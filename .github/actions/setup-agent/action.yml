@@ -41,7 +41,7 @@ runs:
         elapsed=0
 
         while [ $elapsed -lt $timeout ]; do
-          if docker logs pbs-plus-agent 2>&1 | grep -q "tls: connection established"; then
+          if docker logs pbs-plus-agent 2>&1 | grep -qE "tls: connection established|quic: connection established"; then
             echo "✓ PBS Agent fully initialized and running"
             break
           fi

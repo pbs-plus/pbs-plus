@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/xtaci/smux"
 )
 
 type testPKI struct {
@@ -353,7 +352,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 	router.Handle("binary_flow", func(req *Request) (Response, error) {
 		resp := Response{
 			Status: 213,
-			RawStream: func(st *smux.Stream) {
+			RawStream: func(st ARPCStream) {
 				payload := []byte("hello world")
 				_ = SendDataFromReader(bytes.NewReader(payload), len(payload), st)
 				_ = st.Close()
@@ -373,7 +372,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 	defer pipe.Close()
 
 	var received []byte
-	handler := RawStreamHandler(func(st *smux.Stream) error {
+	handler := RawStreamHandler(func(st ARPCStream) error {
 		buf := make([]byte, len("hello world"))
 		n, err := ReceiveDataInto(st, buf)
 		if err != nil {
@@ -398,7 +397,7 @@ func TestCall_RawStream_BinaryFlow(t *testing.T) {
 func TestCall_RawStream_HandlerMissing(t *testing.T) {
 	router := NewRouter()
 	router.Handle("binary", func(req *Request) (Response, error) {
-		return Response{Status: 213, RawStream: func(st *smux.Stream) {}}, nil
+		return Response{Status: 213, RawStream: func(st ARPCStream) {}}, nil
 	})
 
 	addr, shutdown, _, _ := newTestARPCServer(t, router)
@@ -922,7 +921,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 	router.Handle("binary", func(req *Request) (Response, error) {
 		return Response{
 			Status: 213,
-			RawStream: func(st *smux.Stream) {
+			RawStream: func(st ARPCStream) {
 				data := make([]byte, 1024)
 				_, _ = st.Write(data)
 				_ = st.Close()
@@ -944,7 +943,7 @@ func TestLeak_RawStreamHandlers(t *testing.T) {
 
 	const numCalls = 30
 	for range numCalls {
-		handler := RawStreamHandler(func(st *smux.Stream) error {
+		handler := RawStreamHandler(func(st ARPCStream) error {
 			buf := make([]byte, 1024)
 			_, err := st.Read(buf)
 			return err

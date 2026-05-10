@@ -107,26 +107,50 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
 
-	// Retrieve the ARPC session for the target.
-	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
-	if !exists {
+	// Retrieve the ARPC session for the target (QUIC preferred, TCP fallback).
+	var respMsg string
+	if qPipe, ok := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname); ok {
+		// Prepare the backup request.
+		backupReq := types.BackupReq{
+			Drive:      args.Drive,
+			BackupID:   args.BackupID,
+			SourceMode: backup.SourceMode,
+			ReadMode:   backup.ReadMode,
+		}
+
+		s.Store.ARPCAgentsManager.Expect(backup.GetStreamID())
+
+		var err error
+		respMsg, err = qPipe.CallMessage(ctx, "backup", &backupReq)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			reply.Status = 500
+			reply.Message = err.Error()
+			return errors.New(reply.Message)
+		}
+	} else if tcpPipe, ok := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname); ok {
+		backupReq := types.BackupReq{
+			Drive:      args.Drive,
+			BackupID:   args.BackupID,
+			SourceMode: backup.SourceMode,
+			ReadMode:   backup.ReadMode,
+		}
+
+		s.Store.ARPCAgentsManager.Expect(backup.GetStreamID())
+
+		var err error
+		respMsg, err = tcpPipe.CallMessage(ctx, "backup", &backupReq)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			reply.Status = 500
+			reply.Message = err.Error()
+			return errors.New(reply.Message)
+		}
+	} else {
 		reply.Status = 500
 		reply.Message = "unable to reach target"
 		return errors.New(reply.Message)
 	}
-
-	// Prepare the backup request (using the types.BackupReq structure).
-	backupReq := types.BackupReq{
-		Drive:      args.Drive,
-		BackupID:   args.BackupID,
-		SourceMode: backup.SourceMode,
-		ReadMode:   backup.ReadMode,
-	}
-
-	s.Store.ARPCAgentsManager.Expect(backup.GetStreamID())
-
-	// Call the target's backup method via ARPC.
-	respMsg, err := arpcSess.CallMessage(ctx, "backup", &backupReq)
 	if err != nil {
 		syslog.L.Error(err).Write()
 		reply.Status = 500
@@ -270,8 +294,10 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 
 	s.Store.ARPCAgentsManager.NotExpect(childKey)
 
-	arpcSess, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
-	if !exists {
+	// Try QUIC first, then TCP fallback
+	qSess, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
+	tSess, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
+	if !qExists && !tExists {
 		syslog.L.Info().
 			WithMessage("Target unreachable, assuming cleanup successful.").
 			WithField("jobID", args.BackupID).
@@ -286,12 +312,22 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 		BackupID: args.BackupID,
 	}
 
-	_, err := arpcSess.CallMessage(ctx, "cleanup", &cleanupReq)
-	if err != nil {
-		syslog.L.Error(err).Write()
-		reply.Status = 500
-		reply.Message = err.Error()
-		return errors.New(reply.Message)
+	if qExists {
+		_, err := qSess.CallMessage(ctx, "cleanup", &cleanupReq)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			reply.Status = 500
+			reply.Message = err.Error()
+			return errors.New(reply.Message)
+		}
+	} else {
+		_, err := tSess.CallMessage(ctx, "cleanup", &cleanupReq)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			reply.Status = 500
+			reply.Message = err.Error()
+			return errors.New(reply.Message)
+		}
 	}
 
 	reply.Status = 200
@@ -313,15 +349,17 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 			"target":   args.TargetHostname,
 		}).Write()
 
-	// Retrieve the ARPC session for the target.
-	_, exists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
-	if !exists {
+	// Check QUIC pipe first, then TCP for the control connection.
+	_, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
+	_, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
+	controlOk := qExists || tExists
+	if !controlOk {
 		reply.Connected = false
 		return nil
 	}
 
 	childKey := args.TargetHostname + "|" + args.BackupID
-	_, exists = s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
+	_, exists := s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
 	if !exists {
 		reply.Connected = false
 		return nil

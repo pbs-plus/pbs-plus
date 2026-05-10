@@ -29,7 +29,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xtaci/smux"
 )
 
 type testPKI struct {
@@ -381,7 +380,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		n := 0
 		buf := make([]byte, 64*1024)
-		readDirHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
+		readDirHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 			n, err = arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
 				return err
@@ -435,7 +434,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		var readAtBytes bytes.Buffer
 
-		readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
+		readAtHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 			buf := make([]byte, 25)
 			n, err := arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
@@ -486,7 +485,7 @@ func TestAgentFSServer(t *testing.T) {
 				Length:   readSize,
 			}
 
-			readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
+			readAtHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 				buf := make([]byte, readSize)
 				_, err := arpc.ReceiveDataInto(st, buf)
 				if err != nil && !errors.Is(err, io.EOF) {
@@ -530,7 +529,7 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		var receivedLargeFileBytes bytes.Buffer
-		readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
+		readAtHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 			buf := make([]byte, readSize)
 			n, err := arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
@@ -575,7 +574,7 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		t.Log("Current handle map before invalid ReadAt:", dumpHandleMap(agentFsServer))
-		err := clientPipe.Call(ctx, "ReadAt", &readAtPayload, arpc.RawStreamHandler(func(st *smux.Stream) error { st.Close(); return nil }))
+		err := clientPipe.Call(ctx, "ReadAt", &readAtPayload, arpc.RawStreamHandler(func(st arpc.ARPCStream) error { st.Close(); return nil }))
 		assert.Error(t, err, "ReadAt with invalid handle should return an error")
 
 		closePayload := types.CloseReq{HandleID: 33123}
@@ -783,7 +782,7 @@ func TestAgentFSServer(t *testing.T) {
 				}
 
 				var goroutineReadBytes bytes.Buffer
-				readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
+				readAtHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 					buf := make([]byte, readSize)
 					n, err := arpc.ReceiveDataInto(st, buf)
 					if err != nil && !errors.Is(err, io.EOF) {
@@ -892,7 +891,7 @@ func TestAgentFSServer(t *testing.T) {
 		}
 
 		var buffer1 bytes.Buffer
-		readAtHandler1 := arpc.RawStreamHandler(func(st *smux.Stream) error {
+		readAtHandler1 := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 			buf := make([]byte, readAtPayload1.Length)
 			n, copyErr := arpc.ReceiveDataInto(st, buf)
 			if copyErr != nil && !errors.Is(copyErr, io.EOF) {
@@ -903,7 +902,7 @@ func TestAgentFSServer(t *testing.T) {
 		})
 
 		var buffer2 bytes.Buffer
-		readAtHandler2 := arpc.RawStreamHandler(func(st *smux.Stream) error {
+		readAtHandler2 := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 			buf := make([]byte, readAtPayload2.Length)
 			n, copyErr := arpc.ReceiveDataInto(st, buf)
 			if copyErr != nil && !errors.Is(copyErr, io.EOF) {
@@ -975,7 +974,7 @@ func TestAgentFSServer(t *testing.T) {
 		readDirPayload := types.ReadDirReq{HandleID: dirHandle}
 		var entries types.ReadDirEntries
 
-		readDirHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
+		readDirHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 			buf := make([]byte, 64*1024)
 			n, err := arpc.ReceiveDataInto(st, buf)
 			if err != nil && !errors.Is(err, io.EOF) {
@@ -1031,7 +1030,7 @@ func TestAgentFSServer(t *testing.T) {
 				Length:   readSize,
 			}
 
-			readAtHandler := arpc.RawStreamHandler(func(st *smux.Stream) error {
+			readAtHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 				buf := make([]byte, readSize)
 				_, err := arpc.ReceiveDataInto(st, buf)
 				if err != nil && !errors.Is(err, io.EOF) {

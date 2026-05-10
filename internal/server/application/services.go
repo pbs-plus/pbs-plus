@@ -199,8 +199,28 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []database.Targ
 				results[idx] = result
 				return
 			}
-			arpcSess, ok := s.agentsMgr.GetStreamPipe(tgt.GetHostname())
+			arpcSess, ok := s.agentsMgr.GetQuicPipe(tgt.GetHostname())
 			if !ok {
+				arpcSessTcp, tcpOk := s.agentsMgr.GetStreamPipe(tgt.GetHostname())
+				if !tcpOk {
+					results[idx] = result
+					return
+				}
+				result.AgentVersion = arpcSessTcp.GetVersion()
+				if checkStatus {
+					timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+					defer cancel()
+					respMsg, err := arpcSessTcp.CallMessage(timeoutCtx, "target_status",
+						&reqTypes.TargetStatusReq{Drive: tgt.VolumeID})
+					if err == nil && strings.HasPrefix(respMsg, "reachable") {
+						result.ConnectionStatus = true
+						if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
+							result.AgentVersion = parts[1]
+						}
+					} else if err != nil {
+						result.Error = err
+					}
+				}
 				results[idx] = result
 				return
 			}
