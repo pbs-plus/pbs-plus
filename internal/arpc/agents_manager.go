@@ -145,6 +145,9 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
 	}
+	if existingQuic, exists := sm.quicSessions.Get(clientID); exists {
+		existingQuic.Close()
+	}
 
 	if !sm.isExpected(clientID, state.PeerCertificates) {
 		return nil, "", errors.New("connection is not expected by server")
@@ -225,8 +228,12 @@ func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, 
 		return "", err
 	}
 
+	// Evict any existing session (TCP or QUIC) with the same client ID.
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
+	}
+	if existingQuic, exists := sm.quicSessions.Get(clientID); exists {
+		existingQuic.Close()
 	}
 
 	if !sm.isExpected(clientID, state.PeerCertificates) {

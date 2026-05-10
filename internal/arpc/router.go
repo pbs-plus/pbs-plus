@@ -11,7 +11,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-var errMissingMethod = errors.New("missing method field")
+var (
+	errMissingMethod = errors.New("missing method field")
+	ackSignal        = []byte{0xAA}
+)
 
 type HandlerFunc func(req *Request) (Response, error)
 
@@ -80,7 +83,7 @@ func (r *Router) serveStream(stream ARPCStream) {
 			return
 		}
 
-		if _, err := stream.Write([]byte{0xAA}); err != nil {
+		if _, err := stream.Write(ackSignal); err != nil {
 			syslog.L.Debug().WithField("req", req.Method).WithMessage("failed to send ack").Write()
 			return
 		}
