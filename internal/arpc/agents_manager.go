@@ -267,26 +267,6 @@ func (sm *AgentsManager) GetQuicPipe(clientID string) (*QuicPipe, bool) {
 	return sm.quicSessions.Get(clientID)
 }
 
-func (sm *AgentsManager) WaitQuicPipe(ctx context.Context, clientID string) (*QuicPipe, error) {
-	if pipe, ok := sm.quicSessions.Get(clientID); ok {
-		return pipe, nil
-	}
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-ticker.C:
-			if pipe, ok := sm.quicSessions.Get(clientID); ok {
-				return pipe, nil
-			}
-		}
-	}
-}
-
 func (sm *AgentsManager) unregisterQuicPipe(clientID string) {
 	_, exists := sm.quicSessions.GetAndDel(clientID)
 	if exists {

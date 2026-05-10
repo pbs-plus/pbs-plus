@@ -224,10 +224,6 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []database.Targ
 				results[idx] = result
 				return
 			}
-			if !ok {
-				results[idx] = result
-				return
-			}
 			result.AgentVersion = arpcSess.GetVersion()
 			if checkStatus {
 				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
