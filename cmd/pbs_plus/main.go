@@ -15,14 +15,14 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	backend "github.com/pbs-plus/pbs-plus/internal/backend"
-	"github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup"
-	"github.com/pbs-plus/pbs-plus/internal/backend/rpc/job"
+	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/backup"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/store"
-	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/pbs-plus/pbs-plus/internal/web"
+	"github.com/pbs-plus/pbs-plus/internal/server/web"
 
 )
 
@@ -166,14 +166,14 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 			continue
 		}
 
-		args := &job.BackupQueueArgs{
+		args := &jobrpc.BackupQueueArgs{
 			Job:             backupTask,
 			SkipCheck:       true,
 			Stop:            stop,
 			Web:             webRun,
 			ExtraExclusions: extExclusions,
 		}
-		var reply job.QueueReply
+		var reply jobrpc.QueueReply
 		if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
 			syslog.L.Error(err).WithField("backupID", backupRun).Write()
 			continue
@@ -190,13 +190,13 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 			continue
 		}
 
-		args := &job.RestoreQueueArgs{
+		args := &jobrpc.RestoreQueueArgs{
 			Job:       restoreTask,
 			SkipCheck: true,
 			Stop:      stop,
 			Web:       webRun,
 		}
-		var reply job.QueueReply
+		var reply jobrpc.QueueReply
 		if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
 			syslog.L.Error(err).WithField("restoreID", restoreRun).Write()
 			continue
