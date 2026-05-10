@@ -34,25 +34,34 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	taskMonitorQueue chan *Job
-	executionSem     chan struct{}
+	executionSem chan struct{}
 
 	detectionMu     sync.Mutex
 	singleExecution bool
 	runningJobs     *safemap.Map[string, contextPair]
+
+	// Dynamic queue: slice-based queue with condition variable.
+	// capacityFn returns the maximum number of queued jobs allowed at any moment.
+	// It is re-evaluated on every enqueue, so the limit stays in sync with the
+	// database as jobs are created or deleted.
+	queueMu    sync.Mutex
+	queueCond  *sync.Cond
+	queue      []*Job
+	capacityFn func() int
 }
 
-func NewManager(ctx context.Context, maxConcurrent int, queueSize int, singleExecution bool) *Manager {
+func NewManager(ctx context.Context, maxConcurrent int, capacityFn func() int, singleExecution bool) *Manager {
 	newCtx, cancel := context.WithCancel(ctx)
 
 	m := &Manager{
-		ctx:              newCtx,
-		cancel:           cancel,
-		taskMonitorQueue: make(chan *Job, queueSize),
-		executionSem:     make(chan struct{}, maxConcurrent),
-		runningJobs:      safemap.New[string, contextPair](),
-		singleExecution:  singleExecution,
+		ctx:             newCtx,
+		cancel:          cancel,
+		executionSem:    make(chan struct{}, maxConcurrent),
+		runningJobs:     safemap.New[string, contextPair](),
+		singleExecution: singleExecution,
+		capacityFn:      capacityFn,
 	}
+	m.queueCond = sync.NewCond(&m.queueMu)
 
 	go m.processQueue()
 
@@ -69,7 +78,6 @@ func (m *Manager) Enqueue(job *Job) error {
 	jobID := job.ID
 
 	m.detectionMu.Lock()
-
 	if _, exists := m.runningJobs.Get(jobID); exists {
 		m.detectionMu.Unlock()
 		return fmt.Errorf("Job %s is already running/in queue.", jobID)
@@ -78,8 +86,26 @@ func (m *Manager) Enqueue(job *Job) error {
 	m.runningJobs.Set(jobID, contextPair{ctx: ctx, cancel: cancel})
 	m.detectionMu.Unlock()
 
+	// Wait until the queue has room, respecting the dynamic capacity.
+	pushed := make(chan struct{})
+	go func() {
+		m.queueMu.Lock()
+		defer m.queueMu.Unlock()
+
+		for !m.isClosed() {
+			cap := m.capacityFn()
+			if len(m.queue) < cap {
+				m.queue = append(m.queue, job)
+				m.queueCond.Signal()
+				close(pushed)
+				return
+			}
+			m.queueCond.Wait()
+		}
+	}()
+
 	select {
-	case m.taskMonitorQueue <- job:
+	case <-pushed:
 		return nil
 	case <-m.ctx.Done():
 		m.cleanup(job, cancel)
@@ -98,19 +124,26 @@ func (m *Manager) Enqueue(job *Job) error {
 
 func (m *Manager) processQueue() {
 	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case job := <-m.taskMonitorQueue:
-			go m.runJob(job)
+		m.queueMu.Lock()
+		for len(m.queue) == 0 && !m.isClosed() {
+			m.queueCond.Wait()
 		}
+		if m.isClosed() {
+			m.queueMu.Unlock()
+			return
+		}
+		job := m.queue[0]
+		m.queue = m.queue[1:]
+		m.queueCond.Broadcast() // wake up any enqueuers waiting for capacity
+		m.queueMu.Unlock()
+
+		go m.runJob(job)
 	}
 }
 
 func (m *Manager) runJob(job *Job) {
 	pair, exists := m.runningJobs.Get(job.ID)
 	if !exists {
-		// Job was cancelled before starting
 		return
 	}
 	ctx := pair.ctx
@@ -126,8 +159,6 @@ func (m *Manager) runJob(job *Job) {
 	default:
 	}
 
-	// Run pre-execution phase outside the semaphore so queuing/mounting
-	// doesn't consume a concurrency slot.
 	if job.PreExec != nil {
 		if err := job.PreExec(ctx); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -161,7 +192,6 @@ func (m *Manager) runJob(job *Job) {
 		m.detectionMu.Lock()
 	}
 
-	// Execute the job
 	err := job.Execute(ctx)
 
 	if m.singleExecution {
@@ -225,4 +255,13 @@ func (m *Manager) RunningCount() int {
 
 func (m *Manager) Close() {
 	m.cancel()
+}
+
+func (m *Manager) isClosed() bool {
+	select {
+	case <-m.ctx.Done():
+		return true
+	default:
+		return false
+	}
 }
