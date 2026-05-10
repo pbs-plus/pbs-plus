@@ -9,7 +9,11 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/xtaci/smux"
+)
+
+var (
+	errMissingMethod = errors.New("missing method field")
+	ackSignal        = []byte{0xAA}
 )
 
 type HandlerFunc func(req *Request) (Response, error)
@@ -30,7 +34,7 @@ func (r *Router) CloseHandle(method string) {
 	r.handlers.Del(method)
 }
 
-func (r *Router) serveStream(stream *smux.Stream) {
+func (r *Router) serveStream(stream ARPCStream) {
 	dec := cbor.NewDecoder(stream)
 	enc := cbor.NewEncoder(stream)
 
@@ -41,7 +45,7 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	if req.Method == "" {
-		writeErrorResponse(stream, http.StatusBadRequest, errors.New("missing method field"))
+		writeErrorResponse(stream, http.StatusBadRequest, errMissingMethod)
 		return
 	}
 
@@ -69,8 +73,8 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	if resp.Status == 213 && resp.RawStream != nil {
 		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary").Write()
 
-		readyByte := make([]byte, 1)
-		if _, err := stream.Read(readyByte); err != nil {
+		var readyByte [1]byte
+		if _, err := stream.Read(readyByte[:]); err != nil {
 			syslog.L.Debug().WithField("req", req.Method).WithMessage("client not ready").Write()
 			return
 		}
@@ -79,7 +83,6 @@ func (r *Router) serveStream(stream *smux.Stream) {
 			return
 		}
 
-		ackSignal := []byte{0xAA}
 		if _, err := stream.Write(ackSignal); err != nil {
 			syslog.L.Debug().WithField("req", req.Method).WithMessage("failed to send ack").Write()
 			return
