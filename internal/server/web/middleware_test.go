@@ -103,7 +103,7 @@ func TestRecovery_NormalRequestPassthrough(t *testing.T) {
 
 func TestRequestLogger_LogsRequest(t *testing.T) {
 	var buf strings.Builder
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	handler := RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
