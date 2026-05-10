@@ -33,6 +33,8 @@ type SerializableError struct {
 // RawStreamHandler is a function type for handling raw stream data.
 type RawStreamHandler func(ARPCStream) error
 
+var readySignal = []byte{0xFF}
+
 // StatusRawStream is the HTTP status code for raw stream mode.
 const StatusRawStream = 213
 
@@ -52,7 +54,6 @@ func (s *StreamPipe) checkRPCError(resp *Response) error {
 
 // performHandshake performs the ready/ack handshake for raw stream mode.
 func performHandshake(stream ARPCStream) error {
-	readySignal := []byte{0xFF}
 	if _, err := stream.Write(readySignal); err != nil {
 		return fmt.Errorf("write ready signal: %w", err)
 	}

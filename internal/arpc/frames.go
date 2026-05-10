@@ -16,6 +16,11 @@ const (
 	maxSingleHeaderSize = 2048
 )
 
+var (
+	rejectionMarker = []byte{0x00}
+	successMarker   = []byte{0x01}
+)
+
 type RejectionFrame struct {
 	Message string `cbor:"message"`
 	Code    int    `cbor:"code"`
@@ -27,7 +32,7 @@ func (r RejectionFrame) Error() string {
 
 func writeRejectionFrame(s ARPCStream, rejection RejectionFrame) error {
 	// Send marker byte to indicate rejection (0x00 = rejection, 0x01 = success)
-	if _, err := s.Write([]byte{0x00}); err != nil {
+	if _, err := s.Write(rejectionMarker); err != nil {
 		return err
 	}
 
@@ -71,7 +76,7 @@ func readRejectionFrame(s ARPCStream) (RejectionFrame, error) {
 }
 
 func writeHeadersSuccess(s ARPCStream) error {
-	_, err := s.Write([]byte{0x01})
+	_, err := s.Write(successMarker)
 	return err
 }
 

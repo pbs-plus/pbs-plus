@@ -11,6 +11,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+var errMissingMethod = errors.New("missing method field")
+
 type HandlerFunc func(req *Request) (Response, error)
 
 type Router struct {
@@ -40,7 +42,7 @@ func (r *Router) serveStream(stream ARPCStream) {
 	}
 
 	if req.Method == "" {
-		writeErrorResponse(stream, http.StatusBadRequest, errors.New("missing method field"))
+		writeErrorResponse(stream, http.StatusBadRequest, errMissingMethod)
 		return
 	}
 
@@ -68,8 +70,8 @@ func (r *Router) serveStream(stream ARPCStream) {
 	if resp.Status == 213 && resp.RawStream != nil {
 		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary").Write()
 
-		readyByte := make([]byte, 1)
-		if _, err := stream.Read(readyByte); err != nil {
+		var readyByte [1]byte
+		if _, err := stream.Read(readyByte[:]); err != nil {
 			syslog.L.Debug().WithField("req", req.Method).WithMessage("client not ready").Write()
 			return
 		}
@@ -78,8 +80,7 @@ func (r *Router) serveStream(stream ARPCStream) {
 			return
 		}
 
-		ackSignal := []byte{0xAA}
-		if _, err := stream.Write(ackSignal); err != nil {
+		if _, err := stream.Write([]byte{0xAA}); err != nil {
 			syslog.L.Debug().WithField("req", req.Method).WithMessage("failed to send ack").Write()
 			return
 		}

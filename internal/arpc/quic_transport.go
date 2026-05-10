@@ -13,6 +13,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// quicNextProtos is the ALPN protocol list for QUIC connections.
+var quicNextProtos = []string{"pbsarpc-quic"}
+
 // QuicPipe is the QUIC-based transport for the ARPC control plane.
 // Replaces smux-over-TCP for RPC control messages.
 // Binary data streams use TCP via the data Pipe.
@@ -26,6 +29,9 @@ type QuicPipe struct {
 	headers    http.Header
 	version    string
 
+	cborEnc cbor.EncMode
+	cborDec cbor.DecMode
+
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 }
@@ -33,10 +39,17 @@ type QuicPipe struct {
 // NewQuicServerPipe creates a QuicPipe from an accepted QUIC connection.
 func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 	ctx, cancel := context.WithCancel(ctx)
+	enc, _ := cbor.EncOptions{}.EncMode()
+	dec, err := cbor.DecOptions{MaxArrayElements: math.MaxInt32}.DecMode()
+	if err != nil {
+		dec, _ = cbor.DecOptions{}.DecMode()
+	}
 	return &QuicPipe{
 		ctx:        ctx,
 		cancelFunc: cancel,
 		conn:       conn,
+		cborEnc:    enc,
+		cborDec:    dec,
 	}
 }
 
@@ -50,7 +63,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 	}
 
 	quicTLS := tlsConfig.Clone()
-	quicTLS.NextProtos = []string{"pbsarpc-quic"}
+	quicTLS.NextProtos = quicNextProtos
 
 	conn, err := quic.DialAddr(ctx, serverAddr, quicTLS, nil)
 	if err != nil {
@@ -160,31 +173,14 @@ func (q *QuicPipe) Serve() error {
 	}
 }
 
-// cborEnc returns a CBOR encoder mode. Uses a shared default.
-func (q *QuicPipe) cborEnc() cbor.EncMode {
-	enc, _ := cbor.EncOptions{}.EncMode()
-	return enc
-}
-
-// cborDec returns a CBOR decoder mode with MaxArrayElements set.
-func (q *QuicPipe) cborDec() cbor.DecMode {
-	dec, err := cbor.DecOptions{
-		MaxArrayElements: math.MaxInt32,
-	}.DecMode()
-	if err != nil {
-		dec, _ = cbor.DecOptions{}.DecMode()
-	}
-	return dec
-}
-
 func (q *QuicPipe) call(ctx context.Context, method string, payload any) (ARPCStream, *Response, error) {
 	stream, err := q.OpenStream()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	enc := q.cborEnc().NewEncoder(stream)
-	dec := q.cborDec().NewDecoder(stream)
+	enc := q.cborEnc.NewEncoder(stream)
+	dec := q.cborDec.NewDecoder(stream)
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := stream.SetDeadline(deadline); err != nil {
@@ -198,7 +194,7 @@ func (q *QuicPipe) call(ctx context.Context, method string, payload any) (ARPCSt
 		case []byte:
 			payloadBytes = p
 		default:
-			payloadBytes, err = q.cborEnc().Marshal(p)
+			payloadBytes, err = q.cborEnc.Marshal(p)
 			if err != nil {
 				return stream, nil, fmt.Errorf("marshal payload: %w", err)
 			}
@@ -225,7 +221,7 @@ func (q *QuicPipe) checkRPCError(resp *Response) error {
 	if resp.Status != http.StatusOK {
 		if len(resp.Data) > 0 {
 			var serErr SerializableError
-			if err := q.cborDec().Unmarshal(resp.Data, &serErr); err == nil {
+			if err := q.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
 				return UnwrapError(serErr)
 			}
 		}
@@ -266,7 +262,7 @@ func (q *QuicPipe) Call(ctx context.Context, method string, payload any, out any
 		*dst = append((*dst)[:0], resp.Data...)
 		return nil
 	default:
-		return q.cborDec().Unmarshal(resp.Data, out)
+		return q.cborDec.Unmarshal(resp.Data, out)
 	}
 }
 
@@ -318,7 +314,7 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 	}
 
 	quicTLS := tlsConfig.Clone()
-	quicTLS.NextProtos = []string{"pbsarpc-quic"}
+	quicTLS.NextProtos = quicNextProtos
 
 	// If the config uses GetConfigForClient, wrap it to inject our NextProtos.
 	if quicTLS.GetConfigForClient != nil {
@@ -328,7 +324,7 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 			if err != nil {
 				return nil, err
 			}
-			cfg.NextProtos = []string{"pbsarpc-quic"}
+			cfg.NextProtos = quicNextProtos
 			return cfg, nil
 		}
 	}
