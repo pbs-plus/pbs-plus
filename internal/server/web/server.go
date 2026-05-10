@@ -235,7 +235,7 @@ func (s *Server) StartAll() {
 	})
 
 	s.wg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("arpc: quic endpoint starting on %s", conf.ARPCQuicPort)).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("arpc: quic endpoint starting on udp %s", conf.ARPCQuicPort)).Write()
 		if err := s.StartARPCQuic(); err != nil {
 			syslog.L.Error(err).WithMessage("arpc quic agent endpoint server failed").Write()
 		}

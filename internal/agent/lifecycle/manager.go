@@ -133,7 +133,7 @@ func ConnectARPC(
 	address := fmt.Sprintf(
 		"%s%s",
 		strings.TrimSuffix(uri.Hostname(), ":"),
-		conf.ARPCQuicPort,
+		conf.ARPCServerPort,
 	)
 	headers := http.Header{}
 	headers.Add("X-PBS-Agent", clientId)

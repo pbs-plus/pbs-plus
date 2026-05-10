@@ -6,7 +6,7 @@ const (
 	ProxyTargetURL = "https://127.0.0.1:8007" // The target server URL
 
 	ARPCServerPort   = ":8008"
-	ARPCQuicPort     = ":8009"
+	ARPCQuicPort     = ":8008"
 	AgentAPIPort     = ":8018"
 	ServerAPIExtPort = ":8017"
 
