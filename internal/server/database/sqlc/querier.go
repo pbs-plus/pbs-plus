@@ -12,6 +12,8 @@ import (
 type Querier interface {
 	AgentHostExists(ctx context.Context, name string) (int64, error)
 	BackupExists(ctx context.Context, id string) (int64, error)
+	CountBackups(ctx context.Context) (int64, error)
+	CountRestores(ctx context.Context) (int64, error)
 	CreateAgentHost(ctx context.Context, arg CreateAgentHostParams) error
 	CreateBackup(ctx context.Context, arg CreateBackupParams) error
 	CreateExclusion(ctx context.Context, arg CreateExclusionParams) error

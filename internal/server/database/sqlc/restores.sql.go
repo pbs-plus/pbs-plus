@@ -10,6 +10,17 @@ import (
 	"database/sql"
 )
 
+const countRestores = `-- name: CountRestores :one
+SELECT COUNT(*) FROM restores
+`
+
+func (q *Queries) CountRestores(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countRestores)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRestore = `-- name: CreateRestore :exec
 INSERT INTO restores (
     id, store, namespace, snapshot, src_path, dest_target, dest_subpath,

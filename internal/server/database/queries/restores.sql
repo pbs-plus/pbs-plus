@@ -62,3 +62,6 @@ DELETE FROM restores WHERE id = ?;
 
 -- name: RestoreExists :one
 SELECT 1 FROM restores WHERE id = ? LIMIT 1;
+
+-- name: CountRestores :one
+SELECT COUNT(*) FROM restores;

@@ -102,8 +102,15 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		}
 	}()
 
-	// Start scheduler
-	manager := jobs.NewManager(mainCtx, conf.MaxConcurrentClients, 100, true)
+	// Start scheduler with dynamic queue capacity that reflects the current
+	// number of backup + restore jobs in the database.
+	manager := jobs.NewManager(mainCtx, conf.MaxConcurrentClients, func() int {
+		n, err := storeInstance.Database.JobCount(mainCtx)
+		if err != nil || n < 1 {
+			return 100
+		}
+		return n
+	}, true)
 	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
 	s.Start()
 
