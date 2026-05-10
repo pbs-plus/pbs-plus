@@ -20,15 +20,13 @@ type StreamPipe struct {
 	conn   net.Conn
 	router *Router
 
-	serverAddr   string
-	tlsConfig    *tls.Config
-	headers      http.Header
-	version      string
-	isServerSide bool
+	serverAddr string
+	tlsConfig  *tls.Config
+	headers    http.Header
+	version    string
 
 	ctx        context.Context
 	cancelFunc context.CancelFunc
-	wg         sync.WaitGroup
 	cborEnc    cbor.EncMode
 	cborDec    cbor.DecMode
 }
@@ -79,7 +77,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to create smux client: %w", err)
 	}
 
-	pipe, err := newStreamPipe(ctx, smuxC, conn, serverAddr, arpcTls, false)
+	pipe, err := newStreamPipe(ctx, smuxC, conn, serverAddr, arpcTls)
 	if err != nil {
 		syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err init").Write()
 		_ = smuxC.Close()
@@ -120,7 +118,7 @@ func AcceptConnection(ctx context.Context, tun *smux.Session, conn net.Conn) (*S
 		ctx = context.Background()
 	}
 
-	pipe, err := newStreamPipe(ctx, tun, conn, "", nil, true)
+	pipe, err := newStreamPipe(ctx, tun, conn, "", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server pipe: %w", err)
 	}
@@ -128,7 +126,7 @@ func AcceptConnection(ctx context.Context, tun *smux.Session, conn net.Conn) (*S
 	return pipe, nil
 }
 
-func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, serverAddr string, tlsConfig *tls.Config, isServerSide bool) (*StreamPipe, error) {
+func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, serverAddr string, tlsConfig *tls.Config) (*StreamPipe, error) {
 	if tun == nil {
 		return nil, fmt.Errorf("nil smux tunnel")
 	}
@@ -144,15 +142,15 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, server
 	cborEnc, _ := cbor.EncOptions{}.EncMode()
 
 	pipe := &StreamPipe{
-		ctx:          ctx,
-		cancelFunc:   cancel,
-		tun:          tun,
-		conn:         conn,
-		serverAddr:   serverAddr,
-		tlsConfig:    tlsConfig,
-		isServerSide: isServerSide,
-		cborDec:      cborDec,
-		cborEnc:      cborEnc,
+		ctx:        ctx,
+		cancelFunc: cancel,
+		tun:        tun,
+		conn:       conn,
+		serverAddr: serverAddr,
+		tlsConfig:  tlsConfig,
+
+		cborDec: cborDec,
+		cborEnc: cborEnc,
 	}
 
 	go func() {
