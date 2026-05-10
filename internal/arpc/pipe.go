@@ -54,6 +54,10 @@ func (s *StreamPipe) GetVersion() string {
 	return s.version
 }
 
+func (s *StreamPipe) SetHeaders(headers http.Header) {
+	s.headers = headers
+}
+
 func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header, tlsConfig *tls.Config) (*StreamPipe, error) {
 	if ctx == nil {
 		ctx = context.Background()
