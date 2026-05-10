@@ -335,7 +335,7 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
     let view = me.getView();
 
     Ext.Ajax.request({
-      url: pbsPlusBaseUrl + "/api2/json/d2d/target?status=true",
+      url: pbsPlusBaseUrl + "/api2/json/d2d/target",
       method: "GET",
       withCredentials: true,
       headers: {
@@ -354,9 +354,44 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
 
         // Apply current filter if exists
         me.filterTree();
+
+        // Async: fetch detailed statuses
+        me.loadStatuses();
       },
       failure: function (response) {
         Ext.Msg.alert(gettext("Error"), gettext("Failed to load targets"));
+      },
+    });
+  },
+
+  loadStatuses: function () {
+    let me = this;
+    let view = me.getView();
+
+    Ext.Ajax.request({
+      url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target-status?refresh=true",
+      method: "GET",
+      withCredentials: true,
+      headers: {
+        Accept: "application/json",
+      },
+      success: function (response) {
+        let statuses = Ext.decode(response.responseText);
+        if (!statuses || Object.keys(statuses).length === 0) {
+          return;
+        }
+
+        let store = view.getStore();
+        store.each(function (node) {
+          node.eachChild(function (child) {
+            let name = child.get("name");
+            if (name && statuses[name]) {
+              let st = statuses[name];
+              child.set("agent_version", st.AgentVersion || "");
+              child.set("connection_status", st.ConnectionStatus);
+            }
+          });
+        });
       },
     });
   },

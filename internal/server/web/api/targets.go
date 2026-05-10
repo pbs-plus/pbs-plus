@@ -9,11 +9,10 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -38,39 +37,23 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		checkStatus := strings.ToLower(r.FormValue("status")) == "true"
-
-		// Separate agent targets from others for batch processing
-		agentTargets := make([]database.Target, 0)
-		agentIndices := make([]int, 0)
-
 		for i := range all {
-			if all[i].IsAgent() {
-				agentTargets = append(agentTargets, all[i])
-				agentIndices = append(agentIndices, i)
-			} else if all[i].IsS3() {
+			if all[i].IsS3() {
 				all[i].ConnectionStatus = true
 				all[i].AgentVersion = "N/A (S3 target)"
-			} else {
+			} else if !all[i].IsAgent() {
 				all[i].AgentVersion = "N/A (local target)"
 				_, err := os.Stat(all[i].Path)
 				all[i].ConnectionStatus = err == nil && validate.IsValid(all[i].Path)
-			}
-		}
-
-		if len(agentTargets) > 0 {
-			timeout := 5 * time.Second
-			results := storeInstance.TargetSvc.CheckStatus(
-				r.Context(),
-				agentTargets,
-				checkStatus,
-				timeout,
-			)
-
-			for i, result := range results {
-				originalIdx := agentIndices[i]
-				all[originalIdx].AgentVersion = result.AgentVersion
-				all[originalIdx].ConnectionStatus = result.ConnectionStatus
+			} else {
+				// Instant: check if session exists (map lookup, no RPC)
+				if qSess, ok := storeInstance.ARPCAgentsManager.GetQuicPipe(all[i].GetHostname()); ok {
+					all[i].ConnectionStatus = true
+					all[i].AgentVersion = qSess.GetVersion()
+				} else if tSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(all[i].GetHostname()); ok {
+					all[i].ConnectionStatus = true
+					all[i].AgentVersion = tSess.GetVersion()
+				}
 			}
 		}
 
@@ -87,6 +70,25 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toReturn)
+	}
+}
+
+func D2DTargetStatusHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Trigger async refresh if requested
+		if strings.ToLower(r.FormValue("refresh")) == "true" {
+			storeInstance.TargetSvc.RefreshStatuses()
+		}
+
+		cached := storeInstance.TargetSvc.GetCachedStatuses()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cached)
 	}
 }
 
