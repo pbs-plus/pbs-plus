@@ -37,6 +37,7 @@ type Manager struct {
 	executionSem chan struct{}
 
 	detectionMu     sync.Mutex
+	enqueueMu       sync.Mutex
 	singleExecution bool
 	runningJobs     *safemap.Map[string, contextPair]
 
@@ -77,14 +78,14 @@ func (m *Manager) Enqueue(job *Job) error {
 
 	jobID := job.ID
 
-	m.detectionMu.Lock()
+	m.enqueueMu.Lock()
 	if _, exists := m.runningJobs.Get(jobID); exists {
-		m.detectionMu.Unlock()
+		m.enqueueMu.Unlock()
 		return fmt.Errorf("Job %s is already running/in queue.", jobID)
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.runningJobs.Set(jobID, contextPair{ctx: ctx, cancel: cancel})
-	m.detectionMu.Unlock()
+	m.enqueueMu.Unlock()
 
 	// Wait until the queue has room, respecting the dynamic capacity.
 	pushed := make(chan struct{})
