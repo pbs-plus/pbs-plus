@@ -62,7 +62,7 @@ runs:
           fi
           
           # Error: Backup mount failed
-          if echo "$server_logs" | grep -q "failed to create fuse connection"; then
+          if echo "$server_logs" | grep -q "mount: fuse connection failed"; then
             echo "✗ Backup mount failed"
             exit 1
           fi
