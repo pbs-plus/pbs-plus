@@ -1,6 +1,6 @@
 //go:build linux
 
-package tasks
+package backup
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 )
 
 // GetBackupTask waits for and retrieves a backup task by scanning log files.
@@ -101,7 +102,7 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := now()
+	startTime := tasks.Now()
 	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
 
 	task := proxmox.Task{
@@ -119,13 +120,13 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
 	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
 
-	file, _, err := createTaskLogFile(task.UPID)
+	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
 	defer file.Close()
 
-	timestamp := now().Format(time.RFC3339)
+	timestamp := tasks.Now().Format(time.RFC3339)
 
 	// Write additional data
 	for _, data := range additionalData {
@@ -157,11 +158,11 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 	fmt.Fprintf(file, "%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine)
 
 	// Archive with the error
-	writeArchive(task.UPID, task.StartTime, firstNonEmptyLine)
+	tasks.WriteArchive(task.UPID, task.StartTime, firstNonEmptyLine)
 
 	task.Status = "stopped"
 	task.ExitStatus = firstNonEmptyLine
-	task.EndTime = now().Unix()
+	task.EndTime = tasks.Now().Unix()
 	return task, nil
 }
 
@@ -169,7 +170,7 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := now()
+	startTime := tasks.Now()
 	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
 
 	task := proxmox.Task{
@@ -187,22 +188,22 @@ func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (pro
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
 	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
 
-	file, _, err := createTaskLogFile(task.UPID)
+	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
 	defer file.Close()
 
-	base := baseTask{Task: task, file: file}
+	base := tasks.NewBaseTask(task, file)
 	for _, data := range additionalData {
-		base.writeLogLine("%s", data)
+		base.WriteLogLine("%s", data)
 	}
-	base.writeLogLine("TASK OK")
+	base.WriteLogLine("TASK OK")
 
-	writeArchive(task.UPID, task.StartTime, "OK")
+	tasks.WriteArchive(task.UPID, task.StartTime, "OK")
 
 	task.Status = "stopped"
 	task.ExitStatus = "OK"
-	task.EndTime = now().Unix()
+	task.EndTime = tasks.Now().Unix()
 	return task, nil
 }

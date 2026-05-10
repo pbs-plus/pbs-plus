@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/backup"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/restore"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
+	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"

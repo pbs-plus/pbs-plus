@@ -1,6 +1,6 @@
 //go:build linux
 
-package tasks
+package restore
 
 import (
 	"bufio"
@@ -13,11 +13,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 )
 
 // RestoreTask manages restore job logging and lifecycle.
 type RestoreTask struct {
-	baseTask
+	tasks.BaseTask
 	restore database.Restore
 }
 
@@ -25,7 +26,7 @@ type RestoreTask struct {
 func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTimeHex := fmt.Sprintf("%08X", uint32(now().Unix()))
+	startTimeHex := fmt.Sprintf("%08X", uint32(tasks.Now().Unix()))
 	pidHex := fmt.Sprintf("%08X", os.Getpid())
 	pstartHex := fmt.Sprintf("%08X", proxmox.GetPStart())
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
@@ -34,36 +35,29 @@ func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 		Node:       "pbsplus",
 		PID:        os.Getpid(),
 		PStart:     proxmox.GetPStart(),
-		StartTime:  now().Unix(),
+		StartTime:  tasks.Now().Unix(),
 		WorkerType: "reader",
 		WID:        wid,
 		User:       proxmox.AUTH_ID,
 	}
 	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pidHex, pstartHex, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
 
-	file, _, err := createTaskLogFile(task.UPID)
+	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return nil, err
 	}
 
 	rTask := &RestoreTask{
-		baseTask: baseTask{Task: task, file: file},
+		BaseTask: tasks.NewBaseTask(task, file),
 		restore:  job,
 	}
 	rTask.addActiveTask()
 	return rTask, nil
 }
 
-// WriteString writes a timestamped log line to the task file.
+// WriteString delegates to BaseTask.WriteString.
 func (t *RestoreTask) WriteString(data string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if t.closed.Load() {
-		return
-	}
-	t.writeLogLine("%s", data)
-	t.file.Sync()
+	t.BaseTask.WriteString(data)
 }
 
 // addActiveTask registers this task in the active tasks file.
@@ -99,7 +93,7 @@ func modifyActiveTaskFile(target string, add bool) error {
 		line := scanner.Text()
 		if strings.Contains(line, target) {
 			found = true
-			if !add { // skip when removing
+			if !add {
 				continue
 			}
 		}
@@ -108,12 +102,12 @@ func modifyActiveTaskFile(target string, add bool) error {
 
 	if add {
 		if found {
-			return nil // already exists
+			return nil
 		}
 		lines = append(lines, target)
 	} else {
 		if !found {
-			return nil // nothing to remove
+			return nil
 		}
 	}
 
@@ -138,7 +132,7 @@ func modifyActiveTaskFile(target string, add bool) error {
 
 // CloseOK closes the task with "OK" status.
 func (t *RestoreTask) CloseOK() {
-	t.closeWithStatus("OK", nil, func() {
+	t.CloseWithStatus("OK", nil, func() {
 		_ = t.removeActiveTask()
 	})
 }
@@ -146,14 +140,14 @@ func (t *RestoreTask) CloseOK() {
 // CloseErr closes the task with "ERROR: <msg>" status.
 func (t *RestoreTask) CloseErr(taskErr error) {
 	errMsg := taskErr.Error()
-	t.closeWithStatus(errMsg, nil, func() {
+	t.CloseWithStatus(errMsg, nil, func() {
 		_ = t.removeActiveTask()
 	})
 }
 
 // CloseWarn closes the task with "WARNINGS: <n>" status.
 func (t *RestoreTask) CloseWarn(warning int) {
-	t.closeWithStatus("OK", nil, func() {
+	t.CloseWithStatus("OK", nil, func() {
 		_ = t.removeActiveTask()
 	})
 }
@@ -162,7 +156,7 @@ func (t *RestoreTask) CloseWarn(warning int) {
 func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := now().Unix()
+	startTime := tasks.Now().Unix()
 	startTimeHex := fmt.Sprintf("%08X", uint32(startTime))
 	pidHex := fmt.Sprintf("%08X", os.Getpid())
 	pstartHex := fmt.Sprintf("%08X", proxmox.GetPStart())
@@ -179,21 +173,21 @@ func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (p
 	}
 	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pidHex, pstartHex, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
 
-	file, _, err := createTaskLogFile(task.UPID)
+	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
 	defer file.Close()
 
-	base := baseTask{Task: task, file: file}
+	base := tasks.NewBaseTask(task, file)
 	for _, data := range additionalData {
-		base.writeLogLine("%s", data)
+		base.WriteLogLine("%s", data)
 	}
-	base.writeLogLine("TASK OK")
+	base.WriteLogLine("TASK OK")
 
-	writeArchive(task.UPID, task.StartTime, "OK")
+	tasks.WriteArchive(task.UPID, task.StartTime, "OK")
 	task.Status = "stopped"
 	task.ExitStatus = "OK"
-	task.EndTime = now().Unix()
+	task.EndTime = tasks.Now().Unix()
 	return task, nil
 }
