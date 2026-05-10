@@ -5,13 +5,14 @@ package application
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
 // --- BackupService ---
@@ -44,7 +45,9 @@ func (s *BackupService) GetBackup(id string) (database.Backup, error) { return s
 func (s *BackupService) CreateBackup(b database.Backup) error         { return s.db.CreateBackup(nil, b) }
 func (s *BackupService) UpdateBackup(b database.Backup) error         { return s.db.UpdateBackup(nil, b) }
 func (s *BackupService) DeleteBackup(id string) error                 { return s.db.DeleteBackup(nil, id) }
-func (s *BackupService) GetAllQueuedBackups() ([]database.Backup, error)     { return s.db.GetAllQueuedBackups() }
+func (s *BackupService) GetAllQueuedBackups() ([]database.Backup, error) {
+	return s.db.GetAllQueuedBackups()
+}
 
 func jobStatsFromVFS(stats vfs.VFSStats) database.JobStats {
 	return database.JobStats{
@@ -63,7 +66,7 @@ type RestoreService struct{ db *database.Database }
 
 func NewRestoreService(db *database.Database) *RestoreService { return &RestoreService{db: db} }
 
-func (s *RestoreService) GetAllRestores() ([]database.Restore, error)       { return s.db.GetAllRestores() }
+func (s *RestoreService) GetAllRestores() ([]database.Restore, error)    { return s.db.GetAllRestores() }
 func (s *RestoreService) GetRestore(id string) (database.Restore, error) { return s.db.GetRestore(id) }
 func (s *RestoreService) CreateRestore(r database.Restore) error         { return s.db.CreateRestore(nil, r) }
 func (s *RestoreService) UpdateRestore(r database.Restore) error         { return s.db.UpdateRestore(nil, r) }
@@ -75,13 +78,19 @@ type ExclusionService struct{ db *database.Database }
 
 func NewExclusionService(db *database.Database) *ExclusionService { return &ExclusionService{db: db} }
 
-func (s *ExclusionService) GetAllGlobalExclusions() ([]database.Exclusion, error) { return s.db.GetAllGlobalExclusions() }
+func (s *ExclusionService) GetAllGlobalExclusions() ([]database.Exclusion, error) {
+	return s.db.GetAllGlobalExclusions()
+}
 func (s *ExclusionService) GetExclusion(path string) (*database.Exclusion, error) {
 	return s.db.GetExclusion(path)
 }
-func (s *ExclusionService) CreateExclusion(e database.Exclusion) error { return s.db.CreateExclusion(nil, e) }
-func (s *ExclusionService) UpdateExclusion(e database.Exclusion) error { return s.db.UpdateExclusion(nil, e) }
-func (s *ExclusionService) DeleteExclusion(path string) error          { return s.db.DeleteExclusion(nil, path) }
+func (s *ExclusionService) CreateExclusion(e database.Exclusion) error {
+	return s.db.CreateExclusion(nil, e)
+}
+func (s *ExclusionService) UpdateExclusion(e database.Exclusion) error {
+	return s.db.UpdateExclusion(nil, e)
+}
+func (s *ExclusionService) DeleteExclusion(path string) error { return s.db.DeleteExclusion(nil, path) }
 
 // --- AgentHostService ---
 
@@ -98,7 +107,9 @@ func (s *AgentHostService) CreateAgentHost(tx *database.Transaction, h database.
 func (s *AgentHostService) UpdateAgentHost(tx *database.Transaction, h database.AgentHost) error {
 	return s.db.UpdateAgentHost(tx, h)
 }
-func (s *AgentHostService) DeleteAgentHost(hostname string) error { return s.db.DeleteAgentHost(nil, hostname) }
+func (s *AgentHostService) DeleteAgentHost(hostname string) error {
+	return s.db.DeleteAgentHost(nil, hostname)
+}
 
 // --- TokenService ---
 
@@ -106,7 +117,7 @@ type TokenService struct{ db *database.Database }
 
 func NewTokenService(db *database.Database) *TokenService { return &TokenService{db: db} }
 
-func (s *TokenService) GetAllTokens() ([]database.AgentToken, error)       { return s.db.GetAllTokens(false) }
+func (s *TokenService) GetAllTokens() ([]database.AgentToken, error)    { return s.db.GetAllTokens(false) }
 func (s *TokenService) GetToken(id string) (database.AgentToken, error) { return s.db.GetToken(id) }
 func (s *TokenService) CreateToken(d time.Duration, c string) error     { return s.db.CreateToken(d, c) }
 func (s *TokenService) RevokeToken(t database.AgentToken) error         { return s.db.RevokeToken(t) }
@@ -117,7 +128,7 @@ type ScriptService struct{ db *database.Database }
 
 func NewScriptService(db *database.Database) *ScriptService { return &ScriptService{db: db} }
 
-func (s *ScriptService) GetAllScripts() ([]database.Script, error)         { return s.db.GetAllScripts() }
+func (s *ScriptService) GetAllScripts() ([]database.Script, error)      { return s.db.GetAllScripts() }
 func (s *ScriptService) GetScript(path string) (database.Script, error) { return s.db.GetScript(path) }
 func (s *ScriptService) CreateScript(sc database.Script) error          { return s.db.CreateScript(nil, sc) }
 func (s *ScriptService) UpdateScript(sc database.Script) error          { return s.db.UpdateScript(nil, sc) }
@@ -134,7 +145,7 @@ func NewTargetService(db *database.Database, agentsMgr *arpc.AgentsManager) *Tar
 	return &TargetService{db: db, agentsMgr: agentsMgr}
 }
 
-func (s *TargetService) GetAllTargets() ([]database.Target, error)         { return s.db.GetAllTargets() }
+func (s *TargetService) GetAllTargets() ([]database.Target, error)      { return s.db.GetAllTargets() }
 func (s *TargetService) GetTarget(name string) (database.Target, error) { return s.db.GetTarget(name) }
 func (s *TargetService) CreateTarget(tx *database.Transaction, t database.Target) error {
 	return s.db.CreateTarget(tx, t)
@@ -165,44 +176,56 @@ type TargetStatusResult struct {
 func (s *TargetService) CheckStatus(ctx context.Context, targets []database.Target, checkStatus bool, timeout time.Duration) []TargetStatusResult {
 	results := make([]TargetStatusResult, len(targets))
 	sem := make(chan struct{}, 20)
+	var wg sync.WaitGroup
+
+	for i, target := range targets {
+		wg.Add(1)
+		go func(idx int, tgt database.Target) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					results[idx] = TargetStatusResult{
+						Index:            idx,
+						ConnectionStatus: false,
+					}
+				}
+			}()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			result := TargetStatusResult{Index: idx}
+			if !tgt.IsAgent() {
+				results[idx] = result
+				return
+			}
+			arpcSess, ok := s.agentsMgr.GetStreamPipe(tgt.GetHostname())
+			if !ok {
+				results[idx] = result
+				return
+			}
+			result.AgentVersion = arpcSess.GetVersion()
+			if checkStatus {
+				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+				defer cancel()
+				respMsg, err := arpcSess.CallMessage(timeoutCtx, "target_status",
+					&reqTypes.TargetStatusReq{Drive: tgt.VolumeID})
+				if err == nil && strings.HasPrefix(respMsg, "reachable") {
+					result.ConnectionStatus = true
+					if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
+						result.AgentVersion = parts[1]
+					}
+				} else if err != nil {
+					result.Error = err
+				}
+			}
+			results[idx] = result
+		}(i, target)
+	}
 
 	done := make(chan struct{})
 	go func() {
-		for i, target := range targets {
-			sem <- struct{}{}
-			go func(idx int, tgt database.Target) {
-				defer func() { <-sem }()
-				result := TargetStatusResult{Index: idx}
-				if !tgt.IsAgent() {
-					results[idx] = result
-					return
-				}
-				arpcSess, ok := s.agentsMgr.GetStreamPipe(tgt.GetHostname())
-				if !ok {
-					results[idx] = result
-					return
-				}
-				result.AgentVersion = arpcSess.GetVersion()
-				if checkStatus {
-					timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-					defer cancel()
-					respMsg, err := arpcSess.CallMessage(timeoutCtx, "target_status",
-						&reqTypes.TargetStatusReq{Drive: tgt.VolumeID})
-					if err == nil && strings.HasPrefix(respMsg, "reachable") {
-						result.ConnectionStatus = true
-						if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
-							result.AgentVersion = parts[1]
-						}
-					} else if err != nil {
-						result.Error = err
-					}
-				}
-				results[idx] = result
-			}(i, target)
-		}
-		for range len(targets) {
-			sem <- struct{}{}
-		}
+		wg.Wait()
 		close(done)
 	}()
 
