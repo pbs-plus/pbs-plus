@@ -102,7 +102,7 @@ func init() {
 
 	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level:     level,
-		AddSource: true,
+		AddSource: false,
 	})
 
 	zlogger := slog.New(handler)
@@ -238,10 +238,7 @@ func (e *LogEntry) SkipDedup() *LogEntry {
 // slogAttrs converts the LogEntry fields to slog key-value pairs
 // for use with slog.Logger methods.
 func (e *LogEntry) slogAttrs() []any {
-	n := len(e.Fields)
-	if n < 0 {
-		n = 0
-	}
+	n := max(len(e.Fields), 0)
 	args := make([]any, 0, n*2+2)
 	for k, v := range e.Fields {
 		args = append(args, k, v)
