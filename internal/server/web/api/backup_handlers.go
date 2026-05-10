@@ -4,14 +4,19 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
-	"os"
-	"os/exec"
+	"net/rpc"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -53,7 +58,6 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		var response BackupRunResponse
 
-		// Get all backup IDs from query parameters: ?job=backup1&job=backup2
 		backupIDs := r.URL.Query()["job"]
 		if len(backupIDs) == 0 {
 			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
@@ -61,43 +65,50 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		decodedBackupIDs := []string{}
-
 		for _, backupID := range backupIDs {
 			decoded := validate.DecodePath(backupID)
-
 			if err := validate.ValidateJobId(decoded); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
-
 			decodedBackupIDs = append(decodedBackupIDs, decoded)
 		}
 
-		execPath, err := os.Executable()
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
+		stop := r.Method == http.MethodDelete
 
-		args := []string{}
-		for _, backupID := range decodedBackupIDs {
-			args = append(args, "-backup-job", backupID)
-		}
-		args = append(args, "-web")
-		if r.Method == http.MethodDelete {
-			args = append(args, "-stop")
-		} else if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
+		go func() {
+			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
+			if err != nil {
+				syslog.L.Error(err).WithField("backups", decodedBackupIDs).Write()
+				return
+			}
+			rpcClient := rpc.NewClient(conn)
+			defer rpcClient.Close()
 
-		cmd := exec.Command(execPath, args...)
-		cmd.Env = os.Environ()
-		err = cmd.Start()
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
+			for _, backupID := range decodedBackupIDs {
+				backupTask, err := storeInstance.Database.GetBackup(backupID)
+				if err != nil {
+					syslog.L.Error(err).WithField("backupID", backupID).Write()
+					continue
+				}
+
+				args := &jobrpc.BackupQueueArgs{
+					Job:             backupTask,
+					SkipCheck:       true,
+					Stop:            stop,
+					Web:             true,
+					ExtraExclusions: nil,
+				}
+				var reply jobrpc.QueueReply
+				if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
+					syslog.L.Error(err).WithField("backupID", backupID).Write()
+					continue
+				}
+				if reply.Status != 200 {
+					syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupID", backupID).Write()
+				}
+			}
+		}()
 
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
