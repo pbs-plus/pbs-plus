@@ -14,15 +14,14 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/backup"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/restore"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/scheduler"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	job "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/scheduler"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -149,7 +148,7 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 	}
 
 	for _, queuedBackup := range queuedBackups {
-		task, err := tasks.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
+		task, err := backup.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
 		if err != nil {
 			continue
 		}

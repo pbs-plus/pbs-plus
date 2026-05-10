@@ -14,19 +14,23 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 )
 
-// baseTask contains shared fields and operations for all task types.
-// Embed this in task-specific structs (like RestoreTask, QueuedTask, etc.)
-// to avoid duplicating common file-handling logic.
-type baseTask struct {
+// BaseTask contains shared fields and operations for all task types.
+// Embed this in task-specific structs to avoid duplicating common file-handling logic.
+type BaseTask struct {
 	proxmox.Task
 	mu     sync.Mutex
 	closed atomic.Bool
 	file   *os.File
 }
 
-// close closes the task log file and marks the task as closed.
+// NewBaseTask creates a BaseTask with the given task and file.
+func NewBaseTask(task proxmox.Task, file *os.File) BaseTask {
+	return BaseTask{Task: task, file: file}
+}
+
+// Close closes the task log file and marks the task as closed.
 // Must be called while holding the mutex.
-func (t *baseTask) close() {
+func (t *BaseTask) Close() {
 	if t.file != nil {
 		t.file.Close()
 		t.file = nil
@@ -34,9 +38,9 @@ func (t *baseTask) close() {
 	t.closed.Store(true)
 }
 
-// writeLogLine writes a timestamped line to the task file.
+// WriteLogLine writes a timestamped line to the task file.
 // Must be called while holding the mutex and with an open t.file.
-func (t *baseTask) writeLogLine(format string, args ...any) bool {
+func (t *BaseTask) WriteLogLine(format string, args ...any) bool {
 	timestamp := time.Now().Format(time.RFC3339)
 	line := fmt.Sprintf("%s: "+format+"\n", append([]any{timestamp}, args...)...)
 	if _, err := t.file.WriteString(line); err != nil {
@@ -45,26 +49,26 @@ func (t *baseTask) writeLogLine(format string, args ...any) bool {
 	return true
 }
 
-// closeWithStatus writes a final TASK status line, archives it, and closes the log file.
+// CloseWithStatus writes a final TASK status line, archives it, and closes the log file.
 // The onClose callback runs while the mutex is held but before the file is closed.
 // The afterUnlock callback runs after the mutex is released.
-func (t *baseTask) closeWithStatus(status string, onClose func(), afterUnlock func()) {
+func (t *BaseTask) CloseWithStatus(status string, onClose func(), afterUnlock func()) {
 	t.mu.Lock()
 
-	if !t.writeLogLine("TASK %s", status) {
+	if !t.WriteLogLine("TASK %s", status) {
 		if onClose != nil {
 			onClose()
 		}
-		t.close()
+		t.Close()
 		t.mu.Unlock()
 		return
 	}
-	writeArchive(t.UPID, t.StartTime, status)
+	WriteArchive(t.UPID, t.StartTime, status)
 
 	if onClose != nil {
 		onClose()
 	}
-	t.close()
+	t.Close()
 	t.mu.Unlock()
 
 	if afterUnlock != nil {
@@ -72,9 +76,9 @@ func (t *baseTask) closeWithStatus(status string, onClose func(), afterUnlock fu
 	}
 }
 
-// writeArchive writes an entry to the global task archive.
+// WriteArchive writes an entry to the global task archive.
 // The format is "UPID StartTime Status\n"
-func writeArchive(upid string, startTime int64, status string) bool {
+func WriteArchive(upid string, startTime int64, status string) bool {
 	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return false
@@ -89,9 +93,9 @@ func writeArchive(upid string, startTime int64, status string) bool {
 	return true
 }
 
-// createTaskLogFile creates a task log file and returns the open file handle and path.
+// CreateTaskLogFile creates a task log file and returns the open file handle and path.
 // It handles directory creation, ownership, and file creation atomically.
-func createTaskLogFile(upid string) (*os.File, string, error) {
+func CreateTaskLogFile(upid string) (*os.File, string, error) {
 	path, err := proxmox.GetLogPath(upid)
 	if err != nil {
 		return nil, "", err
@@ -114,4 +118,17 @@ func createTaskLogFile(upid string) (*os.File, string, error) {
 	return file, path, nil
 }
 
-func now() time.Time { return time.Now() }
+// Now returns the current time.
+func Now() time.Time { return time.Now() }
+
+// WriteString writes a timestamped log line with mutex protection and file sync.
+func (t *BaseTask) WriteString(data string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.closed.Load() {
+		return
+	}
+	t.WriteLogLine("%s", data)
+	t.file.Sync()
+}
