@@ -15,13 +15,13 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mount"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // BackupJob holds the state for a backup operation.
@@ -633,6 +633,12 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 		qt.UpdateDescription("waiting for proxmox-backup-client to start")
 	}
 
+	// Serialize task detection/monitoring startup. Once the PBS task
+	// appears and the proxmox-backup-client process is running, we
+	// release the mutex so other jobs can start in parallel.
+	startupMu := b.storeInstance.Manager.StartupMu()
+	startupMu.Lock()
+
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
@@ -640,6 +646,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 
 	cmd, err := prepareBackupCommand(ctx, job, b.storeInstance, srcPath, target.IsAgent(), extraExclusions)
 	if err != nil {
+		startupMu.Unlock()
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
 	}
 
@@ -648,8 +655,10 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	select {
 	case <-readyChan:
 	case err := <-errChan:
+		startupMu.Unlock()
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
 	case <-ctx.Done():
+		startupMu.Unlock()
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, proxmox.Task{}, "", jobs.ErrCanceled
 		}
@@ -670,6 +679,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	syslog.L.Info().WithMessage("starting backup job").WithField("args", cmd.Args).Write()
 
 	if err := cmd.Start(); err != nil {
+		startupMu.Unlock()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, b.storeInstance, currOwner)
 		}
@@ -691,9 +701,14 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	var task proxmox.Task
 	select {
 	case task = <-taskChan:
+		// Task detected — release the startup mutex so the next job
+		// can begin its monitoring/detection phase.
+		startupMu.Unlock()
 	case err := <-errChan:
+		startupMu.Unlock()
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
 	case <-ctx.Done():
+		startupMu.Unlock()
 		_ = cmd.Process.Kill()
 		if currOwner != "" {
 			_ = SetDatastoreOwner(job, b.storeInstance, currOwner)

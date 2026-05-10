@@ -36,10 +36,9 @@ type Manager struct {
 
 	executionSem chan struct{}
 
-	detectionMu     sync.Mutex
-	enqueueMu       sync.Mutex
-	singleExecution bool
-	runningJobs     *safemap.Map[string, contextPair]
+	enqueueMu   sync.Mutex
+	startupMu   sync.Mutex
+	runningJobs *safemap.Map[string, contextPair]
 
 	// Dynamic queue: slice-based queue with condition variable.
 	// capacityFn returns the maximum number of queued jobs allowed at any moment.
@@ -51,16 +50,15 @@ type Manager struct {
 	capacityFn func() int
 }
 
-func NewManager(ctx context.Context, maxConcurrent int, capacityFn func() int, singleExecution bool) *Manager {
+func NewManager(ctx context.Context, maxConcurrent int, capacityFn func() int) *Manager {
 	newCtx, cancel := context.WithCancel(ctx)
 
 	m := &Manager{
-		ctx:             newCtx,
-		cancel:          cancel,
-		executionSem:    make(chan struct{}, maxConcurrent),
-		runningJobs:     safemap.New[string, contextPair](),
-		singleExecution: singleExecution,
-		capacityFn:      capacityFn,
+		ctx:          newCtx,
+		cancel:       cancel,
+		executionSem: make(chan struct{}, maxConcurrent),
+		runningJobs:  safemap.New[string, contextPair](),
+		capacityFn:   capacityFn,
 	}
 	m.queueCond = sync.NewCond(&m.queueMu)
 
@@ -189,15 +187,7 @@ func (m *Manager) runJob(job *Job) {
 		return
 	}
 
-	if m.singleExecution {
-		m.detectionMu.Lock()
-	}
-
 	err := job.Execute(ctx)
-
-	if m.singleExecution {
-		m.detectionMu.Unlock()
-	}
 
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -256,6 +246,10 @@ func (m *Manager) RunningCount() int {
 
 func (m *Manager) Close() {
 	m.cancel()
+}
+
+func (m *Manager) StartupMu() *sync.Mutex {
+	return &m.startupMu
 }
 
 func (m *Manager) isClosed() bool {
