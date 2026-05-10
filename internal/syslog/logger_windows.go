@@ -34,7 +34,7 @@ func (l *Logger) SetServiceLogger() error {
 	if err == nil {
 		handler := slog.NewJSONHandler(&LogWriter{logger: evl}, &slog.HandlerOptions{
 			Level:     slog.LevelInfo,
-			AddSource: true,
+			AddSource: false,
 		})
 		zlogger := slog.New(handler)
 		l.zlog = zlogger
@@ -56,7 +56,7 @@ func (l *Logger) SetServiceLogger() error {
 
 	handler := slog.NewJSONHandler(rotator, &slog.HandlerOptions{
 		Level:     slog.LevelInfo,
-		AddSource: true,
+		AddSource: false,
 	})
 	zlogger := slog.New(handler)
 	l.zlog = zlogger

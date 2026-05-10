@@ -37,7 +37,7 @@ func dialServerContext(ctx context.Context, serverAddr string, tlsConfig *tls.Co
 	syslog.L.Info().
 		WithField("tls_version", state.Version).
 		WithField("alpn", state.NegotiatedProtocol).
-		WithMessage("TLS connection established").
+		WithMessage("tls: connection established").
 		Write()
 	return conn, nil
 }

@@ -17,8 +17,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"net/http/pprof"
 )
 
@@ -217,7 +217,7 @@ func (s *Server) StartAll() {
 	})
 
 	s.wg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting aRPC endpoint on TCP %s", conf.ARPCServerPort)).Write()
+		syslog.L.Info().WithMessage(fmt.Sprintf("arpc: endpoint starting on tcp %s", conf.ARPCServerPort)).Write()
 		if err := s.StartARPC(); err != nil {
 			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed").Write()
 		}
