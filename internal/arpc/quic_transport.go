@@ -58,6 +58,11 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 		return nil, fmt.Errorf("QUIC dial failed (%s): %w", serverAddr, err)
 	}
 
+	syslog.L.Info().
+		WithField("quic_version", conn.ConnectionState().Version).
+		WithMessage("quic: connection established").
+		Write()
+
 	if headers == nil {
 		headers = make(http.Header)
 	}
