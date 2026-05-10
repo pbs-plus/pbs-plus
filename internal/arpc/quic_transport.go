@@ -41,7 +41,7 @@ func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 }
 
 // DialQuic connects to a QUIC server and creates a QuicPipe.
-func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config) (*QuicPipe, error) {
+func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, headers http.Header) (*QuicPipe, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -58,6 +58,11 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config) (*Q
 		return nil, fmt.Errorf("QUIC dial failed (%s): %w", serverAddr, err)
 	}
 
+	if headers == nil {
+		headers = make(http.Header)
+	}
+	headers.Add("ARPCVersion", "2")
+
 	pipe := &QuicPipe{
 		ctx:        ctx,
 		cancelFunc: func() {},
@@ -65,6 +70,24 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config) (*Q
 		serverAddr: serverAddr,
 		tlsConfig:  quicTLS,
 		version:    "2",
+		headers:    headers,
+	}
+
+	stream, err := pipe.OpenStream()
+	if err != nil {
+		pipe.Close()
+		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
+	}
+	defer stream.Close()
+
+	if werr := writeHeadersFrame(stream, headers); werr != nil {
+		pipe.Close()
+		return nil, fmt.Errorf("failed to write headers: %w", werr)
+	}
+
+	if err := readHandshakeResponse(stream); err != nil {
+		pipe.Close()
+		return nil, err
 	}
 
 	return pipe, nil
@@ -291,6 +314,19 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 
 	quicTLS := tlsConfig.Clone()
 	quicTLS.NextProtos = []string{"pbsarpc-quic"}
+
+	// If the config uses GetConfigForClient, wrap it to inject our NextProtos.
+	if quicTLS.GetConfigForClient != nil {
+		origGetConfig := quicTLS.GetConfigForClient
+		quicTLS.GetConfigForClient = func(info *tls.ClientHelloInfo) (*tls.Config, error) {
+			cfg, err := origGetConfig(info)
+			if err != nil {
+				return nil, err
+			}
+			cfg.NextProtos = []string{"pbsarpc-quic"}
+			return cfg, nil
+		}
+	}
 
 	listener, err := quic.ListenAddr(addr, quicTLS, nil)
 	if err != nil {
