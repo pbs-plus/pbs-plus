@@ -62,26 +62,26 @@ func (r *Router) serveStream(stream *smux.Stream) {
 	}
 
 	if err = enc.Encode(resp); err != nil {
-		syslog.L.Debug().WithField("req", req.Method).WithField("code", resp.Status).WithMessage("sending response")
+		syslog.L.Debug().WithField("req", req.Method).WithField("code", resp.Status).WithMessage("sending response").Write()
 		return
 	}
 
 	if resp.Status == 213 && resp.RawStream != nil {
-		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary")
+		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary").Write()
 
 		readyByte := make([]byte, 1)
 		if _, err := stream.Read(readyByte); err != nil {
-			syslog.L.Debug().WithField("req", req.Method).WithMessage("client not ready")
+			syslog.L.Debug().WithField("req", req.Method).WithMessage("client not ready").Write()
 			return
 		}
 		if readyByte[0] != 0xFF {
-			syslog.L.Debug().WithField("req", req.Method).WithMessage("invalid ready signal")
+			syslog.L.Debug().WithField("req", req.Method).WithMessage("invalid ready signal").Write()
 			return
 		}
 
 		ackSignal := []byte{0xAA}
 		if _, err := stream.Write(ackSignal); err != nil {
-			syslog.L.Debug().WithField("req", req.Method).WithMessage("failed to send ack")
+			syslog.L.Debug().WithField("req", req.Method).WithMessage("failed to send ack").Write()
 			return
 		}
 

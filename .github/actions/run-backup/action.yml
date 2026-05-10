@@ -10,34 +10,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Wait for agent to be ready
-      shell: bash
-      run: |
-        echo "Checking agent connection..."
-        timeout=60
-        elapsed=0
-        while [ $elapsed -lt $timeout ]; do
-          # Check agent logs for successful connection
-          if docker logs pbs-plus-agent 2>&1 | grep -q "connected successfully"; then
-            echo "✓ Agent connected to server"
-            break
-          fi
-          # Check for connection errors
-          if docker logs pbs-plus-agent 2>&1 | grep -q "connection failed"; then
-            echo "✗ Agent connection failed"
-            exit 1
-          fi
-          sleep 2
-          elapsed=$((elapsed + 2))
-          if [ $((elapsed % 10)) -eq 0 ]; then
-            echo "Still waiting for agent... (${elapsed}s)"
-          fi
-        done
-        
-        if [ $elapsed -ge $timeout ]; then
-          echo "⚠ Agent connection check timed out, but continuing..."
-        fi
-
     - name: Start backup
       shell: bash
       run: |
@@ -46,7 +18,7 @@ runs:
           -H "Content-Type: application/x-www-form-urlencoded" \
           -w "\nHTTP_CODE:%{http_code}")
         echo "Backup API response: $response"
-        
+
         # Check if backup was accepted
         if ! echo "$response" | grep -q "HTTP_CODE:200"; then
           echo "✗ Backup API returned non-200 status"
@@ -68,7 +40,7 @@ runs:
           server_logs=$(docker logs pbs-plus-test 2>&1)
           
           # Success: Agent forked process exited
-          if echo "$agent_logs" | grep -q "CmdBackup: finished"; then
+          if echo "$agent_logs" | grep -q "backup: finished"; then
             echo "✓ Agent backup process completed"
             # Give logs time to flush before verifying
             sleep 0.5
@@ -84,13 +56,13 @@ runs:
           fi
           
           # Error: Agent connection failed
-          if echo "$agent_logs" | grep -q "CmdBackup: Authorization failed"; then
+          if echo "$agent_logs" | grep -q "backup: authorization failed"; then
             echo "✗ Agent authorization failed"
             exit 1
           fi
           
           # Error: Backup mount failed
-          if echo "$server_logs" | grep -q "failed to create fuse connection"; then
+          if echo "$server_logs" | grep -q "mount: fuse connection failed"; then
             echo "✗ Backup mount failed"
             exit 1
           fi
@@ -134,17 +106,17 @@ runs:
           echo "Waiting for backup completion log... (attempt $i/5)"
           sleep 0.5
         done
-        
+
         if [ "$backup_processed" != "true" ]; then
           echo "✗ proxmox-backup-client did not process backup"
           exit 1
         fi
         echo "✓ proxmox-backup-client processed backup"
-        
+
         # Check for any errors in server logs
         if echo "$server_logs" | grep -q "backup.*error"; then
           echo "⚠ Warning: Errors detected in server logs"
           echo "$server_logs" | grep "backup.*error" || true
         fi
-        
+
         echo "✓ Backup test completed successfully"

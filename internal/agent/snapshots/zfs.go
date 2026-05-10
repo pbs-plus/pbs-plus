@@ -11,13 +11,13 @@ import (
 
 type ZFSSnapshotHandler struct{}
 
-func (z *ZFSSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
+func (z *ZFSSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	if !z.IsSupported(sourcePath) {
 		return Snapshot{}, fmt.Errorf("source path %q is not on a ZFS filesystem", sourcePath)
 	}
 
 	// ZFS snapshots are named as <dataset>@<snapshot_name>
-	snapshotName := fmt.Sprintf("%s@%s", sourcePath, jobId)
+	snapshotName := fmt.Sprintf("%s@%s", sourcePath, jobID)
 	timeStarted := time.Now()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

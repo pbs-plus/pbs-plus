@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"log/slog"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/rs/zerolog"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -20,7 +21,7 @@ func (l *Logger) SetServiceLogger() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if os.Getenv("PBS_PLUS_STDOUT_ONLY") == "true" {
+	if conf.Env.StdoutOnly {
 		return nil
 	}
 
@@ -31,31 +32,14 @@ func (l *Logger) SetServiceLogger() error {
 
 	evl, err := eventlog.Open(sourceName)
 	if err == nil {
-		zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-			w.Out = &LogWriter{logger: evl}
-			w.NoColor = true
-			w.FormatCaller = func(i any) string {
-				var c string
-				if cc, ok := i.(string); ok {
-					c = cc
-				}
-				if c == "" {
-					return ""
-				}
-				parts := strings.Split(c, "/")
-				if len(parts) >= 2 {
-					return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
-				}
-				return filepath.Base(c)
-			}
-		})).With().
-			CallerWithSkipFrameCount(3).
-			Timestamp().
-			Logger()
-
-		l.zlog = &zlogger
+		handler := slog.NewJSONHandler(&LogWriter{logger: evl}, &slog.HandlerOptions{
+			Level:     slog.LevelInfo,
+			AddSource: false,
+		})
+		zlogger := slog.New(handler)
+		l.zlog = zlogger
 		l.hostname, _ = types.GetAgentHostname()
-		l.zlog.Info().Msg("Service logger successfully added for Windows Event Log")
+		l.zlog.Info("service logger successfully added for Windows Event Log")
 		return nil
 	}
 
@@ -64,38 +48,20 @@ func (l *Logger) SetServiceLogger() error {
 
 	rotator := &lumberjack.Logger{
 		Filename:   logPath,
-		MaxSize:    25, // MB
+		MaxSize:    25,
 		MaxBackups: 5,
-		MaxAge:     30,   // days
-		Compress:   true, // gzip
+		MaxAge:     30,
+		Compress:   true,
 	}
 
-	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.Out = rotator
-		w.NoColor = true
-		w.FormatCaller = func(i any) string {
-			var c string
-			if cc, ok := i.(string); ok {
-				c = cc
-			}
-			if c == "" {
-				return ""
-			}
-			parts := strings.Split(c, "/")
-			if len(parts) >= 2 {
-				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
-			}
-			return filepath.Base(c)
-		}
-	})).With().
-		CallerWithSkipFrameCount(3).
-		Timestamp().
-		Logger()
-
-	l.zlog = &zlogger
+	handler := slog.NewJSONHandler(rotator, &slog.HandlerOptions{
+		Level:     slog.LevelInfo,
+		AddSource: false,
+	})
+	zlogger := slog.New(handler)
+	l.zlog = zlogger
 	l.hostname, _ = types.GetAgentHostname()
-
-	l.zlog.Warn().Err(err).Msg("Windows Event Log unavailable; falling back to file logging")
+	l.zlog.Warn(fmt.Sprintf("windows event log unavailable; falling back to file logging: %v", err))
 	return nil
 }
 
@@ -108,24 +74,12 @@ func (e *LogEntry) Write() {
 	}
 
 	if e.JobID != "" {
-		e.Fields["jobId"] = e.JobID
+		e.Fields["jobID"] = e.JobID
 	}
 
 	if _, ok := e.Fields["hostname"]; !ok {
 		e.Fields["hostname"] = e.logger.hostname
 	}
 
-	// Produce a full JSON log entry.
-	switch e.Level {
-	case "info":
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
-	case "debug":
-		e.logger.zlog.Debug().Fields(e.Fields).Msg(e.Message)
-	case "warn":
-		e.logger.zlog.Warn().Fields(e.Fields).Msg(e.Message)
-	case "error":
-		e.logger.zlog.Error().Err(e.Err).Fields(e.Fields).Msg(e.Message)
-	default:
-		e.logger.zlog.Info().Fields(e.Fields).Msg(e.Message)
-	}
+	e.writeSlog()
 }

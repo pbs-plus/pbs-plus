@@ -16,7 +16,7 @@ type Snapshot struct {
 
 // SnapshotHandler defines the interface for snapshot operations
 type SnapshotHandler interface {
-	CreateSnapshot(jobId string, sourcePath string) (Snapshot, error)
+	CreateSnapshot(jobID string, sourcePath string) (Snapshot, error)
 	DeleteSnapshot(snapshot Snapshot) error
 	IsSupported(sourcePath string) bool
 }

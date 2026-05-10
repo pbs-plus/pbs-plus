@@ -33,19 +33,19 @@ func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respo
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Info().WithMessage("received backup request for job").WithField("id", reqData.BackupId).Write()
+	syslog.L.Info().WithMessage("received backup request for job").WithField("id", reqData.BackupID).Write()
 
-	syslog.L.Info().WithMessage("forking process for backup job").WithField("id", reqData.BackupId).Write()
-	backupMode, pid, err := cli.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Drive, reqData.BackupId)
+	syslog.L.Info().WithMessage("forking process for backup job").WithField("id", reqData.BackupID).Write()
+	backupMode, pid, err := cli.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Drive, reqData.BackupID)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("forking process for backup job").WithField("id", reqData.BackupId).Write()
+		syslog.L.Error(err).WithMessage("forking process for backup job").WithField("id", reqData.BackupID).Write()
 		if pid != -1 {
 			if runtime.GOOS == "windows" {
 				timeout := time.Second * 5
 				if err := winquit.QuitProcess(pid, timeout); err != nil {
 					syslog.L.Error(err).
 						WithMessage("failed to send signal for graceful shutdown").
-						WithField("jobId", reqData.BackupId).
+						WithField("jobID", reqData.BackupID).
 						Write()
 				}
 			} else {
@@ -54,7 +54,7 @@ func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respo
 					if sigErr := process.Signal(syscall.SIGTERM); sigErr != nil {
 						syslog.L.Error(sigErr).
 							WithMessage("failed to send SIGTERM").
-							WithField("id", reqData.BackupId).
+							WithField("id", reqData.BackupID).
 							Write()
 					}
 				}
@@ -63,7 +63,7 @@ func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respo
 		return arpc.Response{}, err
 	}
 
-	activePids.Set(reqData.BackupId, pid)
+	activePids.Set(reqData.BackupID, pid)
 
 	return arpc.Response{Status: 200, Message: backupMode}, nil
 }
@@ -75,21 +75,21 @@ func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	syslog.L.Info().WithMessage("received closure request for job").WithField("id", reqData.BackupId).Write()
+	syslog.L.Info().WithMessage("received closure request for job").WithField("id", reqData.BackupID).Write()
 
-	pid, ok := activePids.Get(reqData.BackupId)
+	pid, ok := activePids.Get(reqData.BackupID)
 	if ok {
 		syslog.L.Info().WithMessage("killing child process").
-			WithField("id", reqData.BackupId).
+			WithField("id", reqData.BackupID).
 			WithField("pid", pid).Write()
 
-		activePids.Del(reqData.BackupId)
+		activePids.Del(reqData.BackupID)
 		if runtime.GOOS == "windows" {
 			timeout := time.Second * 5
 			if err := winquit.QuitProcess(pid, timeout); err != nil {
 				syslog.L.Error(err).
 					WithMessage("failed to send signal for graceful shutdown").
-					WithField("jobId", reqData.BackupId).
+					WithField("jobID", reqData.BackupID).
 					Write()
 			}
 		} else {
@@ -98,14 +98,14 @@ func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 				if sigErr := process.Signal(syscall.SIGTERM); sigErr != nil {
 					syslog.L.Error(sigErr).
 						WithMessage("failed to send SIGTERM").
-						WithField("id", reqData.BackupId).
+						WithField("id", reqData.BackupID).
 						Write()
 				}
 			}
 		}
 	} else {
 		syslog.L.Info().WithMessage("no pid found to kill for cleanup").
-			WithField("id", reqData.BackupId).
+			WithField("id", reqData.BackupID).
 			Write()
 	}
 

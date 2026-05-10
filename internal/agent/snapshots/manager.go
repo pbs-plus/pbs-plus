@@ -25,7 +25,7 @@ var Manager = &SnapshotManager{
 }
 
 // CreateSnapshot detects the filesystem and delegates to the appropriate handler
-func (m *SnapshotManager) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
+func (m *SnapshotManager) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	fsType, err := detectFilesystem(sourcePath)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("failed to detect filesystem: %w", err)
@@ -36,5 +36,5 @@ func (m *SnapshotManager) CreateSnapshot(jobId string, sourcePath string) (Snaps
 		return Snapshot{}, fmt.Errorf("no snapshot handler available for filesystem type: %s", fsType)
 	}
 
-	return handler.CreateSnapshot(jobId, sourcePath)
+	return handler.CreateSnapshot(jobID, sourcePath)
 }

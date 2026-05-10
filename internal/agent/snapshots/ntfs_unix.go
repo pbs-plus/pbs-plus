@@ -8,7 +8,7 @@ import (
 
 type NtfsSnapshotHandler struct{}
 
-func (w *NtfsSnapshotHandler) CreateSnapshot(jobId string, sourcePath string) (Snapshot, error) {
+func (w *NtfsSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	return Snapshot{}, errors.New("unsupported")
 }
 

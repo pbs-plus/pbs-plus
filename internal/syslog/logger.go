@@ -4,16 +4,15 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"maps"
 	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog"
+	"log/slog"
+
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
 // Global logger instance.
@@ -22,7 +21,7 @@ var L *Logger
 // Deduplicator tracks recently seen log entries to prevent spam.
 type Deduplicator struct {
 	mu      sync.RWMutex
-	entries map[[32]byte]time.Time // Use fixed-size array as key instead of string
+	entries map[[32]byte]time.Time
 	window  time.Duration
 }
 
@@ -31,16 +30,13 @@ func newDeduplicator(window time.Duration) *Deduplicator {
 		entries: make(map[[32]byte]time.Time),
 		window:  window,
 	}
-	// Start cleanup goroutine
 	go d.cleanup()
 	return d
 }
 
-// cleanup periodically removes expired entries.
 func (d *Deduplicator) cleanup() {
 	ticker := time.NewTicker(d.window)
 	defer ticker.Stop()
-
 	for range ticker.C {
 		d.mu.Lock()
 		now := time.Now()
@@ -53,107 +49,73 @@ func (d *Deduplicator) cleanup() {
 	}
 }
 
-// shouldLog returns true if the log should be emitted.
 func (d *Deduplicator) shouldLog(key [32]byte) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-
 	now := time.Now()
 	if lastSeen, exists := d.entries[key]; exists {
 		if now.Sub(lastSeen) < d.window {
-			return false // Duplicate within window
+			return false
 		}
 	}
-
 	d.entries[key] = now
 	return true
 }
 
-// Pre-allocate buffers for key generation
 var keyBufferPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, 0, 512) // Reasonable initial capacity
+		b := make([]byte, 0, 512)
 		return &b
 	},
 }
 
-// generateKey creates a unique key for a log entry.
 func (e *LogEntry) generateKey() [32]byte {
-	// Get buffer from pool
 	bufPtr := keyBufferPool.Get().(*[]byte)
-	buf := (*bufPtr)[:0] // Reset length but keep capacity
+	buf := (*bufPtr)[:0]
 	defer func() {
 		*bufPtr = buf
 		keyBufferPool.Put(bufPtr)
 	}()
 
-	// Append level
 	buf = append(buf, e.Level...)
 	buf = append(buf, '|')
-
-	// Append message
 	buf = append(buf, e.Message...)
 	buf = append(buf, '|')
-
-	// Append jobID
 	buf = append(buf, e.JobID...)
 	buf = append(buf, '|')
-
-	// Append error message if present
 	if e.Err != nil {
 		buf = append(buf, e.Err.Error()...)
 	}
 	buf = append(buf, '|')
-
-	// Append fields (sorted for consistency)
 	if len(e.Fields) > 0 {
-		// Use json.Marshal only if we have fields
 		fieldsJSON, _ := json.Marshal(e.Fields)
 		buf = append(buf, fieldsJSON...)
 	}
-
-	// Return hash directly as fixed-size array
 	return sha256.Sum256(buf)
 }
 
 func init() {
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
-	if os.Getenv("DEBUG") == "true" {
-		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	level := slog.LevelInfo
+	if conf.Env.Debug {
+		level = slog.LevelDebug
 	}
 
-	// Configure zerolog to output via our EventLogWriter wrapped in a ConsoleWriter.
-	zlogger := zerolog.New(zerolog.NewConsoleWriter(func(w *zerolog.ConsoleWriter) {
-		w.NoColor = true
-		w.FormatCaller = func(i any) string {
-			var c string
-			if cc, ok := i.(string); ok {
-				c = cc
-			}
-			if c == "" {
-				return ""
-			}
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:     level,
+		AddSource: false,
+	})
 
-			parts := strings.Split(c, "/")
-			if len(parts) >= 2 {
-				return fmt.Sprintf("%s/%s", parts[len(parts)-2], parts[len(parts)-1])
-			}
-			return filepath.Base(c)
-		}
-	})).With().
-		CallerWithSkipFrameCount(3).
-		Timestamp().
-		Logger()
+	zlogger := slog.New(handler)
 
 	dedupWindow := 5 * time.Second
-	if window := os.Getenv("LOG_DEDUP_WINDOW"); window != "" {
-		if d, err := time.ParseDuration(window); err == nil {
+	if conf.Env.LogDedupWindow != "" {
+		if d, err := time.ParseDuration(conf.Env.LogDedupWindow); err == nil {
 			dedupWindow = d
 		}
 	}
 
 	L = &Logger{
-		zlog:         &zlogger,
+		zlog:         zlogger,
 		dedup:        newDeduplicator(dedupWindow),
 		dedupEnabled: true,
 	}
@@ -171,39 +133,34 @@ func (l *Logger) Enable() {
 	l.disabled = false
 }
 
-// DisableDeduplication turns off log deduplication.
 func (l *Logger) DisableDeduplication() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.dedupEnabled = false
 }
 
-// EnableDeduplication turns on log deduplication.
 func (l *Logger) EnableDeduplication() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.dedupEnabled = true
 }
 
-// Pre-allocated LogEntry pool
 var logEntryPool = sync.Pool{
 	New: func() any {
 		return &LogEntry{
-			Fields: make(map[string]any, 8), // Pre-allocate some capacity
+			Fields: make(map[string]any, 8),
 		}
 	},
 }
 
 func getLogEntry() *LogEntry {
 	e := logEntryPool.Get().(*LogEntry)
-	// Clear previous data
 	e.Level = ""
 	e.Message = ""
 	e.JobID = ""
 	e.Err = nil
 	e.ErrString = ""
 	e.skipDedup = false
-	// Clear map but keep allocation
 	for k := range e.Fields {
 		delete(e.Fields, k)
 	}
@@ -214,7 +171,6 @@ func putLogEntry(e *LogEntry) {
 	logEntryPool.Put(e)
 }
 
-// Error creates a new error-level LogEntry.
 func (l *Logger) Error(err error) *LogEntry {
 	e := getLogEntry()
 	e.Level = "error"
@@ -223,7 +179,6 @@ func (l *Logger) Error(err error) *LogEntry {
 	return e
 }
 
-// Warn creates a new warning-level LogEntry.
 func (l *Logger) Warn() *LogEntry {
 	e := getLogEntry()
 	e.Level = "warn"
@@ -231,7 +186,6 @@ func (l *Logger) Warn() *LogEntry {
 	return e
 }
 
-// Info creates a new info-level LogEntry.
 func (l *Logger) Info() *LogEntry {
 	e := getLogEntry()
 	e.Level = "info"
@@ -246,23 +200,19 @@ func (l *Logger) Debug() *LogEntry {
 	return e
 }
 
-// WithMessage sets the log message.
 func (e *LogEntry) WithMessage(msg string) *LogEntry {
 	e.Message = msg
 	return e
 }
 
-// WithJob sets the job ID.
-func (e *LogEntry) WithJob(jobId string) *LogEntry {
-	e.JobID = jobId
+func (e *LogEntry) WithJob(jobID string) *LogEntry {
+	e.JobID = jobID
 	return e
 }
 
-// WithJSON attempts to unmarshal the input JSON and merge the fields.
 func (e *LogEntry) WithJSON(msg string) *LogEntry {
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
-		// Reuse existing map
 		maps.Copy(e.Fields, parsed)
 	} else {
 		e.Message = msg
@@ -270,26 +220,72 @@ func (e *LogEntry) WithJSON(msg string) *LogEntry {
 	return e
 }
 
-// WithField adds one key-value pair to the LogEntry.
 func (e *LogEntry) WithField(key string, value any) *LogEntry {
 	e.Fields[key] = value
 	return e
 }
 
-// WithFields adds multiple key-value pairs to the LogEntry.
 func (e *LogEntry) WithFields(fields map[string]any) *LogEntry {
 	maps.Copy(e.Fields, fields)
 	return e
 }
 
-// SkipDedup marks this log entry to bypass deduplication.
 func (e *LogEntry) SkipDedup() *LogEntry {
 	e.skipDedup = true
 	return e
 }
 
-// parseLogEntry parses a JSON payload (e.g. sent from a Linux system)
-// into a LogEntry.
+// slogAttrs converts the LogEntry fields to slog key-value pairs
+// for use with slog.Logger methods.
+func (e *LogEntry) slogAttrs() []any {
+	n := max(len(e.Fields), 0)
+	args := make([]any, 0, n*2+2)
+	for k, v := range e.Fields {
+		args = append(args, k, v)
+	}
+	if e.Err != nil {
+		args = append(args, "error", e.Err.Error())
+	}
+	return args
+}
+
+func (e *LogEntry) dedupCheck() bool {
+	e.logger.mu.RLock()
+	disabled := e.logger.disabled
+	dedupEnabled := e.logger.dedupEnabled
+	e.logger.mu.RUnlock()
+
+	if disabled {
+		return false
+	}
+	if e.skipDedup || !dedupEnabled || e.logger.dedup == nil {
+		return true
+	}
+	key := e.generateKey()
+	return e.logger.dedup.shouldLog(key)
+}
+
+// writeSlog emits the log entry through the underlying slog.Logger.
+func (e *LogEntry) writeSlog() {
+	if !e.dedupCheck() {
+		return
+	}
+
+	attrs := e.slogAttrs()
+	switch e.Level {
+	case "info":
+		e.logger.zlog.Info(e.Message, attrs...)
+	case "warn":
+		e.logger.zlog.Warn(e.Message, attrs...)
+	case "error":
+		e.logger.zlog.Error(e.Message, attrs...)
+	case "debug":
+		e.logger.zlog.Debug(e.Message, attrs...)
+	default:
+		e.logger.zlog.Info(e.Message, attrs...)
+	}
+}
+
 func parseLogEntry(body io.ReadCloser) (*LogEntry, error) {
 	entry := getLogEntry()
 	if err := json.NewDecoder(body).Decode(entry); err != nil {
@@ -303,44 +299,14 @@ func parseLogEntry(body io.ReadCloser) (*LogEntry, error) {
 	return entry, nil
 }
 
-// ParseAndLogWindowsEntry parses a JSON payload using ParseLogEntry
-// and then writes it using the Windows logger.
+// ParseAndLogWindowsEntry parses a JSON payload and writes it using the configured logger.
 func ParseAndLogWindowsEntry(body io.ReadCloser) error {
 	entry, err := parseLogEntry(body)
 	if err != nil {
 		return err
 	}
-	defer putLogEntry(entry) // Return to pool when done
+	defer putLogEntry(entry)
 
-	entry.logger.mu.RLock()
-	disabled := entry.logger.disabled
-	dedupEnabled := entry.logger.dedupEnabled
-	entry.logger.mu.RUnlock()
-
-	if disabled {
-		return nil
-	}
-
-	// Check deduplication
-	if !entry.skipDedup && dedupEnabled && entry.logger.dedup != nil {
-		key := entry.generateKey()
-		if !entry.logger.dedup.shouldLog(key) {
-			return nil // Skip duplicate log
-		}
-	}
-
-	// Log based on level
-	switch entry.Level {
-	case "info":
-		entry.logger.zlog.Info().Fields(entry.Fields).Msg(entry.Message)
-	case "warn":
-		entry.logger.zlog.Warn().Fields(entry.Fields).Msg(entry.Message)
-	case "error":
-		entry.logger.zlog.Error().Err(entry.Err).Fields(entry.Fields).Msg(entry.Message)
-	case "debug":
-		entry.logger.zlog.Debug().Err(entry.Err).Fields(entry.Fields).Msg(entry.Message)
-	default:
-		entry.logger.zlog.Info().Fields(entry.Fields).Msg(entry.Message)
-	}
+	entry.writeSlog()
 	return nil
 }

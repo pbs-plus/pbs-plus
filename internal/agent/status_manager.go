@@ -9,7 +9,7 @@ import (
 )
 
 type BackupSessionData struct {
-	JobId     string    `json:"job_id"`
+	JobID     string    `json:"job_id"`
 	StartTime time.Time `json:"start_time"`
 }
 
@@ -44,25 +44,25 @@ func (bs *BackupStore) updateSessions(fn func(map[string]*BackupSessionData)) er
 	return os.WriteFile(bs.filePath, newData, 0644)
 }
 
-func (bs *BackupStore) StartBackup(jobId string) error {
+func (bs *BackupStore) StartBackup(jobID string) error {
 	enableWakeLockSystem()
 
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
-		sessions[jobId] = &BackupSessionData{
-			JobId:     jobId,
+		sessions[jobID] = &BackupSessionData{
+			JobID:     jobID,
 			StartTime: time.Now(),
 		}
 	})
 }
 
-func (bs *BackupStore) EndBackup(jobId string) error {
+func (bs *BackupStore) EndBackup(jobID string) error {
 	hasActive, err := bs.HasActiveBackups()
 	if err == nil && !hasActive {
 		disableWakeLock()
 	}
 
 	return bs.updateSessions(func(sessions map[string]*BackupSessionData) {
-		delete(sessions, jobId)
+		delete(sessions, jobID)
 	})
 }
 

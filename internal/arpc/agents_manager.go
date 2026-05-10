@@ -77,12 +77,12 @@ func (sm *AgentsManager) getClientId(state tls.ConnectionState, headers http.Hea
 		clientID = clientCertificate.Subject.CommonName
 	}
 
-	jobIdHeader := headers.Get("X-PBS-Plus-BackupId")
+	jobIdHeader := headers.Get("X-PBS-Plus-BackupID")
 	if jobIdHeader != "" {
 		clientID = clientID + "|" + jobIdHeader
 	}
 
-	restoreIdHeader := headers.Get("X-PBS-Plus-RestoreId")
+	restoreIdHeader := headers.Get("X-PBS-Plus-RestoreID")
 	if restoreIdHeader != "" {
 		clientID = clientID + "|" + restoreIdHeader + "|restore"
 	}
