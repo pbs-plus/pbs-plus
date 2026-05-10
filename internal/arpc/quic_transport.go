@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -15,6 +16,17 @@ import (
 
 // quicNextProtos is the ALPN protocol list for QUIC connections.
 var quicNextProtos = []string{"pbsarpc-quic"}
+
+func quicConfig() *quic.Config {
+	return &quic.Config{
+		MaxIdleTimeout:             5 * time.Minute,
+		KeepAlivePeriod:            30 * time.Second,
+		HandshakeIdleTimeout:       10 * time.Second,
+		MaxIncomingStreams:         1 << 16,
+		MaxStreamReceiveWindow:     10 * 1024 * 1024,
+		MaxConnectionReceiveWindow: 15 * 1024 * 1024,
+	}
+}
 
 // QuicPipe is the QUIC-based transport for the ARPC control plane.
 // Replaces smux-over-TCP for RPC control messages.
@@ -65,7 +77,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 	quicTLS := tlsConfig.Clone()
 	quicTLS.NextProtos = quicNextProtos
 
-	conn, err := quic.DialAddr(ctx, serverAddr, quicTLS, nil)
+	conn, err := quic.DialAddr(ctx, serverAddr, quicTLS, quicConfig())
 	if err != nil {
 		syslog.L.Error(err).WithField("serverAddr", serverAddr).Write()
 		return nil, fmt.Errorf("QUIC dial failed (%s): %w", serverAddr, err)
@@ -338,7 +350,7 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 		}
 	}
 
-	listener, err := quic.ListenAddr(addr, quicTLS, nil)
+	listener, err := quic.ListenAddr(addr, quicTLS, quicConfig())
 	if err != nil {
 		return nil, fmt.Errorf("QUIC listen: %w", err)
 	}
@@ -419,7 +431,10 @@ func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsM
 
 // readHeadersFromFirstStream reads headers from the first stream on a QUIC connection.
 func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Header, error) {
-	stream, err := conn.AcceptStream(ctx)
+	headerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	stream, err := conn.AcceptStream(headerCtx)
 	if err != nil {
 		return nil, err
 	}
