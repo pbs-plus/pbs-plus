@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gobwas/glob"
-	"github.com/pbs-plus/pbs-plus/internal/calendarevent"
+	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"net"
 	"net/url"
@@ -37,27 +37,27 @@ func IsValidID(id string) bool {
 	return ValidateJobId(id) == nil
 }
 
-func ValidateJobId(jobId string) error {
-	if jobId == "" {
-		return errors.New("jobId cannot be empty")
+func ValidateJobId(jobID string) error {
+	if jobID == "" {
+		return errors.New("jobID cannot be empty")
 	}
 
-	if len(jobId) > 255 {
-		return errors.New("jobId exceeds maximum length")
+	if len(jobID) > 255 {
+		return errors.New("jobID exceeds maximum length")
 	}
 
-	if !jobIdRegex.MatchString(jobId) {
-		return errors.New("jobId contains invalid characters")
+	if !jobIdRegex.MatchString(jobID) {
+		return errors.New("jobID contains invalid characters")
 	}
 
-	if strings.Contains(jobId, string(os.PathSeparator)) ||
-		strings.Contains(jobId, "/") ||
-		strings.Contains(jobId, "\\") {
-		return errors.New("jobId cannot contain path separators")
+	if strings.Contains(jobID, string(os.PathSeparator)) ||
+		strings.Contains(jobID, "/") ||
+		strings.Contains(jobID, "\\") {
+		return errors.New("jobID cannot contain path separators")
 	}
 
-	if jobId == "." || jobId == ".." {
-		return errors.New("jobId cannot be '.' or '..'")
+	if jobID == "." || jobID == ".." {
+		return errors.New("jobID cannot be '.' or '..'")
 	}
 
 	return nil
@@ -330,7 +330,7 @@ func ValidateOnCalendar(value string) error {
 	if value == "" {
 		return fmt.Errorf("calendar specification cannot be empty")
 	}
-	_, err := calendarevent.Parse(value)
+	_, err := calendar.Parse(value)
 	if err != nil {
 		return fmt.Errorf("invalid calendar specification: %v", err)
 	}

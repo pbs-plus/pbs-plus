@@ -23,7 +23,6 @@ import (
 
 	_ "net/http/pprof"
 
-	_ "github.com/pbs-plus/pbs-plus/internal/memlimit"
 )
 
 var Version = "v0.0.0"
@@ -94,7 +93,7 @@ func (p *pbsService) run() {
 				case <-innerCtx.Done():
 					return
 				case <-ticker.C:
-					_ = agent.CheckAndRenewCertificate()
+					_ = agent.RenewCertificateIfExpiring()
 				}
 			}
 		})

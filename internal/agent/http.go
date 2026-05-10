@@ -10,6 +10,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var httpClient *http.Client
@@ -100,12 +101,10 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 
 	defer func() {
 		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-			// Log error but continue - cleanup is best-effort
-			fmt.Printf("agent: failed to discard response body: %v\n", err)
+			syslog.L.Error(err).WithMessage("agent: failed to discard response body").Write()
 		}
 		if err := resp.Body.Close(); err != nil {
-			// Log error but continue - cleanup is best-effort
-			fmt.Printf("agent: failed to close response body: %v\n", err)
+			syslog.L.Error(err).WithMessage("agent: failed to close response body").Write()
 		}
 	}()
 

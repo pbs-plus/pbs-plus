@@ -22,11 +22,15 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/store/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/store/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/puzpuzpuz/xsync/v4"
 )
+
+// TaskWriter is the interface for logging task progress.
+type TaskWriter interface {
+	WriteString(string)
+}
 
 type PxarReader struct {
 	connPool   chan net.Conn
@@ -35,7 +39,7 @@ type PxarReader struct {
 	enc        cbor.EncMode
 	dec        cbor.DecMode
 	cmd        *exec.Cmd
-	task       *tasks.RestoreTask
+	task       TaskWriter
 	loggerCh   chan string
 	closed     atomic.Bool
 
@@ -98,7 +102,7 @@ func (r *PxarReader) GetStats() PxarReaderStats {
 	}
 }
 
-func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapshot string, proxmoxTask *tasks.RestoreTask) (*PxarReader, error) {
+func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapshot string, task TaskWriter) (*PxarReader, error) {
 	dsInfo, err := proxmox.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
@@ -185,7 +189,7 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 		enc:         encMode,
 		dec:         decMode,
 		cmd:         cmd,
-		task:        proxmoxTask,
+		task:        task,
 		loggerCh:    loggerCh,
 		FileCount:   xsync.NewCounter(),
 		FolderCount: xsync.NewCounter(),
@@ -210,7 +214,7 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 				if !ok {
 					return
 				}
-				proxmoxTask.WriteString(log)
+				task.WriteString(log)
 			}
 		}
 	}()

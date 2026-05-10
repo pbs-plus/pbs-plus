@@ -7,7 +7,7 @@ inputs:
     description: PBS Plus authentication token
   timeout-seconds:
     required: false
-    default: '20'
+    default: "20"
     description: Timeout for agent initialization
 
 runs:
@@ -39,9 +39,9 @@ runs:
         echo "Waiting for agent to bootstrap..."
         timeout=${{ inputs.timeout-seconds }}
         elapsed=0
-        
+
         while [ $elapsed -lt $timeout ]; do
-          if docker logs pbs-plus-agent 2>&1 | grep -q "TLS connection established"; then
+          if docker logs pbs-plus-agent 2>&1 | grep -q "tls: connection established"; then
             echo "✓ PBS Agent fully initialized and running"
             break
           fi
