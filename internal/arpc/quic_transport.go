@@ -81,14 +81,23 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 	}
 	headers.Add("ARPCVersion", "2")
 
+	pipeCtx, pipeCancel := context.WithCancel(ctx)
+	enc, _ := cbor.EncOptions{}.EncMode()
+	dec, err := cbor.DecOptions{MaxArrayElements: math.MaxInt32}.DecMode()
+	if err != nil {
+		dec, _ = cbor.DecOptions{}.DecMode()
+	}
+
 	pipe := &QuicPipe{
-		ctx:        ctx,
-		cancelFunc: func() {},
+		ctx:        pipeCtx,
+		cancelFunc: pipeCancel,
 		conn:       conn,
 		serverAddr: serverAddr,
 		tlsConfig:  quicTLS,
 		version:    "2",
 		headers:    headers,
+		cborEnc:    enc,
+		cborDec:    dec,
 	}
 
 	stream, err := pipe.OpenStream()
