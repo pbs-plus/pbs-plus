@@ -1,0 +1,794 @@
+{
+  "metadata": {
+    "project": "pbs-plus",
+    "module": "github.com/pbs-plus/pbs-plus",
+    "description": "Complete file-by-file mapping for domain-driven package restructure. Consolidates backend/, web/, store/, tasks/, application/ into internal/server/. Renames snake_case filenames to MixedCaps. Merges deep sub-packages to stay within 3 directory levels from internal/.",
+    "constraints": [
+      "Max 3 directory levels from internal/ root (internal/server/X/Y is the limit)",
+      "sqlc-generated code structure preserved (files stay together at internal/server/database/sqlc/)",
+      "Build constraint tags preserved in file content",
+      "Test files stay with their source files",
+      "Non-Go files (SQL, JS, PS1) move with their packages"
+    ]
+  },
+
+  "domain_moves": {
+    "description": "All files moving from old server packages into internal/server/",
+
+    "internal/server (package: server)": {
+      "description": "Server bootstrap, shared types, resilience, application services",
+      "files": {
+        "internal/backend/bootstrap.go": "internal/server/bootstrap.go",
+        "internal/backend/encode_path.go": "internal/server/encodePath.go",
+        "internal/backend/filetree.go": "internal/server/filetree.go",
+        "internal/backend/memlimit.go": "internal/server/memlimit.go",
+        "internal/backend/resilience.go": "internal/server/resilience.go",
+        "internal/backend/resilience_test.go": "internal/server/resilience_test.go",
+        "internal/backend/shared.go": "internal/server/shared.go",
+        "internal/backend/systemd_mount.go": "internal/server/systemdMount.go"
+      },
+      "package_changes": {
+        "backend": "server"
+      }
+    },
+
+    "internal/server/jobs (package: jobs)": {
+      "description": "Job environment, manager, shell, status",
+      "files": {
+        "internal/backend/jobs/env.go": "internal/server/jobs/env.go",
+        "internal/backend/jobs/manager.go": "internal/server/jobs/manager.go",
+        "internal/backend/jobs/shell.go": "internal/server/jobs/shell.go",
+        "internal/backend/jobs/status.go": "internal/server/jobs/status.go"
+      },
+      "package_changes": {
+        "jobs": "jobs"
+      }
+    },
+
+    "internal/server/jobs/backup (package: backup)": {
+      "description": "Backup job logic",
+      "files": {
+        "internal/backend/jobs/backup/client_logging.go": "internal/server/jobs/backup/clientLogging.go",
+        "internal/backend/jobs/backup/command.go": "internal/server/jobs/backup/command.go",
+        "internal/backend/jobs/backup/errors.go": "internal/server/jobs/backup/errors.go",
+        "internal/backend/jobs/backup/fix_datastore.go": "internal/server/jobs/backup/fixDatastore.go",
+        "internal/backend/jobs/backup/job.go": "internal/server/jobs/backup/job.go",
+        "internal/backend/jobs/backup/logcleanup.go": "internal/server/jobs/backup/logCleanup.go",
+        "internal/backend/jobs/backup/pbs_logging.go": "internal/server/jobs/backup/pbsLogging.go",
+        "internal/backend/jobs/backup/status.go": "internal/server/jobs/backup/status.go",
+        "internal/backend/jobs/backup/task_path.go": "internal/server/jobs/backup/taskPath.go"
+      },
+      "package_changes": {
+        "backup": "backup"
+      }
+    },
+
+    "internal/server/jobs/restore (package: restore)": {
+      "description": "Restore job logic",
+      "files": {
+        "internal/backend/jobs/restore/errors.go": "internal/server/jobs/restore/errors.go",
+        "internal/backend/jobs/restore/format.go": "internal/server/jobs/restore/format.go",
+        "internal/backend/jobs/restore/job.go": "internal/server/jobs/restore/job.go",
+        "internal/backend/jobs/restore/status.go": "internal/server/jobs/restore/status.go"
+      },
+      "package_changes": {
+        "restore": "restore"
+      }
+    },
+
+    "internal/server/jobs/scheduler (package: scheduler)": {
+      "description": "Job scheduler",
+      "files": {
+        "internal/backend/jobs/scheduler/scheduler.go": "internal/server/jobs/scheduler/scheduler.go",
+        "internal/backend/jobs/scheduler/scheduler_test.go": "internal/server/jobs/scheduler/scheduler_test.go"
+      },
+      "package_changes": {
+        "scheduler": "scheduler"
+      }
+    },
+
+    "internal/server/mount (package: mount)": {
+      "description": "Mount operations (agent mount, S3 mount)",
+      "files": {
+        "internal/backend/mount/agent.go": "internal/server/mount/agent.go",
+        "internal/backend/mount/s3.go": "internal/server/mount/s3.go"
+      },
+      "package_changes": {
+        "mount": "mount"
+      }
+    },
+
+    "internal/server/rpc (package: rpc)": {
+      "description": "RPC handlers. Merged rpc/job sub-package into rpc directly.",
+      "files": {
+        "internal/backend/rpc/mount.go": "internal/server/rpc/mount.go",
+        "internal/backend/rpc/job/service.go": "internal/server/rpc/jobService.go"
+      },
+      "package_changes": {
+        "rpc": "rpc",
+        "job": "rpc"
+      },
+      "merge_notes": "rpc/job/service.go (was package 'job') merges into package 'rpc'. Rename exported symbols if collisions found. Currently no collisions: rpc exports MountRPCService/StartRPCServer/RunRPCServer; job exports JobRPCService/StartJobRPCServer/RunJobRPCServer."
+    },
+
+    "internal/server/vfs (package: vfs)": {
+      "description": "Virtual filesystem core",
+      "files": {
+        "internal/backend/vfs/vfs.go": "internal/server/vfs/vfs.go",
+        "internal/backend/vfs/memlocal.go": "internal/server/vfs/memlocal.go",
+        "internal/backend/vfs/pool.go": "internal/server/vfs/pool.go"
+      },
+      "package_changes": {
+        "vfs": "vfs"
+      }
+    },
+
+    "internal/server/vfs/arpcfs (package: arpcfs)": {
+      "description": "ARPC filesystem. Merged arpcfuse and arpcmount sub-packages into arpcfs.",
+      "files": {
+        "internal/backend/vfs/arpcfs/dir.go": "internal/server/vfs/arpcfs/dir.go",
+        "internal/backend/vfs/arpcfs/file.go": "internal/server/vfs/arpcfs/file.go",
+        "internal/backend/vfs/arpcfs/fs.go": "internal/server/vfs/arpcfs/fs.go",
+        "internal/backend/vfs/arpcfs/types.go": "internal/server/vfs/arpcfs/types.go",
+        "internal/backend/vfs/arpcfs/arpcfuse/server.go": "internal/server/vfs/arpcfs/arpcfuse.go",
+        "internal/backend/vfs/arpcfs/arpcmount/mount.go": "internal/server/vfs/arpcfs/arpcmount.go"
+      },
+      "package_changes": {
+        "arpcfs": "arpcfs",
+        "arpcfuse": "arpcfs",
+        "arpcmount": "arpcfs"
+      },
+      "merge_notes": "arpcfuse and arpcmount merge into arpcfs. Symbol renames required: arpcfuse.Mount→MountFuse, arpcmount.Mount→MountARPC. Node type from arpcfuse does not conflict with arpcfs exports."
+    },
+
+    "internal/server/vfs/s3fs (package: s3fs)": {
+      "description": "S3 filesystem. Merged fuse, s3mount, s3url sub-packages into s3fs.",
+      "files": {
+        "internal/backend/vfs/s3fs/dir.go": "internal/server/vfs/s3fs/dir.go",
+        "internal/backend/vfs/s3fs/file.go": "internal/server/vfs/s3fs/file.go",
+        "internal/backend/vfs/s3fs/fs.go": "internal/server/vfs/s3fs/fs.go",
+        "internal/backend/vfs/s3fs/types.go": "internal/server/vfs/s3fs/types.go",
+        "internal/backend/vfs/s3fs/fuse/err.go": "internal/server/vfs/s3fs/fuseErr.go",
+        "internal/backend/vfs/s3fs/fuse/server.go": "internal/server/vfs/s3fs/fuseServer.go",
+        "internal/backend/vfs/s3fs/s3mount/mount.go": "internal/server/vfs/s3fs/s3mount.go",
+        "internal/backend/vfs/s3fs/s3url/url.go": "internal/server/vfs/s3fs/s3url.go"
+      },
+      "package_changes": {
+        "s3fs": "s3fs",
+        "fuse": "s3fs",
+        "s3mount": "s3fs",
+        "s3url": "s3fs"
+      },
+      "merge_notes": "fuse, s3mount, s3url merge into s3fs. Symbol renames required: fuse.Mount→MountFuse, s3mount.Mount→MountS3, s3url.Parse→ParseS3Url. No collisions with s3fs exports (S3DirStream, NewS3FS, S3FS, S3File)."
+    },
+
+    "internal/server/vfs/sessions (package: sessions)": {
+      "description": "VFS session management",
+      "files": {
+        "internal/backend/vfs/sessions/sessions.go": "internal/server/vfs/sessions/sessions.go"
+      },
+      "package_changes": {
+        "sessions": "sessions"
+      }
+    },
+
+    "internal/server/web (package: web)": {
+      "description": "HTTP server, middleware, auth, tokens",
+      "files": {
+        "internal/web/server.go": "internal/server/web/server.go",
+        "internal/web/serve.go": "internal/server/web/serve.go",
+        "internal/web/middleware.go": "internal/server/web/middleware.go",
+        "internal/web/middleware_test.go": "internal/server/web/middleware_test.go",
+        "internal/web/auth.go": "internal/server/web/auth.go",
+        "internal/web/token.go": "internal/server/web/token.go",
+        "internal/web/is_localhost.go": "internal/server/web/isLocalhost.go",
+        "internal/web/js_compiler.go": "internal/server/web/jsCompiler.go"
+      },
+      "package_changes": {
+        "web": "web"
+      }
+    },
+
+    "internal/server/web/api (package: api)": {
+      "description": "API handlers and endpoints",
+      "files": {
+        "internal/web/api/agent_host_handlers.go": "internal/server/web/api/agentHostHandlers.go",
+        "internal/web/api/agents.go": "internal/server/web/api/agents.go",
+        "internal/web/api/backup_handlers.go": "internal/server/web/api/backupHandlers.go",
+        "internal/web/api/digest.go": "internal/server/web/api/digest.go",
+        "internal/web/api/error.go": "internal/server/web/api/error.go",
+        "internal/web/api/error_test.go": "internal/server/web/api/error_test.go",
+        "internal/web/api/exclusions.go": "internal/server/web/api/exclusions.go",
+        "internal/web/api/filetree.go": "internal/server/web/api/filetree.go",
+        "internal/web/api/is_mounted.go": "internal/server/web/api/isMounted.go",
+        "internal/web/api/metrics.go": "internal/server/web/api/metrics.go",
+        "internal/web/api/mount_handlers.go": "internal/server/web/api/mountHandlers.go",
+        "internal/web/api/plus.go": "internal/server/web/api/plus.go",
+        "internal/web/api/restore_handlers.go": "internal/server/web/api/restoreHandlers.go",
+        "internal/web/api/scripts.go": "internal/server/web/api/scripts.go",
+        "internal/web/api/targets.go": "internal/server/web/api/targets.go",
+        "internal/web/api/tokens.go": "internal/server/web/api/tokens.go",
+        "internal/web/api/types.go": "internal/server/web/api/types.go",
+        "internal/web/api/install-agent.ps1": "internal/server/web/api/install-agent.ps1"
+      },
+      "package_changes": {
+        "api": "api"
+      }
+    },
+
+    "internal/server/web/views (non-Go: JS templates)": {
+      "description": "HTML/JS template files, move directory tree as-is",
+      "files": {
+        "internal/web/views/custom/1_navigation.js": "internal/server/web/views/custom/1_navigation.js",
+        "internal/web/views/custom/2_disk_backup.js": "internal/server/web/views/custom/2_disk_backup.js",
+        "internal/web/views/custom/3_snapshot_mount.js": "internal/server/web/views/custom/3_snapshot_mount.js",
+        "internal/web/views/custom/5_models.js": "internal/server/web/views/custom/5_models.js",
+        "internal/web/views/custom/panels/backups.js": "internal/server/web/views/custom/panels/backups.js",
+        "internal/web/views/custom/panels/exclusions.js": "internal/server/web/views/custom/panels/exclusions.js",
+        "internal/web/views/custom/panels/mounts.js": "internal/server/web/views/custom/panels/mounts.js",
+        "internal/web/views/custom/panels/restores.js": "internal/server/web/views/custom/panels/restores.js",
+        "internal/web/views/custom/panels/scripts.js": "internal/server/web/views/custom/panels/scripts.js",
+        "internal/web/views/custom/panels/targets.js": "internal/server/web/views/custom/panels/targets.js",
+        "internal/web/views/custom/panels/tokens.js": "internal/server/web/views/custom/panels/tokens.js",
+        "internal/web/views/custom/selectors/calendarevents.js": "internal/server/web/views/custom/selectors/calendarevents.js",
+        "internal/web/views/custom/selectors/exclusions.js": "internal/server/web/views/custom/selectors/exclusions.js",
+        "internal/web/views/custom/selectors/namespaces.js": "internal/server/web/views/custom/selectors/namespaces.js",
+        "internal/web/views/custom/selectors/scripts.js": "internal/server/web/views/custom/selectors/scripts.js",
+        "internal/web/views/custom/selectors/snapshot_path_selector.js": "internal/server/web/views/custom/selectors/snapshot_path_selector.js",
+        "internal/web/views/custom/selectors/snapshots.js": "internal/server/web/views/custom/selectors/snapshots.js",
+        "internal/web/views/custom/selectors/target_path_selector.js": "internal/server/web/views/custom/selectors/target_path_selector.js",
+        "internal/web/views/custom/selectors/targets.js": "internal/server/web/views/custom/selectors/targets.js",
+        "internal/web/views/custom/selectors/tokens.js": "internal/server/web/views/custom/selectors/tokens.js",
+        "internal/web/views/custom/windows/backup.js": "internal/server/web/views/custom/windows/backup.js",
+        "internal/web/views/custom/windows/exclusion.js": "internal/server/web/views/custom/windows/exclusion.js",
+        "internal/web/views/custom/windows/path_browser.js": "internal/server/web/views/custom/windows/path_browser.js",
+        "internal/web/views/custom/windows/restore.js": "internal/server/web/views/custom/windows/restore.js",
+        "internal/web/views/custom/windows/script.js": "internal/server/web/views/custom/windows/script.js",
+        "internal/web/views/custom/windows/target.js": "internal/server/web/views/custom/windows/target.js",
+        "internal/web/views/custom/windows/token.js": "internal/server/web/views/custom/windows/token.js",
+        "internal/web/views/pre/1_initialization.js": "internal/server/web/views/pre/1_initialization.js",
+        "internal/web/views/pre/2_utils.js": "internal/server/web/views/pre/2_utils.js",
+        "internal/web/views/pre/3_log_view.js": "internal/server/web/views/pre/3_log_view.js",
+        "internal/web/views/pre/4_task_viewer.js": "internal/server/web/views/pre/4_task_viewer.js"
+      },
+      "package_changes": {}
+    },
+
+    "internal/server/store (package: store)": {
+      "description": "Store interface/facade (thin top-level)",
+      "files": {
+        "internal/store/store.go": "internal/server/store/store.go",
+        "internal/store/db_test.go": "internal/server/store/db_test.go"
+      },
+      "package_changes": {
+        "store": "store"
+      }
+    },
+
+    "internal/server/database (package: database)": {
+      "description": "Database layer. Lifted from store/database to be direct child of server/ (avoids 4-level depth for sqlc/).",
+      "files": {
+        "internal/store/database/agent_host.go": "internal/server/database/agentHost.go",
+        "internal/store/database/backups.go": "internal/server/database/backups.go",
+        "internal/store/database/convert.go": "internal/server/database/convert.go",
+        "internal/store/database/errors.go": "internal/server/database/errors.go",
+        "internal/store/database/exclusions.go": "internal/server/database/exclusions.go",
+        "internal/store/database/job_schedule.go": "internal/server/database/jobSchedule.go",
+        "internal/store/database/migrate.go": "internal/server/database/migrate.go",
+        "internal/store/database/proxy_cert.go": "internal/server/database/proxyCert.go",
+        "internal/store/database/restores.go": "internal/server/database/restores.go",
+        "internal/store/database/scripts.go": "internal/server/database/scripts.go",
+        "internal/store/database/secrets_box.go": "internal/server/database/secretsBox.go",
+        "internal/store/database/sqlite.go": "internal/server/database/sqlite.go",
+        "internal/store/database/targets.go": "internal/server/database/targets.go",
+        "internal/store/database/tokens.go": "internal/server/database/tokens.go",
+        "internal/store/database/types.go": "internal/server/database/types.go"
+      },
+      "package_changes": {
+        "database": "database"
+      }
+    },
+
+    "internal/server/database/sqlc (package: sqlc, generated)": {
+      "description": "sqlc-generated code. Must preserve structure. Path changes from store/database/sqlc to server/database/sqlc.",
+      "files": {
+        "internal/store/database/sqlc/agent_hosts.sql.go": "internal/server/database/sqlc/agent_hosts.sql.go",
+        "internal/store/database/sqlc/backups.sql.go": "internal/server/database/sqlc/backups.sql.go",
+        "internal/store/database/sqlc/db.go": "internal/server/database/sqlc/db.go",
+        "internal/store/database/sqlc/exclusions.sql.go": "internal/server/database/sqlc/exclusions.sql.go",
+        "internal/store/database/sqlc/models.go": "internal/server/database/sqlc/models.go",
+        "internal/store/database/sqlc/querier.go": "internal/server/database/sqlc/querier.go",
+        "internal/store/database/sqlc/restores.sql.go": "internal/server/database/sqlc/restores.sql.go",
+        "internal/store/database/sqlc/scripts.sql.go": "internal/server/database/sqlc/scripts.sql.go",
+        "internal/store/database/sqlc/targets.sql.go": "internal/server/database/sqlc/targets.sql.go",
+        "internal/store/database/sqlc/tokens.sql.go": "internal/server/database/sqlc/tokens.sql.go"
+      },
+      "package_changes": {
+        "sqlc": "sqlc"
+      }
+    },
+
+    "internal/server/database/migrations (SQL files, non-Go)": {
+      "description": "Database migration SQL files",
+      "files": {
+        "internal/store/database/migrations/000001_create_jobs_table.down.sql": "internal/server/database/migrations/000001_create_jobs_table.down.sql",
+        "internal/store/database/migrations/000001_create_jobs_table.up.sql": "internal/server/database/migrations/000001_create_jobs_table.up.sql",
+        "internal/store/database/migrations/000002_create_exclusions_table.down.sql": "internal/server/database/migrations/000002_create_exclusions_table.down.sql",
+        "internal/store/database/migrations/000002_create_exclusions_table.up.sql": "internal/server/database/migrations/000002_create_exclusions_table.up.sql",
+        "internal/store/database/migrations/000003_create_targets_table.down.sql": "internal/server/database/migrations/000003_create_targets_table.down.sql",
+        "internal/store/database/migrations/000003_create_targets_table.up.sql": "internal/server/database/migrations/000003_create_targets_table.up.sql",
+        "internal/store/database/migrations/000004_create_tokens_table.down.sql": "internal/server/database/migrations/000004_create_tokens_table.down.sql",
+        "internal/store/database/migrations/000004_create_tokens_table.up.sql": "internal/server/database/migrations/000004_create_tokens_table.up.sql",
+        "internal/store/database/migrations/000005_add_entries_max_job.down.sql": "internal/server/database/migrations/000005_add_entries_max_job.down.sql",
+        "internal/store/database/migrations/000005_add_entries_max_job.up.sql": "internal/server/database/migrations/000005_add_entries_max_job.up.sql",
+        "internal/store/database/migrations/000006_delete_raw_exclusions.down.sql": "internal/server/database/migrations/000006_delete_raw_exclusions.down.sql",
+        "internal/store/database/migrations/000006_delete_raw_exclusions.up.sql": "internal/server/database/migrations/000006_delete_raw_exclusions.up.sql",
+        "internal/store/database/migrations/000007_add_read_mode.down.sql": "internal/server/database/migrations/000007_add_read_mode.down.sql",
+        "internal/store/database/migrations/000007_add_read_mode.up.sql": "internal/server/database/migrations/000007_add_read_mode.up.sql",
+        "internal/store/database/migrations/000008_create_scripts_table.down.sql": "internal/server/database/migrations/000008_create_scripts_table.down.sql",
+        "internal/store/database/migrations/000008_create_scripts_table.up.sql": "internal/server/database/migrations/000008_create_scripts_table.up.sql",
+        "internal/store/database/migrations/000009_add_scripts_job.down.sql": "internal/server/database/migrations/000009_add_scripts_job.down.sql",
+        "internal/store/database/migrations/000009_add_scripts_job.up.sql": "internal/server/database/migrations/000009_add_scripts_job.up.sql",
+        "internal/store/database/migrations/000010_add_scripts_target.down.sql": "internal/server/database/migrations/000010_add_scripts_target.down.sql",
+        "internal/store/database/migrations/000010_add_scripts_target.up.sql": "internal/server/database/migrations/000010_add_scripts_target.up.sql",
+        "internal/store/database/migrations/000011_add_os_target.down.sql": "internal/server/database/migrations/000011_add_os_target.down.sql",
+        "internal/store/database/migrations/000011_add_os_target.up.sql": "internal/server/database/migrations/000011_add_os_target.up.sql",
+        "internal/store/database/migrations/000012_add_s3_secret.down.sql": "internal/server/database/migrations/000012_add_s3_secret.down.sql",
+        "internal/store/database/migrations/000012_add_s3_secret.up.sql": "internal/server/database/migrations/000012_add_s3_secret.up.sql",
+        "internal/store/database/migrations/000013_add_xattr_job.down.sql": "internal/server/database/migrations/000013_add_xattr_job.down.sql",
+        "internal/store/database/migrations/000013_add_xattr_job.up.sql": "internal/server/database/migrations/000013_add_xattr_job.up.sql",
+        "internal/store/database/migrations/000014_add_legacy_xattr_job.down.sql": "internal/server/database/migrations/000014_add_legacy_xattr_job.down.sql",
+        "internal/store/database/migrations/000014_add_legacy_xattr_job.up.sql": "internal/server/database/migrations/000014_add_legacy_xattr_job.up.sql",
+        "internal/store/database/migrations/000015_create_restores_table.down.sql": "internal/server/database/migrations/000015_create_restores_table.down.sql",
+        "internal/store/database/migrations/000015_create_restores_table.up.sql": "internal/server/database/migrations/000015_create_restores_table.up.sql",
+        "internal/store/database/migrations/000016_renaming_backups_table.down.sql": "internal/server/database/migrations/000016_renaming_backups_table.down.sql",
+        "internal/store/database/migrations/000016_renaming_backups_table.up.sql": "internal/server/database/migrations/000016_renaming_backups_table.up.sql",
+        "internal/store/database/migrations/000017_add_scripts_restore.down.sql": "internal/server/database/migrations/000017_add_scripts_restore.down.sql",
+        "internal/store/database/migrations/000017_add_scripts_restore.up.sql": "internal/server/database/migrations/000017_add_scripts_restore.up.sql",
+        "internal/store/database/migrations/000018_create_hosts_table.down.sql": "internal/server/database/migrations/000018_create_hosts_table.down.sql",
+        "internal/store/database/migrations/000018_create_hosts_table.up.sql": "internal/server/database/migrations/000018_create_hosts_table.up.sql",
+        "internal/store/database/migrations/000019_notnull_exclusions_table.down.sql": "internal/server/database/migrations/000019_notnull_exclusions_table.down.sql",
+        "internal/store/database/migrations/000019_notnull_exclusions_table.up.sql": "internal/server/database/migrations/000019_notnull_exclusions_table.up.sql",
+        "internal/store/database/migrations/000020_add_restore_mode.down.sql": "internal/server/database/migrations/000020_add_restore_mode.down.sql",
+        "internal/store/database/migrations/000020_add_restore_mode.up.sql": "internal/server/database/migrations/000020_add_restore_mode.up.sql",
+        "internal/store/database/migrations/000021_add_job_status.down.sql": "internal/server/database/migrations/000021_add_job_status.down.sql",
+        "internal/store/database/migrations/000021_add_job_status.up.sql": "internal/server/database/migrations/000021_add_job_status.up.sql",
+        "internal/store/database/migrations/000022_add_job_status_to_restores.down.sql": "internal/server/database/migrations/000022_add_job_status_to_restores.down.sql",
+        "internal/store/database/migrations/000022_add_job_status_to_restores.up.sql": "internal/server/database/migrations/000022_add_job_status_to_restores.up.sql"
+      },
+      "package_changes": {}
+    },
+
+    "internal/server/database/queries (SQL files, non-Go)": {
+      "description": "sqlc query definition files",
+      "files": {
+        "internal/store/database/queries/agent_hosts.sql": "internal/server/database/queries/agent_hosts.sql",
+        "internal/store/database/queries/backups.sql": "internal/server/database/queries/backups.sql",
+        "internal/store/database/queries/exclusions.sql": "internal/server/database/queries/exclusions.sql",
+        "internal/store/database/queries/restores.sql": "internal/server/database/queries/restores.sql",
+        "internal/store/database/queries/scripts.sql": "internal/server/database/queries/scripts.sql",
+        "internal/store/database/queries/targets.sql": "internal/server/database/queries/targets.sql",
+        "internal/store/database/queries/tokens.sql": "internal/server/database/queries/tokens.sql"
+      },
+      "package_changes": {}
+    },
+
+    "internal/server/proxmox (package: proxmox)": {
+      "description": "Proxmox API client. Lifted from store/proxmox to server/proxmox.",
+      "files": {
+        "internal/store/proxmox/cert.go": "internal/server/proxmox/cert.go",
+        "internal/store/proxmox/datastore.go": "internal/server/proxmox/datastore.go",
+        "internal/store/proxmox/refresh_token.go": "internal/server/proxmox/refreshToken.go",
+        "internal/store/proxmox/tasks.go": "internal/server/proxmox/tasks.go",
+        "internal/store/proxmox/types.go": "internal/server/proxmox/types.go",
+        "internal/store/proxmox/upid.go": "internal/server/proxmox/upid.go"
+      },
+      "package_changes": {
+        "proxmox": "proxmox"
+      }
+    },
+
+    "internal/server/tasks (package: tasks)": {
+      "description": "Task type definitions (base, backup, queued, restore)",
+      "files": {
+        "internal/tasks/base.go": "internal/server/tasks/base.go",
+        "internal/tasks/backup.go": "internal/server/tasks/backup.go",
+        "internal/tasks/queued.go": "internal/server/tasks/queued.go",
+        "internal/tasks/restore.go": "internal/server/tasks/restore.go"
+      },
+      "package_changes": {
+        "tasks": "tasks"
+      }
+    },
+
+    "internal/server/application (package: application)": {
+      "description": "Application service/repository layer",
+      "files": {
+        "internal/application/repository.go": "internal/server/application/repository.go",
+        "internal/application/services.go": "internal/server/application/services.go",
+        "internal/application/service_test.go": "internal/server/application/service_test.go"
+      },
+      "package_changes": {
+        "application": "application"
+      }
+    }
+  },
+
+  "agent_renames": {
+    "description": "Snake_case filename renames within internal/agent/ (no directory moves)",
+    "files": {
+      "internal/agent/restore_manager.go": "internal/agent/restoreManager.go",
+      "internal/agent/restore_manager_unix.go": "internal/agent/restoreManager_unix.go",
+      "internal/agent/restore_manager_windows.go": "internal/agent/restoreManager_windows.go",
+      "internal/agent/status_manager.go": "internal/agent/statusManager.go",
+      "internal/agent/status_manager_unix.go": "internal/agent/statusManager_unix.go",
+      "internal/agent/status_manager_windows.go": "internal/agent/statusManager_windows.go",
+      "internal/agent/systray_comm.go": "internal/agent/systrayComm.go",
+      "internal/agent/tls_config.go": "internal/agent/tlsConfig.go",
+      "internal/agent/agentfs/acls_noattr_freebsd.go": "internal/agent/agentfs/aclsNoattr_freebsd.go",
+      "internal/agent/agentfs/acls_noattr_unix.go": "internal/agent/agentfs/aclsNoattr_unix.go",
+      "internal/agent/agentfs/syscalls_nt_windows.go": "internal/agent/agentfs/syscallsNt_windows.go",
+      "internal/agent/agentfs/types_local.go": "internal/agent/agentfs/typesLocal.go",
+      "internal/agent/sync/volume_status.go": "internal/agent/sync/volumeStatus.go",
+      "internal/agent/sync/volume_status_unix.go": "internal/agent/sync/volumeStatus_unix.go",
+      "internal/agent/sync/volume_status_windows.go": "internal/agent/sync/volumeStatus_windows.go",
+      "internal/agent/updater/cleanup_generic.go": "internal/agent/updater/cleanupGeneric.go",
+      "internal/agent/snapshots/ext4_xfs.go": "internal/agent/snapshots/ext4Xfs.go"
+    }
+  },
+
+  "shared_package_renames": {
+    "description": "Snake_case filename renames in packages that stay in place (no directory moves)",
+    "files": {
+      "internal/arpc/agents_manager.go": "internal/arpc/agentsManager.go",
+      "internal/arpc/binary_stream.go": "internal/arpc/binaryStream.go",
+      "internal/mtls/cert_manager.go": "internal/mtls/certManager.go",
+      "internal/conf/constants_agent.go": "internal/conf/constantsAgent.go",
+      "internal/conf/default_exclusions.go": "internal/conf/defaultExclusions.go",
+      "internal/pxar/entry_info.go": "internal/pxar/entryInfo.go",
+      "internal/pxar/format_nonlinux.go": "internal/pxar/formatNonlinux.go",
+      "internal/pxar/fscap_bsd.go": "internal/pxar/fscapBsd.go",
+      "internal/syslog/pbs_logger_unix.go": "internal/syslog/pbsLogger_unix.go",
+      "internal/operator/pod_manager.go": "internal/operator/podManager.go",
+      "internal/operator/snapshot_manager.go": "internal/operator/snapshotManager.go"
+    }
+  },
+
+  "merge_operations": {
+    "description": "Packages merged into their parent to stay within 3-level depth limit. Requires: (1) change package declaration, (2) update internal references, (3) rename exported symbols if collisions exist.",
+    "merges": [
+      {
+        "old_package": "internal/backend/rpc/job",
+        "old_package_name": "job",
+        "new_package": "internal/server/rpc",
+        "new_package_name": "rpc",
+        "files": [
+          {
+            "old_path": "internal/backend/rpc/job/service.go",
+            "new_path": "internal/server/rpc/jobService.go"
+          }
+        ],
+        "symbol_renames": {},
+        "notes": "No exported symbol collisions. job.JobRPCService, job.BackupQueueArgs, etc. become rpc.JobRPCService, rpc.BackupQueueArgs."
+      },
+      {
+        "old_package": "internal/backend/vfs/arpcfs/arpcfuse",
+        "old_package_name": "arpcfuse",
+        "new_package": "internal/server/vfs/arpcfs",
+        "new_package_name": "arpcfs",
+        "files": [
+          {
+            "old_path": "internal/backend/vfs/arpcfs/arpcfuse/server.go",
+            "new_path": "internal/server/vfs/arpcfs/arpcfuse.go"
+          }
+        ],
+        "symbol_renames": {
+          "arpcfuse.Mount": "MountFuse"
+        },
+        "notes": "arpcfuse.Mount→arpcfs.MountFuse to avoid collision with arpcmount.Mount which also merges into arpcfs. Node type from arpcfuse is unexported in this context so no collision."
+      },
+      {
+        "old_package": "internal/backend/vfs/arpcfs/arpcmount",
+        "old_package_name": "arpcmount",
+        "new_package": "internal/server/vfs/arpcfs",
+        "new_package_name": "arpcfs",
+        "files": [
+          {
+            "old_path": "internal/backend/vfs/arpcfs/arpcmount/mount.go",
+            "new_path": "internal/server/vfs/arpcfs/arpcmount.go"
+          }
+        ],
+        "symbol_renames": {
+          "arpcmount.Mount": "MountARPC"
+        },
+        "notes": "arpcmount.Mount→arpcfs.MountARPC to avoid collision with arpcfuse.Mount which also merges into arpcfs."
+      },
+      {
+        "old_package": "internal/backend/vfs/s3fs/fuse",
+        "old_package_name": "fuse",
+        "new_package": "internal/server/vfs/s3fs",
+        "new_package_name": "s3fs",
+        "files": [
+          {
+            "old_path": "internal/backend/vfs/s3fs/fuse/err.go",
+            "new_path": "internal/server/vfs/s3fs/fuseErr.go"
+          },
+          {
+            "old_path": "internal/backend/vfs/s3fs/fuse/server.go",
+            "new_path": "internal/server/vfs/s3fs/fuseServer.go"
+          }
+        ],
+        "symbol_renames": {
+          "fuse.Mount": "MountFuse"
+        },
+        "notes": "fuse.Mount→s3fs.MountFuse to avoid collision with s3mount.Mount which also merges into s3fs. Node and FileHandle types from fuse have no collision with s3fs exports."
+      },
+      {
+        "old_package": "internal/backend/vfs/s3fs/s3mount",
+        "old_package_name": "s3mount",
+        "new_package": "internal/server/vfs/s3fs",
+        "new_package_name": "s3fs",
+        "files": [
+          {
+            "old_path": "internal/backend/vfs/s3fs/s3mount/mount.go",
+            "new_path": "internal/server/vfs/s3fs/s3mount.go"
+          }
+        ],
+        "symbol_renames": {
+          "s3mount.Mount": "MountS3"
+        },
+        "notes": "s3mount.Mount→s3fs.MountS3 to avoid collision with fuse.Mount→MountFuse."
+      },
+      {
+        "old_package": "internal/backend/vfs/s3fs/s3url",
+        "old_package_name": "s3url",
+        "new_package": "internal/server/vfs/s3fs",
+        "new_package_name": "s3fs",
+        "files": [
+          {
+            "old_path": "internal/backend/vfs/s3fs/s3url/url.go",
+            "new_path": "internal/server/vfs/s3fs/s3url.go"
+          }
+        ],
+        "symbol_renames": {
+          "s3url.Parse": "ParseS3Url"
+        },
+        "notes": "s3url.Parse→s3fs.ParseS3Url to avoid collision with generic name. S3Url struct becomes s3fs.S3Url."
+      }
+    ]
+  },
+
+  "keep_in_place": {
+    "description": "Packages that stay at their current location unchanged (only snake_case filenames renamed per shared_package_renames above)",
+    "packages": [
+      "internal/agent",
+      "internal/agent/agentfs",
+      "internal/agent/agentfs/types",
+      "internal/agent/cli",
+      "internal/agent/lifecycle",
+      "internal/agent/migration",
+      "internal/agent/registry",
+      "internal/agent/snapshots",
+      "internal/agent/sync",
+      "internal/agent/updater",
+      "internal/arpc",
+      "internal/calendar",
+      "internal/conf",
+      "internal/mtls",
+      "internal/operator",
+      "internal/pxar",
+      "internal/safemap",
+      "internal/syslog",
+      "internal/validate"
+    ]
+  },
+
+  "delete_directories": {
+    "description": "Old directories to remove after all files have been moved out",
+    "directories": [
+      "internal/application",
+      "internal/backend",
+      "internal/tasks",
+      "internal/web",
+      "internal/store"
+    ]
+  },
+
+  "final_directory_structure": {
+    "internal/agent/": "bootstrap.go, drives_unix.go, drives_windows.go, hostname.go, http.go, restoreManager.go, restoreManager_unix.go, restoreManager_windows.go, statusManager.go, statusManager_unix.go, statusManager_windows.go, systrayComm.go, tlsConfig.go, uri.go, wakelock_unix.go, wakelock_windows.go",
+    "internal/agent/agentfs/": "aclsNoattr_freebsd.go, aclsNoattr_unix.go, acls_unix.go, acls_windows.go, acls_windows_test.go, agentfs_test.go, constants.go, idgen.go, pathjoin.go, readdir.go, readdir_linux.go, readdir_test.go, readdir_unix.go, readdir_windows.go, server.go, server_unix.go, server_windows.go, statfs_linux.go, statfs_unix.go, syscallsNt_windows.go, syscalls_unix.go, syscalls_windows.go, syscall_unix.go, syscall_windows.go, typesLocal.go",
+    "internal/agent/agentfs/types/": "types.go, types_windows.go (no changes)",
+    "internal/agent/cli/": "backup.go, entry.go, exec_unix.go, exec_windows.go, restore.go (no changes)",
+    "internal/agent/lifecycle/": "manager.go, service.go (no changes)",
+    "internal/agent/migration/": "migration.go, migration_test.go (no changes)",
+    "internal/agent/registry/": "paths.go, registry_unix.go, registry_windows.go (no changes)",
+    "internal/agent/snapshots/": "btrfs.go, detect.go, ext4_xfs.go, lvm.go, manager.go, ntfs_unix.go, ntfs_windows.go, snapshot.go, zfs.go (no changes)",
+    "internal/agent/sync/": "backup.go, restore.go, volumeStatus.go, volumeStatus_unix.go, volumeStatus_windows.go, wire.go",
+    "internal/agent/updater/": "cleanupGeneric.go, cleanup_linux.go, cleanup_windows.go, restart_unix.go, restart_windows.go, updater.go",
+    "internal/arpc/": "agentsManager.go, arpc_test.go, binaryStream.go, call.go, errors.go, frames.go, listener.go, pipe.go, router.go, stream.go",
+    "internal/calendar/": "calendar.go, calendar_test.go (no changes)",
+    "internal/conf/": "buffer.go, config.go, config_test.go, constantsAgent.go, constants.go, defaultExclusions.go, version.go",
+    "internal/mtls/": "certManager.go, errors.go, mtls.go, mtls_test.go, tokens.go",
+    "internal/operator/": "operator.go, podManager.go, snapshotManager.go",
+    "internal/pxar/": "client.go, entryInfo.go, format.go, formatNonlinux.go, fscapBsd.go, fscap_linux.go, fscap_unix.go, fscap_windows.go, reader.go, remote.go, restore.go, restore_unix.go, restore_windows.go, types.go, zip.go",
+    "internal/safemap/": "safemap.go (no changes)",
+    "internal/syslog/": "logger.go, logger_unix.go, logger_windows.go, pbsLogger_unix.go, types.go, writer_unix.go, writer_windows.go",
+    "internal/validate/": "validate.go (no changes)",
+    "internal/server/": "bootstrap.go, encodePath.go, filetree.go, memlimit.go, resilience.go, resilience_test.go, shared.go, systemdMount.go",
+    "internal/server/jobs/": "env.go, manager.go, shell.go, status.go",
+    "internal/server/jobs/backup/": "clientLogging.go, command.go, errors.go, fixDatastore.go, job.go, logCleanup.go, pbsLogging.go, status.go, taskPath.go",
+    "internal/server/jobs/restore/": "errors.go, format.go, job.go, status.go",
+    "internal/server/jobs/scheduler/": "scheduler.go, scheduler_test.go",
+    "internal/server/mount/": "agent.go, s3.go",
+    "internal/server/rpc/": "mount.go, jobService.go",
+    "internal/server/vfs/": "vfs.go, memlocal.go, pool.go",
+    "internal/server/vfs/arpcfs/": "dir.go, file.go, fs.go, types.go, arpcfuse.go, arpcmount.go",
+    "internal/server/vfs/s3fs/": "dir.go, file.go, fs.go, types.go, fuseErr.go, fuseServer.go, s3mount.go, s3url.go",
+    "internal/server/vfs/sessions/": "sessions.go",
+    "internal/server/web/": "auth.go, isLocalhost.go, jsCompiler.go, middleware.go, middleware_test.go, serve.go, server.go, token.go",
+    "internal/server/web/api/": "agentHostHandlers.go, agents.go, backupHandlers.go, digest.go, error.go, error_test.go, exclusions.go, filetree.go, isMounted.go, metrics.go, mountHandlers.go, plus.go, restoreHandlers.go, scripts.go, targets.go, tokens.go, types.go, install-agent.ps1",
+    "internal/server/web/views/": "(JS template directory, moved as-is)",
+    "internal/server/store/": "store.go, db_test.go",
+    "internal/server/database/": "agentHost.go, backups.go, convert.go, errors.go, exclusions.go, jobSchedule.go, migrate.go, proxyCert.go, restores.go, scripts.go, secretsBox.go, sqlite.go, targets.go, tokens.go, types.go",
+    "internal/server/database/sqlc/": "(generated files, moved as-is)",
+    "internal/server/database/migrations/": "(SQL migration files, moved as-is)",
+    "internal/server/database/queries/": "(SQL query files, moved as-is)",
+    "internal/server/proxmox/": "cert.go, datastore.go, refreshToken.go, tasks.go, types.go, upid.go",
+    "internal/server/tasks/": "base.go, backup.go, queued.go, restore.go",
+    "internal/server/application/": "repository.go, services.go, service_test.go"
+  },
+
+  "import_path_changes": {
+    "description": "All module import paths that change. Every .go file importing these must be updated.",
+    "mapping": {
+      "github.com/pbs-plus/pbs-plus/internal/backend": "github.com/pbs-plus/pbs-plus/internal/server",
+      "github.com/pbs-plus/pbs-plus/internal/backend/jobs": "github.com/pbs-plus/pbs-plus/internal/server/jobs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/jobs/backup": "github.com/pbs-plus/pbs-plus/internal/server/jobs/backup",
+      "github.com/pbs-plus/pbs-plus/internal/backend/jobs/restore": "github.com/pbs-plus/pbs-plus/internal/server/jobs/restore",
+      "github.com/pbs-plus/pbs-plus/internal/backend/jobs/scheduler": "github.com/pbs-plus/pbs-plus/internal/server/jobs/scheduler",
+      "github.com/pbs-plus/pbs-plus/internal/backend/mount": "github.com/pbs-plus/pbs-plus/internal/server/mount",
+      "github.com/pbs-plus/pbs-plus/internal/backend/rpc": "github.com/pbs-plus/pbs-plus/internal/server/rpc",
+      "github.com/pbs-plus/pbs-plus/internal/backend/rpc/job": "github.com/pbs-plus/pbs-plus/internal/server/rpc",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs": "github.com/pbs-plus/pbs-plus/internal/server/vfs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs": "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs/arpcfuse": "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/arpcfs/arpcmount": "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs": "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs/fuse": "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs/s3mount": "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/s3fs/s3url": "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs",
+      "github.com/pbs-plus/pbs-plus/internal/backend/vfs/sessions": "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions",
+      "github.com/pbs-plus/pbs-plus/internal/web": "github.com/pbs-plus/pbs-plus/internal/server/web",
+      "github.com/pbs-plus/pbs-plus/internal/web/api": "github.com/pbs-plus/pbs-plus/internal/server/web/api",
+      "github.com/pbs-plus/pbs-plus/internal/store": "github.com/pbs-plus/pbs-plus/internal/server/store",
+      "github.com/pbs-plus/pbs-plus/internal/store/database": "github.com/pbs-plus/pbs-plus/internal/server/database",
+      "github.com/pbs-plus/pbs-plus/internal/store/database/sqlc": "github.com/pbs-plus/pbs-plus/internal/server/database/sqlc",
+      "github.com/pbs-plus/pbs-plus/internal/store/proxmox": "github.com/pbs-plus/pbs-plus/internal/server/proxmox",
+      "github.com/pbs-plus/pbs-plus/internal/tasks": "github.com/pbs-plus/pbs-plus/internal/server/tasks",
+      "github.com/pbs-plus/pbs-plus/internal/application": "github.com/pbs-plus/pbs-plus/internal/server/application"
+    }
+  },
+
+  "snake_case_renames_summary": {
+    "description": "Complete list of all snake_case filename renames (MixedCaps conversion). Build-constraint suffixes (_linux, _windows, _unix, _freebsd, _bsd) are preserved; only the descriptive base name is converted.",
+    "server_moves": [
+      "backend/encode_path.go → server/encodePath.go",
+      "backend/systemd_mount.go → server/systemdMount.go",
+      "backend/jobs/backup/client_logging.go → server/jobs/backup/clientLogging.go",
+      "backend/jobs/backup/fix_datastore.go → server/jobs/backup/fixDatastore.go",
+      "backend/jobs/backup/logcleanup.go → server/jobs/backup/logCleanup.go",
+      "backend/jobs/backup/pbs_logging.go → server/jobs/backup/pbsLogging.go",
+      "backend/jobs/backup/task_path.go → server/jobs/backup/taskPath.go",
+      "web/is_localhost.go → server/web/isLocalhost.go",
+      "web/js_compiler.go → server/web/jsCompiler.go",
+      "web/api/agent_host_handlers.go → server/web/api/agentHostHandlers.go",
+      "web/api/backup_handlers.go → server/web/api/backupHandlers.go",
+      "web/api/is_mounted.go → server/web/api/isMounted.go",
+      "web/api/mount_handlers.go → server/web/api/mountHandlers.go",
+      "web/api/restore_handlers.go → server/web/api/restoreHandlers.go",
+      "store/database/agent_host.go → server/database/agentHost.go",
+      "store/database/job_schedule.go → server/database/jobSchedule.go",
+      "store/database/proxy_cert.go → server/database/proxyCert.go",
+      "store/database/secrets_box.go → server/database/secretsBox.go",
+      "store/proxmox/refresh_token.go → server/proxmox/refreshToken.go"
+    ],
+    "agent_only": [
+      "agent/restore_manager.go → agent/restoreManager.go",
+      "agent/restore_manager_unix.go → agent/restoreManager_unix.go",
+      "agent/restore_manager_windows.go → agent/restoreManager_windows.go",
+      "agent/status_manager.go → agent/statusManager.go",
+      "agent/status_manager_unix.go → agent/statusManager_unix.go",
+      "agent/status_manager_windows.go → agent/statusManager_windows.go",
+      "agent/systray_comm.go → agent/systrayComm.go",
+      "agent/tls_config.go → agent/tlsConfig.go",
+      "agent/agentfs/acls_noattr_freebsd.go → agent/agentfs/aclsNoattr_freebsd.go",
+      "agent/agentfs/acls_noattr_unix.go → agent/agentfs/aclsNoattr_unix.go",
+      "agent/agentfs/syscalls_nt_windows.go → agent/agentfs/syscallsNt_windows.go",
+      "agent/agentfs/types_local.go → agent/agentfs/typesLocal.go",
+      "agent/sync/volume_status.go → agent/sync/volumeStatus.go",
+      "agent/sync/volume_status_unix.go → agent/sync/volumeStatus_unix.go",
+      "agent/sync/volume_status_windows.go → agent/sync/volumeStatus_windows.go",
+      "agent/updater/cleanup_generic.go → agent/updater/cleanupGeneric.go"
+    ],
+    "shared_packages": [
+      "arpc/agents_manager.go → arpc/agentsManager.go",
+      "arpc/binary_stream.go → arpc/binaryStream.go",
+      "mtls/cert_manager.go → mtls/certManager.go",
+      "conf/constants_agent.go → conf/constantsAgent.go",
+      "conf/default_exclusions.go → conf/defaultExclusions.go",
+      "pxar/entry_info.go → pxar/entryInfo.go",
+      "pxar/format_nonlinux.go → pxar/formatNonlinux.go",
+      "pxar/fscap_bsd.go → pxar/fscapBsd.go",
+      "syslog/pbs_logger_unix.go → syslog/pbsLogger_unix.go",
+      "operator/pod_manager.go → operator/podManager.go",
+      "operator/snapshot_manager.go → operator/snapshotManager.go"
+    ]
+  },
+
+  "depth_compliance": {
+    "description": "Verification that all packages are within 3 directory levels from internal/ root",
+    "level_1": [
+      "internal/agent",
+      "internal/arpc",
+      "internal/calendar",
+      "internal/conf",
+      "internal/mtls",
+      "internal/operator",
+      "internal/pxar",
+      "internal/safemap",
+      "internal/syslog",
+      "internal/validate",
+      "internal/server"
+    ],
+    "level_2": [
+      "internal/agent/agentfs",
+      "internal/agent/cli",
+      "internal/agent/lifecycle",
+      "internal/agent/migration",
+      "internal/agent/registry",
+      "internal/agent/snapshots",
+      "internal/agent/sync",
+      "internal/agent/updater",
+      "internal/server/jobs",
+      "internal/server/mount",
+      "internal/server/rpc",
+      "internal/server/vfs",
+      "internal/server/web",
+      "internal/server/store",
+      "internal/server/database",
+      "internal/server/proxmox",
+      "internal/server/tasks",
+      "internal/server/application"
+    ],
+    "level_3": [
+      "internal/agent/agentfs/types",
+      "internal/server/jobs/backup",
+      "internal/server/jobs/restore",
+      "internal/server/jobs/scheduler",
+      "internal/server/vfs/arpcfs",
+      "internal/server/vfs/s3fs",
+      "internal/server/vfs/sessions",
+      "internal/server/web/api",
+      "internal/server/database/sqlc"
+    ],
+    "over_3_deleted": [
+      "internal/backend/vfs/arpcfs/arpcfuse (4 levels) → merged into arpcfs)",
+      "internal/backend/vfs/arpcfs/arpcmount (4 levels) → merged into arpcfs)",
+      "internal/backend/vfs/s3fs/fuse (4 levels) → merged into s3fs)",
+      "internal/backend/vfs/s3fs/s3mount (4 levels) → merged into s3fs)",
+      "internal/backend/vfs/s3fs/s3url (4 levels) → merged into s3fs)",
+      "internal/backend/rpc/job (4 levels) → merged into rpc)",
+      "internal/store/database/sqlc (4 levels) → now internal/server/database/sqlc (3 levels)"
+    ]
+  },
+
+  "total_file_count": {
+    "go_files_moved_with_rename": 197,
+    "go_files_renamed_in_place_agent": 17,
+    "go_files_renamed_in_place_shared": 11,
+    "non_go_files_moved": 83,
+    "package_merges": 6,
+    "import_paths_changed": 25,
+    "directories_deleted": 5
+  }
+}
