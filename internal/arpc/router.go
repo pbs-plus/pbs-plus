@@ -9,7 +9,6 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"github.com/xtaci/smux"
 )
 
 type HandlerFunc func(req *Request) (Response, error)
@@ -30,7 +29,7 @@ func (r *Router) CloseHandle(method string) {
 	r.handlers.Del(method)
 }
 
-func (r *Router) serveStream(stream *smux.Stream) {
+func (r *Router) serveStream(stream ARPCStream) {
 	dec := cbor.NewDecoder(stream)
 	enc := cbor.NewEncoder(stream)
 

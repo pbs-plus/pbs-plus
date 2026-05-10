@@ -16,12 +16,12 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -252,20 +252,31 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget.Name))
 
-	arpcSess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget.GetHostname())
-	if !exists {
+	qSess, qExists := b.storeInstance.ARPCAgentsManager.GetQuicPipe(b.job.DestTarget.GetHostname())
+	tSess, tExists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget.GetHostname())
+	if !qExists && !tExists {
 		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	respMsg, err := arpcSess.CallMessage(
-		timeoutCtx,
-		"target_status",
-		&types.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
-	)
-	if err != nil || !strings.HasPrefix(respMsg, "reachable") {
+	var respMsg string
+	var statusErr error
+	if qExists {
+		respMsg, statusErr = qSess.CallMessage(
+			timeoutCtx,
+			"target_status",
+			&types.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+		)
+	} else {
+		respMsg, statusErr = tSess.CallMessage(
+			timeoutCtx,
+			"target_status",
+			&types.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+		)
+	}
+	if statusErr != nil || !strings.HasPrefix(respMsg, "reachable") {
 		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
@@ -306,9 +317,14 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 
 	b.task.WriteString(fmt.Sprintf("calling restore to %s (%s)", b.job.DestTarget.Name, destPath))
 
-	_, err = arpcSess.CallMessage(preCtx, "restore", &restoreReq)
-	if err != nil {
-		return err
+	var restoreErr error
+	if qExists {
+		_, restoreErr = qSess.CallMessage(preCtx, "restore", &restoreReq)
+	} else {
+		_, restoreErr = tSess.CallMessage(preCtx, "restore", &restoreReq)
+	}
+	if restoreErr != nil {
+		return restoreErr
 	}
 
 	childKey := b.job.GetStreamID()

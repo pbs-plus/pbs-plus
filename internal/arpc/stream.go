@@ -4,11 +4,21 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/xtaci/smux"
 )
+
+// ARPCStream abstracts a bidirectional byte stream. Backed by smux.Stream
+// (TCP data plane) or quic.Stream (QUIC control plane).
+type ARPCStream interface {
+	io.Reader
+	io.Writer
+	io.Closer
+	SetDeadline(time.Time) error
+}
 
 func writeErrorResponse(stream io.Writer, status int, err error) {
 	serErr := WrapError(err)

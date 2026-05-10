@@ -442,19 +442,30 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 
 	switch job.Target.Type {
 	case database.TargetTypeAgent:
-		sess, exists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(job.Target.GetHostname())
-		if !exists {
+		qSess, qExists := b.storeInstance.ARPCAgentsManager.GetQuicPipe(job.Target.GetHostname())
+		tSess, tExists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(job.Target.GetHostname())
+		if !qExists && !tExists {
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target.Name)
 		}
 
 		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		respMsg, err := sess.CallMessage(
-			timeoutCtx,
-			"target_status",
-			&types.TargetStatusReq{Drive: job.Target.VolumeID},
-		)
+		var respMsg string
+		var err error
+		if qExists {
+			respMsg, err = qSess.CallMessage(
+				timeoutCtx,
+				"target_status",
+				&types.TargetStatusReq{Drive: job.Target.VolumeID},
+			)
+		} else {
+			respMsg, err = tSess.CallMessage(
+				timeoutCtx,
+				"target_status",
+				&types.TargetStatusReq{Drive: job.Target.VolumeID},
+			)
+		}
 		if err != nil || !isReachable(respMsg) {
 			return fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target.Name)
 		}

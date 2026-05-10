@@ -14,6 +14,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/quic-go/quic-go"
 	"github.com/xtaci/smux"
 	"golang.org/x/time/rate"
 )
@@ -21,6 +22,7 @@ import (
 type AgentsManager struct {
 	expectedList *safemap.Map[string, struct{}]
 	sessions     *safemap.Map[string, *StreamPipe]
+	quicSessions *safemap.Map[string, *QuicPipe]
 	rateLimiters *safemap.Map[string, *rate.Limiter]
 
 	mu                sync.Mutex
@@ -31,6 +33,7 @@ func NewAgentsManager() *AgentsManager {
 	return &AgentsManager{
 		expectedList: safemap.New[string, struct{}](),
 		sessions:     safemap.New[string, *StreamPipe](),
+		quicSessions: safemap.New[string, *QuicPipe](),
 		rateLimiters: safemap.New[string, *rate.Limiter](),
 	}
 }
@@ -208,4 +211,98 @@ func (sm *AgentsManager) unregisterStreamPipe(clientID string) {
 		syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", clientID).Write()
 	}
 	sm.rateLimiters.Del(clientID)
+}
+
+func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, tlsState *tls.ConnectionState, headers http.Header) (string, error) {
+	if err := sm.validateTLSState(tlsState); err != nil {
+		return "", err
+	}
+
+	state := *tlsState
+	clientID := sm.getClientId(state, headers)
+
+	if err := sm.checkRateLimit(clientID); err != nil {
+		return "", err
+	}
+
+	if existingSession, exists := sm.sessions.Get(clientID); exists {
+		existingSession.Close()
+	}
+
+	if !sm.isExpected(clientID, state.PeerCertificates) {
+		return "", errors.New("connection is not expected by server")
+	}
+
+	qPipe := NewQuicServerPipe(ctx, conn)
+
+	router := NewRouter()
+	router.Handle("echo", func(req *Request) (Response, error) {
+		var msg string
+		if err := cbor.Unmarshal(req.Payload, &msg); err != nil {
+			return Response{}, WrapError(err)
+		}
+		data, err := cbor.Marshal(msg)
+		if err != nil {
+			return Response{}, WrapError(err)
+		}
+		return Response{Status: 200, Data: data}, nil
+	})
+	qPipe.SetRouter(router)
+
+	sm.quicSessions.Set(clientID, qPipe)
+
+	syslog.L.Info().WithMessage("agent connected via QUIC").WithField("hostname", clientID).Write()
+
+	return clientID, nil
+}
+
+func (sm *AgentsManager) GetQuicPipe(clientID string) (*QuicPipe, bool) {
+	return sm.quicSessions.Get(clientID)
+}
+
+func (sm *AgentsManager) WaitQuicPipe(ctx context.Context, clientID string) (*QuicPipe, error) {
+	if pipe, ok := sm.quicSessions.Get(clientID); ok {
+		return pipe, nil
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if pipe, ok := sm.quicSessions.Get(clientID); ok {
+				return pipe, nil
+			}
+		}
+	}
+}
+
+func (sm *AgentsManager) unregisterQuicPipe(clientID string) {
+	_, exists := sm.quicSessions.GetAndDel(clientID)
+	if exists {
+		syslog.L.Info().WithMessage("agent QUIC disconnected").WithField("hostname", clientID).Write()
+	}
+	sm.rateLimiters.Del(clientID)
+}
+
+func (sm *AgentsManager) validateTLSState(state *tls.ConnectionState) error {
+	if state == nil {
+		return errors.New("nil TLS state")
+	}
+	if len(state.PeerCertificates) == 0 {
+		return errors.New("no client certificate provided")
+	}
+
+	cert := state.PeerCertificates[0]
+	now := time.Now()
+	if now.Before(cert.NotBefore) || now.After(cert.NotAfter) {
+		return fmt.Errorf("certificate expired or not yet valid")
+	}
+	if len(state.VerifiedChains) == 0 {
+		return errors.New("certificate chain verification failed")
+	}
+	return nil
 }
