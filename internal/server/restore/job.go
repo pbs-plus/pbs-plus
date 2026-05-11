@@ -42,12 +42,13 @@ type restoreJob struct {
 	receivedDone atomic.Bool
 	disconnected chan struct{}
 
-	job           database.Restore
-	remoteServer  *pxar.RemoteServer
-	localClient   *pxar.Client
-	storeInstance *store.Store
-	skipCheck     bool
-	web           bool
+	job                 database.Restore
+	remoteServer        *pxar.RemoteServer
+	localClient         *pxar.Client
+	storeInstance       *store.Store
+	skipCheck           bool
+	web                 bool
+	disablePayloadCache bool
 }
 
 // NewRestoreJob creates a new restore job.
@@ -63,13 +64,14 @@ func NewRestoreJob(
 	}
 
 	j := &restoreJob{
-		job:           job,
-		storeInstance: storeInstance,
-		skipCheck:     skipCheck,
-		web:           web,
-		waitGroup:     &sync.WaitGroup{},
-		task:          task,
-		disconnected:  make(chan struct{}, 1),
+		job:                 job,
+		storeInstance:       storeInstance,
+		skipCheck:           skipCheck,
+		web:                 web,
+		waitGroup:           &sync.WaitGroup{},
+		task:                task,
+		disconnected:        make(chan struct{}, 1),
+		disablePayloadCache: true,
 	}
 
 	return &jobs.Job{
@@ -360,6 +362,10 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		return err
 	}
 
+	if b.disablePayloadCache {
+		reader.DisablePayloadCache()
+	}
+
 	b.task.WriteString(fmt.Sprintf(
 		"running remote pxar reader [datastore: %s, namespace: %s, snapshot: %s]",
 		b.job.Store, b.job.Namespace, b.job.Snapshot,
@@ -432,6 +438,10 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 	)
 	if err != nil {
 		return err
+	}
+
+	if b.disablePayloadCache {
+		reader.DisablePayloadCache()
 	}
 
 	b.localClient, b.errCh = pxar.NewLocalClient(reader, b.job.ID)

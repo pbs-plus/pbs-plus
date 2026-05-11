@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
@@ -49,7 +50,7 @@ type PxarReader struct {
 	TotalBytes  *xsync.Counter
 
 	task   TaskWriter
-	closed bool
+	closed atomic.Bool
 }
 
 // PxarReaderStats holds read performance statistics.
@@ -173,14 +174,22 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 
 // Close releases all resources held by the reader.
 func (r *PxarReader) Close() error {
-	if r.closed {
+	if !r.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	r.closed = true
 	if r.reader != nil {
 		return r.reader.Close()
 	}
 	return nil
+}
+
+// DisablePayloadCache disables chunk caching for the payload stream.
+// Content chunks are decoded on demand and immediately discarded,
+// keeping memory bounded during streaming restores.
+func (r *PxarReader) DisablePayloadCache() {
+	if r.reader != nil {
+		r.reader.DisablePayloadCache()
+	}
 }
 
 // cacheEntry stores an entry in the lookup cache.

@@ -19,6 +19,15 @@ const (
 	RestoreModeNoAttr
 )
 
+// copyBufPool reuses 256KB buffers across sequential restoreFile calls,
+// avoiding per-file heap allocations.
+var copyBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 256*1024)
+		return &buf
+	},
+}
+
 type RestoreOptions struct {
 	Mode    RestoreMode
 	DestDir string
@@ -162,9 +171,9 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 			} else {
 				defer rc.Close()
 
-				const bufSize = 256 * 1024
-				buf := make([]byte, bufSize)
-				if _, err := io.CopyBuffer(f, rc, buf); err != nil {
+				bufPtr := copyBufPool.Get().(*[]byte)
+				defer copyBufPool.Put(bufPtr)
+				if _, err := io.CopyBuffer(f, rc, *bufPtr); err != nil {
 					return fmt.Errorf("copy data %q: %w", path, err)
 				}
 			}
