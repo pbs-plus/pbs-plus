@@ -3,27 +3,21 @@
 package pxar
 
 import (
-	"bufio"
 	"context"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
-	"math"
-	"net"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
-	"syscall"
+	"sync"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/accessor"
+	"github.com/pbs-plus/pxar/datastore"
+	"github.com/pbs-plus/pxar/transfer"
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
@@ -32,28 +26,26 @@ type TaskWriter interface {
 	WriteString(string)
 }
 
+// PxarReader provides random access to a pxar archive backed by a PBS datastore
+// using the Go pxar library (datastore + accessor + transfer).
 type PxarReader struct {
-	connPool   chan net.Conn
-	poolSize   int
-	socketPath string
-	enc        cbor.EncMode
-	dec        cbor.DecMode
-	cmd        *exec.Cmd
-	task       TaskWriter
-	loggerCh   chan string
-	closed     atomic.Bool
+	reader *transfer.SplitArchiveReader
+
+	// entryCache maps entry file offsets to pxar.Entry for quick attribute lookback.
+	entryCache    map[uint64]*pxar.Entry
+	contentCache  map[uint64]*pxar.Entry // maps ContentOffset -> Entry for Read
+	rangeToOffset map[uint64]uint64      // maps EntryRangeEnd -> ContentOffset for ReadDir
+	cacheMu       sync.RWMutex
 
 	FileCount   *xsync.Counter
 	FolderCount *xsync.Counter
 	TotalBytes  *xsync.Counter
 
-	lastAccessTime  int64
-	lastBytesTime   int64
-	lastFileCount   int64
-	lastFolderCount int64
-	lastTotalBytes  int64
+	task   TaskWriter
+	closed bool
 }
 
+// PxarReaderStats holds read performance statistics.
 type PxarReaderStats struct {
 	ByteReadSpeed   float64
 	FileAccessSpeed float64
@@ -64,45 +56,18 @@ type PxarReaderStats struct {
 	StatCacheHits   int64
 }
 
+// GetStats returns the current reader statistics.
 func (r *PxarReader) GetStats() PxarReaderStats {
-	currentTime := time.Now().UnixNano()
-
-	currentFileCount := r.FileCount.Value()
-	currentFolderCount := r.FolderCount.Value()
-	totalAccessed := currentFileCount + currentFolderCount
-
-	elapsed := float64(currentTime-r.lastAccessTime) / 1e9
-	var accessSpeed float64
-	if elapsed > 0 && r.lastAccessTime > 0 {
-		accessDelta := (currentFileCount + currentFolderCount) - (r.lastFileCount + r.lastFolderCount)
-		accessSpeed = float64(accessDelta) / elapsed
-	}
-
-	r.lastAccessTime = currentTime
-	r.lastFileCount = currentFileCount
-	r.lastFolderCount = currentFolderCount
-
-	currentTotalBytes := r.TotalBytes.Value()
-	secDiff := float64(currentTime-r.lastBytesTime) / 1e9
-	var bytesSpeed float64
-	if secDiff > 0 && r.lastBytesTime > 0 {
-		bytesSpeed = float64(currentTotalBytes-r.lastTotalBytes) / secDiff
-	}
-
-	r.lastBytesTime = currentTime
-	r.lastTotalBytes = currentTotalBytes
-
 	return PxarReaderStats{
-		FilesAccessed:   currentFileCount,
-		FoldersAccessed: currentFolderCount,
-		TotalAccessed:   totalAccessed,
-		FileAccessSpeed: accessSpeed,
-		TotalBytes:      uint64(currentTotalBytes),
-		ByteReadSpeed:   bytesSpeed,
+		FilesAccessed:   r.FileCount.Value(),
+		FoldersAccessed: r.FolderCount.Value(),
+		TotalAccessed:   r.FileCount.Value() + r.FolderCount.Value(),
+		TotalBytes:      uint64(r.TotalBytes.Value()),
 	}
 }
 
-func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapshot string, task TaskWriter) (*PxarReader, error) {
+// NewPxarReader creates a PxarReader for the given snapshot using the Go pxar library.
+func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, task TaskWriter) (*PxarReader, error) {
 	dsInfo, err := proxmox.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
@@ -114,7 +79,7 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 	}
 
 	backupType := snapSplit[0]
-	snapshotId := snapSplit[1]
+	snapshotID := snapSplit[1]
 	timestampRaw := snapSplit[2]
 
 	unixTime, err := strconv.ParseInt(timestampRaw, 10, 64)
@@ -129,7 +94,7 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 		dsInfo.Path,
 		namespace,
 		backupType,
-		snapshotId,
+		snapshotID,
 		snapshotTime,
 		"",
 	)
@@ -137,527 +102,342 @@ func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapsho
 		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
 	}
 
-	if !isSplit {
-		return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
-	}
-
-	cmd, err := runSocket(ctx, socketPath, dsInfo.Path, mpxarPath, ppxarPath, "")
+	// Open the chunk store
+	store, err := datastore.NewChunkStore(dsInfo.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serve socket: %w", err)
+		return nil, fmt.Errorf("failed to open chunk store: %w", err)
 	}
 
-	exp := time.NewTimer(5 * time.Second)
-	interval := time.NewTicker(500 * time.Millisecond)
-	defer interval.Stop()
+	chunkSource := datastore.NewChunkStoreSource(store)
 
-	var testConn net.Conn
-	for {
-		select {
-		case <-exp.C:
-			return nil, fmt.Errorf("failed to connect to socket: timeout")
-		case <-interval.C:
-		}
-		testConn, err = net.Dial("unix", socketPath)
-		if err == nil && testConn != nil {
-			testConn.Close()
-			break
-		}
-	}
+	var archiveReader *transfer.SplitArchiveReader
 
-	encMode, err := cbor.EncOptions{}.EncMode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CBOR encoder: %w", err)
-	}
-
-	decMode, err := cbor.DecOptions{
-		MaxArrayElements: math.MaxInt32,
-	}.DecMode()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CBOR decoder: %w", err)
-	}
-
-	loggerCh := make(chan string, 100)
-
-	poolSize := min(max(runtime.NumCPU()*2, 4),
-		// Cap at reasonable limit
-		16)
-
-	reader := &PxarReader{
-		connPool:    make(chan net.Conn, poolSize),
-		poolSize:    poolSize,
-		socketPath:  socketPath,
-		enc:         encMode,
-		dec:         decMode,
-		cmd:         cmd,
-		task:        task,
-		loggerCh:    loggerCh,
-		FileCount:   xsync.NewCounter(),
-		FolderCount: xsync.NewCounter(),
-		TotalBytes:  xsync.NewCounter(),
-	}
-
-	for i := range poolSize {
-		conn, err := net.Dial("unix", socketPath)
+	if isSplit {
+		metaData, err := os.ReadFile(mpxarPath)
 		if err != nil {
-			reader.Close()
-			return nil, fmt.Errorf("failed to create connection %d: %w", i, err)
+			return nil, fmt.Errorf("failed to read metadata index %s: %w", mpxarPath, err)
 		}
-		reader.connPool <- conn
+		payloadData, err := os.ReadFile(ppxarPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read payload index %s: %w", ppxarPath, err)
+		}
+
+		archiveReader, err = transfer.NewSplitArchiveReader(metaData, payloadData, chunkSource)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create split archive reader: %w", err)
+		}
+
+		pr := &PxarReader{
+			reader:        archiveReader,
+			entryCache:    make(map[uint64]*pxar.Entry),
+			contentCache:  make(map[uint64]*pxar.Entry),
+			rangeToOffset: make(map[uint64]uint64),
+			FileCount:     xsync.NewCounter(),
+			FolderCount:   xsync.NewCounter(),
+			TotalBytes:    xsync.NewCounter(),
+			task:          task,
+		}
+
+		syslog.L.Info().
+			WithMessage("pxar: native Go reader created").
+			WithField("datastore", pbsStore).
+			WithField("split", true).
+			Write()
+
+		return pr, nil
 	}
 
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case log, ok := <-loggerCh:
-				if !ok {
-					return
-				}
-				task.WriteString(log)
-			}
-		}
-	}()
+	// Non-split (.pxar.didx) — read as a chunked archive
+	idxData, err := os.ReadFile(mpxarPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read index %s: %w", mpxarPath, err)
+	}
 
-	return reader, nil
+	if _, err := datastore.ReadDynamicIndex(idxData); err != nil {
+		return nil, fmt.Errorf("failed to parse index: %w", err)
+	}
+
+	if _, err := transfer.NewChunkedArchiveReader(idxData, chunkSource); err != nil {
+		return nil, fmt.Errorf("failed to create chunked archive reader: %w", err)
+	}
+
+	return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
 }
 
-func runSocket(ctx context.Context, socketPath, pbsStore, mpxarPath, ppxarPath, keyFile string) (*exec.Cmd, error) {
-	socketDir := filepath.Dir(socketPath)
-	if err := os.MkdirAll(socketDir, 0755); err != nil {
-		syslog.L.Error(err).WithMessage("pxar-socket: failed to create socket directory").Write()
-		return nil, err
-	}
-
-	args := []string{
-		"--socket", socketPath,
-		"--pbs-store", pbsStore,
-		"--mpxar-didx", mpxarPath,
-		"--ppxar-didx", ppxarPath,
-	}
-
-	if keyFile != "" {
-		args = append(args, "--keyfile", keyFile)
-	}
-
-	cmd := exec.CommandContext(ctx, "/usr/bin/pxar-socket-api", args...)
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("pxar-socket: StdoutPipe failed").Write()
-		return nil, err
-	}
-
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		syslog.L.Error(err).WithMessage("pxar-socket: StderrPipe failed").Write()
-		return nil, err
-	}
-
-	errScanner := bufio.NewScanner(stderrPipe)
-	scanner := bufio.NewScanner(stdoutPipe)
-
-	go func() {
-		for scanner.Scan() {
-			syslog.L.Info().
-				WithMessage(scanner.Text()).Write()
-		}
-		if err := scanner.Err(); err != nil {
-			syslog.L.Warn().WithMessage("pxar-socket: stdout scanner error").WithField("error", err.Error()).Write()
-		}
-	}()
-
-	go func() {
-		for errScanner.Scan() {
-			syslog.L.Error(errors.New(errScanner.Text())).
-				Write()
-		}
-		if err := errScanner.Err(); err != nil {
-			syslog.L.Warn().WithMessage("pxar-socket: stderr scanner error").WithField("error", err.Error()).Write()
-		}
-	}()
-
-	if err := cmd.Start(); err != nil {
-		syslog.L.Error(err).WithMessage("pxar-socket: cmd.Start failed").Write()
-		return nil, err
-	}
-	syslog.L.Info().WithMessage("pxar-socket: child started").
-		WithField("pid", cmd.Process.Pid).
-		WithField("args", strings.Join(args, " ")).
-		Write()
-
-	return cmd, nil
-}
-
-func (c *PxarReader) Close() error {
-	if c.closed.Swap(true) {
+// Close releases all resources held by the reader.
+func (r *PxarReader) Close() error {
+	if r.closed {
 		return nil
 	}
-
-	if c.loggerCh != nil {
-		close(c.loggerCh)
-	}
-
-	close(c.connPool)
-	for conn := range c.connPool {
-		if conn != nil {
-			conn.Close()
-		}
-	}
-
-	if c.cmd != nil {
-		c.cmd.Cancel()
+	r.closed = true
+	if r.reader != nil {
+		return r.reader.Close()
 	}
 	return nil
 }
 
-func (c *PxarReader) getConn(ctx context.Context) (net.Conn, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case conn := <-c.connPool:
-		conn.SetReadDeadline(time.Now().Add(1 * time.Millisecond))
-		one := []byte{0}
-		_, err := conn.Read(one)
-		conn.SetReadDeadline(time.Time{})
-
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return conn, nil
-		}
-
-		conn.Close()
-		newConn, err := net.Dial("unix", c.socketPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to recreate connection: %w", err)
-		}
-		return newConn, nil
+// cacheEntry stores an entry in the lookup cache.
+func (r *PxarReader) cacheEntry(e *pxar.Entry) {
+	r.cacheMu.Lock()
+	r.entryCache[e.FileOffset] = e
+	if e.IsRegularFile() && e.ContentOffset > 0 {
+		r.contentCache[e.ContentOffset] = e
 	}
+	if e.IsDir() && e.ContentOffset > 0 {
+		r.rangeToOffset[e.FileOffset+e.FileSize] = e.ContentOffset
+	}
+	r.cacheMu.Unlock()
 }
 
-func (c *PxarReader) putConn(conn net.Conn) {
-	if c.closed.Load() {
-		if conn != nil {
-			conn.Close()
-		}
-		return
-	}
-
-	select {
-	case c.connPool <- conn:
-		// Successfully returned to pool
-	default:
-		// Pool is full, close this connection
-		conn.Close()
-	}
+// getCachedEntry retrieves an entry from the lookup cache by offset.
+func (r *PxarReader) getCachedEntry(offset uint64) *pxar.Entry {
+	r.cacheMu.RLock()
+	e := r.entryCache[offset]
+	r.cacheMu.RUnlock()
+	return e
 }
 
-func (c *PxarReader) sendRequest(ctx context.Context, reqVariant string, reqData any) (Response, error) {
-	conn, err := c.getConn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer c.putConn(conn)
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-
-	reqMap := map[string]any{reqVariant: reqData}
-
-	reqBytes, err := c.enc.Marshal(reqMap)
-	if err != nil {
-		return nil, err
-	}
-
-	length := uint32(len(reqBytes))
-	if err := binary.Write(conn, binary.LittleEndian, length); err != nil {
-		return nil, err
-	}
-
-	if _, err := conn.Write(reqBytes); err != nil {
-		return nil, err
-	}
-
-	if deadline, ok := ctx.Deadline(); ok {
-		conn.SetReadDeadline(deadline)
-	}
-	defer conn.SetReadDeadline(time.Time{})
-
-	var respLength uint32
-	if err := binary.Read(conn, binary.LittleEndian, &respLength); err != nil {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			return nil, err
-		}
-	}
-
-	respData := make([]byte, respLength)
-	if _, err := io.ReadFull(conn, respData); err != nil {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-			return nil, err
-		}
-	}
-
-	var resp Response
-	if err := c.dec.Unmarshal(respData, &resp); err != nil {
-		return nil, err
-	}
-
-	if errData, ok := resp["Error"]; ok {
-		if errMap, ok := errData.(map[any]any); ok {
-			if errno, ok := errMap["errno"].(int64); ok {
-				return nil, syscall.Errno(errno)
-			}
-		}
-		return nil, fmt.Errorf("pxar-socket error")
-	}
-
-	return resp, nil
+// getCachedContentEntry retrieves a file entry by content offset.
+func (r *PxarReader) getCachedContentEntry(contentOffset uint64) *pxar.Entry {
+	r.cacheMu.RLock()
+	e := r.contentCache[contentOffset]
+	r.cacheMu.RUnlock()
+	return e
 }
 
-func (c *PxarReader) GetRoot(ctx context.Context) (*EntryInfo, error) {
-	c.task.WriteString("get root of source")
-
-	resp, err := c.sendRequest(ctx, "GetRoot", nil)
-	if err != nil {
-		return nil, err
+// resolveContentOffset converts a ReadDir parameter (which may be
+// ContentOffset or legacy EntryRangeEnd) to ContentOffset by checking
+// the cache.
+func (r *PxarReader) resolveContentOffset(offset uint64) uint64 {
+	r.cacheMu.RLock()
+	co, ok := r.rangeToOffset[offset]
+	r.cacheMu.RUnlock()
+	if ok {
+		return co
 	}
-
-	entryData, ok := resp["Entry"]
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
-	}
-
-	entryMap, ok := entryData.(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid entry data")
-	}
-
-	infoData, ok := entryMap["info"]
-	if !ok {
-		return nil, fmt.Errorf("missing info field")
-	}
-
-	infoBytes, err := c.enc.Marshal(infoData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to re-encode info: %w", err)
-	}
-
-	var info EntryInfo
-	if err := c.dec.Unmarshal(infoBytes, &info); err != nil {
-		return nil, fmt.Errorf("failed to decode info: %w", err)
-	}
-
-	return &info, nil
+	// Not found in cache — assume it's already a ContentOffset
+	return offset
 }
 
-func (c *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo, error) {
-	c.task.WriteString(fmt.Sprintf("looking up path: %s", path))
-
-	reqData := map[string]any{
-		"path": []byte(path),
+// GetRoot returns the root entry of the archive.
+func (r *PxarReader) GetRoot(ctx context.Context) (*EntryInfo, error) {
+	if r.task != nil {
+		r.task.WriteString("get root of source")
 	}
 
-	resp, err := c.sendRequest(ctx, "LookupByPath", reqData)
+	entry, err := r.reader.ReadRoot()
 	if err != nil {
 		return nil, err
 	}
 
-	return extractEntryInfo(c, resp)
+	r.cacheEntry(entry)
+	return entryToEntryInfo(entry), nil
 }
 
-func (c *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
-	resp, err := c.sendRequest(ctx, "ReadDir", map[string]any{"entry_end": entryEnd})
+// LookupByPath finds an entry by archive-internal path.
+func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo, error) {
+	if r.task != nil {
+		r.task.WriteString(fmt.Sprintf("looking up path: %s", path))
+	}
+
+	entry, err := r.reader.Lookup(path)
 	if err != nil {
 		return nil, err
 	}
 
-	dirData, ok := resp["DirEntries"].(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid response")
-	}
+	r.cacheEntry(entry)
+	return entryToEntryInfo(entry), nil
+}
 
-	entriesBytes, _ := c.enc.Marshal(dirData["entries"])
-	var entries []EntryInfo
-	if err := c.dec.Unmarshal(entriesBytes, &entries); err != nil {
-		return nil, err
-	}
+// ReadDir lists the entries in a directory.
+// Accepts dirOffset (ContentOffset) or legacy EntryRangeEnd —
+// resolves to ContentOffset via the content cache.
+func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]EntryInfo, error) {
+	// Try to resolve to ContentOffset: dirOffset might be EntryRangeEnd
+	// (legacy agent) or ContentOffset (new code). Look up in cache.
+	offset := r.resolveContentOffset(dirOffset)
 
-	for i := range entries {
-		if entries[i].IsDir() {
-			select {
-			case c.loggerCh <- fmt.Sprintf("restoring entries of dir: %s", entries[i].Name()):
-			default:
-			}
+	entries := make([]EntryInfo, 0, 64)
+	err := r.reader.ListDirectory(int64(offset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
+		info := entryToEntryInfo(e)
+		entries = append(entries, *info)
+		r.cacheEntry(e)
 
-			c.FolderCount.Add(1)
+		if e.IsDir() {
+			r.FolderCount.Add(1)
 		} else {
-			c.FileCount.Add(1)
+			r.FileCount.Add(1)
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return entries, nil
 }
 
-func (c *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (*EntryInfo, error) {
-	reqData := map[string]any{
-		"entry_start": entryStart,
-		"entry_end":   entryEnd,
-	}
-
-	resp, err := c.sendRequest(ctx, "GetAttr", reqData)
-	if err != nil {
-		return nil, err
-	}
-
-	entry, err := extractEntryInfo(c, resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if entry.IsDir() {
-		c.FolderCount.Add(1)
-	} else {
-		c.FileCount.Add(1)
-	}
-
-	return entry, nil
-}
-
-func (c *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
-	reqData := map[string]any{
-		"content_start": contentStart,
-		"content_end":   contentEnd,
-		"offset":        offset,
-		"size":          size,
-	}
-
-	resp, err := c.sendRequest(ctx, "Read", reqData)
-	if err != nil {
-		return nil, err
-	}
-
-	dataResp, ok := resp["Data"]
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
-	}
-
-	dataMap, ok := dataResp.(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid data response")
-	}
-
-	data, ok := dataMap["data"].([]byte)
-	if !ok {
-		return nil, fmt.Errorf("invalid data field")
-	}
-
-	c.TotalBytes.Add(int64(len(data)))
-
-	return data, nil
-}
-
-func (c *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
-	reqData := map[string]any{
-		"entry_start": entryStart,
-		"entry_end":   entryEnd,
-	}
-
-	resp, err := c.sendRequest(ctx, "ReadLink", reqData)
-	if err != nil {
-		return nil, err
-	}
-
-	symlinkResp, ok := resp["Symlink"]
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
-	}
-
-	symlinkMap, ok := symlinkResp.(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid symlink response")
-	}
-
-	target, ok := symlinkMap["target"].([]byte)
-	if !ok {
-		return nil, fmt.Errorf("invalid target field")
-	}
-
-	return target, nil
-}
-
-func (c *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
-	reqData := map[string]any{
-		"entry_start": entryStart,
-		"entry_end":   entryEnd,
-	}
-
-	resp, err := c.sendRequest(ctx, "ListXAttrs", reqData)
-	if err != nil {
-		return nil, err
-	}
-
-	xattrsResp, ok := resp["XAttrs"]
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
-	}
-
-	xattrsMap, ok := xattrsResp.(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid xattrs response")
-	}
-
-	xattrsData, ok := xattrsMap["xattrs"].([]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid xattrs field")
-	}
-
-	result := make(map[string][]byte)
-	for _, item := range xattrsData {
-		pair, ok := item.([]any)
-		if !ok || len(pair) != 2 {
-			continue
+// GetAttr returns attributes for an entry identified by its byte range.
+// entryStart is the file offset (pxar.Entry.FileOffset), entryEnd is unused.
+func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (*EntryInfo, error) {
+	// Try cache first
+	if e := r.getCachedEntry(entryStart); e != nil {
+		if e.IsDir() {
+			r.FolderCount.Add(1)
+		} else {
+			r.FileCount.Add(1)
 		}
-		name, ok1 := pair[0].([]byte)
-		value, ok2 := pair[1].([]byte)
-		if ok1 && ok2 {
-			result[string(name)] = value
+		return entryToEntryInfo(e), nil
+	}
+
+	// Read entry by archive byte offset using the accessor
+	entry, err := r.reader.ReadEntryAt(int64(entryStart))
+	if err != nil {
+		return nil, fmt.Errorf("entry at offset %d: %w", entryStart, err)
+	}
+	r.cacheEntry(entry)
+	return entryToEntryInfo(entry), nil
+}
+
+// Read reads raw file content from the archive.
+func (r *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
+	targetEntry := r.getCachedContentEntry(contentStart)
+	if targetEntry == nil {
+		return nil, fmt.Errorf("entry with content offset %d not found in cache", contentStart)
+	}
+
+	rc, err := r.reader.ReadFileContentReader(targetEntry)
+	if err != nil {
+		return nil, fmt.Errorf("open content reader: %w", err)
+	}
+	defer rc.Close()
+
+	if offset > 0 {
+		if _, err := io.CopyN(io.Discard, rc, int64(offset)); err != nil {
+			return nil, fmt.Errorf("seek to offset: %w", err)
 		}
 	}
 
-	return result, nil
+	buf := make([]byte, size)
+	n, err := io.ReadFull(rc, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return nil, fmt.Errorf("read content: %w", err)
+	}
+
+	r.TotalBytes.Add(int64(n))
+	return buf[:n], nil
 }
 
-func extractEntryInfo(c *PxarReader, resp Response) (*EntryInfo, error) {
-	entryData, ok := resp["Entry"]
-	if !ok {
-		return nil, fmt.Errorf("unexpected response type")
+// ReadFileContentReader returns a streaming reader for an entire file,
+// looked up by content offset. The caller must close the reader.
+func (r *PxarReader) ReadFileContentReader(ctx context.Context, contentStart, contentEnd uint64) (io.ReadCloser, error) {
+	targetEntry := r.getCachedContentEntry(contentStart)
+	if targetEntry == nil {
+		return nil, fmt.Errorf("entry with content offset %d not found in cache", contentStart)
+	}
+	return r.reader.ReadFileContentReader(targetEntry)
+}
+
+// ReadLink returns the target of a symlink identified by its byte range.
+func (r *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
+	// Try cache first
+	if e := r.getCachedEntry(entryStart); e != nil {
+		if e.LinkTarget != "" {
+			return []byte(e.LinkTarget), nil
+		}
 	}
 
-	entryMap, ok := entryData.(map[any]any)
-	if !ok {
-		return nil, fmt.Errorf("invalid entry data")
+	return nil, fmt.Errorf("symlink entry at offset %d not found or has no target", entryStart)
+}
+
+// ListXAttrs returns extended attributes for an entry.
+// If the cached entry was loaded with Minimal decoding, falls back to
+// ReadEntryAt for full metadata.
+func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
+	e := r.getCachedEntry(entryStart)
+	if e == nil {
+		return nil, fmt.Errorf("entry at offset %d not found", entryStart)
 	}
 
-	infoData, ok := entryMap["info"]
-	if !ok {
-		return nil, fmt.Errorf("missing info field")
+	// If the cached entry has no xattrs but might have them (loaded with Minimal),
+	// re-read the full entry.
+	if len(e.Metadata.XAttrs) == 0 && e.Metadata.FCaps == nil {
+		full, err := r.reader.ReadEntryAt(int64(entryStart))
+		if err != nil {
+			return nil, nil // entry has genuinely no xattrs
+		}
+		e = full
+		r.cacheEntry(e)
 	}
 
-	infoBytes, err := c.enc.Marshal(infoData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to re-encode info: %w", err)
+	nx := len(e.Metadata.XAttrs)
+	if nx == 0 && e.Metadata.FCaps == nil {
+		return nil, nil
+	}
+	xattrs := make(map[string][]byte, nx+1)
+	for _, xa := range e.Metadata.XAttrs {
+		xattrs[string(xa.Name())] = xa.Value()
+	}
+	if e.Metadata.FCaps != nil {
+		xattrs["security.capability"] = e.Metadata.FCaps
+	}
+	return xattrs, nil
+}
+
+// entryToEntryInfo converts a pxar.Entry to our EntryInfo format.
+// The returned EntryInfo must be copied if the caller needs to retain it
+// beyond the lifetime of the source entry.
+func entryToEntryInfo(e *pxar.Entry) *EntryInfo {
+	var ft FileType
+	switch e.Kind {
+	case pxar.KindDirectory:
+		ft = FileTypeDirectory
+	case pxar.KindSymlink:
+		ft = FileTypeSymlink
+	case pxar.KindHardlink:
+		ft = FileTypeHardlink
+	case pxar.KindDevice:
+		ft = FileTypeDevice
+	case pxar.KindFifo:
+		ft = FileTypeFifo
+	case pxar.KindSocket:
+		ft = FileTypeSocket
+	default:
+		ft = FileTypeFile
 	}
 
-	var info EntryInfo
-	if err := c.dec.Unmarshal(infoBytes, &info); err != nil {
-		return nil, fmt.Errorf("failed to decode info: %w", err)
+	var xattrs map[string][]byte
+	if nx := len(e.Metadata.XAttrs); nx > 0 || e.Metadata.FCaps != nil {
+		xattrs = make(map[string][]byte, nx+1) // +1 for fcaps
+		for _, xa := range e.Metadata.XAttrs {
+			xattrs[string(xa.Name())] = xa.Value()
+		}
+		if e.Metadata.FCaps != nil {
+			xattrs["security.capability"] = e.Metadata.FCaps
+		}
 	}
 
-	return &info, nil
+	info := &EntryInfo{
+		FileName:        []byte(e.FileName()),
+		FileType:        ft,
+		EntryRangeStart: e.FileOffset,
+		EntryRangeEnd:   e.FileOffset + e.FileSize,
+		ContentOffset:   e.ContentOffset,
+		Mode:            e.Metadata.Stat.Mode,
+		UID:             e.Metadata.Stat.UID,
+		GID:             e.Metadata.Stat.GID,
+		Size:            e.FileSize,
+		MtimeSecs:       e.Metadata.Stat.Mtime.Secs,
+		MtimeNsecs:      e.Metadata.Stat.Mtime.Nanos,
+		LinkTarget:      e.LinkTarget,
+		Xattrs:          xattrs,
+	}
+
+	if e.IsRegularFile() && e.ContentOffset > 0 {
+		info.ContentRange = []uint64{
+			e.ContentOffset,
+			e.ContentOffset + e.FileSize,
+		}
+	}
+
+	return info
 }
