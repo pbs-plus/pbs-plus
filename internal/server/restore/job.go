@@ -151,6 +151,8 @@ func (b *restoreJob) onError(err error) {
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
+
+	_ = updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance)
 }
 
 func (b *restoreJob) onSuccess() {
@@ -168,10 +170,12 @@ func (b *restoreJob) onSuccess() {
 	errCount := b.errCount.Load()
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
+		_ = updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance)
 		return
 	}
 
 	b.task.CloseOK()
+	_ = updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance)
 }
 
 func (b *restoreJob) cleanup() {
