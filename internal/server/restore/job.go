@@ -470,10 +470,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 }
 
 func (b *restoreJob) waitForCompletion(ctx context.Context) error {
-	if b.waitGroup != nil {
-		b.waitGroup.Wait()
-	}
-
+	// Wait for agent's done signal first (remote restores only)
 	if b.remoteServer != nil {
 		select {
 		case <-ctx.Done():
@@ -487,6 +484,20 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 				b.err = fmt.Errorf("lost connection to agent without receiving done signal")
 			}
 		}
+	}
+
+	// Close errCh to unblock the error-collecting goroutine.
+	// For remote restores this runs after the agent signals done;
+	// for local restores the restore goroutine may still be in
+	// progress, but waitGroup.Wait() ensures both goroutines finish.
+	if b.errCh != nil {
+		if !b.errChClosed.Swap(true) {
+			close(b.errCh)
+		}
+	}
+
+	if b.waitGroup != nil {
+		b.waitGroup.Wait()
 	}
 
 	if ctx.Err() == nil {
