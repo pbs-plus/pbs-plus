@@ -31,6 +31,13 @@ type TaskWriter interface {
 type PxarReader struct {
 	reader *transfer.SplitArchiveReader
 
+	// metaMu serializes access to the metadata stream reader.
+	// The underlying ChunkedReadSeeker is NOT thread-safe for Seek+Read
+	// (only ReadAt is safe). Multiple goroutines making concurrent RPC
+	// calls (e.g. ReadDir, GetAttr, LookupByPath) would race on the
+	// shared offset without this lock.
+	metaMu sync.Mutex
+
 	// entryCache maps entry file offsets to pxar.Entry for quick attribute lookback.
 	entryCache    map[uint64]*pxar.Entry
 	contentCache  map[uint64]*pxar.Entry // maps ContentOffset -> Entry for Read
@@ -225,7 +232,9 @@ func (r *PxarReader) GetRoot(ctx context.Context) (*EntryInfo, error) {
 		r.task.WriteString("get root of source")
 	}
 
+	r.metaMu.Lock()
 	entry, err := r.reader.ReadRoot()
+	r.metaMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +249,9 @@ func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo,
 		r.task.WriteString(fmt.Sprintf("looking up path: %s", path))
 	}
 
+	r.metaMu.Lock()
 	entry, err := r.reader.Lookup(path)
+	r.metaMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -257,6 +268,7 @@ func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]EntryInfo
 	// (legacy agent) or ContentOffset (new code). Look up in cache.
 	offset := r.resolveContentOffset(dirOffset)
 
+	r.metaMu.Lock()
 	entries := make([]EntryInfo, 0, 64)
 	err := r.reader.ListDirectory(int64(offset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		info := entryToEntryInfo(e)
@@ -270,6 +282,7 @@ func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]EntryInfo
 		}
 		return nil
 	})
+	r.metaMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +303,9 @@ func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 	}
 
 	// Read entry by archive byte offset using the accessor
+	r.metaMu.Lock()
 	entry, err := r.reader.ReadEntryAt(int64(entryStart))
+	r.metaMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("entry at offset %d: %w", entryStart, err)
 	}
@@ -346,6 +361,18 @@ func (r *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) 
 		}
 	}
 
+	// Fall through to metadata read if not in cache
+	r.metaMu.Lock()
+	entry, err := r.reader.ReadEntryAt(int64(entryStart))
+	r.metaMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("symlink entry at offset %d: %w", entryStart, err)
+	}
+	r.cacheEntry(entry)
+	if entry.LinkTarget != "" {
+		return []byte(entry.LinkTarget), nil
+	}
+
 	return nil, fmt.Errorf("symlink entry at offset %d not found or has no target", entryStart)
 }
 
@@ -361,7 +388,9 @@ func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64
 	// If the cached entry has no xattrs but might have them (loaded with Minimal),
 	// re-read the full entry.
 	if len(e.Metadata.XAttrs) == 0 && e.Metadata.FCaps == nil {
+		r.metaMu.Lock()
 		full, err := r.reader.ReadEntryAt(int64(entryStart))
+		r.metaMu.Unlock()
 		if err != nil {
 			return nil, nil // entry has genuinely no xattrs
 		}
