@@ -283,6 +283,42 @@ nfpms:
       apk:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
 
+  - id: pxar-mount-deb
+    ids:
+      - pxar-mount
+    package_name: "{{ .ProjectName }}-pxar-mount"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      PBS Plus pxar-mount - FUSE mounter for pxar/mpxar backup archives
+    license: MIT
+    formats:
+      - deb
+    dependencies:
+      - fuse3
+    overrides:
+      deb:
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+
+  - id: pxar-mount-rpm
+    ids:
+      - pxar-mount
+    package_name: "{{ .ProjectName }}-pxar-mount"
+    vendor: Son Roy Almerol
+    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
+    maintainer: Son Roy Almerol <github@snry.me>
+    description: >
+      PBS Plus pxar-mount - FUSE mounter for pxar/mpxar backup archives
+    license: MIT
+    formats:
+      - rpm
+    dependencies:
+      - fuse3
+    overrides:
+      rpm:
+        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+
 release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
