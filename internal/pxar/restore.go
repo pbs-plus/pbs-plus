@@ -1,6 +1,7 @@
 package pxar
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -140,14 +141,32 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 		if e.Size > 0 && e.ContentRange != nil {
 			rc, err := client.ReadFileContentReader(ctx, e.ContentRange[0], e.ContentRange[1])
 			if err != nil {
-				return fmt.Errorf("open content reader %q: %w", path, err)
-			}
-			defer rc.Close()
+				// Fallback to rangeReader for remote clients
+				// where ReadFileContentReader is not supported.
+				rr := &rangeReader{
+					ctx:          ctx,
+					client:       client,
+					contentStart: e.ContentRange[0],
+					contentEnd:   e.ContentRange[1],
+					totalSize:    e.Size,
+				}
 
-			const bufSize = 256 * 1024
-			buf := make([]byte, bufSize)
-			if _, err := io.CopyBuffer(f, rc, buf); err != nil {
-				return fmt.Errorf("copy data %q: %w", path, err)
+				const bufSize = 256 * 1024
+				bw := bufio.NewWriterSize(f, bufSize)
+				if _, err := io.Copy(bw, rr); err != nil {
+					return fmt.Errorf("copy data %q: %w", path, err)
+				}
+				if err := bw.Flush(); err != nil {
+					return fmt.Errorf("flush %q: %w", path, err)
+				}
+			} else {
+				defer rc.Close()
+
+				const bufSize = 256 * 1024
+				buf := make([]byte, bufSize)
+				if _, err := io.CopyBuffer(f, rc, buf); err != nil {
+					return fmt.Errorf("copy data %q: %w", path, err)
+				}
 			}
 		} else {
 			if err := f.Sync(); err != nil {
