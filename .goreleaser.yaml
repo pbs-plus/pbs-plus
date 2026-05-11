@@ -338,8 +338,6 @@ nfpms:
           preinstall: "build/package/pxar-mount/preinstall.sh"
 
 release:
-
-release:
   github:
     owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
     name: "{{ .Env.GITHUB_REPOSITORY_NAME }}"
