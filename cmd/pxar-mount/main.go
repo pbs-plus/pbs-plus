@@ -13,13 +13,11 @@
 package main
 
 import (
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,6 +26,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/accessor"
+	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 )
@@ -110,9 +109,13 @@ func main() {
 			*pbsStore, *mpxarDidx, *ppxarDidx, mountPoint)
 	}
 
-	// Use PBS-compatible 4-char prefix chunk source (not the library's
-	// 2-char ChunkStore, which doesn't match PBS's .chunks layout).
-	source := &pbsChunkStore{base: *pbsStore}
+	// Use the library's ChunkStore (now PBS-compatible with 4-char prefix)
+	store, err := datastore.NewChunkStore(*pbsStore)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening chunk store: %v\n", err)
+		os.Exit(1)
+	}
+	source := datastore.NewChunkStoreSource(store)
 
 	var reader *transfer.SplitArchiveReader
 	isSplit := *mpxarDidx != ""
@@ -617,26 +620,4 @@ func statMode(mode uint64) uint32 {
 		ft = syscall.S_IFSOCK
 	}
 	return ft | uint32(mode&0o7777)
-}
-
-// pbsChunkStore implements the chunk source interface for PBS datastores
-// using the 4-character subdirectory prefix (.chunks/ABCD/ABCDEF...).
-// The pxar library's ChunkStore uses 2-char prefixes which doesn't match
-// PBS's layout.
-type pbsChunkStore struct {
-	base string
-}
-
-func (s *pbsChunkStore) GetChunk(digest [32]byte) ([]byte, error) {
-	var buf [64]byte
-	hex.Encode(buf[:], digest[:])
-	path := filepath.Join(s.base, ".chunks", string(buf[:4]), string(buf[:]))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("chunk not found: %s", string(buf[:16]))
-		}
-		return nil, fmt.Errorf("read chunk: %w", err)
-	}
-	return data, nil
 }
