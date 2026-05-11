@@ -291,15 +291,24 @@ nfpms:
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
     maintainer: Son Roy Almerol <github@snry.me>
     description: >
-      PBS Plus pxar-mount - FUSE mounter for pxar/mpxar backup archives
+      PBS Plus pxar-mount - FUSE mounter for pxar/mpxar backup archives.
+      Replaces the legacy Rust pxar-direct-mount and pxar-socket-api.
     license: MIT
     formats:
       - deb
     dependencies:
       - fuse3
+    replaces:
+      - pxar-direct-mount
+      - pxar-socket-api
+    conflicts:
+      - pxar-direct-mount
+      - pxar-socket-api
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+        scripts:
+          preinstall: "build/package/pxar-mount/preinstall.sh"
 
   - id: pxar-mount-rpm
     ids:
@@ -309,15 +318,26 @@ nfpms:
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
     maintainer: Son Roy Almerol <github@snry.me>
     description: >
-      PBS Plus pxar-mount - FUSE mounter for pxar/mpxar backup archives
+      PBS Plus pxar-mount - FUSE mounter for pxar/mpxar backup archives.
+      Replaces the legacy Rust pxar-direct-mount and pxar-socket-api.
     license: MIT
     formats:
       - rpm
     dependencies:
       - fuse3
+    replaces:
+      - pxar-direct-mount
+      - pxar-socket-api
+    conflicts:
+      - pxar-direct-mount
+      - pxar-socket-api
     overrides:
       rpm:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
+        scripts:
+          preinstall: "build/package/pxar-mount/preinstall.sh"
+
+release:
 
 release:
   github:
