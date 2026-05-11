@@ -30,7 +30,6 @@ type TaskWriter interface {
 // using the Go pxar library (datastore + accessor + transfer).
 type PxarReader struct {
 	reader *transfer.SplitArchiveReader
-	source datastore.ChunkSource
 
 	// entryCache maps entry file offsets to pxar.Entry for quick attribute lookback.
 	entryCache    map[uint64]*pxar.Entry
@@ -103,11 +102,13 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
 	}
 
-	// Open the chunk store using PBS-compatible 4-char prefix layout
-	chunkSource, err := newPBSChunkSource(dsInfo.Path)
+	// Open the chunk store
+	store, err := datastore.NewChunkStore(dsInfo.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open chunk source: %w", err)
+		return nil, fmt.Errorf("failed to open chunk store: %w", err)
 	}
+
+	chunkSource := datastore.NewChunkStoreSource(store)
 
 	var archiveReader *transfer.SplitArchiveReader
 
@@ -128,7 +129,6 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 
 		pr := &PxarReader{
 			reader:        archiveReader,
-			source:        chunkSource,
 			entryCache:    make(map[uint64]*pxar.Entry),
 			contentCache:  make(map[uint64]*pxar.Entry),
 			rangeToOffset: make(map[uint64]uint64),
