@@ -35,14 +35,22 @@ func isCertError(err error) bool {
 }
 
 // IsHostNotExpected checks if an error indicates the agent host was
-// deleted from the server's targets database.
+// deleted from the server's targets database. This only fires for
+// the main agent control connection (no backup/restore child IDs)
+// because ConnectARPC uses plain hostname without X-PBS-Plus-BackupID
+// or X-PBS-Plus-RestoreID headers.
 func IsHostNotExpected(err error) bool {
 	if errors.Is(err, ErrHostNotExpected) {
 		return true
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "not expected") ||
-		strings.Contains(msg, "not trusted")
+	// Server-side rejection from AgentsManager.isExpected:
+	//   "connection is not expected by server"
+	// HTTP middleware rejection from checkAgentAuth when
+	// LoadAgentHostCert returns ErrAgentHostNotFound:
+	//   "CheckAgentAuth: certificate not trusted"
+	return strings.Contains(msg, "is not expected by server") ||
+		strings.Contains(msg, "CheckAgentAuth: certificate not trusted")
 }
 
 func ClearCertificates() {
@@ -307,13 +315,23 @@ func ConnectARPC(
 					signalCertError(serveErr)
 					return
 				}
-				if IsHostNotExpected(serveErr) {
-					syslog.L.Warn().
-						WithMessage("host not expected by server during session, stopping retries until re-bootstrap").
-						WithField("error", serveErr.Error()).
-						Write()
-					signalCertError(ErrHostNotExpected)
-					return
+				// QUIC closes the connection without a rejection frame
+				// when the host is not expected (success marker already
+				// sent). Probe via TCP to get the explicit rejection.
+				tcpPipe, probeErr := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+				if probeErr != nil {
+					tcpPipe = nil
+					if IsHostNotExpected(probeErr) {
+						syslog.L.Warn().
+							WithMessage("host not expected by server (detected via probe), stopping retries until re-bootstrap").
+							WithField("error", probeErr.Error()).
+							Write()
+						signalCertError(ErrHostNotExpected)
+						return
+					}
+				}
+				if tcpPipe != nil {
+					tcpPipe.Close()
 				}
 			}
 		}
