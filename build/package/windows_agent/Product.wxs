@@ -65,7 +65,7 @@
         <Directory Id="INSTALLFOLDER" Name="PBS Plus Agent">
           
           <!-- Config component: writes ServerURL/BootstrapToken, clears Auth for re-bootstrap -->
-          <Component Id="ConfigComponent" Guid="C1B2D3E4-F5A6-7890-ABCD-EF1234567890" Win64="yes" KeyPath="yes">
+          <Component Id="ConfigComponent" Guid="C1B2D3E4-F5A6-7890-ABCD-EF1234567890" Win64="yes">
             <RegistryKey Root="HKLM" Key="SOFTWARE\PBSPlus\Config" ForceCreateOnInstall="yes">
               <RegistryValue Type="string" Name="ServerURL" Value="[SERVERURL]" KeyPath="yes" />
               <RegistryValue Type="string" Name="BootstrapToken" Value="[BOOTSTRAPTOKEN]" />
