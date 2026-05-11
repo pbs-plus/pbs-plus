@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -254,6 +254,15 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		authHostname := r.Header.Get("X-PBS-Authenticated-Agent")
+		if authHostname != "" && authHostname != reqParsed.Hostname {
+			w.WriteHeader(http.StatusForbidden)
+			hostnameErr := fmt.Errorf("hostname mismatch: authenticated as %q but request claims %q", authHostname, reqParsed.Hostname)
+			WriteErrorResponse(w, hostnameErr)
+			syslog.L.Error(hostnameErr).Write()
+			return
+		}
+
 		if len(reqParsed.Drives) == 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, fmt.Errorf("no drives provided"))
@@ -309,7 +318,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		host := database.AgentHost{
 			Name:            reqParsed.Hostname,
 			IP:              clientIP,
-			Auth:            currentHost.Auth,
+			Auth:            encodedCert,
 			TokenUsed:       currentHost.TokenUsed,
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
