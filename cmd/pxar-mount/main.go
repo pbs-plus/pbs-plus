@@ -42,19 +42,20 @@ func isDirInode(ino uint64) bool { return ino&nonDirBit == 0 }
 // Only stores what's needed for GetAttr — full entry data is
 // fetched on demand for xattrs, symlinks, and file content.
 type node struct {
-	inode      uint64
-	parent     uint64
-	refs       int64
-	entryStart uint64 // FileOffset in archive
-	fileSize   uint64
-	mode       uint64
-	uid        uint32
-	gid        uint32
-	mtimeSecs  int64
-	mtimeNanos uint32
-	isDir      bool
-	isSymlink  bool
-	isReg      bool
+	inode         uint64
+	parent        uint64
+	refs          int64
+	entryStart    uint64 // FileOffset in archive
+	contentOffset uint64 // ContentOffset for directories (children start)
+	fileSize      uint64
+	mode          uint64
+	uid           uint32
+	gid           uint32
+	mtimeSecs     int64
+	mtimeNanos    uint32
+	isDir         bool
+	isSymlink     bool
+	isReg         bool
 }
 
 // pxarFS implements fuse.RawFileSystem backed by a lazy-loading SplitArchiveReader.
@@ -302,6 +303,81 @@ func (fs *pxarFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.
 	return fuse.OK
 }
 
+func (fs *pxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
+	entries, err := fs.readDirRaw(input.NodeId)
+	if err != nil {
+		return fuse.ToStatus(err)
+	}
+
+	// "." entry first
+	if input.Offset == 0 {
+		fs.mu.RLock()
+		n := fs.nodes[input.NodeId]
+		fs.mu.RUnlock()
+		mode := uint32(syscall.S_IFDIR | 0o555)
+		if n != nil {
+			mode = statMode(n.mode)
+		}
+		eo := out.AddDirLookupEntry(fuse.DirEntry{Name: ".", Ino: input.NodeId, Mode: mode})
+		if eo == nil {
+			return fuse.OK
+		}
+		if n != nil {
+			fillEntryOut(input.NodeId, n, eo)
+		}
+	}
+
+	// ".." entry
+	if input.Offset == 0 || input.Offset == 1 {
+		fs.mu.RLock()
+		n := fs.nodes[input.NodeId]
+		fs.mu.RUnlock()
+		parentIno := uint64(rootInode)
+		mode := uint32(syscall.S_IFDIR | 0o555)
+		var pn *node
+		if n != nil {
+			parentIno = n.parent
+			fs.mu.RLock()
+			pn = fs.nodes[parentIno]
+			fs.mu.RUnlock()
+			if pn != nil {
+				mode = statMode(pn.mode)
+			}
+		}
+		if input.Offset <= 1 {
+			eo := out.AddDirLookupEntry(fuse.DirEntry{Name: "..", Ino: parentIno, Mode: mode})
+			if eo == nil {
+				return fuse.OK
+			}
+			if pn != nil {
+				fillEntryOut(parentIno, pn, eo)
+			}
+		}
+	}
+
+	// Child entries based on offset (offset 0=".", 1="..", 2=first child, ...)
+	start := max(int(input.Offset)-2, 0)
+
+	for i := start; i < len(entries); i++ {
+		eo := out.AddDirLookupEntry(fuse.DirEntry{
+			Name: entries[i].name,
+			Ino:  entries[i].inode,
+			Mode: entries[i].mode,
+		})
+		if eo == nil {
+			break
+		}
+		fs.registerNode(entries[i].inode, input.NodeId, &entries[i].meta)
+		fs.mu.RLock()
+		child := fs.nodes[entries[i].inode]
+		fs.mu.RUnlock()
+		if child != nil {
+			fillEntryOut(entries[i].inode, child, eo)
+		}
+	}
+	return fuse.OK
+}
+
 func (fs *pxarFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
 	return fuse.OK
 }
@@ -318,7 +394,7 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	}
 
 	// Read full entry to get content offset info
-	entry, err := fs.reader.ReadEntryAt(int64(n.entryStart))
+	entry, err := fs.readEntryForNode(n)
 	if err != nil {
 		return nil, fuse.EIO
 	}
@@ -345,6 +421,19 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	return fuse.ReadResultData(buf[:nr]), fuse.OK
 }
 
+// readEntryForNode reads the full pxar entry for a node. For the root inode
+// (which has no FILENAME header), returns a minimal entry from cached data.
+func (fs *pxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
+	if n.inode == rootInode {
+		return &pxar.Entry{
+			Path:     "/",
+			Kind:     pxar.KindDirectory,
+			Metadata: pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}},
+		}, nil
+	}
+	return fs.reader.ReadEntryAt(int64(n.entryStart))
+}
+
 func (fs *pxarFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byte, fuse.Status) {
 	fs.mu.RLock()
 	n := fs.nodes[header.NodeId]
@@ -356,7 +445,7 @@ func (fs *pxarFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byt
 		return nil, fuse.EINVAL
 	}
 
-	entry, err := fs.reader.ReadEntryAt(int64(n.entryStart))
+	entry, err := fs.readEntryForNode(n)
 	if err != nil {
 		return nil, fuse.EIO
 	}
@@ -371,7 +460,7 @@ func (fs *pxarFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest 
 		return 0, fuse.ENOENT
 	}
 
-	entry, err := fs.reader.ReadEntryAt(int64(n.entryStart))
+	entry, err := fs.readEntryForNode(n)
 	if err != nil {
 		return 0, fuse.EIO
 	}
@@ -413,7 +502,7 @@ func (fs *pxarFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr s
 		return 0, fuse.ENOENT
 	}
 
-	entry, err := fs.reader.ReadEntryAt(int64(n.entryStart))
+	entry, err := fs.readEntryForNode(n)
 	if err != nil {
 		return 0, fuse.EIO
 	}
@@ -476,17 +565,8 @@ func (fs *pxarFS) readDirRaw(inode uint64) ([]dirEntryMeta, error) {
 		return nil, syscall.ENOTDIR
 	}
 
-	// Read the full directory entry to get ContentOffset
-	entry, err := fs.reader.ReadEntryAt(int64(n.entryStart))
-	if err != nil {
-		return nil, err
-	}
-	if !entry.IsDir() {
-		return nil, syscall.ENOTDIR
-	}
-
 	var entries []dirEntryMeta
-	listErr := fs.reader.ListDirectory(int64(entry.ContentOffset), accessor.ListOption{}, func(e *pxar.Entry) error {
+	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{}, func(e *pxar.Entry) error {
 		childIno := toInode(e)
 		entries = append(entries, dirEntryMeta{
 			name:  e.FileName(),
@@ -524,19 +604,20 @@ func (fs *pxarFS) refNode(inode uint64) {
 func nodeFromEntry(e *pxar.Entry, inode, parent uint64) *node {
 	st := e.Metadata.Stat
 	return &node{
-		inode:      inode,
-		parent:     parent,
-		refs:       1,
-		entryStart: e.FileOffset,
-		fileSize:   e.FileSize,
-		mode:       st.Mode,
-		uid:        st.UID,
-		gid:        st.GID,
-		mtimeSecs:  st.Mtime.Secs,
-		mtimeNanos: st.Mtime.Nanos,
-		isDir:      e.IsDir(),
-		isSymlink:  e.IsSymlink(),
-		isReg:      e.IsRegularFile(),
+		inode:         inode,
+		parent:        parent,
+		refs:          1,
+		entryStart:    e.FileOffset,
+		contentOffset: e.ContentOffset,
+		fileSize:      e.FileSize,
+		mode:          st.Mode,
+		uid:           st.UID,
+		gid:           st.GID,
+		mtimeSecs:     st.Mtime.Secs,
+		mtimeNanos:    st.Mtime.Nanos,
+		isDir:         e.IsDir(),
+		isSymlink:     e.IsSymlink(),
+		isReg:         e.IsRegularFile(),
 	}
 }
 
