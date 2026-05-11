@@ -269,7 +269,7 @@ func (r *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo,
 }
 
 // GetAttr returns attributes for an entry identified by its byte range.
-// entryStart is the file offset, entryEnd is not used.
+// entryStart is the file offset (pxar.Entry.FileOffset), entryEnd is unused.
 func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (*EntryInfo, error) {
 	// Try cache first
 	if e := r.getCachedEntry(entryStart); e != nil {
@@ -281,14 +281,13 @@ func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 		return entryToEntryInfo(e), nil
 	}
 
-	// Read from the accessor using the offset
-	entry, err := r.reader.Lookup(fmt.Sprintf("@%d", entryStart))
-	if err == nil {
-		r.cacheEntry(entry)
-		return entryToEntryInfo(entry), nil
+	// Read entry by archive byte offset using the accessor
+	entry, err := r.reader.ReadEntryAt(int64(entryStart))
+	if err != nil {
+		return nil, fmt.Errorf("entry at offset %d: %w", entryStart, err)
 	}
-
-	return nil, fmt.Errorf("entry at offset %d not found: %w", entryStart, err)
+	r.cacheEntry(entry)
+	return entryToEntryInfo(entry), nil
 }
 
 // Read reads raw file content from the archive.
