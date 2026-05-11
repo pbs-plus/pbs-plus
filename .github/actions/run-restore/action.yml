@@ -130,3 +130,27 @@ runs:
         SOURCE_COUNT=$(wc -l < /tmp/source-checksums.txt)
         RESTORED_COUNT=$(wc -l < /tmp/restored-checksums.txt)
         echo "✓ Data integrity verified: ${RESTORED_COUNT}/${SOURCE_COUNT} files match (sha256)"
+
+    - name: Verify restore task status
+      shell: bash
+      run: |
+        RESTORE_ID_ENCODED=$(echo -n "test-restore" | base64 -w0)
+        echo "Checking restore task status..."
+        # Poll for task completion -- the task closes asynchronously
+        # after the restore process finishes.
+        for i in $(seq 1 30); do
+          TASK_STATUS=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/disk-restore/${RESTORE_ID_ENCODED}" \
+            -H "Accept: application/json" | jq -r '.data.history."last-run-state"')
+          echo "  Task status: ${TASK_STATUS} (attempt $i/30)"
+          if [ "$TASK_STATUS" = "OK" ]; then
+            echo "✓ Restore task completed with status OK"
+            exit 0
+          fi
+          if [ -n "$TASK_STATUS" ] && [ "$TASK_STATUS" != "null" ] && [ "$TASK_STATUS" != "OK" ]; then
+            echo "✗ Restore task failed with status: ${TASK_STATUS}"
+            exit 1
+          fi
+          sleep 1
+        done
+        echo "✗ Restore task did not reach OK status within 30 seconds"
+        exit 1
