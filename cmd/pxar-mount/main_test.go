@@ -67,9 +67,8 @@ func newTestFS(tb testing.TB) (*pxarFS, *bytes.Reader) {
 
 	// Build a simple mock using the accessor directly
 	fs := &pxarFS{
-		reader: nil, // populated below via split reader mock
+		reader: nil,
 		nodes:  make(map[uint64]*node),
-		dirs:   make(map[uint64][]cachedEntry),
 		size:   size,
 	}
 
@@ -78,12 +77,7 @@ func newTestFS(tb testing.TB) (*pxarFS, *bytes.Reader) {
 		tb.Fatal(err)
 	}
 
-	fs.nodes[rootInode] = &node{
-		entry:  *root,
-		inode:  rootInode,
-		parent: rootInode,
-		refs:   1,
-	}
+	fs.nodes[rootInode] = nodeFromEntry(root, rootInode, rootInode)
 
 	return fs, r
 }
