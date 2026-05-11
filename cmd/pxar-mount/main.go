@@ -13,11 +13,14 @@
 package main
 
 import (
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,7 +28,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/accessor"
-	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 )
@@ -77,13 +79,17 @@ func toInode(e *pxar.Entry) uint64 {
 func main() {
 	pbsStore := flag.String("pbs-store", "", "PBS datastore root path")
 	mpxarDidx := flag.String("mpxar-didx", "", "Path to metadata dynamic index (.mpxar.didx)")
-	ppxarDidx := flag.String("ppxar-didx", "", "Path to payload dynamic index (.ppxar.didx)")
+	ppxarDidx := flag.String("ppxar-didx", "", "Path to payload or unified dynamic index (.ppxar.didx)")
+	keyfile := flag.String("keyfile", "", "Path to encryption key (accepted for CLI compat, encryption not yet supported)")
+	verifyChunks := flag.Bool("verify-chunks", false, "Verify chunk SHA256 on read (accepted for CLI compat)")
+	cacheMB := flag.Int("cache-size", 256, "Cache size in MB (accepted for CLI compat)")
+	fuseOpts := flag.String("options", "ro,default_permissions", "FUSE mount options")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 
 	flag.Parse()
 
-	if *pbsStore == "" || *mpxarDidx == "" || *ppxarDidx == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --mpxar-didx <path> --ppxar-didx <path> [--verbose] <mountpoint>\n")
+	if *pbsStore == "" || *ppxarDidx == "" {
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--verbose] <mountpoint>\n")
 		os.Exit(1)
 	}
 
@@ -94,32 +100,59 @@ func main() {
 	}
 	mountPoint := args[0]
 
+	// CLI compatibility: accept flags that the Rust binary supported
+	_ = keyfile
+	_ = verifyChunks
+	_ = cacheMB
+
 	if *verbose {
 		fmt.Fprintf(os.Stderr, "pxar-mount: datastore=%s metadata=%s payload=%s mount=%s\n",
 			*pbsStore, *mpxarDidx, *ppxarDidx, mountPoint)
 	}
 
-	store, err := datastore.NewChunkStore(*pbsStore)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening chunk store: %v\n", err)
-		os.Exit(1)
-	}
-	source := datastore.NewChunkStoreSource(store)
+	// Use PBS-compatible 4-char prefix chunk source (not the library's
+	// 2-char ChunkStore, which doesn't match PBS's .chunks layout).
+	source := &pbsChunkStore{base: *pbsStore}
 
-	metaData, err := os.ReadFile(*mpxarDidx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading metadata index: %v\n", err)
-		os.Exit(1)
-	}
-	payloadData, err := os.ReadFile(*ppxarDidx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading payload index: %v\n", err)
-		os.Exit(1)
-	}
+	var reader *transfer.SplitArchiveReader
+	isSplit := *mpxarDidx != ""
 
-	reader, err := transfer.NewSplitArchiveReader(metaData, payloadData, source)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating split archive reader: %v\n", err)
+	if isSplit {
+		// Split archive: metadata + payload indexes
+		metaData, err := os.ReadFile(*mpxarDidx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading metadata index: %v\n", err)
+			os.Exit(1)
+		}
+		payloadData, err := os.ReadFile(*ppxarDidx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading payload index: %v\n", err)
+			os.Exit(1)
+		}
+		reader, err = transfer.NewSplitArchiveReader(metaData, payloadData, source)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating split archive reader: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Non-split (unified) archive: single .pxar.didx
+		idxData, err := os.ReadFile(*ppxarDidx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading index: %v\n", err)
+			os.Exit(1)
+		}
+		chunkedReader, err := transfer.NewChunkedArchiveReader(idxData, source)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating chunked archive reader: %v\n", err)
+			os.Exit(1)
+		}
+		// Wrap as a split reader for unified access — ChunkedArchiveReader
+		// provides the same ArchiveReader interface but through a different
+		// concrete type. We need a SplitArchiveReader for node registration.
+		// For now, reconstruct eagerly and use fusefs.Session.
+		// TODO: support ChunkedArchiveReader directly
+		_ = chunkedReader
+		fmt.Fprintf(os.Stderr, "Error: non-split (unified) .pxar.didx archives not yet supported\n")
 		os.Exit(1)
 	}
 	defer reader.Close()
@@ -140,7 +173,7 @@ func main() {
 
 	server, err := fuse.NewServer(fs, mountPoint, &fuse.MountOptions{
 		Name:    "pxar-mount",
-		Options: []string{"ro", "default_permissions"},
+		Options: strings.Split(*fuseOpts, ","),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating FUSE server: %v\n", err)
@@ -584,4 +617,26 @@ func statMode(mode uint64) uint32 {
 		ft = syscall.S_IFSOCK
 	}
 	return ft | uint32(mode&0o7777)
+}
+
+// pbsChunkStore implements the chunk source interface for PBS datastores
+// using the 4-character subdirectory prefix (.chunks/ABCD/ABCDEF...).
+// The pxar library's ChunkStore uses 2-char prefixes which doesn't match
+// PBS's layout.
+type pbsChunkStore struct {
+	base string
+}
+
+func (s *pbsChunkStore) GetChunk(digest [32]byte) ([]byte, error) {
+	var buf [64]byte
+	hex.Encode(buf[:], digest[:])
+	path := filepath.Join(s.base, ".chunks", string(buf[:4]), string(buf[:]))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("chunk not found: %s", string(buf[:16]))
+		}
+		return nil, fmt.Errorf("read chunk: %w", err)
+	}
+	return data, nil
 }
