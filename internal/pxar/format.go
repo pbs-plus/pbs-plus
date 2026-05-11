@@ -36,9 +36,10 @@ type PxarReader struct {
 	payloadIdx *datastore.DynamicIndexReader
 
 	// entryCache maps entry file offsets to pxar.Entry for quick attribute lookback.
-	entryCache   map[uint64]*pxar.Entry
-	contentCache map[uint64]*pxar.Entry // maps ContentOffset -> Entry for Read
-	cacheMu      sync.RWMutex
+	entryCache    map[uint64]*pxar.Entry
+	contentCache  map[uint64]*pxar.Entry // maps ContentOffset -> Entry for Read
+	rangeToOffset map[uint64]uint64      // maps EntryRangeEnd -> ContentOffset for ReadDir
+	cacheMu       sync.RWMutex
 
 	FileCount   *xsync.Counter
 	FolderCount *xsync.Counter
@@ -140,17 +141,18 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		}
 
 		pr := &PxarReader{
-			reader:       archiveReader,
-			store:        store,
-			source:       chunkSource,
-			metaIdx:      metaIdx,
-			payloadIdx:   payloadIdx,
-			entryCache:   make(map[uint64]*pxar.Entry),
-			contentCache: make(map[uint64]*pxar.Entry),
-			FileCount:    xsync.NewCounter(),
-			FolderCount:  xsync.NewCounter(),
-			TotalBytes:   xsync.NewCounter(),
-			task:         task,
+			reader:        archiveReader,
+			store:         store,
+			source:        chunkSource,
+			metaIdx:       metaIdx,
+			payloadIdx:    payloadIdx,
+			entryCache:    make(map[uint64]*pxar.Entry),
+			contentCache:  make(map[uint64]*pxar.Entry),
+			rangeToOffset: make(map[uint64]uint64),
+			FileCount:     xsync.NewCounter(),
+			FolderCount:   xsync.NewCounter(),
+			TotalBytes:    xsync.NewCounter(),
+			task:          task,
 		}
 
 		syslog.L.Info().
@@ -198,6 +200,9 @@ func (r *PxarReader) cacheEntry(e *pxar.Entry) {
 	if e.IsRegularFile() && e.ContentOffset > 0 {
 		r.contentCache[e.ContentOffset] = e
 	}
+	if e.IsDir() && e.ContentOffset > 0 {
+		r.rangeToOffset[e.FileOffset+e.FileSize] = e.ContentOffset
+	}
 	r.cacheMu.Unlock()
 }
 
@@ -215,6 +220,20 @@ func (r *PxarReader) getCachedContentEntry(contentOffset uint64) *pxar.Entry {
 	e := r.contentCache[contentOffset]
 	r.cacheMu.RUnlock()
 	return e
+}
+
+// resolveContentOffset converts a ReadDir parameter (which may be
+// ContentOffset or legacy EntryRangeEnd) to ContentOffset by checking
+// the cache.
+func (r *PxarReader) resolveContentOffset(offset uint64) uint64 {
+	r.cacheMu.RLock()
+	co, ok := r.rangeToOffset[offset]
+	r.cacheMu.RUnlock()
+	if ok {
+		return co
+	}
+	// Not found in cache — assume it's already a ContentOffset
+	return offset
 }
 
 // GetRoot returns the root entry of the archive.
@@ -247,10 +266,16 @@ func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo,
 	return entryToEntryInfo(entry), nil
 }
 
-// ReadDir lists the entries in a directory. entryEnd is the directory content offset.
-func (r *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
+// ReadDir lists the entries in a directory.
+// Accepts dirOffset (ContentOffset) or legacy EntryRangeEnd —
+// resolves to ContentOffset via the content cache.
+func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]EntryInfo, error) {
+	// Try to resolve to ContentOffset: dirOffset might be EntryRangeEnd
+	// (legacy agent) or ContentOffset (new code). Look up in cache.
+	offset := r.resolveContentOffset(dirOffset)
+
 	entries := make([]EntryInfo, 0, 64)
-	err := r.reader.ListDirectory(int64(entryEnd), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
+	err := r.reader.ListDirectory(int64(offset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		info := entryToEntryInfo(e)
 		entries = append(entries, *info)
 		r.cacheEntry(e)
@@ -413,6 +438,7 @@ func entryToEntryInfo(e *pxar.Entry) *EntryInfo {
 		FileType:        ft,
 		EntryRangeStart: e.FileOffset,
 		EntryRangeEnd:   e.FileOffset + e.FileSize,
+		ContentOffset:   e.ContentOffset,
 		Mode:            e.Metadata.Stat.Mode,
 		UID:             e.Metadata.Stat.UID,
 		GID:             e.Metadata.Stat.GID,
