@@ -151,6 +151,8 @@ func (b *restoreJob) onError(err error) {
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
+
+	_ = updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance)
 }
 
 func (b *restoreJob) onSuccess() {
@@ -168,10 +170,12 @@ func (b *restoreJob) onSuccess() {
 	errCount := b.errCount.Load()
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
+		_ = updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance)
 		return
 	}
 
 	b.task.CloseOK()
+	_ = updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance)
 }
 
 func (b *restoreJob) cleanup() {
@@ -470,10 +474,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 }
 
 func (b *restoreJob) waitForCompletion(ctx context.Context) error {
-	if b.waitGroup != nil {
-		b.waitGroup.Wait()
-	}
-
+	// Wait for agent's done signal first (remote restores only)
 	if b.remoteServer != nil {
 		select {
 		case <-ctx.Done():
@@ -487,6 +488,20 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 				b.err = fmt.Errorf("lost connection to agent without receiving done signal")
 			}
 		}
+	}
+
+	// Close errCh to unblock the error-collecting goroutine.
+	// For remote restores this runs after the agent signals done;
+	// for local restores the restore goroutine may still be in
+	// progress, but waitGroup.Wait() ensures both goroutines finish.
+	if b.errCh != nil {
+		if !b.errChClosed.Swap(true) {
+			close(b.errCh)
+		}
+	}
+
+	if b.waitGroup != nil {
+		b.waitGroup.Wait()
 	}
 
 	if ctx.Err() == nil {

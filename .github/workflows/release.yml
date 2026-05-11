@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   goreleaser:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,7 +95,7 @@ jobs:
 
   build-msi:
     needs: goreleaser
-    runs-on: blacksmith-4vcpu-windows-2025
+    runs-on: windows-2025
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -243,7 +243,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -290,7 +290,7 @@ jobs:
             VERSION=${{ github.ref_name }}
 
   docker-operator:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
