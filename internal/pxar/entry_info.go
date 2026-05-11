@@ -23,15 +23,16 @@ type EntryInfo struct {
 	EntryRangeStart uint64   `cbor:"entry_range_start"`
 	EntryRangeEnd   uint64   `cbor:"entry_range_end"`
 	// Option<(u64, u64)> in Rust becomes a 2-element array or nil in CBOR
-	ContentRange []uint64          `cbor:"content_range"`
-	LinkTarget   string            `cbor:"link_target,omitempty"`
-	Xattrs       map[string][]byte `cbor:"xattrs,omitempty"`
-	Mode         uint64            `cbor:"mode"`
-	UID          uint32            `cbor:"uid"`
-	GID          uint32            `cbor:"gid"`
-	Size         uint64            `cbor:"size"`
-	MtimeSecs    int64             `cbor:"mtime_secs"`
-	MtimeNsecs   uint32            `cbor:"mtime_nsecs"`
+	ContentRange  []uint64          `cbor:"content_range"`
+	ContentOffset uint64            `cbor:"content_offset"`
+	LinkTarget    string            `cbor:"link_target,omitempty"`
+	Xattrs        map[string][]byte `cbor:"xattrs,omitempty"`
+	Mode          uint64            `cbor:"mode"`
+	UID           uint32            `cbor:"uid"`
+	GID           uint32            `cbor:"gid"`
+	Size          uint64            `cbor:"size"`
+	MtimeSecs     int64             `cbor:"mtime_secs"`
+	MtimeNsecs    uint32            `cbor:"mtime_nsecs"`
 }
 
 func (e *EntryInfo) IsDir() bool  { return e.FileType == FileTypeDirectory }
