@@ -257,6 +257,11 @@ func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo,
 	}
 
 	r.cacheEntry(entry)
+	if entry.IsDir() {
+		r.FolderCount.Add(1)
+	} else {
+		r.FileCount.Add(1)
+	}
 	return entryToEntryInfo(entry), nil
 }
 
@@ -310,6 +315,11 @@ func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 		return nil, fmt.Errorf("entry at offset %d: %w", entryStart, err)
 	}
 	r.cacheEntry(entry)
+	if entry.IsDir() {
+		r.FolderCount.Add(1)
+	} else {
+		r.FileCount.Add(1)
+	}
 	return entryToEntryInfo(entry), nil
 }
 
@@ -349,6 +359,7 @@ func (r *PxarReader) ReadFileContentReader(ctx context.Context, contentStart, co
 	if targetEntry == nil {
 		return nil, fmt.Errorf("entry with content offset %d not found in cache", contentStart)
 	}
+	r.TotalBytes.Add(int64(targetEntry.FileSize))
 	return r.reader.ReadFileContentReader(targetEntry)
 }
 
