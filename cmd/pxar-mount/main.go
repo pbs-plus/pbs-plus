@@ -65,8 +65,9 @@ type pxarFS struct {
 	reader *transfer.SplitArchiveReader
 	size   int64
 
-	mu    sync.RWMutex
-	nodes map[uint64]*node // inode → cached stat metadata
+	mu       sync.RWMutex
+	nodes    map[uint64]*node // inode → cached stat metadata
+	readerMu sync.Mutex       // serializes all archive reader access (not thread-safe)
 }
 
 func toInode(e *pxar.Entry) uint64 {
@@ -393,18 +394,22 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 		return nil, fuse.EISDIR
 	}
 
-	// Read full entry to get content offset info
+	// Read entry metadata under lock (metadata reader is shared).
+	fs.readerMu.Lock()
 	entry, err := fs.readEntryForNode(n)
 	if err != nil {
+		fs.readerMu.Unlock()
 		return nil, fuse.EIO
 	}
 
 	rc, err := fs.reader.ReadFileContentReader(entry)
+	fs.readerMu.Unlock()
 	if err != nil {
 		return nil, fuse.EIO
 	}
 	defer rc.Close()
 
+	// rc is a SectionReader (v0.16.0+) — concurrent-safe, no lock needed.
 	if input.Offset > 0 {
 		if _, err := io.CopyN(io.Discard, rc, int64(input.Offset)); err != nil {
 			return nil, fuse.EIO
@@ -423,6 +428,7 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 
 // readEntryForNode reads the full pxar entry for a node. For the root inode
 // (which has no FILENAME header), returns a minimal entry from cached data.
+// Caller must hold readerMu.
 func (fs *pxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	if n.inode == rootInode {
 		return &pxar.Entry{
@@ -566,6 +572,7 @@ func (fs *pxarFS) readDirRaw(inode uint64) ([]dirEntryMeta, error) {
 	}
 
 	var entries []dirEntryMeta
+	fs.readerMu.Lock()
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{}, func(e *pxar.Entry) error {
 		childIno := toInode(e)
 		entries = append(entries, dirEntryMeta{
@@ -576,6 +583,7 @@ func (fs *pxarFS) readDirRaw(inode uint64) ([]dirEntryMeta, error) {
 		})
 		return nil
 	})
+	fs.readerMu.Unlock()
 	if listErr != nil {
 		return nil, listErr
 	}
