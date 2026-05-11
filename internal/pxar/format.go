@@ -250,7 +250,7 @@ func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo,
 // ReadDir lists the entries in a directory. entryEnd is the directory content offset.
 func (r *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
 	entries := make([]EntryInfo, 0, 64)
-	err := r.reader.ListDirectory(int64(entryEnd), accessor.ListOption{}, func(e *pxar.Entry) error {
+	err := r.reader.ListDirectory(int64(entryEnd), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		info := entryToEntryInfo(e)
 		entries = append(entries, *info)
 		r.cacheEntry(e)
@@ -319,6 +319,16 @@ func (r *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset 
 	return buf[:n], nil
 }
 
+// ReadFileContentReader returns a streaming reader for an entire file,
+// looked up by content offset. The caller must close the reader.
+func (r *PxarReader) ReadFileContentReader(ctx context.Context, contentStart, contentEnd uint64) (io.ReadCloser, error) {
+	targetEntry := r.getCachedContentEntry(contentStart)
+	if targetEntry == nil {
+		return nil, fmt.Errorf("entry with content offset %d not found in cache", contentStart)
+	}
+	return r.reader.ReadFileContentReader(targetEntry)
+}
+
 // ReadLink returns the target of a symlink identified by its byte range.
 func (r *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
 	// Try cache first
@@ -332,23 +342,37 @@ func (r *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) 
 }
 
 // ListXAttrs returns extended attributes for an entry.
+// If the cached entry was loaded with Minimal decoding, falls back to
+// ReadEntryAt for full metadata.
 func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
-	if e := r.getCachedEntry(entryStart); e != nil {
-		nx := len(e.Metadata.XAttrs)
-		if nx == 0 && e.Metadata.FCaps == nil {
-			return nil, nil
-		}
-		xattrs := make(map[string][]byte, nx+1)
-		for _, xa := range e.Metadata.XAttrs {
-			xattrs[string(xa.Name())] = xa.Value()
-		}
-		if e.Metadata.FCaps != nil {
-			xattrs["security.capability"] = e.Metadata.FCaps
-		}
-		return xattrs, nil
+	e := r.getCachedEntry(entryStart)
+	if e == nil {
+		return nil, fmt.Errorf("entry at offset %d not found", entryStart)
 	}
 
-	return nil, fmt.Errorf("entry at offset %d not found", entryStart)
+	// If the cached entry has no xattrs but might have them (loaded with Minimal),
+	// re-read the full entry.
+	if len(e.Metadata.XAttrs) == 0 && e.Metadata.FCaps == nil {
+		full, err := r.reader.ReadEntryAt(int64(entryStart))
+		if err != nil {
+			return nil, nil // entry has genuinely no xattrs
+		}
+		e = full
+		r.cacheEntry(e)
+	}
+
+	nx := len(e.Metadata.XAttrs)
+	if nx == 0 && e.Metadata.FCaps == nil {
+		return nil, nil
+	}
+	xattrs := make(map[string][]byte, nx+1)
+	for _, xa := range e.Metadata.XAttrs {
+		xattrs[string(xa.Name())] = xa.Value()
+	}
+	if e.Metadata.FCaps != nil {
+		xattrs["security.capability"] = e.Metadata.FCaps
+	}
+	return xattrs, nil
 }
 
 // entryToEntryInfo converts a pxar.Entry to our EntryInfo format.
