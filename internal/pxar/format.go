@@ -36,8 +36,9 @@ type PxarReader struct {
 	payloadIdx *datastore.DynamicIndexReader
 
 	// entryCache maps entry file offsets to pxar.Entry for quick attribute lookback.
-	entryCache map[uint64]*pxar.Entry
-	cacheMu    sync.RWMutex
+	entryCache   map[uint64]*pxar.Entry
+	contentCache map[uint64]*pxar.Entry // maps ContentOffset -> Entry for Read
+	cacheMu      sync.RWMutex
 
 	FileCount   *xsync.Counter
 	FolderCount *xsync.Counter
@@ -139,16 +140,17 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		}
 
 		pr := &PxarReader{
-			reader:      archiveReader,
-			store:       store,
-			source:      chunkSource,
-			metaIdx:     metaIdx,
-			payloadIdx:  payloadIdx,
-			entryCache:  make(map[uint64]*pxar.Entry),
-			FileCount:   xsync.NewCounter(),
-			FolderCount: xsync.NewCounter(),
-			TotalBytes:  xsync.NewCounter(),
-			task:        task,
+			reader:       archiveReader,
+			store:        store,
+			source:       chunkSource,
+			metaIdx:      metaIdx,
+			payloadIdx:   payloadIdx,
+			entryCache:   make(map[uint64]*pxar.Entry),
+			contentCache: make(map[uint64]*pxar.Entry),
+			FileCount:    xsync.NewCounter(),
+			FolderCount:  xsync.NewCounter(),
+			TotalBytes:   xsync.NewCounter(),
+			task:         task,
 		}
 
 		syslog.L.Info().
@@ -166,37 +168,15 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return nil, fmt.Errorf("failed to read index %s: %w", mpxarPath, err)
 	}
 
-	metaIdx, err := datastore.ReadDynamicIndex(idxData)
-	if err != nil {
+	if _, err := datastore.ReadDynamicIndex(idxData); err != nil {
 		return nil, fmt.Errorf("failed to parse index: %w", err)
 	}
 
-	chunkedReader, err := transfer.NewChunkedArchiveReader(idxData, chunkSource)
-	if err != nil {
+	if _, err := transfer.NewChunkedArchiveReader(idxData, chunkSource); err != nil {
 		return nil, fmt.Errorf("failed to create chunked archive reader: %w", err)
 	}
 
-	// Wrap chunked reader as a split archive reader via the accessor
-	// Use the inner FileArchiveReader directly
-	pr := &PxarReader{
-		store:       store,
-		source:      chunkSource,
-		metaIdx:     metaIdx,
-		entryCache:  make(map[uint64]*pxar.Entry),
-		FileCount:   xsync.NewCounter(),
-		FolderCount: xsync.NewCounter(),
-		TotalBytes:  xsync.NewCounter(),
-		task:        task,
-	}
-	_ = chunkedReader
-	_ = pr
-
-	syslog.L.Info().
-		WithMessage("pxar: native Go reader created (non-split)").
-		WithField("datastore", pbsStore).
-		Write()
-
-	return pr, nil
+	return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
 }
 
 // Close releases all resources held by the reader.
@@ -215,6 +195,9 @@ func (r *PxarReader) Close() error {
 func (r *PxarReader) cacheEntry(e *pxar.Entry) {
 	r.cacheMu.Lock()
 	r.entryCache[e.FileOffset] = e
+	if e.IsRegularFile() && e.ContentOffset > 0 {
+		r.contentCache[e.ContentOffset] = e
+	}
 	r.cacheMu.Unlock()
 }
 
@@ -222,6 +205,14 @@ func (r *PxarReader) cacheEntry(e *pxar.Entry) {
 func (r *PxarReader) getCachedEntry(offset uint64) *pxar.Entry {
 	r.cacheMu.RLock()
 	e := r.entryCache[offset]
+	r.cacheMu.RUnlock()
+	return e
+}
+
+// getCachedContentEntry retrieves a file entry by content offset.
+func (r *PxarReader) getCachedContentEntry(contentOffset uint64) *pxar.Entry {
+	r.cacheMu.RLock()
+	e := r.contentCache[contentOffset]
 	r.cacheMu.RUnlock()
 	return e
 }
@@ -258,7 +249,7 @@ func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo,
 
 // ReadDir lists the entries in a directory. entryEnd is the directory content offset.
 func (r *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
-	var entries []EntryInfo
+	entries := make([]EntryInfo, 0, 64)
 	err := r.reader.ListDirectory(int64(entryEnd), accessor.ListOption{}, func(e *pxar.Entry) error {
 		info := entryToEntryInfo(e)
 		entries = append(entries, *info)
@@ -266,9 +257,6 @@ func (r *PxarReader) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo,
 
 		if e.IsDir() {
 			r.FolderCount.Add(1)
-			if r.task != nil {
-				r.task.WriteString(fmt.Sprintf("restoring entries of dir: %s", e.FileName()))
-			}
 		} else {
 			r.FileCount.Add(1)
 		}
@@ -305,18 +293,7 @@ func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 
 // Read reads raw file content from the archive.
 func (r *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
-	// Try to find the entry by content offset
-	// contentStart is the ContentOffset of the file entry
-	r.cacheMu.RLock()
-	var targetEntry *pxar.Entry
-	for _, e := range r.entryCache {
-		if e.IsRegularFile() && e.ContentOffset == contentStart {
-			targetEntry = e
-			break
-		}
-	}
-	r.cacheMu.RUnlock()
-
+	targetEntry := r.getCachedContentEntry(contentStart)
 	if targetEntry == nil {
 		return nil, fmt.Errorf("entry with content offset %d not found in cache", contentStart)
 	}
@@ -328,7 +305,6 @@ func (r *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset 
 	defer rc.Close()
 
 	if offset > 0 {
-		// Seek by reading and discarding
 		if _, err := io.CopyN(io.Discard, rc, int64(offset)); err != nil {
 			return nil, fmt.Errorf("seek to offset: %w", err)
 		}
@@ -359,7 +335,11 @@ func (r *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) 
 // ListXAttrs returns extended attributes for an entry.
 func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
 	if e := r.getCachedEntry(entryStart); e != nil {
-		xattrs := make(map[string][]byte)
+		nx := len(e.Metadata.XAttrs)
+		if nx == 0 && e.Metadata.FCaps == nil {
+			return nil, nil
+		}
+		xattrs := make(map[string][]byte, nx+1)
 		for _, xa := range e.Metadata.XAttrs {
 			xattrs[string(xa.Name())] = xa.Value()
 		}
@@ -373,6 +353,8 @@ func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64
 }
 
 // entryToEntryInfo converts a pxar.Entry to our EntryInfo format.
+// The returned EntryInfo must be copied if the caller needs to retain it
+// beyond the lifetime of the source entry.
 func entryToEntryInfo(e *pxar.Entry) *EntryInfo {
 	var ft FileType
 	switch e.Kind {
@@ -392,9 +374,15 @@ func entryToEntryInfo(e *pxar.Entry) *EntryInfo {
 		ft = FileTypeFile
 	}
 
-	xattrs := make(map[string][]byte)
-	for _, xa := range e.Metadata.XAttrs {
-		xattrs[string(xa.Name())] = xa.Value()
+	var xattrs map[string][]byte
+	if nx := len(e.Metadata.XAttrs); nx > 0 || e.Metadata.FCaps != nil {
+		xattrs = make(map[string][]byte, nx+1) // +1 for fcaps
+		for _, xa := range e.Metadata.XAttrs {
+			xattrs[string(xa.Name())] = xa.Value()
+		}
+		if e.Metadata.FCaps != nil {
+			xattrs["security.capability"] = e.Metadata.FCaps
+		}
 	}
 
 	info := &EntryInfo{

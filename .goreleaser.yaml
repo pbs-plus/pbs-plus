@@ -43,6 +43,24 @@ builds:
       - -tags=agent,netgo,osusergo
       - -installsuffix=netgo
 
+  # pxar-mount (replaces Rust pxar-direct-mount)
+  - id: pxar-mount
+    main: ./cmd/pxar-mount
+    binary: pxar-mount
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
+    ldflags:
+      - -X 'main.Version=v{{.Version}}'
+    flags:
+      - -installsuffix=netgo
+
   # BSD Agent
   - id: freebsd-agent
     main: ./cmd/agent
@@ -143,6 +161,13 @@ archives:
     formats:
       - binary
 
+  - id: pxar-mount
+    ids:
+      - pxar-mount
+    name_template: "{{ .ProjectName }}-pxar-mount-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
 checksum:
   name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
   algorithm: md5
@@ -167,9 +192,6 @@ nfpms:
       - proxmox-backup-client (>= 3.2.5)
       - fuse3
       - memcached
-    recommends:
-      - pxar-direct-mount
-      - pxar-socket-api
     contents:
       - src: ./build/package/server/pbs-plus.service
         dst: /lib/systemd/system/pbs-plus.service
