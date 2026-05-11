@@ -134,11 +134,12 @@ runs:
     - name: Verify restore task status
       shell: bash
       run: |
+        RESTORE_ID_ENCODED=$(echo -n "test-restore" | base64 -w0)
         echo "Checking restore task status..."
         # Poll for task completion -- the task closes asynchronously
         # after the restore process finishes.
         for i in $(seq 1 30); do
-          TASK_STATUS=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/disk-restore/test-restore" \
+          TASK_STATUS=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/disk-restore/${RESTORE_ID_ENCODED}" \
             -H "Accept: application/json" | jq -r '.data.history."last-run-state"')
           echo "  Task status: ${TASK_STATUS} (attempt $i/30)"
           if [ "$TASK_STATUS" = "OK" ]; then
