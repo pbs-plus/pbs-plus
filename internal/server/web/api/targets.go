@@ -105,11 +105,20 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		authHostname := r.Header.Get("X-PBS-Authenticated-Agent")
+
 		var reqParsed NewAgentHostnameRequest
 		err := json.NewDecoder(r.Body).Decode(&reqParsed)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, fmt.Errorf("Failed to parse request body: %w", err))
+			return
+		}
+
+		if authHostname != "" && authHostname != reqParsed.Hostname {
+			w.WriteHeader(http.StatusForbidden)
+			hostnameErr := fmt.Errorf("hostname mismatch: authenticated as %q but request claims %q", authHostname, reqParsed.Hostname)
+			WriteErrorResponse(w, hostnameErr)
 			return
 		}
 
