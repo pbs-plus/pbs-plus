@@ -217,7 +217,8 @@ func alphabetHint(s string) string {
 
 func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := checkAgentAuth(store, r); err != nil {
+		hostname, err := checkAgentAuth(store, r)
+		if err != nil {
 			syslog.L.Error(err).
 				WithField("mode", "agent_only").
 				WithField("hostname", getClientInfo(r)).
@@ -226,6 +227,7 @@ func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 			return
 		}
 
+		r.Header.Set("X-PBS-Authenticated-Agent", hostname)
 		next.ServeHTTP(w, r)
 	}))
 }
@@ -250,10 +252,11 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 		authenticated := false
 		var lastErr error
 
-		if err := checkAgentAuth(store, r); err == nil {
+		hostname, agentErr := checkAgentAuth(store, r)
+		if agentErr == nil {
 			authenticated = true
 		} else {
-			lastErr = err
+			lastErr = agentErr
 		}
 
 		if err := checkProxyAuth(r); err == nil || IsLocalhost(r) {
@@ -271,31 +274,49 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 			return
 		}
 
+		if hostname != "" {
+			r.Header.Set("X-PBS-Authenticated-Agent", hostname)
+		}
 		next.ServeHTTP(w, r)
 	}))
 }
 
-func checkAgentAuth(store *store.Store, r *http.Request) error {
+func checkAgentAuth(store *store.Store, r *http.Request) (string, error) {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-		return fmt.Errorf("CheckAgentAuth: client certificate required")
+		return "", fmt.Errorf("CheckAgentAuth: client certificate required")
 	}
 
 	clientCert := r.TLS.PeerCertificates[0]
 
 	agentHostname := clientCert.Subject.CommonName
 	if agentHostname == "" {
-		return fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
+		return "", fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
 	}
 
 	trustedCert, err := store.Database.LoadAgentHostCert(agentHostname)
 	if err != nil {
-		return fmt.Errorf("CheckAgentAuth: certificate not trusted")
+		return "", fmt.Errorf("CheckAgentAuth: certificate not trusted")
 	}
 
 	if !clientCert.Equal(trustedCert) {
-		return fmt.Errorf("certificate does not match pinned certificate")
+		return "", fmt.Errorf("certificate does not match pinned certificate")
 	}
 
+	return agentHostname, nil
+}
+
+// validateAgentHostnameMatch returns an error if the body hostname doesn't match
+// the TLS-authenticated hostname.
+func validateAgentHostnameMatch(authHostname, bodyHostname string) error {
+	if authHostname == "" {
+		return fmt.Errorf("no authenticated agent hostname")
+	}
+	if bodyHostname == "" {
+		return fmt.Errorf("missing hostname in request body")
+	}
+	if authHostname != bodyHostname {
+		return fmt.Errorf("hostname mismatch: authenticated as %q but request claims %q", authHostname, bodyHostname)
+	}
 	return nil
 }
 

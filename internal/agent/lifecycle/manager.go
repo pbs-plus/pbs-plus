@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -21,11 +22,35 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+// ErrHostNotExpected is returned when the server indicates the agent host
+// has been removed from the targets database and will not be accepted
+// until manually re-bootstrapped or re-added by an admin.
+var ErrHostNotExpected = errors.New("host not expected by server - requires re-bootstrap")
+
 func isCertError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "x509:") ||
 		strings.Contains(msg, "tls:") ||
 		strings.Contains(msg, "certificate")
+}
+
+// IsHostNotExpected checks if an error indicates the agent host was
+// deleted from the server's targets database. This only fires for
+// the main agent control connection (no backup/restore child IDs)
+// because ConnectARPC uses plain hostname without X-PBS-Plus-BackupID
+// or X-PBS-Plus-RestoreID headers.
+func IsHostNotExpected(err error) bool {
+	if errors.Is(err, ErrHostNotExpected) {
+		return true
+	}
+	msg := err.Error()
+	// Server-side rejection from AgentsManager.isExpected:
+	//   "connection is not expected by server"
+	// HTTP middleware rejection from checkAgentAuth when
+	// LoadAgentHostCert returns ErrAgentHostNotFound:
+	//   "CheckAgentAuth: certificate not trusted"
+	return strings.Contains(msg, "is not expected by server") ||
+		strings.Contains(msg, "CheckAgentAuth: certificate not trusted")
 }
 
 func ClearCertificates() {
@@ -65,8 +90,8 @@ func UpdateDrives() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
 	_, _ = io.Copy(io.Discard, resp)
+	_ = resp.Close()
 	return nil
 }
 
@@ -181,6 +206,15 @@ func ConnectARPC(
 					return
 				}
 
+				if IsHostNotExpected(connErr) {
+					syslog.L.Warn().
+						WithMessage("host not expected by server, stopping retries until re-bootstrap").
+						WithField("error", connErr.Error()).
+						Write()
+					signalCertError(ErrHostNotExpected)
+					return
+				}
+
 				syslog.L.Warn().
 					WithField("error", connErr.Error()).
 					WithMessage("QUIC connection failed, falling back to TCP/mTLS").
@@ -202,6 +236,15 @@ func ConnectARPC(
 						WithMessage("certificate error on connect, requesting re-bootstrap").
 						Write()
 					signalCertError(connErr)
+					return
+				}
+
+				if IsHostNotExpected(connErr) {
+					syslog.L.Warn().
+						WithMessage("host not expected by server, stopping retries until re-bootstrap").
+						WithField("error", connErr.Error()).
+						Write()
+					signalCertError(ErrHostNotExpected)
 					return
 				}
 
@@ -264,12 +307,32 @@ func ConnectARPC(
 			session.Close()
 			session = nil
 
-			if serveErr != nil && isCertError(serveErr) {
-				syslog.L.Error(serveErr).
-					WithMessage("certificate error during session, requesting re-bootstrap").
-					Write()
-				signalCertError(serveErr)
-				return
+			if serveErr != nil {
+				if isCertError(serveErr) {
+					syslog.L.Error(serveErr).
+						WithMessage("certificate error during session, requesting re-bootstrap").
+						Write()
+					signalCertError(serveErr)
+					return
+				}
+				// QUIC closes the connection without a rejection frame
+				// when the host is not expected (success marker already
+				// sent). Probe via TCP to get the explicit rejection.
+				tcpPipe, probeErr := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+				if probeErr != nil {
+					tcpPipe = nil
+					if IsHostNotExpected(probeErr) {
+						syslog.L.Warn().
+							WithMessage("host not expected by server (detected via probe), stopping retries until re-bootstrap").
+							WithField("error", probeErr.Error()).
+							Write()
+						signalCertError(ErrHostNotExpected)
+						return
+					}
+				}
+				if tcpPipe != nil {
+					tcpPipe.Close()
+				}
 			}
 		}
 	}()
