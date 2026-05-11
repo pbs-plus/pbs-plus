@@ -6,6 +6,7 @@ target
 /operator
 pbs-plus
 pbs-plus-agent
+/agent
 /pbs_plus
 *.exe
 /pxar-mount
