@@ -8,6 +8,7 @@ A Proxmox Backup Server (PBS) "extension" designed to add advanced backup featur
 > However, feel free to post issues if you think it will be helpful for the development of this project.
 
 ## Table of Contents
+
 - [Introduction](#introduction)
 - [Features](#features)
 - [Installation](#installation)
@@ -21,13 +22,15 @@ A Proxmox Backup Server (PBS) "extension" designed to add advanced backup featur
 - [License](#license)
 
 ## Introduction
+
 PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with advanced features to create a more competitive backup solution, aiming to make PBS a viable alternative to Veeam. Among these enhancements is remote file-level backup, integrated directly within the PBS Web UI, allowing for streamlined configuration and management of backups of bare-metal workstations without requiring external cron jobs or additional scripts.
 
 ## How does it work?
+
 ![image](https://github.com/user-attachments/assets/e9005288-b95e-44e7-b5d8-211907cfab10)
 
-
 ## Planned Features/Roadmap
+
 - [x] Execute remote backups directly from Proxmox Backup Server Web UI
 - [x] File-level backup from bare-metal workstations with agent
 - [x] File-level restore to bare-metal workstations with agent
@@ -36,7 +39,7 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [x] Linux agent support for workstations
 - [x] Containerized agent support for Docker/Kubernetes
 - [x] Kubernetes Operator for PVC backup management
-- [ ] ~Mac agent support for workstations~ (unfortunately, I don't have a setup to develop for Mac but PRs will be accepted) 
+- [ ] ~Mac agent support for workstations~ (unfortunately, I don't have a setup to develop for Mac but PRs will be accepted)
 - [x] MySQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] PostgreSQL database backup/restore support (use pre-backup hook scripts to dump databases)
 - [x] Active Directory/LDAP backup/restore support (use pre-backup hook scripts to dump databases)
@@ -44,12 +47,14 @@ PBS Plus is a project focused on extending Proxmox Backup Server (PBS) with adva
 - [ ] Volume-level backup from bare-metal workstations with agent
 
 ## Installation
+
 To install PBS Plus:
+
 ### PBS Plus
+
 - Install the `.deb` package in the release and install it in your Proxmox Backup Server machine.
-- RECOMMENDED: Install the latest `.deb` packages in the release for `pxar-direct-mount` and `pxar-socket-api` and install it in your Proxmox Backup Server machine.
-  - `pxar-direct-mount` is required for mounting snapshots.
-  - `pxar-socket-api` is required for restoring files directly to targets.
+- `pxar-mount` is bundled with the server binary — no extra packages needed.
+  - Mounting snapshots and restoring files use Go-native pxar access (no Rust dependencies).
 - Edit `/etc/proxmox-backup/pbs-plus/pbs-plus.env` and add the following required environment variables:
   - `PBS_PLUS_HOSTNAME`: server's hostname/FQDN for mTLS certificate
 - Restart the `pbs-plus` service so it reads the env vars and initializes:
@@ -59,6 +64,7 @@ To install PBS Plus:
 - You should see a modified Web UI on `https://<pbs>:8007` if installation was successful.
 
 ### Windows Agent
+
 - In the Agent Bootstrap menu under Disk Backup, click on an existing valid token or generate a new one.
 - Click on Deploy With Token while the valid token is selected. That should give you a PowerShell command. Executing that command in an elevated PowerShell should install and bootstrap the agent properly.
 - Windows agents store configuration in the Windows Registry and use DPAPI for secrets. They do not use environment variables for initial configuration except for the following:
@@ -66,6 +72,7 @@ To install PBS Plus:
 - As soon as the script finishes, you should be able to see the client as Reachable in the Targets tab. If so, you should be good to go.
 
 ### Linux Agent
+
 - Install one of the `pbs-plus-agent` Linux packages from the Releases page and install it on your machine, or use the containerized agent below.
 - In the Agent Bootstrap menu under Disk Backup, click on an existing valid token or generate a new one.
 - Click on Copy Token while the valid token is selected. That should give you the token you need for the agent to establish connection.
@@ -78,6 +85,7 @@ To install PBS Plus:
 - As soon as the agent starts, it should persist config to `/etc/pbs-plus-agent/registry.toml`, bootstrap mTLS, and you should see the client as Reachable in the Targets tab. If so, you should be good to go.
 
 ### Containerized Agent (Docker/Podman/Kubernetes)
+
 - You can run the agent as a container instead of installing a native package.
 - `DAC_READ_SEARCH` might be required for the agent to have read permissions to the filesystem.
 - Provide initial configuration via environment variables (Linux-style):
@@ -107,6 +115,7 @@ To install PBS Plus:
 The PBS Plus Kubernetes Operator automates PVC backups by watching for annotated PVCs and creating backup agent pods. It supports both direct mount (for RWX volumes) and snapshot-based backup (for RWO volumes).
 
 #### Prerequisites
+
 - Kubernetes 1.24+
 - [VolumeSnapshot CRD](https://kubernetes.io/docs/concepts/storage/volume-snapshots/) installed (for snapshot-based backups)
 - PBS Plus server running and accessible from the cluster
@@ -114,11 +123,13 @@ The PBS Plus Kubernetes Operator automates PVC backups by watching for annotated
 #### Installation
 
 1. Deploy the operator:
+
 ```bash
 kubectl apply -f deploy/kubernetes/operator.yaml
 ```
 
 2. Create a bootstrap secret:
+
 ```bash
 kubectl create secret generic pbs-plus-bootstrap \
   --from-literal=server-url='https://<pbs-server>:8008' \
@@ -148,36 +159,39 @@ kubectl annotate pvc my-rwx-pvc pbs-plus.io/backup=true pbs-plus.io/snapshot=tru
 
 #### Configuration Options
 
-| Annotation | Description |
-|------------|-------------|
-| `pbs-plus.io/backup=true` | Required - enables backup for this PVC |
+| Annotation                  | Description                                                        |
+| --------------------------- | ------------------------------------------------------------------ |
+| `pbs-plus.io/backup=true`   | Required - enables backup for this PVC                             |
 | `pbs-plus.io/snapshot=true` | Optional - force snapshot mode (default for RWO, optional for RWX) |
 
-| Secret Key | Description |
-|------------|-------------|
-| `server-url` | PBS Plus server URL (e.g., `https://pbs.example.com:8008`) |
-| `bootstrap-token` | Bootstrap token from PBS Plus server |
+| Secret Key        | Description                                                |
+| ----------------- | ---------------------------------------------------------- |
+| `server-url`      | PBS Plus server URL (e.g., `https://pbs.example.com:8008`) |
+| `bootstrap-token` | Bootstrap token from PBS Plus server                       |
 
 #### Operator Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--server-url` | (required) | PBS Plus server URL |
-| `--bootstrap-token-secret` | `pbs-plus-bootstrap` | Secret containing bootstrap credentials |
-| `--namespace` | `` (all namespaces) | Namespace to watch (empty for all) |
-| `--agent-image` | `ghcr.io/pbs-plus/pbs-plus-agent:latest` | Agent container image |
-| `--snapshot-class` | `` (auto-detect) | Default VolumeSnapshotClass |
+| Flag                       | Default                                  | Description                             |
+| -------------------------- | ---------------------------------------- | --------------------------------------- |
+| `--server-url`             | (required)                               | PBS Plus server URL                     |
+| `--bootstrap-token-secret` | `pbs-plus-bootstrap`                     | Secret containing bootstrap credentials |
+| `--namespace`              | `` (all namespaces)                      | Namespace to watch (empty for all)      |
+| `--agent-image`            | `ghcr.io/pbs-plus/pbs-plus-agent:latest` | Agent container image                   |
+| `--snapshot-class`         | `` (auto-detect)                         | Default VolumeSnapshotClass             |
 
 #### Cleanup
 
 When a PVC's backup annotation is removed, the operator automatically:
+
 1. Deletes the backup agent pod
 2. Cleans up any VolumeSnapshots and restored PVCs
 
 ## Usage
+
 PBS Plus currently consists of two main components: the server and the agent. The server should be installed on the PBS machine, while agents are installed on client workstations.
 
 ### Server
+
 - The server hosts an API server for its services on port `TCP/8017` to enable enhanced functionality.
 - The server hosts another endpoint for agent HTTP communications (bootstrap, renewal, drive updates) on port `TCP/8018`.
 - The server listens on port `8008` for aRPC (Agent RPC) using both:
@@ -186,18 +200,22 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 - All new features, including remote file-level backups, can be managed through the "Disk Backup" page.
 
 ### Agent
+
 - Currently, Windows and Linux agents are supported.
 - Linux agents **do not** support snapshots on backup yet.
 - The agent registers with the server on initialization, exchanging public keys for communication.
 - The agent acts as a service, using a custom RPC (`aRPC`/Agent RPC). The control plane runs over QUIC (UDP) with mTLS, keeping a persistent connection for status, commands, and file-tree browsing. When a backup or restore starts, the agent forks a subprocess that establishes a temporary TCP+mTLS+smux connection for streaming file data. The server mounts the agent's filesystem via FUSE over `aRPC`, then runs `proxmox-backup-client` on the server side to perform the actual backup.
 
 ### S3-compatible backup target
+
 > [!WARNING]  
 > This is a very early implementation of S3 as backup target. This has not been optimized to lessen access fees and has only been tested on local S3-compatible implementations (Ceph, MinIO, etc.)
+
 - It should be as simple as adding a target with the following format as path: `<scheme>://<access key>@<endpoint>/<bucket>`
 - Afterwards, you can set the secret key via the `Set S3 Secret Key` button while having the newly created target selected.
 
 ### Hook scripts (Pre/Post scripts)
+
 #### Overview
 
 - PreScript: runs before the backup. Can validate prerequisites and optionally emit overrides (e.g., namespace). If it exits non‑zero, the backup is aborted.
@@ -205,6 +223,7 @@ PBS Plus currently consists of two main components: the server and the agent. Th
 - Communication: all job fields are provided as env vars; PreScript can emit `KEY=VALUE` overrides via stdout.
 
 Reminders:
+
 - Scripts run on the PBS server, not on the agent.
 - Paths and dependencies must exist on the PBS server.
 - Scripts must be executable and return promptly; long scripts delay the job.
@@ -237,6 +256,7 @@ Print overrides to stdout as `KEY=VALUE` lines:
 - `PBS_PLUS__NAMESPACE` — updates the job’s namespace before the backup starts
 
 Notes:
+
 - Use stdout strictly for `KEY=VALUE` when emitting overrides; write human logs to stderr.
 - If PreScript exits non‑zero, the backup does not proceed.
 
@@ -260,6 +280,7 @@ exit 0
 ```
 
 Other common “required” conditions for PreScript:
+
 - Snapshot/quiesce gating (exit non‑zero if app quiesce fails)
 - Free space/health checks (exit if below threshold)
 - Access control/time windows (as above)
@@ -284,6 +305,7 @@ exit 0
 PBS Plus can back up databases (MySQL, PostgreSQL, etc.) and Directory Services (LDAP/Active Directory) by using hook scripts. Since the agent mounts the target filesystem to the PBS server, a script set up as a PreScript or Mount Script can trigger a dump to a local folder on the agent or a specific path on the server before the backup process begins.
 
 ### How it works
+
 1. **PreScript/Mount Script Execution**: The PBS Server runs your script.
 2. **Data Export**: The script connects to your database/service and exports the data to a designated "Dump Directory".
 3. **Backup**: PBS Plus backs up the files in that directory as part of the job.
@@ -334,9 +356,11 @@ exit 0
 ```
 
 ### LDAP / Active Directory Backup Script
+
 For LDAP-based services, use `slapcat` (OpenLDAP) or `ldifde` (Windows/AD via agent-side scripts) to export the directory structure.
 
 **OpenLDAP Example:**
+
 ```bash
 #!/bin/bash
 # LDAP Pre-Backup Hook
@@ -351,12 +375,14 @@ exit 0
 ```
 
 ### Important Tips:
+
 - **Cleanup**: You can use a **PostScript** to delete the `.dump` or `.sql` files after the backup is successful to save local disk space.
 - **Error Handling**: If your dump script fails (e.g., database is down), ensure the script exits with a non-zero code (`exit 1`). This will prevent PBS Plus from backing up a partial or corrupted database dump.
 
 ## Contributing
+
 Contributions are welcome! Please fork the repository and create a pull request with your changes. Ensure code style consistency and include tests for any new features or bug fixes.
 
 ## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
 
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
