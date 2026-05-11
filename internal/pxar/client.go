@@ -2,6 +2,8 @@ package pxar
 
 import (
 	"context"
+	"fmt"
+	"io"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -198,4 +200,16 @@ func (c *Client) Close() error {
 	}
 
 	return c.pr.Close()
+}
+
+// ReadFileContentReader returns a streaming reader for file content identified
+// by content offset range. For local clients, this bypasses the rangeReader
+// indirection and reads directly from the chunk store. The caller must close
+// the returned reader.
+func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, contentEnd uint64) (io.ReadCloser, error) {
+	// Remote path not supported for streaming — fall back to Read
+	if c.pipe != nil {
+		return nil, fmt.Errorf("ReadFileContentReader not supported over remote ARPC")
+	}
+	return c.pr.ReadFileContentReader(ctx, contentStart, contentEnd)
 }
