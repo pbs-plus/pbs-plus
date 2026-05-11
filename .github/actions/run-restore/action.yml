@@ -99,3 +99,34 @@ runs:
           exit 1
         fi
         echo "✓ ${RESTORED} file(s) restored to /tmp/pbs-plus-restore-test"
+
+    - name: Verify data integrity
+      shell: bash
+      run: |
+        echo "Computing checksums of source files..."
+        docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -exec sha256sum {} \; | sort' > /tmp/source-checksums.txt
+
+        echo "Computing checksums of restored files..."
+        docker exec pbs-plus-agent sh -c 'cd /tmp/pbs-plus-restore-test && find . -type f -exec sha256sum {} \; | sort' > /tmp/restored-checksums.txt
+
+        # Normalize paths for comparison (strip leading ./)
+        sed -i 's|^\./||' /tmp/source-checksums.txt
+        sed -i 's|^\./||' /tmp/restored-checksums.txt
+
+        if ! diff -q /tmp/source-checksums.txt /tmp/restored-checksums.txt > /dev/null 2>&1; then
+          echo "✗ DATA INTEGRITY CHECK FAILED: restored files differ from source!"
+          echo ""
+          echo "=== Differences (source vs restored) ==="
+          diff /tmp/source-checksums.txt /tmp/restored-checksums.txt || true
+          echo ""
+          echo "=== Source file sizes ==="
+          docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -exec stat --format="%s %n" {} \; | sort'
+          echo ""
+          echo "=== Restored file sizes ==="
+          docker exec pbs-plus-agent sh -c 'cd /tmp/pbs-plus-restore-test && find . -type f -exec stat --format="%s %n" {} \; | sort'
+          exit 1
+        fi
+
+        SOURCE_COUNT=$(wc -l < /tmp/source-checksums.txt)
+        RESTORED_COUNT=$(wc -l < /tmp/restored-checksums.txt)
+        echo "✓ Data integrity verified: ${RESTORED_COUNT}/${SOURCE_COUNT} files match (sha256)"
