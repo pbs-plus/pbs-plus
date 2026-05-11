@@ -100,7 +100,8 @@ func Recovery(next http.Handler) http.Handler {
 func RequireAgentAuth(st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if err := checkAgentAuth(st, r); err != nil {
+			hostname, err := checkAgentAuth(st, r)
+			if err != nil {
 				syslog.L.Error(err).
 					WithField("mode", "agent_only").
 					WithField("hostname", getClientInfo(r)).
@@ -109,6 +110,7 @@ func RequireAgentAuth(st *store.Store) func(http.Handler) http.Handler {
 				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 				return
 			}
+			r.Header.Set("X-PBS-Authenticated-Agent", hostname)
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -141,10 +143,11 @@ func RequireAgentOrServerAuth(st *store.Store) func(http.Handler) http.Handler {
 			authenticated := false
 			var lastErr error
 
-			if err := checkAgentAuth(st, r); err == nil {
+			hostname, agentErr := checkAgentAuth(st, r)
+			if agentErr == nil {
 				authenticated = true
 			} else {
-				lastErr = err
+				lastErr = agentErr
 			}
 
 			if err := checkProxyAuth(r); err == nil || IsLocalhost(r) {
@@ -161,6 +164,9 @@ func RequireAgentOrServerAuth(st *store.Store) func(http.Handler) http.Handler {
 					Write()
 				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 				return
+			}
+			if hostname != "" {
+				r.Header.Set("X-PBS-Authenticated-Agent", hostname)
 			}
 			next.ServeHTTP(w, r)
 		})

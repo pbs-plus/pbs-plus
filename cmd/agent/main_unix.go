@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -22,7 +23,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	_ "net/http/pprof"
-
 )
 
 var Version = "v0.0.0"
@@ -98,8 +98,18 @@ func (p *pbsService) run() {
 			}
 		})
 
+		driveErrCh := make(chan error, 1)
 		innerWg.Go(func() {
-			_ = lifecycle.UpdateDrives()
+			defer close(driveErrCh)
+			if err := lifecycle.UpdateDrives(); err != nil {
+				if lifecycle.IsHostNotExpected(err) {
+					select {
+					case driveErrCh <- err:
+					default:
+					}
+					return
+				}
+			}
 			ticker := time.NewTicker(agent.ComputeDelay())
 			defer ticker.Stop()
 			for {
@@ -107,7 +117,15 @@ func (p *pbsService) run() {
 				case <-innerCtx.Done():
 					return
 				case <-ticker.C:
-					_ = lifecycle.UpdateDrives()
+					if err := lifecycle.UpdateDrives(); err != nil {
+						if lifecycle.IsHostNotExpected(err) {
+							select {
+							case driveErrCh <- err:
+							default:
+							}
+							return
+						}
+					}
 					ticker.Reset(agent.ComputeDelay())
 				}
 			}
@@ -135,6 +153,18 @@ func (p *pbsService) run() {
 			innerWg.Wait()
 			return
 
+		case err := <-driveErrCh:
+			innerCancel()
+			innerWg.Wait()
+			syslog.L.Error(err).
+				WithMessage("host not expected by server (detected via HTTP), waiting for re-bootstrap").
+				Write()
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(5 * time.Minute):
+			}
+
 		case certErr, ok := <-certErrCh:
 			innerCancel()
 			innerWg.Wait()
@@ -143,15 +173,26 @@ func (p *pbsService) run() {
 				return
 			}
 
-			syslog.L.Error(certErr).
-				WithMessage("clearing certificates and re-bootstrapping").
-				Write()
-			lifecycle.ClearCertificates()
+			if errors.Is(certErr, lifecycle.ErrHostNotExpected) {
+				syslog.L.Error(certErr).
+					WithMessage("host not expected by server, waiting for re-bootstrap").
+					Write()
+				select {
+				case <-p.ctx.Done():
+					return
+				case <-time.After(5 * time.Minute):
+				}
+			} else {
+				syslog.L.Error(certErr).
+					WithMessage("clearing certificates and re-bootstrapping").
+					Write()
+				lifecycle.ClearCertificates()
 
-			select {
-			case <-p.ctx.Done():
-				return
-			case <-time.After(5 * time.Second):
+				select {
+				case <-p.ctx.Done():
+					return
+				case <-time.After(5 * time.Second):
+				}
 			}
 		}
 	}
