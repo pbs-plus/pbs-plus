@@ -206,7 +206,7 @@ func parseLastLogMessage(upid string) (string, error) {
 
 	lastLine := strings.TrimSpace(out.String())
 
-	re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[-+]\d{2}:\d{2}: `)
+	re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[-+]\d{2}:\d{2}|Z): `)
 	message := re.ReplaceAllString(lastLine, "")
 
 	return strings.TrimSpace(message), nil
