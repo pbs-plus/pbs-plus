@@ -1,0 +1,1 @@
+ALTER TABLE restores ADD COLUMN payload_cache_chunks INTEGER NOT NULL DEFAULT 0;

@@ -48,7 +48,7 @@ type restoreJob struct {
 	storeInstance       *store.Store
 	skipCheck           bool
 	web                 bool
-	disablePayloadCache bool
+	payloadCacheChunks int
 }
 
 // NewRestoreJob creates a new restore job.
@@ -71,7 +71,7 @@ func NewRestoreJob(
 		waitGroup:           &sync.WaitGroup{},
 		task:                task,
 		disconnected:        make(chan struct{}, 1),
-		disablePayloadCache: true,
+		payloadCacheChunks: job.PayloadCacheChunks,
 	}
 
 	return &jobs.Job{
@@ -362,8 +362,8 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		return err
 	}
 
-	if b.disablePayloadCache {
-		reader.DisablePayloadCache()
+	if b.payloadCacheChunks >= 0 {
+		reader.SetPayloadCacheSize(b.payloadCacheChunks)
 	}
 
 	b.task.WriteString(fmt.Sprintf(
@@ -440,8 +440,8 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 		return err
 	}
 
-	if b.disablePayloadCache {
-		reader.DisablePayloadCache()
+	if b.payloadCacheChunks >= 0 {
+		reader.SetPayloadCacheSize(b.payloadCacheChunks)
 	}
 
 	b.localClient, b.errCh = pxar.NewLocalClient(reader, b.job.ID)

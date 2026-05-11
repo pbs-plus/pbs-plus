@@ -181,6 +181,16 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
+		payloadCacheChunks, err := strconv.Atoi(r.FormValue("payload-cache-chunks"))
+		if err != nil {
+			if r.FormValue("payload-cache-chunks") == "" {
+				payloadCacheChunks = 0
+			} else {
+				WriteErrorResponse(w, err)
+				return
+			}
+		}
+
 		id := r.FormValue("id")
 		if err := validate.ValidateJobId(id); err != nil && id != "" {
 			WriteErrorResponse(w, err)
@@ -230,19 +240,20 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		newRestore := database.Restore{
-			ID:            id,
-			Store:         store,
-			Namespace:     namespace,
-			Snapshot:      snapshot,
-			SrcPath:       srcPath,
-			Mode:          mode,
-			DestTarget:    database.Target{Name: r.FormValue("dest-target")},
-			DestSubpath:   destSubpath,
-			PreScript:     preScript,
-			PostScript:    postScript,
-			Comment:       r.FormValue("comment"),
-			Retry:         retry,
-			RetryInterval: retryInterval,
+			ID:                 id,
+			Store:              store,
+			Namespace:          namespace,
+			Snapshot:           snapshot,
+			SrcPath:            srcPath,
+			Mode:               mode,
+			PayloadCacheChunks: payloadCacheChunks,
+			DestTarget:         database.Target{Name: r.FormValue("dest-target")},
+			DestSubpath:        destSubpath,
+			PreScript:          preScript,
+			PostScript:         postScript,
+			Comment:            r.FormValue("comment"),
+			Retry:              retry,
+			RetryInterval:      retryInterval,
 		}
 
 		err = storeInstance.RestoreSvc.CreateRestore(newRestore)
@@ -349,6 +360,12 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			restore.Mode = mode
 
+			payloadCacheChunks, pccErr := strconv.Atoi(r.FormValue("payload-cache-chunks"))
+			if pccErr != nil {
+				payloadCacheChunks = 0
+			}
+			restore.PayloadCacheChunks = payloadCacheChunks
+
 			retry, err := strconv.Atoi(r.FormValue("retry"))
 			if err != nil {
 				retry = 0
@@ -385,6 +402,8 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						restore.Comment = ""
 					case "mode":
 						restore.Mode = 0
+					case "payload-cache-chunks":
+						restore.PayloadCacheChunks = 0
 					case "retry":
 						restore.Retry = 0
 					case "retry-interval":

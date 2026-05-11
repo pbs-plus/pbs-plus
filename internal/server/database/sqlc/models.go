@@ -68,6 +68,7 @@ type Restore struct {
 	RestoreMode        int64          `json:"restore_mode"`
 	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
 	RetryCount         sql.NullInt64  `json:"retry_count"`
+	PayloadCacheChunks int64          `json:"payload_cache_chunks"`
 }
 
 type Script struct {

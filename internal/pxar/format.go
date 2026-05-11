@@ -183,12 +183,11 @@ func (r *PxarReader) Close() error {
 	return nil
 }
 
-// DisablePayloadCache disables chunk caching for the payload stream.
-// Content chunks are decoded on demand and immediately discarded,
-// keeping memory bounded during streaming restores.
-func (r *PxarReader) DisablePayloadCache() {
+// SetPayloadCacheSize adjusts the payload chunk cache size.
+// n=0 disables caching entirely (lowest memory), n>0 caps the cache.
+func (r *PxarReader) SetPayloadCacheSize(n int) {
 	if r.reader != nil {
-		r.reader.DisablePayloadCache()
+		r.reader.SetPayloadCacheSize(n)
 	}
 }
 

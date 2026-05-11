@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
 )
 
 // JobStatus is a typed enum for job completion status.
@@ -145,24 +144,25 @@ type Exclusion struct {
 }
 
 type Restore struct {
-	ID            string     `json:"id"`
-	Store         string     `json:"store"`
-	Snapshot      string     `json:"snapshot"`
-	Namespace     string     `json:"ns"`
-	Mode          int        `json:"mode"`
-	SrcPath       string     `json:"src-path"`
-	DestTarget    Target     `json:"dest-target"`
-	DestSubpath   string     `json:"dest-subpath"`
-	PreScript     string     `json:"pre_script"`
-	PostScript    string     `json:"post_script"`
-	Comment       string     `json:"comment"`
-	Retry         int        `json:"retry"`
-	RetryInterval int        `json:"retry-interval"`
-	CurrentPID    int        `json:"current_pid"`
-	ExpectedSize  int        `json:"expected_size,omitempty"`
-	UPIDs         []string   `json:"upids"`
-	CurrentStats  JobStats   `json:"current-stats"`
-	History       JobHistory `json:"history"`
+	ID                 string     `json:"id"`
+	Store              string     `json:"store"`
+	Snapshot           string     `json:"snapshot"`
+	Namespace          string     `json:"ns"`
+	Mode               int        `json:"mode"`
+	PayloadCacheChunks int        `json:"payload-cache-chunks"`
+	SrcPath            string     `json:"src-path"`
+	DestTarget         Target     `json:"dest-target"`
+	DestSubpath        string     `json:"dest-subpath"`
+	PreScript          string     `json:"pre_script"`
+	PostScript         string     `json:"post_script"`
+	Comment            string     `json:"comment"`
+	Retry              int        `json:"retry"`
+	RetryInterval      int        `json:"retry-interval"`
+	CurrentPID         int        `json:"current_pid"`
+	ExpectedSize       int        `json:"expected_size,omitempty"`
+	UPIDs              []string   `json:"upids"`
+	CurrentStats       JobStats   `json:"current-stats"`
+	History            JobHistory `json:"history"`
 }
 
 type Script struct {
@@ -196,25 +196,25 @@ type JobHistory struct {
 }
 
 type Target struct {
-	Name             string       `json:"name"`
-	Type             TargetType   `json:"target_type"`
-	Path             string       `json:"path"`
-	AgentHost        AgentHost    `json:"agent_host"`
-	VolumeID         string       `json:"volume_id,omitempty"`
-	MountScript      string       `json:"mount_script"`
-	AgentVersion     string       `json:"agent_version"`
-	ConnectionStatus bool         `json:"connection_status"`
-	JobCount         int          `json:"job_count"`
-	VolumeType       string       `json:"volume_type"`
-	VolumeName       string       `json:"volume_name"`
-	VolumeFS         string       `json:"volume_fs"`
-	VolumeTotalBytes int          `json:"volume_total_bytes,omitempty"`
-	VolumeUsedBytes  int          `json:"volume_used_bytes,omitempty"`
-	VolumeFreeBytes  int          `json:"volume_free_bytes,omitempty"`
-	VolumeTotal      string       `json:"volume_total"`
-	VolumeUsed       string       `json:"volume_used"`
-	VolumeFree       string       `json:"volume_free"`
-	S3Info           *S3Url `json:"s3_info"`
+	Name             string     `json:"name"`
+	Type             TargetType `json:"target_type"`
+	Path             string     `json:"path"`
+	AgentHost        AgentHost  `json:"agent_host"`
+	VolumeID         string     `json:"volume_id,omitempty"`
+	MountScript      string     `json:"mount_script"`
+	AgentVersion     string     `json:"agent_version"`
+	ConnectionStatus bool       `json:"connection_status"`
+	JobCount         int        `json:"job_count"`
+	VolumeType       string     `json:"volume_type"`
+	VolumeName       string     `json:"volume_name"`
+	VolumeFS         string     `json:"volume_fs"`
+	VolumeTotalBytes int        `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes  int        `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes  int        `json:"volume_free_bytes,omitempty"`
+	VolumeTotal      string     `json:"volume_total"`
+	VolumeUsed       string     `json:"volume_used"`
+	VolumeFree       string     `json:"volume_free"`
+	S3Info           *S3Url     `json:"s3_info"`
 }
 
 type AgentHost struct {

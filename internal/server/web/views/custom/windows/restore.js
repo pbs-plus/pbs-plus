@@ -250,6 +250,19 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
               deleteEmpty: "{!isCreate}",
             },
           },
+          {
+            xtype: "proxmoxintegerfield",
+            name: "payload-cache-chunks",
+            fieldLabel: gettext("Payload Cache Chunks"),
+            minValue: 0,
+            maxValue: 128,
+            value: 0,
+            allowBlank: true,
+            emptyText: "0 (lowest memory)",
+            cbind: {
+              deleteEmpty: "{!isCreate}",
+            },
+          },
         ],
 
         columnB: [

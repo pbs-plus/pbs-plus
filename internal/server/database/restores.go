@@ -130,6 +130,7 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		RestoreMode:        int64(restore.Mode),
 		LastRunStatus:      toNullInt64(int(restore.History.LastRunStatus)),
 		RetryCount:         toNullInt64(restore.History.RetryCount),
+		PayloadCacheChunks: int64(restore.PayloadCacheChunks),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
@@ -184,11 +185,12 @@ func (database *Database) GetRestore(id string) (Restore, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:         fromNullInt64(row.Retry),
-		RetryInterval: fromNullInt64(row.RetryInterval),
-		Mode:          int(row.RestoreMode),
-		PreScript:     row.PreScript,
-		PostScript:    row.PostScript,
+		Retry:              fromNullInt64(row.Retry),
+		RetryInterval:      fromNullInt64(row.RetryInterval),
+		Mode:               int(row.RestoreMode),
+		PayloadCacheChunks: int(row.PayloadCacheChunks),
+		PreScript:          row.PreScript,
+		PostScript:         row.PostScript,
 	}
 
 	restore.DestTarget.populateInfo()
@@ -288,6 +290,7 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 		Snapshot:           restore.Snapshot,
 		SrcPath:            restore.SrcPath,
 		RestoreMode:        int64(restore.Mode),
+		PayloadCacheChunks: int64(restore.PayloadCacheChunks),
 		DestTarget:         restore.DestTarget.Name,
 		DestSubpath:        toNullString(restore.DestSubpath),
 		Comment:            toNullString(restore.Comment),
@@ -437,7 +440,8 @@ func (database *Database) GetAllQueuedRestores() ([]Restore, error) {
 			Store:    row.Store,
 			Snapshot: row.Snapshot,
 			SrcPath:  row.SrcPath,
-			Mode:     int(row.RestoreMode),
+			Mode:               int(row.RestoreMode),
+			PayloadCacheChunks: int(row.PayloadCacheChunks),
 			DestTarget: Target{
 				Name:      row.DestTarget,
 				AgentHost: AgentHost{},
