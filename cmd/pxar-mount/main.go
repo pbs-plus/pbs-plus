@@ -573,7 +573,7 @@ func (fs *pxarFS) readDirRaw(inode uint64) ([]dirEntryMeta, error) {
 
 	var entries []dirEntryMeta
 	fs.readerMu.Lock()
-	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{}, func(e *pxar.Entry) error {
+	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		childIno := toInode(e)
 		entries = append(entries, dirEntryMeta{
 			name:  e.FileName(),
