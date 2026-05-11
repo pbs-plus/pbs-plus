@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -21,11 +22,27 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+// ErrHostNotExpected is returned when the server indicates the agent host
+// has been removed from the targets database and will not be accepted
+// until manually re-bootstrapped or re-added by an admin.
+var ErrHostNotExpected = errors.New("host not expected by server - requires re-bootstrap")
+
 func isCertError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "x509:") ||
 		strings.Contains(msg, "tls:") ||
 		strings.Contains(msg, "certificate")
+}
+
+// IsHostNotExpected checks if an error indicates the agent host was
+// deleted from the server's targets database.
+func IsHostNotExpected(err error) bool {
+	if errors.Is(err, ErrHostNotExpected) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not expected") ||
+		strings.Contains(msg, "not trusted")
 }
 
 func ClearCertificates() {
@@ -65,8 +82,8 @@ func UpdateDrives() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Close()
 	_, _ = io.Copy(io.Discard, resp)
+	_ = resp.Close()
 	return nil
 }
 
@@ -181,6 +198,15 @@ func ConnectARPC(
 					return
 				}
 
+				if IsHostNotExpected(connErr) {
+					syslog.L.Warn().
+						WithMessage("host not expected by server, stopping retries until re-bootstrap").
+						WithField("error", connErr.Error()).
+						Write()
+					signalCertError(ErrHostNotExpected)
+					return
+				}
+
 				syslog.L.Warn().
 					WithField("error", connErr.Error()).
 					WithMessage("QUIC connection failed, falling back to TCP/mTLS").
@@ -202,6 +228,15 @@ func ConnectARPC(
 						WithMessage("certificate error on connect, requesting re-bootstrap").
 						Write()
 					signalCertError(connErr)
+					return
+				}
+
+				if IsHostNotExpected(connErr) {
+					syslog.L.Warn().
+						WithMessage("host not expected by server, stopping retries until re-bootstrap").
+						WithField("error", connErr.Error()).
+						Write()
+					signalCertError(ErrHostNotExpected)
 					return
 				}
 
@@ -264,12 +299,22 @@ func ConnectARPC(
 			session.Close()
 			session = nil
 
-			if serveErr != nil && isCertError(serveErr) {
-				syslog.L.Error(serveErr).
-					WithMessage("certificate error during session, requesting re-bootstrap").
-					Write()
-				signalCertError(serveErr)
-				return
+			if serveErr != nil {
+				if isCertError(serveErr) {
+					syslog.L.Error(serveErr).
+						WithMessage("certificate error during session, requesting re-bootstrap").
+						Write()
+					signalCertError(serveErr)
+					return
+				}
+				if IsHostNotExpected(serveErr) {
+					syslog.L.Warn().
+						WithMessage("host not expected by server during session, stopping retries until re-bootstrap").
+						WithField("error", serveErr.Error()).
+						Write()
+					signalCertError(ErrHostNotExpected)
+					return
+				}
 			}
 		}
 	}()
