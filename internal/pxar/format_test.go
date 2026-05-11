@@ -7,12 +7,15 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/accessor"
 	"github.com/pbs-plus/pxar/encoder"
 	"github.com/pbs-plus/pxar/format"
+	"github.com/pbs-plus/pxar/transfer"
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
@@ -544,6 +547,61 @@ func TestPxarReaderStats(t *testing.T) {
 	}
 	if stats.TotalBytes != 4096 {
 		t.Errorf("TotalBytes = %d, want 4096", stats.TotalBytes)
+	}
+}
+
+// TestReaderConcurrentAccess demonstrates the race condition in the
+// shared metadata reader. Multiple goroutines calling
+// ListDirectory concurrently on the same FileArchiveReader will race
+// on the internal offset of the backing bytes.Reader. This test
+// triggers the race by spawning many goroutines that repeatedly list
+// the root directory, checking for errors or wrong entry counts.
+func TestReaderConcurrentAccess(t *testing.T) {
+	buf := makeTestArchiveManyFiles(t, 100)
+	// bytes.Reader is used as backing — it has the same non-thread-safe
+	// Seek+Read pattern as ChunkedReadSeeker.
+	ar := transfer.NewFileArchiveReader(buf)
+	defer ar.Close()
+
+	// Get the root to find the directory content offset
+	root, err := ar.ReadRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootContentOffset := int64(root.ContentOffset)
+
+	var errCount atomic.Int64
+	var wrongCount atomic.Int64
+	var wg sync.WaitGroup
+
+	const numGoroutines = 20
+	const iterations = 50
+
+	for range numGoroutines {
+		wg.Go(func() {
+			for range iterations {
+				count := 0
+				err := ar.ListDirectory(rootContentOffset, accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
+					count++
+					return nil
+				})
+				if err != nil {
+					errCount.Add(1)
+					continue
+				}
+				if count != 100 {
+					wrongCount.Add(1)
+				}
+			}
+		})
+	}
+
+	wg.Wait()
+
+	t.Logf("errors: %d, wrong counts: %d", errCount.Load(), wrongCount.Load())
+	if errCount.Load() > 0 || wrongCount.Load() > 0 {
+		t.Errorf("concurrent access produced %d errors, %d wrong counts (both should be 0)",
+			errCount.Load(), wrongCount.Load())
 	}
 }
 
