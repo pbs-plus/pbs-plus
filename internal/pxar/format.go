@@ -29,11 +29,8 @@ type TaskWriter interface {
 // PxarReader provides random access to a pxar archive backed by a PBS datastore
 // using the Go pxar library (datastore + accessor + transfer).
 type PxarReader struct {
-	reader     *transfer.SplitArchiveReader
-	store      *datastore.ChunkStore
-	source     datastore.ChunkSource
-	metaIdx    *datastore.DynamicIndexReader
-	payloadIdx *datastore.DynamicIndexReader
+	reader *transfer.SplitArchiveReader
+	source datastore.ChunkSource
 
 	// entryCache maps entry file offsets to pxar.Entry for quick attribute lookback.
 	entryCache    map[uint64]*pxar.Entry
@@ -106,13 +103,11 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
 	}
 
-	// Open the chunk store
-	store, err := datastore.NewChunkStore(dsInfo.Path)
+	// Open the chunk store using PBS-compatible 4-char prefix layout
+	chunkSource, err := newPBSChunkSource(dsInfo.Path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open chunk store: %w", err)
+		return nil, fmt.Errorf("failed to open chunk source: %w", err)
 	}
-
-	chunkSource := datastore.NewChunkStoreSource(store)
 
 	var archiveReader *transfer.SplitArchiveReader
 
@@ -126,15 +121,6 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 			return nil, fmt.Errorf("failed to read payload index %s: %w", ppxarPath, err)
 		}
 
-		metaIdx, err := datastore.ReadDynamicIndex(metaData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse metadata index: %w", err)
-		}
-		payloadIdx, err := datastore.ReadDynamicIndex(payloadData)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse payload index: %w", err)
-		}
-
 		archiveReader, err = transfer.NewSplitArchiveReader(metaData, payloadData, chunkSource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create split archive reader: %w", err)
@@ -142,10 +128,7 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 
 		pr := &PxarReader{
 			reader:        archiveReader,
-			store:         store,
 			source:        chunkSource,
-			metaIdx:       metaIdx,
-			payloadIdx:    payloadIdx,
 			entryCache:    make(map[uint64]*pxar.Entry),
 			contentCache:  make(map[uint64]*pxar.Entry),
 			rangeToOffset: make(map[uint64]uint64),
