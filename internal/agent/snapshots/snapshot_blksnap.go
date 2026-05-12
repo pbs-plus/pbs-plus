@@ -76,7 +76,7 @@ func (p *BlksnapProvider) CreateSnapshot(jobID, sourcePath string) (Snapshot, er
 		return Snapshot{}, fmt.Errorf("blksnap: create mount dir: %w", err)
 	}
 
-	fsType := detectFilesystemType(sourcePath)
+	fsType, _ := detectFilesystem(sourcePath)
 	if err := unix.Mount(imageDev, mountPoint, fsType, unix.MS_RDONLY, ""); err != nil {
 		return Snapshot{}, fmt.Errorf("blksnap: mount snapshot: %w", err)
 	}
@@ -129,14 +129,18 @@ func (p *BlksnapProvider) IsSupported(sourcePath string) bool {
 		return false
 	}
 
-	// Check if the source path is on a block device (not a network fs, tmpfs, etc.).
+	// Must be on a block device (not a network fs, tmpfs, etc.).
 	dev, err := blockDeviceForPath(sourcePath)
 	if err != nil || dev == "" {
 		return false
 	}
 
-	// Only support ext4 and XFS for now.
-	switch detectFilesystemType(sourcePath) {
+	// Only support ext4 and XFS.
+	fsType, err := detectFilesystem(sourcePath)
+	if err != nil {
+		return false
+	}
+	switch fsType {
 	case "ext4", "xfs":
 		return true
 	}
@@ -159,20 +163,4 @@ func blockDeviceForPath(path string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no block device found for %s", path)
-}
-
-// detectFilesystemType returns the filesystem type for the given path.
-func detectFilesystemType(path string) string {
-	var st unix.Statfs_t
-	if err := unix.Statfs(path, &st); err != nil {
-		return ""
-	}
-	switch st.Type {
-	case 0xEF53:
-		return "ext4"
-	case 0x58465342:
-		return "xfs"
-	default:
-		return ""
-	}
 }
