@@ -67,6 +67,11 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 			continue
 		}
 
+		// Skip system paths and non-directory mounts (Docker bind-mounted files).
+		if !isDataMountPoint(entry.mountPoint) {
+			continue
+		}
+
 		var stat unix.Statfs_t
 		if err := unix.Statfs(entry.mountPoint, &stat); err != nil {
 			continue
@@ -121,6 +126,39 @@ func parseMountinfoLine(line string) (mountEntry, bool) {
 		fsType:     suffixFields[0],
 		device:     suffixFields[1],
 	}, true
+}
+
+// systemPathPrefixes are mount points that should never be treated as
+// backup-worthy data volumes.
+var systemPathPrefixes = []string{
+	"/dev",
+	"/proc",
+	"/sys",
+	"/run",
+	"/etc",
+	"/snap",
+}
+
+// isDataMountPoint checks whether a mount point represents a real data
+// volume worth backing up. Excludes system paths, non-directories
+// (Docker bind-mounted files like /etc/resolv.conf), and common
+// container runtime artifacts.
+func isDataMountPoint(mp string) bool {
+	for _, prefix := range systemPathPrefixes {
+		if mp == prefix || strings.HasPrefix(mp, prefix+"/") {
+			return false
+		}
+	}
+
+	// Skip non-directories — Docker bind-mounts individual files
+	// like /etc/hostname, /etc/resolv.conf, /etc/hosts as ext4
+	// mounts in /proc/self/mountinfo.
+	fi, err := os.Stat(mp)
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+
+	return true
 }
 
 // unescapeOctal replaces \xxx octal escape sequences.
