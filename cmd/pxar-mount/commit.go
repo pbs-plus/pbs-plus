@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -201,7 +203,179 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 		return fmt.Errorf("finish session: %w", err)
 	}
 
+	// Post-commit: hot-swap to the new snapshot and clean up
+	if err := fs.postCommit(backupID, backupType, namespace, archiveName, backupTime); err != nil {
+		return fmt.Errorf("post-commit: %w", err)
+	}
+
 	return nil
+}
+
+// postCommit switches the mounted pxar to the newly committed snapshot,
+// verifies backed files are present, and cleans up the backing directory.
+func (fs *passthroughFS) postCommit(backupID, backupType, namespace, archiveName string, backupTime int64) error {
+	// Compute paths for the new snapshot's DIDX files.
+	// PBS stores snapshots at: <store>/<ns>/<type>/<backup-id>/<backup-time>/
+	var nsPrefix string
+	if namespace != "" {
+		nsPrefix = namespace + "/"
+	}
+	snapDir := filepath.Join(fs.pbsStore, nsPrefix+backupType, backupID, fmt.Sprintf("%012d", backupTime))
+
+	mpxarPath := filepath.Join(snapDir, archiveName+".mpxar.didx")
+	ppxarPath := filepath.Join(snapDir, archiveName+".ppxar.didx")
+
+	// Read the new DIDX data
+	metaData, err := os.ReadFile(mpxarPath)
+	if err != nil {
+		return fmt.Errorf("read new mpxar: %w", err)
+	}
+	payloadData, err := os.ReadFile(ppxarPath)
+	if err != nil {
+		return fmt.Errorf("read new ppxar: %w", err)
+	}
+
+	// Create a new chunk store source from the same datastore
+	store, err := datastore.NewChunkStore(fs.pbsStore)
+	if err != nil {
+		return fmt.Errorf("open chunk store: %w", err)
+	}
+	source := datastore.NewChunkStoreSource(store)
+
+	// Create new archive reader from the committed snapshot
+	newReader, err := transfer.NewSplitArchiveReader(metaData, payloadData, source)
+	if err != nil {
+		return fmt.Errorf("create new reader: %w", err)
+	}
+
+	// Verify that every backed file exists in the new snapshot
+	if err := fs.verifyBackedFiles(newReader); err != nil {
+		_ = newReader.Close()
+		return fmt.Errorf("verification failed: %w", err)
+	}
+
+	// Hot-swap the pxar reader to the new snapshot
+	fs.pxar.hotSwap(newReader)
+
+	// Update origSnapshot to the new state
+	fs.origSnapshot = snapshotRef{
+		BackupType:  backupType,
+		BackupID:    backupID,
+		BackupTime:  backupTime,
+		Namespace:   namespace,
+		ArchiveName: archiveName,
+	}
+
+	// Clean up the backing directory (all files are now in the new snapshot)
+	if err := os.RemoveAll(fs.backingDir); err != nil {
+		return fmt.Errorf("cleanup backing dir: %w", err)
+	}
+	if err := os.MkdirAll(fs.backingDir, 0o755); err != nil {
+		return fmt.Errorf("recreate backing dir: %w", err)
+	}
+
+	return nil
+}
+
+// verifyBackedFiles checks that all files in the backing directory can be
+// found in the new snapshot (confirming the commit was complete).
+func (fs *passthroughFS) verifyBackedFiles(reader *transfer.SplitArchiveReader) error {
+	return filepath.Walk(fs.backingDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(fs.backingDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Try to look up this path in the new snapshot
+		entry, lookupErr := reader.Lookup("/" + rel)
+		if lookupErr != nil {
+			return fmt.Errorf("backed file %q not found in new snapshot: %w", rel, lookupErr)
+		}
+
+		if info.IsDir() {
+			if !entry.IsDir() {
+				return fmt.Errorf("backed dir %q is not a directory in new snapshot", rel)
+			}
+			return nil
+		}
+
+		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return nil // special files can't be verified easily
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			if !entry.IsSymlink() {
+				return fmt.Errorf("backed symlink %q is not a symlink in new snapshot", rel)
+			}
+			return nil
+		}
+
+		// Regular file: compare size and content
+		if entry.FileSize != uint64(info.Size()) {
+			return fmt.Errorf("backed file %q size mismatch: backing=%d snapshot=%d", rel, info.Size(), entry.FileSize)
+		}
+
+		if info.Size() > 0 {
+			rc, err := reader.ReadFileContentReader(entry)
+			if err != nil {
+				return fmt.Errorf("read backed file %q from new snapshot: %w", rel, err)
+			}
+
+			f, err := os.Open(path)
+			if err != nil {
+				_ = rc.Close()
+				return err
+			}
+
+			equal, err := readersEqual(rc, f)
+			_ = rc.Close()
+			_ = f.Close()
+			if err != nil {
+				return fmt.Errorf("compare backed file %q: %w", rel, err)
+			}
+			if !equal {
+				return fmt.Errorf("backed file %q content differs from new snapshot", rel)
+			}
+		}
+
+		return nil
+	})
+}
+
+// readersEqual returns true if two readers produce identical bytes.
+func readersEqual(a, b io.Reader) (bool, error) {
+	bufA := make([]byte, 64*1024)
+	bufB := make([]byte, 64*1024)
+	for {
+		nA, errA := io.ReadFull(a, bufA)
+		nB, errB := io.ReadFull(b, bufB)
+
+		if nA != nB {
+			return false, nil
+		}
+		if !bytes.Equal(bufA[:nA], bufB[:nB]) {
+			return false, nil
+		}
+
+		if errA == io.ErrUnexpectedEOF || errA == io.EOF {
+			if errB == io.ErrUnexpectedEOF || errB == io.EOF {
+				return true, nil
+			}
+			return false, nil
+		}
+		if errA != nil {
+			return false, errA
+		}
+		if errB != nil {
+			return false, errB
+		}
+	}
 }
 
 // walkOverlay recursively walks the overlay and writes entries to the ArchiveWriter.
