@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -35,23 +36,25 @@ type commitRequest struct {
 }
 
 // parseCommitLine parses a COMMIT line from the socket protocol.
-// Format: COMMIT <url> <datastore> <token> [namespace] [backup-type] [backup-id]
-// All fields after token are optional and default to the original snapshot's values.
+// Format: COMMIT [url] [datastore] [token] [namespace] [backup-type] [backup-id]
+// All fields are optional; the daemon auto-detects defaults from its environment.
 func parseCommitLine(line string) (*commitRequest, error) {
-	parts := strings.SplitN(line, " ", 8)
-	if len(parts) < 4 || parts[0] != "COMMIT" {
-		return nil, fmt.Errorf("invalid COMMIT format: expected COMMIT <url> <datastore> <token> [namespace] [backup-type] [backup-id]")
+	parts := strings.SplitN(line, " ", 7)
+	if len(parts) < 1 || parts[0] != "COMMIT" {
+		return nil, fmt.Errorf("invalid COMMIT format: expected COMMIT [url] [datastore] [token] [ns] [type] [id]")
 	}
-	req := &commitRequest{
-		PBSURL:    parts[1],
-		Datastore: parts[2],
-		AuthToken: parts[3],
+	req := &commitRequest{}
+	if len(parts) > 1 {
+		req.PBSURL = parts[1]
 	}
-	if len(parts) > 4 {
+	if len(parts) > 2 {
+		req.Datastore = parts[2]
+	}
+	if len(parts) > 3 {
+		req.AuthToken = parts[3]
+	}
+	if len(parts) > 4 && parts[4] != "-" {
 		req.Namespace = parts[4]
-	}
-	if req.Namespace == "-" {
-		req.Namespace = ""
 	}
 	if len(parts) > 5 {
 		req.BackupType = parts[5]
@@ -60,6 +63,33 @@ func parseCommitLine(line string) (*commitRequest, error) {
 		req.BackupID = parts[6]
 	}
 	return req, nil
+}
+
+// readLocalToken tries to read the PBS API token from the standard
+// pbs-plus-token.json file, returning it in PBSAPIToken format.
+func readLocalToken() string {
+	// Standard locations to check.
+	candidates := []string{
+		filepath.Join("/etc/proxmox-backup", "pbs-plus-token.json"),
+		filepath.Join("/var/lib/pbs-plus", "pbs-plus-token.json"),
+	}
+	for _, p := range candidates {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var tok struct {
+			TokenID string `json:"tokenid"`
+			Value   string `json:"value"`
+		}
+		if err := json.Unmarshal(data, &tok); err != nil {
+			continue
+		}
+		if tok.TokenID != "" && tok.Value != "" {
+			return tok.TokenID + ":" + tok.Value
+		}
+	}
+	return ""
 }
 
 // startSocketListener opens a Unix domain socket and processes commit requests.
@@ -113,11 +143,30 @@ func (fs *passthroughFS) handleSocketConn(conn net.Conn) {
 //
 // Uses the original snapshot's backup-id and archive-name. Backup-time is
 // always the current time. Deduplicates against the original snapshot.
+//
+// PBS connection parameters default to local auto-detection:
+//   - URL: https://localhost:8007
+//   - Datastore: last component of --pbs-store path
+//   - Token: read from pbs-plus-token.json if available
 func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
 	orig := fs.origSnapshot
+
+	// Resolve PBS connection: auto-detect when fields are empty.
+	pbsURL := req.PBSURL
+	if pbsURL == "" {
+		pbsURL = "https://localhost:8007"
+	}
+	datastoreName := req.Datastore
+	if datastoreName == "" {
+		datastoreName = filepath.Base(fs.pbsStore)
+	}
+	authToken := req.AuthToken
+	if authToken == "" {
+		authToken = readLocalToken()
+	}
 
 	// Resolve backup metadata: command-line overrides take priority,
 	// otherwise default to the original snapshot's values.
@@ -156,9 +205,9 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	}
 
 	store := backupproxy.NewPBSRemoteStore(backupproxy.PBSConfig{
-		BaseURL:       req.PBSURL,
-		Datastore:     req.Datastore,
-		AuthToken:     req.AuthToken,
+		BaseURL:       pbsURL,
+		Datastore:     datastoreName,
+		AuthToken:     authToken,
 		Namespace:     namespace,
 		SkipTLSVerify: req.SkipTLS,
 	}, buzhash.Config{}, false)
@@ -651,17 +700,18 @@ var commitMu sync.Mutex
 func runCommitSubcommand() {
 	fs := flag.NewFlagSet("commit", flag.ExitOnError)
 	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
-	pbsURL := fs.String("pbs-url", "", "PBS server URL (required)")
-	datastoreName := fs.String("datastore", "", "PBS datastore name (required)")
-	authToken := fs.String("token", "", "PBS API token (required)")
-	namespace := fs.String("ns", "-", "PBS namespace (use '-' for none; defaults to original snapshot's)")
+	pbsURL := fs.String("pbs-url", "", "PBS server URL (auto-detected as https://localhost:8007 if omitted)")
+	datastoreName := fs.String("datastore", "", "PBS datastore name (auto-detected from mount if omitted)")
+	authToken := fs.String("token", "", "PBS API token (auto-detected from pbs-plus-token.json if omitted)")
+	namespace := fs.String("ns", "", "PBS namespace (defaults to original snapshot's; use '-' for none)")
 	backupType := fs.String("backup-type", "", "Backup type (defaults to original snapshot's)")
 	backupID := fs.String("backup-id", "", "Backup ID (defaults to original snapshot's; generates a new snapshot in the same group)")
 
 	fs.Parse(os.Args[2:])
 
-	if *socketPath == "" || *pbsURL == "" || *datastoreName == "" || *authToken == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> --pbs-url <url> --datastore <name> --token <token> [--ns <ns>] [--backup-type host] [--backup-id <id>]\n")
+	if *socketPath == "" {
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> [--pbs-url <url>] [--datastore <name>] [--token <token>] [--ns <ns>] [--backup-type <type>] [--backup-id <id>]\n")
+		fmt.Fprintf(os.Stderr, "\nAll flags except --socket are optional; the daemon auto-detects defaults.\n")
 		os.Exit(1)
 	}
 
