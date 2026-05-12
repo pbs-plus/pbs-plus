@@ -913,7 +913,11 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 			backedName[pe.name] = false // suppress the backed version
 		}
 	}
-	entries = append(entries, backedEntries...)
+	for _, be := range backedEntries {
+		if backedName[be.name] { // false = suppressed (pxar dir took precedence)
+			entries = append(entries, be)
+		}
+	}
 
 	// "." entry
 	if input.Offset == 0 {
