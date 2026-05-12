@@ -203,12 +203,16 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Parse original snapshot identity from the DIDX path for dedup
+		origSnap := parseOrigSnapshot(*pbsStore, *ppxarDidx)
+
 		ptFS := &passthroughFS{
-			pxar:       fs,
-			backingDir: *passthrough,
-			nodePaths:  make(map[uint64]string),
-			backed:     make(map[uint64]bool),
-			handles:    make(map[uint64]*passFh),
+			pxar:         fs,
+			backingDir:   *passthrough,
+			origSnapshot: origSnap,
+			nodePaths:    make(map[uint64]string),
+			backed:       make(map[uint64]bool),
+			handles:      make(map[uint64]*passFh),
 		}
 		ptFS.setNode(rootInode, "/", false)
 		rawFS = ptFS

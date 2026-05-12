@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -36,6 +38,9 @@ type passthroughFS struct {
 	pxar       *pxarFS
 	backingDir string
 
+	// Original snapshot metadata (parsed from the mounted DIDX path)
+	origSnapshot snapshotRef
+
 	mu          sync.RWMutex
 	nextBackIno uint64
 	nodePaths   map[uint64]string // inode → relative path from mount root
@@ -48,6 +53,50 @@ type passthroughFS struct {
 	fhmu    sync.Mutex
 	handles map[uint64]*passFh // file handle id → open fd
 	nextFh  uint64
+}
+
+// snapshotRef holds the identity of a PBS snapshot.
+type snapshotRef struct {
+	BackupType  string
+	BackupID    string
+	BackupTime  int64
+	Namespace   string
+	ArchiveName string // base filename (e.g. "root" from "root.pxar.didx")
+}
+
+// parseOrigSnapshot extracts snapshot identity from a DIDX file path.
+// Path format: <store>/[ns/]<type>/<backup-id>/<backup-time>/<file>.ppxar.didx
+func parseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
+	rel := strings.TrimPrefix(ppxarDidx, pbsStore)
+	rel = strings.TrimPrefix(rel, "/")
+	parts := strings.Split(rel, "/")
+
+	var ref snapshotRef
+	if len(parts) >= 4 {
+		// filename is last component
+		filename := parts[len(parts)-1]
+		ref.ArchiveName = strings.TrimSuffix(filename, ".ppxar.didx")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".mpxar.didx")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".pxar.didx")
+
+		// backup-time is second-to-last
+		_, _ = fmt.Sscanf(parts[len(parts)-2], "%d", &ref.BackupTime)
+		// backup-id is third-to-last
+		ref.BackupID = parts[len(parts)-3]
+		// backup-type is fourth-to-last
+		ref.BackupType = parts[len(parts)-4]
+		// everything before that is namespace
+		if len(parts) > 4 {
+			ref.Namespace = strings.Join(parts[:len(parts)-4], "/")
+		}
+	}
+	if ref.BackupType == "" {
+		ref.BackupType = "host"
+	}
+	if ref.ArchiveName == "" {
+		ref.ArchiveName = ref.BackupID
+	}
+	return ref
 }
 
 type passFh struct {

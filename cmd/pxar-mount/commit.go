@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
@@ -28,33 +29,33 @@ type commitRequest struct {
 	Namespace  string
 	BackupID   string
 	BackupType string
-	BackupTime int64
 	SkipTLS    bool
 }
 
 // parseCommitLine parses a COMMIT line from the socket protocol.
-// Format: COMMIT <url> <datastore> <token> <namespace> <backup-type> <backup-id> [backup-time]
+// Format: COMMIT <url> <datastore> <token> [namespace] [backup-type] [backup-id]
+// All fields after token are optional and default to the original snapshot's values.
 func parseCommitLine(line string) (*commitRequest, error) {
 	parts := strings.SplitN(line, " ", 8)
-	if len(parts) < 7 || parts[0] != "COMMIT" {
-		return nil, fmt.Errorf("invalid COMMIT format: expected COMMIT <url> <datastore> <token> <namespace> <backup-type> <backup-id>")
+	if len(parts) < 4 || parts[0] != "COMMIT" {
+		return nil, fmt.Errorf("invalid COMMIT format: expected COMMIT <url> <datastore> <token> [namespace] [backup-type] [backup-id]")
 	}
 	req := &commitRequest{
-		PBSURL:     parts[1],
-		Datastore:  parts[2],
-		AuthToken:  parts[3],
-		Namespace:  parts[4],
-		BackupType: parts[5],
-		BackupID:   parts[6],
+		PBSURL:    parts[1],
+		Datastore: parts[2],
+		AuthToken: parts[3],
+	}
+	if len(parts) > 4 {
+		req.Namespace = parts[4]
 	}
 	if req.Namespace == "-" {
 		req.Namespace = ""
 	}
-	if len(parts) > 7 {
-		_, _ = fmt.Sscanf(parts[7], "%d", &req.BackupTime)
+	if len(parts) > 5 {
+		req.BackupType = parts[5]
 	}
-	if req.BackupType == "" {
-		req.BackupType = "host"
+	if len(parts) > 6 {
+		req.BackupID = parts[6]
 	}
 	return req, nil
 }
@@ -107,38 +108,75 @@ func (fs *passthroughFS) handleSocketConn(conn net.Conn) {
 
 // commitOverlay walks the merged overlay filesystem, builds a new split pxar
 // archive, and uploads it to PBS via the backup protocol.
+//
+// Uses the original snapshot's backup-id and archive-name. Backup-time is
+// always the current time. Deduplicates against the original snapshot.
 func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	commitMu.Lock()
 	defer commitMu.Unlock()
+
+	orig := fs.origSnapshot
+
+	// Resolve backup metadata: command-line overrides take priority,
+	// otherwise default to the original snapshot's values.
+	backupID := req.BackupID
+	if backupID == "" {
+		backupID = orig.BackupID
+	}
+	backupType := req.BackupType
+	if backupType == "" {
+		backupType = orig.BackupType
+	}
+	namespace := req.Namespace
+	if namespace == "" && orig.Namespace != "" {
+		namespace = orig.Namespace
+	}
+	archiveName := orig.ArchiveName
+	if archiveName == "" {
+		archiveName = backupID
+	}
+	backupTime := time.Now().Unix()
+
+	bt, err := datastore.ParseBackupType(backupType)
+	if err != nil {
+		return fmt.Errorf("invalid backup type %q: %w", backupType, err)
+	}
+
+	// Build previous backup ref for chunk dedup
+	var prev *backupproxy.PreviousBackupRef
+	if orig.BackupID != "" && orig.BackupTime > 0 {
+		prev = &backupproxy.PreviousBackupRef{
+			BackupType: bt,
+			BackupID:   orig.BackupID,
+			BackupTime: orig.BackupTime,
+			Namespace:  orig.Namespace,
+		}
+	}
 
 	store := backupproxy.NewPBSRemoteStore(backupproxy.PBSConfig{
 		BaseURL:       req.PBSURL,
 		Datastore:     req.Datastore,
 		AuthToken:     req.AuthToken,
-		Namespace:     req.Namespace,
+		Namespace:     namespace,
 		SkipTLSVerify: req.SkipTLS,
 	}, buzhash.Config{}, false)
-
-	bt, err := datastore.ParseBackupType(req.BackupType)
-	if err != nil {
-		return fmt.Errorf("invalid backup type %q: %w", req.BackupType, err)
-	}
 
 	ctx := context.Background()
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
 		BackupType:     bt,
-		BackupID:       req.BackupID,
-		BackupTime:     req.BackupTime,
-		PreviousBackup: nil, // TODO: support previous backup ref for dedup
+		BackupID:       backupID,
+		BackupTime:     backupTime,
+		PreviousBackup: prev,
 		CryptMode:      datastore.CryptModeNone,
 	})
 	if err != nil {
 		return fmt.Errorf("start PBS session: %w", err)
 	}
 
-	// Use SplitSessionArchiveWriter to build and upload the archive
-	metaName := req.BackupID // will get .mpxar.didx suffix
-	payloadName := req.BackupID + ".ppxar"
+	// Use SplitSessionArchiveWriter to build and upload the archive.
+	// The archive base name matches the original snapshot's archive filename.
+	metaName := archiveName
+	payloadName := archiveName + ".ppxar"
 
 	writer := transfer.NewSplitSessionArchiveWriter(ctx, session, metaName, payloadName)
 
@@ -439,15 +477,14 @@ func runCommitSubcommand() {
 	pbsURL := fs.String("pbs-url", "", "PBS server URL (required)")
 	datastoreName := fs.String("datastore", "", "PBS datastore name (required)")
 	authToken := fs.String("token", "", "PBS API token (required)")
-	namespace := fs.String("ns", "-", "PBS namespace (use '-' for none)")
-	backupType := fs.String("backup-type", "host", "Backup type (host, vm, ct)")
-	backupID := fs.String("backup-id", "", "Backup ID (required)")
-	backupTime := fs.Int64("backup-time", 0, "Backup timestamp (Unix seconds)")
+	namespace := fs.String("ns", "-", "PBS namespace (use '-' for none; defaults to original snapshot's)")
+	backupType := fs.String("backup-type", "", "Backup type (defaults to original snapshot's)")
+	backupID := fs.String("backup-id", "", "Backup ID (defaults to original snapshot's; generates a new snapshot in the same group)")
 
 	fs.Parse(os.Args[2:])
 
-	if *socketPath == "" || *pbsURL == "" || *datastoreName == "" || *authToken == "" || *backupID == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> --pbs-url <url> --datastore <name> --token <token> [--ns <ns>] [--backup-type host] --backup-id <id>\n")
+	if *socketPath == "" || *pbsURL == "" || *datastoreName == "" || *authToken == "" {
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> --pbs-url <url> --datastore <name> --token <token> [--ns <ns>] [--backup-type host] [--backup-id <id>]\n")
 		os.Exit(1)
 	}
 
@@ -458,8 +495,8 @@ func runCommitSubcommand() {
 	}
 	defer conn.Close()
 
-	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s %d\n",
-		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID, *backupTime)
+	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
+		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID)
 	if _, err := fmt.Fprint(conn, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending command: %v\n", err)
 		os.Exit(1)
