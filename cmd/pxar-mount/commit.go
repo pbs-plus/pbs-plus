@@ -534,6 +534,8 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 		childIno := toInode(pxarEntry)
 
 		if pxarEntry.IsDir() {
+			// Register the directory node in the pxar cache so readDirRaw works.
+			fs.pxar.registerNode(childIno, pxarIno, pxarEntry)
 			meta := buildMetaFromEntry(pxarEntry)
 			if err := w.BeginDirectory(we.name, &meta); err != nil {
 				return fmt.Errorf("begin dir %s: %w", we.name, err)
