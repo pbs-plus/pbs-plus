@@ -262,7 +262,17 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	metaName := archiveName + ".mpxar.didx"
 	payloadName := archiveName + ".ppxar.didx"
 
-	writer := transfer.NewSplitSessionArchiveWriter(ctx, session, metaName, payloadName)
+	// Use RemoteDedupSplitArchiveWriter for chunk-level dedup.
+	// Read original payload DIDX for chunk injection.
+	var origPayloadIdx []byte
+	if fs.origPpxarDidx != "" {
+		origPayloadIdx, _ = os.ReadFile(fs.origPpxarDidx)
+	}
+
+	writer, err := transfer.NewRemoteDedupSplitArchiveWriter(ctx, session, metaName, payloadName, origPayloadIdx)
+	if err != nil {
+		return fmt.Errorf("create dedup writer: %w", err)
+	}
 
 	// Build root metadata from pxar root entry
 	rootPxarEntry := fs.getPxarEntry(rootInode)
@@ -272,7 +282,8 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 		return fmt.Errorf("begin archive: %w", err)
 	}
 
-	if err := fs.walkOverlay(writer, rootInode, "/"); err != nil {
+	ow := &overlayWalk{writer: writer, dedup: writer}
+	if err := fs.walkOverlay(ow, rootInode, "/"); err != nil {
 		return fmt.Errorf("walk overlay: %w", err)
 	}
 
@@ -463,8 +474,8 @@ func readersEqual(a, b io.Reader) (bool, error) {
 	}
 }
 
-// walkOverlay recursively walks the overlay and writes entries to the ArchiveWriter.
-func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, relPath string) error {
+// walkOverlay recursively walks the overlay and writes entries.
+func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath string) error {
 	pxarEntries, _ := fs.pxar.readDirRaw(pxarIno)
 	backedEntries := fs.readBackedDir(relPath)
 
@@ -475,9 +486,9 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 		backedName[be.name] = true
 	}
 
-	// Process entries: backed entries first (shadow pxar), then pxar-only.
+	// Process entries: pxar entries first (to advance payload position past
+	// original range), then backed entries (which get new payload offsets).
 	var allEntries []walkEntry
-	allEntries = append(allEntries, backedEntries...)
 	for _, pe := range pxarEntries {
 		if backedName[pe.name] {
 			continue
@@ -488,6 +499,7 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 			backed: false,
 		})
 	}
+	allEntries = append(allEntries, backedEntries...)
 
 	for _, we := range allEntries {
 		childRel := relPath
@@ -505,24 +517,27 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 
 			if fi.IsDir() {
 				meta := statToMetadata(fi, true)
-				if err := w.BeginDirectory(we.name, &meta); err != nil {
+				if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
 					return fmt.Errorf("begin dir %s: %w", we.name, err)
 				}
 				pxarChildIno := fs.pxarInoForPath(pxarIno, we.name)
-				if err := fs.walkOverlay(w, pxarChildIno, childRel); err != nil {
+				if err := fs.walkOverlay(ow, pxarChildIno, childRel); err != nil {
 					return err
 				}
-				if err := w.EndDirectory(); err != nil {
+				if err := ow.writer.EndDirectory(); err != nil {
 					return fmt.Errorf("end dir %s: %w", we.name, err)
 				}
 				continue
 			}
 
+			if err := ow.ensureAdvanced(); err != nil {
+				return fmt.Errorf("advance payload position: %w", err)
+			}
 			entry, content, err := fs.readBackedEntry(childRel, fi)
 			if err != nil {
 				return fmt.Errorf("read backed entry %s: %w", childRel, err)
 			}
-			if err := w.WriteEntry(entry, content); err != nil {
+			if err := ow.writer.WriteEntry(entry, content); err != nil {
 				return fmt.Errorf("write entry %s: %w", we.name, err)
 			}
 			continue
@@ -540,28 +555,22 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 			// Register the directory node in the pxar cache so readDirRaw works.
 			fs.pxar.registerNode(childIno, pxarIno, pxarEntry)
 			meta := buildMetaFromEntry(pxarEntry)
-			if err := w.BeginDirectory(we.name, &meta); err != nil {
+			if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
 				return fmt.Errorf("begin dir %s: %w", we.name, err)
 			}
-			if err := fs.walkOverlay(w, childIno, childRel); err != nil {
+			if err := fs.walkOverlay(ow, childIno, childRel); err != nil {
 				return err
 			}
-			if err := w.EndDirectory(); err != nil {
+			if err := ow.writer.EndDirectory(); err != nil {
 				return fmt.Errorf("end dir %s: %w", we.name, err)
 			}
 			continue
 		}
 
-		// Pxar file — read content from original archive and write normally.
-		// The process runs on the PBS server with local chunk access,
-		// so reading is fast. PBS dedup skips re-upload of matching chunks.
-		content, err := fs.readPxarContent(pxarEntry)
-		if err != nil {
-			return fmt.Errorf("read pxar file %s: %w", childRel, err)
-		}
+		// Pxar file — reference original payload offset (no data read).
 		entry := cloneEntryWithName(pxarEntry, we.name)
-		if err := w.WriteEntry(entry, content); err != nil {
-			return fmt.Errorf("write pxar entry %s: %w", we.name, err)
+		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
+			return fmt.Errorf("write pxar ref %s: %w", we.name, err)
 		}
 	}
 
@@ -569,6 +578,21 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 }
 
 // walkEntry represents a single entry in the merged overlay walk.
+// overlayWalk tracks state across the recursive walk.
+type overlayWalk struct {
+	writer    transfer.ArchiveWriter
+	dedup     *transfer.RemoteDedupSplitArchiveWriter
+	advanced  bool // true after Advance(HeaderSize) was called
+}
+
+func (ow *overlayWalk) ensureAdvanced() error {
+	if ow.advanced || ow.dedup == nil {
+		return nil
+	}
+	ow.advanced = true
+	return ow.dedup.AdvancePayloadPosition(format.HeaderSize)
+}
+
 type walkEntry struct {
 	name   string
 	pxar   *pxar.Entry // non-nil if from pxar
