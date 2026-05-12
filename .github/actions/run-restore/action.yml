@@ -123,7 +123,7 @@ runs:
           docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -exec stat --format="%s %n" {} \; | sort'
           echo ""
           echo "=== Restored file sizes ==="
-          docker exec pbs-plus-agent sh -c 'cd /test-backup/tmp/pbs-plus-restore-test && find . -type f -exec stat --format="%s %n" {} \; | sort'
+          docker exec pbs-plus-agent sh -c 'cd /test-backup/tmp/pbs-plus-restore-test && find . -type f -exec stat -c "%s %n" {} \; | sort'
           exit 1
         fi
 
