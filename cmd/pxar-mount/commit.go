@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -70,6 +71,7 @@ func parseCommitLine(line string) (*commitRequest, error) {
 func readLocalToken() string {
 	// Standard locations to check.
 	candidates := []string{
+		filepath.Join("/var/lib/proxmox-backup", "pbs-plus-token.json"),
 		filepath.Join("/etc/proxmox-backup", "pbs-plus-token.json"),
 		filepath.Join("/var/lib/pbs-plus", "pbs-plus-token.json"),
 	}
@@ -85,11 +87,35 @@ func readLocalToken() string {
 		if err := json.Unmarshal(data, &tok); err != nil {
 			continue
 		}
-		if tok.TokenID != "" && tok.Value != "" {
+		if tok.Value != "" {
+			// PBS H2 API expects PBSAPIToken <tokenid>:<value>
 			return tok.TokenID + ":" + tok.Value
 		}
 	}
 	return ""
+}
+
+// resolveDatastoreName finds the PBS datastore name for a given path by
+// querying proxmox-backup-manager.
+func resolveDatastoreName(pbsStore string) string {
+	out, err := exec.Command("proxmox-backup-manager", "datastore", "list", "--output-format", "json").Output()
+	if err != nil {
+		return filepath.Base(pbsStore)
+	}
+	var dss []struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(out, &dss); err != nil {
+		return filepath.Base(pbsStore)
+	}
+	cleanPath := filepath.Clean(pbsStore)
+	for _, ds := range dss {
+		if filepath.Clean(ds.Path) == cleanPath {
+			return ds.Name
+		}
+	}
+	return filepath.Base(pbsStore)
 }
 
 // startSocketListener opens a Unix domain socket and processes commit requests.
@@ -157,14 +183,13 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	// Resolve PBS connection: auto-detect when fields are empty.
 	pbsURL := req.PBSURL
 	if pbsURL == "" {
-		// The PBS H2 upgrade path is constructed as <url-path>/backup.
-		// PBS API lives under /api2/json, so the base URL must include it.
 		pbsURL = "https://localhost:8007/api2/json"
 		req.SkipTLS = true
 	}
 	datastoreName := req.Datastore
 	if datastoreName == "" {
-		datastoreName = filepath.Base(fs.pbsStore)
+		// Try to find datastore name by matching the pbs-store path.
+		datastoreName = resolveDatastoreName(fs.pbsStore)
 	}
 	authToken := req.AuthToken
 	if authToken == "" {
@@ -220,6 +245,7 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 		BackupType:     bt,
 		BackupID:       backupID,
 		BackupTime:     backupTime,
+		Namespace:      namespace,
 		PreviousBackup: prev,
 		CryptMode:      datastore.CryptModeNone,
 	})
@@ -228,9 +254,10 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	}
 
 	// Use SplitSessionArchiveWriter to build and upload the archive.
-	// The archive base name matches the original snapshot's archive filename.
-	metaName := archiveName
-	payloadName := archiveName + ".ppxar"
+	// PBS expects archive names with .didx extension (as seen in pbs-s3gateway).
+	// For split: <name>.mpxar.didx and <name>.ppxar.didx
+	metaName := archiveName + ".mpxar.didx"
+	payloadName := archiveName + ".ppxar.didx"
 
 	writer := transfer.NewSplitSessionArchiveWriter(ctx, session, metaName, payloadName)
 
