@@ -21,7 +21,6 @@ type Manager struct {
 func initProviders() map[string]providerChain {
 	var (
 		blksnapP SnapshotProvider
-		lvmP     = &LVMProvider{}
 		btrfsP   SnapshotProvider
 		zfsP     = &ZFSProvider{}
 		vssP     = &VSSProvider{}
@@ -34,9 +33,10 @@ func initProviders() map[string]providerChain {
 	}
 
 	chains := map[string]providerChain{
-		// ext4/XFS: try blksnap first, then LVM.
-		"ext4": {blksnapP, lvmP},
-		"xfs":  {blksnapP, lvmP},
+		// ext4/XFS: blksnap sits underneath LVM/RAID/dm-crypt at the
+		// block layer, treating the LV as just another block device.
+		"ext4": {blksnapP},
+		"xfs":  {blksnapP},
 
 		// BTRFS: use kernel ioctl.
 		"btrfs": {btrfsP},
