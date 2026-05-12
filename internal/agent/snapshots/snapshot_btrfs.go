@@ -20,8 +20,9 @@ type BtrfsProvider struct{}
 func (p *BtrfsProvider) Name() string { return "btrfs-ioctl" }
 
 func (p *BtrfsProvider) CreateSnapshot(jobID, sourcePath string) (Snapshot, error) {
-	if !p.IsSupported(sourcePath) {
-		return Snapshot{}, fmt.Errorf("source path %q is not on a Btrfs subvolume", sourcePath)
+	subvolRoot, err := resolveBtrfsSubvolume(sourcePath)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("btrfs: %w", err)
 	}
 
 	tmpDir := os.TempDir()
@@ -36,7 +37,7 @@ func (p *BtrfsProvider) CreateSnapshot(jobID, sourcePath string) (Snapshot, erro
 	// Clean up any stale snapshot from a previous run.
 	_ = os.RemoveAll(snapshotPath)
 
-	if err := btrfs.SubvolSnapshot(snapshotPath, sourcePath, true); err != nil {
+	if err := btrfs.SubvolSnapshot(snapshotPath, subvolRoot, true); err != nil {
 		return Snapshot{}, fmt.Errorf("btrfs snapshot create failed: %w", err)
 	}
 
@@ -69,9 +70,35 @@ func (p *BtrfsProvider) IsSupported(sourcePath string) bool {
 		return false
 	}
 
-	// Verify it's actually a subvolume (not just on a btrfs filesystem).
-	return btrfs.IsSubvolume(sourcePath) == nil
+	// Walk up to find the containing subvolume.
+	_, err := resolveBtrfsSubvolume(sourcePath)
+	return err == nil
 }
 
 // btrfsSuperMagic is the BTRFS magic number.
 const btrfsSuperMagic = 0x9123683E
+
+// resolveBtrfsSubvolume walks up from path to find the BTRFS subvolume
+// root. Returns the subvolume path or an error if none is found.
+func resolveBtrfsSubvolume(path string) (string, error) {
+	// Clean and resolve to absolute.
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("resolve absolute path: %w", err)
+		}
+		path = abs
+	}
+
+	for {
+		if btrfs.IsSubvolume(path) == nil {
+			return path, nil
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			// Reached root without finding a subvolume.
+			return "", fmt.Errorf("no btrfs subvolume found above %s", path)
+		}
+		path = parent
+	}
+}
