@@ -8,9 +8,9 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/billgraziano/dpapi v0.5.0
 	github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf
-	github.com/containerd/btrfs/v2 v2.0.0
 	github.com/containers/winquit v1.1.0
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/dennwc/btrfs v0.0.0-20260222081608-edfb8b9e4f55
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/fynelabs/selfupdate v0.2.1
@@ -49,6 +49,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dennwc/ioctl v1.0.1-0.20181021180353-017804252068 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect

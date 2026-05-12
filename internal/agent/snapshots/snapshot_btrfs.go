@@ -1,4 +1,4 @@
-//go:build linux && cgo
+//go:build linux
 
 package snapshots
 
@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/btrfs/v2"
+	"github.com/dennwc/btrfs"
 	"golang.org/x/sys/unix"
 )
 
 // BtrfsProvider creates snapshots using the BTRFS kernel ioctl
-// (BTRFS_IOC_SNAP_CREATE_V2) via the containerd/btrfs library.
+// (BTRFS_IOC_SNAP_CREATE_V2) via the pure-Go dennwc/btrfs library.
 type BtrfsProvider struct{}
 
 func (p *BtrfsProvider) Name() string { return "btrfs-ioctl" }
@@ -38,7 +38,7 @@ func (p *BtrfsProvider) CreateSnapshot(jobID, sourcePath string) (Snapshot, erro
 	// Clean up any stale snapshot from a previous run.
 	_ = os.RemoveAll(snapshotPath)
 
-	if err := btrfs.SubvolSnapshot(snapshotPath, subvolRoot, true); err != nil {
+	if err := btrfs.SnapshotSubVolume(subvolRoot, snapshotPath, true); err != nil {
 		return Snapshot{}, fmt.Errorf("btrfs snapshot create failed: %w", err)
 	}
 
@@ -56,7 +56,7 @@ func (p *BtrfsProvider) CreateSnapshot(jobID, sourcePath string) (Snapshot, erro
 }
 
 func (p *BtrfsProvider) DeleteSnapshot(snapshot Snapshot) error {
-	if err := btrfs.SubvolDelete(snapshot.Path); err != nil {
+	if err := btrfs.DeleteSubVolume(snapshot.Path); err != nil {
 		return fmt.Errorf("btrfs snapshot delete failed: %w", err)
 	}
 	return nil
@@ -87,7 +87,6 @@ const btrfsSuperMagic = 0x9123683E
 // resolveBtrfsSubvolume walks up from path to find the BTRFS subvolume
 // root. Returns the subvolume path or an error if none is found.
 func resolveBtrfsSubvolume(path string) (string, error) {
-	// Clean and resolve to absolute.
 	if !filepath.IsAbs(path) {
 		abs, err := filepath.Abs(path)
 		if err != nil {
@@ -97,12 +96,15 @@ func resolveBtrfsSubvolume(path string) (string, error) {
 	}
 
 	for {
-		if btrfs.IsSubvolume(path) == nil {
+		isSubvol, err := btrfs.IsSubVolume(path)
+		if err != nil {
+			return "", fmt.Errorf("check subvolume at %s: %w", path, err)
+		}
+		if isSubvol {
 			return path, nil
 		}
 		parent := filepath.Dir(path)
 		if parent == path {
-			// Reached root without finding a subvolume.
 			return "", fmt.Errorf("no btrfs subvolume found above %s", path)
 		}
 		path = parent
