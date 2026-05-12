@@ -10,6 +10,7 @@ type Snapshot struct {
 	Path        string          `json:"path"`
 	TimeStarted time.Time       `json:"time_started"`
 	SourcePath  string          `json:"source_path"`
+	SubPath     string          `json:"subpath"` // relative from Path to the actual backup target
 	Direct      bool            `json:"direct"`
 	Handler     SnapshotHandler `json:"-"`
 }

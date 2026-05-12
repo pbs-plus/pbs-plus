@@ -14,7 +14,8 @@ import (
 )
 
 func (s *AgentFSServer) abs(filename string) string {
-	path := Join(s.snapshot.Path, filename)
+	root := Join(s.snapshot.Path, s.snapshot.SubPath)
+	path := Join(root, filename)
 	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
 		return path
 	}

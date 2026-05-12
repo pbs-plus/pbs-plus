@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/containerd/btrfs/v2"
@@ -41,10 +42,15 @@ func (p *BtrfsProvider) CreateSnapshot(jobID, sourcePath string) (Snapshot, erro
 		return Snapshot{}, fmt.Errorf("btrfs snapshot create failed: %w", err)
 	}
 
+	// Compute the subpath: the portion of sourcePath inside the subvolume.
+	subPath := strings.TrimPrefix(sourcePath, subvolRoot)
+	subPath = strings.TrimPrefix(subPath, "/")
+
 	return Snapshot{
 		Path:        snapshotPath,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		SubPath:     subPath,
 		Handler:     p,
 	}, nil
 }
