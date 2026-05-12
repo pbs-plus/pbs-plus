@@ -37,6 +37,7 @@ type passthroughFS struct {
 
 	pxar       *pxarFS
 	backingDir string
+	pbsStore   string // datastore root path for constructing new snapshot paths
 
 	// Original snapshot metadata (parsed from the mounted DIDX path)
 	origSnapshot snapshotRef
