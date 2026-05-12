@@ -21,6 +21,8 @@ runs:
           len=$((16 + RANDOM % 241))
           head -c "$len" /dev/urandom | base64 | tr -d '\n' > "./test-agent/random${i}.txt"
         done
+        # Allow the agent container user to write restore output.
+        chmod 777 ./test-agent
 
     - name: Run agent container
       shell: bash
