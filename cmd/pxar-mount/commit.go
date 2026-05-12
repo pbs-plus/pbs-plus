@@ -238,7 +238,10 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 		AuthToken:     authToken,
 		Namespace:     namespace,
 		SkipTLSVerify: req.SkipTLS,
-	}, buzhash.Config{}, false)
+	}, func() buzhash.Config {
+		cfg, _ := buzhash.NewConfig(4096)
+		return cfg
+	}(), false)
 
 	ctx := context.Background()
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
