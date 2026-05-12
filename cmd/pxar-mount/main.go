@@ -210,13 +210,14 @@ func main() {
 		origSnap := parseOrigSnapshot(*pbsStore, *ppxarDidx)
 
 		ptFS := &passthroughFS{
-			pxar:         fs,
-			pbsStore:     *pbsStore,
-			backingDir:   *passthrough,
-			origSnapshot: origSnap,
-			nodePaths:    make(map[uint64]string),
-			backed:       make(map[uint64]bool),
-			handles:      make(map[uint64]*passFh),
+			pxar:          fs,
+			pbsStore:      *pbsStore,
+			backingDir:    *passthrough,
+			origSnapshot:  origSnap,
+			origPpxarDidx: *ppxarDidx,
+			nodePaths:     make(map[uint64]string),
+			backed:        make(map[uint64]bool),
+			handles:       make(map[uint64]*passFh),
 		}
 		ptFS.setNode(rootInode, "/", false)
 		rawFS = ptFS

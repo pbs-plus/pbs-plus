@@ -214,13 +214,15 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 // postCommit switches the mounted pxar to the newly committed snapshot,
 // verifies backed files are present, and cleans up the backing directory.
 func (fs *passthroughFS) postCommit(backupID, backupType, namespace, archiveName string, backupTime int64) error {
-	// Compute paths for the new snapshot's DIDX files.
-	// PBS stores snapshots at: <store>/<ns>/<type>/<backup-id>/<backup-time>/
-	var nsPrefix string
-	if namespace != "" {
-		nsPrefix = namespace + "/"
-	}
-	snapDir := filepath.Join(fs.pbsStore, nsPrefix+backupType, backupID, fmt.Sprintf("%012d", backupTime))
+	// Derive the new snapshot directory from the original DIDX path.
+	// Example original: /pbs-store/ns/2001-PROJECTS/host/XM-05/2025-08-05T13:55:39Z/XM-05---F.ppxar.didx
+	// The group directory is two levels up (past time + filename).
+	origDir := filepath.Dir(fs.origPpxarDidx) // the time directory
+	groupDir := filepath.Dir(origDir)         // the group directory
+
+	// Format the new backup time as ISO 8601 (PBS directory naming).
+	newTimeISO := time.Unix(backupTime, 0).UTC().Format("2006-01-02T15:04:05Z")
+	snapDir := filepath.Join(groupDir, newTimeISO)
 
 	mpxarPath := filepath.Join(snapDir, archiveName+".mpxar.didx")
 	ppxarPath := filepath.Join(snapDir, archiveName+".ppxar.didx")
@@ -265,6 +267,7 @@ func (fs *passthroughFS) postCommit(backupID, backupType, namespace, archiveName
 		Namespace:   namespace,
 		ArchiveName: archiveName,
 	}
+	fs.origPpxarDidx = ppxarPath
 
 	// Clean up the backing directory (all files are now in the new snapshot)
 	if err := os.RemoveAll(fs.backingDir); err != nil {
