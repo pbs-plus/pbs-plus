@@ -157,8 +157,9 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	// Resolve PBS connection: auto-detect when fields are empty.
 	pbsURL := req.PBSURL
 	if pbsURL == "" {
-		pbsURL = "https://localhost:8007"
-		// Localhost connections typically have self-signed or hostname-mismatched certs.
+		// The PBS H2 upgrade path is constructed as <url-path>/backup.
+		// PBS API lives under /api2/json, so the base URL must include it.
+		pbsURL = "https://localhost:8007/api2/json"
 		req.SkipTLS = true
 	}
 	datastoreName := req.Datastore
