@@ -286,7 +286,15 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 
 	destPath := b.job.DestSubpath
 	basePath := b.job.DestTarget.GetAgentHostPath()
-	fullPath := path.Join(basePath, destPath)
+
+	// If subpath is absolute (e.g. /tmp/restore), use it directly.
+	// Otherwise join with the base path (e.g. /mnt/data + subdir).
+	var fullPath string
+	if path.IsAbs(destPath) {
+		fullPath = destPath
+	} else {
+		fullPath = path.Join(basePath, destPath)
+	}
 
 	if b.job.DestTarget.AgentHost.OperatingSystem == "windows" {
 		fullPath = strings.ReplaceAll(fullPath, "/", "\\")
