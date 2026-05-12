@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -191,6 +192,8 @@ func main() {
 
 	var rawFS fuse.RawFileSystem = fs
 
+	var sockListener net.Listener // captured for graceful shutdown
+
 	if *passthrough != "" {
 		// Validate the passthrough directory
 		ptInfo, err := os.Stat(*passthrough)
@@ -219,10 +222,12 @@ func main() {
 
 		// Start socket listener for commit commands
 		if *socketPath != "" {
-			if _, err := ptFS.startSocketListener(*socketPath); err != nil {
+			l, _, err := ptFS.startSocketListener(*socketPath)
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error starting socket listener: %v\n", err)
 				os.Exit(1)
 			}
+			sockListener = l
 			if *verbose {
 				fmt.Fprintf(os.Stderr, "pxar-mount: listening for commits on %s\n", *socketPath)
 			}
@@ -256,6 +261,10 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
+		// Close socket listener first so defers run and socket file is removed
+		if sockListener != nil {
+			_ = sockListener.Close()
+		}
 		_ = server.Unmount()
 	}()
 
