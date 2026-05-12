@@ -85,11 +85,17 @@ func (p *BlksnapProvider) CreateSnapshot(jobID, sourcePath string) (Snapshot, er
 	p.mountPoint = mountPoint
 	cleanupDone = true
 
+	// Compute the subpath: the portion of sourcePath inside the mount.
+	mountEntry, _ := resolveMountPoint(sourcePath)
+	subPath := strings.TrimPrefix(sourcePath, mountEntry.mountPoint)
+	subPath = strings.TrimPrefix(subPath, "/")
+
 	timeStarted := time.Now()
 	return Snapshot{
 		Path:        mountPoint,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		SubPath:     subPath,
 		Handler:     p,
 	}, nil
 }
