@@ -36,10 +36,14 @@ type passthroughFS struct {
 	pxar       *pxarFS
 	backingDir string
 
-	mu          sync.Mutex
+	mu          sync.RWMutex
 	nextBackIno uint64
 	nodePaths   map[uint64]string // inode → relative path from mount root
 	backed      map[uint64]bool   // true if inode lives in backing dir
+
+	// readDirTemp holds backed-entry stat_t values during ReadDir/ReadDirPlus
+	// to avoid redundant Lstat calls in fillEntryOutForNode.
+	readDirStats map[uint64]syscall.Stat_t
 
 	fhmu    sync.Mutex
 	handles map[uint64]*passFh // file handle id → open fd
@@ -71,14 +75,14 @@ func (fs *passthroughFS) absPath(rel string) string {
 }
 
 func (fs *passthroughFS) isBacked(ino uint64) bool {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
 	return fs.backed[ino]
 }
 
 func (fs *passthroughFS) nodePath(ino uint64) string {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
 	return fs.nodePaths[ino]
 }
 
@@ -711,15 +715,19 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 
 	// Read backing dir entries
 	var backedEntries []dirEntryMeta
+	var backedStats []syscall.Stat_t // parallel: syscall.Stat_t for each backed entry
 	if parentPath != "" {
 		absParent := fs.absPath(parentPath)
 		des, err := os.ReadDir(absParent)
-		if err == nil {
+		if err == nil && len(des) > 0 {
+			backedEntries = make([]dirEntryMeta, 0, len(des))
+			backedStats = make([]syscall.Stat_t, 0, len(des))
 			for _, de := range des {
 				info, err := de.Info()
 				if err != nil {
 					continue
 				}
+				st := info.Sys().(*syscall.Stat_t)
 				childPath := parentPath + "/" + de.Name()
 				mode := info.Mode()
 				isDir := de.IsDir()
@@ -731,17 +739,31 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 					inode: ino,
 					mode:  uint32(mode),
 				})
+				backedStats = append(backedStats, *st)
 			}
 		}
 	}
 
 	// Merge: backed entries shadow pxar entries
 	backedName := make(map[string]bool, len(backedEntries))
-	for _, be := range backedEntries {
-		backedName[be.name] = true
+	// Build a lookup for backed stats by inode
+	if plus && len(backedStats) > 0 {
+		if fs.readDirStats == nil {
+			fs.readDirStats = make(map[uint64]syscall.Stat_t, len(backedStats))
+		} else {
+			clear(fs.readDirStats)
+		}
+		for i, be := range backedEntries {
+			backedName[be.name] = true
+			fs.readDirStats[be.inode] = backedStats[i]
+		}
+	} else {
+		for _, be := range backedEntries {
+			backedName[be.name] = true
+		}
 	}
 
-	var entries []dirEntryMeta
+	entries := make([]dirEntryMeta, 0, len(pxarEntries)+len(backedEntries))
 	for _, pe := range pxarEntries {
 		if !backedName[pe.name] {
 			entries = append(entries, pe)
@@ -836,6 +858,11 @@ func (fs *passthroughFS) dirModeForNode(ino uint64) uint32 {
 }
 
 func (fs *passthroughFS) fillEntryOutForNode(ino uint64, out *fuse.EntryOut) {
+	// Fast path: use cached stat from readDirImpl
+	if st, ok := fs.readDirStats[ino]; ok {
+		fillAttrFromStat(ino, &st, out)
+		return
+	}
 	if fs.isBacked(ino) {
 		rel := fs.nodePath(ino)
 		nd, err := fs.statBacked(rel)
@@ -847,6 +874,33 @@ func (fs *passthroughFS) fillEntryOutForNode(ino uint64, out *fuse.EntryOut) {
 	if n := fs.getPxarNode(ino); n != nil {
 		fillEntryOut(ino, n, out)
 	}
+}
+
+// fillAttrFromStat fills a fuse.EntryOut directly from a syscall.Stat_t
+// without allocating an intermediate node struct.
+func fillAttrFromStat(ino uint64, st *syscall.Stat_t, out *fuse.EntryOut) {
+	out.NodeId = ino
+	out.Generation = 1
+	out.EntryValid = 1
+	out.AttrValid = 1
+	out.Ino = ino
+	out.Size = uint64(st.Size)
+	out.Blocks = (uint64(st.Size) + 511) / 512
+	out.Mode = uint32(st.Mode)
+	out.Nlink = 1
+	if st.Mode&syscall.S_IFDIR != 0 {
+		out.Nlink = 2
+		out.Mode |= syscall.S_IFDIR
+	}
+	out.Uid = st.Uid
+	out.Gid = st.Gid
+	out.Mtime = uint64(st.Mtim.Sec)
+	out.Mtimensec = uint32(st.Mtim.Nsec)
+	out.Atime = uint64(st.Atim.Sec)
+	out.Atimensec = uint32(st.Atim.Nsec)
+	out.Ctime = uint64(st.Ctim.Sec)
+	out.Ctimensec = uint32(st.Ctim.Nsec)
+	out.Blksize = 4096
 }
 
 func (fs *passthroughFS) ReleaseDir(input *fuse.ReleaseIn) {}
