@@ -19,7 +19,7 @@ import (
 )
 
 func NormalizeHostname(hostname string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(hostname, ".", "-"), " ", "-")
+	return strings.NewReplacer(".", "-", " ", "-", "/", "-", "\\", "-").Replace(hostname)
 }
 
 // ParseUPID parses a Proxmox Backup Server UPID string and returns a Task struct.
