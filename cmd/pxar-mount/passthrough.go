@@ -256,21 +256,34 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 	childPath := parentPath + "/" + name
 
 	// Check backing dir first (upper layer takes priority)
-	if nd, err := fs.statBacked(childPath); err == nil {
+	backedNode, _ := fs.statBacked(childPath)
+
+	// For directories, prefer the pxar inode so that readDirRaw works.
+	// A backed directory created by ensureBackingParent (empty) should
+	// not shadow the pxar directory with actual content.
+	if backedNode != nil && backedNode.isDir {
+		// Try pxar lookup for the same name
+		if pxarSt := fs.pxar.Lookup(cancel, header, name, out); pxarSt == fuse.OK {
+			// Found pxar directory — use its inode but mark as backed
+			// so file creation still works in this directory.
+			fs.setNode(out.NodeId, childPath, true)
+			return fuse.OK
+		}
+	}
+
+	if backedNode != nil {
 		fs.mu.Lock()
-		nd.refs++
-		nd.parent = header.NodeId
+		backedNode.refs++
+		backedNode.parent = header.NodeId
 		fs.mu.Unlock()
-		fillEntryOut(nd.inode, nd, out)
+		fillEntryOut(backedNode.inode, backedNode, out)
 		return fuse.OK
 	}
 
 	// Delegate to pxar
 	st := fs.pxar.Lookup(cancel, header, name, out)
 	if st == fuse.OK {
-		// Store the pxar node's path for future overlay lookups
 		fs.setNode(out.NodeId, childPath, false)
-		// Also store the parent path for pxar directories if not already set
 		fs.mu.Lock()
 		if _, exists := fs.nodePaths[header.NodeId]; !exists {
 			fs.nodePaths[header.NodeId] = parentPath
@@ -766,6 +779,15 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	var pxarEntries []dirEntryMeta
 	if pxarN, err := fs.pxar.readDirRaw(input.NodeId); err == nil {
 		pxarEntries = pxarN
+	} else {
+		// For backed directories that shadow pxar directories, readDirRaw
+		// fails because the inode isn't in the pxar node cache. Try to
+		// find the pxar directory by looking up the parent's entries.
+		if fs.isBacked(input.NodeId) {
+			if pxarEntries = fs.pxarEntriesForPath(parentPath); pxarEntries != nil {
+				// Found pxar entries — register the node so future reads work
+			}
+		}
 	}
 
 	// Read backing dir entries
@@ -828,6 +850,13 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		if !backedName[pe.name] {
 			entries = append(entries, pe)
 			fs.setNode(pe.inode, parentPath+"/"+pe.name, false)
+		} else if isDirInode(pe.inode) {
+			// Pxar directory shadowed by a backed directory (created by
+			// ensureBackingParent). Keep the pxar inode so readDirRaw
+			// works, but mark as backed so file creation works.
+			entries = append(entries, pe)
+			fs.setNode(pe.inode, parentPath+"/"+pe.name, true)
+			backedName[pe.name] = false // suppress the backed version
 		}
 	}
 	entries = append(entries, backedEntries...)
@@ -977,6 +1006,49 @@ func (fs *passthroughFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fu
 }
 
 // --- xattr ---
+
+// pxarEntriesForPath finds pxar directory entries for a given path by
+// looking up the parent's pxar entries and matching the last component.
+// Returns nil if not found.
+func (fs *passthroughFS) pxarEntriesForPath(relPath string) []dirEntryMeta {
+	if relPath == "" || relPath == "/" {
+		return nil
+	}
+	parent := filepath.Dir(relPath)
+	name := filepath.Base(relPath)
+
+	// Find the parent directory's pxar inode
+	var parentIno uint64
+	fs.mu.RLock()
+	for ino, p := range fs.nodePaths {
+		if p == parent && !fs.backed[ino] {
+			parentIno = ino
+			break
+		}
+	}
+	fs.mu.RUnlock()
+	if parentIno == 0 {
+		return nil
+	}
+
+	parentEntries, err := fs.pxar.readDirRaw(parentIno)
+	if err != nil {
+		return nil
+	}
+
+	for _, pe := range parentEntries {
+		if pe.name == name && isDirInode(pe.inode) {
+			// Found the pxar directory — register it and read its entries
+			fs.pxar.registerNode(pe.inode, parentIno, &pe.meta)
+			children, err := fs.pxar.readDirRaw(pe.inode)
+			if err != nil {
+				return nil
+			}
+			return children
+		}
+	}
+	return nil
+}
 
 // isPxarDir returns true if the inode is a non-backed directory node.
 func (fs *passthroughFS) isPxarDir(ino uint64) bool {
