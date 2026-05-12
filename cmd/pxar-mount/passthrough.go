@@ -974,12 +974,12 @@ func (fs *passthroughFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fu
 
 // --- xattr ---
 
-// isPxarDir returns true if the inode is a pxar directory node.
+// isPxarDir returns true if the inode is a non-backed directory node.
 func (fs *passthroughFS) isPxarDir(ino uint64) bool {
-	if n := fs.getPxarNode(ino); n != nil {
-		return n.isDir
+	if fs.isBacked(ino) {
+		return false
 	}
-	return false
+	return isDirInode(ino)
 }
 
 // xattrSidecarPath returns the path to a sidecar directory in
