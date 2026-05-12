@@ -104,7 +104,7 @@ runs:
       shell: bash
       run: |
         echo "Computing checksums of source files..."
-        docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -exec sha256sum {} \; | sort' > /tmp/source-checksums.txt
+        docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -not -path "./tmp/*" -exec sha256sum {} \; | sort' > /tmp/source-checksums.txt
 
         echo "Computing checksums of restored files..."
         docker exec pbs-plus-agent sh -c 'cd /test-backup/tmp/pbs-plus-restore-test && find . -type f -exec sha256sum {} \; | sort' > /tmp/restored-checksums.txt
@@ -120,7 +120,7 @@ runs:
           diff /tmp/source-checksums.txt /tmp/restored-checksums.txt || true
           echo ""
           echo "=== Source file sizes ==="
-          docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -exec stat -c "%s %n" {} \; | sort'
+          docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -not -path "./tmp/*" -exec stat -c "%s %n" {} \; | sort'
           echo ""
           echo "=== Restored file sizes ==="
           docker exec pbs-plus-agent sh -c 'cd /test-backup/tmp/pbs-plus-restore-test && find . -type f -exec stat -c "%s %n" {} \; | sort'
