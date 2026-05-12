@@ -465,6 +465,8 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 	pxarEntries, _ := fs.pxar.readDirRaw(pxarIno)
 	backedEntries := fs.readBackedDir(relPath)
 
+	fmt.Fprintf(os.Stderr, "walkOverlay ino=%d rel=%q pxar=%d backed=%d\n", pxarIno, relPath, len(pxarEntries), len(backedEntries))
+
 	backedName := make(map[string]bool, len(backedEntries))
 	for _, be := range backedEntries {
 		backedName[be.name] = true
