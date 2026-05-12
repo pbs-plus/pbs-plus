@@ -78,6 +78,12 @@ func toInode(e *pxar.Entry) uint64 {
 }
 
 func main() {
+	// Handle "commit" subcommand before parsing mount flags
+	if len(os.Args) > 1 && os.Args[1] == "commit" {
+		runCommitSubcommand()
+		return
+	}
+
 	pbsStore := flag.String("pbs-store", "", "PBS datastore root path")
 	mpxarDidx := flag.String("mpxar-didx", "", "Path to metadata dynamic index (.mpxar.didx)")
 	ppxarDidx := flag.String("ppxar-didx", "", "Path to payload or unified dynamic index (.ppxar.didx)")
@@ -86,12 +92,18 @@ func main() {
 	cacheMB := flag.Int("cache-size", 256, "Cache size in MB (accepted for CLI compat)")
 	fuseOpts := flag.String("options", "ro,default_permissions", "FUSE mount options")
 	passthrough := flag.String("passthrough", "", "Backing directory for write passthrough (enables read-write overlay)")
+	socketPath := flag.String("socket", "", "Unix socket path for commit commands")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 
 	flag.Parse()
 
 	if *pbsStore == "" || *ppxarDidx == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--passthrough <dir>] [--verbose] <mountpoint>\n")
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--passthrough <dir>] [--socket <path>] [--verbose] <mountpoint>\n")
+		os.Exit(1)
+	}
+
+	if *passthrough == "" && *socketPath != "" {
+		fmt.Fprintf(os.Stderr, "Error: --socket requires --passthrough\n")
 		os.Exit(1)
 	}
 
@@ -200,6 +212,17 @@ func main() {
 		}
 		ptFS.setNode(rootInode, "/", false)
 		rawFS = ptFS
+
+		// Start socket listener for commit commands
+		if *socketPath != "" {
+			if _, err := ptFS.startSocketListener(*socketPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error starting socket listener: %v\n", err)
+				os.Exit(1)
+			}
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "pxar-mount: listening for commits on %s\n", *socketPath)
+			}
+		}
 
 		// Override mount options for read-write
 		*fuseOpts = strings.Replace(*fuseOpts, "ro,", "rw,", 1)
