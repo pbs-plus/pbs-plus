@@ -211,6 +211,7 @@ func main() {
 
 		ptFS := &passthroughFS{
 			pxar:         fs,
+			pbsStore:     *pbsStore,
 			backingDir:   *passthrough,
 			origSnapshot: origSnap,
 			nodePaths:    make(map[uint64]string),
@@ -781,4 +782,36 @@ func statMode(mode uint64) uint32 {
 		ft = syscall.S_IFSOCK
 	}
 	return ft | uint32(mode&0o7777)
+}
+
+// hotSwap replaces the pxar archive reader and clears the node cache.
+// Called after a successful commit to switch to the new snapshot without
+// remounting the FUSE filesystem.
+func (fs *pxarFS) hotSwap(newReader *transfer.SplitArchiveReader) {
+	fs.mu.Lock()
+	oldNodes := fs.nodes
+	fs.nodes = make(map[uint64]*node)
+	fs.mu.Unlock()
+
+	// Swap the reader under the reader mutex
+	// The old reader will be GC'd after this; any in-flight reads
+	// hold their own references (SectionReader) so they complete safely.
+	fs.readerMu.Lock()
+	fs.reader = newReader
+	fs.readerMu.Unlock()
+
+	// Clear old nodes to free memory
+	for k := range oldNodes {
+		delete(oldNodes, k)
+	}
+
+	// Re-register root node from the new reader
+	root, err := newReader.ReadRoot()
+	if err != nil {
+		return
+	}
+	fs.mu.Lock()
+	fs.size = int64(root.FileOffset + root.FileSize)
+	fs.nodes[rootInode] = nodeFromEntry(root, rootInode, rootInode)
+	fs.mu.Unlock()
 }
