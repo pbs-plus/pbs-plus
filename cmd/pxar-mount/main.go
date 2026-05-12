@@ -78,6 +78,12 @@ func toInode(e *pxar.Entry) uint64 {
 }
 
 func main() {
+	// Handle "commit" subcommand before parsing mount flags
+	if len(os.Args) > 1 && os.Args[1] == "commit" {
+		runCommitSubcommand()
+		return
+	}
+
 	pbsStore := flag.String("pbs-store", "", "PBS datastore root path")
 	mpxarDidx := flag.String("mpxar-didx", "", "Path to metadata dynamic index (.mpxar.didx)")
 	ppxarDidx := flag.String("ppxar-didx", "", "Path to payload or unified dynamic index (.ppxar.didx)")
@@ -85,12 +91,19 @@ func main() {
 	verifyChunks := flag.Bool("verify-chunks", false, "Verify chunk SHA256 on read (accepted for CLI compat)")
 	cacheMB := flag.Int("cache-size", 256, "Cache size in MB (accepted for CLI compat)")
 	fuseOpts := flag.String("options", "ro,default_permissions", "FUSE mount options")
+	passthrough := flag.String("passthrough", "", "Backing directory for write passthrough (enables read-write overlay)")
+	socketPath := flag.String("socket", "", "Unix socket path for commit commands")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 
 	flag.Parse()
 
 	if *pbsStore == "" || *ppxarDidx == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--verbose] <mountpoint>\n")
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--passthrough <dir>] [--socket <path>] [--verbose] <mountpoint>\n")
+		os.Exit(1)
+	}
+
+	if *passthrough == "" && *socketPath != "" {
+		fmt.Fprintf(os.Stderr, "Error: --socket requires --passthrough\n")
 		os.Exit(1)
 	}
 
@@ -176,7 +189,53 @@ func main() {
 
 	fs.nodes[rootInode] = nodeFromEntry(root, rootInode, rootInode)
 
-	server, err := fuse.NewServer(fs, mountPoint, &fuse.MountOptions{
+	var rawFS fuse.RawFileSystem = fs
+
+	if *passthrough != "" {
+		// Validate the passthrough directory
+		ptInfo, err := os.Stat(*passthrough)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: passthrough directory not accessible: %v\n", err)
+			os.Exit(1)
+		}
+		if !ptInfo.IsDir() {
+			fmt.Fprintf(os.Stderr, "Error: passthrough path is not a directory\n")
+			os.Exit(1)
+		}
+
+		ptFS := &passthroughFS{
+			pxar:       fs,
+			backingDir: *passthrough,
+			nodePaths:  make(map[uint64]string),
+			backed:     make(map[uint64]bool),
+			handles:    make(map[uint64]*passFh),
+		}
+		ptFS.setNode(rootInode, "/", false)
+		rawFS = ptFS
+
+		// Start socket listener for commit commands
+		if *socketPath != "" {
+			if _, err := ptFS.startSocketListener(*socketPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error starting socket listener: %v\n", err)
+				os.Exit(1)
+			}
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "pxar-mount: listening for commits on %s\n", *socketPath)
+			}
+		}
+
+		// Override mount options for read-write
+		*fuseOpts = strings.Replace(*fuseOpts, "ro,", "rw,", 1)
+		if !strings.Contains(*fuseOpts, "rw") {
+			*fuseOpts = "rw,default_permissions"
+		}
+
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "pxar-mount: passthrough mode, backing dir=%s\n", *passthrough)
+		}
+	}
+
+	server, err := fuse.NewServer(rawFS, mountPoint, &fuse.MountOptions{
 		Name:    "pxar-mount",
 		Options: strings.Split(*fuseOpts, ","),
 	})
