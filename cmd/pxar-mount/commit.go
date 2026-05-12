@@ -61,12 +61,12 @@ func parseCommitLine(line string) (*commitRequest, error) {
 }
 
 // startSocketListener opens a Unix domain socket and processes commit requests.
-// Returns a done channel that closes when the listener exits.
-func (fs *passthroughFS) startSocketListener(sockPath string) (chan struct{}, error) {
+// Returns the listener (for graceful shutdown) and a done channel.
+func (fs *passthroughFS) startSocketListener(sockPath string) (net.Listener, chan struct{}, error) {
 	_ = os.Remove(sockPath)
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
-		return nil, fmt.Errorf("listen on %s: %w", sockPath, err)
+		return nil, nil, fmt.Errorf("listen on %s: %w", sockPath, err)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -81,7 +81,7 @@ func (fs *passthroughFS) startSocketListener(sockPath string) (chan struct{}, er
 			go fs.handleSocketConn(conn)
 		}
 	}()
-	return done, nil
+	return l, done, nil
 }
 
 func (fs *passthroughFS) handleSocketConn(conn net.Conn) {
