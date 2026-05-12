@@ -77,11 +77,14 @@ func parseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
 
 	var ref snapshotRef
 	if len(parts) >= 4 {
-		// filename is last component
+		// filename is last component: AKA---E.mpxar.didx or AKA---E.ppxar.didx
 		filename := parts[len(parts)-1]
-		ref.ArchiveName = strings.TrimSuffix(filename, ".ppxar.didx")
-		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".mpxar.didx")
-		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".pxar.didx")
+		// Strip .didx suffix, then .mpxar/.ppxar/.pxar to get the base archive name.
+		// Example: AKA---E.mpxar.didx → AKA---E
+		ref.ArchiveName = strings.TrimSuffix(filename, ".didx")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".mpxar")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".ppxar")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".pxar")
 
 		// backup-time is second-to-last
 		_, _ = fmt.Sscanf(parts[len(parts)-2], "%d", &ref.BackupTime)
@@ -89,9 +92,18 @@ func parseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
 		ref.BackupID = parts[len(parts)-3]
 		// backup-type is fourth-to-last
 		ref.BackupType = parts[len(parts)-4]
-		// everything before that is namespace
+		// everything before that is namespace (with ns/ prefix per segment)
+		// e.g. "ns/test/ns/sgprog" → namespace "test/sgprog"
 		if len(parts) > 4 {
-			ref.Namespace = strings.Join(parts[:len(parts)-4], "/")
+			nsParts := parts[:len(parts)-4]
+			var clean []string
+			for i := 0; i < len(nsParts); i++ {
+				if nsParts[i] == "ns" && i+1 < len(nsParts) {
+					i++
+					clean = append(clean, nsParts[i])
+				}
+			}
+			ref.Namespace = strings.Join(clean, "/")
 		}
 	}
 	if ref.BackupType == "" {
