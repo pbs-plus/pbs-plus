@@ -974,6 +974,34 @@ func (fs *passthroughFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fu
 
 // --- xattr ---
 
+// isPxarDir returns true if the inode is a pxar directory node.
+func (fs *passthroughFS) isPxarDir(ino uint64) bool {
+	if n := fs.getPxarNode(ino); n != nil {
+		return n.isDir
+	}
+	return false
+}
+
+// xattrSidecarPath returns the path to a sidecar directory in
+// backingDir/.pxar-xattr/ where xattrs for pxar overlay nodes are stored.
+// The sidecar is a real directory so that Samba's acl_xattr can work with it.
+func (fs *passthroughFS) xattrSidecarPath(ino uint64) (string, error) {
+	rel := fs.nodePath(ino)
+	if rel == "" {
+		return "", syscall.ENOENT
+	}
+	name := strings.Trim(strings.ReplaceAll(rel, "/", "_"), "_")
+	if name == "" {
+		name = "root"
+	}
+	storeDir := filepath.Join(fs.backingDir, ".pxar-xattr")
+	sidecar := filepath.Join(storeDir, name)
+	if err := os.MkdirAll(sidecar, 0o755); err != nil {
+		return "", err
+	}
+	return sidecar, nil
+}
+
 func (fs *passthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
 	if fs.isBacked(header.NodeId) {
 		rel := fs.nodePath(header.NodeId)
@@ -983,6 +1011,16 @@ func (fs *passthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader,
 		}
 		return uint32(sz), fuse.OK
 	}
+
+	// For pxar directory nodes, try backing dir first (e.g. NTACL set by Samba)
+	if fs.isPxarDir(header.NodeId) {
+		if abs, err := fs.xattrSidecarPath(header.NodeId); err == nil {
+			if sz, err := unix.Getxattr(abs, attr, dest); err == nil {
+				return uint32(sz), fuse.OK
+			}
+		}
+	}
+
 	return fs.pxar.GetXAttr(cancel, header, attr, dest)
 }
 
@@ -995,35 +1033,72 @@ func (fs *passthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 		}
 		return uint32(sz), fuse.OK
 	}
+
+	// For pxar directory nodes, try backing dir first (e.g. NTACL set by Samba)
+	if fs.isPxarDir(header.NodeId) {
+		if abs, err := fs.xattrSidecarPath(header.NodeId); err == nil {
+			if sz, err := unix.Listxattr(abs, dest); err == nil {
+				return uint32(sz), fuse.OK
+			}
+		}
+	}
+
 	return fs.pxar.ListXAttr(cancel, header, dest)
 }
 
 func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
-	if !fs.isBacked(input.NodeId) {
-		return fuse.EROFS
-	}
-	rel := fs.nodePath(input.NodeId)
 	flags := 0
 	if input.Flags&xattrCreate != 0 {
 		flags = unix.XATTR_CREATE
 	} else if input.Flags&xattrReplace != 0 {
 		flags = unix.XATTR_REPLACE
 	}
-	if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
-		return fuse.ToStatus(err)
+
+	if fs.isBacked(input.NodeId) {
+		rel := fs.nodePath(input.NodeId)
+		if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
 	}
-	return fuse.OK
+
+	// For pxar overlay directory nodes, store xattrs in backing dir
+	if fs.isPxarDir(input.NodeId) {
+		abs, err := fs.xattrSidecarPath(input.NodeId)
+		if err != nil {
+			return fuse.ToStatus(err)
+		}
+		if err := unix.Setxattr(abs, attr, data, flags); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
+	}
+
+	return fuse.EROFS
 }
 
 func (fs *passthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
-	if !fs.isBacked(header.NodeId) {
-		return fuse.EROFS
+	if fs.isBacked(header.NodeId) {
+		rel := fs.nodePath(header.NodeId)
+		if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
 	}
-	rel := fs.nodePath(header.NodeId)
-	if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
-		return fuse.ToStatus(err)
+
+	// For pxar overlay directory nodes, try removing from backing dir
+	if fs.isPxarDir(header.NodeId) {
+		abs, err := fs.xattrSidecarPath(header.NodeId)
+		if err != nil {
+			return fuse.ToStatus(err)
+		}
+		if err := unix.Removexattr(abs, attr); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
 	}
-	return fuse.OK
+
+	return fuse.EROFS
 }
 
 // --- StatFs ---
