@@ -284,17 +284,9 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
-	destPath := b.job.DestSubpath
+	destPath := strings.TrimLeft(b.job.DestSubpath, "/")
 	basePath := b.job.DestTarget.GetAgentHostPath()
-
-	// If subpath is absolute (e.g. /tmp/restore), use it directly.
-	// Otherwise join with the base path (e.g. /mnt/data + subdir).
-	var fullPath string
-	if path.IsAbs(destPath) {
-		fullPath = destPath
-	} else {
-		fullPath = path.Join(basePath, destPath)
-	}
+	fullPath := path.Join(basePath, destPath)
 
 	if b.job.DestTarget.AgentHost.OperatingSystem == "windows" {
 		fullPath = strings.ReplaceAll(fullPath, "/", "\\")
