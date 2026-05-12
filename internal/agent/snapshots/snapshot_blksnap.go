@@ -146,21 +146,3 @@ func (p *BlksnapProvider) IsSupported(sourcePath string) bool {
 	}
 	return false
 }
-
-// blockDeviceForPath returns the block device backing the given mount point.
-func blockDeviceForPath(path string) (string, error) {
-	data, err := os.ReadFile("/proc/mounts")
-	if err != nil {
-		return "", err
-	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[1] == path {
-			dev := fields[0]
-			if strings.HasPrefix(dev, "/dev/") {
-				return dev, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no block device found for %s", path)
-}
