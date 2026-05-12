@@ -158,6 +158,8 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	pbsURL := req.PBSURL
 	if pbsURL == "" {
 		pbsURL = "https://localhost:8007"
+		// Localhost connections typically have self-signed or hostname-mismatched certs.
+		req.SkipTLS = true
 	}
 	datastoreName := req.Datastore
 	if datastoreName == "" {
