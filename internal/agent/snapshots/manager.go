@@ -2,7 +2,6 @@ package snapshots
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 )
 
@@ -16,56 +15,6 @@ type providerChain []SnapshotProvider
 // provider whose IsSupported() returns true handles the snapshot.
 type Manager struct {
 	chains map[string]providerChain
-}
-
-func initProviders() map[string]providerChain {
-	var (
-		blksnapP SnapshotProvider
-		btrfsP   SnapshotProvider
-		zfsP     = &ZFSProvider{}
-		vssP     = &VSSProvider{}
-	)
-
-	// Blksnap and BTRFS are Linux-only (cgo).
-	if runtime.GOOS == "linux" {
-		blksnapP = &BlksnapProvider{}
-		btrfsP = &BtrfsProvider{}
-	}
-
-	chains := map[string]providerChain{
-		// ext4/XFS: blksnap sits underneath LVM/RAID/dm-crypt at the
-		// block layer, treating the LV as just another block device.
-		"ext4": {blksnapP},
-		"xfs":  {blksnapP},
-
-		// BTRFS: use kernel ioctl.
-		"btrfs": {btrfsP},
-
-		// ZFS: snapshot-less (file-level only).
-		"zfs": {zfsP},
-
-		// Windows filesystems: VSS.
-		"ntfs": {vssP},
-		"refs": {vssP},
-
-		// Filesystems without snapshot support.
-		"fat32": nil,
-		"exfat": nil,
-		"hfs+":  nil,
-	}
-
-	// Remove nil entries from chains.
-	for fs, chain := range chains {
-		var filtered providerChain
-		for _, p := range chain {
-			if p != nil {
-				filtered = append(filtered, p)
-			}
-		}
-		chains[fs] = filtered
-	}
-
-	return chains
 }
 
 // DefaultManager is the global snapshot manager instance.

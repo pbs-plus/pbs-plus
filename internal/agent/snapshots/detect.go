@@ -1,48 +1,5 @@
 package snapshots
 
-import (
-	"fmt"
-	"runtime"
-
-	"golang.org/x/sys/unix"
-)
-
-// detectFilesystem returns the normalized filesystem type for a path.
-//
-// Uses statfs(2) to get the filesystem magic number directly from the
-// kernel — works on any path (not just mount points), handles symlinks,
-// and is immune to /proc/mounts escaping issues.
-func detectFilesystem(path string) (string, error) {
-	switch runtime.GOOS {
-	case "linux":
-		var st unix.Statfs_t
-		if err := unix.Statfs(path, &st); err != nil {
-			return "", fmt.Errorf("statfs %s: %w", path, err)
-		}
-		fsType := fsTypeFromMagic(int64(st.Type))
-		if fsType == "" {
-			return "", fmt.Errorf("unknown filesystem magic 0x%X at %s", st.Type, path)
-		}
-		return fsType, nil
-
-	case "darwin":
-		return detectFilesystemDarwin(path)
-
-	case "windows":
-		// Windows reports everything as NTFS; ReFS volumes are
-		// indistinguishable at this level without an additional API call.
-		return "ntfs", nil
-
-	default:
-		return "", fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
-	}
-}
-
-// detectFilesystemDarwin uses diskutil for macOS filesystem detection.
-func detectFilesystemDarwin(path string) (string, error) {
-	return "", fmt.Errorf("darwin filesystem detection not implemented")
-}
-
 // fsTypeFromMagic maps a statfs f_type to a normalized filesystem name.
 //
 // Only includes filesystems the snapshot manager has provider chains for.
@@ -66,12 +23,11 @@ func fsTypeFromMagic(magic int64) string {
 		return "zfs"
 
 	// NTFS (Linux ntfs3 / ntfs-3g).
-	case 0x5346544E: // NTFS_SB_MAGIC
+	case 0x5346544E:
 		return "ntfs"
 
 	// FUSE (ntfs-3g via fuse, exfat-fuse, etc.).
-	// We can't distinguish the actual FS behind FUSE from statfs alone.
-	// The manager normalizes "fuseblk" → "ntfs" for the common case.
+	// Normalized to "ntfs" by the manager for the common case.
 	case 0x65735546:
 		return "fuseblk"
 
