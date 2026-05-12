@@ -38,7 +38,8 @@ type passthroughFS struct {
 	pxar          *pxarFS
 	handles       map[uint64]*passFh
 	readDirStats  map[uint64]syscall.Stat_t
-	backed        map[uint64]bool
+	backed        map[uint64]bool // has a real path in backing dir
+	pxarDir       map[uint64]bool // originated from pxar (directory)
 	origSnapshot  snapshotRef
 	pbsStore      string
 	origPpxarDidx string
@@ -169,6 +170,45 @@ func (fs *passthroughFS) ensureBackingParent(rel string) error {
 	return os.MkdirAll(fs.absPath(parent), 0o755)
 }
 
+// precreateDirectories walks the pxar tree and creates all directories
+// in the backing dir so that SMB's acl_xattr can work directly on them.
+func (fs *passthroughFS) precreateDirectories() error {
+	// Mark root as backed and pxar-originated
+	fs.setNode(rootInode, "/", true)
+	fs.mu.Lock()
+	fs.pxarDir[rootInode] = true
+	fs.mu.Unlock()
+	return fs.precreateDir(rootInode, "/")
+}
+
+func (fs *passthroughFS) precreateDir(ino uint64, relPath string) error {
+	absPath := fs.absPath(relPath)
+	if err := os.MkdirAll(absPath, 0o755); err != nil {
+		return err
+	}
+
+	entries, err := fs.pxar.readDirRaw(ino)
+	if err != nil {
+		return nil // leaf or unreadable, not an error
+	}
+
+	for _, pe := range entries {
+		if !isDirInode(pe.inode) {
+			continue
+		}
+		childPath := relPath + "/" + pe.name
+		fs.pxar.registerNode(pe.inode, ino, &pe.meta)
+		fs.setNode(pe.inode, childPath, true)
+		fs.mu.Lock()
+		fs.pxarDir[pe.inode] = true
+		fs.mu.Unlock()
+		if err := fs.precreateDir(pe.inode, childPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // statBacked stat's a relative path in the backing dir and constructs
 // backing node metadata. Returns nil if the file does not exist.
 func (fs *passthroughFS) statBacked(rel string) (*node, error) {
@@ -267,6 +307,9 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 			// Found pxar directory — use its inode but mark as backed
 			// so file creation still works in this directory.
 			fs.setNode(out.NodeId, childPath, true)
+			fs.mu.Lock()
+			fs.pxarDir[out.NodeId] = true
+			fs.mu.Unlock()
 			return fuse.OK
 		}
 	}
@@ -284,6 +327,11 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 	st := fs.pxar.Lookup(cancel, header, name, out)
 	if st == fuse.OK {
 		fs.setNode(out.NodeId, childPath, false)
+		if out.Mode&syscall.S_IFDIR != 0 {
+			fs.mu.Lock()
+			fs.pxarDir[out.NodeId] = true
+			fs.mu.Unlock()
+		}
 		fs.mu.Lock()
 		if _, exists := fs.nodePaths[header.NodeId]; !exists {
 			fs.nodePaths[header.NodeId] = parentPath
@@ -843,6 +891,12 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	// Register pxar nodes so fillEntryOutForNode can find them.
 	for _, pe := range pxarEntries {
 		fs.pxar.registerNode(pe.inode, input.NodeId, &pe.meta)
+		// Track pxar-originated directories for xattr sidecar support
+		if isDirInode(pe.inode) {
+			fs.mu.Lock()
+			fs.pxarDir[pe.inode] = true
+			fs.mu.Unlock()
+		}
 	}
 
 	entries := make([]dirEntryMeta, 0, len(pxarEntries)+len(backedEntries))
@@ -1050,34 +1104,6 @@ func (fs *passthroughFS) pxarEntriesForPath(relPath string) []dirEntryMeta {
 	return nil
 }
 
-// isPxarDir returns true if the inode is a non-backed directory node.
-func (fs *passthroughFS) isPxarDir(ino uint64) bool {
-	if fs.isBacked(ino) {
-		return false
-	}
-	return isDirInode(ino)
-}
-
-// xattrSidecarPath returns the path to a sidecar directory in
-// backingDir/.pxar-xattr/ where xattrs for pxar overlay nodes are stored.
-// The sidecar is a real directory so that Samba's acl_xattr can work with it.
-func (fs *passthroughFS) xattrSidecarPath(ino uint64) (string, error) {
-	rel := fs.nodePath(ino)
-	if rel == "" {
-		return "", syscall.ENOENT
-	}
-	name := strings.Trim(strings.ReplaceAll(rel, "/", "_"), "_")
-	if name == "" {
-		name = "root"
-	}
-	storeDir := filepath.Join(fs.backingDir, ".pxar-xattr")
-	sidecar := filepath.Join(storeDir, name)
-	if err := os.MkdirAll(sidecar, 0o755); err != nil {
-		return "", err
-	}
-	return sidecar, nil
-}
-
 func (fs *passthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
 	if fs.isBacked(header.NodeId) {
 		rel := fs.nodePath(header.NodeId)
@@ -1086,15 +1112,6 @@ func (fs *passthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader,
 			return 0, fuse.ToStatus(err)
 		}
 		return uint32(sz), fuse.OK
-	}
-
-	// For pxar directory nodes, try backing dir first (e.g. NTACL set by Samba)
-	if fs.isPxarDir(header.NodeId) {
-		if abs, err := fs.xattrSidecarPath(header.NodeId); err == nil {
-			if sz, err := unix.Getxattr(abs, attr, dest); err == nil {
-				return uint32(sz), fuse.OK
-			}
-		}
 	}
 
 	return fs.pxar.GetXAttr(cancel, header, attr, dest)
@@ -1108,15 +1125,6 @@ func (fs *passthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 			return 0, fuse.ToStatus(err)
 		}
 		return uint32(sz), fuse.OK
-	}
-
-	// For pxar directory nodes, try backing dir first (e.g. NTACL set by Samba)
-	if fs.isPxarDir(header.NodeId) {
-		if abs, err := fs.xattrSidecarPath(header.NodeId); err == nil {
-			if sz, err := unix.Listxattr(abs, dest); err == nil {
-				return uint32(sz), fuse.OK
-			}
-		}
 	}
 
 	return fs.pxar.ListXAttr(cancel, header, dest)
@@ -1138,18 +1146,6 @@ func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn
 		return fuse.OK
 	}
 
-	// For pxar overlay directory nodes, store xattrs in backing dir
-	if fs.isPxarDir(input.NodeId) {
-		abs, err := fs.xattrSidecarPath(input.NodeId)
-		if err != nil {
-			return fuse.ToStatus(err)
-		}
-		if err := unix.Setxattr(abs, attr, data, flags); err != nil {
-			return fuse.ToStatus(err)
-		}
-		return fuse.OK
-	}
-
 	return fuse.EROFS
 }
 
@@ -1157,18 +1153,6 @@ func (fs *passthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHead
 	if fs.isBacked(header.NodeId) {
 		rel := fs.nodePath(header.NodeId)
 		if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
-			return fuse.ToStatus(err)
-		}
-		return fuse.OK
-	}
-
-	// For pxar overlay directory nodes, try removing from backing dir
-	if fs.isPxarDir(header.NodeId) {
-		abs, err := fs.xattrSidecarPath(header.NodeId)
-		if err != nil {
-			return fuse.ToStatus(err)
-		}
-		if err := unix.Removexattr(abs, attr); err != nil {
 			return fuse.ToStatus(err)
 		}
 		return fuse.OK
