@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -263,20 +262,7 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	metaName := archiveName + ".mpxar.didx"
 	payloadName := archiveName + ".ppxar.didx"
 
-	// Use RemoteDedupSplitArchiveWriter for chunk-level dedup.
-	// Read original payload DIDX for chunk injection.
-	var origPayloadIdx []byte
-	if fs.origPpxarDidx != "" {
-		origPayloadIdx, err = os.ReadFile(fs.origPpxarDidx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: could not read original payload DIDX: %v\n", err)
-		}
-	}
-
-	writer, err := transfer.NewRemoteDedupSplitArchiveWriter(ctx, session, metaName, payloadName, origPayloadIdx)
-	if err != nil {
-		return fmt.Errorf("create dedup writer: %w", err)
-	}
+	writer := transfer.NewSplitSessionArchiveWriter(ctx, session, metaName, payloadName)
 
 	// Build root metadata from pxar root entry
 	rootPxarEntry := fs.getPxarEntry(rootInode)
@@ -489,29 +475,19 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 		backedName[be.name] = true
 	}
 
-	// Process entries: pxar entries first (sorted by payload offset for correct
-	// payload stream layout), then backed entries (which get new offsets at the end).
-	var pxarOnly []walkEntry
+	// Process entries: backed entries first (shadow pxar), then pxar-only.
+	var allEntries []walkEntry
+	allEntries = append(allEntries, backedEntries...)
 	for _, pe := range pxarEntries {
 		if backedName[pe.name] {
 			continue
 		}
-		pxarOnly = append(pxarOnly, walkEntry{
-			name:         pe.name,
-			pxar:         &pe.meta,
-			backed:       false,
-			payloadOffs: pe.meta.PayloadOffset,
+		allEntries = append(allEntries, walkEntry{
+			name:   pe.name,
+			pxar:   &pe.meta,
+			backed: false,
 		})
 	}
-	// Sort pxar entries by payload offset so AddPayloadRef sees monotonically
-	// increasing offsets (required by the encoder).
-	sort.Slice(pxarOnly, func(i, j int) bool {
-		return pxarOnly[i].payloadOffs < pxarOnly[j].payloadOffs
-	})
-
-	var allEntries []walkEntry
-	allEntries = append(allEntries, pxarOnly...)
-	allEntries = append(allEntries, backedEntries...)
 
 	for _, we := range allEntries {
 		childRel := relPath
@@ -576,11 +552,16 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 			continue
 		}
 
-		// Pxar file — use WriteEntryRef to reference original payload offset
-		// instead of reading the actual content (chunk-level dedup).
+		// Pxar file — read content from original archive and write normally.
+		// The process runs on the PBS server with local chunk access,
+		// so reading is fast. PBS dedup skips re-upload of matching chunks.
+		content, err := fs.readPxarContent(pxarEntry)
+		if err != nil {
+			return fmt.Errorf("read pxar file %s: %w", childRel, err)
+		}
 		entry := cloneEntryWithName(pxarEntry, we.name)
-		if err := w.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
-			return fmt.Errorf("write pxar ref %s: %w", we.name, err)
+		if err := w.WriteEntry(entry, content); err != nil {
+			return fmt.Errorf("write pxar entry %s: %w", we.name, err)
 		}
 	}
 
@@ -589,10 +570,9 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 
 // walkEntry represents a single entry in the merged overlay walk.
 type walkEntry struct {
-	name         string
-	pxar         *pxar.Entry // non-nil if from pxar
-	backed       bool
-	payloadOffs  uint64      // original payload offset (for pxar entries)
+	name   string
+	pxar   *pxar.Entry // non-nil if from pxar
+	backed bool
 }
 
 // readBackedDir reads directory entries from the backing filesystem.
