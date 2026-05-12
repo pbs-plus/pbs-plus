@@ -818,11 +818,15 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		}
 	}
 
+	// Register pxar nodes so fillEntryOutForNode can find them.
+	for _, pe := range pxarEntries {
+		fs.pxar.registerNode(pe.inode, input.NodeId, &pe.meta)
+	}
+
 	entries := make([]dirEntryMeta, 0, len(pxarEntries)+len(backedEntries))
 	for _, pe := range pxarEntries {
 		if !backedName[pe.name] {
 			entries = append(entries, pe)
-			// Store pxar entry path for future overlay lookups
 			fs.setNode(pe.inode, parentPath+"/"+pe.name, false)
 		}
 	}
