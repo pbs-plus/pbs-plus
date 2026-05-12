@@ -2,39 +2,117 @@ package snapshots
 
 import (
 	"fmt"
+	"runtime"
+	"strings"
 )
 
-// SnapshotManager manages snapshot operations based on filesystem and OS detection
-type SnapshotManager struct {
-	handlerMap map[string]SnapshotHandler
+// providerChain is a prioritized list of providers for a given filesystem type.
+type providerChain []SnapshotProvider
+
+// Manager orchestrates snapshot creation across filesystems using a
+// priority-based provider chain.
+//
+// For each filesystem type, providers are tried in order. The first
+// provider whose IsSupported() returns true handles the snapshot.
+type Manager struct {
+	chains map[string]providerChain
 }
 
-var Manager = &SnapshotManager{
-	handlerMap: map[string]SnapshotHandler{
-		"btrfs": &BtrfsSnapshotHandler{},
-		"zfs":   &ZFSSnapshotHandler{},
-		"lvm":   &LVMSnapshotHandler{},
-		"ext4":  &EXT4XFSHandler{}, // EXT4 delegates to LVM
-		"xfs":   &EXT4XFSHandler{}, // XFS delegates to LVM
-		"ntfs":  &NtfsSnapshotHandler{},
-		"refs":  &NtfsSnapshotHandler{},
-		"fat32": nil, // FAT32 does not support snapshots
-		"exfat": nil, // exFAT does not support snapshots
-		"hfs+":  nil, // HFS+ does not support snapshots
-	},
+func initProviders() map[string]providerChain {
+	var (
+		blksnapP SnapshotProvider
+		lvmP     = &LVMProvider{}
+		btrfsP   SnapshotProvider
+		zfsP     = &ZFSProvider{}
+		vssP     = &VSSProvider{}
+	)
+
+	// Blksnap and BTRFS are Linux-only (cgo).
+	if runtime.GOOS == "linux" {
+		blksnapP = &BlksnapProvider{}
+		btrfsP = &BtrfsProvider{}
+	}
+
+	chains := map[string]providerChain{
+		// ext4/XFS: try blksnap first, then LVM.
+		"ext4": {blksnapP, lvmP},
+		"xfs":  {blksnapP, lvmP},
+
+		// BTRFS: use kernel ioctl.
+		"btrfs": {btrfsP},
+
+		// ZFS: snapshot-less (file-level only).
+		"zfs": {zfsP},
+
+		// Windows filesystems: VSS.
+		"ntfs": {vssP},
+		"refs": {vssP},
+
+		// Filesystems without snapshot support.
+		"fat32": nil,
+		"exfat": nil,
+		"hfs+":  nil,
+	}
+
+	// Remove nil entries from chains.
+	for fs, chain := range chains {
+		var filtered providerChain
+		for _, p := range chain {
+			if p != nil {
+				filtered = append(filtered, p)
+			}
+		}
+		chains[fs] = filtered
+	}
+
+	return chains
 }
 
-// CreateSnapshot detects the filesystem and delegates to the appropriate handler
-func (m *SnapshotManager) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
+// DefaultManager is the global snapshot manager instance.
+var DefaultManager = &Manager{
+	chains: initProviders(),
+}
+
+// CreateSnapshot detects the filesystem and delegates to the first
+// supported provider in the chain.
+func (m *Manager) CreateSnapshot(jobID, sourcePath string) (Snapshot, error) {
 	fsType, err := detectFilesystem(sourcePath)
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("failed to detect filesystem: %w", err)
+		return Snapshot{}, fmt.Errorf("snapshot: detect filesystem: %w", err)
 	}
 
-	handler, exists := m.handlerMap[fsType]
-	if !exists || handler == nil {
-		return Snapshot{}, fmt.Errorf("no snapshot handler available for filesystem type: %s", fsType)
+	fsType = normalizeFilesystemType(fsType)
+	chain, exists := m.chains[fsType]
+	if !exists {
+		return Snapshot{}, fmt.Errorf("snapshot: unknown filesystem type: %s", fsType)
+	}
+	if len(chain) == 0 {
+		return Snapshot{}, fmt.Errorf("%w: %s", ErrNoSnapshotSupport, fsType)
 	}
 
-	return handler.CreateSnapshot(jobID, sourcePath)
+	for _, provider := range chain {
+		if provider.IsSupported(sourcePath) {
+			snap, err := provider.CreateSnapshot(jobID, sourcePath)
+			if err != nil {
+				return Snapshot{}, fmt.Errorf("snapshot: provider %q: %w", provider.Name(), err)
+			}
+			return snap, nil
+		}
+	}
+
+	return Snapshot{}, fmt.Errorf("%w: no provider available for %s", ErrNoSnapshotSupport, fsType)
+}
+
+// normalizeFilesystemType normalizes common filesystem type variations
+// (e.g. fuseblk → ntfs on Linux).
+func normalizeFilesystemType(fsType string) string {
+	fsType = strings.ToLower(fsType)
+	switch fsType {
+	case "fuseblk":
+		return "ntfs"
+	case "ext3", "ext2":
+		return "ext4"
+	default:
+		return fsType
+	}
 }

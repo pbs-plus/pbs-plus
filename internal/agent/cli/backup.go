@@ -424,7 +424,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 				Write()
 		default:
 			var err error
-			snapshot, err = snapshots.Manager.CreateSnapshot(backupID, drive)
+			snapshot, err = snapshots.DefaultManager.CreateSnapshot(backupID, drive)
 			if err != nil && snapshot == (snapshots.Snapshot{}) {
 				syslog.L.Error(err).WithMessage("Backup: VSS snapshot failed; switching to direct mode").WithField("drive", drive).Write()
 				backupMode = "direct"
