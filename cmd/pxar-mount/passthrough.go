@@ -39,6 +39,9 @@ type passthroughFS struct {
 	backingDir string
 	pbsStore   string // datastore root path for constructing new snapshot paths
 
+	// Original DIDX path so we can derive new snapshot paths from it.
+	origPpxarDidx string
+
 	// Original snapshot metadata (parsed from the mounted DIDX path)
 	origSnapshot snapshotRef
 
