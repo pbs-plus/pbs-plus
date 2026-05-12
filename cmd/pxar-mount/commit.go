@@ -276,10 +276,10 @@ type walkEntry struct {
 func (fs *passthroughFS) readBackedDir(relPath string) []walkEntry {
 	abs := fs.absPath(relPath)
 	des, err := os.ReadDir(abs)
-	if err != nil {
+	if err != nil || len(des) == 0 {
 		return nil
 	}
-	var entries []walkEntry
+	entries := make([]walkEntry, 0, len(des))
 	for _, de := range des {
 		entries = append(entries, walkEntry{
 			name:   de.Name(),
