@@ -62,13 +62,11 @@ type node struct {
 // pxarFS implements fuse.RawFileSystem backed by a lazy-loading SplitArchiveReader.
 type pxarFS struct {
 	fuse.RawFileSystem
-
-	reader *transfer.SplitArchiveReader
-	size   int64
-
+	reader   *transfer.SplitArchiveReader
+	nodes    map[uint64]*node
+	size     int64
 	mu       sync.RWMutex
-	nodes    map[uint64]*node // inode → cached stat metadata
-	readerMu sync.Mutex       // serializes all archive reader access (not thread-safe)
+	readerMu sync.Mutex
 }
 
 func toInode(e *pxar.Entry) uint64 {
@@ -626,9 +624,9 @@ func (fs *pxarFS) Forget(nodeID, nlookup uint64) {
 // dirEntryMeta holds minimal metadata needed for directory listing.
 type dirEntryMeta struct {
 	name  string
+	meta  pxar.Entry
 	inode uint64
 	mode  uint32
-	meta  pxar.Entry // temporary, used only for node registration
 }
 
 // readDirRaw reads a directory from the archive and returns its entries.

@@ -533,12 +533,56 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 			if err := ow.ensureAdvanced(); err != nil {
 				return fmt.Errorf("advance payload position: %w", err)
 			}
-			entry, content, err := fs.readBackedEntry(childRel, fi)
-			if err != nil {
-				return fmt.Errorf("read backed entry %s: %w", childRel, err)
+
+			if fi.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(abs)
+				if err != nil {
+					return fmt.Errorf("readlink %s: %w", abs, err)
+				}
+				entry := &pxar.Entry{
+					Path:       childRel,
+					Kind:       pxar.KindSymlink,
+					Metadata:   statToMetadata(fi, false),
+					FileSize:   uint64(fi.Size()),
+					LinkTarget: target,
+				}
+				if err := ow.writer.WriteEntry(entry, nil); err != nil {
+					return fmt.Errorf("write symlink %s: %w", we.name, err)
+				}
+				continue
 			}
-			if err := ow.writer.WriteEntry(entry, content); err != nil {
-				return fmt.Errorf("write entry %s: %w", we.name, err)
+
+			if !fi.Mode().IsRegular() {
+				// Device, FIFO, socket — no content
+				meta := statToMetadata(fi, false)
+				entry := &pxar.Entry{
+					Path:     childRel,
+					Kind:     pxar.KindFile,
+					Metadata: meta,
+					FileSize: 0,
+				}
+				if err := ow.writer.WriteEntry(entry, nil); err != nil {
+					return fmt.Errorf("write entry %s: %w", we.name, err)
+				}
+				continue
+			}
+
+			// Stream regular file to avoid buffering entire content
+			f, err := os.Open(abs)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", abs, err)
+			}
+			meta := statToMetadata(fi, false)
+			entry := &pxar.Entry{
+				Path:     childRel,
+				Kind:     pxar.KindFile,
+				Metadata: meta,
+				FileSize: uint64(fi.Size()),
+			}
+			err = ow.writer.WriteEntryReader(entry, f, uint64(fi.Size()))
+			f.Close()
+			if err != nil {
+				return fmt.Errorf("write file %s: %w", we.name, err)
 			}
 			continue
 		}
@@ -580,9 +624,9 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 // walkEntry represents a single entry in the merged overlay walk.
 // overlayWalk tracks state across the recursive walk.
 type overlayWalk struct {
-	writer    transfer.ArchiveWriter
-	dedup     *transfer.RemoteDedupSplitArchiveWriter
-	advanced  bool // true after Advance(HeaderSize) was called
+	writer   transfer.ArchiveWriter
+	dedup    *transfer.RemoteDedupSplitArchiveWriter
+	advanced bool // true after Advance(HeaderSize) was called
 }
 
 func (ow *overlayWalk) ensureAdvanced() error {
@@ -594,8 +638,8 @@ func (ow *overlayWalk) ensureAdvanced() error {
 }
 
 type walkEntry struct {
+	pxar   *pxar.Entry
 	name   string
-	pxar   *pxar.Entry // non-nil if from pxar
 	backed bool
 }
 
@@ -628,78 +672,6 @@ func (fs *passthroughFS) pxarInoForPath(parentIno uint64, name string) uint64 {
 		}
 	}
 	return 0
-}
-
-// readBackedEntry reads a file/symlink from the backing dir and returns
-// a pxar.Entry plus content bytes.
-func (fs *passthroughFS) readBackedEntry(relPath string, fi os.FileInfo) (*pxar.Entry, []byte, error) {
-	abs := fs.absPath(relPath)
-
-	if fi.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(abs)
-		if err != nil {
-			return nil, nil, err
-		}
-		entry := &pxar.Entry{
-			Path:       relPath,
-			Kind:       pxar.KindSymlink,
-			Metadata:   statToMetadata(fi, false),
-			FileSize:   uint64(fi.Size()),
-			LinkTarget: target,
-		}
-		return entry, nil, nil
-	}
-
-	if fi.IsDir() {
-		entry := &pxar.Entry{
-			Path:     relPath,
-			Kind:     pxar.KindDirectory,
-			Metadata: statToMetadata(fi, true),
-			FileSize: uint64(fi.Size()),
-		}
-		return entry, nil, nil
-	}
-
-	// Regular file
-	content, err := os.ReadFile(abs)
-	if err != nil {
-		return nil, nil, err
-	}
-	entry := &pxar.Entry{
-		Path:     relPath,
-		Kind:     pxar.KindFile,
-		Metadata: statToMetadata(fi, false),
-		FileSize: uint64(len(content)),
-	}
-	return entry, content, nil
-}
-
-// readPxarContent reads the content of a pxar archive entry.
-func (fs *passthroughFS) readPxarContent(entry *pxar.Entry) ([]byte, error) {
-	if entry.IsRegularFile() {
-		fs.pxar.readerMu.Lock()
-		pxarEntry, err := fs.pxar.readEntryForNode(&node{
-			inode:      toInode(entry),
-			entryStart: entry.FileOffset,
-		})
-		if err != nil {
-			fs.pxar.readerMu.Unlock()
-			return nil, err
-		}
-		rc, err := fs.pxar.reader.ReadFileContentReader(pxarEntry)
-		if err != nil {
-			fs.pxar.readerMu.Unlock()
-			return nil, err
-		}
-		content, err := io.ReadAll(rc)
-		_ = rc.Close()
-		fs.pxar.readerMu.Unlock()
-		return content, err
-	}
-	if entry.IsSymlink() {
-		return nil, nil
-	}
-	return nil, nil
 }
 
 // --- helpers ---

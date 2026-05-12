@@ -34,38 +34,28 @@ const (
 // are written to backingDir. Listing merges both layers (backing wins).
 type passthroughFS struct {
 	fuse.RawFileSystem
-
-	pxar       *pxarFS
-	backingDir string
-	pbsStore   string // datastore root path for constructing new snapshot paths
-
-	// Original DIDX path so we can derive new snapshot paths from it.
+	nodePaths     map[uint64]string
+	pxar          *pxarFS
+	handles       map[uint64]*passFh
+	readDirStats  map[uint64]syscall.Stat_t
+	backed        map[uint64]bool
+	origSnapshot  snapshotRef
+	pbsStore      string
 	origPpxarDidx string
-
-	// Original snapshot metadata (parsed from the mounted DIDX path)
-	origSnapshot snapshotRef
-
-	mu          sync.RWMutex
-	nextBackIno uint64
-	nodePaths   map[uint64]string // inode → relative path from mount root
-	backed      map[uint64]bool   // true if inode lives in backing dir
-
-	// readDirTemp holds backed-entry stat_t values during ReadDir/ReadDirPlus
-	// to avoid redundant Lstat calls in fillEntryOutForNode.
-	readDirStats map[uint64]syscall.Stat_t
-
-	fhmu    sync.Mutex
-	handles map[uint64]*passFh // file handle id → open fd
-	nextFh  uint64
+	backingDir    string
+	nextBackIno   uint64
+	nextFh        uint64
+	mu            sync.RWMutex
+	fhmu          sync.Mutex
 }
 
 // snapshotRef holds the identity of a PBS snapshot.
 type snapshotRef struct {
 	BackupType  string
 	BackupID    string
-	BackupTime  int64
 	Namespace   string
-	ArchiveName string // base filename (e.g. "root" from "root.pxar.didx")
+	ArchiveName string
+	BackupTime  int64
 }
 
 // parseOrigSnapshot extracts snapshot identity from a DIDX file path.
