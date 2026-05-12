@@ -10,6 +10,7 @@ require (
 	github.com/bradfitz/gomemcache v0.0.0-20250403215159-8d39553ac7cf
 	github.com/containers/winquit v1.1.0
 	github.com/coreos/go-systemd/v22 v22.7.0
+	github.com/dennwc/btrfs v0.0.0-20260222081608-edfb8b9e4f55
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/fynelabs/selfupdate v0.2.1
@@ -25,6 +26,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.100
 	github.com/mxk/go-vss v1.2.1
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
+	github.com/pbs-plus/go-blksnap v0.1.0
 	github.com/pbs-plus/pxar v0.16.5
 	github.com/prometheus/client_golang v1.23.2
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
@@ -34,7 +36,7 @@ require (
 	github.com/xtaci/smux v1.5.57
 	golang.org/x/crypto v0.50.0
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
-	golang.org/x/sys v0.43.0
+	golang.org/x/sys v0.44.0
 	golang.org/x/time v0.15.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.35.4
@@ -47,6 +49,7 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dennwc/ioctl v1.0.1-0.20181021180353-017804252068 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect

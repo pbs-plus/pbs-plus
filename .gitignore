@@ -10,3 +10,4 @@ pbs-plus-agent
 /pbs_plus
 *.exe
 /pxar-mount
+testdata/

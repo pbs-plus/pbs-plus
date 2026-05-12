@@ -403,57 +403,10 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		return nil, "", err
 	}
 
-	var snapshot snapshots.Snapshot
-	backupMode := sourceMode
-
-	if runtime.GOOS == "windows" {
-		switch sourceMode {
-		case "direct":
-			path := drive
-			volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
-			path = volName + "\\"
-			snapshot = snapshots.Snapshot{
-				Path:        path,
-				TimeStarted: time.Now(),
-				SourcePath:  drive,
-				Direct:      true,
-			}
-			syslog.L.Info().WithMessage("backup: configured direct mode").
-				WithField("path", path).
-				WithField("drive", drive).
-				Write()
-		default:
-			var err error
-			snapshot, err = snapshots.Manager.CreateSnapshot(backupID, drive)
-			if err != nil && snapshot == (snapshots.Snapshot{}) {
-				syslog.L.Error(err).WithMessage("Backup: VSS snapshot failed; switching to direct mode").WithField("drive", drive).Write()
-				backupMode = "direct"
-
-				path := drive
-				volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
-				path = volName + "\\"
-
-				snapshot = snapshots.Snapshot{
-					Path:        path,
-					TimeStarted: time.Now(),
-					SourcePath:  drive,
-					Direct:      true,
-				}
-			} else {
-				syslog.L.Info().WithMessage("backup: snapshot created").
-					WithField("path", snapshot.Path).
-					WithField("drive", drive).
-					Write()
-			}
-		}
-	} else {
-		snapshot = snapshots.Snapshot{
-			Path:        "/",
-			TimeStarted: time.Now(),
-			SourcePath:  "/",
-			Direct:      true,
-		}
-		syslog.L.Info().WithMessage("backup: using root snapshot").Write()
+	snapshot, backupMode, err := resolveSnapshot(backupID, drive, sourceMode)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("Backup: snapshot resolution failed").WithField("drive", drive).Write()
+		return nil, "", err
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
@@ -467,4 +420,52 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 	activeSessions.Set(backupID, session)
 
 	return &snapshot, backupMode, nil
+}
+
+// resolveSnapshot attempts to create a snapshot via the provider chain.
+// Falls back to direct (file-level) mode when no provider supports the
+// filesystem.
+func resolveSnapshot(backupID, drive, sourceMode string) (snapshots.Snapshot, string, error) {
+	if sourceMode == "direct" {
+		return directSnapshot(drive), "direct", nil
+	}
+
+	snap, err := snapshots.DefaultManager.CreateSnapshot(backupID, drive)
+	if err == nil {
+		syslog.L.Info().WithMessage("backup: snapshot created").
+			WithField("path", snap.Path).
+			WithField("drive", drive).
+			Write()
+		return snap, sourceMode, nil
+	}
+
+	if errors.Is(err, snapshots.ErrNoSnapshotSupport) {
+		syslog.L.Info().WithMessage("backup: filesystem does not support snapshots, using direct mode").
+			WithField("drive", drive).
+			Write()
+	} else {
+		syslog.L.Error(err).WithMessage("backup: snapshot failed, falling back to direct mode").
+			WithField("drive", drive).
+			Write()
+	}
+
+	return directSnapshot(drive), "direct", nil
+}
+
+func directSnapshot(drive string) snapshots.Snapshot {
+	path := drive
+	if runtime.GOOS == "windows" {
+		volName := filepath.VolumeName(fmt.Sprintf("%s:", drive))
+		path = volName + "\\"
+	}
+	syslog.L.Info().WithMessage("backup: direct mode").
+		WithField("path", path).
+		WithField("drive", drive).
+		Write()
+	return snapshots.Snapshot{
+		Path:        path,
+		TimeStarted: time.Now(),
+		SourcePath:  drive,
+		Direct:      true,
+	}
 }

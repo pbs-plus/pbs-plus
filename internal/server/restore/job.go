@@ -284,7 +284,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
-	destPath := b.job.DestSubpath
+	destPath := strings.TrimLeft(b.job.DestSubpath, "/")
 	basePath := b.job.DestTarget.GetAgentHostPath()
 	fullPath := path.Join(basePath, destPath)
 

@@ -1,59 +1,53 @@
 package snapshots
 
-import (
-	"bufio"
-	"fmt"
-	"os"
-	"os/exec"
-	"runtime"
-	"strings"
-)
+// fsTypeFromMagic maps a statfs f_type to a normalized filesystem name.
+//
+// Only includes filesystems the snapshot manager has provider chains for.
+// Unknown magic numbers return "" so the caller gets a clear error.
+func fsTypeFromMagic(magic int64) string {
+	switch magic {
+	// ext2/ext3/ext4 all share this magic.
+	case 0xEF53:
+		return "ext4"
 
-func detectFilesystem(mountPoint string) (string, error) {
-	switch runtime.GOOS {
-	case "linux":
-		mountsFile, err := os.Open("/proc/mounts")
-		if err != nil {
-			return "", fmt.Errorf("failed to open /proc/mounts: %w", err)
-		}
-		defer mountsFile.Close()
+	// XFS.
+	case 0x58465342:
+		return "xfs"
 
-		scanner := bufio.NewScanner(mountsFile)
-		for scanner.Scan() {
-			fields := strings.Fields(scanner.Text())
-			if len(fields) >= 3 {
-				mount := fields[1]
-				fsType := fields[2]
-				if mount == mountPoint {
-					return fsType, nil
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			return "", fmt.Errorf("failed to read /proc/mounts: %w", err)
-		}
-		return "", fmt.Errorf("mount point %s not found in /proc/mounts", mountPoint)
+	// BTRFS.
+	case 0x9123683E:
+		return "btrfs"
 
-	case "darwin":
-		cmd := exec.Command("diskutil", "info", mountPoint)
-		output, err := cmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("failed to detect filesystem type: %w", err)
-		}
-		for line := range strings.SplitSeq(string(output), "\n") {
-			if strings.Contains(line, "File System Personality") {
-				parts := strings.Split(line, ":")
-				if len(parts) > 1 {
-					return strings.TrimSpace(parts[1]), nil
-				}
-			}
-		}
-		return "", fmt.Errorf("could not determine filesystem type from diskutil output")
+	// ZFS.
+	case 0x2FC12FC1:
+		return "zfs"
 
-	case "windows":
-		return "ntfs", nil
+	// NTFS (Linux ntfs3 / ntfs-3g).
+	case 0x5346544E:
+		return "ntfs"
+
+	// FUSE (ntfs-3g via fuse, exfat-fuse, etc.).
+	// Normalized to "ntfs" by the manager for the common case.
+	case 0x65735546:
+		return "fuseblk"
+
+	// FAT32.
+	case 0x4D44:
+		return "fat32"
+
+	// exFAT.
+	case 0x2011BAB0:
+		return "exfat"
+
+	// HFS+.
+	case 0x482B:
+		return "hfs+"
+
+	// APFS (macOS).
+	case 0x41505346:
+		return "apfs"
 
 	default:
-		return "", fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+		return ""
 	}
 }

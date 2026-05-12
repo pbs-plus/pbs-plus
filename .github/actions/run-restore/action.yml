@@ -37,7 +37,7 @@ runs:
           -d "ns=test" \
           -d "snapshot=${{ steps.get-snapshot.outputs.snapshot }}" \
           -d "src-path=/" \
-          -d "dest-target=test-host - Root" \
+          -d "dest-target=test-host - /test-backup" \
           -d "dest-subpath=/tmp/pbs-plus-restore-test" \
           -d "mode=0" \
           -d "retry=0" \
@@ -93,21 +93,21 @@ runs:
         fi
         echo "✓ Restore completed successfully"
 
-        RESTORED=$(docker exec pbs-plus-agent find /tmp/pbs-plus-restore-test -type f 2>/dev/null | wc -l)
+        RESTORED=$(docker exec pbs-plus-agent find /test-backup/tmp/pbs-plus-restore-test -type f 2>/dev/null | wc -l)
         if [ "$RESTORED" -eq 0 ]; then
           echo "✗ No files found in restore destination"
           exit 1
         fi
-        echo "✓ ${RESTORED} file(s) restored to /tmp/pbs-plus-restore-test"
+        echo "✓ ${RESTORED} file(s) restored to /test-backup/tmp/pbs-plus-restore-test"
 
     - name: Verify data integrity
       shell: bash
       run: |
         echo "Computing checksums of source files..."
-        docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -exec sha256sum {} \; | sort' > /tmp/source-checksums.txt
+        docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -not -path "./tmp/*" -exec sha256sum {} \; | sort' > /tmp/source-checksums.txt
 
         echo "Computing checksums of restored files..."
-        docker exec pbs-plus-agent sh -c 'cd /tmp/pbs-plus-restore-test && find . -type f -exec sha256sum {} \; | sort' > /tmp/restored-checksums.txt
+        docker exec pbs-plus-agent sh -c 'cd /test-backup/tmp/pbs-plus-restore-test && find . -type f -exec sha256sum {} \; | sort' > /tmp/restored-checksums.txt
 
         # Normalize paths for comparison (strip leading ./)
         sed -i 's|^\./||' /tmp/source-checksums.txt
@@ -120,10 +120,10 @@ runs:
           diff /tmp/source-checksums.txt /tmp/restored-checksums.txt || true
           echo ""
           echo "=== Source file sizes ==="
-          docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -exec stat --format="%s %n" {} \; | sort'
+          docker exec pbs-plus-agent sh -c 'cd /test-backup && find . -type f -not -path "./tmp/*" -exec stat -c "%s %n" {} \; | sort'
           echo ""
           echo "=== Restored file sizes ==="
-          docker exec pbs-plus-agent sh -c 'cd /tmp/pbs-plus-restore-test && find . -type f -exec stat --format="%s %n" {} \; | sort'
+          docker exec pbs-plus-agent sh -c 'cd /test-backup/tmp/pbs-plus-restore-test && find . -type f -exec stat -c "%s %n" {} \; | sort'
           exit 1
         fi
 

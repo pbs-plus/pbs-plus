@@ -31,13 +31,7 @@ func isVolumeLocked(drive string) (bool, error) {
 }
 
 func CheckDriveStatus(drive string, subpath string) (TargetStatus, error) {
-	prefix := drive
-
-	if strings.ToLower(drive) == "root" {
-		prefix = "/"
-	}
-
-	fullPath := filepath.Join(prefix, subpath)
+	fullPath := filepath.Join(drive, subpath)
 
 	locked, err := isVolumeLocked(fullPath)
 	if err != nil {

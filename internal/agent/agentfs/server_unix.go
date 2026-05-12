@@ -13,10 +13,11 @@ import (
 )
 
 func (s *AgentFSServer) abs(filename string) string {
+	root := Join(s.snapshot.Path, s.snapshot.SubPath)
 	if filename == "" || filename == "." || filename == "/" {
-		return s.snapshot.Path
+		return root
 	}
-	return Join(s.snapshot.Path, filename)
+	return Join(root, filename)
 }
 
 func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
