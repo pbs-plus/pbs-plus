@@ -215,10 +215,17 @@ func main() {
 			origPpxarDidx: *ppxarDidx,
 			nodePaths:     make(map[uint64]string),
 			backed:        make(map[uint64]bool),
+			pxarDir:       make(map[uint64]bool),
 			handles:       make(map[uint64]*passFh),
 		}
-		ptFS.setNode(rootInode, "/", false)
 		rawFS = ptFS
+
+		// Pre-create all pxar directories in the backing dir so
+		// SMB's acl_xattr can store/retrieve ACLs directly.
+		if err := ptFS.precreateDirectories(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error pre-creating directories: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Start socket listener for commit commands
 		if *socketPath != "" {
