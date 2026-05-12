@@ -16,7 +16,7 @@ runs:
         docker exec pbs-plus-test curl -k -X POST "https://localhost:8017/api2/extjs/config/disk-backup" \
           -H "Content-Type: application/x-www-form-urlencoded" \
           -d "id=test-backup-job" \
-          -d "target=test-host - Root" \
+          -d "target=test-host - /test-backup" \
           -d "subpath=" \
           -d "store=test" \
           -d "ns=test" \
