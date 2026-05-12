@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Snapshot represents a generic snapshot
+// Snapshot represents a generic snapshot.
 type Snapshot struct {
 	Path        string          `json:"path"`
 	TimeStarted time.Time       `json:"time_started"`
@@ -14,15 +14,24 @@ type Snapshot struct {
 	Handler     SnapshotHandler `json:"-"`
 }
 
-// SnapshotHandler defines the interface for snapshot operations
+// SnapshotHandler defines the interface for snapshot lifecycle operations.
 type SnapshotHandler interface {
-	CreateSnapshot(jobID string, sourcePath string) (Snapshot, error)
+	CreateSnapshot(jobID, sourcePath string) (Snapshot, error)
 	DeleteSnapshot(snapshot Snapshot) error
 	IsSupported(sourcePath string) bool
 }
 
+// SnapshotProvider is the new interface for filesystem-specific snapshot
+// providers. Each provider handles exactly one snapshot mechanism.
+type SnapshotProvider interface {
+	SnapshotHandler
+	// Name returns a human-readable name for this provider (e.g. "blksnap", "btrfs-ioctl").
+	Name() string
+}
+
 var (
-	ErrSnapshotTimeout  = errors.New("timeout waiting for in-progress snapshot")
-	ErrSnapshotCreation = errors.New("failed to create snapshot")
-	ErrInvalidSnapshot  = errors.New("invalid snapshot")
+	ErrSnapshotTimeout   = errors.New("timeout waiting for in-progress snapshot")
+	ErrSnapshotCreation  = errors.New("failed to create snapshot")
+	ErrInvalidSnapshot   = errors.New("invalid snapshot")
+	ErrNoSnapshotSupport = errors.New("filesystem does not support snapshots, use file-level (direct) mode")
 )

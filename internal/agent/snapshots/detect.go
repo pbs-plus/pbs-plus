@@ -16,7 +16,7 @@ func detectFilesystem(mountPoint string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to open /proc/mounts: %w", err)
 		}
-		defer mountsFile.Close()
+		defer func() { _ = mountsFile.Close() }()
 
 		scanner := bufio.NewScanner(mountsFile)
 		for scanner.Scan() {
