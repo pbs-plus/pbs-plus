@@ -458,8 +458,6 @@ func (t *Target) GetAgentHostPath() string {
 	if t.AgentHost.Name != "" {
 		res := strings.ToLower(t.VolumeID)
 		switch {
-		case res == "root":
-			hostPath = "/"
 		case t.AgentHost.OperatingSystem == "windows":
 			hostPath = res + ":\\"
 		default:
