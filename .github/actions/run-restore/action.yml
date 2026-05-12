@@ -37,7 +37,7 @@ runs:
           -d "ns=test" \
           -d "snapshot=${{ steps.get-snapshot.outputs.snapshot }}" \
           -d "src-path=/" \
-          -d "dest-target=test-host - Root" \
+          -d "dest-target=test-host - /test-backup" \
           -d "dest-subpath=/tmp/pbs-plus-restore-test" \
           -d "mode=0" \
           -d "retry=0" \
