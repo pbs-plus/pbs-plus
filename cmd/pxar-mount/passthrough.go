@@ -69,8 +69,10 @@ type passthroughFS struct {
 	backingDir    string
 	nextBackIno   uint64
 	nextFh        uint64
-	mu            sync.RWMutex // guards nodePaths, pathToIno, backed, pxarDir, deletedPaths, nextBackIno
-	fhmu          sync.Mutex   // guards handles, nextFh
+	mu            sync.RWMutex           // guards nodePaths, pathToIno, backed, pxarDir, deletedPaths, nextBackIno
+	fhmu          sync.Mutex             // guards handles, nextFh
+	matMu         sync.Mutex             // guards materialize map
+	materialize   map[uint64]*sync.Mutex // per-inode serialization for materializePxarFile
 
 	// Mutation mode: allows rename/delete/write of pxar-backed entries.
 	// Transactions are recorded in txnLog and applied during commit.
@@ -409,7 +411,33 @@ func (fs *passthroughFS) markPathDeleted(relPath string) {
 // materializePxarFile copies a pxar-backed file to the backing directory
 // so it can be modified. The node is then marked as backed.
 // Returns the relative path and nil on success.
+// Concurrent calls for the same inode are serialized to prevent data corruption
+// from O_TRUNC racing with concurrent writes.
 func (fs *passthroughFS) materializePxarFile(ino uint64) (string, error) {
+	// Serialize per-inode to prevent concurrent materialization.
+	inoMu := fs.getInoMu(ino)
+	inoMu.Lock()
+	defer inoMu.Unlock()
+
+	return fs.materializePxarFileLocked(ino)
+}
+
+// getInoMu returns a per-inode mutex used to serialize materialization.
+func (fs *passthroughFS) getInoMu(ino uint64) *sync.Mutex {
+	fs.matMu.Lock()
+	if fs.materialize == nil {
+		fs.materialize = make(map[uint64]*sync.Mutex)
+	}
+	m, ok := fs.materialize[ino]
+	if !ok {
+		m = &sync.Mutex{}
+		fs.materialize[ino] = m
+	}
+	fs.matMu.Unlock()
+	return m
+}
+
+func (fs *passthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
 	relPath := fs.nodePath(ino)
 	if relPath == "" {
 		return "", syscall.ENOENT
@@ -1521,6 +1549,11 @@ func (fs *passthroughFS) resetState() {
 	fs.backed[rootInode] = rootBacked
 	fs.pxarDir[rootInode] = rootPxarDir
 	fs.mu.Unlock()
+
+	// Clear per-inode materialization locks
+	fs.matMu.Lock()
+	fs.materialize = nil
+	fs.matMu.Unlock()
 
 	// Clear the transaction log if present.
 	if fs.txnLog != nil {
