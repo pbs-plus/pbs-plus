@@ -66,7 +66,15 @@ type passthroughFS struct {
 	fhmu          sync.Mutex   // guards handles, nextFh
 }
 
-// snapshotRef holds the identity of a PBS snapshot.
+// joinPath builds a child path from a parent path and a name.
+// Handles the root ("/") case without producing "//".
+func joinPath(parent, name string) string {
+	if parent == "/" {
+		return "/" + name
+	}
+	return parent + "/" + name
+}
+
 type snapshotRef struct {
 	BackupType  string
 	BackupID    string
@@ -366,7 +374,7 @@ func (fs *passthroughFS) isPxarChild(parentIno uint64, name string) bool {
 
 func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
 	parentPath := fs.nodePath(header.NodeId)
-	childPath := parentPath + "/" + name
+	childPath := joinPath(parentPath, name)
 
 	// Check backing dir first (upper layer takes priority)
 	backedNode, _ := fs.statBacked(childPath)
@@ -404,6 +412,7 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 	}
 
 	if backedNode != nil {
+		fs.setNode(backedNode.inode, childPath, true)
 		fs.mu.Lock()
 		backedNode.refs++
 		backedNode.parent = header.NodeId
@@ -503,81 +512,36 @@ func (fs *passthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, 
 
 func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name string, out *fuse.CreateOut) fuse.Status {
 	parentPath := fs.nodePath(input.NodeId)
-	childPath := parentPath + "/" + name
+	childPath := joinPath(parentPath, name)
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
 	}
 
-	// Atomically allocate inode and check for existing entry.
-	ino, allocated := fs.lookupOrAllocIno(childPath, false)
-	if !allocated {
-		// File inode already registered — check if it still exists.
-		// Another concurrent Create may have already created it.
-		abs := fs.absPath(childPath)
-		fd, err := syscall.Open(abs, os.O_WRONLY|os.O_TRUNC, 0)
-		if err != nil {
-			// File was deleted between registration and now; allocate new.
-			fs.mu.Lock()
-			delete(fs.pathToIno, childPath)
-			delete(fs.nodePaths, ino)
-			delete(fs.backed, ino)
-			fs.mu.Unlock()
-			ino = fs.allocBackedIno(false)
-			fs.setNode(ino, childPath, true)
-			flags := int(input.Flags) | os.O_CREATE | os.O_EXCL
-			fd, err = syscall.Open(abs, flags, uint32(input.Mode&0o777))
-			if err != nil {
-				return fuse.ToStatus(err)
-			}
-		}
-		defer syscall.Close(fd)
-
-		fs.fhmu.Lock()
-		fhID := fs.nextFh
-		fs.nextFh++
-		fs.handles[fhID] = &passFh{fd: fd, inode: ino}
-		fs.fhmu.Unlock()
-
-		var st syscall.Stat_t
-		if err := syscall.Fstat(fd, &st); err != nil {
-			return fuse.ToStatus(err)
-		}
-
-		out.NodeId = ino
-		out.Generation = 1
-		out.EntryValid = 1
-		out.AttrValid = 1
-		out.Fh = fhID
-		out.OpenFlags = fuse.FOPEN_KEEP_CACHE
-		n := nodeFromStat(&st)
-		n.inode = ino
-		n.mtimeNanos = uint32(st.Mtim.Nsec)
-		n.isReg = true
-		fillAttr(&out.Attr, n)
-		return fuse.OK
-	}
-
 	abs := fs.absPath(childPath)
+
+	// Try atomic create first.
 	flags := int(input.Flags) | os.O_CREATE | os.O_EXCL
 	fd, err := syscall.Open(abs, flags, uint32(input.Mode&0o777))
-	if err != nil {
-		// O_EXCL failed: file was created by another goroutine.
-		// Clean up the pre-allocated inode and retry without O_EXCL.
-		fs.mu.Lock()
-		delete(fs.pathToIno, childPath)
-		delete(fs.nodePaths, ino)
-		delete(fs.backed, ino)
-		fs.mu.Unlock()
-		ino, _ = fs.lookupOrAllocIno(childPath, false)
-		fd, err = syscall.Open(abs, os.O_WRONLY|os.O_TRUNC, 0)
-		if err != nil {
-			return fuse.ToStatus(err)
-		}
+	if err == nil {
+		// We won the O_EXCL race. This inode is ours.
+		ino, _ := fs.lookupOrAllocIno(childPath, false)
+		fs.setNode(ino, childPath, true)
+		return fs.finishCreate(ino, fd, out)
 	}
 
+	// O_EXCL failed — file exists. Open without O_EXCL and reuse inode.
+	ino, _ := fs.lookupOrAllocIno(childPath, false)
 	fs.setNode(ino, childPath, true)
+	fd, err = syscall.Open(abs, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return fuse.ToStatus(err)
+	}
+	return fs.finishCreate(ino, fd, out)
+}
 
+// finishCreate populates the CreateOut response and registers a file handle.
+func (fs *passthroughFS) finishCreate(ino uint64, fd int, out *fuse.CreateOut) fuse.Status {
 	fs.fhmu.Lock()
 	fhID := fs.nextFh
 	fs.nextFh++
@@ -586,7 +550,6 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
-		_ = syscall.Close(fd)
 		return fuse.ToStatus(err)
 	}
 
@@ -601,13 +564,12 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	n.mtimeNanos = uint32(st.Mtim.Nsec)
 	n.isReg = true
 	fillAttr(&out.Attr, n)
-
 	return fuse.OK
 }
 
 func (fs *passthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name string, out *fuse.EntryOut) fuse.Status {
 	parentPath := fs.nodePath(input.NodeId)
-	childPath := parentPath + "/" + name
+	childPath := joinPath(parentPath, name)
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
@@ -652,7 +614,7 @@ func (fs *passthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 
 func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name string, out *fuse.EntryOut) fuse.Status {
 	parentPath := fs.nodePath(input.NodeId)
-	childPath := parentPath + "/" + name
+	childPath := joinPath(parentPath, name)
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
@@ -695,7 +657,7 @@ func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 
 func (fs *passthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, linkName string, out *fuse.EntryOut) fuse.Status {
 	parentPath := fs.nodePath(header.NodeId)
-	childPath := parentPath + "/" + linkName
+	childPath := joinPath(parentPath, linkName)
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
@@ -749,7 +711,7 @@ func (fs *passthroughFS) removeEntry(parentIno uint64, name string, removeFn fun
 	}
 
 	parentPath := fs.nodePath(parentIno)
-	childPath := parentPath + "/" + name
+	childPath := joinPath(parentPath, name)
 	abs := fs.absPath(childPath)
 
 	if _, err := os.Lstat(abs); err != nil {
@@ -758,6 +720,17 @@ func (fs *passthroughFS) removeEntry(parentIno uint64, name string, removeFn fun
 	if err := removeFn(abs); err != nil {
 		return fuse.ToStatus(err)
 	}
+
+	// Clean up inode mappings for the removed entry.
+	fs.mu.Lock()
+	if ino, ok := fs.pathToIno[childPath]; ok {
+		delete(fs.nodePaths, ino)
+		delete(fs.backed, ino)
+		delete(fs.pxarDir, ino)
+		delete(fs.pathToIno, childPath)
+	}
+	fs.mu.Unlock()
+
 	return fuse.OK
 }
 
@@ -767,6 +740,27 @@ func (fs *passthroughFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, n
 
 func (fs *passthroughFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
 	return fs.removeEntry(header.NodeId, name, syscall.Rmdir)
+}
+
+// renamePaths updates the internal path→inode mappings after a successful
+// filesystem rename. It moves the inode from oldPath to newPath.
+func (fs *passthroughFS) renamePaths(oldPath, newPath string) {
+	fs.mu.Lock()
+	ino, ok := fs.pathToIno[oldPath]
+	if ok {
+		delete(fs.pathToIno, oldPath)
+		fs.pathToIno[newPath] = ino
+		fs.nodePaths[ino] = newPath
+
+		// If the destination had an existing file that was overwritten by rename,
+		// its inode is now stale — clean it up.
+		if oldDstIno, exists := fs.pathToIno[newPath]; exists && oldDstIno != ino {
+			delete(fs.nodePaths, oldDstIno)
+			delete(fs.backed, oldDstIno)
+			delete(fs.pxarDir, oldDstIno)
+		}
+	}
+	fs.mu.Unlock()
 }
 
 // --- Rename ---
@@ -783,8 +777,8 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	oldParentPath := fs.nodePath(input.NodeId)
 	newParentPath := fs.nodePath(input.Newdir)
-	oldPath := oldParentPath + "/" + oldName
-	newPath := newParentPath + "/" + newName
+	oldPath := joinPath(oldParentPath, oldName)
+	newPath := joinPath(newParentPath, newName)
 
 	oldAbs := fs.absPath(oldPath)
 
@@ -807,6 +801,7 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 		if err := os.Rename(oldAbs, newAbs); err != nil {
 			return fuse.ToStatus(err)
 		}
+		fs.renamePaths(oldPath, newPath)
 		return fuse.OK
 	}
 
@@ -814,6 +809,7 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 		if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
 			return fuse.ToStatus(err)
 		}
+		fs.renamePaths(oldPath, newPath)
 		return fuse.OK
 	}
 
@@ -821,6 +817,7 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 	if err := os.Rename(oldAbs, newAbs); err != nil {
 		return fuse.ToStatus(err)
 	}
+	fs.renamePaths(oldPath, newPath)
 	return fuse.OK
 }
 
@@ -1037,7 +1034,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 					continue
 				}
 				st := info.Sys().(*syscall.Stat_t)
-				childPath := parentPath + "/" + de.Name()
+				childPath := joinPath(parentPath, de.Name())
 				mode := info.Mode()
 				isDir := de.IsDir()
 				ino, _ := fs.lookupOrAllocIno(childPath, isDir)
@@ -1064,7 +1061,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
 		fs.pxar.registerSlimNode(pe, input.NodeId)
-		childPath := parentPath + "/" + pe.name
+		childPath := joinPath(parentPath, pe.name)
 		if isDirInode(pe.inode) {
 			// Lazily create the backing directory on first ReadDir
 			// so SMB's acl_xattr can store/retrieve ACLs.
