@@ -133,6 +133,7 @@ func main() {
 	fuseOpts := flag.String("options", "ro,default_permissions", "FUSE mount options")
 	passthrough := flag.String("passthrough", "", "Backing directory for write passthrough (enables read-write overlay)")
 	socketPath := flag.String("socket", "", "Unix socket path for commit commands")
+	mutationsDir := flag.String("mutations-dir", "", "Directory for mutation transaction log (enables full mutation mode: rename/delete/modify pxar entries)")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 
 	flag.Parse()
@@ -144,6 +145,11 @@ func main() {
 
 	if *passthrough == "" && *socketPath != "" {
 		fmt.Fprintf(os.Stderr, "Error: --socket requires --passthrough\n")
+		os.Exit(1)
+	}
+
+	if *mutationsDir != "" && *passthrough == "" {
+		fmt.Fprintf(os.Stderr, "Error: --mutations-dir requires --passthrough\n")
 		os.Exit(1)
 	}
 
@@ -259,7 +265,24 @@ func main() {
 			pathToIno:     make(map[string]uint64),
 			backed:        make(map[uint64]bool),
 			pxarDir:       make(map[uint64]bool),
+			deletedPaths:  make(map[string]bool),
 			handles:       make(map[uint64]*passFh),
+			mutationMode:  *mutationsDir != "",
+		}
+
+		// Open transaction log if mutation mode is enabled
+		if *mutationsDir != "" {
+			tl, err := OpenTransactionLog(*mutationsDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error opening transaction log: %v\n", err)
+				os.Exit(1)
+			}
+			ptFS.txnLog = tl
+			defer tl.Close()
+
+			if *verbose {
+				fmt.Fprintf(os.Stderr, "pxar-mount: mutation mode enabled, transactions in %s\n", *mutationsDir)
+			}
 		}
 		rawFS = ptFS
 
@@ -292,7 +315,7 @@ func main() {
 		}
 
 		if *verbose {
-			fmt.Fprintf(os.Stderr, "pxar-mount: passthrough mode, backing dir=%s\n", *passthrough)
+			fmt.Fprintf(os.Stderr, "pxar-mount: passthrough mode, backing dir=%s, mutations=%v\n", *passthrough, *mutationsDir != "")
 		}
 	}
 

@@ -375,6 +375,13 @@ func (fs *passthroughFS) postCommit(backupID, backupType, namespace, archiveName
 		return fmt.Errorf("recreate backing dir: %w", err)
 	}
 
+	// Clear the transaction log after successful commit
+	if fs.txnLog != nil {
+		if err := fs.txnLog.Clear(); err != nil {
+			return fmt.Errorf("clear transaction log: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -510,8 +517,13 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 	var entries []posEntry
 
 	// Pxar entries not overridden by backed files.
+	// In mutation mode, skip entries that have been deleted.
 	for _, pe := range pxarEntries {
 		if backedName[pe.name] {
+			continue
+		}
+		childPath := joinPath(relPath, pe.name)
+		if fs.mutationMode && fs.isPathDeleted(childPath) {
 			continue
 		}
 		entries = append(entries, posEntry{
