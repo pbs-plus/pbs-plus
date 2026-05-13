@@ -528,3 +528,64 @@ func TestResetState_ClearsDeletedPathsAndTxnLog(t *testing.T) {
 		t.Errorf("txnLog not cleared after resetState: %d entries", len(txns))
 	}
 }
+
+// --- Bug 11: setNode doesn't clean up pxarDir for old inode ---
+// When setNode assigns a new inode to a path that already had a different inode,
+// it cleans up nodePaths and backed for the old inode, but NOT pxarDir.
+// This means isPxarBacked(oldIno) returns true for a stale inode.
+
+func TestSetNode_CleansUpPxarDirForOldInode(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	const oldIno uint64 = 100 | nonDirBit
+	const newIno uint64 = 200 | nonDirBit
+	path := "/test.txt"
+
+	// Set up old inode as pxar-backed
+	fs.setNode(oldIno, path, true)
+	fs.mu.Lock()
+	fs.pxarDir[oldIno] = true
+	fs.mu.Unlock()
+
+	if !fs.isPxarBacked(oldIno) {
+		t.Fatal("oldIno should be pxar-backed")
+	}
+
+	// Assign a new inode to the same path (simulates backing file creation)
+	fs.setNode(newIno, path, true)
+
+	// oldIno should be cleaned up from pxarDir
+	if fs.isPxarBacked(oldIno) {
+		t.Error("oldIno still in pxarDir after setNode reassigned path to newIno")
+	}
+}
+
+// --- Bug 12: Forget doesn't clean up pxarDir ---
+// When a backed node is forgotten (kernel drops dentry cache),
+// Forget cleans up backed/nodePaths/pathToIno but leaves pxarDir.
+// Stale pxarDir entries cause isPxarBacked to return true for forgotten inodes.
+
+func TestForget_CleansUpPxarDir(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	const ino uint64 = 100 | nonDirBit
+	path := "/forget-test.txt"
+
+	fs.setNode(ino, path, true)
+	fs.mu.Lock()
+	fs.pxarDir[ino] = true
+	fs.mu.Unlock()
+
+	if !fs.isPxarBacked(ino) {
+		t.Fatal("ino should be pxar-backed before Forget")
+	}
+
+	// Forget the inode (kernel evicts dentry)
+	fs.Forget(ino, 1)
+
+	if fs.isPxarBacked(ino) {
+		t.Error("ino still in pxarDir after Forget")
+	}
+}

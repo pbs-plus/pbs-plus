@@ -187,6 +187,7 @@ func (fs *passthroughFS) setNode(ino uint64, relPath string, backed bool) {
 	if oldIno, exists := fs.pathToIno[relPath]; exists && oldIno != ino {
 		delete(fs.nodePaths, oldIno)
 		delete(fs.backed, oldIno)
+		delete(fs.pxarDir, oldIno)
 	}
 	fs.nodePaths[ino] = relPath
 	fs.pathToIno[relPath] = ino
@@ -1091,6 +1092,12 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	newAbs := fs.absPath(newPath)
 
+	// Mark old pxar path as deleted so walkOverlay skips it during commit.
+	// The renamed content lives at newPath as a backed entry.
+	if oldIsPxar && fs.mutationMode {
+		fs.markPathDeleted(oldPath)
+	}
+
 	if input.Flags&renameNoReplace != 0 {
 		if _, err := os.Lstat(newAbs); err == nil {
 			return fuse.Status(syscall.EEXIST)
@@ -1827,6 +1834,7 @@ func (fs *passthroughFS) Forget(nodeID, nlookup uint64) {
 		}
 		delete(fs.backed, nodeID)
 		delete(fs.nodePaths, nodeID)
+		delete(fs.pxarDir, nodeID)
 	}
 	fs.mu.Unlock()
 	fs.pxar.Forget(nodeID, nlookup)
