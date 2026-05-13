@@ -672,6 +672,8 @@ func (fs *pxarFS) Forget(nodeID, nlookup uint64) {
 		n.refs -= int64(nlookup)
 		if n.refs <= 0 {
 			delete(fs.nodes, nodeID)
+		} else {
+			fs.nodes[nodeID] = n
 		}
 	}
 	fs.mu.Unlock()
@@ -794,6 +796,7 @@ func (fs *pxarFS) refNode(inode uint64) {
 	fs.mu.Lock()
 	if n, ok := fs.nodes[inode]; ok {
 		n.refs++
+		fs.nodes[inode] = n
 	}
 	fs.mu.Unlock()
 }

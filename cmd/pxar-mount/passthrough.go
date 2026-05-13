@@ -304,7 +304,23 @@ func (fs *passthroughFS) isPxarBacked(ino uint64) bool {
 func (fs *passthroughFS) isPxarChild(parentIno uint64, name string) bool {
 	entries, err := fs.pxar.readDirRaw(parentIno)
 	if err != nil {
-		return false
+		// Node may have been evicted — try recovery via path
+		parentPath := fs.nodePath(parentIno)
+		if parentPath != "" {
+			if recovered := fs.recoverPxarDirNode(parentPath); recovered != 0 {
+				fs.setNode(recovered, parentPath, true)
+				fs.mu.Lock()
+				fs.pxarDir[recovered] = true
+				fs.mu.Unlock()
+				if entries2, err2 := fs.pxar.readDirRaw(recovered); err2 == nil {
+					entries = entries2
+					err = nil
+				}
+			}
+		}
+		if err != nil {
+			return false
+		}
 	}
 	for _, e := range entries {
 		if e.name == name {
@@ -336,6 +352,22 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 			fs.pxarDir[out.NodeId] = true
 			fs.mu.Unlock()
 			return fuse.OK
+		}
+		// pxar.Lookup failed — the parent node may have been evicted.
+		// Try to recover by walking the pxar tree from root.
+		if pxarIno := fs.recoverPxarDirNode(childPath); pxarIno != 0 {
+			fs.setNode(pxarIno, childPath, true)
+			fs.mu.Lock()
+			fs.pxarDir[pxarIno] = true
+			fs.mu.Unlock()
+			// Use the recovered pxar inode
+			fs.pxar.mu.RLock()
+			if pn, ok := fs.pxar.nodes[pxarIno]; ok {
+				fillEntryOut(pxarIno, &pn, out)
+				fs.pxar.mu.RUnlock()
+				return fuse.OK
+			}
+			fs.pxar.mu.RUnlock()
 		}
 	}
 
@@ -821,12 +853,25 @@ func (fs *passthroughFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn,
 func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList, plus bool) fuse.Status {
 	parentPath := fs.nodePath(input.NodeId)
 
-	// Read pxar entries
+	// Resolve the actual pxar inode to use for reading directory entries.
+	// input.NodeId may be a backed inode (from allocBackedIno) that has no
+	// pxar node registered. In that case, recover the pxar inode from the
+	// archive by walking from root.
+	dirIno := input.NodeId
+	if _, err := fs.pxar.readDirRaw(dirIno); err != nil && parentPath != "" {
+		if recovered := fs.recoverPxarDirNode(parentPath); recovered != 0 {
+			fs.setNode(recovered, parentPath, true)
+			fs.mu.Lock()
+			fs.pxarDir[recovered] = true
+			fs.mu.Unlock()
+			dirIno = recovered
+		}
+	}
+
+	// Read pxar entries using the resolved inode.
 	var pxarEntries []dirEntrySlim
-	if pxarN, err := fs.pxar.readDirRaw(input.NodeId); err == nil {
+	if pxarN, err := fs.pxar.readDirRaw(dirIno); err == nil {
 		pxarEntries = pxarN
-	} else if fs.isBacked(input.NodeId) {
-		pxarEntries = fs.pxarEntriesForPath(parentPath)
 	}
 
 	// Read backing dir entries
@@ -1027,47 +1072,52 @@ func (fs *passthroughFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fu
 
 // --- xattr ---
 
-// pxarEntriesForPath finds pxar directory entries for a given path by
-// looking up the parent's pxar entries and matching the last component.
-// Returns nil if not found.
-func (fs *passthroughFS) pxarEntriesForPath(relPath string) []dirEntrySlim {
+// recoverPxarDirNode attempts to recover the pxar inode for a directory
+// whose node was evicted from the pxar node cache. It walks up the path
+// to find an ancestor still in cache, then re-reads directory entries
+// down to the target directory, re-registering all nodes along the way.
+// Returns the recovered pxar inode, or 0 if recovery fails.
+func (fs *passthroughFS) recoverPxarDirNode(relPath string) uint64 {
 	if relPath == "" || relPath == "/" {
-		return nil
+		return rootInode
 	}
-	parent := filepath.Dir(relPath)
-	name := filepath.Base(relPath)
 
-	// Find the parent directory's pxar inode
-	var parentIno uint64
-	fs.mu.RLock()
-	for ino, p := range fs.nodePaths {
-		if p == parent && !fs.backed[ino] {
-			parentIno = ino
-			break
+	// Build the path components: ["", "2022-PROJECTS", "USGS__22.PA"]
+	parts := strings.Split(relPath, "/")
+
+	// Find the deepest ancestor still registered in pxar.nodes.
+	// Start from root (always in cache after hotSwap or init) and walk down.
+	curIno := rootInode
+	for i := 1; i < len(parts); i++ {
+		name := parts[i]
+		if name == "" {
+			continue
 		}
-	}
-	fs.mu.RUnlock()
-	if parentIno == 0 {
-		return nil
-	}
 
-	parentEntries, err := fs.pxar.readDirRaw(parentIno)
-	if err != nil {
-		return nil
-	}
+		// Try to read this level's directory entries
+		entries, err := fs.pxar.readDirRaw(curIno)
+		if err != nil {
+			return 0 // can't read parent
+		}
 
-	for _, pe := range parentEntries {
-		if pe.name == name && isDirInode(pe.inode) {
-			// Found the pxar directory — register it and read its entries
-			fs.pxar.registerSlimNode(&pe, parentIno)
-			children, err := fs.pxar.readDirRaw(pe.inode)
-			if err != nil {
-				return nil
+		found := false
+		for _, e := range entries {
+			if e.name == name {
+				fs.pxar.registerSlimNode(&e, curIno)
+				if isDirInode(e.inode) {
+					curIno = e.inode
+					found = true
+				} else {
+					return e.inode // it's a file, not a dir
+				}
+				break
 			}
-			return children
+		}
+		if !found {
+			return 0 // name not found in parent
 		}
 	}
-	return nil
+	return curIno
 }
 
 func (fs *passthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
