@@ -1092,6 +1092,9 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	// Ensure target parent exists
 	if err := fs.ensureBackingParent(newPath); err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(newPath)
+		}
 		return fuse.ToStatus(err)
 	}
 
@@ -1105,9 +1108,15 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	if input.Flags&renameNoReplace != 0 {
 		if _, err := os.Lstat(newAbs); err == nil {
+			if wasDeleted {
+				fs.markPathDeleted(newPath)
+			}
 			return fuse.Status(syscall.EEXIST)
 		}
 		if err := os.Rename(oldAbs, newAbs); err != nil {
+			if wasDeleted {
+				fs.markPathDeleted(newPath)
+			}
 			return fuse.ToStatus(err)
 		}
 		fs.renamePaths(oldPath, newPath)
@@ -1121,6 +1130,9 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	if input.Flags&renameExchange != 0 {
 		if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
+			if wasDeleted {
+				fs.markPathDeleted(newPath)
+			}
 			return fuse.ToStatus(err)
 		}
 
@@ -1164,6 +1176,9 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	// Default: rename with potential overwrite of existing backing file.
 	if err := os.Rename(oldAbs, newAbs); err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(newPath)
+		}
 		return fuse.ToStatus(err)
 	}
 	fs.renamePaths(oldPath, newPath)
