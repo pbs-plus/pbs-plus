@@ -26,6 +26,22 @@ const (
 	xattrReplace = 2
 )
 
+// isACLXattr reports whether the xattr name is ACL-related.
+// Covers Linux POSIX ACLs and Windows NT ACLs (SMB acl_xattr module).
+func isACLXattr(attr string) bool {
+	switch attr {
+	case "system.posix_acl_access",
+		"system.posix_acl_default",
+		"security.NTACL",
+		"security.XDACL",
+		"security.ACL":
+		return true
+	}
+	return strings.HasPrefix(attr, "system.posix_acl_") ||
+		strings.HasPrefix(attr, "security.ntfs_") ||
+		strings.HasPrefix(attr, "user.NTACL")
+}
+
 // passthroughFS implements fuse.RawFileSystem as an overlay:
 //   - pxarFS provides the read-only lower layer
 //   - backingDir provides the read-write upper layer
@@ -410,9 +426,14 @@ func (fs *passthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, 
 	if !fs.isBacked(input.NodeId) {
 		return fuse.EROFS
 	}
-	// Pxar-backed entries are immutable — reject metadata mutations.
+	// Pxar-backed entries are immutable — reject metadata mutations,
+	// except for directories which are materialized in the backing
+	// overlay and need to accept mode/owner/ACL-related changes.
 	if fs.isPxarBacked(input.NodeId) {
-		return fuse.EPERM
+		n := fs.getPxarNode(input.NodeId)
+		if n == nil || !n.isDir {
+			return fuse.EPERM
+		}
 	}
 	rel := fs.nodePath(input.NodeId)
 	abs := fs.absPath(rel)
@@ -1150,6 +1171,10 @@ func (fs *passthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 }
 
 func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
+	if isACLXattr(attr) {
+		return fs.setACLXAttr(input, attr, data)
+	}
+
 	if !fs.isBacked(input.NodeId) {
 		return fuse.EROFS
 	}
@@ -1172,13 +1197,60 @@ func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn
 	return fuse.OK
 }
 
+// setACLXAttr handles ACL xattr writes with per-node-type semantics:
+//   - Transparent-backed files/dirs: apply normally to the backing filesystem.
+//   - Pxar-backed directories: apply to the materialized directory in the
+//     backing overlay so the ACL is visible in the mount.
+//   - Pxar-backed files: accept silently (return OK) without persisting.
+func (fs *passthroughFS) setACLXAttr(input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
+	if !fs.isBacked(input.NodeId) {
+		// Pxar-backed file (no real path): accept the ACL change silently.
+		return fuse.OK
+	}
+
+	// Transparent-backed or pxar-backed directory (both have real paths):
+	// apply the ACL to the backing filesystem.
+	flags := 0
+	if input.Flags&xattrCreate != 0 {
+		flags = unix.XATTR_CREATE
+	} else if input.Flags&xattrReplace != 0 {
+		flags = unix.XATTR_REPLACE
+	}
+
+	rel := fs.nodePath(input.NodeId)
+	if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
+		return fuse.ToStatus(err)
+	}
+	return fuse.OK
+}
+
 func (fs *passthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
+	if isACLXattr(attr) {
+		return fs.removeACLXAttr(header, attr)
+	}
+
 	if !fs.isBacked(header.NodeId) {
 		return fuse.EROFS
 	}
 	// Pxar-backed entries are immutable — reject all xattr removals.
 	if fs.isPxarBacked(header.NodeId) {
 		return fuse.EPERM
+	}
+
+	rel := fs.nodePath(header.NodeId)
+	if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
+		return fuse.ToStatus(err)
+	}
+	return fuse.OK
+}
+
+// removeACLXAttr handles ACL xattr removals with the same semantics as
+// setACLXAttr: accept for pxar-backed files, apply for everything else
+// that has a real backing path.
+func (fs *passthroughFS) removeACLXAttr(header *fuse.InHeader, attr string) fuse.Status {
+	if !fs.isBacked(header.NodeId) {
+		// Pxar-backed file: accept silently.
+		return fuse.OK
 	}
 
 	rel := fs.nodePath(header.NodeId)
