@@ -1070,8 +1070,9 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 			}
 		}
 
-		if newIsPxar {
+		if newIsPxar && input.Flags&renameExchange == 0 {
 			// Overwriting a pxar destination: mark it as deleted.
+			// For RENAME_EXCHANGE, the destination is NOT deleted — it swaps to oldPath.
 			fs.markPathDeleted(newPath)
 		}
 	}
@@ -1110,10 +1111,31 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 		if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
 			return fuse.ToStatus(err)
 		}
-		fs.renamePaths(oldPath, newPath)
 
-		if oldIsPxar && fs.txnLog != nil {
-			_, _ = fs.txnLog.RecordRename(oldPath, newPath)
+		// RENAME_EXCHANGE atomically swaps oldPath↔newPath.
+		// We must NOT use renamePaths (which is one-directional) for exchange.
+		// Instead, swap the inode mappings directly.
+		fs.mu.Lock()
+		oldIno, oldOk := fs.pathToIno[oldPath]
+		newIno, newOk := fs.pathToIno[newPath]
+		if oldOk {
+			fs.nodePaths[oldIno] = newPath
+		}
+		if newOk {
+			fs.nodePaths[newIno] = oldPath
+		}
+		fs.pathToIno[oldPath] = newIno
+		fs.pathToIno[newPath] = oldIno
+		fs.mu.Unlock()
+
+		// Record both directions for correct replay during commit.
+		if fs.txnLog != nil {
+			if oldIsPxar {
+				_, _ = fs.txnLog.RecordRename(oldPath, newPath)
+			}
+			if newIsPxar {
+				_, _ = fs.txnLog.RecordRename(newPath, oldPath)
+			}
 		}
 		return fuse.OK
 	}

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 // --- Bug 1: materializePxarFile race ---
@@ -402,6 +404,90 @@ func TestMaterializePxarFile_DoesNotRecordModifyIfAlreadyBacked(t *testing.T) {
 		if txn.Type == TxnModify {
 			t.Errorf("spurious MODIFY transaction recorded for already-backed file: %+v", txn)
 		}
+	}
+}
+
+// --- Bug 10: RENAME_EXCHANGE only updates one direction ---
+// renamePaths(oldPath, newPath) only moves old→new. For RENAME_EXCHANGE,
+// both entries swap, so both inode mappings must be updated.
+// Additionally, only one RENAME transaction is recorded instead of two.
+
+func TestRename_ExchangeSwapsBothDirections(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Set up two backed files with different inodes
+	const srcIno uint64 = 100 | nonDirBit
+	const dstIno uint64 = 200 | nonDirBit
+
+	srcPath := "/exchange-src.txt"
+	dstPath := "/exchange-dst.txt"
+
+	// Create actual files in backing dir
+	srcAbs := filepath.Join(backingDir, "exchange-src.txt")
+	dstAbs := filepath.Join(backingDir, "exchange-dst.txt")
+	if err := os.WriteFile(srcAbs, []byte("src-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dstAbs, []byte("dst-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fs.setNode(srcIno, srcPath, true)
+	fs.setNode(dstIno, dstPath, true)
+
+	// Now do RENAME_EXCHANGE via the Rename handler.
+	// We need a parent inode for the rename. Use rootInode.
+	fs.mu.Lock()
+	fs.nodePaths[rootInode] = "/"
+	fs.pathToIno["/"] = rootInode
+	fs.mu.Unlock()
+
+	// Perform the exchange
+	st := fs.Rename(nil, &fuse.RenameIn{
+		InHeader: fuse.InHeader{NodeId: rootInode},
+		Newdir:   rootInode,
+		Flags:    renameExchange,
+	}, "exchange-src.txt", "exchange-dst.txt")
+
+	if st != fuse.OK {
+		t.Fatalf("RENAME_EXCHANGE failed: %v", st)
+	}
+
+	// After exchange:
+	// - srcIno (was srcPath) should now map to dstPath
+	// - dstIno (was dstPath) should now map to srcPath
+	fs.mu.RLock()
+	if fs.nodePaths[srcIno] != dstPath {
+		t.Errorf("srcIno path = %q, want %q (BUG: renamePaths is one-directional)", fs.nodePaths[srcIno], dstPath)
+	}
+	if fs.nodePaths[dstIno] != srcPath {
+		t.Errorf("dstIno path = %q, want %q (BUG: renamePaths is one-directional)", fs.nodePaths[dstIno], srcPath)
+	}
+	if fs.pathToIno[srcPath] != dstIno {
+		t.Errorf("srcPath inode = %d, want %d", fs.pathToIno[srcPath], dstIno)
+	}
+	if fs.pathToIno[dstPath] != srcIno {
+		t.Errorf("dstPath inode = %d, want %d", fs.pathToIno[dstPath], srcIno)
+	}
+	fs.mu.RUnlock()
+
+	// Also check the physical files were swapped
+	data, err := os.ReadFile(srcAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "dst-content" {
+		t.Errorf("srcPath content = %q, want %q (physical swap failed)", string(data), "dst-content")
+	}
+	data, err = os.ReadFile(dstAbs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "src-content" {
+		t.Errorf("dstPath content = %q, want %q (physical swap failed)", string(data), "src-content")
 	}
 }
 
