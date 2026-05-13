@@ -107,6 +107,7 @@ type pxarFS struct {
 	size     int64
 	mu       sync.RWMutex
 	readerMu sync.Mutex
+	readerAt io.ReaderAt // payload ReaderAt — concurrent-safe, no lock needed
 }
 
 func toInode(e *pxar.Entry) uint64 {
@@ -221,9 +222,10 @@ func main() {
 	}
 
 	fs := &pxarFS{
-		reader: reader,
-		nodes:  make(map[uint64]node),
-		size:   int64(root.FileOffset + root.FileSize),
+		reader:   reader,
+		readerAt: reader.PayloadReaderAt(),
+		nodes:    make(map[uint64]node),
+		size:     int64(root.FileOffset + root.FileSize),
 	}
 
 	fs.nodes[rootInode] = newNodeFromEntry(root, rootInode, rootInode)
@@ -486,7 +488,35 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 		return nil, fuse.EISDIR
 	}
 
-	// Read entry metadata under lock (metadata reader is shared).
+	// Snapshot immutable node fields.
+	contentOff := n.contentOffset // == PayloadOffset for split archives
+	contentSz := n.fileSize
+	isReg := n.isReg
+	ra := fs.readerAt
+
+	// Fast path: payload ReaderAt — fully concurrent, no lock needed.
+	// For split archives, contentOff == PayloadOffset and actual file data
+	// starts at PayloadOffset + HeaderSize.
+	if isReg && ra != nil && contentOff != 0 {
+		if input.Offset >= contentSz {
+			return fuse.ReadResultData(nil), fuse.OK
+		}
+
+		remaining := contentSz - input.Offset
+		toRead := min(uint64(len(buf)), remaining)
+
+		nr, err := ra.ReadAt(buf[:toRead], int64(contentOff)+format.HeaderSize+int64(input.Offset))
+		if err != nil && err != io.EOF {
+			return nil, fuse.EIO
+		}
+		if nr == 0 {
+			return fuse.ReadResultData(nil), fuse.OK
+		}
+		return fuse.ReadResultData(buf[:nr]), fuse.OK
+	}
+
+	// Slow path: unified archive or non-split entry.
+	// readerMu serializes metadata stream access.
 	fs.readerMu.Lock()
 	entry, err := fs.readEntryForNode(&n)
 	if err != nil {
@@ -501,7 +531,6 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	}
 	defer rc.Close()
 
-	// Use Seek instead of io.CopyN(io.Discard) — zero allocations.
 	if input.Offset > 0 {
 		if seeker, ok := rc.(io.Seeker); ok {
 			if _, err := seeker.Seek(int64(input.Offset), io.SeekStart); err != nil {
@@ -884,6 +913,9 @@ func (fs *pxarFS) hotSwap(newReader *transfer.SplitArchiveReader) {
 	fs.readerMu.Lock()
 	fs.reader = newReader
 	fs.readerMu.Unlock()
+
+	// Update the concurrent-safe ReaderAt
+	fs.readerAt = newReader.PayloadReaderAt()
 
 	// Re-register root node from the new reader
 	root, err := newReader.ReadRoot()
