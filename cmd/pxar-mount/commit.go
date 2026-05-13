@@ -353,6 +353,10 @@ func (fs *passthroughFS) postCommit(backupID, backupType, namespace, archiveName
 	// Hot-swap the pxar reader to the new snapshot
 	fs.pxar.hotSwap(newReader)
 
+	// Reset passthrough state: clear stale inode/handle mappings
+	// that reference the old pxar nodes and backing files.
+	fs.resetState()
+
 	// Update origSnapshot to the new state
 	fs.origSnapshot = snapshotRef{
 		BackupType:  backupType,
