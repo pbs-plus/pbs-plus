@@ -589,3 +589,46 @@ func TestForget_CleansUpPxarDir(t *testing.T) {
 		t.Error("ino still in pxarDir after Forget")
 	}
 }
+
+// --- Bug 14: Rename un-deletes destination before confirming source exists ---
+// If the source doesn't exist (Lstat fails), Rename returns EROFS
+// but has already un-deleted the destination path. The previously-deleted
+// pxar entry at the destination becomes visible again.
+
+func TestRename_DestinationStaysDeletedOnFailure(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Set up root inode
+	fs.mu.Lock()
+	fs.nodePaths[rootInode] = "/"
+	fs.pathToIno["/"] = rootInode
+	fs.mu.Unlock()
+
+	// Mark a destination path as deleted (simulates a previously-deleted pxar entry)
+	destPath := "/deleted-dest.txt"
+	fs.markPathDeleted(destPath)
+
+	if !fs.isPathDeleted(destPath) {
+		t.Fatal("destPath should be deleted before rename")
+	}
+
+	// Attempt to rename a non-existent source to the deleted destination.
+	// Source "nonexistent-src.txt" doesn't exist in backing dir.
+	st := fs.Rename(nil, &fuse.RenameIn{
+		InHeader: fuse.InHeader{NodeId: rootInode},
+		Newdir:   rootInode,
+	}, "nonexistent-src.txt", "deleted-dest.txt")
+
+	// Rename should fail
+	if st == fuse.OK {
+		t.Fatal("Rename should have failed for non-existent source")
+	}
+
+	// The destination should STILL be deleted — unDeletePath was premature.
+	if !fs.isPathDeleted(destPath) {
+		t.Error("destPath was un-deleted even though Rename failed")
+	}
+}

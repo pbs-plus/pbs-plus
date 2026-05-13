@@ -1043,11 +1043,8 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 	oldPath := joinPath(oldParentPath, oldName)
 	newPath := joinPath(newParentPath, newName)
 
-	// Un-delete the destination path if it was previously deleted.
-	// This handles rename-to-deleted-path correctly.
-	if fs.mutationMode {
-		fs.unDeletePath(newPath)
-	}
+	// Save the destination's deleted state so we can restore it if Rename fails.
+	wasDeleted := fs.isPathDeleted(newPath)
 
 	if fs.mutationMode {
 		if oldIsPxar {
@@ -1082,7 +1079,15 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	// Source must exist in backing dir
 	if _, err := os.Lstat(oldAbs); err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(newPath)
+		}
 		return fuse.EROFS
+	}
+
+	// Source exists — safe to un-delete the destination.
+	if fs.mutationMode && wasDeleted {
+		fs.unDeletePath(newPath)
 	}
 
 	// Ensure target parent exists
