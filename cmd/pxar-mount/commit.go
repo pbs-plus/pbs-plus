@@ -232,7 +232,7 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 		}
 	}
 
-	store := backupproxy.NewPBSRemoteStore(backupproxy.PBSConfig{
+	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
 		BaseURL:       pbsURL,
 		Datastore:     datastoreName,
 		AuthToken:     authToken,

@@ -15,7 +15,7 @@ import (
 
 func mustTestArchive(tb testing.TB) (*bytes.Reader, int64) {
 	tb.Helper()
-	ts := format.StatxTimestampFromDurationSinceEpoch(1430487000 * 1e9)
+	ts := format.NewStatxTimestampFromDuration(1430487000 * 1e9)
 	var buf bytes.Buffer
 	rootMeta := &pxar.Metadata{
 		Stat: format.Stat{

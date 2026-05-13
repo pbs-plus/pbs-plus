@@ -22,7 +22,7 @@ import (
 // --- helpers for building test pxar archives ---
 
 func dirMeta(mode uint64) *pxar.Metadata {
-	ts := format.StatxTimestampFromDurationSinceEpoch(1430487000 * time.Second)
+	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
 	return &pxar.Metadata{
 		Stat: format.Stat{
 			Mode:  format.ModeIFDIR | mode,
@@ -32,7 +32,7 @@ func dirMeta(mode uint64) *pxar.Metadata {
 }
 
 func fileMeta(mode uint64, uid, gid uint32, size uint64) *pxar.Metadata {
-	ts := format.StatxTimestampFromDurationSinceEpoch(1430487000 * time.Second)
+	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
 	return &pxar.Metadata{
 		Stat: format.Stat{
 			Mode:  format.ModeIFREG | mode,
@@ -44,7 +44,7 @@ func fileMeta(mode uint64, uid, gid uint32, size uint64) *pxar.Metadata {
 }
 
 func fileMetaXattr(mode uint64, uid, gid uint32, size uint64, xattrs ...[2]string) *pxar.Metadata {
-	ts := format.StatxTimestampFromDurationSinceEpoch(1430487000 * time.Second)
+	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
 	m := &pxar.Metadata{
 		Stat: format.Stat{
 			Mode:  format.ModeIFREG | mode,
@@ -60,7 +60,7 @@ func fileMetaXattr(mode uint64, uid, gid uint32, size uint64, xattrs ...[2]strin
 }
 
 func symlinkMeta(mode uint64, uid, gid uint32) *pxar.Metadata {
-	ts := format.StatxTimestampFromDurationSinceEpoch(1430487000 * time.Second)
+	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
 	return &pxar.Metadata{
 		Stat: format.Stat{
 			Mode:  format.ModeIFLNK | mode,
@@ -430,7 +430,7 @@ func TestEntryToEntryInfo_AllKinds(t *testing.T) {
 		{pxar.KindSymlink, FileTypeSymlink},
 		{pxar.KindHardlink, FileTypeHardlink},
 		{pxar.KindDevice, FileTypeDevice},
-		{pxar.KindFifo, FileTypeFifo},
+		{pxar.KindFIFO, FileTypeFifo},
 		{pxar.KindSocket, FileTypeSocket},
 	}
 
