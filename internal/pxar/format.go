@@ -160,7 +160,7 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return nil, fmt.Errorf("failed to read index %s: %w", mpxarPath, err)
 	}
 
-	if _, err := datastore.ReadDynamicIndex(idxData); err != nil {
+	if _, err := datastore.ParseDynamicIndex(idxData); err != nil {
 		return nil, fmt.Errorf("failed to parse index: %w", err)
 	}
 
@@ -437,7 +437,7 @@ func entryToEntryInfo(e *pxar.Entry) *EntryInfo {
 		ft = FileTypeHardlink
 	case pxar.KindDevice:
 		ft = FileTypeDevice
-	case pxar.KindFifo:
+	case pxar.KindFIFO:
 		ft = FileTypeFifo
 	case pxar.KindSocket:
 		ft = FileTypeSocket
