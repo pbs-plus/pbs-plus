@@ -170,43 +170,33 @@ func (fs *passthroughFS) ensureBackingParent(rel string) error {
 	return os.MkdirAll(fs.absPath(parent), 0o755)
 }
 
-// precreateDirectories walks the pxar tree and creates all directories
-// in the backing dir so that SMB's acl_xattr can work directly on them.
-func (fs *passthroughFS) precreateDirectories() error {
-	// Mark root as backed and pxar-originated
+// initPassthroughRoot initializes the root directory in the backing dir.
+// Subdirectories are created lazily on first access (Lookup / ReadDir)
+// via ensureDirBacking, rather than eagerly walking the entire pxar tree.
+func (fs *passthroughFS) initPassthroughRoot() error {
+	if err := os.MkdirAll(fs.backingDir, 0o755); err != nil {
+		return err
+	}
 	fs.setNode(rootInode, "/", true)
 	fs.mu.Lock()
 	fs.pxarDir[rootInode] = true
 	fs.mu.Unlock()
-	return fs.precreateDir(rootInode, "/")
+	return nil
 }
 
-func (fs *passthroughFS) precreateDir(ino uint64, relPath string) error {
+// ensureDirBacking lazily creates a pxar-originated directory on disk in
+// the backing filesystem. This is called when a directory is first accessed
+// (via Lookup or ReadDir), avoiding the need to walk the entire archive tree
+// at init time. MkdirAll ensures all ancestor directories exist as well.
+func (fs *passthroughFS) ensureDirBacking(ino uint64, relPath string) {
 	absPath := fs.absPath(relPath)
 	if err := os.MkdirAll(absPath, 0o755); err != nil {
-		return err
+		return
 	}
-
-	entries, err := fs.pxar.readDirRaw(ino)
-	if err != nil {
-		return nil // leaf or unreadable, not an error
-	}
-
-	for _, pe := range entries {
-		if !isDirInode(pe.inode) {
-			continue
-		}
-		childPath := relPath + "/" + pe.name
-		fs.pxar.registerSlimNode(&pe, ino)
-		fs.setNode(pe.inode, childPath, true)
-		fs.mu.Lock()
-		fs.pxarDir[pe.inode] = true
-		fs.mu.Unlock()
-		if err := fs.precreateDir(pe.inode, childPath); err != nil {
-			return err
-		}
-	}
-	return nil
+	fs.setNode(ino, relPath, true)
+	fs.mu.Lock()
+	fs.pxarDir[ino] = true
+	fs.mu.Unlock()
 }
 
 // statBacked stat's a relative path in the backing dir and constructs
@@ -383,11 +373,12 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 	// Delegate to pxar
 	st := fs.pxar.Lookup(cancel, header, name, out)
 	if st == fuse.OK {
-		fs.setNode(out.NodeId, childPath, false)
 		if out.Mode&syscall.S_IFDIR != 0 {
-			fs.mu.Lock()
-			fs.pxarDir[out.NodeId] = true
-			fs.mu.Unlock()
+			// Lazily create the backing directory on first access
+			// so SMB's acl_xattr can store/retrieve ACLs.
+			fs.ensureDirBacking(out.NodeId, childPath)
+		} else {
+			fs.setNode(out.NodeId, childPath, false)
 		}
 		fs.mu.Lock()
 		if _, exists := fs.nodePaths[header.NodeId]; !exists {
@@ -934,14 +925,15 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	}
 
 	// Register pxar nodes so fillEntryOutForNode can find them.
+	// For directories, lazily create them in the backing filesystem.
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
 		fs.pxar.registerSlimNode(pe, input.NodeId)
-		// Track pxar-originated directories for xattr sidecar support
+		childPath := parentPath + "/" + pe.name
 		if isDirInode(pe.inode) {
-			fs.mu.Lock()
-			fs.pxarDir[pe.inode] = true
-			fs.mu.Unlock()
+			// Lazily create the backing directory on first ReadDir
+			// so SMB's acl_xattr can store/retrieve ACLs.
+			fs.ensureDirBacking(pe.inode, childPath)
 		}
 	}
 
@@ -949,10 +941,12 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	for _, pe := range pxarEntries {
 		if !backedName[pe.name] {
 			entries = append(entries, pe)
-			fs.setNode(pe.inode, parentPath+"/"+pe.name, false)
+			if !isDirInode(pe.inode) {
+				fs.setNode(pe.inode, parentPath+"/"+pe.name, false)
+			}
 		} else if isDirInode(pe.inode) {
-			// Pxar directory shadowed by a backed directory (created by
-			// ensureBackingParent). Keep the pxar inode so readDirRaw
+			// Pxar directory shadowed by a backed directory (e.g. from a
+			// previous lazy creation). Keep the pxar inode so readDirRaw
 			// works, but mark as backed so file creation works.
 			entries = append(entries, pe)
 			fs.setNode(pe.inode, parentPath+"/"+pe.name, true)
