@@ -540,6 +540,251 @@ func TestConcurrentNestedMkdir(t *testing.T) {
 	}
 }
 
+// --- Test 13: Unlink cleans up pathToIno mapping ---
+// After Unlink, the old path should not have a stale inode.
+// Creating a new file at the same path should get a clean inode.
+
+func TestUnlink_CleansUpPathToIno(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Create a file
+	input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+	var cout fuse.CreateOut
+	if st := fs.Create(nil, input, "file_to_delete.txt", &cout); st != fuse.OK {
+		t.Fatalf("Create failed: %v", st)
+	}
+	firstIno := cout.NodeId
+
+	// Verify it's registered
+	fs.mu.RLock()
+	oldIno, hadMapping := fs.pathToIno["/file_to_delete.txt"]
+	fs.mu.RUnlock()
+	if !hadMapping {
+		t.Fatal("pathToIno should have mapping for /file_to_delete.txt")
+	}
+	if oldIno != firstIno {
+		t.Fatalf("pathToIno mapping ino=%d, expected %d", oldIno, firstIno)
+	}
+
+	// Unlink it
+	header := &fuse.InHeader{NodeId: rootInode}
+	if st := fs.Unlink(nil, header, "file_to_delete.txt"); st != fuse.OK {
+		t.Fatalf("Unlink failed: %v", st)
+	}
+
+	// The pathToIno entry should be gone
+	fs.mu.RLock()
+	_, stillMapped := fs.pathToIno["/file_to_delete.txt"]
+	fs.mu.RUnlock()
+	if stillMapped {
+		t.Error("pathToIno should not have mapping for /file_to_delete.txt after Unlink")
+	}
+
+	// Creating a new file at the same path should NOT reuse the old inode
+	var cout2 fuse.CreateOut
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "file_to_delete.txt", &cout2); st != fuse.OK {
+		t.Fatalf("Create after unlink failed: %v", st)
+	}
+	if cout2.NodeId == firstIno {
+		t.Errorf("new file should get a fresh inode, got same ino=%d", firstIno)
+	}
+}
+
+// --- Test 14: Rename updates nodePaths and pathToIno ---
+// After Rename, the inode should be mapped to the new path, not the old one.
+
+func TestRename_UpdatesPathMappings(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Create a file
+	var cout fuse.CreateOut
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "old_name.txt", &cout); st != fuse.OK {
+		t.Fatalf("Create failed: %v", st)
+	}
+	ino := cout.NodeId
+
+	// Verify initial mapping
+	fs.mu.RLock()
+	oldPath, hasOld := fs.nodePaths[ino]
+	fs.mu.RUnlock()
+	expectedPath := "/old_name.txt"
+	if !hasOld || oldPath != expectedPath {
+		t.Fatalf("nodePaths should map ino to %q, got %q", expectedPath, oldPath)
+	}
+
+	// Rename it
+	renameInput := &fuse.RenameIn{
+		InHeader: fuse.InHeader{NodeId: rootInode},
+		Newdir:   rootInode,
+	}
+	if st := fs.Rename(nil, renameInput, "old_name.txt", "new_name.txt"); st != fuse.OK {
+		t.Fatalf("Rename failed: %v", st)
+	}
+
+	// The inode should now map to the new path
+	fs.mu.RLock()
+	newPath, hasNew := fs.nodePaths[ino]
+	_, oldStillExists := fs.pathToIno["/old_name.txt"]
+	_, newPathExists := fs.pathToIno["/new_name.txt"]
+	fs.mu.RUnlock()
+
+	if !hasNew {
+		t.Error("nodePaths should have mapping for inode after rename")
+	} else if newPath != "/new_name.txt" {
+		t.Errorf("nodePaths should map ino to /new_name.txt, got %q", newPath)
+	}
+	if oldStillExists {
+		t.Error("pathToIno should not have /old_name.txt after rename")
+	}
+	if !newPathExists {
+		t.Error("pathToIno should have /new_name.txt after rename")
+	}
+
+	// GetAttr should work on the new path
+	var aout fuse.AttrOut
+	if st := fs.GetAttr(nil, &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: ino}}, &aout); st != fuse.OK {
+		t.Errorf("GetAttr should work after rename, got: %v", st)
+	}
+}
+
+// --- Test 15: Lookup sets backed=true for non-directory files ---
+// A file that exists in the backing dir should have isBacked return true
+// after Lookup, so that GetAttr works correctly.
+
+func TestLookup_SetsBackedForNonDir(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Pre-create a file in the backing dir
+	if err := os.WriteFile(filepath.Join(backingDir, "existing_file.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Lookup the file
+	var out fuse.EntryOut
+	header := &fuse.InHeader{NodeId: rootInode}
+	if st := fs.Lookup(nil, header, "existing_file.txt", &out); st != fuse.OK {
+		t.Fatalf("Lookup failed: %v", st)
+	}
+
+	ino := out.NodeId
+	if !fs.isBacked(ino) {
+		t.Errorf("isBacked(%d) should be true after Lookup for backed file", ino)
+	}
+
+	// GetAttr should work via the backing dir (not delegate to pxar)
+	var aout fuse.AttrOut
+	if st := fs.GetAttr(nil, &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: ino}}, &aout); st != fuse.OK {
+		t.Errorf("GetAttr failed for backed file: %v", st)
+	}
+}
+
+// --- Test 16: Concurrent Unlink + Create at same path ---
+// One goroutine unlinks a file while another creates a new file with the
+// same name. The new file should get its own inode, not the stale one.
+
+func TestConcurrentUnlinkCreate_NoStaleInode(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Create a file
+	var cout fuse.CreateOut
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "cycle.txt", &cout); st != fuse.OK {
+		t.Fatalf("initial Create failed: %v", st)
+	}
+	firstIno := cout.NodeId
+
+	const rounds = 50
+	for i := range rounds {
+		// Unlink
+		header := &fuse.InHeader{NodeId: rootInode}
+		if st := fs.Unlink(nil, header, "cycle.txt"); st != fuse.OK {
+			t.Fatalf("Unlink round %d failed: %v", i, st)
+		}
+
+		// Recreate
+		var c2 fuse.CreateOut
+		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "cycle.txt", &c2); st != fuse.OK {
+			t.Fatalf("Create round %d failed: %v", i, st)
+		}
+
+		// The inode should be different from the first one
+		if c2.NodeId == firstIno {
+			t.Errorf("round %d: recreated file got stale inode %d", i, firstIno)
+		}
+		firstIno = c2.NodeId
+	}
+}
+
+// --- Test 17: Concurrent Rename + Lookup ---
+
+func TestConcurrentRenameLookup_ConsistentPaths(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Create files to rename
+	for i := range 10 {
+		name := fmt.Sprintf("rename_src_%d.txt", i)
+		var cout fuse.CreateOut
+		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, name, &cout); st != fuse.OK {
+			t.Fatalf("Create %s failed: %v", name, st)
+		}
+	}
+
+	var wg sync.WaitGroup
+
+	// Renamer: rename files to new names
+	wg.Go(func() {
+		for i := range 10 {
+			oldName := fmt.Sprintf("rename_src_%d.txt", i)
+			newName := fmt.Sprintf("rename_dst_%d.txt", i)
+			input := &fuse.RenameIn{
+				InHeader: fuse.InHeader{NodeId: rootInode},
+				Newdir:   rootInode,
+			}
+			fs.Rename(nil, input, oldName, newName)
+		}
+	})
+
+	// Lookup: look up files that are being renamed
+	wg.Go(func() {
+		for i := range 10 {
+			name := fmt.Sprintf("rename_src_%d.txt", i)
+			var out fuse.EntryOut
+			fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, name, &out)
+		}
+	})
+
+	wg.Wait()
+
+	// After renames, Lookups for the new names should succeed and return
+	// consistent inodes.
+	for i := range 10 {
+		newName := fmt.Sprintf("rename_dst_%d.txt", i)
+		var out fuse.EntryOut
+		if st := fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, newName, &out); st != fuse.OK {
+			t.Errorf("Lookup %s after rename failed: %v", newName, st)
+		}
+
+		newPath := "/" + newName
+		fs.mu.RLock()
+		_, newMapped := fs.pathToIno[newPath]
+		fs.mu.RUnlock()
+		if !newMapped {
+			t.Errorf("new path %q should be in pathToIno after rename+lookup", newPath)
+		}
+	}
+
+	// No duplicate inode mappings for any path
+	for path, count := range countPaths(fs) {
+		if path != "/" && count > 1 {
+			t.Errorf("path %q has %d inode mappings (should be 1)", path, count)
+		}
+	}
+}
+
 // helpers
 
 func countPaths(fs *passthroughFS) map[string]int {
