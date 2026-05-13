@@ -51,9 +51,9 @@ func isACLXattr(attr string) bool {
 type passthroughFS struct {
 	fuse.RawFileSystem
 	nodePaths     map[uint64]string
+	pathToIno     map[string]uint64 // reverse: relPath → inode for dedup
 	pxar          *pxarFS
 	handles       map[uint64]*passFh
-	readDirStats  map[uint64]syscall.Stat_t
 	backed        map[uint64]bool // has a real path in backing dir
 	pxarDir       map[uint64]bool // originated from pxar (directory)
 	origSnapshot  snapshotRef
@@ -62,8 +62,8 @@ type passthroughFS struct {
 	backingDir    string
 	nextBackIno   uint64
 	nextFh        uint64
-	mu            sync.RWMutex
-	fhmu          sync.Mutex
+	mu            sync.RWMutex // guards nodePaths, pathToIno, backed, pxarDir, nextBackIno
+	fhmu          sync.Mutex   // guards handles, nextFh
 }
 
 // snapshotRef holds the identity of a PBS snapshot.
@@ -161,7 +161,13 @@ func (fs *passthroughFS) nodePath(ino uint64) string {
 func (fs *passthroughFS) setNode(ino uint64, relPath string, backed bool) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	// If this path already has a different inode, clean up the old one.
+	if oldIno, exists := fs.pathToIno[relPath]; exists && oldIno != ino {
+		delete(fs.nodePaths, oldIno)
+		delete(fs.backed, oldIno)
+	}
 	fs.nodePaths[ino] = relPath
+	fs.pathToIno[relPath] = ino
 	fs.backed[ino] = backed
 }
 
@@ -174,6 +180,26 @@ func (fs *passthroughFS) allocBackedIno(isDir bool) uint64 {
 		ino |= nonDirBit
 	}
 	return ino
+}
+
+// lookupOrAllocIno atomically returns the existing inode for relPath, or
+// allocates a new one. This prevents concurrent goroutines from creating
+// duplicate inodes for the same backing file.
+func (fs *passthroughFS) lookupOrAllocIno(relPath string, isDir bool) (ino uint64, allocated bool) {
+	fs.mu.Lock()
+	if existing, ok := fs.pathToIno[relPath]; ok {
+		fs.mu.Unlock()
+		return existing, false
+	}
+	ino = fs.nextBackIno + backedInoBase
+	fs.nextBackIno++
+	if !isDir {
+		ino |= nonDirBit
+	}
+	fs.pathToIno[relPath] = ino
+	fs.nodePaths[ino] = relPath
+	fs.mu.Unlock()
+	return ino, true
 }
 
 // ensureBackingParent creates parent directories in backingDir for the
@@ -217,14 +243,14 @@ func (fs *passthroughFS) ensureDirBacking(ino uint64, relPath string) {
 
 // statBacked stat's a relative path in the backing dir and constructs
 // backing node metadata. Returns nil if the file does not exist.
+// Uses lookupOrAllocIno to avoid allocating duplicate inodes.
 func (fs *passthroughFS) statBacked(rel string) (*node, error) {
 	var st syscall.Stat_t
 	if err := syscall.Lstat(fs.absPath(rel), &st); err != nil {
 		return nil, err
 	}
 	mode := uint64(st.Mode)
-	ino := fs.allocBackedIno(mode&syscall.S_IFDIR != 0)
-	fs.setNode(ino, rel, true)
+	ino, _ := fs.lookupOrAllocIno(rel, mode&syscall.S_IFDIR != 0)
 	nd := &node{
 		inode:     ino,
 		parent:    rootInode, // filled by caller if needed
@@ -483,14 +509,73 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 		return fuse.ToStatus(err)
 	}
 
-	abs := fs.absPath(childPath)
-	flags := int(input.Flags) | os.O_CREATE | os.O_TRUNC
-	fd, err := syscall.Open(abs, flags, uint32(input.Mode&0o777))
-	if err != nil {
-		return fuse.ToStatus(err)
+	// Atomically allocate inode and check for existing entry.
+	ino, allocated := fs.lookupOrAllocIno(childPath, false)
+	if !allocated {
+		// File inode already registered — check if it still exists.
+		// Another concurrent Create may have already created it.
+		abs := fs.absPath(childPath)
+		fd, err := syscall.Open(abs, os.O_WRONLY|os.O_TRUNC, 0)
+		if err != nil {
+			// File was deleted between registration and now; allocate new.
+			fs.mu.Lock()
+			delete(fs.pathToIno, childPath)
+			delete(fs.nodePaths, ino)
+			delete(fs.backed, ino)
+			fs.mu.Unlock()
+			ino = fs.allocBackedIno(false)
+			fs.setNode(ino, childPath, true)
+			flags := int(input.Flags) | os.O_CREATE | os.O_EXCL
+			fd, err = syscall.Open(abs, flags, uint32(input.Mode&0o777))
+			if err != nil {
+				return fuse.ToStatus(err)
+			}
+		}
+		defer syscall.Close(fd)
+
+		fs.fhmu.Lock()
+		fhID := fs.nextFh
+		fs.nextFh++
+		fs.handles[fhID] = &passFh{fd: fd, inode: ino}
+		fs.fhmu.Unlock()
+
+		var st syscall.Stat_t
+		if err := syscall.Fstat(fd, &st); err != nil {
+			return fuse.ToStatus(err)
+		}
+
+		out.NodeId = ino
+		out.Generation = 1
+		out.EntryValid = 1
+		out.AttrValid = 1
+		out.Fh = fhID
+		out.OpenFlags = fuse.FOPEN_KEEP_CACHE
+		n := nodeFromStat(&st)
+		n.inode = ino
+		n.mtimeNanos = uint32(st.Mtim.Nsec)
+		n.isReg = true
+		fillAttr(&out.Attr, n)
+		return fuse.OK
 	}
 
-	ino := fs.allocBackedIno(false)
+	abs := fs.absPath(childPath)
+	flags := int(input.Flags) | os.O_CREATE | os.O_EXCL
+	fd, err := syscall.Open(abs, flags, uint32(input.Mode&0o777))
+	if err != nil {
+		// O_EXCL failed: file was created by another goroutine.
+		// Clean up the pre-allocated inode and retry without O_EXCL.
+		fs.mu.Lock()
+		delete(fs.pathToIno, childPath)
+		delete(fs.nodePaths, ino)
+		delete(fs.backed, ino)
+		fs.mu.Unlock()
+		ino, _ = fs.lookupOrAllocIno(childPath, false)
+		fd, err = syscall.Open(abs, os.O_WRONLY|os.O_TRUNC, 0)
+		if err != nil {
+			return fuse.ToStatus(err)
+		}
+	}
+
 	fs.setNode(ino, childPath, true)
 
 	fs.fhmu.Lock()
@@ -499,7 +584,6 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	fs.handles[fhID] = &passFh{fd: fd, inode: ino}
 	fs.fhmu.Unlock()
 
-	// Stat for the entry out
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
 		_ = syscall.Close(fd)
@@ -531,6 +615,21 @@ func (fs *passthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 
 	abs := fs.absPath(childPath)
 	if err := syscall.Mkdir(abs, input.Mode&0o777); err != nil {
+		if err == syscall.EEXIST {
+			// Created by another goroutine; reuse existing inode.
+			ino, _ := fs.lookupOrAllocIno(childPath, true)
+			fs.setNode(ino, childPath, true)
+			var st syscall.Stat_t
+			if err2 := syscall.Lstat(abs, &st); err2 != nil {
+				return fuse.ToStatus(err2)
+			}
+			n := nodeFromStat(&st)
+			n.inode = ino
+			n.mtimeNanos = uint32(st.Mtim.Nsec)
+			n.isDir = true
+			fillEntryOut(ino, n, out)
+			return fuse.OK
+		}
 		return fuse.ToStatus(err)
 	}
 
@@ -560,11 +659,25 @@ func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 	}
 
 	abs := fs.absPath(childPath)
+	isDir := input.Mode&syscall.S_IFDIR != 0
 	if err := syscall.Mknod(abs, input.Mode, int(input.Rdev)); err != nil {
+		if err == syscall.EEXIST {
+			ino, _ := fs.lookupOrAllocIno(childPath, isDir)
+			fs.setNode(ino, childPath, true)
+			var st syscall.Stat_t
+			if err2 := syscall.Lstat(abs, &st); err2 != nil {
+				return fuse.ToStatus(err2)
+			}
+			n := nodeFromStat(&st)
+			n.inode = ino
+			n.mtimeNanos = uint32(st.Mtim.Nsec)
+			fillEntryOut(ino, n, out)
+			return fuse.OK
+		}
 		return fuse.ToStatus(err)
 	}
 
-	ino := fs.allocBackedIno(input.Mode&syscall.S_IFDIR != 0)
+	ino := fs.allocBackedIno(isDir)
 	fs.setNode(ino, childPath, true)
 
 	var st syscall.Stat_t
@@ -590,6 +703,21 @@ func (fs *passthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, 
 
 	abs := fs.absPath(childPath)
 	if err := syscall.Symlink(target, abs); err != nil {
+		if err == syscall.EEXIST {
+			// Created by another goroutine; reuse existing inode.
+			ino, _ := fs.lookupOrAllocIno(childPath, false)
+			fs.setNode(ino, childPath, true)
+			var st syscall.Stat_t
+			if err2 := syscall.Lstat(abs, &st); err2 != nil {
+				return fuse.ToStatus(err2)
+			}
+			n := nodeFromStat(&st)
+			n.inode = ino
+			n.mtimeNanos = uint32(st.Mtim.Nsec)
+			n.isSymlink = true
+			fillEntryOut(ino, n, out)
+			return fuse.OK
+		}
 		return fuse.ToStatus(err)
 	}
 
@@ -895,15 +1023,14 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		pxarEntries = pxarN
 	}
 
-	// Read backing dir entries
+	// Read backing dir entries using lookupOrAllocIno for inode stability.
 	var backedEntries []dirEntrySlim
-	var backedStats []syscall.Stat_t // parallel: syscall.Stat_t for each backed entry
+	localStats := make(map[uint64]syscall.Stat_t) // per-call, no lock needed
 	if parentPath != "" {
 		absParent := fs.absPath(parentPath)
 		des, err := os.ReadDir(absParent)
 		if err == nil && len(des) > 0 {
 			backedEntries = make([]dirEntrySlim, 0, len(des))
-			backedStats = make([]syscall.Stat_t, 0, len(des))
 			for _, de := range des {
 				info, err := de.Info()
 				if err != nil {
@@ -913,7 +1040,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 				childPath := parentPath + "/" + de.Name()
 				mode := info.Mode()
 				isDir := de.IsDir()
-				ino := fs.allocBackedIno(isDir)
+				ino, _ := fs.lookupOrAllocIno(childPath, isDir)
 				fs.setNode(ino, childPath, true)
 
 				backedEntries = append(backedEntries, dirEntrySlim{
@@ -921,28 +1048,15 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 					inode: ino,
 					mode:  uint32(mode),
 				})
-				backedStats = append(backedStats, *st)
+				localStats[ino] = *st
 			}
 		}
 	}
 
 	// Merge: backed entries shadow pxar entries
 	backedName := make(map[string]bool, len(backedEntries))
-	// Build a lookup for backed stats by inode
-	if plus && len(backedStats) > 0 {
-		if fs.readDirStats == nil {
-			fs.readDirStats = make(map[uint64]syscall.Stat_t, len(backedStats))
-		} else {
-			clear(fs.readDirStats)
-		}
-		for i, be := range backedEntries {
-			backedName[be.name] = true
-			fs.readDirStats[be.inode] = backedStats[i]
-		}
-	} else {
-		for _, be := range backedEntries {
-			backedName[be.name] = true
-		}
+	for _, be := range backedEntries {
+		backedName[be.name] = true
 	}
 
 	// Register pxar nodes so fillEntryOutForNode can find them.
@@ -988,7 +1102,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 			if eo == nil {
 				return fuse.OK
 			}
-			fs.fillEntryOutForNode(input.NodeId, eo)
+			fs.fillEntryOutForNodeWithStats(input.NodeId, eo, localStats)
 		} else {
 			if !out.AddDirEntry(fuse.DirEntry{Name: ".", Ino: input.NodeId, Mode: mode}) {
 				return fuse.OK
@@ -1014,7 +1128,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		if plus {
 			eo := out.AddDirLookupEntry(fuse.DirEntry{Name: "..", Ino: parentIno, Mode: parentMode})
 			if eo != nil {
-				fs.fillEntryOutForNode(parentIno, eo)
+				fs.fillEntryOutForNodeWithStats(parentIno, eo, localStats)
 			}
 		} else {
 			out.AddDirEntry(fuse.DirEntry{Name: "..", Ino: parentIno, Mode: parentMode})
@@ -1034,7 +1148,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 			if eo == nil {
 				break
 			}
-			fs.fillEntryOutForNode(entries[i].inode, eo)
+			fs.fillEntryOutForNodeWithStats(entries[i].inode, eo, localStats)
 		} else {
 			if !out.AddDirEntry(de) {
 				break
@@ -1058,9 +1172,10 @@ func (fs *passthroughFS) dirModeForNode(ino uint64) uint32 {
 	return uint32(syscall.S_IFDIR | 0o555)
 }
 
-func (fs *passthroughFS) fillEntryOutForNode(ino uint64, out *fuse.EntryOut) {
-	// Fast path: use cached stat from readDirImpl
-	if st, ok := fs.readDirStats[ino]; ok {
+// fillEntryOutForNodeWithStats uses a per-call local stats map instead of a
+// shared field, eliminating the need for any locking during concurrent ReadDir calls.
+func (fs *passthroughFS) fillEntryOutForNodeWithStats(ino uint64, out *fuse.EntryOut, localStats map[uint64]syscall.Stat_t) {
+	if st, ok := localStats[ino]; ok {
 		n := nodeFromStat(&st)
 		n.inode = ino
 		n.mtimeNanos = uint32(st.Mtim.Nsec)
@@ -1289,6 +1404,9 @@ func (fs *passthroughFS) Statx(cancel <-chan struct{}, input *fuse.StatxIn, out 
 func (fs *passthroughFS) Forget(nodeID, nlookup uint64) {
 	fs.mu.Lock()
 	if fs.backed[nodeID] {
+		if path, ok := fs.nodePaths[nodeID]; ok {
+			delete(fs.pathToIno, path)
+		}
 		delete(fs.backed, nodeID)
 		delete(fs.nodePaths, nodeID)
 	}
