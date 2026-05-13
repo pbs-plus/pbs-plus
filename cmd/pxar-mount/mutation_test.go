@@ -176,6 +176,45 @@ func TestTransactionLog_Durability(t *testing.T) {
 // If os.Create fails in Clear, tl.file is set to nil but the old file is
 // already closed. Subsequent Record calls would panic on nil buf.
 
+// --- Bug 9: Creating a new file over a deleted pxar path fails in Lookup ---
+// After deleting a pxar file via mutation mode, creating a new file with
+// the same name should un-delete the path so Lookup can find it.
+
+func TestCreate_UndeletesDeletedPath(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	childPath := "undelete-test.txt"
+
+	// Mark the path as deleted (simulating a prior pxar file deletion)
+	fs.markPathDeleted(childPath)
+
+	if !fs.isPathDeleted(childPath) {
+		t.Fatal("path should be deleted")
+	}
+
+	// Now create a new file with the same name in the backing dir,
+	// simulating what the FUSE Create handler does.
+	abs := filepath.Join(backingDir, childPath)
+	fd, err := syscall.Open(abs, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_TRUNC, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syscall.Close(fd)
+
+	ino, _ := fs.lookupOrAllocIno(childPath, false)
+	fs.setNode(ino, childPath, true)
+
+	// Simulate what Create now does: un-delete the path.
+	fs.unDeletePath(childPath)
+
+	if fs.isPathDeleted(childPath) {
+		t.Error("path should no longer be deleted after unDeletePath")
+	}
+}
+
 func TestTransactionLog_ClearThenRecord(t *testing.T) {
 	dir := t.TempDir()
 	tl, err := OpenTransactionLog(dir)

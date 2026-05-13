@@ -408,6 +408,15 @@ func (fs *passthroughFS) markPathDeleted(relPath string) {
 	}
 }
 
+// unDeletePath removes a path from the deleted set, allowing it to
+// appear in Lookup/ReadDir again. Called when a new file/dir is created
+// over a previously-deleted pxar path.
+func (fs *passthroughFS) unDeletePath(relPath string) {
+	fs.mu.Lock()
+	delete(fs.deletedPaths, relPath)
+	fs.mu.Unlock()
+}
+
 // materializePxarFile copies a pxar-backed file to the backing directory
 // so it can be modified. The node is then marked as backed.
 // Returns the relative path and nil on success.
@@ -715,6 +724,11 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	parentPath := fs.nodePath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
+	// Un-delete the path if it was previously a deleted pxar entry.
+	if fs.mutationMode {
+		fs.unDeletePath(childPath)
+	}
+
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -772,6 +786,10 @@ func (fs *passthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 	parentPath := fs.nodePath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
+	if fs.mutationMode {
+		fs.unDeletePath(childPath)
+	}
+
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -817,6 +835,10 @@ func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 	parentPath := fs.nodePath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
+	if fs.mutationMode {
+		fs.unDeletePath(childPath)
+	}
+
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -859,6 +881,10 @@ func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 func (fs *passthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, linkName string, out *fuse.EntryOut) fuse.Status {
 	parentPath := fs.nodePath(header.NodeId)
 	childPath := joinPath(parentPath, linkName)
+
+	if fs.mutationMode {
+		fs.unDeletePath(childPath)
+	}
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
 		return fuse.ToStatus(err)
@@ -1015,6 +1041,12 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 	newParentPath := fs.nodePath(input.Newdir)
 	oldPath := joinPath(oldParentPath, oldName)
 	newPath := joinPath(newParentPath, newName)
+
+	// Un-delete the destination path if it was previously deleted.
+	// This handles rename-to-deleted-path correctly.
+	if fs.mutationMode {
+		fs.unDeletePath(newPath)
+	}
 
 	if fs.mutationMode {
 		if oldIsPxar {
