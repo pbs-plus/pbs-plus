@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -486,22 +487,54 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		backedName[be.name] = true
 	}
 
-	// Process entries: pxar entries first (to advance payload position past
-	// original range), then backed entries (which get new payload offsets).
-	var allEntries []walkEntry
+	// Build a name→pxarEntry index so backed entries replacing pxar
+	// entries can inherit the original FileOffset for correct ordering.
+	pxarByName := make(map[string]*dirEntrySlim, len(pxarEntries))
+	for i := range pxarEntries {
+		pxarByName[pxarEntries[i].name] = &pxarEntries[i]
+	}
+
+	// Build position-ordered entry list.
+	// readDirRaw iterates the goodbye BST (hash-sorted), but entries must
+	// be processed in original archive encoding order (depth-first walk)
+	// to keep payload offsets strictly increasing. Each entry's FileOffset
+	// (metadata stream position) reflects that original order.
+	type posEntry struct {
+		walkEntry
+		fileOffset uint64
+	}
+	var entries []posEntry
+
+	// Pxar entries not overridden by backed files.
 	for _, pe := range pxarEntries {
 		if backedName[pe.name] {
 			continue
 		}
-		allEntries = append(allEntries, walkEntry{
-			name:   pe.name,
-			pxar:   &pe.meta,
-			backed: false,
+		entries = append(entries, posEntry{
+			walkEntry:  walkEntry{name: pe.name, entryStart: pe.entryStart, backed: false},
+			fileOffset: pe.entryStart,
 		})
 	}
-	allEntries = append(allEntries, backedEntries...)
 
-	for _, we := range allEntries {
+	// Backed entries: if replacing a pxar entry, inherit its FileOffset
+	// so the backed dir/file is processed at the same position in the
+	// archive order. New entries (no pxar counterpart) go at the end.
+	for _, be := range backedEntries {
+		fo := ^uint64(0)
+		if pe, ok := pxarByName[be.name]; ok {
+			fo = pe.entryStart
+		}
+		entries = append(entries, posEntry{
+			walkEntry:  be,
+			fileOffset: fo,
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].fileOffset < entries[j].fileOffset
+	})
+
+	for _, we := range entries {
 		childRel := relPath
 		if childRel != "/" {
 			childRel += "/"
@@ -587,9 +620,15 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 			continue
 		}
 
-		// Pxar-only entry
-		pxarEntry := we.pxar
-		if pxarEntry == nil {
+		// Pxar-only entry: re-read full entry from archive (cold path)
+		if we.entryStart == 0 {
+			continue
+		}
+
+		fs.pxar.readerMu.Lock()
+		pxarEntry, err := fs.pxar.reader.ReadEntryAt(int64(we.entryStart))
+		fs.pxar.readerMu.Unlock()
+		if err != nil {
 			continue
 		}
 
@@ -638,9 +677,9 @@ func (ow *overlayWalk) ensureAdvanced() error {
 }
 
 type walkEntry struct {
-	pxar   *pxar.Entry
-	name   string
-	backed bool
+	entryStart uint64 // FileOffset for re-reading full entry on demand
+	name       string
+	backed     bool
 }
 
 // readBackedDir reads directory entries from the backing filesystem.
