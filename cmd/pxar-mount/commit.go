@@ -487,43 +487,54 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		backedName[be.name] = true
 	}
 
-	// Collect pxar entries not overridden by backed files.
-	// Separate into directories (order doesn't matter for monotonicity)
-	// and files (must be sorted by PayloadOffset to maintain strictly
-	// increasing offsets required by WriteEntryRef, matching Rust's
-	// cache which batches reusable entries in filesystem order).
-	var pxarDirs, pxarFiles []walkEntry
+	// Build a name→pxarEntry index so backed entries replacing pxar
+	// entries can inherit the original FileOffset for correct ordering.
+	pxarByName := make(map[string]*dirEntryMeta, len(pxarEntries))
+	for i := range pxarEntries {
+		pxarByName[pxarEntries[i].name] = &pxarEntries[i]
+	}
+
+	// Build position-ordered entry list.
+	// readDirRaw iterates the goodbye BST (hash-sorted), but entries must
+	// be processed in original archive encoding order (depth-first walk)
+	// to keep payload offsets strictly increasing. Each entry's FileOffset
+	// (metadata stream position) reflects that original order.
+	type posEntry struct {
+		walkEntry
+		fileOffset uint64
+	}
+	var entries []posEntry
+
+	// Pxar entries not overridden by backed files.
 	for _, pe := range pxarEntries {
 		if backedName[pe.name] {
 			continue
 		}
-		we := walkEntry{
-			name:   pe.name,
-			pxar:   &pe.meta,
-			backed: false,
-		}
-		if pe.meta.IsDir() {
-			pxarDirs = append(pxarDirs, we)
-		} else {
-			pxarFiles = append(pxarFiles, we)
-		}
+		entries = append(entries, posEntry{
+			walkEntry:  walkEntry{name: pe.name, pxar: &pe.meta, backed: false},
+			fileOffset: pe.meta.FileOffset,
+		})
 	}
 
-	// Sort pxar files by PayloadOffset so WriteEntryRef sees strictly
-	// increasing offsets. readDirRaw iterates the goodbye BST which is
-	// hash-sorted, not filesystem order.
-	sort.Slice(pxarFiles, func(i, j int) bool {
-		return pxarFiles[i].pxar.PayloadOffset < pxarFiles[j].pxar.PayloadOffset
+	// Backed entries: if replacing a pxar entry, inherit its FileOffset
+	// so the backed dir/file is processed at the same position in the
+	// archive order. New entries (no pxar counterpart) go at the end.
+	for _, be := range backedEntries {
+		fo := ^uint64(0)
+		if pe, ok := pxarByName[be.name]; ok {
+			fo = pe.meta.FileOffset
+		}
+		entries = append(entries, posEntry{
+			walkEntry:  be,
+			fileOffset: fo,
+		})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].fileOffset < entries[j].fileOffset
 	})
 
-	// Process: pxar files first (sorted by payload offset), then dirs,
-	// then backed entries (which get new payload offsets via WriteEntry).
-	var allEntries []walkEntry
-	allEntries = append(allEntries, pxarFiles...)
-	allEntries = append(allEntries, pxarDirs...)
-	allEntries = append(allEntries, backedEntries...)
-
-	for _, we := range allEntries {
+	for _, we := range entries {
 		childRel := relPath
 		if childRel != "/" {
 			childRel += "/"
