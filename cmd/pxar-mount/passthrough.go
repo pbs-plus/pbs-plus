@@ -197,7 +197,7 @@ func (fs *passthroughFS) precreateDir(ino uint64, relPath string) error {
 			continue
 		}
 		childPath := relPath + "/" + pe.name
-		fs.pxar.registerNode(pe.inode, ino, &pe.meta)
+		fs.pxar.registerSlimNode(&pe, ino)
 		fs.setNode(pe.inode, childPath, true)
 		fs.mu.Lock()
 		fs.pxarDir[pe.inode] = true
@@ -262,24 +262,30 @@ func (fs *passthroughFS) registerFh(rel string, nodeID uint64, flags int) (uint6
 }
 
 // getPxarNode safely reads a node from the pxar node cache.
+// Returns a heap-allocated copy — use only when pointer is needed for FUSE APIs.
 func (fs *passthroughFS) getPxarNode(ino uint64) *node {
 	fs.pxar.mu.RLock()
 	defer fs.pxar.mu.RUnlock()
-	return fs.pxar.nodes[ino]
+	n, ok := fs.pxar.nodes[ino]
+	if !ok {
+		return nil
+	}
+	return &n
 }
 
 // nodeFromStat creates a minimal node from a syscall.Stat_t for use with
 // fillEntryOut / fillAttrOut. The inode field is set by the caller.
 func nodeFromStat(st *syscall.Stat_t) *node {
 	return &node{
-		fileSize:  uint64(st.Size),
-		mode:      uint64(st.Mode),
-		uid:       st.Uid,
-		gid:       st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec),
-		isDir:     st.Mode&syscall.S_IFDIR != 0,
-		isSymlink: st.Mode&syscall.S_IFLNK != 0,
-		isReg:     st.Mode&syscall.S_IFREG != 0,
+		fileSize:   uint64(st.Size),
+		mode:       uint64(st.Mode),
+		mtimeSecs:  int64(st.Mtim.Sec),
+		uid:        st.Uid,
+		mtimeNanos: uint32(st.Mtim.Nsec),
+		gid:        st.Gid,
+		isDir:      st.Mode&syscall.S_IFDIR != 0,
+		isSymlink:  st.Mode&syscall.S_IFLNK != 0,
+		isReg:      st.Mode&syscall.S_IFREG != 0,
 	}
 }
 
@@ -816,7 +822,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	parentPath := fs.nodePath(input.NodeId)
 
 	// Read pxar entries
-	var pxarEntries []dirEntryMeta
+	var pxarEntries []dirEntrySlim
 	if pxarN, err := fs.pxar.readDirRaw(input.NodeId); err == nil {
 		pxarEntries = pxarN
 	} else if fs.isBacked(input.NodeId) {
@@ -824,13 +830,13 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	}
 
 	// Read backing dir entries
-	var backedEntries []dirEntryMeta
+	var backedEntries []dirEntrySlim
 	var backedStats []syscall.Stat_t // parallel: syscall.Stat_t for each backed entry
 	if parentPath != "" {
 		absParent := fs.absPath(parentPath)
 		des, err := os.ReadDir(absParent)
 		if err == nil && len(des) > 0 {
-			backedEntries = make([]dirEntryMeta, 0, len(des))
+			backedEntries = make([]dirEntrySlim, 0, len(des))
 			backedStats = make([]syscall.Stat_t, 0, len(des))
 			for _, de := range des {
 				info, err := de.Info()
@@ -844,7 +850,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 				ino := fs.allocBackedIno(isDir)
 				fs.setNode(ino, childPath, true)
 
-				backedEntries = append(backedEntries, dirEntryMeta{
+				backedEntries = append(backedEntries, dirEntrySlim{
 					name:  de.Name(),
 					inode: ino,
 					mode:  uint32(mode),
@@ -874,8 +880,9 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	}
 
 	// Register pxar nodes so fillEntryOutForNode can find them.
-	for _, pe := range pxarEntries {
-		fs.pxar.registerNode(pe.inode, input.NodeId, &pe.meta)
+	for i := range pxarEntries {
+		pe := &pxarEntries[i]
+		fs.pxar.registerSlimNode(pe, input.NodeId)
 		// Track pxar-originated directories for xattr sidecar support
 		if isDirInode(pe.inode) {
 			fs.mu.Lock()
@@ -884,7 +891,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		}
 	}
 
-	entries := make([]dirEntryMeta, 0, len(pxarEntries)+len(backedEntries))
+	entries := make([]dirEntrySlim, 0, len(pxarEntries)+len(backedEntries))
 	for _, pe := range pxarEntries {
 		if !backedName[pe.name] {
 			entries = append(entries, pe)
@@ -930,7 +937,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		}
 
 		fs.pxar.mu.RLock()
-		if pn := fs.pxar.nodes[parentIno]; pn != nil {
+		if pn, pok := fs.pxar.nodes[parentIno]; pok {
 			parentMode = statMode(pn.mode)
 		}
 		fs.pxar.mu.RUnlock()
@@ -1023,7 +1030,7 @@ func (fs *passthroughFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fu
 // pxarEntriesForPath finds pxar directory entries for a given path by
 // looking up the parent's pxar entries and matching the last component.
 // Returns nil if not found.
-func (fs *passthroughFS) pxarEntriesForPath(relPath string) []dirEntryMeta {
+func (fs *passthroughFS) pxarEntriesForPath(relPath string) []dirEntrySlim {
 	if relPath == "" || relPath == "/" {
 		return nil
 	}
@@ -1052,7 +1059,7 @@ func (fs *passthroughFS) pxarEntriesForPath(relPath string) []dirEntryMeta {
 	for _, pe := range parentEntries {
 		if pe.name == name && isDirInode(pe.inode) {
 			// Found the pxar directory — register it and read its entries
-			fs.pxar.registerNode(pe.inode, parentIno, &pe.meta)
+			fs.pxar.registerSlimNode(&pe, parentIno)
 			children, err := fs.pxar.readDirRaw(pe.inode)
 			if err != nil {
 				return nil
