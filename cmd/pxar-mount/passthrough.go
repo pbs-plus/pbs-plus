@@ -170,43 +170,33 @@ func (fs *passthroughFS) ensureBackingParent(rel string) error {
 	return os.MkdirAll(fs.absPath(parent), 0o755)
 }
 
-// precreateDirectories walks the pxar tree and creates all directories
-// in the backing dir so that SMB's acl_xattr can work directly on them.
-func (fs *passthroughFS) precreateDirectories() error {
-	// Mark root as backed and pxar-originated
+// initPassthroughRoot initializes the root directory in the backing dir.
+// Subdirectories are created lazily on first access (Lookup / ReadDir)
+// via ensureDirBacking, rather than eagerly walking the entire pxar tree.
+func (fs *passthroughFS) initPassthroughRoot() error {
+	if err := os.MkdirAll(fs.backingDir, 0o755); err != nil {
+		return err
+	}
 	fs.setNode(rootInode, "/", true)
 	fs.mu.Lock()
 	fs.pxarDir[rootInode] = true
 	fs.mu.Unlock()
-	return fs.precreateDir(rootInode, "/")
+	return nil
 }
 
-func (fs *passthroughFS) precreateDir(ino uint64, relPath string) error {
+// ensureDirBacking lazily creates a pxar-originated directory on disk in
+// the backing filesystem. This is called when a directory is first accessed
+// (via Lookup or ReadDir), avoiding the need to walk the entire archive tree
+// at init time. MkdirAll ensures all ancestor directories exist as well.
+func (fs *passthroughFS) ensureDirBacking(ino uint64, relPath string) {
 	absPath := fs.absPath(relPath)
 	if err := os.MkdirAll(absPath, 0o755); err != nil {
-		return err
+		return
 	}
-
-	entries, err := fs.pxar.readDirRaw(ino)
-	if err != nil {
-		return nil // leaf or unreadable, not an error
-	}
-
-	for _, pe := range entries {
-		if !isDirInode(pe.inode) {
-			continue
-		}
-		childPath := relPath + "/" + pe.name
-		fs.pxar.registerNode(pe.inode, ino, &pe.meta)
-		fs.setNode(pe.inode, childPath, true)
-		fs.mu.Lock()
-		fs.pxarDir[pe.inode] = true
-		fs.mu.Unlock()
-		if err := fs.precreateDir(pe.inode, childPath); err != nil {
-			return err
-		}
-	}
-	return nil
+	fs.setNode(ino, relPath, true)
+	fs.mu.Lock()
+	fs.pxarDir[ino] = true
+	fs.mu.Unlock()
 }
 
 // statBacked stat's a relative path in the backing dir and constructs
@@ -262,31 +252,72 @@ func (fs *passthroughFS) registerFh(rel string, nodeID uint64, flags int) (uint6
 }
 
 // getPxarNode safely reads a node from the pxar node cache.
+// Returns a heap-allocated copy — use only when pointer is needed for FUSE APIs.
 func (fs *passthroughFS) getPxarNode(ino uint64) *node {
 	fs.pxar.mu.RLock()
 	defer fs.pxar.mu.RUnlock()
-	return fs.pxar.nodes[ino]
+	n, ok := fs.pxar.nodes[ino]
+	if !ok {
+		return nil
+	}
+	return &n
 }
 
-func (fs *passthroughFS) fillStatAttr(n *node, attr *fuse.Attr) {
-	attr.Ino = n.inode
-	attr.Size = n.fileSize
-	attr.Blocks = (n.fileSize + 511) / 512
-	attr.Atime = uint64(n.mtimeSecs)
-	attr.Mtime = uint64(n.mtimeSecs)
-	attr.Ctime = uint64(n.mtimeSecs)
-	attr.Atimensec = n.mtimeNanos
-	attr.Mtimensec = n.mtimeNanos
-	attr.Ctimensec = n.mtimeNanos
-	attr.Mode = statMode(n.mode)
-	if n.isDir {
-		attr.Nlink = 2
-	} else {
-		attr.Nlink = 1
+// nodeFromStat creates a minimal node from a syscall.Stat_t for use with
+// fillEntryOut / fillAttrOut. The inode field is set by the caller.
+func nodeFromStat(st *syscall.Stat_t) *node {
+	return &node{
+		fileSize:   uint64(st.Size),
+		mode:       uint64(st.Mode),
+		mtimeSecs:  int64(st.Mtim.Sec),
+		uid:        st.Uid,
+		mtimeNanos: uint32(st.Mtim.Nsec),
+		gid:        st.Gid,
+		isDir:      st.Mode&syscall.S_IFDIR != 0,
+		isSymlink:  st.Mode&syscall.S_IFLNK != 0,
+		isReg:      st.Mode&syscall.S_IFREG != 0,
 	}
-	attr.Uid = n.uid
-	attr.Gid = n.gid
-	attr.Blksize = 4096
+}
+
+// isPxarBacked returns true if the node (by inode) originated from the pxar
+// archive. Pxar-backed nodes reject ALL mutating FS operations, including
+// xattr changes — the archive is fully immutable.
+func (fs *passthroughFS) isPxarBacked(ino uint64) bool {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	return fs.pxarDir[ino]
+}
+
+// isPxarChild checks whether any pxar entry (file, dir, symlink, etc.) with
+// the given name exists under the parent directory. Used to prevent
+// deletion/rename of archive entries.
+func (fs *passthroughFS) isPxarChild(parentIno uint64, name string) bool {
+	entries, err := fs.pxar.readDirRaw(parentIno)
+	if err != nil {
+		// Node may have been evicted — try recovery via path
+		parentPath := fs.nodePath(parentIno)
+		if parentPath != "" {
+			if recovered := fs.recoverPxarDirNode(parentPath); recovered != 0 {
+				fs.setNode(recovered, parentPath, true)
+				fs.mu.Lock()
+				fs.pxarDir[recovered] = true
+				fs.mu.Unlock()
+				if entries2, err2 := fs.pxar.readDirRaw(recovered); err2 == nil {
+					entries = entries2
+					err = nil
+				}
+			}
+		}
+		if err != nil {
+			return false
+		}
+	}
+	for _, e := range entries {
+		if e.name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Lookup ---
@@ -312,6 +343,22 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 			fs.mu.Unlock()
 			return fuse.OK
 		}
+		// pxar.Lookup failed — the parent node may have been evicted.
+		// Try to recover by walking the pxar tree from root.
+		if pxarIno := fs.recoverPxarDirNode(childPath); pxarIno != 0 {
+			fs.setNode(pxarIno, childPath, true)
+			fs.mu.Lock()
+			fs.pxarDir[pxarIno] = true
+			fs.mu.Unlock()
+			// Use the recovered pxar inode
+			fs.pxar.mu.RLock()
+			if pn, ok := fs.pxar.nodes[pxarIno]; ok {
+				fillEntryOut(pxarIno, &pn, out)
+				fs.pxar.mu.RUnlock()
+				return fuse.OK
+			}
+			fs.pxar.mu.RUnlock()
+		}
 	}
 
 	if backedNode != nil {
@@ -326,11 +373,12 @@ func (fs *passthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 	// Delegate to pxar
 	st := fs.pxar.Lookup(cancel, header, name, out)
 	if st == fuse.OK {
-		fs.setNode(out.NodeId, childPath, false)
 		if out.Mode&syscall.S_IFDIR != 0 {
-			fs.mu.Lock()
-			fs.pxarDir[out.NodeId] = true
-			fs.mu.Unlock()
+			// Lazily create the backing directory on first access
+			// so SMB's acl_xattr can store/retrieve ACLs.
+			fs.ensureDirBacking(out.NodeId, childPath)
+		} else {
+			fs.setNode(out.NodeId, childPath, false)
 		}
 		fs.mu.Lock()
 		if _, exists := fs.nodePaths[header.NodeId]; !exists {
@@ -350,17 +398,8 @@ func (fs *passthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, 
 		if err := syscall.Lstat(fs.absPath(rel), &st); err != nil {
 			return fuse.ToStatus(err)
 		}
-		n := &node{
-			inode:     input.NodeId,
-			fileSize:  uint64(st.Size),
-			mode:      uint64(st.Mode),
-			uid:       st.Uid,
-			gid:       st.Gid,
-			mtimeSecs: int64(st.Mtim.Sec),
-			isDir:     st.Mode&syscall.S_IFDIR != 0,
-			isSymlink: st.Mode&syscall.S_IFLNK != 0,
-			isReg:     st.Mode&syscall.S_IFREG != 0,
-		}
+		n := nodeFromStat(&st)
+		n.inode = input.NodeId
 		fillAttrOut(n, out)
 		return fuse.OK
 	}
@@ -370,6 +409,10 @@ func (fs *passthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, 
 func (fs *passthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) fuse.Status {
 	if !fs.isBacked(input.NodeId) {
 		return fuse.EROFS
+	}
+	// Pxar-backed entries are immutable — reject metadata mutations.
+	if fs.isPxarBacked(input.NodeId) {
+		return fuse.EPERM
 	}
 	rel := fs.nodePath(input.NodeId)
 	abs := fs.absPath(rel)
@@ -448,12 +491,11 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	out.AttrValid = 1
 	out.Fh = fhID
 	out.OpenFlags = fuse.FOPEN_KEEP_CACHE
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-		isReg: true,
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	n.isReg = true
+	fillAttr(&out.Attr, n)
 
 	return fuse.OK
 }
@@ -479,16 +521,11 @@ func (fs *passthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 		return fuse.ToStatus(err)
 	}
 
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-		isDir: true,
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	n.isDir = true
+	fillEntryOut(ino, n, out)
 
 	return fuse.OK
 }
@@ -514,15 +551,10 @@ func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 		return fuse.ToStatus(err)
 	}
 
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	fillEntryOut(ino, n, out)
 
 	return fuse.OK
 }
@@ -548,55 +580,58 @@ func (fs *passthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, 
 		return fuse.ToStatus(err)
 	}
 
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-		isSymlink: true,
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	n.isSymlink = true
+	fillEntryOut(ino, n, out)
 
 	return fuse.OK
 }
 
 // --- Unlink / Rmdir ---
 
-func (fs *passthroughFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
-	parentPath := fs.nodePath(header.NodeId)
-	childPath := parentPath + "/" + name
+// --- Unlink / Rmdir ---
 
+// removeEntry is the shared implementation for Unlink and Rmdir.
+func (fs *passthroughFS) removeEntry(parentIno uint64, name string, removeFn func(string) error) fuse.Status {
+	if fs.isPxarChild(parentIno, name) {
+		return fuse.EPERM
+	}
+
+	parentPath := fs.nodePath(parentIno)
+	childPath := parentPath + "/" + name
 	abs := fs.absPath(childPath)
+
 	if _, err := os.Lstat(abs); err != nil {
 		return fuse.EROFS
 	}
-
-	if err := syscall.Unlink(abs); err != nil {
+	if err := removeFn(abs); err != nil {
 		return fuse.ToStatus(err)
 	}
 	return fuse.OK
 }
 
+func (fs *passthroughFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
+	return fs.removeEntry(header.NodeId, name, syscall.Unlink)
+}
+
 func (fs *passthroughFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
-	parentPath := fs.nodePath(header.NodeId)
-	childPath := parentPath + "/" + name
-
-	abs := fs.absPath(childPath)
-	if _, err := os.Lstat(abs); err != nil {
-		return fuse.EROFS
-	}
-
-	if err := syscall.Rmdir(abs); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
+	return fs.removeEntry(header.NodeId, name, syscall.Rmdir)
 }
 
 // --- Rename ---
 
 func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldName string, newName string) fuse.Status {
+	// Pxar entries cannot be renamed/moved — the archive tree is immutable.
+	if fs.isPxarChild(input.NodeId, oldName) {
+		return fuse.EPERM
+	}
+	// Also reject overwriting/exchanging a pxar entry at the destination.
+	if fs.isPxarChild(input.Newdir, newName) {
+		return fuse.EPERM
+	}
+
 	oldParentPath := fs.nodePath(input.NodeId)
 	newParentPath := fs.nodePath(input.Newdir)
 	oldPath := oldParentPath + "/" + oldName
@@ -620,29 +655,21 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 		if _, err := os.Lstat(newAbs); err == nil {
 			return fuse.Status(syscall.EEXIST)
 		}
-		return fs.renameSimple(oldAbs, newAbs)
+		if err := os.Rename(oldAbs, newAbs); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
 	}
 
 	if input.Flags&renameExchange != 0 {
-		return fs.renameExchange(oldAbs, newAbs)
+		if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
 	}
 
 	// Default: rename with potential overwrite of existing backing file.
 	if err := os.Rename(oldAbs, newAbs); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
-}
-
-func (fs *passthroughFS) renameSimple(oldAbs, newAbs string) fuse.Status {
-	if err := os.Rename(oldAbs, newAbs); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
-}
-
-func (fs *passthroughFS) renameExchange(oldAbs, newAbs string) fuse.Status {
-	if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
 		return fuse.ToStatus(err)
 	}
 	return fuse.OK
@@ -659,6 +686,11 @@ func (fs *passthroughFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name s
 func (fs *passthroughFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
 	if !fs.isBacked(input.NodeId) {
 		return fs.pxar.Open(cancel, input, out)
+	}
+
+	// Pxar-backed entries are read-only — reject write opens.
+	if fs.isPxarBacked(input.NodeId) && input.Flags&(uint32(syscall.O_WRONLY|syscall.O_RDWR)) != 0 {
+		return fuse.EROFS
 	}
 
 	rel := fs.nodePath(input.NodeId)
@@ -696,6 +728,9 @@ func (fs *passthroughFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data
 	if !fs.isBacked(input.NodeId) {
 		return 0, fuse.EROFS
 	}
+	if fs.isPxarBacked(input.NodeId) {
+		return 0, fuse.EROFS
+	}
 
 	fh := fs.handleForNode(input.NodeId, input.Fh)
 	if fh == nil {
@@ -709,12 +744,11 @@ func (fs *passthroughFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data
 	return uint32(n), fuse.OK
 }
 
-func (fs *passthroughFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
-	if !fs.isBacked(input.NodeId) {
+func (fs *passthroughFS) fsyncBacked(nodeID, fhID uint64) fuse.Status {
+	if !fs.isBacked(nodeID) {
 		return fuse.OK
 	}
-
-	fh := fs.handleForNode(input.NodeId, input.Fh)
+	fh := fs.handleForNode(nodeID, fhID)
 	if fh == nil {
 		return fuse.EBADF
 	}
@@ -724,23 +758,19 @@ func (fs *passthroughFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse
 	return fuse.OK
 }
 
-func (fs *passthroughFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
-	if !fs.isBacked(input.NodeId) {
-		return fuse.OK
-	}
+func (fs *passthroughFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
+	return fs.fsyncBacked(input.NodeId, input.Fh)
+}
 
-	fh := fs.handleForNode(input.NodeId, input.Fh)
-	if fh == nil {
-		return fuse.EBADF
-	}
-	if err := syscall.Fsync(fh.fd); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
+func (fs *passthroughFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
+	return fs.fsyncBacked(input.NodeId, input.Fh)
 }
 
 func (fs *passthroughFS) Fallocate(cancel <-chan struct{}, input *fuse.FallocateIn) fuse.Status {
 	if !fs.isBacked(input.NodeId) {
+		return fuse.EROFS
+	}
+	if fs.isPxarBacked(input.NodeId) {
 		return fuse.EROFS
 	}
 
@@ -823,29 +853,35 @@ func (fs *passthroughFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn,
 func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList, plus bool) fuse.Status {
 	parentPath := fs.nodePath(input.NodeId)
 
-	// Read pxar entries
-	var pxarEntries []dirEntryMeta
-	if pxarN, err := fs.pxar.readDirRaw(input.NodeId); err == nil {
-		pxarEntries = pxarN
-	} else {
-		// For backed directories that shadow pxar directories, readDirRaw
-		// fails because the inode isn't in the pxar node cache. Try to
-		// find the pxar directory by looking up the parent's entries.
-		if fs.isBacked(input.NodeId) {
-			if pxarEntries = fs.pxarEntriesForPath(parentPath); pxarEntries != nil {
-				// Found pxar entries — register the node so future reads work
-			}
+	// Resolve the actual pxar inode to use for reading directory entries.
+	// input.NodeId may be a backed inode (from allocBackedIno) that has no
+	// pxar node registered. In that case, recover the pxar inode from the
+	// archive by walking from root.
+	dirIno := input.NodeId
+	if _, err := fs.pxar.readDirRaw(dirIno); err != nil && parentPath != "" {
+		if recovered := fs.recoverPxarDirNode(parentPath); recovered != 0 {
+			fs.setNode(recovered, parentPath, true)
+			fs.mu.Lock()
+			fs.pxarDir[recovered] = true
+			fs.mu.Unlock()
+			dirIno = recovered
 		}
 	}
 
+	// Read pxar entries using the resolved inode.
+	var pxarEntries []dirEntrySlim
+	if pxarN, err := fs.pxar.readDirRaw(dirIno); err == nil {
+		pxarEntries = pxarN
+	}
+
 	// Read backing dir entries
-	var backedEntries []dirEntryMeta
+	var backedEntries []dirEntrySlim
 	var backedStats []syscall.Stat_t // parallel: syscall.Stat_t for each backed entry
 	if parentPath != "" {
 		absParent := fs.absPath(parentPath)
 		des, err := os.ReadDir(absParent)
 		if err == nil && len(des) > 0 {
-			backedEntries = make([]dirEntryMeta, 0, len(des))
+			backedEntries = make([]dirEntrySlim, 0, len(des))
 			backedStats = make([]syscall.Stat_t, 0, len(des))
 			for _, de := range des {
 				info, err := de.Info()
@@ -859,7 +895,7 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 				ino := fs.allocBackedIno(isDir)
 				fs.setNode(ino, childPath, true)
 
-				backedEntries = append(backedEntries, dirEntryMeta{
+				backedEntries = append(backedEntries, dirEntrySlim{
 					name:  de.Name(),
 					inode: ino,
 					mode:  uint32(mode),
@@ -889,24 +925,28 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	}
 
 	// Register pxar nodes so fillEntryOutForNode can find them.
-	for _, pe := range pxarEntries {
-		fs.pxar.registerNode(pe.inode, input.NodeId, &pe.meta)
-		// Track pxar-originated directories for xattr sidecar support
+	// For directories, lazily create them in the backing filesystem.
+	for i := range pxarEntries {
+		pe := &pxarEntries[i]
+		fs.pxar.registerSlimNode(pe, input.NodeId)
+		childPath := parentPath + "/" + pe.name
 		if isDirInode(pe.inode) {
-			fs.mu.Lock()
-			fs.pxarDir[pe.inode] = true
-			fs.mu.Unlock()
+			// Lazily create the backing directory on first ReadDir
+			// so SMB's acl_xattr can store/retrieve ACLs.
+			fs.ensureDirBacking(pe.inode, childPath)
 		}
 	}
 
-	entries := make([]dirEntryMeta, 0, len(pxarEntries)+len(backedEntries))
+	entries := make([]dirEntrySlim, 0, len(pxarEntries)+len(backedEntries))
 	for _, pe := range pxarEntries {
 		if !backedName[pe.name] {
 			entries = append(entries, pe)
-			fs.setNode(pe.inode, parentPath+"/"+pe.name, false)
+			if !isDirInode(pe.inode) {
+				fs.setNode(pe.inode, parentPath+"/"+pe.name, false)
+			}
 		} else if isDirInode(pe.inode) {
-			// Pxar directory shadowed by a backed directory (created by
-			// ensureBackingParent). Keep the pxar inode so readDirRaw
+			// Pxar directory shadowed by a backed directory (e.g. from a
+			// previous lazy creation). Keep the pxar inode so readDirRaw
 			// works, but mark as backed so file creation works.
 			entries = append(entries, pe)
 			fs.setNode(pe.inode, parentPath+"/"+pe.name, true)
@@ -943,15 +983,9 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		if n := fs.getPxarNode(input.NodeId); n != nil {
 			parentIno = n.parent
 		}
-		// For backed nodes, try to find parent in pxar cache
-		if fs.isBacked(input.NodeId) {
-			if pn := fs.getPxarNode(input.NodeId); pn != nil {
-				parentIno = pn.parent
-			}
-		}
 
 		fs.pxar.mu.RLock()
-		if pn := fs.pxar.nodes[parentIno]; pn != nil {
+		if pn, pok := fs.pxar.nodes[parentIno]; pok {
 			parentMode = statMode(pn.mode)
 		}
 		fs.pxar.mu.RUnlock()
@@ -1006,7 +1040,10 @@ func (fs *passthroughFS) dirModeForNode(ino uint64) uint32 {
 func (fs *passthroughFS) fillEntryOutForNode(ino uint64, out *fuse.EntryOut) {
 	// Fast path: use cached stat from readDirImpl
 	if st, ok := fs.readDirStats[ino]; ok {
-		fillAttrFromStat(ino, &st, out)
+		n := nodeFromStat(&st)
+		n.inode = ino
+		n.mtimeNanos = uint32(st.Mtim.Nsec)
+		fillEntryOut(ino, n, out)
 		return
 	}
 	if fs.isBacked(ino) {
@@ -1020,33 +1057,6 @@ func (fs *passthroughFS) fillEntryOutForNode(ino uint64, out *fuse.EntryOut) {
 	if n := fs.getPxarNode(ino); n != nil {
 		fillEntryOut(ino, n, out)
 	}
-}
-
-// fillAttrFromStat fills a fuse.EntryOut directly from a syscall.Stat_t
-// without allocating an intermediate node struct.
-func fillAttrFromStat(ino uint64, st *syscall.Stat_t, out *fuse.EntryOut) {
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	out.Ino = ino
-	out.Size = uint64(st.Size)
-	out.Blocks = (uint64(st.Size) + 511) / 512
-	out.Mode = uint32(st.Mode)
-	out.Nlink = 1
-	if st.Mode&syscall.S_IFDIR != 0 {
-		out.Nlink = 2
-		out.Mode |= syscall.S_IFDIR
-	}
-	out.Uid = st.Uid
-	out.Gid = st.Gid
-	out.Mtime = uint64(st.Mtim.Sec)
-	out.Mtimensec = uint32(st.Mtim.Nsec)
-	out.Atime = uint64(st.Atim.Sec)
-	out.Atimensec = uint32(st.Atim.Nsec)
-	out.Ctime = uint64(st.Ctim.Sec)
-	out.Ctimensec = uint32(st.Ctim.Nsec)
-	out.Blksize = 4096
 }
 
 func (fs *passthroughFS) ReleaseDir(input *fuse.ReleaseIn) {}
@@ -1065,47 +1075,52 @@ func (fs *passthroughFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fu
 
 // --- xattr ---
 
-// pxarEntriesForPath finds pxar directory entries for a given path by
-// looking up the parent's pxar entries and matching the last component.
-// Returns nil if not found.
-func (fs *passthroughFS) pxarEntriesForPath(relPath string) []dirEntryMeta {
+// recoverPxarDirNode attempts to recover the pxar inode for a directory
+// whose node was evicted from the pxar node cache. It walks up the path
+// to find an ancestor still in cache, then re-reads directory entries
+// down to the target directory, re-registering all nodes along the way.
+// Returns the recovered pxar inode, or 0 if recovery fails.
+func (fs *passthroughFS) recoverPxarDirNode(relPath string) uint64 {
 	if relPath == "" || relPath == "/" {
-		return nil
+		return rootInode
 	}
-	parent := filepath.Dir(relPath)
-	name := filepath.Base(relPath)
 
-	// Find the parent directory's pxar inode
-	var parentIno uint64
-	fs.mu.RLock()
-	for ino, p := range fs.nodePaths {
-		if p == parent && !fs.backed[ino] {
-			parentIno = ino
-			break
+	// Build the path components: ["", "2022-PROJECTS", "USGS__22.PA"]
+	parts := strings.Split(relPath, "/")
+
+	// Find the deepest ancestor still registered in pxar.nodes.
+	// Start from root (always in cache after hotSwap or init) and walk down.
+	curIno := rootInode
+	for i := 1; i < len(parts); i++ {
+		name := parts[i]
+		if name == "" {
+			continue
 		}
-	}
-	fs.mu.RUnlock()
-	if parentIno == 0 {
-		return nil
-	}
 
-	parentEntries, err := fs.pxar.readDirRaw(parentIno)
-	if err != nil {
-		return nil
-	}
+		// Try to read this level's directory entries
+		entries, err := fs.pxar.readDirRaw(curIno)
+		if err != nil {
+			return 0 // can't read parent
+		}
 
-	for _, pe := range parentEntries {
-		if pe.name == name && isDirInode(pe.inode) {
-			// Found the pxar directory — register it and read its entries
-			fs.pxar.registerNode(pe.inode, parentIno, &pe.meta)
-			children, err := fs.pxar.readDirRaw(pe.inode)
-			if err != nil {
-				return nil
+		found := false
+		for _, e := range entries {
+			if e.name == name {
+				fs.pxar.registerSlimNode(&e, curIno)
+				if isDirInode(e.inode) {
+					curIno = e.inode
+					found = true
+				} else {
+					return e.inode // it's a file, not a dir
+				}
+				break
 			}
-			return children
+		}
+		if !found {
+			return 0 // name not found in parent
 		}
 	}
-	return nil
+	return curIno
 }
 
 func (fs *passthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
@@ -1135,6 +1150,14 @@ func (fs *passthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 }
 
 func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
+	if !fs.isBacked(input.NodeId) {
+		return fuse.EROFS
+	}
+	// Pxar-backed entries are immutable — reject all xattr changes.
+	if fs.isPxarBacked(input.NodeId) {
+		return fuse.EPERM
+	}
+
 	flags := 0
 	if input.Flags&xattrCreate != 0 {
 		flags = unix.XATTR_CREATE
@@ -1142,27 +1165,27 @@ func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn
 		flags = unix.XATTR_REPLACE
 	}
 
-	if fs.isBacked(input.NodeId) {
-		rel := fs.nodePath(input.NodeId)
-		if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
-			return fuse.ToStatus(err)
-		}
-		return fuse.OK
+	rel := fs.nodePath(input.NodeId)
+	if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
+		return fuse.ToStatus(err)
 	}
-
-	return fuse.EROFS
+	return fuse.OK
 }
 
 func (fs *passthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
-	if fs.isBacked(header.NodeId) {
-		rel := fs.nodePath(header.NodeId)
-		if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
-			return fuse.ToStatus(err)
-		}
-		return fuse.OK
+	if !fs.isBacked(header.NodeId) {
+		return fuse.EROFS
+	}
+	// Pxar-backed entries are immutable — reject all xattr removals.
+	if fs.isPxarBacked(header.NodeId) {
+		return fuse.EPERM
 	}
 
-	return fuse.EROFS
+	rel := fs.nodePath(header.NodeId)
+	if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
+		return fuse.ToStatus(err)
+	}
+	return fuse.OK
 }
 
 // --- StatFs ---

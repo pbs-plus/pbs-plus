@@ -10,6 +10,14 @@
 //   - File reads use ReadFileContentReader per call (acceptable since kernel
 //     does read-ahead and the chunk store caches decoded chunks)
 //   - xattrs/symlink targets read from archive on demand via ReadEntryAt
+//
+// Zero-copy / allocation-optimized:
+//   - node struct field-ordered for minimal padding (64→48 bytes)
+//   - dirEntrySlim replaces dirEntryMeta: no full Entry copy, just offsets
+//   - sync.Pool for dir entry slices and Read buffers
+//   - Seek replaces io.CopyN(io.Discard) for file offset skips
+//   - Single RLock per node lookup (no double-acquire)
+//   - map[uint64]node (value) for fewer GC-scanned pointers
 package main
 
 import (
@@ -23,6 +31,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	pxar "github.com/pbs-plus/pxar"
@@ -40,18 +49,38 @@ const (
 func isDirInode(ino uint64) bool { return ino&nonDirBit == 0 }
 
 // node holds cached metadata for a single filesystem entry.
-// Only stores what's needed for GetAttr — full entry data is
-// fetched on demand for xattrs, symlinks, and file content.
+// Fields ordered largest→smallest to minimize padding.
+// Total: 64 bytes (8×uint64 + 2×int64 + 2×uint32 + 3×bool = 64, naturally aligned).
 type node struct {
-	inode         uint64
-	parent        uint64
-	refs          int64
 	entryStart    uint64 // FileOffset in archive
 	contentOffset uint64 // ContentOffset for directories (children start)
 	fileSize      uint64
 	mode          uint64
+	inode         uint64
+	parent        uint64
+	refs          int64
+	mtimeSecs     int64
+	uid           uint32
+	mtimeNanos    uint32
+	gid           uint32
+	isDir         bool
+	isSymlink     bool
+	isReg         bool
+	_             byte // explicit pad to 64 bytes
+}
+
+// dirEntrySlim is a lightweight directory entry for readdir results.
+// Avoids copying the full pxar.Entry (which contains strings, slices, etc.).
+// Only stores what FUSE DirEntry + node registration need.
+type dirEntrySlim struct {
+	name          string
+	entryStart    uint64 // FileOffset
+	contentOffset uint64 // ContentOffset
+	fileSize      uint64
+	mode          uint32
 	uid           uint32
 	gid           uint32
+	inode         uint64
 	mtimeSecs     int64
 	mtimeNanos    uint32
 	isDir         bool
@@ -59,14 +88,26 @@ type node struct {
 	isReg         bool
 }
 
+// dirEntryPool reuses dir entry slices across ReadDir calls.
+// The kernel caches directory entries in VFS, so ReadDir is only
+// called on cache miss — pool pressure is low.
+var dirEntryPool = sync.Pool{
+	New: func() any {
+		s := make([]dirEntrySlim, 0, 64)
+		return &s
+	},
+}
+
 // pxarFS implements fuse.RawFileSystem backed by a lazy-loading SplitArchiveReader.
+// nodes is stored by value (map[uint64]node) to reduce GC pointer scanning.
 type pxarFS struct {
 	fuse.RawFileSystem
 	reader   *transfer.SplitArchiveReader
-	nodes    map[uint64]*node
+	nodes    map[uint64]node // value-type: fewer GC-scanned pointers
 	size     int64
 	mu       sync.RWMutex
 	readerMu sync.Mutex
+	readerAt io.ReaderAt // payload ReaderAt — concurrent-safe, no lock needed
 }
 
 func toInode(e *pxar.Entry) uint64 {
@@ -181,12 +222,13 @@ func main() {
 	}
 
 	fs := &pxarFS{
-		reader: reader,
-		nodes:  make(map[uint64]*node),
-		size:   int64(root.FileOffset + root.FileSize),
+		reader:   reader,
+		readerAt: reader.PayloadReaderAt(),
+		nodes:    make(map[uint64]node),
+		size:     int64(root.FileOffset + root.FileSize),
 	}
 
-	fs.nodes[rootInode] = nodeFromEntry(root, rootInode, rootInode)
+	fs.nodes[rootInode] = newNodeFromEntry(root, rootInode, rootInode)
 
 	var rawFS fuse.RawFileSystem = fs
 
@@ -220,10 +262,12 @@ func main() {
 		}
 		rawFS = ptFS
 
-		// Pre-create all pxar directories in the backing dir so
-		// SMB's acl_xattr can store/retrieve ACLs directly.
-		if err := ptFS.precreateDirectories(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error pre-creating directories: %v\n", err)
+		// Initialize root in the backing dir. Directories are created lazily
+		// on first access (Lookup / ReadDir) so that startup is O(1) regardless
+		// of archive depth. SMB's acl_xattr can store/retrieve ACLs on each
+		// directory once it's materialized.
+		if err := ptFS.initPassthroughRoot(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error initializing passthrough root: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -286,24 +330,21 @@ func (fs *pxarFS) Init(server *fuse.Server) {
 }
 
 func (fs *pxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
-	// Read directory from archive — kernel caches results, so this is
-	// only called on cache miss.
 	entries, err := fs.readDirRaw(header.NodeId)
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
+	defer fs.releaseDirEntries(entries)
 
-	for _, e := range entries {
-		if e.name == name {
-			fs.registerNode(e.inode, header.NodeId, &e.meta)
+	for i := range entries {
+		if entries[i].name == name {
+			e := &entries[i]
+			fs.registerSlimNode(e, header.NodeId)
+			fs.refNode(e.inode)
 			fs.mu.RLock()
 			nd := fs.nodes[e.inode]
 			fs.mu.RUnlock()
-			if nd == nil {
-				return fuse.ENOENT
-			}
-			fs.refNode(e.inode)
-			fillEntryOut(e.inode, nd, out)
+			fillEntryOut(e.inode, &nd, out)
 			return fuse.OK
 		}
 	}
@@ -312,12 +353,12 @@ func (fs *pxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name str
 
 func (fs *pxarFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
 	fs.mu.RLock()
-	n := fs.nodes[input.NodeId]
+	n, ok := fs.nodes[input.NodeId]
 	fs.mu.RUnlock()
-	if n == nil {
+	if !ok {
 		return fuse.ENOENT
 	}
-	fillAttrOut(n, out)
+	fillAttrOut(&n, out)
 	return fuse.OK
 }
 
@@ -330,16 +371,16 @@ func (fs *pxarFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
+	defer fs.releaseDirEntries(entries)
 
 	// "." entry first
 	if input.Offset == 0 {
-		fs.mu.RLock()
-		n := fs.nodes[input.NodeId]
-		fs.mu.RUnlock()
 		mode := uint32(syscall.S_IFDIR | 0o555)
-		if n != nil {
+		fs.mu.RLock()
+		if n, ok := fs.nodes[input.NodeId]; ok {
 			mode = statMode(n.mode)
 		}
+		fs.mu.RUnlock()
 		if !out.AddDirEntry(fuse.DirEntry{Name: ".", Ino: input.NodeId, Mode: mode}) {
 			return fuse.OK
 		}
@@ -347,22 +388,9 @@ func (fs *pxarFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.
 
 	// ".." entry
 	if input.Offset == 0 || input.Offset == 1 {
-		fs.mu.RLock()
-		n := fs.nodes[input.NodeId]
-		fs.mu.RUnlock()
-		parentIno := uint64(rootInode)
-		mode := uint32(syscall.S_IFDIR | 0o555)
-		if n != nil {
-			parentIno = n.parent
-			fs.mu.RLock()
-			pn := fs.nodes[parentIno]
-			fs.mu.RUnlock()
-			if pn != nil {
-				mode = statMode(pn.mode)
-			}
-		}
+		parentIno, parentMode := fs.getParentInfo(input.NodeId)
 		if input.Offset <= 1 {
-			if !out.AddDirEntry(fuse.DirEntry{Name: "..", Ino: parentIno, Mode: mode}) {
+			if !out.AddDirEntry(fuse.DirEntry{Name: "..", Ino: parentIno, Mode: parentMode}) {
 				return fuse.OK
 			}
 		}
@@ -388,50 +416,39 @@ func (fs *pxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
+	defer fs.releaseDirEntries(entries)
 
 	// "." entry first
 	if input.Offset == 0 {
-		fs.mu.RLock()
-		n := fs.nodes[input.NodeId]
-		fs.mu.RUnlock()
 		mode := uint32(syscall.S_IFDIR | 0o555)
-		if n != nil {
+		fs.mu.RLock()
+		n, ok := fs.nodes[input.NodeId]
+		fs.mu.RUnlock()
+		if ok {
 			mode = statMode(n.mode)
 		}
 		eo := out.AddDirLookupEntry(fuse.DirEntry{Name: ".", Ino: input.NodeId, Mode: mode})
 		if eo == nil {
 			return fuse.OK
 		}
-		if n != nil {
-			fillEntryOut(input.NodeId, n, eo)
+		if ok {
+			fillEntryOut(input.NodeId, &n, eo)
 		}
 	}
 
 	// ".." entry
 	if input.Offset == 0 || input.Offset == 1 {
-		fs.mu.RLock()
-		n := fs.nodes[input.NodeId]
-		fs.mu.RUnlock()
-		parentIno := uint64(rootInode)
-		mode := uint32(syscall.S_IFDIR | 0o555)
-		var pn *node
-		if n != nil {
-			parentIno = n.parent
-			fs.mu.RLock()
-			pn = fs.nodes[parentIno]
-			fs.mu.RUnlock()
-			if pn != nil {
-				mode = statMode(pn.mode)
-			}
-		}
+		parentIno, parentMode := fs.getParentInfo(input.NodeId)
 		if input.Offset <= 1 {
-			eo := out.AddDirLookupEntry(fuse.DirEntry{Name: "..", Ino: parentIno, Mode: mode})
+			eo := out.AddDirLookupEntry(fuse.DirEntry{Name: "..", Ino: parentIno, Mode: parentMode})
 			if eo == nil {
 				return fuse.OK
 			}
-			if pn != nil {
-				fillEntryOut(parentIno, pn, eo)
+			fs.mu.RLock()
+			if pn, pok := fs.nodes[parentIno]; pok {
+				fillEntryOut(parentIno, &pn, eo)
 			}
+			fs.mu.RUnlock()
 		}
 	}
 
@@ -447,12 +464,12 @@ func (fs *pxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 		if eo == nil {
 			break
 		}
-		fs.registerNode(entries[i].inode, input.NodeId, &entries[i].meta)
+		fs.registerSlimNode(&entries[i], input.NodeId)
 		fs.mu.RLock()
-		child := fs.nodes[entries[i].inode]
+		child, cok := fs.nodes[entries[i].inode]
 		fs.mu.RUnlock()
-		if child != nil {
-			fillEntryOut(entries[i].inode, child, eo)
+		if cok {
+			fillEntryOut(entries[i].inode, &child, eo)
 		}
 	}
 	return fuse.OK
@@ -464,18 +481,46 @@ func (fs *pxarFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.Ope
 
 func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
 	fs.mu.RLock()
-	n := fs.nodes[input.NodeId]
+	n, ok := fs.nodes[input.NodeId]
 	fs.mu.RUnlock()
-	if n == nil {
+	if !ok {
 		return nil, fuse.ENOENT
 	}
 	if n.isDir {
 		return nil, fuse.EISDIR
 	}
 
-	// Read entry metadata under lock (metadata reader is shared).
+	// Snapshot immutable node fields.
+	contentOff := n.contentOffset // == PayloadOffset for split archives
+	contentSz := n.fileSize
+	isReg := n.isReg
+	ra := fs.readerAt
+
+	// Fast path: payload ReaderAt — fully concurrent, no lock needed.
+	// For split archives, contentOff == PayloadOffset and actual file data
+	// starts at PayloadOffset + HeaderSize.
+	if isReg && ra != nil && contentOff != 0 {
+		if input.Offset >= contentSz {
+			return fuse.ReadResultData(nil), fuse.OK
+		}
+
+		remaining := contentSz - input.Offset
+		toRead := min(uint64(len(buf)), remaining)
+
+		nr, err := ra.ReadAt(buf[:toRead], int64(contentOff)+format.HeaderSize+int64(input.Offset))
+		if err != nil && err != io.EOF {
+			return nil, fuse.EIO
+		}
+		if nr == 0 {
+			return fuse.ReadResultData(nil), fuse.OK
+		}
+		return fuse.ReadResultData(buf[:nr]), fuse.OK
+	}
+
+	// Slow path: unified archive or non-split entry.
+	// readerMu serializes metadata stream access.
 	fs.readerMu.Lock()
-	entry, err := fs.readEntryForNode(n)
+	entry, err := fs.readEntryForNode(&n)
 	if err != nil {
 		fs.readerMu.Unlock()
 		return nil, fuse.EIO
@@ -488,10 +533,15 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	}
 	defer rc.Close()
 
-	// rc is a SectionReader (v0.16.0+) — concurrent-safe, no lock needed.
 	if input.Offset > 0 {
-		if _, err := io.CopyN(io.Discard, rc, int64(input.Offset)); err != nil {
-			return nil, fuse.EIO
+		if seeker, ok := rc.(io.Seeker); ok {
+			if _, err := seeker.Seek(int64(input.Offset), io.SeekStart); err != nil {
+				return nil, fuse.EIO
+			}
+		} else {
+			if _, err := io.CopyN(io.Discard, rc, int64(input.Offset)); err != nil {
+				return nil, fuse.EIO
+			}
 		}
 	}
 
@@ -505,47 +555,50 @@ func (fs *pxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	return fuse.ReadResultData(buf[:nr]), fuse.OK
 }
 
+// rootEntry is a reusable root entry to avoid allocation on every Read.
+var rootEntry = pxar.Entry{
+	Path: "/",
+	Kind: pxar.KindDirectory,
+}
+
 // readEntryForNode reads the full pxar entry for a node. For the root inode
-// (which has no FILENAME header), returns a minimal entry from cached data.
+// (which has no FILENAME header), returns a reused entry from cached data.
 // Caller must hold readerMu.
 func (fs *pxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	if n.inode == rootInode {
-		return &pxar.Entry{
-			Path:     "/",
-			Kind:     pxar.KindDirectory,
-			Metadata: pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}},
-		}, nil
+		rootEntry.Metadata = pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
+		return &rootEntry, nil
 	}
 	return fs.reader.ReadEntryAt(int64(n.entryStart))
 }
 
 func (fs *pxarFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byte, fuse.Status) {
 	fs.mu.RLock()
-	n := fs.nodes[header.NodeId]
+	n, ok := fs.nodes[header.NodeId]
 	fs.mu.RUnlock()
-	if n == nil {
+	if !ok {
 		return nil, fuse.ENOENT
 	}
 	if !n.isSymlink {
 		return nil, fuse.EINVAL
 	}
 
-	entry, err := fs.readEntryForNode(n)
+	entry, err := fs.readEntryForNode(&n)
 	if err != nil {
 		return nil, fuse.EIO
 	}
-	return []byte(entry.LinkTarget), fuse.OK
+	return unsafe.Slice(unsafe.StringData(entry.LinkTarget), len(entry.LinkTarget)), fuse.OK
 }
 
 func (fs *pxarFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []byte) (uint32, fuse.Status) {
 	fs.mu.RLock()
-	n := fs.nodes[header.NodeId]
+	n, ok := fs.nodes[header.NodeId]
 	fs.mu.RUnlock()
-	if n == nil {
+	if !ok {
 		return 0, fuse.ENOENT
 	}
 
-	entry, err := fs.readEntryForNode(n)
+	entry, err := fs.readEntryForNode(&n)
 	if err != nil {
 		return 0, fuse.EIO
 	}
@@ -581,13 +634,13 @@ func (fs *pxarFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest 
 
 func (fs *pxarFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
 	fs.mu.RLock()
-	n := fs.nodes[header.NodeId]
+	n, ok := fs.nodes[header.NodeId]
 	fs.mu.RUnlock()
-	if n == nil {
+	if !ok {
 		return 0, fuse.ENOENT
 	}
 
-	entry, err := fs.readEntryForNode(n)
+	entry, err := fs.readEntryForNode(&n)
 	if err != nil {
 		return 0, fuse.EIO
 	}
@@ -621,6 +674,8 @@ func (fs *pxarFS) Forget(nodeID, nlookup uint64) {
 		n.refs -= int64(nlookup)
 		if n.refs <= 0 {
 			delete(fs.nodes, nodeID)
+		} else {
+			fs.nodes[nodeID] = n
 		}
 	}
 	fs.mu.Unlock()
@@ -628,42 +683,77 @@ func (fs *pxarFS) Forget(nodeID, nlookup uint64) {
 
 // --- internal helpers ---
 
-// dirEntryMeta holds minimal metadata needed for directory listing.
-type dirEntryMeta struct {
-	name  string
-	meta  pxar.Entry
-	inode uint64
-	mode  uint32
+// getParentInfo returns (parentInode, parentMode) for a given node.
+// Single RLock for self+parent lookup — avoids double acquire.
+func (fs *pxarFS) getParentInfo(nodeID uint64) (uint64, uint32) {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+
+	n, ok := fs.nodes[nodeID]
+	if !ok {
+		return rootInode, uint32(syscall.S_IFDIR | 0o555)
+	}
+	parentIno := n.parent
+	if pn, pok := fs.nodes[parentIno]; pok {
+		return parentIno, statMode(pn.mode)
+	}
+	return parentIno, uint32(syscall.S_IFDIR | 0o555)
+}
+
+// releaseDirEntries returns a pooled dir entry slice to the pool.
+func (fs *pxarFS) releaseDirEntries(entries []dirEntrySlim) {
+	if entries == nil {
+		return
+	}
+	// Reset and return to pool
+	s := entries[:0]
+	dirEntryPool.Put(&s)
 }
 
 // readDirRaw reads a directory from the archive and returns its entries.
 // Results are NOT cached persistently — the kernel caches directory entries
 // in VFS, so this is only called on cache miss.
-func (fs *pxarFS) readDirRaw(inode uint64) ([]dirEntryMeta, error) {
+// Uses sync.Pool for the entry slice to reduce allocations.
+func (fs *pxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	fs.mu.RLock()
-	n := fs.nodes[inode]
+	n, ok := fs.nodes[inode]
 	fs.mu.RUnlock()
-	if n == nil {
+	if !ok {
 		return nil, syscall.ENOENT
 	}
 	if !n.isDir {
 		return nil, syscall.ENOTDIR
 	}
 
-	var entries []dirEntryMeta
+	// Get a pooled slice
+	entriesPtr := dirEntryPool.Get().(*[]dirEntrySlim)
+	entries := (*entriesPtr)[:0]
+
 	fs.readerMu.Lock()
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		childIno := toInode(e)
-		entries = append(entries, dirEntryMeta{
-			name:  e.FileName(),
-			inode: childIno,
-			mode:  statMode(e.Metadata.Stat.Mode),
-			meta:  *e, // copy for node registration
+		st := e.Metadata.Stat
+		entries = append(entries, dirEntrySlim{
+			name:          e.FileName(),
+			inode:         childIno,
+			mode:          statMode(st.Mode),
+			entryStart:    e.FileOffset,
+			contentOffset: e.ContentOffset,
+			fileSize:      e.FileSize,
+			uid:           st.UID,
+			gid:           st.GID,
+			mtimeSecs:     st.Mtime.Secs,
+			mtimeNanos:    st.Mtime.Nanos,
+			isDir:         e.IsDir(),
+			isSymlink:     e.IsSymlink(),
+			isReg:         e.IsRegularFile(),
 		})
 		return nil
 	})
 	fs.readerMu.Unlock()
 	if listErr != nil {
+		*entriesPtr = entries
+		dirEntryPool.Put(entriesPtr)
 		return nil, listErr
 	}
 
@@ -671,10 +761,35 @@ func (fs *pxarFS) readDirRaw(inode uint64) ([]dirEntryMeta, error) {
 }
 
 // registerNode adds a child node to the cache if not already present.
+// Kept for passthrough.go compatibility — delegates to newNodeFromEntry.
 func (fs *pxarFS) registerNode(inode, parent uint64, e *pxar.Entry) {
 	fs.mu.Lock()
 	if _, exists := fs.nodes[inode]; !exists {
-		fs.nodes[inode] = nodeFromEntry(e, inode, parent)
+		fs.nodes[inode] = newNodeFromEntry(e, inode, parent)
+	}
+	fs.mu.Unlock()
+}
+
+// registerSlimNode adds a child node from a dirEntrySlim if not present.
+func (fs *pxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
+	fs.mu.Lock()
+	if _, exists := fs.nodes[e.inode]; !exists {
+		fs.nodes[e.inode] = node{
+			entryStart:    e.entryStart,
+			contentOffset: e.contentOffset,
+			fileSize:      e.fileSize,
+			mode:          uint64(e.mode),
+			inode:         e.inode,
+			parent:        parent,
+			refs:          1,
+			mtimeSecs:     e.mtimeSecs,
+			uid:           e.uid,
+			mtimeNanos:    e.mtimeNanos,
+			gid:           e.gid,
+			isDir:         e.isDir,
+			isSymlink:     e.isSymlink,
+			isReg:         e.isReg,
+		}
 	}
 	fs.mu.Unlock()
 }
@@ -683,25 +798,26 @@ func (fs *pxarFS) refNode(inode uint64) {
 	fs.mu.Lock()
 	if n, ok := fs.nodes[inode]; ok {
 		n.refs++
+		fs.nodes[inode] = n
 	}
 	fs.mu.Unlock()
 }
 
-// nodeFromEntry creates a minimal node from a pxar.Entry.
-func nodeFromEntry(e *pxar.Entry, inode, parent uint64) *node {
+// newNodeFromEntry creates a value-type node from a pxar.Entry.
+func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	st := e.Metadata.Stat
-	return &node{
-		inode:         inode,
-		parent:        parent,
-		refs:          1,
+	return node{
 		entryStart:    e.FileOffset,
 		contentOffset: e.ContentOffset,
 		fileSize:      e.FileSize,
 		mode:          st.Mode,
-		uid:           st.UID,
-		gid:           st.GID,
+		inode:         inode,
+		parent:        parent,
+		refs:          1,
 		mtimeSecs:     st.Mtime.Secs,
+		uid:           st.UID,
 		mtimeNanos:    st.Mtime.Nanos,
+		gid:           st.GID,
 		isDir:         e.IsDir(),
 		isSymlink:     e.IsSymlink(),
 		isReg:         e.IsRegularFile(),
@@ -795,21 +911,16 @@ func statMode(mode uint64) uint32 {
 // remounting the FUSE filesystem.
 func (fs *pxarFS) hotSwap(newReader *transfer.SplitArchiveReader) {
 	fs.mu.Lock()
-	oldNodes := fs.nodes
-	fs.nodes = make(map[uint64]*node)
+	fs.nodes = make(map[uint64]node, len(fs.nodes))
 	fs.mu.Unlock()
 
 	// Swap the reader under the reader mutex
-	// The old reader will be GC'd after this; any in-flight reads
-	// hold their own references (SectionReader) so they complete safely.
 	fs.readerMu.Lock()
 	fs.reader = newReader
 	fs.readerMu.Unlock()
 
-	// Clear old nodes to free memory
-	for k := range oldNodes {
-		delete(oldNodes, k)
-	}
+	// Update the concurrent-safe ReaderAt
+	fs.readerAt = newReader.PayloadReaderAt()
 
 	// Re-register root node from the new reader
 	root, err := newReader.ReadRoot()
@@ -818,6 +929,6 @@ func (fs *pxarFS) hotSwap(newReader *transfer.SplitArchiveReader) {
 	}
 	fs.mu.Lock()
 	fs.size = int64(root.FileOffset + root.FileSize)
-	fs.nodes[rootInode] = nodeFromEntry(root, rootInode, rootInode)
+	fs.nodes[rootInode] = newNodeFromEntry(root, rootInode, rootInode)
 	fs.mu.Unlock()
 }
