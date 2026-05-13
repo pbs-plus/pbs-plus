@@ -1206,6 +1206,40 @@ func (fs *passthroughFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fu
 	return fs.pxar.Access(cancel, input)
 }
 
+// resetState clears all passthrough inode/handle state after a pxar hotSwap.
+// This must be called after pxar.hotSwap() and after the backing dir has
+// been cleaned up and recreated. It preserves only the root inode mapping.
+func (fs *passthroughFS) resetState() {
+	// Close any open file handles
+	fs.fhmu.Lock()
+	for _, fh := range fs.handles {
+		_ = syscall.Close(fh.fd)
+	}
+	fs.handles = make(map[uint64]*passFh)
+	fs.nextFh = 0
+	fs.fhmu.Unlock()
+
+	// Reset all inode maps, preserving root
+	fs.mu.Lock()
+	rootPath := fs.nodePaths[rootInode]
+	rootBacked := fs.backed[rootInode]
+	rootPxarDir := fs.pxarDir[rootInode]
+
+	fs.nodePaths = make(map[uint64]string)
+	fs.pathToIno = make(map[string]uint64)
+	fs.backed = make(map[uint64]bool)
+	fs.pxarDir = make(map[uint64]bool)
+
+	// Re-register root
+	if rootPath != "" {
+		fs.nodePaths[rootInode] = rootPath
+		fs.pathToIno[rootPath] = rootInode
+	}
+	fs.backed[rootInode] = rootBacked
+	fs.pxarDir[rootInode] = rootPxarDir
+	fs.mu.Unlock()
+}
+
 // --- xattr ---
 
 // recoverPxarDirNode attempts to recover the pxar inode for a directory
