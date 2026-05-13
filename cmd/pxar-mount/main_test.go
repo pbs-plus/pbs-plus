@@ -1,86 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"syscall"
 	"testing"
 
 	pxar "github.com/pbs-plus/pxar"
-	"github.com/pbs-plus/pxar/encoder"
 	"github.com/pbs-plus/pxar/format"
-	"github.com/pbs-plus/pxar/transfer"
 )
-
-// Test helpers
-
-func mustTestArchive(tb testing.TB) (*bytes.Reader, int64) {
-	tb.Helper()
-	ts := format.NewStatxTimestampFromDuration(1430487000 * 1e9)
-	var buf bytes.Buffer
-	rootMeta := &pxar.Metadata{
-		Stat: format.Stat{
-			Mode: format.ModeIFDIR | 0o755,
-			UID:  0, GID: 0,
-			Mtime: ts,
-		},
-	}
-	enc := encoder.NewEncoder(&buf, nil, rootMeta, nil)
-
-	fileMeta := &pxar.Metadata{
-		Stat: format.Stat{
-			Mode: format.ModeIFREG | 0o644,
-			UID:  1000, GID: 1000,
-			Mtime: ts,
-		},
-	}
-	_, _ = enc.AddFile(fileMeta, "hello.txt", []byte("hello world"))
-
-	dirMeta := &pxar.Metadata{
-		Stat: format.Stat{
-			Mode: format.ModeIFDIR | 0o755,
-			UID:  0, GID: 0,
-			Mtime: ts,
-		},
-	}
-	_ = enc.CreateDirectory("subdir", dirMeta)
-	_, _ = enc.AddFile(fileMeta, "nested.txt", []byte("nested content"))
-	_ = enc.Finish()
-
-	symMeta := &pxar.Metadata{
-		Stat: format.Stat{
-			Mode:  format.ModeIFLNK | 0o777,
-			Mtime: ts,
-		},
-	}
-	_ = enc.AddSymlink(symMeta, "link", "hello.txt")
-
-	enc.Close()
-	data := buf.Bytes()
-	return bytes.NewReader(data), int64(len(data))
-}
-
-func newTestFS(tb testing.TB) (*pxarFS, *bytes.Reader) {
-	tb.Helper()
-	r, size := mustTestArchive(tb)
-	far := transfer.NewFileArchiveReader(r)
-	_ = far // use raw reader for now
-
-	// Build a simple mock using the accessor directly
-	fs := &pxarFS{
-		reader: nil,
-		nodes:  make(map[uint64]*node),
-		size:   size,
-	}
-
-	root, err := far.ReadRoot()
-	if err != nil {
-		tb.Fatal(err)
-	}
-
-	fs.nodes[rootInode] = nodeFromEntry(root, rootInode, rootInode)
-
-	return fs, r
-}
 
 func TestToInode(t *testing.T) {
 	df := &pxar.Entry{
