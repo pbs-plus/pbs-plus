@@ -256,6 +256,7 @@ func main() {
 			origSnapshot:  origSnap,
 			origPpxarDidx: *ppxarDidx,
 			nodePaths:     make(map[uint64]string),
+			pathToIno:     make(map[string]uint64),
 			backed:        make(map[uint64]bool),
 			pxarDir:       make(map[uint64]bool),
 			handles:       make(map[uint64]*passFh),
