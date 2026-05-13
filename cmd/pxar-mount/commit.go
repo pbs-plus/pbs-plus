@@ -563,10 +563,6 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 				continue
 			}
 
-			if err := ow.ensureAdvanced(); err != nil {
-				return fmt.Errorf("advance payload position: %w", err)
-			}
-
 			if fi.Mode()&os.ModeSymlink != 0 {
 				target, err := os.Readlink(abs)
 				if err != nil {
@@ -663,17 +659,8 @@ func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 // walkEntry represents a single entry in the merged overlay walk.
 // overlayWalk tracks state across the recursive walk.
 type overlayWalk struct {
-	writer   transfer.ArchiveWriter
-	dedup    *transfer.RemoteDedupSplitArchiveWriter
-	advanced bool // true after Advance(HeaderSize) was called
-}
-
-func (ow *overlayWalk) ensureAdvanced() error {
-	if ow.advanced || ow.dedup == nil {
-		return nil
-	}
-	ow.advanced = true
-	return ow.dedup.AdvancePayloadPosition(format.HeaderSize)
+	writer transfer.ArchiveWriter
+	dedup  *transfer.RemoteDedupSplitArchiveWriter
 }
 
 type walkEntry struct {
