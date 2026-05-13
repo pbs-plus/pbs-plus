@@ -262,10 +262,12 @@ func main() {
 		}
 		rawFS = ptFS
 
-		// Pre-create all pxar directories in the backing dir so
-		// SMB's acl_xattr can store/retrieve ACLs directly.
-		if err := ptFS.precreateDirectories(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error pre-creating directories: %v\n", err)
+		// Initialize root in the backing dir. Directories are created lazily
+		// on first access (Lookup / ReadDir) so that startup is O(1) regardless
+		// of archive depth. SMB's acl_xattr can store/retrieve ACLs on each
+		// directory once it's materialized.
+		if err := ptFS.initPassthroughRoot(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error initializing passthrough root: %v\n", err)
 			os.Exit(1)
 		}
 
