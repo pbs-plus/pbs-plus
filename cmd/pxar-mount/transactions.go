@@ -203,7 +203,7 @@ func (tl *TransactionLog) ReadAll() ([]Txn, error) {
 	return txns, scanner.Err()
 }
 
-// Clear removes the transaction log file after a successful commit.
+// Clear truncates the transaction log after a successful commit.
 func (tl *TransactionLog) Clear() error {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
@@ -211,17 +211,18 @@ func (tl *TransactionLog) Clear() error {
 	if tl.buf != nil {
 		_ = tl.buf.Flush()
 	}
-	if tl.file != nil {
-		_ = tl.file.Close()
-		tl.file = nil
-		tl.buf = nil
-	}
 
-	// Truncate the file
+	// Truncate the file. Open the new file BEFORE closing the old one
+	// so we never leave tl.file/tl.buf in a nil state on error.
 	f, err := os.Create(tl.path)
 	if err != nil {
 		return err
 	}
+
+	if tl.file != nil {
+		_ = tl.file.Close()
+	}
+
 	tl.file = f
 	tl.buf = bufio.NewWriter(f)
 	tl.next = 0

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
 	"sync"
@@ -264,6 +265,106 @@ func TestRenamePaths_DestOverwrite(t *testing.T) {
 // --- Bug 6: resetState clears deletedPaths but doesn't reset txnLog ---
 // After resetState (e.g., hot swap), deletedPaths is empty but txnLog
 // may still reference stale entries from the previous snapshot.
+
+// --- Bug 7: Clear leaves TransactionLog in broken state on os.Create failure ---
+// If os.Create fails after closing the old file, tl.file and tl.buf are nil.
+// Subsequent Record calls panic on nil pointer dereference.
+
+func TestTransactionLog_ClearFailureDoesNotCorruptState(t *testing.T) {
+	dir := t.TempDir()
+	tl, err := OpenTransactionLog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _ = tl.Record(TxnDelete, "before-clear")
+
+	// Close the underlying file externally to simulate os.Create failure
+	_ = tl.file.Close()
+	// Make the path a directory so os.Create fails
+	_ = os.Remove(tl.path)
+	_ = os.MkdirAll(tl.path, 0o755)
+
+	err = tl.Clear()
+	if err == nil {
+		t.Fatal("expected Clear to fail when os.Create cannot create file")
+	}
+
+	// After the fix, the old file handle should still be usable.
+	// Record should NOT panic even after a failed Clear.
+	// Fix the path so Record can actually write.
+	_ = os.Remove(tl.path)
+	f2, err2 := os.Create(tl.path)
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	_ = tl.file.Close() // close the stale handle
+	tl.file = f2
+	tl.buf = bufio.NewWriter(f2)
+	tl.next = 0
+
+	_, err = tl.Record(TxnDelete, "after-failed-clear")
+	if err != nil {
+		t.Fatalf("Record after failed Clear should not panic, got: %v", err)
+	}
+}
+
+// --- Bug 8: materializePxarFile records MODIFY transaction every time ---
+// If a file is already backed (pre-existing in backing dir), calling
+// materializePxarFile should NOT record a MODIFY transaction since
+// the file wasn't actually copied from pxar.
+
+func TestMaterializePxarFile_DoesNotRecordModifyIfAlreadyBacked(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Enable mutation mode with transaction log.
+	mutDir := t.TempDir()
+	tl, err := OpenTransactionLog(mutDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.mutationMode = true
+	fs.txnLog = tl
+
+	const ino uint64 = 100 | nonDirBit
+	relPath := "already-backed.txt"
+
+	// Register the pxar node.
+	fs.pxar.mu.Lock()
+	fs.pxar.nodes[ino] = node{
+		inode: ino,
+		mode:  uint64(syscall.S_IFREG | 0o644),
+		isReg: true,
+	}
+	fs.pxar.mu.Unlock()
+
+	// Pre-create the file in backing dir and mark as backed.
+	abs := filepath.Join(backingDir, relPath)
+	if err := os.WriteFile(abs, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs.setNode(ino, relPath, true)
+
+	// Call materializePxarFile — should return early without MODIFY txn.
+	path, err := fs.materializePxarFile(ino)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != relPath {
+		t.Errorf("path = %q, want %q", path, relPath)
+	}
+
+	txns, err := tl.ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, txn := range txns {
+		if txn.Type == TxnModify {
+			t.Errorf("spurious MODIFY transaction recorded for already-backed file: %+v", txn)
+		}
+	}
+}
 
 func TestResetState_ClearsDeletedPathsAndTxnLog(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
