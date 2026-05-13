@@ -1130,14 +1130,24 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 		fs.mu.Lock()
 		oldIno, oldOk := fs.pathToIno[oldPath]
 		newIno, newOk := fs.pathToIno[newPath]
-		if oldOk {
+
+		if oldOk && newOk {
+			// Both have inodes: swap them.
 			fs.nodePaths[oldIno] = newPath
-		}
-		if newOk {
 			fs.nodePaths[newIno] = oldPath
+			fs.pathToIno[oldPath] = newIno
+			fs.pathToIno[newPath] = oldIno
+		} else if oldOk {
+			// Only source has an inode: move it to newPath.
+			delete(fs.pathToIno, oldPath)
+			fs.nodePaths[oldIno] = newPath
+			fs.pathToIno[newPath] = oldIno
+		} else if newOk {
+			// Only dest has an inode: move it to oldPath.
+			delete(fs.pathToIno, newPath)
+			fs.nodePaths[newIno] = oldPath
+			fs.pathToIno[oldPath] = newIno
 		}
-		fs.pathToIno[oldPath] = newIno
-		fs.pathToIno[newPath] = oldIno
 		fs.mu.Unlock()
 
 		// Record both directions for correct replay during commit.

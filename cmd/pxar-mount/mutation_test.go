@@ -632,3 +632,77 @@ func TestRename_DestinationStaysDeletedOnFailure(t *testing.T) {
 		t.Error("destPath was un-deleted even though Rename failed")
 	}
 }
+
+// --- Bug 15: RENAME_EXCHANGE with missing dest inode maps oldPath to inode 0 ---
+// When RENAME_EXCHANGE swaps two paths and the destination has no inode
+// mapping (newOk=false), the exchange code sets pathToIno[oldPath]=0,
+// which corrupts the mapping.
+
+func TestRename_ExchangeWithMissingDestInode(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Set up root inode
+	fs.mu.Lock()
+	fs.nodePaths[rootInode] = "/"
+	fs.pathToIno["/"] = rootInode
+	fs.mu.Unlock()
+
+	// Create a source file via passthrough so it has an inode mapping
+	srcPath := filepath.Join(backingDir, "exchange-src.txt")
+	if err := os.WriteFile(srcPath, []byte("src"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var srcOut fuse.EntryOut
+	if st := fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, "exchange-src.txt", &srcOut); st != fuse.OK {
+		t.Fatalf("Lookup source: %v", st)
+	}
+	srcIno := srcOut.NodeId
+
+	// Create dest file on disk but do NOT register an inode for it.
+	// This simulates a file that exists in the backing dir but hasn't been
+	// looked up yet.
+	destPath := filepath.Join(backingDir, "exchange-dst.txt")
+	if err := os.WriteFile(destPath, []byte("dst"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify dest has NO inode mapping
+	fs.mu.RLock()
+	_, dstHasMapping := fs.pathToIno["/exchange-dst.txt"]
+	fs.mu.RUnlock()
+	if dstHasMapping {
+		t.Fatal("test setup: dest should have no inode mapping")
+	}
+
+	// Perform RENAME_EXCHANGE
+	st := fs.Rename(nil, &fuse.RenameIn{
+		InHeader: fuse.InHeader{NodeId: rootInode},
+		Newdir:   rootInode,
+		Flags:    renameExchange,
+	}, "exchange-src.txt", "exchange-dst.txt")
+
+	if st != fuse.OK {
+		t.Fatalf("RENAME_EXCHANGE failed: %v", st)
+	}
+
+	// After exchange, oldPath should map to the dest's inode (or 0 if unmapped).
+	// The old source inode should still be valid.
+	fs.mu.RLock()
+	oldIno, oldOk := fs.pathToIno["/exchange-src.txt"]
+	newIno, newOk := fs.pathToIno["/exchange-dst.txt"]
+	fs.mu.RUnlock()
+
+	if oldOk && oldIno == 0 {
+		t.Error("oldPath (/exchange-src.txt) mapped to inode 0 — corrupted by exchange with unmapped dest")
+	}
+
+	// The source inode should now be at the destination path
+	if !newOk || newIno != srcIno {
+		t.Errorf("dest path should map to src inode %d, got ino=%d ok=%v", srcIno, newIno, newOk)
+	}
+
+	_ = oldIno // just check it's not 0
+}
