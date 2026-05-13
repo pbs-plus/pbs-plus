@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -61,13 +62,11 @@ type node struct {
 // pxarFS implements fuse.RawFileSystem backed by a lazy-loading SplitArchiveReader.
 type pxarFS struct {
 	fuse.RawFileSystem
-
-	reader *transfer.SplitArchiveReader
-	size   int64
-
+	reader   *transfer.SplitArchiveReader
+	nodes    map[uint64]*node
+	size     int64
 	mu       sync.RWMutex
-	nodes    map[uint64]*node // inode → cached stat metadata
-	readerMu sync.Mutex       // serializes all archive reader access (not thread-safe)
+	readerMu sync.Mutex
 }
 
 func toInode(e *pxar.Entry) uint64 {
@@ -191,6 +190,8 @@ func main() {
 
 	var rawFS fuse.RawFileSystem = fs
 
+	var sockListener net.Listener // captured for graceful shutdown
+
 	if *passthrough != "" {
 		// Validate the passthrough directory
 		ptInfo, err := os.Stat(*passthrough)
@@ -203,22 +204,37 @@ func main() {
 			os.Exit(1)
 		}
 
+		// Parse original snapshot identity from the DIDX path for dedup
+		origSnap := parseOrigSnapshot(*pbsStore, *ppxarDidx)
+
 		ptFS := &passthroughFS{
-			pxar:       fs,
-			backingDir: *passthrough,
-			nodePaths:  make(map[uint64]string),
-			backed:     make(map[uint64]bool),
-			handles:    make(map[uint64]*passFh),
+			pxar:          fs,
+			pbsStore:      *pbsStore,
+			backingDir:    *passthrough,
+			origSnapshot:  origSnap,
+			origPpxarDidx: *ppxarDidx,
+			nodePaths:     make(map[uint64]string),
+			backed:        make(map[uint64]bool),
+			pxarDir:       make(map[uint64]bool),
+			handles:       make(map[uint64]*passFh),
 		}
-		ptFS.setNode(rootInode, "/", false)
 		rawFS = ptFS
+
+		// Pre-create all pxar directories in the backing dir so
+		// SMB's acl_xattr can store/retrieve ACLs directly.
+		if err := ptFS.precreateDirectories(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error pre-creating directories: %v\n", err)
+			os.Exit(1)
+		}
 
 		// Start socket listener for commit commands
 		if *socketPath != "" {
-			if _, err := ptFS.startSocketListener(*socketPath); err != nil {
+			l, _, err := ptFS.startSocketListener(*socketPath)
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error starting socket listener: %v\n", err)
 				os.Exit(1)
 			}
+			sockListener = l
 			if *verbose {
 				fmt.Fprintf(os.Stderr, "pxar-mount: listening for commits on %s\n", *socketPath)
 			}
@@ -252,6 +268,10 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
+		// Close socket listener first so defers run and socket file is removed
+		if sockListener != nil {
+			_ = sockListener.Close()
+		}
 		_ = server.Unmount()
 	}()
 
@@ -611,9 +631,9 @@ func (fs *pxarFS) Forget(nodeID, nlookup uint64) {
 // dirEntryMeta holds minimal metadata needed for directory listing.
 type dirEntryMeta struct {
 	name  string
+	meta  pxar.Entry
 	inode uint64
 	mode  uint32
-	meta  pxar.Entry // temporary, used only for node registration
 }
 
 // readDirRaw reads a directory from the archive and returns its entries.
@@ -768,4 +788,36 @@ func statMode(mode uint64) uint32 {
 		ft = syscall.S_IFSOCK
 	}
 	return ft | uint32(mode&0o7777)
+}
+
+// hotSwap replaces the pxar archive reader and clears the node cache.
+// Called after a successful commit to switch to the new snapshot without
+// remounting the FUSE filesystem.
+func (fs *pxarFS) hotSwap(newReader *transfer.SplitArchiveReader) {
+	fs.mu.Lock()
+	oldNodes := fs.nodes
+	fs.nodes = make(map[uint64]*node)
+	fs.mu.Unlock()
+
+	// Swap the reader under the reader mutex
+	// The old reader will be GC'd after this; any in-flight reads
+	// hold their own references (SectionReader) so they complete safely.
+	fs.readerMu.Lock()
+	fs.reader = newReader
+	fs.readerMu.Unlock()
+
+	// Clear old nodes to free memory
+	for k := range oldNodes {
+		delete(oldNodes, k)
+	}
+
+	// Re-register root node from the new reader
+	root, err := newReader.ReadRoot()
+	if err != nil {
+		return
+	}
+	fs.mu.Lock()
+	fs.size = int64(root.FileOffset + root.FileSize)
+	fs.nodes[rootInode] = nodeFromEntry(root, rootInode, rootInode)
+	fs.mu.Unlock()
 }

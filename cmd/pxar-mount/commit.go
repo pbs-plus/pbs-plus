@@ -2,15 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
@@ -28,44 +33,98 @@ type commitRequest struct {
 	Namespace  string
 	BackupID   string
 	BackupType string
-	BackupTime int64
 	SkipTLS    bool
 }
 
 // parseCommitLine parses a COMMIT line from the socket protocol.
-// Format: COMMIT <url> <datastore> <token> <namespace> <backup-type> <backup-id> [backup-time]
+// Format: COMMIT [url] [datastore] [token] [namespace] [backup-type] [backup-id]
+// All fields are optional; the daemon auto-detects defaults from its environment.
 func parseCommitLine(line string) (*commitRequest, error) {
-	parts := strings.SplitN(line, " ", 8)
-	if len(parts) < 7 || parts[0] != "COMMIT" {
-		return nil, fmt.Errorf("invalid COMMIT format: expected COMMIT <url> <datastore> <token> <namespace> <backup-type> <backup-id>")
+	parts := strings.SplitN(line, " ", 7)
+	if len(parts) < 1 || parts[0] != "COMMIT" {
+		return nil, fmt.Errorf("invalid COMMIT format: expected COMMIT [url] [datastore] [token] [ns] [type] [id]")
 	}
-	req := &commitRequest{
-		PBSURL:     parts[1],
-		Datastore:  parts[2],
-		AuthToken:  parts[3],
-		Namespace:  parts[4],
-		BackupType: parts[5],
-		BackupID:   parts[6],
+	req := &commitRequest{}
+	if len(parts) > 1 {
+		req.PBSURL = parts[1]
 	}
-	if req.Namespace == "-" {
-		req.Namespace = ""
+	if len(parts) > 2 {
+		req.Datastore = parts[2]
 	}
-	if len(parts) > 7 {
-		_, _ = fmt.Sscanf(parts[7], "%d", &req.BackupTime)
+	if len(parts) > 3 {
+		req.AuthToken = parts[3]
 	}
-	if req.BackupType == "" {
-		req.BackupType = "host"
+	if len(parts) > 4 && parts[4] != "-" {
+		req.Namespace = parts[4]
+	}
+	if len(parts) > 5 {
+		req.BackupType = parts[5]
+	}
+	if len(parts) > 6 {
+		req.BackupID = parts[6]
 	}
 	return req, nil
 }
 
+// readLocalToken tries to read the PBS API token from the standard
+// pbs-plus-token.json file, returning it in PBSAPIToken format.
+func readLocalToken() string {
+	// Standard locations to check.
+	candidates := []string{
+		filepath.Join("/var/lib/proxmox-backup", "pbs-plus-token.json"),
+		filepath.Join("/etc/proxmox-backup", "pbs-plus-token.json"),
+		filepath.Join("/var/lib/pbs-plus", "pbs-plus-token.json"),
+	}
+	for _, p := range candidates {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var tok struct {
+			TokenID string `json:"tokenid"`
+			Value   string `json:"value"`
+		}
+		if err := json.Unmarshal(data, &tok); err != nil {
+			continue
+		}
+		if tok.Value != "" {
+			// PBS H2 API expects PBSAPIToken <tokenid>:<value>
+			return tok.TokenID + ":" + tok.Value
+		}
+	}
+	return ""
+}
+
+// resolveDatastoreName finds the PBS datastore name for a given path by
+// querying proxmox-backup-manager.
+func resolveDatastoreName(pbsStore string) string {
+	out, err := exec.Command("proxmox-backup-manager", "datastore", "list", "--output-format", "json").Output()
+	if err != nil {
+		return filepath.Base(pbsStore)
+	}
+	var dss []struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(out, &dss); err != nil {
+		return filepath.Base(pbsStore)
+	}
+	cleanPath := filepath.Clean(pbsStore)
+	for _, ds := range dss {
+		if filepath.Clean(ds.Path) == cleanPath {
+			return ds.Name
+		}
+	}
+	return filepath.Base(pbsStore)
+}
+
 // startSocketListener opens a Unix domain socket and processes commit requests.
-// Returns a done channel that closes when the listener exits.
-func (fs *passthroughFS) startSocketListener(sockPath string) (chan struct{}, error) {
+// Returns the listener (for graceful shutdown) and a done channel.
+func (fs *passthroughFS) startSocketListener(sockPath string) (net.Listener, chan struct{}, error) {
 	_ = os.Remove(sockPath)
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
-		return nil, fmt.Errorf("listen on %s: %w", sockPath, err)
+		return nil, nil, fmt.Errorf("listen on %s: %w", sockPath, err)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -80,7 +139,7 @@ func (fs *passthroughFS) startSocketListener(sockPath string) (chan struct{}, er
 			go fs.handleSocketConn(conn)
 		}
 	}()
-	return done, nil
+	return l, done, nil
 }
 
 func (fs *passthroughFS) handleSocketConn(conn net.Conn) {
@@ -107,40 +166,113 @@ func (fs *passthroughFS) handleSocketConn(conn net.Conn) {
 
 // commitOverlay walks the merged overlay filesystem, builds a new split pxar
 // archive, and uploads it to PBS via the backup protocol.
+//
+// Uses the original snapshot's backup-id and archive-name. Backup-time is
+// always the current time. Deduplicates against the original snapshot.
+//
+// PBS connection parameters default to local auto-detection:
+//   - URL: https://localhost:8007
+//   - Datastore: last component of --pbs-store path
+//   - Token: read from pbs-plus-token.json if available
 func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
-	store := backupproxy.NewPBSRemoteStore(backupproxy.PBSConfig{
-		BaseURL:       req.PBSURL,
-		Datastore:     req.Datastore,
-		AuthToken:     req.AuthToken,
-		Namespace:     req.Namespace,
-		SkipTLSVerify: req.SkipTLS,
-	}, buzhash.Config{}, false)
+	orig := fs.origSnapshot
 
-	bt, err := datastore.ParseBackupType(req.BackupType)
-	if err != nil {
-		return fmt.Errorf("invalid backup type %q: %w", req.BackupType, err)
+	// Resolve PBS connection: auto-detect when fields are empty.
+	pbsURL := req.PBSURL
+	if pbsURL == "" {
+		pbsURL = "https://localhost:8007/api2/json"
+		req.SkipTLS = true
 	}
+	datastoreName := req.Datastore
+	if datastoreName == "" {
+		// Try to find datastore name by matching the pbs-store path.
+		datastoreName = resolveDatastoreName(fs.pbsStore)
+	}
+	authToken := req.AuthToken
+	if authToken == "" {
+		authToken = readLocalToken()
+	}
+
+	// Resolve backup metadata: command-line overrides take priority,
+	// otherwise default to the original snapshot's values.
+	backupID := req.BackupID
+	if backupID == "" {
+		backupID = orig.BackupID
+	}
+	backupType := req.BackupType
+	if backupType == "" {
+		backupType = orig.BackupType
+	}
+	namespace := req.Namespace
+	if namespace == "" && orig.Namespace != "" {
+		namespace = orig.Namespace
+	}
+	archiveName := orig.ArchiveName
+	if archiveName == "" {
+		archiveName = backupID
+	}
+	backupTime := time.Now().Unix()
+
+	bt, err := datastore.ParseBackupType(backupType)
+	if err != nil {
+		return fmt.Errorf("invalid backup type %q: %w", backupType, err)
+	}
+
+	// Build previous backup ref for chunk dedup
+	var prev *backupproxy.PreviousBackupRef
+	if orig.BackupID != "" && orig.BackupTime > 0 {
+		prev = &backupproxy.PreviousBackupRef{
+			BackupType: bt,
+			BackupID:   orig.BackupID,
+			BackupTime: orig.BackupTime,
+			Namespace:  orig.Namespace,
+		}
+	}
+
+	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
+		BaseURL:       pbsURL,
+		Datastore:     datastoreName,
+		AuthToken:     authToken,
+		Namespace:     namespace,
+		SkipTLSVerify: req.SkipTLS,
+	}, func() buzhash.Config {
+		cfg, _ := buzhash.NewConfig(4096)
+		return cfg
+	}(), false)
 
 	ctx := context.Background()
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
 		BackupType:     bt,
-		BackupID:       req.BackupID,
-		BackupTime:     req.BackupTime,
-		PreviousBackup: nil, // TODO: support previous backup ref for dedup
+		BackupID:       backupID,
+		BackupTime:     backupTime,
+		Namespace:      namespace,
+		PreviousBackup: prev,
 		CryptMode:      datastore.CryptModeNone,
 	})
 	if err != nil {
 		return fmt.Errorf("start PBS session: %w", err)
 	}
 
-	// Use SplitSessionArchiveWriter to build and upload the archive
-	metaName := req.BackupID // will get .mpxar.didx suffix
-	payloadName := req.BackupID + ".ppxar"
+	// Use SplitSessionArchiveWriter to build and upload the archive.
+	// PBS expects archive names with .didx extension (as seen in pbs-s3gateway).
+	// For split: <name>.mpxar.didx and <name>.ppxar.didx
+	metaName := archiveName + ".mpxar.didx"
+	payloadName := archiveName + ".ppxar.didx"
 
-	writer := transfer.NewSplitSessionArchiveWriter(ctx, session, metaName, payloadName)
+	// Use RemoteDedupSplitArchiveWriter for chunk-level dedup.
+	// Read original payload DIDX for chunk injection.
+	var origPayloadIdx []byte
+	if fs.origPpxarDidx != "" {
+		origPayloadIdx, _ = os.ReadFile(fs.origPpxarDidx)
+	}
+
+	writer, err := transfer.NewRemoteDedupSplitArchiveWriter(ctx, session, metaName, payloadName, origPayloadIdx)
+	if err != nil {
+		return fmt.Errorf("create dedup writer: %w", err)
+	}
 
 	// Build root metadata from pxar root entry
 	rootPxarEntry := fs.getPxarEntry(rootInode)
@@ -150,7 +282,8 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 		return fmt.Errorf("begin archive: %w", err)
 	}
 
-	if err := fs.walkOverlay(writer, rootInode, "/"); err != nil {
+	ow := &overlayWalk{writer: writer, dedup: writer}
+	if err := fs.walkOverlay(ow, rootInode, "/"); err != nil {
 		return fmt.Errorf("walk overlay: %w", err)
 	}
 
@@ -163,22 +296,199 @@ func (fs *passthroughFS) commitOverlay(req *commitRequest) error {
 		return fmt.Errorf("finish session: %w", err)
 	}
 
+	// Post-commit: hot-swap to the new snapshot and clean up
+	if err := fs.postCommit(backupID, backupType, namespace, archiveName, backupTime); err != nil {
+		return fmt.Errorf("post-commit: %w", err)
+	}
+
 	return nil
 }
 
-// walkOverlay recursively walks the overlay and writes entries to the ArchiveWriter.
-func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, relPath string) error {
+// postCommit switches the mounted pxar to the newly committed snapshot,
+// verifies backed files are present, and cleans up the backing directory.
+func (fs *passthroughFS) postCommit(backupID, backupType, namespace, archiveName string, backupTime int64) error {
+	// Derive the new snapshot directory from the original DIDX path.
+	// Example original: /pbs-store/ns/2001-PROJECTS/host/XM-05/2025-08-05T13:55:39Z/XM-05---F.ppxar.didx
+	// The group directory is two levels up (past time + filename).
+	origDir := filepath.Dir(fs.origPpxarDidx) // the time directory
+	groupDir := filepath.Dir(origDir)         // the group directory
+
+	// Format the new backup time as ISO 8601 (PBS directory naming).
+	newTimeISO := time.Unix(backupTime, 0).UTC().Format("2006-01-02T15:04:05Z")
+	snapDir := filepath.Join(groupDir, newTimeISO)
+
+	mpxarPath := filepath.Join(snapDir, archiveName+".mpxar.didx")
+	ppxarPath := filepath.Join(snapDir, archiveName+".ppxar.didx")
+
+	// Read the new DIDX data
+	metaData, err := os.ReadFile(mpxarPath)
+	if err != nil {
+		return fmt.Errorf("read new mpxar: %w", err)
+	}
+	payloadData, err := os.ReadFile(ppxarPath)
+	if err != nil {
+		return fmt.Errorf("read new ppxar: %w", err)
+	}
+
+	// Create a new chunk store source from the same datastore
+	store, err := datastore.NewChunkStore(fs.pbsStore)
+	if err != nil {
+		return fmt.Errorf("open chunk store: %w", err)
+	}
+	source := datastore.NewChunkStoreSource(store)
+
+	// Create new archive reader from the committed snapshot
+	newReader, err := transfer.NewSplitArchiveReader(metaData, payloadData, source)
+	if err != nil {
+		return fmt.Errorf("create new reader: %w", err)
+	}
+
+	// Verify that every backed file exists in the new snapshot
+	if err := fs.verifyBackedFiles(newReader); err != nil {
+		_ = newReader.Close()
+		return fmt.Errorf("verification failed: %w", err)
+	}
+
+	// Hot-swap the pxar reader to the new snapshot
+	fs.pxar.hotSwap(newReader)
+
+	// Update origSnapshot to the new state
+	fs.origSnapshot = snapshotRef{
+		BackupType:  backupType,
+		BackupID:    backupID,
+		BackupTime:  backupTime,
+		Namespace:   namespace,
+		ArchiveName: archiveName,
+	}
+	fs.origPpxarDidx = ppxarPath
+
+	// Clean up the backing directory (all files are now in the new snapshot)
+	if err := os.RemoveAll(fs.backingDir); err != nil {
+		return fmt.Errorf("cleanup backing dir: %w", err)
+	}
+	if err := os.MkdirAll(fs.backingDir, 0o755); err != nil {
+		return fmt.Errorf("recreate backing dir: %w", err)
+	}
+
+	return nil
+}
+
+// verifyBackedFiles checks that all files in the backing directory can be
+// found in the new snapshot (confirming the commit was complete).
+func (fs *passthroughFS) verifyBackedFiles(reader *transfer.SplitArchiveReader) error {
+	return filepath.Walk(fs.backingDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(fs.backingDir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		// Try to look up this path in the new snapshot
+		entry, lookupErr := reader.Lookup("/" + rel)
+		if lookupErr != nil {
+			return fmt.Errorf("backed file %q not found in new snapshot: %w", rel, lookupErr)
+		}
+
+		if info.IsDir() {
+			if !entry.IsDir() {
+				return fmt.Errorf("backed dir %q is not a directory in new snapshot", rel)
+			}
+			return nil
+		}
+
+		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			return nil // special files can't be verified easily
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			if !entry.IsSymlink() {
+				return fmt.Errorf("backed symlink %q is not a symlink in new snapshot", rel)
+			}
+			return nil
+		}
+
+		// Regular file: compare size and content
+		if entry.FileSize != uint64(info.Size()) {
+			return fmt.Errorf("backed file %q size mismatch: backing=%d snapshot=%d", rel, info.Size(), entry.FileSize)
+		}
+
+		if info.Size() > 0 {
+			rc, err := reader.ReadFileContentReader(entry)
+			if err != nil {
+				return fmt.Errorf("read backed file %q from new snapshot: %w", rel, err)
+			}
+
+			f, err := os.Open(path)
+			if err != nil {
+				_ = rc.Close()
+				return err
+			}
+
+			equal, err := readersEqual(rc, f)
+			_ = rc.Close()
+			_ = f.Close()
+			if err != nil {
+				return fmt.Errorf("compare backed file %q: %w", rel, err)
+			}
+			if !equal {
+				return fmt.Errorf("backed file %q content differs from new snapshot", rel)
+			}
+		}
+
+		return nil
+	})
+}
+
+// readersEqual returns true if two readers produce identical bytes.
+func readersEqual(a, b io.Reader) (bool, error) {
+	bufA := make([]byte, 64*1024)
+	bufB := make([]byte, 64*1024)
+	for {
+		nA, errA := io.ReadFull(a, bufA)
+		nB, errB := io.ReadFull(b, bufB)
+
+		if nA != nB {
+			return false, nil
+		}
+		if !bytes.Equal(bufA[:nA], bufB[:nB]) {
+			return false, nil
+		}
+
+		if errA == io.ErrUnexpectedEOF || errA == io.EOF {
+			if errB == io.ErrUnexpectedEOF || errB == io.EOF {
+				return true, nil
+			}
+			return false, nil
+		}
+		if errA != nil {
+			return false, errA
+		}
+		if errB != nil {
+			return false, errB
+		}
+	}
+}
+
+// walkOverlay recursively walks the overlay and writes entries.
+func (fs *passthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath string) error {
 	pxarEntries, _ := fs.pxar.readDirRaw(pxarIno)
 	backedEntries := fs.readBackedDir(relPath)
+
+	fmt.Fprintf(os.Stderr, "walkOverlay ino=%d rel=%q pxar=%d backed=%d\n", pxarIno, relPath, len(pxarEntries), len(backedEntries))
 
 	backedName := make(map[string]bool, len(backedEntries))
 	for _, be := range backedEntries {
 		backedName[be.name] = true
 	}
 
-	// Process entries: pxar entries first, but skip those shadowed by backed
+	// Process entries: pxar entries first (to advance payload position past
+	// original range), then backed entries (which get new payload offsets).
 	var allEntries []walkEntry
-	allEntries = append(allEntries, backedEntries...)
 	for _, pe := range pxarEntries {
 		if backedName[pe.name] {
 			continue
@@ -189,6 +499,7 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 			backed: false,
 		})
 	}
+	allEntries = append(allEntries, backedEntries...)
 
 	for _, we := range allEntries {
 		childRel := relPath
@@ -206,25 +517,72 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 
 			if fi.IsDir() {
 				meta := statToMetadata(fi, true)
-				if err := w.BeginDirectory(we.name, &meta); err != nil {
+				if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
 					return fmt.Errorf("begin dir %s: %w", we.name, err)
 				}
 				pxarChildIno := fs.pxarInoForPath(pxarIno, we.name)
-				if err := fs.walkOverlay(w, pxarChildIno, childRel); err != nil {
+				if err := fs.walkOverlay(ow, pxarChildIno, childRel); err != nil {
 					return err
 				}
-				if err := w.EndDirectory(); err != nil {
+				if err := ow.writer.EndDirectory(); err != nil {
 					return fmt.Errorf("end dir %s: %w", we.name, err)
 				}
 				continue
 			}
 
-			entry, content, err := fs.readBackedEntry(childRel, fi)
-			if err != nil {
-				return fmt.Errorf("read backed entry %s: %w", childRel, err)
+			if err := ow.ensureAdvanced(); err != nil {
+				return fmt.Errorf("advance payload position: %w", err)
 			}
-			if err := w.WriteEntry(entry, content); err != nil {
-				return fmt.Errorf("write entry %s: %w", we.name, err)
+
+			if fi.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(abs)
+				if err != nil {
+					return fmt.Errorf("readlink %s: %w", abs, err)
+				}
+				entry := &pxar.Entry{
+					Path:       childRel,
+					Kind:       pxar.KindSymlink,
+					Metadata:   statToMetadata(fi, false),
+					FileSize:   uint64(fi.Size()),
+					LinkTarget: target,
+				}
+				if err := ow.writer.WriteEntry(entry, nil); err != nil {
+					return fmt.Errorf("write symlink %s: %w", we.name, err)
+				}
+				continue
+			}
+
+			if !fi.Mode().IsRegular() {
+				// Device, FIFO, socket — no content
+				meta := statToMetadata(fi, false)
+				entry := &pxar.Entry{
+					Path:     childRel,
+					Kind:     pxar.KindFile,
+					Metadata: meta,
+					FileSize: 0,
+				}
+				if err := ow.writer.WriteEntry(entry, nil); err != nil {
+					return fmt.Errorf("write entry %s: %w", we.name, err)
+				}
+				continue
+			}
+
+			// Stream regular file to avoid buffering entire content
+			f, err := os.Open(abs)
+			if err != nil {
+				return fmt.Errorf("open %s: %w", abs, err)
+			}
+			meta := statToMetadata(fi, false)
+			entry := &pxar.Entry{
+				Path:     childRel,
+				Kind:     pxar.KindFile,
+				Metadata: meta,
+				FileSize: uint64(fi.Size()),
+			}
+			err = ow.writer.WriteEntryReader(entry, f, uint64(fi.Size()))
+			f.Close()
+			if err != nil {
+				return fmt.Errorf("write file %s: %w", we.name, err)
 			}
 			continue
 		}
@@ -238,27 +596,25 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 		childIno := toInode(pxarEntry)
 
 		if pxarEntry.IsDir() {
+			// Register the directory node in the pxar cache so readDirRaw works.
+			fs.pxar.registerNode(childIno, pxarIno, pxarEntry)
 			meta := buildMetaFromEntry(pxarEntry)
-			if err := w.BeginDirectory(we.name, &meta); err != nil {
+			if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
 				return fmt.Errorf("begin dir %s: %w", we.name, err)
 			}
-			if err := fs.walkOverlay(w, childIno, childRel); err != nil {
+			if err := fs.walkOverlay(ow, childIno, childRel); err != nil {
 				return err
 			}
-			if err := w.EndDirectory(); err != nil {
+			if err := ow.writer.EndDirectory(); err != nil {
 				return fmt.Errorf("end dir %s: %w", we.name, err)
 			}
 			continue
 		}
 
-		// Pxar file
-		content, err := fs.readPxarContent(pxarEntry)
-		if err != nil {
-			return fmt.Errorf("read pxar file %s: %w", childRel, err)
-		}
+		// Pxar file — reference original payload offset (no data read).
 		entry := cloneEntryWithName(pxarEntry, we.name)
-		if err := w.WriteEntry(entry, content); err != nil {
-			return fmt.Errorf("write pxar entry %s: %w", we.name, err)
+		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
+			return fmt.Errorf("write pxar ref %s: %w", we.name, err)
 		}
 	}
 
@@ -266,9 +622,24 @@ func (fs *passthroughFS) walkOverlay(w transfer.ArchiveWriter, pxarIno uint64, r
 }
 
 // walkEntry represents a single entry in the merged overlay walk.
+// overlayWalk tracks state across the recursive walk.
+type overlayWalk struct {
+	writer   transfer.ArchiveWriter
+	dedup    *transfer.RemoteDedupSplitArchiveWriter
+	advanced bool // true after Advance(HeaderSize) was called
+}
+
+func (ow *overlayWalk) ensureAdvanced() error {
+	if ow.advanced || ow.dedup == nil {
+		return nil
+	}
+	ow.advanced = true
+	return ow.dedup.AdvancePayloadPosition(format.HeaderSize)
+}
+
 type walkEntry struct {
+	pxar   *pxar.Entry
 	name   string
-	pxar   *pxar.Entry // non-nil if from pxar
 	backed bool
 }
 
@@ -301,78 +672,6 @@ func (fs *passthroughFS) pxarInoForPath(parentIno uint64, name string) uint64 {
 		}
 	}
 	return 0
-}
-
-// readBackedEntry reads a file/symlink from the backing dir and returns
-// a pxar.Entry plus content bytes.
-func (fs *passthroughFS) readBackedEntry(relPath string, fi os.FileInfo) (*pxar.Entry, []byte, error) {
-	abs := fs.absPath(relPath)
-
-	if fi.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(abs)
-		if err != nil {
-			return nil, nil, err
-		}
-		entry := &pxar.Entry{
-			Path:       relPath,
-			Kind:       pxar.KindSymlink,
-			Metadata:   statToMetadata(fi, false),
-			FileSize:   uint64(fi.Size()),
-			LinkTarget: target,
-		}
-		return entry, nil, nil
-	}
-
-	if fi.IsDir() {
-		entry := &pxar.Entry{
-			Path:     relPath,
-			Kind:     pxar.KindDirectory,
-			Metadata: statToMetadata(fi, true),
-			FileSize: uint64(fi.Size()),
-		}
-		return entry, nil, nil
-	}
-
-	// Regular file
-	content, err := os.ReadFile(abs)
-	if err != nil {
-		return nil, nil, err
-	}
-	entry := &pxar.Entry{
-		Path:     relPath,
-		Kind:     pxar.KindFile,
-		Metadata: statToMetadata(fi, false),
-		FileSize: uint64(len(content)),
-	}
-	return entry, content, nil
-}
-
-// readPxarContent reads the content of a pxar archive entry.
-func (fs *passthroughFS) readPxarContent(entry *pxar.Entry) ([]byte, error) {
-	if entry.IsRegularFile() {
-		fs.pxar.readerMu.Lock()
-		pxarEntry, err := fs.pxar.readEntryForNode(&node{
-			inode:      toInode(entry),
-			entryStart: entry.FileOffset,
-		})
-		if err != nil {
-			fs.pxar.readerMu.Unlock()
-			return nil, err
-		}
-		rc, err := fs.pxar.reader.ReadFileContentReader(pxarEntry)
-		if err != nil {
-			fs.pxar.readerMu.Unlock()
-			return nil, err
-		}
-		content, err := io.ReadAll(rc)
-		_ = rc.Close()
-		fs.pxar.readerMu.Unlock()
-		return content, err
-	}
-	if entry.IsSymlink() {
-		return nil, nil
-	}
-	return nil, nil
 }
 
 // --- helpers ---
@@ -436,18 +735,18 @@ var commitMu sync.Mutex
 func runCommitSubcommand() {
 	fs := flag.NewFlagSet("commit", flag.ExitOnError)
 	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
-	pbsURL := fs.String("pbs-url", "", "PBS server URL (required)")
-	datastoreName := fs.String("datastore", "", "PBS datastore name (required)")
-	authToken := fs.String("token", "", "PBS API token (required)")
-	namespace := fs.String("ns", "-", "PBS namespace (use '-' for none)")
-	backupType := fs.String("backup-type", "host", "Backup type (host, vm, ct)")
-	backupID := fs.String("backup-id", "", "Backup ID (required)")
-	backupTime := fs.Int64("backup-time", 0, "Backup timestamp (Unix seconds)")
+	pbsURL := fs.String("pbs-url", "", "PBS server URL (auto-detected as https://localhost:8007 if omitted)")
+	datastoreName := fs.String("datastore", "", "PBS datastore name (auto-detected from mount if omitted)")
+	authToken := fs.String("token", "", "PBS API token (auto-detected from pbs-plus-token.json if omitted)")
+	namespace := fs.String("ns", "", "PBS namespace (defaults to original snapshot's; use '-' for none)")
+	backupType := fs.String("backup-type", "", "Backup type (defaults to original snapshot's)")
+	backupID := fs.String("backup-id", "", "Backup ID (defaults to original snapshot's; generates a new snapshot in the same group)")
 
 	fs.Parse(os.Args[2:])
 
-	if *socketPath == "" || *pbsURL == "" || *datastoreName == "" || *authToken == "" || *backupID == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> --pbs-url <url> --datastore <name> --token <token> [--ns <ns>] [--backup-type host] --backup-id <id>\n")
+	if *socketPath == "" {
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> [--pbs-url <url>] [--datastore <name>] [--token <token>] [--ns <ns>] [--backup-type <type>] [--backup-id <id>]\n")
+		fmt.Fprintf(os.Stderr, "\nAll flags except --socket are optional; the daemon auto-detects defaults.\n")
 		os.Exit(1)
 	}
 
@@ -458,8 +757,8 @@ func runCommitSubcommand() {
 	}
 	defer conn.Close()
 
-	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s %d\n",
-		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID, *backupTime)
+	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
+		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID)
 	if _, err := fmt.Fprint(conn, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending command: %v\n", err)
 		os.Exit(1)
