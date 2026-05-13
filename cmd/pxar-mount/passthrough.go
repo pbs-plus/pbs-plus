@@ -290,8 +290,8 @@ func nodeFromStat(st *syscall.Stat_t) *node {
 }
 
 // isPxarBacked returns true if the node (by inode) originated from the pxar
-// archive. Pxar-backed nodes reject all mutating FS operations except ACL
-// xattr changes, which are stored on the precreated backing directory.
+// archive. Pxar-backed nodes reject ALL mutating FS operations, including
+// xattr changes — the archive is fully immutable.
 func (fs *passthroughFS) isPxarBacked(ino uint64) bool {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
@@ -420,8 +420,6 @@ func (fs *passthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, 
 		return fuse.EROFS
 	}
 	// Pxar-backed entries are immutable — reject metadata mutations.
-	// ACL changes are handled via SetXAttr/RemoveXAttr (xattrs stored on
-	// the backing directory, not in the archive).
 	if fs.isPxarBacked(input.NodeId) {
 		return fuse.EPERM
 	}
@@ -699,6 +697,11 @@ func (fs *passthroughFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *f
 		return fs.pxar.Open(cancel, input, out)
 	}
 
+	// Pxar-backed entries are read-only — reject write opens.
+	if fs.isPxarBacked(input.NodeId) && input.Flags&(uint32(syscall.O_WRONLY|syscall.O_RDWR)) != 0 {
+		return fuse.EROFS
+	}
+
 	rel := fs.nodePath(input.NodeId)
 	flags := int(input.Flags) & (os.O_RDONLY | os.O_WRONLY | os.O_RDWR)
 	fhID, err := fs.registerFh(rel, input.NodeId, flags)
@@ -732,6 +735,9 @@ func (fs *passthroughFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []
 
 func (fs *passthroughFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []byte) (uint32, fuse.Status) {
 	if !fs.isBacked(input.NodeId) {
+		return 0, fuse.EROFS
+	}
+	if fs.isPxarBacked(input.NodeId) {
 		return 0, fuse.EROFS
 	}
 
@@ -771,6 +777,9 @@ func (fs *passthroughFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse
 
 func (fs *passthroughFS) Fallocate(cancel <-chan struct{}, input *fuse.FallocateIn) fuse.Status {
 	if !fs.isBacked(input.NodeId) {
+		return fuse.EROFS
+	}
+	if fs.isPxarBacked(input.NodeId) {
 		return fuse.EROFS
 	}
 
@@ -1147,6 +1156,14 @@ func (fs *passthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 }
 
 func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
+	if !fs.isBacked(input.NodeId) {
+		return fuse.EROFS
+	}
+	// Pxar-backed entries are immutable — reject all xattr changes.
+	if fs.isPxarBacked(input.NodeId) {
+		return fuse.EPERM
+	}
+
 	flags := 0
 	if input.Flags&xattrCreate != 0 {
 		flags = unix.XATTR_CREATE
@@ -1154,27 +1171,27 @@ func (fs *passthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn
 		flags = unix.XATTR_REPLACE
 	}
 
-	if fs.isBacked(input.NodeId) {
-		rel := fs.nodePath(input.NodeId)
-		if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
-			return fuse.ToStatus(err)
-		}
-		return fuse.OK
+	rel := fs.nodePath(input.NodeId)
+	if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
+		return fuse.ToStatus(err)
 	}
-
-	return fuse.EROFS
+	return fuse.OK
 }
 
 func (fs *passthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
-	if fs.isBacked(header.NodeId) {
-		rel := fs.nodePath(header.NodeId)
-		if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
-			return fuse.ToStatus(err)
-		}
-		return fuse.OK
+	if !fs.isBacked(header.NodeId) {
+		return fuse.EROFS
+	}
+	// Pxar-backed entries are immutable — reject all xattr removals.
+	if fs.isPxarBacked(header.NodeId) {
+		return fuse.EPERM
 	}
 
-	return fuse.EROFS
+	rel := fs.nodePath(header.NodeId)
+	if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
+		return fuse.ToStatus(err)
+	}
+	return fuse.OK
 }
 
 // --- StatFs ---
