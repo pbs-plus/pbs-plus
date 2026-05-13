@@ -268,25 +268,44 @@ func (fs *passthroughFS) getPxarNode(ino uint64) *node {
 	return fs.pxar.nodes[ino]
 }
 
-func (fs *passthroughFS) fillStatAttr(n *node, attr *fuse.Attr) {
-	attr.Ino = n.inode
-	attr.Size = n.fileSize
-	attr.Blocks = (n.fileSize + 511) / 512
-	attr.Atime = uint64(n.mtimeSecs)
-	attr.Mtime = uint64(n.mtimeSecs)
-	attr.Ctime = uint64(n.mtimeSecs)
-	attr.Atimensec = n.mtimeNanos
-	attr.Mtimensec = n.mtimeNanos
-	attr.Ctimensec = n.mtimeNanos
-	attr.Mode = statMode(n.mode)
-	if n.isDir {
-		attr.Nlink = 2
-	} else {
-		attr.Nlink = 1
+// nodeFromStat creates a minimal node from a syscall.Stat_t for use with
+// fillEntryOut / fillAttrOut. The inode field is set by the caller.
+func nodeFromStat(st *syscall.Stat_t) *node {
+	return &node{
+		fileSize:  uint64(st.Size),
+		mode:      uint64(st.Mode),
+		uid:       st.Uid,
+		gid:       st.Gid,
+		mtimeSecs: int64(st.Mtim.Sec),
+		isDir:     st.Mode&syscall.S_IFDIR != 0,
+		isSymlink: st.Mode&syscall.S_IFLNK != 0,
+		isReg:     st.Mode&syscall.S_IFREG != 0,
 	}
-	attr.Uid = n.uid
-	attr.Gid = n.gid
-	attr.Blksize = 4096
+}
+
+// isPxarBacked returns true if the node (by inode) originated from the pxar
+// archive. Pxar-backed nodes reject all mutating FS operations except ACL
+// xattr changes, which are stored on the precreated backing directory.
+func (fs *passthroughFS) isPxarBacked(ino uint64) bool {
+	fs.mu.RLock()
+	defer fs.mu.RUnlock()
+	return fs.pxarDir[ino]
+}
+
+// isPxarChild checks whether any pxar entry (file, dir, symlink, etc.) with
+// the given name exists under the parent directory. Used to prevent
+// deletion/rename of archive entries.
+func (fs *passthroughFS) isPxarChild(parentIno uint64, name string) bool {
+	entries, err := fs.pxar.readDirRaw(parentIno)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Lookup ---
@@ -350,17 +369,8 @@ func (fs *passthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, 
 		if err := syscall.Lstat(fs.absPath(rel), &st); err != nil {
 			return fuse.ToStatus(err)
 		}
-		n := &node{
-			inode:     input.NodeId,
-			fileSize:  uint64(st.Size),
-			mode:      uint64(st.Mode),
-			uid:       st.Uid,
-			gid:       st.Gid,
-			mtimeSecs: int64(st.Mtim.Sec),
-			isDir:     st.Mode&syscall.S_IFDIR != 0,
-			isSymlink: st.Mode&syscall.S_IFLNK != 0,
-			isReg:     st.Mode&syscall.S_IFREG != 0,
-		}
+		n := nodeFromStat(&st)
+		n.inode = input.NodeId
 		fillAttrOut(n, out)
 		return fuse.OK
 	}
@@ -370,6 +380,12 @@ func (fs *passthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, 
 func (fs *passthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) fuse.Status {
 	if !fs.isBacked(input.NodeId) {
 		return fuse.EROFS
+	}
+	// Pxar-backed entries are immutable — reject metadata mutations.
+	// ACL changes are handled via SetXAttr/RemoveXAttr (xattrs stored on
+	// the backing directory, not in the archive).
+	if fs.isPxarBacked(input.NodeId) {
+		return fuse.EPERM
 	}
 	rel := fs.nodePath(input.NodeId)
 	abs := fs.absPath(rel)
@@ -448,12 +464,11 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	out.AttrValid = 1
 	out.Fh = fhID
 	out.OpenFlags = fuse.FOPEN_KEEP_CACHE
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-		isReg: true,
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	n.isReg = true
+	fillAttr(&out.Attr, n)
 
 	return fuse.OK
 }
@@ -479,16 +494,11 @@ func (fs *passthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 		return fuse.ToStatus(err)
 	}
 
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-		isDir: true,
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	n.isDir = true
+	fillEntryOut(ino, n, out)
 
 	return fuse.OK
 }
@@ -514,15 +524,10 @@ func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 		return fuse.ToStatus(err)
 	}
 
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	fillEntryOut(ino, n, out)
 
 	return fuse.OK
 }
@@ -548,55 +553,58 @@ func (fs *passthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, 
 		return fuse.ToStatus(err)
 	}
 
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	fs.fillStatAttr(&node{
-		inode: ino, fileSize: uint64(st.Size), mode: uint64(st.Mode),
-		uid: st.Uid, gid: st.Gid,
-		mtimeSecs: int64(st.Mtim.Sec), mtimeNanos: uint32(st.Mtim.Nsec),
-		isSymlink: true,
-	}, &out.Attr)
+	n := nodeFromStat(&st)
+	n.inode = ino
+	n.mtimeNanos = uint32(st.Mtim.Nsec)
+	n.isSymlink = true
+	fillEntryOut(ino, n, out)
 
 	return fuse.OK
 }
 
 // --- Unlink / Rmdir ---
 
-func (fs *passthroughFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
-	parentPath := fs.nodePath(header.NodeId)
-	childPath := parentPath + "/" + name
+// --- Unlink / Rmdir ---
 
+// removeEntry is the shared implementation for Unlink and Rmdir.
+func (fs *passthroughFS) removeEntry(parentIno uint64, name string, removeFn func(string) error) fuse.Status {
+	if fs.isPxarChild(parentIno, name) {
+		return fuse.EPERM
+	}
+
+	parentPath := fs.nodePath(parentIno)
+	childPath := parentPath + "/" + name
 	abs := fs.absPath(childPath)
+
 	if _, err := os.Lstat(abs); err != nil {
 		return fuse.EROFS
 	}
-
-	if err := syscall.Unlink(abs); err != nil {
+	if err := removeFn(abs); err != nil {
 		return fuse.ToStatus(err)
 	}
 	return fuse.OK
 }
 
+func (fs *passthroughFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
+	return fs.removeEntry(header.NodeId, name, syscall.Unlink)
+}
+
 func (fs *passthroughFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
-	parentPath := fs.nodePath(header.NodeId)
-	childPath := parentPath + "/" + name
-
-	abs := fs.absPath(childPath)
-	if _, err := os.Lstat(abs); err != nil {
-		return fuse.EROFS
-	}
-
-	if err := syscall.Rmdir(abs); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
+	return fs.removeEntry(header.NodeId, name, syscall.Rmdir)
 }
 
 // --- Rename ---
 
 func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldName string, newName string) fuse.Status {
+	// Pxar entries cannot be renamed/moved — the archive tree is immutable.
+	if fs.isPxarChild(input.NodeId, oldName) {
+		return fuse.EPERM
+	}
+	// Also reject overwriting/exchanging a pxar entry at the destination.
+	if fs.isPxarChild(input.Newdir, newName) {
+		return fuse.EPERM
+	}
+
 	oldParentPath := fs.nodePath(input.NodeId)
 	newParentPath := fs.nodePath(input.Newdir)
 	oldPath := oldParentPath + "/" + oldName
@@ -620,29 +628,21 @@ func (fs *passthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 		if _, err := os.Lstat(newAbs); err == nil {
 			return fuse.Status(syscall.EEXIST)
 		}
-		return fs.renameSimple(oldAbs, newAbs)
+		if err := os.Rename(oldAbs, newAbs); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
 	}
 
 	if input.Flags&renameExchange != 0 {
-		return fs.renameExchange(oldAbs, newAbs)
+		if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
+			return fuse.ToStatus(err)
+		}
+		return fuse.OK
 	}
 
 	// Default: rename with potential overwrite of existing backing file.
 	if err := os.Rename(oldAbs, newAbs); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
-}
-
-func (fs *passthroughFS) renameSimple(oldAbs, newAbs string) fuse.Status {
-	if err := os.Rename(oldAbs, newAbs); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
-}
-
-func (fs *passthroughFS) renameExchange(oldAbs, newAbs string) fuse.Status {
-	if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
 		return fuse.ToStatus(err)
 	}
 	return fuse.OK
@@ -709,12 +709,11 @@ func (fs *passthroughFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data
 	return uint32(n), fuse.OK
 }
 
-func (fs *passthroughFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
-	if !fs.isBacked(input.NodeId) {
+func (fs *passthroughFS) fsyncBacked(nodeID, fhID uint64) fuse.Status {
+	if !fs.isBacked(nodeID) {
 		return fuse.OK
 	}
-
-	fh := fs.handleForNode(input.NodeId, input.Fh)
+	fh := fs.handleForNode(nodeID, fhID)
 	if fh == nil {
 		return fuse.EBADF
 	}
@@ -724,19 +723,12 @@ func (fs *passthroughFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse
 	return fuse.OK
 }
 
-func (fs *passthroughFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
-	if !fs.isBacked(input.NodeId) {
-		return fuse.OK
-	}
+func (fs *passthroughFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
+	return fs.fsyncBacked(input.NodeId, input.Fh)
+}
 
-	fh := fs.handleForNode(input.NodeId, input.Fh)
-	if fh == nil {
-		return fuse.EBADF
-	}
-	if err := syscall.Fsync(fh.fd); err != nil {
-		return fuse.ToStatus(err)
-	}
-	return fuse.OK
+func (fs *passthroughFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
+	return fs.fsyncBacked(input.NodeId, input.Fh)
 }
 
 func (fs *passthroughFS) Fallocate(cancel <-chan struct{}, input *fuse.FallocateIn) fuse.Status {
@@ -827,15 +819,8 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	var pxarEntries []dirEntryMeta
 	if pxarN, err := fs.pxar.readDirRaw(input.NodeId); err == nil {
 		pxarEntries = pxarN
-	} else {
-		// For backed directories that shadow pxar directories, readDirRaw
-		// fails because the inode isn't in the pxar node cache. Try to
-		// find the pxar directory by looking up the parent's entries.
-		if fs.isBacked(input.NodeId) {
-			if pxarEntries = fs.pxarEntriesForPath(parentPath); pxarEntries != nil {
-				// Found pxar entries — register the node so future reads work
-			}
-		}
+	} else if fs.isBacked(input.NodeId) {
+		pxarEntries = fs.pxarEntriesForPath(parentPath)
 	}
 
 	// Read backing dir entries
@@ -943,12 +928,6 @@ func (fs *passthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		if n := fs.getPxarNode(input.NodeId); n != nil {
 			parentIno = n.parent
 		}
-		// For backed nodes, try to find parent in pxar cache
-		if fs.isBacked(input.NodeId) {
-			if pn := fs.getPxarNode(input.NodeId); pn != nil {
-				parentIno = pn.parent
-			}
-		}
 
 		fs.pxar.mu.RLock()
 		if pn := fs.pxar.nodes[parentIno]; pn != nil {
@@ -1006,7 +985,10 @@ func (fs *passthroughFS) dirModeForNode(ino uint64) uint32 {
 func (fs *passthroughFS) fillEntryOutForNode(ino uint64, out *fuse.EntryOut) {
 	// Fast path: use cached stat from readDirImpl
 	if st, ok := fs.readDirStats[ino]; ok {
-		fillAttrFromStat(ino, &st, out)
+		n := nodeFromStat(&st)
+		n.inode = ino
+		n.mtimeNanos = uint32(st.Mtim.Nsec)
+		fillEntryOut(ino, n, out)
 		return
 	}
 	if fs.isBacked(ino) {
@@ -1020,33 +1002,6 @@ func (fs *passthroughFS) fillEntryOutForNode(ino uint64, out *fuse.EntryOut) {
 	if n := fs.getPxarNode(ino); n != nil {
 		fillEntryOut(ino, n, out)
 	}
-}
-
-// fillAttrFromStat fills a fuse.EntryOut directly from a syscall.Stat_t
-// without allocating an intermediate node struct.
-func fillAttrFromStat(ino uint64, st *syscall.Stat_t, out *fuse.EntryOut) {
-	out.NodeId = ino
-	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
-	out.Ino = ino
-	out.Size = uint64(st.Size)
-	out.Blocks = (uint64(st.Size) + 511) / 512
-	out.Mode = uint32(st.Mode)
-	out.Nlink = 1
-	if st.Mode&syscall.S_IFDIR != 0 {
-		out.Nlink = 2
-		out.Mode |= syscall.S_IFDIR
-	}
-	out.Uid = st.Uid
-	out.Gid = st.Gid
-	out.Mtime = uint64(st.Mtim.Sec)
-	out.Mtimensec = uint32(st.Mtim.Nsec)
-	out.Atime = uint64(st.Atim.Sec)
-	out.Atimensec = uint32(st.Atim.Nsec)
-	out.Ctime = uint64(st.Ctim.Sec)
-	out.Ctimensec = uint32(st.Ctim.Nsec)
-	out.Blksize = 4096
 }
 
 func (fs *passthroughFS) ReleaseDir(input *fuse.ReleaseIn) {}
