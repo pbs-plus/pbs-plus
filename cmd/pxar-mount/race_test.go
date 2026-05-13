@@ -785,6 +785,159 @@ func TestConcurrentRenameLookup_ConsistentPaths(t *testing.T) {
 	}
 }
 
+// --- Test 18: hotSwap resets passthrough state ---
+// After hotSwap clears pxar.nodes, passthrough's stale inode mappings
+// (nodePaths, pathToIno, backed, pxarDir) must be cleared so that
+// subsequent operations don't reference non-existent pxar inodes.
+
+func TestHotSwap_ResetsPassthroughState(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Create some backed files and directories via passthrough
+	for i := range 5 {
+		name := fmt.Sprintf("swapfile_%d.txt", i)
+		var cout fuse.CreateOut
+		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, name, &cout); st != fuse.OK {
+			t.Fatalf("Create %s failed: %v", name, st)
+		}
+	}
+	if st := fs.Mkdir(nil, &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: rootInode}, Mode: 0o755}, "swapdir", &(fuse.EntryOut{})); st != fuse.OK {
+		t.Fatalf("Mkdir swapdir failed: %v", st)
+	}
+
+	// Simulate what hotSwap does: clear pxar.nodes, recreate backing dir
+	fs.pxar.mu.Lock()
+	oldNodes := fs.pxar.nodes
+	fs.pxar.nodes = make(map[uint64]node, len(oldNodes))
+	// Re-register root
+	fs.pxar.nodes[rootInode] = oldNodes[rootInode]
+	fs.pxar.mu.Unlock()
+
+	// Recreate backing dir (like commit does)
+	_ = os.RemoveAll(backingDir)
+	if err := os.MkdirAll(backingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now call resetState (the fix we'll implement)
+	fs.resetState()
+
+	// Verify all passthrough maps are clean
+	fs.mu.RLock()
+	npCount := len(fs.nodePaths)
+	piCount := len(fs.pathToIno)
+	bCount := len(fs.backed)
+	pdCount := len(fs.pxarDir)
+	fs.mu.RUnlock()
+
+	// Only root should remain
+	if npCount != 1 {
+		t.Errorf("nodePaths should have 1 entry (root), got %d", npCount)
+	}
+	if piCount != 1 {
+		t.Errorf("pathToIno should have 1 entry (root), got %d", piCount)
+	}
+	if bCount != 1 {
+		t.Errorf("backed should have 1 entry (root), got %d", bCount)
+	}
+	if pdCount != 1 {
+		t.Errorf("pxarDir should have 1 entry (root), got %d", pdCount)
+	}
+
+	// Root should still be valid
+	if !fs.isBacked(rootInode) {
+		t.Error("root should still be backed")
+	}
+
+	// New operations should work on a clean slate
+	var cout fuse.CreateOut
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "post_swap.txt", &cout); st != fuse.OK {
+		t.Fatalf("Create after reset failed: %v", st)
+	}
+	if !fs.isBacked(cout.NodeId) {
+		t.Error("post-swap file should be backed")
+	}
+
+	// File handles should be cleared
+	fs.fhmu.Lock()
+	fhCount := len(fs.handles)
+	fs.fhmu.Unlock()
+	if fhCount != 1 { // only the new file's handle
+		t.Errorf("handles should have 1 entry, got %d", fhCount)
+	}
+}
+
+// --- Test 19: Concurrent hotSwap + Lookup doesn't panic ---
+
+func TestConcurrentHotSwapLookup_NoPanic(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Pre-create files
+	for i := range 10 {
+		name := fmt.Sprintf("concurrent_swap_%d.txt", i)
+		if err := os.WriteFile(filepath.Join(backingDir, name), []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	const rounds = 20
+
+	// Swapper: simulate hotSwap + reset repeatedly
+	wg.Go(func() {
+		for range rounds {
+			fs.pxar.mu.Lock()
+			oldNodes := fs.pxar.nodes
+			fs.pxar.nodes = make(map[uint64]node, len(oldNodes))
+			fs.pxar.nodes[rootInode] = oldNodes[rootInode]
+			fs.pxar.mu.Unlock()
+
+			_ = os.RemoveAll(backingDir)
+			_ = os.MkdirAll(backingDir, 0o755)
+
+			fs.resetState()
+		}
+	})
+
+	// Lookup goroutines: constantly looking up files
+	for i := range 3 {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := range rounds {
+				name := fmt.Sprintf("concurrent_swap_%d.txt", j%10)
+				var out fuse.EntryOut
+				fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, name, &out)
+			}
+		}(i)
+	}
+
+	// Create goroutines
+	wg.Go(func() {
+		for j := range rounds {
+			name := fmt.Sprintf("new_file_%d.txt", j)
+			var cout fuse.CreateOut
+			fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, name, &cout)
+		}
+	})
+
+	// ReadDir goroutine
+	wg.Go(func() {
+		for range rounds {
+			buf := make([]byte, 16*1024)
+			out := fuse.NewDirEntryList(buf, 0)
+			fs.readDirImpl(nil, &fuse.ReadIn{
+				InHeader: fuse.InHeader{NodeId: rootInode},
+			}, out, true)
+		}
+	})
+
+	// This test just needs to complete without panicking or racing
+	wg.Wait()
+}
+
 // helpers
 
 func countPaths(fs *passthroughFS) map[string]int {
