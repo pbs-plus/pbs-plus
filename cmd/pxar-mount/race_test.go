@@ -25,13 +25,14 @@ func newTestPassthroughFS(t *testing.T) (*passthroughFS, string, func()) {
 	}
 
 	fs := &passthroughFS{
-		pxar:       pxar,
-		backingDir: backingDir,
-		nodePaths:  make(map[uint64]string),
-		pathToIno:  make(map[string]uint64),
-		backed:     make(map[uint64]bool),
-		pxarDir:    make(map[uint64]bool),
-		handles:    make(map[uint64]*passFh),
+		pxar:         pxar,
+		backingDir:   backingDir,
+		nodePaths:    make(map[uint64]string),
+		pathToIno:    make(map[string]uint64),
+		backed:       make(map[uint64]bool),
+		pxarDir:      make(map[uint64]bool),
+		deletedPaths: make(map[string]bool),
+		handles:      make(map[uint64]*passFh),
 	}
 
 	// Initialize root

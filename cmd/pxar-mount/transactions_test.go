@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-//go:fix inline
-func uint32Ptr(v uint32) *uint32 { return new(v) }
-
 func TestTransactionLogRecord(t *testing.T) {
 	dir := t.TempDir()
 	tl, err := OpenTransactionLog(dir)
@@ -45,7 +42,7 @@ func TestTransactionLogReadAll(t *testing.T) {
 
 	_, _ = tl.Record(TxnDelete, "/a")
 	_, _ = tl.RecordRename("/b", "/c")
-	_, _ = tl.RecordSetAttr("/d", &TxnAttrs{Mode: uint32Ptr(0o755)})
+	_, _ = tl.RecordSetAttr("/d", &TxnAttrs{Mode: new(uint32(0o755))})
 
 	txns, err := tl.ReadAll()
 	if err != nil {
@@ -190,8 +187,8 @@ func TestTxnAttrsNilFields(t *testing.T) {
 	}
 
 	attrs2 := &TxnAttrs{
-		Mode: uint32Ptr(0o644),
-		GID:  uint32Ptr(100),
+		Mode: new(uint32(0o644)),
+		GID:  new(uint32(100)),
 	}
 	data2, err := json.Marshal(attrs2)
 	if err != nil {

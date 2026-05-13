@@ -391,8 +391,14 @@ func (fs *passthroughFS) isPathDeleted(relPath string) bool {
 }
 
 // markPathDeleted records a path as deleted and records a DELETE transaction.
+// It is idempotent: if the path is already deleted, no duplicate transaction
+// is recorded.
 func (fs *passthroughFS) markPathDeleted(relPath string) {
 	fs.mu.Lock()
+	if fs.deletedPaths[relPath] {
+		fs.mu.Unlock()
+		return // already deleted
+	}
 	fs.deletedPaths[relPath] = true
 	fs.mu.Unlock()
 	if fs.txnLog != nil {
@@ -943,13 +949,16 @@ func (fs *passthroughFS) renamePaths(oldPath, newPath string) {
 	fs.mu.Lock()
 	ino, ok := fs.pathToIno[oldPath]
 	if ok {
+		// Save the old destination inode BEFORE overwriting.
+		oldDstIno, hadDst := fs.pathToIno[newPath]
+
 		delete(fs.pathToIno, oldPath)
 		fs.pathToIno[newPath] = ino
 		fs.nodePaths[ino] = newPath
 
 		// If the destination had an existing file that was overwritten by rename,
 		// its inode is now stale — clean it up.
-		if oldDstIno, exists := fs.pathToIno[newPath]; exists && oldDstIno != ino {
+		if hadDst && oldDstIno != ino {
 			delete(fs.nodePaths, oldDstIno)
 			delete(fs.backed, oldDstIno)
 			delete(fs.pxarDir, oldDstIno)
@@ -1512,6 +1521,11 @@ func (fs *passthroughFS) resetState() {
 	fs.backed[rootInode] = rootBacked
 	fs.pxarDir[rootInode] = rootPxarDir
 	fs.mu.Unlock()
+
+	// Clear the transaction log if present.
+	if fs.txnLog != nil {
+		_ = fs.txnLog.Clear()
+	}
 }
 
 // --- xattr ---
