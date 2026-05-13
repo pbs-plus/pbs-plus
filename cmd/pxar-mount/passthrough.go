@@ -971,7 +971,7 @@ func (fs *passthroughFS) removeEntry(parentIno uint64, name string, removeFn fun
 	abs := fs.absPath(childPath)
 
 	if _, err := os.Lstat(abs); err != nil {
-		return fuse.EROFS
+		return fuse.ENOENT
 	}
 	if err := removeFn(abs); err != nil {
 		return fuse.ToStatus(err)

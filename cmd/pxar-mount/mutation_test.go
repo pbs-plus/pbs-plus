@@ -825,3 +825,38 @@ func TestRename_DestinationStaysDeletedOnBackingParentFailure(t *testing.T) {
 		t.Error("destPath was un-deleted even though ensureBackingParent failed")
 	}
 }
+
+// --- Bug 18: removeEntry returns EROFS for non-existent backed files ---
+// When a backed file doesn't exist on disk (e.g., already removed),
+// removeEntry returns EROFS instead of ENOENT. This is misleading
+// because the issue is "file not found", not "read-only filesystem".
+
+func TestRemoveEntry_NonExistentBackedFileReturnsENOENT(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Set up root inode
+	fs.mu.Lock()
+	fs.nodePaths[rootInode] = "/"
+	fs.pathToIno["/"] = rootInode
+	fs.mu.Unlock()
+
+	// Register a path that has NO file on disk (orphaned inode mapping)
+	childPath := "/ghost.txt"
+	fs.mu.Lock()
+	ino := uint64(backedInoBase) + 1
+	fs.pathToIno[childPath] = ino
+	fs.nodePaths[ino] = childPath
+	fs.backed[ino] = true
+	fs.mu.Unlock()
+
+	// Attempt to unlink the ghost file
+	st := fs.Unlink(nil, &fuse.InHeader{NodeId: rootInode}, "ghost.txt")
+
+	// Should return ENOENT (file not found), not EROFS
+	if st == fuse.EROFS {
+		t.Error("removeEntry returned EROFS for non-existent file; expected ENOENT or similar")
+	}
+}
