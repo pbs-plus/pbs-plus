@@ -860,3 +860,50 @@ func TestRemoveEntry_NonExistentBackedFileReturnsENOENT(t *testing.T) {
 		t.Error("removeEntry returned EROFS for non-existent file; expected ENOENT or similar")
 	}
 }
+
+// --- Bug 19: Create un-deletes path then ensureBackingParent fails ---
+// Create calls unDeletePath before ensureBackingParent. If ensureBackingParent
+// fails, the path stays un-deleted even though nothing was created.
+// A previously-deleted pxar entry becomes visible to Lookups.
+
+func TestCreate_DeletedPathStaysDeletedOnBackingParentFailure(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Set up root inode
+	fs.mu.Lock()
+	fs.nodePaths[rootInode] = "/"
+	fs.pathToIno["/"] = rootInode
+	fs.mu.Unlock()
+
+	// Mark a path as deleted (simulates a previously-deleted pxar entry)
+	childRelPath := "/subdir/deleted-file.txt"
+	fs.markPathDeleted(childRelPath)
+
+	if !fs.isPathDeleted(childRelPath) {
+		t.Fatal("childRelPath should be deleted before Create")
+	}
+
+	// Block MkdirAll by creating a FILE at "subdir" path
+	subdirPath := filepath.Join(backingDir, "subdir")
+	if err := os.WriteFile(subdirPath, []byte("blocker"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Attempt Create — ensureBackingParent should fail
+	var cout fuse.CreateOut
+	st := fs.Create(nil, &fuse.CreateIn{
+		InHeader: fuse.InHeader{NodeId: rootInode},
+	}, "subdir/deleted-file.txt", &cout)
+
+	if st == fuse.OK {
+		t.Fatal("Create should fail when parent dir can't be created")
+	}
+
+	// Path should STILL be deleted
+	if !fs.isPathDeleted(childRelPath) {
+		t.Error("childRelPath was un-deleted even though Create failed")
+	}
+}

@@ -726,11 +726,17 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	childPath := joinPath(parentPath, name)
 
 	// Un-delete the path if it was previously a deleted pxar entry.
+	// Save state so we can restore on error.
+	wasDeleted := false
 	if fs.mutationMode {
+		wasDeleted = fs.isPathDeleted(childPath)
 		fs.unDeletePath(childPath)
 	}
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(childPath)
+		}
 		return fuse.ToStatus(err)
 	}
 
@@ -787,11 +793,16 @@ func (fs *passthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 	parentPath := fs.nodePath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
+	wasDeleted := false
 	if fs.mutationMode {
+		wasDeleted = fs.isPathDeleted(childPath)
 		fs.unDeletePath(childPath)
 	}
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(childPath)
+		}
 		return fuse.ToStatus(err)
 	}
 
@@ -836,11 +847,16 @@ func (fs *passthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 	parentPath := fs.nodePath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
+	wasDeleted := false
 	if fs.mutationMode {
+		wasDeleted = fs.isPathDeleted(childPath)
 		fs.unDeletePath(childPath)
 	}
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(childPath)
+		}
 		return fuse.ToStatus(err)
 	}
 
@@ -883,11 +899,16 @@ func (fs *passthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, 
 	parentPath := fs.nodePath(header.NodeId)
 	childPath := joinPath(parentPath, linkName)
 
+	wasDeleted := false
 	if fs.mutationMode {
+		wasDeleted = fs.isPathDeleted(childPath)
 		fs.unDeletePath(childPath)
 	}
 
 	if err := fs.ensureBackingParent(childPath); err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(childPath)
+		}
 		return fuse.ToStatus(err)
 	}
 
