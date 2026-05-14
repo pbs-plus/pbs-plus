@@ -148,6 +148,7 @@ func (fs *MutableFS) FsyncDir(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.
 
 // ReadDir merges immutable (pxar) and mutable (journal edges) entries.
 func (fs *MutableFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
+	fmt.Fprintf(os.Stderr, "  ReadDir: ino=%d offset=%d\n", input.NodeId, input.Offset)
 	return fs.readDirImpl(input, out, false)
 }
 
