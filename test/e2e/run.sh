@@ -21,6 +21,7 @@ INIT_SOCKET="/var/lib/archive-outpost/sockets/init-test.sock"
 MOUNT="/mnt/archive-mounts/test"
 INIT_MOUNT="/mnt/archive-mounts/init-test"
 PASS_DIR="/tmp/passthrough/2001-PROJECTS"
+INIT_PASS_DIR="/tmp/passthrough/init-test"
 
 unmount() {
 	fusermount -u "$1" 2>/dev/null || true
@@ -31,14 +32,15 @@ unmount() {
 }
 
 mount_init() {
-	local ns=$1 bid=$2 socket=$3 mount=$4
+	local ns=$1 bid=$2 socket=$3 mount=$4 pass=$5
 	unmount "$mount"
-	rm -rf "${mount}.backing" "${mount}.backing/.pxar-journal"
-	mkdir -p "$mount" "$(dirname $socket)"
+	rm -rf "$pass/.pxar-journal" "$pass"/*
+	mkdir -p "$pass" "$mount" "$(dirname $socket)"
 	nohup /usr/bin/pxar-mount init \
 		--pbs-store /archiving/pbs-datastore \
 		--socket "$socket" \
 		--namespace "$ns" \
+		--passthrough "$pass" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
 	# Wait for mount to be ready
@@ -90,7 +92,7 @@ echo "Using snapshot: $ORIG_SNAP"
 section "PHASE 1: INIT MODE — Fresh archive from scratch"
 ###############################################################################
 
-mount_init "test/init" "E2E-INIT" "$INIT_SOCKET" "$INIT_MOUNT"
+mount_init "test/init" "E2E-INIT" "$INIT_SOCKET" "$INIT_MOUNT" "$INIT_PASS_DIR"
 
 # 1a. Create files
 echo "hello world" > "$INIT_MOUNT/file1.txt"

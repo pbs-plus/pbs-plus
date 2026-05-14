@@ -20,6 +20,7 @@ func RunInitSubcommand() {
 	pbsStore := fs.String("pbs-store", "", "PBS datastore root path (required)")
 	socketPath := fs.String("socket", "", "Unix socket path for commit commands (required)")
 	namespace := fs.String("namespace", "", "PBS namespace")
+	passthrough := fs.String("passthrough", "", "Backing directory for write passthrough")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fuseOpts := fs.String("options", "rw,default_permissions", "FUSE mount options")
 	aclOwner := fs.Int("acl-owner", 0, "Default owner UID for new files/dirs (0 = inherit)")
@@ -30,7 +31,7 @@ func RunInitSubcommand() {
 	fs.Parse(os.Args[2:])
 
 	if *pbsStore == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount init --pbs-store <path> --socket <path> [--namespace <ns>] [--verbose] <mountpoint>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount init --pbs-store <path> --socket <path> [--passthrough <dir>] [--namespace <ns>] [--verbose] <mountpoint>\n\n")
 		fmt.Fprintf(os.Stderr, "Creates a writable mount that, on commit, produces a new PBS snapshot.\n")
 		fs.PrintDefaults()
 		os.Exit(1)
@@ -44,6 +45,7 @@ func RunInitSubcommand() {
 
 	Serve(MountConfig{
 		PBSStore:   *pbsStore,
+		BackingDir: *passthrough,
 		MountPoint: args[0],
 		SocketPath: *socketPath,
 		Namespace:  *namespace,
