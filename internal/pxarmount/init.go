@@ -26,6 +26,10 @@ func RunInitSubcommand() {
 	namespace := fs.String("namespace", "", "PBS namespace")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fuseOpts := fs.String("options", "rw,default_permissions", "FUSE mount options")
+	aclOwner := fs.Int("acl-owner", 0, "Default owner UID for new files/dirs (0 = inherit)")
+	aclGroup := fs.Int("acl-group", 0, "Default group GID for new files/dirs (0 = inherit)")
+	forceAclOwner := fs.Bool("force-acl-owner", false, "Force set owner on all existing files at mount")
+	forceAclGroup := fs.Bool("force-acl-group", false, "Force set group on all existing files at mount")
 
 	fs.Parse(os.Args[2:])
 
@@ -50,5 +54,11 @@ func RunInitSubcommand() {
 		FuseOpts:   *fuseOpts,
 		Verbose:    *verbose,
 		InitMode:   true,
+		ACL: ACLConfig{
+			OwnerUID:   *aclOwner,
+			OwnerGID:   *aclGroup,
+			ForceOwner: *forceAclOwner,
+			ForceGroup: *forceAclGroup,
+		},
 	})
 }

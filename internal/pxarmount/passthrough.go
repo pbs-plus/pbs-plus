@@ -8,6 +8,7 @@ package pxarmount
 // Mutations are recorded in txnLog and applied during commit.
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,13 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"golang.org/x/sys/unix"
 )
+
+type ACLConfig struct {
+	OwnerUID   int  // default owner UID for new files/dirs (0 = inherit)
+	OwnerGID   int  // default group GID for new files/dirs (0 = inherit)
+	ForceOwner bool // force chown on mount and after commit
+	ForceGroup bool // force chgrp on mount and after commit
+}
 
 type PassthroughFS struct {
 	fuse.RawFileSystem
@@ -42,6 +50,7 @@ type PassthroughFS struct {
 	mmapData      [][]byte
 	mutationMode  bool
 	txnLog        *TransactionLog
+	acl           ACLConfig
 }
 
 // NewPassthroughFS creates a new overlay filesystem.
@@ -60,6 +69,11 @@ func NewPassthroughFS(pxar *PxarFS, backingDir, pbsStore, ppxarDidx string, muta
 		deletedPaths:  make(map[string]bool),
 		handles:       make(map[uint64]*passFh),
 	}
+}
+
+// SetACLConfig applies the ACL policy. Must be called before InitPassthroughRoot.
+func (fs *PassthroughFS) SetACLConfig(cfg ACLConfig) {
+	fs.acl = cfg
 }
 
 // InitPassthroughRoot initializes the root directory in the backing dir.
@@ -179,6 +193,7 @@ func (fs *PassthroughFS) ensureDirBacking(ino uint64, relPath string) {
 	fs.mu.Lock()
 	fs.pxarDir[ino] = true
 	fs.mu.Unlock()
+	fs.applyACLOwnership(absPath, true)
 }
 
 func (fs *PassthroughFS) statBacked(rel string) (*node, error) {
@@ -376,6 +391,7 @@ func (fs *PassthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
 		if err := syscall.Symlink(entry.LinkTarget, abs); err != nil {
 			return "", err
 		}
+		fs.applyACLOwnership(abs, false)
 	} else if n.isReg {
 		fs.pxar.readerMu.Lock()
 		entry, err := fs.pxar.ReadEntryForNode(&n)
@@ -409,6 +425,7 @@ func (fs *PassthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
 
 	ino2, _ := fs.lookupOrAllocIno(relPath, n.isDir)
 	fs.setNode(ino2, relPath, true)
+	fs.applyACLOwnership(abs, n.isDir)
 
 	if fs.txnLog != nil {
 		_, _ = fs.txnLog.Record(TxnModify, relPath)
@@ -604,6 +621,7 @@ func (fs *PassthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	if createErr == nil {
 		ino, _ := fs.lookupOrAllocIno(childPath, false)
 		fs.setNode(ino, childPath, true)
+		fs.applyACLOwnership(abs, false)
 		return fs.finishCreate(ino, fd, out)
 	}
 
@@ -674,6 +692,7 @@ func (fs *PassthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 		_ = wasDeleted // EEXIST handled; other errors are not wasDeleted-restorable per pattern
 		return fuse.ToStatus(err)
 	}
+	fs.applyACLOwnership(abs, true)
 
 	ino := fs.allocBackedIno(true)
 	fs.setNode(ino, childPath, true)
@@ -721,6 +740,7 @@ func (fs *PassthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 	}
 
 	ino := fs.allocBackedIno(isDir)
+	fs.applyACLOwnership(abs, isDir)
 	fs.setNode(ino, childPath, true)
 
 	var st syscall.Stat_t
@@ -1429,7 +1449,12 @@ func (fs *PassthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn
 
 func (fs *PassthroughFS) setACLXAttr(input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
 	if !fs.isBacked(input.NodeId) {
-		return fuse.OK
+		if !fs.mutationMode {
+			return fuse.EROFS
+		}
+		if _, err := fs.materializePxarFile(input.NodeId); err != nil {
+			return fuse.ToStatus(err)
+		}
 	}
 
 	flags := 0
@@ -1472,7 +1497,12 @@ func (fs *PassthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHead
 
 func (fs *PassthroughFS) removeACLXAttr(header *fuse.InHeader, attr string) fuse.Status {
 	if !fs.isBacked(header.NodeId) {
-		return fuse.OK
+		if !fs.mutationMode {
+			return fuse.EROFS
+		}
+		if _, err := fs.materializePxarFile(header.NodeId); err != nil {
+			return fuse.ToStatus(err)
+		}
 	}
 
 	rel := fs.nodePath(header.NodeId)
@@ -1480,6 +1510,100 @@ func (fs *PassthroughFS) removeACLXAttr(header *fuse.InHeader, attr string) fuse
 		return fuse.ToStatus(err)
 	}
 	return fuse.OK
+}
+
+// saveRootACLs reads all ACL-related xattrs from the backing dir root.
+func (fs *PassthroughFS) saveRootACLs() map[string][]byte {
+	var xattrs map[string][]byte
+
+	// First call: get size.
+	sz, err := unix.Llistxattr(fs.backingDir, nil)
+	if err != nil || sz == 0 {
+		return nil
+	}
+
+	// Second call: get names.
+	nameBuf := make([]byte, sz)
+	sz, err = unix.Llistxattr(fs.backingDir, nameBuf)
+	if err != nil {
+		return nil
+	}
+
+	valBuf := make([]byte, 4096)
+	for name := range bytes.SplitSeq(nameBuf[:sz], []byte{0}) {
+		if len(name) == 0 {
+			continue
+		}
+		s := string(name)
+		if !isACLXattr(s) {
+			continue
+		}
+		for {
+			sz, err := unix.Lgetxattr(fs.backingDir, s, valBuf)
+			if err == unix.ERANGE {
+				valBuf = make([]byte, len(valBuf)*2)
+				continue
+			}
+			if err != nil {
+				break
+			}
+			val := make([]byte, sz)
+			copy(val, valBuf[:sz])
+			if xattrs == nil {
+				xattrs = make(map[string][]byte)
+			}
+			xattrs[s] = val
+			break
+		}
+	}
+
+	return xattrs
+}
+
+// restoreRootACLs writes saved ACL xattrs and ownership back to the backing
+// dir root. Also applies the ACLConfig defaults.
+func (fs *PassthroughFS) restoreRootACLs(xattrs map[string][]byte) {
+	uid := fs.acl.OwnerUID
+	gid := fs.acl.OwnerGID
+
+	// Restore saved ACL xattrs (inheritance).
+	for name, val := range xattrs {
+		_ = unix.Setxattr(fs.backingDir, name, val, 0)
+	}
+
+	if uid != 0 || gid != 0 {
+		_ = os.Chown(fs.backingDir, uid, gid)
+	}
+}
+
+// applyACLOwnership applies the configured default owner/group to a newly
+// created or materialized file in the backing dir.
+func (fs *PassthroughFS) applyACLOwnership(absPath string, isDir bool) {
+	uid := fs.acl.OwnerUID
+	gid := fs.acl.OwnerGID
+	if uid != 0 || gid != 0 {
+		_ = os.Chown(absPath, uid, gid)
+	}
+}
+
+// ForceACLOwnership walks the entire backing dir and forces owner/group
+// on every file and directory. Called once at mount when force flags are set.
+func (fs *PassthroughFS) ForceACLOwnership() {
+	if !fs.acl.ForceOwner && !fs.acl.ForceGroup {
+		return
+	}
+	uid := fs.acl.OwnerUID
+	gid := fs.acl.OwnerGID
+	if uid == 0 && gid == 0 {
+		return
+	}
+	_ = filepath.Walk(fs.backingDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		_ = os.Chown(path, uid, gid)
+		return nil
+	})
 }
 
 // --- StatFs ---

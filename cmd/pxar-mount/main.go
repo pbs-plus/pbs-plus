@@ -36,6 +36,10 @@ func runMountSubcommand() {
 	passthrough := flag.String("passthrough", "", "Backing directory for write passthrough")
 	socketPath := flag.String("socket", "", "Unix socket path for commit commands")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
+	aclOwner := flag.Int("acl-owner", 0, "Default owner UID for new files/dirs (0 = inherit)")
+	aclGroup := flag.Int("acl-group", 0, "Default group GID for new files/dirs (0 = inherit)")
+	forceAclOwner := flag.Bool("force-acl-owner", false, "Force set owner on all existing files at mount")
+	forceAclGroup := flag.Bool("force-acl-group", false, "Force set group on all existing files at mount")
 
 	flag.Parse()
 
@@ -105,5 +109,11 @@ func runMountSubcommand() {
 		SocketPath:    *socketPath,
 		FuseOpts:      *fuseOpts,
 		Verbose:       *verbose,
+		ACL: pxarmount.ACLConfig{
+			OwnerUID:   *aclOwner,
+			OwnerGID:   *aclGroup,
+			ForceOwner: *forceAclOwner,
+			ForceGroup: *forceAclGroup,
+		},
 	})
 }

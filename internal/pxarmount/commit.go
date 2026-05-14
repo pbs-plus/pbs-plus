@@ -395,12 +395,18 @@ func (fs *PassthroughFS) postCommit(backupID, backupType, namespace, archiveName
 	fs.origPpxarDidx = ppxarPath
 	fs.mu.Unlock()
 
+	// Save ACL state before nuking the backing dir.
+	savedACLs := fs.saveRootACLs()
+
 	if err := os.RemoveAll(fs.backingDir); err != nil {
 		return fmt.Errorf("cleanup backing dir: %w", err)
 	}
 	if err := os.MkdirAll(fs.backingDir, 0o755); err != nil {
 		return fmt.Errorf("recreate backing dir: %w", err)
 	}
+
+	// Restore ACLs on the new root.
+	fs.restoreRootACLs(savedACLs)
 
 	if fs.txnLog != nil {
 		// Recreate the transactions subdirectory and clear the log.

@@ -48,6 +48,9 @@ type MountConfig struct {
 	// InitMode creates a writable mount with no base snapshot.
 	// Reader must be nil. On commit, a new PBS snapshot is created from scratch.
 	InitMode bool
+
+	// ACL configures default ownership and force-set behavior.
+	ACL ACLConfig
 }
 
 // EnsureNamespaceDir creates the namespace directory structure on the PBS
@@ -117,6 +120,7 @@ func Serve(cfg MountConfig) {
 
 		ptFS := NewPassthroughFS(pxarFS, backingDir, cfg.PBSStore, cfg.OrigPpxarDidx, true, tl)
 		ptFS.SetSnapshotRef(origSnap)
+		ptFS.SetACLConfig(cfg.ACL)
 
 		rawFS = ptFS
 		ptFSClose = ptFS.Close
@@ -125,6 +129,10 @@ func Serve(cfg MountConfig) {
 			fmt.Fprintf(os.Stderr, "  ✗ error initializing passthrough root: %v\n", err)
 			os.Exit(1)
 		}
+
+		// Apply default ownership on root and force-walk if requested.
+		ptFS.applyACLOwnership(backingDir, true)
+		ptFS.ForceACLOwnership()
 
 		if cfg.SocketPath != "" {
 			l, _, err := ptFS.StartSocketListener(cfg.SocketPath)
