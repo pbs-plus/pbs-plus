@@ -545,6 +545,9 @@ func (ow *commitWalkState) minDescendantPayloadOffset(pxarInode uint64) uint64 {
 		entries = ow.readPxarDirEntries(pxarInode)
 		ow.pxarDirCache[pxarInode] = entries
 	}
+	if len(entries) == 0 && ow.mfs.verbose {
+		ow.mfs.debugf("minDesc(%d): no entries found", pxarInode)
+	}
 	min := ^uint64(0)
 	for i := range entries {
 		e := &entries[i]
