@@ -130,6 +130,11 @@ func Serve(cfg MountConfig) {
 			os.Exit(1)
 		}
 
+		// Replay any pending transactions from a previous session.
+		if err := ptFS.RebuildOverlayFromLog(); err != nil {
+			fmt.Fprintf(os.Stderr, "  ⚠ warning: failed to replay transactions: %v\n", err)
+		}
+
 		// Apply default ownership on root and force-walk if requested.
 		ptFS.applyACLOwnership(backingDir, true)
 		ptFS.ForceACLOwnership()

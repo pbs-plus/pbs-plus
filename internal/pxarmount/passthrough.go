@@ -28,6 +28,20 @@ type ACLConfig struct {
 	ForceGroup bool // force chgrp on mount and after commit
 }
 
+// metaOverride stores pending metadata changes for a non-materialized pxar entry.
+// These are applied in-memory until the file is materialized (for content writes)
+// or committed. This avoids copying entire file contents just for chmod/chown/xattr.
+type metaOverride struct {
+	mode  *uint32
+	uid   *uint32
+	gid   *uint32
+	mtime *int64
+	atime *int64
+	size  *uint64
+	xadd  map[string][]byte // xattrs to add/replace
+	xdel  map[string]bool   // xattrs to remove
+}
+
 type PassthroughFS struct {
 	fuse.RawFileSystem
 	nodePaths     map[uint64]string
@@ -51,6 +65,7 @@ type PassthroughFS struct {
 	mutationMode  bool
 	txnLog        *TransactionLog
 	acl           ACLConfig
+	metaOverlay   map[string]*metaOverride // pending metadata overrides for non-backed pxar entries
 }
 
 // NewPassthroughFS creates a new overlay filesystem.
@@ -68,6 +83,7 @@ func NewPassthroughFS(pxar *PxarFS, backingDir, pbsStore, ppxarDidx string, muta
 		pxarDir:       make(map[uint64]bool),
 		deletedPaths:  make(map[string]bool),
 		handles:       make(map[uint64]*passFh),
+		metaOverlay:   make(map[string]*metaOverride),
 	}
 }
 
@@ -427,6 +443,12 @@ func (fs *PassthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
 	fs.setNode(ino2, relPath, true)
 	fs.applyACLOwnership(abs, n.isDir)
 
+	// Flush any pending metadata overlay onto the newly-materialized file.
+	if mo := fs.getOverlay(relPath); mo != nil {
+		fs.flushOverlayToDisk(abs, mo)
+		delete(fs.metaOverlay, relPath)
+	}
+
 	if fs.txnLog != nil {
 		_, _ = fs.txnLog.Record(TxnModify, relPath)
 	}
@@ -503,6 +525,126 @@ func (fs *PassthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 	return st
 }
 
+// --- Metadata Overlay ---
+
+// getOrCreateOverlay returns the existing metaOverride for path, or creates one.
+func (fs *PassthroughFS) getOrCreateOverlay(relPath string) *metaOverride {
+	mo := fs.metaOverlay[relPath]
+	if mo == nil {
+		mo = &metaOverride{
+			xadd: make(map[string][]byte),
+			xdel: make(map[string]bool),
+		}
+		fs.metaOverlay[relPath] = mo
+	}
+	return mo
+}
+
+// getOverlay returns the metaOverride for path, or nil.
+func (fs *PassthroughFS) getOverlay(relPath string) *metaOverride {
+	return fs.metaOverlay[relPath]
+}
+
+// flushOverlayToDisk applies pending metadata overrides to a newly-materialized file.
+// Called after materialization to ensure the overlay state is on the real filesystem.
+func (fs *PassthroughFS) flushOverlayToDisk(absPath string, mo *metaOverride) {
+	if mo.mode != nil {
+		_ = unix.Chmod(absPath, *mo.mode)
+	}
+	if mo.uid != nil && mo.gid != nil {
+		_ = unix.Lchown(absPath, int(*mo.uid), int(*mo.gid))
+	} else if mo.uid != nil {
+		_ = unix.Lchown(absPath, int(*mo.uid), -1)
+	} else if mo.gid != nil {
+		_ = unix.Lchown(absPath, -1, int(*mo.gid))
+	}
+	if mo.size != nil {
+		_ = os.Truncate(absPath, int64(*mo.size))
+	}
+	for name, val := range mo.xadd {
+		_ = unix.Setxattr(absPath, name, val, 0)
+	}
+	for name := range mo.xdel {
+		_ = unix.Removexattr(absPath, name)
+	}
+	if mo.mtime != nil || mo.atime != nil {
+		var st syscall.Stat_t
+		if syscall.Lstat(absPath, &st) == nil {
+			atime := st.Atim
+			mtime := st.Mtim
+			if mo.atime != nil {
+				atime.Sec = *mo.atime / 1000000000
+				atime.Nsec = *mo.atime % 1000000000
+			}
+			if mo.mtime != nil {
+				mtime.Sec = *mo.mtime / 1000000000
+				mtime.Nsec = *mo.mtime % 1000000000
+			}
+			tv := []unix.Timeval{
+				{Sec: atime.Sec, Usec: atime.Nsec / 1000},
+				{Sec: mtime.Sec, Usec: mtime.Nsec / 1000},
+			}
+			_ = unix.Lutimes(absPath, tv)
+		}
+	}
+}
+
+// RebuildOverlayFromLog replays the transaction log to reconstruct the metadata overlay.
+// Called on mount to restore pending metadata changes from a previous session.
+func (fs *PassthroughFS) RebuildOverlayFromLog() error {
+	if fs.txnLog == nil {
+		return nil
+	}
+	txns, err := fs.txnLog.ReadAll()
+	if err != nil {
+		return err
+	}
+	for _, txn := range txns {
+		switch txn.Type {
+		case TxnSetAttr:
+			if txn.Attrs == nil {
+				continue
+			}
+			mo := fs.getOrCreateOverlay(txn.Path)
+			if txn.Attrs.Mode != nil {
+				mo.mode = txn.Attrs.Mode
+			}
+			if txn.Attrs.UID != nil {
+				mo.uid = txn.Attrs.UID
+			}
+			if txn.Attrs.GID != nil {
+				mo.gid = txn.Attrs.GID
+			}
+			if txn.Attrs.Size != nil {
+				mo.size = txn.Attrs.Size
+			}
+			if txn.Attrs.Mtime != nil {
+				mo.mtime = txn.Attrs.Mtime
+			}
+			if txn.Attrs.Atime != nil {
+				mo.atime = txn.Attrs.Atime
+			}
+			// Remove from xdel if re-added
+			delete(mo.xdel, "") // no-op placeholder
+		case TxnSetXAttr:
+			if txn.XAttr == nil {
+				continue
+			}
+			mo := fs.getOrCreateOverlay(txn.Path)
+			mo.xadd[txn.XAttr.Name] = txn.XAttr.Value
+			delete(mo.xdel, txn.XAttr.Name)
+		case TxnRemoveXAttr:
+			if txn.XAttr == nil {
+				continue
+			}
+			mo := fs.getOrCreateOverlay(txn.Path)
+			delete(mo.xadd, txn.XAttr.Name)
+			mo.xdel[txn.XAttr.Name] = true
+		}
+	}
+	return nil
+}
+
 // --- GetAttr / SetAttr ---
 
 func (fs *PassthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
@@ -517,11 +659,53 @@ func (fs *PassthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, 
 		fillAttrOut(n, out)
 		return fuse.OK
 	}
-	return fs.pxar.GetAttr(cancel, input, out)
+	status := fs.pxar.GetAttr(cancel, input, out)
+	if status != fuse.OK {
+		return status
+	}
+
+	// Overlay pending metadata changes on top of pxar attributes.
+	rel := fs.nodePath(input.NodeId)
+	if mo := fs.getOverlay(rel); mo != nil {
+		if mo.mode != nil {
+			out.Attr.Mode = *mo.mode
+		}
+		if mo.uid != nil {
+			out.Attr.Uid = *mo.uid
+		}
+		if mo.gid != nil {
+			out.Attr.Gid = *mo.gid
+		}
+		if mo.size != nil {
+			out.Attr.Size = *mo.size
+		}
+		if mo.mtime != nil {
+			sec := *mo.mtime / 1_000_000_000
+			nsec := *mo.mtime % 1_000_000_000
+			out.Attr.Mtime = uint64(sec)
+			out.Attr.Mtimensec = uint32(nsec)
+		}
+		if mo.atime != nil {
+			sec := *mo.atime / 1_000_000_000
+			nsec := *mo.atime % 1_000_000_000
+			out.Attr.Atime = uint64(sec)
+			out.Attr.Atimensec = uint32(nsec)
+		}
+	}
+
+	return fuse.OK
 }
 
 func (fs *PassthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) fuse.Status {
-	if !fs.isBacked(input.NodeId) {
+	if !fs.mutationMode && fs.isPxarBacked(input.NodeId) {
+		n := fs.getPxarNode(input.NodeId)
+		if n == nil || !n.isDir {
+			return fuse.EPERM
+		}
+	}
+
+	// Size changes require materialization (content modification).
+	if _, ok := input.GetSize(); ok && !fs.isBacked(input.NodeId) {
 		if !fs.mutationMode {
 			return fuse.EROFS
 		}
@@ -529,15 +713,12 @@ func (fs *PassthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, 
 			return fuse.ToStatus(err)
 		}
 	}
-	if fs.isPxarBacked(input.NodeId) && !fs.mutationMode {
-		n := fs.getPxarNode(input.NodeId)
-		if n == nil || !n.isDir {
-			return fuse.EPERM
-		}
-	}
 
-	if fs.mutationMode && fs.isPxarBacked(input.NodeId) && fs.txnLog != nil {
-		rel := fs.nodePath(input.NodeId)
+	rel := fs.nodePath(input.NodeId)
+	isBacked := fs.isBacked(input.NodeId)
+
+	// Build transaction attrs and overlay update.
+	if fs.mutationMode && fs.txnLog != nil {
 		attrs := &TxnAttrs{}
 		hasAttr := false
 		if v, ok := input.GetMode(); ok {
@@ -560,42 +741,76 @@ func (fs *PassthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, 
 			attrs.Size = &sz
 			hasAttr = true
 		}
+		if a, ok := input.GetATime(); ok {
+			aNs := a.UnixNano()
+			attrs.Atime = &aNs
+			hasAttr = true
+		}
+		if m, ok := input.GetMTime(); ok {
+			mNs := m.UnixNano()
+			attrs.Mtime = &mNs
+			hasAttr = true
+		}
 		if hasAttr {
 			_, _ = fs.txnLog.RecordSetAttr(rel, attrs)
 		}
-	}
 
-	rel := fs.nodePath(input.NodeId)
-	abs := fs.absPath(rel)
-
-	if v, ok := input.GetMode(); ok {
-		if err := unix.Chmod(abs, v); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-	if v, ok := input.GetUID(); ok {
-		if err := unix.Lchown(abs, int(v), -1); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-	if v, ok := input.GetGID(); ok {
-		if err := unix.Lchown(abs, -1, int(v)); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-	if v, ok := input.GetSize(); ok {
-		if err := os.Truncate(abs, int64(v)); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-	if atime, aok := input.GetATime(); aok {
-		if mtime, mok := input.GetMTime(); mok {
-			tv := []unix.Timeval{
-				{Sec: atime.Unix(), Usec: int64(atime.Nanosecond() / 1000)},
-				{Sec: mtime.Unix(), Usec: int64(mtime.Nanosecond() / 1000)},
+		// Update in-memory overlay for non-backed entries.
+		if !isBacked {
+			mo := fs.getOrCreateOverlay(rel)
+			if attrs.Mode != nil {
+				mo.mode = attrs.Mode
 			}
-			if err := unix.Lutimes(abs, tv); err != nil {
+			if attrs.UID != nil {
+				mo.uid = attrs.UID
+			}
+			if attrs.GID != nil {
+				mo.gid = attrs.GID
+			}
+			if attrs.Size != nil {
+				mo.size = attrs.Size
+			}
+			if attrs.Atime != nil {
+				mo.atime = attrs.Atime
+			}
+			if attrs.Mtime != nil {
+				mo.mtime = attrs.Mtime
+			}
+		}
+	}
+
+	// Apply to backing filesystem.
+	if isBacked {
+		abs := fs.absPath(rel)
+		if v, ok := input.GetMode(); ok {
+			if err := unix.Chmod(abs, v); err != nil {
 				return fuse.ToStatus(err)
+			}
+		}
+		if v, ok := input.GetUID(); ok {
+			if err := unix.Lchown(abs, int(v), -1); err != nil {
+				return fuse.ToStatus(err)
+			}
+		}
+		if v, ok := input.GetGID(); ok {
+			if err := unix.Lchown(abs, -1, int(v)); err != nil {
+				return fuse.ToStatus(err)
+			}
+		}
+		if v, ok := input.GetSize(); ok {
+			if err := os.Truncate(abs, int64(v)); err != nil {
+				return fuse.ToStatus(err)
+			}
+		}
+		if atime, aok := input.GetATime(); aok {
+			if mtime, mok := input.GetMTime(); mok {
+				tv := []unix.Timeval{
+					{Sec: atime.Unix(), Usec: int64(atime.Nanosecond() / 1000)},
+					{Sec: mtime.Unix(), Usec: int64(mtime.Nanosecond() / 1000)},
+				}
+				if err := unix.Lutimes(abs, tv); err != nil {
+					return fuse.ToStatus(err)
+				}
 			}
 		}
 	}
@@ -1401,6 +1616,21 @@ func (fs *PassthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader,
 		}
 		return uint32(sz), fuse.OK
 	}
+	rel := fs.nodePath(header.NodeId)
+	if mo := fs.getOverlay(rel); mo != nil {
+		if mo.xdel[attr] {
+			return 0, fuse.Status(syscall.ENODATA)
+		}
+		if val, ok := mo.xadd[attr]; ok {
+			if dest == nil {
+				return uint32(len(val)), fuse.OK
+			}
+			if uint32(len(dest)) < uint32(len(val)) {
+				return 0, fuse.Status(syscall.ERANGE)
+			}
+			return uint32(copy(dest, val)), fuse.OK
+		}
+	}
 	return fs.pxar.GetXAttr(cancel, header, attr, dest)
 }
 
@@ -1413,60 +1643,127 @@ func (fs *PassthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 		}
 		return uint32(sz), fuse.OK
 	}
-	return fs.pxar.ListXAttr(cancel, header, dest)
+
+	// Merge pxar xattrs with overlay additions/removals.
+	rel := fs.nodePath(header.NodeId)
+
+	// Get base list from pxar.
+	var baseNames []string
+	{
+		tmpBuf := make([]byte, 4096)
+		sz, status := fs.pxar.ListXAttr(cancel, header, tmpBuf)
+		if status != fuse.OK {
+			if status == fuse.Status(syscall.ERANGE) {
+				tmpBuf = make([]byte, 16384)
+				sz, status = fs.pxar.ListXAttr(cancel, header, tmpBuf)
+			}
+			if status != fuse.OK {
+				return 0, status
+			}
+		}
+		for name := range bytes.SplitSeq(tmpBuf[:sz], []byte{0}) {
+			if len(name) > 0 {
+				baseNames = append(baseNames, string(name))
+			}
+		}
+	}
+
+	// Build merged list.
+	names := make(map[string]bool)
+	for _, n := range baseNames {
+		names[n] = true
+	}
+	mo := fs.getOverlay(rel)
+	if mo != nil {
+		for name := range mo.xdel {
+			delete(names, name)
+		}
+		for name := range mo.xadd {
+			names[name] = true
+		}
+	}
+
+	var total uint32
+	for name := range names {
+		total += uint32(len(name)) + 1
+	}
+	if dest == nil {
+		return total, fuse.OK
+	}
+	if uint32(len(dest)) < total {
+		return 0, fuse.Status(syscall.ERANGE)
+	}
+	pos := 0
+	for name := range names {
+		pos += copy(dest[pos:], name)
+		dest[pos] = 0
+		pos++
+	}
+	return uint32(pos), fuse.OK
 }
 
 func (fs *PassthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
 	if isACLXattr(attr) {
 		return fs.setACLXAttr(input, attr, data)
 	}
-
-	if !fs.isBacked(input.NodeId) {
-		if !fs.mutationMode {
-			return fuse.EROFS
-		}
-		if _, err := fs.materializePxarFile(input.NodeId); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-	if fs.isPxarBacked(input.NodeId) && !fs.mutationMode {
-		return fuse.EPERM
-	}
-
-	flags := 0
-	if input.Flags&xattrCreate != 0 {
-		flags = unix.XATTR_CREATE
-	} else if input.Flags&xattrReplace != 0 {
-		flags = unix.XATTR_REPLACE
+	if !fs.mutationMode {
+		return fuse.EROFS
 	}
 
 	rel := fs.nodePath(input.NodeId)
-	if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
-		return fuse.ToStatus(err)
+
+	if fs.isBacked(input.NodeId) {
+		flags := 0
+		if input.Flags&xattrCreate != 0 {
+			flags = unix.XATTR_CREATE
+		} else if input.Flags&xattrReplace != 0 {
+			flags = unix.XATTR_REPLACE
+		}
+		if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
+			return fuse.ToStatus(err)
+		}
+	}
+
+	// Record in overlay + txn log.
+	if fs.txnLog != nil {
+		_, _ = fs.txnLog.RecordSetXAttr(rel, attr, data)
+	}
+	if !fs.isBacked(input.NodeId) {
+		mo := fs.getOrCreateOverlay(rel)
+		mo.xadd[attr] = make([]byte, len(data))
+		copy(mo.xadd[attr], data)
+		delete(mo.xdel, attr)
 	}
 	return fuse.OK
 }
 
 func (fs *PassthroughFS) setACLXAttr(input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
-	if !fs.isBacked(input.NodeId) {
-		if !fs.mutationMode {
-			return fuse.EROFS
+	if !fs.mutationMode {
+		return fuse.EROFS
+	}
+
+	rel := fs.nodePath(input.NodeId)
+
+	if fs.isBacked(input.NodeId) {
+		flags := 0
+		if input.Flags&xattrCreate != 0 {
+			flags = unix.XATTR_CREATE
+		} else if input.Flags&xattrReplace != 0 {
+			flags = unix.XATTR_REPLACE
 		}
-		if _, err := fs.materializePxarFile(input.NodeId); err != nil {
+		if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
 			return fuse.ToStatus(err)
 		}
 	}
 
-	flags := 0
-	if input.Flags&xattrCreate != 0 {
-		flags = unix.XATTR_CREATE
-	} else if input.Flags&xattrReplace != 0 {
-		flags = unix.XATTR_REPLACE
+	if fs.txnLog != nil {
+		_, _ = fs.txnLog.RecordSetXAttr(rel, attr, data)
 	}
-
-	rel := fs.nodePath(input.NodeId)
-	if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
-		return fuse.ToStatus(err)
+	if !fs.isBacked(input.NodeId) {
+		mo := fs.getOrCreateOverlay(rel)
+		mo.xadd[attr] = make([]byte, len(data))
+		copy(mo.xadd[attr], data)
+		delete(mo.xdel, attr)
 	}
 	return fuse.OK
 }
@@ -1475,39 +1772,49 @@ func (fs *PassthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHead
 	if isACLXattr(attr) {
 		return fs.removeACLXAttr(header, attr)
 	}
-
-	if !fs.isBacked(header.NodeId) {
-		if !fs.mutationMode {
-			return fuse.EROFS
-		}
-		if _, err := fs.materializePxarFile(header.NodeId); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-	if fs.isPxarBacked(header.NodeId) && !fs.mutationMode {
-		return fuse.EPERM
+	if !fs.mutationMode {
+		return fuse.EROFS
 	}
 
 	rel := fs.nodePath(header.NodeId)
-	if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
-		return fuse.ToStatus(err)
+
+	if fs.isBacked(header.NodeId) {
+		if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
+			return fuse.ToStatus(err)
+		}
+	}
+
+	if fs.txnLog != nil {
+		_, _ = fs.txnLog.RecordRemoveXAttr(rel, attr)
+	}
+	if !fs.isBacked(header.NodeId) {
+		mo := fs.getOrCreateOverlay(rel)
+		delete(mo.xadd, attr)
+		mo.xdel[attr] = true
 	}
 	return fuse.OK
 }
 
 func (fs *PassthroughFS) removeACLXAttr(header *fuse.InHeader, attr string) fuse.Status {
-	if !fs.isBacked(header.NodeId) {
-		if !fs.mutationMode {
-			return fuse.EROFS
-		}
-		if _, err := fs.materializePxarFile(header.NodeId); err != nil {
+	if !fs.mutationMode {
+		return fuse.EROFS
+	}
+
+	rel := fs.nodePath(header.NodeId)
+
+	if fs.isBacked(header.NodeId) {
+		if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
 			return fuse.ToStatus(err)
 		}
 	}
 
-	rel := fs.nodePath(header.NodeId)
-	if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
-		return fuse.ToStatus(err)
+	if fs.txnLog != nil {
+		_, _ = fs.txnLog.RecordRemoveXAttr(rel, attr)
+	}
+	if !fs.isBacked(header.NodeId) {
+		mo := fs.getOrCreateOverlay(rel)
+		delete(mo.xadd, attr)
+		mo.xdel[attr] = true
 	}
 	return fuse.OK
 }
@@ -1771,6 +2078,7 @@ func (fs *PassthroughFS) ResetState() {
 	fs.backed = make(map[uint64]bool)
 	fs.pxarDir = make(map[uint64]bool)
 	fs.deletedPaths = make(map[string]bool)
+	fs.metaOverlay = make(map[string]*metaOverride)
 
 	if rootPath != "" {
 		fs.nodePaths[RootInode] = rootPath

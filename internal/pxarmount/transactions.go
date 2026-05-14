@@ -15,10 +15,12 @@ import (
 type TxnType string
 
 const (
-	TxnDelete  TxnType = "DELETE"
-	TxnRename  TxnType = "RENAME"
-	TxnModify  TxnType = "MODIFY"
-	TxnSetAttr TxnType = "SETATTR"
+	TxnDelete      TxnType = "DELETE"
+	TxnRename      TxnType = "RENAME"
+	TxnModify      TxnType = "MODIFY"
+	TxnSetAttr     TxnType = "SETATTR"
+	TxnSetXAttr    TxnType = "SETXATTR"
+	TxnRemoveXAttr TxnType = "REMXATTR"
 )
 
 // Txn represents a single filesystem mutation recorded for later replay.
@@ -30,6 +32,7 @@ type Txn struct {
 	Timestamp int64     `cbor:"5,keyasint"`
 	Attrs     *TxnAttrs `cbor:"6,keyasint,omitempty"`
 	Backed    bool      `cbor:"7,keyasint"`
+	XAttr     *TxnXAttr `cbor:"9,keyasint,omitempty"`
 }
 
 // TxnAttrs captures metadata changes from a SETATTR operation.
@@ -39,6 +42,13 @@ type TxnAttrs struct {
 	GID   *uint32 `cbor:"3,keyasint,omitempty"`
 	Size  *uint64 `cbor:"4,keyasint,omitempty"`
 	Mtime *int64  `cbor:"5,keyasint,omitempty"`
+	Atime *int64  `cbor:"8,keyasint,omitempty"`
+}
+
+// TxnXAttr captures xattr changes for SETXATTR/REMOVEXATTR operations.
+type TxnXAttr struct {
+	Name  string `cbor:"1,keyasint"`
+	Value []byte `cbor:"2,keyasint,omitempty"`
 }
 
 // TransactionLog manages an append-only CBOR file of mutations.
@@ -114,6 +124,26 @@ func (tl *TransactionLog) RecordSetAttr(path string, attrs *TxnAttrs) (uint64, e
 		Type:      TxnSetAttr,
 		Path:      path,
 		Attrs:     attrs,
+		Timestamp: time.Now().Unix(),
+	})
+}
+
+// RecordSetXAttr appends a setxattr transaction.
+func (tl *TransactionLog) RecordSetXAttr(path, name string, value []byte) (uint64, error) {
+	return tl.record(&Txn{
+		Type:      TxnSetXAttr,
+		Path:      path,
+		XAttr:     &TxnXAttr{Name: name, Value: value},
+		Timestamp: time.Now().Unix(),
+	})
+}
+
+// RecordRemoveXAttr appends a removexattr transaction.
+func (tl *TransactionLog) RecordRemoveXAttr(path, name string) (uint64, error) {
+	return tl.record(&Txn{
+		Type:      TxnRemoveXAttr,
+		Path:      path,
+		XAttr:     &TxnXAttr{Name: name},
 		Timestamp: time.Now().Unix(),
 	})
 }

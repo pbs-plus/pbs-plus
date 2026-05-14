@@ -617,6 +617,7 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		if pxarEntry.IsDir() {
 			fs.pxar.RegisterNode(childIno, pxarIno, pxarEntry)
 			meta := buildMetaFromEntry(pxarEntry)
+			applyOverlayToMeta(childRel, &meta, fs.metaOverlay)
 			if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
 				return fmt.Errorf("begin dir %s: %w", we.name, err)
 			}
@@ -630,6 +631,9 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		}
 
 		entry := cloneEntryWithName(pxarEntry, we.name)
+		if mo := fs.metaOverlay[childRel]; mo != nil {
+			applyOverlayToMeta(childRel, &entry.Metadata, fs.metaOverlay)
+		}
 		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
 			return fmt.Errorf("write pxar ref %s: %w", we.name, err)
 		}
@@ -718,6 +722,50 @@ func cloneEntryWithName(e *pxar.Entry, name string) *pxar.Entry {
 	clone := *e
 	clone.Path = name
 	return &clone
+}
+
+// applyOverlayToMeta applies pending metadata overrides from the overlay
+// to a pxar.Metadata struct. Used during commit for non-backed pxar entries.
+func applyOverlayToMeta(relPath string, meta *pxar.Metadata, overlay map[string]*metaOverride) {
+	mo := overlay[relPath]
+	if mo == nil {
+		return
+	}
+	if mo.mode != nil {
+		// Preserve file type bits, override permission bits.
+		meta.Stat.Mode = (meta.Stat.Mode & format.ModeIFMT) | uint64(*mo.mode&0o7777)
+	}
+	if mo.uid != nil {
+		meta.Stat.UID = *mo.uid
+	}
+	if mo.gid != nil {
+		meta.Stat.GID = *mo.gid
+	}
+	if mo.mtime != nil {
+		meta.Stat.Mtime = format.StatxTimestamp{
+			Secs:  *mo.mtime / 1_000_000_000,
+			Nanos: uint32(*mo.mtime % 1_000_000_000),
+		}
+	}
+	// Merge xattrs: remove deleted, add/replace new.
+	if len(mo.xdel) > 0 || len(mo.xadd) > 0 {
+		var kept []format.XAttr
+		for _, xa := range meta.XAttrs {
+			if mo.xdel[string(xa.Name())] {
+				continue
+			}
+			if replacement, ok := mo.xadd[string(xa.Name())]; ok {
+				kept = append(kept, format.NewXAttr(xa.Name(), replacement))
+				delete(mo.xadd, string(xa.Name()))
+				continue
+			}
+			kept = append(kept, xa)
+		}
+		for name, val := range mo.xadd {
+			kept = append(kept, format.NewXAttr([]byte(name), val))
+		}
+		meta.XAttrs = kept
+	}
 }
 
 // RunCommitSubcommand is the CLI entry point for `pxar-mount commit`.
