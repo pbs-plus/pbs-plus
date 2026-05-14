@@ -1,7 +1,7 @@
 #!/bin/bash
 # Comprehensive E2E test for pxar-mount
 # Tests: init mode, mount mode, commit, re-commit, and all FUSE operations
-set -euo pipefail
+set -uo pipefail
 
 PASS=0
 FAIL=0
@@ -41,7 +41,12 @@ mount_init() {
 		--socket "$socket" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
-	sleep 2
+	# Wait for mount to be ready
+	for i in $(seq 1 10); do
+		mountpoint -q "$mount" && break
+		sleep 1
+	done
+	mountpoint -q "$mount" || { echo "FAILED to mount $mount"; cat /tmp/pxar-mount-test.log; exit 1; }
 }
 
 mount_archive() {
@@ -66,7 +71,7 @@ do_commit() {
 
 latest_snapshot() {
 	local dir=$1
-	ls -1 "$dir" | sort | tail -1
+	ls -1 "$dir" | grep -E '^[0-9]{4}-' | sort | tail -1
 }
 
 ###############################################################################
