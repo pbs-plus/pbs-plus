@@ -817,12 +817,13 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string][32]byte) error {
 	return nil
 }
 
-// ensureNamespaceDir creates the namespace directory on the PBS datastore.
+// ensureNamespaceDir creates the namespace directory structure on the PBS
+// datastore. PBS expects on-disk ns/<component>/ns/<component>/... directories
+// owned by the backup user (uid/gid 34) so the PBS daemon can write to them.
 func ensureNamespaceDir(pbsStore, namespace string) error {
 	if pbsStore == "" || namespace == "" {
 		return nil
 	}
-	// Walk from datastore root, creating ns/ns/.../ns/<namespace> directories.
 	parts := strings.Split(namespace, "/")
 	cur := pbsStore
 	for _, p := range parts {
@@ -833,6 +834,8 @@ func ensureNamespaceDir(pbsStore, namespace string) error {
 		if err := os.MkdirAll(cur, 0o755); err != nil {
 			return err
 		}
+		// PBS daemon runs as uid/gid 34 (backup user).
+		_ = os.Chown(cur, 34, 34)
 	}
 	return nil
 }
