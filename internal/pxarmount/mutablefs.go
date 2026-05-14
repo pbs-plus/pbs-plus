@@ -914,26 +914,9 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		}
 	}
 
-	// Whiteout dest if it had a pxar entry and we're not moving back
-	// to a location where the pxar data is the source.
+	// Whiteout dest if it had a pxar entry that should stay hidden.
 	if destHasPXar {
-		// If source is a journal node with RedirectTo matching the dest path,
-		// it's moving back home — remove any existing whiteout at dest.
-		if oldRE.Node != nil && oldRE.Node.RedirectTo == newPath {
-			_ = fs.journal.RemoveWhiteout(newParentID, newName)
-		} else {
-			_ = fs.journal.AddWhiteout(newParentID, newName)
-		}
-	} else {
-		// No pxar at dest — make sure there's no stale whiteout.
-		_ = fs.journal.RemoveWhiteout(newParentID, newName)
-	}
-
-	// Remove whiteout at old location if it was purely a journal move
-	// (the old location might have had a pxar entry that we whiteout'd before).
-	// Only keep the old whiteout if there's actually a pxar file there to hide.
-	if oldRE.Node != nil && !fs.hasPxarEntry(oldPath) {
-		_ = fs.journal.RemoveWhiteout(oldParentID, oldName)
+		_ = fs.journal.AddWhiteout(newParentID, newName)
 	}
 
 	// Update inode mapping.

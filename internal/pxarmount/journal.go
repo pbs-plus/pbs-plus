@@ -362,6 +362,8 @@ func (j *Journal) LookupEdgeNode(parentID int64, name string) (*GraphNode, error
 // CreateEdge creates a parent→child binding. OR REPLACE handles re-creation.
 func (j *Journal) CreateEdge(parentID int64, name string, childID int64) error {
 	return j.tx(func(tx *sql.Tx) error {
+		// Edges shadow whiteouts — remove any stale whiteout at this location.
+		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
 		_, err := tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
 			parentID, name, childID)
 		return err
@@ -379,6 +381,8 @@ func (j *Journal) DeleteEdge(parentID int64, name string) error {
 // MoveEdge renames/moves an edge. This is the O(1) rename operation.
 func (j *Journal) MoveEdge(oldParent int64, oldName string, newParent int64, newName string) error {
 	return j.tx(func(tx *sql.Tx) error {
+		// Remove any whiteout at destination — the new edge takes priority.
+		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
 		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
 			newParent, newName, oldParent, oldName)
 		if err != nil {
@@ -530,21 +534,20 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 			continue
 		}
 
-		// Check whiteout at this level
-		isWO, err := j.IsWhiteout(curID, part)
-		if err != nil {
-			return 0, "", 0, "", err
-		}
-		if isWO {
-			return 0, "", 0, "", nil // whiteout = ENOENT, pxarPath intentionally empty
-		}
-
-		// Look up edge
+		// Edges take priority over whiteouts. Check edge first.
 		var childID int64
 		err = j.db.QueryRow(
 			`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
 			curID, part).Scan(&childID)
 		if err == sql.ErrNoRows {
+			// No edge — check whiteout before falling back to pxar.
+			isWO, werr := j.IsWhiteout(curID, part)
+			if werr != nil {
+				return 0, "", 0, "", werr
+			}
+			if isWO {
+				return 0, "", 0, "", nil // whiteout = ENOENT
+			}
 			// Fell off graph — remaining path is in pxar
 			rem := strings.Join(parts[i:], "/")
 			var pp string
@@ -559,6 +562,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 			return 0, "", 0, "", err
 		}
 
+		// Edge found — it shadows any whiteout at this location.
 		curID = childID
 
 		// Update pxar prefix from this node's redirect_to
