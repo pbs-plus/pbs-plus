@@ -18,6 +18,7 @@ import (
 	"time"
 
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/accessor"
 	"github.com/pbs-plus/pxar/backupproxy"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
@@ -492,20 +493,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		return entries[i].pxarOffset < entries[j].pxarOffset
 	})
 
-	if f, err := os.OpenFile("/tmp/commit-sort.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
-		fmt.Fprintf(f, "COMMIT-WALK dir=%q entries=%d:\n", relPath, len(entries))
-		for i := range entries {
-			var kind string
-			if entries[i].node != nil {
-				kind = fmt.Sprintf("journal-%d", entries[i].node.Kind)
-			} else {
-				kind = "pxar"
-			}
-			fmt.Fprintf(f, "  [%d] %s name=%q offset=%d isDir=%v\n", i, kind, entries[i].name, entries[i].pxarOffset, entries[i].pxarSlim != nil && entries[i].pxarSlim.isDir)
-		}
-		f.Close()
-	}
-
 	// Process each merged entry.
 	for i := range entries {
 		if entries[i].node != nil {
@@ -826,18 +813,14 @@ func resolvePxarPayloadOffset(ow *commitWalkState, relPath string) uint64 {
 
 // minDescendantOffset returns the minimum content offset among all regular
 // file descendants of the pxar directory identified by inode.
+// minDescendantOffset returns the minimum content offset among all regular
+// file descendants of the pxar directory identified by inode.
+// Reads directories directly from the reader using contentOffset to avoid
+// requiring nodes to be registered in PxarFS's node map.
 func minDescendantOffset(ow *commitWalkState, pxarInode uint64) uint64 {
 	entries, ok := ow.pxarDirCache[pxarInode]
 	if !ok {
-		var err error
-		entries, err = ow.mfs.pxar.ReadDirRaw(pxarInode)
-		if err != nil {
-			if f, fe := os.OpenFile("/tmp/commit-sort.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); fe == nil {
-				fmt.Fprintf(f, "minDesc: ReadDirRaw(%d) err=%v\n", pxarInode, err)
-				f.Close()
-			}
-			return ^uint64(0)
-		}
+		entries = ow.readDirForOffset(pxarInode)
 		ow.pxarDirCache[pxarInode] = entries
 	}
 	min := ^uint64(0)
@@ -852,11 +835,50 @@ func minDescendantOffset(ow *commitWalkState, pxarInode uint64) uint64 {
 			min = e.contentOffset
 		}
 	}
-	if f, fe := os.OpenFile("/tmp/commit-sort.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); fe == nil {
-		fmt.Fprintf(f, "minDesc(%d): entries=%d min=%d\n", pxarInode, len(entries), min)
-		f.Close()
-	}
 	return min
+}
+
+// readDirForOffset reads directory entries directly using the contentOffset
+// stored in the slim entry, bypassing PxarFS's node registry.
+func (ow *commitWalkState) readDirForOffset(dirInode uint64) []dirEntrySlim {
+	// Look up contentOffset from the already-listed parent's entries.
+	// The dirEntrySlim for a directory stores its contentOffset.
+	for _, entries := range ow.pxarDirCache {
+		for i := range entries {
+			if entries[i].inode == dirInode && entries[i].isDir {
+				return ow.listDirAtOffset(entries[i].contentOffset)
+			}
+		}
+	}
+	return nil
+}
+
+// listDirAtOffset reads directory entries at a content offset directly from
+// the pxar reader, bypassing PxarFS's node registry.
+func (ow *commitWalkState) listDirAtOffset(contentOffset uint64) []dirEntrySlim {
+	ow.mfs.pxar.readerMu.Lock()
+	defer ow.mfs.pxar.readerMu.Unlock()
+
+	var result []dirEntrySlim
+	ow.mfs.pxar.Reader().ListDirectory(int64(contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
+		result = append(result, dirEntrySlim{
+			name:          e.FileName(),
+			inode:         toInode(e),
+			mode:          statMode(e.Metadata.Stat.Mode),
+			entryStart:    e.FileOffset,
+			contentOffset: e.ContentOffset,
+			fileSize:      e.FileSize,
+			uid:           e.Metadata.Stat.UID,
+			gid:           e.Metadata.Stat.GID,
+			mtimeSecs:     e.Metadata.Stat.Mtime.Secs,
+			mtimeNanos:    e.Metadata.Stat.Mtime.Nanos,
+			isDir:         e.IsDir(),
+			isSymlink:     e.IsSymlink(),
+			isReg:         e.IsRegularFile(),
+		})
+		return nil
+	})
+	return result
 }
 
 // verifyBackedFileHashes checks that backed files haven't changed since upload.
