@@ -963,6 +963,11 @@ func (fs *PassthroughFS) finishCreate(ino uint64, fd int, out *fuse.CreateOut) f
 
 	var st syscall.Stat_t
 	if err := syscall.Fstat(fd, &st); err != nil {
+		// Fstat failed — clean up the registered handle to avoid fd leak.
+		fs.fhmu.Lock()
+		delete(fs.handles, fhID)
+		fs.fhmu.Unlock()
+		_ = syscall.Close(fd)
 		return fuse.ToStatus(err)
 	}
 
