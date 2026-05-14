@@ -104,6 +104,8 @@ func main() {
 	var rawFS fuse.RawFileSystem = pxarFS
 	var sockListener net.Listener
 
+	var ptFSClose func()
+
 	if *passthrough != "" {
 		ptInfo, err := os.Stat(*passthrough)
 		if err != nil {
@@ -137,6 +139,7 @@ func main() {
 		ptFS.SetSnapshotRef(origSnap)
 
 		rawFS = ptFS
+		ptFSClose = ptFS.Close
 
 		if err := ptFS.InitPassthroughRoot(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error initializing passthrough root: %v\n", err)
@@ -184,6 +187,9 @@ func main() {
 		<-sigCh
 		if sockListener != nil {
 			_ = sockListener.Close()
+		}
+		if ptFSClose != nil {
+			ptFSClose()
 		}
 		_ = server.Unmount()
 	}()

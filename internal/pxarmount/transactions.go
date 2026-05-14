@@ -73,7 +73,7 @@ func OpenTransactionLog(dir string) (*TransactionLog, error) {
 
 	return &TransactionLog{
 		file: f,
-		buf:  bufio.NewWriter(f),
+		buf:  bufio.NewWriterSize(f, 64*1024),
 		path: logPath,
 		next: next,
 	}, nil
@@ -126,11 +126,27 @@ func (tl *TransactionLog) record(txn *Txn) (uint64, error) {
 	if err := tl.buf.WriteByte('\n'); err != nil {
 		return 0, fmt.Errorf("write newline: %w", err)
 	}
-	if err := tl.buf.Flush(); err != nil {
-		return 0, fmt.Errorf("flush transaction log: %w", err)
-	}
 
 	return txn.ID, nil
+}
+
+// Sync flushes buffered transactions to disk and fsyncs the file.
+func (tl *TransactionLog) Sync() error {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+	return tl.syncLocked()
+}
+
+func (tl *TransactionLog) syncLocked() error {
+	if tl.buf != nil {
+		if err := tl.buf.Flush(); err != nil {
+			return err
+		}
+	}
+	if tl.file != nil {
+		return tl.file.Sync()
+	}
+	return nil
 }
 
 // Close flushes and closes the transaction log.
@@ -153,6 +169,9 @@ func (tl *TransactionLog) ReadAll() ([]Txn, error) {
 
 	if tl.buf != nil {
 		_ = tl.buf.Flush()
+	}
+	if tl.file != nil {
+		_ = tl.file.Sync()
 	}
 
 	f, err := os.Open(tl.path)

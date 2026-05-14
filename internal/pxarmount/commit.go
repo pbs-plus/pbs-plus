@@ -3,9 +3,11 @@ package pxarmount
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -116,14 +118,11 @@ var commitMu sync.Mutex
 
 // overlayWalk tracks state across the recursive walk.
 type overlayWalk struct {
-	writer transfer.ArchiveWriter
-	dedup  *transfer.RemoteDedupSplitArchiveWriter
-}
-
-type walkEntry struct {
-	entryStart uint64
-	name       string
-	backed     bool
+	writer       transfer.ArchiveWriter
+	dedup        *transfer.RemoteDedupSplitArchiveWriter
+	backedHashes map[string][32]byte       // relPath → SHA256 of uploaded backed files
+	pxarDirCache map[uint64][]dirEntrySlim // pxar inode → cached dir entries
+	backedDirs   map[string][]string       // parent relPath → backed child names
 }
 
 // StartSocketListener opens a Unix domain socket and processes commit requests.
@@ -268,9 +267,22 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest) error {
 		return fmt.Errorf("begin archive: %w", err)
 	}
 
-	ow := &overlayWalk{writer: writer, dedup: writer}
+	ow := &overlayWalk{
+		writer:       writer,
+		dedup:        writer,
+		backedHashes: make(map[string][32]byte),
+		pxarDirCache: make(map[uint64][]dirEntrySlim),
+		backedDirs:   fs.preWalkBackingDir(),
+	}
 	if err := fs.walkOverlay(ow, RootInode, "/"); err != nil {
 		return fmt.Errorf("walk overlay: %w", err)
+	}
+
+	// Sync transaction log before finalizing upload.
+	if fs.txnLog != nil {
+		if err := fs.txnLog.Sync(); err != nil {
+			return fmt.Errorf("sync transaction log: %w", err)
+		}
 	}
 
 	if err := writer.Finish(); err != nil {
@@ -279,6 +291,13 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest) error {
 
 	if _, err = session.Finish(ctx); err != nil {
 		return fmt.Errorf("finish session: %w", err)
+	}
+
+	// Verify backed files using upload-time hashes (no full re-read).
+	if len(ow.backedHashes) > 0 {
+		if err := fs.verifyBackedFileHashes(ow.backedHashes); err != nil {
+			return fmt.Errorf("verification failed: %w", err)
+		}
 	}
 
 	return fs.postCommit(backupID, backupType, namespace, archiveName, backupTime)
@@ -294,32 +313,45 @@ func (fs *PassthroughFS) postCommit(backupID, backupType, namespace, archiveName
 	mpxarPath := filepath.Join(snapDir, archiveName+".mpxar.didx")
 	ppxarPath := filepath.Join(snapDir, archiveName+".ppxar.didx")
 
-	metaData, err := os.ReadFile(mpxarPath)
+	// mmap DIDX files — avoids heap allocation.
+	metaData, err := mmapFile(mpxarPath)
 	if err != nil {
-		return fmt.Errorf("read new mpxar: %w", err)
+		return fmt.Errorf("mmap new mpxar: %w", err)
 	}
-	payloadData, err := os.ReadFile(ppxarPath)
+	payloadData, err := mmapFile(ppxarPath)
 	if err != nil {
-		return fmt.Errorf("read new ppxar: %w", err)
+		_ = munmap(metaData)
+		return fmt.Errorf("mmap new ppxar: %w", err)
 	}
 
 	store, err := datastore.NewChunkStore(fs.pbsStore)
 	if err != nil {
+		_ = munmap(metaData)
+		_ = munmap(payloadData)
 		return fmt.Errorf("open chunk store: %w", err)
 	}
 	source := datastore.NewChunkStoreSource(store)
 
 	newReader, err := transfer.NewSplitArchiveReader(metaData, payloadData, source)
 	if err != nil {
+		_ = munmap(metaData)
+		_ = munmap(payloadData)
 		return fmt.Errorf("create new reader: %w", err)
 	}
 
-	if err := fs.verifyBackedFiles(newReader); err != nil {
-		_ = newReader.Close()
-		return fmt.Errorf("verification failed: %w", err)
+	// Release previous mmap'd DIDX data.
+	for _, d := range fs.mmapData {
+		_ = munmap(d)
 	}
 
 	fs.pxar.HotSwap(newReader)
+	fs.mmapData = nil
+	if len(metaData) > 0 {
+		fs.mmapData = append(fs.mmapData, metaData)
+	}
+	if len(payloadData) > 0 {
+		fs.mmapData = append(fs.mmapData, payloadData)
+	}
 	fs.ResetState()
 
 	fs.mu.Lock()
@@ -349,82 +381,47 @@ func (fs *PassthroughFS) postCommit(backupID, backupType, namespace, archiveName
 	return nil
 }
 
-func (fs *PassthroughFS) verifyBackedFiles(reader *transfer.SplitArchiveReader) error {
-	return filepath.Walk(fs.backingDir, func(path string, info os.FileInfo, err error) error {
+// verifyBackedFileHashes compares each backed file's current SHA256
+// against the hash computed during upload. Uses a single 64KB buffer
+// across all files.
+func (fs *PassthroughFS) verifyBackedFileHashes(hashes map[string][32]byte) error {
+	buf := make([]byte, 64*1024)
+	for relPath, expected := range hashes {
+		abs := fs.absPath(relPath)
+		f, err := os.Open(abs)
 		if err != nil {
-			return err
+			return fmt.Errorf("open backed file %q for verification: %w", relPath, err)
 		}
-		rel, err := filepath.Rel(fs.backingDir, path)
+		h := sha256.New()
+		_, err = io.CopyBuffer(h, f, buf)
+		_ = f.Close()
 		if err != nil {
-			return err
+			return fmt.Errorf("hash backed file %q: %w", relPath, err)
 		}
-		if rel == "." {
-			return nil
+		var actual [32]byte
+		h.Sum(actual[:0])
+		if actual != expected {
+			return fmt.Errorf("backed file %q content hash differs", relPath)
 		}
-
-		entry, lookupErr := reader.Lookup("/" + rel)
-		if lookupErr != nil {
-			return fmt.Errorf("backed file %q not found in new snapshot: %w", rel, lookupErr)
-		}
-
-		if info.IsDir() {
-			if !entry.IsDir() {
-				return fmt.Errorf("backed dir %q is not a directory in new snapshot", rel)
-			}
-			return nil
-		}
-
-		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
-			return nil
-		}
-
-		if info.Mode()&os.ModeSymlink != 0 {
-			if !entry.IsSymlink() {
-				return fmt.Errorf("backed symlink %q is not a symlink in new snapshot", rel)
-			}
-			return nil
-		}
-
-		if entry.FileSize != uint64(info.Size()) {
-			return fmt.Errorf("backed file %q size mismatch: backing=%d snapshot=%d", rel, info.Size(), entry.FileSize)
-		}
-
-		if info.Size() > 0 {
-			rc, err := reader.ReadFileContentReader(entry)
-			if err != nil {
-				return fmt.Errorf("read backed file %q from new snapshot: %w", rel, err)
-			}
-
-			f, err := os.Open(path)
-			if err != nil {
-				_ = rc.Close()
-				return err
-			}
-
-			equal, err := readersEqual(rc, f)
-			_ = rc.Close()
-			_ = f.Close()
-			if err != nil {
-				return fmt.Errorf("compare backed file %q: %w", rel, err)
-			}
-			if !equal {
-				return fmt.Errorf("backed file %q content differs from new snapshot", rel)
-			}
-		}
-
-		return nil
-	})
+	}
+	return nil
 }
 
 func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath string) error {
-	pxarEntries, _ := fs.pxar.ReadDirRaw(pxarIno)
-	backedEntries := fs.readBackedDir(relPath)
+	// 1. Get pxar entries — cached to avoid redundant deserialization.
+	pxarEntries, ok := ow.pxarDirCache[pxarIno]
+	if !ok {
+		pxarEntries, _ = fs.pxar.ReadDirRaw(pxarIno)
+		ow.pxarDirCache[pxarIno] = pxarEntries
+	}
 
-	fmt.Fprintf(os.Stderr, "walkOverlay ino=%d rel=%q pxar=%d backed=%d\n", pxarIno, relPath, len(pxarEntries), len(backedEntries))
+	// 2. Get backed entry names from pre-walk.
+	backedNames := ow.backedDirs[relPath]
 
-	backedName := make(map[string]bool, len(backedEntries))
-	for _, be := range backedEntries {
-		backedName[be.name] = true
+	// 3. Build lookup maps.
+	backedSet := make(map[string]bool, len(backedNames))
+	for _, name := range backedNames {
+		backedSet[name] = true
 	}
 
 	pxarByName := make(map[string]*dirEntrySlim, len(pxarEntries))
@@ -432,14 +429,16 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		pxarByName[pxarEntries[i].name] = &pxarEntries[i]
 	}
 
+	// 4. Build sorted entry list.
 	type posEntry struct {
-		walkEntry
-		fileOffset uint64
+		name       string
+		entryStart uint64
+		backed     bool
 	}
 	var entries []posEntry
 
 	for _, pe := range pxarEntries {
-		if backedName[pe.name] {
+		if backedSet[pe.name] {
 			continue
 		}
 		childPath := joinPath(relPath, pe.name)
@@ -447,32 +446,31 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 			continue
 		}
 		entries = append(entries, posEntry{
-			walkEntry:  walkEntry{name: pe.name, entryStart: pe.entryStart, backed: false},
-			fileOffset: pe.entryStart,
+			name:       pe.name,
+			entryStart: pe.entryStart,
+			backed:     false,
 		})
 	}
 
-	for _, be := range backedEntries {
+	for _, name := range backedNames {
 		fo := ^uint64(0)
-		if pe, ok := pxarByName[be.name]; ok {
+		if pe, ok := pxarByName[name]; ok {
 			fo = pe.entryStart
 		}
 		entries = append(entries, posEntry{
-			walkEntry:  be,
-			fileOffset: fo,
+			name:       name,
+			entryStart: fo,
+			backed:     true,
 		})
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].fileOffset < entries[j].fileOffset
+		return entries[i].entryStart < entries[j].entryStart
 	})
 
+	// 5. Process entries.
 	for _, we := range entries {
-		childRel := relPath
-		if childRel != "/" {
-			childRel += "/"
-		}
-		childRel += we.name
+		childRel := joinPath(relPath, we.name)
 
 		if we.backed {
 			abs := fs.absPath(childRel)
@@ -486,7 +484,11 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 				if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
 					return fmt.Errorf("begin dir %s: %w", we.name, err)
 				}
-				pxarChildIno := fs.pxarInoForPath(pxarIno, we.name)
+				// Look up pxar child inode from already-cached entries.
+				var pxarChildIno uint64
+				if pe, ok := pxarByName[we.name]; ok {
+					pxarChildIno = pe.inode
+				}
 				if err := fs.walkOverlay(ow, pxarChildIno, childRel); err != nil {
 					return err
 				}
@@ -528,10 +530,13 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 				continue
 			}
 
+			// Regular file: upload with concurrent SHA256 hashing.
 			f, err := os.Open(abs)
 			if err != nil {
 				return fmt.Errorf("open %s: %w", abs, err)
 			}
+			hash := sha256.New()
+			tee := io.TeeReader(f, hash)
 			meta := statToMetadata(fi, false)
 			entry := &pxar.Entry{
 				Path:     childRel,
@@ -539,14 +544,20 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 				Metadata: meta,
 				FileSize: uint64(fi.Size()),
 			}
-			err = ow.writer.WriteEntryReader(entry, f, uint64(fi.Size()))
+			writeErr := ow.writer.WriteEntryReader(entry, tee, uint64(fi.Size()))
+			if writeErr == nil {
+				var h [32]byte
+				hash.Sum(h[:0])
+				ow.backedHashes[childRel] = h
+			}
 			f.Close()
-			if err != nil {
-				return fmt.Errorf("write file %s: %w", we.name, err)
+			if writeErr != nil {
+				return fmt.Errorf("write file %s: %w", we.name, writeErr)
 			}
 			continue
 		}
 
+		// pxar entry — use chunk reference (no data read).
 		if we.entryStart == 0 {
 			continue
 		}
@@ -584,33 +595,28 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 	return nil
 }
 
-func (fs *PassthroughFS) readBackedDir(relPath string) []walkEntry {
-	abs := fs.absPath(relPath)
-	des, err := os.ReadDir(abs)
-	if err != nil || len(des) == 0 {
-		return nil
-	}
-	entries := make([]walkEntry, 0, len(des))
-	for _, de := range des {
-		entries = append(entries, walkEntry{
-			name:   de.Name(),
-			backed: true,
-		})
-	}
-	return entries
-}
-
-func (fs *PassthroughFS) pxarInoForPath(parentIno uint64, name string) uint64 {
-	entries, err := fs.pxar.ReadDirRaw(parentIno)
-	if err != nil {
-		return 0
-	}
-	for _, e := range entries {
-		if e.name == name {
-			return e.inode
+// preWalkBackingDir performs a single walk of the backing directory tree
+// and returns a map from parent relPath to child names. Only directories
+// containing backed files have entries, so empty directories are skipped.
+func (fs *PassthroughFS) preWalkBackingDir() map[string][]string {
+	tree := make(map[string][]string)
+	filepath.Walk(fs.backingDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
 		}
-	}
-	return 0
+		rel, err := filepath.Rel(fs.backingDir, path)
+		if err != nil || rel == "." {
+			return nil
+		}
+		parentDir := filepath.Dir(rel)
+		parentRel := "/"
+		if parentDir != "." {
+			parentRel = "/" + parentDir
+		}
+		tree[parentRel] = append(tree[parentRel], info.Name())
+		return nil
+	})
+	return tree
 }
 
 func (fs *PassthroughFS) getPxarEntry(ino uint64) *pxar.Entry {

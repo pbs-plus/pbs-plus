@@ -1,8 +1,8 @@
 package pxarmount
 
 import (
-	"bytes"
 	"io"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -75,6 +75,14 @@ type dirEntrySlim struct {
 	isDir         bool
 	isSymlink     bool
 	isReg         bool
+}
+
+// copyBufPool provides 1MB buffers for file copy operations.
+var copyBufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 1024*1024)
+		return &buf
+	},
 }
 
 // dirEntryPool reuses dir entry slices across ReadDir calls.
@@ -237,32 +245,37 @@ func unsafeStringBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
-// readersEqual returns true if two readers produce identical bytes.
-func readersEqual(a, b io.Reader) (bool, error) {
-	bufA := make([]byte, 64*1024)
-	bufB := make([]byte, 64*1024)
-	for {
-		nA, errA := io.ReadFull(a, bufA)
-		nB, errB := io.ReadFull(b, bufB)
-
-		if nA != nB {
-			return false, nil
-		}
-		if !bytes.Equal(bufA[:nA], bufB[:nB]) {
-			return false, nil
-		}
-
-		if errA == io.ErrUnexpectedEOF || errA == io.EOF {
-			if errB == io.ErrUnexpectedEOF || errB == io.EOF {
-				return true, nil
-			}
-			return false, nil
-		}
-		if errA != nil {
-			return false, errA
-		}
-		if errB != nil {
-			return false, errB
-		}
+// mmapFile memory-maps a file for reading without heap allocation.
+func mmapFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() == 0 {
+		return nil, nil
+	}
+
+	data, err := syscall.Mmap(int(f.Fd()), 0, int(fi.Size()), syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		// Fallback to ReadFile if mmap unavailable.
+		if _, err2 := f.Seek(0, io.SeekStart); err2 != nil {
+			return nil, err
+		}
+		return io.ReadAll(f)
+	}
+	return data, nil
+}
+
+// munmap releases a memory-mapped region.
+func munmap(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	return syscall.Munmap(data)
 }

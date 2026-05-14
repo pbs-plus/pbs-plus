@@ -39,6 +39,7 @@ type PassthroughFS struct {
 	fhmu          sync.Mutex
 	matMu         sync.Mutex
 	materialize   map[uint64]*sync.Mutex
+	mmapData      [][]byte
 	mutationMode  bool
 	txnLog        *TransactionLog
 }
@@ -395,7 +396,9 @@ func (fs *PassthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
 		}
 		defer func() { _ = rc.Close() }()
 
-		if _, err := io.Copy(f, rc); err != nil {
+		bufp := copyBufPool.Get().(*[]byte)
+		defer copyBufPool.Put(bufp)
+		if _, err := io.CopyBuffer(f, rc, *bufp); err != nil {
 			return "", err
 		}
 
@@ -1580,6 +1583,25 @@ func (fs *PassthroughFS) SetSnapshotRef(ref snapshotRef) {
 	fs.mu.Lock()
 	fs.origSnapshot = ref
 	fs.mu.Unlock()
+}
+
+// Close releases resources held by the filesystem.
+func (fs *PassthroughFS) Close() {
+	for _, d := range fs.mmapData {
+		_ = munmap(d)
+	}
+	fs.mmapData = nil
+
+	fs.fhmu.Lock()
+	for _, fh := range fs.handles {
+		_ = syscall.Close(fh.fd)
+	}
+	fs.handles = nil
+	fs.fhmu.Unlock()
+
+	if fs.txnLog != nil {
+		_ = fs.txnLog.Close()
+	}
 }
 
 // ResetState clears all passthrough inode/handle state after a pxar hotSwap.
