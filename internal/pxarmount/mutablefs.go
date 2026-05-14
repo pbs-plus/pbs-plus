@@ -835,8 +835,43 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 	return fuse.OK
 }
 
-// Rmdir removes a directory.
+// Rmdir removes a directory. Checks emptiness first.
 func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
+	parentPath := fs.inodeToPath(header.NodeId)
+	childPath := joinPath(parentPath, name)
+
+	re, status := fs.resolve(childPath)
+	if status != fuse.OK {
+		return status
+	}
+	if !re.IsDir {
+		return fuse.ENOTDIR
+	}
+
+	// Check if directory has any children.
+	parentNodeID := fs.resolveParentNodeID(childPath)
+	if parentNodeID != 0 {
+		edges, _ := fs.journal.ListEdges(parentNodeID)
+		whiteouts, _ := fs.journal.ListWhiteouts(parentNodeID)
+		if len(edges) > 0 || len(whiteouts) > 0 {
+			return fuse.Status(syscall.ENOTEMPTY)
+		}
+	}
+
+	// Also check pxar children if not opaque.
+	if re.Node == nil || !re.Node.Opaque {
+		pxarDirPath := childPath
+		if re.Node != nil && re.Node.RedirectTo != "" {
+			pxarDirPath = re.Node.RedirectTo
+		}
+		if pxarNode := fs.findPxarNode(pxarDirPath); pxarNode != nil {
+			entries, _ := fs.pxar.ReadDirRaw(pxarNode.inode)
+			if len(entries) > 0 {
+				return fuse.Status(syscall.ENOTEMPTY)
+			}
+		}
+	}
+
 	return fs.Unlink(cancel, header, name)
 }
 
