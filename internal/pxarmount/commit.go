@@ -492,6 +492,20 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		return entries[i].pxarOffset < entries[j].pxarOffset
 	})
 
+	if f, err := os.OpenFile("/tmp/commit-sort.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		fmt.Fprintf(f, "COMMIT-WALK dir=%q entries=%d:\n", relPath, len(entries))
+		for i := range entries {
+			var kind string
+			if entries[i].node != nil {
+				kind = fmt.Sprintf("journal-%d", entries[i].node.Kind)
+			} else {
+				kind = "pxar"
+			}
+			fmt.Fprintf(f, "  [%d] %s name=%q offset=%d isDir=%v\n", i, kind, entries[i].name, entries[i].pxarOffset, entries[i].pxarSlim != nil && entries[i].pxarSlim.isDir)
+		}
+		f.Close()
+	}
+
 	// Process each merged entry.
 	for i := range entries {
 		if entries[i].node != nil {
