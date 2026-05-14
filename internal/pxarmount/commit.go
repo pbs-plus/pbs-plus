@@ -749,6 +749,8 @@ func (ow *commitWalkState) minPayloadOffset(slim *dirEntrySlim) uint64 {
 	if cached, ok := ow.pxarDirCache[ino]; ok {
 		return ow.minPayloadFromEntries(cached)
 	}
+	// Ensure the directory node is registered so ReadDirRaw can find it.
+	ow.mfs.pxar.RegisterSlimNode(slim, 0)
 	entries, err := ow.mfs.pxar.ReadDirRaw(ino)
 	if err != nil || len(entries) == 0 {
 		return slim.contentOffset // fallback: use dir's own offset
