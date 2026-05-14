@@ -27,7 +27,7 @@
 
     <MajorUpgrade 
       AllowDowngrades="yes"
-      Schedule="afterInstallInitialize" />
+      Schedule="afterInstallValidate" />
     
     <MediaTemplate EmbedCab="yes" />
 
@@ -40,25 +40,6 @@
     </Property>
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
-
-    <!-- Find net.exe in System32 for service control -->
-    <Property Id="NETEXEPATH">
-      <DirectorySearch Id="SystemDir" Path="[SystemFolder]">
-        <FileSearch Id="NetExe" Name="net.exe" />
-      </DirectorySearch>
-    </Property>
-
-    <!-- Stop service early via net stop, before RemoveExistingProducts -->
-    <CustomAction Id="StopServiceBefore"
-                  Property="NETEXEPATH"
-                  ExeCommand="stop PBSPlusAgent"
-                  Return="ignore"
-                  Impersonate="no"
-                  Execute="deferred" />
-
-    <InstallExecuteSequence>
-      <Custom Action="StopServiceBefore" Before="RemoveExistingProducts">NETEXEPATH</Custom>
-    </InstallExecuteSequence>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
