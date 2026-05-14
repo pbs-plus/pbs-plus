@@ -1899,20 +1899,28 @@ func (fs *PassthroughFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader,
 		return uint32(sz), fuse.OK
 	}
 	rel := fs.nodePath(header.NodeId)
-	if mo := fs.getOverlay(rel); mo != nil {
+	fs.mu.RLock()
+	mo := fs.metaOverlay[rel]
+	if mo != nil {
 		if mo.xdel[attr] {
+			fs.mu.RUnlock()
 			return 0, fuse.Status(syscall.ENODATA)
 		}
 		if val, ok := mo.xadd[attr]; ok {
 			if dest == nil {
+				fs.mu.RUnlock()
 				return uint32(len(val)), fuse.OK
 			}
 			if uint32(len(dest)) < uint32(len(val)) {
+				fs.mu.RUnlock()
 				return 0, fuse.Status(syscall.ERANGE)
 			}
-			return uint32(copy(dest, val)), fuse.OK
+			copied := uint32(copy(dest, val))
+			fs.mu.RUnlock()
+			return copied, fuse.OK
 		}
 	}
+	fs.mu.RUnlock()
 	return fs.pxar.GetXAttr(cancel, header, attr, dest)
 }
 
@@ -1955,7 +1963,8 @@ func (fs *PassthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 	for _, n := range baseNames {
 		names[n] = true
 	}
-	mo := fs.getOverlay(rel)
+	fs.mu.RLock()
+	mo := fs.metaOverlay[rel]
 	if mo != nil {
 		for name := range mo.xdel {
 			delete(names, name)
@@ -1964,6 +1973,7 @@ func (fs *PassthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 			names[name] = true
 		}
 	}
+	fs.mu.RUnlock()
 
 	var total uint32
 	for name := range names {
@@ -2011,10 +2021,19 @@ func (fs *PassthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn
 		_, _ = fs.txnLog.RecordSetXAttr(rel, attr, data)
 	}
 	if !fs.isBacked(input.NodeId) {
-		mo := fs.getOrCreateOverlay(rel)
+		fs.mu.Lock()
+		mo := fs.metaOverlay[rel]
+		if mo == nil {
+			mo = &metaOverride{
+				xadd: make(map[string][]byte),
+				xdel: make(map[string]bool),
+			}
+			fs.metaOverlay[rel] = mo
+		}
 		mo.xadd[attr] = make([]byte, len(data))
 		copy(mo.xadd[attr], data)
 		delete(mo.xdel, attr)
+		fs.mu.Unlock()
 	}
 	return fuse.OK
 }
@@ -2042,10 +2061,19 @@ func (fs *PassthroughFS) setACLXAttr(input *fuse.SetXAttrIn, attr string, data [
 		_, _ = fs.txnLog.RecordSetXAttr(rel, attr, data)
 	}
 	if !fs.isBacked(input.NodeId) {
-		mo := fs.getOrCreateOverlay(rel)
+		fs.mu.Lock()
+		mo := fs.metaOverlay[rel]
+		if mo == nil {
+			mo = &metaOverride{
+				xadd: make(map[string][]byte),
+				xdel: make(map[string]bool),
+			}
+			fs.metaOverlay[rel] = mo
+		}
 		mo.xadd[attr] = make([]byte, len(data))
 		copy(mo.xadd[attr], data)
 		delete(mo.xdel, attr)
+		fs.mu.Unlock()
 	}
 	return fuse.OK
 }
@@ -2070,9 +2098,18 @@ func (fs *PassthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHead
 		_, _ = fs.txnLog.RecordRemoveXAttr(rel, attr)
 	}
 	if !fs.isBacked(header.NodeId) {
-		mo := fs.getOrCreateOverlay(rel)
+		fs.mu.Lock()
+		mo := fs.metaOverlay[rel]
+		if mo == nil {
+			mo = &metaOverride{
+				xadd: make(map[string][]byte),
+				xdel: make(map[string]bool),
+			}
+			fs.metaOverlay[rel] = mo
+		}
 		delete(mo.xadd, attr)
 		mo.xdel[attr] = true
+		fs.mu.Unlock()
 	}
 	return fuse.OK
 }
@@ -2094,9 +2131,18 @@ func (fs *PassthroughFS) removeACLXAttr(header *fuse.InHeader, attr string) fuse
 		_, _ = fs.txnLog.RecordRemoveXAttr(rel, attr)
 	}
 	if !fs.isBacked(header.NodeId) {
-		mo := fs.getOrCreateOverlay(rel)
+		fs.mu.Lock()
+		mo := fs.metaOverlay[rel]
+		if mo == nil {
+			mo = &metaOverride{
+				xadd: make(map[string][]byte),
+				xdel: make(map[string]bool),
+			}
+			fs.metaOverlay[rel] = mo
+		}
 		delete(mo.xadd, attr)
 		mo.xdel[attr] = true
+		fs.mu.Unlock()
 	}
 	return fuse.OK
 }
