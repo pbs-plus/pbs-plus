@@ -108,7 +108,7 @@ func OpenJournal(dir string) (*Journal, error) {
 			name        TEXT NOT NULL,
 			PRIMARY KEY (parent_id, name)
 		) WITHOUT ROWID;
-		INSERT OR IGNORE INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 0755, '/');
+		INSERT OR IGNORE INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/');
 	`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)

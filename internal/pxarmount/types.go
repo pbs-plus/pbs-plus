@@ -252,6 +252,20 @@ func joinPath(parent, name string) string {
 	return parent + "/" + name
 }
 
+func ensureModeType(mode uint32, kind uint8) uint32 {
+	perm := mode & 0o7777
+	var ft uint32
+	switch kind {
+	case NodeDir:
+		ft = syscall.S_IFDIR
+	case NodeSymlink:
+		ft = syscall.S_IFLNK
+	default:
+		ft = syscall.S_IFREG
+	}
+	return ft | perm
+}
+
 func unsafeStringBytes(s string) []byte {
 	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
