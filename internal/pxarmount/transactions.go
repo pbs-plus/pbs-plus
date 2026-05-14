@@ -2,12 +2,13 @@ package pxarmount
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 // TxnType identifies the kind of filesystem mutation.
@@ -22,28 +23,31 @@ const (
 
 // Txn represents a single filesystem mutation recorded for later replay.
 type Txn struct {
-	ID        uint64    `json:"id"`
-	Type      TxnType   `json:"type"`
-	Path      string    `json:"path"`
-	NewPath   string    `json:"new_path,omitempty"`
-	Timestamp int64     `json:"timestamp"`
-	Attrs     *TxnAttrs `json:"attrs,omitempty"`
-	Backed    bool      `json:"backed"`
+	ID        uint64    `cbor:"1,keyasint"`
+	Type      TxnType   `cbor:"2,keyasint"`
+	Path      string    `cbor:"3,keyasint"`
+	NewPath   string    `cbor:"4,keyasint,omitempty"`
+	Timestamp int64     `cbor:"5,keyasint"`
+	Attrs     *TxnAttrs `cbor:"6,keyasint,omitempty"`
+	Backed    bool      `cbor:"7,keyasint"`
 }
 
 // TxnAttrs captures metadata changes from a SETATTR operation.
 type TxnAttrs struct {
-	Mode  *uint32 `json:"mode,omitempty"`
-	UID   *uint32 `json:"uid,omitempty"`
-	GID   *uint32 `json:"gid,omitempty"`
-	Size  *uint64 `json:"size,omitempty"`
-	Mtime *int64  `json:"mtime,omitempty"`
+	Mode  *uint32 `cbor:"1,keyasint,omitempty"`
+	UID   *uint32 `cbor:"2,keyasint,omitempty"`
+	GID   *uint32 `cbor:"3,keyasint,omitempty"`
+	Size  *uint64 `cbor:"4,keyasint,omitempty"`
+	Mtime *int64  `cbor:"5,keyasint,omitempty"`
 }
 
-// TransactionLog manages an append-only JSONL file of mutations.
+// TransactionLog manages an append-only CBOR file of mutations.
+// Each record is a self-contained CBOR data item, enabling streaming
+// decode without length-prefix framing.
 type TransactionLog struct {
 	mu   sync.Mutex
 	file *os.File
+	enc  *cbor.Encoder
 	buf  *bufio.Writer
 	next uint64
 	path string
@@ -55,15 +59,19 @@ func OpenTransactionLog(dir string) (*TransactionLog, error) {
 		return nil, fmt.Errorf("create transactions dir: %w", err)
 	}
 
-	logPath := filepath.Join(dir, "transactions.jsonl")
+	logPath := filepath.Join(dir, "transactions.cbor")
 
 	var next uint64
-	if data, err := os.ReadFile(logPath); err == nil {
-		for _, line := range splitLines(data) {
-			if len(line) > 0 {
-				next++
+	if f, err := os.Open(logPath); err == nil {
+		dec := cbor.NewDecoder(f)
+		for {
+			var txn Txn
+			if err := dec.Decode(&txn); err != nil {
+				break
 			}
+			next++
 		}
+		f.Close()
 	}
 
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -71,9 +79,11 @@ func OpenTransactionLog(dir string) (*TransactionLog, error) {
 		return nil, fmt.Errorf("open transaction log: %w", err)
 	}
 
+	buf := bufio.NewWriterSize(f, 64*1024)
 	return &TransactionLog{
 		file: f,
-		buf:  bufio.NewWriterSize(f, 64*1024),
+		buf:  buf,
+		enc:  cbor.NewEncoder(buf),
 		path: logPath,
 		next: next,
 	}, nil
@@ -115,16 +125,8 @@ func (tl *TransactionLog) record(txn *Txn) (uint64, error) {
 	tl.next++
 	txn.ID = tl.next
 
-	data, err := json.Marshal(txn)
-	if err != nil {
-		return 0, fmt.Errorf("marshal transaction: %w", err)
-	}
-
-	if _, err := tl.buf.Write(data); err != nil {
-		return 0, fmt.Errorf("write transaction: %w", err)
-	}
-	if err := tl.buf.WriteByte('\n'); err != nil {
-		return 0, fmt.Errorf("write newline: %w", err)
+	if err := tl.enc.Encode(txn); err != nil {
+		return 0, fmt.Errorf("encode transaction: %w", err)
 	}
 
 	return txn.ID, nil
@@ -184,19 +186,15 @@ func (tl *TransactionLog) ReadAll() ([]Txn, error) {
 	defer f.Close()
 
 	var txns []Txn
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
+	dec := cbor.NewDecoder(f)
+	for {
 		var txn Txn
-		if err := json.Unmarshal(line, &txn); err != nil {
-			continue
+		if err := dec.Decode(&txn); err != nil {
+			break
 		}
 		txns = append(txns, txn)
 	}
-	return txns, scanner.Err()
+	return txns, nil
 }
 
 // Clear truncates the transaction log after a successful commit.
@@ -219,24 +217,7 @@ func (tl *TransactionLog) Clear() error {
 
 	tl.file = f
 	tl.buf = bufio.NewWriter(f)
+	tl.enc = cbor.NewEncoder(tl.buf)
 	tl.next = 0
 	return nil
-}
-
-// splitLines splits raw bytes into lines without trailing newlines.
-func splitLines(data []byte) [][]byte {
-	var lines [][]byte
-	start := 0
-	for i, b := range data {
-		if b == '\n' {
-			if i > start {
-				lines = append(lines, data[start:i])
-			}
-			start = i + 1
-		}
-	}
-	if start < len(data) {
-		lines = append(lines, data[start:])
-	}
-	return lines
 }

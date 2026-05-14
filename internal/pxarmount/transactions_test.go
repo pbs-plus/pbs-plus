@@ -1,10 +1,11 @@
 package pxarmount
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 func TestTransactionLogRecord(t *testing.T) {
@@ -96,7 +97,7 @@ func TestTransactionLogClear(t *testing.T) {
 	}
 }
 
-func TestTransactionLogJSONLFormat(t *testing.T) {
+func TestTransactionLogCBORFormat(t *testing.T) {
 	dir := t.TempDir()
 	tl, err := OpenTransactionLog(dir)
 	if err != nil {
@@ -106,15 +107,15 @@ func TestTransactionLogJSONLFormat(t *testing.T) {
 	_, _ = tl.Record(TxnDelete, "/test")
 	_ = tl.Close()
 
-	// Read raw file and verify it's valid JSONL
-	data, err := os.ReadFile(filepath.Join(dir, "transactions.jsonl"))
+	// Read raw file and verify it's valid CBOR
+	data, err := os.ReadFile(filepath.Join(dir, "transactions.cbor"))
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
 
 	var txn Txn
-	if err := json.Unmarshal(data[:len(data)-1], &txn); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	if err := cbor.Unmarshal(data, &txn); err != nil {
+		t.Fatalf("cbor unmarshal: %v", err)
 	}
 	if txn.Type != TxnDelete || txn.Path != "/test" || txn.ID != 1 {
 		t.Errorf("txn = %+v, want DELETE /test id=1", txn)
@@ -177,34 +178,57 @@ func TestTransactionTypes(t *testing.T) {
 
 func TestTxnAttrsNilFields(t *testing.T) {
 	attrs := &TxnAttrs{}
-	data, err := json.Marshal(attrs)
+	data, err := cbor.Marshal(attrs)
 	if err != nil {
 		t.Fatalf("marshal empty attrs: %v", err)
 	}
-	// Nil fields should be omitted
-	if string(data) != "{}" {
-		t.Errorf("empty attrs = %s, want {}", data)
+
+	var parsed TxnAttrs
+	if err := cbor.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if parsed.Mode != nil || parsed.UID != nil || parsed.GID != nil || parsed.Size != nil || parsed.Mtime != nil {
+		t.Errorf("empty attrs should have all nil fields, got %+v", parsed)
 	}
 
 	attrs2 := &TxnAttrs{
 		Mode: new(uint32(0o644)),
 		GID:  new(uint32(100)),
 	}
-	data2, err := json.Marshal(attrs2)
+	data2, err := cbor.Marshal(attrs2)
 	if err != nil {
 		t.Fatalf("marshal partial attrs: %v", err)
 	}
-	var parsed TxnAttrs
-	if err := json.Unmarshal(data2, &parsed); err != nil {
+	var parsed2 TxnAttrs
+	if err := cbor.Unmarshal(data2, &parsed2); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if parsed.Mode == nil || *parsed.Mode != 0o644 {
+	if parsed2.Mode == nil || *parsed2.Mode != 0o644 {
 		t.Error("Mode not preserved")
 	}
-	if parsed.UID != nil {
+	if parsed2.UID != nil {
 		t.Error("UID should be nil")
 	}
-	if parsed.GID == nil || *parsed.GID != 100 {
+	if parsed2.GID == nil || *parsed2.GID != 100 {
 		t.Error("GID not preserved")
+	}
+}
+
+func TestTxnCBORSize(t *testing.T) {
+	// Verify CBOR encoding is compact compared to JSON.
+	txn := Txn{
+		ID:        42,
+		Type:      TxnDelete,
+		Path:      "/some/long/path/to/a/file.txt",
+		Timestamp: 1700000000,
+	}
+
+	cborData, err := cbor.Marshal(txn)
+	if err != nil {
+		t.Fatalf("cbor marshal: %v", err)
+	}
+
+	if len(cborData) > 80 {
+		t.Errorf("CBOR txn size = %d bytes, expected < 80", len(cborData))
 	}
 }

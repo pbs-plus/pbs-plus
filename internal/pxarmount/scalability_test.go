@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 // --- Benchmark 1: Hash-based verification ---
@@ -127,6 +129,55 @@ func BenchmarkTxnLog_PerRecordFlush(b *testing.B) {
 		f.Sync()
 		f.Close()
 	}
+}
+
+func BenchmarkTxnLog_CBOREncode(b *testing.B) {
+	txn := &Txn{
+		Type:      TxnDelete,
+		Path:      "/some/test/path/file.txt",
+		Timestamp: 1700000000,
+	}
+	b.ResetTimer()
+	for range b.N {
+		cbor.Marshal(txn)
+	}
+}
+
+func BenchmarkTxnLog_CBORDecode(b *testing.B) {
+	txn := &Txn{
+		Type:      TxnDelete,
+		Path:      "/some/test/path/file.txt",
+		Timestamp: 1700000000,
+	}
+	data, _ := cbor.Marshal(txn)
+	b.ResetTimer()
+	for range b.N {
+		var t Txn
+		cbor.Unmarshal(data, &t)
+	}
+}
+
+func BenchmarkTxnLog_CBORRecordSize(b *testing.B) {
+	txn := &Txn{
+		Type:      TxnDelete,
+		Path:      "/some/test/path/file.txt",
+		Timestamp: 1700000000,
+	}
+	data, _ := cbor.Marshal(txn)
+	b.ReportMetric(float64(len(data)), "bytes/record")
+}
+
+func BenchmarkTxnLog_CBOREncodeParallel(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			txn := &Txn{
+				Type:      TxnDelete,
+				Path:      "/parallel/file.txt",
+				Timestamp: 1700000000,
+			}
+			cbor.Marshal(txn)
+		}
+	})
 }
 
 // --- Benchmark 3: mmap vs ReadFile for DIDX-sized payloads ---

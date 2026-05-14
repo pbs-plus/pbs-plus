@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
@@ -342,6 +343,7 @@ func TestTransactionLog_ClearFailureDoesNotCorruptState(t *testing.T) {
 	_ = tl.file.Close() // close the stale handle
 	tl.file = f2
 	tl.buf = bufio.NewWriter(f2)
+	tl.enc = cbor.NewEncoder(tl.buf)
 	tl.next = 0
 
 	_, err = tl.Record(TxnDelete, "after-failed-clear")
