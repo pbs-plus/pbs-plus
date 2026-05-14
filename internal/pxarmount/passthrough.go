@@ -377,6 +377,10 @@ func (fs *PassthroughFS) getInoMu(ino uint64) *sync.Mutex {
 }
 
 func (fs *PassthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
+	// Already materialized by a concurrent caller.
+	if fs.isBacked(ino) {
+		return fs.nodePath(ino), nil
+	}
 	relPath := fs.nodePath(ino)
 	if relPath == "" {
 		return "", syscall.ENOENT
