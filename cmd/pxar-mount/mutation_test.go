@@ -907,3 +907,50 @@ func TestCreate_DeletedPathStaysDeletedOnBackingParentFailure(t *testing.T) {
 		t.Error("childRelPath was un-deleted even though Create failed")
 	}
 }
+
+// --- Bug 20: Create un-deletes path, then fallback syscall.Open fails ---
+// When O_EXCL fails (file exists) and the fallback syscall.Open with
+// O_WRONLY|O_TRUNC also fails (e.g., target is a directory), the path
+// stays un-deleted and an inode is registered even though Create failed.
+
+func TestCreate_DeletedPathStaysDeletedOnFallbackOpenFailure(t *testing.T) {
+	fs, backingDir, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Set up root inode
+	fs.mu.Lock()
+	fs.nodePaths[rootInode] = "/"
+	fs.pathToIno["/"] = rootInode
+	fs.mu.Unlock()
+
+	// Mark a path as deleted
+	childRelPath := "/foo"
+	fs.markPathDeleted(childRelPath)
+
+	if !fs.isPathDeleted(childRelPath) {
+		t.Fatal("childRelPath should be deleted before Create")
+	}
+
+	// Create a DIRECTORY at the target path so O_EXCL fails (EEXIST)
+	// and the fallback O_WRONLY|O_TRUNC also fails (EISDIR).
+	if err := os.Mkdir(filepath.Join(backingDir, "foo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Attempt Create
+	var cout fuse.CreateOut
+	st := fs.Create(nil, &fuse.CreateIn{
+		InHeader: fuse.InHeader{NodeId: rootInode},
+	}, "foo", &cout)
+
+	if st == fuse.OK {
+		t.Fatal("Create should fail when fallback open fails (EISDIR)")
+	}
+
+	// Path should STILL be deleted
+	if !fs.isPathDeleted(childRelPath) {
+		t.Errorf("childRelPath was un-deleted even though Create failed (status=%v)", st)
+	}
+}

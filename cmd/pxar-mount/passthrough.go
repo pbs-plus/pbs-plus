@@ -757,6 +757,9 @@ func (fs *passthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 	fs.setNode(ino, childPath, true)
 	fd, err = syscall.Open(abs, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
+		if wasDeleted {
+			fs.markPathDeleted(childPath)
+		}
 		return fuse.ToStatus(err)
 	}
 	return fs.finishCreate(ino, fd, out)
