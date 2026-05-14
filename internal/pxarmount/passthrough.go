@@ -1315,17 +1315,20 @@ func (fs *PassthroughFS) renamePxarEntry(input *fuse.RenameIn, oldPath, newPath,
 	if mo := fs.metaOverlay[oldPath]; mo != nil && mo.renameFrom != "" {
 		origSrcPath = mo.renameFrom
 	}
-	fs.mu.Unlock()
 
-	// Create overlay entry at destination with renameFrom.
-	mo := fs.getOrCreateOverlay(newPath)
+	// Create overlay entry at destination with renameFrom (under same lock).
+	mo := fs.metaOverlay[newPath]
+	if mo == nil {
+		mo = &metaOverride{
+			xadd: make(map[string][]byte),
+			xdel: make(map[string]bool),
+		}
+		fs.metaOverlay[newPath] = mo
+	}
 	mo.renameFrom = origSrcPath
 
-	// Update inode → path mapping.
-	fs.mu.Lock()
-	// Remove old path mapping.
+	// Update inode → path mapping (still under same lock).
 	delete(fs.pathToIno, oldPath)
-	// Set new path mapping.
 	if oldDstIno, hadDst := fs.pathToIno[newPath]; hadDst && oldDstIno != srcIno {
 		delete(fs.nodePaths, oldDstIno)
 		delete(fs.backed, oldDstIno)
