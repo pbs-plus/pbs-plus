@@ -255,6 +255,35 @@ func (fs *PassthroughFS) handleForNode(nodeID, fhID uint64) *passFh {
 	return fh
 }
 
+// lazyOpenFh opens a file handle for a node when the kernel sent fh=0.
+// It is safe for concurrent use: if two goroutines race to open, the
+// loser closes its fd and reuses the winner's handle.
+func (fs *PassthroughFS) lazyOpenFh(nodeID uint64) (*passFh, fuse.Status) {
+	rel := fs.nodePath(nodeID)
+	fd, err := syscall.Open(fs.absPath(rel), syscall.O_WRONLY, 0)
+	if err != nil {
+		return nil, fuse.ToStatus(err)
+	}
+
+	fs.fhmu.Lock()
+	// Check if another goroutine already opened a handle for this node.
+	for id, h := range fs.handles {
+		if h.inode == nodeID {
+			// Another goroutine won; close our fd.
+			fs.fhmu.Unlock()
+			_ = syscall.Close(fd)
+			return h, fuse.OK
+		}
+		_ = id
+	}
+	id := fs.nextFh
+	fs.nextFh++
+	fh := &passFh{fd: fd, inode: nodeID}
+	fs.handles[id] = fh
+	fs.fhmu.Unlock()
+	return fh, fuse.OK
+}
+
 func (fs *PassthroughFS) registerFh(rel string, nodeID uint64, flags int) (uint64, error) {
 	abs := fs.absPath(rel)
 	fd, err := syscall.Open(abs, flags, 0)
@@ -460,7 +489,9 @@ func (fs *PassthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
 	// Flush any pending metadata overlay onto the newly-materialized file.
 	if mo := fs.getOverlay(relPath); mo != nil {
 		fs.flushOverlayToDisk(abs, mo)
+		fs.mu.Lock()
 		delete(fs.metaOverlay, relPath)
+		fs.mu.Unlock()
 	}
 
 	if fs.txnLog != nil {
@@ -563,7 +594,9 @@ func (fs *PassthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 // --- Metadata Overlay ---
 
 // getOrCreateOverlay returns the existing metaOverride for path, or creates one.
+// Caller must NOT hold fs.mu.
 func (fs *PassthroughFS) getOrCreateOverlay(relPath string) *metaOverride {
+	fs.mu.Lock()
 	mo := fs.metaOverlay[relPath]
 	if mo == nil {
 		mo = &metaOverride{
@@ -572,12 +605,17 @@ func (fs *PassthroughFS) getOrCreateOverlay(relPath string) *metaOverride {
 		}
 		fs.metaOverlay[relPath] = mo
 	}
+	fs.mu.Unlock()
 	return mo
 }
 
 // getOverlay returns the metaOverride for path, or nil.
+// Caller must NOT hold fs.mu.
 func (fs *PassthroughFS) getOverlay(relPath string) *metaOverride {
-	return fs.metaOverlay[relPath]
+	fs.mu.RLock()
+	mo := fs.metaOverlay[relPath]
+	fs.mu.RUnlock()
+	return mo
 }
 
 // flushOverlayToDisk applies pending metadata overrides to a newly-materialized file.
@@ -685,7 +723,7 @@ func (fs *PassthroughFS) RebuildOverlayFromLog() error {
 
 			// Resolve rename chains: find the ultimate source.
 			origSrcPath := txn.Path
-			if prevMo := fs.metaOverlay[txn.Path]; prevMo != nil && prevMo.renameFrom != "" {
+			if prevMo := fs.getOverlay(txn.Path); prevMo != nil && prevMo.renameFrom != "" {
 				origSrcPath = prevMo.renameFrom
 			}
 
@@ -1245,6 +1283,7 @@ func (fs *PassthroughFS) renamePxarEntry(input *fuse.RenameIn, oldPath, newPath,
 
 	// Remove any old overlay rename pointing to the same old path.
 	// (handles chained renames: /a → /b, then /b → /c)
+	fs.mu.Lock()
 	for path, mo := range fs.metaOverlay {
 		if mo.renameFrom == oldPath {
 			// This entry was previously renamed to `path` from `oldPath`.
@@ -1258,6 +1297,7 @@ func (fs *PassthroughFS) renamePxarEntry(input *fuse.RenameIn, oldPath, newPath,
 	if mo := fs.metaOverlay[oldPath]; mo != nil && mo.renameFrom != "" {
 		origSrcPath = mo.renameFrom
 	}
+	fs.mu.Unlock()
 
 	// Create overlay entry at destination with renameFrom.
 	mo := fs.getOrCreateOverlay(newPath)
@@ -1471,17 +1511,11 @@ func (fs *PassthroughFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data
 	fh := fs.handleForNode(input.NodeId, input.Fh)
 	if fh == nil {
 		// Lazy-open: materialization happened but no fd yet.
-		rel := fs.nodePath(input.NodeId)
-		fd, err := syscall.Open(fs.absPath(rel), syscall.O_WRONLY, 0)
-		if err != nil {
-			return 0, fuse.ToStatus(err)
+		var st fuse.Status
+		fh, st = fs.lazyOpenFh(input.NodeId)
+		if st != fuse.OK {
+			return 0, st
 		}
-		fs.fhmu.Lock()
-		id := fs.nextFh
-		fs.nextFh++
-		fs.handles[id] = &passFh{fd: fd, inode: input.NodeId}
-		fs.fhmu.Unlock()
-		fh = fs.handles[id]
 	}
 
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
@@ -1528,17 +1562,11 @@ func (fs *PassthroughFS) Fallocate(cancel <-chan struct{}, input *fuse.Fallocate
 
 	fh := fs.handleForNode(input.NodeId, input.Fh)
 	if fh == nil {
-		rel := fs.nodePath(input.NodeId)
-		fd, err := syscall.Open(fs.absPath(rel), syscall.O_WRONLY, 0)
-		if err != nil {
-			return fuse.ToStatus(err)
+		var st fuse.Status
+		fh, st = fs.lazyOpenFh(input.NodeId)
+		if st != fuse.OK {
+			return st
 		}
-		fs.fhmu.Lock()
-		id := fs.nextFh
-		fs.nextFh++
-		fs.handles[id] = &passFh{fd: fd, inode: input.NodeId}
-		fs.fhmu.Unlock()
-		fh = fs.handles[id]
 	}
 
 	mode := uint32(0)
@@ -1711,6 +1739,7 @@ func (fs *PassthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		for _, e := range entries {
 			existingNames[e.name] = true
 		}
+		fs.mu.RLock()
 		for newPath, mo := range fs.metaOverlay {
 			if mo.renameFrom == "" {
 				continue
@@ -1732,6 +1761,7 @@ func (fs *PassthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 				}
 			}
 		}
+		fs.mu.RUnlock()
 	}
 
 	if input.Offset == 0 {
@@ -2178,6 +2208,7 @@ func (fs *PassthroughFS) Forget(nodeID, nlookup uint64) {
 	if fs.backed[nodeID] {
 		if path, ok := fs.nodePaths[nodeID]; ok {
 			delete(fs.pathToIno, path)
+			delete(fs.metaOverlay, path)
 		}
 		delete(fs.backed, nodeID)
 		delete(fs.nodePaths, nodeID)

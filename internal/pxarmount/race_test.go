@@ -33,6 +33,7 @@ func newTestPassthroughFS(t *testing.T) (*PassthroughFS, string, func()) {
 		pxarDir:      make(map[uint64]bool),
 		deletedPaths: make(map[string]bool),
 		handles:      make(map[uint64]*passFh),
+		metaOverlay:  make(map[string]*metaOverride),
 	}
 
 	// Initialize root

@@ -617,7 +617,9 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		if pxarEntry.IsDir() {
 			fs.pxar.RegisterNode(childIno, pxarIno, pxarEntry)
 			meta := buildMetaFromEntry(pxarEntry)
+			fs.mu.RLock()
 			applyOverlayToMeta(childRel, &meta, fs.metaOverlay)
+			fs.mu.RUnlock()
 			if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
 				return fmt.Errorf("begin dir %s: %w", we.name, err)
 			}
@@ -631,8 +633,10 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		}
 
 		entry := cloneEntryWithName(pxarEntry, we.name)
-		if mo := fs.metaOverlay[childRel]; mo != nil {
+		if mo := fs.getOverlay(childRel); mo != nil {
+			fs.mu.RLock()
 			applyOverlayToMeta(childRel, &entry.Metadata, fs.metaOverlay)
+			fs.mu.RUnlock()
 		}
 		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
 			return fmt.Errorf("write pxar ref %s: %w", we.name, err)
@@ -784,6 +788,7 @@ func (fs *PassthroughFS) emitRenamedEntries(ow *overlayWalk, dirRelPath string) 
 		prefix = "/"
 	}
 
+	fs.mu.RLock()
 	for newPath, mo := range fs.metaOverlay {
 		if mo.renameFrom == "" {
 			continue
@@ -809,12 +814,15 @@ func (fs *PassthroughFS) emitRenamedEntries(ow *overlayWalk, dirRelPath string) 
 			meta := buildMetaFromEntry(pxarEntry)
 			applyOverlayToMeta(newPath, &meta, fs.metaOverlay)
 			if err := ow.writer.BeginDirectory(childName, &meta); err != nil {
+				fs.mu.RUnlock()
 				return fmt.Errorf("begin renamed dir %s: %w", childName, err)
 			}
 			if err := fs.walkOverlay(ow, childIno, newPath); err != nil {
+				fs.mu.RUnlock()
 				return err
 			}
 			if err := ow.writer.EndDirectory(); err != nil {
+				fs.mu.RUnlock()
 				return fmt.Errorf("end renamed dir %s: %w", childName, err)
 			}
 			continue
@@ -823,9 +831,11 @@ func (fs *PassthroughFS) emitRenamedEntries(ow *overlayWalk, dirRelPath string) 
 		entry := cloneEntryWithName(pxarEntry, childName)
 		applyOverlayToMeta(newPath, &entry.Metadata, fs.metaOverlay)
 		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
+			fs.mu.RUnlock()
 			return fmt.Errorf("write renamed pxar ref %s: %w", childName, err)
 		}
 	}
+	fs.mu.RUnlock()
 	return nil
 }
 

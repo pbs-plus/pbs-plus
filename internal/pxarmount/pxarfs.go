@@ -211,7 +211,10 @@ func (fs *PxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	contentOff := n.contentOffset
 	contentSz := n.fileSize
 	isReg := n.isReg
+
+	fs.mu.RLock()
 	ra := fs.readerAt
+	fs.mu.RUnlock()
 
 	// Fast path: payload ReaderAt — fully concurrent, no lock needed.
 	if isReg && ra != nil && contentOff != 0 {
@@ -278,7 +281,9 @@ func (fs *PxarFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byt
 		return nil, fuse.EINVAL
 	}
 
+	fs.readerMu.Lock()
 	entry, err := fs.readEntryForNode(&n)
+	fs.readerMu.Unlock()
 	if err != nil {
 		return nil, fuse.EIO
 	}
@@ -293,7 +298,9 @@ func (fs *PxarFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest 
 		return 0, fuse.ENOENT
 	}
 
+	fs.readerMu.Lock()
 	entry, err := fs.readEntryForNode(&n)
+	fs.readerMu.Unlock()
 	if err != nil {
 		return 0, fuse.EIO
 	}
@@ -335,7 +342,9 @@ func (fs *PxarFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr s
 		return 0, fuse.ENOENT
 	}
 
+	fs.readerMu.Lock()
 	entry, err := fs.readEntryForNode(&n)
+	fs.readerMu.Unlock()
 	if err != nil {
 		return 0, fuse.EIO
 	}
@@ -386,8 +395,6 @@ func (fs *PxarFS) HotSwap(newReader *transfer.SplitArchiveReader) {
 	fs.reader = newReader
 	fs.readerMu.Unlock()
 
-	fs.readerAt = newReader.PayloadReaderAt()
-
 	root, err := newReader.ReadRoot()
 	if err != nil {
 		return
@@ -395,6 +402,7 @@ func (fs *PxarFS) HotSwap(newReader *transfer.SplitArchiveReader) {
 	fs.mu.Lock()
 	fs.size = int64(root.FileOffset + root.FileSize)
 	fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
+	fs.readerAt = newReader.PayloadReaderAt()
 	fs.mu.Unlock()
 }
 
