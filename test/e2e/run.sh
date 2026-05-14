@@ -38,6 +38,7 @@ mount_init() {
 	mkdir -p "$pass" "$mount" "$(dirname $socket)"
 	nohup /usr/bin/pxar-mount \
 		--passthrough "$pass" \
+		--pbs-store /archiving/pbs-datastore \
 		--socket "$socket" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
