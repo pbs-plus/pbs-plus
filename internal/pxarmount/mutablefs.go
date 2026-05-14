@@ -873,6 +873,19 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	// Dest has a pxar entry → whiteout it.
 	destHasPXar := fs.hasPxarEntry(newPath)
 
+	// Resolve destination to check for existing journal node/edge.
+	destRE, _ := fs.resolve(newPath)
+
+	// If dest has a journal edge, remove it first (rename replaces atomically).
+	if destRE != nil && destRE.Node != nil {
+		_ = fs.journal.DeleteEdge(newParentID, newName)
+		_ = fs.journal.DeleteNode(destRE.Node.ID)
+		if destRE.DataIsMut {
+			_ = os.Remove(fs.mutablePath(newPath))
+		}
+		fs.unmapInode(newPath)
+	}
+
 	if oldRE.Node != nil {
 		// Source has a journal node: move the edge.
 		if err := fs.journal.MoveEdge(oldParentID, oldName, newParentID, newName); err != nil {
@@ -928,6 +941,11 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	ino := fs.pathToIno(oldPath, oldRE.IsDir)
 	fs.unmapInode(oldPath)
 	fs.mapInode(ino, newPath)
+
+	// If renamed a directory, update all child inode path mappings.
+	if oldRE.IsDir {
+		fs.remapPathPrefix(oldPath, newPath)
+	}
 
 	return fuse.OK
 }
@@ -1643,6 +1661,20 @@ func (fs *MutableFS) unmapInode(path string) {
 	if ino, ok := pathToIno[path]; ok {
 		delete(inoToPath, ino)
 		delete(pathToIno, path)
+	}
+	pathInoMu.Unlock()
+}
+
+// remapPathPrefix updates all inode mappings under oldPrefix to use newPrefix.
+func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
+	pathInoMu.Lock()
+	for p, ino := range pathToIno {
+		if p == oldPrefix || strings.HasPrefix(p, oldPrefix+"/") {
+			newPath := newPrefix + p[len(oldPrefix):]
+			pathToIno[newPath] = ino
+			inoToPath[ino] = newPath
+			delete(pathToIno, p)
+		}
 	}
 	pathInoMu.Unlock()
 }
