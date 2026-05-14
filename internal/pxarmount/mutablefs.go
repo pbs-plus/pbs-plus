@@ -105,6 +105,7 @@ func (fs *MutableFS) SetDebug(dbg bool) {}
 
 // Lookup resolves a name in a directory.
 func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
+	fmt.Fprintf(os.Stderr, "  Lookup: parent=%d name=%q\n", header.NodeId, name)
 	if name == JournalDir {
 		return fuse.ENOENT
 	}
@@ -114,6 +115,7 @@ func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name 
 
 	re, status := fs.resolve(childPath)
 	if status != fuse.OK {
+		fmt.Fprintf(os.Stderr, "  Lookup: resolve(%q)=%s\n", childPath, status)
 		return status
 	}
 
@@ -125,16 +127,23 @@ func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name 
 // GetAttr returns attributes.
 func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
-	if path == "" {
+	fmt.Fprintf(os.Stderr, "  GetAttr: ino=%d path=%q\n", input.NodeId, path)
+	if path == "" && input.NodeId != RootInode {
+		fmt.Fprintf(os.Stderr, "  GetAttr: ENOENT (no path for ino %d)\n", input.NodeId)
 		return fuse.ENOENT
+	}
+	if path == "" {
+		path = "/"
 	}
 
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
+		fmt.Fprintf(os.Stderr, "  GetAttr: resolve(%q) failed: %s\n", path, status)
 		return status
 	}
 
 	fillResolvedAttrOut(re, out)
+	fmt.Fprintf(os.Stderr, "  GetAttr: ok mode=0%o isDir=%v\n", out.Attr.Mode, re.IsDir)
 	return fuse.OK
 }
 
@@ -1252,6 +1261,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 // resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
 	n, err := fs.journal.GetNode(1)
+	fmt.Fprintf(os.Stderr, "  resolveRoot: GetNode(1) err=%v node=%+v\n", err, n)
 	if err != nil {
 		return nil, fuse.EIO
 	}
