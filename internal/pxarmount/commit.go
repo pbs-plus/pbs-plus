@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -444,16 +445,31 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	var refEntries, newDataEntries []commitEntry
 
 	// Classify pxar entries — all are ref-emitters.
+	// Sort FILE entries by contentOffset (= PayloadOffset) to maintain
+	// monotonicity. Directory entries stay in metadata order to preserve
+	// depth-first payload ordering across directory boundaries.
+	var pxarFiles, pxarDirs []commitEntry
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
 		if edgeNames[pe.name] || whiteoutSet[pe.name] {
 			continue
 		}
-		refEntries = append(refEntries, commitEntry{
-			name:     pe.name,
-			pxarSlim: pe,
-		})
+		if pe.isDir {
+			pxarDirs = append(pxarDirs, commitEntry{name: pe.name, pxarSlim: pe})
+		} else if pe.isSymlink {
+			// Symlinks have no payload — emit with dirs (before sorted files).
+			pxarDirs = append(pxarDirs, commitEntry{name: pe.name, pxarSlim: pe})
+		} else {
+			pxarFiles = append(pxarFiles, commitEntry{name: pe.name, pxarSlim: pe})
+		}
 	}
+	// Sort files by contentOffset (ascending payload offset).
+	sort.Slice(pxarFiles, func(i, j int) bool {
+		return pxarFiles[i].pxarSlim.contentOffset < pxarFiles[j].pxarSlim.contentOffset
+	})
+	// Emit dirs (metadata order) then sorted files.
+	refEntries = append(refEntries, pxarDirs...)
+	refEntries = append(refEntries, pxarFiles...)
 
 	// Classify journal edges by whether they emit new data.
 	for i := range journalEdges {
