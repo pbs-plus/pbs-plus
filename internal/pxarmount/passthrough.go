@@ -1280,6 +1280,22 @@ func (fs *PassthroughFS) renamePxarEntry(input *fuse.RenameIn, oldPath, newPath,
 	// Mark old path as deleted.
 	fs.markPathDeleted(oldPath)
 
+	// Move or remove the transparent backing directory so that
+	// preWalkBackingDir and readDirImpl don't emit the old name.
+	// If the dir has materialized children, rename it to the new
+	// path so they are preserved; otherwise just remove it.
+	oldAbs := fs.absPath(oldPath)
+	if fi, err := os.Lstat(oldAbs); err == nil && fi.IsDir() {
+		newAbs := fs.absPath(newPath)
+		if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err == nil {
+			if err := os.Rename(oldAbs, newAbs); err != nil {
+				_ = os.RemoveAll(oldAbs)
+			}
+		} else {
+			_ = os.RemoveAll(oldAbs)
+		}
+	}
+
 	// Remove any old overlay rename pointing to the same old path.
 	// (handles chained renames: /a → /b, then /b → /c)
 	fs.mu.Lock()
@@ -1723,9 +1739,13 @@ func (fs *PassthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		}
 	}
 	for _, be := range backedEntries {
-		if backedName[be.name] {
-			entries = append(entries, be)
+		if !backedName[be.name] {
+			continue
 		}
+		if fs.mutationMode && fs.isPathDeleted(joinPath(parentPath, be.name)) {
+			continue
+		}
+		entries = append(entries, be)
 	}
 
 	// Add renamed-in pxar entries from the overlay.

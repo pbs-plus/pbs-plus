@@ -497,6 +497,10 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 	}
 
 	for _, name := range backedNames {
+		childPath := joinPath(relPath, name)
+		if fs.mutationMode && fs.isPathDeleted(childPath) {
+			continue
+		}
 		fo := ^uint64(0)
 		if pe, ok := pxarByName[name]; ok {
 			fo = pe.entryStart
