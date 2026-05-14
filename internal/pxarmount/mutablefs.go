@@ -301,9 +301,11 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		if pxarParentIno != 0 {
 			fs.pxar.RegisterSlimNode(&pe, pxarParentIno)
 		}
+		childPath := joinPath(parentPath, pe.name)
+		ino := fs.pathToIno(childPath, pe.isDir)
 		merged = append(merged, mergedEntry{
 			name:  pe.name,
-			ino:   pe.inode,
+			ino:   ino,
 			mode:  pe.mode,
 			isDir: pe.isDir,
 		})
