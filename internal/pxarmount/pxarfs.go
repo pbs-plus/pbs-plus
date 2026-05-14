@@ -1,7 +1,9 @@
 package pxarmount
 
 import (
+	"fmt"
 	"io"
+	"os"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -202,11 +204,15 @@ func (fs *PxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	n, ok := fs.nodes[input.NodeId]
 	fs.mu.RUnlock()
 	if !ok {
+		fmt.Fprintf(os.Stderr, "PxarFS.Read: ino=%d NOT FOUND\n", input.NodeId)
 		return nil, fuse.ENOENT
 	}
 	if n.isDir {
 		return nil, fuse.EISDIR
 	}
+
+	fmt.Fprintf(os.Stderr, "PxarFS.Read: ino=%d entryStart=%d contentOffset=%d fileSize=%d\n",
+		input.NodeId, n.entryStart, n.contentOffset, n.fileSize)
 
 	return fs.readFileContent(input.NodeId, int64(input.Offset), int64(len(buf)), buf)
 }
