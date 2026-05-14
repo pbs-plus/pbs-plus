@@ -1253,6 +1253,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 	nodeID, pxarPath, fellOffAt, remaining, err := fs.journal.ResolvePath(path)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "  resolve(%q) ResolvePath err: %v\n", path, err)
 		return nil, fuse.EIO
 	}
 
