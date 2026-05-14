@@ -881,6 +881,11 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 			}
 			return fuse.EIO
 		}
+		// If the node wraps pxar content (has RedirectTo), whiteout the old
+		// location so the underlying pxar entry stays hidden after the move.
+		if oldRE.Node.RedirectTo != "" {
+			_ = fs.journal.AddWhiteout(oldParentID, oldName)
+		}
 	} else {
 		// Source is pxar-only: create a journal node + edge, whiteout old location.
 		now := time.Now().UnixNano()
