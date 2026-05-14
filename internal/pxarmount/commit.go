@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -58,10 +59,10 @@ func ParseCommitLine(line string) (*CommitRequest, error) {
 		req.Namespace = parts[4]
 	}
 	if len(parts) > 5 {
-		req.BackupID = parts[5]
+		req.BackupType = parts[5]
 	}
 	if len(parts) > 6 {
-		req.BackupType = parts[6]
+		req.BackupID = parts[6]
 	}
 	if req.BackupType == "" {
 		req.BackupType = "host"
@@ -973,7 +974,57 @@ func ParseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
 
 // RunCommitSubcommand is the CLI entry point for `pxar-mount commit`.
 func RunCommitSubcommand() {
-	fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path>\n")
-	fmt.Fprintf(os.Stderr, "Send COMMIT command via socket instead.\n")
+	fs := flag.NewFlagSet("commit", flag.ExitOnError)
+	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
+	pbsURL := fs.String("pbs-url", "", "PBS server URL")
+	datastoreName := fs.String("datastore", "", "PBS datastore name")
+	authToken := fs.String("token", "", "PBS API token")
+	namespace := fs.String("ns", "", "PBS namespace")
+	backupType := fs.String("backup-type", "host", "Backup type")
+	backupID := fs.String("backup-id", "", "Backup ID")
+
+	fs.Parse(os.Args[2:])
+
+	if *socketPath == "" {
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> [options]\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fs.PrintDefaults()
+		os.Exit(1)
+	}
+
+	conn, err := net.Dial("unix", *socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  \u2717 error connecting to socket %s: %v\n", *socketPath, err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+
+	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
+		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID)
+	if _, err := fmt.Fprint(conn, cmd); err != nil {
+		fmt.Fprintf(os.Stderr, "  \u2717 error sending command: %v\n", err)
+		os.Exit(1)
+	}
+
+	display := NewProgressDisplay(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Committing snapshot...\n")
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PROGRESS ") {
+			display.Update(line)
+			continue
+		}
+		if strings.HasPrefix(line, "OK ") {
+			display.Done(line)
+			return
+		}
+		if strings.HasPrefix(line, "ERR ") {
+			display.Error(line)
+			os.Exit(1)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "  \u2717 error: no response from daemon\n")
 	os.Exit(1)
 }
