@@ -667,9 +667,21 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		return nil
 	}
 
-	// Regular file or other entry with payload — emit as chunk reference.
+	// Regular file with payload — try chunk reference first.
 	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
-		return fmt.Errorf("write pxar ref %s: %w", ce.name, err)
+		// Offset monotonicity violated — re-stream file content instead.
+		// The dedup writer handles chunk deduplication, so no extra storage cost.
+		ow.mfs.pxar.readerMu.Lock()
+		rc, rerr := ow.mfs.pxar.Reader().ReadFileContentReader(pxarEntry)
+		ow.mfs.pxar.readerMu.Unlock()
+		if rerr != nil {
+			return fmt.Errorf("write pxar ref %s failed (%v), then read content failed: %w", ce.name, err, rerr)
+		}
+		defer rc.Close()
+		if werr := ow.writer.WriteEntryReader(clone, rc, uint64(pxarEntry.FileSize)); werr != nil {
+			return fmt.Errorf("write pxar restream %s: %w", ce.name, werr)
+		}
+		return nil
 	}
 	return nil
 }
