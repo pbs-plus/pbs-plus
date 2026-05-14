@@ -898,13 +898,6 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		mfs.mmapData = append(mfs.mmapData, payloadData)
 	}
 
-	// Reset inode mappings.
-	pathInoMu.Lock()
-	pathToIno = make(map[string]uint64)
-	inoToPath = make(map[uint64]string)
-	pathInoMu.Unlock()
-	mfs.mapInode(RootInode, "/")
-
 	// Update snapshot reference.
 	mfs.origSnapshot = snapshotRef{
 		BackupType:  backupType,
