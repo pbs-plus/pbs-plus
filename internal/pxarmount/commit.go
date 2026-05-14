@@ -2,6 +2,7 @@ package pxarmount
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -733,9 +734,28 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		return nil
 	}
 
-	// Regular file with payload — emit as chunk reference.
+	// Regular file with payload.
+	// Try chunk reference first (efficient). If monotonicity fails
+	// (non-monotonic offsets in source archive), fall back to re-streaming
+	// the file content via WriteEntryReader. This mirrors the Rust
+	// client's try_record_strictly_greater + re-encode pattern.
 	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
-		return fmt.Errorf("write pxar ref %s: %w", ce.name, err)
+		ow.mfs.pxar.readerMu.Lock()
+		rc, rerr := ow.mfs.pxar.Reader().ReadFileContentReader(pxarEntry)
+		ow.mfs.pxar.readerMu.Unlock()
+		if rerr != nil {
+			return fmt.Errorf("write pxar ref %s failed (%v), read content also failed: %w", ce.name, err, rerr)
+		}
+		content, rerr2 := io.ReadAll(rc)
+		rc.Close()
+		if rerr2 != nil {
+			return fmt.Errorf("read pxar content %s: %w", ce.name, rerr2)
+		}
+		clone.FileSize = uint64(len(content))
+		if werr := ow.writer.WriteEntryReader(clone, bytes.NewReader(content), clone.FileSize); werr != nil {
+			return fmt.Errorf("write pxar restream %s: %w", ce.name, werr)
+		}
+		return nil
 	}
 	return nil
 }
