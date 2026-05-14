@@ -322,12 +322,14 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 // Open opens a file. For writes, triggers copy-up.
 func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
+	fmt.Fprintf(os.Stderr, "  Open: ino=%d path=%q flags=0x%x\n", input.NodeId, path, input.Flags)
 	if path == "" {
 		return fuse.ENOENT
 	}
 
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
+		fmt.Fprintf(os.Stderr, "  Open: resolve(%q) failed: %s\n", path, status)
 		return status
 	}
 
@@ -336,6 +338,7 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 
 	if isWrite && !re.DataIsMut {
 		if err := fs.copyUp(re); err != nil {
+			fmt.Fprintf(os.Stderr, "  Open: copyUp failed: %v\n", err)
 			return fuse.ToStatus(err)
 		}
 		re.DataIsMut = true
@@ -345,38 +348,45 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 		abs := fs.mutablePath(path)
 		fd, err := syscall.Open(abs, flags, 0)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Open: syscall.Open(%q) failed: %v\n", abs, err)
 			return fuse.ToStatus(err)
 		}
 		fhID := fs.registerFh(path, fd)
 		out.Fh = fhID
 		out.OpenFlags = fuse.FOPEN_KEEP_CACHE
+		fmt.Fprintf(os.Stderr, "  Open: mutable fh=%d\n", fhID)
 		return fuse.OK
 	}
 
 	out.Fh = 0
 	out.OpenFlags = fuse.FOPEN_KEEP_CACHE
+	fmt.Fprintf(os.Stderr, "  Open: pxar passthrough\n")
 	return fuse.OK
 }
 
 // Read reads data from the appropriate source.
 func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
 	path := fs.inodeToPath(input.NodeId)
+	fmt.Fprintf(os.Stderr, "  Read: ino=%d fh=%d path=%q off=%d sz=%d\n", input.NodeId, input.Fh, path, input.Offset, len(buf))
 	if path == "" {
 		return nil, fuse.ENOENT
 	}
 
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
+		fmt.Fprintf(os.Stderr, "  Read: resolve(%q) failed: %s\n", path, status)
 		return nil, status
 	}
 
 	if re.DataIsMut {
 		fh := fs.getFh(input.Fh)
 		if fh == nil {
+			fmt.Fprintf(os.Stderr, "  Read: EBADF fh=%d\n", input.Fh)
 			return nil, fuse.EBADF
 		}
 		n, err := syscall.Pread(fh.fd, buf, int64(input.Offset))
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Read: pread err: %v\n", err)
 			return nil, fuse.ToStatus(err)
 		}
 		if n == 0 {
@@ -387,11 +397,14 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 
 	// Delegate to pxar using its native inode.
 	if re.PxarNode == nil {
+		fmt.Fprintf(os.Stderr, "  Read: no pxar node for %q, re=%+v\n", path, re)
 		return nil, fuse.EIO
 	}
 	pxarInput := *input
 	pxarInput.NodeId = re.PxarNode.inode
-	return fs.pxar.Read(cancel, &pxarInput, buf)
+	result, status := fs.pxar.Read(cancel, &pxarInput, buf)
+	fmt.Fprintf(os.Stderr, "  Read: pxar delegate ino=%d status=%s\n", pxarInput.NodeId, status)
+	return result, status
 }
 
 // Write writes data. Triggers copy-up if needed.
