@@ -633,11 +633,9 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		}
 
 		entry := cloneEntryWithName(pxarEntry, we.name)
-		if mo := fs.getOverlay(childRel); mo != nil {
-			fs.mu.RLock()
-			applyOverlayToMeta(childRel, &entry.Metadata, fs.metaOverlay)
-			fs.mu.RUnlock()
-		}
+		fs.mu.RLock()
+		applyOverlayToMeta(childRel, &entry.Metadata, fs.metaOverlay)
+		fs.mu.RUnlock()
 		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
 			return fmt.Errorf("write pxar ref %s: %w", we.name, err)
 		}
