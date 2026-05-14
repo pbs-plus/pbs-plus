@@ -121,7 +121,6 @@ func (fs *MutableFS) SetDebug(dbg bool) {}
 func (fs *MutableFS) waitIfFrozen() {
 	fs.freezeMu.Lock()
 	for fs.frozen {
-		fs.debugf("waitIfFrozen: blocked")
 		fs.freezeCond.Wait()
 	}
 	fs.freezeMu.Unlock()
