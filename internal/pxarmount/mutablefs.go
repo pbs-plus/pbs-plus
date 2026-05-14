@@ -990,17 +990,26 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
+		if fs.verbose {
+			fmt.Fprintf(os.Stderr, "  SetXAttr: inode %d → empty path\n", input.NodeId)
+		}
 		return fuse.ENOENT
 	}
 
 	// Ensure a journal entry exists for this path.
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
+		if fs.verbose {
+			fmt.Fprintf(os.Stderr, "  SetXAttr: resolve %q failed: %v\n", path, status)
+		}
 		return status
 	}
 	fs.ensureJournalEntry(re)
 
 	if err := fs.journal.SetXAttr(path, attr, data); err != nil {
+		if fs.verbose {
+			fmt.Fprintf(os.Stderr, "  SetXAttr: journal.SetXAttr %q %s failed: %v\n", path, attr, err)
+		}
 		return fuse.EIO
 	}
 
