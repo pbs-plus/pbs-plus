@@ -1,4 +1,4 @@
-package main
+package pxarmount
 
 import (
 	"fmt"
@@ -12,19 +12,19 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-// newTestPassthroughFS creates a passthroughFS backed by a temp directory.
-func newTestPassthroughFS(t *testing.T) (*passthroughFS, string, func()) {
+// newTestPassthroughFS creates a PassthroughFS backed by a temp directory.
+func newTestPassthroughFS(t *testing.T) (*PassthroughFS, string, func()) {
 	t.Helper()
 	backingDir, err := os.MkdirTemp("", "pxar-race-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	pxar := &pxarFS{
+	pxar := &PxarFS{
 		nodes: make(map[uint64]node),
 	}
 
-	fs := &passthroughFS{
+	fs := &PassthroughFS{
 		pxar:         pxar,
 		backingDir:   backingDir,
 		nodePaths:    make(map[uint64]string),
@@ -36,9 +36,9 @@ func newTestPassthroughFS(t *testing.T) (*passthroughFS, string, func()) {
 	}
 
 	// Initialize root
-	fs.setNode(rootInode, "/", true)
+	fs.setNode(RootInode, "/", true)
 	fs.mu.Lock()
-	fs.pxarDir[rootInode] = true
+	fs.pxarDir[RootInode] = true
 	fs.mu.Unlock()
 
 	cleanup := func() {
@@ -61,7 +61,7 @@ func TestConcurrentMkdir_NoDuplicates(t *testing.T) {
 
 	for range goroutines {
 		wg.Go(func() {
-			input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+			input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 			var out fuse.EntryOut
 			fs.Mkdir(nil, input, "testdir", &out)
 		})
@@ -92,7 +92,7 @@ func TestConcurrentCreate_NoDuplicates(t *testing.T) {
 
 	for range goroutines {
 		wg.Go(func() {
-			input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+			input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 			var out fuse.CreateOut
 			fs.Create(nil, input, "testfile.txt", &out)
 		})
@@ -142,7 +142,7 @@ func TestConcurrentReadDir_ConsistentInodes(t *testing.T) {
 			inodes := make(map[string]uint64)
 
 			fs.readDirImpl(nil, &fuse.ReadIn{
-				InHeader: fuse.InHeader{NodeId: rootInode},
+				InHeader: fuse.InHeader{NodeId: RootInode},
 			}, out, true)
 
 			fs.mu.RLock()
@@ -192,7 +192,7 @@ func TestConcurrentCreateReadDir_Consistency(t *testing.T) {
 	wg.Go(func() {
 		for i := range filesToCreate {
 			name := fmt.Sprintf("concurrent_%d.txt", i)
-			input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+			input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 			var out fuse.CreateOut
 			if st := fs.Create(nil, input, name, &out); st == fuse.OK {
 				created.Add(1)
@@ -206,7 +206,7 @@ func TestConcurrentCreateReadDir_Consistency(t *testing.T) {
 			buf := make([]byte, 16*1024)
 			out := fuse.NewDirEntryList(buf, 0)
 			fs.readDirImpl(nil, &fuse.ReadIn{
-				InHeader: fuse.InHeader{NodeId: rootInode},
+				InHeader: fuse.InHeader{NodeId: RootInode},
 			}, out, false)
 		}
 	})
@@ -244,7 +244,7 @@ func TestConcurrentSymlink_NoDuplicates(t *testing.T) {
 
 	for range goroutines {
 		wg.Go(func() {
-			header := &fuse.InHeader{NodeId: rootInode}
+			header := &fuse.InHeader{NodeId: RootInode}
 			var out fuse.EntryOut
 			fs.Symlink(nil, header, "/target", "testlink", &out)
 		})
@@ -272,7 +272,7 @@ func TestConcurrentMkdirAndCreate_NoConflicts(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+		input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 		var out fuse.EntryOut
 		if fs.Mkdir(nil, input, "dir1", &out) == fuse.OK {
 			mkdirOK.Store(true)
@@ -280,7 +280,7 @@ func TestConcurrentMkdirAndCreate_NoConflicts(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+		input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 		var out fuse.CreateOut
 		if fs.Create(nil, input, "file1.txt", &out) == fuse.OK {
 			createOK.Store(true)
@@ -319,7 +319,7 @@ func TestReadDir_InodeStability(t *testing.T) {
 	buf1 := make([]byte, 16*1024)
 	out1 := fuse.NewDirEntryList(buf1, 0)
 	fs.readDirImpl(nil, &fuse.ReadIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
+		InHeader: fuse.InHeader{NodeId: RootInode},
 	}, out1, true)
 
 	firstPaths := snapshotPaths(fs)
@@ -328,7 +328,7 @@ func TestReadDir_InodeStability(t *testing.T) {
 	buf2 := make([]byte, 16*1024)
 	out2 := fuse.NewDirEntryList(buf2, 0)
 	fs.readDirImpl(nil, &fuse.ReadIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
+		InHeader: fuse.InHeader{NodeId: RootInode},
 	}, out2, true)
 
 	secondPaths := snapshotPaths(fs)
@@ -369,7 +369,7 @@ func TestConcurrentLookup_ConsistentInodes(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			var out fuse.EntryOut
-			header := &fuse.InHeader{NodeId: rootInode}
+			header := &fuse.InHeader{NodeId: RootInode}
 			if st := fs.Lookup(nil, header, "lookup_test.txt", &out); st == fuse.OK {
 				inodes[idx] = out.NodeId
 			}
@@ -409,7 +409,7 @@ func TestConcurrentMkdir_DifferentPaths(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			name := fmt.Sprintf("unique_dir_%d", idx)
-			input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+			input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 			var out fuse.EntryOut
 			if fs.Mkdir(nil, input, name, &out) == fuse.OK {
 				successes.Add(1)
@@ -453,7 +453,7 @@ func TestReadDirStats_ConcurrentAccess(t *testing.T) {
 			buf := make([]byte, 16*1024)
 			out := fuse.NewDirEntryList(buf, 0)
 			fs.readDirImpl(nil, &fuse.ReadIn{
-				InHeader: fuse.InHeader{NodeId: rootInode},
+				InHeader: fuse.InHeader{NodeId: RootInode},
 			}, out, true)
 		}()
 		go func() {
@@ -461,7 +461,7 @@ func TestReadDirStats_ConcurrentAccess(t *testing.T) {
 			buf := make([]byte, 16*1024)
 			out := fuse.NewDirEntryList(buf, 0)
 			fs.readDirImpl(nil, &fuse.ReadIn{
-				InHeader: fuse.InHeader{NodeId: rootInode},
+				InHeader: fuse.InHeader{NodeId: RootInode},
 			}, out, true)
 		}()
 	}
@@ -477,7 +477,7 @@ func TestCreateThenStat(t *testing.T) {
 	const iterations = 100
 	for i := range iterations {
 		name := fmt.Sprintf("stat_test_%d", i)
-		input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+		input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 		var cout fuse.CreateOut
 		if st := fs.Create(nil, input, name, &cout); st != fuse.OK {
 			t.Fatalf("Create %s failed: %v", name, st)
@@ -501,7 +501,7 @@ func TestConcurrentNestedMkdir(t *testing.T) {
 	var ok1, ok2 atomic.Bool
 
 	// Create /parent1 first (with proper mode)
-	input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: rootInode}, Mode: 0o755}
+	input := &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: RootInode}, Mode: 0o755}
 	var out fuse.EntryOut
 	if st := fs.Mkdir(nil, input, "parent1", &out); st != fuse.OK {
 		t.Fatalf("create parent1: %v", st)
@@ -550,7 +550,7 @@ func TestUnlink_CleansUpPathToIno(t *testing.T) {
 	defer cleanup()
 
 	// Create a file
-	input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}
+	input := &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}
 	var cout fuse.CreateOut
 	if st := fs.Create(nil, input, "file_to_delete.txt", &cout); st != fuse.OK {
 		t.Fatalf("Create failed: %v", st)
@@ -569,7 +569,7 @@ func TestUnlink_CleansUpPathToIno(t *testing.T) {
 	}
 
 	// Unlink it
-	header := &fuse.InHeader{NodeId: rootInode}
+	header := &fuse.InHeader{NodeId: RootInode}
 	if st := fs.Unlink(nil, header, "file_to_delete.txt"); st != fuse.OK {
 		t.Fatalf("Unlink failed: %v", st)
 	}
@@ -584,7 +584,7 @@ func TestUnlink_CleansUpPathToIno(t *testing.T) {
 
 	// Creating a new file at the same path should NOT reuse the old inode
 	var cout2 fuse.CreateOut
-	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "file_to_delete.txt", &cout2); st != fuse.OK {
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, "file_to_delete.txt", &cout2); st != fuse.OK {
 		t.Fatalf("Create after unlink failed: %v", st)
 	}
 	if cout2.NodeId == firstIno {
@@ -601,7 +601,7 @@ func TestRename_UpdatesPathMappings(t *testing.T) {
 
 	// Create a file
 	var cout fuse.CreateOut
-	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "old_name.txt", &cout); st != fuse.OK {
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, "old_name.txt", &cout); st != fuse.OK {
 		t.Fatalf("Create failed: %v", st)
 	}
 	ino := cout.NodeId
@@ -617,8 +617,8 @@ func TestRename_UpdatesPathMappings(t *testing.T) {
 
 	// Rename it
 	renameInput := &fuse.RenameIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
-		Newdir:   rootInode,
+		InHeader: fuse.InHeader{NodeId: RootInode},
+		Newdir:   RootInode,
 	}
 	if st := fs.Rename(nil, renameInput, "old_name.txt", "new_name.txt"); st != fuse.OK {
 		t.Fatalf("Rename failed: %v", st)
@@ -665,7 +665,7 @@ func TestLookup_SetsBackedForNonDir(t *testing.T) {
 
 	// Lookup the file
 	var out fuse.EntryOut
-	header := &fuse.InHeader{NodeId: rootInode}
+	header := &fuse.InHeader{NodeId: RootInode}
 	if st := fs.Lookup(nil, header, "existing_file.txt", &out); st != fuse.OK {
 		t.Fatalf("Lookup failed: %v", st)
 	}
@@ -692,7 +692,7 @@ func TestConcurrentUnlinkCreate_NoStaleInode(t *testing.T) {
 
 	// Create a file
 	var cout fuse.CreateOut
-	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "cycle.txt", &cout); st != fuse.OK {
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, "cycle.txt", &cout); st != fuse.OK {
 		t.Fatalf("initial Create failed: %v", st)
 	}
 	firstIno := cout.NodeId
@@ -700,14 +700,14 @@ func TestConcurrentUnlinkCreate_NoStaleInode(t *testing.T) {
 	const rounds = 50
 	for i := range rounds {
 		// Unlink
-		header := &fuse.InHeader{NodeId: rootInode}
+		header := &fuse.InHeader{NodeId: RootInode}
 		if st := fs.Unlink(nil, header, "cycle.txt"); st != fuse.OK {
 			t.Fatalf("Unlink round %d failed: %v", i, st)
 		}
 
 		// Recreate
 		var c2 fuse.CreateOut
-		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "cycle.txt", &c2); st != fuse.OK {
+		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, "cycle.txt", &c2); st != fuse.OK {
 			t.Fatalf("Create round %d failed: %v", i, st)
 		}
 
@@ -729,7 +729,7 @@ func TestConcurrentRenameLookup_ConsistentPaths(t *testing.T) {
 	for i := range 10 {
 		name := fmt.Sprintf("rename_src_%d.txt", i)
 		var cout fuse.CreateOut
-		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, name, &cout); st != fuse.OK {
+		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, name, &cout); st != fuse.OK {
 			t.Fatalf("Create %s failed: %v", name, st)
 		}
 	}
@@ -742,8 +742,8 @@ func TestConcurrentRenameLookup_ConsistentPaths(t *testing.T) {
 			oldName := fmt.Sprintf("rename_src_%d.txt", i)
 			newName := fmt.Sprintf("rename_dst_%d.txt", i)
 			input := &fuse.RenameIn{
-				InHeader: fuse.InHeader{NodeId: rootInode},
-				Newdir:   rootInode,
+				InHeader: fuse.InHeader{NodeId: RootInode},
+				Newdir:   RootInode,
 			}
 			fs.Rename(nil, input, oldName, newName)
 		}
@@ -754,7 +754,7 @@ func TestConcurrentRenameLookup_ConsistentPaths(t *testing.T) {
 		for i := range 10 {
 			name := fmt.Sprintf("rename_src_%d.txt", i)
 			var out fuse.EntryOut
-			fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, name, &out)
+			fs.Lookup(nil, &fuse.InHeader{NodeId: RootInode}, name, &out)
 		}
 	})
 
@@ -765,7 +765,7 @@ func TestConcurrentRenameLookup_ConsistentPaths(t *testing.T) {
 	for i := range 10 {
 		newName := fmt.Sprintf("rename_dst_%d.txt", i)
 		var out fuse.EntryOut
-		if st := fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, newName, &out); st != fuse.OK {
+		if st := fs.Lookup(nil, &fuse.InHeader{NodeId: RootInode}, newName, &out); st != fuse.OK {
 			t.Errorf("Lookup %s after rename failed: %v", newName, st)
 		}
 
@@ -799,11 +799,11 @@ func TestHotSwap_ResetsPassthroughState(t *testing.T) {
 	for i := range 5 {
 		name := fmt.Sprintf("swapfile_%d.txt", i)
 		var cout fuse.CreateOut
-		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, name, &cout); st != fuse.OK {
+		if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, name, &cout); st != fuse.OK {
 			t.Fatalf("Create %s failed: %v", name, st)
 		}
 	}
-	if st := fs.Mkdir(nil, &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: rootInode}, Mode: 0o755}, "swapdir", &(fuse.EntryOut{})); st != fuse.OK {
+	if st := fs.Mkdir(nil, &fuse.MkdirIn{InHeader: fuse.InHeader{NodeId: RootInode}, Mode: 0o755}, "swapdir", &(fuse.EntryOut{})); st != fuse.OK {
 		t.Fatalf("Mkdir swapdir failed: %v", st)
 	}
 
@@ -812,7 +812,7 @@ func TestHotSwap_ResetsPassthroughState(t *testing.T) {
 	oldNodes := fs.pxar.nodes
 	fs.pxar.nodes = make(map[uint64]node, len(oldNodes))
 	// Re-register root
-	fs.pxar.nodes[rootInode] = oldNodes[rootInode]
+	fs.pxar.nodes[RootInode] = oldNodes[RootInode]
 	fs.pxar.mu.Unlock()
 
 	// Recreate backing dir (like commit does)
@@ -822,7 +822,7 @@ func TestHotSwap_ResetsPassthroughState(t *testing.T) {
 	}
 
 	// Now call resetState (the fix we'll implement)
-	fs.resetState()
+	fs.ResetState()
 
 	// Verify all passthrough maps are clean
 	fs.mu.RLock()
@@ -847,13 +847,13 @@ func TestHotSwap_ResetsPassthroughState(t *testing.T) {
 	}
 
 	// Root should still be valid
-	if !fs.isBacked(rootInode) {
+	if !fs.isBacked(RootInode) {
 		t.Error("root should still be backed")
 	}
 
 	// New operations should work on a clean slate
 	var cout fuse.CreateOut
-	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "post_swap.txt", &cout); st != fuse.OK {
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, "post_swap.txt", &cout); st != fuse.OK {
 		t.Fatalf("Create after reset failed: %v", st)
 	}
 	if !fs.isBacked(cout.NodeId) {
@@ -892,13 +892,13 @@ func TestConcurrentHotSwapLookup_NoPanic(t *testing.T) {
 			fs.pxar.mu.Lock()
 			oldNodes := fs.pxar.nodes
 			fs.pxar.nodes = make(map[uint64]node, len(oldNodes))
-			fs.pxar.nodes[rootInode] = oldNodes[rootInode]
+			fs.pxar.nodes[RootInode] = oldNodes[RootInode]
 			fs.pxar.mu.Unlock()
 
 			_ = os.RemoveAll(backingDir)
 			_ = os.MkdirAll(backingDir, 0o755)
 
-			fs.resetState()
+			fs.ResetState()
 		}
 	})
 
@@ -910,7 +910,7 @@ func TestConcurrentHotSwapLookup_NoPanic(t *testing.T) {
 			for j := range rounds {
 				name := fmt.Sprintf("concurrent_swap_%d.txt", j%10)
 				var out fuse.EntryOut
-				fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, name, &out)
+				fs.Lookup(nil, &fuse.InHeader{NodeId: RootInode}, name, &out)
 			}
 		}(i)
 	}
@@ -920,7 +920,7 @@ func TestConcurrentHotSwapLookup_NoPanic(t *testing.T) {
 		for j := range rounds {
 			name := fmt.Sprintf("new_file_%d.txt", j)
 			var cout fuse.CreateOut
-			fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, name, &cout)
+			fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, name, &cout)
 		}
 	})
 
@@ -930,7 +930,7 @@ func TestConcurrentHotSwapLookup_NoPanic(t *testing.T) {
 			buf := make([]byte, 16*1024)
 			out := fuse.NewDirEntryList(buf, 0)
 			fs.readDirImpl(nil, &fuse.ReadIn{
-				InHeader: fuse.InHeader{NodeId: rootInode},
+				InHeader: fuse.InHeader{NodeId: RootInode},
 			}, out, true)
 		}
 	})
@@ -941,7 +941,7 @@ func TestConcurrentHotSwapLookup_NoPanic(t *testing.T) {
 
 // helpers
 
-func countPaths(fs *passthroughFS) map[string]int {
+func countPaths(fs *PassthroughFS) map[string]int {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	m := make(map[string]int)
@@ -951,7 +951,7 @@ func countPaths(fs *passthroughFS) map[string]int {
 	return m
 }
 
-func snapshotPaths(fs *passthroughFS) map[string]uint64 {
+func snapshotPaths(fs *PassthroughFS) map[string]uint64 {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 	m := make(map[string]uint64, len(fs.nodePaths))
@@ -963,8 +963,8 @@ func snapshotPaths(fs *passthroughFS) map[string]uint64 {
 	return m
 }
 
-// Compile-time check that passthroughFS implements fuse.RawFileSystem
-var _ fuse.RawFileSystem = (*passthroughFS)(nil)
+// Compile-time check that PassthroughFS implements fuse.RawFileSystem
+var _ fuse.RawFileSystem = (*PassthroughFS)(nil)
 
 func init() {
 	_ = syscall.ENOENT

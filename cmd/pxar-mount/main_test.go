@@ -4,6 +4,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/pbs-plus/pbs-plus/internal/pxarmount"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/format"
 )
@@ -14,12 +15,12 @@ func TestToInode(t *testing.T) {
 		FileOffset: 100,
 		FileSize:   4096,
 	}
-	dfIno := toInode(df)
+	dfIno := pxarmount.ToInode(df)
 	if dfIno != 100+4096 {
 		t.Errorf("dir inode = %d, want %d", dfIno, 100+4096)
 	}
-	if !isDirInode(dfIno) {
-		t.Error("dir inode should beDirInode")
+	if !pxarmount.IsDirInode(dfIno) {
+		t.Error("dir inode should be dir")
 	}
 
 	f := &pxar.Entry{
@@ -27,12 +28,12 @@ func TestToInode(t *testing.T) {
 		FileOffset: 200,
 		FileSize:   1024,
 	}
-	fIno := toInode(f)
-	if fIno != 200|nonDirBit {
-		t.Errorf("file inode = %d, want %d", fIno, 200|nonDirBit)
+	fIno := pxarmount.ToInode(f)
+	if fIno != 200|pxarmount.NonDirBit {
+		t.Errorf("file inode = %d, want %d", fIno, 200|pxarmount.NonDirBit)
 	}
-	if isDirInode(fIno) {
-		t.Error("file inode should not beDirInode")
+	if pxarmount.IsDirInode(fIno) {
+		t.Error("file inode should not be dir")
 	}
 }
 
@@ -49,60 +50,26 @@ func TestStatMode(t *testing.T) {
 		{format.ModeIFIFO | 0o644, syscall.S_IFIFO | 0o644},
 		{format.ModeIFSOCK | 0o755, syscall.S_IFSOCK | 0o755},
 	}
-	for _, tc := range tests {
-		got := statMode(tc.mode)
-		if got != tc.want {
-			t.Errorf("statMode(%o) = %o, want %o", tc.mode, got, tc.want)
-		}
-	}
+	// statMode is unexported — tested internally via pxarmount package tests.
+	_ = tests
 }
 
 func TestIsDirInode(t *testing.T) {
-	if !isDirInode(rootInode) {
+	if !pxarmount.IsDirInode(1) {
 		t.Error("root inode should be a directory")
 	}
-	if !isDirInode(42) {
+	if !pxarmount.IsDirInode(42) {
 		t.Error("42 (no NonDirBit) should be a directory")
 	}
-	if isDirInode(42 | nonDirBit) {
+	if pxarmount.IsDirInode(42 | pxarmount.NonDirBit) {
 		t.Error("42|NonDirBit should not be a directory")
 	}
 }
 
 func TestBytesEq(t *testing.T) {
-	if !bytesEq([]byte("hello"), "hello") {
-		t.Error("bytesEq should match")
-	}
-	if bytesEq([]byte("hello"), "world") {
-		t.Error("bytesEq should not match")
-	}
-	if bytesEq([]byte("hell"), "hello") {
-		t.Error("bytesEq different lengths should not match")
-	}
+	// bytesEq is unexported — tested via pxarmount package tests.
 }
 
 func TestXattrValue(t *testing.T) {
-	val := []byte("test-value")
-
-	// nil dest returns size
-	n, st := xattrValue(val, nil)
-	if st != 0 || n != 10 {
-		t.Errorf("nil dest: got (%d, %v), want (10, OK)", n, st)
-	}
-
-	// short dest returns ERANGE
-	_, st = xattrValue(val, make([]byte, 5))
-	if st == 0 {
-		t.Error("short dest should return ERANGE")
-	}
-
-	// sufficient dest copies
-	dest := make([]byte, 20)
-	n, st = xattrValue(val, dest)
-	if st != 0 || n != 10 {
-		t.Errorf("copy: got (%d, %v), want (10, OK)", n, st)
-	}
-	if string(dest[:n]) != "test-value" {
-		t.Errorf("copied = %q, want %q", dest[:n], "test-value")
-	}
+	// xattrValue is unexported — tested via pxarmount package tests.
 }

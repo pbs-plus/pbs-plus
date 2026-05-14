@@ -1,4 +1,4 @@
-package main
+package pxarmount
 
 import (
 	"bufio"
@@ -14,21 +14,21 @@ import (
 type TxnType string
 
 const (
-	TxnDelete  TxnType = "DELETE"  // file/dir removed (unlink/rmdir)
-	TxnRename  TxnType = "RENAME"  // file/dir moved (rename)
-	TxnModify  TxnType = "MODIFY"  // file content modified (copy-on-write)
-	TxnSetAttr TxnType = "SETATTR" // metadata changed (chmod/chown/utimes/xattr)
+	TxnDelete  TxnType = "DELETE"
+	TxnRename  TxnType = "RENAME"
+	TxnModify  TxnType = "MODIFY"
+	TxnSetAttr TxnType = "SETATTR"
 )
 
 // Txn represents a single filesystem mutation recorded for later replay.
 type Txn struct {
 	ID        uint64    `json:"id"`
 	Type      TxnType   `json:"type"`
-	Path      string    `json:"path"`            // original pxar path (before mutation)
-	NewPath   string    `json:"new_path"`        // only for RENAME
-	Timestamp int64     `json:"timestamp"`       // unix seconds
-	Attrs     *TxnAttrs `json:"attrs,omitempty"` // only for SETATTR
-	Backed    bool      `json:"backed"`          // true if materialized to backing dir
+	Path      string    `json:"path"`
+	NewPath   string    `json:"new_path,omitempty"`
+	Timestamp int64     `json:"timestamp"`
+	Attrs     *TxnAttrs `json:"attrs,omitempty"`
+	Backed    bool      `json:"backed"`
 }
 
 // TxnAttrs captures metadata changes from a SETATTR operation.
@@ -49,7 +49,7 @@ type TransactionLog struct {
 	path string
 }
 
-// OpenTransactionLog opens or creates the transaction log directory and file.
+// OpenTransactionLog opens or creates the transaction log.
 func OpenTransactionLog(dir string) (*TransactionLog, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create transactions dir: %w", err)
@@ -57,7 +57,6 @@ func OpenTransactionLog(dir string) (*TransactionLog, error) {
 
 	logPath := filepath.Join(dir, "transactions.jsonl")
 
-	// Count existing entries to set next ID
 	var next uint64
 	if data, err := os.ReadFile(logPath); err == nil {
 		for _, line := range splitLines(data) {
@@ -72,35 +71,15 @@ func OpenTransactionLog(dir string) (*TransactionLog, error) {
 		return nil, fmt.Errorf("open transaction log: %w", err)
 	}
 
-	tl := &TransactionLog{
+	return &TransactionLog{
 		file: f,
 		buf:  bufio.NewWriter(f),
 		path: logPath,
 		next: next,
-	}
-
-	return tl, nil
+	}, nil
 }
 
-// splitLines splits raw bytes into lines (without trailing newlines).
-func splitLines(data []byte) [][]byte {
-	var lines [][]byte
-	start := 0
-	for i, b := range data {
-		if b == '\n' {
-			if i > start {
-				lines = append(lines, data[start:i])
-			}
-			start = i + 1
-		}
-	}
-	if start < len(data) {
-		lines = append(lines, data[start:])
-	}
-	return lines
-}
-
-// Record appends a transaction to the log and returns its ID.
+// Record appends a transaction to the log.
 func (tl *TransactionLog) Record(typ TxnType, path string) (uint64, error) {
 	return tl.record(&Txn{
 		Type:      typ,
@@ -167,13 +146,11 @@ func (tl *TransactionLog) Close() error {
 	return nil
 }
 
-// ReadAll reads all transactions from the log. Used during commit to
-// apply mutations to the new snapshot.
+// ReadAll reads all transactions from the log.
 func (tl *TransactionLog) ReadAll() ([]Txn, error) {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
 
-	// Flush any buffered writes first
 	if tl.buf != nil {
 		_ = tl.buf.Flush()
 	}
@@ -196,7 +173,7 @@ func (tl *TransactionLog) ReadAll() ([]Txn, error) {
 		}
 		var txn Txn
 		if err := json.Unmarshal(line, &txn); err != nil {
-			continue // skip malformed lines
+			continue
 		}
 		txns = append(txns, txn)
 	}
@@ -212,8 +189,6 @@ func (tl *TransactionLog) Clear() error {
 		_ = tl.buf.Flush()
 	}
 
-	// Truncate the file. Open the new file BEFORE closing the old one
-	// so we never leave tl.file/tl.buf in a nil state on error.
 	f, err := os.Create(tl.path)
 	if err != nil {
 		return err
@@ -227,4 +202,22 @@ func (tl *TransactionLog) Clear() error {
 	tl.buf = bufio.NewWriter(f)
 	tl.next = 0
 	return nil
+}
+
+// splitLines splits raw bytes into lines without trailing newlines.
+func splitLines(data []byte) [][]byte {
+	var lines [][]byte
+	start := 0
+	for i, b := range data {
+		if b == '\n' {
+			if i > start {
+				lines = append(lines, data[start:i])
+			}
+			start = i + 1
+		}
+	}
+	if start < len(data) {
+		lines = append(lines, data[start:])
+	}
+	return lines
 }

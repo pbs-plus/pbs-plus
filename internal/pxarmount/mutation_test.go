@@ -1,4 +1,4 @@
-package main
+package pxarmount
 
 import (
 	"bufio"
@@ -21,7 +21,7 @@ func TestMaterializePxarFile_ConcurrentDedup(t *testing.T) {
 	defer cleanup()
 
 	// Set up a pxar file node with content.
-	const ino uint64 = 100 | nonDirBit
+	const ino uint64 = 100 | NonDirBit
 	relPath := "testdir/file.txt"
 
 	// Register the pxar node.
@@ -270,8 +270,8 @@ func TestRenamePaths_DestOverwrite(t *testing.T) {
 	defer cleanup()
 
 	// Set up two inodes
-	const srcIno uint64 = 100 | nonDirBit
-	const dstIno uint64 = 200 | nonDirBit
+	const srcIno uint64 = 100 | NonDirBit
+	const dstIno uint64 = 200 | NonDirBit
 
 	fs.setNode(srcIno, "src.txt", true)
 	fs.setNode(dstIno, "dst.txt", true)
@@ -368,7 +368,7 @@ func TestMaterializePxarFile_DoesNotRecordModifyIfAlreadyBacked(t *testing.T) {
 	fs.mutationMode = true
 	fs.txnLog = tl
 
-	const ino uint64 = 100 | nonDirBit
+	const ino uint64 = 100 | NonDirBit
 	relPath := "already-backed.txt"
 
 	// Register the pxar node.
@@ -419,8 +419,8 @@ func TestRename_ExchangeSwapsBothDirections(t *testing.T) {
 	fs.mutationMode = true
 
 	// Set up two backed files with different inodes
-	const srcIno uint64 = 100 | nonDirBit
-	const dstIno uint64 = 200 | nonDirBit
+	const srcIno uint64 = 100 | NonDirBit
+	const dstIno uint64 = 200 | NonDirBit
 
 	srcPath := "/exchange-src.txt"
 	dstPath := "/exchange-dst.txt"
@@ -439,16 +439,16 @@ func TestRename_ExchangeSwapsBothDirections(t *testing.T) {
 	fs.setNode(dstIno, dstPath, true)
 
 	// Now do RENAME_EXCHANGE via the Rename handler.
-	// We need a parent inode for the rename. Use rootInode.
+	// We need a parent inode for the rename. Use RootInode.
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Perform the exchange
 	st := fs.Rename(nil, &fuse.RenameIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
-		Newdir:   rootInode,
+		InHeader: fuse.InHeader{NodeId: RootInode},
+		Newdir:   RootInode,
 		Flags:    renameExchange,
 	}, "exchange-src.txt", "exchange-dst.txt")
 
@@ -510,7 +510,7 @@ func TestResetState_ClearsDeletedPathsAndTxnLog(t *testing.T) {
 	fs.mu.Unlock()
 
 	// Reset state (simulates hot swap)
-	fs.resetState()
+	fs.ResetState()
 
 	// deletedPaths should be empty
 	fs.mu.RLock()
@@ -538,8 +538,8 @@ func TestSetNode_CleansUpPxarDirForOldInode(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
 
-	const oldIno uint64 = 100 | nonDirBit
-	const newIno uint64 = 200 | nonDirBit
+	const oldIno uint64 = 100 | NonDirBit
+	const newIno uint64 = 200 | NonDirBit
 	path := "/test.txt"
 
 	// Set up old inode as pxar-backed
@@ -570,7 +570,7 @@ func TestForget_CleansUpPxarDir(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
 
-	const ino uint64 = 100 | nonDirBit
+	const ino uint64 = 100 | NonDirBit
 	path := "/forget-test.txt"
 
 	fs.setNode(ino, path, true)
@@ -603,8 +603,8 @@ func TestRename_DestinationStaysDeletedOnFailure(t *testing.T) {
 
 	// Set up root inode
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Mark a destination path as deleted (simulates a previously-deleted pxar entry)
@@ -618,8 +618,8 @@ func TestRename_DestinationStaysDeletedOnFailure(t *testing.T) {
 	// Attempt to rename a non-existent source to the deleted destination.
 	// Source "nonexistent-src.txt" doesn't exist in backing dir.
 	st := fs.Rename(nil, &fuse.RenameIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
-		Newdir:   rootInode,
+		InHeader: fuse.InHeader{NodeId: RootInode},
+		Newdir:   RootInode,
 	}, "nonexistent-src.txt", "deleted-dest.txt")
 
 	// Rename should fail
@@ -646,8 +646,8 @@ func TestRename_ExchangeWithMissingDestInode(t *testing.T) {
 
 	// Set up root inode
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Create a source file via passthrough so it has an inode mapping
@@ -656,7 +656,7 @@ func TestRename_ExchangeWithMissingDestInode(t *testing.T) {
 		t.Fatal(err)
 	}
 	var srcOut fuse.EntryOut
-	if st := fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, "exchange-src.txt", &srcOut); st != fuse.OK {
+	if st := fs.Lookup(nil, &fuse.InHeader{NodeId: RootInode}, "exchange-src.txt", &srcOut); st != fuse.OK {
 		t.Fatalf("Lookup source: %v", st)
 	}
 	srcIno := srcOut.NodeId
@@ -679,8 +679,8 @@ func TestRename_ExchangeWithMissingDestInode(t *testing.T) {
 
 	// Perform RENAME_EXCHANGE
 	st := fs.Rename(nil, &fuse.RenameIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
-		Newdir:   rootInode,
+		InHeader: fuse.InHeader{NodeId: RootInode},
+		Newdir:   RootInode,
 		Flags:    renameExchange,
 	}, "exchange-src.txt", "exchange-dst.txt")
 
@@ -720,13 +720,13 @@ func TestRename_DestinationStaysDeletedOnRenameFailure(t *testing.T) {
 
 	// Set up root inode
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Create a source file via Create so it's fully registered
 	var cout fuse.CreateOut
-	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: rootInode}}, "src.txt", &cout); st != fuse.OK {
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, "src.txt", &cout); st != fuse.OK {
 		t.Fatalf("Create src: %v", st)
 	}
 
@@ -755,8 +755,8 @@ func TestRename_DestinationStaysDeletedOnRenameFailure(t *testing.T) {
 	os.Remove(filepath.Join(backingDir, "src.txt"))
 
 	st := fs.Rename(nil, &fuse.RenameIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
-		Newdir:   rootInode,
+		InHeader: fuse.InHeader{NodeId: RootInode},
+		Newdir:   RootInode,
 	}, "src.txt", "deleted-dest.txt")
 
 	if st == fuse.OK {
@@ -781,8 +781,8 @@ func TestRename_DestinationStaysDeletedOnBackingParentFailure(t *testing.T) {
 
 	// Set up root inode
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Create a source file
@@ -791,7 +791,7 @@ func TestRename_DestinationStaysDeletedOnBackingParentFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	var srcOut fuse.EntryOut
-	if st := fs.Lookup(nil, &fuse.InHeader{NodeId: rootInode}, "src.txt", &srcOut); st != fuse.OK {
+	if st := fs.Lookup(nil, &fuse.InHeader{NodeId: RootInode}, "src.txt", &srcOut); st != fuse.OK {
 		t.Fatalf("Lookup src: %v", st)
 	}
 
@@ -812,8 +812,8 @@ func TestRename_DestinationStaysDeletedOnBackingParentFailure(t *testing.T) {
 
 	// Attempt rename to a path whose parent can't be created
 	st := fs.Rename(nil, &fuse.RenameIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
-		Newdir:   rootInode,
+		InHeader: fuse.InHeader{NodeId: RootInode},
+		Newdir:   RootInode,
 	}, "src.txt", "subdir/deleted-dest.txt")
 
 	if st == fuse.OK {
@@ -839,8 +839,8 @@ func TestRemoveEntry_NonExistentBackedFileReturnsENOENT(t *testing.T) {
 
 	// Set up root inode
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Register a path that has NO file on disk (orphaned inode mapping)
@@ -853,7 +853,7 @@ func TestRemoveEntry_NonExistentBackedFileReturnsENOENT(t *testing.T) {
 	fs.mu.Unlock()
 
 	// Attempt to unlink the ghost file
-	st := fs.Unlink(nil, &fuse.InHeader{NodeId: rootInode}, "ghost.txt")
+	st := fs.Unlink(nil, &fuse.InHeader{NodeId: RootInode}, "ghost.txt")
 
 	// Should return ENOENT (file not found), not EROFS
 	if st == fuse.EROFS {
@@ -874,8 +874,8 @@ func TestCreate_DeletedPathStaysDeletedOnBackingParentFailure(t *testing.T) {
 
 	// Set up root inode
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Mark a path as deleted (simulates a previously-deleted pxar entry)
@@ -895,7 +895,7 @@ func TestCreate_DeletedPathStaysDeletedOnBackingParentFailure(t *testing.T) {
 	// Attempt Create — ensureBackingParent should fail
 	var cout fuse.CreateOut
 	st := fs.Create(nil, &fuse.CreateIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
+		InHeader: fuse.InHeader{NodeId: RootInode},
 	}, "subdir/deleted-file.txt", &cout)
 
 	if st == fuse.OK {
@@ -921,8 +921,8 @@ func TestCreate_DeletedPathStaysDeletedOnFallbackOpenFailure(t *testing.T) {
 
 	// Set up root inode
 	fs.mu.Lock()
-	fs.nodePaths[rootInode] = "/"
-	fs.pathToIno["/"] = rootInode
+	fs.nodePaths[RootInode] = "/"
+	fs.pathToIno["/"] = RootInode
 	fs.mu.Unlock()
 
 	// Mark a path as deleted
@@ -942,7 +942,7 @@ func TestCreate_DeletedPathStaysDeletedOnFallbackOpenFailure(t *testing.T) {
 	// Attempt Create
 	var cout fuse.CreateOut
 	st := fs.Create(nil, &fuse.CreateIn{
-		InHeader: fuse.InHeader{NodeId: rootInode},
+		InHeader: fuse.InHeader{NodeId: RootInode},
 	}, "foo", &cout)
 
 	if st == fuse.OK {
