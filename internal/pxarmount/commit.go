@@ -452,7 +452,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 
 		// If node wraps pxar content, resolve its payload offset for sorting.
 		if node.RedirectTo != "" && !node.HasData {
-			if pe := resolvePxarOffset(ow, node.RedirectTo); pe != 0 {
+			if pe := resolvePxarPayloadOffset(ow, node.RedirectTo); pe != 0 {
 				pxarOffset = pe
 			}
 		}
@@ -476,10 +476,14 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		if edgeNames[pe.name] || whiteoutSet[pe.name] {
 			continue
 		}
+		offset := pe.contentOffset
+		if pe.isDir {
+			offset = minDescendantOffset(ow, pe.inode)
+		}
 		entries = append(entries, commitEntry{
 			name:       pe.name,
 			pxarSlim:   pe,
-			pxarOffset: pe.entryStart,
+			pxarOffset: offset,
 		})
 	}
 
@@ -764,11 +768,14 @@ func resolvePxarEntry(mfs *MutableFS, relPath string) (*pxar.Entry, error) {
 	return nil, fmt.Errorf("path %q not found", relPath)
 }
 
-// resolvePxarOffset resolves the entry start offset for a pxar path.
+// resolvePxarPayloadOffset resolves the payload offset for a pxar path.
 // Returns 0 if not found.
-func resolvePxarOffset(ow *commitWalkState, relPath string) uint64 {
+func resolvePxarPayloadOffset(ow *commitWalkState, relPath string) uint64 {
 	parts := splitPath(relPath)
 	curIno := RootInode
+
+	var target dirEntrySlim
+	found := false
 
 	for i, comp := range parts {
 		entries, ok := ow.pxarDirCache[curIno]
@@ -783,14 +790,47 @@ func resolvePxarOffset(ow *commitWalkState, relPath string) uint64 {
 		for _, e := range entries {
 			if e.name == comp {
 				if i == len(parts)-1 {
-					return e.entryStart
+					target = e
+					found = true
+				} else {
+					curIno = e.inode
 				}
-				curIno = e.inode
 				break
 			}
 		}
 	}
-	return 0
+
+	if !found {
+		return 0
+	}
+
+	if !target.isDir {
+		return target.contentOffset
+	}
+	return minDescendantOffset(ow, target.inode)
+}
+
+// minDescendantOffset returns the minimum content offset among all regular
+// file descendants of the pxar directory identified by inode.
+func minDescendantOffset(ow *commitWalkState, pxarInode uint64) uint64 {
+	entries, ok := ow.pxarDirCache[pxarInode]
+	if !ok {
+		entries, _ = ow.mfs.pxar.ReadDirRaw(pxarInode)
+		ow.pxarDirCache[pxarInode] = entries
+	}
+	min := ^uint64(0)
+	for i := range entries {
+		e := &entries[i]
+		if e.isDir {
+			child := minDescendantOffset(ow, e.inode)
+			if child < min {
+				min = child
+			}
+		} else if e.isReg && e.contentOffset < min {
+			min = e.contentOffset
+		}
+	}
+	return min
 }
 
 // verifyBackedFileHashes checks that backed files haven't changed since upload.
