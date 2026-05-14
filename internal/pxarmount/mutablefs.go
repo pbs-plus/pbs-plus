@@ -181,16 +181,12 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	isOpaque, _ := fs.journal.IsOpaque(parentPath)
 
 	// Get pxar entries (immutable layer).
+	// Resolve the mutable inode to the pxar inode for this path.
 	var pxarEntries []dirEntrySlim
 	if !isOpaque {
-		pxarNode := fs.pxar.GetNode(input.NodeId)
+		pxarNode := fs.findPxarNode(parentPath)
 		if pxarNode != nil && pxarNode.isDir {
-			var err error
-			pxarEntries, err = fs.pxar.ReadDirRaw(input.NodeId)
-			if err != nil {
-				// pxar node doesn't exist or isn't a dir — that's OK,
-				// we still emit journal entries.
-			}
+			pxarEntries, _ = fs.pxar.ReadDirRaw(pxarNode.inode)
 		}
 	}
 
@@ -219,6 +215,13 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	}
 	var merged []mergedEntry
 
+	// Determine the pxar parent inode for RegisterSlimNode.
+	pxarParent := fs.findPxarNode(parentPath)
+	pxarParentIno := uint64(0)
+	if pxarParent != nil {
+		pxarParentIno = pxarParent.inode
+	}
+
 	for _, pe := range pxarEntries {
 		if whiteouts[pe.name] {
 			continue
@@ -226,7 +229,9 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		if _, overridden := journalNames[pe.name]; overridden {
 			continue
 		}
-		fs.pxar.RegisterSlimNode(&pe, input.NodeId)
+		if pxarParentIno != 0 {
+			fs.pxar.RegisterSlimNode(&pe, pxarParentIno)
+		}
 		merged = append(merged, mergedEntry{
 			name:  pe.name,
 			ino:   pe.inode,
@@ -373,7 +378,10 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 		return fuse.ReadResultData(buf[:n]), fuse.OK
 	}
 
-	return fs.pxar.Read(cancel, input, buf)
+	// Delegate to pxar using its native inode.
+	pxarInput := *input
+	pxarInput.NodeId = re.PxarNode.inode
+	return fs.pxar.Read(cancel, &pxarInput, buf)
 }
 
 // Write writes data. Triggers copy-up if needed.
@@ -815,7 +823,9 @@ func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]
 		return []byte(re.SymlinkTgt), fuse.OK
 	}
 	if re.PxarNode != nil && re.PxarNode.isSymlink {
-		return fs.pxar.Readlink(cancel, header)
+		pxarHeader := *header
+		pxarHeader.NodeId = re.PxarNode.inode
+		return fs.pxar.Readlink(cancel, &pxarHeader)
 	}
 	return nil, fuse.EINVAL
 }
@@ -845,14 +855,13 @@ func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, att
 		if xerr == nil {
 			return uint32(sz), fuse.OK
 		}
-		if xerr != syscall.ENODATA {
-			// Fall through to pxar.
-		}
 	}
 
-	// Fall back to pxar.
+	// Fall back to pxar using its native inode.
 	if re != nil && re.PxarNode != nil {
-		return fs.pxar.GetXAttr(cancel, header, attr, dest)
+		pxarHeader := *header
+		pxarHeader.NodeId = re.PxarNode.inode
+		return fs.pxar.GetXAttr(cancel, &pxarHeader, attr, dest)
 	}
 
 	return 0, fuse.Status(syscall.ENODATA)
@@ -875,7 +884,9 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 	// Pxar xattrs (merged, journal wins).
 	re, _ := fs.resolve(path)
 	if re != nil && re.PxarNode != nil {
-		_, _ = fs.pxar.ListXAttr(cancel, header, nil)
+		pxarHeader := *header
+		pxarHeader.NodeId = re.PxarNode.inode
+		_, _ = fs.pxar.ListXAttr(cancel, &pxarHeader, nil)
 	}
 
 	// Build output.
