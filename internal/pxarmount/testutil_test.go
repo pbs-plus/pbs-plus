@@ -33,6 +33,7 @@ func newTestPassthroughFS(t *testing.T) (*PassthroughFS, string, func()) {
 		deletedPaths: make(map[string]bool),
 		handles:      make(map[uint64]*passFh),
 		metaOverlay:  make(map[string]*metaOverride),
+		nextFh:       1, // 0 is reserved sentinel for lazy-open
 	}
 
 	fs.setNode(RootInode, "/", true)

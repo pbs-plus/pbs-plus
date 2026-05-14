@@ -57,7 +57,7 @@ type PassthroughFS struct {
 	origPpxarDidx string
 	backingDir    string
 	nextBackIno   uint64
-	nextFh        uint64
+	nextFh        uint64 // starts at 1; fh=0 is sentinel for lazy-open
 	mu            sync.RWMutex
 	fhmu          sync.Mutex
 	matMu         sync.Mutex
@@ -85,6 +85,7 @@ func NewPassthroughFS(pxar *PxarFS, backingDir, pbsStore, ppxarDidx string, muta
 		deletedPaths:  make(map[string]bool),
 		handles:       make(map[uint64]*passFh),
 		metaOverlay:   make(map[string]*metaOverride),
+		nextFh:        1, // 0 is reserved as sentinel for lazy-open
 	}
 }
 
@@ -755,7 +756,9 @@ func (fs *PassthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, 
 
 	// Overlay pending metadata changes on top of pxar attributes.
 	rel := fs.nodePath(input.NodeId)
-	if mo := fs.getOverlay(rel); mo != nil {
+	fs.mu.RLock()
+	mo := fs.metaOverlay[rel]
+	if mo != nil {
 		if mo.mode != nil {
 			out.Attr.Mode = *mo.mode
 		}
@@ -781,6 +784,7 @@ func (fs *PassthroughFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, 
 			out.Attr.Atimensec = uint32(nsec)
 		}
 	}
+	fs.mu.RUnlock()
 
 	return fuse.OK
 }
@@ -846,7 +850,15 @@ func (fs *PassthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, 
 
 		// Update in-memory overlay for non-backed entries.
 		if !isBacked {
-			mo := fs.getOrCreateOverlay(rel)
+			fs.mu.Lock()
+			mo := fs.metaOverlay[rel]
+			if mo == nil {
+				mo = &metaOverride{
+					xadd: make(map[string][]byte),
+					xdel: make(map[string]bool),
+				}
+				fs.metaOverlay[rel] = mo
+			}
 			if attrs.Mode != nil {
 				mo.mode = attrs.Mode
 			}
@@ -865,6 +877,7 @@ func (fs *PassthroughFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, 
 			if attrs.Mtime != nil {
 				mo.mtime = attrs.Mtime
 			}
+			fs.mu.Unlock()
 		}
 	}
 
@@ -2331,7 +2344,7 @@ func (fs *PassthroughFS) ResetState() {
 		_ = syscall.Close(fh.fd)
 	}
 	fs.handles = make(map[uint64]*passFh)
-	fs.nextFh = 0
+	fs.nextFh = 1 // 0 is reserved sentinel for lazy-open
 	fs.fhmu.Unlock()
 
 	fs.mu.Lock()
