@@ -627,7 +627,7 @@ func (ow *commitWalkState) emitJournalEntry(ce *commitEntry, parentRelPath strin
 	node := ce.node
 	childPath := joinPath(parentRelPath, ce.name)
 
-	ow.mfs.debugf("emit journal %q kind=%d redirect=%q hasData=%v", childPath, node.Kind, node.RedirectTo, node.HasData)
+	ow.mfs.debugf("emit journal %q kind=%d", childPath, node.Kind)
 
 	// Resolve xattrs.
 	xattrs := ow.xattrCache[node.ID]
