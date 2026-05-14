@@ -56,10 +56,15 @@ type MutableFS struct {
 
 	acl     ACLConfig
 	verbose bool
+
+	// Freeze mechanism: blocks FUSE mutations during commit.
+	freezeMu   sync.Mutex
+	freezeCond *sync.Cond
+	frozen     bool
 }
 
 func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS {
-	return &MutableFS{
+	fs := &MutableFS{
 		pxar:       pxar,
 		journal:    journal,
 		mutableDir: mutableDir,
@@ -68,6 +73,8 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		nextFh:     1,
 		nextIno:    2, // 1 is RootInode
 	}
+	fs.freezeCond = sync.NewCond(&fs.freezeMu)
+	return fs
 }
 
 func (fs *MutableFS) SetSnapshotRef(ref snapshotRef) { fs.origSnapshot = ref }
@@ -108,6 +115,16 @@ func (fs *MutableFS) Init(server *fuse.Server) {
 
 func (fs *MutableFS) String() string    { return "pxar-mutable" }
 func (fs *MutableFS) SetDebug(dbg bool) {}
+
+// waitIfFrozen blocks until the filesystem is no longer frozen for commit.
+// All mutation FUSE ops must call this first to ensure consistency.
+func (fs *MutableFS) waitIfFrozen() {
+	fs.freezeMu.Lock()
+	for fs.frozen {
+		fs.freezeCond.Wait()
+	}
+	fs.freezeMu.Unlock()
+}
 
 // Lookup resolves a name in a directory.
 func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
@@ -415,6 +432,7 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 
 // Write writes data. Triggers copy-up if needed.
 func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []byte) (uint32, fuse.Status) {
+	fs.waitIfFrozen()
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
 		return 0, fuse.ENOENT
@@ -468,6 +486,7 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 
 // SetAttr applies metadata changes.
 func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) fuse.Status {
+	fs.waitIfFrozen()
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
 		return fuse.ENOENT
@@ -547,6 +566,7 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 
 // Create creates a new file.
 func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name string, out *fuse.CreateOut) fuse.Status {
+	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -619,6 +639,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 
 // Mkdir creates a directory.
 func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name string, out *fuse.EntryOut) fuse.Status {
+	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -679,6 +700,7 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 
 // Mknod creates a device/special node.
 func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name string, out *fuse.EntryOut) fuse.Status {
+	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -737,6 +759,7 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 
 // Symlink creates a symlink.
 func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, linkName string, out *fuse.EntryOut) fuse.Status {
+	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
 	childPath := joinPath(parentPath, linkName)
 
@@ -796,6 +819,7 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 
 // Unlink removes a file.
 func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
+	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -837,6 +861,7 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 
 // Rmdir removes a directory. Checks emptiness first.
 func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
+	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -877,6 +902,7 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 
 // Rename moves/renames a file or directory. O(1) — updates one edge row.
 func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldName string, newName string) fuse.Status {
+	fs.waitIfFrozen()
 	oldParentPath := fs.inodeToPath(input.NodeId)
 	newParentPath := fs.inodeToPath(input.Newdir)
 	oldPath := joinPath(oldParentPath, oldName)
@@ -1120,6 +1146,7 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 }
 
 func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
+	fs.waitIfFrozen()
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
 		return fuse.ENOENT
@@ -1155,6 +1182,7 @@ func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, at
 }
 
 func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
+	fs.waitIfFrozen()
 	path := fs.inodeToPath(header.NodeId)
 	if path == "" {
 		return fuse.ENOENT
@@ -1218,6 +1246,7 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 // --- unsupported ops ---
 
 func (fs *MutableFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name string, out *fuse.EntryOut) fuse.Status {
+	fs.waitIfFrozen()
 	return fuse.ENOSYS
 }
 func (fs *MutableFS) CopyFileRange(cancel <-chan struct{}, input *fuse.CopyFileRangeIn) (uint32, fuse.Status) {
