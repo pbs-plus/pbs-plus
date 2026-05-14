@@ -2,6 +2,7 @@ package pxarmount
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -677,8 +678,18 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		if rerr != nil {
 			return fmt.Errorf("write pxar ref %s failed (%v), then read content failed: %w", ce.name, err, rerr)
 		}
-		defer rc.Close()
-		if werr := ow.writer.WriteEntryReader(clone, rc, uint64(pxarEntry.FileSize)); werr != nil {
+
+		// Read all content into a buffer to avoid size mismatches from
+		// the payload reader (ref entries may have offset inconsistencies
+		// between original and committed archives).
+		content, rerr2 := io.ReadAll(rc)
+		rc.Close()
+		if rerr2 != nil {
+			return fmt.Errorf("read pxar content %s: %w", ce.name, rerr2)
+		}
+
+		clone.FileSize = uint64(len(content))
+		if werr := ow.writer.WriteEntryReader(clone, bytes.NewReader(content), clone.FileSize); werr != nil {
 			return fmt.Errorf("write pxar restream %s: %w", ce.name, werr)
 		}
 		return nil
