@@ -4,7 +4,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	pxar "github.com/pbs-plus/pxar"
@@ -115,9 +114,8 @@ var dirEntryPool = sync.Pool{
 
 // passFh is an open file handle.
 type passFh struct {
-	fd    int
-	inode uint64
-	path  string
+	fd   int
+	path string
 }
 
 // snapshotRef identifies a PBS snapshot for commit dedup.
@@ -171,20 +169,6 @@ func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 		isDir:         e.IsDir(),
 		isSymlink:     e.IsSymlink(),
 		isReg:         e.IsRegularFile(),
-	}
-}
-
-func nodeFromStat(st *syscall.Stat_t) *node {
-	return &node{
-		fileSize:   uint64(st.Size),
-		mode:       uint64(st.Mode),
-		mtimeSecs:  int64(st.Mtim.Sec),
-		uid:        st.Uid,
-		mtimeNanos: uint32(st.Mtim.Nsec),
-		gid:        st.Gid,
-		isDir:      st.Mode&syscall.S_IFDIR != 0,
-		isSymlink:  st.Mode&syscall.S_IFLNK != 0,
-		isReg:      st.Mode&syscall.S_IFREG != 0,
 	}
 }
 
@@ -264,8 +248,4 @@ func ensureModeType(mode uint32, kind uint8) uint32 {
 		ft = syscall.S_IFREG
 	}
 	return ft | perm
-}
-
-func unsafeStringBytes(s string) []byte {
-	return unsafe.Slice(unsafe.StringData(s), len(s))
 }

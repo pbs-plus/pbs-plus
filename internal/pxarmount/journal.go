@@ -150,14 +150,6 @@ func (j *Journal) GetNode(id int64) (*GraphNode, error) {
 	return scanNode(row, id)
 }
 
-func getNodeTx(tx *sql.Tx, id int64) (*GraphNode, error) {
-	row := tx.QueryRow(`
-		SELECT kind, mode, uid, gid, size, mtime_ns, ctime_ns, has_data,
-		       symlink_tgt, redirect_to, opaque
-		FROM nodes WHERE id = ?`, id)
-	return scanNode(row, id)
-}
-
 func scanNode(row interface{ Scan(...any) error }, id int64) (*GraphNode, error) {
 	n := &GraphNode{ID: id}
 	var kind, mode, uid, gid, hasData, opaque sql.NullInt64
