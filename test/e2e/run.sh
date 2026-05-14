@@ -128,7 +128,7 @@ ok "chmod files and directories"
 ls "$INIT_MOUNT/" > /dev/null && ok "list root directory" || fail "list root directory"
 
 # 1h. First commit (init mode)
-RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
+sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "init mode commit #1"
 else
@@ -148,7 +148,7 @@ rm "$INIT_MOUNT/file2.txt"
 ok "post-commit delete file2.txt"
 
 # 1l. Second commit (re-commit from committed snapshot)
-RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
+sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "init mode commit #2 (re-commit)"
 else
@@ -161,7 +161,7 @@ fi
 [ ! -f "$INIT_MOUNT/file2.txt" ] && ok "post-2nd file2.txt is gone" || fail "post-2nd file2.txt should not exist"
 
 # 1n. Third commit (no changes)
-RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
+sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "init mode commit #3 (no-op)"
 else
@@ -212,7 +212,7 @@ if [ -n "$FIRST_DIR" ]; then
 fi
 
 # 2h. Commit mounted archive
-RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "mount mode commit #1"
 else
@@ -238,7 +238,7 @@ echo "dir content" > "$MOUNT/post-commit-dir/file.txt"
 ok "post-commit create dir and file"
 
 # 2m. Second commit (re-commit against committed snapshot)
-RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "mount mode commit #2 (re-commit)"
 else
@@ -322,7 +322,7 @@ rmdir "$MOUNT/nonempty-dir" 2>/dev/null && fail "rmdir non-empty dir should fail
 rm "$MOUNT/nonempty-dir/x.txt"
 
 # 4f. Commit with all these edge cases
-RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "edge cases commit"
 else
@@ -345,7 +345,7 @@ for i in $(seq 1 5); do
 	echo "rapid-$i" > "$MOUNT/rapid-$i.txt"
 	mkdir -p "$MOUNT/rapid-dir-$i"
 	echo "rapid-dir-content-$i" > "$MOUNT/rapid-dir-$i/file.txt"
-	RESULT=$(do_commit "$SOCKET" "AKA")
+	sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
 	if echo "$RESULT" | grep -q "✓"; then
 		ok "rapid commit #$i"
 	else
@@ -380,7 +380,7 @@ mkdir "$MOUNT/acl-dir"
 setfacl -m u:34:rwx "$MOUNT/acl-dir" 2>/dev/null && ok "setfacl on directory" || skip "setfacl on directory (not supported)"
 
 # 6d. Commit with ACLs
-RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "ACL commit"
 else
@@ -406,7 +406,7 @@ SIZE=$(stat -c%s "$MOUNT/large-1m.bin" 2>/dev/null || stat -f%z "$MOUNT/large-1m
 
 # 7b. Compute checksum, commit, verify
 CS_BEFORE=$(sha256sum "$MOUNT/large-1m.bin" | awk '{print $1}')
-RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "large file commit"
 else
