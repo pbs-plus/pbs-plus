@@ -324,8 +324,13 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest, prog *ProgressReporte
 }
 
 func (fs *PassthroughFS) postCommit(backupID, backupType, namespace, archiveName string, backupTime int64) error {
-	origDir := filepath.Dir(fs.origPpxarDidx)
-	groupDir := filepath.Dir(origDir)
+	var groupDir string
+	if fs.origPpxarDidx != "" {
+		origDir := filepath.Dir(fs.origPpxarDidx)
+		groupDir = filepath.Dir(origDir)
+	} else {
+		groupDir = fs.snapshotGroupDir(backupType, backupID, namespace)
+	}
 
 	newTimeISO := time.Unix(backupTime, 0).UTC().Format("2006-01-02T15:04:05Z")
 	snapDir := filepath.Join(groupDir, newTimeISO)

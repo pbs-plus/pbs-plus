@@ -1,6 +1,7 @@
 package pxarmount
 
 import (
+	"fmt"
 	"io"
 	"sync"
 	"syscall"
@@ -25,17 +26,28 @@ type PxarFS struct {
 
 // NewPxarFS creates a pxar-backed FUSE filesystem.
 func NewPxarFS(reader *transfer.SplitArchiveReader) (*PxarFS, error) {
-	root, err := reader.ReadRoot()
-	if err != nil {
-		return nil, err
-	}
 	fs := &PxarFS{
-		reader:   reader,
-		readerAt: reader.PayloadReaderAt(),
-		nodes:    make(map[uint64]node),
-		size:     int64(root.FileOffset + root.FileSize),
+		reader: reader,
+		nodes:  make(map[uint64]node),
 	}
-	fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
+	if reader != nil {
+		root, err := reader.ReadRoot()
+		if err != nil {
+			return nil, err
+		}
+		fs.readerAt = reader.PayloadReaderAt()
+		fs.size = int64(root.FileOffset + root.FileSize)
+		fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
+	} else {
+		// Empty filesystem — synthetic root directory only.
+		fs.nodes[RootInode] = node{
+			inode:  RootInode,
+			parent: RootInode,
+			mode:   uint64(syscall.S_IFDIR | 0o755),
+			isDir:  true,
+			refs:   1,
+		}
+	}
 	return fs, nil
 }
 
@@ -412,6 +424,9 @@ func (fs *PxarFS) ReadDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	if !n.isDir {
 		return nil, syscall.ENOTDIR
 	}
+	if fs.reader == nil {
+		return nil, nil
+	}
 
 	entriesPtr := dirEntryPool.Get().(*[]dirEntrySlim)
 	entries := (*entriesPtr)[:0]
@@ -522,17 +537,29 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 }
 
 func (fs *PxarFS) ReadRoot() (*pxar.Entry, error) {
+	if fs.reader == nil {
+		return &pxar.Entry{Path: "/", Kind: pxar.KindDirectory}, nil
+	}
 	return fs.reader.ReadRoot()
 }
 
 func (fs *PxarFS) ReadEntryAt(offset int64) (*pxar.Entry, error) {
+	if fs.reader == nil {
+		return nil, fmt.Errorf("no archive reader")
+	}
 	return fs.reader.ReadEntryAt(offset)
 }
 
 func (fs *PxarFS) ReadFileContentReader(entry *pxar.Entry) (io.ReadCloser, error) {
+	if fs.reader == nil {
+		return nil, fmt.Errorf("no archive reader")
+	}
 	return fs.reader.ReadFileContentReader(entry)
 }
 
 func (fs *PxarFS) Close() error {
+	if fs.reader == nil {
+		return nil
+	}
 	return fs.reader.Close()
 }

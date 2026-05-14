@@ -1592,6 +1592,22 @@ func (fs *PassthroughFS) SetSnapshotRef(ref snapshotRef) {
 	fs.mu.Unlock()
 }
 
+// snapshotGroupDir returns the local filesystem path for a backup group:
+//
+//	<pbsStore>/[ns/.../]<backup-type>/<backup-id>
+func (fs *PassthroughFS) snapshotGroupDir(backupType, backupID, namespace string) string {
+	parts := []string{fs.pbsStore}
+	if namespace != "" {
+		for comp := range strings.SplitSeq(namespace, "/") {
+			if comp != "" {
+				parts = append(parts, "ns", comp)
+			}
+		}
+	}
+	parts = append(parts, backupType, backupID)
+	return filepath.Join(parts...)
+}
+
 // Close releases resources held by the filesystem.
 func (fs *PassthroughFS) Close() {
 	for _, d := range fs.mmapData {

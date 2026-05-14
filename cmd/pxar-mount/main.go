@@ -17,11 +17,21 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "commit" {
-		pxarmount.RunCommitSubcommand()
-		return
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "commit":
+			pxarmount.RunCommitSubcommand()
+			return
+		case "init":
+			pxarmount.RunInitSubcommand()
+			return
+		}
 	}
+	runMountSubcommand()
+}
 
+// runMountSubcommand is the default mount mode — mounts an existing pxar snapshot.
+func runMountSubcommand() {
 	pbsStore := flag.String("pbs-store", "", "PBS datastore root path")
 	mpxarDidx := flag.String("mpxar-didx", "", "Path to metadata dynamic index (.mpxar.didx)")
 	ppxarDidx := flag.String("ppxar-didx", "", "Path to payload or unified dynamic index (.ppxar.didx)")
@@ -128,7 +138,6 @@ func main() {
 		}
 
 		ptFS := pxarmount.NewPassthroughFS(pxarFS, *passthrough, *pbsStore, *ppxarDidx, true, tl)
-		// Set the snapshot ref
 		ptFS.SetSnapshotRef(origSnap)
 
 		rawFS = ptFS
