@@ -125,6 +125,14 @@ func (fs *PassthroughFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name s
 
 // --- inode management ---
 
+// registerRecoveredDir marks an inode as a recovered pxar-backed directory.
+func (fs *PassthroughFS) registerRecoveredDir(ino uint64, relPath string) {
+	fs.setNode(ino, relPath, true)
+	fs.mu.Lock()
+	fs.pxarDir[ino] = true
+	fs.mu.Unlock()
+}
+
 func (fs *PassthroughFS) absPath(rel string) string {
 	return filepath.Join(fs.backingDir, rel)
 }
@@ -268,14 +276,12 @@ func (fs *PassthroughFS) lazyOpenFh(nodeID uint64) (*passFh, fuse.Status) {
 
 	fs.fhmu.Lock()
 	// Check if another goroutine already opened a handle for this node.
-	for id, h := range fs.handles {
+	for _, h := range fs.handles {
 		if h.inode == nodeID {
-			// Another goroutine won; close our fd.
 			fs.fhmu.Unlock()
 			_ = syscall.Close(fd)
 			return h, fuse.OK
 		}
-		_ = id
 	}
 	id := fs.nextFh
 	fs.nextFh++
@@ -321,10 +327,7 @@ func (fs *PassthroughFS) isPxarChild(parentIno uint64, name string) bool {
 		parentPath := fs.nodePath(parentIno)
 		if parentPath != "" {
 			if recovered := fs.recoverPxarDirNode(parentPath); recovered != 0 {
-				fs.setNode(recovered, parentPath, true)
-				fs.mu.Lock()
-				fs.pxarDir[recovered] = true
-				fs.mu.Unlock()
+				fs.registerRecoveredDir(recovered, parentPath)
 				if entries2, err2 := fs.pxar.ReadDirRaw(recovered); err2 == nil {
 					entries = entries2
 					err = nil
@@ -415,13 +418,6 @@ func (fs *PassthroughFS) materializePxarFileLocked(ino uint64) (string, error) {
 	relPath := fs.nodePath(ino)
 	if relPath == "" {
 		return "", syscall.ENOENT
-	}
-
-	if fs.isBacked(ino) {
-		abs := fs.absPath(relPath)
-		if _, err := os.Lstat(abs); err == nil {
-			return relPath, nil
-		}
 	}
 
 	fs.pxar.mu.RLock()
@@ -524,17 +520,11 @@ func (fs *PassthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 
 	if backedNode != nil && backedNode.isDir {
 		if pxarSt := fs.pxar.Lookup(cancel, header, name, out); pxarSt == fuse.OK {
-			fs.setNode(out.NodeId, childPath, true)
-			fs.mu.Lock()
-			fs.pxarDir[out.NodeId] = true
-			fs.mu.Unlock()
+			fs.registerRecoveredDir(out.NodeId, childPath)
 			return fuse.OK
 		}
 		if pxarIno := fs.recoverPxarDirNode(childPath); pxarIno != 0 {
-			fs.setNode(pxarIno, childPath, true)
-			fs.mu.Lock()
-			fs.pxarDir[pxarIno] = true
-			fs.mu.Unlock()
+			fs.registerRecoveredDir(pxarIno, childPath)
 			fs.pxar.mu.RLock()
 			if pn, ok := fs.pxar.nodes[pxarIno]; ok {
 				fillEntryOut(pxarIno, &pn, out)
@@ -982,8 +972,6 @@ func (fs *PassthroughFS) finishCreate(ino uint64, fd int, out *fuse.CreateOut) f
 	out.OpenFlags = fuse.FOPEN_KEEP_CACHE
 	n := nodeFromStat(&st)
 	n.inode = ino
-	n.mtimeNanos = uint32(st.Mtim.Nsec)
-	n.isReg = true
 	fillAttr(&out.Attr, n)
 	return fuse.OK
 }
@@ -1009,8 +997,6 @@ func (fs *PassthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 			}
 			n := nodeFromStat(&st)
 			n.inode = ino
-			n.mtimeNanos = uint32(st.Mtim.Nsec)
-			n.isDir = true
 			fillEntryOut(ino, n, out)
 			return fuse.OK
 		}
@@ -1029,8 +1015,6 @@ func (fs *PassthroughFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name
 
 	n := nodeFromStat(&st)
 	n.inode = ino
-	n.mtimeNanos = uint32(st.Mtim.Nsec)
-	n.isDir = true
 	fillEntryOut(ino, n, out)
 	return fuse.OK
 }
@@ -1056,7 +1040,6 @@ func (fs *PassthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 			}
 			n := nodeFromStat(&st)
 			n.inode = ino
-			n.mtimeNanos = uint32(st.Mtim.Nsec)
 			fillEntryOut(ino, n, out)
 			return fuse.OK
 		}
@@ -1075,7 +1058,6 @@ func (fs *PassthroughFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name
 
 	n := nodeFromStat(&st)
 	n.inode = ino
-	n.mtimeNanos = uint32(st.Mtim.Nsec)
 	fillEntryOut(ino, n, out)
 	return fuse.OK
 }
@@ -1100,8 +1082,6 @@ func (fs *PassthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, 
 			}
 			n := nodeFromStat(&st)
 			n.inode = ino
-			n.mtimeNanos = uint32(st.Mtim.Nsec)
-			n.isSymlink = true
 			fillEntryOut(ino, n, out)
 			return fuse.OK
 		}
@@ -1119,8 +1099,6 @@ func (fs *PassthroughFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, 
 
 	n := nodeFromStat(&st)
 	n.inode = ino
-	n.mtimeNanos = uint32(st.Mtim.Nsec)
-	n.isSymlink = true
 	fillEntryOut(ino, n, out)
 	return fuse.OK
 }
@@ -1666,10 +1644,7 @@ func (fs *PassthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	dirIno := input.NodeId
 	if _, err := fs.pxar.ReadDirRaw(dirIno); err != nil && parentPath != "" {
 		if recovered := fs.recoverPxarDirNode(parentPath); recovered != 0 {
-			fs.setNode(recovered, parentPath, true)
-			fs.mu.Lock()
-			fs.pxarDir[recovered] = true
-			fs.mu.Unlock()
+			fs.registerRecoveredDir(recovered, parentPath)
 			dirIno = recovered
 		}
 	}
@@ -1867,7 +1842,6 @@ func (fs *PassthroughFS) fillEntryOutForNodeWithStats(ino uint64, out *fuse.Entr
 	if st, ok := localStats[ino]; ok {
 		n := nodeFromStat(&st)
 		n.inode = ino
-		n.mtimeNanos = uint32(st.Mtim.Nsec)
 		fillEntryOut(ino, n, out)
 		return
 	}
@@ -2001,50 +1975,6 @@ func (fs *PassthroughFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader
 }
 
 func (fs *PassthroughFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
-	if isACLXattr(attr) {
-		return fs.setACLXAttr(input, attr, data)
-	}
-	if !fs.mutationMode {
-		return fuse.EROFS
-	}
-
-	rel := fs.nodePath(input.NodeId)
-
-	if fs.isBacked(input.NodeId) {
-		flags := 0
-		if input.Flags&xattrCreate != 0 {
-			flags = unix.XATTR_CREATE
-		} else if input.Flags&xattrReplace != 0 {
-			flags = unix.XATTR_REPLACE
-		}
-		if err := unix.Setxattr(fs.absPath(rel), attr, data, flags); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-
-	// Record in overlay + txn log.
-	if fs.txnLog != nil {
-		_, _ = fs.txnLog.RecordSetXAttr(rel, attr, data)
-	}
-	if !fs.isBacked(input.NodeId) {
-		fs.mu.Lock()
-		mo := fs.metaOverlay[rel]
-		if mo == nil {
-			mo = &metaOverride{
-				xadd: make(map[string][]byte),
-				xdel: make(map[string]bool),
-			}
-			fs.metaOverlay[rel] = mo
-		}
-		mo.xadd[attr] = make([]byte, len(data))
-		copy(mo.xadd[attr], data)
-		delete(mo.xdel, attr)
-		fs.mu.Unlock()
-	}
-	return fuse.OK
-}
-
-func (fs *PassthroughFS) setACLXAttr(input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
 	if !fs.mutationMode {
 		return fuse.EROFS
 	}
@@ -2067,27 +1997,15 @@ func (fs *PassthroughFS) setACLXAttr(input *fuse.SetXAttrIn, attr string, data [
 		_, _ = fs.txnLog.RecordSetXAttr(rel, attr, data)
 	}
 	if !fs.isBacked(input.NodeId) {
-		fs.mu.Lock()
-		mo := fs.metaOverlay[rel]
-		if mo == nil {
-			mo = &metaOverride{
-				xadd: make(map[string][]byte),
-				xdel: make(map[string]bool),
-			}
-			fs.metaOverlay[rel] = mo
-		}
+		mo := fs.getOrCreateOverlay(rel)
 		mo.xadd[attr] = make([]byte, len(data))
 		copy(mo.xadd[attr], data)
 		delete(mo.xdel, attr)
-		fs.mu.Unlock()
 	}
 	return fuse.OK
 }
 
 func (fs *PassthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
-	if isACLXattr(attr) {
-		return fs.removeACLXAttr(header, attr)
-	}
 	if !fs.mutationMode {
 		return fuse.EROFS
 	}
@@ -2104,51 +2022,9 @@ func (fs *PassthroughFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHead
 		_, _ = fs.txnLog.RecordRemoveXAttr(rel, attr)
 	}
 	if !fs.isBacked(header.NodeId) {
-		fs.mu.Lock()
-		mo := fs.metaOverlay[rel]
-		if mo == nil {
-			mo = &metaOverride{
-				xadd: make(map[string][]byte),
-				xdel: make(map[string]bool),
-			}
-			fs.metaOverlay[rel] = mo
-		}
+		mo := fs.getOrCreateOverlay(rel)
 		delete(mo.xadd, attr)
 		mo.xdel[attr] = true
-		fs.mu.Unlock()
-	}
-	return fuse.OK
-}
-
-func (fs *PassthroughFS) removeACLXAttr(header *fuse.InHeader, attr string) fuse.Status {
-	if !fs.mutationMode {
-		return fuse.EROFS
-	}
-
-	rel := fs.nodePath(header.NodeId)
-
-	if fs.isBacked(header.NodeId) {
-		if err := unix.Removexattr(fs.absPath(rel), attr); err != nil {
-			return fuse.ToStatus(err)
-		}
-	}
-
-	if fs.txnLog != nil {
-		_, _ = fs.txnLog.RecordRemoveXAttr(rel, attr)
-	}
-	if !fs.isBacked(header.NodeId) {
-		fs.mu.Lock()
-		mo := fs.metaOverlay[rel]
-		if mo == nil {
-			mo = &metaOverride{
-				xadd: make(map[string][]byte),
-				xdel: make(map[string]bool),
-			}
-			fs.metaOverlay[rel] = mo
-		}
-		delete(mo.xadd, attr)
-		mo.xdel[attr] = true
-		fs.mu.Unlock()
 	}
 	return fuse.OK
 }

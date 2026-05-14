@@ -236,7 +236,7 @@ func (fs *PxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 
 	// Slow path: unified archive or non-split entry.
 	fs.readerMu.Lock()
-	entry, err := fs.readEntryForNode(&n)
+	entry, err := fs.ReadEntryForNode(&n)
 	if err != nil {
 		fs.readerMu.Unlock()
 		return nil, fuse.EIO
@@ -282,7 +282,7 @@ func (fs *PxarFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byt
 	}
 
 	fs.readerMu.Lock()
-	entry, err := fs.readEntryForNode(&n)
+	entry, err := fs.ReadEntryForNode(&n)
 	fs.readerMu.Unlock()
 	if err != nil {
 		return nil, fuse.EIO
@@ -299,7 +299,7 @@ func (fs *PxarFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest 
 	}
 
 	fs.readerMu.Lock()
-	entry, err := fs.readEntryForNode(&n)
+	entry, err := fs.ReadEntryForNode(&n)
 	fs.readerMu.Unlock()
 	if err != nil {
 		return 0, fuse.EIO
@@ -343,7 +343,7 @@ func (fs *PxarFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr s
 	}
 
 	fs.readerMu.Lock()
-	entry, err := fs.readEntryForNode(&n)
+	entry, err := fs.ReadEntryForNode(&n)
 	fs.readerMu.Unlock()
 	if err != nil {
 		return 0, fuse.EIO
@@ -491,11 +491,6 @@ func (fs *PxarFS) refNode(inode uint64) {
 		fs.nodes[inode] = n
 	}
 	fs.mu.Unlock()
-}
-
-// readEntryForNode is the internal version — caller must hold readerMu.
-func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
-	return fs.ReadEntryForNode(n)
 }
 
 func (fs *PxarFS) getParentInfo(nodeID uint64) (uint64, uint32) {

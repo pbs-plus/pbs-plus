@@ -1,12 +1,10 @@
 package main
 
 import (
-	"syscall"
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/pxarmount"
-	pxar "github.com/pbs-plus/pxar"
-	"github.com/pbs-plus/pxar/format"
+	"github.com/pbs-plus/pxar"
 )
 
 func TestToInode(t *testing.T) {
@@ -38,20 +36,7 @@ func TestToInode(t *testing.T) {
 }
 
 func TestStatMode(t *testing.T) {
-	tests := []struct {
-		mode uint64
-		want uint32
-	}{
-		{format.ModeIFREG | 0o644, syscall.S_IFREG | 0o644},
-		{format.ModeIFDIR | 0o755, syscall.S_IFDIR | 0o755},
-		{format.ModeIFLNK | 0o777, syscall.S_IFLNK | 0o777},
-		{format.ModeIFBLK | 0o600, syscall.S_IFBLK | 0o600},
-		{format.ModeIFCHR | 0o600, syscall.S_IFCHR | 0o600},
-		{format.ModeIFIFO | 0o644, syscall.S_IFIFO | 0o644},
-		{format.ModeIFSOCK | 0o755, syscall.S_IFSOCK | 0o755},
-	}
 	// statMode is unexported — tested internally via pxarmount package tests.
-	_ = tests
 }
 
 func TestIsDirInode(t *testing.T) {
@@ -64,12 +49,4 @@ func TestIsDirInode(t *testing.T) {
 	if pxarmount.IsDirInode(42 | pxarmount.NonDirBit) {
 		t.Error("42|NonDirBit should not be a directory")
 	}
-}
-
-func TestBytesEq(t *testing.T) {
-	// bytesEq is unexported — tested via pxarmount package tests.
-}
-
-func TestXattrValue(t *testing.T) {
-	// xattrValue is unexported — tested via pxarmount package tests.
 }
