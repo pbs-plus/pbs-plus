@@ -1384,15 +1384,15 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 		SymlinkTgt: n.SymlinkTgt,
 	}
 
+	// Ensure mode has file type bits.
+	re.Mode = ensureModeType(re.Mode, n.Kind)
+
 	// If the node has a redirect, check pxar for data.
 	if n.RedirectTo != "" && !n.HasData {
 		pxarNode := fs.findPxarNode(n.RedirectTo)
 		re.PxarNode = pxarNode
 		// Use pxar metadata if node fields are zero.
 		if pxarNode != nil {
-			if re.Mode == 0 {
-				re.Mode = statMode(pxarNode.mode)
-			}
 			if re.Size == 0 {
 				re.Size = pxarNode.fileSize
 			}
@@ -1799,7 +1799,7 @@ func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Atimensec = nsec
 	attr.Mtimensec = nsec
 	attr.Ctimensec = nsec
-	attr.Mode = n.Mode
+	attr.Mode = ensureModeType(n.Mode, n.Kind)
 	if n.Kind == NodeDir {
 		attr.Nlink = 2
 	} else {
