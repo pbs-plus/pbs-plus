@@ -341,6 +341,11 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		return nil, syscall.ENOTDIR
 	}
 
+	// Init mode: no backing archive, every dir is empty.
+	if fs.reader == nil {
+		return nil, nil
+	}
+
 	entriesPtr := dirEntryPool.Get().(*[]dirEntrySlim)
 	entries := (*entriesPtr)[:0]
 
