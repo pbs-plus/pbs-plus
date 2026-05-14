@@ -688,7 +688,10 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 		CtimeNs: now,
 		HasData: false,
 	}
-	_ = fs.journal.MarkNew(je)
+	if err := fs.journal.MarkNew(je); err != nil {
+		os.Remove(abs)
+		return fuse.EIO
+	}
 
 	ino := fs.allocInode(true)
 	fs.mapInode(ino, childPath)
@@ -724,7 +727,7 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	je := &JournalEntry{
 		Path:    childPath,
 		State:   state,
-		Mode:    uint32(input.Mode & 0o777),
+		Mode:    uint32(input.Mode),
 		UID:     input.Uid,
 		GID:     input.Gid,
 		Size:    0,
@@ -732,7 +735,10 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 		CtimeNs: now,
 		HasData: true,
 	}
-	_ = fs.journal.MarkModified(je)
+	if err := fs.journal.MarkModified(je); err != nil {
+		os.Remove(abs)
+		return fuse.EIO
+	}
 
 	ino := fs.allocInode(false)
 	fs.mapInode(ino, childPath)
@@ -777,7 +783,10 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 		HasData: true,
 		Target:  target,
 	}
-	_ = fs.journal.MarkModified(je)
+	if err := fs.journal.MarkModified(je); err != nil {
+		os.Remove(abs)
+		return fuse.EIO
+	}
 
 	ino := fs.allocInode(false)
 	fs.mapInode(ino, childPath)
@@ -801,11 +810,15 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 		return status
 	}
 
-	// If there's an immutable entry, insert a whiteout.
+	// Journal-first for destructive ops: record deletion before touching disk.
 	if re.PxarNode != nil {
-		_ = fs.journal.MarkWhiteout(childPath)
+		if err := fs.journal.MarkWhiteout(childPath); err != nil {
+			return fuse.EIO
+		}
 	} else {
-		_ = fs.journal.RemoveEntry(childPath)
+		if err := fs.journal.RemoveEntry(childPath); err != nil {
+			return fuse.EIO
+		}
 	}
 
 	// Remove mutable data if present.
@@ -859,12 +872,24 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		// Pure immutable rename: whiteout old, create modified entry at new.
 		je := pxarNodeToJE(oldRE.PxarNode, newPath)
 		je.State = StateModified
-		_ = fs.journal.RenameImmutable(oldPath, newPath, je)
+		if err := fs.journal.RenameImmutable(oldPath, newPath, je); err != nil {
+			if oldRE.DataIsMut {
+				_ = os.Rename(fs.mutablePath(newPath), fs.mutablePath(oldPath))
+			}
+			return fuse.EIO
+		}
 	} else if oldRE.Journal != nil {
-		_ = fs.journal.Rename(oldPath, newPath, destHasImmutable)
+		if err := fs.journal.Rename(oldPath, newPath, destHasImmutable); err != nil {
+			if oldRE.DataIsMut {
+				_ = os.Rename(fs.mutablePath(newPath), fs.mutablePath(oldPath))
+			}
+			return fuse.EIO
+		}
 	} else {
 		// Pure new entry: remove old, create new.
-		_ = fs.journal.RemoveEntry(oldPath)
+		if err := fs.journal.RemoveEntry(oldPath); err != nil {
+			return fuse.EIO
+		}
 		je := &JournalEntry{
 			Path:    newPath,
 			State:   StateNew,
@@ -877,7 +902,9 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 			HasData: oldRE.DataIsMut,
 			Target:  oldRE.SymlinkTgt,
 		}
-		_ = fs.journal.MarkModified(je)
+		if err := fs.journal.MarkModified(je); err != nil {
+			return fuse.EIO
+		}
 	}
 
 	// Update inode mapping.
@@ -992,26 +1019,16 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
-		if fs.verbose {
-			fmt.Fprintf(os.Stderr, "  SetXAttr: inode %d → empty path\n", input.NodeId)
-		}
 		return fuse.ENOENT
 	}
 
-	// Ensure a journal entry exists for this path.
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
-		if fs.verbose {
-			fmt.Fprintf(os.Stderr, "  SetXAttr: resolve %q failed: %v\n", path, status)
-		}
 		return status
 	}
 	fs.ensureJournalEntry(re)
 
 	if err := fs.journal.SetXAttr(path, attr, data); err != nil {
-		if fs.verbose {
-			fmt.Fprintf(os.Stderr, "  SetXAttr: journal.SetXAttr %q %s failed: %v\n", path, attr, err)
-		}
 		return fuse.EIO
 	}
 
