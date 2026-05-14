@@ -856,6 +856,19 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	oldParentID := fs.resolveParentNodeID(oldParentPath)
 	newParentID := fs.resolveParentNodeID(newParentPath)
 
+	// Resolve destination first and clean up any existing journal node/edge.
+	// Must happen BEFORE we move source disk data to the dest path.
+	destHasPXar := fs.hasPxarEntry(newPath)
+	destRE, _ := fs.resolve(newPath)
+	if destRE != nil && destRE.Node != nil {
+		_ = fs.journal.DeleteEdge(newParentID, newName)
+		_ = fs.journal.DeleteNode(destRE.Node.ID)
+		if destRE.DataIsMut {
+			_ = os.Remove(fs.mutablePath(newPath))
+		}
+		fs.unmapInode(newPath)
+	}
+
 	// Move mutable disk data if present.
 	if oldRE.DataIsMut {
 		oldAbs := fs.mutablePath(oldPath)
@@ -868,22 +881,18 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 				return fuse.ToStatus(err)
 			}
 		}
-	}
-
-	// Dest has a pxar entry → whiteout it.
-	destHasPXar := fs.hasPxarEntry(newPath)
-
-	// Resolve destination to check for existing journal node/edge.
-	destRE, _ := fs.resolve(newPath)
-
-	// If dest has a journal edge, remove it first (rename replaces atomically).
-	if destRE != nil && destRE.Node != nil {
-		_ = fs.journal.DeleteEdge(newParentID, newName)
-		_ = fs.journal.DeleteNode(destRE.Node.ID)
-		if destRE.DataIsMut {
-			_ = os.Remove(fs.mutablePath(newPath))
+	} else if oldRE.IsDir {
+		// For directories, rename the backing dir if it exists (children may have data).
+		oldAbs := fs.mutablePath(oldPath)
+		if _, err := os.Stat(oldAbs); err == nil {
+			newAbs := fs.mutablePath(newPath)
+			if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
+				return fuse.ToStatus(err)
+			}
+			if err := os.Rename(oldAbs, newAbs); err != nil {
+				return fuse.ToStatus(err)
+			}
 		}
-		fs.unmapInode(newPath)
 	}
 
 	if oldRE.Node != nil {
