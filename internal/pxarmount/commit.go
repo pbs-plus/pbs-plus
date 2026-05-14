@@ -12,12 +12,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	pxar "github.com/pbs-plus/pxar"
-	"github.com/pbs-plus/pxar/accessor"
 	"github.com/pbs-plus/pxar/backupproxy"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
@@ -444,22 +444,35 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	// directories before files so children appear inside their parent.
 	var refEntries, newDataEntries []commitEntry
 
-	// Classify pxar entries in ORIGINAL METADATA ORDER.
-	// The pxar archive's metadata order follows depth-first traversal
-	// with ascending payload offsets (PBS writes this way). GOODBYE
-	// hash ordering applies to lookup, not to the iteration order
-	// returned by ListDirectory — entries are returned in the order
-	// they appear in the metadata stream, which IS payload order.
+	// Classify pxar entries.
+	//
+	// PBS archives are written depth-first with strictly ascending payload
+	// offsets. Each directory's children occupy a contiguous, non-overlapping
+	// range. GOODBYE hash ordering differs from payload ordering, so we
+	// must sort FILE entries by contentOffset within each directory.
+	//
+	// Directories stay in metadata order to preserve the depth-first
+	// traversal that PBS used (non-overlapping ranges).
+	var pxarDirs, pxarFiles []commitEntry
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
 		if edgeNames[pe.name] || whiteoutSet[pe.name] {
 			continue
 		}
-		refEntries = append(refEntries, commitEntry{
-			name:     pe.name,
-			pxarSlim: pe,
-		})
+		if pe.isDir || pe.isSymlink {
+			pxarDirs = append(pxarDirs, commitEntry{name: pe.name, pxarSlim: pe})
+		} else {
+			pxarFiles = append(pxarFiles, commitEntry{name: pe.name, pxarSlim: pe})
+		}
 	}
+	// Sort regular files by payload offset (contentOffset = PayloadOffset
+	// for PXAR_PAYLOAD_REF entries).
+	sort.Slice(pxarFiles, func(i, j int) bool {
+		return pxarFiles[i].pxarSlim.contentOffset < pxarFiles[j].pxarSlim.contentOffset
+	})
+	// Directories first (depth-first, metadata order), then sorted files.
+	refEntries = append(refEntries, pxarDirs...)
+	refEntries = append(refEntries, pxarFiles...)
 
 	// Classify journal edges by whether they emit new data.
 	for i := range journalEdges {
