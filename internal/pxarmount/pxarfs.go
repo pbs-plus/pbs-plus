@@ -408,6 +408,9 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 		return nil, fuse.EIO
 	}
 
+	fmt.Fprintf(os.Stderr, "readFileContent: ino=%d entryStart=%d contentOffset=%d fileSize=%d payloadOff=%d\n",
+		ino, n.entryStart, n.contentOffset, n.fileSize, entry.PayloadOffset)
+
 	rc, err := fs.reader.ReadFileContentReader(entry)
 	if err != nil {
 		return nil, fuse.EIO
