@@ -1250,7 +1250,40 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 // --- resolution ---
 
 // resolve looks up a path using the inode graph, falling back to pxar.
+func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
+	n, err := fs.journal.GetNode(1)
+	if err != nil {
+		return nil, fuse.EIO
+	}
+	if n != nil {
+		return fs.resolveFromNode("/", n)
+	}
+	// Fallback to pure pxar root
+	pxarNode := fs.findPxarNode("/")
+	if pxarNode == nil {
+		return nil, fuse.ENOENT
+	}
+	re := &ResolvedEntry{
+		Path:      "/",
+		PxarNode:  pxarNode,
+		DataIsMut: false,
+		IsDir:     true,
+		Mode:      statMode(pxarNode.mode),
+		UID:       pxarNode.uid,
+		GID:       pxarNode.gid,
+		Size:      pxarNode.fileSize,
+		MtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
+		CtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
+	}
+	re.Inode = fs.pathToIno("/", true)
+	return re, fuse.OK
+}
+
 func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
+	// Root is always a pxar-only directory.
+	if path == "/" || path == "" {
+		return fs.resolveRoot()
+	}
 	nodeID, pxarPath, fellOffAt, remaining, err := fs.journal.ResolvePath(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  resolve(%q) ResolvePath err: %v\n", path, err)
