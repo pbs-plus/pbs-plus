@@ -761,19 +761,22 @@ func applyOverlayToMeta(relPath string, meta *pxar.Metadata, overlay map[string]
 	// Merge xattrs: remove deleted, add/replace new.
 	if len(mo.xdel) > 0 || len(mo.xadd) > 0 {
 		var kept []format.XAttr
+		emitted := make(map[string]bool, len(mo.xadd))
 		for _, xa := range meta.XAttrs {
 			if mo.xdel[string(xa.Name())] {
 				continue
 			}
 			if replacement, ok := mo.xadd[string(xa.Name())]; ok {
 				kept = append(kept, format.NewXAttr(xa.Name(), replacement))
-				delete(mo.xadd, string(xa.Name()))
+				emitted[string(xa.Name())] = true
 				continue
 			}
 			kept = append(kept, xa)
 		}
 		for name, val := range mo.xadd {
-			kept = append(kept, format.NewXAttr([]byte(name), val))
+			if !emitted[name] {
+				kept = append(kept, format.NewXAttr([]byte(name), val))
+			}
 		}
 		meta.XAttrs = kept
 	}
