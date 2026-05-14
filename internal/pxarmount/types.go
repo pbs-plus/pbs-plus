@@ -32,16 +32,6 @@ const (
 	XattrReplace = 2
 )
 
-// EntryState represents the mutation state of a path in the journal.
-type EntryState string
-
-const (
-	StateModified EntryState = "modified"
-	StateWhiteout EntryState = "whiteout"
-	StateOpaque   EntryState = "opaque"
-	StateNew      EntryState = "new"
-)
-
 // IsDirInode reports whether the inode represents a directory.
 func IsDirInode(ino uint64) bool { return ino&NonDirBit == 0 }
 
@@ -89,28 +79,14 @@ type dirEntrySlim struct {
 	isReg         bool
 }
 
-// JournalEntry is an authoritative metadata record for a path.
-type JournalEntry struct {
-	Path    string
-	State   EntryState
-	Mode    uint32
-	UID     uint32
-	GID     uint32
-	Size    uint64
-	MtimeNs int64
-	CtimeNs int64
-	HasData bool
-	Target  string // symlink target, empty if not a symlink
-}
-
 // ResolvedEntry is the result of path resolution.
 // It tells the caller where metadata and data come from.
 type ResolvedEntry struct {
 	Path       string
 	Inode      uint64
-	Journal    *JournalEntry // non-nil if journal overrides metadata
-	PxarNode   *node         // non-nil if there's an immutable backing entry
-	DataIsMut  bool          // data comes from mutable dir
+	Node       *GraphNode // non-nil if the inode graph has a node for this path
+	PxarNode   *node      // non-nil if there's an immutable backing entry
+	DataIsMut  bool       // data comes from mutable dir
 	IsDir      bool
 	Mode       uint32
 	UID        uint32
@@ -245,29 +221,6 @@ func fillAttr(attr *fuse.Attr, n *node) {
 	}
 	attr.Uid = n.uid
 	attr.Gid = n.gid
-	attr.Blksize = 4096
-}
-
-func fillAttrFromJE(attr *fuse.Attr, je *JournalEntry) {
-	attr.Ino = 0
-	attr.Size = je.Size
-	attr.Blocks = (je.Size + 511) / 512
-	sec := je.MtimeNs / 1_000_000_000
-	nsec := uint32(je.MtimeNs % 1_000_000_000)
-	attr.Atime = uint64(sec)
-	attr.Mtime = uint64(sec)
-	attr.Ctime = uint64(sec)
-	attr.Atimensec = nsec
-	attr.Mtimensec = nsec
-	attr.Ctimensec = nsec
-	attr.Mode = je.Mode
-	if je.Mode&syscall.S_IFDIR != 0 {
-		attr.Nlink = 2
-	} else {
-		attr.Nlink = 1
-	}
-	attr.Uid = je.UID
-	attr.Gid = je.GID
 	attr.Blksize = 4096
 }
 
