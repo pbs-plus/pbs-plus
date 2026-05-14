@@ -123,6 +123,7 @@ type overlayWalk struct {
 	backedHashes map[string][32]byte       // relPath → SHA256 of uploaded backed files
 	pxarDirCache map[uint64][]dirEntrySlim // pxar inode → cached dir entries
 	backedDirs   map[string][]string       // parent relPath → backed child names
+	progress     *ProgressReporter         // optional progress reporting
 }
 
 // StartSocketListener opens a Unix domain socket and processes commit requests.
@@ -161,16 +162,16 @@ func (fs *PassthroughFS) handleSocketConn(conn net.Conn) {
 			fmt.Fprintf(conn, "ERR %v\n", err)
 			return
 		}
-		if err := fs.commitOverlay(req); err != nil {
-			fmt.Fprintf(conn, "ERR %v\n", err)
+		prog := NewProgressReporter(conn)
+		if err := fs.commitOverlay(req, prog); err != nil {
+			prog.Error(err.Error())
 			return
 		}
-		fmt.Fprintf(conn, "OK committed %s/%s\n", req.Namespace, req.BackupID)
 		return
 	}
 }
 
-func (fs *PassthroughFS) commitOverlay(req *CommitRequest) error {
+func (fs *PassthroughFS) commitOverlay(req *CommitRequest, prog *ProgressReporter) error {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
@@ -234,6 +235,8 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest) error {
 		return cfg
 	}(), false)
 
+	prog.SetPhase(PhasePrepare)
+
 	ctx := context.Background()
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
 		BackupType:     bt,
@@ -267,16 +270,23 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest) error {
 		return fmt.Errorf("begin archive: %w", err)
 	}
 
+	prog.SetPhase(PhaseWalk)
+	prog.SetMsg(fmt.Sprintf("Scanning overlay (backed: %d dirs)", len(fs.preWalkBackingDir())))
+
 	ow := &overlayWalk{
 		writer:       writer,
 		dedup:        writer,
 		backedHashes: make(map[string][32]byte),
 		pxarDirCache: make(map[uint64][]dirEntrySlim),
 		backedDirs:   fs.preWalkBackingDir(),
+		progress:     prog,
 	}
 	if err := fs.walkOverlay(ow, RootInode, "/"); err != nil {
 		return fmt.Errorf("walk overlay: %w", err)
 	}
+
+	prog.SetPhase(PhaseUpload)
+	prog.SetMsg("Uploading to PBS")
 
 	// Sync transaction log before finalizing upload.
 	if fs.txnLog != nil {
@@ -293,6 +303,9 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest) error {
 		return fmt.Errorf("finish session: %w", err)
 	}
 
+	prog.SetPhase(PhaseVerify)
+	prog.SetMsg(fmt.Sprintf("Verifying %d backed files", len(ow.backedHashes)))
+
 	// Verify backed files using upload-time hashes (no full re-read).
 	if len(ow.backedHashes) > 0 {
 		if err := fs.verifyBackedFileHashes(ow.backedHashes); err != nil {
@@ -300,7 +313,14 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest) error {
 		}
 	}
 
-	return fs.postCommit(backupID, backupType, namespace, archiveName, backupTime)
+	prog.SetPhase(PhaseFinalize)
+	prog.SetMsg("Swapping snapshot")
+
+	if err := fs.postCommit(backupID, backupType, namespace, archiveName, backupTime); err != nil {
+		return err
+	}
+	prog.Done(fmt.Sprintf("committed %s/%s", namespace, backupID))
+	return nil
 }
 
 func (fs *PassthroughFS) postCommit(backupID, backupType, namespace, archiveName string, backupTime int64) error {
@@ -373,6 +393,10 @@ func (fs *PassthroughFS) postCommit(backupID, backupType, namespace, archiveName
 	}
 
 	if fs.txnLog != nil {
+		// Recreate the transactions subdirectory and clear the log.
+		if err := os.MkdirAll(filepath.Join(fs.backingDir, TransactionsDir), 0o700); err != nil {
+			return fmt.Errorf("recreate transactions dir: %w", err)
+		}
 		if err := fs.txnLog.Clear(); err != nil {
 			return fmt.Errorf("clear transaction log: %w", err)
 		}
@@ -554,6 +578,9 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 			if writeErr != nil {
 				return fmt.Errorf("write file %s: %w", we.name, writeErr)
 			}
+			if ow.progress != nil {
+				ow.progress.AddFile(fi.Size())
+			}
 			continue
 		}
 
@@ -606,6 +633,13 @@ func (fs *PassthroughFS) preWalkBackingDir() map[string][]string {
 		}
 		rel, err := filepath.Rel(fs.backingDir, path)
 		if err != nil || rel == "." {
+			return nil
+		}
+		// Skip the internal transactions directory.
+		if rel == TransactionsDir {
+			return filepath.SkipDir
+		}
+		if strings.HasPrefix(rel, TransactionsDir+string(filepath.Separator)) {
 			return nil
 		}
 		parentDir := filepath.Dir(rel)
@@ -684,13 +718,15 @@ func RunCommitSubcommand() {
 	fs.Parse(os.Args[2:])
 
 	if *socketPath == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> [options]\n")
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> [options]\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fs.PrintDefaults()
 		os.Exit(1)
 	}
 
 	conn, err := net.Dial("unix", *socketPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error connecting to socket %s: %v\n", *socketPath, err)
+		fmt.Fprintf(os.Stderr, "  ✗ error connecting to socket %s: %v\n", *socketPath, err)
 		os.Exit(1)
 	}
 	defer conn.Close()
@@ -698,19 +734,30 @@ func RunCommitSubcommand() {
 	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
 		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID)
 	if _, err := fmt.Fprint(conn, cmd); err != nil {
-		fmt.Fprintf(os.Stderr, "Error sending command: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  ✗ error sending command: %v\n", err)
 		os.Exit(1)
 	}
 
+	display := NewProgressDisplay(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Committing snapshot...\n")
+
 	scanner := bufio.NewScanner(conn)
-	if scanner.Scan() {
-		response := scanner.Text()
-		fmt.Println(response)
-		if strings.HasPrefix(response, "ERR") {
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PROGRESS ") {
+			display.Update(line)
+			continue
+		}
+		if strings.HasPrefix(line, "OK ") {
+			display.Done(line)
+			return
+		}
+		if strings.HasPrefix(line, "ERR ") {
+			display.Error(line)
 			os.Exit(1)
 		}
-	} else {
-		fmt.Fprintf(os.Stderr, "Error: no response from daemon\n")
-		os.Exit(1)
+		// Unknown line — ignore.
 	}
+	fmt.Fprintf(os.Stderr, "  ✗ error: no response from daemon\n")
+	os.Exit(1)
 }

@@ -20,6 +20,11 @@ const (
 	// Backed inodes start above the pxar range.
 	backedInoBase uint64 = 1 << 60
 
+	// TransactionsDir is the special directory inside the backing dir
+	// where the transaction log is stored. Hidden from FUSE readdir
+	// and excluded from overlay walks.
+	TransactionsDir = ".pxar-transactions"
+
 	// RENAME flags (Linux FUSE protocol, fuse_kernel.h).
 	renameNoReplace = 1 << 0
 	renameExchange  = 1 << 1

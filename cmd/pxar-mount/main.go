@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -30,7 +31,6 @@ func main() {
 	fuseOpts := flag.String("options", "ro,default_permissions", "FUSE mount options")
 	passthrough := flag.String("passthrough", "", "Backing directory for write passthrough")
 	socketPath := flag.String("socket", "", "Unix socket path for commit commands")
-	mutationsDir := flag.String("mutations-dir", "", "Directory for mutation transaction log")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 
 	flag.Parse()
@@ -42,10 +42,6 @@ func main() {
 
 	if *passthrough == "" && *socketPath != "" {
 		fmt.Fprintf(os.Stderr, "Error: --socket requires --passthrough\n")
-		os.Exit(1)
-	}
-	if *mutationsDir != "" && *passthrough == "" {
-		fmt.Fprintf(os.Stderr, "Error: --mutations-dir requires --passthrough\n")
 		os.Exit(1)
 	}
 
@@ -119,22 +115,19 @@ func main() {
 
 		origSnap := pxarmount.ParseOrigSnapshot(*pbsStore, *ppxarDidx)
 
-		var txnLog *pxarmount.TransactionLog
-		if *mutationsDir != "" {
-			tl, err := pxarmount.OpenTransactionLog(*mutationsDir)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening transaction log: %v\n", err)
-				os.Exit(1)
-			}
-			txnLog = tl
-			defer tl.Close()
+		mutationsDir := filepath.Join(*passthrough, pxarmount.TransactionsDir)
+		tl, err := pxarmount.OpenTransactionLog(mutationsDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening transaction log: %v\n", err)
+			os.Exit(1)
+		}
+		defer tl.Close()
 
-			if *verbose {
-				fmt.Fprintf(os.Stderr, "pxar-mount: mutation mode enabled, transactions in %s\n", *mutationsDir)
-			}
+		if *verbose {
+			fmt.Fprintf(os.Stderr, "pxar-mount: mutation mode enabled, transactions in %s\n", mutationsDir)
 		}
 
-		ptFS := pxarmount.NewPassthroughFS(pxarFS, *passthrough, *pbsStore, *ppxarDidx, *mutationsDir != "", txnLog)
+		ptFS := pxarmount.NewPassthroughFS(pxarFS, *passthrough, *pbsStore, *ppxarDidx, true, tl)
 		// Set the snapshot ref
 		ptFS.SetSnapshotRef(origSnap)
 
@@ -164,7 +157,7 @@ func main() {
 		}
 
 		if *verbose {
-			fmt.Fprintf(os.Stderr, "pxar-mount: passthrough mode, backing dir=%s, mutations=%v\n", *passthrough, *mutationsDir != "")
+			fmt.Fprintf(os.Stderr, "pxar-mount: passthrough mode, backing dir=%s\n", *passthrough)
 		}
 	}
 

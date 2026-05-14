@@ -424,6 +424,10 @@ func (fs *PassthroughFS) materializePxarDir(ino uint64, relPath string) {
 // --- Lookup ---
 
 func (fs *PassthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
+	if name == TransactionsDir {
+		return fuse.ENOENT
+	}
+
 	parentPath := fs.nodePath(header.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -1195,6 +1199,9 @@ func (fs *PassthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 		if err == nil && len(des) > 0 {
 			backedEntries = make([]dirEntrySlim, 0, len(des))
 			for _, de := range des {
+				if de.Name() == TransactionsDir {
+					continue
+				}
 				info, err := de.Info()
 				if err != nil {
 					continue
