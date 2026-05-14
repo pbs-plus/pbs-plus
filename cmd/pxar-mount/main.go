@@ -3,14 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net"
 	"os"
-	"os/signal"
-	"path/filepath"
-	"strings"
-	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/pxarmount"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/transfer"
@@ -69,6 +63,7 @@ func runMountSubcommand() {
 			*pbsStore, *mpxarDidx, *ppxarDidx, mountPoint)
 	}
 
+	// Open the chunk store and build the archive reader.
 	store, err := datastore.NewChunkStore(*pbsStore)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening chunk store: %v\n", err)
@@ -101,100 +96,14 @@ func runMountSubcommand() {
 	}
 	defer reader.Close()
 
-	pxarFS, err := pxarmount.NewPxarFS(reader)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating pxar FS: %v\n", err)
-		os.Exit(1)
-	}
-
-	var rawFS fuse.RawFileSystem = pxarFS
-	var sockListener net.Listener
-
-	var ptFSClose func()
-
-	if *passthrough != "" {
-		ptInfo, err := os.Stat(*passthrough)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: passthrough directory not accessible: %v\n", err)
-			os.Exit(1)
-		}
-		if !ptInfo.IsDir() {
-			fmt.Fprintf(os.Stderr, "Error: passthrough path is not a directory\n")
-			os.Exit(1)
-		}
-
-		origSnap := pxarmount.ParseOrigSnapshot(*pbsStore, *ppxarDidx)
-
-		mutationsDir := filepath.Join(*passthrough, pxarmount.TransactionsDir)
-		tl, err := pxarmount.OpenTransactionLog(mutationsDir)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening transaction log: %v\n", err)
-			os.Exit(1)
-		}
-		defer tl.Close()
-
-		if *verbose {
-			fmt.Fprintf(os.Stderr, "pxar-mount: mutation mode enabled, transactions in %s\n", mutationsDir)
-		}
-
-		ptFS := pxarmount.NewPassthroughFS(pxarFS, *passthrough, *pbsStore, *ppxarDidx, true, tl)
-		ptFS.SetSnapshotRef(origSnap)
-
-		rawFS = ptFS
-		ptFSClose = ptFS.Close
-
-		if err := ptFS.InitPassthroughRoot(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error initializing passthrough root: %v\n", err)
-			os.Exit(1)
-		}
-
-		if *socketPath != "" {
-			l, _, err := ptFS.StartSocketListener(*socketPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error starting socket listener: %v\n", err)
-				os.Exit(1)
-			}
-			sockListener = l
-			if *verbose {
-				fmt.Fprintf(os.Stderr, "pxar-mount: listening for commits on %s\n", *socketPath)
-			}
-		}
-
-		*fuseOpts = strings.Replace(*fuseOpts, "ro,", "rw,", 1)
-		if !strings.Contains(*fuseOpts, "rw") {
-			*fuseOpts = "rw,default_permissions"
-		}
-
-		if *verbose {
-			fmt.Fprintf(os.Stderr, "pxar-mount: passthrough mode, backing dir=%s\n", *passthrough)
-		}
-	}
-
-	server, err := fuse.NewServer(rawFS, mountPoint, &fuse.MountOptions{
-		Name:    "pxar-mount",
-		Options: strings.Split(*fuseOpts, ","),
+	pxarmount.Serve(pxarmount.MountConfig{
+		PBSStore:      *pbsStore,
+		Reader:        reader,
+		OrigPpxarDidx: *ppxarDidx,
+		BackingDir:    *passthrough,
+		MountPoint:    mountPoint,
+		SocketPath:    *socketPath,
+		FuseOpts:      *fuseOpts,
+		Verbose:       *verbose,
 	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating FUSE server: %v\n", err)
-		os.Exit(1)
-	}
-
-	if *verbose {
-		fmt.Fprintf(os.Stderr, "pxar-mount: serving at %s\n", mountPoint)
-	}
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		if sockListener != nil {
-			_ = sockListener.Close()
-		}
-		if ptFSClose != nil {
-			ptFSClose()
-		}
-		_ = server.Unmount()
-	}()
-
-	server.Serve()
 }

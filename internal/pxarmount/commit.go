@@ -209,6 +209,11 @@ func (fs *PassthroughFS) commitOverlay(req *CommitRequest, prog *ProgressReporte
 	}
 	backupTime := time.Now().Unix()
 
+	// Ensure namespace directory exists on disk before starting session.
+	if err := EnsureNamespaceDir(fs.pbsStore, namespace); err != nil {
+		return fmt.Errorf("ensure namespace dir: %w", err)
+	}
+
 	bt, err := datastore.ParseBackupType(backupType)
 	if err != nil {
 		return fmt.Errorf("invalid backup type %q: %w", backupType, err)
