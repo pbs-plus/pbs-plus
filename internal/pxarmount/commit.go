@@ -2,7 +2,6 @@ package pxarmount
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -431,66 +430,113 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		edgeNames[e.Name] = true
 	}
 
-	pxarByName := make(map[string]*dirEntrySlim, len(pxarEntries))
-	for i := range pxarEntries {
-		pxarByName[pxarEntries[i].name] = &pxarEntries[i]
-	}
-
 	// Build merged entry list.
 	//
-	// Architectural decision: emit pxar entries in their ORIGINAL metadata order
-	// (which has ascending payload offsets), then journal entries last.
+	// Architectural decision: split entries into ref-emitters and
+	// new-data-emitters. All refs (WriteEntryRef) must precede all
+	// new-data writes (WriteEntryReader) because WriteEntryReader
+	// advances the payload stream position past all existing ref
+	// offsets, making subsequent refs fail the monotonicity check.
 	//
-	// The pxar encoder requires strictly ascending payload offsets across ALL
-	// WriteEntryRef and WriteEntryReader calls. The original archive's metadata
-	// order IS ascending because PBS writes depth-first with monotonic offsets.
-	// Journal entries use WriteEntryReader (new offsets assigned by the writer)
-	// so they always sort after all refs.
-	//
-	// Sorting by offset within each directory doesn't guarantee global monotonicity
-	// because walking a directory's children can advance lastPayloadOffset past
-	// sibling entries. Original metadata order avoids this.
-	var entries []commitEntry
+	// Within each group, maintain original metadata order for refs
+	// (which preserves ascending payload offsets from PBS) and emit
+	// directories before files so children appear inside their parent.
+	var refEntries, newDataEntries []commitEntry
 
-	// Phase 1: pxar entries in original metadata order.
+	// Classify pxar entries — all are ref-emitters.
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
 		if edgeNames[pe.name] || whiteoutSet[pe.name] {
 			continue
 		}
-		entries = append(entries, commitEntry{
+		refEntries = append(refEntries, commitEntry{
 			name:     pe.name,
 			pxarSlim: pe,
 		})
 	}
 
-	// Phase 2: journal edges (new/modified entries) after all pxar refs.
+	// Classify journal edges by whether they emit new data.
 	for i := range journalEdges {
 		edge := &journalEdges[i]
 		node, err := ow.mfs.journal.GetNode(edge.ChildID)
 		if err != nil || node == nil {
 			continue
 		}
-		entries = append(entries, commitEntry{
-			name: edge.Name,
-			node: node,
-		})
+		if node.Kind == NodeFile && node.HasData {
+			// New/modified file — must come after all refs.
+			newDataEntries = append(newDataEntries, commitEntry{
+				name: edge.Name,
+				node: node,
+			})
+		} else if node.Kind == NodeDir {
+			// Directory — classify by whether subtree has new data.
+			if ow.subtreeHasNewData(node.ID) {
+				newDataEntries = append(newDataEntries, commitEntry{
+					name: edge.Name,
+					node: node,
+				})
+			} else {
+				refEntries = append(refEntries, commitEntry{
+					name: edge.Name,
+					node: node,
+				})
+			}
+		} else {
+			// Symlinks, empty files, redirects — no payload advance.
+			refEntries = append(refEntries, commitEntry{
+				name: edge.Name,
+				node: node,
+			})
+		}
 	}
 
-	// Process each merged entry.
-	for i := range entries {
-		if entries[i].node != nil {
-			if err := ow.emitJournalEntry(&entries[i], relPath); err != nil {
+	// Emit all ref entries first, then all new-data entries.
+	for i := range refEntries {
+		if refEntries[i].node != nil {
+			if err := ow.emitJournalEntry(&refEntries[i], relPath); err != nil {
 				return err
 			}
 		} else {
-			if err := ow.emitPxarEntry(&entries[i], relPath); err != nil {
+			if err := ow.emitPxarEntry(&refEntries[i], relPath); err != nil {
+				return err
+			}
+		}
+	}
+	for i := range newDataEntries {
+		if newDataEntries[i].node != nil {
+			if err := ow.emitJournalEntry(&newDataEntries[i], relPath); err != nil {
+				return err
+			}
+		} else {
+			if err := ow.emitPxarEntry(&newDataEntries[i], relPath); err != nil {
 				return err
 			}
 		}
 	}
 
 	return nil
+}
+
+// subtreeHasNewData returns true if the journal subtree rooted at nodeID
+// contains any file nodes with HasData=true (new/modified backed files).
+func (ow *commitWalkState) subtreeHasNewData(nodeID int64) bool {
+	edges, err := ow.mfs.journal.ListEdges(nodeID)
+	if err != nil {
+		return false
+	}
+	for _, e := range edges {
+		node, err := ow.mfs.journal.GetNode(e.ChildID)
+		if err != nil || node == nil {
+			continue
+		}
+		if node.Kind == NodeFile && node.HasData {
+			return true
+		}
+		if node.Kind == NodeDir && ow.subtreeHasNewData(node.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 // emitJournalEntry writes a journal node to the archive.
@@ -668,31 +714,9 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		return nil
 	}
 
-	// Regular file with payload — try chunk reference first.
+	// Regular file with payload — emit as chunk reference.
 	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
-		// Offset monotonicity violated — re-stream file content instead.
-		// The dedup writer handles chunk deduplication, so no extra storage cost.
-		ow.mfs.pxar.readerMu.Lock()
-		rc, rerr := ow.mfs.pxar.Reader().ReadFileContentReader(pxarEntry)
-		ow.mfs.pxar.readerMu.Unlock()
-		if rerr != nil {
-			return fmt.Errorf("write pxar ref %s failed (%v), then read content failed: %w", ce.name, err, rerr)
-		}
-
-		// Read all content into a buffer to avoid size mismatches from
-		// the payload reader (ref entries may have offset inconsistencies
-		// between original and committed archives).
-		content, rerr2 := io.ReadAll(rc)
-		rc.Close()
-		if rerr2 != nil {
-			return fmt.Errorf("read pxar content %s: %w", ce.name, rerr2)
-		}
-
-		clone.FileSize = uint64(len(content))
-		if werr := ow.writer.WriteEntryReader(clone, bytes.NewReader(content), clone.FileSize); werr != nil {
-			return fmt.Errorf("write pxar restream %s: %w", ce.name, werr)
-		}
-		return nil
+		return fmt.Errorf("write pxar ref %s: %w", ce.name, err)
 	}
 	return nil
 }
