@@ -74,6 +74,12 @@ func (fs *MutableFS) SetSnapshotRef(ref snapshotRef) { fs.origSnapshot = ref }
 func (fs *MutableFS) SetACLConfig(cfg ACLConfig)     { fs.acl = cfg }
 func (fs *MutableFS) SetVerbose(v bool)              { fs.verbose = v }
 
+func (fs *MutableFS) debugf(format string, args ...any) {
+	if fs.verbose {
+		fmt.Fprintf(os.Stderr, "  "+format+"\n", args...)
+	}
+}
+
 func (fs *MutableFS) SetStorePaths(pbsStore, ppxarDidx string) {
 	fs.pbsStore = pbsStore
 	fs.origPpxarDidx = ppxarDidx
@@ -105,7 +111,7 @@ func (fs *MutableFS) SetDebug(dbg bool) {}
 
 // Lookup resolves a name in a directory.
 func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
-	fmt.Fprintf(os.Stderr, "  Lookup: parent=%d name=%q\n", header.NodeId, name)
+	fs.debugf("Lookup: parent=%d name=%q", header.NodeId, name)
 	if name == JournalDir {
 		return fuse.ENOENT
 	}
@@ -115,7 +121,7 @@ func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name 
 
 	re, status := fs.resolve(childPath)
 	if status != fuse.OK {
-		fmt.Fprintf(os.Stderr, "  Lookup: resolve(%q)=%s\n", childPath, status)
+		fs.debugf("Lookup: resolve(%q)=%s", childPath, status)
 		return status
 	}
 
@@ -127,9 +133,9 @@ func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name 
 // GetAttr returns attributes.
 func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
-	fmt.Fprintf(os.Stderr, "  GetAttr: ino=%d path=%q\n", input.NodeId, path)
+	fs.debugf("GetAttr: ino=%d path=%q", input.NodeId, path)
 	if path == "" && input.NodeId != RootInode {
-		fmt.Fprintf(os.Stderr, "  GetAttr: ENOENT (no path for ino %d)\n", input.NodeId)
+		fs.debugf("GetAttr: ENOENT (no path for ino %d)", input.NodeId)
 		return fuse.ENOENT
 	}
 	if path == "" {
@@ -138,12 +144,12 @@ func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out 
 
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
-		fmt.Fprintf(os.Stderr, "  GetAttr: resolve(%q) failed: %s\n", path, status)
+		fs.debugf("GetAttr: resolve(%q) failed: %s", path, status)
 		return status
 	}
 
 	fillResolvedAttrOut(re, out)
-	fmt.Fprintf(os.Stderr, "  GetAttr: ok mode=0%o isDir=%v\n", out.Attr.Mode, re.IsDir)
+	fs.debugf("GetAttr: ok mode=0%o isDir=%v", out.Attr.Mode, re.IsDir)
 	return fuse.OK
 }
 
@@ -157,7 +163,7 @@ func (fs *MutableFS) FsyncDir(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.
 
 // ReadDir merges immutable (pxar) and mutable (journal edges) entries.
 func (fs *MutableFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
-	fmt.Fprintf(os.Stderr, "  ReadDir: ino=%d offset=%d\n", input.NodeId, input.Offset)
+	fs.debugf("ReadDir: ino=%d offset=%d", input.NodeId, input.Offset)
 	return fs.readDirImpl(input, out, false)
 }
 
@@ -322,14 +328,14 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 // Open opens a file. For writes, triggers copy-up.
 func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
-	fmt.Fprintf(os.Stderr, "  Open: ino=%d path=%q flags=0x%x\n", input.NodeId, path, input.Flags)
+	fs.debugf("Open: ino=%d path=%q flags=0x%x", input.NodeId, path, input.Flags)
 	if path == "" {
 		return fuse.ENOENT
 	}
 
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
-		fmt.Fprintf(os.Stderr, "  Open: resolve(%q) failed: %s\n", path, status)
+		fs.debugf("Open: resolve(%q) failed: %s", path, status)
 		return status
 	}
 
@@ -338,7 +344,7 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 
 	if isWrite && !re.DataIsMut {
 		if err := fs.copyUp(re); err != nil {
-			fmt.Fprintf(os.Stderr, "  Open: copyUp failed: %v\n", err)
+			fs.debugf("Open: copyUp failed: %v", err)
 			return fuse.ToStatus(err)
 		}
 		re.DataIsMut = true
@@ -348,45 +354,45 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 		abs := fs.mutablePath(path)
 		fd, err := syscall.Open(abs, flags, 0)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Open: syscall.Open(%q) failed: %v\n", abs, err)
+			fs.debugf("Open: syscall.Open(%q) failed: %v", abs, err)
 			return fuse.ToStatus(err)
 		}
 		fhID := fs.registerFh(path, fd)
 		out.Fh = fhID
 		out.OpenFlags = fuse.FOPEN_KEEP_CACHE
-		fmt.Fprintf(os.Stderr, "  Open: mutable fh=%d\n", fhID)
+		fs.debugf("Open: mutable fh=%d", fhID)
 		return fuse.OK
 	}
 
 	out.Fh = 0
 	out.OpenFlags = fuse.FOPEN_KEEP_CACHE
-	fmt.Fprintf(os.Stderr, "  Open: pxar passthrough\n")
+	fs.debugf("Open: pxar passthrough")
 	return fuse.OK
 }
 
 // Read reads data from the appropriate source.
 func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
 	path := fs.inodeToPath(input.NodeId)
-	fmt.Fprintf(os.Stderr, "  Read: ino=%d fh=%d path=%q off=%d sz=%d\n", input.NodeId, input.Fh, path, input.Offset, len(buf))
+	fs.debugf("Read: ino=%d fh=%d path=%q off=%d sz=%d", input.NodeId, input.Fh, path, input.Offset, len(buf))
 	if path == "" {
 		return nil, fuse.ENOENT
 	}
 
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
-		fmt.Fprintf(os.Stderr, "  Read: resolve(%q) failed: %s\n", path, status)
+		fs.debugf("Read: resolve(%q) failed: %s", path, status)
 		return nil, status
 	}
 
 	if re.DataIsMut {
 		fh := fs.getFh(input.Fh)
 		if fh == nil {
-			fmt.Fprintf(os.Stderr, "  Read: EBADF fh=%d\n", input.Fh)
+			fs.debugf("Read: EBADF fh=%d", input.Fh)
 			return nil, fuse.EBADF
 		}
 		n, err := syscall.Pread(fh.fd, buf, int64(input.Offset))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Read: pread err: %v\n", err)
+			fs.debugf("Read: pread err: %v", err)
 			return nil, fuse.ToStatus(err)
 		}
 		if n == 0 {
@@ -397,13 +403,13 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 
 	// Delegate to pxar using its native inode.
 	if re.PxarNode == nil {
-		fmt.Fprintf(os.Stderr, "  Read: no pxar node for %q, re=%+v\n", path, re)
+		fs.debugf("Read: no pxar node for %q, re=%+v", path, re)
 		return nil, fuse.EIO
 	}
 	pxarInput := *input
 	pxarInput.NodeId = re.PxarNode.inode
 	result, status := fs.pxar.Read(cancel, &pxarInput, buf)
-	fmt.Fprintf(os.Stderr, "  Read: pxar delegate ino=%d status=%s\n", pxarInput.NodeId, status)
+	fs.debugf("Read: pxar delegate ino=%d status=%s", pxarInput.NodeId, status)
 	return result, status
 }
 
@@ -1106,10 +1112,16 @@ func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, 
 // --- file handle lifecycle ---
 
 func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
+	if input.Fh == 0 {
+		return fuse.OK // pxar passthrough, no fd to sync
+	}
 	return fs.fsyncInternal(input.NodeId, input.Fh)
 }
 
 func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
+	if input.Fh == 0 {
+		return fuse.OK
+	}
 	return fs.fsyncInternal(input.NodeId, input.Fh)
 }
 
@@ -1125,6 +1137,9 @@ func (fs *MutableFS) fsyncInternal(nodeID, fhID uint64) fuse.Status {
 }
 
 func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
+	if input.Fh == 0 {
+		return // pxar passthrough, no fd to close
+	}
 	fs.fhMu.Lock()
 	if fh, ok := fs.handles[input.Fh]; ok {
 		_ = syscall.Close(fh.fd)
@@ -1274,7 +1289,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 // resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
 	n, err := fs.journal.GetNode(1)
-	fmt.Fprintf(os.Stderr, "  resolveRoot: GetNode(1) err=%v node=%+v\n", err, n)
+	fs.debugf("resolveRoot: GetNode(1) err=%v node=%+v", err, n)
 	if err != nil {
 		return nil, fuse.EIO
 	}
@@ -1309,7 +1324,7 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 	}
 	nodeID, pxarPath, fellOffAt, remaining, err := fs.journal.ResolvePath(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  resolve(%q) ResolvePath err: %v\n", path, err)
+		fs.debugf("resolve(%q) ResolvePath err: %v", path, err)
 		return nil, fuse.EIO
 	}
 
