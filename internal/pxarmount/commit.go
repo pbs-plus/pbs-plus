@@ -2,7 +2,6 @@ package pxarmount
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -168,6 +167,7 @@ type commitEntry struct {
 	name     string
 	node     *GraphNode    // journal node (nil for pure pxar)
 	pxarSlim *dirEntrySlim // pxar slim entry (nil for journal-only)
+	sortKey  uint64        // min descendant payload offset (dirs only)
 }
 
 // commitWalkState holds state for the recursive commit walk.
@@ -466,14 +466,38 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			pxarFiles = append(pxarFiles, commitEntry{name: pe.name, pxarSlim: pe})
 		}
 	}
-	// Sort regular files by payload offset (contentOffset = PayloadOffset
-	// for PXAR_PAYLOAD_REF entries).
-	sort.Slice(pxarFiles, func(i, j int) bool {
-		return pxarFiles[i].pxarSlim.contentOffset < pxarFiles[j].pxarSlim.contentOffset
+	// Sort ALL pxar children (dirs + files + symlinks) by min descendant
+	// payload offset. PBS writes depth-first with strictly ascending
+	// offsets, so sorting by min descendant offset restores the original
+	// write order. Symlinks have no payload but occupy a metadata position
+	// between payload entries — assign them a high sort key so they don't
+	// interfere with monotonicity.
+	for i := range pxarDirs {
+		d := &pxarDirs[i]
+		if d.pxarSlim.isDir {
+			d.sortKey = ow.minPayloadOffset(d.pxarSlim)
+		} else {
+			// Symlink — no payload, emit in original order
+			d.sortKey = d.pxarSlim.contentOffset
+		}
+	}
+	allEntries := make([]commitEntry, 0, len(pxarDirs)+len(pxarFiles))
+	allEntries = append(allEntries, pxarDirs...)
+	allEntries = append(allEntries, pxarFiles...)
+	for i := range allEntries {
+		e := &allEntries[i]
+		if e.pxarSlim.isDir {
+			// already set above
+		} else if e.pxarSlim.isSymlink {
+			e.sortKey = e.pxarSlim.contentOffset
+		} else {
+			e.sortKey = e.pxarSlim.contentOffset
+		}
+	}
+	sort.Slice(allEntries, func(i, j int) bool {
+		return allEntries[i].sortKey < allEntries[j].sortKey
 	})
-	// Directories first (depth-first, metadata order), then sorted files.
-	refEntries = append(refEntries, pxarDirs...)
-	refEntries = append(refEntries, pxarFiles...)
+	refEntries = append(refEntries, allEntries...)
 
 	// Classify journal edges by whether they emit new data.
 	for i := range journalEdges {
@@ -687,6 +711,41 @@ func (ow *commitWalkState) emitRedirectedFile(node *GraphNode, name string, meta
 	return nil
 }
 
+// minPayloadOffset returns the minimum contentOffset across a directory's
+// immediate file children. Directories are recursed; symlinks are skipped
+// (they have no payload). Used to sort sibling directories so depth-first
+// traversal produces ascending payload offsets.
+func (ow *commitWalkState) minPayloadOffset(slim *dirEntrySlim) uint64 {
+	ino := slim.inode
+	if cached, ok := ow.pxarDirCache[ino]; ok {
+		return ow.minPayloadFromEntries(cached)
+	}
+	entries, err := ow.mfs.pxar.ReadDirRaw(ino)
+	if err != nil || len(entries) == 0 {
+		return slim.contentOffset // fallback: use dir's own offset
+	}
+	ow.pxarDirCache[ino] = entries
+	return ow.minPayloadFromEntries(entries)
+}
+
+func (ow *commitWalkState) minPayloadFromEntries(entries []dirEntrySlim) uint64 {
+	minOff := uint64(0)
+	for i := range entries {
+		e := &entries[i]
+		if e.isDir {
+			sub := ow.minPayloadOffset(e)
+			if minOff == 0 || sub < minOff {
+				minOff = sub
+			}
+		} else if !e.isSymlink && e.contentOffset > 0 {
+			if minOff == 0 || e.contentOffset < minOff {
+				minOff = e.contentOffset
+			}
+		}
+	}
+	return minOff
+}
+
 // emitPxarEntry writes a pure pxar entry to the archive.
 func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
@@ -734,28 +793,12 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		return nil
 	}
 
-	// Regular file with payload.
-	// Try chunk reference first (efficient). If monotonicity fails
-	// (non-monotonic offsets in source archive), fall back to re-streaming
-	// the file content via WriteEntryReader. This mirrors the Rust
-	// client's try_record_strictly_greater + re-encode pattern.
+	// Regular file with payload — emit as chunk reference.
+	// Offset must be monotonically increasing. The walk sorts entries
+	// by payload offset within each directory and sorts directories
+	// by min descendant offset to ensure monotonicity.
 	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
-		ow.mfs.pxar.readerMu.Lock()
-		rc, rerr := ow.mfs.pxar.Reader().ReadFileContentReader(pxarEntry)
-		ow.mfs.pxar.readerMu.Unlock()
-		if rerr != nil {
-			return fmt.Errorf("write pxar ref %s failed (%v), read content also failed: %w", ce.name, err, rerr)
-		}
-		content, rerr2 := io.ReadAll(rc)
-		rc.Close()
-		if rerr2 != nil {
-			return fmt.Errorf("read pxar content %s: %w", ce.name, rerr2)
-		}
-		clone.FileSize = uint64(len(content))
-		if werr := ow.writer.WriteEntryReader(clone, bytes.NewReader(content), clone.FileSize); werr != nil {
-			return fmt.Errorf("write pxar restream %s: %w", ce.name, werr)
-		}
-		return nil
+		return fmt.Errorf("write pxar ref %s (offset %d): %w", ce.name, pxarEntry.PayloadOffset, err)
 	}
 	return nil
 }
