@@ -947,27 +947,38 @@ func snapshotGroupDir(pbsStore, backupType, backupID, namespace string) string {
 
 // ParseOrigSnapshot extracts snapshot metadata from the original DIDX path.
 func ParseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
-	parts := strings.Split(filepath.ToSlash(ppxarDidx), "/")
-	ref := snapshotRef{
-		BackupType: "host",
-		BackupID:   "orig",
-		Namespace:  "ns",
-	}
-	// Extract namespace and backup ID from path like .../ns/test/ns/sgprog/host/...
-	for i, p := range parts {
-		if p == "ns" && i+1 < len(parts) {
-			if ref.Namespace == "ns" {
-				ref.Namespace = parts[i+1]
+	rel := strings.TrimPrefix(ppxarDidx, pbsStore)
+	rel = strings.TrimPrefix(rel, "/")
+	parts := strings.Split(rel, "/")
+
+	var ref snapshotRef
+	if len(parts) >= 4 {
+		filename := parts[len(parts)-1]
+		ref.ArchiveName = strings.TrimSuffix(filename, ".didx")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".mpxar")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".ppxar")
+		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".pxar")
+
+		_, _ = fmt.Sscanf(parts[len(parts)-2], "%d", &ref.BackupTime)
+		ref.BackupID = parts[len(parts)-3]
+		ref.BackupType = parts[len(parts)-4]
+		if len(parts) > 4 {
+			nsParts := parts[:len(parts)-4]
+			var clean []string
+			for i := 0; i < len(nsParts); i++ {
+				if nsParts[i] == "ns" && i+1 < len(nsParts) {
+					i++
+					clean = append(clean, nsParts[i])
+				}
 			}
+			ref.Namespace = strings.Join(clean, "/")
 		}
 	}
-	for i, p := range parts {
-		if p == "host" && i+1 < len(parts) {
-			ref.BackupID = parts[i+1]
-		}
-		if p == "ct" && i+1 < len(parts) {
-			ref.BackupID = parts[i+1]
-		}
+	if ref.BackupType == "" {
+		ref.BackupType = "host"
+	}
+	if ref.ArchiveName == "" {
+		ref.ArchiveName = ref.BackupID
 	}
 	return ref
 }
