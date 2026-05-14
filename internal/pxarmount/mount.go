@@ -7,10 +7,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pxar/transfer"
+	"golang.org/x/sys/unix"
 )
 
 // MountConfig holds all parameters needed to start a pxar-mount FUSE server.
@@ -177,18 +177,37 @@ func Serve(cfg MountConfig) {
 		fmt.Fprintf(os.Stderr, "  %s: serving at %s\n", mode, cfg.MountPoint)
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, unix.SIGINT, unix.SIGTERM)
 	go func() {
 		<-sigCh
+
+		// Stop accepting new commit connections.
 		if sockListener != nil {
 			_ = sockListener.Close()
 		}
-		if ptFSClose != nil {
-			ptFSClose()
+
+		// Flush pending transactions to disk before unmounting.
+		if ptFS, ok := rawFS.(*PassthroughFS); ok && ptFS.txnLog != nil {
+			_ = ptFS.txnLog.Sync()
 		}
-		_ = server.Unmount()
+
+		// Unmount the FUSE filesystem so Serve() can exit.
+		// If graceful unmount fails (e.g. busy mount), force-detach
+		// from the kernel via MNT_DETACH.
+		if err := server.Unmount(); err != nil {
+			_ = unix.Unmount(cfg.MountPoint, unix.MNT_DETACH)
+		}
+
+		// Second signal: force exit.
+		<-sigCh
+		os.Exit(1)
 	}()
 
 	server.Serve()
+
+	// Cleanup after Serve() returns (Unmount was called by signal handler).
+	if ptFSClose != nil {
+		ptFSClose()
+	}
 }

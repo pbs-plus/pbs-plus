@@ -2089,6 +2089,7 @@ func (fs *PassthroughFS) Close() {
 	fs.fhmu.Unlock()
 
 	if fs.txnLog != nil {
+		_ = fs.txnLog.Sync()
 		_ = fs.txnLog.Close()
 	}
 }
