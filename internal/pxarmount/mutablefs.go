@@ -121,6 +121,7 @@ func (fs *MutableFS) SetDebug(dbg bool) {}
 func (fs *MutableFS) waitIfFrozen() {
 	fs.freezeMu.Lock()
 	for fs.frozen {
+		fs.debugf("waitIfFrozen: blocked")
 		fs.freezeCond.Wait()
 	}
 	fs.freezeMu.Unlock()
@@ -567,6 +568,7 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 // Create creates a new file.
 func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name string, out *fuse.CreateOut) fuse.Status {
 	fs.waitIfFrozen()
+	fs.debugf("Create: parent=%d name=%q", input.NodeId, name)
 	parentPath := fs.inodeToPath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
