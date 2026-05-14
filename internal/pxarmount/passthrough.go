@@ -941,6 +941,9 @@ func (fs *PassthroughFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, na
 		fs.applyACLOwnership(abs, false)
 		return fs.finishCreate(ino, fd, out)
 	}
+	if createErr != syscall.EEXIST {
+		return fuse.ToStatus(createErr)
+	}
 
 	ino, _ := fs.lookupOrAllocIno(childPath, false)
 	fs.setNode(ino, childPath, true)
