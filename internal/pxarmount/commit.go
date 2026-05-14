@@ -12,13 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	pxar "github.com/pbs-plus/pxar"
-	"github.com/pbs-plus/pxar/accessor"
 	"github.com/pbs-plus/pxar/backupproxy"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
@@ -165,10 +163,9 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 
 // commitEntry represents one item in the merged directory view during commit walk.
 type commitEntry struct {
-	name       string
-	node       *GraphNode    // journal node (nil for pure pxar)
-	pxarSlim   *dirEntrySlim // pxar slim entry (nil for journal-only)
-	pxarOffset uint64        // sort key: pxar payload/entry offset
+	name     string
+	node     *GraphNode    // journal node (nil for pure pxar)
+	pxarSlim *dirEntrySlim // pxar slim entry (nil for journal-only)
 }
 
 // commitWalkState holds state for the recursive commit walk.
@@ -439,59 +436,45 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	}
 
 	// Build merged entry list.
+	//
+	// Architectural decision: emit pxar entries in their ORIGINAL metadata order
+	// (which has ascending payload offsets), then journal entries last.
+	//
+	// The pxar encoder requires strictly ascending payload offsets across ALL
+	// WriteEntryRef and WriteEntryReader calls. The original archive's metadata
+	// order IS ascending because PBS writes depth-first with monotonic offsets.
+	// Journal entries use WriteEntryReader (new offsets assigned by the writer)
+	// so they always sort after all refs.
+	//
+	// Sorting by offset within each directory doesn't guarantee global monotonicity
+	// because walking a directory's children can advance lastPayloadOffset past
+	// sibling entries. Original metadata order avoids this.
 	var entries []commitEntry
 
-	// Add journal edges.
+	// Phase 1: pxar entries in original metadata order.
+	for i := range pxarEntries {
+		pe := &pxarEntries[i]
+		if edgeNames[pe.name] || whiteoutSet[pe.name] {
+			continue
+		}
+		entries = append(entries, commitEntry{
+			name:     pe.name,
+			pxarSlim: pe,
+		})
+	}
+
+	// Phase 2: journal edges (new/modified entries) after all pxar refs.
 	for i := range journalEdges {
 		edge := &journalEdges[i]
 		node, err := ow.mfs.journal.GetNode(edge.ChildID)
 		if err != nil || node == nil {
 			continue
 		}
-
-		pxarOffset := ^uint64(0) // sort last by default
-
-		// If node wraps pxar content, resolve its payload offset for sorting.
-		if node.RedirectTo != "" && !node.HasData {
-			if pe := resolvePxarPayloadOffset(ow, node.RedirectTo); pe != 0 {
-				pxarOffset = pe
-			}
-		}
-		// If pxar has an entry with the same name, use its offset for locality.
-		if pxarOffset == ^uint64(0) {
-			if pe, ok := pxarByName[edge.Name]; ok {
-				pxarOffset = pe.entryStart
-			}
-		}
-
 		entries = append(entries, commitEntry{
-			name:       edge.Name,
-			node:       node,
-			pxarOffset: pxarOffset,
+			name: edge.Name,
+			node: node,
 		})
 	}
-
-	// Add non-overridden, non-whited-out pxar entries.
-	for i := range pxarEntries {
-		pe := &pxarEntries[i]
-		if edgeNames[pe.name] || whiteoutSet[pe.name] {
-			continue
-		}
-		offset := pe.contentOffset
-		if pe.isDir {
-			offset = minDescendantOffset(ow, pe.inode)
-		}
-		entries = append(entries, commitEntry{
-			name:       pe.name,
-			pxarSlim:   pe,
-			pxarOffset: offset,
-		})
-	}
-
-	// Sort by pxar offset for sequential payload access.
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].pxarOffset < entries[j].pxarOffset
-	})
 
 	// Process each merged entry.
 	for i := range entries {
@@ -673,8 +656,18 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		return nil
 	}
 
-	// Non-directory pxar entry — emit as chunk reference.
+	// Non-directory pxar entry.
 	clone := clonePxarEntry(pxarEntry, ce.name)
+
+	if pxarEntry.IsSymlink() {
+		// Symlinks have no payload — write inline.
+		if err := ow.writer.WriteEntry(clone, nil); err != nil {
+			return fmt.Errorf("write pxar symlink %s: %w", ce.name, err)
+		}
+		return nil
+	}
+
+	// Regular file or other entry with payload — emit as chunk reference.
 	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
 		return fmt.Errorf("write pxar ref %s: %w", ce.name, err)
 	}
@@ -767,118 +760,6 @@ func resolvePxarEntry(mfs *MutableFS, relPath string) (*pxar.Entry, error) {
 		}
 	}
 	return nil, fmt.Errorf("path %q not found", relPath)
-}
-
-// resolvePxarPayloadOffset resolves the payload offset for a pxar path.
-// Returns 0 if not found.
-func resolvePxarPayloadOffset(ow *commitWalkState, relPath string) uint64 {
-	parts := splitPath(relPath)
-	curIno := RootInode
-
-	var target dirEntrySlim
-	found := false
-
-	for i, comp := range parts {
-		entries, ok := ow.pxarDirCache[curIno]
-		if !ok {
-			var err error
-			entries, err = ow.mfs.pxar.ReadDirRaw(curIno)
-			if err != nil {
-				return 0
-			}
-			ow.pxarDirCache[curIno] = entries
-		}
-		for _, e := range entries {
-			if e.name == comp {
-				if i == len(parts)-1 {
-					target = e
-					found = true
-				} else {
-					curIno = e.inode
-				}
-				break
-			}
-		}
-	}
-
-	if !found {
-		return 0
-	}
-
-	if !target.isDir {
-		return target.contentOffset
-	}
-	return minDescendantOffset(ow, target.inode)
-}
-
-// minDescendantOffset returns the minimum content offset among all regular
-// file descendants of the pxar directory identified by inode.
-// minDescendantOffset returns the minimum content offset among all regular
-// file descendants of the pxar directory identified by inode.
-// Reads directories directly from the reader using contentOffset to avoid
-// requiring nodes to be registered in PxarFS's node map.
-func minDescendantOffset(ow *commitWalkState, pxarInode uint64) uint64 {
-	entries, ok := ow.pxarDirCache[pxarInode]
-	if !ok {
-		entries = ow.readDirForOffset(pxarInode)
-		ow.pxarDirCache[pxarInode] = entries
-	}
-	min := ^uint64(0)
-	for i := range entries {
-		e := &entries[i]
-		if e.isDir {
-			child := minDescendantOffset(ow, e.inode)
-			if child < min {
-				min = child
-			}
-		} else if e.isReg && e.contentOffset < min {
-			min = e.contentOffset
-		}
-	}
-	return min
-}
-
-// readDirForOffset reads directory entries directly using the contentOffset
-// stored in the slim entry, bypassing PxarFS's node registry.
-func (ow *commitWalkState) readDirForOffset(dirInode uint64) []dirEntrySlim {
-	// Look up contentOffset from the already-listed parent's entries.
-	// The dirEntrySlim for a directory stores its contentOffset.
-	for _, entries := range ow.pxarDirCache {
-		for i := range entries {
-			if entries[i].inode == dirInode && entries[i].isDir {
-				return ow.listDirAtOffset(entries[i].contentOffset)
-			}
-		}
-	}
-	return nil
-}
-
-// listDirAtOffset reads directory entries at a content offset directly from
-// the pxar reader, bypassing PxarFS's node registry.
-func (ow *commitWalkState) listDirAtOffset(contentOffset uint64) []dirEntrySlim {
-	ow.mfs.pxar.readerMu.Lock()
-	defer ow.mfs.pxar.readerMu.Unlock()
-
-	var result []dirEntrySlim
-	ow.mfs.pxar.Reader().ListDirectory(int64(contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
-		result = append(result, dirEntrySlim{
-			name:          e.FileName(),
-			inode:         toInode(e),
-			mode:          statMode(e.Metadata.Stat.Mode),
-			entryStart:    e.FileOffset,
-			contentOffset: e.ContentOffset,
-			fileSize:      e.FileSize,
-			uid:           e.Metadata.Stat.UID,
-			gid:           e.Metadata.Stat.GID,
-			mtimeSecs:     e.Metadata.Stat.Mtime.Secs,
-			mtimeNanos:    e.Metadata.Stat.Mtime.Nanos,
-			isDir:         e.IsDir(),
-			isSymlink:     e.IsSymlink(),
-			isReg:         e.IsRegularFile(),
-		})
-		return nil
-	})
-	return result
 }
 
 // verifyBackedFileHashes checks that backed files haven't changed since upload.
