@@ -70,6 +70,11 @@ func Serve(cfg MountConfig) {
 			os.Exit(1)
 		}
 
+		// Reconcile orphan disk entries with journal on startup.
+		if err := mfs.ReconcileMutableDir(); err != nil && cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "  warning: reconcile error: %v\n", err)
+		}
+
 		// Apply default ownership and force-walk if requested.
 		mfs.applyACLOwnership(backingDir, true)
 		mfs.ForceACLOwnership()
