@@ -829,7 +829,15 @@ func resolvePxarPayloadOffset(ow *commitWalkState, relPath string) uint64 {
 func minDescendantOffset(ow *commitWalkState, pxarInode uint64) uint64 {
 	entries, ok := ow.pxarDirCache[pxarInode]
 	if !ok {
-		entries, _ = ow.mfs.pxar.ReadDirRaw(pxarInode)
+		var err error
+		entries, err = ow.mfs.pxar.ReadDirRaw(pxarInode)
+		if err != nil {
+			if f, fe := os.OpenFile("/tmp/commit-sort.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); fe == nil {
+				fmt.Fprintf(f, "minDesc: ReadDirRaw(%d) err=%v\n", pxarInode, err)
+				f.Close()
+			}
+			return ^uint64(0)
+		}
 		ow.pxarDirCache[pxarInode] = entries
 	}
 	min := ^uint64(0)
@@ -843,6 +851,10 @@ func minDescendantOffset(ow *commitWalkState, pxarInode uint64) uint64 {
 		} else if e.isReg && e.contentOffset < min {
 			min = e.contentOffset
 		}
+	}
+	if f, fe := os.OpenFile("/tmp/commit-sort.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); fe == nil {
+		fmt.Fprintf(f, "minDesc(%d): entries=%d min=%d\n", pxarInode, len(entries), min)
+		f.Close()
 	}
 	return min
 }
