@@ -474,8 +474,12 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		name       string
 		entryStart uint64
 		backed     bool
+		renamed    bool // pxar entry renamed into this dir via overlay
 	}
 	var entries []posEntry
+
+	// Track names already covered (pxar + backed) to avoid duplicates from renames.
+	nameSet := make(map[string]bool)
 
 	for _, pe := range pxarEntries {
 		if backedSet[pe.name] {
@@ -488,8 +492,8 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		entries = append(entries, posEntry{
 			name:       pe.name,
 			entryStart: pe.entryStart,
-			backed:     false,
 		})
+		nameSet[pe.name] = true
 	}
 
 	for _, name := range backedNames {
@@ -502,7 +506,45 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 			entryStart: fo,
 			backed:     true,
 		})
+		nameSet[name] = true
 	}
+
+	// Collect renamed pxar entries so they sort by payload offset.
+	var renamedEntries []posEntry
+	if fs.mutationMode {
+		prefix := relPath + "/"
+		if relPath == "/" {
+			prefix = "/"
+		}
+		fs.mu.RLock()
+		for newPath, mo := range fs.metaOverlay {
+			if mo.renameFrom == "" {
+				continue
+			}
+			if !strings.HasPrefix(newPath, prefix) {
+				continue
+			}
+			childName := newPath[len(prefix):]
+			if strings.Contains(childName, "/") {
+				continue
+			}
+			if nameSet[childName] {
+				continue // already covered by pxar or backed
+			}
+			// Resolve the original pxar entry to get entryStart for sorting.
+			srcPxar, err := fs.resolvePxarEntry(mo.renameFrom)
+			if err != nil {
+				continue
+			}
+			renamedEntries = append(renamedEntries, posEntry{
+				name:       childName,
+				entryStart: srcPxar.PayloadOffset,
+				renamed:    true,
+			})
+		}
+		fs.mu.RUnlock()
+	}
+	entries = append(entries, renamedEntries...)
 
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].entryStart < entries[j].entryStart
@@ -600,6 +642,45 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 			continue
 		}
 
+		// Renamed pxar entry — resolve original and emit as ref.
+		if we.renamed {
+			fs.mu.RLock()
+			mo := fs.metaOverlay[childRel]
+			renameFrom := ""
+			if mo != nil {
+				renameFrom = mo.renameFrom
+			}
+			fs.mu.RUnlock()
+			if renameFrom == "" {
+				continue
+			}
+			pxarEntry, err := fs.resolvePxarEntry(renameFrom)
+			if err != nil {
+				continue
+			}
+			childIno := ToInode(pxarEntry)
+			if pxarEntry.IsDir() {
+				meta := buildMetaFromEntry(pxarEntry)
+				applyOverlayToMeta(childRel, &meta, fs.metaOverlay)
+				if err := ow.writer.BeginDirectory(we.name, &meta); err != nil {
+					return fmt.Errorf("begin renamed dir %s: %w", we.name, err)
+				}
+				if err := fs.walkOverlay(ow, childIno, childRel); err != nil {
+					return err
+				}
+				if err := ow.writer.EndDirectory(); err != nil {
+					return fmt.Errorf("end renamed dir %s: %w", we.name, err)
+				}
+				continue
+			}
+			entry := cloneEntryWithName(pxarEntry, we.name)
+			applyOverlayToMeta(childRel, &entry.Metadata, fs.metaOverlay)
+			if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
+				return fmt.Errorf("write renamed pxar ref %s: %w", we.name, err)
+			}
+			continue
+		}
+
 		// pxar entry — use chunk reference (no data read).
 		if we.entryStart == 0 {
 			continue
@@ -638,13 +719,6 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		fs.mu.RUnlock()
 		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
 			return fmt.Errorf("write pxar ref %s: %w", we.name, err)
-		}
-	}
-
-	// Emit renamed-in pxar entries: overlay entries with renameFrom in this directory.
-	if fs.mutationMode {
-		if err := fs.emitRenamedEntries(ow, relPath); err != nil {
-			return err
 		}
 	}
 
@@ -778,66 +852,6 @@ func applyOverlayToMeta(relPath string, meta *pxar.Metadata, overlay map[string]
 		}
 		meta.XAttrs = kept
 	}
-}
-
-// emitRenamedEntries scans the metaOverlay for entries with renameFrom
-// that are direct children of dirRelPath, and emits them using their
-// original pxar entry data but with the new name.
-func (fs *PassthroughFS) emitRenamedEntries(ow *overlayWalk, dirRelPath string) error {
-	prefix := dirRelPath + "/"
-	if dirRelPath == "/" {
-		prefix = "/"
-	}
-
-	fs.mu.RLock()
-	for newPath, mo := range fs.metaOverlay {
-		if mo.renameFrom == "" {
-			continue
-		}
-		// Only emit direct children of dirRelPath.
-		if !strings.HasPrefix(newPath, prefix) {
-			continue
-		}
-		childName := newPath[len(prefix):]
-		if strings.Contains(childName, "/") {
-			continue // not a direct child
-		}
-
-		// Resolve the original pxar entry.
-		pxarEntry, err := fs.resolvePxarEntry(mo.renameFrom)
-		if err != nil {
-			continue
-		}
-
-		childIno := ToInode(pxarEntry)
-
-		if pxarEntry.IsDir() {
-			meta := buildMetaFromEntry(pxarEntry)
-			applyOverlayToMeta(newPath, &meta, fs.metaOverlay)
-			if err := ow.writer.BeginDirectory(childName, &meta); err != nil {
-				fs.mu.RUnlock()
-				return fmt.Errorf("begin renamed dir %s: %w", childName, err)
-			}
-			if err := fs.walkOverlay(ow, childIno, newPath); err != nil {
-				fs.mu.RUnlock()
-				return err
-			}
-			if err := ow.writer.EndDirectory(); err != nil {
-				fs.mu.RUnlock()
-				return fmt.Errorf("end renamed dir %s: %w", childName, err)
-			}
-			continue
-		}
-
-		entry := cloneEntryWithName(pxarEntry, childName)
-		applyOverlayToMeta(newPath, &entry.Metadata, fs.metaOverlay)
-		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
-			fs.mu.RUnlock()
-			return fmt.Errorf("write renamed pxar ref %s: %w", childName, err)
-		}
-	}
-	fs.mu.RUnlock()
-	return nil
 }
 
 // resolvePxarEntry walks the pxar archive to find the entry at relPath
