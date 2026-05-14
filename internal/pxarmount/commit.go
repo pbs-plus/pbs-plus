@@ -639,6 +639,13 @@ func (fs *PassthroughFS) walkOverlay(ow *overlayWalk, pxarIno uint64, relPath st
 		}
 	}
 
+	// Emit renamed-in pxar entries: overlay entries with renameFrom in this directory.
+	if fs.mutationMode {
+		if err := fs.emitRenamedEntries(ow, relPath); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -766,6 +773,103 @@ func applyOverlayToMeta(relPath string, meta *pxar.Metadata, overlay map[string]
 		}
 		meta.XAttrs = kept
 	}
+}
+
+// emitRenamedEntries scans the metaOverlay for entries with renameFrom
+// that are direct children of dirRelPath, and emits them using their
+// original pxar entry data but with the new name.
+func (fs *PassthroughFS) emitRenamedEntries(ow *overlayWalk, dirRelPath string) error {
+	prefix := dirRelPath + "/"
+	if dirRelPath == "/" {
+		prefix = "/"
+	}
+
+	for newPath, mo := range fs.metaOverlay {
+		if mo.renameFrom == "" {
+			continue
+		}
+		// Only emit direct children of dirRelPath.
+		if !strings.HasPrefix(newPath, prefix) {
+			continue
+		}
+		childName := newPath[len(prefix):]
+		if strings.Contains(childName, "/") {
+			continue // not a direct child
+		}
+
+		// Resolve the original pxar entry.
+		pxarEntry, err := fs.resolvePxarEntry(mo.renameFrom)
+		if err != nil {
+			continue
+		}
+
+		childIno := ToInode(pxarEntry)
+
+		if pxarEntry.IsDir() {
+			meta := buildMetaFromEntry(pxarEntry)
+			applyOverlayToMeta(newPath, &meta, fs.metaOverlay)
+			if err := ow.writer.BeginDirectory(childName, &meta); err != nil {
+				return fmt.Errorf("begin renamed dir %s: %w", childName, err)
+			}
+			if err := fs.walkOverlay(ow, childIno, newPath); err != nil {
+				return err
+			}
+			if err := ow.writer.EndDirectory(); err != nil {
+				return fmt.Errorf("end renamed dir %s: %w", childName, err)
+			}
+			continue
+		}
+
+		entry := cloneEntryWithName(pxarEntry, childName)
+		applyOverlayToMeta(newPath, &entry.Metadata, fs.metaOverlay)
+		if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
+			return fmt.Errorf("write renamed pxar ref %s: %w", childName, err)
+		}
+	}
+	return nil
+}
+
+// resolvePxarEntry walks the pxar archive to find the entry at relPath
+// and returns it. Returns an error if the path cannot be resolved.
+func (fs *PassthroughFS) resolvePxarEntry(relPath string) (*pxar.Entry, error) {
+	// Walk from root to the target path.
+	components := strings.Split(strings.Trim(relPath, "/"), "/")
+	if len(components) == 0 || components[0] == "" {
+		// Root entry.
+		return nil, fmt.Errorf("cannot resolve root")
+	}
+
+	curIno := RootInode
+	for i, comp := range components {
+		entries, err := fs.pxar.ReadDirRaw(curIno)
+		if err != nil {
+			return nil, fmt.Errorf("readdir ino %d: %w", curIno, err)
+		}
+		found := false
+		for _, e := range entries {
+			if e.name == comp {
+				fs.pxar.readerMu.Lock()
+				pxarEntry, err := fs.pxar.reader.ReadEntryAt(int64(e.entryStart))
+				fs.pxar.readerMu.Unlock()
+				if err != nil {
+					return nil, fmt.Errorf("read entry at %d: %w", e.entryStart, err)
+				}
+				if i == len(components)-1 {
+					return pxarEntry, nil
+				}
+				if pxarEntry.IsDir() {
+					curIno = ToInode(pxarEntry)
+					found = true
+					break
+				}
+				return nil, fmt.Errorf("%s is not a directory", comp)
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("component %q not found in ino %d", comp, curIno)
+		}
+	}
+	return nil, fmt.Errorf("path %q not found", relPath)
 }
 
 // RunCommitSubcommand is the CLI entry point for `pxar-mount commit`.

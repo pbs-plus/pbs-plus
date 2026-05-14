@@ -32,14 +32,15 @@ type ACLConfig struct {
 // These are applied in-memory until the file is materialized (for content writes)
 // or committed. This avoids copying entire file contents just for chmod/chown/xattr.
 type metaOverride struct {
-	mode  *uint32
-	uid   *uint32
-	gid   *uint32
-	mtime *int64
-	atime *int64
-	size  *uint64
-	xadd  map[string][]byte // xattrs to add/replace
-	xdel  map[string]bool   // xattrs to remove
+	mode       *uint32
+	uid        *uint32
+	gid        *uint32
+	mtime      *int64
+	atime      *int64
+	size       *uint64
+	xadd       map[string][]byte // xattrs to add/replace
+	xdel       map[string]bool   // xattrs to remove
+	renameFrom string            // original pxar relPath if this entry was renamed (not materialized)
 }
 
 type PassthroughFS struct {
@@ -534,7 +535,28 @@ func (fs *PassthroughFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, n
 			fs.nodePaths[header.NodeId] = parentPath
 		}
 		fs.mu.Unlock()
+		return st
 	}
+
+	// Check if this is a renamed pxar entry in the overlay.
+	if fs.mutationMode {
+		if mo := fs.getOverlay(childPath); mo != nil && mo.renameFrom != "" {
+			// Resolve the original pxar inode from the renameFrom path.
+			if ino, ok := fs.pathToIno[childPath]; ok {
+				if n := fs.getPxarNode(ino); n != nil {
+					fillEntryOut(ino, n, out)
+					fs.setNode(ino, childPath, n.isDir)
+					if n.isDir {
+						fs.mu.Lock()
+						fs.pxarDir[ino] = true
+						fs.mu.Unlock()
+					}
+					return fuse.OK
+				}
+			}
+		}
+	}
+
 	return st
 }
 
@@ -653,6 +675,22 @@ func (fs *PassthroughFS) RebuildOverlayFromLog() error {
 			mo := fs.getOrCreateOverlay(txn.Path)
 			delete(mo.xadd, txn.XAttr.Name)
 			mo.xdel[txn.XAttr.Name] = true
+		case TxnRename:
+			// Replay rename: mark old path deleted, set renameFrom at new path.
+			if txn.NewPath == "" {
+				continue
+			}
+			fs.markPathDeleted(txn.Path)
+			fs.unDeletePath(txn.NewPath)
+
+			// Resolve rename chains: find the ultimate source.
+			origSrcPath := txn.Path
+			if prevMo := fs.metaOverlay[txn.Path]; prevMo != nil && prevMo.renameFrom != "" {
+				origSrcPath = prevMo.renameFrom
+			}
+
+			mo := fs.getOrCreateOverlay(txn.NewPath)
+			mo.renameFrom = origSrcPath
 		}
 	}
 	return nil
@@ -1115,33 +1153,23 @@ func (fs *PassthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	wasDeleted := fs.isPathDeleted(newPath)
 
-	if fs.mutationMode {
-		if oldIsPxar {
-			if entries, err := fs.pxar.ReadDirRaw(input.NodeId); err == nil {
-				for _, e := range entries {
-					if e.name == oldName {
-						fs.pxar.RegisterSlimNode(&e, input.NodeId)
-						ino := e.inode
-						if e.isDir {
-							fs.materializePxarDir(ino, oldPath)
-						} else {
-							if _, err := fs.materializePxarFile(ino); err != nil {
-								return fuse.ToStatus(err)
-							}
-						}
-						break
-					}
-				}
-			}
-		}
-
-		if newIsPxar && input.Flags&renameExchange == 0 {
-			fs.markPathDeleted(newPath)
-		}
+	// --- exchange rename: materialize both sides (complex bidirectional swap) ---
+	if input.Flags&renameExchange != 0 {
+		return fs.renameExchange(input, oldPath, newPath, oldName, newName, oldIsPxar, newIsPxar, wasDeleted)
 	}
 
-	oldAbs := fs.absPath(oldPath)
+	// Mark destination as deleted if overwriting a pxar entry.
+	if fs.mutationMode && newIsPxar {
+		fs.markPathDeleted(newPath)
+	}
 
+	// --- pxar→pxar rename: no materialization needed ---
+	if oldIsPxar && fs.mutationMode {
+		return fs.renamePxarEntry(input, oldPath, newPath, oldName, newName, wasDeleted)
+	}
+
+	// --- backed source: filesystem rename ---
+	oldAbs := fs.absPath(oldPath)
 	if _, err := os.Lstat(oldAbs); err != nil {
 		if wasDeleted {
 			fs.markPathDeleted(newPath)
@@ -1162,10 +1190,6 @@ func (fs *PassthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	newAbs := fs.absPath(newPath)
 
-	if oldIsPxar && fs.mutationMode {
-		fs.markPathDeleted(oldPath)
-	}
-
 	if input.Flags&renameNoReplace != 0 {
 		if _, err := os.Lstat(newAbs); err == nil {
 			if wasDeleted {
@@ -1173,57 +1197,6 @@ func (fs *PassthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 			}
 			return fuse.Status(syscall.EEXIST)
 		}
-		if err := os.Rename(oldAbs, newAbs); err != nil {
-			if wasDeleted {
-				fs.markPathDeleted(newPath)
-			}
-			return fuse.ToStatus(err)
-		}
-		fs.renamePaths(oldPath, newPath)
-
-		if oldIsPxar && fs.txnLog != nil {
-			_, _ = fs.txnLog.RecordRename(oldPath, newPath)
-		}
-		return fuse.OK
-	}
-
-	if input.Flags&renameExchange != 0 {
-		if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
-			if wasDeleted {
-				fs.markPathDeleted(newPath)
-			}
-			return fuse.ToStatus(err)
-		}
-
-		fs.mu.Lock()
-		oldIno, oldOk := fs.pathToIno[oldPath]
-		newIno, newOk := fs.pathToIno[newPath]
-
-		if oldOk && newOk {
-			fs.nodePaths[oldIno] = newPath
-			fs.nodePaths[newIno] = oldPath
-			fs.pathToIno[oldPath] = newIno
-			fs.pathToIno[newPath] = oldIno
-		} else if oldOk {
-			delete(fs.pathToIno, oldPath)
-			fs.nodePaths[oldIno] = newPath
-			fs.pathToIno[newPath] = oldIno
-		} else if newOk {
-			delete(fs.pathToIno, newPath)
-			fs.nodePaths[newIno] = oldPath
-			fs.pathToIno[oldPath] = newIno
-		}
-		fs.mu.Unlock()
-
-		if fs.txnLog != nil {
-			if oldIsPxar {
-				_, _ = fs.txnLog.RecordRename(oldPath, newPath)
-			}
-			if newIsPxar {
-				_, _ = fs.txnLog.RecordRename(newPath, oldPath)
-			}
-		}
-		return fuse.OK
 	}
 
 	if err := os.Rename(oldAbs, newAbs); err != nil {
@@ -1236,6 +1209,199 @@ func (fs *PassthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 
 	if oldIsPxar && fs.txnLog != nil {
 		_, _ = fs.txnLog.RecordRename(oldPath, newPath)
+	}
+	return fuse.OK
+}
+
+// renamePxarEntry handles rename of a pxar-backed entry without materialization.
+// It updates inode path mappings, marks the old path deleted, and records the
+// rename in the overlay so the commit walk emits it at the new location.
+func (fs *PassthroughFS) renamePxarEntry(input *fuse.RenameIn, oldPath, newPath, oldName, newName string, wasDeleted bool) fuse.Status {
+	// Register the source inode so we can look it up later.
+	var srcIno uint64
+	var srcIsDir bool
+	if entries, err := fs.pxar.ReadDirRaw(input.NodeId); err == nil {
+		for i := range entries {
+			if entries[i].name == oldName {
+				e := &entries[i]
+				fs.pxar.RegisterSlimNode(e, input.NodeId)
+				srcIno = e.inode
+				srcIsDir = e.isDir
+				break
+			}
+		}
+	}
+	if srcIno == 0 {
+		return fuse.ENOENT
+	}
+
+	// If destination was deleted, un-delete it.
+	if wasDeleted {
+		fs.unDeletePath(newPath)
+	}
+
+	// Mark old path as deleted.
+	fs.markPathDeleted(oldPath)
+
+	// Remove any old overlay rename pointing to the same old path.
+	// (handles chained renames: /a → /b, then /b → /c)
+	for path, mo := range fs.metaOverlay {
+		if mo.renameFrom == oldPath {
+			// This entry was previously renamed to `path` from `oldPath`.
+			// It's now being renamed again, so clean up the old overlay.
+			delete(fs.metaOverlay, path)
+		}
+	}
+
+	// Find the original source path (resolve rename chains).
+	origSrcPath := oldPath
+	if mo := fs.metaOverlay[oldPath]; mo != nil && mo.renameFrom != "" {
+		origSrcPath = mo.renameFrom
+	}
+
+	// Create overlay entry at destination with renameFrom.
+	mo := fs.getOrCreateOverlay(newPath)
+	mo.renameFrom = origSrcPath
+
+	// Update inode → path mapping.
+	fs.mu.Lock()
+	// Remove old path mapping.
+	delete(fs.pathToIno, oldPath)
+	// Set new path mapping.
+	if oldDstIno, hadDst := fs.pathToIno[newPath]; hadDst && oldDstIno != srcIno {
+		delete(fs.nodePaths, oldDstIno)
+		delete(fs.backed, oldDstIno)
+		delete(fs.pxarDir, oldDstIno)
+	}
+	fs.pathToIno[newPath] = srcIno
+	fs.nodePaths[srcIno] = newPath
+	fs.mu.Unlock()
+
+	// For directories, also update child path mappings.
+	if srcIsDir {
+		fs.remapChildPaths(oldPath, newPath)
+	}
+
+	if fs.txnLog != nil {
+		_, _ = fs.txnLog.RecordRename(oldPath, newPath)
+	}
+	return fuse.OK
+}
+
+// remapChildPaths updates path mappings for all children under oldDir to newDir.
+// Used when a pxar directory is renamed without materialization.
+func (fs *PassthroughFS) remapChildPaths(oldDir, newDir string) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	prefix := oldDir + "/"
+	for ino, path := range fs.nodePaths {
+		if after, ok := strings.CutPrefix(path, prefix); ok {
+			rel := after
+			newPath := newDir + "/" + rel
+			delete(fs.pathToIno, path)
+			fs.pathToIno[newPath] = ino
+			fs.nodePaths[ino] = newPath
+		}
+	}
+	// Also update overlay entries for children.
+	for path, mo := range fs.metaOverlay {
+		if after, ok := strings.CutPrefix(path, prefix); ok {
+			rel := after
+			newPath := newDir + "/" + rel
+			delete(fs.metaOverlay, path)
+			if mo.renameFrom != "" {
+				if after, ok := strings.CutPrefix(mo.renameFrom, prefix); ok {
+					mo.renameFrom = newDir + "/" + after
+				}
+			}
+			fs.metaOverlay[newPath] = mo
+		}
+	}
+	// Update deletedPaths for children.
+	for path, deleted := range fs.deletedPaths {
+		if deleted && strings.HasPrefix(path, prefix) {
+			rel := strings.TrimPrefix(path, prefix)
+			newPath := newDir + "/" + rel
+			delete(fs.deletedPaths, path)
+			fs.deletedPaths[newPath] = true
+		}
+	}
+}
+
+// renameExchange handles RENAME_EXCHANGE by materializing both sides.
+func (fs *PassthroughFS) renameExchange(input *fuse.RenameIn, oldPath, newPath, oldName, newName string, oldIsPxar, newIsPxar, wasDeleted bool) fuse.Status {
+	// Materialize pxar sources for exchange (complex bidirectional swap).
+	if oldIsPxar {
+		if entries, err := fs.pxar.ReadDirRaw(input.NodeId); err == nil {
+			for _, e := range entries {
+				if e.name == oldName {
+					fs.pxar.RegisterSlimNode(&e, input.NodeId)
+					ino := e.inode
+					if e.isDir {
+						fs.materializePxarDir(ino, oldPath)
+					} else {
+						if _, err := fs.materializePxarFile(ino); err != nil {
+							return fuse.ToStatus(err)
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+	if newIsPxar {
+		if entries, err := fs.pxar.ReadDirRaw(input.Newdir); err == nil {
+			for _, e := range entries {
+				if e.name == newName {
+					fs.pxar.RegisterSlimNode(&e, input.Newdir)
+					ino := e.inode
+					if e.isDir {
+						fs.materializePxarDir(ino, newPath)
+					} else {
+						if _, err := fs.materializePxarFile(ino); err != nil {
+							return fuse.ToStatus(err)
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
+	oldAbs := fs.absPath(oldPath)
+	newAbs := fs.absPath(newPath)
+
+	if err := unix.Renameat2(unix.AT_FDCWD, oldAbs, unix.AT_FDCWD, newAbs, unix.RENAME_EXCHANGE); err != nil {
+		return fuse.ToStatus(err)
+	}
+
+	fs.mu.Lock()
+	oldIno, oldOk := fs.pathToIno[oldPath]
+	newIno, newOk := fs.pathToIno[newPath]
+
+	if oldOk && newOk {
+		fs.nodePaths[oldIno] = newPath
+		fs.nodePaths[newIno] = oldPath
+		fs.pathToIno[oldPath] = newIno
+		fs.pathToIno[newPath] = oldIno
+	} else if oldOk {
+		delete(fs.pathToIno, oldPath)
+		fs.nodePaths[oldIno] = newPath
+		fs.pathToIno[newPath] = oldIno
+	} else if newOk {
+		delete(fs.pathToIno, newPath)
+		fs.nodePaths[newIno] = oldPath
+		fs.pathToIno[oldPath] = newIno
+	}
+	fs.mu.Unlock()
+
+	if fs.txnLog != nil {
+		if oldIsPxar {
+			_, _ = fs.txnLog.RecordRename(oldPath, newPath)
+		}
+		if newIsPxar {
+			_, _ = fs.txnLog.RecordRename(newPath, oldPath)
+		}
 	}
 	return fuse.OK
 }
@@ -1532,6 +1698,39 @@ func (fs *PassthroughFS) readDirImpl(cancel <-chan struct{}, input *fuse.ReadIn,
 	for _, be := range backedEntries {
 		if backedName[be.name] {
 			entries = append(entries, be)
+		}
+	}
+
+	// Add renamed-in pxar entries from the overlay.
+	if fs.mutationMode && parentPath != "" {
+		prefix := parentPath + "/"
+		if parentPath == "/" {
+			prefix = "/"
+		}
+		existingNames := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			existingNames[e.name] = true
+		}
+		for newPath, mo := range fs.metaOverlay {
+			if mo.renameFrom == "" {
+				continue
+			}
+			if !strings.HasPrefix(newPath, prefix) {
+				continue
+			}
+			childName := newPath[len(prefix):]
+			if strings.Contains(childName, "/") || existingNames[childName] {
+				continue
+			}
+			if ino, ok := fs.pathToIno[newPath]; ok {
+				if n := fs.getPxarNode(ino); n != nil {
+					entries = append(entries, dirEntrySlim{
+						name:  childName,
+						inode: ino,
+						mode:  statMode(n.mode),
+					})
+				}
+			}
 		}
 	}
 
