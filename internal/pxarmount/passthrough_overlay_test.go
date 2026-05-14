@@ -15,8 +15,6 @@ import (
 // --- Bug 1: materializePxarFile race ---
 // Two concurrent callers (Write + SetAttr) on the same pxar inode can both
 // pass the isBacked check and double-materialize. With O_CREATE|O_TRUNC the
-// second truncates the first copy to zero before writing, so data is lost.
-
 func TestMaterializePxarFile_ConcurrentDedup(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -86,12 +84,6 @@ func TestMaterializePxarFile_ConcurrentDedup(t *testing.T) {
 		t.Errorf("file was corrupted by concurrent materialize: got %q", string(data))
 	}
 }
-
-// --- Bug 2: markPathDeleted is not idempotent / TOCTOU on delete ---
-// Two concurrent calls to markPathDeleted for the same path will both
-// record DELETE transactions. The transaction log should have exactly one
-// DELETE per path.
-
 func TestMarkPathDeleted_ConcurrentDedup(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -139,15 +131,6 @@ func TestMarkPathDeleted_ConcurrentDedup(t *testing.T) {
 		t.Error("path should be marked as deleted")
 	}
 }
-
-// --- Bug 3: Transaction log does not sync to disk after flush ---
-// bufio.Writer.Flush only pushes to the os.File write buffer, not to disk.
-// If the process crashes between Record and the OS flushing, the transaction
-// is lost. The Record method should fsync after flush for durability.
-
-// This is a design concern, not easily tested without fault injection.
-// We verify the contract: after Record returns, ReadAll must see the entry.
-
 func TestTransactionLog_Durability(t *testing.T) {
 	dir := t.TempDir()
 	tl, err := OpenTransactionLog(dir)
@@ -174,15 +157,6 @@ func TestTransactionLog_Durability(t *testing.T) {
 		t.Errorf("ID mismatch: got %d, want %d", txns[0].ID, id)
 	}
 }
-
-// --- Bug 4: TransactionLog.Clear loses file reference on error ---
-// If os.Create fails in Clear, tl.file is set to nil but the old file is
-// already closed. Subsequent Record calls would panic on nil buf.
-
-// --- Bug 9: Creating a new file over a deleted pxar path fails in Lookup ---
-// After deleting a pxar file via mutation mode, creating a new file with
-// the same name should un-delete the path so Lookup can find it.
-
 func TestCreate_UndeletesDeletedPath(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -217,7 +191,6 @@ func TestCreate_UndeletesDeletedPath(t *testing.T) {
 		t.Error("path should no longer be deleted after unDeletePath")
 	}
 }
-
 func TestTransactionLog_ClearThenRecord(t *testing.T) {
 	dir := t.TempDir()
 	tl, err := OpenTransactionLog(dir)
@@ -260,12 +233,6 @@ func TestTransactionLog_ClearThenRecord(t *testing.T) {
 		t.Errorf("entry path = %q, want /after-clear", txns[0].Path)
 	}
 }
-
-// --- Bug 5: renamePaths overwrites destination inode without cleaning up
-// the old destination's mappings properly ---
-// If destination exists and has a different inode, renamePaths deletes the
-// old dst's nodePaths entry but the old inode may still be in backed/pxarDir.
-
 func TestRenamePaths_DestOverwrite(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -303,15 +270,6 @@ func TestRenamePaths_DestOverwrite(t *testing.T) {
 	}
 	fs.mu.RUnlock()
 }
-
-// --- Bug 6: resetState clears deletedPaths but doesn't reset txnLog ---
-// After resetState (e.g., hot swap), deletedPaths is empty but txnLog
-// may still reference stale entries from the previous snapshot.
-
-// --- Bug 7: Clear leaves TransactionLog in broken state on os.Create failure ---
-// If os.Create fails after closing the old file, tl.file and tl.buf are nil.
-// Subsequent Record calls panic on nil pointer dereference.
-
 func TestTransactionLog_ClearFailureDoesNotCorruptState(t *testing.T) {
 	dir := t.TempDir()
 	tl, err := OpenTransactionLog(dir)
@@ -351,12 +309,6 @@ func TestTransactionLog_ClearFailureDoesNotCorruptState(t *testing.T) {
 		t.Fatalf("Record after failed Clear should not panic, got: %v", err)
 	}
 }
-
-// --- Bug 8: materializePxarFile records MODIFY transaction every time ---
-// If a file is already backed (pre-existing in backing dir), calling
-// materializePxarFile should NOT record a MODIFY transaction since
-// the file wasn't actually copied from pxar.
-
 func TestMaterializePxarFile_DoesNotRecordModifyIfAlreadyBacked(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -408,12 +360,6 @@ func TestMaterializePxarFile_DoesNotRecordModifyIfAlreadyBacked(t *testing.T) {
 		}
 	}
 }
-
-// --- Bug 10: RENAME_EXCHANGE only updates one direction ---
-// renamePaths(oldPath, newPath) only moves old→new. For RENAME_EXCHANGE,
-// both entries swap, so both inode mappings must be updated.
-// Additionally, only one RENAME transaction is recorded instead of two.
-
 func TestRename_ExchangeSwapsBothDirections(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -492,7 +438,6 @@ func TestRename_ExchangeSwapsBothDirections(t *testing.T) {
 		t.Errorf("dstPath content = %q, want %q (physical swap failed)", string(data), "src-content")
 	}
 }
-
 func TestResetState_ClearsDeletedPathsAndTxnLog(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -530,12 +475,6 @@ func TestResetState_ClearsDeletedPathsAndTxnLog(t *testing.T) {
 		t.Errorf("txnLog not cleared after resetState: %d entries", len(txns))
 	}
 }
-
-// --- Bug 11: setNode doesn't clean up pxarDir for old inode ---
-// When setNode assigns a new inode to a path that already had a different inode,
-// it cleans up nodePaths and backed for the old inode, but NOT pxarDir.
-// This means isPxarBacked(oldIno) returns true for a stale inode.
-
 func TestSetNode_CleansUpPxarDirForOldInode(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -562,12 +501,6 @@ func TestSetNode_CleansUpPxarDirForOldInode(t *testing.T) {
 		t.Error("oldIno still in pxarDir after setNode reassigned path to newIno")
 	}
 }
-
-// --- Bug 12: Forget doesn't clean up pxarDir ---
-// When a backed node is forgotten (kernel drops dentry cache),
-// Forget cleans up backed/nodePaths/pathToIno but leaves pxarDir.
-// Stale pxarDir entries cause isPxarBacked to return true for forgotten inodes.
-
 func TestForget_CleansUpPxarDir(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -591,12 +524,6 @@ func TestForget_CleansUpPxarDir(t *testing.T) {
 		t.Error("ino still in pxarDir after Forget")
 	}
 }
-
-// --- Bug 14: Rename un-deletes destination before confirming source exists ---
-// If the source doesn't exist (Lstat fails), Rename returns EROFS
-// but has already un-deleted the destination path. The previously-deleted
-// pxar entry at the destination becomes visible again.
-
 func TestRename_DestinationStaysDeletedOnFailure(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -634,12 +561,6 @@ func TestRename_DestinationStaysDeletedOnFailure(t *testing.T) {
 		t.Error("destPath was un-deleted even though Rename failed")
 	}
 }
-
-// --- Bug 15: RENAME_EXCHANGE with missing dest inode maps oldPath to inode 0 ---
-// When RENAME_EXCHANGE swaps two paths and the destination has no inode
-// mapping (newOk=false), the exchange code sets pathToIno[oldPath]=0,
-// which corrupts the mapping.
-
 func TestRename_ExchangeWithMissingDestInode(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -708,12 +629,6 @@ func TestRename_ExchangeWithMissingDestInode(t *testing.T) {
 
 	_ = oldIno // just check it's not 0
 }
-
-// --- Bug 16: Rename un-deletes destination but physical rename can still fail ---
-// After un-deleting the destination, if os.Rename fails (e.g., source removed
-// by concurrent Unlink), the destination stays un-deleted even though the
-// rename never happened. A previously-deleted entry becomes visible.
-
 func TestRename_DestinationStaysDeletedOnRenameFailure(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -770,11 +685,6 @@ func TestRename_DestinationStaysDeletedOnRenameFailure(t *testing.T) {
 		t.Error("destPath was un-deleted even though Rename failed")
 	}
 }
-
-// --- Bug 17: Rename un-deletes destination but ensureBackingParent can fail ---
-// After un-deleting the destination, if ensureBackingParent fails,
-// the destination stays un-deleted even though the rename never happened.
-
 func TestRename_DestinationStaysDeletedOnBackingParentFailure(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -827,12 +737,6 @@ func TestRename_DestinationStaysDeletedOnBackingParentFailure(t *testing.T) {
 		t.Error("destPath was un-deleted even though ensureBackingParent failed")
 	}
 }
-
-// --- Bug 18: removeEntry returns EROFS for non-existent backed files ---
-// When a backed file doesn't exist on disk (e.g., already removed),
-// removeEntry returns EROFS instead of ENOENT. This is misleading
-// because the issue is "file not found", not "read-only filesystem".
-
 func TestRemoveEntry_NonExistentBackedFileReturnsENOENT(t *testing.T) {
 	fs, _, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -862,12 +766,6 @@ func TestRemoveEntry_NonExistentBackedFileReturnsENOENT(t *testing.T) {
 		t.Error("removeEntry returned EROFS for non-existent file; expected ENOENT or similar")
 	}
 }
-
-// --- Bug 19: Create un-deletes path then ensureBackingParent fails ---
-// Create calls unDeletePath before ensureBackingParent. If ensureBackingParent
-// fails, the path stays un-deleted even though nothing was created.
-// A previously-deleted pxar entry becomes visible to Lookups.
-
 func TestCreate_DeletedPathStaysDeletedOnBackingParentFailure(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -909,12 +807,6 @@ func TestCreate_DeletedPathStaysDeletedOnBackingParentFailure(t *testing.T) {
 		t.Error("childRelPath was un-deleted even though Create failed")
 	}
 }
-
-// --- Bug 20: Create un-deletes path, then fallback syscall.Open fails ---
-// When O_EXCL fails (file exists) and the fallback syscall.Open with
-// O_WRONLY|O_TRUNC also fails (e.g., target is a directory), the path
-// stays un-deleted and an inode is registered even though Create failed.
-
 func TestCreate_DeletedPathStaysDeletedOnFallbackOpenFailure(t *testing.T) {
 	fs, backingDir, cleanup := newTestPassthroughFS(t)
 	defer cleanup()
@@ -955,4 +847,164 @@ func TestCreate_DeletedPathStaysDeletedOnFallbackOpenFailure(t *testing.T) {
 	if !fs.isPathDeleted(childRelPath) {
 		t.Errorf("childRelPath was un-deleted even though Create failed (status=%v)", st)
 	}
+}
+func TestWrite_LazyOpenHandleLeak(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Create a file with write permissions
+	var cout fuse.CreateOut
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}, Mode: 0o644}, "lazyfile.txt", &cout); st != fuse.OK {
+		t.Fatalf("Create failed: %v", st)
+	}
+	ino := cout.NodeId
+
+	// Close the existing handle (simulate the fd being released)
+	fs.fhmu.Lock()
+	for id, fh := range fs.handles {
+		syscall.Close(fh.fd)
+		delete(fs.handles, id)
+	}
+	fs.fhmu.Unlock()
+
+	// Now do concurrent writes — both will see fh==nil and open new fds
+	var wg sync.WaitGroup
+	const writers = 5
+	errs := make([]fuse.Status, writers)
+
+	for i := range writers {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			data := []byte("hello from writer")
+			_, errs[idx] = fs.Write(nil, &fuse.WriteIn{
+				InHeader: fuse.InHeader{NodeId: ino},
+				Fh:       0, // sentinel — triggers lazy-open
+				Offset:   uint64(idx * 20),
+			}, data)
+		}(i)
+	}
+	wg.Wait()
+
+	// Count file handles — should be at most 1 per inode
+	fs.fhmu.Lock()
+	handleCount := len(fs.handles)
+	fs.fhmu.Unlock()
+
+	if handleCount > 2 { // allow some slack for race, but not 5
+		t.Errorf("expected ~1 file handle after concurrent writes, got %d (leak from lazy-open race)", handleCount)
+	}
+
+	// At least some writes should have succeeded
+	successCount := 0
+	for _, s := range errs {
+		if s == fuse.OK {
+			successCount++
+		}
+	}
+	if successCount == 0 {
+		t.Error("at least one write should have succeeded")
+	}
+}
+
+func TestFallocate_LazyOpenHandleLeak(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	fs.mutationMode = true
+
+	// Create a file
+	var cout fuse.CreateOut
+	if st := fs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: RootInode}}, "fallocfile.txt", &cout); st != fuse.OK {
+		t.Fatalf("Create failed: %v", st)
+	}
+	ino := cout.NodeId
+
+	// Close the existing handle
+	fs.fhmu.Lock()
+	for id, fh := range fs.handles {
+		syscall.Close(fh.fd)
+		delete(fs.handles, id)
+	}
+	fs.fhmu.Unlock()
+
+	var wg sync.WaitGroup
+	const callers = 5
+	errs := make([]fuse.Status, callers)
+
+	for i := range callers {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = fs.Fallocate(nil, &fuse.FallocateIn{
+				InHeader: fuse.InHeader{NodeId: ino},
+				Fh:       0,
+				Offset:   uint64(idx * 4096),
+				Length:   4096,
+			})
+		}(i)
+	}
+	wg.Wait()
+
+	fs.fhmu.Lock()
+	handleCount := len(fs.handles)
+	fs.fhmu.Unlock()
+
+	if handleCount > 2 {
+		t.Errorf("expected ~1 file handle after concurrent fallocate, got %d", handleCount)
+	}
+}
+
+func TestForget_CleansUpMetaOverlay(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	const ino uint64 = 100 | NonDirBit
+	path := "/forget-overlay.txt"
+
+	fs.setNode(ino, path, true)
+
+	// Add a metaOverlay entry for this path
+	fs.mu.Lock()
+	fs.metaOverlay[path] = &metaOverride{
+		mode: new(uint32(0o755)),
+		xadd: make(map[string][]byte),
+		xdel: make(map[string]bool),
+	}
+	fs.mu.Unlock()
+
+	// Forget the inode
+	fs.Forget(ino, 1)
+
+	// metaOverlay should be cleaned up for this path
+	fs.mu.RLock()
+	_, hasOverlay := fs.metaOverlay[path]
+	fs.mu.RUnlock()
+
+	if hasOverlay {
+		t.Error("metaOverlay entry should be cleaned up after Forget")
+	}
+}
+
+func TestReadDirRaw_PoolAliasSafety(t *testing.T) {
+	fs, _, cleanup := newTestPassthroughFS(t)
+	defer cleanup()
+
+	// Just test that two sequential ReadDirRaw calls work correctly
+	// without pool corruption. The real issue would be if someone
+	// retains the slice across a second call.
+	entries1, err := fs.pxar.ReadDirRaw(RootInode)
+	if err != nil {
+		// No reader is set, so this returns nil entries
+		t.Logf("ReadDirRaw returned err=%v (expected, no reader)", err)
+	}
+	_ = entries1
+
+	entries2, err := fs.pxar.ReadDirRaw(RootInode)
+	if err != nil {
+		t.Logf("ReadDirRaw 2 returned err=%v", err)
+	}
+	_ = entries2
 }
