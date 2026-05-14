@@ -564,6 +564,16 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	}
 
 	// Emit all ref entries first, then all new-data entries.
+	if ow.mfs.verbose {
+		ow.mfs.debugf("commit-walk %q: %d refEntries, %d newDataEntries (pxarInode=%d)",
+			relPath, len(refEntries), len(newDataEntries), pxarInode)
+		for i, e := range refEntries {
+			ow.mfs.debugf("  ref[%d] name=%q node=%v slim=%v", i, e.name, e.node != nil, e.pxarSlim != nil)
+		}
+		for i, e := range newDataEntries {
+			ow.mfs.debugf("  new[%d] name=%q node=%v slim=%v", i, e.name, e.node != nil, e.pxarSlim != nil)
+		}
+	}
 	for i := range refEntries {
 		if refEntries[i].node != nil {
 			if err := ow.emitJournalEntry(&refEntries[i], relPath); err != nil {
