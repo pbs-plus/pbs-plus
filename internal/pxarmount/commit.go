@@ -497,6 +497,35 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	sort.Slice(allEntries, func(i, j int) bool {
 		return allEntries[i].sortKey < allEntries[j].sortKey
 	})
+	// Debug: log sort order for directories with both dirs and files
+	if ow.mfs.verbose {
+		hasDir, hasFile := false, false
+		for _, e := range allEntries {
+			if e.pxarSlim != nil {
+				if e.pxarSlim.isDir {
+					hasDir = true
+				} else if !e.pxarSlim.isSymlink {
+					hasFile = true
+				}
+			}
+		}
+		if hasDir && hasFile {
+			ow.mfs.debugf("commit-walk sort %q: %d entries", relPath, len(allEntries))
+			for i, e := range allEntries {
+				if e.pxarSlim == nil {
+					continue
+				}
+				kind := "file"
+				if e.pxarSlim.isDir {
+					kind = "dir"
+				} else if e.pxarSlim.isSymlink {
+					kind = "sym"
+				}
+				ow.mfs.debugf("  [%d] %s %s sortKey=%d contentOffset=%d",
+					i, kind, e.name, e.sortKey, e.pxarSlim.contentOffset)
+			}
+		}
+	}
 	refEntries = append(refEntries, allEntries...)
 
 	// Classify journal edges by whether they emit new data.
@@ -794,11 +823,10 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 	}
 
 	// Regular file with payload — emit as chunk reference.
-	// Offset must be monotonically increasing. The walk sorts entries
-	// by payload offset within each directory and sorts directories
-	// by min descendant offset to ensure monotonicity.
+	// Offset must be monotonically increasing.
+	ow.mfs.debugf("emit ref %s/%s offset=%d", parentRelPath, ce.name, pxarEntry.PayloadOffset)
 	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
-		return fmt.Errorf("write pxar ref %s (offset %d): %w", ce.name, pxarEntry.PayloadOffset, err)
+		return fmt.Errorf("write pxar ref %s/%s (offset %d): %w", parentRelPath, ce.name, pxarEntry.PayloadOffset, err)
 	}
 	return nil
 }
