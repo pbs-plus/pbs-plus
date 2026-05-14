@@ -1,6 +1,7 @@
 package pxarmount
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -97,6 +98,74 @@ func (fs *MutableFS) SetVerbose(v bool) {
 // InitMutableRoot ensures the mutable root directory exists.
 func (fs *MutableFS) InitMutableRoot() error {
 	return os.MkdirAll(fs.mutableDir, 0o755)
+}
+
+// ReconcileMutableDir removes orphan disk entries not tracked by the journal.
+// Called on startup to ensure disk and journal stay in sync.
+func (fs *MutableFS) ReconcileMutableDir() error {
+	entries, err := os.ReadDir(fs.mutableDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == JournalDir {
+			continue
+		}
+		relPath := "/" + e.Name()
+		je, jerr := fs.journal.GetEntry(relPath)
+		if jerr != nil {
+			continue
+		}
+		if je == nil {
+			// Orphan: exists on disk but not in journal.
+			os.RemoveAll(filepath.Join(fs.mutableDir, relPath))
+			if fs.verbose {
+				fmt.Fprintf(os.Stderr, "  reconciled orphan: %s\n", relPath)
+			}
+		}
+	}
+	// Recurse into subdirectories.
+	return fs.reconcileDir("")
+}
+
+func (fs *MutableFS) reconcileDir(relDir string) error {
+	absDir := filepath.Join(fs.mutableDir, relDir)
+	entries, err := os.ReadDir(absDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.Name() == JournalDir && relDir == "" {
+			continue
+		}
+		relPath := joinPath(relDir, e.Name())
+		if relDir == "" || relDir == "/" {
+			relPath = "/" + e.Name()
+		}
+		je, jerr := fs.journal.GetEntry(relPath)
+		if jerr != nil {
+			continue
+		}
+		if je == nil {
+			os.RemoveAll(filepath.Join(fs.mutableDir, relPath))
+			if fs.verbose {
+				fmt.Fprintf(os.Stderr, "  reconciled orphan: %s\n", relPath)
+			}
+			continue
+		}
+		if e.IsDir() {
+			if err := fs.reconcileDir(relPath); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // --- FUSE interface ---
@@ -424,7 +493,7 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 
 	// Update journal size and mtime after write.
 	now := time.Now().UnixNano()
-	fs.journal.MarkModified(&JournalEntry{
+	if err := fs.journal.MarkModified(&JournalEntry{
 		Path:    path,
 		State:   StateModified,
 		Mode:    re.Mode,
@@ -434,7 +503,9 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 		MtimeNs: now,
 		CtimeNs: now,
 		HasData: true,
-	})
+	}); err != nil {
+		return 0, fuse.EIO
+	}
 
 	return uint32(n), fuse.OK
 }
@@ -531,7 +602,9 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 
 	// Check if an immutable entry existed — mark whiteout.
 	if _, st := fs.resolve(childPath); st == fuse.OK {
-		fs.journal.MarkWhiteout(childPath)
+		if err := fs.journal.MarkWhiteout(childPath); err != nil {
+			return fuse.EIO
+		}
 	}
 
 	abs := fs.mutablePath(childPath)
@@ -544,8 +617,6 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 		return fuse.ToStatus(err)
 	}
 
-	fs.applyACLOwnership(abs, false)
-
 	ino := fs.allocInode(false)
 	fs.mapInode(ino, childPath)
 
@@ -553,7 +624,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 	je := &JournalEntry{
 		Path:    childPath,
 		State:   StateNew,
-		Mode:    uint32(input.Mode & 0o777),
+		Mode:    uint32(syscall.S_IFREG) | uint32(input.Mode&0o777),
 		UID:     input.Uid,
 		GID:     input.Gid,
 		Size:    0,
@@ -561,7 +632,14 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 		CtimeNs: now,
 		HasData: true,
 	}
-	_ = fs.journal.MarkNew(je)
+	if err := fs.journal.MarkNew(je); err != nil {
+		syscall.Close(fd)
+		os.Remove(abs)
+		fs.unmapInode(childPath)
+		return fuse.EIO
+	}
+
+	fs.applyACLOwnership(abs, false)
 
 	fhID := fs.registerFh(childPath, fd)
 
@@ -922,7 +1000,9 @@ func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, at
 	}
 	fs.ensureJournalEntry(re)
 
-	_ = fs.journal.SetXAttr(path, attr, data)
+	if err := fs.journal.SetXAttr(path, attr, data); err != nil {
+		return fuse.EIO
+	}
 
 	// Also apply to mutable data if present.
 	if re.DataIsMut {
@@ -945,7 +1025,9 @@ func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, 
 		return fuse.ENOENT
 	}
 
-	_ = fs.journal.RemoveXAttr(path, attr)
+	if err := fs.journal.RemoveXAttr(path, attr); err != nil {
+		return fuse.EIO
+	}
 
 	re, _ := fs.resolve(path)
 	if re != nil && re.DataIsMut {
@@ -1088,7 +1170,9 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	}
 
 	// Mark as having data.
-	_ = fs.journal.SetHasData(re.Path)
+	if err := fs.journal.SetHasData(re.Path); err != nil {
+		return fmt.Errorf("journal set has_data: %w", err)
+	}
 	re.DataIsMut = true
 
 	fs.applyACLOwnership(abs, re.IsDir)
@@ -1255,7 +1339,9 @@ func (fs *MutableFS) ensureJournalEntry(re *ResolvedEntry) {
 		HasData: re.DataIsMut,
 		Target:  re.SymlinkTgt,
 	}
-	_ = fs.journal.MarkModified(je)
+	if err := fs.journal.MarkModified(je); err != nil {
+		return
+	}
 }
 
 // --- inode management ---
