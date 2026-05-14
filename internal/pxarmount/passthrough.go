@@ -210,6 +210,15 @@ func (fs *PassthroughFS) ensureDirBacking(ino uint64, relPath string) {
 	fs.pxarDir[ino] = true
 	fs.mu.Unlock()
 	fs.applyACLOwnership(absPath, true)
+
+	// Restore pxar timestamps on the directory.
+	if n := fs.getPxarNode(ino); n != nil {
+		tv := []unix.Timeval{
+			{Sec: n.mtimeSecs, Usec: int64(n.mtimeNanos) / 1000},
+			{Sec: n.mtimeSecs, Usec: int64(n.mtimeNanos) / 1000},
+		}
+		_ = unix.Lutimes(absPath, tv)
+	}
 }
 
 func (fs *PassthroughFS) statBacked(rel string) (*node, error) {
@@ -1232,12 +1241,13 @@ func (fs *PassthroughFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, ol
 func (fs *PassthroughFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
 	if !fs.isBacked(input.NodeId) {
 		if fs.mutationMode && input.Flags&(uint32(syscall.O_WRONLY|syscall.O_RDWR)) != 0 {
-			if _, err := fs.materializePxarFile(input.NodeId); err != nil {
-				return fuse.ToStatus(err)
-			}
-		} else {
-			return fs.pxar.Open(cancel, input, out)
+			// Defer materialization — don't copy file content just for opening.
+			// Return a sentinel fh=0; Write/Fallocate will materialize lazily.
+			out.Fh = 0
+			out.OpenFlags = fuse.FOPEN_KEEP_CACHE
+			return fuse.OK
 		}
+		return fs.pxar.Open(cancel, input, out)
 	}
 
 	if fs.isPxarBacked(input.NodeId) && !fs.mutationMode && input.Flags&(uint32(syscall.O_WRONLY|syscall.O_RDWR)) != 0 {
@@ -1290,7 +1300,18 @@ func (fs *PassthroughFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data
 
 	fh := fs.handleForNode(input.NodeId, input.Fh)
 	if fh == nil {
-		return 0, fuse.EBADF
+		// Lazy-open: materialization happened but no fd yet.
+		rel := fs.nodePath(input.NodeId)
+		fd, err := syscall.Open(fs.absPath(rel), syscall.O_WRONLY, 0)
+		if err != nil {
+			return 0, fuse.ToStatus(err)
+		}
+		fs.fhmu.Lock()
+		id := fs.nextFh
+		fs.nextFh++
+		fs.handles[id] = &passFh{fd: fd, inode: input.NodeId}
+		fs.fhmu.Unlock()
+		fh = fs.handles[id]
 	}
 
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
@@ -1337,7 +1358,17 @@ func (fs *PassthroughFS) Fallocate(cancel <-chan struct{}, input *fuse.Fallocate
 
 	fh := fs.handleForNode(input.NodeId, input.Fh)
 	if fh == nil {
-		return fuse.EBADF
+		rel := fs.nodePath(input.NodeId)
+		fd, err := syscall.Open(fs.absPath(rel), syscall.O_WRONLY, 0)
+		if err != nil {
+			return fuse.ToStatus(err)
+		}
+		fs.fhmu.Lock()
+		id := fs.nextFh
+		fs.nextFh++
+		fs.handles[id] = &passFh{fd: fd, inode: input.NodeId}
+		fs.fhmu.Unlock()
+		fh = fs.handles[id]
 	}
 
 	mode := uint32(0)
