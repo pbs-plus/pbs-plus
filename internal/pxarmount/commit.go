@@ -917,15 +917,18 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		return fmt.Errorf("clear journal: %w", err)
 	}
 
-	// Reset mutable dir.
-	if err := os.RemoveAll(mfs.mutableDir); err != nil {
-		return fmt.Errorf("cleanup mutable dir: %w", err)
+	// Reset mutable dir — preserve journal directory.
+	entries, err := os.ReadDir(mfs.mutableDir)
+	if err != nil {
+		return fmt.Errorf("read mutable dir: %w", err)
 	}
-	if err := os.MkdirAll(mfs.mutableDir, 0o755); err != nil {
-		return fmt.Errorf("recreate mutable dir: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Join(mfs.mutableDir, JournalDir), 0o755); err != nil {
-		return fmt.Errorf("recreate journal dir: %w", err)
+	for _, e := range entries {
+		if e.Name() == JournalDir {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(mfs.mutableDir, e.Name())); err != nil {
+			return fmt.Errorf("remove mutable entry %s: %w", e.Name(), err)
+		}
 	}
 
 	return nil
