@@ -249,9 +249,8 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	}
 
 	for name, nodeID := range edgeNames {
-		if whiteoutNames[name] {
-			continue
-		}
+		// Edges take priority over whiteouts — if there's a journal node,
+		// it's always visible.
 		node, _ := fs.journal.GetNode(nodeID)
 		if node == nil {
 			continue
@@ -1252,26 +1251,6 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 
 // resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
-	if path == "/" {
-		pxarNode := fs.findPxarNode(path)
-		if pxarNode == nil {
-			return nil, fuse.ENOENT
-		}
-		re := &ResolvedEntry{
-			Path:      path,
-			PxarNode:  pxarNode,
-			DataIsMut: false,
-			IsDir:     true,
-			Mode:      statMode(pxarNode.mode),
-			UID:       pxarNode.uid,
-			GID:       pxarNode.gid,
-			Size:      pxarNode.fileSize,
-			MtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
-			CtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
-		}
-		re.Inode = fs.pathToIno(path, re.IsDir)
-		return re, fuse.OK
-	}
 	nodeID, pxarPath, fellOffAt, remaining, err := fs.journal.ResolvePath(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  resolve(%q) ResolvePath err: %v\n", path, err)
