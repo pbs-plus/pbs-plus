@@ -18,6 +18,7 @@ import (
 	"time"
 
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/accessor"
 	"github.com/pbs-plus/pxar/backupproxy"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
@@ -164,9 +165,10 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 
 // commitEntry represents one item in the merged directory view during commit walk.
 type commitEntry struct {
-	name     string
-	node     *GraphNode    // journal node (nil for pure pxar)
-	pxarSlim *dirEntrySlim // pxar slim entry (nil for journal-only)
+	name       string
+	node       *GraphNode    // journal node (nil for pure pxar)
+	pxarSlim   *dirEntrySlim // pxar slim entry (nil for journal-only)
+	pxarOffset uint64        // sort key: payload offset (files) or min descendant offset (dirs)
 }
 
 // commitWalkState holds state for the recursive commit walk.
@@ -444,32 +446,32 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	// directories before files so children appear inside their parent.
 	var refEntries, newDataEntries []commitEntry
 
-	// Classify pxar entries — all are ref-emitters.
-	// Sort FILE entries by contentOffset (= PayloadOffset) to maintain
-	// monotonicity. Directory entries stay in metadata order to preserve
-	// depth-first payload ordering across directory boundaries.
-	var pxarFiles, pxarDirs []commitEntry
+	// Classify pxar entries — sort ALL entries by payload offset.
+	// Directories use their minimum descendant payload offset.
+	// This is the ONLY way to guarantee global monotonicity across
+	// directory boundaries: directories and files are interleaved in
+	// offset order.
+	var pxarRefEntries []commitEntry
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
 		if edgeNames[pe.name] || whiteoutSet[pe.name] {
 			continue
 		}
+		offset := pe.contentOffset
 		if pe.isDir {
-			pxarDirs = append(pxarDirs, commitEntry{name: pe.name, pxarSlim: pe})
-		} else if pe.isSymlink {
-			// Symlinks have no payload — emit with dirs (before sorted files).
-			pxarDirs = append(pxarDirs, commitEntry{name: pe.name, pxarSlim: pe})
-		} else {
-			pxarFiles = append(pxarFiles, commitEntry{name: pe.name, pxarSlim: pe})
+			offset = ow.minDescendantPayloadOffset(pe.inode)
 		}
+		pxarRefEntries = append(pxarRefEntries, commitEntry{
+			name:       pe.name,
+			pxarSlim:   pe,
+			pxarOffset: offset,
+		})
 	}
-	// Sort files by contentOffset (ascending payload offset).
-	sort.Slice(pxarFiles, func(i, j int) bool {
-		return pxarFiles[i].pxarSlim.contentOffset < pxarFiles[j].pxarSlim.contentOffset
+	// Sort all pxar entries by offset.
+	sort.Slice(pxarRefEntries, func(i, j int) bool {
+		return pxarRefEntries[i].pxarOffset < pxarRefEntries[j].pxarOffset
 	})
-	// Emit dirs (metadata order) then sorted files.
-	refEntries = append(refEntries, pxarDirs...)
-	refEntries = append(refEntries, pxarFiles...)
+	refEntries = append(refEntries, pxarRefEntries...)
 
 	// Classify journal edges by whether they emit new data.
 	for i := range journalEdges {
@@ -531,6 +533,72 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	}
 
 	return nil
+}
+
+// minDescendantPayloadOffset returns the minimum PayloadOffset (contentOffset)
+// among all regular-file descendants of the pxar directory at pxarInode.
+// Uses the pxarDirCache for O(n) total cost, reading from the pxar reader
+// directly (bypassing PxarFS's node registry) when needed.
+func (ow *commitWalkState) minDescendantPayloadOffset(pxarInode uint64) uint64 {
+	entries, ok := ow.pxarDirCache[pxarInode]
+	if !ok {
+		entries = ow.readPxarDirEntries(pxarInode)
+		ow.pxarDirCache[pxarInode] = entries
+	}
+	min := ^uint64(0)
+	for i := range entries {
+		e := &entries[i]
+		if e.isDir {
+			child := ow.minDescendantPayloadOffset(e.inode)
+			if child < min {
+				min = child
+			}
+		} else if e.isReg && e.contentOffset < min {
+			min = e.contentOffset
+		}
+	}
+	return min
+}
+
+// readPxarDirEntries reads directory entries by finding the contentOffset
+// for the given inode from the already-cached parent entries.
+func (ow *commitWalkState) readPxarDirEntries(pxarInode uint64) []dirEntrySlim {
+	for _, entries := range ow.pxarDirCache {
+		for i := range entries {
+			if entries[i].inode == pxarInode && entries[i].isDir {
+				return ow.listDirEntriesAt(entries[i].contentOffset)
+			}
+		}
+	}
+	return nil
+}
+
+// listDirEntriesAt reads directory entries at a content offset directly from
+// the pxar reader.
+func (ow *commitWalkState) listDirEntriesAt(contentOffset uint64) []dirEntrySlim {
+	ow.mfs.pxar.readerMu.Lock()
+	defer ow.mfs.pxar.readerMu.Unlock()
+
+	var result []dirEntrySlim
+	ow.mfs.pxar.Reader().ListDirectory(int64(contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
+		result = append(result, dirEntrySlim{
+			name:          e.FileName(),
+			inode:         toInode(e),
+			mode:          statMode(e.Metadata.Stat.Mode),
+			entryStart:    e.FileOffset,
+			contentOffset: e.ContentOffset,
+			fileSize:      e.FileSize,
+			uid:           e.Metadata.Stat.UID,
+			gid:           e.Metadata.Stat.GID,
+			mtimeSecs:     e.Metadata.Stat.Mtime.Secs,
+			mtimeNanos:    e.Metadata.Stat.Mtime.Nanos,
+			isDir:         e.IsDir(),
+			isSymlink:     e.IsSymlink(),
+			isReg:         e.IsRegularFile(),
+		})
+		return nil
+	})
+	return result
 }
 
 // subtreeHasNewData returns true if the journal subtree rooted at nodeID
