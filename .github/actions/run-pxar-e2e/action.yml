@@ -1,0 +1,23 @@
+name: Run pxar-mount E2E
+description: Run pxar-mount FUSE end-to-end tests inside the PBS container
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "120"
+    description: Timeout for the e2e test script
+
+runs:
+  using: composite
+  steps:
+    - name: Copy e2e script into container
+      shell: bash
+      run: |
+        docker cp .github/actions/run-pxar-e2e/run.sh pbs-plus-test:/tmp/e2e-pxar-mount.sh
+        docker exec pbs-plus-test chmod +x /tmp/e2e-pxar-mount.sh
+
+    - name: Run pxar-mount e2e tests
+      shell: bash
+      run: |
+        echo "Running pxar-mount e2e tests..."
+        timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-pxar-mount.sh
