@@ -28,6 +28,11 @@ import (
 // commitMu serializes commit operations globally.
 var commitMu sync.Mutex
 
+// lastCommitTime tracks the last committed backup timestamp to ensure
+// monotonically increasing timestamps. PBS rejects identical timestamps
+// for the same backup group.
+var lastCommitTime int64
+
 // CommitRequest holds parameters for a re-snapshot commit.
 type CommitRequest struct {
 	PBSURL     string
@@ -243,7 +248,14 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 	if archiveName == "" {
 		archiveName = backupID
 	}
-	backupTime := time.Now().Unix()
+	now := time.Now().Unix()
+	// Ensure strictly increasing timestamps — PBS rejects identical
+	// backup times for the same group ("timestamp too old").
+	if now <= lastCommitTime {
+		now = lastCommitTime + 1
+	}
+	lastCommitTime = now
+	backupTime := now
 
 	// Ensure namespace directory exists on disk.
 	if err := ensureNamespaceDir(mfs.pbsStore, namespace); err != nil {
@@ -599,28 +611,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	}
 
 	return nil
-}
-
-// subtreeHasNewData returns true if the journal subtree rooted at nodeID
-// contains any file nodes with HasData=true (new/modified backed files).
-func (ow *commitWalkState) subtreeHasNewData(nodeID int64) bool {
-	edges, err := ow.mfs.journal.ListEdges(nodeID)
-	if err != nil {
-		return false
-	}
-	for _, e := range edges {
-		node, err := ow.mfs.journal.GetNode(e.ChildID)
-		if err != nil || node == nil {
-			continue
-		}
-		if node.Kind == NodeFile && node.HasData {
-			return true
-		}
-		if node.Kind == NodeDir && ow.subtreeHasNewData(node.ID) {
-			return true
-		}
-	}
-	return false
 }
 
 // emitJournalEntry writes a journal node to the archive.
