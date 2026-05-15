@@ -14,22 +14,24 @@ PBS Plus extends a stock Proxmox Backup Server with file-level backup/restore ca
 
 ## Network Topology
 
-```
-┌─────────────────────────────────────────────────┐
-│               PBS Plus Server                    │
-│                                                  │
-│  TCP/8007 ── Modified PBS Web UI (proxied)       │
-│  TCP/8017 ── PBS Plus API (jobs, targets, etc.)  │
-│  TCP/8018 ── Agent HTTP (bootstrap, renewal)     │
-│  UDP/8008 ── aRPC control plane (QUIC + mTLS)   │
-│  TCP/8008 ── aRPC data plane (mTLS + smux)      │
-└────────────┬──────────────────────────┬──────────┘
-             │ QUIC (persistent)        │ TCP (on-demand)
-             │ status, commands,        │ backup/restore
-             │ file-tree browsing       │ binary streams
-     ┌───────▼────────┐        ┌───────▼────────┐
-     │  Agent (Linux)  │        │ Agent (Windows) │
-     └────────────────┘        └────────────────┘
+```mermaid
+graph LR
+    subgraph Server["PBS Plus Server"]
+        direction LR
+        WUI["TCP/8007 — Modified PBS Web UI"]
+        API["TCP/8017 — PBS Plus API"]
+        HTTP["TCP/8018 — Agent HTTP"]
+        QUIC["UDP/8008 — aRPC control (QUIC + mTLS)"]
+        TCP["TCP/8008 — aRPC data (mTLS + smux)"]
+    end
+
+    AgentL["Agent (Linux)"]
+    AgentW["Agent (Windows)"]
+
+    Server -- "QUIC — persistent\nstatus, commands,\nfile-tree browsing" --> AgentL
+    Server -- "QUIC — persistent\nstatus, commands,\nfile-tree browsing" --> AgentW
+    Server -- "TCP — on-demand\nbackup/restore\nbinary streams" --> AgentL
+    Server -- "TCP — on-demand\nbackup/restore\nbinary streams" --> AgentW
 ```
 
 ### Ports
@@ -61,41 +63,42 @@ PBS Plus extends a stock Proxmox Backup Server with file-level backup/restore ca
 
 ## Internal Packages
 
-```
-internal/
-├── agent/          # Agent binary code
-│   ├── agentfs/    # Filesystem enumeration (Windows drives, Unix root)
-│   ├── cli/        # Command-line modes (backup, restore, file-tree)
-│   ├── lifecycle/  # Service lifecycle management
-│   ├── migration/  # Registry format migrations
-│   ├── registry/   # Config storage (TOML on Unix, registry on Windows)
-│   ├── snapshots/  # Block-level snapshot support (Windows VSS)
-│   └── sync/       # Volume status synchronization
-├── arpc/           # Agent RPC — QUIC control plane + TCP data plane
-├── calendar/       # Schedule expression parser
-├── conf/           # Environment config singleton
-├── mtls/           # mTLS certificate management
-├── operator/       # Kubernetes operator controller
-├── pxar/           # Pxar format reader, client, restore logic
-├── pxarmount/      # FUSE filesystem + journal overlay + commit engine
-├── safemap/        # Thread-safe generic map
-├── server/         # Server binary code
-│   ├── application/  # Business logic services (backup, restore, targets, etc.)
-│   ├── backup/       # Backup orchestration and FUSE mount management
-│   ├── database/     # SQLite database (migrations, queries, sqlc generated code)
-│   ├── jobs/         # Job scheduling and execution
-│   ├── mount/        # pxar-mount management
-│   ├── proxmox/      # PBS integration (datastore ops, UPID parsing)
-│   ├── restore/      # Restore orchestration
-│   ├── rpc/          # Server-side aRPC handlers
-│   ├── scheduler/    # Cron-like scheduler
-│   ├── store/        # Central store (DB + services + agent manager)
-│   └── vfs/          # Virtual filesystem layers
-│       ├── arpcfs/     # FUSE filesystem over aRPC (mounts remote agent FS)
-│       ├── s3fs/       # S3-compatible backup target filesystem
-│       └── sessions/   # smux session management
-├── syslog/         # Structured logging
-└── validate/       # Input validation helpers
+```mermaid
+graph TD
+    internal["internal/"]
+    internal --> agent["agent/"]
+    agent --> agentfs["agentfs/ — Filesystem enumeration"]
+    agent --> cli["cli/ — Command-line modes"]
+    agent --> lifecycle["lifecycle/ — Service lifecycle"]
+    agent --> migration["migration/ — Registry migrations"]
+    agent --> registry["registry/ — Config storage"]
+    agent --> snapshots["snapshots/ — Block-level snapshots (VSS)"]
+    agent --> sync["sync/ — Volume status sync"]
+    internal --> arpc["arpc/ — Agent RPC (QUIC + TCP)"]
+    internal --> calendar["calendar/ — Schedule parser"]
+    internal --> conf["conf/ — Env config singleton"]
+    internal --> mtls["mtls/ — mTLS certificate mgmt"]
+    internal --> operator["operator/ — K8s controller"]
+    internal --> pxar["pxar/ — Pxar format reader/client"]
+    internal --> pxarmount["pxarmount/ — FUSE + journal + commit"]
+    internal --> safemap["safemap/ — Thread-safe map"]
+    internal --> server["server/"]
+    server --> application["application/ — Business logic services"]
+    server --> backup["backup/ — Backup orchestration, FUSE mounts"]
+    server --> database["database/ — SQLite + migrations + sqlc"]
+    server --> jobs["jobs/ — Job scheduling & execution"]
+    server --> mount["mount/ — pxar-mount management"]
+    server --> proxmox["proxmox/ — PBS integration"]
+    server --> restore["restore/ — Restore orchestration"]
+    server --> rpc["rpc/ — Server-side aRPC handlers"]
+    server --> scheduler["scheduler/ — Cron-like scheduler"]
+    server --> store["store/ — Central store"]
+    server --> vfs["vfs/"]
+    vfs --> arpcfs["arpcfs/ — FUSE over aRPC"]
+    vfs --> s3fs["s3fs/ — S3 target filesystem"]
+    vfs --> sessions["sessions/ — smux session mgmt"]
+    internal --> syslog["syslog/ — Structured logging"]
+    internal --> validate["validate/ — Input validation"]
 ```
 
 ## Database
