@@ -47,7 +47,7 @@ func Serve(cfg MountConfig) {
 			fmt.Fprintf(os.Stderr, "  ✗ error opening journal: %v\n", err)
 			os.Exit(1)
 		}
-		defer journal.Close()
+		defer func() { _ = journal.Close() }()
 
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "  mutation mode, journal in %s\n", journalDir)

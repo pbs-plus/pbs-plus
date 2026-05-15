@@ -65,17 +65,27 @@ func OpenJournal(dir string) (*Journal, error) {
 	}
 
 	dbPath := filepath.Join(dir, "journal.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous=FULL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
-	if _, err := db.Exec(`
+	if err := initSchema(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("init schema: %w", err)
+	}
+
+	return &Journal{db: db}, nil
+}
+
+// initSchema creates the journal database tables.
+func initSchema(db *sql.DB) error {
+	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS nodes (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			kind        INTEGER NOT NULL,
@@ -109,12 +119,8 @@ func OpenJournal(dir string) (*Journal, error) {
 			PRIMARY KEY (parent_id, name)
 		) WITHOUT ROWID;
 		INSERT OR IGNORE INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/');
-	`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
-
-	return &Journal{db: db}, nil
+	`)
+	return err
 }
 
 func (j *Journal) Close() error {
@@ -122,6 +128,8 @@ func (j *Journal) Close() error {
 }
 
 // tx executes fn within a single SQLite transaction.
+// After a successful commit, a WAL truncation checkpoint ensures the
+// transaction is durable even if the process crashes immediately after.
 func (j *Journal) tx(fn func(tx *sql.Tx) error) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -134,7 +142,14 @@ func (j *Journal) tx(fn func(tx *sql.Tx) error) error {
 		_ = tx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Truncate WAL so committed data reaches the main DB file.
+	// This makes the transaction durable without relying on the OS
+	// page cache flush.
+	_, _ = j.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +410,7 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var edges []GraphEdge
 	for rows.Next() {
 		var e GraphEdge
@@ -441,7 +456,7 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var names []string
 	for rows.Next() {
 		var name string
@@ -472,7 +487,7 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var names []string
 	for rows.Next() {
 		var name string
@@ -611,7 +626,7 @@ func (j *Journal) AllNodes() ([]*GraphNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var nodes []*GraphNode
 	for rows.Next() {
 		n := &GraphNode{}
@@ -666,7 +681,7 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[int64]map[string][]byte)
 	for rows.Next() {
 		var nodeID int64
@@ -689,7 +704,7 @@ func (j *Journal) AllWhiteouts() (map[int64][]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make(map[int64][]string)
 	for rows.Next() {
 		var parentID int64
@@ -719,5 +734,152 @@ func (j *Journal) Clear() error {
 		}
 		_, err := tx.Exec(`UPDATE nodes SET redirect_to = '/' WHERE id = 1`)
 		return err
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Compound atomic operations
+// ---------------------------------------------------------------------------
+
+// CreateNodeAndEdge atomically creates a node and links it under a parent.
+// On failure, neither the node nor the edge exists.
+func (j *Journal) CreateNodeAndEdge(parentID int64, name string, n *GraphNode) (int64, error) {
+	var id int64
+	err := j.tx(func(tx *sql.Tx) error {
+		// Remove any stale whiteout at this location.
+		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
+
+		var err error
+		id, err = createNodeTx(tx, n)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
+			parentID, name, id)
+		return err
+	})
+	return id, err
+}
+
+// DeleteEdgeAndNode atomically removes an edge and its target node.
+// CASCADE handles xattrs; the whiteout is added in the same tx.
+func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {
+	return j.tx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, parentID, name); err != nil {
+			return err
+		}
+		if addWhiteout {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name); err != nil {
+				return err
+			}
+		}
+		// Node deletion cascades to xattrs.
+		if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, nodeID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+// RenameEdge atomically moves an edge from (oldParent, oldName) to
+// (newParent, newName), cleaning up destination whiteouts and any
+// destination edge+node if replace is true.
+func (j *Journal) RenameEdge(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64) error {
+	return j.tx(func(tx *sql.Tx) error {
+		// Remove destination whiteout.
+		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
+
+		// If replacing a destination node, remove its edge and the node itself.
+		if replaceDestNode != 0 {
+			if _, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, replaceDestNode); err != nil {
+				return err
+			}
+		} else {
+			// Just remove any existing edge at destination.
+			_, _ = tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName)
+		}
+
+		// Move source edge.
+		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
+			newParent, newName, oldParent, oldName)
+		if err != nil {
+			return err
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			return fmt.Errorf("rename edge: source (%d, %q) not found", oldParent, oldName)
+		}
+		return nil
+	})
+}
+
+// CreateNodeEdgeAndWhiteout atomically creates a node, links it, and adds
+// a whiteout for the pxar entry being shadowed.
+func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *GraphNode, whiteout bool) (int64, error) {
+	var id int64
+	err := j.tx(func(tx *sql.Tx) error {
+		var err error
+		id, err = createNodeTx(tx, n)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
+			parentID, name, id); err != nil {
+			return err
+		}
+		if whiteout {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return id, err
+}
+
+// MoveEdgeAndWhiteout atomically moves an edge and adds whiteouts for both
+// old and new pxar locations.
+func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64, whiteoutOld, whiteoutNew bool) error {
+	return j.tx(func(tx *sql.Tx) error {
+		// Remove destination whiteout.
+		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
+
+		// Handle destination collision.
+		if replaceDestNode != 0 {
+			if _, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, replaceDestNode); err != nil {
+				return err
+			}
+		}
+
+		// Move source edge.
+		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
+			newParent, newName, oldParent, oldName)
+		if err != nil {
+			return err
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 0 {
+			return fmt.Errorf("move edge: source (%d, %q) not found", oldParent, oldName)
+		}
+
+		// Whiteout old location.
+		if whiteoutOld {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, oldParent, oldName); err != nil {
+				return err
+			}
+		}
+		// Whiteout new location if it had a pxar entry.
+		if whiteoutNew {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, newParent, newName); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
