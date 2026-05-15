@@ -14,19 +14,31 @@ skip() { echo "  ⊘ $1"; ((SKIP++)); }
 section() { echo ""; echo "══════════════════════════════════════════"; echo "  $1"; echo "══════════════════════════════════════════"; }
 
 ###############################################################################
-# Helpers
+# Configuration (override via environment)
+###############################################################################
+PBS_STORE="${PBS_STORE:-/mnt/test}"
+NAMESPACE="${NAMESPACE:-test}"
+BACKUP_ID="${BACKUP_ID:-test-host}"
+BACKUP_DISK="${BACKUP_DISK:-Root}"
+PXAR_MOUNT_BIN="${PXAR_MOUNT_BIN:-/usr/bin/pxar-mount}"
+
+###############################################################################
+# Derived paths
 ###############################################################################
 SOCKET="/var/lib/archive-outpost/sockets/test.sock"
 INIT_SOCKET="/var/lib/archive-outpost/sockets/init-test.sock"
 MOUNT="/mnt/archive-mounts/test"
 INIT_MOUNT="/mnt/archive-mounts/init-test"
-PASS_DIR="/tmp/passthrough/2001-PROJECTS"
+PASS_DIR="/tmp/passthrough/e2e-pass"
 INIT_PASS_DIR="/tmp/passthrough/init-test"
+
+HOST_DIR="${PBS_STORE}/ns/${NAMESPACE}/host/${BACKUP_ID}"
+MPXAR_PATTERN="${BACKUP_ID}---${BACKUP_DISK}.mpxar.didx"
+PPXAR_PATTERN="${BACKUP_ID}---${BACKUP_DISK}.ppxar.didx"
 
 unmount() {
 	fusermount -u "$1" 2>/dev/null || true
 	sleep 1
-	# kill any remaining mount process
 	pgrep -f "pxar-mount.*$(basename $1)" | xargs kill 2>/dev/null || true
 	sleep 1
 }
@@ -36,14 +48,13 @@ mount_init() {
 	unmount "$mount"
 	rm -rf "$pass/.pxar-journal" "$pass"/*
 	mkdir -p "$pass" "$mount" "$(dirname $socket)"
-	nohup /usr/bin/pxar-mount init \
-		--pbs-store /archiving/pbs-datastore \
+	nohup "$PXAR_MOUNT_BIN" init \
+		--pbs-store "$PBS_STORE" \
 		--socket "$socket" \
 		--namespace "$ns" \
 		--passthrough "$pass" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
-	# Wait for mount to be ready
 	for i in $(seq 1 10); do
 		mountpoint -q "$mount" && break
 		sleep 1
@@ -56,11 +67,11 @@ mount_archive() {
 	unmount "$mount"
 	rm -rf "$pass/.pxar-journal" "$pass"/*
 	mkdir -p "$pass" "$mount" "$(dirname $socket)"
-	nohup /usr/bin/pxar-mount \
+	nohup "$PXAR_MOUNT_BIN" \
 		--passthrough "$pass" \
 		--mpxar-didx "$mpxar" \
 		--ppxar-didx "$ppxar" \
-		--pbs-store /archiving/pbs-datastore \
+		--pbs-store "$PBS_STORE" \
 		--socket "$socket" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
@@ -68,7 +79,7 @@ mount_archive() {
 }
 
 do_commit() {
-	pxar-mount commit --socket "$1" --backup-id "$2" 2>&1
+	"$PXAR_MOUNT_BIN" commit --socket "$1" --backup-id "$2" 2>&1
 }
 
 latest_snapshot() {
@@ -79,20 +90,22 @@ latest_snapshot() {
 ###############################################################################
 # Pre-check: find existing snapshot for mount mode tests
 ###############################################################################
-ORIG_SNAP=$(latest_snapshot /archiving/pbs-datastore/ns/test/ns/sgprog/host/AKA 2>/dev/null || true)
+ORIG_SNAP=$(latest_snapshot "$HOST_DIR" 2>/dev/null || true)
 if [ -z "$ORIG_SNAP" ]; then
-	echo "ERROR: No existing AKA snapshots found for mount mode tests"
+	echo "ERROR: No existing snapshots found at $HOST_DIR for mount mode tests"
 	exit 1
 fi
-MPXAR="/archiving/pbs-datastore/ns/test/ns/sgprog/host/AKA/$ORIG_SNAP/AKA---E.mpxar.didx"
-PPXAR="/archiving/pbs-datastore/ns/test/ns/sgprog/host/AKA/$ORIG_SNAP/AKA---E.ppxar.didx"
+MPXAR="${HOST_DIR}/${ORIG_SNAP}/${MPXAR_PATTERN}"
+PPXAR="${HOST_DIR}/${ORIG_SNAP}/${PPXAR_PATTERN}"
 echo "Using snapshot: $ORIG_SNAP"
+echo "MPXAR: $MPXAR"
+echo "PPXAR: $PPXAR"
 
 ###############################################################################
 section "PHASE 1: INIT MODE — Fresh archive from scratch"
 ###############################################################################
 
-mount_init "test/init" "E2E-INIT" "$INIT_SOCKET" "$INIT_MOUNT" "$INIT_PASS_DIR"
+mount_init "${NAMESPACE}/init" "E2E-INIT" "$INIT_SOCKET" "$INIT_MOUNT" "$INIT_PASS_DIR"
 
 # 1a. Create files
 echo "hello world" > "$INIT_MOUNT/file1.txt"
@@ -212,7 +225,7 @@ if [ -n "$FIRST_DIR" ]; then
 fi
 
 # 2h. Commit mounted archive
-sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "mount mode commit #1"
 else
@@ -238,7 +251,7 @@ echo "dir content" > "$MOUNT/post-commit-dir/file.txt"
 ok "post-commit create dir and file"
 
 # 2m. Second commit (re-commit against committed snapshot)
-sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "mount mode commit #2 (re-commit)"
 else
@@ -256,10 +269,9 @@ unmount "$MOUNT"
 section "PHASE 3: MOUNT LATEST SNAPSHOT — Verify committed data persists"
 ###############################################################################
 
-# Find latest snapshot after commits
-LATEST=$(latest_snapshot /archiving/pbs-datastore/ns/test/ns/sgprog/host/AKA)
-MPXAR2="/archiving/pbs-datastore/ns/test/ns/sgprog/host/AKA/$LATEST/AKA---E.mpxar.didx"
-PPXAR2="/archiving/pbs-datastore/ns/test/ns/sgprog/host/AKA/$LATEST/AKA---E.ppxar.didx"
+LATEST=$(latest_snapshot "$HOST_DIR")
+MPXAR2="${HOST_DIR}/${LATEST}/${MPXAR_PATTERN}"
+PPXAR2="${HOST_DIR}/${LATEST}/${PPXAR_PATTERN}"
 
 mount_archive "$MPXAR2" "$PPXAR2" "$SOCKET" "$MOUNT" "$PASS_DIR"
 
@@ -322,7 +334,7 @@ rmdir "$MOUNT/nonempty-dir" 2>/dev/null && fail "rmdir non-empty dir should fail
 rm "$MOUNT/nonempty-dir/x.txt"
 
 # 4f. Commit with all these edge cases
-sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "edge cases commit"
 else
@@ -345,14 +357,13 @@ for i in $(seq 1 5); do
 	echo "rapid-$i" > "$MOUNT/rapid-$i.txt"
 	mkdir -p "$MOUNT/rapid-dir-$i"
 	echo "rapid-dir-content-$i" > "$MOUNT/rapid-dir-$i/file.txt"
-	sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
+	sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 	if echo "$RESULT" | grep -q "✓"; then
 		ok "rapid commit #$i"
 	else
 		fail "rapid commit #$i: $RESULT"
 		break
 	fi
-	# Verify all previous rapid files still accessible
 	for j in $(seq 1 $i); do
 		[ "$(cat $MOUNT/rapid-$j.txt)" = "rapid-$j" ] || { fail "rapid verify #$j after commit $i"; break 2; }
 	done
@@ -380,7 +391,7 @@ mkdir "$MOUNT/acl-dir"
 setfacl -m u:34:rwx "$MOUNT/acl-dir" 2>/dev/null && ok "setfacl on directory" || skip "setfacl on directory (not supported)"
 
 # 6d. Commit with ACLs
-sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "ACL commit"
 else
@@ -406,7 +417,7 @@ SIZE=$(stat -c%s "$MOUNT/large-1m.bin" 2>/dev/null || stat -f%z "$MOUNT/large-1m
 
 # 7b. Compute checksum, commit, verify
 CS_BEFORE=$(sha256sum "$MOUNT/large-1m.bin" | awk '{print $1}')
-sleep 1; RESULT=$(do_commit "$SOCKET" "AKA")
+sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 if echo "$RESULT" | grep -q "✓"; then
 	ok "large file commit"
 else
