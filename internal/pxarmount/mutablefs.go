@@ -1105,7 +1105,24 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 	if re.PxarNode != nil {
 		pxarHeader := *header
 		pxarHeader.NodeId = re.PxarNode.inode
-		_, _ = fs.pxar.ListXAttr(cancel, &pxarHeader, nil)
+		// First call with nil dest to get total size.
+		pxarSz, pxarStatus := fs.pxar.ListXAttr(cancel, &pxarHeader, nil)
+		if pxarStatus == fuse.OK && pxarSz > 0 {
+			buf := make([]byte, pxarSz)
+			sz, status := fs.pxar.ListXAttr(cancel, &pxarHeader, buf)
+			if status == fuse.OK {
+				// Parse null-delimited names from the buffer.
+				start := 0
+				for i := 0; i <= int(sz); i++ {
+					if i == int(sz) || buf[i] == 0 {
+						if i > start {
+							nameSet[string(buf[start:i])] = true
+						}
+						start = i + 1
+					}
+				}
+			}
+		}
 	}
 
 	var total uint32
@@ -1561,6 +1578,7 @@ func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 // ensureNode ensures a journal node+edge exists for a resolved entry.
 // For pxar-only entries, it creates a node with redirect_to and an edge
 // under the parent. For journal entries, it's a no-op.
+// All database operations are batched into a single SQLite transaction.
 func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	if re.Node != nil {
 		return
@@ -1588,78 +1606,12 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 		node.RedirectTo = re.Path
 	}
 
-	nodeID, err := fs.journal.CreateNode(node)
+	nodeID, err := fs.journal.EnsureNodePath(re.Path, node, false)
 	if err != nil {
+		fs.debugf("ensureNode: EnsureNodePath(%q) failed: %v", re.Path, err)
 		return
 	}
 	node.ID = nodeID
-
-	// Create edges for any parent nodes that don't already have them.
-	// Walk path from root, creating edges and intermediate nodes as needed.
-	parts := splitPath(re.Path)
-	curParentID := int64(1) // root
-
-	for i, name := range parts {
-		if name == "" {
-			continue
-		}
-		childID, err := fs.journal.LookupEdge(curParentID, name)
-		if err != nil {
-			return
-		}
-		if childID != 0 {
-			curParentID = childID
-			continue
-		}
-
-		if i == len(parts)-1 {
-			// This is the target — use our node.
-			if err := fs.journal.CreateEdge(curParentID, name, nodeID); err != nil {
-				return
-			}
-			// Add whiteout if shadowing pxar.
-			if re.PxarNode != nil {
-				if err := fs.journal.AddWhiteout(curParentID, name); err != nil {
-					fs.logNonFatal("add-whiteout", name, err)
-				}
-			}
-		} else {
-			// Intermediate directory — create inline.
-			var intermediatePath strings.Builder
-			intermediatePath.WriteString("/" + parts[0])
-			for j := 1; j <= i; j++ {
-				intermediatePath.WriteString("/" + parts[j])
-			}
-			intermediate := &GraphNode{
-				Kind:       NodeDir,
-				Mode:       syscall.S_IFDIR | 0o755,
-				UID:        node.UID,
-				GID:        node.GID,
-				Size:       0,
-				MtimeNs:    now,
-				CtimeNs:    now,
-				RedirectTo: intermediatePath.String(),
-			}
-			midID, err := fs.journal.CreateNode(intermediate)
-			if err != nil {
-				return
-			}
-			intermediate.ID = midID
-			if err := fs.journal.CreateEdge(curParentID, name, midID); err != nil {
-				return
-			}
-			curParentID = midID
-		}
-
-		// Check pxar whiteouts.
-		isWO, _ := fs.journal.IsWhiteout(curParentID, name)
-		if isWO {
-			if err := fs.journal.RemoveWhiteout(curParentID, name); err != nil {
-				fs.logNonFatal("remove-whiteout", name, err)
-			}
-		}
-	}
-
 	re.Node = node
 }
 
@@ -1929,27 +1881,6 @@ func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Uid = n.UID
 	attr.Gid = n.GID
 	attr.Blksize = 4096
-}
-
-// splitPath splits a path into components.
-func splitPath(path string) []string {
-	if path == "/" || path == "" {
-		return nil
-	}
-	p := path
-	if p[0] == '/' {
-		p = p[1:]
-	}
-	var parts []string
-	start := 0
-	for i := 0; i < len(p); i++ {
-		if p[i] == '/' {
-			parts = append(parts, p[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, p[start:])
-	return parts
 }
 
 func munmap(data []byte) error {
