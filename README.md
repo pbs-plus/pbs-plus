@@ -18,6 +18,14 @@ A Proxmox Backup Server (PBS) "extension" designed to add advanced backup featur
   - [Containerized Agent](#containerized-agent-dockerpodmankubernetes)
   - [Kubernetes Operator](#kubernetes-operator)
 - [Usage](#usage)
+- [pxar-mount](#pxar-mount)
+  - [What is pxar-mount?](#what-is-pxar-mount)
+  - [Quick start](#quick-start)
+  - [CLI reference](#cli-reference)
+  - [Commit workflow](#commit-workflow)
+  - [Architecture](#architecture)
+  - [Performance](#performance)
+  - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -378,6 +386,200 @@ exit 0
 
 - **Cleanup**: You can use a **PostScript** to delete the `.dump` or `.sql` files after the backup is successful to save local disk space.
 - **Error Handling**: If your dump script fails (e.g., database is down), ensure the script exits with a non-zero code (`exit 1`). This will prevent PBS Plus from backing up a partial or corrupted database dump.
+
+## pxar-mount
+
+### What is pxar-mount?
+
+`pxar-mount` is the user-space filesystem driver that powers all PBS Plus file operations. It presents PBS pxar archives (snapshots) as a standard FUSE mount with **read/write** support, allowing you to browse, modify, delete, and create files in a snapshotted archive as if it were a live directory.
+
+Changes are tracked in an SQLite-backed journal overlay. When you're ready to persist changes, a `commit` operation re-snapshots the archive back to PBS with **payload-level deduplication** — unchanged files reference their original payload so only new or modified data is uploaded.
+
+### Key features
+
+- **Read/write FUSE mount** of any PBS pxar archive snapshot
+- **Journal overlay** — all mutations (create, delete, rename, chmod, chown, xattr, ACL) tracked in SQLite without modifying the original archive
+- **Commit (re-snapshot)** — efficiently produces a new PBS snapshot using payload chunk deduplication; only new/modified file content is uploaded
+- **Init mode** — start with an empty filesystem and build archives from scratch without a backing snapshot
+- **Passthrough mode** — mutable file data lives in a local backing directory for zero-copy writes, with the journal tracking metadata
+- **Whitespace-preserving renames** — moves and renames are O(1) edge operations in the journal graph, not recursive copies
+- **Atomic destination replacement** — renaming over an existing file atomically replaces the journal node and cleans up backing data
+- **Directory rename** — renames recursively update child inode mappings so the kernel dentry cache stays coherent
+- **Whiteout support** — deleting pxar-backed entries creates invisible whiteout markers so subsequent lookups return ENOENT
+- **ACL support** — `setfacl` / `getfacl` works on both new and existing files
+- **Symlink support** — create, readlink, and delete symlinks with journal-backed persistence
+- **Rapid-fire commits** — can re-commit within the same second via monotonically increasing backup timestamps
+- **Crash safety** — if a commit upload fails, the mount continues serving the previous archive; the journal is only cleared after successful hot-swap
+
+### Quick start
+
+```bash
+# Mount an existing PBS archive read/write
+pxar-mount \
+  --passthrough /tmp/overlay \
+  --mpxar-didx /path/to/snapshot/archive.mpxar.didx \
+  --pbs-store /path/to/pbs-datastore \
+  --ppxar-didx /path/to/snapshot/archive.ppxar.didx \
+  --options rw,allow_other \
+  --socket /var/run/pxar-mount.sock \
+  /mnt/archive
+
+# Create a new archive from scratch (init mode)
+pxar-mount init \
+  --passthrough /tmp/overlay \
+  --pbs-store /path/to/pbs-datastore \
+  --socket /var/run/pxar-mount.sock \
+  --namespace 'my/namespace' \
+  /mnt/archive
+
+# Commit changes back to PBS
+pxar-mount commit \
+  --socket /var/run/pxar-mount.sock \
+  --backup-id my-backup \
+  --ns my/namespace
+
+# Unmount when done
+umount /mnt/archive
+```
+
+### CLI reference
+
+#### Mount command
+
+```
+pxar-mount [options] <mountpoint>
+```
+
+| Flag | Description |
+|---|---|
+| `--passthrough <dir>` | Backing directory for mutable file data |
+| `--mpxar-didx <path>` | Path to metadata `.mpxar.didx` (required for existing archives) |
+| `--ppxar-didx <path>` | Path to payload `.ppxar.didx` (required for existing archives) |
+| `--pbs-store <path>` | PBS datastore root (for chunk resolution) |
+| `--options <str>` | FUSE mount options (e.g. `rw,allow_other`) |
+| `--socket <path>` | Unix socket for commit control |
+| `--verbose` | Enable debug logging to stderr |
+
+#### Init command
+
+```
+pxar-mount init [options] <mountpoint>
+```
+
+| Flag | Description |
+|---|---|
+| `--passthrough <dir>` | Backing directory for mutable file data |
+| `--pbs-store <path>` | PBS datastore root |
+| `--socket <path>` | Unix socket for commit control |
+| `--namespace <ns>` | PBS namespace for the archive |
+| `--verbose` | Enable debug logging to stderr |
+
+#### Commit command
+
+```
+pxar-mount commit [options]
+```
+
+| Flag | Description |
+|---|---|
+| `--socket <path>` | Path to pxar-mount Unix socket (required) |
+| `--backup-id <id>` | PBS backup ID |
+| `--ns <namespace>` | PBS namespace |
+| `--backup-type <type>` | Backup type (default: `host`) |
+| `--pbs-url <url>` | PBS server URL (default: `https://localhost:8007/api2/json`) |
+| `--datastore <name>` | PBS datastore name |
+
+### Commit workflow
+
+The commit pipeline runs in 6 phases:
+
+1. **Freeze** — FUSE mutations are paused via a `sync.Cond` barrier with zero overhead when idle
+2. **Prepare** — resolves PBS connection parameters, authenticates, starts a dedup session linked to the previous backup
+3. **Scan** — walks the journal graph to identify new and modified files
+4. **Walk** — traverses the merged journal+pxar tree, emitting entries to a dedup archive writer:
+   - **Ref entries** (unchanged pxar files): emitted as `PAYLOAD_REF` — zero data transfer, only a pointer to the original payload chunk
+   - **New entries** (modified/created files): streamed via `PAYLOAD` with content read from the backing directory
+5. **Upload** — builds a combined DIDX from original chunks + new file data, uploads only new chunks
+6. **Hot-swap** — mmaps the new DIDX files, replaces the active archive reader, and clears the journal
+
+**Payload deduplication**: the commit walker sorts pxar entries by their original payload offset to maintain monotonicity (required by PBS). If sibling directories have overlapping payload ranges (from re-committed archives), the walker falls back to re-encoding affected files — this mirrors the Rust `proxmox-backup-client` pattern of `try_record_reusable_offset` + fallback re-encode.
+
+### Architecture
+
+```
+┌─────────────────────────────────────┐
+│           FUSE Kernel Layer          │
+└─────────────────┬───────────────────┘
+                  │
+┌─────────────────▼───────────────────┐
+│            MutableFS                │
+│  ┌─────────────────────────────┐    │
+│  │  Path → Inode → Resolve     │    │
+│  │  ┌─────────┐  ┌──────────┐  │    │
+│  │  │ Journal │  │  PxarFS  │  │    │
+│  │  │ (SQLite)│  │ (archive)│  │    │
+│  │  └────┬────┘  └────┬─────┘  │    │
+│  │       │ edges/     │ reader  │    │
+│  │       │ nodes      │         │    │
+│  └───────┼────────────┼─────────┘    │
+│          │            │              │
+│  ┌───────▼────┐ ┌─────▼──────────┐   │
+│  │ Mutable Dir │ │ SplitArchive  │   │
+│  │ (passthru)  │ │ Reader (mmap) │   │
+│  └────────────┘ └────────────────┘   │
+│                                      │
+│  ┌────────────────────────────────┐  │
+│  │     Commit Engine              │  │
+│  │  Freeze → Walk → Upload → Swap │  │
+│  └────────────────────────────────┘  │
+└──────────────────────────────────────┘
+```
+
+**Components**:
+
+- **MutableFS** — the FUSE filesystem implementation. All operations (read, write, create, delete, rename, getattr, setattr, readdir, xattr) go through this layer
+- **PxarFS** — immutable read-only access to the pxar archive. Uses lazy chunk loading (on-demand DIDX resolution) for memory efficiency
+- **Journal** — SQLite-backed graph database tracking all mutations: nodes (inode metadata), edges (directory entries), whiteouts (deletions). Edges always take priority over pxar entries during path resolution
+- **Mutable Dir** — local directory on disk where new/modified file content lives. Zero-copy writes via native `syscall.Pwrite`
+- **SplitArchive Reader** — mmap-based access to PBS DIDX files with separate metadata and payload streams
+- **Commit Engine** — freeze/thaw synchronized pipeline that walks the merged tree and produces a new PBS archive
+
+### Performance
+
+**Hot read path** — pxar-backed files are read via `io.ReaderAt` directly from the payload stream, bypassing the mpxar entry read. This eliminates two heap allocations and one I/O round-trip per FUSE read.
+
+**Zero-copy writes** — journal-backed files use the local backing directory with `syscall.Pwrite`. No intermediate buffers.
+
+**Path resolution** — zero-allocation path walker using string slicing instead of `strings.Split` + `strings.Join`. Journal edges are resolved via indexed SQLite queries.
+
+**Memory** — the pxar reader uses lazy chunk loading via `ChunkedReadSeeker`. Only chunks needed for directory listings and file content reads are fetched, not the entire archive.
+
+**Commit deduplication** — unchanged files reference their original payload chunks. Only new/modified content is uploaded. The combined DIDX injects original chunk references at the front and appends new chunks at the end.
+
+### Troubleshooting
+
+**Mount won't start**:
+- Verify the DIDX paths exist and are readable
+- Check that `--pbs-store` points to the correct datastore root
+- Ensure the mountpoint directory exists and is not already in use
+
+**Commit fails with "timestamp too old"**:
+- Consecutive commits within the same second are automatically handled (timestamps are bumped by 1s). If you still see this, check for clock skew
+
+**Commit fails with "payload offset not strictly greater"**:
+- This is handled automatically via fallback re-encoding. If it persists, try with `--verbose` to see which directory has overlapping payload ranges
+
+**Post-commit reads return empty**:
+- This should no longer happen as of v0.19.2 (fixed encoder `payloadWritePos` drift bug). If you encounter it, verify the pxar library version
+
+**Journal database corruption**:
+- Delete the `.pxar-journal` directory in the passthrough directory and restart. Note: this discards all uncommitted changes
+
+**Getting debug output**:
+```bash
+pxar-mount ... --verbose /mnt/archive 2>/tmp/pxar-mount.log
+```
+All FUSE operations, journal queries, and commit walk details are logged to stderr when `--verbose` is enabled.
 
 ## Contributing
 
