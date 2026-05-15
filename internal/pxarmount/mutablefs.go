@@ -87,6 +87,13 @@ func (fs *MutableFS) debugf(format string, args ...any) {
 	}
 }
 
+// logNonFatal logs a non-fatal error to stderr when verbose.
+func (fs *MutableFS) logNonFatal(op, path string, err error) {
+	if fs.verbose {
+		fmt.Fprintf(os.Stderr, "  [nonfatal] %s %s: %v\n", op, path, err)
+	}
+}
+
 func (fs *MutableFS) SetStorePaths(pbsStore, ppxarDidx string) {
 	fs.pbsStore = pbsStore
 	fs.origPpxarDidx = ppxarDidx
@@ -229,7 +236,11 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	if !isOpaque && pxarDirPath != "" {
 		pxarNode := fs.findPxarNode(pxarDirPath)
 		if pxarNode != nil && pxarNode.isDir {
-			pxarEntries, _ = fs.pxar.ReadDirRaw(pxarNode.inode)
+			var rerr error
+			pxarEntries, rerr = fs.pxar.ReadDirRaw(pxarNode.inode)
+			if rerr != nil {
+				fs.debugf("ReadDir: pxar readdir %q err: %v", pxarDirPath, rerr)
+			}
 		}
 	}
 
@@ -237,13 +248,23 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	edgeNames := make(map[string]int64) // name → child node ID
 	whiteoutNames := make(map[string]bool)
 	if parentNodeID != 0 {
-		edges, _ := fs.journal.ListEdges(parentNodeID)
-		for _, e := range edges {
-			edgeNames[e.Name] = e.ChildID
+		var edges []GraphEdge
+		var wos []string
+		if e, err := fs.journal.ListEdges(parentNodeID); err != nil {
+			fs.debugf("ReadDir: list edges %d err: %v", parentNodeID, err)
+		} else {
+			edges = e
+			for _, e := range edges {
+				edgeNames[e.Name] = e.ChildID
+			}
 		}
-		wos, _ := fs.journal.ListWhiteouts(parentNodeID)
-		for _, w := range wos {
-			whiteoutNames[w] = true
+		if w, err := fs.journal.ListWhiteouts(parentNodeID); err != nil {
+			fs.debugf("ReadDir: list whiteouts %d err: %v", parentNodeID, err)
+		} else {
+			wos = w
+			for _, w := range wos {
+				whiteoutNames[w] = true
+			}
 		}
 	}
 
@@ -509,7 +530,9 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	if v, ok := input.GetSize(); ok {
 		re.Size = v
 		if re.DataIsMut {
-			_ = os.Truncate(fs.mutablePath(path), int64(v))
+			if err := os.Truncate(fs.mutablePath(path), int64(v)); err != nil {
+				fs.logNonFatal("truncate", path, err)
+			}
 		}
 	}
 	if a, ok := input.GetATime(); ok {
@@ -523,7 +546,9 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		if m, ok := input.GetMode(); ok {
-			_ = unix.Chmod(abs, m)
+			if err := unix.Chmod(abs, m); err != nil {
+				fs.logNonFatal("chmod", path, err)
+			}
 		}
 		uid, gid := -1, -1
 		if u, ok := input.GetUID(); ok {
@@ -533,7 +558,9 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 			gid = int(g)
 		}
 		if uid != -1 || gid != -1 {
-			_ = unix.Lchown(abs, uid, gid)
+			if err := unix.Lchown(abs, uid, gid); err != nil {
+				fs.logNonFatal("lchown", path, err)
+			}
 		}
 		if atime, aok := input.GetATime(); aok {
 			if mtime, mok := input.GetMTime(); mok {
@@ -541,7 +568,9 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 					{Sec: atime.Unix(), Usec: int64(atime.Nanosecond() / 1000)},
 					{Sec: mtime.Unix(), Usec: int64(mtime.Nanosecond() / 1000)},
 				}
-				_ = unix.Lutimes(abs, tv)
+				if err := unix.Lutimes(abs, tv); err != nil {
+					fs.logNonFatal("lutimes", path, err)
+				}
 			}
 		}
 	}
@@ -600,8 +629,12 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 
 	nodeID, err := fs.journal.CreateNode(node)
 	if err != nil {
-		syscall.Close(fd)
-		os.Remove(abs)
+		if cerr := syscall.Close(fd); cerr != nil {
+			fs.logNonFatal("close-fd-cleanup", "fd", cerr)
+		}
+		if rerr := os.Remove(abs); rerr != nil {
+			fs.logNonFatal("remove-cleanup", abs, rerr)
+		}
 		fs.unmapInode(childPath)
 		return fuse.EIO
 	}
@@ -609,16 +642,24 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 
 	// Create edge.
 	if err := fs.journal.CreateEdge(parentID, name, nodeID); err != nil {
-		syscall.Close(fd)
-		os.Remove(abs)
-		fs.journal.DeleteNode(nodeID)
+		if cerr := syscall.Close(fd); cerr != nil {
+			fs.logNonFatal("close-fd-cleanup", "fd", cerr)
+		}
+		if rerr := os.Remove(abs); rerr != nil {
+			fs.logNonFatal("remove-cleanup", abs, rerr)
+		}
+		if derr := fs.journal.DeleteNode(nodeID); derr != nil {
+			fs.logNonFatal("delete-node-cleanup", fmt.Sprint(nodeID), derr)
+		}
 		fs.unmapInode(childPath)
 		return fuse.EIO
 	}
 
 	// If shadowing a pxar entry, add whiteout.
 	if fs.hasPxarEntry(childPath) {
-		_ = fs.journal.AddWhiteout(parentID, name)
+		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
+			fs.logNonFatal("add-whiteout", name, err)
+		}
 	}
 
 	fs.applyACLOwnership(abs, false)
@@ -683,7 +724,9 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 
 	// If shadowing pxar, add whiteout to hide the pxar name.
 	if hasPxar {
-		_ = fs.journal.AddWhiteout(parentID, name)
+		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
+			fs.logNonFatal("add-whiteout", name, err)
+		}
 	}
 
 	ino := fs.pathToIno(childPath, true)
@@ -742,7 +785,9 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	}
 
 	if hasPxar {
-		_ = fs.journal.AddWhiteout(parentID, name)
+		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
+			fs.logNonFatal("add-whiteout", name, err)
+		}
 	}
 
 	ino := fs.pathToIno(childPath, false)
@@ -802,7 +847,9 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	}
 
 	if hasPxar {
-		_ = fs.journal.AddWhiteout(parentID, linkName)
+		if err := fs.journal.AddWhiteout(parentID, linkName); err != nil {
+			fs.logNonFatal("add-whiteout", linkName, err)
+		}
 	}
 
 	ino := fs.pathToIno(childPath, false)
@@ -841,7 +888,9 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 			}
 		}
 		// Delete the node (cascade removes xattrs).
-		_ = fs.journal.DeleteNode(re.Node.ID)
+		if err := fs.journal.DeleteNode(re.Node.ID); err != nil {
+			fs.logNonFatal("delete-node", fmt.Sprint(re.Node.ID), err)
+		}
 	} else if re.PxarNode != nil {
 		// Pure pxar deletion: just add whiteout.
 		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
@@ -851,7 +900,9 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 
 	// Remove mutable data.
 	if re.DataIsMut {
-		_ = os.Remove(fs.mutablePath(childPath))
+		if err := os.Remove(fs.mutablePath(childPath)); err != nil {
+			fs.logNonFatal("remove", childPath, err)
+		}
 	}
 
 	fs.unmapInode(childPath)
@@ -921,10 +972,16 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	destHasPXar := fs.hasPxarEntry(newPath)
 	destRE, _ := fs.resolve(newPath)
 	if destRE != nil && destRE.Node != nil {
-		_ = fs.journal.DeleteEdge(newParentID, newName)
-		_ = fs.journal.DeleteNode(destRE.Node.ID)
+		if err := fs.journal.DeleteEdge(newParentID, newName); err != nil {
+			fs.logNonFatal("delete-edge", newName, err)
+		}
+		if err := fs.journal.DeleteNode(destRE.Node.ID); err != nil {
+			fs.logNonFatal("delete-node", fmt.Sprint(destRE.Node.ID), err)
+		}
 		if destRE.DataIsMut {
-			_ = os.Remove(fs.mutablePath(newPath))
+			if err := os.Remove(fs.mutablePath(newPath)); err != nil {
+				fs.logNonFatal("remove", newPath, err)
+			}
 		}
 		fs.unmapInode(newPath)
 	}
@@ -959,14 +1016,18 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		// Source has a journal node: move the edge.
 		if err := fs.journal.MoveEdge(oldParentID, oldName, newParentID, newName); err != nil {
 			if oldRE.DataIsMut {
-				_ = os.Rename(fs.mutablePath(newPath), fs.mutablePath(oldPath))
+				if err := os.Rename(fs.mutablePath(newPath), fs.mutablePath(oldPath)); err != nil {
+					fs.logNonFatal("rename-revert", oldPath, err)
+				}
 			}
 			return fuse.EIO
 		}
 		// If the node wraps pxar content (has RedirectTo), whiteout the old
 		// location so the underlying pxar entry stays hidden after the move.
 		if oldRE.Node.RedirectTo != "" {
-			_ = fs.journal.AddWhiteout(oldParentID, oldName)
+			if err := fs.journal.AddWhiteout(oldParentID, oldName); err != nil {
+				fs.logNonFatal("add-whiteout", oldName, err)
+			}
 		}
 	} else {
 		// Source is pxar-only: create a journal node + edge, whiteout old location.
@@ -1003,7 +1064,9 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 
 	// Whiteout dest if it had a pxar entry that should stay hidden.
 	if destHasPXar {
-		_ = fs.journal.AddWhiteout(newParentID, newName)
+		if err := fs.journal.AddWhiteout(newParentID, newName); err != nil {
+			fs.logNonFatal("add-whiteout", newName, err)
+		}
 	}
 
 	// Update inode mapping.
@@ -1121,8 +1184,7 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 	if re.PxarNode != nil {
 		pxarHeader := *header
 		pxarHeader.NodeId = re.PxarNode.inode
-		sz, _ := fs.pxar.ListXAttr(cancel, &pxarHeader, nil)
-		_ = sz
+		_, _ = fs.pxar.ListXAttr(cancel, &pxarHeader, nil)
 	}
 
 	var total uint32
@@ -1174,7 +1236,9 @@ func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, at
 		} else if input.Flags&XattrReplace != 0 {
 			flags = unix.XATTR_REPLACE
 		}
-		_ = unix.Setxattr(abs, attr, data, flags)
+		if err := unix.Setxattr(abs, attr, data, flags); err != nil {
+			fs.logNonFatal("setxattr", attr, err)
+		}
 	}
 
 	return fuse.OK
@@ -1197,7 +1261,9 @@ func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, 
 	}
 
 	if re.DataIsMut {
-		_ = unix.Removexattr(fs.mutablePath(path), attr)
+		if err := unix.Removexattr(fs.mutablePath(path), attr); err != nil {
+			fs.logNonFatal("removexattr", attr, err)
+		}
 	}
 
 	return fuse.OK
@@ -1236,7 +1302,9 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 	}
 	fs.fhMu.Lock()
 	if fh, ok := fs.handles[input.Fh]; ok {
-		_ = syscall.Close(fh.fd)
+		if err := syscall.Close(fh.fd); err != nil {
+			fs.logNonFatal("close-fd", "fd", err)
+		}
 		delete(fs.handles, input.Fh)
 	}
 	fs.fhMu.Unlock()
@@ -1375,7 +1443,9 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	}
 
 	mode := os.FileMode(statMode(n.mode) & 0o7777)
-	_ = os.Chmod(abs, mode)
+	if err := os.Chmod(abs, mode); err != nil {
+		fs.logNonFatal("chmod", abs, err)
+	}
 	return nil
 }
 
@@ -1628,7 +1698,9 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 			}
 			// Add whiteout if shadowing pxar.
 			if re.PxarNode != nil {
-				_ = fs.journal.AddWhiteout(curParentID, name)
+				if err := fs.journal.AddWhiteout(curParentID, name); err != nil {
+					fs.logNonFatal("add-whiteout", name, err)
+				}
 			}
 		} else {
 			// Intermediate directory — create inline.
@@ -1661,7 +1733,9 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 		// Check pxar whiteouts.
 		isWO, _ := fs.journal.IsWhiteout(curParentID, name)
 		if isWO {
-			_ = fs.journal.RemoveWhiteout(curParentID, name)
+			if err := fs.journal.RemoveWhiteout(curParentID, name); err != nil {
+				fs.logNonFatal("remove-whiteout", name, err)
+			}
 		}
 	}
 
@@ -1809,7 +1883,9 @@ func (fs *MutableFS) applyACLOwnership(absPath string, isDir bool) {
 	uid := fs.acl.OwnerUID
 	gid := fs.acl.OwnerGID
 	if uid != 0 || gid != 0 {
-		_ = os.Chown(absPath, uid, gid)
+		if err := os.Chown(absPath, uid, gid); err != nil {
+			fs.logNonFatal("chown", absPath, err)
+		}
 	}
 }
 
@@ -1822,24 +1898,32 @@ func (fs *MutableFS) ForceACLOwnership() {
 	if uid == 0 && gid == 0 {
 		return
 	}
-	_ = filepath.Walk(fs.mutableDir, func(path string, info os.FileInfo, err error) error {
+	if err := filepath.Walk(fs.mutableDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		_ = os.Chown(path, uid, gid)
+		if err := os.Chown(path, uid, gid); err != nil {
+			fs.logNonFatal("chown", path, err)
+		}
 		return nil
-	})
+	}); err != nil {
+		fs.logNonFatal("walk-chown", fs.mutableDir, err)
+	}
 }
 
 func (fs *MutableFS) Close() {
 	for _, d := range fs.mmapData {
-		_ = munmap(d)
+		if err := munmap(d); err != nil {
+			fs.logNonFatal("munmap", "data", err)
+		}
 	}
 	fs.mmapData = nil
 
 	fs.fhMu.Lock()
 	for _, fh := range fs.handles {
-		_ = syscall.Close(fh.fd)
+		if err := syscall.Close(fh.fd); err != nil {
+			fs.logNonFatal("close-fd", "fd", err)
+		}
 	}
 	fs.handles = nil
 	fs.fhMu.Unlock()
