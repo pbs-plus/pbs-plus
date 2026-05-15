@@ -166,7 +166,7 @@ func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out 
 	}
 
 	fillResolvedAttrOut(re, out)
-	fs.debugf("GetAttr: ok mode=0%o isDir=%v", out.Attr.Mode, re.IsDir)
+	fs.debugf("GetAttr: ok mode=0%o isDir=%v", out.Mode, re.IsDir)
 	return fuse.OK
 }
 
@@ -618,9 +618,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 
 	// If shadowing a pxar entry, add whiteout.
 	if fs.hasPxarEntry(childPath) {
-		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
-			// Not fatal — edge already created.
-		}
+		_ = fs.journal.AddWhiteout(parentID, name)
 	}
 
 	fs.applyACLOwnership(abs, false)
@@ -634,7 +632,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 	out.Fh = fhID
 	out.OpenFlags = fuse.FOPEN_KEEP_CACHE
 	fillAttrFromNode(&out.Attr, node)
-	out.Attr.Ino = ino
+	out.Ino = ino
 	return fuse.OK
 }
 
@@ -695,7 +693,7 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	out.EntryValid = 1
 	out.AttrValid = 1
 	fillAttrFromNode(&out.Attr, node)
-	out.Attr.Ino = ino
+	out.Ino = ino
 	return fuse.OK
 }
 
@@ -754,7 +752,7 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	out.EntryValid = 1
 	out.AttrValid = 1
 	fillAttrFromNode(&out.Attr, node)
-	out.Attr.Ino = ino
+	out.Ino = ino
 	return fuse.OK
 }
 
@@ -814,7 +812,7 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	out.EntryValid = 1
 	out.AttrValid = 1
 	fillAttrFromNode(&out.Attr, node)
-	out.Attr.Ino = ino
+	out.Ino = ino
 	return fuse.OK
 }
 

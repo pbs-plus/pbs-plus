@@ -353,7 +353,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		entries = append(entries, dirEntrySlim{
 			name:          e.FileName(),
-			inode:         toInode(e),
+			inode:         ToInode(e),
 			mode:          statMode(e.Metadata.Stat.Mode),
 			entryStart:    e.FileOffset,
 			contentOffset: e.ContentOffset,
@@ -530,13 +530,6 @@ func (fs *PxarFS) Reader() *transfer.SplitArchiveReader {
 }
 
 // --- helpers ---
-
-func toInode(e *pxar.Entry) uint64 {
-	if e.IsDir() {
-		return e.FileOffset + e.FileSize
-	}
-	return e.FileOffset | NonDirBit
-}
 
 func bytesEq(b []byte, s string) bool {
 	if len(b) != len(s) {
