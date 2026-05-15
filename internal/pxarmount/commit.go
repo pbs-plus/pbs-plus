@@ -542,18 +542,19 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 				node: node,
 			})
 		} else if node.Kind == NodeDir {
-			// Directory — classify by whether subtree has new data.
-			if ow.subtreeHasNewData(node.ID) {
-				newDataEntries = append(newDataEntries, commitEntry{
-					name: edge.Name,
-					node: node,
-				})
-			} else {
-				refEntries = append(refEntries, commitEntry{
-					name: edge.Name,
-					node: node,
-				})
-			}
+			// Directories, even those with new data in their subtree,
+			// are always ref entries. The directory metadata entry
+			// itself does not advance the payload. New data in the
+			// subtree is handled by the recursive walk of that
+			// directory's children.
+			//
+			// Putting a directory in newDataEntries would displace
+			// all of its ref children from the correctly sorted
+			// order alongside sibling entries.
+			refEntries = append(refEntries, commitEntry{
+				name: edge.Name,
+				node: node,
+			})
 		} else {
 			// Symlinks, empty files, redirects — no payload advance.
 			refEntries = append(refEntries, commitEntry{
