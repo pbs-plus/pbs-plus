@@ -2,28 +2,32 @@
 
 ## Repository Structure
 
-```
-.
-├── cmd/
-│   ├── pbs_plus/       # Server binary
-│   ├── agent/          # Agent binary (Linux/Windows)
-│   ├── pxar-mount/     # FUSE mount binary
-│   ├── operator/       # Kubernetes operator
-│   └── signer/         # Ed25519 update signer
-├── internal/           # All library code (see architecture.md for breakdown)
-├── build/
-│   ├── container/      # Agent Docker image support files
-│   ├── package/        # MSI/DEB packaging assets
-│   └── tests/          # CI test Dockerfile
-├── deploy/
-│   └── kubernetes/     # Operator manifests
-├── .github/
-│   ├── workflows/      # CI/CD workflows
-│   └── actions/        # Reusable composite actions
-├── Dockerfile          # Agent container image
-├── Dockerfile.operator # Operator container image
-├── sqlc.yaml           # sqlc config for DB query generation
-└── .goreleaser.yaml    # Release build config
+```mermaid
+graph TD
+    root["."] --> cmd
+    root --> internal["internal/ — library code"]
+    root --> build
+    root --> deploy
+    root --> github["github/"]
+    root --> Dockerfile
+    root --> DockerfileOp["Dockerfile.operator"]
+    root --> sqlc["sqlc.yaml"]
+    root --> goreleaser["goreleaser.yaml"]
+
+    cmd --> pbs_plus["pbs_plus/ — Server binary"]
+    cmd --> agent["agent/ — Agent binary (Linux/Windows)"]
+    cmd --> pxarmount["pxar-mount/ — FUSE mount binary"]
+    cmd --> operator["operator/ — K8s operator"]
+    cmd --> signer["signer/ — Ed25519 update signer"]
+
+    build --> container["container/ — Agent Docker image files"]
+    build --> pkg["package/ — MSI/DEB packaging"]
+    build --> tests["tests/ — CI test Dockerfile"]
+
+    deploy --> k8s["kubernetes/ — Operator manifests"]
+
+    github --> workflows["workflows/ — CI/CD"]
+    github --> actions["actions/ — Reusable composite actions"]
 ```
 
 ## Building
