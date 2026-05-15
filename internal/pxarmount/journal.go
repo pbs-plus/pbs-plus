@@ -517,60 +517,61 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 		return 1, "/", 0, "", nil
 	}
 
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	// Zero-allocation path walker. Walk path segments by slicing the
+	// original string — no []string allocation, no strings.Join.
 	curID := int64(1)
-	pxarPrefix := "/"
+	var pxarPrefix strings.Builder
+	pxarPrefix.WriteByte('/')
+	pos := 1 // start after leading /
 
-	for i, part := range parts {
-		if part == "" {
-			continue
+	for pos < len(path) {
+		// Find next segment.
+		end := pos
+		for end < len(path) && path[end] != '/' {
+			end++
 		}
+		part := path[pos:end]
 
-		// Edges take priority over whiteouts. Check edge first.
+		// Edges take priority over whiteouts.
 		var childID int64
 		err = j.db.QueryRow(
 			`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
 			curID, part).Scan(&childID)
 		if err == sql.ErrNoRows {
-			// No edge — check whiteout before falling back to pxar.
 			isWO, werr := j.IsWhiteout(curID, part)
 			if werr != nil {
 				return 0, "", 0, "", werr
 			}
 			if isWO {
-				return 0, "", 0, "", nil // whiteout = ENOENT
+				return 0, "", 0, "", nil
 			}
-			// Fell off graph — remaining path is in pxar
-			rem := strings.Join(parts[i:], "/")
-			var pp string
-			if pxarPrefix == "/" {
-				pp = "/" + rem
-			} else {
-				pp = pxarPrefix + "/" + rem
-			}
-			return 0, pp, curID, rem, nil
+			// Fell off graph — remaining is from current position.
+			return 0, pxarPrefix.String() + path[pos-1:], curID, path[pos:], nil
 		}
 		if err != nil {
 			return 0, "", 0, "", err
 		}
 
-		// Edge found — it shadows any whiteout at this location.
 		curID = childID
 
-		// Update pxar prefix from this node's redirect_to
+		// Update pxar prefix from redirect_to.
 		var redirectTo sql.NullString
 		if err := j.db.QueryRow(
 			`SELECT redirect_to FROM nodes WHERE id = ?`, curID).Scan(&redirectTo); err != nil {
 			return 0, "", 0, "", err
 		}
 		if redirectTo.Valid && redirectTo.String != "" {
-			pxarPrefix = redirectTo.String
+			pxarPrefix.Reset()
+			pxarPrefix.WriteString(redirectTo.String)
 		} else {
-			pxarPrefix = "/" + strings.Join(parts[:i+1], "/")
+			pxarPrefix.WriteByte('/')
+			pxarPrefix.WriteString(part)
 		}
+
+		pos = end + 1
 	}
 
-	return curID, pxarPrefix, 0, "", nil
+	return curID, pxarPrefix.String(), 0, "", nil
 }
 
 // ReconstructPath walks edges backward from nodeID to reconstruct its full path.
