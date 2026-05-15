@@ -3,7 +3,6 @@ package pxarmount
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zeebo/xxh3"
 
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
@@ -125,13 +126,13 @@ func ResolveDatastoreName(pbsStore string) string {
 
 // StartCommitListener listens on a Unix socket for commit requests.
 func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) {
-	_ = os.Remove(sockPath)
+	_ = os.Remove(sockPath) // ignore error — may not exist
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(sockPath, 0o660); err != nil {
-		l.Close()
+		_ = l.Close()
 		return nil, err
 	}
 	go func() {
@@ -147,7 +148,7 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 }
 
 func handleCommitConn(mfs *MutableFS, conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
 		return
@@ -155,7 +156,7 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	line := scanner.Text()
 	req, err := ParseCommitLine(line)
 	if err != nil {
-		fmt.Fprintf(conn, "ERR %v\n", err)
+		_, _ = fmt.Fprintf(conn, "ERR %v\n", err)
 		return
 	}
 	prog := NewProgressReporter(conn)
@@ -183,7 +184,7 @@ type commitWalkState struct {
 	prog         *ProgressReporter
 	pxarDirCache map[uint64][]dirEntrySlim // pxar inode → cached dir entries
 	xattrCache   map[int64][]format.XAttr  // journal node ID → xattrs
-	backedHashes map[string][32]byte       // relPath → SHA256 of uploaded files
+	backedHashes map[string]uint64         // relPath → xxh3 hash of uploaded files
 	mutableFiles int                       // count of new/modified files
 }
 
@@ -345,7 +346,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 		prog:         prog,
 		pxarDirCache: make(map[uint64][]dirEntrySlim),
 		xattrCache:   make(map[int64][]format.XAttr),
-		backedHashes: make(map[string][32]byte),
+		backedHashes: make(map[string]uint64),
 	}
 
 	// Pre-load all journal xattrs for batch access.
@@ -686,7 +687,7 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 	if err != nil {
 		return fmt.Errorf("open backed file %s: %w", childPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fi, err := f.Stat()
 	if err != nil {
@@ -700,16 +701,14 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 		FileSize: uint64(fi.Size()),
 	}
 
-	hash := sha256.New()
-	tee := io.TeeReader(f, hash)
+	h := xxh3.New()
+	tee := io.TeeReader(f, h)
 
 	if err := ow.writer.WriteEntryReader(entry, tee, uint64(fi.Size())); err != nil {
 		return fmt.Errorf("write backed file %s: %w", name, err)
 	}
 
-	var h [32]byte
-	hash.Sum(h[:0])
-	ow.backedHashes[childPath] = h
+	ow.backedHashes[childPath] = h.Sum64()
 	ow.mutableFiles++
 
 	if ow.prog != nil {
@@ -841,7 +840,7 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 			if rerr != nil {
 				return fmt.Errorf("read pxar file content for re-encode %s/%s: %w", parentRelPath, ce.name, rerr)
 			}
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			if werr := ow.writer.WriteEntryReader(clone, rc, pxarEntry.FileSize); werr != nil {
 				return fmt.Errorf("write pxar file (re-encode) %s/%s: %w", parentRelPath, ce.name, werr)
 			}
@@ -941,7 +940,7 @@ func resolvePxarEntry(mfs *MutableFS, relPath string) (*pxar.Entry, error) {
 }
 
 // verifyBackedFileHashes checks that backed files haven't changed since upload.
-func verifyBackedFileHashes(mfs *MutableFS, hashes map[string][32]byte) error {
+func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64) error {
 	buf := make([]byte, 64*1024)
 	for relPath, expected := range hashes {
 		abs := mfs.mutablePath(relPath)
@@ -949,15 +948,13 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string][32]byte) error {
 		if err != nil {
 			return fmt.Errorf("open backed file %q for verification: %w", relPath, err)
 		}
-		h := sha256.New()
+		h := xxh3.New()
 		_, err = io.CopyBuffer(h, f, buf)
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			return fmt.Errorf("hash backed file %q: %w", relPath, err)
 		}
-		var actual [32]byte
-		h.Sum(actual[:0])
-		if actual != expected {
+		if h.Sum64() != expected {
 			return fmt.Errorf("backed file %q content hash differs", relPath)
 		}
 	}
@@ -1011,28 +1008,28 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	}
 	payloadData, err := mmapFile(ppxarPath)
 	if err != nil {
-		munmap(metaData)
+		_ = munmap(metaData)
 		return fmt.Errorf("mmap new ppxar: %w", err)
 	}
 
 	store, err := datastore.NewChunkStore(mfs.pbsStore)
 	if err != nil {
-		munmap(metaData)
-		munmap(payloadData)
+		_ = munmap(metaData)
+		_ = munmap(payloadData)
 		return fmt.Errorf("open chunk store: %w", err)
 	}
 	source := datastore.NewChunkStoreSource(store)
 
 	newReader, err := transfer.NewSplitArchiveReader(metaData, payloadData, source)
 	if err != nil {
-		munmap(metaData)
-		munmap(payloadData)
+		_ = munmap(metaData)
+		_ = munmap(payloadData)
 		return fmt.Errorf("create new reader: %w", err)
 	}
 
 	// Release previous mmap'd DIDX data.
 	for _, d := range mfs.mmapData {
-		munmap(d)
+		_ = munmap(d)
 	}
 
 	// Hot-swap the pxar reader.
@@ -1140,7 +1137,7 @@ func RunCommitSubcommand() {
 	backupType := fs.String("backup-type", "host", "Backup type")
 	backupID := fs.String("backup-id", "", "Backup ID")
 
-	fs.Parse(os.Args[2:])
+	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *socketPath == "" {
 		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> [options]\n\n")
@@ -1154,7 +1151,7 @@ func RunCommitSubcommand() {
 		fmt.Fprintf(os.Stderr, "  \u2717 error connecting to socket %s: %v\n", *socketPath, err)
 		os.Exit(1)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
 		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID)

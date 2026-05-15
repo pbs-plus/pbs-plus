@@ -28,7 +28,7 @@ func RunInitSubcommand() {
 	forceAclOwner := fs.Bool("force-acl-owner", false, "Force set owner on all existing files at mount")
 	forceAclGroup := fs.Bool("force-acl-group", false, "Force set group on all existing files at mount")
 
-	fs.Parse(os.Args[2:])
+	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *pbsStore == "" {
 		fmt.Fprintf(os.Stderr, "Usage: pxar-mount init --pbs-store <path> --socket <path> [--passthrough <dir>] [--namespace <ns>] [--verbose] <mountpoint>\n\n")
