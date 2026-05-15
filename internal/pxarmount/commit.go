@@ -466,16 +466,20 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			pxarFiles = append(pxarFiles, commitEntry{name: pe.name, pxarSlim: pe})
 		}
 	}
-	// Sort ALL pxar children (dirs + files + symlinks) by min descendant
-	// payload offset. PBS writes depth-first with strictly ascending
-	// offsets, so sorting by min descendant offset restores the original
-	// write order. Symlinks have no payload but occupy a metadata position
-	// between payload entries — assign them a high sort key so they don't
-	// interfere with monotonicity.
+	// Sort ALL pxar children (dirs + files + symlinks) by entryStart
+	// (mpxar metadata position). PBS writes the mpxar and ppxar streams
+	// simultaneously in depth-first order, so the mpxar entry order
+	// preserves the original payload write order.
+	//
+	// Previous approach used minPayloadOffset for directories, but that
+	// doesn't account for a directory's max descendant payload offset.
+	// Sibling directories with overlapping payload ranges sorted by
+	// minPayloadOffset can violate monotonicity when one directory's
+	// subtree extends past another directory's first file.
 	for i := range pxarDirs {
 		d := &pxarDirs[i]
 		if d.pxarSlim.isDir {
-			d.sortKey = ow.minPayloadOffset(d.pxarSlim)
+			d.sortKey = uint64(d.pxarSlim.entryStart)
 		} else {
 			// Symlink — no payload, emit in original order
 			d.sortKey = d.pxarSlim.contentOffset
@@ -487,7 +491,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	for i := range allEntries {
 		e := &allEntries[i]
 		if e.pxarSlim.isDir {
-			// already set above
+			// already set above to entryStart
 		} else if e.pxarSlim.isSymlink {
 			e.sortKey = e.pxarSlim.contentOffset
 		} else {
