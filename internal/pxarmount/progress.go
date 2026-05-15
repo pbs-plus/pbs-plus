@@ -134,7 +134,7 @@ func (r *ProgressReporter) send() {
 		}
 		extra += ")"
 	}
-	fmt.Fprintf(r.w, "PROGRESS %s%s\n", msg, extra)
+	_, _ = fmt.Fprintf(r.w, "PROGRESS %s%s\n", msg, extra)
 	r.lastSend = time.Now()
 }
 
@@ -143,14 +143,14 @@ func (r *ProgressReporter) Done(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state.Phase = PhaseDone
-	fmt.Fprintf(r.w, "OK %s\n", msg)
+	_, _ = fmt.Fprintf(r.w, "OK %s\n", msg)
 }
 
 // Error sends an error message.
 func (r *ProgressReporter) Error(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	fmt.Fprintf(r.w, "ERR %s\n", msg)
+	_, _ = fmt.Fprintf(r.w, "ERR %s\n", msg)
 }
 
 // ProgressDisplay renders a live progress bar on a terminal.
@@ -171,27 +171,27 @@ func (d *ProgressDisplay) Update(line string) {
 	if len(line) < len(d.lastLine) {
 		line += strings.Repeat(" ", len(d.lastLine)-len(line))
 	}
-	fmt.Fprint(d.w, line)
+	_, _ = fmt.Fprint(d.w, line)
 	d.lastLine = line
 }
 
 // Done prints the final status line.
 func (d *ProgressDisplay) Done(line string) {
 	if len(d.lastLine) > 0 {
-		fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
+		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
 	}
 	msg := strings.TrimPrefix(line, "OK ")
-	fmt.Fprintf(d.w, "  ✓ %s\n", msg)
+	_, _ = fmt.Fprintf(d.w, "  ✓ %s\n", msg)
 	d.lastLine = ""
 }
 
 // Error prints the error.
 func (d *ProgressDisplay) Error(line string) {
 	if len(d.lastLine) > 0 {
-		fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
+		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
 	}
 	msg := strings.TrimPrefix(line, "ERR ")
-	fmt.Fprintf(d.w, "  ✗ error: %s\n", msg)
+	_, _ = fmt.Fprintf(d.w, "  ✗ error: %s\n", msg)
 	d.lastLine = ""
 }
 
