@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 
 	_ "modernc.org/sqlite"
 )
@@ -715,6 +716,117 @@ func (j *Journal) AllWhiteouts() (map[int64][]string, error) {
 		result[parentID] = append(result[parentID], name)
 	}
 	return result, rows.Err()
+}
+
+// EnsureNodePath atomically creates a journal node and all intermediate
+// edges/nodes for the given path in a single transaction.
+// If whiteout is true and the entry has a pxar counterpart, a whiteout is added.
+// This is the efficient, atomic replacement for the multi-transaction
+// ensureNode path walk.
+func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int64, error) {
+	var nodeID int64
+	err := j.tx(func(tx *sql.Tx) error {
+		id, err := createNodeTx(tx, n)
+		if err != nil {
+			return err
+		}
+		nodeID = id
+
+		// Walk path components from root.
+		parts := splitPath(path)
+		curParentID := int64(1) // root
+
+		for i, name := range parts {
+			if name == "" {
+				continue
+			}
+
+			// Check if edge already exists.
+			var childID int64
+			err := tx.QueryRow(
+				`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
+				curParentID, name).Scan(&childID)
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+
+			if err == nil {
+				// Edge exists, follow it.
+				curParentID = childID
+				continue
+			}
+
+			// No edge — clean up any stale whiteout.
+			_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, curParentID, name)
+
+			if i == len(parts)-1 {
+				// Final component — link to our node.
+				if _, err := tx.Exec(
+					`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
+					curParentID, name, nodeID); err != nil {
+					return err
+				}
+				if whiteout {
+					if _, err := tx.Exec(
+						`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`,
+						curParentID, name); err != nil {
+						return err
+					}
+				}
+			} else {
+				// Intermediate directory — create redirect node.
+				var intermediatePath strings.Builder
+				intermediatePath.WriteByte('/')
+				intermediatePath.WriteString(parts[0])
+				for j := 1; j <= i; j++ {
+					intermediatePath.WriteByte('/')
+					intermediatePath.WriteString(parts[j])
+				}
+				intermediate := &GraphNode{
+					Kind:       NodeDir,
+					Mode:       syscall.S_IFDIR | 0o755,
+					UID:        n.UID,
+					GID:        n.GID,
+					MtimeNs:    n.MtimeNs,
+					CtimeNs:    n.CtimeNs,
+					RedirectTo: intermediatePath.String(),
+				}
+				midID, err := createNodeTx(tx, intermediate)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(
+					`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
+					curParentID, name, midID); err != nil {
+					return err
+				}
+				curParentID = midID
+			}
+		}
+		return nil
+	})
+	return nodeID, err
+}
+
+// splitPath splits a path into components.
+func splitPath(path string) []string {
+	if path == "/" || path == "" {
+		return nil
+	}
+	p := path
+	if p[0] == '/' {
+		p = p[1:]
+	}
+	var parts []string
+	start := 0
+	for i := 0; i < len(p); i++ {
+		if p[i] == '/' {
+			parts = append(parts, p[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, p[start:])
+	return parts
 }
 
 // Clear truncates all tables (keeps root node).
