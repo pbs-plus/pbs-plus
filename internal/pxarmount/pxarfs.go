@@ -387,9 +387,6 @@ func (fs *PxarFS) releaseDirEntries(entries []dirEntrySlim) {
 }
 
 func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fuse.ReadResult, fuse.Status) {
-	fs.readerMu.Lock()
-	defer fs.readerMu.Unlock()
-
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
 	fs.mu.RUnlock()
@@ -397,34 +394,25 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 		return nil, fuse.ENOENT
 	}
 
-	entry, err := fs.readEntryForNode(&n)
-	if err != nil {
-		return nil, fuse.EIO
+	// Clamp to file bounds.
+	fileSize := int64(n.fileSize)
+	if off >= fileSize {
+		return fuse.ReadResultData(nil), fuse.OK
 	}
-
-	rc, err := fs.reader.ReadFileContentReader(entry)
-	if err != nil {
-		return nil, fuse.EIO
+	remaining := fileSize - off
+	if size > remaining {
+		size = remaining
 	}
-	defer rc.Close()
-
-	if off > 0 {
-		buf := make([]byte, 32*1024)
-		for off > 0 {
-			toRead := min(off, int64(len(buf)))
-			n, err := rc.Read(buf[:toRead])
-			if err != nil {
-				return nil, fuse.EIO
-			}
-			off -= int64(n)
-		}
-	}
-
 	if int64(len(dest)) < size {
 		size = int64(len(dest))
 	}
-	nr, err := io.ReadFull(rc, dest[:size])
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+
+	// Zero-copy read: PayloadOffset + HeaderSize (16) gives the file
+	// content start in the ppxar stream. ReadAt avoids the SectionReader
+	// allocation and the mpxar entry read (readEntryForNode).
+	start := int64(n.contentOffset) + 16 + off
+	nr, err := fs.readerAt.ReadAt(dest[:size], start)
+	if err != nil && err != io.EOF {
 		return nil, fuse.EIO
 	}
 	if nr == 0 {

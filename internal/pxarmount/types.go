@@ -43,35 +43,36 @@ func ToInode(e *pxar.Entry) uint64 {
 }
 
 // node holds cached metadata for a single filesystem entry.
+// Fields ordered largest-to-smallest to minimize padding (56 bytes total).
 type node struct {
+	inode         uint64
+	parent        uint64
 	entryStart    uint64
 	contentOffset uint64
 	fileSize      uint64
 	mode          uint64
-	inode         uint64
-	parent        uint64
 	refs          int64
 	mtimeSecs     int64
 	uid           uint32
-	mtimeNanos    uint32
 	gid           uint32
+	mtimeNanos    uint32
 	isDir         bool
 	isSymlink     bool
 	isReg         bool
-	_             byte
 }
 
 // dirEntrySlim is a lightweight directory entry for readdir results.
+// Fields ordered largest-to-smallest for minimal padding.
 type dirEntrySlim struct {
 	name          string
+	inode         uint64
 	entryStart    uint64
 	contentOffset uint64
 	fileSize      uint64
+	mtimeSecs     int64
 	mode          uint32
 	uid           uint32
 	gid           uint32
-	inode         uint64
-	mtimeSecs     int64
 	mtimeNanos    uint32
 	isDir         bool
 	isSymlink     bool
