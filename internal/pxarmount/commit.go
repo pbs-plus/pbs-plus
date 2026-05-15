@@ -837,10 +837,26 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		return nil
 	}
 
-	// Regular file with payload — emit as chunk reference.
-	// Offset must be monotonically increasing.
+	// Regular file with payload — try to emit as chunk reference.
+	// If monotonicity fails (overlapping sibling directory ranges),
+	// fall back to re-encoding from archive content. This mirrors the
+	// Rust pxar client's try_record_reusable_offset + re-encode pattern.
 	ow.mfs.debugf("emit ref %s/%s offset=%d", parentRelPath, ce.name, pxarEntry.PayloadOffset)
 	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
+		if strings.Contains(err.Error(), "not strictly greater") {
+			ow.mfs.debugf("emit ref %s/%s monotonicity fail, re-encoding", parentRelPath, ce.name)
+			ow.mfs.pxar.readerMu.Lock()
+			rc, rerr := ow.mfs.pxar.reader.ReadFileContentReader(pxarEntry)
+			ow.mfs.pxar.readerMu.Unlock()
+			if rerr != nil {
+				return fmt.Errorf("read pxar file content for re-encode %s/%s: %w", parentRelPath, ce.name, rerr)
+			}
+			defer rc.Close()
+			if werr := ow.writer.WriteEntryReader(clone, rc, pxarEntry.FileSize); werr != nil {
+				return fmt.Errorf("write pxar file (re-encode) %s/%s: %w", parentRelPath, ce.name, werr)
+			}
+			return nil
+		}
 		return fmt.Errorf("write pxar ref %s/%s (offset %d): %w", parentRelPath, ce.name, pxarEntry.PayloadOffset, err)
 	}
 	return nil
