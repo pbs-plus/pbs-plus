@@ -1419,7 +1419,7 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 	if path == "/" || path == "" {
 		return fs.resolveRoot()
 	}
-	nodeID, pxarPath, fellOffAt, remaining, err := fs.journal.ResolvePath(path)
+	nodeID, pxarPath, _, _, err := fs.journal.ResolvePath(path)
 	if err != nil {
 		fs.debugf("resolve(%q) ResolvePath err: %v", path, err)
 		return nil, fuse.EIO
@@ -1442,13 +1442,7 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		return fs.resolveFromNode(path, node)
 	}
 
-	// Fell off graph — check for pxar entry at the resolved pxar path.
-	// First check if any part of the remaining path hits a pxar whiteout.
-	if fellOffAt != 0 {
-		parts := stringsSplit(remaining, "/")
-		_ = parts
-	}
-
+	// Fell off graph — check pxar.
 	pxarNode := fs.findPxarNode(pxarPath)
 	if pxarNode == nil {
 		return nil, fuse.ENOENT
@@ -1468,21 +1462,6 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 	}
 	re.Inode = fs.pathToIno(path, re.IsDir)
 	return re, fuse.OK
-}
-
-func stringsSplit(s, sep string) []string {
-	parts := []string{}
-	for i := 0; i < len(s); {
-		j := i
-		for j < len(s) && s[j] != '/' {
-			j++
-		}
-		if j > i {
-			parts = append(parts, s[i:j])
-		}
-		i = j + 1
-	}
-	return parts
 }
 
 // resolveCheck is a helper for xattr ops that returns (status, ok) where
