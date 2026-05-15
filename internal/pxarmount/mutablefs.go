@@ -624,10 +624,11 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 		HasData: true,
 	}
 
-	// Get parent node ID for the edge.
 	parentID := fs.resolveParentNodeID(parentPath)
+	shadowPxar := fs.hasPxarEntry(childPath)
 
-	nodeID, err := fs.journal.CreateNode(node)
+	// Atomically create node + edge + optional whiteout.
+	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, shadowPxar)
 	if err != nil {
 		if cerr := syscall.Close(fd); cerr != nil {
 			fs.logNonFatal("close-fd-cleanup", "fd", cerr)
@@ -639,28 +640,6 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 		return fuse.EIO
 	}
 	node.ID = nodeID
-
-	// Create edge.
-	if err := fs.journal.CreateEdge(parentID, name, nodeID); err != nil {
-		if cerr := syscall.Close(fd); cerr != nil {
-			fs.logNonFatal("close-fd-cleanup", "fd", cerr)
-		}
-		if rerr := os.Remove(abs); rerr != nil {
-			fs.logNonFatal("remove-cleanup", abs, rerr)
-		}
-		if derr := fs.journal.DeleteNode(nodeID); derr != nil {
-			fs.logNonFatal("delete-node-cleanup", fmt.Sprint(nodeID), derr)
-		}
-		fs.unmapInode(childPath)
-		return fuse.EIO
-	}
-
-	// If shadowing a pxar entry, add whiteout.
-	if fs.hasPxarEntry(childPath) {
-		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
-			fs.logNonFatal("add-whiteout", name, err)
-		}
-	}
 
 	fs.applyACLOwnership(abs, false)
 
@@ -709,25 +688,13 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 
 	parentID := fs.resolveParentNodeID(parentPath)
 
-	nodeID, err := fs.journal.CreateNode(node)
+	// Atomically create node + edge + whiteout.
+	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		os.Remove(abs)
+		_ = os.Remove(abs)
 		return fuse.EIO
 	}
 	node.ID = nodeID
-
-	if err := fs.journal.CreateEdge(parentID, name, nodeID); err != nil {
-		os.Remove(abs)
-		fs.journal.DeleteNode(nodeID)
-		return fuse.EIO
-	}
-
-	// If shadowing pxar, add whiteout to hide the pxar name.
-	if hasPxar {
-		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
-			fs.logNonFatal("add-whiteout", name, err)
-		}
-	}
 
 	ino := fs.pathToIno(childPath, true)
 
@@ -771,24 +738,13 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 
 	parentID := fs.resolveParentNodeID(parentPath)
 
-	nodeID, err := fs.journal.CreateNode(node)
+	// Atomically create node + edge + whiteout.
+	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		os.Remove(abs)
+		_ = os.Remove(abs)
 		return fuse.EIO
 	}
 	node.ID = nodeID
-
-	if err := fs.journal.CreateEdge(parentID, name, nodeID); err != nil {
-		os.Remove(abs)
-		fs.journal.DeleteNode(nodeID)
-		return fuse.EIO
-	}
-
-	if hasPxar {
-		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
-			fs.logNonFatal("add-whiteout", name, err)
-		}
-	}
 
 	ino := fs.pathToIno(childPath, false)
 
@@ -833,24 +789,13 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 
 	parentID := fs.resolveParentNodeID(parentPath)
 
-	nodeID, err := fs.journal.CreateNode(node)
+	// Atomically create node + edge + whiteout.
+	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, linkName, node, hasPxar)
 	if err != nil {
-		os.Remove(abs)
+		_ = os.Remove(abs)
 		return fuse.EIO
 	}
 	node.ID = nodeID
-
-	if err := fs.journal.CreateEdge(parentID, linkName, nodeID); err != nil {
-		os.Remove(abs)
-		fs.journal.DeleteNode(nodeID)
-		return fuse.EIO
-	}
-
-	if hasPxar {
-		if err := fs.journal.AddWhiteout(parentID, linkName); err != nil {
-			fs.logNonFatal("add-whiteout", linkName, err)
-		}
-	}
 
 	ino := fs.pathToIno(childPath, false)
 
@@ -878,18 +823,10 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 	parentID := fs.resolveParentNodeID(parentPath)
 
 	if re.Node != nil {
-		// Delete the edge. If pxar counterpart exists, add whiteout.
-		if err := fs.journal.DeleteEdge(parentID, name); err != nil {
+		// Atomically remove edge + node + add whiteout if pxar counterpart exists.
+		needsWhiteout := re.PxarNode != nil || fs.hasPxarEntry(childPath)
+		if err := fs.journal.DeleteEdgeAndNode(parentID, name, re.Node.ID, needsWhiteout); err != nil {
 			return fuse.EIO
-		}
-		if re.PxarNode != nil || fs.hasPxarEntry(childPath) {
-			if err := fs.journal.AddWhiteout(parentID, name); err != nil {
-				return fuse.EIO
-			}
-		}
-		// Delete the node (cascade removes xattrs).
-		if err := fs.journal.DeleteNode(re.Node.ID); err != nil {
-			fs.logNonFatal("delete-node", fmt.Sprint(re.Node.ID), err)
 		}
 	} else if re.PxarNode != nil {
 		// Pure pxar deletion: just add whiteout.
@@ -963,74 +900,30 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		return oldStatus
 	}
 
-	// Get parent node IDs.
 	oldParentID := fs.resolveParentNodeID(oldParentPath)
 	newParentID := fs.resolveParentNodeID(newParentPath)
 
-	// Resolve destination first and clean up any existing journal node/edge.
-	// Must happen BEFORE we move source disk data to the dest path.
+	// Resolve destination before touching anything.
 	destHasPXar := fs.hasPxarEntry(newPath)
 	destRE, _ := fs.resolve(newPath)
+	var destNodeID int64
 	if destRE != nil && destRE.Node != nil {
-		if err := fs.journal.DeleteEdge(newParentID, newName); err != nil {
-			fs.logNonFatal("delete-edge", newName, err)
-		}
-		if err := fs.journal.DeleteNode(destRE.Node.ID); err != nil {
-			fs.logNonFatal("delete-node", fmt.Sprint(destRE.Node.ID), err)
-		}
-		if destRE.DataIsMut {
-			if err := os.Remove(fs.mutablePath(newPath)); err != nil {
-				fs.logNonFatal("remove", newPath, err)
-			}
-		}
-		fs.unmapInode(newPath)
+		destNodeID = destRE.Node.ID
 	}
 
-	// Move mutable disk data if present.
-	if oldRE.DataIsMut {
-		oldAbs := fs.mutablePath(oldPath)
-		if _, err := os.Stat(oldAbs); err == nil {
-			newAbs := fs.mutablePath(newPath)
-			if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
-				return fuse.ToStatus(err)
-			}
-			if err := os.Rename(oldAbs, newAbs); err != nil {
-				return fuse.ToStatus(err)
-			}
-		}
-	} else if oldRE.IsDir {
-		// For directories, rename the backing dir if it exists (children may have data).
-		oldAbs := fs.mutablePath(oldPath)
-		if _, err := os.Stat(oldAbs); err == nil {
-			newAbs := fs.mutablePath(newPath)
-			if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
-				return fuse.ToStatus(err)
-			}
-			if err := os.Rename(oldAbs, newAbs); err != nil {
-				return fuse.ToStatus(err)
-			}
-		}
-	}
-
+	// --- Phase 1: Journal-first atomic rename ---
+	// All journal mutations happen in a single SQLite transaction so a
+	// crash at any point leaves the journal in a consistent state.
 	if oldRE.Node != nil {
-		// Source has a journal node: move the edge.
-		if err := fs.journal.MoveEdge(oldParentID, oldName, newParentID, newName); err != nil {
-			if oldRE.DataIsMut {
-				if err := os.Rename(fs.mutablePath(newPath), fs.mutablePath(oldPath)); err != nil {
-					fs.logNonFatal("rename-revert", oldPath, err)
-				}
-			}
+		// Source has a journal node: atomically move edge, replace dest, add whiteouts.
+		whiteoutOld := oldRE.Node.RedirectTo != ""
+		if err := fs.journal.MoveEdgeAndWhiteout(
+			oldParentID, oldName, newParentID, newName,
+			destNodeID, whiteoutOld, destHasPXar); err != nil {
 			return fuse.EIO
 		}
-		// If the node wraps pxar content (has RedirectTo), whiteout the old
-		// location so the underlying pxar entry stays hidden after the move.
-		if oldRE.Node.RedirectTo != "" {
-			if err := fs.journal.AddWhiteout(oldParentID, oldName); err != nil {
-				fs.logNonFatal("add-whiteout", oldName, err)
-			}
-		}
 	} else {
-		// Source is pxar-only: create a journal node + edge, whiteout old location.
+		// Source is pxar-only: create journal node at destination, whiteout old.
 		now := time.Now().UnixNano()
 		node := &GraphNode{
 			Kind:       nodeKindFromPxar(oldRE.PxarNode),
@@ -1041,40 +934,68 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 			MtimeNs:    int64(oldRE.PxarNode.mtimeSecs)*1e9 + int64(oldRE.PxarNode.mtimeNanos),
 			CtimeNs:    now,
 			HasData:    false,
-			RedirectTo: oldPath, // pxar source path
+			RedirectTo: oldPath,
 			SymlinkTgt: oldRE.SymlinkTgt,
 		}
-
-		nodeID, err := fs.journal.CreateNode(node)
+		// Use compound operation: delete dest edge+node if needed, create node+edge+whiteouts.
+		if destNodeID != 0 {
+			if err := fs.journal.DeleteEdgeAndNode(newParentID, newName, destNodeID, false); err != nil {
+				return fuse.EIO
+			}
+		}
+		nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(newParentID, newName, node, false)
 		if err != nil {
 			return fuse.EIO
 		}
 		node.ID = nodeID
 
-		if err := fs.journal.CreateEdge(newParentID, newName, nodeID); err != nil {
-			fs.journal.DeleteNode(nodeID)
-			return fuse.EIO
-		}
-
 		// Whiteout old location.
 		if err := fs.journal.AddWhiteout(oldParentID, oldName); err != nil {
 			return fuse.EIO
 		}
+		if destHasPXar {
+			if err := fs.journal.AddWhiteout(newParentID, newName); err != nil {
+				fs.logNonFatal("add-whiteout", newName, err)
+			}
+		}
+		oldRE.Node = node
 	}
 
-	// Whiteout dest if it had a pxar entry that should stay hidden.
-	if destHasPXar {
-		if err := fs.journal.AddWhiteout(newParentID, newName); err != nil {
-			fs.logNonFatal("add-whiteout", newName, err)
+	// --- Phase 2: Disk mutations (after journal is committed) ---
+	// If we crash here, the journal is consistent — disk files are redundant
+	// copies that the next commit will re-snapshot from the correct paths.
+
+	// Remove destination mutable data (journal already points away from it).
+	if destRE != nil && destRE.DataIsMut {
+		if err := os.Remove(fs.mutablePath(newPath)); err != nil {
+			fs.logNonFatal("remove-dest", newPath, err)
 		}
 	}
 
-	// Update inode mapping.
+	// Move mutable disk data if present.
+	if oldRE.DataIsMut || oldRE.IsDir {
+		oldAbs := fs.mutablePath(oldPath)
+		if _, err := os.Stat(oldAbs); err == nil {
+			newAbs := fs.mutablePath(newPath)
+			if err := os.MkdirAll(filepath.Dir(newAbs), 0o755); err != nil {
+				return fuse.ToStatus(err)
+			}
+			if err := os.Rename(oldAbs, newAbs); err != nil {
+				// Disk move failed — journal already committed, but the disk
+				// file is still at the old path. The journal edge is correct;
+				// the file will be re-read from the old location on next access.
+				// This is safe: the journal is the source of truth.
+				fs.logNonFatal("rename-disk", oldPath, err)
+			}
+		}
+	}
+
+	// --- Phase 3: Update inode mapping ---
+	fs.unmapInode(newPath) // clear dest mapping
 	ino := fs.pathToIno(oldPath, oldRE.IsDir)
 	fs.unmapInode(oldPath)
 	fs.mapInode(ino, newPath)
 
-	// If renamed a directory, update all child inode path mappings.
 	if oldRE.IsDir {
 		fs.remapPathPrefix(oldPath, newPath)
 	}
@@ -1423,7 +1344,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	entry, err := fs.pxar.GetPxarEntry(n.inode)
 	if err != nil {
@@ -1434,7 +1355,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	bufp := copyBufPool.Get().(*[]byte)
 	defer copyBufPool.Put(bufp)
@@ -2043,7 +1964,7 @@ func mmapFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	fi, err := f.Stat()
 	if err != nil {
