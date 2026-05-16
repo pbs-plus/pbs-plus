@@ -19,7 +19,6 @@ type PxarFS struct {
 	fuse.RawFileSystem
 	reader   *transfer.SplitArchiveReader
 	nodes    map[uint64]node
-	size     int64
 	mu       sync.RWMutex
 	readerMu sync.Mutex
 	readerAt io.ReaderAt
@@ -37,7 +36,6 @@ func NewPxarFS(reader *transfer.SplitArchiveReader) (*PxarFS, error) {
 			return nil, err
 		}
 		fs.readerAt = reader.PayloadReaderAt()
-		fs.size = int64(root.FileOffset + root.FileSize)
 		fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
 	} else {
 		fs.nodes[RootInode] = node{
@@ -510,7 +508,6 @@ func (fs *PxarFS) HotSwap(reader *transfer.SplitArchiveReader) {
 		root, err := reader.ReadRoot()
 		if err == nil {
 			fs.readerAt = reader.PayloadReaderAt()
-			fs.size = int64(root.FileOffset + root.FileSize)
 			fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
 		}
 	}
