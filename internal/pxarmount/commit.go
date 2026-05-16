@@ -208,6 +208,11 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 	mfs.freezeMu.Lock()
 	mfs.frozen = true
 	mfs.freezeMu.Unlock()
+
+	// Sync journal while frozen — all pending metadata is durably
+	// checkpointed before we start reading the journal for commit.
+	_ = mfs.journal.Sync()
+
 	defer func() {
 		mfs.freezeMu.Lock()
 		mfs.frozen = false
@@ -1052,9 +1057,12 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	}
 	mfs.origPpxarDidx = ppxarPath
 
-	// Clear the journal.
+	// Clear the journal and sync to ensure durability.
 	if err := mfs.journal.Clear(); err != nil {
 		return fmt.Errorf("clear journal: %w", err)
+	}
+	if err := mfs.journal.Sync(); err != nil {
+		return fmt.Errorf("sync journal after clear: %w", err)
 	}
 
 	// Reset mutable dir — preserve journal directory.

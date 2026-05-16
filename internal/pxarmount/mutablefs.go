@@ -1217,6 +1217,8 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 }
 
 func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
+	// Sync journal so metadata durability matches data durability.
+	_ = fs.journal.Sync()
 	if input.Fh == 0 {
 		return fuse.OK
 	}
