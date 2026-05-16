@@ -253,9 +253,7 @@ func (j *Journal) startCheckpointLoop() {
 	}()
 }
 
-// ---------------------------------------------------------------------------
-// Node CRUD
-// ---------------------------------------------------------------------------
+// --- Node CRUD ---
 
 // GetNode returns the node by ID, or nil if not found.
 func (j *Journal) GetNode(id int64) (*GraphNode, error) {
@@ -339,17 +337,6 @@ func createNodeTx(tx *sql.Tx, n *GraphNode) (int64, error) {
 	return res.LastInsertId()
 }
 
-// CreateNode inserts a new node and returns its ID.
-func (j *Journal) CreateNode(n *GraphNode) (int64, error) {
-	var id int64
-	err := j.tx(func(tx *sql.Tx) error {
-		var err error
-		id, err = createNodeTx(tx, n)
-		return err
-	})
-	return id, err
-}
-
 func updateNodeTx(tx *sql.Tx, n *GraphNode) error {
 	hasData := 0
 	if n.HasData {
@@ -377,14 +364,6 @@ func (j *Journal) UpdateNode(n *GraphNode) error {
 	})
 }
 
-// DeleteNode deletes a node. CASCADE removes its edges, xattrs.
-func (j *Journal) DeleteNode(id int64) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, id)
-		return err
-	})
-}
-
 // SetHasData marks that a node now has data in the mutable dir.
 func (j *Journal) SetHasData(nodeID int64) error {
 	return j.tx(func(tx *sql.Tx) error {
@@ -393,116 +372,7 @@ func (j *Journal) SetHasData(nodeID int64) error {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Edge CRUD
-// ---------------------------------------------------------------------------
-
-// LookupEdge returns the child node ID for (parent, name), or 0 if not found.
-func (j *Journal) LookupEdge(parentID int64, name string) (int64, error) {
-	var childID int64
-	err := j.db.QueryRow(
-		`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
-		parentID, name).Scan(&childID)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return childID, err
-}
-
-// LookupEdgeNode returns the child node for (parent, name), or nil.
-func (j *Journal) LookupEdgeNode(parentID int64, name string) (*GraphNode, error) {
-	row := j.db.QueryRow(`
-		SELECT n.id, n.kind, n.mode, n.uid, n.gid, n.size,
-		       n.mtime_ns, n.ctime_ns, n.has_data,
-		       n.symlink_tgt, n.redirect_to, n.opaque
-		FROM edges e JOIN nodes n ON e.child_id = n.id
-		WHERE e.parent_id = ? AND e.name = ?`, parentID, name)
-
-	n := &GraphNode{}
-	var kind, mode, uid, gid, hasData, opaque sql.NullInt64
-	var size, mtimeNs, ctimeNs sql.NullInt64
-	var symlinkTgt, redirectTo sql.NullString
-
-	err := row.Scan(&n.ID, &kind, &mode, &uid, &gid, &size,
-		&mtimeNs, &ctimeNs, &hasData, &symlinkTgt, &redirectTo, &opaque)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if kind.Valid {
-		n.Kind = uint8(kind.Int64)
-	}
-	if mode.Valid {
-		n.Mode = uint32(mode.Int64)
-	}
-	if uid.Valid {
-		n.UID = uint32(uid.Int64)
-	}
-	if gid.Valid {
-		n.GID = uint32(gid.Int64)
-	}
-	if size.Valid {
-		n.Size = uint64(size.Int64)
-	}
-	if mtimeNs.Valid {
-		n.MtimeNs = mtimeNs.Int64
-	}
-	if ctimeNs.Valid {
-		n.CtimeNs = ctimeNs.Int64
-	}
-	if hasData.Valid {
-		n.HasData = hasData.Int64 != 0
-	}
-	if symlinkTgt.Valid {
-		n.SymlinkTgt = symlinkTgt.String
-	}
-	if redirectTo.Valid {
-		n.RedirectTo = redirectTo.String
-	}
-	if opaque.Valid {
-		n.Opaque = opaque.Int64 != 0
-	}
-	return n, nil
-}
-
-// CreateEdge creates a parent→child binding. OR REPLACE handles re-creation.
-func (j *Journal) CreateEdge(parentID int64, name string, childID int64) error {
-	return j.tx(func(tx *sql.Tx) error {
-		// Edges shadow whiteouts — remove any stale whiteout at this location.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
-		_, err := tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
-			parentID, name, childID)
-		return err
-	})
-}
-
-// DeleteEdge removes a parent→child binding.
-func (j *Journal) DeleteEdge(parentID int64, name string) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, parentID, name)
-		return err
-	})
-}
-
-// MoveEdge renames/moves an edge. This is the O(1) rename operation.
-func (j *Journal) MoveEdge(oldParent int64, oldName string, newParent int64, newName string) error {
-	return j.tx(func(tx *sql.Tx) error {
-		// Remove any whiteout at destination — the new edge takes priority.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
-		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
-			newParent, newName, oldParent, oldName)
-		if err != nil {
-			return err
-		}
-		affected, _ := res.RowsAffected()
-		if affected == 0 {
-			return fmt.Errorf("move edge: source edge (%d, %q) not found", oldParent, oldName)
-		}
-		return nil
-	})
-}
+// --- Edge CRUD ---
 
 // ListEdges returns all edges under a parent.
 func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
@@ -524,32 +394,13 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	return edges, rows.Err()
 }
 
-// ---------------------------------------------------------------------------
-// Whiteout CRUD
-// ---------------------------------------------------------------------------
+// --- Whiteout CRUD ---
 
 func (j *Journal) AddWhiteout(parentID int64, name string) error {
 	return j.tx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name)
 		return err
 	})
-}
-
-func (j *Journal) RemoveWhiteout(parentID int64, name string) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
-		return err
-	})
-}
-
-func (j *Journal) IsWhiteout(parentID int64, name string) (bool, error) {
-	var count int
-	err := j.db.QueryRow(
-		`SELECT 1 FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name).Scan(&count)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
@@ -569,9 +420,7 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	return names, rows.Err()
 }
 
-// ---------------------------------------------------------------------------
-// Xattr operations
-// ---------------------------------------------------------------------------
+// --- Xattr operations ---
 
 func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	var val []byte
@@ -615,9 +464,7 @@ func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Path resolution: walk the edge graph component-by-component
-// ---------------------------------------------------------------------------
+// --- Path resolution: walk the edge graph component-by-component ---
 
 // ResolvePath walks the edge graph from root to find a path.
 // Returns:
@@ -708,33 +555,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 	return curID, pxarPrefix.String(), 0, "", nil
 }
 
-// ReconstructPath walks edges backward from nodeID to reconstruct its full path.
-func (j *Journal) ReconstructPath(nodeID int64) (string, error) {
-	if nodeID == 1 {
-		return "/", nil
-	}
-	var components []string
-	curID := nodeID
-	for curID != 1 {
-		var parentID int64
-		var name string
-		err := j.db.QueryRow(
-			`SELECT parent_id, name FROM edges WHERE child_id = ? LIMIT 1`, curID).Scan(&parentID, &name)
-		if err != nil {
-			return "", fmt.Errorf("reconstruct path for node %d: %w", nodeID, err)
-		}
-		components = append(components, name)
-		curID = parentID
-	}
-	for i, k := 0, len(components)-1; i < k; i, k = i+1, k-1 {
-		components[i], components[k] = components[k], components[i]
-	}
-	return "/" + strings.Join(components, "/"), nil
-}
-
-// ---------------------------------------------------------------------------
-// Batch operations for commit
-// ---------------------------------------------------------------------------
+// --- Batch operations for commit ---
 
 // AllNodes returns all nodes (except root) for commit walking.
 func (j *Journal) AllNodes() ([]*GraphNode, error) {
@@ -926,27 +747,6 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 	return nodeID, err
 }
 
-// splitPath splits a path into components.
-func splitPath(path string) []string {
-	if path == "/" || path == "" {
-		return nil
-	}
-	p := path
-	if p[0] == '/' {
-		p = p[1:]
-	}
-	var parts []string
-	start := 0
-	for i := 0; i < len(p); i++ {
-		if p[i] == '/' {
-			parts = append(parts, p[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, p[start:])
-	return parts
-}
-
 // Clear truncates all tables (keeps root node).
 func (j *Journal) Clear() error {
 	return j.tx(func(tx *sql.Tx) error {
@@ -967,29 +767,7 @@ func (j *Journal) Clear() error {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Compound atomic operations
-// ---------------------------------------------------------------------------
-
-// CreateNodeAndEdge atomically creates a node and links it under a parent.
-// On failure, neither the node nor the edge exists.
-func (j *Journal) CreateNodeAndEdge(parentID int64, name string, n *GraphNode) (int64, error) {
-	var id int64
-	err := j.tx(func(tx *sql.Tx) error {
-		// Remove any stale whiteout at this location.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
-
-		var err error
-		id, err = createNodeTx(tx, n)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
-			parentID, name, id)
-		return err
-	})
-	return id, err
-}
+// --- Compound atomic operations ---
 
 // DeleteEdgeAndNode atomically removes an edge and its target node.
 // CASCADE handles xattrs; the whiteout is added in the same tx.
@@ -1006,41 +784,6 @@ func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, a
 		// Node deletion cascades to xattrs.
 		if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, nodeID); err != nil {
 			return err
-		}
-		return nil
-	})
-}
-
-// RenameEdge atomically moves an edge from (oldParent, oldName) to
-// (newParent, newName), cleaning up destination whiteouts and any
-// destination edge+node if replace is true.
-func (j *Journal) RenameEdge(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64) error {
-	return j.tx(func(tx *sql.Tx) error {
-		// Remove destination whiteout.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
-
-		// If replacing a destination node, remove its edge and the node itself.
-		if replaceDestNode != 0 {
-			if _, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, replaceDestNode); err != nil {
-				return err
-			}
-		} else {
-			// Just remove any existing edge at destination.
-			_, _ = tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName)
-		}
-
-		// Move source edge.
-		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
-			newParent, newName, oldParent, oldName)
-		if err != nil {
-			return err
-		}
-		affected, _ := res.RowsAffected()
-		if affected == 0 {
-			return fmt.Errorf("rename edge: source (%d, %q) not found", oldParent, oldName)
 		}
 		return nil
 	})

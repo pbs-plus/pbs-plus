@@ -14,25 +14,14 @@ const (
 	RootInode uint64 = 1
 	NonDirBit uint64 = 1 << 63
 
-	// Backed inodes are allocated from this offset up.
-	// Pxar inodes use the file offset space (well below 2^60).
-	BackedInoBase uint64 = 1 << 60
-
 	// JournalDir is the hidden directory inside the mutable backing dir
 	// where the SQLite journal database lives.
 	JournalDir = ".pxar-journal"
-
-	// RENAME flags (Linux FUSE protocol).
-	RenameNoReplace = 1 << 0
-	RenameExchange  = 1 << 1
 
 	// xattr flags.
 	XattrCreate  = 1
 	XattrReplace = 2
 )
-
-// IsDirInode reports whether the inode represents a directory.
-func IsDirInode(ino uint64) bool { return ino&NonDirBit == 0 }
 
 // ToInode computes a stable inode number from a pxar entry.
 func ToInode(e *pxar.Entry) uint64 {
@@ -235,6 +224,27 @@ func joinPath(parent, name string) string {
 		return "/" + name
 	}
 	return parent + "/" + name
+}
+
+// splitPath splits a path into components.
+func splitPath(path string) []string {
+	if path == "/" || path == "" {
+		return nil
+	}
+	p := path
+	if p[0] == '/' {
+		p = p[1:]
+	}
+	var parts []string
+	start := 0
+	for i := 0; i < len(p); i++ {
+		if p[i] == '/' {
+			parts = append(parts, p[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, p[start:])
+	return parts
 }
 
 func ensureModeType(mode uint32, kind uint8) uint32 {
