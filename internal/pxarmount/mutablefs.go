@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,8 +45,7 @@ type MutableFS struct {
 	fhMu    sync.Mutex
 
 	// Per-inode writer locks.
-	inoLocks   map[uint64]*sync.Mutex
-	inoLocksMu sync.Mutex
+	inoLocks *xsync.Map[uint64, *sync.Mutex]
 
 	// mmap'd DIDX data.
 	mmapData [][]byte
@@ -64,28 +64,29 @@ type MutableFS struct {
 
 	// Inode ↔ path bidirectional mapping.
 	// Per-instance to prevent cross-mount corruption — analogous to
-	// ext4's per-superblock inode cache.
-	inoLookup  map[string]uint64 // path → inode number
-	pathLookup map[uint64]string // inode number → path
-	lookupMu   sync.RWMutex      // protects both maps
+	// ext4's per-superblock inode cache. Uses xsync.Map for lock-free
+	// reads — critical since resolve() is called on every FUSE op.
+	inoLookup  *xsync.Map[string, uint64]
+	pathLookup *xsync.Map[uint64, string]
 
 	// Per-path ensureNode serialization — prevents duplicate journal
 	// nodes when concurrent FUSE ops (e.g. setfacl -R) materialize
 	// the same pxar entry simultaneously.
-	ensureLocks sync.Map // string → *sync.Mutex
+	ensureLocks *xsync.Map[string, *sync.Mutex]
 }
 
 func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS {
 	fs := &MutableFS{
-		pxar:       pxar,
-		journal:    journal,
-		mutableDir: mutableDir,
-		handles:    make(map[uint64]*passFh),
-		inoLocks:   make(map[uint64]*sync.Mutex),
-		inoLookup:  make(map[string]uint64),
-		pathLookup: make(map[uint64]string),
-		nextFh:     1,
-		nextIno:    2, // 1 is RootInode
+		pxar:        pxar,
+		journal:     journal,
+		mutableDir:  mutableDir,
+		handles:     make(map[uint64]*passFh),
+		inoLocks:    xsync.NewMap[uint64, *sync.Mutex](),
+		inoLookup:   xsync.NewMap[string, uint64](),
+		pathLookup:  xsync.NewMap[uint64, string](),
+		ensureLocks: xsync.NewMap[string, *sync.Mutex](),
+		nextFh:      1,
+		nextIno:     2, // 1 is RootInode
 	}
 	fs.freezeCond = sync.NewCond(&fs.freezeMu)
 	return fs
@@ -1697,7 +1698,7 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	// same path. Without this, two concurrent setfacl threads could both
 	// resolve the same path, see Node==nil, and create duplicate nodes.
 	val, _ := fs.ensureLocks.LoadOrStore(re.Path, &sync.Mutex{})
-	pathMu := val.(*sync.Mutex)
+	pathMu := val
 	pathMu.Lock()
 	defer pathMu.Unlock()
 
@@ -1758,12 +1759,9 @@ func (fs *MutableFS) allocInode(isDir bool) uint64 {
 }
 
 func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
-	fs.lookupMu.RLock()
-	if ino, ok := fs.inoLookup[path]; ok {
-		fs.lookupMu.RUnlock()
+	if ino, ok := fs.inoLookup.Load(path); ok {
 		return ino
 	}
-	fs.lookupMu.RUnlock()
 
 	ino := fs.allocInode(isDir)
 	fs.mapInode(ino, path)
@@ -1771,39 +1769,32 @@ func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 }
 
 func (fs *MutableFS) mapInode(ino uint64, path string) {
-	fs.lookupMu.Lock()
-	fs.inoLookup[path] = ino
-	fs.pathLookup[ino] = path
-	fs.lookupMu.Unlock()
+	fs.inoLookup.Store(path, ino)
+	fs.pathLookup.Store(ino, path)
 }
 
 func (fs *MutableFS) unmapInode(path string) {
-	fs.lookupMu.Lock()
-	if ino, ok := fs.inoLookup[path]; ok {
-		delete(fs.pathLookup, ino)
-		delete(fs.inoLookup, path)
+	if ino, ok := fs.inoLookup.LoadAndDelete(path); ok {
+		fs.pathLookup.Delete(ino)
 	}
-	fs.lookupMu.Unlock()
 }
 
 // remapPathPrefix updates all inode mappings under oldPrefix to use newPrefix.
 func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
-	fs.lookupMu.Lock()
-	for p, ino := range fs.inoLookup {
+	fs.inoLookup.Range(func(p string, ino uint64) bool {
 		if p == oldPrefix || strings.HasPrefix(p, oldPrefix+"/") {
 			newPath := newPrefix + p[len(oldPrefix):]
-			fs.inoLookup[newPath] = ino
-			fs.pathLookup[ino] = newPath
-			delete(fs.inoLookup, p)
+			fs.inoLookup.Store(newPath, ino)
+			fs.pathLookup.Store(ino, newPath)
+			fs.inoLookup.Delete(p)
 		}
-	}
-	fs.lookupMu.Unlock()
+		return true
+	})
 }
 
 func (fs *MutableFS) inodeToPath(ino uint64) string {
-	fs.lookupMu.RLock()
-	defer fs.lookupMu.RUnlock()
-	return fs.pathLookup[ino]
+	path, _ := fs.pathLookup.Load(ino)
+	return path
 }
 
 // --- file handle management ---
@@ -1826,14 +1817,8 @@ func (fs *MutableFS) getFh(id uint64) *passFh {
 // --- per-inode writer lock ---
 
 func (fs *MutableFS) getInoLock(ino uint64) *sync.Mutex {
-	fs.inoLocksMu.Lock()
-	defer fs.inoLocksMu.Unlock()
-	if m, ok := fs.inoLocks[ino]; ok {
-		return m
-	}
-	m := &sync.Mutex{}
-	fs.inoLocks[ino] = m
-	return m
+	val, _ := fs.inoLocks.LoadOrStore(ino, &sync.Mutex{})
+	return val
 }
 
 // --- helpers ---
