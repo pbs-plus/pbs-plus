@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -54,9 +56,28 @@ type GraphEdge struct {
 //
 // Root node (id=1) always exists with redirect_to='/'.
 // Renames are O(1): just update the edge row. No descendants touched.
+//
+// Durability follows the filesystem journaling model: writes are
+// committed to the WAL immediately but checkpoints (which fsync the
+// main DB) are deferred to a background goroutine. This avoids an
+// fsync per transaction while maintaining crash consistency — the WAL
+// is replayed automatically on recovery. Explicit Sync() forces a
+// full checkpoint for durability-critical paths (commit, fsync).
 type Journal struct {
 	db *sql.DB
 	mu sync.Mutex // serializes write transactions
+
+	// Periodic checkpoint state. Modeled after ext4's commit=5s:
+	// mutations accumulate in the WAL, a background goroutine
+	// checkpoints every checkpointInterval. Sync() forces an
+	// immediate checkpoint (like fsync).
+	ckptDone    chan struct{}
+	ckptClose   chan struct{}
+	ckptPending atomic.Int64 // approximate WAL size; incremented per tx
+
+	// checkpointInterval controls how often the background
+	// checkpoint goroutine runs. Analogous to ext4's commit= mount option.
+	checkpointInterval time.Duration
 }
 
 // OpenJournal opens or creates the journal database in dir.
@@ -81,7 +102,9 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
-	return &Journal{db: db}, nil
+	j := &Journal{db: db}
+	j.startCheckpointLoop()
+	return j, nil
 }
 
 // initSchema creates the journal database tables.
@@ -125,12 +148,21 @@ func initSchema(db *sql.DB) error {
 }
 
 func (j *Journal) Close() error {
+	if j.ckptClose != nil {
+		close(j.ckptClose)
+	}
+	// Final checkpoint to flush everything before closing.
+	j.mu.Lock()
+	_ = j.checkpoint()
+	j.mu.Unlock()
 	return j.db.Close()
 }
 
 // tx executes fn within a single SQLite transaction.
-// After a successful commit, a WAL truncation checkpoint ensures the
-// transaction is durable even if the process crashes immediately after.
+// The commit is durable in the WAL (survives process crash; SQLite
+// replays the WAL on next open). Periodic background checkpointing
+// moves WAL contents to the main DB file — analogous to ext4's
+// commit=5s journal flush.
 func (j *Journal) tx(fn func(tx *sql.Tx) error) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -146,11 +178,58 @@ func (j *Journal) tx(fn func(tx *sql.Tx) error) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	// Truncate WAL so committed data reaches the main DB file.
-	// This makes the transaction durable without relying on the OS
-	// page cache flush.
-	_, _ = j.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+
+	// Track pending WAL frames for the checkpoint goroutine.
+	j.ckptPending.Add(1)
+
+	// Eager checkpoint if enough frames have accumulated.
+	if j.ckptPending.Load() >= 256 {
+		_ = j.checkpoint()
+	}
+
 	return nil
+}
+
+// Sync forces a full WAL checkpoint (TRUNCATE), making all committed
+// transactions durable in the main DB file. Call this from FUSE's
+// Fsync path and the commit path — analogous to ext4's fsync().
+func (j *Journal) Sync() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.checkpoint()
+}
+
+// checkpoint moves WAL contents into the main DB and truncates the WAL.
+// Caller must hold j.mu.
+func (j *Journal) checkpoint() error {
+	_, err := j.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	j.ckptPending.Store(0)
+	return err
+}
+
+// startCheckpointLoop launches the background periodic checkpoint goroutine.
+func (j *Journal) startCheckpointLoop() {
+	if j.checkpointInterval <= 0 {
+		j.checkpointInterval = 5 * time.Second
+	}
+	j.ckptDone = make(chan struct{})
+	j.ckptClose = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(j.checkpointInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-j.ckptClose:
+				return
+			case <-ticker.C:
+				if j.ckptPending.Load() > 0 {
+					j.mu.Lock()
+					_ = j.checkpoint()
+					j.mu.Unlock()
+				}
+			}
+		}
+	}()
 }
 
 // ---------------------------------------------------------------------------
