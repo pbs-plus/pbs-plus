@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/puzpuzpuz/xsync/v4"
 	_ "modernc.org/sqlite"
 )
 
@@ -73,7 +73,7 @@ type Journal struct {
 	// immediate checkpoint (like fsync).
 	ckptDone    chan struct{}
 	ckptClose   chan struct{}
-	ckptPending atomic.Int64 // approximate WAL size; incremented per tx
+	ckptPending *xsync.Counter // approximate WAL size; incremented per tx
 
 	// checkpointInterval controls how often the background
 	// checkpoint goroutine runs. Analogous to ext4's commit= mount option.
@@ -117,7 +117,7 @@ func OpenJournal(dir string) (*Journal, error) {
 		}
 	}
 
-	j := &Journal{db: db}
+	j := &Journal{db: db, ckptPending: xsync.NewCounter()}
 	j.startCheckpointLoop()
 	return j, nil
 }
@@ -203,7 +203,7 @@ func (j *Journal) tx(fn func(tx *sql.Tx) error) error {
 	j.ckptPending.Add(1)
 
 	// Eager checkpoint if enough frames have accumulated.
-	if j.ckptPending.Load() >= 256 {
+	if j.ckptPending.Value() >= 256 {
 		_ = j.checkpoint()
 	}
 
@@ -223,7 +223,7 @@ func (j *Journal) Sync() error {
 // Caller must hold j.mu.
 func (j *Journal) checkpoint() error {
 	_, err := j.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	j.ckptPending.Store(0)
+	j.ckptPending.Reset()
 	return err
 }
 
@@ -243,7 +243,7 @@ func (j *Journal) startCheckpointLoop() {
 			case <-j.ckptClose:
 				return
 			case <-ticker.C:
-				if j.ckptPending.Load() > 0 {
+				if j.ckptPending.Value() > 0 {
 					j.mu.Lock()
 					_ = j.checkpoint()
 					j.mu.Unlock()
