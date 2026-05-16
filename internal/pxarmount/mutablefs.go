@@ -120,7 +120,6 @@ func (fs *MutableFS) InitMutableRoot() error {
 }
 
 // ReconcileMutableDir removes orphan disk entries not tracked by journal nodes.
-// ReconcileMutableDir removes orphan disk entries not tracked by journal nodes.
 // Called on startup to clean up after unclean shutdowns — analogous to
 // ext4's orphan inode cleanup during journal recovery (ext4_orphan_cleanup).
 //
