@@ -75,6 +75,7 @@ type MutableFS struct {
 	ensureLocks *xsync.Map[string, *sync.Mutex]
 }
 
+// NewMutableFS creates a layered filesystem with an immutable pxar base and a mutable overlay.
 func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS {
 	fs := &MutableFS{
 		pxar:        pxar,
@@ -96,6 +97,7 @@ func (fs *MutableFS) SetSnapshotRef(ref snapshotRef) { fs.origSnapshot = ref }
 func (fs *MutableFS) SetACLConfig(cfg ACLConfig)     { fs.acl = cfg }
 func (fs *MutableFS) SetVerbose(v bool)              { fs.verbose = v }
 
+// debugf prints a debug message when verbose mode is enabled.
 func (fs *MutableFS) debugf(format string, args ...any) {
 	if fs.verbose {
 		fmt.Fprintf(os.Stderr, "  "+format+"\n", args...)
@@ -185,7 +187,7 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 	})
 }
 
-// --- FUSE interface ---
+// --- FUSE Interface ---
 
 func (fs *MutableFS) Init(server *fuse.Server) {
 	fs.RawFileSystem = fuse.NewDefaultRawFileSystem()
@@ -267,6 +269,7 @@ func (fs *MutableFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out
 	return fs.readDirImpl(input, out, true)
 }
 
+// readDirImpl implements both ReadDir and ReadDirPlus with optional entry lookup.
 func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plus bool) fuse.Status {
 	parentPath := fs.inodeToPath(input.NodeId)
 	if parentPath == "" && input.NodeId != RootInode {
@@ -1108,7 +1111,7 @@ func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]
 	return nil, fuse.EINVAL
 }
 
-// --- XAttr ---
+// --- XAttr Operations ---
 
 func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
 	path := fs.inodeToPath(header.NodeId)
@@ -1296,6 +1299,7 @@ func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Sta
 	return fs.fsyncInternal(input.NodeId, input.Fh)
 }
 
+// fsyncInternal syncs a file handle to disk.
 func (fs *MutableFS) fsyncInternal(nodeID, fhID uint64) fuse.Status {
 	fh := fs.getFh(fhID)
 	if fh == nil {
@@ -1321,7 +1325,7 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 	fs.fhMu.Unlock()
 }
 
-// --- Unsupported Ops ---
+// --- Unsupported Operations ---
 
 func (fs *MutableFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
@@ -1428,6 +1432,7 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	return nil
 }
 
+// copyUpRegularFile copies file content from pxar to the mutable directory.
 func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	abs := fs.mutablePath(path)
 	f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
@@ -1515,6 +1520,7 @@ func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
 	return re, fuse.OK
 }
 
+// resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 	// Root is always a pxar-only directory.
 	if path == "/" || path == "" {
@@ -1574,6 +1580,7 @@ func (fs *MutableFS) resolveCheck(path string, re *ResolvedEntry) (fuse.Status, 
 	return fuse.OK, true
 }
 
+// resolveFromNode builds a ResolvedEntry from a journal GraphNode.
 func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry, fuse.Status) {
 	re := &ResolvedEntry{
 		Path:       path,
@@ -1612,6 +1619,7 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 	return re, fuse.OK
 }
 
+// findPxarNode walks the pxar tree to find a cached node for the given path.
 func (fs *MutableFS) findPxarNode(path string) *node {
 	if path == "/" {
 		return fs.pxar.GetNode(RootInode)
@@ -1647,6 +1655,7 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 	return nil
 }
 
+// hasPxarEntry reports whether a pxar entry exists at the given path.
 func (fs *MutableFS) hasPxarEntry(path string) bool {
 	return fs.findPxarNode(path) != nil
 }
@@ -1746,6 +1755,7 @@ func (fs *MutableFS) allocInode(isDir bool) uint64 {
 	return ino
 }
 
+// pathToIno returns the inode for a path, allocating one if needed.
 func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 	if ino, ok := fs.inoLookup.Load(path); ok {
 		return ino
@@ -1756,11 +1766,13 @@ func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 	return ino
 }
 
+// mapInode stores a bidirectional inode↔path mapping.
 func (fs *MutableFS) mapInode(ino uint64, path string) {
 	fs.inoLookup.Store(path, ino)
 	fs.pathLookup.Store(ino, path)
 }
 
+// unmapInode removes the bidirectional mapping for a path.
 func (fs *MutableFS) unmapInode(path string) {
 	if ino, ok := fs.inoLookup.LoadAndDelete(path); ok {
 		fs.pathLookup.Delete(ino)
@@ -1780,6 +1792,7 @@ func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
 	})
 }
 
+// inodeToPath returns the path for an inode, or empty string if unknown.
 func (fs *MutableFS) inodeToPath(ino uint64) string {
 	path, _ := fs.pathLookup.Load(ino)
 	return path
@@ -1796,6 +1809,7 @@ func (fs *MutableFS) registerFh(path string, fd int) uint64 {
 	return id
 }
 
+// getFh returns the file handle for an ID, or nil if not found.
 func (fs *MutableFS) getFh(id uint64) *passFh {
 	fs.fhMu.Lock()
 	defer fs.fhMu.Unlock()
@@ -1815,6 +1829,7 @@ func (fs *MutableFS) mutablePath(relPath string) string {
 	return filepath.Join(fs.mutableDir, relPath)
 }
 
+// dirModeForPath returns the directory mode bits for a resolved path.
 func (fs *MutableFS) dirModeForPath(path string) uint32 {
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
@@ -1823,6 +1838,7 @@ func (fs *MutableFS) dirModeForPath(path string) uint32 {
 	return re.Mode | syscall.S_IFDIR
 }
 
+// fillEntryOutForPath resolves a path and fills a FUSE EntryOut.
 func (fs *MutableFS) fillEntryOutForPath(path string, out *fuse.EntryOut) {
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
@@ -1831,6 +1847,7 @@ func (fs *MutableFS) fillEntryOutForPath(path string, out *fuse.EntryOut) {
 	fillResolvedEntryOut(re.Inode, re, out)
 }
 
+// getParentInfo returns the inode and mode of a path parent directory.
 func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode uint32) {
 	parentDir := filepath.Dir(path)
 	if parentDir == "." {
@@ -1847,6 +1864,7 @@ func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode ui
 	return
 }
 
+// applyACLOwnership sets default ownership on a path if ACL config specifies it.
 func (fs *MutableFS) applyACLOwnership(absPath string) {
 	uid := fs.acl.OwnerUID
 	gid := fs.acl.OwnerGID

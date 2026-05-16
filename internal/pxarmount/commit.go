@@ -774,6 +774,7 @@ func (ow *commitWalkState) minPayloadOffset(slim *dirEntrySlim) uint64 {
 	return ow.minPayloadFromEntries(entries)
 }
 
+// minPayloadFromEntries returns the minimum contentOffset across file entries.
 func (ow *commitWalkState) minPayloadFromEntries(entries []dirEntrySlim) uint64 {
 	minOff := uint64(0)
 	for i := range entries {

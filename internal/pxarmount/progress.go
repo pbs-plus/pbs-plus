@@ -98,6 +98,7 @@ func (r *ProgressReporter) State() ProgressState {
 	return r.state
 }
 
+// send writes a framed progress update to the underlying writer.
 func (r *ProgressReporter) send() {
 	label, ok := phaseLabels[r.state.Phase]
 	if !ok {
