@@ -102,6 +102,21 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
+	// Verify root node survived any prior crash.
+	var rootCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = 1`).Scan(&rootCount); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify root node: %w", err)
+	}
+	if rootCount == 0 {
+		// Root node missing — recreate (shouldn't happen, but defensive).
+		if _, err := db.Exec(
+			`INSERT INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/')`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("recreate root node: %w", err)
+		}
+	}
+
 	j := &Journal{db: db}
 	j.startCheckpointLoop()
 	return j, nil
@@ -148,9 +163,14 @@ func initSchema(db *sql.DB) error {
 }
 
 func (j *Journal) Close() error {
+	// Signal checkpoint goroutine to stop, then wait for it.
 	if j.ckptClose != nil {
 		close(j.ckptClose)
 	}
+	if j.ckptDone != nil {
+		<-j.ckptDone
+	}
+
 	// Final checkpoint to flush everything before closing.
 	j.mu.Lock()
 	_ = j.checkpoint()
@@ -215,6 +235,7 @@ func (j *Journal) startCheckpointLoop() {
 	j.ckptDone = make(chan struct{})
 	j.ckptClose = make(chan struct{})
 	go func() {
+		defer close(j.ckptDone)
 		ticker := time.NewTicker(j.checkpointInterval)
 		defer ticker.Stop()
 		for {
@@ -607,10 +628,24 @@ func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 //
 // If nodeID != 0, the path is fully in the journal.
 // If nodeID == 0, the path is partially or fully in pxar.
+//
+// All queries execute within a single read transaction, providing
+// snapshot consistency across the entire walk — analogous to ext4's
+// i_mutex on parent directories during lookup.
 func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellOffAt int64, remaining string, err error) {
 	if path == "/" || path == "" {
 		return 1, "/", 0, "", nil
 	}
+
+	// Snapshot read: In SQLite WAL mode, BEGIN provides a consistent
+	// view without blocking concurrent writers. This is the same
+	// approach ext4 uses — directory lookups hold i_mutex so renames
+	// can't interleave with lookups.
+	tx, txErr := j.db.Begin()
+	if txErr != nil {
+		return 0, "", 0, "", fmt.Errorf("begin snapshot: %w", txErr)
+	}
+	defer func() { _ = tx.Rollback() }() // read-only: rollback is free
 
 	// Zero-allocation path walker. Walk path segments by slicing the
 	// original string — no []string allocation, no strings.Join.
@@ -627,18 +662,22 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 		}
 		part := path[pos:end]
 
-		// Edges take priority over whiteouts.
+		// Look up edge within the snapshot.
 		var childID int64
-		err = j.db.QueryRow(
+		err = tx.QueryRow(
 			`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
 			curID, part).Scan(&childID)
 		if err == sql.ErrNoRows {
-			isWO, werr := j.IsWhiteout(curID, part)
-			if werr != nil {
+			// Check for whiteout within the same snapshot.
+			var wo int
+			werr := tx.QueryRow(
+				`SELECT 1 FROM whiteouts WHERE parent_id = ? AND name = ?`,
+				curID, part).Scan(&wo)
+			if werr != nil && werr != sql.ErrNoRows {
 				return 0, "", 0, "", werr
 			}
-			if isWO {
-				return 0, "", 0, "", nil
+			if werr == nil {
+				return 0, "", 0, "", nil // whiteout
 			}
 			// Fell off graph — remaining is from current position.
 			return 0, pxarPrefix.String() + path[pos-1:], curID, path[pos:], nil
@@ -649,9 +688,9 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 
 		curID = childID
 
-		// Update pxar prefix from redirect_to.
+		// Track pxar redirect within the snapshot.
 		var redirectTo sql.NullString
-		if err := j.db.QueryRow(
+		if err := tx.QueryRow(
 			`SELECT redirect_to FROM nodes WHERE id = ?`, curID).Scan(&redirectTo); err != nil {
 			return 0, "", 0, "", err
 		}

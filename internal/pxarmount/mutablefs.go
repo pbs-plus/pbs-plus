@@ -61,6 +61,18 @@ type MutableFS struct {
 	freezeMu   sync.Mutex
 	freezeCond *sync.Cond
 	frozen     bool
+
+	// Inode ↔ path bidirectional mapping.
+	// Per-instance to prevent cross-mount corruption — analogous to
+	// ext4's per-superblock inode cache.
+	inoLookup  map[string]uint64 // path → inode number
+	pathLookup map[uint64]string // inode number → path
+	lookupMu   sync.RWMutex      // protects both maps
+
+	// Per-path ensureNode serialization — prevents duplicate journal
+	// nodes when concurrent FUSE ops (e.g. setfacl -R) materialize
+	// the same pxar entry simultaneously.
+	ensureLocks sync.Map // string → *sync.Mutex
 }
 
 func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS {
@@ -70,6 +82,8 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		mutableDir: mutableDir,
 		handles:    make(map[uint64]*passFh),
 		inoLocks:   make(map[uint64]*sync.Mutex),
+		inoLookup:  make(map[string]uint64),
+		pathLookup: make(map[uint64]string),
 		nextFh:     1,
 		nextIno:    2, // 1 is RootInode
 	}
@@ -105,12 +119,70 @@ func (fs *MutableFS) InitMutableRoot() error {
 }
 
 // ReconcileMutableDir removes orphan disk entries not tracked by journal nodes.
+// ReconcileMutableDir removes orphan disk entries not tracked by journal nodes.
+// Called on startup to clean up after unclean shutdowns — analogous to
+// ext4's orphan inode cleanup during journal recovery (ext4_orphan_cleanup).
+//
+// A file is an orphan if:
+//   - No journal node exists for its path, OR
+//   - The journal node exists but HasData is false
+//
+// Directories are kept (they may be parents of tracked files and are cheap).
 func (fs *MutableFS) ReconcileMutableDir() error {
-	// With the graph model, orphan detection means: files on disk whose
-	// reconstructed path doesn't match any tracked node. For now we
-	// trust the journal — committed nodes are the source of truth.
-	// On restart, any disk files under tracked paths are valid.
-	return nil
+	return filepath.Walk(fs.mutableDir, func(absPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // skip errors
+		}
+
+		relPath, rerr := filepath.Rel(fs.mutableDir, absPath)
+		if rerr != nil {
+			return nil
+		}
+
+		// Skip root, journal directory, and its contents.
+		if relPath == "." || relPath == JournalDir || strings.HasPrefix(relPath, JournalDir+string(filepath.Separator)) {
+			return nil
+		}
+
+		// Only reconcile files — directories are kept as structural scaffolding.
+		if info.IsDir() {
+			return nil
+		}
+
+		// Convert OS path to FUSE path.
+		fusePath := "/" + filepath.ToSlash(relPath)
+
+		// Resolve through the journal.
+		nodeID, _, _, _, rerr := fs.journal.ResolvePath(fusePath)
+		if rerr != nil {
+			fs.debugf("reconcile: ResolvePath(%q) err: %v", fusePath, rerr)
+			return nil // skip resolution errors
+		}
+
+		if nodeID == 0 {
+			// Not tracked — orphan.
+			fs.debugf("reconcile: removing orphan %q (no node)", fusePath)
+			if err := os.Remove(absPath); err != nil {
+				fs.logNonFatal("reconcile-remove", fusePath, err)
+			}
+			return nil
+		}
+
+		node, nerr := fs.journal.GetNode(nodeID)
+		if nerr != nil || node == nil {
+			return nil
+		}
+
+		if !node.HasData {
+			// Node exists but doesn't expect local data — orphan.
+			fs.debugf("reconcile: removing orphan %q (HasData=false)", fusePath)
+			if err := os.Remove(absPath); err != nil {
+				fs.logNonFatal("reconcile-remove", fusePath, err)
+			}
+		}
+
+		return nil
+	})
 }
 
 // --- FUSE interface ---
@@ -470,20 +542,25 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	}
 
 	fh := fs.getFh(input.Fh)
+	// If no registered handle (e.g. write without open, or handle
+	// already released), open an anonymous fd and close it after the
+	// write. Registering it would leak since the kernel won't send
+	// Release for an unknown handle.
+	closeAfterWrite := false
 	if fh == nil {
 		abs := fs.mutablePath(path)
 		fd, err := syscall.Open(abs, os.O_WRONLY, 0)
 		if err != nil {
 			return 0, fuse.ToStatus(err)
 		}
-		fhID := fs.registerFh(path, fd)
-		fh = fs.getFh(fhID)
-		if fh == nil {
-			return 0, fuse.EBADF
-		}
+		fh = &passFh{fd: fd, path: path}
+		closeAfterWrite = true
 	}
 
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
+	if closeAfterWrite {
+		_ = syscall.Close(fh.fd)
+	}
 	if err != nil {
 		return 0, fuse.ToStatus(err)
 	}
@@ -981,11 +1058,16 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 				return fuse.ToStatus(err)
 			}
 			if err := os.Rename(oldAbs, newAbs); err != nil {
-				// Disk move failed — journal already committed, but the disk
-				// file is still at the old path. The journal edge is correct;
-				// the file will be re-read from the old location on next access.
-				// This is safe: the journal is the source of truth.
+				// Rename failed (cross-device? perms?). Fall back to
+				// copy so the data is at the location the journal expects.
+				// If copy also fails, the journal edge is still correct
+				// and ReconcileMutableDir will clean up on next startup.
 				fs.logNonFatal("rename-disk", oldPath, err)
+				if !oldRE.IsDir {
+					if copyErr := copyRegularFile(oldAbs, newAbs); copyErr != nil {
+						fs.logNonFatal("copy-fallback", newPath, copyErr)
+					}
+				}
 			}
 		}
 	}
@@ -1389,6 +1471,28 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	return nil
 }
 
+// copyRegularFile copies a regular file from src to dst.
+// Used as a fallback when os.Rename fails during Rename operations
+// (e.g. cross-device rename).
+func copyRegularFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+
+	bufp := copyBufPool.Get().(*[]byte)
+	defer copyBufPool.Put(bufp)
+	_, err = io.CopyBuffer(out, in, *bufp)
+	return err
+}
+
 // --- resolution ---
 
 // resolve looks up a path using the inode graph, falling back to pxar.
@@ -1580,9 +1684,32 @@ func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 // ensureNode ensures a journal node+edge exists for a resolved entry.
 // For pxar-only entries, it creates a node with redirect_to and an edge
 // under the parent. For journal entries, it's a no-op.
-// All database operations are batched into a single SQLite transaction.
+//
+// Per-path locking prevents duplicate nodes when concurrent FUSE ops
+// (e.g. setfacl -R) materialize the same pxar entry simultaneously —
+// analogous to ext4's inode_lock preventing concurrent inode initialization.
 func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	if re.Node != nil {
+		return
+	}
+
+	// Acquire per-path lock to serialize concurrent ensureNode for the
+	// same path. Without this, two concurrent setfacl threads could both
+	// resolve the same path, see Node==nil, and create duplicate nodes.
+	val, _ := fs.ensureLocks.LoadOrStore(re.Path, &sync.Mutex{})
+	pathMu := val.(*sync.Mutex)
+	pathMu.Lock()
+	defer pathMu.Unlock()
+
+	// Double-check after acquiring lock — another goroutine may have
+	// created the node while we waited.
+	if re.Node != nil {
+		return
+	}
+	// Re-resolve: the other goroutine's node is visible via the journal.
+	re2, status := fs.resolve(re.Path)
+	if status == fuse.OK && re2.Node != nil {
+		re.Node = re2.Node
 		return
 	}
 
@@ -1619,12 +1746,6 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 
 // --- inode management ---
 
-var (
-	pathToIno = make(map[string]uint64)
-	inoToPath = make(map[uint64]string)
-	pathInoMu sync.RWMutex
-)
-
 func (fs *MutableFS) allocInode(isDir bool) uint64 {
 	fs.inoMu.Lock()
 	ino := fs.nextIno
@@ -1637,12 +1758,12 @@ func (fs *MutableFS) allocInode(isDir bool) uint64 {
 }
 
 func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
-	pathInoMu.RLock()
-	if ino, ok := pathToIno[path]; ok {
-		pathInoMu.RUnlock()
+	fs.lookupMu.RLock()
+	if ino, ok := fs.inoLookup[path]; ok {
+		fs.lookupMu.RUnlock()
 		return ino
 	}
-	pathInoMu.RUnlock()
+	fs.lookupMu.RUnlock()
 
 	ino := fs.allocInode(isDir)
 	fs.mapInode(ino, path)
@@ -1650,39 +1771,39 @@ func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 }
 
 func (fs *MutableFS) mapInode(ino uint64, path string) {
-	pathInoMu.Lock()
-	pathToIno[path] = ino
-	inoToPath[ino] = path
-	pathInoMu.Unlock()
+	fs.lookupMu.Lock()
+	fs.inoLookup[path] = ino
+	fs.pathLookup[ino] = path
+	fs.lookupMu.Unlock()
 }
 
 func (fs *MutableFS) unmapInode(path string) {
-	pathInoMu.Lock()
-	if ino, ok := pathToIno[path]; ok {
-		delete(inoToPath, ino)
-		delete(pathToIno, path)
+	fs.lookupMu.Lock()
+	if ino, ok := fs.inoLookup[path]; ok {
+		delete(fs.pathLookup, ino)
+		delete(fs.inoLookup, path)
 	}
-	pathInoMu.Unlock()
+	fs.lookupMu.Unlock()
 }
 
 // remapPathPrefix updates all inode mappings under oldPrefix to use newPrefix.
 func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
-	pathInoMu.Lock()
-	for p, ino := range pathToIno {
+	fs.lookupMu.Lock()
+	for p, ino := range fs.inoLookup {
 		if p == oldPrefix || strings.HasPrefix(p, oldPrefix+"/") {
 			newPath := newPrefix + p[len(oldPrefix):]
-			pathToIno[newPath] = ino
-			inoToPath[ino] = newPath
-			delete(pathToIno, p)
+			fs.inoLookup[newPath] = ino
+			fs.pathLookup[ino] = newPath
+			delete(fs.inoLookup, p)
 		}
 	}
-	pathInoMu.Unlock()
+	fs.lookupMu.Unlock()
 }
 
 func (fs *MutableFS) inodeToPath(ino uint64) string {
-	pathInoMu.RLock()
-	defer pathInoMu.RUnlock()
-	return inoToPath[ino]
+	fs.lookupMu.RLock()
+	defer fs.lookupMu.RUnlock()
+	return fs.pathLookup[ino]
 }
 
 // --- file handle management ---

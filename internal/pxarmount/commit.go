@@ -211,7 +211,16 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 
 	// Sync journal while frozen — all pending metadata is durably
 	// checkpointed before we start reading the journal for commit.
-	_ = mfs.journal.Sync()
+	// This is the write barrier equivalent: all metadata must be on
+	// stable storage before we snapshot it, like ext4's journal flush
+	// before checkpoint.
+	if err := mfs.journal.Sync(); err != nil {
+		mfs.freezeMu.Lock()
+		mfs.frozen = false
+		mfs.freezeMu.Unlock()
+		mfs.freezeCond.Broadcast()
+		return fmt.Errorf("sync journal before commit: %w", err)
+	}
 
 	defer func() {
 		mfs.freezeMu.Lock()
