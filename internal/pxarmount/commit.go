@@ -181,7 +181,6 @@ type commitEntry struct {
 type commitWalkState struct {
 	mfs          *MutableFS
 	writer       transfer.ArchiveWriter
-	dedup        *transfer.RemoteDedupSplitArchiveWriter
 	prog         *ProgressReporter
 	pxarDirCache map[uint64][]dirEntrySlim // pxar inode → cached dir entries
 	xattrCache   map[int64][]format.XAttr  // journal node ID → xattrs
@@ -357,7 +356,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 	ow := &commitWalkState{
 		mfs:          mfs,
 		writer:       writer,
-		dedup:        writer,
 		prog:         prog,
 		pxarDirCache: make(map[uint64][]dirEntrySlim),
 		xattrCache:   make(map[int64][]format.XAttr),

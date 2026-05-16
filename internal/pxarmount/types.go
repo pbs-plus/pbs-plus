@@ -104,8 +104,7 @@ var dirEntryPool = sync.Pool{
 
 // passFh is an open file handle.
 type passFh struct {
-	fd   int
-	path string
+	fd int
 }
 
 // snapshotRef identifies a PBS snapshot for commit dedup.
@@ -174,7 +173,6 @@ func fillEntryOut(inode uint64, n *node, out *fuse.EntryOut) {
 }
 
 // fillAttrOut fills a FUSE AttrOut from a cached node.
-// fillAttr fills FUSE attributes from a cached node.
 func fillAttrOut(n *node, out *fuse.AttrOut) {
 	out.AttrValid = 1
 	out.AttrValidNsec = uint32(time.Second)

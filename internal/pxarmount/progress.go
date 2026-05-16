@@ -37,7 +37,6 @@ type ProgressState struct {
 	TotalFiles int64
 	TotalBytes int64
 	Msg        string
-	Started    time.Time
 }
 
 // ProgressReporter sends framed progress updates to a writer.
@@ -51,10 +50,8 @@ type ProgressReporter struct {
 // NewProgressReporter creates a reporter that writes to w.
 func NewProgressReporter(w io.Writer) *ProgressReporter {
 	return &ProgressReporter{
-		w: w,
-		state: ProgressState{
-			Started: time.Now(),
-		},
+		w:     w,
+		state: ProgressState{},
 	}
 }
 

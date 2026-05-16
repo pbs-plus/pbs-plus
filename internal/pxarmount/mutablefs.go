@@ -553,7 +553,7 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 		if err != nil {
 			return 0, fuse.ToStatus(err)
 		}
-		fh = &passFh{fd: fd, path: path}
+		fh = &passFh{fd: fd}
 		closeAfterWrite = true
 	}
 
@@ -1791,7 +1791,7 @@ func (fs *MutableFS) registerFh(path string, fd int) uint64 {
 	fs.fhMu.Lock()
 	id := fs.nextFh
 	fs.nextFh++
-	fs.handles[id] = &passFh{fd: fd, path: path}
+	fs.handles[id] = &passFh{fd: fd}
 	fs.fhMu.Unlock()
 	return id
 }

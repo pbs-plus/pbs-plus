@@ -316,7 +316,6 @@ func scanNode(row interface{ Scan(...any) error }, id int64) (*GraphNode, error)
 	return n, nil
 }
 
-// CreateNodeTx inserts a new node within a transaction and returns its ID.
 // createNodeTx inserts a new node within a transaction and returns its ID.
 func createNodeTx(tx *sql.Tx, n *GraphNode) (int64, error) {
 	hasData := 0
