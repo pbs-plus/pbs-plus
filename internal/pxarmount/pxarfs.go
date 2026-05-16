@@ -51,9 +51,6 @@ func NewPxarFS(reader *transfer.SplitArchiveReader) (*PxarFS, error) {
 	return fs, nil
 }
 
-// Size returns the total archive size.
-func (fs *PxarFS) Size() int64 { return fs.size }
-
 func (fs *PxarFS) Init(server *fuse.Server) {
 	fs.RawFileSystem = fuse.NewDefaultRawFileSystem()
 	fs.RawFileSystem.Init(server)
@@ -328,7 +325,7 @@ func (fs *PxarFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.Stat
 	return fuse.OK
 }
 
-// --- internal helpers ---
+// --- Internal Helpers ---
 
 func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	fs.mu.RLock()
@@ -519,18 +516,12 @@ func (fs *PxarFS) HotSwap(reader *transfer.SplitArchiveReader) {
 	}
 }
 
-// ReaderAt returns the payload ReaderAt for commit/dedup use.
-func (fs *PxarFS) ReaderAt() io.ReaderAt {
-	return fs.readerAt
-}
-
 // Reader returns the underlying SplitArchiveReader.
 func (fs *PxarFS) Reader() *transfer.SplitArchiveReader {
 	return fs.reader
 }
 
-// --- helpers ---
-
+// bytesEq compares a byte slice to a string without allocation.
 func bytesEq(b []byte, s string) bool {
 	if len(b) != len(s) {
 		return false
@@ -543,6 +534,7 @@ func bytesEq(b []byte, s string) bool {
 	return true
 }
 
+// xattrValue copies an xattr value into dest, or returns the size if dest is nil.
 func xattrValue(val []byte, dest []byte) (uint32, fuse.Status) {
 	if dest == nil {
 		return uint32(len(val)), fuse.OK

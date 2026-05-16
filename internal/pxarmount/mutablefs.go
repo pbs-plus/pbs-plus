@@ -718,7 +718,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 	}
 	node.ID = nodeID
 
-	fs.applyACLOwnership(abs, false)
+	fs.applyACLOwnership(abs)
 
 	fhID := fs.registerFh(childPath, fd)
 
@@ -744,7 +744,7 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 		return fuse.ToStatus(err)
 	}
 
-	fs.applyACLOwnership(abs, true)
+	fs.applyACLOwnership(abs)
 
 	hasPxar := fs.hasPxarEntry(childPath)
 	now := time.Now().UnixNano()
@@ -795,7 +795,7 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 		return fuse.ToStatus(err)
 	}
 
-	fs.applyACLOwnership(abs, false)
+	fs.applyACLOwnership(abs)
 
 	hasPxar := fs.hasPxarEntry(childPath)
 	now := time.Now().UnixNano()
@@ -845,7 +845,7 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 		return fuse.ToStatus(err)
 	}
 
-	fs.applyACLOwnership(abs, false)
+	fs.applyACLOwnership(abs)
 
 	hasPxar := fs.hasPxarEntry(childPath)
 	now := time.Now().UnixNano()
@@ -1085,17 +1085,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	return fuse.OK
 }
 
-// nodeKindFromPxar returns the journal node kind for a pxar node.
-func nodeKindFromPxar(n *node) uint8 {
-	if n.isDir {
-		return NodeDir
-	}
-	if n.isSymlink {
-		return NodeSymlink
-	}
-	return NodeFile
-}
-
 // Readlink resolves and returns the symlink target.
 func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byte, fuse.Status) {
 	path := fs.inodeToPath(header.NodeId)
@@ -1119,7 +1108,7 @@ func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]
 	return nil, fuse.EINVAL
 }
 
-// --- xattr ---
+// --- XAttr ---
 
 func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
 	path := fs.inodeToPath(header.NodeId)
@@ -1289,7 +1278,7 @@ func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, 
 	return fuse.OK
 }
 
-// --- file handle lifecycle ---
+// --- File Handle Lifecycle ---
 
 func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
 	if input.Fh == 0 {
@@ -1332,7 +1321,7 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 	fs.fhMu.Unlock()
 }
 
-// --- unsupported ops ---
+// --- Unsupported Ops ---
 
 func (fs *MutableFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
@@ -1390,7 +1379,7 @@ func (fs *MutableFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.S
 	return fuse.OK
 }
 
-// --- copy-up ---
+// --- Copy-Up ---
 
 func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	inoMu := fs.getInoLock(re.Inode)
@@ -1435,7 +1424,7 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	re.DataIsMut = true
 	re.Node.HasData = true
 
-	fs.applyACLOwnership(abs, re.IsDir)
+	fs.applyACLOwnership(abs)
 	return nil
 }
 
@@ -1493,7 +1482,7 @@ func copyRegularFile(src, dst string) error {
 	return err
 }
 
-// --- resolution ---
+// --- Resolution ---
 
 // resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
@@ -1744,7 +1733,7 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	re.Node = node
 }
 
-// --- inode management ---
+// --- Inode Management ---
 
 func (fs *MutableFS) allocInode(isDir bool) uint64 {
 	fs.inoMu.Lock()
@@ -1796,7 +1785,7 @@ func (fs *MutableFS) inodeToPath(ino uint64) string {
 	return path
 }
 
-// --- file handle management ---
+// --- File Handle Management ---
 
 func (fs *MutableFS) registerFh(path string, fd int) uint64 {
 	fs.fhMu.Lock()
@@ -1813,14 +1802,14 @@ func (fs *MutableFS) getFh(id uint64) *passFh {
 	return fs.handles[id]
 }
 
-// --- per-inode writer lock ---
+// --- Per-Inode Writer Lock ---
 
 func (fs *MutableFS) getInoLock(ino uint64) *sync.Mutex {
 	val, _ := fs.inoLocks.LoadOrStore(ino, &sync.Mutex{})
 	return val
 }
 
-// --- helpers ---
+// --- Helpers ---
 
 func (fs *MutableFS) mutablePath(relPath string) string {
 	return filepath.Join(fs.mutableDir, relPath)
@@ -1858,8 +1847,7 @@ func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode ui
 	return
 }
 
-func (fs *MutableFS) applyACLOwnership(absPath string, isDir bool) {
-	_ = isDir
+func (fs *MutableFS) applyACLOwnership(absPath string) {
 	uid := fs.acl.OwnerUID
 	gid := fs.acl.OwnerGID
 	if uid != 0 || gid != 0 {
@@ -1909,8 +1897,9 @@ func (fs *MutableFS) Close() {
 	fs.fhMu.Unlock()
 }
 
-// --- fill helpers ---
+// --- Fill Helpers ---
 
+// fillResolvedEntryOut fills a FUSE EntryOut from a ResolvedEntry.
 func fillResolvedEntryOut(ino uint64, re *ResolvedEntry, out *fuse.EntryOut) {
 	out.NodeId = ino
 	out.Generation = 1
@@ -1941,6 +1930,7 @@ func fillResolvedEntryOut(ino uint64, re *ResolvedEntry, out *fuse.EntryOut) {
 	a.Blksize = 4096
 }
 
+// fillResolvedAttrOut fills a FUSE AttrOut from a ResolvedEntry.
 func fillResolvedAttrOut(re *ResolvedEntry, out *fuse.AttrOut) {
 	out.AttrValid = 1
 	out.AttrValidNsec = uint32(time.Second)
@@ -1968,6 +1958,7 @@ func fillResolvedAttrOut(re *ResolvedEntry, out *fuse.AttrOut) {
 	a.Blksize = 4096
 }
 
+// fillAttrFromNode fills FUSE attributes from a GraphNode.
 func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Size = n.Size
 	attr.Blocks = (n.Size + 511) / 512
@@ -1990,6 +1981,7 @@ func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Blksize = 4096
 }
 
+// munmap unmaps a memory-mapped region.
 func munmap(data []byte) error {
 	if len(data) == 0 {
 		return nil
@@ -1997,6 +1989,7 @@ func munmap(data []byte) error {
 	return syscall.Munmap(data)
 }
 
+// mmapFile memory-maps a file, falling back to ReadAll on error.
 func mmapFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
