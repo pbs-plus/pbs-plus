@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -44,10 +45,17 @@ type GraphEdge struct {
 	ChildID  int64
 }
 
+// schemaVersion is the current journal schema version.
+// Increment when making non-trivial schema changes. OpenJournal
+// will run migrations automatically — analogous to ext4's feature
+// compatibility flags checked at mount time.
+const schemaVersion = 1
+
 // Journal is the SQLite-backed inode graph for the mutable overlay.
 //
 // Schema:
 //
+//	meta(key, value)                  — stores schema_version, etc.
 //	nodes(id, kind, mode, uid, gid, size, mtime_ns, ctime_ns, has_data,
 //	      symlink_tgt, redirect_to, opaque)
 //	edges(parent_id, name, child_id)  PK(parent_id, name)
@@ -77,10 +85,16 @@ type Journal struct {
 
 	// checkpointInterval controls how often the background
 	// checkpoint goroutine runs. Analogous to ext4's commit= mount option.
-	checkpointInterval time.Duration
+	// Atomic for safe concurrent reads from the ticker goroutine.
+	checkpointInterval atomic.Int64 // nanoseconds
 }
 
 // OpenJournal opens or creates the journal database in dir.
+// Performs crash recovery analogous to ext4's journal replay:
+//  1. WAL auto-replay (SQLite handles this)
+//  2. Schema version check and migration
+//  3. Root node integrity verification
+//  4. Orphan edge cleanup (dangling references from partial tx)
 func OpenJournal(dir string) (*Journal, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create journal dir: %w", err)
@@ -92,29 +106,64 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
+	// Verify the database is accessible and not corrupt.
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping journal db: %w", err)
+	}
+
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
+	// Integrity check: like ext4's ext4_check_descriptors() at mount time.
+	// Catches corrupt pages from torn writes that WAL replay couldn't fix.
+	var ok string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&ok); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("integrity check: %w", err)
+	}
+	if ok != "ok" {
+		_ = db.Close()
+		return nil, fmt.Errorf("integrity check failed: %s", ok)
+	}
+
+	// Create or migrate schema.
 	if err := initSchema(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
-	// Verify root node survived any prior crash.
+	if err := migrateSchema(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+
+	// Verify root node survived any prior crash — analogous to ext4's
+	// ext4_orphan_cleanup() which runs at mount time.
 	var rootCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = 1`).Scan(&rootCount); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("verify root node: %w", err)
 	}
 	if rootCount == 0 {
-		// Root node missing — recreate (shouldn't happen, but defensive).
 		if _, err := db.Exec(
 			`INSERT INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/')`); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("recreate root node: %w", err)
 		}
+	}
+
+	// Clean up orphan edges: edges pointing to non-existent nodes.
+	// This can happen if a process crash occurs between node creation
+	// and edge insertion in a compound operation. Like ext4's
+	// ext4_orphan_cleanup().
+	if _, err := db.Exec(`
+		DELETE FROM edges
+		WHERE child_id NOT IN (SELECT id FROM nodes)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("clean orphan edges: %w", err)
 	}
 
 	j := &Journal{db: db, ckptPending: xsync.NewCounter()}
@@ -125,6 +174,12 @@ func OpenJournal(dir string) (*Journal, error) {
 // initSchema creates the journal database tables.
 func initSchema(db *sql.DB) error {
 	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS meta (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		) WITHOUT ROWID;
+		INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '` + fmt.Sprint(schemaVersion) + `');
+
 		CREATE TABLE IF NOT EXISTS nodes (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			kind        INTEGER NOT NULL,
@@ -160,6 +215,90 @@ func initSchema(db *sql.DB) error {
 		INSERT OR IGNORE INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/');
 	`)
 	return err
+}
+
+// migrateSchema applies schema migrations. Analogous to ext4's
+// feature compatibility check + online resize — runs once at open.
+// Future schema changes should add cases here.
+func migrateSchema(db *sql.DB) error {
+	var ver string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&ver); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	// No migrations yet — schema is at version 1.
+	// Example future migration:
+	//   if ver == "1" {
+	//       _, err := db.Exec(`ALTER TABLE nodes ADD COLUMN new_col ...`)
+	//       _, err = db.Exec(`UPDATE meta SET value = '2' WHERE key = 'schema_version'`)
+	//   }
+	_ = ver
+	return nil
+}
+
+// VerifyIntegrity runs a full database consistency check.
+// Analogous to ext4's e2fsck -n (read-only check):
+//   - SQLite integrity_check pragma
+//   - Foreign key constraint verification
+//   - Root node existence
+//   - No orphan edges (edges without matching nodes)
+//   - No orphan xattrs (xattrs without matching nodes)
+func (j *Journal) VerifyIntegrity() error {
+	// 1. SQLite built-in integrity check.
+	var ok string
+	if err := j.db.QueryRow("PRAGMA integrity_check").Scan(&ok); err != nil {
+		return fmt.Errorf("integrity_check: %w", err)
+	}
+	if ok != "ok" {
+		return fmt.Errorf("integrity_check failed: %s", ok)
+	}
+
+	// 2. Foreign key violation check.
+	rows, err := j.db.Query("PRAGMA foreign_key_check")
+	if err != nil {
+		return fmt.Errorf("foreign_key_check: %w", err)
+	}
+	for rows.Next() {
+		var table, from, to string
+		var rowid, fkid int64
+		_ = rows.Scan(&table, &rowid, &from, &to, &fkid)
+		_ = rows.Close()
+		return fmt.Errorf("foreign key violation: %s row %d references %s.%s", table, rowid, to, from)
+	}
+	_ = rows.Close()
+
+	// 3. Root node must exist.
+	var rootCount int
+	if err := j.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = 1`).Scan(&rootCount); err != nil {
+		return fmt.Errorf("root node check: %w", err)
+	}
+	if rootCount == 0 {
+		return fmt.Errorf("root node missing")
+	}
+
+	// 4. No orphan edges.
+	var orphanEdges int
+	if err := j.db.QueryRow(`
+		SELECT COUNT(*) FROM edges e
+		WHERE e.parent_id NOT IN (SELECT id FROM nodes)
+		   OR e.child_id NOT IN (SELECT id FROM nodes)`).Scan(&orphanEdges); err != nil {
+		return fmt.Errorf("orphan edge check: %w", err)
+	}
+	if orphanEdges > 0 {
+		return fmt.Errorf("%d orphan edges detected", orphanEdges)
+	}
+
+	// 5. No orphan xattrs.
+	var orphanXattrs int
+	if err := j.db.QueryRow(`
+		SELECT COUNT(*) FROM xattrs x
+		WHERE x.node_id NOT IN (SELECT id FROM nodes)`).Scan(&orphanXattrs); err != nil {
+		return fmt.Errorf("orphan xattr check: %w", err)
+	}
+	if orphanXattrs > 0 {
+		return fmt.Errorf("%d orphan xattrs detected", orphanXattrs)
+	}
+
+	return nil
 }
 
 func (j *Journal) Close() error {
@@ -229,14 +368,14 @@ func (j *Journal) checkpoint() error {
 
 // startCheckpointLoop launches the background periodic checkpoint goroutine.
 func (j *Journal) startCheckpointLoop() {
-	if j.checkpointInterval <= 0 {
-		j.checkpointInterval = 5 * time.Second
+	if j.checkpointInterval.Load() <= 0 {
+		j.checkpointInterval.Store(int64(5 * time.Second))
 	}
 	j.ckptDone = make(chan struct{})
 	j.ckptClose = make(chan struct{})
 	go func() {
 		defer close(j.ckptDone)
-		ticker := time.NewTicker(j.checkpointInterval)
+		ticker := time.NewTicker(time.Duration(j.checkpointInterval.Load()))
 		defer ticker.Stop()
 		for {
 			select {
