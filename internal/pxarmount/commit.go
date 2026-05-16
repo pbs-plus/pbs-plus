@@ -147,6 +147,7 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 	return l, nil
 }
 
+// handleCommitConn processes a single commit connection.
 func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	scanner := bufio.NewScanner(conn)
@@ -166,7 +167,7 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	}
 }
 
-// --- commit core ---
+// --- Commit Core ---
 
 // commitEntry represents one item in the merged directory view during commit walk.
 type commitEntry struct {
@@ -865,7 +866,7 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 	return nil
 }
 
-// --- helpers ---
+// --- Helpers ---
 
 // nodeToMetadata converts a journal GraphNode to pxar.Metadata.
 func nodeToMetadata(n *GraphNode, xattrs []format.XAttr) pxar.Metadata {

@@ -140,8 +140,9 @@ type MountConfig struct {
 	ACL           ACLConfig
 }
 
-// --- helpers ---
+// --- Helpers ---
 
+// newNodeFromEntry creates a node from a pxar entry with cached metadata.
 func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	st := e.Metadata.Stat
 	return node{
@@ -162,6 +163,7 @@ func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	}
 }
 
+// fillEntryOut fills a FUSE EntryOut from a cached node.
 func fillEntryOut(inode uint64, n *node, out *fuse.EntryOut) {
 	out.NodeId = inode
 	out.Generation = 1
@@ -171,12 +173,15 @@ func fillEntryOut(inode uint64, n *node, out *fuse.EntryOut) {
 	fillAttr(&out.Attr, n)
 }
 
+// fillAttrOut fills a FUSE AttrOut from a cached node.
+// fillAttr fills FUSE attributes from a cached node.
 func fillAttrOut(n *node, out *fuse.AttrOut) {
 	out.AttrValid = 1
 	out.AttrValidNsec = uint32(time.Second)
 	fillAttr(&out.Attr, n)
 }
 
+// fillAttr fills FUSE attributes from a cached node.
 func fillAttr(attr *fuse.Attr, n *node) {
 	attr.Ino = n.inode
 	attr.Size = n.fileSize
@@ -198,6 +203,7 @@ func fillAttr(attr *fuse.Attr, n *node) {
 	attr.Blksize = 4096
 }
 
+// statMode converts a pxar mode to a syscall mode with file type bits.
 func statMode(mode uint64) uint32 {
 	var ft uint32
 	switch mode & format.ModeIFMT {
@@ -219,6 +225,7 @@ func statMode(mode uint64) uint32 {
 	return ft | uint32(mode&0o7777)
 }
 
+// joinPath joins a parent path and a name component.
 func joinPath(parent, name string) string {
 	if parent == "/" {
 		return "/" + name
@@ -247,6 +254,7 @@ func splitPath(path string) []string {
 	return parts
 }
 
+// ensureModeType ensures mode has the correct file type bits for the given node kind.
 func ensureModeType(mode uint32, kind uint8) uint32 {
 	perm := mode & 0o7777
 	var ft uint32
@@ -259,4 +267,15 @@ func ensureModeType(mode uint32, kind uint8) uint32 {
 		ft = syscall.S_IFREG
 	}
 	return ft | perm
+}
+
+// nodeKindFromPxar returns the journal node kind for a pxar node.
+func nodeKindFromPxar(n *node) uint8 {
+	if n.isDir {
+		return NodeDir
+	}
+	if n.isSymlink {
+		return NodeSymlink
+	}
+	return NodeFile
 }

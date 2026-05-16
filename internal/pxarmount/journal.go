@@ -264,6 +264,7 @@ func (j *Journal) GetNode(id int64) (*GraphNode, error) {
 	return scanNode(row, id)
 }
 
+// scanNode scans a single database row into a GraphNode.
 func scanNode(row interface{ Scan(...any) error }, id int64) (*GraphNode, error) {
 	n := &GraphNode{ID: id}
 	var kind, mode, uid, gid, hasData, opaque sql.NullInt64
@@ -316,6 +317,7 @@ func scanNode(row interface{ Scan(...any) error }, id int64) (*GraphNode, error)
 }
 
 // CreateNodeTx inserts a new node within a transaction and returns its ID.
+// createNodeTx inserts a new node within a transaction and returns its ID.
 func createNodeTx(tx *sql.Tx, n *GraphNode) (int64, error) {
 	hasData := 0
 	if n.HasData {
@@ -337,6 +339,7 @@ func createNodeTx(tx *sql.Tx, n *GraphNode) (int64, error) {
 	return res.LastInsertId()
 }
 
+// updateNodeTx updates a node within a transaction.
 func updateNodeTx(tx *sql.Tx, n *GraphNode) error {
 	hasData := 0
 	if n.HasData {
@@ -420,7 +423,7 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	return names, rows.Err()
 }
 
-// --- Xattr operations ---
+// --- XAttr Operations ---
 
 func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	var val []byte
@@ -464,7 +467,7 @@ func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 	})
 }
 
-// --- Path resolution: walk the edge graph component-by-component ---
+// --- Path Resolution ---
 
 // ResolvePath walks the edge graph from root to find a path.
 // Returns:
@@ -555,65 +558,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 	return curID, pxarPrefix.String(), 0, "", nil
 }
 
-// --- Batch operations for commit ---
-
-// AllNodes returns all nodes (except root) for commit walking.
-func (j *Journal) AllNodes() ([]*GraphNode, error) {
-	rows, err := j.db.Query(`
-		SELECT id, kind, mode, uid, gid, size, mtime_ns, ctime_ns,
-		       has_data, symlink_tgt, redirect_to, opaque
-		FROM nodes WHERE id != 1 ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var nodes []*GraphNode
-	for rows.Next() {
-		n := &GraphNode{}
-		var kind, mode, uid, gid, hasData, opaque sql.NullInt64
-		var size, mtimeNs, ctimeNs sql.NullInt64
-		var symlinkTgt, redirectTo sql.NullString
-		if err := rows.Scan(&n.ID, &kind, &mode, &uid, &gid, &size,
-			&mtimeNs, &ctimeNs, &hasData, &symlinkTgt, &redirectTo, &opaque); err != nil {
-			return nil, err
-		}
-		if kind.Valid {
-			n.Kind = uint8(kind.Int64)
-		}
-		if mode.Valid {
-			n.Mode = uint32(mode.Int64)
-		}
-		if uid.Valid {
-			n.UID = uint32(uid.Int64)
-		}
-		if gid.Valid {
-			n.GID = uint32(gid.Int64)
-		}
-		if size.Valid {
-			n.Size = uint64(size.Int64)
-		}
-		if mtimeNs.Valid {
-			n.MtimeNs = mtimeNs.Int64
-		}
-		if ctimeNs.Valid {
-			n.CtimeNs = ctimeNs.Int64
-		}
-		if hasData.Valid {
-			n.HasData = hasData.Int64 != 0
-		}
-		if symlinkTgt.Valid {
-			n.SymlinkTgt = symlinkTgt.String
-		}
-		if redirectTo.Valid {
-			n.RedirectTo = redirectTo.String
-		}
-		if opaque.Valid {
-			n.Opaque = opaque.Int64 != 0
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
-}
+// --- Batch Operations for Commit ---
 
 // AllXAttrs returns all xattrs grouped by node ID.
 func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
@@ -634,25 +579,6 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 			result[nodeID] = make(map[string][]byte)
 		}
 		result[nodeID][name] = value
-	}
-	return result, rows.Err()
-}
-
-// AllWhiteouts returns all whiteouts grouped by parent node ID.
-func (j *Journal) AllWhiteouts() (map[int64][]string, error) {
-	rows, err := j.db.Query(`SELECT parent_id, name FROM whiteouts ORDER BY parent_id, name`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	result := make(map[int64][]string)
-	for rows.Next() {
-		var parentID int64
-		var name string
-		if err := rows.Scan(&parentID, &name); err != nil {
-			return nil, err
-		}
-		result[parentID] = append(result[parentID], name)
 	}
 	return result, rows.Err()
 }

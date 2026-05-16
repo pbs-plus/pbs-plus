@@ -76,7 +76,7 @@ func Serve(cfg MountConfig) {
 		}
 
 		// Apply default ownership and force-walk if requested.
-		mfs.applyACLOwnership(backingDir, true)
+		mfs.applyACLOwnership(backingDir)
 		mfs.ForceACLOwnership()
 
 		// Map root inode.
