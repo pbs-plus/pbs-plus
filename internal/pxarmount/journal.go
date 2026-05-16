@@ -537,6 +537,7 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 
 // --- Whiteout CRUD ---
 
+// AddWhiteout records that a pxar entry at (parentID, name) is deleted.
 func (j *Journal) AddWhiteout(parentID int64, name string) error {
 	return j.tx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name)
@@ -544,6 +545,7 @@ func (j *Journal) AddWhiteout(parentID int64, name string) error {
 	})
 }
 
+// ListWhiteouts returns all whiteout names under a parent.
 func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	rows, err := j.db.Query(`SELECT name FROM whiteouts WHERE parent_id = ?`, parentID)
 	if err != nil {
@@ -563,6 +565,7 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 
 // --- XAttr Operations ---
 
+// GetXAttr returns the value of an extended attribute, or nil if not found.
 func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	var val []byte
 	err := j.db.QueryRow(
@@ -573,6 +576,7 @@ func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	return val, err
 }
 
+// ListXAttrs returns all extended attribute names for a node.
 func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	rows, err := j.db.Query(`SELECT name FROM xattrs WHERE node_id = ?`, nodeID)
 	if err != nil {
@@ -591,6 +595,7 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 }
 
 func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
+// SetXAttr upserts an extended attribute value.
 	return j.tx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT OR REPLACE INTO xattrs (node_id, name, value) VALUES (?, ?, ?)`,
 			nodeID, name, value)
@@ -600,6 +605,7 @@ func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
 
 func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 	return j.tx(func(tx *sql.Tx) error {
+// RemoveXAttr deletes an extended attribute.
 		_, err := tx.Exec(`DELETE FROM xattrs WHERE node_id = ? AND name = ?`, nodeID, name)
 		return err
 	})
@@ -831,7 +837,7 @@ func (j *Journal) Clear() error {
 	})
 }
 
-// --- Compound atomic operations ---
+// --- Compound Atomic Operations ---
 
 // DeleteEdgeAndNode atomically removes an edge and its target node.
 // CASCADE handles xattrs; the whiteout is added in the same tx.
