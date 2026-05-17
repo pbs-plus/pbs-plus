@@ -37,23 +37,6 @@ type ProgressState struct {
 	TotalFiles int64
 	TotalBytes int64
 	Msg        string
-	Started    time.Time
-}
-
-// Percent returns completion percentage (0-100), or -1 if unknown.
-func (s ProgressState) Percent() float64 {
-	if s.TotalFiles > 0 && s.Files > 0 {
-		return float64(s.Files) / float64(s.TotalFiles) * 100
-	}
-	if s.TotalBytes > 0 && s.Bytes > 0 {
-		return float64(s.Bytes) / float64(s.TotalBytes) * 100
-	}
-	return -1
-}
-
-// Elapsed returns time since the operation started.
-func (s ProgressState) Elapsed() time.Duration {
-	return time.Since(s.Started)
 }
 
 // ProgressReporter sends framed progress updates to a writer.
@@ -67,10 +50,8 @@ type ProgressReporter struct {
 // NewProgressReporter creates a reporter that writes to w.
 func NewProgressReporter(w io.Writer) *ProgressReporter {
 	return &ProgressReporter{
-		w: w,
-		state: ProgressState{
-			Started: time.Now(),
-		},
+		w:     w,
+		state: ProgressState{},
 	}
 }
 
@@ -117,6 +98,7 @@ func (r *ProgressReporter) State() ProgressState {
 	return r.state
 }
 
+// send writes a framed progress update to the underlying writer.
 func (r *ProgressReporter) send() {
 	label, ok := phaseLabels[r.state.Phase]
 	if !ok {
@@ -195,6 +177,7 @@ func (d *ProgressDisplay) Error(line string) {
 	d.lastLine = ""
 }
 
+// formatBytes formats a byte count as a human-readable string.
 func formatBytes(b int64) string {
 	const (
 		kiB = 1024

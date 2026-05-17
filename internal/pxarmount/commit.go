@@ -147,6 +147,7 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 	return l, nil
 }
 
+// handleCommitConn processes a single commit connection.
 func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	scanner := bufio.NewScanner(conn)
@@ -166,7 +167,7 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	}
 }
 
-// --- commit core ---
+// --- Commit Core ---
 
 // commitEntry represents one item in the merged directory view during commit walk.
 type commitEntry struct {
@@ -180,7 +181,6 @@ type commitEntry struct {
 type commitWalkState struct {
 	mfs          *MutableFS
 	writer       transfer.ArchiveWriter
-	dedup        *transfer.RemoteDedupSplitArchiveWriter
 	prog         *ProgressReporter
 	pxarDirCache map[uint64][]dirEntrySlim // pxar inode → cached dir entries
 	xattrCache   map[int64][]format.XAttr  // journal node ID → xattrs
@@ -211,7 +211,16 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 
 	// Sync journal while frozen — all pending metadata is durably
 	// checkpointed before we start reading the journal for commit.
-	_ = mfs.journal.Sync()
+	// This is the write barrier equivalent: all metadata must be on
+	// stable storage before we snapshot it, like ext4's journal flush
+	// before checkpoint.
+	if err := mfs.journal.Sync(); err != nil {
+		mfs.freezeMu.Lock()
+		mfs.frozen = false
+		mfs.freezeMu.Unlock()
+		mfs.freezeCond.Broadcast()
+		return fmt.Errorf("sync journal before commit: %w", err)
+	}
 
 	defer func() {
 		mfs.freezeMu.Lock()
@@ -347,7 +356,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 	ow := &commitWalkState{
 		mfs:          mfs,
 		writer:       writer,
-		dedup:        writer,
 		prog:         prog,
 		pxarDirCache: make(map[uint64][]dirEntrySlim),
 		xattrCache:   make(map[int64][]format.XAttr),
@@ -766,6 +774,7 @@ func (ow *commitWalkState) minPayloadOffset(slim *dirEntrySlim) uint64 {
 	return ow.minPayloadFromEntries(entries)
 }
 
+// minPayloadFromEntries returns the minimum contentOffset across file entries.
 func (ow *commitWalkState) minPayloadFromEntries(entries []dirEntrySlim) uint64 {
 	minOff := uint64(0)
 	for i := range entries {
@@ -856,7 +865,7 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 	return nil
 }
 
-// --- helpers ---
+// --- Helpers ---
 
 // nodeToMetadata converts a journal GraphNode to pxar.Metadata.
 func nodeToMetadata(n *GraphNode, xattrs []format.XAttr) pxar.Metadata {
