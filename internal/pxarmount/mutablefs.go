@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -39,10 +40,11 @@ type MutableFS struct {
 	nextIno uint64
 	inoMu   sync.Mutex
 
-	// File handle management.
-	handles map[uint64]*passFh
-	nextFh  uint64
-	fhMu    sync.Mutex
+	// File handle management — lock-free via xsync.Map since every
+	// Read/Write/Flush/Fsync calls getFh. nextFh uses atomic for
+	// allocation without a separate mutex.
+	handles *xsync.Map[uint64, *passFh]
+	nextFh  atomic.Uint64
 
 	// Per-inode writer locks.
 	inoLocks *xsync.Map[uint64, *sync.Mutex]
@@ -81,12 +83,11 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		pxar:        pxar,
 		journal:     journal,
 		mutableDir:  mutableDir,
-		handles:     make(map[uint64]*passFh),
+		handles:     xsync.NewMap[uint64, *passFh](),
 		inoLocks:    xsync.NewMap[uint64, *sync.Mutex](),
 		inoLookup:   xsync.NewMap[string, uint64](),
 		pathLookup:  xsync.NewMap[uint64, string](),
 		ensureLocks: xsync.NewMap[string, *sync.Mutex](),
-		nextFh:      1,
 		nextIno:     2, // 1 is RootInode
 	}
 	fs.freezeCond = sync.NewCond(&fs.freezeMu)
@@ -1315,14 +1316,11 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 	if input.Fh == 0 {
 		return // pxar passthrough, no fd to close
 	}
-	fs.fhMu.Lock()
-	if fh, ok := fs.handles[input.Fh]; ok {
+	if fh, ok := fs.handles.LoadAndDelete(input.Fh); ok {
 		if err := syscall.Close(fh.fd); err != nil {
 			fs.logNonFatal("close-fd", "fd", err)
 		}
-		delete(fs.handles, input.Fh)
 	}
-	fs.fhMu.Unlock()
 }
 
 // --- Unsupported Operations ---
@@ -1801,19 +1799,15 @@ func (fs *MutableFS) inodeToPath(ino uint64) string {
 // --- File Handle Management ---
 
 func (fs *MutableFS) registerFh(path string, fd int) uint64 {
-	fs.fhMu.Lock()
-	id := fs.nextFh
-	fs.nextFh++
-	fs.handles[id] = &passFh{fd: fd}
-	fs.fhMu.Unlock()
+	id := fs.nextFh.Add(1)
+	fs.handles.Store(id, &passFh{fd: fd})
 	return id
 }
 
 // getFh returns the file handle for an ID, or nil if not found.
 func (fs *MutableFS) getFh(id uint64) *passFh {
-	fs.fhMu.Lock()
-	defer fs.fhMu.Unlock()
-	return fs.handles[id]
+	val, _ := fs.handles.Load(id)
+	return val
 }
 
 // --- Per-Inode Writer Lock ---
@@ -1905,14 +1899,13 @@ func (fs *MutableFS) Close() {
 	}
 	fs.mmapData = nil
 
-	fs.fhMu.Lock()
-	for _, fh := range fs.handles {
+	fs.handles.Range(func(_ uint64, fh *passFh) bool {
 		if err := syscall.Close(fh.fd); err != nil {
 			fs.logNonFatal("close-fd", "fd", err)
 		}
-	}
+		return true
+	})
 	fs.handles = nil
-	fs.fhMu.Unlock()
 }
 
 // --- Fill Helpers ---
