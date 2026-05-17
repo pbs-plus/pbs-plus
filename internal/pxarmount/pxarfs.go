@@ -19,7 +19,6 @@ type PxarFS struct {
 	fuse.RawFileSystem
 	reader   *transfer.SplitArchiveReader
 	nodes    map[uint64]node
-	size     int64
 	mu       sync.RWMutex
 	readerMu sync.Mutex
 	readerAt io.ReaderAt
@@ -37,7 +36,6 @@ func NewPxarFS(reader *transfer.SplitArchiveReader) (*PxarFS, error) {
 			return nil, err
 		}
 		fs.readerAt = reader.PayloadReaderAt()
-		fs.size = int64(root.FileOffset + root.FileSize)
 		fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
 	} else {
 		fs.nodes[RootInode] = node{
@@ -50,9 +48,6 @@ func NewPxarFS(reader *transfer.SplitArchiveReader) (*PxarFS, error) {
 	}
 	return fs, nil
 }
-
-// Size returns the total archive size.
-func (fs *PxarFS) Size() int64 { return fs.size }
 
 func (fs *PxarFS) Init(server *fuse.Server) {
 	fs.RawFileSystem = fuse.NewDefaultRawFileSystem()
@@ -217,6 +212,7 @@ var rootEntry = pxar.Entry{
 	Kind: pxar.KindDirectory,
 }
 
+// readEntryForNode reads the full pxar entry for a cached node.
 func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	if n.inode == RootInode {
 		rootEntry.Metadata = pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
@@ -328,7 +324,7 @@ func (fs *PxarFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.Stat
 	return fuse.OK
 }
 
-// --- internal helpers ---
+// --- Internal Helpers ---
 
 func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	fs.mu.RLock()
@@ -378,6 +374,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	return entries, nil
 }
 
+// releaseDirEntries returns a dir entry slice to the pool.
 func (fs *PxarFS) releaseDirEntries(entries []dirEntrySlim) {
 	if entries == nil {
 		return
@@ -386,6 +383,7 @@ func (fs *PxarFS) releaseDirEntries(entries []dirEntrySlim) {
 	dirEntryPool.Put(&s)
 }
 
+// readFileContent reads file data from the pxar payload stream.
 func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fuse.ReadResult, fuse.Status) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
@@ -421,6 +419,7 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 	return fuse.ReadResultData(dest[:nr]), fuse.OK
 }
 
+// registerSlimNode caches a directory entry as a full node.
 func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -449,6 +448,7 @@ func (fs *PxarFS) RegisterSlimNode(e *dirEntrySlim, parent uint64) {
 	fs.registerSlimNode(e, parent)
 }
 
+// refNode increments the reference count for an inode.
 func (fs *PxarFS) refNode(ino uint64) {
 	fs.mu.Lock()
 	if n, ok := fs.nodes[ino]; ok {
@@ -458,6 +458,7 @@ func (fs *PxarFS) refNode(ino uint64) {
 	fs.mu.Unlock()
 }
 
+// getParentInfo returns the parent inode and mode for a given inode.
 func (fs *PxarFS) getParentInfo(ino uint64) (parentIno uint64, parentMode uint32) {
 	parentIno = RootInode
 	parentMode = uint32(syscall.S_IFDIR | 0o555)
@@ -513,15 +514,9 @@ func (fs *PxarFS) HotSwap(reader *transfer.SplitArchiveReader) {
 		root, err := reader.ReadRoot()
 		if err == nil {
 			fs.readerAt = reader.PayloadReaderAt()
-			fs.size = int64(root.FileOffset + root.FileSize)
 			fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
 		}
 	}
-}
-
-// ReaderAt returns the payload ReaderAt for commit/dedup use.
-func (fs *PxarFS) ReaderAt() io.ReaderAt {
-	return fs.readerAt
 }
 
 // Reader returns the underlying SplitArchiveReader.
@@ -529,8 +524,7 @@ func (fs *PxarFS) Reader() *transfer.SplitArchiveReader {
 	return fs.reader
 }
 
-// --- helpers ---
-
+// bytesEq compares a byte slice to a string without allocation.
 func bytesEq(b []byte, s string) bool {
 	if len(b) != len(s) {
 		return false
@@ -543,6 +537,7 @@ func bytesEq(b []byte, s string) bool {
 	return true
 }
 
+// xattrValue copies an xattr value into dest, or returns the size if dest is nil.
 func xattrValue(val []byte, dest []byte) (uint32, fuse.Status) {
 	if dest == nil {
 		return uint32(len(val)), fuse.OK

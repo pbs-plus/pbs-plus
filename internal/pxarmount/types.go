@@ -14,25 +14,14 @@ const (
 	RootInode uint64 = 1
 	NonDirBit uint64 = 1 << 63
 
-	// Backed inodes are allocated from this offset up.
-	// Pxar inodes use the file offset space (well below 2^60).
-	BackedInoBase uint64 = 1 << 60
-
 	// JournalDir is the hidden directory inside the mutable backing dir
 	// where the SQLite journal database lives.
 	JournalDir = ".pxar-journal"
-
-	// RENAME flags (Linux FUSE protocol).
-	RenameNoReplace = 1 << 0
-	RenameExchange  = 1 << 1
 
 	// xattr flags.
 	XattrCreate  = 1
 	XattrReplace = 2
 )
-
-// IsDirInode reports whether the inode represents a directory.
-func IsDirInode(ino uint64) bool { return ino&NonDirBit == 0 }
 
 // ToInode computes a stable inode number from a pxar entry.
 func ToInode(e *pxar.Entry) uint64 {
@@ -115,8 +104,7 @@ var dirEntryPool = sync.Pool{
 
 // passFh is an open file handle.
 type passFh struct {
-	fd   int
-	path string
+	fd int
 }
 
 // snapshotRef identifies a PBS snapshot for commit dedup.
@@ -151,8 +139,9 @@ type MountConfig struct {
 	ACL           ACLConfig
 }
 
-// --- helpers ---
+// --- Helpers ---
 
+// newNodeFromEntry creates a node from a pxar entry with cached metadata.
 func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	st := e.Metadata.Stat
 	return node{
@@ -173,6 +162,7 @@ func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	}
 }
 
+// fillEntryOut fills a FUSE EntryOut from a cached node.
 func fillEntryOut(inode uint64, n *node, out *fuse.EntryOut) {
 	out.NodeId = inode
 	out.Generation = 1
@@ -182,12 +172,14 @@ func fillEntryOut(inode uint64, n *node, out *fuse.EntryOut) {
 	fillAttr(&out.Attr, n)
 }
 
+// fillAttrOut fills a FUSE AttrOut from a cached node.
 func fillAttrOut(n *node, out *fuse.AttrOut) {
 	out.AttrValid = 1
 	out.AttrValidNsec = uint32(time.Second)
 	fillAttr(&out.Attr, n)
 }
 
+// fillAttr fills FUSE attributes from a cached node.
 func fillAttr(attr *fuse.Attr, n *node) {
 	attr.Ino = n.inode
 	attr.Size = n.fileSize
@@ -209,6 +201,7 @@ func fillAttr(attr *fuse.Attr, n *node) {
 	attr.Blksize = 4096
 }
 
+// statMode converts a pxar mode to a syscall mode with file type bits.
 func statMode(mode uint64) uint32 {
 	var ft uint32
 	switch mode & format.ModeIFMT {
@@ -230,6 +223,7 @@ func statMode(mode uint64) uint32 {
 	return ft | uint32(mode&0o7777)
 }
 
+// joinPath joins a parent path and a name component.
 func joinPath(parent, name string) string {
 	if parent == "/" {
 		return "/" + name
@@ -237,6 +231,28 @@ func joinPath(parent, name string) string {
 	return parent + "/" + name
 }
 
+// splitPath splits a path into components.
+func splitPath(path string) []string {
+	if path == "/" || path == "" {
+		return nil
+	}
+	p := path
+	if p[0] == '/' {
+		p = p[1:]
+	}
+	var parts []string
+	start := 0
+	for i := 0; i < len(p); i++ {
+		if p[i] == '/' {
+			parts = append(parts, p[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, p[start:])
+	return parts
+}
+
+// ensureModeType ensures mode has the correct file type bits for the given node kind.
 func ensureModeType(mode uint32, kind uint8) uint32 {
 	perm := mode & 0o7777
 	var ft uint32
@@ -249,4 +265,15 @@ func ensureModeType(mode uint32, kind uint8) uint32 {
 		ft = syscall.S_IFREG
 	}
 	return ft | perm
+}
+
+// nodeKindFromPxar returns the journal node kind for a pxar node.
+func nodeKindFromPxar(n *node) uint8 {
+	if n.isDir {
+		return NodeDir
+	}
+	if n.isSymlink {
+		return NodeSymlink
+	}
+	return NodeFile
 }

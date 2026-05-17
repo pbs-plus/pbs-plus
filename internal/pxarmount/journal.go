@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/puzpuzpuz/xsync/v4"
 	_ "modernc.org/sqlite"
 )
 
@@ -44,10 +45,17 @@ type GraphEdge struct {
 	ChildID  int64
 }
 
+// schemaVersion is the current journal schema version.
+// Increment when making non-trivial schema changes. OpenJournal
+// will run migrations automatically — analogous to ext4's feature
+// compatibility flags checked at mount time.
+const schemaVersion = 1
+
 // Journal is the SQLite-backed inode graph for the mutable overlay.
 //
 // Schema:
 //
+//	meta(key, value)                  — stores schema_version, etc.
 //	nodes(id, kind, mode, uid, gid, size, mtime_ns, ctime_ns, has_data,
 //	      symlink_tgt, redirect_to, opaque)
 //	edges(parent_id, name, child_id)  PK(parent_id, name)
@@ -73,14 +81,20 @@ type Journal struct {
 	// immediate checkpoint (like fsync).
 	ckptDone    chan struct{}
 	ckptClose   chan struct{}
-	ckptPending atomic.Int64 // approximate WAL size; incremented per tx
+	ckptPending *xsync.Counter // approximate WAL size; incremented per tx
 
 	// checkpointInterval controls how often the background
 	// checkpoint goroutine runs. Analogous to ext4's commit= mount option.
-	checkpointInterval time.Duration
+	// Atomic for safe concurrent reads from the ticker goroutine.
+	checkpointInterval atomic.Int64 // nanoseconds
 }
 
 // OpenJournal opens or creates the journal database in dir.
+// Performs crash recovery analogous to ext4's journal replay:
+//  1. WAL auto-replay (SQLite handles this)
+//  2. Schema version check and migration
+//  3. Root node integrity verification
+//  4. Orphan edge cleanup (dangling references from partial tx)
 func OpenJournal(dir string) (*Journal, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create journal dir: %w", err)
@@ -92,17 +106,67 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
+	// Verify the database is accessible and not corrupt.
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping journal db: %w", err)
+	}
+
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
+	// Integrity check: like ext4's ext4_check_descriptors() at mount time.
+	// Catches corrupt pages from torn writes that WAL replay couldn't fix.
+	var ok string
+	if err := db.QueryRow("PRAGMA integrity_check").Scan(&ok); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("integrity check: %w", err)
+	}
+	if ok != "ok" {
+		_ = db.Close()
+		return nil, fmt.Errorf("integrity check failed: %s", ok)
+	}
+
+	// Create or migrate schema.
 	if err := initSchema(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
-	j := &Journal{db: db}
+	if err := migrateSchema(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+
+	// Verify root node survived any prior crash — analogous to ext4's
+	// ext4_orphan_cleanup() which runs at mount time.
+	var rootCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = 1`).Scan(&rootCount); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("verify root node: %w", err)
+	}
+	if rootCount == 0 {
+		if _, err := db.Exec(
+			`INSERT INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/')`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("recreate root node: %w", err)
+		}
+	}
+
+	// Clean up orphan edges: edges pointing to non-existent nodes.
+	// This can happen if a process crash occurs between node creation
+	// and edge insertion in a compound operation. Like ext4's
+	// ext4_orphan_cleanup().
+	if _, err := db.Exec(`
+		DELETE FROM edges
+		WHERE child_id NOT IN (SELECT id FROM nodes)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("clean orphan edges: %w", err)
+	}
+
+	j := &Journal{db: db, ckptPending: xsync.NewCounter()}
 	j.startCheckpointLoop()
 	return j, nil
 }
@@ -110,6 +174,12 @@ func OpenJournal(dir string) (*Journal, error) {
 // initSchema creates the journal database tables.
 func initSchema(db *sql.DB) error {
 	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS meta (
+			key   TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		) WITHOUT ROWID;
+		INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '` + fmt.Sprint(schemaVersion) + `');
+
 		CREATE TABLE IF NOT EXISTS nodes (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			kind        INTEGER NOT NULL,
@@ -147,10 +217,99 @@ func initSchema(db *sql.DB) error {
 	return err
 }
 
+// migrateSchema applies schema migrations. Analogous to ext4's
+// feature compatibility check + online resize — runs once at open.
+// Future schema changes should add cases here.
+func migrateSchema(db *sql.DB) error {
+	var ver string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&ver); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	// No migrations yet — schema is at version 1.
+	// Example future migration:
+	//   if ver == "1" {
+	//       _, err := db.Exec(`ALTER TABLE nodes ADD COLUMN new_col ...`)
+	//       _, err = db.Exec(`UPDATE meta SET value = '2' WHERE key = 'schema_version'`)
+	//   }
+	_ = ver
+	return nil
+}
+
+// VerifyIntegrity runs a full database consistency check.
+// Analogous to ext4's e2fsck -n (read-only check):
+//   - SQLite integrity_check pragma
+//   - Foreign key constraint verification
+//   - Root node existence
+//   - No orphan edges (edges without matching nodes)
+//   - No orphan xattrs (xattrs without matching nodes)
+func (j *Journal) VerifyIntegrity() error {
+	// 1. SQLite built-in integrity check.
+	var ok string
+	if err := j.db.QueryRow("PRAGMA integrity_check").Scan(&ok); err != nil {
+		return fmt.Errorf("integrity_check: %w", err)
+	}
+	if ok != "ok" {
+		return fmt.Errorf("integrity_check failed: %s", ok)
+	}
+
+	// 2. Foreign key violation check.
+	rows, err := j.db.Query("PRAGMA foreign_key_check")
+	if err != nil {
+		return fmt.Errorf("foreign_key_check: %w", err)
+	}
+	for rows.Next() {
+		var table, from, to string
+		var rowid, fkid int64
+		_ = rows.Scan(&table, &rowid, &from, &to, &fkid)
+		_ = rows.Close()
+		return fmt.Errorf("foreign key violation: %s row %d references %s.%s", table, rowid, to, from)
+	}
+	_ = rows.Close()
+
+	// 3. Root node must exist.
+	var rootCount int
+	if err := j.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = 1`).Scan(&rootCount); err != nil {
+		return fmt.Errorf("root node check: %w", err)
+	}
+	if rootCount == 0 {
+		return fmt.Errorf("root node missing")
+	}
+
+	// 4. No orphan edges.
+	var orphanEdges int
+	if err := j.db.QueryRow(`
+		SELECT COUNT(*) FROM edges e
+		WHERE e.parent_id NOT IN (SELECT id FROM nodes)
+		   OR e.child_id NOT IN (SELECT id FROM nodes)`).Scan(&orphanEdges); err != nil {
+		return fmt.Errorf("orphan edge check: %w", err)
+	}
+	if orphanEdges > 0 {
+		return fmt.Errorf("%d orphan edges detected", orphanEdges)
+	}
+
+	// 5. No orphan xattrs.
+	var orphanXattrs int
+	if err := j.db.QueryRow(`
+		SELECT COUNT(*) FROM xattrs x
+		WHERE x.node_id NOT IN (SELECT id FROM nodes)`).Scan(&orphanXattrs); err != nil {
+		return fmt.Errorf("orphan xattr check: %w", err)
+	}
+	if orphanXattrs > 0 {
+		return fmt.Errorf("%d orphan xattrs detected", orphanXattrs)
+	}
+
+	return nil
+}
+
 func (j *Journal) Close() error {
+	// Signal checkpoint goroutine to stop, then wait for it.
 	if j.ckptClose != nil {
 		close(j.ckptClose)
 	}
+	if j.ckptDone != nil {
+		<-j.ckptDone
+	}
+
 	// Final checkpoint to flush everything before closing.
 	j.mu.Lock()
 	_ = j.checkpoint()
@@ -183,7 +342,7 @@ func (j *Journal) tx(fn func(tx *sql.Tx) error) error {
 	j.ckptPending.Add(1)
 
 	// Eager checkpoint if enough frames have accumulated.
-	if j.ckptPending.Load() >= 256 {
+	if j.ckptPending.Value() >= 256 {
 		_ = j.checkpoint()
 	}
 
@@ -203,26 +362,27 @@ func (j *Journal) Sync() error {
 // Caller must hold j.mu.
 func (j *Journal) checkpoint() error {
 	_, err := j.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	j.ckptPending.Store(0)
+	j.ckptPending.Reset()
 	return err
 }
 
 // startCheckpointLoop launches the background periodic checkpoint goroutine.
 func (j *Journal) startCheckpointLoop() {
-	if j.checkpointInterval <= 0 {
-		j.checkpointInterval = 5 * time.Second
+	if j.checkpointInterval.Load() <= 0 {
+		j.checkpointInterval.Store(int64(5 * time.Second))
 	}
 	j.ckptDone = make(chan struct{})
 	j.ckptClose = make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(j.checkpointInterval)
+		defer close(j.ckptDone)
+		ticker := time.NewTicker(time.Duration(j.checkpointInterval.Load()))
 		defer ticker.Stop()
 		for {
 			select {
 			case <-j.ckptClose:
 				return
 			case <-ticker.C:
-				if j.ckptPending.Load() > 0 {
+				if j.ckptPending.Value() > 0 {
 					j.mu.Lock()
 					_ = j.checkpoint()
 					j.mu.Unlock()
@@ -232,9 +392,7 @@ func (j *Journal) startCheckpointLoop() {
 	}()
 }
 
-// ---------------------------------------------------------------------------
-// Node CRUD
-// ---------------------------------------------------------------------------
+// --- Node CRUD ---
 
 // GetNode returns the node by ID, or nil if not found.
 func (j *Journal) GetNode(id int64) (*GraphNode, error) {
@@ -245,6 +403,7 @@ func (j *Journal) GetNode(id int64) (*GraphNode, error) {
 	return scanNode(row, id)
 }
 
+// scanNode scans a single database row into a GraphNode.
 func scanNode(row interface{ Scan(...any) error }, id int64) (*GraphNode, error) {
 	n := &GraphNode{ID: id}
 	var kind, mode, uid, gid, hasData, opaque sql.NullInt64
@@ -296,7 +455,7 @@ func scanNode(row interface{ Scan(...any) error }, id int64) (*GraphNode, error)
 	return n, nil
 }
 
-// CreateNodeTx inserts a new node within a transaction and returns its ID.
+// createNodeTx inserts a new node within a transaction and returns its ID.
 func createNodeTx(tx *sql.Tx, n *GraphNode) (int64, error) {
 	hasData := 0
 	if n.HasData {
@@ -318,17 +477,7 @@ func createNodeTx(tx *sql.Tx, n *GraphNode) (int64, error) {
 	return res.LastInsertId()
 }
 
-// CreateNode inserts a new node and returns its ID.
-func (j *Journal) CreateNode(n *GraphNode) (int64, error) {
-	var id int64
-	err := j.tx(func(tx *sql.Tx) error {
-		var err error
-		id, err = createNodeTx(tx, n)
-		return err
-	})
-	return id, err
-}
-
+// updateNodeTx updates a node within a transaction.
 func updateNodeTx(tx *sql.Tx, n *GraphNode) error {
 	hasData := 0
 	if n.HasData {
@@ -356,14 +505,6 @@ func (j *Journal) UpdateNode(n *GraphNode) error {
 	})
 }
 
-// DeleteNode deletes a node. CASCADE removes its edges, xattrs.
-func (j *Journal) DeleteNode(id int64) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, id)
-		return err
-	})
-}
-
 // SetHasData marks that a node now has data in the mutable dir.
 func (j *Journal) SetHasData(nodeID int64) error {
 	return j.tx(func(tx *sql.Tx) error {
@@ -372,116 +513,7 @@ func (j *Journal) SetHasData(nodeID int64) error {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Edge CRUD
-// ---------------------------------------------------------------------------
-
-// LookupEdge returns the child node ID for (parent, name), or 0 if not found.
-func (j *Journal) LookupEdge(parentID int64, name string) (int64, error) {
-	var childID int64
-	err := j.db.QueryRow(
-		`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
-		parentID, name).Scan(&childID)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	return childID, err
-}
-
-// LookupEdgeNode returns the child node for (parent, name), or nil.
-func (j *Journal) LookupEdgeNode(parentID int64, name string) (*GraphNode, error) {
-	row := j.db.QueryRow(`
-		SELECT n.id, n.kind, n.mode, n.uid, n.gid, n.size,
-		       n.mtime_ns, n.ctime_ns, n.has_data,
-		       n.symlink_tgt, n.redirect_to, n.opaque
-		FROM edges e JOIN nodes n ON e.child_id = n.id
-		WHERE e.parent_id = ? AND e.name = ?`, parentID, name)
-
-	n := &GraphNode{}
-	var kind, mode, uid, gid, hasData, opaque sql.NullInt64
-	var size, mtimeNs, ctimeNs sql.NullInt64
-	var symlinkTgt, redirectTo sql.NullString
-
-	err := row.Scan(&n.ID, &kind, &mode, &uid, &gid, &size,
-		&mtimeNs, &ctimeNs, &hasData, &symlinkTgt, &redirectTo, &opaque)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if kind.Valid {
-		n.Kind = uint8(kind.Int64)
-	}
-	if mode.Valid {
-		n.Mode = uint32(mode.Int64)
-	}
-	if uid.Valid {
-		n.UID = uint32(uid.Int64)
-	}
-	if gid.Valid {
-		n.GID = uint32(gid.Int64)
-	}
-	if size.Valid {
-		n.Size = uint64(size.Int64)
-	}
-	if mtimeNs.Valid {
-		n.MtimeNs = mtimeNs.Int64
-	}
-	if ctimeNs.Valid {
-		n.CtimeNs = ctimeNs.Int64
-	}
-	if hasData.Valid {
-		n.HasData = hasData.Int64 != 0
-	}
-	if symlinkTgt.Valid {
-		n.SymlinkTgt = symlinkTgt.String
-	}
-	if redirectTo.Valid {
-		n.RedirectTo = redirectTo.String
-	}
-	if opaque.Valid {
-		n.Opaque = opaque.Int64 != 0
-	}
-	return n, nil
-}
-
-// CreateEdge creates a parent→child binding. OR REPLACE handles re-creation.
-func (j *Journal) CreateEdge(parentID int64, name string, childID int64) error {
-	return j.tx(func(tx *sql.Tx) error {
-		// Edges shadow whiteouts — remove any stale whiteout at this location.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
-		_, err := tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
-			parentID, name, childID)
-		return err
-	})
-}
-
-// DeleteEdge removes a parent→child binding.
-func (j *Journal) DeleteEdge(parentID int64, name string) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, parentID, name)
-		return err
-	})
-}
-
-// MoveEdge renames/moves an edge. This is the O(1) rename operation.
-func (j *Journal) MoveEdge(oldParent int64, oldName string, newParent int64, newName string) error {
-	return j.tx(func(tx *sql.Tx) error {
-		// Remove any whiteout at destination — the new edge takes priority.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
-		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
-			newParent, newName, oldParent, oldName)
-		if err != nil {
-			return err
-		}
-		affected, _ := res.RowsAffected()
-		if affected == 0 {
-			return fmt.Errorf("move edge: source edge (%d, %q) not found", oldParent, oldName)
-		}
-		return nil
-	})
-}
+// --- Edge CRUD ---
 
 // ListEdges returns all edges under a parent.
 func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
@@ -503,10 +535,9 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	return edges, rows.Err()
 }
 
-// ---------------------------------------------------------------------------
-// Whiteout CRUD
-// ---------------------------------------------------------------------------
+// --- Whiteout CRUD ---
 
+// AddWhiteout records that a pxar entry at (parentID, name) is deleted.
 func (j *Journal) AddWhiteout(parentID int64, name string) error {
 	return j.tx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name)
@@ -514,23 +545,7 @@ func (j *Journal) AddWhiteout(parentID int64, name string) error {
 	})
 }
 
-func (j *Journal) RemoveWhiteout(parentID int64, name string) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
-		return err
-	})
-}
-
-func (j *Journal) IsWhiteout(parentID int64, name string) (bool, error) {
-	var count int
-	err := j.db.QueryRow(
-		`SELECT 1 FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name).Scan(&count)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	return err == nil, err
-}
-
+// ListWhiteouts returns all whiteout names under a parent.
 func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	rows, err := j.db.Query(`SELECT name FROM whiteouts WHERE parent_id = ?`, parentID)
 	if err != nil {
@@ -548,10 +563,9 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	return names, rows.Err()
 }
 
-// ---------------------------------------------------------------------------
-// Xattr operations
-// ---------------------------------------------------------------------------
+// --- XAttr Operations ---
 
+// GetXAttr returns the value of an extended attribute, or nil if not found.
 func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	var val []byte
 	err := j.db.QueryRow(
@@ -562,6 +576,7 @@ func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	return val, err
 }
 
+// ListXAttrs returns all extended attribute names for a node.
 func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	rows, err := j.db.Query(`SELECT name FROM xattrs WHERE node_id = ?`, nodeID)
 	if err != nil {
@@ -580,6 +595,7 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 }
 
 func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
+// SetXAttr upserts an extended attribute value.
 	return j.tx(func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT OR REPLACE INTO xattrs (node_id, name, value) VALUES (?, ?, ?)`,
 			nodeID, name, value)
@@ -589,14 +605,13 @@ func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
 
 func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 	return j.tx(func(tx *sql.Tx) error {
+// RemoveXAttr deletes an extended attribute.
 		_, err := tx.Exec(`DELETE FROM xattrs WHERE node_id = ? AND name = ?`, nodeID, name)
 		return err
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Path resolution: walk the edge graph component-by-component
-// ---------------------------------------------------------------------------
+// --- Path Resolution ---
 
 // ResolvePath walks the edge graph from root to find a path.
 // Returns:
@@ -607,10 +622,24 @@ func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 //
 // If nodeID != 0, the path is fully in the journal.
 // If nodeID == 0, the path is partially or fully in pxar.
+//
+// All queries execute within a single read transaction, providing
+// snapshot consistency across the entire walk — analogous to ext4's
+// i_mutex on parent directories during lookup.
 func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellOffAt int64, remaining string, err error) {
 	if path == "/" || path == "" {
 		return 1, "/", 0, "", nil
 	}
+
+	// Snapshot read: In SQLite WAL mode, BEGIN provides a consistent
+	// view without blocking concurrent writers. This is the same
+	// approach ext4 uses — directory lookups hold i_mutex so renames
+	// can't interleave with lookups.
+	tx, txErr := j.db.Begin()
+	if txErr != nil {
+		return 0, "", 0, "", fmt.Errorf("begin snapshot: %w", txErr)
+	}
+	defer func() { _ = tx.Rollback() }() // read-only: rollback is free
 
 	// Zero-allocation path walker. Walk path segments by slicing the
 	// original string — no []string allocation, no strings.Join.
@@ -627,18 +656,22 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 		}
 		part := path[pos:end]
 
-		// Edges take priority over whiteouts.
+		// Look up edge within the snapshot.
 		var childID int64
-		err = j.db.QueryRow(
+		err = tx.QueryRow(
 			`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
 			curID, part).Scan(&childID)
 		if err == sql.ErrNoRows {
-			isWO, werr := j.IsWhiteout(curID, part)
-			if werr != nil {
+			// Check for whiteout within the same snapshot.
+			var wo int
+			werr := tx.QueryRow(
+				`SELECT 1 FROM whiteouts WHERE parent_id = ? AND name = ?`,
+				curID, part).Scan(&wo)
+			if werr != nil && werr != sql.ErrNoRows {
 				return 0, "", 0, "", werr
 			}
-			if isWO {
-				return 0, "", 0, "", nil
+			if werr == nil {
+				return 0, "", 0, "", nil // whiteout
 			}
 			// Fell off graph — remaining is from current position.
 			return 0, pxarPrefix.String() + path[pos-1:], curID, path[pos:], nil
@@ -649,9 +682,9 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 
 		curID = childID
 
-		// Update pxar prefix from redirect_to.
+		// Track pxar redirect within the snapshot.
 		var redirectTo sql.NullString
-		if err := j.db.QueryRow(
+		if err := tx.QueryRow(
 			`SELECT redirect_to FROM nodes WHERE id = ?`, curID).Scan(&redirectTo); err != nil {
 			return 0, "", 0, "", err
 		}
@@ -669,91 +702,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 	return curID, pxarPrefix.String(), 0, "", nil
 }
 
-// ReconstructPath walks edges backward from nodeID to reconstruct its full path.
-func (j *Journal) ReconstructPath(nodeID int64) (string, error) {
-	if nodeID == 1 {
-		return "/", nil
-	}
-	var components []string
-	curID := nodeID
-	for curID != 1 {
-		var parentID int64
-		var name string
-		err := j.db.QueryRow(
-			`SELECT parent_id, name FROM edges WHERE child_id = ? LIMIT 1`, curID).Scan(&parentID, &name)
-		if err != nil {
-			return "", fmt.Errorf("reconstruct path for node %d: %w", nodeID, err)
-		}
-		components = append(components, name)
-		curID = parentID
-	}
-	for i, k := 0, len(components)-1; i < k; i, k = i+1, k-1 {
-		components[i], components[k] = components[k], components[i]
-	}
-	return "/" + strings.Join(components, "/"), nil
-}
-
-// ---------------------------------------------------------------------------
-// Batch operations for commit
-// ---------------------------------------------------------------------------
-
-// AllNodes returns all nodes (except root) for commit walking.
-func (j *Journal) AllNodes() ([]*GraphNode, error) {
-	rows, err := j.db.Query(`
-		SELECT id, kind, mode, uid, gid, size, mtime_ns, ctime_ns,
-		       has_data, symlink_tgt, redirect_to, opaque
-		FROM nodes WHERE id != 1 ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var nodes []*GraphNode
-	for rows.Next() {
-		n := &GraphNode{}
-		var kind, mode, uid, gid, hasData, opaque sql.NullInt64
-		var size, mtimeNs, ctimeNs sql.NullInt64
-		var symlinkTgt, redirectTo sql.NullString
-		if err := rows.Scan(&n.ID, &kind, &mode, &uid, &gid, &size,
-			&mtimeNs, &ctimeNs, &hasData, &symlinkTgt, &redirectTo, &opaque); err != nil {
-			return nil, err
-		}
-		if kind.Valid {
-			n.Kind = uint8(kind.Int64)
-		}
-		if mode.Valid {
-			n.Mode = uint32(mode.Int64)
-		}
-		if uid.Valid {
-			n.UID = uint32(uid.Int64)
-		}
-		if gid.Valid {
-			n.GID = uint32(gid.Int64)
-		}
-		if size.Valid {
-			n.Size = uint64(size.Int64)
-		}
-		if mtimeNs.Valid {
-			n.MtimeNs = mtimeNs.Int64
-		}
-		if ctimeNs.Valid {
-			n.CtimeNs = ctimeNs.Int64
-		}
-		if hasData.Valid {
-			n.HasData = hasData.Int64 != 0
-		}
-		if symlinkTgt.Valid {
-			n.SymlinkTgt = symlinkTgt.String
-		}
-		if redirectTo.Valid {
-			n.RedirectTo = redirectTo.String
-		}
-		if opaque.Valid {
-			n.Opaque = opaque.Int64 != 0
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
-}
+// --- Batch Operations for Commit ---
 
 // AllXAttrs returns all xattrs grouped by node ID.
 func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
@@ -774,25 +723,6 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 			result[nodeID] = make(map[string][]byte)
 		}
 		result[nodeID][name] = value
-	}
-	return result, rows.Err()
-}
-
-// AllWhiteouts returns all whiteouts grouped by parent node ID.
-func (j *Journal) AllWhiteouts() (map[int64][]string, error) {
-	rows, err := j.db.Query(`SELECT parent_id, name FROM whiteouts ORDER BY parent_id, name`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	result := make(map[int64][]string)
-	for rows.Next() {
-		var parentID int64
-		var name string
-		if err := rows.Scan(&parentID, &name); err != nil {
-			return nil, err
-		}
-		result[parentID] = append(result[parentID], name)
 	}
 	return result, rows.Err()
 }
@@ -887,27 +817,6 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 	return nodeID, err
 }
 
-// splitPath splits a path into components.
-func splitPath(path string) []string {
-	if path == "/" || path == "" {
-		return nil
-	}
-	p := path
-	if p[0] == '/' {
-		p = p[1:]
-	}
-	var parts []string
-	start := 0
-	for i := 0; i < len(p); i++ {
-		if p[i] == '/' {
-			parts = append(parts, p[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, p[start:])
-	return parts
-}
-
 // Clear truncates all tables (keeps root node).
 func (j *Journal) Clear() error {
 	return j.tx(func(tx *sql.Tx) error {
@@ -928,29 +837,7 @@ func (j *Journal) Clear() error {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Compound atomic operations
-// ---------------------------------------------------------------------------
-
-// CreateNodeAndEdge atomically creates a node and links it under a parent.
-// On failure, neither the node nor the edge exists.
-func (j *Journal) CreateNodeAndEdge(parentID int64, name string, n *GraphNode) (int64, error) {
-	var id int64
-	err := j.tx(func(tx *sql.Tx) error {
-		// Remove any stale whiteout at this location.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, parentID, name)
-
-		var err error
-		id, err = createNodeTx(tx, n)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
-			parentID, name, id)
-		return err
-	})
-	return id, err
-}
+// --- Compound Atomic Operations ---
 
 // DeleteEdgeAndNode atomically removes an edge and its target node.
 // CASCADE handles xattrs; the whiteout is added in the same tx.
@@ -967,41 +854,6 @@ func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, a
 		// Node deletion cascades to xattrs.
 		if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, nodeID); err != nil {
 			return err
-		}
-		return nil
-	})
-}
-
-// RenameEdge atomically moves an edge from (oldParent, oldName) to
-// (newParent, newName), cleaning up destination whiteouts and any
-// destination edge+node if replace is true.
-func (j *Journal) RenameEdge(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64) error {
-	return j.tx(func(tx *sql.Tx) error {
-		// Remove destination whiteout.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
-
-		// If replacing a destination node, remove its edge and the node itself.
-		if replaceDestNode != 0 {
-			if _, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, replaceDestNode); err != nil {
-				return err
-			}
-		} else {
-			// Just remove any existing edge at destination.
-			_, _ = tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName)
-		}
-
-		// Move source edge.
-		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
-			newParent, newName, oldParent, oldName)
-		if err != nil {
-			return err
-		}
-		affected, _ := res.RowsAffected()
-		if affected == 0 {
-			return fmt.Errorf("rename edge: source (%d, %q) not found", oldParent, oldName)
 		}
 		return nil
 	})
