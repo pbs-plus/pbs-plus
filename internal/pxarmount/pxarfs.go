@@ -13,11 +13,11 @@ import (
 	"github.com/pbs-plus/pxar/transfer"
 )
 
-// PxarFS implements fuse.RawFileSystem backed by a lazy-loading SplitArchiveReader.
+// PxarFS implements fuse.RawFileSystem backed by a lazy-loading SplitReader.
 // This is the immutable layer that provides read-only access to the pxar archive.
 type PxarFS struct {
 	fuse.RawFileSystem
-	reader   *transfer.SplitArchiveReader
+	reader   *transfer.SplitReader
 	nodes    map[uint64]node
 	mu       sync.RWMutex
 	readerMu sync.Mutex
@@ -25,7 +25,7 @@ type PxarFS struct {
 }
 
 // NewPxarFS creates a pxar-backed FUSE filesystem.
-func NewPxarFS(reader *transfer.SplitArchiveReader) (*PxarFS, error) {
+func NewPxarFS(reader *transfer.SplitReader) (*PxarFS, error) {
 	fs := &PxarFS{
 		reader: reader,
 		nodes:  make(map[uint64]node),
@@ -503,7 +503,7 @@ func (fs *PxarFS) ReadDirRaw(ino uint64) ([]dirEntrySlim, error) {
 }
 
 // HotSwap replaces the underlying archive reader.
-func (fs *PxarFS) HotSwap(reader *transfer.SplitArchiveReader) {
+func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
@@ -519,8 +519,8 @@ func (fs *PxarFS) HotSwap(reader *transfer.SplitArchiveReader) {
 	}
 }
 
-// Reader returns the underlying SplitArchiveReader.
-func (fs *PxarFS) Reader() *transfer.SplitArchiveReader {
+// Reader returns the underlying SplitReader.
+func (fs *PxarFS) Reader() *transfer.SplitReader {
 	return fs.reader
 }
 

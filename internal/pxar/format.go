@@ -24,11 +24,11 @@ type TaskWriter interface {
 	WriteString(string)
 }
 
-// PxarReader wraps a vfs.LocalOffsetFS with PBS-specific bookkeeping
+// PxarReader wraps a vfs.LocalFS with PBS-specific bookkeeping
 // (task logging). All archive access and stats tracking is delegated to
-// the embedded LocalOffsetFS.
+// the embedded LocalFS.
 type PxarReader struct {
-	ofs *vfs.LocalOffsetFS
+	ofs *vfs.LocalFS
 
 	task   TaskWriter
 	closed bool
@@ -100,7 +100,7 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 
 	chunkSource := datastore.NewChunkStoreSource(store)
 
-	var archiveReader *transfer.SplitArchiveReader
+	var archiveReader *transfer.SplitReader
 
 	if isSplit {
 		metaData, err := os.ReadFile(mpxarPath)
@@ -112,13 +112,13 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 			return nil, fmt.Errorf("failed to read payload index %s: %w", ppxarPath, err)
 		}
 
-		archiveReader, err = transfer.NewSplitArchiveReader(metaData, payloadData, chunkSource)
+		archiveReader, err = transfer.NewSplitReader(metaData, payloadData, chunkSource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create split archive reader: %w", err)
 		}
 
 		pr := &PxarReader{
-			ofs:  vfs.NewLocalOffsetFS(archiveReader),
+			ofs:  vfs.NewLocalFS(archiveReader),
 			task: task,
 		}
 
