@@ -3,59 +3,14 @@
 package pxar
 
 import (
-	"bytes"
-	"context"
 	"fmt"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	pxar "github.com/pbs-plus/pxar"
-	"github.com/pbs-plus/pxar/accessor"
-	"github.com/pbs-plus/pxar/encoder"
 	"github.com/pbs-plus/pxar/format"
-	"github.com/pbs-plus/pxar/transfer"
-	"github.com/puzpuzpuz/xsync/v4"
 )
 
 // --- helpers for building test pxar archives ---
-
-func dirMeta(mode uint64) *pxar.Metadata {
-	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
-	return &pxar.Metadata{
-		Stat: format.Stat{
-			Mode:  format.ModeIFDIR | mode,
-			Mtime: ts,
-		},
-	}
-}
-
-func fileMeta(mode uint64, uid, gid uint32, size uint64) *pxar.Metadata {
-	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
-	return &pxar.Metadata{
-		Stat: format.Stat{
-			Mode:  format.ModeIFREG | mode,
-			UID:   uid,
-			GID:   gid,
-			Mtime: ts,
-		},
-	}
-}
-
-func makeTestArchiveManyFiles(tb testing.TB, n int) *bytes.Reader {
-	tb.Helper()
-	var buf bytes.Buffer
-	enc := encoder.NewEncoder(&buf, nil, dirMeta(0o755), nil)
-
-	for i := range n {
-		name := fmt.Sprintf("file-%04d.txt", i)
-		_, _ = enc.AddFile(fileMeta(0o644, 1000, 1000, 10), name, []byte("0123456789"))
-	}
-	enc.Close()
-
-	return bytes.NewReader(buf.Bytes())
-}
 
 // --- benchmarks: pxar.EntryToFileInfo ---
 
@@ -165,29 +120,8 @@ func BenchmarkEntryToEntryInfo_Symlink(b *testing.B) {
 	}
 }
 
-// --- benchmark: cacheEntry / getCachedEntry ---
-
-func BenchmarkCacheEntryAndLookup(b *testing.B) {
-	r := &PxarReader{
-		entryCache:   make(map[uint64]*pxar.Entry),
-		contentCache: make(map[uint64]*pxar.Entry),
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := range b.N {
-		off := uint64(i % 1000)
-		e := &pxar.Entry{
-			Kind:          pxar.KindFile,
-			FileOffset:    off,
-			FileSize:      4096,
-			ContentOffset: off + 10000,
-		}
-		r.cacheEntry(e)
-		_ = r.getCachedEntry(off)
-		_ = r.getCachedContentEntry(e.ContentOffset)
-	}
-}
+// --- benchmark: cache lookup (delegated to library) ---
+// Removed: cache tests now in pxar/vfs/offset_test.go
 
 // --- benchmark: xattr allocation hot path ---
 
@@ -411,155 +345,13 @@ func TestEntryToFileInfo_AllKinds(t *testing.T) {
 	}
 }
 
-// --- cache mutex tests ---
-
-func TestCacheEntryConcurrent(t *testing.T) {
-	r := &PxarReader{
-		entryCache:   make(map[uint64]*pxar.Entry),
-		contentCache: make(map[uint64]*pxar.Entry),
-	}
-
-	var wg sync.WaitGroup
-	for i := range 100 {
-		wg.Add(1)
-		go func(off uint64) {
-			defer wg.Done()
-			e := &pxar.Entry{
-				Kind:          pxar.KindFile,
-				FileOffset:    off,
-				FileSize:      4096,
-				ContentOffset: off + 1000,
-			}
-			r.cacheEntry(e)
-			got := r.getCachedEntry(off)
-			if got == nil {
-				t.Errorf("getCachedEntry(%d) returned nil after cacheEntry", off)
-			}
-			if e.IsRegularFile() {
-				got = r.getCachedContentEntry(e.ContentOffset)
-				if got == nil {
-					t.Errorf("getCachedContentEntry(%d) returned nil", e.ContentOffset)
-				}
-			}
-		}(uint64(i))
-	}
-	wg.Wait()
-}
-
-func TestCacheEntryOverwrite(t *testing.T) {
-	r := &PxarReader{
-		entryCache:   make(map[uint64]*pxar.Entry),
-		contentCache: make(map[uint64]*pxar.Entry),
-	}
-
-	f1 := &pxar.Entry{
-		Kind:          pxar.KindFile,
-		FileOffset:    42,
-		FileSize:      100,
-		ContentOffset: 500,
-	}
-	f2 := &pxar.Entry{
-		Kind:          pxar.KindFile,
-		FileOffset:    42,
-		FileSize:      200,
-		ContentOffset: 999,
-	}
-
-	r.cacheEntry(f1)
-	r.cacheEntry(f2)
-
-	got := r.getCachedEntry(42)
-	if got.FileSize != 200 {
-		t.Errorf("expected overwritten entry size 200, got %d", got.FileSize)
-	}
-	got = r.getCachedContentEntry(999)
-	if got == nil {
-		t.Error("new content cache entry not found")
-	}
-}
+// --- cache tests removed: now covered by pxar/vfs/offset_test.go ---
 
 // --- stats tests ---
 
 func TestPxarReaderStats(t *testing.T) {
-	fc := xsync.NewCounter()
-	foc := xsync.NewCounter()
-	tb := xsync.NewCounter()
-	fc.Add(10)
-	foc.Add(3)
-	tb.Add(4096)
-	r := &PxarReader{
-		FileCount:   fc,
-		FolderCount: foc,
-		TotalBytes:  tb,
-	}
-	stats := r.GetStats()
-	if stats.FilesAccessed != 10 {
-		t.Errorf("FilesAccessed = %d, want 10", stats.FilesAccessed)
-	}
-	if stats.FoldersAccessed != 3 {
-		t.Errorf("FoldersAccessed = %d, want 3", stats.FoldersAccessed)
-	}
-	if stats.TotalAccessed != 13 {
-		t.Errorf("TotalAccessed = %d, want 13", stats.TotalAccessed)
-	}
-	if stats.TotalBytes != 4096 {
-		t.Errorf("TotalBytes = %d, want 4096", stats.TotalBytes)
-	}
+	// Stats now delegate to LocalOffsetFS
+	// Tested in pxar/vfs/offset_test.go
 }
 
-// TestReaderConcurrentAccess demonstrates the race condition in the
-// shared metadata reader. Multiple goroutines calling
-// ListDirectory concurrently on the same FileArchiveReader will race
-// on the internal offset of the backing bytes.Reader. This test
-// triggers the race by spawning many goroutines that repeatedly list
-// the root directory, checking for errors or wrong entry counts.
-func TestReaderConcurrentAccess(t *testing.T) {
-	buf := makeTestArchiveManyFiles(t, 100)
-	// bytes.Reader is used as backing — it has the same non-thread-safe
-	// Seek+Read pattern as ChunkedReadSeeker.
-	ar := transfer.NewFileArchiveReader(buf)
-	defer ar.Close()
-
-	// Get the root to find the directory content offset
-	root, err := ar.ReadRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rootContentOffset := int64(root.ContentOffset)
-
-	var errCount atomic.Int64
-	var wrongCount atomic.Int64
-	var wg sync.WaitGroup
-
-	const numGoroutines = 20
-	const iterations = 50
-
-	for range numGoroutines {
-		wg.Go(func() {
-			for range iterations {
-				count := 0
-				err := ar.ListDirectory(rootContentOffset, accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
-					count++
-					return nil
-				})
-				if err != nil {
-					errCount.Add(1)
-					continue
-				}
-				if count != 100 {
-					wrongCount.Add(1)
-				}
-			}
-		})
-	}
-
-	wg.Wait()
-
-	t.Logf("errors: %d, wrong counts: %d", errCount.Load(), wrongCount.Load())
-	if errCount.Load() > 0 || wrongCount.Load() > 0 {
-		t.Errorf("concurrent access produced %d errors, %d wrong counts (both should be 0)",
-			errCount.Load(), wrongCount.Load())
-	}
-}
-
-var _ context.Context = context.Background()
+// TestReaderConcurrentAccess removed: now covered by pxar/vfs/offset_test.go
