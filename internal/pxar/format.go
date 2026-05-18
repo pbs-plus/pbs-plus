@@ -131,20 +131,7 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return pr, nil
 	}
 
-	// Non-split (.pxar.didx) — read as a chunked archive
-	idxData, err := os.ReadFile(mpxarPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read index %s: %w", mpxarPath, err)
-	}
-
-	if _, err := datastore.ParseDynamicIndex(idxData); err != nil {
-		return nil, fmt.Errorf("failed to parse index: %w", err)
-	}
-
-	if _, err := transfer.NewChunkedArchiveReader(idxData, chunkSource); err != nil {
-		return nil, fmt.Errorf("failed to create chunked archive reader: %w", err)
-	}
-
+	// Non-split (.pxar.didx) — not yet supported.
 	return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
 }
 
@@ -155,11 +142,6 @@ func (r *PxarReader) Close() error {
 	}
 	r.closed = true
 	return r.ofs.Close()
-}
-
-// OffsetFS returns the underlying vfs.LocalOffsetFS for direct use.
-func (r *PxarReader) OffsetFS() *vfs.LocalOffsetFS {
-	return r.ofs
 }
 
 // GetRoot returns the root entry of the archive.
