@@ -409,16 +409,5 @@ func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64
 		r.cacheEntry(e)
 	}
 
-	nx := len(e.Metadata.XAttrs)
-	if nx == 0 && e.Metadata.FCaps == nil {
-		return nil, nil
-	}
-	xattrs := make(map[string][]byte, nx+1)
-	for _, xa := range e.Metadata.XAttrs {
-		xattrs[string(xa.Name())] = xa.Value()
-	}
-	if e.Metadata.FCaps != nil {
-		xattrs["security.capability"] = e.Metadata.FCaps
-	}
-	return xattrs, nil
+	return pxar.EntryToXAttrs(e), nil
 }
