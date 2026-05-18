@@ -227,7 +227,7 @@ func (r *PxarReader) resolveContentOffset(offset uint64) uint64 {
 }
 
 // GetRoot returns the root entry of the archive.
-func (r *PxarReader) GetRoot(ctx context.Context) (*EntryInfo, error) {
+func (r *PxarReader) GetRoot(ctx context.Context) (*pxar.FileInfo, error) {
 	if r.task != nil {
 		r.task.WriteString("get root of source")
 	}
@@ -240,11 +240,11 @@ func (r *PxarReader) GetRoot(ctx context.Context) (*EntryInfo, error) {
 	}
 
 	r.cacheEntry(entry)
-	return entryToEntryInfo(entry), nil
+	return pxar.EntryToFileInfo(entry), nil
 }
 
 // LookupByPath finds an entry by archive-internal path.
-func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo, error) {
+func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*pxar.FileInfo, error) {
 	if r.task != nil {
 		r.task.WriteString(fmt.Sprintf("looking up path: %s", path))
 	}
@@ -262,21 +262,21 @@ func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*EntryInfo,
 	} else {
 		r.FileCount.Add(1)
 	}
-	return entryToEntryInfo(entry), nil
+	return pxar.EntryToFileInfo(entry), nil
 }
 
 // ReadDir lists the entries in a directory.
 // Accepts dirOffset (ContentOffset) or legacy EntryRangeEnd —
 // resolves to ContentOffset via the content cache.
-func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]EntryInfo, error) {
+func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]pxar.FileInfo, error) {
 	// Try to resolve to ContentOffset: dirOffset might be EntryRangeEnd
 	// (legacy agent) or ContentOffset (new code). Look up in cache.
 	offset := r.resolveContentOffset(dirOffset)
 
 	r.metaMu.Lock()
-	entries := make([]EntryInfo, 0, 64)
+	entries := make([]pxar.FileInfo, 0, 64)
 	err := r.reader.ListDirectory(int64(offset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
-		info := entryToEntryInfo(e)
+		info := pxar.EntryToFileInfo(e)
 		entries = append(entries, *info)
 		r.cacheEntry(e)
 
@@ -296,7 +296,7 @@ func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]EntryInfo
 
 // GetAttr returns attributes for an entry identified by its byte range.
 // entryStart is the file offset (pxar.Entry.FileOffset), entryEnd is unused.
-func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (*EntryInfo, error) {
+func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (*pxar.FileInfo, error) {
 	// Try cache first
 	if e := r.getCachedEntry(entryStart); e != nil {
 		if e.IsDir() {
@@ -304,7 +304,7 @@ func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 		} else {
 			r.FileCount.Add(1)
 		}
-		return entryToEntryInfo(e), nil
+		return pxar.EntryToFileInfo(e), nil
 	}
 
 	// Read entry by archive byte offset using the accessor
@@ -320,7 +320,7 @@ func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 	} else {
 		r.FileCount.Add(1)
 	}
-	return entryToEntryInfo(entry), nil
+	return pxar.EntryToFileInfo(entry), nil
 }
 
 // Read reads raw file content from the archive.
@@ -421,63 +421,4 @@ func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64
 		xattrs["security.capability"] = e.Metadata.FCaps
 	}
 	return xattrs, nil
-}
-
-// entryToEntryInfo converts a pxar.Entry to our EntryInfo format.
-// The returned EntryInfo must be copied if the caller needs to retain it
-// beyond the lifetime of the source entry.
-func entryToEntryInfo(e *pxar.Entry) *EntryInfo {
-	var ft FileType
-	switch e.Kind {
-	case pxar.KindDirectory:
-		ft = FileTypeDirectory
-	case pxar.KindSymlink:
-		ft = FileTypeSymlink
-	case pxar.KindHardlink:
-		ft = FileTypeHardlink
-	case pxar.KindDevice:
-		ft = FileTypeDevice
-	case pxar.KindFIFO:
-		ft = FileTypeFifo
-	case pxar.KindSocket:
-		ft = FileTypeSocket
-	default:
-		ft = FileTypeFile
-	}
-
-	var xattrs map[string][]byte
-	if nx := len(e.Metadata.XAttrs); nx > 0 || e.Metadata.FCaps != nil {
-		xattrs = make(map[string][]byte, nx+1) // +1 for fcaps
-		for _, xa := range e.Metadata.XAttrs {
-			xattrs[string(xa.Name())] = xa.Value()
-		}
-		if e.Metadata.FCaps != nil {
-			xattrs["security.capability"] = e.Metadata.FCaps
-		}
-	}
-
-	info := &EntryInfo{
-		FileName:        []byte(e.FileName()),
-		FileType:        ft,
-		EntryRangeStart: e.FileOffset,
-		EntryRangeEnd:   e.FileOffset + e.FileSize,
-		ContentOffset:   e.ContentOffset,
-		Mode:            e.Metadata.Stat.Mode,
-		UID:             e.Metadata.Stat.UID,
-		GID:             e.Metadata.Stat.GID,
-		Size:            e.FileSize,
-		MtimeSecs:       e.Metadata.Stat.Mtime.Secs,
-		MtimeNsecs:      e.Metadata.Stat.Mtime.Nanos,
-		LinkTarget:      e.LinkTarget,
-		Xattrs:          xattrs,
-	}
-
-	if e.IsRegularFile() && e.ContentOffset > 0 {
-		info.ContentRange = []uint64{
-			e.ContentOffset,
-			e.ContentOffset + e.FileSize,
-		}
-	}
-
-	return info
 }

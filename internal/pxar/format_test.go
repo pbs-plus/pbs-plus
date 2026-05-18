@@ -100,7 +100,7 @@ func makeTestArchiveManyFiles(tb testing.TB, n int) *bytes.Reader {
 	return bytes.NewReader(buf.Bytes())
 }
 
-// --- benchmarks: entryToEntryInfo ---
+// --- benchmarks: pxar.EntryToFileInfo ---
 
 func BenchmarkEntryToEntryInfo_File(b *testing.B) {
 	e := &pxar.Entry{
@@ -122,7 +122,7 @@ func BenchmarkEntryToEntryInfo_File(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		info := entryToEntryInfo(e)
+		info := pxar.EntryToFileInfo(e)
 		_ = info
 	}
 }
@@ -153,7 +153,7 @@ func BenchmarkEntryToEntryInfo_FileWithXattrs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		info := entryToEntryInfo(e)
+		info := pxar.EntryToFileInfo(e)
 		_ = info
 	}
 }
@@ -178,7 +178,7 @@ func BenchmarkEntryToEntryInfo_Dir(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		info := entryToEntryInfo(e)
+		info := pxar.EntryToFileInfo(e)
 		_ = info
 	}
 }
@@ -203,7 +203,7 @@ func BenchmarkEntryToEntryInfo_Symlink(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		info := entryToEntryInfo(e)
+		info := pxar.EntryToFileInfo(e)
 		_ = info
 	}
 }
@@ -264,7 +264,7 @@ func BenchmarkEntryToEntryInfo_XattrAlloc(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				_ = entryToEntryInfo(e)
+				_ = pxar.EntryToFileInfo(e)
 			}
 		})
 	}
@@ -289,21 +289,21 @@ func TestEntryToEntryInfo_File(t *testing.T) {
 		},
 	}
 
-	info := entryToEntryInfo(e)
+	info := pxar.EntryToFileInfo(e)
 	if string(info.FileName) != "testfile.txt" {
 		t.Errorf("FileName = %s, want testfile.txt", info.FileName)
 	}
-	if info.FileType != FileTypeFile {
-		t.Errorf("FileType = %d, want FileTypeFile", info.FileType)
+	if info.FileType != pxar.FileTypeFile {
+		t.Errorf("pxar.FileType = %d, want pxar.FileTypeFile", info.FileType)
 	}
-	if info.Size != 4096 {
-		t.Errorf("Size = %d, want 4096", info.Size)
+	if info.RawSize != 4096 {
+		t.Errorf("Size = %d, want 4096", info.RawSize)
 	}
-	if info.Mode != (format.ModeIFREG | 0o644) {
-		t.Errorf("Mode = %o, want %o", info.Mode, format.ModeIFREG|0o644)
+	if info.RawMode != (format.ModeIFREG | 0o644) {
+		t.Errorf("Mode = %o, want %o", info.RawMode, format.ModeIFREG|0o644)
 	}
-	if info.UID != 1000 || info.GID != 1000 {
-		t.Errorf("UID=%d GID=%d, want 1000 1000", info.UID, info.GID)
+	if info.RawUID != 1000 || info.RawGID != 1000 {
+		t.Errorf("UID=%d GID=%d, want 1000 1000", info.RawUID, info.RawGID)
 	}
 	if info.MtimeSecs != 1234567890 || info.MtimeNsecs != 500 {
 		t.Errorf("Mtime = %d.%d, want 1234567890.500", info.MtimeSecs, info.MtimeNsecs)
@@ -332,7 +332,7 @@ func TestEntryToEntryInfo_NoXattrMeansNil(t *testing.T) {
 			},
 		},
 	}
-	info := entryToEntryInfo(e)
+	info := pxar.EntryToFileInfo(e)
 	if info.Xattrs != nil {
 		t.Errorf("Xattrs should be nil when entry has no xattrs/fcaps, got %v", info.Xattrs)
 	}
@@ -357,7 +357,7 @@ func TestEntryToEntryInfo_WithXattrs(t *testing.T) {
 			FCaps: []byte{0xde, 0xad},
 		},
 	}
-	info := entryToEntryInfo(e)
+	info := pxar.EntryToFileInfo(e)
 	if info.Xattrs == nil {
 		t.Fatal("Xattrs should not be nil")
 	}
@@ -388,9 +388,9 @@ func TestEntryToEntryInfo_Dir(t *testing.T) {
 			},
 		},
 	}
-	info := entryToEntryInfo(e)
-	if info.FileType != FileTypeDirectory {
-		t.Errorf("FileType = %d, want FileTypeDirectory", info.FileType)
+	info := pxar.EntryToFileInfo(e)
+	if info.FileType != pxar.FileTypeDirectory {
+		t.Errorf("pxar.FileType = %d, want pxar.FileTypeDirectory", info.FileType)
 	}
 	if info.ContentRange != nil {
 		t.Errorf("ContentRange should be nil for directory, got %v", info.ContentRange)
@@ -411,9 +411,9 @@ func TestEntryToEntryInfo_Symlink(t *testing.T) {
 			},
 		},
 	}
-	info := entryToEntryInfo(e)
-	if info.FileType != FileTypeSymlink {
-		t.Errorf("FileType = %d, want FileTypeSymlink", info.FileType)
+	info := pxar.EntryToFileInfo(e)
+	if info.FileType != pxar.FileTypeSymlink {
+		t.Errorf("pxar.FileType = %d, want pxar.FileTypeSymlink", info.FileType)
 	}
 	if info.LinkTarget != "/etc/hosts" {
 		t.Errorf("LinkTarget = %q, want /etc/hosts", info.LinkTarget)
@@ -423,15 +423,15 @@ func TestEntryToEntryInfo_Symlink(t *testing.T) {
 func TestEntryToEntryInfo_AllKinds(t *testing.T) {
 	tests := []struct {
 		kind pxar.EntryKind
-		ft   FileType
+		ft   pxar.FileType
 	}{
-		{pxar.KindFile, FileTypeFile},
-		{pxar.KindDirectory, FileTypeDirectory},
-		{pxar.KindSymlink, FileTypeSymlink},
-		{pxar.KindHardlink, FileTypeHardlink},
-		{pxar.KindDevice, FileTypeDevice},
-		{pxar.KindFIFO, FileTypeFifo},
-		{pxar.KindSocket, FileTypeSocket},
+		{pxar.KindFile, pxar.FileTypeFile},
+		{pxar.KindDirectory, pxar.FileTypeDirectory},
+		{pxar.KindSymlink, pxar.FileTypeSymlink},
+		{pxar.KindHardlink, pxar.FileTypeHardlink},
+		{pxar.KindDevice, pxar.FileTypeDevice},
+		{pxar.KindFIFO, pxar.FileTypeFifo},
+		{pxar.KindSocket, pxar.FileTypeSocket},
 	}
 
 	for _, tc := range tests {
@@ -447,9 +447,9 @@ func TestEntryToEntryInfo_AllKinds(t *testing.T) {
 				},
 			},
 		}
-		info := entryToEntryInfo(e)
+		info := pxar.EntryToFileInfo(e)
 		if info.FileType != tc.ft {
-			t.Errorf("Kind=%v: FileType=%d, want %d", tc.kind, info.FileType, tc.ft)
+			t.Errorf("Kind=%v: pxar.FileType=%d, want %d", tc.kind, info.FileType, tc.ft)
 		}
 	}
 }
