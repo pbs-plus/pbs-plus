@@ -16,7 +16,7 @@ import (
 // Serve builds the filesystem stack and runs the FUSE server.
 // It blocks until the process receives SIGINT/SIGTERM.
 func Serve(cfg MountConfig) {
-	reader, _ := cfg.Reader.(*transfer.SplitArchiveReader)
+	reader, _ := cfg.Reader.(*transfer.SplitReader)
 	pxarFS, err := NewPxarFS(reader)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ error creating pxar FS: %v\n", err)
