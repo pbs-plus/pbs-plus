@@ -43,49 +43,6 @@ func fileMeta(mode uint64, uid, gid uint32, size uint64) *pxar.Metadata {
 	}
 }
 
-func fileMetaXattr(mode uint64, uid, gid uint32, size uint64, xattrs ...[2]string) *pxar.Metadata {
-	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
-	m := &pxar.Metadata{
-		Stat: format.Stat{
-			Mode:  format.ModeIFREG | mode,
-			UID:   uid,
-			GID:   gid,
-			Mtime: ts,
-		},
-	}
-	for _, xa := range xattrs {
-		m.XAttrs = append(m.XAttrs, format.NewXAttr([]byte(xa[0]), []byte(xa[1])))
-	}
-	return m
-}
-
-func symlinkMeta(mode uint64, uid, gid uint32) *pxar.Metadata {
-	ts := format.NewStatxTimestampFromDuration(1430487000 * time.Second)
-	return &pxar.Metadata{
-		Stat: format.Stat{
-			Mode:  format.ModeIFLNK | mode,
-			UID:   uid,
-			GID:   gid,
-			Mtime: ts,
-		},
-	}
-}
-
-func makeTestArchive(tb testing.TB) *bytes.Reader {
-	tb.Helper()
-	var buf bytes.Buffer
-	enc := encoder.NewEncoder(&buf, nil, dirMeta(0o755), nil)
-
-	_, _ = enc.AddFile(fileMeta(0o644, 1000, 1000, 11), "hello.txt", []byte("hello world"))
-	_ = enc.CreateDirectory("subdir", dirMeta(0o755))
-	_, _ = enc.AddFile(fileMeta(0o644, 1000, 1000, 14), "nested.txt", []byte("nested content"))
-	_ = enc.Finish()
-	_ = enc.AddSymlink(symlinkMeta(0o777, 0, 0), "link", "hello.txt")
-	enc.Close()
-
-	return bytes.NewReader(buf.Bytes())
-}
-
 func makeTestArchiveManyFiles(tb testing.TB, n int) *bytes.Reader {
 	tb.Helper()
 	var buf bytes.Buffer
@@ -272,7 +229,7 @@ func BenchmarkEntryToEntryInfo_XattrAlloc(b *testing.B) {
 
 // --- unit tests ---
 
-func TestEntryToEntryInfo_File(t *testing.T) {
+func TestEntryToFileInfo_File(t *testing.T) {
 	e := &pxar.Entry{
 		Kind:          pxar.KindFile,
 		Path:          "testfile.txt",
@@ -318,7 +275,7 @@ func TestEntryToEntryInfo_File(t *testing.T) {
 	}
 }
 
-func TestEntryToEntryInfo_NoXattrMeansNil(t *testing.T) {
+func TestEntryToFileInfo_NoXattrMeansNil(t *testing.T) {
 	e := &pxar.Entry{
 		Kind:          pxar.KindFile,
 		Path:          "emptyx.txt",
@@ -338,7 +295,7 @@ func TestEntryToEntryInfo_NoXattrMeansNil(t *testing.T) {
 	}
 }
 
-func TestEntryToEntryInfo_WithXattrs(t *testing.T) {
+func TestEntryToFileInfo_WithXattrs(t *testing.T) {
 	e := &pxar.Entry{
 		Kind:          pxar.KindFile,
 		Path:          "xattr.txt",
@@ -372,7 +329,7 @@ func TestEntryToEntryInfo_WithXattrs(t *testing.T) {
 	}
 }
 
-func TestEntryToEntryInfo_Dir(t *testing.T) {
+func TestEntryToFileInfo_Dir(t *testing.T) {
 	e := &pxar.Entry{
 		Kind:          pxar.KindDirectory,
 		Path:          "mydir",
@@ -397,7 +354,7 @@ func TestEntryToEntryInfo_Dir(t *testing.T) {
 	}
 }
 
-func TestEntryToEntryInfo_Symlink(t *testing.T) {
+func TestEntryToFileInfo_Symlink(t *testing.T) {
 	e := &pxar.Entry{
 		Kind:       pxar.KindSymlink,
 		Path:       "mylink",
@@ -420,7 +377,7 @@ func TestEntryToEntryInfo_Symlink(t *testing.T) {
 	}
 }
 
-func TestEntryToEntryInfo_AllKinds(t *testing.T) {
+func TestEntryToFileInfo_AllKinds(t *testing.T) {
 	tests := []struct {
 		kind pxar.EntryKind
 		ft   pxar.FileType
