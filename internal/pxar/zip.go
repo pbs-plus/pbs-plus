@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/klauspost/compress/zip"
+	pxar "github.com/pbs-plus/pxar"
 )
 
 func restoreAsZips(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
@@ -103,15 +104,15 @@ type zipContext struct {
 	errCh  chan<- error
 }
 
-func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) {
+func (zc *zipContext) addDirectory(relPath string, dirEntry pxar.FileInfo) {
 	dirPath := path.Join(relPath, dirEntry.Name()) + "/"
 
 	header := &zip.FileHeader{
 		Name:     dirPath,
 		Method:   zip.Deflate,
-		Modified: dirEntry.ToFileInfo().ModTime(),
+		Modified: dirEntry.ModTime(),
 	}
-	header.SetMode(os.FileMode(dirEntry.Mode) | os.ModeDir)
+	header.SetMode(os.FileMode(dirEntry.RawMode) | os.ModeDir)
 
 	if _, err := zc.writer.CreateHeader(header); err != nil {
 		zc.sendError(fmt.Errorf("create dir header %q: %w", dirPath, err))
@@ -141,15 +142,15 @@ func (zc *zipContext) addDirectory(relPath string, dirEntry EntryInfo) {
 	}
 }
 
-func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
+func (zc *zipContext) addFile(relPath string, fileEntry pxar.FileInfo) {
 	filePath := path.Join(relPath, fileEntry.Name())
 
 	header := &zip.FileHeader{
 		Name:     filePath,
 		Method:   zip.Deflate,
-		Modified: fileEntry.ToFileInfo().ModTime(),
+		Modified: fileEntry.ModTime(),
 	}
-	header.SetMode(os.FileMode(fileEntry.Mode))
+	header.SetMode(os.FileMode(fileEntry.RawMode))
 
 	writer, err := zc.writer.CreateHeader(header)
 	if err != nil {
@@ -157,13 +158,13 @@ func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
 		return
 	}
 
-	if fileEntry.Size > 0 && fileEntry.ContentRange != nil {
+	if fileEntry.RawSize > 0 && fileEntry.ContentRange != nil {
 		rr := &rangeReader{
 			ctx:          zc.ctx,
 			client:       zc.client,
 			contentStart: fileEntry.ContentRange[0],
 			contentEnd:   fileEntry.ContentRange[1],
-			totalSize:    fileEntry.Size,
+			totalSize:    fileEntry.RawSize,
 		}
 
 		if _, err := io.Copy(writer, rr); err != nil {
@@ -173,7 +174,7 @@ func (zc *zipContext) addFile(relPath string, fileEntry EntryInfo) {
 	}
 }
 
-func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) {
+func (zc *zipContext) addSymlink(relPath string, symlinkEntry pxar.FileInfo) {
 	linkPath := path.Join(relPath, symlinkEntry.Name())
 
 	target, err := zc.client.ReadLink(zc.ctx, symlinkEntry.EntryRangeStart, symlinkEntry.EntryRangeEnd)
@@ -185,9 +186,9 @@ func (zc *zipContext) addSymlink(relPath string, symlinkEntry EntryInfo) {
 	header := &zip.FileHeader{
 		Name:     linkPath,
 		Method:   zip.Deflate,
-		Modified: symlinkEntry.ToFileInfo().ModTime(),
+		Modified: symlinkEntry.ModTime(),
 	}
-	header.SetMode(os.FileMode(symlinkEntry.Mode) | os.ModeSymlink)
+	header.SetMode(os.FileMode(symlinkEntry.RawMode) | os.ModeSymlink)
 
 	writer, err := zc.writer.CreateHeader(header)
 	if err != nil {

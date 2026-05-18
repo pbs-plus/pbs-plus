@@ -14,6 +14,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	pxar "github.com/pbs-plus/pxar"
 	"golang.org/x/sys/windows"
 )
 
@@ -23,7 +24,7 @@ var (
 	procSetSecurityInfo  = modAdvapi32.NewProc("SetSecurityInfo")
 )
 
-func applyMeta(ctx context.Context, client *Client, file *os.File, e EntryInfo, fsCap filesystemCapabilities) error {
+func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileInfo, fsCap filesystemCapabilities) error {
 	defer file.Close()
 
 	h := windows.Handle(file.Fd())
@@ -130,7 +131,7 @@ func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
 	}
 }
 
-func applyMetaSymlink(_ context.Context, _ *Client, _ string, _ EntryInfo, _ filesystemCapabilities) error {
+func applyMetaSymlink(_ context.Context, _ *Client, _ string, _ pxar.FileInfo, _ filesystemCapabilities) error {
 	return nil
 }
 
@@ -206,7 +207,7 @@ func buildDACLFromACEs(winACLs []types.WinACL) (*windows.ACL, error) {
 	return newACL, nil
 }
 
-func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
+func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.FileInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -220,7 +221,7 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryI
 		target := filepath.Join(dst, e.Name())
 
 		wg.Add(1)
-		go func(t string, info EntryInfo) {
+		go func(t string, info pxar.FileInfo) {
 			select {
 			case jobs <- restoreJob{dest: t, info: info}:
 			case <-ctx.Done():

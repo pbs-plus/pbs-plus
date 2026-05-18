@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	pxar "github.com/pbs-plus/pxar"
 )
 
 type RestoreMode int
@@ -26,7 +28,7 @@ type RestoreOptions struct {
 
 type restoreJob struct {
 	dest string
-	info EntryInfo
+	info pxar.FileInfo
 }
 
 func RestoreWithOptions(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
@@ -125,7 +127,7 @@ func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<-
 	return nil
 }
 
-func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities, noAttr bool) error {
+func restoreFile(ctx context.Context, client *Client, path string, e pxar.FileInfo, fsCap filesystemCapabilities, noAttr bool) error {
 	needsUpdate, err := shouldUpdateFile(path, e, noAttr)
 	if err != nil {
 		return fmt.Errorf("check file %q: %w", path, err)
@@ -138,7 +140,7 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 		}
 		defer f.Close()
 
-		if e.Size > 0 && e.ContentRange != nil {
+		if e.RawSize > 0 && e.ContentRange != nil {
 			rc, err := client.ReadFileContentReader(ctx, e.ContentRange[0], e.ContentRange[1])
 			if err != nil {
 				// Fallback to rangeReader for remote clients
@@ -148,7 +150,7 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 					client:       client,
 					contentStart: e.ContentRange[0],
 					contentEnd:   e.ContentRange[1],
-					totalSize:    e.Size,
+					totalSize:    e.RawSize,
 				}
 
 				const bufSize = 256 * 1024
@@ -192,7 +194,7 @@ func restoreFile(ctx context.Context, client *Client, path string, e EntryInfo, 
 	return nil
 }
 
-func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities, noAttr bool) error {
+func restoreSymlink(ctx context.Context, client *Client, path string, e pxar.FileInfo, fsCap filesystemCapabilities, noAttr bool) error {
 	target, err := client.ReadLink(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 	if err != nil {
 		return fmt.Errorf("readlink data %q: %w", path, err)
@@ -219,7 +221,7 @@ func restoreSymlink(ctx context.Context, client *Client, path string, e EntryInf
 	return applyMetaSymlink(ctx, client, path, e, fsCap)
 }
 
-func shouldUpdateFile(path string, archiveInfo EntryInfo, noAttr bool) (bool, error) {
+func shouldUpdateFile(path string, archiveInfo pxar.FileInfo, noAttr bool) (bool, error) {
 	stat, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return true, nil
@@ -236,7 +238,7 @@ func shouldUpdateFile(path string, archiveInfo EntryInfo, noAttr bool) (bool, er
 	}
 
 	if archiveInfo.IsFile() {
-		if stat.Size() != int64(archiveInfo.Size) {
+		if stat.Size() != int64(archiveInfo.RawSize) {
 			return true, nil
 		}
 		if !noAttr {

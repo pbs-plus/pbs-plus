@@ -14,6 +14,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	pxar "github.com/pbs-plus/pxar"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,14 +24,14 @@ const (
 	XATTR_NAME_ACL_DEFAULT = "system.posix_acl_default"
 )
 
-func applyMeta(ctx context.Context, client *Client, file *os.File, e EntryInfo, fsCap filesystemCapabilities) error {
+func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileInfo, fsCap filesystemCapabilities) error {
 	defer file.Close()
 
 	fd := int(file.Fd())
 
-	_ = unix.Fchmod(fd, uint32(e.Mode&0777))
+	_ = unix.Fchmod(fd, uint32(e.RawMode&0777))
 
-	uid, gid := int(e.UID), int(e.GID)
+	uid, gid := int(e.RawUID), int(e.RawGID)
 
 	atime := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
 	mtime := atime
@@ -134,8 +135,8 @@ func packACL(entries []types.PosixACL) []byte {
 	return buf
 }
 
-func applyMetaSymlink(ctx context.Context, client *Client, path string, e EntryInfo, fsCap filesystemCapabilities) error {
-	uid, gid := int(e.UID), int(e.GID)
+func applyMetaSymlink(ctx context.Context, client *Client, path string, e pxar.FileInfo, fsCap filesystemCapabilities) error {
+	uid, gid := int(e.RawUID), int(e.RawGID)
 	xattrs, err := client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 
 	if err == nil && len(xattrs) > 0 {
@@ -169,7 +170,7 @@ func applyMetaSymlink(ctx context.Context, client *Client, path string, e EntryI
 	return nil
 }
 
-func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
+func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.FileInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -183,9 +184,9 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryI
 		target := filepath.Join(dst, e.Name())
 
 		switch e.FileType {
-		case FileTypeDirectory, FileTypeFile, FileTypeSymlink:
+		case pxar.FileTypeDirectory, pxar.FileTypeFile, pxar.FileTypeSymlink:
 			wg.Add(1)
-			go func(t string, info EntryInfo) {
+			go func(t string, info pxar.FileInfo) {
 				select {
 				case jobs <- restoreJob{dest: t, info: info}:
 				case <-ctx.Done():
@@ -193,10 +194,10 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry EntryI
 				}
 			}(target, e)
 
-		case FileTypeFifo, FileTypeSocket:
+		case pxar.FileTypeFifo, pxar.FileTypeSocket:
 			var opErr error
-			mode := uint32(e.Mode & 0777)
-			if e.FileType == FileTypeFifo {
+			mode := uint32(e.RawMode & 0777)
+			if e.FileType == pxar.FileTypeFifo {
 				opErr = syscall.Mkfifo(target, mode)
 			} else {
 				opErr = syscall.Mknod(target, syscall.S_IFSOCK|mode, 0)
