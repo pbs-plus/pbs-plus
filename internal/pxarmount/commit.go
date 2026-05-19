@@ -124,7 +124,8 @@ func ResolveDatastoreName(pbsStore string) string {
 	return filepath.Base(pbsStore)
 }
 
-// StartCommitListener listens on a Unix socket for commit requests.
+// StartCommitListener listens on a Unix socket for commit requests and
+// starts the commit monitor hub for progress broadcasting.
 func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) {
 	_ = os.Remove(sockPath) // ignore error — may not exist
 	l, err := net.Listen("unix", sockPath)
@@ -135,6 +136,15 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 		_ = l.Close()
 		return nil, err
 	}
+
+	// Start the monitor hub for progress broadcasting.
+	hub, err := newCommitHub(sockPath)
+	if err != nil {
+		_ = l.Close()
+		return nil, fmt.Errorf("start monitor hub: %w", err)
+	}
+	globalCommitHub = hub
+
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -148,6 +158,13 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 }
 
 // handleCommitConn processes a single commit connection.
+//
+// Protocol:
+//   - Client sends: COMMIT <url> <ds> <token> <ns> <type> <id>\n
+//   - Client may send: DETACH\n after COMMIT to request background mode
+//   - Daemon replies: JOB <id>\n  (if detached, then closes connection)
+//   - Progress: PROGRESS <msg>\n  (streamed to both original conn and monitor)
+//   - Terminal: OK <msg>\n  or  ERR <msg>\n
 func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	scanner := bufio.NewScanner(conn)
@@ -160,10 +177,38 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 		_, _ = fmt.Fprintf(conn, "ERR %v\n", err)
 		return
 	}
-	prog := NewProgressReporter(conn)
-	if err := CommitSnapshot(mfs, req, prog); err != nil {
-		prog.Error(err.Error())
-		return
+
+	// Check for DETACH flag on next line.
+	detached := false
+	if scanner.Scan() {
+		detached = scanner.Text() == "DETACH"
+	}
+
+	if detached {
+		// Start commit in background, send JOB id, close connection.
+		jobID := globalCommitHub.startJob()
+		_, _ = fmt.Fprintf(conn, "JOB %d\n", jobID)
+		_ = conn.Close()
+
+		go func() {
+			defer globalCommitHub.endJob()
+			prog := newHubProgressReporter()
+			if err := CommitSnapshot(mfs, req, prog); err != nil {
+				prog.Error(err.Error())
+				return
+			}
+		}()
+	} else {
+		// Foreground: stream progress to both the connection and the hub.
+		globalCommitHub.startJob()
+		defer globalCommitHub.endJob()
+
+		primary := NewProgressReporter(conn)
+		prog := &fanoutReporter{primary: primary, hub: globalCommitHub}
+		if err := CommitSnapshot(mfs, req, prog); err != nil {
+			prog.Error(err.Error())
+			return
+		}
 	}
 }
 
@@ -181,12 +226,27 @@ type commitEntry struct {
 type commitWalkState struct {
 	mfs          *MutableFS
 	writer       transfer.ArchiveWriter
-	prog         *ProgressReporter
+	prog         CommitProgress
 	pxarDirCache map[uint64][]dirEntrySlim // pxar inode → cached dir entries
 	xattrCache   map[int64][]format.XAttr  // journal node ID → xattrs
 	backedHashes map[string]uint64         // relPath → xxh3 hash of uploaded files
 	mutableFiles int                       // count of new/modified files
 }
+
+// CommitProgress is the interface used by CommitSnapshot to report progress.
+// Both *ProgressReporter and the hub-based reporters implement it.
+type CommitProgress interface {
+	SetPhase(ProgressPhase)
+	SetMsg(msg string)
+	Done(msg string)
+	Error(msg string)
+	AddFile(bytes int64)
+	SetTotals(files, bytes int64)
+	State() ProgressState
+}
+
+// Ensure *ProgressReporter satisfies CommitProgress.
+var _ CommitProgress = (*ProgressReporter)(nil)
 
 // CommitSnapshot creates a new pxar snapshot from the current journal state.
 //
@@ -200,7 +260,7 @@ type commitWalkState struct {
 //     - Whiteout → skip pxar entry
 //     - Pure pxar entries → emit chunk ref (dedup)
 //  5. Finish upload, hot-swap pxar reader, reset journal
-func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) error {
+func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) error {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
@@ -1153,6 +1213,7 @@ func RunCommitSubcommand() {
 	namespace := fs.String("ns", "", "PBS namespace")
 	backupType := fs.String("backup-type", "host", "Backup type")
 	backupID := fs.String("backup-id", "", "Backup ID")
+	detach := fs.Bool("detach", false, "Run commit in background; use 'attach' to watch progress")
 
 	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
@@ -1177,6 +1238,35 @@ func RunCommitSubcommand() {
 		os.Exit(1)
 	}
 
+	if *detach {
+		// Send DETACH so the daemon runs commit in background.
+		if _, err := fmt.Fprintln(conn, "DETACH"); err != nil {
+			fmt.Fprintf(os.Stderr, "  \u2717 error sending detach: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Read the JOB <id> response.
+		scanner := bufio.NewScanner(conn)
+		if !scanner.Scan() {
+			fmt.Fprintf(os.Stderr, "  \u2717 error: no response from daemon\n")
+			os.Exit(1)
+		}
+		resp := scanner.Text()
+		if after, ok := strings.CutPrefix(resp, "ERR "); ok {
+			fmt.Fprintf(os.Stderr, "  \u2717 %s\n", after)
+			os.Exit(1)
+		}
+		if after, ok := strings.CutPrefix(resp, "JOB "); ok {
+			jobID := after
+			fmt.Fprintf(os.Stderr, "  Commit started in background (job %s)\n", jobID)
+			fmt.Fprintf(os.Stderr, "  Use 'pxar-mount attach --socket %s' to watch progress\n", *socketPath)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "  \u2717 unexpected response: %s\n", resp)
+		os.Exit(1)
+	}
+
+	// Foreground: stream progress directly from the connection.
 	display := NewProgressDisplay(os.Stderr)
 	fmt.Fprintf(os.Stderr, "  Committing snapshot...\n")
 
@@ -1197,5 +1287,57 @@ func RunCommitSubcommand() {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "  \u2717 error: no response from daemon\n")
+	os.Exit(1)
+}
+
+// RunAttachSubcommand is the CLI entry point for `pxar-mount attach`.
+// It connects to the commit monitor socket and streams live progress.
+func RunAttachSubcommand() {
+	fs := flag.NewFlagSet("attach", flag.ExitOnError)
+	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
+
+	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
+
+	if *socketPath == "" {
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount attach --socket <path>\n\n")
+		fmt.Fprintf(os.Stderr, "Connects to a running background commit and streams progress.\n")
+		fs.PrintDefaults()
+		os.Exit(1)
+	}
+
+	monPath := *socketPath + ".monitor"
+	conn, err := net.DialTimeout("unix", monPath, 5*time.Second)
+	if err != nil {
+		if os.IsTimeout(err) {
+			fmt.Fprintf(os.Stderr, "  No commit in progress.\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "  \u2717 error connecting to monitor socket %s: %v\n", monPath, err)
+		}
+		os.Exit(1)
+	}
+	defer func() { _ = conn.Close() }()
+
+	display := NewProgressDisplay(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Attached to commit progress...\n")
+
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PROGRESS ") {
+			display.Update(line)
+			continue
+		}
+		if strings.HasPrefix(line, "OK ") {
+			display.Done(line)
+			return
+		}
+		if strings.HasPrefix(line, "ERR ") {
+			display.Error(line)
+			os.Exit(1)
+		}
+		// Catch-up lines from before we connected.
+		fmt.Fprintf(os.Stderr, "  %s\n", line)
+	}
+	fmt.Fprintf(os.Stderr, "  \u2717 connection lost\n")
 	os.Exit(1)
 }

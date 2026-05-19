@@ -16,6 +16,9 @@ func main() {
 		case "commit":
 			pxarmount.RunCommitSubcommand()
 			return
+		case "attach":
+			pxarmount.RunAttachSubcommand()
+			return
 		case "init":
 			pxarmount.RunInitSubcommand()
 			return

@@ -149,4 +149,7 @@ func Serve(cfg MountConfig) {
 	if mfs != nil {
 		mfs.Close()
 	}
+	if globalCommitHub != nil {
+		globalCommitHub.close()
+	}
 }
