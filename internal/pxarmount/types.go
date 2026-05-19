@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"strconv"
 	"strings"
@@ -273,20 +274,46 @@ func parsePerm(s string) uint16 {
 }
 
 func lookupUID(name string) (uint32, error) {
-	u, err := user.Lookup(name)
-	if err != nil {
-		return 0, err
+	// Try Go's user.Lookup first (uses NSS when dynamically linked).
+	if u, err := user.Lookup(name); err == nil {
+		uid, _ := strconv.ParseUint(u.Uid, 10, 32)
+		return uint32(uid), nil
 	}
-	uid, _ := strconv.ParseUint(u.Uid, 10, 32)
+	// Fallback: try getent which respects NSS/winbind even from
+	// statically-linked binaries.
+	out, err := exec.Command("getent", "passwd", name).Output()
+	if err != nil {
+		return 0, fmt.Errorf("unknown user %q", name)
+	}
+	// getent passwd output: name:*:uid:gid:...
+	fields := strings.SplitN(strings.TrimSpace(string(out)), ":", 4)
+	if len(fields) < 3 {
+		return 0, fmt.Errorf("malformed getent output for user %q", name)
+	}
+	uid, err := strconv.ParseUint(fields[2], 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("bad uid for user %q: %w", name, err)
+	}
 	return uint32(uid), nil
 }
 
 func lookupGID(name string) (uint32, error) {
-	g, err := user.LookupGroup(name)
-	if err != nil {
-		return 0, err
+	if g, err := user.LookupGroup(name); err == nil {
+		gid, _ := strconv.ParseUint(g.Gid, 10, 32)
+		return uint32(gid), nil
 	}
-	gid, _ := strconv.ParseUint(g.Gid, 10, 32)
+	out, err := exec.Command("getent", "group", name).Output()
+	if err != nil {
+		return 0, fmt.Errorf("unknown group %q", name)
+	}
+	fields := strings.SplitN(strings.TrimSpace(string(out)), ":", 4)
+	if len(fields) < 3 {
+		return 0, fmt.Errorf("malformed getent output for group %q", name)
+	}
+	gid, err := strconv.ParseUint(fields[2], 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("bad gid for group %q: %w", name, err)
+	}
 	return uint32(gid), nil
 }
 
