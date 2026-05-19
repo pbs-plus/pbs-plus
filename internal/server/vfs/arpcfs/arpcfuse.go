@@ -139,7 +139,6 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Getattr failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return syscall.ESTALE
 	}
 
@@ -171,7 +170,6 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Getxattr failed").WithField("path", n.getPath()).WithField("attr", attr).WithJob(n.fs.Backup.ID).Write()
 		return 0, syscall.ENODATA
 	}
 
@@ -218,7 +216,6 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Listxattr failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return 0, 0
 	}
 
@@ -260,7 +257,6 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE legacyGetxattr failed").WithField("path", n.getPath()).WithField("attr", attr).WithJob(n.fs.Backup.ID).Write()
 		return 0, syscall.ENODATA
 	}
 
@@ -315,7 +311,6 @@ func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (ui
 func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE legacyListxattr failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return 0, 0
 	}
 
@@ -363,7 +358,6 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Lookup failed").WithField("path", fullPath).WithJob(n.fs.Backup.ID).Write()
 		return nil, syscall.ENOENT
 	}
 
@@ -421,7 +415,6 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Statfs failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return 0
 	}
 

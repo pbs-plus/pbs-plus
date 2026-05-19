@@ -158,7 +158,6 @@ func (n *Node) Getattr(
 ) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Getattr failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return s3ErrorToErrno(err)
 	}
 
@@ -192,7 +191,6 @@ func (n *Node) Lookup(
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Lookup failed").WithField("path", fullPath).WithJob(n.fs.Backup.ID).Write()
 		return nil, s3ErrorToErrno(err)
 	}
 
@@ -263,7 +261,6 @@ func (n *Node) Statfs(
 ) syscall.Errno {
 	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Statfs failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return 0
 	}
 
