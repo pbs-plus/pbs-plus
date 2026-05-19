@@ -12,6 +12,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func newRoot(fs *S3FS) fs.InodeEmbedder {
@@ -157,13 +158,13 @@ func (n *Node) Getattr(
 ) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("FUSE Getattr failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return s3ErrorToErrno(err)
 	}
 
 	mode := fi.Mode
 	if fi.IsDir {
 		mode |= syscall.S_IFDIR
-	} else if os.FileMode(fi.Mode)&os.ModeSymlink != 0 {
 		mode |= syscall.S_IFLNK
 	} else {
 		mode |= syscall.S_IFREG
@@ -191,6 +192,7 @@ func (n *Node) Lookup(
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("FUSE Lookup failed").WithField("path", fullPath).WithJob(n.fs.Backup.ID).Write()
 		return nil, s3ErrorToErrno(err)
 	}
 
@@ -231,6 +233,7 @@ func (n *Node) Lookup(
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
+		syslog.L.Error(err).WithMessage("FUSE Readdir failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return &S3DirStream{}, 0
 	}
 
@@ -244,6 +247,7 @@ func (n *Node) Open(
 ) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("FUSE Open failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return nil, 0, s3ErrorToErrno(err)
 	}
 
@@ -259,6 +263,7 @@ func (n *Node) Statfs(
 ) syscall.Errno {
 	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
+		syslog.L.Error(err).WithMessage("FUSE Statfs failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
 		return 0
 	}
 
@@ -291,6 +296,7 @@ func (fh *FileHandle) Read(
 ) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(dest, offset)
 	if err != nil && err != io.EOF {
+		syslog.L.Error(err).WithMessage("FUSE Read failed").WithField("key", fh.file.key).WithField("offset", offset).WithJob(fh.fs.Backup.ID).Write()
 		return fuse.ReadResultData(nil), 0
 	}
 
@@ -298,6 +304,8 @@ func (fh *FileHandle) Read(
 }
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
-	_ = fh.file.Close()
+	if err := fh.file.Close(); err != nil {
+		syslog.L.Error(err).WithMessage("FUSE Release failed").WithField("key", fh.file.key).WithJob(fh.fs.Backup.ID).Write()
+	}
 	return 0
 }
