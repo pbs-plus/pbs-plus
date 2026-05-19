@@ -8,9 +8,10 @@
   /opt/pbs-plus-agent/pbs-plus-agent mr,
   /opt/pbs-plus-agent/** rw,
 
-  # Allow systemd control
+  # Allow systemd control and unit file installation
   /bin/systemctl ix,
   /usr/bin/systemctl ix,
+  /etc/systemd/system/pbs-plus-agent.service rw,
   
   # State and config directories
   /var/lib/pbs-plus-agent/** rw,

@@ -250,7 +250,13 @@ func main() {
 			fmt.Print(Version)
 			return
 		}
-		_ = service.Control(s, os.Args[1])
+		if err := service.Control(s, os.Args[1]); err != nil {
+			syslog.L.Error(err).
+				WithField("action", os.Args[1]).
+				WithMessage("service control failed").
+				Write()
+			log.Fatal(err)
+		}
 		return
 	}
 
