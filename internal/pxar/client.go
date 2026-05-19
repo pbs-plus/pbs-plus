@@ -7,6 +7,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	pxar "github.com/pbs-plus/pxar"
 )
 
 type Client struct {
@@ -47,49 +48,49 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 	}
 }
 
-func (c *Client) GetRoot(ctx context.Context) (EntryInfo, error) {
+func (c *Client) GetRoot(ctx context.Context) (pxar.FileInfo, error) {
 	if c.pipe != nil {
-		var info EntryInfo
+		var info pxar.FileInfo
 		if err := c.pipe.Call(ctx, "pxar.GetRoot", nil, &info); err != nil {
-			return EntryInfo{}, err
+			return pxar.FileInfo{}, err
 		}
 		return info, nil
 	}
 
 	info, err := c.pr.GetRoot(ctx)
 	if err != nil {
-		return EntryInfo{}, err
+		return pxar.FileInfo{}, err
 	}
 
 	return *info, nil
 }
 
-func (c *Client) LookupByPath(ctx context.Context, path string) (EntryInfo, error) {
+func (c *Client) LookupByPath(ctx context.Context, path string) (pxar.FileInfo, error) {
 	if c.pipe != nil {
 		params := map[string]any{
 			"path": path,
 		}
-		var info EntryInfo
+		var info pxar.FileInfo
 		if err := c.pipe.Call(ctx, "pxar.LookupByPath", params, &info); err != nil {
-			return EntryInfo{}, err
+			return pxar.FileInfo{}, err
 		}
 		return info, nil
 	}
 
 	info, err := c.pr.LookupByPath(ctx, path)
 	if err != nil {
-		return EntryInfo{}, err
+		return pxar.FileInfo{}, err
 	}
 
 	return *info, nil
 }
 
-func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, error) {
+func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]pxar.FileInfo, error) {
 	if c.pipe != nil {
 		params := map[string]any{
 			"entry_end": entryEnd,
 		}
-		var entries []EntryInfo
+		var entries []pxar.FileInfo
 		if err := c.pipe.Call(ctx, "pxar.ReadDir", params, &entries); err != nil {
 			return nil, err
 		}
@@ -104,22 +105,22 @@ func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]EntryInfo, err
 	return info, nil
 }
 
-func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (EntryInfo, error) {
+func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (pxar.FileInfo, error) {
 	if c.pipe != nil {
 		params := map[string]any{
 			"entry_start": entryStart,
 			"entry_end":   entryEnd,
 		}
-		var info EntryInfo
+		var info pxar.FileInfo
 		if err := c.pipe.Call(ctx, "pxar.GetAttr", params, &info); err != nil {
-			return EntryInfo{}, err
+			return pxar.FileInfo{}, err
 		}
 		return info, nil
 	}
 
 	info, err := c.pr.GetAttr(ctx, entryStart, entryEnd)
 	if err != nil {
-		return EntryInfo{}, err
+		return pxar.FileInfo{}, err
 	}
 
 	return *info, nil

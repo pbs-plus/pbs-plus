@@ -326,7 +326,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 		origPayloadIdx, _ = os.ReadFile(mfs.origPpxarDidx)
 	}
 
-	writer, err := transfer.NewRemoteDedupSplitArchiveWriter(ctx, session, metaName, payloadName, origPayloadIdx)
+	writer, err := transfer.NewRemoteDedupWriter(ctx, session, metaName, payloadName, origPayloadIdx)
 	if err != nil {
 		return fmt.Errorf("create dedup writer: %w", err)
 	}
@@ -345,7 +345,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog *ProgressReporter) 
 		rootMeta = buildMetaFromPxarEntry(rootEntry)
 	}
 
-	if err := writer.Begin(&rootMeta, transfer.WriterOptions{Format: format.FormatVersion2}); err != nil {
+	if err := writer.Begin(&rootMeta, transfer.Options{Format: format.FormatVersion2}); err != nil {
 		return fmt.Errorf("begin archive: %w", err)
 	}
 
@@ -1034,7 +1034,7 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	}
 	source := datastore.NewChunkStoreSource(store)
 
-	newReader, err := transfer.NewSplitArchiveReader(metaData, payloadData, source)
+	newReader, err := transfer.NewSplitReader(metaData, payloadData, source)
 	if err != nil {
 		_ = munmap(metaData)
 		_ = munmap(payloadData)

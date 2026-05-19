@@ -5,6 +5,8 @@ package pxar
 import (
 	"context"
 	"io"
+
+	pxar "github.com/pbs-plus/pxar"
 )
 
 // Stub for non-Linux builds. PxarReader is only available on Linux (PBS server).
@@ -14,13 +16,13 @@ type PxarReaderStats struct{}
 
 type PxarReader struct{}
 
-func (*PxarReader) Close() error                                                   { return nil }
-func (*PxarReader) GetRoot(_ context.Context) (*EntryInfo, error)                  { return nil, nil }
-func (*PxarReader) LookupByPath(_ context.Context, _ string) (*EntryInfo, error)   { return nil, nil }
-func (*PxarReader) ReadDir(_ context.Context, _ uint64) ([]EntryInfo, error)       { return nil, nil }
-func (*PxarReader) GetAttr(_ context.Context, _, _ uint64) (*EntryInfo, error)     { return nil, nil }
-func (*PxarReader) ReadLink(_ context.Context, _, _ uint64) ([]byte, error)        { return nil, nil }
-func (*PxarReader) Read(_ context.Context, _, _, _ uint64, _ uint) ([]byte, error) { return nil, nil }
+func (*PxarReader) Close() error                                                     { return nil }
+func (*PxarReader) GetRoot(_ context.Context) (*pxar.FileInfo, error)                { return nil, nil }
+func (*PxarReader) LookupByPath(_ context.Context, _ string) (*pxar.FileInfo, error) { return nil, nil }
+func (*PxarReader) ReadDir(_ context.Context, _ uint64) ([]pxar.FileInfo, error)     { return nil, nil }
+func (*PxarReader) GetAttr(_ context.Context, _, _ uint64) (*pxar.FileInfo, error)   { return nil, nil }
+func (*PxarReader) ReadLink(_ context.Context, _, _ uint64) ([]byte, error)          { return nil, nil }
+func (*PxarReader) Read(_ context.Context, _, _, _ uint64, _ uint) ([]byte, error)   { return nil, nil }
 func (*PxarReader) ListXAttrs(_ context.Context, _, _ uint64) (map[string][]byte, error) {
 	return nil, nil
 }

@@ -73,7 +73,7 @@ func runMountSubcommand() {
 	}
 	source := datastore.NewChunkStoreSource(store)
 
-	var reader *transfer.SplitArchiveReader
+	var reader *transfer.SplitReader
 	isSplit := *mpxarDidx != ""
 
 	if isSplit {
@@ -87,7 +87,7 @@ func runMountSubcommand() {
 			fmt.Fprintf(os.Stderr, "Error reading payload index: %v\n", err)
 			os.Exit(1)
 		}
-		reader, err = transfer.NewSplitArchiveReader(metaData, payloadData, source)
+		reader, err = transfer.NewSplitReader(metaData, payloadData, source)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating split archive reader: %v\n", err)
 			os.Exit(1)
@@ -98,7 +98,7 @@ func runMountSubcommand() {
 			fmt.Fprintf(os.Stderr, "Error reading index: %v\n", err)
 			os.Exit(1)
 		}
-		reader, err = transfer.NewSplitArchiveReader(idxData, nil, source)
+		reader, err = transfer.NewSplitReader(idxData, nil, source)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating archive reader: %v\n", err)
 			os.Exit(1)

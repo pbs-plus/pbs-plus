@@ -144,9 +144,10 @@ func (b *restoreJob) onError(err error) {
 
 	r := sessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
+		s := r.GetStats()
+		b.task.WriteString(fmt.Sprintf(" - %d total files", s.FilesAccessed))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", s.FoldersAccessed))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(int64(s.TotalBytes))))
 	}
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
@@ -160,9 +161,10 @@ func (b *restoreJob) onSuccess() {
 
 	r := sessions.GetSessionPxarReader(b.job.GetStreamID())
 	if r != nil {
-		b.task.WriteString(fmt.Sprintf(" - %d total files", r.FileCount.Value()))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", r.FolderCount.Value()))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(r.TotalBytes.Value())))
+		s := r.GetStats()
+		b.task.WriteString(fmt.Sprintf(" - %d total files", s.FilesAccessed))
+		b.task.WriteString(fmt.Sprintf(" - %d total folders", s.FoldersAccessed))
+		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(int64(s.TotalBytes))))
 	}
 
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
