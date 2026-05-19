@@ -115,13 +115,12 @@ func processJob(ctx context.Context, client *Client, job restoreJob, jobs chan<-
 	default:
 	}
 
-	if job.info.IsDir() {
+	switch job.info.FileType {
+	case pxar.FileTypeDirectory:
 		return restoreDir(ctx, client, job.dest, job.info, jobs, fsCap, wg, noAttr)
-	}
-	if job.info.IsSymlink() {
+	case pxar.FileTypeSymlink:
 		return restoreSymlink(ctx, client, job.dest, job.info, fsCap, noAttr)
-	}
-	if job.info.IsFile() {
+	case pxar.FileTypeFile, pxar.FileTypeHardlink:
 		return restoreFile(ctx, client, job.dest, job.info, fsCap, noAttr)
 	}
 	return nil
@@ -230,14 +229,18 @@ func shouldUpdateFile(path string, archiveInfo pxar.FileInfo, noAttr bool) (bool
 		return false, err
 	}
 
-	if stat.IsDir() != archiveInfo.IsDir() {
+	archiveIsDir := archiveInfo.FileType == pxar.FileTypeDirectory
+	archiveIsSymlink := archiveInfo.FileType == pxar.FileTypeSymlink
+	archiveIsFile := archiveInfo.FileType == pxar.FileTypeFile || archiveInfo.FileType == pxar.FileTypeHardlink
+
+	if stat.IsDir() != archiveIsDir {
 		return true, nil
 	}
-	if (stat.Mode()&os.ModeSymlink != 0) != archiveInfo.IsSymlink() {
+	if (stat.Mode()&os.ModeSymlink != 0) != archiveIsSymlink {
 		return true, nil
 	}
 
-	if archiveInfo.IsFile() {
+	if archiveIsFile {
 		if stat.Size() != int64(archiveInfo.RawSize) {
 			return true, nil
 		}
@@ -248,7 +251,7 @@ func shouldUpdateFile(path string, archiveInfo pxar.FileInfo, noAttr bool) (bool
 		}
 	}
 
-	if archiveInfo.IsSymlink() {
+	if archiveIsSymlink {
 		return true, nil
 	}
 

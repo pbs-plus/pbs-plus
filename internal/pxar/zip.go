@@ -79,14 +79,13 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 		errCh:  errCh,
 	}
 
-	if sourceAttr.IsDir() {
+	switch sourceAttr.FileType {
+	case pxar.FileTypeDirectory:
 		zc.addDirectory("", sourceAttr)
-	} else {
-		if sourceAttr.IsFile() {
-			zc.addFile("", sourceAttr)
-		} else if sourceAttr.IsSymlink() {
-			zc.addSymlink("", sourceAttr)
-		}
+	case pxar.FileTypeFile, pxar.FileTypeHardlink:
+		zc.addFile("", sourceAttr)
+	case pxar.FileTypeSymlink:
+		zc.addSymlink("", sourceAttr)
 	}
 
 	if err := zipWriter.Close(); err != nil {
@@ -132,11 +131,12 @@ func (zc *zipContext) addDirectory(relPath string, dirEntry pxar.FileInfo) {
 
 		currentPath := dirPath[:len(dirPath)-1]
 
-		if e.IsDir() {
+		switch e.FileType {
+		case pxar.FileTypeDirectory:
 			zc.addDirectory(currentPath, e)
-		} else if e.IsFile() {
+		case pxar.FileTypeFile, pxar.FileTypeHardlink:
 			zc.addFile(currentPath, e)
-		} else if e.IsSymlink() {
+		case pxar.FileTypeSymlink:
 			zc.addSymlink(currentPath, e)
 		}
 	}
