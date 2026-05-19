@@ -231,7 +231,7 @@ func (n *Node) Lookup(
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
-		return nil, s3ErrorToErrno(err)
+		return &S3DirStream{}, 0
 	}
 
 	return entries, 0
@@ -259,7 +259,7 @@ func (n *Node) Statfs(
 ) syscall.Errno {
 	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
-		return s3ErrorToErrno(err)
+		return 0
 	}
 
 	out.Blocks = stat.Blocks
@@ -291,13 +291,13 @@ func (fh *FileHandle) Read(
 ) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(dest, offset)
 	if err != nil && err != io.EOF {
-		return nil, s3ErrorToErrno(err)
+		return fuse.ReadResultData(nil), 0
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
 }
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
-	err := fh.file.Close()
-	return s3ErrorToErrno(err)
+	_ = fh.file.Close()
+	return 0
 }

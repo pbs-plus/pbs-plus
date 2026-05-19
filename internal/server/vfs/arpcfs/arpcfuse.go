@@ -138,7 +138,7 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
-		return syscall.ENOENT
+		return syscall.ESTALE
 	}
 
 	mode := fi.Mode
@@ -169,7 +169,7 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
-		return 0, syscall.ENOTSUP
+		return 0, syscall.ENODATA
 	}
 
 	var data []byte
@@ -215,7 +215,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
-		return 0, syscall.ENOTSUP
+		return 0, 0
 	}
 
 	attrs := []string{
@@ -240,7 +240,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 		return uint32(totalLen), 0
 	}
 	if len(dest) < totalLen {
-		return uint32(totalLen), syscall.E2BIG
+		return uint32(totalLen), syscall.ERANGE
 	}
 
 	offset := 0
@@ -256,7 +256,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
-		return 0, syscall.ENOTSUP
+		return 0, syscall.ENODATA
 	}
 
 	if fi.FileAttributes == nil {
@@ -310,7 +310,7 @@ func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (ui
 func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
-		return 0, syscall.ENOTSUP
+		return 0, 0
 	}
 
 	attrs := []string{
@@ -357,7 +357,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
-		return nil, fs.ToErrno(err)
+		return nil, syscall.ENOENT
 	}
 
 	childNode := &Node{
@@ -390,7 +390,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
-		return nil, syscall.EBADF
+		return nil, 0
 	}
 
 	return &entries, 0
@@ -400,7 +400,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
-		return nil, 0, syscall.EACCES
+		return nil, 0, syscall.ESTALE
 	}
 
 	return &FileHandle{
@@ -412,7 +412,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
-		return fs.ToErrno(err)
+		return 0
 	}
 
 	out.Blocks = stat.Blocks
@@ -441,7 +441,7 @@ var _ = (fs.FileLseeker)((*FileHandle)(nil))
 func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {
-		return nil, syscall.EBADF
+		return fuse.ReadResultData(nil), 0
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
@@ -450,13 +450,13 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
 	n, err := fh.file.Lseek(ctx, int64(off), int(whence))
 	if err != nil && err != io.EOF {
-		return 0, syscall.EBADF
+		return off, 0
 	}
 
 	return n, 0
 }
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
-	err := fh.file.Close(ctx)
-	return fs.ToErrno(err)
+	_ = fh.file.Close(ctx)
+	return 0
 }

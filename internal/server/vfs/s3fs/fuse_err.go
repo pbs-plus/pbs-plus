@@ -7,7 +7,6 @@ import (
 	"strings"
 	"syscall"
 
-	gofs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/rclone/rclone/fs"
 )
 
@@ -48,20 +47,16 @@ func s3ErrorToErrno(err error) syscall.Errno {
 	case strings.Contains(errStr, "invalid") || strings.Contains(errStr, "bad request"):
 		return syscall.EINVAL
 	case strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded"):
-		return syscall.ETIMEDOUT
+		return syscall.ENOENT
 	case strings.Contains(errStr, "connection") || strings.Contains(errStr, "network"):
-		return syscall.ECONNREFUSED
+		return syscall.ENOENT
 	case strings.Contains(errStr, "too many requests") || strings.Contains(errStr, "rate limit"):
-		return syscall.EAGAIN
+		return syscall.ENOENT
 	case strings.Contains(errStr, "canceled") || strings.Contains(errStr, "context canceled"):
-		return syscall.ECANCELED
+		return syscall.ENOENT
 	case strings.Contains(errStr, "service unavailable"):
-		return syscall.EAGAIN
+		return syscall.ENOENT
 	default:
-		// Try the default conversion first
-		if errno := gofs.ToErrno(err); errno != syscall.EIO {
-			return errno
-		}
-		return syscall.EIO
+		return syscall.ENOENT
 	}
 }
