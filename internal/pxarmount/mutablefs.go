@@ -97,14 +97,26 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 func (fs *MutableFS) SetSnapshotRef(ref snapshotRef) { fs.origSnapshot = ref }
 func (fs *MutableFS) SetACLConfig(cfg ACLConfig)     { fs.acl = cfg }
 
-// applyACL overrides the UID/GID on a ResolvedEntry when the ACL config
-// specifies a default owner or group.
+// applyACL overrides the UID/GID and mode on a ResolvedEntry when the ACL
+// config specifies a default owner, group, or mask.
 func (fs *MutableFS) applyACL(re *ResolvedEntry) {
 	if fs.acl.OwnerUID != 0 {
 		re.UID = uint32(fs.acl.OwnerUID)
 	}
 	if fs.acl.OwnerGID != 0 {
 		re.GID = uint32(fs.acl.OwnerGID)
+	}
+
+	// When ACL entries are present, the mode's group bits represent the ACL
+	// mask. Update them to match the mask entry so #effective stays consistent.
+	if fs.acl.HasACLs() {
+		for _, e := range fs.acl.ACLEntries {
+			if e.Tag == ACLMask {
+				// Clear existing group bits and set from mask.
+				re.Mode = (re.Mode &^ 0070) | (uint32(e.Perm) << 3)
+				break
+			}
+		}
 	}
 }
 func (fs *MutableFS) SetVerbose(v bool) { fs.verbose = v }

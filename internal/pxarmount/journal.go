@@ -1,18 +1,17 @@
 package pxarmount
 
 import (
-	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
+	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/puzpuzpuz/xsync/v4"
-	_ "modernc.org/sqlite"
 )
 
 // Node kinds stored in the journal graph.
@@ -34,8 +33,8 @@ type GraphNode struct {
 	CtimeNs    int64
 	HasData    bool
 	SymlinkTgt string
-	RedirectTo string // pxar path for lazy materialization
-	Opaque     bool   // if true, don't merge pxar children
+	RedirectTo string
+	Opaque     bool
 }
 
 // GraphEdge is a parent→child name binding.
@@ -45,346 +44,541 @@ type GraphEdge struct {
 	ChildID  int64
 }
 
+// Key prefix namespaces for the Pebble KV store.
+//
+//	n:<id>            → serialized GraphNode
+//	e:<parentID>:<name> → child node ID (int64 LE)
+//	x:<nodeID>:<xattrName> → xattr value bytes
+//	w:<parentID>:<name> → whiteout marker (empty value)
+//	m:next_node_id    → next node ID counter (int64 LE)
+//	m:schema_version  → schema version string
+const (
+	prefixNode     = "n:"
+	prefixEdge     = "e:"
+	prefixXattr    = "x:"
+	prefixWhiteout = "w:"
+	prefixMeta     = "m:"
+)
+
 // schemaVersion is the current journal schema version.
-// Increment when making non-trivial schema changes. OpenJournal
-// will run migrations automatically — analogous to ext4's feature
-// compatibility flags checked at mount time.
 const schemaVersion = 1
 
-// Journal is the SQLite-backed inode graph for the mutable overlay.
+// Journal is the Pebble-backed inode graph for the mutable overlay.
 //
-// Schema:
+// Data model:
 //
-//	meta(key, value)                  — stores schema_version, etc.
-//	nodes(id, kind, mode, uid, gid, size, mtime_ns, ctime_ns, has_data,
-//	      symlink_tgt, redirect_to, opaque)
-//	edges(parent_id, name, child_id)  PK(parent_id, name)
-//	xattrs(node_id, name, value)      PK(node_id, name)
-//	whiteouts(parent_id, name)        PK(parent_id, name)
+//	Nodes:    n:<id>             → binary-encoded GraphNode
+//	Edges:    e:<parentID>:<name> → child node ID (int64 LE)
+//	XAttrs:   x:<nodeID>:<xattrName> → value bytes
+//	Whiteouts: w:<parentID>:<name> → empty value
+//	Meta:     m:next_node_id    → next ID counter
+//	          m:schema_version  → version string
 //
 // Root node (id=1) always exists with redirect_to='/'.
-// Renames are O(1): just update the edge row. No descendants touched.
+// Renames are O(1): just update the edge key. No descendants touched.
 //
-// Durability follows the filesystem journaling model: writes are
-// committed to the WAL immediately but checkpoints (which fsync the
-// main DB) are deferred to a background goroutine. This avoids an
-// fsync per transaction while maintaining crash consistency — the WAL
-// is replayed automatically on recovery. Explicit Sync() forces a
-// full checkpoint for durability-critical paths (commit, fsync).
+// Durability: Pebble's WAL provides crash consistency. Sync() forces
+// a flush to make all committed writes durable.
 type Journal struct {
-	db *sql.DB
-	mu sync.Mutex // serializes write transactions
+	db *pebble.DB
+	mu sync.Mutex // serializes write batches + node ID allocation
 
-	// Periodic checkpoint state. Modeled after ext4's commit=5s:
-	// mutations accumulate in the WAL, a background goroutine
-	// checkpoints every checkpointInterval. Sync() forces an
-	// immediate checkpoint (like fsync).
-	ckptDone    chan struct{}
-	ckptClose   chan struct{}
-	ckptPending *xsync.Counter // approximate WAL size; incremented per tx
+	// nextNodeID is the next auto-increment node ID (in-memory counter,
+	// persisted to m:next_node_id periodically and on Sync).
+	nextNodeID atomic.Int64
 
-	// checkpointInterval controls how often the background
-	// checkpoint goroutine runs. Analogous to ext4's commit= mount option.
-	// Atomic for safe concurrent reads from the ticker goroutine.
-	checkpointInterval atomic.Int64 // nanoseconds
+	// Periodic sync state.
+	syncDone    chan struct{}
+	syncClose   chan struct{}
+	syncPending *xsync.Counter
+
+	// syncInterval controls how often the background sync goroutine runs.
+	syncInterval atomic.Int64 // nanoseconds
+}
+
+// --- Key encoding helpers ---
+
+// nodeKey returns the key for a node: n:<id>
+func nodeKey(id int64) []byte {
+	b := make([]byte, 2+8)
+	copy(b, prefixNode)
+	binary.BigEndian.PutUint64(b[2:], uint64(id))
+	return b
+}
+
+// edgeKey returns the key for an edge: e:<parentID>:<name>
+func edgeKey(parentID int64, name string) []byte {
+	b := make([]byte, 2+8+1+len(name))
+	copy(b, prefixEdge)
+	binary.BigEndian.PutUint64(b[2:], uint64(parentID))
+	b[10] = ':'
+	copy(b[11:], name)
+	return b
+}
+
+// edgePrefix returns the prefix for all edges under a parent: e:<parentID>:
+func edgePrefix(parentID int64) []byte {
+	b := make([]byte, 2+8+1)
+	copy(b, prefixEdge)
+	binary.BigEndian.PutUint64(b[2:], uint64(parentID))
+	b[10] = ':'
+	return b
+}
+
+// xattrKey returns the key for an xattr: x:<nodeID>:<name>
+func xattrKey(nodeID int64, name string) []byte {
+	b := make([]byte, 2+8+1+len(name))
+	copy(b, prefixXattr)
+	binary.BigEndian.PutUint64(b[2:], uint64(nodeID))
+	b[10] = ':'
+	copy(b[11:], name)
+	return b
+}
+
+// xattrPrefix returns the prefix for all xattrs under a node: x:<nodeID>:
+func xattrPrefix(nodeID int64) []byte {
+	b := make([]byte, 2+8+1)
+	copy(b, prefixXattr)
+	binary.BigEndian.PutUint64(b[2:], uint64(nodeID))
+	b[10] = ':'
+	return b
+}
+
+// whiteoutKey returns the key for a whiteout: w:<parentID>:<name>
+func whiteoutKey(parentID int64, name string) []byte {
+	b := make([]byte, 2+8+1+len(name))
+	copy(b, prefixWhiteout)
+	binary.BigEndian.PutUint64(b[2:], uint64(parentID))
+	b[10] = ':'
+	copy(b[11:], name)
+	return b
+}
+
+// whiteoutPrefix returns the prefix for all whiteouts under a parent: w:<parentID>:
+func whiteoutPrefix(parentID int64) []byte {
+	b := make([]byte, 2+8+1)
+	copy(b, prefixWhiteout)
+	binary.BigEndian.PutUint64(b[2:], uint64(parentID))
+	b[10] = ':'
+	return b
+}
+
+// metaKey returns a meta key: m:<key>
+func metaKey(key string) []byte {
+	return append([]byte(prefixMeta), key...)
+}
+
+// nextNodeIDKey returns the key for the next node ID counter.
+func nextNodeIDKey() []byte {
+	return metaKey("next_node_id")
+}
+
+// encodeNode serializes a GraphNode into a byte slice.
+// Format: kind(1) + mode(4) + uid(4) + gid(4) + size(8) + mtimeNs(8) + ctimeNs(8)
+//
+//   - hasData(1) + opaque(1) + symlinkTgtLen(4) + symlinkTgt
+//   - redirectToLen(4) + redirectTo
+func encodeNode(n *GraphNode) []byte {
+	stLen := len(n.SymlinkTgt)
+	rrLen := len(n.RedirectTo)
+	total := 1 + 4 + 4 + 4 + 8 + 8 + 8 + 1 + 1 + 4 + stLen + 4 + rrLen
+	b := make([]byte, total)
+	off := 0
+	b[off] = n.Kind
+	off += 1
+	binary.LittleEndian.PutUint32(b[off:], n.Mode)
+	off += 4
+	binary.LittleEndian.PutUint32(b[off:], n.UID)
+	off += 4
+	binary.LittleEndian.PutUint32(b[off:], n.GID)
+	off += 4
+	binary.LittleEndian.PutUint64(b[off:], n.Size)
+	off += 8
+	binary.LittleEndian.PutUint64(b[off:], uint64(n.MtimeNs))
+	off += 8
+	binary.LittleEndian.PutUint64(b[off:], uint64(n.CtimeNs))
+	off += 8
+	if n.HasData {
+		b[off] = 1
+	}
+	off += 1
+	if n.Opaque {
+		b[off] = 1
+	}
+	off += 1
+	binary.LittleEndian.PutUint32(b[off:], uint32(stLen))
+	off += 4
+	copy(b[off:], n.SymlinkTgt)
+	off += stLen
+	binary.LittleEndian.PutUint32(b[off:], uint32(rrLen))
+	off += 4
+	copy(b[off:], n.RedirectTo)
+	return b
+}
+
+// decodeNode deserializes a GraphNode from a byte slice.
+func decodeNode(data []byte, id int64) *GraphNode {
+	n := &GraphNode{ID: id}
+	off := 0
+	n.Kind = data[off]
+	off += 1
+	n.Mode = binary.LittleEndian.Uint32(data[off:])
+	off += 4
+	n.UID = binary.LittleEndian.Uint32(data[off:])
+	off += 4
+	n.GID = binary.LittleEndian.Uint32(data[off:])
+	off += 4
+	n.Size = binary.LittleEndian.Uint64(data[off:])
+	off += 8
+	n.MtimeNs = int64(binary.LittleEndian.Uint64(data[off:]))
+	off += 8
+	n.CtimeNs = int64(binary.LittleEndian.Uint64(data[off:]))
+	off += 8
+	n.HasData = data[off] != 0
+	off += 1
+	n.Opaque = data[off] != 0
+	off += 1
+	stLen := binary.LittleEndian.Uint32(data[off:])
+	off += 4
+	n.SymlinkTgt = string(data[off : off+int(stLen)])
+	off += int(stLen)
+	rrLen := binary.LittleEndian.Uint32(data[off:])
+	off += 4
+	n.RedirectTo = string(data[off : off+int(rrLen)])
+	return n
+}
+
+// encodeInt64 encodes an int64 as 8 bytes LE.
+func encodeInt64(v int64) []byte {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, uint64(v))
+	return b
+}
+
+// decodeInt64 decodes 8 bytes LE as int64.
+func decodeInt64(b []byte) int64 {
+	return int64(binary.LittleEndian.Uint64(b))
 }
 
 // OpenJournal opens or creates the journal database in dir.
-// Performs crash recovery analogous to ext4's journal replay:
-//  1. WAL auto-replay (SQLite handles this)
-//  2. Schema version check and migration
-//  3. Root node integrity verification
-//  4. Orphan edge cleanup (dangling references from partial tx)
 func OpenJournal(dir string) (*Journal, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create journal dir: %w", err)
 	}
 
-	dbPath := filepath.Join(dir, "journal.db")
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous=FULL&_busy_timeout=5000")
+	// Use the default FS so Pebble uses the OS filesystem directly.
+	opts := &pebble.Options{
+		FS: vfs.Default,
+		// Optimize for the journal workload: small keys, frequent writes.
+		// Keep WAL enabled for crash recovery — it's the primary
+		// durability mechanism. Pebble's WAL replay is equivalent to
+		// SQLite's WAL replay.
+		DisableWAL: false,
+		// Keep memtable small since journal data is metadata-sized.
+		MemTableSize: 4 << 20, // 4MB
+	}
+
+	db, err := pebble.Open(dir, opts)
 	if err != nil {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
-	// Verify the database is accessible and not corrupt.
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping journal db: %w", err)
-	}
+	j := &Journal{db: db, syncPending: xsync.NewCounter()}
 
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
-	// Integrity check: like ext4's ext4_check_descriptors() at mount time.
-	// Catches corrupt pages from torn writes that WAL replay couldn't fix.
-	var ok string
-	if err := db.QueryRow("PRAGMA integrity_check").Scan(&ok); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("integrity check: %w", err)
-	}
-	if ok != "ok" {
-		_ = db.Close()
-		return nil, fmt.Errorf("integrity check failed: %s", ok)
-	}
-
-	// Create or migrate schema.
-	if err := initSchema(db); err != nil {
+	// Initialize or verify schema.
+	if err := j.initSchema(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
-	if err := migrateSchema(db); err != nil {
+	// Load next node ID counter.
+	if err := j.loadNextNodeID(); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("migrate schema: %w", err)
+		return nil, fmt.Errorf("load next node id: %w", err)
 	}
 
-	// Verify root node survived any prior crash — analogous to ext4's
-	// ext4_orphan_cleanup() which runs at mount time.
-	var rootCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = 1`).Scan(&rootCount); err != nil {
+	// Verify root node.
+	rootData, closer, err := db.Get(nodeKey(1))
+	if err == pebble.ErrNotFound {
+		// Create root node.
+		root := &GraphNode{
+			ID:         1,
+			Kind:       NodeDir,
+			Mode:       16877,
+			RedirectTo: "/",
+		}
+		if err := db.Set(nodeKey(1), encodeNode(root), pebble.Sync); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("create root node: %w", err)
+		}
+	} else if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("verify root node: %w", err)
-	}
-	if rootCount == 0 {
-		if _, err := db.Exec(
-			`INSERT INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/')`); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("recreate root node: %w", err)
-		}
+	} else {
+		_ = closer.Close()
+		_ = rootData
 	}
 
 	// Clean up orphan edges: edges pointing to non-existent nodes.
-	// This can happen if a process crash occurs between node creation
-	// and edge insertion in a compound operation. Like ext4's
-	// ext4_orphan_cleanup().
-	if _, err := db.Exec(`
-		DELETE FROM edges
-		WHERE child_id NOT IN (SELECT id FROM nodes)`); err != nil {
+	if err := j.cleanOrphanEdges(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("clean orphan edges: %w", err)
 	}
 
-	j := &Journal{db: db, ckptPending: xsync.NewCounter()}
-	j.startCheckpointLoop()
+	j.startSyncLoop()
 	return j, nil
 }
 
-// initSchema creates the journal database tables.
-func initSchema(db *sql.DB) error {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS meta (
-			key   TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		) WITHOUT ROWID;
-		INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '` + fmt.Sprint(schemaVersion) + `');
-
-		CREATE TABLE IF NOT EXISTS nodes (
-			id          INTEGER PRIMARY KEY AUTOINCREMENT,
-			kind        INTEGER NOT NULL,
-			mode        INTEGER NOT NULL DEFAULT 0,
-			uid         INTEGER NOT NULL DEFAULT 0,
-			gid         INTEGER NOT NULL DEFAULT 0,
-			size        INTEGER NOT NULL DEFAULT 0,
-			mtime_ns    INTEGER NOT NULL DEFAULT 0,
-			ctime_ns    INTEGER NOT NULL DEFAULT 0,
-			has_data    INTEGER NOT NULL DEFAULT 0,
-			symlink_tgt TEXT,
-			redirect_to TEXT,
-			opaque      INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE IF NOT EXISTS edges (
-			parent_id   INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-			name        TEXT NOT NULL,
-			child_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-			PRIMARY KEY (parent_id, name)
-		) WITHOUT ROWID;
-		CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id);
-		CREATE TABLE IF NOT EXISTS xattrs (
-			node_id     INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-			name        TEXT NOT NULL,
-			value       BLOB NOT NULL,
-			PRIMARY KEY (node_id, name)
-		) WITHOUT ROWID;
-		CREATE TABLE IF NOT EXISTS whiteouts (
-			parent_id   INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-			name        TEXT NOT NULL,
-			PRIMARY KEY (parent_id, name)
-		) WITHOUT ROWID;
-		INSERT OR IGNORE INTO nodes (id, kind, mode, redirect_to) VALUES (1, 0, 16877, '/');
-	`)
-	return err
+// initSchema creates or verifies the journal schema metadata.
+func (j *Journal) initSchema() error {
+	schemaKey := metaKey("schema_version")
+	_, closer, err := j.db.Get(schemaKey)
+	if err == pebble.ErrNotFound {
+		// First open — write schema version.
+		if err := j.db.Set(schemaKey, fmt.Append(nil, schemaVersion), pebble.Sync); err != nil {
+			return err
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_ = closer.Close()
+	// Schema version exists; future migrations go here.
+	return nil
 }
 
-// migrateSchema applies schema migrations. Analogous to ext4's
-// feature compatibility check + online resize — runs once at open.
-// Future schema changes should add cases here.
-func migrateSchema(db *sql.DB) error {
-	var ver string
-	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&ver); err != nil {
-		return fmt.Errorf("read schema version: %w", err)
+// loadNextNodeID loads the persisted next-node-ID counter.
+func (j *Journal) loadNextNodeID() error {
+	val, closer, err := j.db.Get(nextNodeIDKey())
+	if err == pebble.ErrNotFound {
+		// Start from 2 (1 is root).
+		j.nextNodeID.Store(2)
+		return nil
 	}
-	// No migrations yet — schema is at version 1.
-	// Example future migration:
-	//   if ver == "1" {
-	//       _, err := db.Exec(`ALTER TABLE nodes ADD COLUMN new_col ...`)
-	//       _, err = db.Exec(`UPDATE meta SET value = '2' WHERE key = 'schema_version'`)
-	//   }
-	_ = ver
+	if err != nil {
+		return err
+	}
+	_ = closer.Close()
+	if len(val) >= 8 {
+		j.nextNodeID.Store(decodeInt64(val))
+	} else {
+		j.nextNodeID.Store(2)
+	}
+	return nil
+}
+
+// persistNextNodeID writes the current next-node-ID counter to the DB.
+func (j *Journal) persistNextNodeID() error {
+	return j.db.Set(nextNodeIDKey(), encodeInt64(j.nextNodeID.Load()), nil)
+}
+
+// cleanOrphanEdges removes edges pointing to non-existent nodes.
+func (j *Journal) cleanOrphanEdges() error {
+	prefix := []byte(prefixEdge)
+	iter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: []byte(prefixEdge + "\xff"),
+	})
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+
+	batch := j.db.NewBatch()
+	defer batch.Close()
+
+	for iter.First(); iter.Valid(); iter.Next() {
+		childIDVal := iter.Value()
+		if len(childIDVal) < 8 {
+			continue
+		}
+		childID := decodeInt64(childIDVal)
+		// Check if node exists.
+		_, closer, err := j.db.Get(nodeKey(childID))
+		if err == pebble.ErrNotFound {
+			// Orphan edge — delete it.
+			_ = batch.Delete(iter.Key(), nil)
+		} else if err != nil {
+			return err
+		} else {
+			_ = closer.Close()
+		}
+	}
+	if err := iter.Error(); err != nil {
+		return err
+	}
+	if batch.Count() > 0 {
+		return batch.Commit(pebble.Sync)
+	}
 	return nil
 }
 
 // VerifyIntegrity runs a full database consistency check.
-// Analogous to ext4's e2fsck -n (read-only check):
-//   - SQLite integrity_check pragma
-//   - Foreign key constraint verification
-//   - Root node existence
-//   - No orphan edges (edges without matching nodes)
-//   - No orphan xattrs (xattrs without matching nodes)
 func (j *Journal) VerifyIntegrity() error {
-	// 1. SQLite built-in integrity check.
-	var ok string
-	if err := j.db.QueryRow("PRAGMA integrity_check").Scan(&ok); err != nil {
-		return fmt.Errorf("integrity_check: %w", err)
-	}
-	if ok != "ok" {
-		return fmt.Errorf("integrity_check failed: %s", ok)
-	}
-
-	// 2. Foreign key violation check.
-	rows, err := j.db.Query("PRAGMA foreign_key_check")
-	if err != nil {
-		return fmt.Errorf("foreign_key_check: %w", err)
-	}
-	for rows.Next() {
-		var table, from, to string
-		var rowid, fkid int64
-		_ = rows.Scan(&table, &rowid, &from, &to, &fkid)
-		_ = rows.Close()
-		return fmt.Errorf("foreign key violation: %s row %d references %s.%s", table, rowid, to, from)
-	}
-	_ = rows.Close()
-
-	// 3. Root node must exist.
-	var rootCount int
-	if err := j.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = 1`).Scan(&rootCount); err != nil {
-		return fmt.Errorf("root node check: %w", err)
-	}
-	if rootCount == 0 {
+	// Check that root node exists.
+	rootData, closer, err := j.db.Get(nodeKey(1))
+	if err == pebble.ErrNotFound {
 		return fmt.Errorf("root node missing")
 	}
+	if err != nil {
+		return fmt.Errorf("root node check: %w", err)
+	}
+	_ = closer.Close()
+	_ = rootData
 
-	// 4. No orphan edges.
-	var orphanEdges int
-	if err := j.db.QueryRow(`
-		SELECT COUNT(*) FROM edges e
-		WHERE e.parent_id NOT IN (SELECT id FROM nodes)
-		   OR e.child_id NOT IN (SELECT id FROM nodes)`).Scan(&orphanEdges); err != nil {
-		return fmt.Errorf("orphan edge check: %w", err)
+	// Check for orphan edges.
+	edgePrefixBytes := []byte(prefixEdge)
+	iter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: edgePrefixBytes,
+		UpperBound: []byte(prefixEdge + "\xff"),
+	})
+	if err != nil {
+		return fmt.Errorf("edge scan: %w", err)
 	}
-	if orphanEdges > 0 {
-		return fmt.Errorf("%d orphan edges detected", orphanEdges)
+	defer iter.Close()
+
+	for iter.First(); iter.Valid(); iter.Next() {
+		childIDVal := iter.Value()
+		if len(childIDVal) < 8 {
+			continue
+		}
+		childID := decodeInt64(childIDVal)
+		_, closer, err := j.db.Get(nodeKey(childID))
+		if err == pebble.ErrNotFound {
+			// closer is nil on ErrNotFound
+			return fmt.Errorf("orphan edge to node %d", childID)
+		}
+		if err != nil {
+			return fmt.Errorf("orphan check: %w", err)
+		}
+		_ = closer.Close()
+	}
+	if err := iter.Error(); err != nil {
+		return fmt.Errorf("edge iter error: %w", err)
 	}
 
-	// 5. No orphan xattrs.
-	var orphanXattrs int
-	if err := j.db.QueryRow(`
-		SELECT COUNT(*) FROM xattrs x
-		WHERE x.node_id NOT IN (SELECT id FROM nodes)`).Scan(&orphanXattrs); err != nil {
-		return fmt.Errorf("orphan xattr check: %w", err)
+	// Check for orphan xattrs.
+	xaPrefix := []byte(prefixXattr)
+	xiter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: xaPrefix,
+		UpperBound: []byte(prefixXattr + "\xff"),
+	})
+	if err != nil {
+		return fmt.Errorf("xattr scan: %w", err)
 	}
-	if orphanXattrs > 0 {
-		return fmt.Errorf("%d orphan xattrs detected", orphanXattrs)
+	defer xiter.Close()
+
+	for xiter.First(); xiter.Valid(); xiter.Next() {
+		// Extract node ID from key: x:<nodeID>:<name>
+		key := xiter.Key()
+		if len(key) < 11 {
+			continue
+		}
+		nodeID := int64(binary.BigEndian.Uint64(key[2:10]))
+		_, closer, err := j.db.Get(nodeKey(nodeID))
+		if err == pebble.ErrNotFound {
+			// closer is nil on ErrNotFound
+			return fmt.Errorf("orphan xattr for node %d", nodeID)
+		}
+		if err != nil {
+			return fmt.Errorf("xattr orphan check: %w", err)
+		}
+		_ = closer.Close()
+	}
+	if err := xiter.Error(); err != nil {
+		return fmt.Errorf("xattr iter error: %w", err)
 	}
 
 	return nil
 }
 
+// Close closes the journal database.
 func (j *Journal) Close() error {
-	// Signal checkpoint goroutine to stop, then wait for it.
-	if j.ckptClose != nil {
-		close(j.ckptClose)
+	if j.syncClose != nil {
+		close(j.syncClose)
 	}
-	if j.ckptDone != nil {
-		<-j.ckptDone
+	if j.syncDone != nil {
+		<-j.syncDone
 	}
 
-	// Final checkpoint to flush everything before closing.
 	j.mu.Lock()
-	_ = j.checkpoint()
+	_ = j.persistNextNodeID()
 	j.mu.Unlock()
+
 	return j.db.Close()
 }
 
-// tx executes fn within a single SQLite transaction.
-// The commit is durable in the WAL (survives process crash; SQLite
-// replays the WAL on next open). Periodic background checkpointing
-// moves WAL contents to the main DB file — analogous to ext4's
-// commit=5s journal flush.
-func (j *Journal) tx(fn func(tx *sql.Tx) error) error {
+// allocNodeID allocates a new unique node ID. Caller must hold j.mu.
+func (j *Journal) allocNodeID() int64 {
+	return j.nextNodeID.Add(1) - 1
+}
+
+// tx executes fn within a single Pebble batch.
+// The batch is committed atomically — either all writes succeed or none do.
+func (j *Journal) tx(fn func(b *pebble.Batch) error) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	tx, err := j.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	if err := fn(tx); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if err := tx.Commit(); err != nil {
+	batch := j.db.NewBatch()
+	defer batch.Close()
+
+	if err := fn(batch); err != nil {
 		return err
 	}
 
-	// Track pending WAL frames for the checkpoint goroutine.
-	j.ckptPending.Add(1)
+	if err := batch.Commit(pebble.NoSync); err != nil {
+		return err
+	}
 
-	// Eager checkpoint if enough frames have accumulated.
-	if j.ckptPending.Value() >= 256 {
-		_ = j.checkpoint()
+	j.syncPending.Add(1)
+
+	// Eager sync if enough writes have accumulated.
+	if j.syncPending.Value() >= 64 {
+		_ = j.syncLocked()
 	}
 
 	return nil
 }
 
-// Sync forces a full WAL checkpoint (TRUNCATE), making all committed
-// transactions durable in the main DB file. Call this from FUSE's
-// Fsync path and the commit path — analogous to ext4's fsync().
+// Sync forces a flush of the WAL to make all writes durable.
 func (j *Journal) Sync() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return j.checkpoint()
+	return j.syncLocked()
 }
 
-// checkpoint moves WAL contents into the main DB and truncates the WAL.
-// Caller must hold j.mu.
-func (j *Journal) checkpoint() error {
-	_, err := j.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
-	j.ckptPending.Reset()
-	return err
-}
-
-// startCheckpointLoop launches the background periodic checkpoint goroutine.
-func (j *Journal) startCheckpointLoop() {
-	if j.checkpointInterval.Load() <= 0 {
-		j.checkpointInterval.Store(int64(5 * time.Second))
+// syncLocked is the internal sync implementation. Caller must hold j.mu.
+func (j *Journal) syncLocked() error {
+	if err := j.persistNextNodeID(); err != nil {
+		return err
 	}
-	j.ckptDone = make(chan struct{})
-	j.ckptClose = make(chan struct{})
+	if err := j.db.Flush(); err != nil {
+		return err
+	}
+	j.syncPending.Reset()
+	return nil
+}
+
+// startSyncLoop launches the background periodic sync goroutine.
+func (j *Journal) startSyncLoop() {
+	if j.syncInterval.Load() <= 0 {
+		j.syncInterval.Store(int64(5 * time.Second))
+	}
+	j.syncDone = make(chan struct{})
+	j.syncClose = make(chan struct{})
 	go func() {
-		defer close(j.ckptDone)
-		ticker := time.NewTicker(time.Duration(j.checkpointInterval.Load()))
+		defer close(j.syncDone)
+		ticker := time.NewTicker(time.Duration(j.syncInterval.Load()))
 		defer ticker.Stop()
 		for {
 			select {
-			case <-j.ckptClose:
+			case <-j.syncClose:
 				return
 			case <-ticker.C:
-				if j.ckptPending.Value() > 0 {
+				if j.syncPending.Value() > 0 {
 					j.mu.Lock()
-					_ = j.checkpoint()
+					_ = j.syncLocked()
 					j.mu.Unlock()
 				}
 			}
@@ -396,120 +590,51 @@ func (j *Journal) startCheckpointLoop() {
 
 // GetNode returns the node by ID, or nil if not found.
 func (j *Journal) GetNode(id int64) (*GraphNode, error) {
-	row := j.db.QueryRow(`
-		SELECT kind, mode, uid, gid, size, mtime_ns, ctime_ns, has_data,
-		       symlink_tgt, redirect_to, opaque
-		FROM nodes WHERE id = ?`, id)
-	return scanNode(row, id)
-}
-
-// scanNode scans a single database row into a GraphNode.
-func scanNode(row interface{ Scan(...any) error }, id int64) (*GraphNode, error) {
-	n := &GraphNode{ID: id}
-	var kind, mode, uid, gid, hasData, opaque sql.NullInt64
-	var size, mtimeNs, ctimeNs sql.NullInt64
-	var symlinkTgt, redirectTo sql.NullString
-
-	err := row.Scan(&kind, &mode, &uid, &gid, &size, &mtimeNs, &ctimeNs,
-		&hasData, &symlinkTgt, &redirectTo, &opaque)
-	if err == sql.ErrNoRows {
+	data, closer, err := j.db.Get(nodeKey(id))
+	if err == pebble.ErrNotFound {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-
-	if kind.Valid {
-		n.Kind = uint8(kind.Int64)
-	}
-	if mode.Valid {
-		n.Mode = uint32(mode.Int64)
-	}
-	if uid.Valid {
-		n.UID = uint32(uid.Int64)
-	}
-	if gid.Valid {
-		n.GID = uint32(gid.Int64)
-	}
-	if size.Valid {
-		n.Size = uint64(size.Int64)
-	}
-	if mtimeNs.Valid {
-		n.MtimeNs = mtimeNs.Int64
-	}
-	if ctimeNs.Valid {
-		n.CtimeNs = ctimeNs.Int64
-	}
-	if hasData.Valid {
-		n.HasData = hasData.Int64 != 0
-	}
-	if symlinkTgt.Valid {
-		n.SymlinkTgt = symlinkTgt.String
-	}
-	if redirectTo.Valid {
-		n.RedirectTo = redirectTo.String
-	}
-	if opaque.Valid {
-		n.Opaque = opaque.Int64 != 0
-	}
+	defer closer.Close()
+	n := decodeNode(data, id)
 	return n, nil
 }
 
-// createNodeTx inserts a new node within a transaction and returns its ID.
-func createNodeTx(tx *sql.Tx, n *GraphNode) (int64, error) {
-	hasData := 0
-	if n.HasData {
-		hasData = 1
-	}
-	opaque := 0
-	if n.Opaque {
-		opaque = 1
-	}
-	res, err := tx.Exec(`
-		INSERT INTO nodes (kind, mode, uid, gid, size, mtime_ns, ctime_ns,
-		                   has_data, symlink_tgt, redirect_to, opaque)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		n.Kind, n.Mode, n.UID, n.GID, n.Size, n.MtimeNs, n.CtimeNs,
-		hasData, n.SymlinkTgt, n.RedirectTo, opaque)
-	if err != nil {
+// createNodeInBatch inserts a new node in a batch and returns its ID.
+func (j *Journal) createNodeInBatch(b *pebble.Batch, n *GraphNode) (int64, error) {
+	id := j.allocNodeID()
+	n.ID = id
+	if err := b.Set(nodeKey(id), encodeNode(n), nil); err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	return id, nil
 }
 
-// updateNodeTx updates a node within a transaction.
-func updateNodeTx(tx *sql.Tx, n *GraphNode) error {
-	hasData := 0
-	if n.HasData {
-		hasData = 1
-	}
-	opaque := 0
-	if n.Opaque {
-		opaque = 1
-	}
-	_, err := tx.Exec(`
-		UPDATE nodes SET kind=?, mode=?, uid=?, gid=?, size=?,
-		                 mtime_ns=?, ctime_ns=?, has_data=?,
-		                 symlink_tgt=?, redirect_to=?, opaque=?
-		WHERE id=?`,
-		n.Kind, n.Mode, n.UID, n.GID, n.Size,
-		n.MtimeNs, n.CtimeNs, hasData,
-		n.SymlinkTgt, n.RedirectTo, opaque, n.ID)
-	return err
+// updateNodeInBatch updates a node in a batch.
+func (j *Journal) updateNodeInBatch(b *pebble.Batch, n *GraphNode) error {
+	return b.Set(nodeKey(n.ID), encodeNode(n), nil)
 }
 
 // UpdateNode updates a node's metadata.
 func (j *Journal) UpdateNode(n *GraphNode) error {
-	return j.tx(func(tx *sql.Tx) error {
-		return updateNodeTx(tx, n)
+	return j.tx(func(b *pebble.Batch) error {
+		return j.updateNodeInBatch(b, n)
 	})
 }
 
 // SetHasData marks that a node now has data in the mutable dir.
 func (j *Journal) SetHasData(nodeID int64) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`UPDATE nodes SET has_data = 1 WHERE id = ?`, nodeID)
-		return err
+	return j.tx(func(b *pebble.Batch) error {
+		data, closer, err := j.db.Get(nodeKey(nodeID))
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+		n := decodeNode(data, nodeID)
+		n.HasData = true
+		return b.Set(nodeKey(nodeID), encodeNode(n), nil)
 	})
 }
 
@@ -517,97 +642,123 @@ func (j *Journal) SetHasData(nodeID int64) error {
 
 // ListEdges returns all edges under a parent.
 func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
-	rows, err := j.db.Query(
-		`SELECT name, child_id FROM edges WHERE parent_id = ? ORDER BY name`, parentID)
+	prefix := edgePrefix(parentID)
+	iter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: append(prefix[:len(prefix):len(prefix)], 0xFF),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer iter.Close()
+
 	var edges []GraphEdge
-	for rows.Next() {
-		var e GraphEdge
-		if err := rows.Scan(&e.Name, &e.ChildID); err != nil {
-			return nil, err
-		}
-		e.ParentID = parentID
-		edges = append(edges, e)
+	for iter.First(); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		// Key format: e:<parentID>:<name>
+		// parentID is at bytes 2-10, name starts at byte 11.
+		name := string(key[11:])
+		childID := decodeInt64(iter.Value())
+		edges = append(edges, GraphEdge{
+			ParentID: parentID,
+			Name:     name,
+			ChildID:  childID,
+		})
 	}
-	return edges, rows.Err()
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return edges, nil
 }
 
 // --- Whiteout CRUD ---
 
 // AddWhiteout records that a pxar entry at (parentID, name) is deleted.
 func (j *Journal) AddWhiteout(parentID int64, name string) error {
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name)
-		return err
+	return j.tx(func(b *pebble.Batch) error {
+		return b.Set(whiteoutKey(parentID, name), nil, nil)
 	})
 }
 
 // ListWhiteouts returns all whiteout names under a parent.
 func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
-	rows, err := j.db.Query(`SELECT name FROM whiteouts WHERE parent_id = ?`, parentID)
+	prefix := whiteoutPrefix(parentID)
+	iter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: append(prefix[:len(prefix):len(prefix)], 0xFF),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer iter.Close()
+
 	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		names = append(names, name)
+	for iter.First(); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		// Key format: w:<parentID>:<name>
+		// parentID is at bytes 2-10, name starts at byte 11.
+		names = append(names, string(key[11:]))
 	}
-	return names, rows.Err()
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
 // --- XAttr Operations ---
 
 // GetXAttr returns the value of an extended attribute, or nil if not found.
 func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
-	var val []byte
-	err := j.db.QueryRow(
-		`SELECT value FROM xattrs WHERE node_id = ? AND name = ?`, nodeID, name).Scan(&val)
-	if err == sql.ErrNoRows {
+	val, closer, err := j.db.Get(xattrKey(nodeID, name))
+	if err == pebble.ErrNotFound {
 		return nil, nil
 	}
-	return val, err
+	if err != nil {
+		return nil, err
+	}
+	defer closer.Close()
+	// Copy the value since it's only valid until closer.Close().
+	cp := make([]byte, len(val))
+	copy(cp, val)
+	return cp, nil
 }
 
 // ListXAttrs returns all extended attribute names for a node.
 func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
-	rows, err := j.db.Query(`SELECT name FROM xattrs WHERE node_id = ?`, nodeID)
+	prefix := xattrPrefix(nodeID)
+	iter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: append(prefix[:len(prefix):len(prefix)], 0xFF),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer iter.Close()
+
 	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		names = append(names, name)
+	for iter.First(); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		// Key format: x:<nodeID>:<name>
+		// nodeID is at bytes 2-10, name starts at byte 11.
+		names = append(names, string(key[11:]))
 	}
-	return names, rows.Err()
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
-func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
 // SetXAttr upserts an extended attribute value.
-	return j.tx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT OR REPLACE INTO xattrs (node_id, name, value) VALUES (?, ?, ?)`,
-			nodeID, name, value)
-		return err
+func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
+	return j.tx(func(b *pebble.Batch) error {
+		return b.Set(xattrKey(nodeID, name), value, nil)
 	})
 }
 
-func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
-	return j.tx(func(tx *sql.Tx) error {
 // RemoveXAttr deletes an extended attribute.
-		_, err := tx.Exec(`DELETE FROM xattrs WHERE node_id = ? AND name = ?`, nodeID, name)
-		return err
+func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
+	return j.tx(func(b *pebble.Batch) error {
+		return b.Delete(xattrKey(nodeID, name), nil)
 	})
 }
 
@@ -623,26 +774,16 @@ func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 // If nodeID != 0, the path is fully in the journal.
 // If nodeID == 0, the path is partially or fully in pxar.
 //
-// All queries execute within a single read transaction, providing
-// snapshot consistency across the entire walk — analogous to ext4's
-// i_mutex on parent directories during lookup.
+// Uses a snapshot iterator for consistent reads across the entire walk.
 func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellOffAt int64, remaining string, err error) {
 	if path == "/" || path == "" {
 		return 1, "/", 0, "", nil
 	}
 
-	// Snapshot read: In SQLite WAL mode, BEGIN provides a consistent
-	// view without blocking concurrent writers. This is the same
-	// approach ext4 uses — directory lookups hold i_mutex so renames
-	// can't interleave with lookups.
-	tx, txErr := j.db.Begin()
-	if txErr != nil {
-		return 0, "", 0, "", fmt.Errorf("begin snapshot: %w", txErr)
-	}
-	defer func() { _ = tx.Rollback() }() // read-only: rollback is free
+	// Use a snapshot for consistent reads across the walk.
+	snap := j.db.NewSnapshot()
+	defer snap.Close()
 
-	// Zero-allocation path walker. Walk path segments by slicing the
-	// original string — no []string allocation, no strings.Join.
 	curID := int64(1)
 	var pxarPrefix strings.Builder
 	pxarPrefix.WriteByte('/')
@@ -657,17 +798,11 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 		part := path[pos:end]
 
 		// Look up edge within the snapshot.
-		var childID int64
-		err = tx.QueryRow(
-			`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
-			curID, part).Scan(&childID)
-		if err == sql.ErrNoRows {
-			// Check for whiteout within the same snapshot.
-			var wo int
-			werr := tx.QueryRow(
-				`SELECT 1 FROM whiteouts WHERE parent_id = ? AND name = ?`,
-				curID, part).Scan(&wo)
-			if werr != nil && werr != sql.ErrNoRows {
+		edgeVal, edgeCloser, gerr := snap.Get(edgeKey(curID, part))
+		if gerr == pebble.ErrNotFound {
+			// Check for whiteout.
+			_, _, werr := snap.Get(whiteoutKey(curID, part))
+			if werr != nil && werr != pebble.ErrNotFound {
 				return 0, "", 0, "", werr
 			}
 			if werr == nil {
@@ -676,21 +811,25 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 			// Fell off graph — remaining is from current position.
 			return 0, pxarPrefix.String() + path[pos-1:], curID, path[pos:], nil
 		}
-		if err != nil {
-			return 0, "", 0, "", err
+		if gerr != nil {
+			return 0, "", 0, "", gerr
 		}
+		childID := decodeInt64(edgeVal)
+		_ = edgeCloser.Close()
 
 		curID = childID
 
-		// Track pxar redirect within the snapshot.
-		var redirectTo sql.NullString
-		if err := tx.QueryRow(
-			`SELECT redirect_to FROM nodes WHERE id = ?`, curID).Scan(&redirectTo); err != nil {
-			return 0, "", 0, "", err
+		// Track pxar redirect.
+		nodeData, nodeCloser, nerr := snap.Get(nodeKey(curID))
+		if nerr != nil {
+			return 0, "", 0, "", nerr
 		}
-		if redirectTo.Valid && redirectTo.String != "" {
+		n := decodeNode(nodeData, curID)
+		_ = nodeCloser.Close()
+
+		if n.RedirectTo != "" {
 			pxarPrefix.Reset()
-			pxarPrefix.WriteString(redirectTo.String)
+			pxarPrefix.WriteString(n.RedirectTo)
 		} else {
 			pxarPrefix.WriteByte('/')
 			pxarPrefix.WriteString(part)
@@ -706,42 +845,48 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 
 // AllXAttrs returns all xattrs grouped by node ID.
 func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
-	rows, err := j.db.Query(`SELECT node_id, name, value FROM xattrs ORDER BY node_id, name`)
+	prefix := []byte(prefixXattr)
+	iter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: []byte(prefixXattr + "\xff"),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	defer iter.Close()
+
 	result := make(map[int64]map[string][]byte)
-	for rows.Next() {
-		var nodeID int64
-		var name string
-		var value []byte
-		if err := rows.Scan(&nodeID, &name, &value); err != nil {
-			return nil, err
-		}
+	for iter.First(); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		// Key format: x:<nodeID>:<name>
+		nodeID := int64(binary.BigEndian.Uint64(key[2:10]))
+		name := string(key[11:])
+		val := iter.Value()
+
 		if result[nodeID] == nil {
 			result[nodeID] = make(map[string][]byte)
 		}
-		result[nodeID][name] = value
+		cp := make([]byte, len(val))
+		copy(cp, val)
+		result[nodeID][name] = cp
 	}
-	return result, rows.Err()
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // EnsureNodePath atomically creates a journal node and all intermediate
-// edges/nodes for the given path in a single transaction.
-// If whiteout is true and the entry has a pxar counterpart, a whiteout is added.
-// This is the efficient, atomic replacement for the multi-transaction
-// ensureNode path walk.
+// edges/nodes for the given path in a single batch.
 func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int64, error) {
 	var nodeID int64
-	err := j.tx(func(tx *sql.Tx) error {
-		id, err := createNodeTx(tx, n)
+	err := j.tx(func(b *pebble.Batch) error {
+		id, err := j.createNodeInBatch(b, n)
 		if err != nil {
 			return err
 		}
 		nodeID = id
 
-		// Walk path components from root.
 		parts := splitPath(path)
 		curParentID := int64(1) // root
 
@@ -751,34 +896,28 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 			}
 
 			// Check if edge already exists.
-			var childID int64
-			err := tx.QueryRow(
-				`SELECT child_id FROM edges WHERE parent_id = ? AND name = ?`,
-				curParentID, name).Scan(&childID)
-			if err != nil && err != sql.ErrNoRows {
-				return err
-			}
-
-			if err == nil {
+			edgeVal, closer, gerr := j.db.Get(edgeKey(curParentID, name))
+			if gerr == nil {
 				// Edge exists, follow it.
+				childID := decodeInt64(edgeVal)
+				_ = closer.Close()
 				curParentID = childID
 				continue
 			}
+			if gerr != pebble.ErrNotFound {
+				return gerr
+			}
 
 			// No edge — clean up any stale whiteout.
-			_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, curParentID, name)
+			_ = b.Delete(whiteoutKey(curParentID, name), nil)
 
 			if i == len(parts)-1 {
 				// Final component — link to our node.
-				if _, err := tx.Exec(
-					`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
-					curParentID, name, nodeID); err != nil {
+				if err := b.Set(edgeKey(curParentID, name), encodeInt64(nodeID), nil); err != nil {
 					return err
 				}
 				if whiteout {
-					if _, err := tx.Exec(
-						`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`,
-						curParentID, name); err != nil {
+					if err := b.Set(whiteoutKey(curParentID, name), nil, nil); err != nil {
 						return err
 					}
 				}
@@ -787,26 +926,24 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 				var intermediatePath strings.Builder
 				intermediatePath.WriteByte('/')
 				intermediatePath.WriteString(parts[0])
-				for j := 1; j <= i; j++ {
+				for jj := 1; jj <= i; jj++ {
 					intermediatePath.WriteByte('/')
-					intermediatePath.WriteString(parts[j])
+					intermediatePath.WriteString(parts[jj])
 				}
 				intermediate := &GraphNode{
 					Kind:       NodeDir,
-					Mode:       syscall.S_IFDIR | 0o755,
+					Mode:       uint32(0o755 | 0x4000), // S_IFDIR | 0o755
 					UID:        n.UID,
 					GID:        n.GID,
 					MtimeNs:    n.MtimeNs,
 					CtimeNs:    n.CtimeNs,
 					RedirectTo: intermediatePath.String(),
 				}
-				midID, err := createNodeTx(tx, intermediate)
+				midID, err := j.createNodeInBatch(b, intermediate)
 				if err != nil {
 					return err
 				}
-				if _, err := tx.Exec(
-					`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
-					curParentID, name, midID); err != nil {
+				if err := b.Set(edgeKey(curParentID, name), encodeInt64(midID), nil); err != nil {
 					return err
 				}
 				curParentID = midID
@@ -817,45 +954,90 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 	return nodeID, err
 }
 
-// Clear truncates all tables (keeps root node).
+// Clear truncates all data (keeps root node).
 func (j *Journal) Clear() error {
-	return j.tx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM whiteouts`); err != nil {
+	return j.tx(func(b *pebble.Batch) error {
+		// Delete all whiteouts, xattrs, edges, and non-root nodes.
+		// We use range deletes via iteration.
+
+		// Delete all whiteouts.
+		if err := deletePrefix(b, []byte(prefixWhiteout)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM xattrs`); err != nil {
+		// Delete all xattrs.
+		if err := deletePrefix(b, []byte(prefixXattr)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM edges`); err != nil {
+		// Delete all edges.
+		if err := deletePrefix(b, []byte(prefixEdge)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`DELETE FROM nodes WHERE id != 1`); err != nil {
+		// Delete all nodes except root.
+		if err := deletePrefixExcept(b, []byte(prefixNode), nodeKey(1)); err != nil {
 			return err
 		}
-		_, err := tx.Exec(`UPDATE nodes SET redirect_to = '/' WHERE id = 1`)
-		return err
+		// Reset root node.
+		root := &GraphNode{
+			ID:         1,
+			Kind:       NodeDir,
+			Mode:       16877,
+			RedirectTo: "/",
+		}
+		return b.Set(nodeKey(1), encodeNode(root), nil)
 	})
+}
+
+// deletePrefix deletes all keys with the given prefix from a batch.
+func deletePrefix(b *pebble.Batch, prefix []byte) error {
+	// Pebble supports DeleteRange which is much more efficient.
+	// Upper bound is prefix with last byte incremented (or 0xFF appended).
+	upper := make([]byte, len(prefix)+1)
+	copy(upper, prefix)
+	upper[len(prefix)] = 0xFF
+	return b.DeleteRange(prefix, upper, nil)
+}
+
+// deletePrefixExcept deletes all keys with the given prefix except one specific key.
+func deletePrefixExcept(b *pebble.Batch, prefix []byte, exceptKey []byte) error {
+	// Delete range [prefix, exceptKey)
+	if err := b.DeleteRange(prefix, exceptKey, nil); err != nil {
+		return err
+	}
+	// Delete range (exceptKey, prefix\xFF]
+	nextKey := make([]byte, len(exceptKey)+1)
+	copy(nextKey, exceptKey)
+	nextKey[len(exceptKey)] = 0xFF
+	upper := make([]byte, len(prefix)+1)
+	copy(upper, prefix)
+	upper[len(prefix)] = 0xFF
+	return b.DeleteRange(nextKey, upper, nil)
 }
 
 // --- Compound Atomic Operations ---
 
 // DeleteEdgeAndNode atomically removes an edge and its target node.
-// CASCADE handles xattrs; the whiteout is added in the same tx.
+// Also removes all xattrs for the node.
 func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {
-	return j.tx(func(tx *sql.Tx) error {
-		if _, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, parentID, name); err != nil {
+	return j.tx(func(b *pebble.Batch) error {
+		// Delete edge.
+		if err := b.Delete(edgeKey(parentID, name), nil); err != nil {
 			return err
 		}
 		if addWhiteout {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name); err != nil {
+			if err := b.Set(whiteoutKey(parentID, name), nil, nil); err != nil {
 				return err
 			}
 		}
-		// Node deletion cascades to xattrs.
-		if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, nodeID); err != nil {
+		// Delete all xattrs for this node.
+		xaPrefix := xattrPrefix(nodeID)
+		xaUpper := make([]byte, len(xaPrefix)+1)
+		copy(xaUpper, xaPrefix)
+		xaUpper[len(xaPrefix)] = 0xFF
+		if err := b.DeleteRange(xaPrefix, xaUpper, nil); err != nil {
 			return err
 		}
-		return nil
+		// Delete node.
+		return b.Delete(nodeKey(nodeID), nil)
 	})
 }
 
@@ -863,18 +1045,17 @@ func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, a
 // a whiteout for the pxar entry being shadowed.
 func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *GraphNode, whiteout bool) (int64, error) {
 	var id int64
-	err := j.tx(func(tx *sql.Tx) error {
+	err := j.tx(func(b *pebble.Batch) error {
 		var err error
-		id, err = createNodeTx(tx, n)
+		id, err = j.createNodeInBatch(b, n)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(`INSERT OR REPLACE INTO edges (parent_id, name, child_id) VALUES (?, ?, ?)`,
-			parentID, name, id); err != nil {
+		if err := b.Set(edgeKey(parentID, name), encodeInt64(id), nil); err != nil {
 			return err
 		}
 		if whiteout {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, parentID, name); err != nil {
+			if err := b.Set(whiteoutKey(parentID, name), nil, nil); err != nil {
 				return err
 			}
 		}
@@ -886,43 +1067,61 @@ func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *Grap
 // MoveEdgeAndWhiteout atomically moves an edge and adds whiteouts for both
 // old and new pxar locations.
 func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64, whiteoutOld, whiteoutNew bool) error {
-	return j.tx(func(tx *sql.Tx) error {
+	return j.tx(func(b *pebble.Batch) error {
 		// Remove destination whiteout.
-		_, _ = tx.Exec(`DELETE FROM whiteouts WHERE parent_id = ? AND name = ?`, newParent, newName)
+		_ = b.Delete(whiteoutKey(newParent, newName), nil)
 
 		// Handle destination collision.
 		if replaceDestNode != 0 {
-			if _, err := tx.Exec(`DELETE FROM edges WHERE parent_id = ? AND name = ?`, newParent, newName); err != nil {
+			if err := b.Delete(edgeKey(newParent, newName), nil); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, replaceDestNode); err != nil {
+			// Delete dest node + xattrs.
+			xaPrefix := xattrPrefix(replaceDestNode)
+			xaUpper := make([]byte, len(xaPrefix)+1)
+			copy(xaUpper, xaPrefix)
+			xaUpper[len(xaPrefix)] = 0xFF
+			if err := b.DeleteRange(xaPrefix, xaUpper, nil); err != nil {
+				return err
+			}
+			if err := b.Delete(nodeKey(replaceDestNode), nil); err != nil {
 				return err
 			}
 		}
 
-		// Move source edge.
-		res, err := tx.Exec(`UPDATE edges SET parent_id = ?, name = ? WHERE parent_id = ? AND name = ?`,
-			newParent, newName, oldParent, oldName)
+		// Look up source edge to get child ID.
+		srcEdgeVal, closer, err := j.db.Get(edgeKey(oldParent, oldName))
 		if err != nil {
+			return fmt.Errorf("move edge: source (%d, %q) not found: %w", oldParent, oldName, err)
+		}
+		childIDVal := make([]byte, len(srcEdgeVal))
+		copy(childIDVal, srcEdgeVal)
+		_ = closer.Close()
+
+		// Move source edge: delete old, set new.
+		if err := b.Delete(edgeKey(oldParent, oldName), nil); err != nil {
 			return err
 		}
-		affected, _ := res.RowsAffected()
-		if affected == 0 {
-			return fmt.Errorf("move edge: source (%d, %q) not found", oldParent, oldName)
+		if err := b.Set(edgeKey(newParent, newName), childIDVal, nil); err != nil {
+			return err
 		}
 
 		// Whiteout old location.
 		if whiteoutOld {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, oldParent, oldName); err != nil {
+			if err := b.Set(whiteoutKey(oldParent, oldName), nil, nil); err != nil {
 				return err
 			}
 		}
 		// Whiteout new location if it had a pxar entry.
 		if whiteoutNew {
-			if _, err := tx.Exec(`INSERT OR IGNORE INTO whiteouts (parent_id, name) VALUES (?, ?)`, newParent, newName); err != nil {
+			if err := b.Set(whiteoutKey(newParent, newName), nil, nil); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 }
+
+// Ensure open.go compatibility: the journal data directory is "journal.db" by convention
+// but Pebble creates its own directory structure. The mount.go code references JournalDir
+// as a subdirectory name — that's fine, Pebble will use it as the database directory.
