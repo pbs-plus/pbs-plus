@@ -35,27 +35,8 @@ jobs:
           echo "GITHUB_REPOSITORY_NAME=${{ github.event.repository.name }}" >> $GITHUB_ENV
           echo "GITHUB_REPOSITORY=${{ github.repository }}" >> $GITHUB_ENV
 
-      - name: Find previous non-RC tag
-        id: prev_tag
-        run: |
-          CURRENT_TAG="${{ github.ref_name }}"
-
-          # Get all tags sorted by version
-          git fetch --tags --prune --force
-
-          # Find the previous non-RC tag
-          PREV_TAG=$(git tag -l --sort=-version:refname | \
-            grep -v '\-rc' | \
-            grep -v "^${CURRENT_TAG}$" | \
-            head -n1)
-
-          if [ -n "$PREV_TAG" ]; then
-            echo "previous_tag=$PREV_TAG" >> $GITHUB_OUTPUT
-            echo "Previous non-RC tag: $PREV_TAG"
-          else
-            echo "No previous non-RC tag found"
-            echo "previous_tag=" >> $GITHUB_OUTPUT
-          fi
+      - name: Fetch tags (prune stale refs from force pushes)
+        run: git fetch --tags --prune --force
 
       - name: Build Ed25519 signer
         run: |
@@ -90,7 +71,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_PREVIOUS_TAG: ${{ steps.prev_tag.outputs.previous_tag }}
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
 
   build-msi:
