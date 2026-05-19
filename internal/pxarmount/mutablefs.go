@@ -96,7 +96,18 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 
 func (fs *MutableFS) SetSnapshotRef(ref snapshotRef) { fs.origSnapshot = ref }
 func (fs *MutableFS) SetACLConfig(cfg ACLConfig)     { fs.acl = cfg }
-func (fs *MutableFS) SetVerbose(v bool)              { fs.verbose = v }
+
+// applyACL overrides the UID/GID on a ResolvedEntry when the ACL config
+// specifies a default owner or group.
+func (fs *MutableFS) applyACL(re *ResolvedEntry) {
+	if fs.acl.OwnerUID != 0 {
+		re.UID = uint32(fs.acl.OwnerUID)
+	}
+	if fs.acl.OwnerGID != 0 {
+		re.GID = uint32(fs.acl.OwnerGID)
+	}
+}
+func (fs *MutableFS) SetVerbose(v bool) { fs.verbose = v }
 
 // debugf prints a debug message when verbose mode is enabled.
 func (fs *MutableFS) debugf(format string, args ...any) {
@@ -1515,6 +1526,7 @@ func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
 		CtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
 	}
 	re.Inode = fs.pathToIno("/", true)
+	fs.applyACL(re)
 	return re, fuse.OK
 }
 
@@ -1566,6 +1578,7 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		CtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
 	}
 	re.Inode = fs.pathToIno(path, re.IsDir)
+	fs.applyACL(re)
 	return re, fuse.OK
 }
 
@@ -1614,6 +1627,7 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 	}
 
 	re.Inode = fs.pathToIno(path, re.IsDir)
+	fs.applyACL(re)
 	return re, fuse.OK
 }
 
