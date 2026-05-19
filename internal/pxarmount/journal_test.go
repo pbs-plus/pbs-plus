@@ -1144,12 +1144,12 @@ func TestConcurrentResolvePath(t *testing.T) {
 
 // --- Background Sync ---
 
-func TestBackgroundSync(t *testing.T) {
+func TestBackgroundFlush(t *testing.T) {
 	j, cleanup := testJournal(t)
 	defer cleanup()
 
 	// Override interval to be fast for testing.
-	j.syncInterval.Store(int64(100 * time.Millisecond))
+	j.flushInterval.Store(int64(100 * time.Millisecond))
 
 	// Write enough to trigger syncs.
 	for i := range 300 {
@@ -1166,7 +1166,7 @@ func TestBackgroundSync(t *testing.T) {
 	}
 }
 
-func TestEagerSyncThreshold(t *testing.T) {
+func TestEagerFlushThreshold(t *testing.T) {
 	j, cleanup := testJournal(t)
 	defer cleanup()
 
@@ -1176,9 +1176,9 @@ func TestEagerSyncThreshold(t *testing.T) {
 		_, _ = j.EnsureNodePath(fmt.Sprintf("/eager_%04d.txt", i), n, false)
 	}
 
-	// syncPending should have been reset by eager sync.
-	if pending := j.syncPending.Value(); pending >= 64 {
-		t.Errorf("syncPending = %d, should be < 64 after eager sync", pending)
+	// flushPending should have been reset by eager flush.
+	if pending := j.flushPending.Value(); pending >= 64 {
+		t.Errorf("flushPending = %d, should be < 64 after eager flush", pending)
 	}
 }
 

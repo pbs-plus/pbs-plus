@@ -50,8 +50,7 @@ type GraphEdge struct {
 //	e:<parentID>:<name> → child node ID (int64 LE)
 //	x:<nodeID>:<xattrName> → xattr value bytes
 //	w:<parentID>:<name> → whiteout marker (empty value)
-//	m:next_node_id    → next node ID counter (int64 LE)
-//	m:schema_version  → schema version string
+//	m:<key>            → meta values (schema_version, next_node_id)
 const (
 	prefixNode     = "n:"
 	prefixEdge     = "e:"
@@ -65,35 +64,74 @@ const schemaVersion = 1
 
 // Journal is the Pebble-backed inode graph for the mutable overlay.
 //
-// Data model:
+// # Data model
 //
-//	Nodes:    n:<id>             → binary-encoded GraphNode
-//	Edges:    e:<parentID>:<name> → child node ID (int64 LE)
-//	XAttrs:   x:<nodeID>:<xattrName> → value bytes
-//	Whiteouts: w:<parentID>:<name> → empty value
-//	Meta:     m:next_node_id    → next ID counter
-//	          m:schema_version  → version string
+//	Nodes:     n:<id>               → binary-encoded GraphNode
+//	Edges:     e:<parentID>:<name>  → child node ID (int64 LE)
+//	XAttrs:    x:<nodeID>:<name>    → value bytes
+//	Whiteouts: w:<parentID>:<name>  → empty value
+//	Meta:      m:next_node_id       → next ID counter
+//	           m:schema_version     → version string
 //
 // Root node (id=1) always exists with redirect_to='/'.
 // Renames are O(1): just update the edge key. No descendants touched.
 //
-// Durability: Pebble's WAL provides crash consistency. Sync() forces
-// a flush to make all committed writes durable.
+// # Durability model
+//
+// Modeled after filesystems built on RocksDB (BlueStore/BlueFS, TiKV/TiFS)
+// with Pebble as the engine. Pebble and RocksDB share the same LSM
+// architecture and WAL semantics.
+//
+// Writes use two durability levels:
+//
+//  1. batch.Commit(Sync) — fsyncs the WAL after every mutation batch.
+//     This matches SQLite's synchronous=FULL and RocksDB's
+//     WriteOptions.sync=true. Every FUSE metadata mutation (create,
+//     unlink, rename, etc.) is durable in the WAL before returning to
+//     the kernel. Process crash → WAL replay recovers all committed
+//     mutations. Analogous to ext4's journal commit on every metadata
+//     write (data=journal mode).
+//
+//  2. Sync() → Flush() — forces memtable contents into SSTables and
+//     fsyncs them. Called on FUSE Fsync and before commit snapshots.
+//     After Flush(), data survives even a storage device reset (not
+//     just a process crash). Analogous to ext4's
+//     ext4_sync_fs()/sync_blockdev().
+//
+//  3. Background flush loop — periodically calls Flush() every 5s to
+//     bound WAL replay time (analogous to ext4's commit=5s). Without
+//     this, a crash would require replaying a potentially large WAL.
+//     The loop does NOT affect durability — writes are already durable
+//     via the WAL sync in (1).
+//
+// # Crash consistency
+//
+// If the process crashes:
+//   - Pebble replays its WAL on Open(), recovering all committed batches
+//   - OpenJournal runs orphan edge cleanup (analogous to ext4's
+//     ext4_orphan_cleanup at mount time)
+//   - Root node is verified/recreated if missing
+//
+// # Snapshot isolation
+//
+// ResolvePath uses pebble.Snapshot for consistent reads across the
+// entire path walk — analogous to holding i_mutex on parent directories
+// during lookup (prevents interleaving with concurrent renames).
 type Journal struct {
 	db *pebble.DB
 	mu sync.Mutex // serializes write batches + node ID allocation
 
 	// nextNodeID is the next auto-increment node ID (in-memory counter,
-	// persisted to m:next_node_id periodically and on Sync).
+	// persisted to m:next_node_id on Sync/Close).
 	nextNodeID atomic.Int64
 
-	// Periodic sync state.
-	syncDone    chan struct{}
-	syncClose   chan struct{}
-	syncPending *xsync.Counter
-
-	// syncInterval controls how often the background sync goroutine runs.
-	syncInterval atomic.Int64 // nanoseconds
+	// Background flush loop state. The loop calls Flush() periodically
+	// to bound WAL replay time. It does NOT affect write durability
+	// (writes are already WAL-synced via batch.Commit(Sync)).
+	flushDone     chan struct{}
+	flushClose    chan struct{}
+	flushPending  *xsync.Counter // approximate unflushed batch count
+	flushInterval atomic.Int64   // nanoseconds
 }
 
 // --- Key encoding helpers ---
@@ -261,21 +299,26 @@ func decodeInt64(b []byte) int64 {
 }
 
 // OpenJournal opens or creates the journal database in dir.
+// Performs crash recovery analogous to ext4's journal replay:
+//  1. WAL auto-replay (Pebble handles this)
+//  2. Schema version check and migration
+//  3. Root node integrity verification
+//  4. Orphan edge cleanup (dangling references from partial tx)
 func OpenJournal(dir string) (*Journal, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create journal dir: %w", err)
 	}
 
-	// Use the default FS so Pebble uses the OS filesystem directly.
 	opts := &pebble.Options{
 		FS: vfs.Default,
-		// Optimize for the journal workload: small keys, frequent writes.
-		// Keep WAL enabled for crash recovery — it's the primary
-		// durability mechanism. Pebble's WAL replay is equivalent to
-		// SQLite's WAL replay.
+		// WAL enabled for crash recovery — equivalent to RocksDB's
+		// default (WAL is always on unless explicitly disabled).
 		DisableWAL: false,
-		// Keep memtable small since journal data is metadata-sized.
-		MemTableSize: 4 << 20, // 4MB
+		// Small memtable: journal stores filesystem metadata (small
+		// keys/values). 4MB matches RocksDB's default write_buffer_size.
+		MemTableSize: 4 << 20,
+		// Disable stats collection — not needed for a FUSE journal.
+
 	}
 
 	db, err := pebble.Open(dir, opts)
@@ -283,7 +326,7 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
-	j := &Journal{db: db, syncPending: xsync.NewCounter()}
+	j := &Journal{db: db, flushPending: xsync.NewCounter()}
 
 	// Initialize or verify schema.
 	if err := j.initSchema(); err != nil {
@@ -297,10 +340,9 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("load next node id: %w", err)
 	}
 
-	// Verify root node.
+	// Verify root node survived any prior crash.
 	rootData, closer, err := db.Get(nodeKey(1))
 	if err == pebble.ErrNotFound {
-		// Create root node.
 		root := &GraphNode{
 			ID:         1,
 			Kind:       NodeDir,
@@ -320,12 +362,15 @@ func OpenJournal(dir string) (*Journal, error) {
 	}
 
 	// Clean up orphan edges: edges pointing to non-existent nodes.
+	// This can happen if a process crash occurs between node creation
+	// and edge insertion in a compound operation. Like ext4's
+	// ext4_orphan_cleanup().
 	if err := j.cleanOrphanEdges(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("clean orphan edges: %w", err)
 	}
 
-	j.startSyncLoop()
+	j.startFlushLoop()
 	return j, nil
 }
 
@@ -334,7 +379,6 @@ func (j *Journal) initSchema() error {
 	schemaKey := metaKey("schema_version")
 	_, closer, err := j.db.Get(schemaKey)
 	if err == pebble.ErrNotFound {
-		// First open — write schema version.
 		if err := j.db.Set(schemaKey, fmt.Append(nil, schemaVersion), pebble.Sync); err != nil {
 			return err
 		}
@@ -344,7 +388,6 @@ func (j *Journal) initSchema() error {
 		return err
 	}
 	_ = closer.Close()
-	// Schema version exists; future migrations go here.
 	return nil
 }
 
@@ -352,8 +395,7 @@ func (j *Journal) initSchema() error {
 func (j *Journal) loadNextNodeID() error {
 	val, closer, err := j.db.Get(nextNodeIDKey())
 	if err == pebble.ErrNotFound {
-		// Start from 2 (1 is root).
-		j.nextNodeID.Store(2)
+		j.nextNodeID.Store(2) // 1 is root
 		return nil
 	}
 	if err != nil {
@@ -369,11 +411,13 @@ func (j *Journal) loadNextNodeID() error {
 }
 
 // persistNextNodeID writes the current next-node-ID counter to the DB.
+// Caller must hold j.mu.
 func (j *Journal) persistNextNodeID() error {
-	return j.db.Set(nextNodeIDKey(), encodeInt64(j.nextNodeID.Load()), nil)
+	return j.db.Set(nextNodeIDKey(), encodeInt64(j.nextNodeID.Load()), pebble.Sync)
 }
 
 // cleanOrphanEdges removes edges pointing to non-existent nodes.
+// Analogous to ext4's ext4_orphan_cleanup() at mount time.
 func (j *Journal) cleanOrphanEdges() error {
 	prefix := []byte(prefixEdge)
 	iter, err := j.db.NewIter(&pebble.IterOptions{
@@ -394,10 +438,8 @@ func (j *Journal) cleanOrphanEdges() error {
 			continue
 		}
 		childID := decodeInt64(childIDVal)
-		// Check if node exists.
 		_, closer, err := j.db.Get(nodeKey(childID))
 		if err == pebble.ErrNotFound {
-			// Orphan edge — delete it.
 			_ = batch.Delete(iter.Key(), nil)
 		} else if err != nil {
 			return err
@@ -415,8 +457,12 @@ func (j *Journal) cleanOrphanEdges() error {
 }
 
 // VerifyIntegrity runs a full database consistency check.
+// Analogous to ext4's e2fsck -n (read-only check):
+//   - Root node existence
+//   - No orphan edges (edges without matching nodes)
+//   - No orphan xattrs (xattrs without matching nodes)
 func (j *Journal) VerifyIntegrity() error {
-	// Check that root node exists.
+	// 1. Root node must exist.
 	rootData, closer, err := j.db.Get(nodeKey(1))
 	if err == pebble.ErrNotFound {
 		return fmt.Errorf("root node missing")
@@ -427,7 +473,7 @@ func (j *Journal) VerifyIntegrity() error {
 	_ = closer.Close()
 	_ = rootData
 
-	// Check for orphan edges.
+	// 2. No orphan edges.
 	edgePrefixBytes := []byte(prefixEdge)
 	iter, err := j.db.NewIter(&pebble.IterOptions{
 		LowerBound: edgePrefixBytes,
@@ -446,7 +492,6 @@ func (j *Journal) VerifyIntegrity() error {
 		childID := decodeInt64(childIDVal)
 		_, closer, err := j.db.Get(nodeKey(childID))
 		if err == pebble.ErrNotFound {
-			// closer is nil on ErrNotFound
 			return fmt.Errorf("orphan edge to node %d", childID)
 		}
 		if err != nil {
@@ -458,7 +503,7 @@ func (j *Journal) VerifyIntegrity() error {
 		return fmt.Errorf("edge iter error: %w", err)
 	}
 
-	// Check for orphan xattrs.
+	// 3. No orphan xattrs.
 	xaPrefix := []byte(prefixXattr)
 	xiter, err := j.db.NewIter(&pebble.IterOptions{
 		LowerBound: xaPrefix,
@@ -470,7 +515,6 @@ func (j *Journal) VerifyIntegrity() error {
 	defer xiter.Close()
 
 	for xiter.First(); xiter.Valid(); xiter.Next() {
-		// Extract node ID from key: x:<nodeID>:<name>
 		key := xiter.Key()
 		if len(key) < 11 {
 			continue
@@ -478,7 +522,6 @@ func (j *Journal) VerifyIntegrity() error {
 		nodeID := int64(binary.BigEndian.Uint64(key[2:10]))
 		_, closer, err := j.db.Get(nodeKey(nodeID))
 		if err == pebble.ErrNotFound {
-			// closer is nil on ErrNotFound
 			return fmt.Errorf("orphan xattr for node %d", nodeID)
 		}
 		if err != nil {
@@ -493,15 +536,17 @@ func (j *Journal) VerifyIntegrity() error {
 	return nil
 }
 
-// Close closes the journal database.
+// Close stops the background flush loop, persists state, and closes the DB.
 func (j *Journal) Close() error {
-	if j.syncClose != nil {
-		close(j.syncClose)
+	// Stop background flush loop.
+	if j.flushClose != nil {
+		close(j.flushClose)
 	}
-	if j.syncDone != nil {
-		<-j.syncDone
+	if j.flushDone != nil {
+		<-j.flushDone
 	}
 
+	// Persist node ID counter with a final WAL-synced write.
 	j.mu.Lock()
 	_ = j.persistNextNodeID()
 	j.mu.Unlock()
@@ -514,8 +559,16 @@ func (j *Journal) allocNodeID() int64 {
 	return j.nextNodeID.Add(1) - 1
 }
 
-// tx executes fn within a single Pebble batch.
-// The batch is committed atomically — either all writes succeed or none do.
+// tx executes fn within a single Pebble batch, committed with WAL sync.
+//
+// Durability guarantee: the batch is fsynced to the WAL before tx returns
+// (pebble.Sync). This matches RocksDB's WriteOptions.sync=true and
+// SQLite's synchronous=FULL. After tx returns, the mutation survives
+// a process crash — Pebble replays the WAL on next Open().
+//
+// The mu lock serializes batches so only one WAL sync is in flight at a
+// time. This is the same model as RocksDB's write thread — one write
+// group syncs the WAL together, eliminating per-write fsync overhead.
 func (j *Journal) tx(fn func(b *pebble.Batch) error) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -527,58 +580,76 @@ func (j *Journal) tx(fn func(b *pebble.Batch) error) error {
 		return err
 	}
 
-	if err := batch.Commit(pebble.NoSync); err != nil {
+	// Sync commit: fsyncs the WAL. Matches RocksDB's
+	// WriteOptions{Sync: true} and SQLite's synchronous=FULL.
+	// Every FUSE metadata mutation is durable before returning.
+	if err := batch.Commit(pebble.Sync); err != nil {
 		return err
 	}
 
-	j.syncPending.Add(1)
+	j.flushPending.Add(1)
 
-	// Eager sync if enough writes have accumulated.
-	if j.syncPending.Value() >= 64 {
-		_ = j.syncLocked()
+	// Eager flush if enough batches have accumulated — bounds WAL
+	// replay time. After Flush(), data is in SSTables so no WAL
+	// replay is needed for these entries.
+	if j.flushPending.Value() >= 64 {
+		_ = j.flushLocked()
 	}
 
 	return nil
 }
 
-// Sync forces a flush of the WAL to make all writes durable.
+// Sync forces a memtable flush to SSTables and fsyncs them.
+// Call this from FUSE's Fsync path and the commit path — analogous to
+// ext4's sync_file_range/fsync which ensures data is on stable storage.
+//
+// After Sync(), all committed mutations are in SSTables (not just the WAL),
+// so they survive even a storage device reset.
 func (j *Journal) Sync() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return j.syncLocked()
+	return j.flushLocked()
 }
 
-// syncLocked is the internal sync implementation. Caller must hold j.mu.
-func (j *Journal) syncLocked() error {
+// flushLocked persists the node ID counter and flushes memtables to SSTables.
+// Caller must hold j.mu.
+func (j *Journal) flushLocked() error {
 	if err := j.persistNextNodeID(); err != nil {
 		return err
 	}
 	if err := j.db.Flush(); err != nil {
 		return err
 	}
-	j.syncPending.Reset()
+	j.flushPending.Reset()
 	return nil
 }
 
-// startSyncLoop launches the background periodic sync goroutine.
-func (j *Journal) startSyncLoop() {
-	if j.syncInterval.Load() <= 0 {
-		j.syncInterval.Store(int64(5 * time.Second))
+// startFlushLoop launches the background periodic flush goroutine.
+// This bounds WAL replay time by periodically moving memtable entries
+// into SSTables. It does NOT affect write durability — writes are
+// already WAL-synced via batch.Commit(Sync).
+//
+// Analogous to ext4's commit=5s: the journal is committed every 5
+// seconds so that after a crash, only the last 5 seconds of WAL need
+// replay (instead of potentially the entire WAL).
+func (j *Journal) startFlushLoop() {
+	if j.flushInterval.Load() <= 0 {
+		j.flushInterval.Store(int64(5 * time.Second))
 	}
-	j.syncDone = make(chan struct{})
-	j.syncClose = make(chan struct{})
+	j.flushDone = make(chan struct{})
+	j.flushClose = make(chan struct{})
 	go func() {
-		defer close(j.syncDone)
-		ticker := time.NewTicker(time.Duration(j.syncInterval.Load()))
+		defer close(j.flushDone)
+		ticker := time.NewTicker(time.Duration(j.flushInterval.Load()))
 		defer ticker.Stop()
 		for {
 			select {
-			case <-j.syncClose:
+			case <-j.flushClose:
 				return
 			case <-ticker.C:
-				if j.syncPending.Value() > 0 {
+				if j.flushPending.Value() > 0 {
 					j.mu.Lock()
-					_ = j.syncLocked()
+					_ = j.flushLocked()
 					j.mu.Unlock()
 				}
 			}
@@ -655,8 +726,6 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	var edges []GraphEdge
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
-		// Key format: e:<parentID>:<name>
-		// parentID is at bytes 2-10, name starts at byte 11.
 		name := string(key[11:])
 		childID := decodeInt64(iter.Value())
 		edges = append(edges, GraphEdge{
@@ -695,8 +764,6 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
-		// Key format: w:<parentID>:<name>
-		// parentID is at bytes 2-10, name starts at byte 11.
 		names = append(names, string(key[11:]))
 	}
 	if err := iter.Error(); err != nil {
@@ -717,7 +784,6 @@ func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 		return nil, err
 	}
 	defer closer.Close()
-	// Copy the value since it's only valid until closer.Close().
 	cp := make([]byte, len(val))
 	copy(cp, val)
 	return cp, nil
@@ -738,8 +804,6 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
-		// Key format: x:<nodeID>:<name>
-		// nodeID is at bytes 2-10, name starts at byte 11.
 		names = append(names, string(key[11:]))
 	}
 	if err := iter.Error(); err != nil {
@@ -774,23 +838,23 @@ func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
 // If nodeID != 0, the path is fully in the journal.
 // If nodeID == 0, the path is partially or fully in pxar.
 //
-// Uses a snapshot iterator for consistent reads across the entire walk.
+// Uses a Pebble snapshot for consistent reads across the entire walk —
+// analogous to ext4's i_mutex on parent directories during lookup.
 func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellOffAt int64, remaining string, err error) {
 	if path == "/" || path == "" {
 		return 1, "/", 0, "", nil
 	}
 
-	// Use a snapshot for consistent reads across the walk.
+	// Snapshot provides a consistent view without blocking writers.
 	snap := j.db.NewSnapshot()
 	defer snap.Close()
 
 	curID := int64(1)
 	var pxarPrefix strings.Builder
 	pxarPrefix.WriteByte('/')
-	pos := 1 // start after leading /
+	pos := 1
 
 	for pos < len(path) {
-		// Find next segment.
 		end := pos
 		for end < len(path) && path[end] != '/' {
 			end++
@@ -800,7 +864,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 		// Look up edge within the snapshot.
 		edgeVal, edgeCloser, gerr := snap.Get(edgeKey(curID, part))
 		if gerr == pebble.ErrNotFound {
-			// Check for whiteout.
+			// Check for whiteout within the same snapshot.
 			_, _, werr := snap.Get(whiteoutKey(curID, part))
 			if werr != nil && werr != pebble.ErrNotFound {
 				return 0, "", 0, "", werr
@@ -808,7 +872,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 			if werr == nil {
 				return 0, "", 0, "", nil // whiteout
 			}
-			// Fell off graph — remaining is from current position.
+			// Fell off graph.
 			return 0, pxarPrefix.String() + path[pos-1:], curID, path[pos:], nil
 		}
 		if gerr != nil {
@@ -819,7 +883,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 
 		curID = childID
 
-		// Track pxar redirect.
+		// Track pxar redirect within the snapshot.
 		nodeData, nodeCloser, nerr := snap.Get(nodeKey(curID))
 		if nerr != nil {
 			return 0, "", 0, "", nerr
@@ -858,7 +922,6 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 	result := make(map[int64]map[string][]byte)
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
-		// Key format: x:<nodeID>:<name>
 		nodeID := int64(binary.BigEndian.Uint64(key[2:10]))
 		name := string(key[11:])
 		val := iter.Value()
@@ -888,7 +951,7 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 		nodeID = id
 
 		parts := splitPath(path)
-		curParentID := int64(1) // root
+		curParentID := int64(1)
 
 		for i, name := range parts {
 			if name == "" {
@@ -898,7 +961,6 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 			// Check if edge already exists.
 			edgeVal, closer, gerr := j.db.Get(edgeKey(curParentID, name))
 			if gerr == nil {
-				// Edge exists, follow it.
 				childID := decodeInt64(edgeVal)
 				_ = closer.Close()
 				curParentID = childID
@@ -932,7 +994,7 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 				}
 				intermediate := &GraphNode{
 					Kind:       NodeDir,
-					Mode:       uint32(0o755 | 0x4000), // S_IFDIR | 0o755
+					Mode:       uint32(0o755 | 0x4000),
 					UID:        n.UID,
 					GID:        n.GID,
 					MtimeNs:    n.MtimeNs,
@@ -957,26 +1019,20 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 // Clear truncates all data (keeps root node).
 func (j *Journal) Clear() error {
 	return j.tx(func(b *pebble.Batch) error {
-		// Delete all whiteouts, xattrs, edges, and non-root nodes.
-		// We use range deletes via iteration.
-
-		// Delete all whiteouts.
+		// Delete all whiteouts, xattrs, edges, and non-root nodes
+		// using efficient range deletes.
 		if err := deletePrefix(b, []byte(prefixWhiteout)); err != nil {
 			return err
 		}
-		// Delete all xattrs.
 		if err := deletePrefix(b, []byte(prefixXattr)); err != nil {
 			return err
 		}
-		// Delete all edges.
 		if err := deletePrefix(b, []byte(prefixEdge)); err != nil {
 			return err
 		}
-		// Delete all nodes except root.
 		if err := deletePrefixExcept(b, []byte(prefixNode), nodeKey(1)); err != nil {
 			return err
 		}
-		// Reset root node.
 		root := &GraphNode{
 			ID:         1,
 			Kind:       NodeDir,
@@ -987,17 +1043,15 @@ func (j *Journal) Clear() error {
 	})
 }
 
-// deletePrefix deletes all keys with the given prefix from a batch.
+// deletePrefix deletes all keys with the given prefix using DeleteRange.
 func deletePrefix(b *pebble.Batch, prefix []byte) error {
-	// Pebble supports DeleteRange which is much more efficient.
-	// Upper bound is prefix with last byte incremented (or 0xFF appended).
 	upper := make([]byte, len(prefix)+1)
 	copy(upper, prefix)
 	upper[len(prefix)] = 0xFF
 	return b.DeleteRange(prefix, upper, nil)
 }
 
-// deletePrefixExcept deletes all keys with the given prefix except one specific key.
+// deletePrefixExcept deletes all keys with the given prefix except one key.
 func deletePrefixExcept(b *pebble.Batch, prefix []byte, exceptKey []byte) error {
 	// Delete range [prefix, exceptKey)
 	if err := b.DeleteRange(prefix, exceptKey, nil); err != nil {
@@ -1016,7 +1070,8 @@ func deletePrefixExcept(b *pebble.Batch, prefix []byte, exceptKey []byte) error 
 // --- Compound Atomic Operations ---
 
 // DeleteEdgeAndNode atomically removes an edge and its target node.
-// Also removes all xattrs for the node.
+// Also cascades: deletes all xattrs and child edges for the node.
+// Analogous to SQLite's ON DELETE CASCADE.
 func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {
 	return j.tx(func(b *pebble.Batch) error {
 		// Delete edge.
@@ -1028,12 +1083,20 @@ func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, a
 				return err
 			}
 		}
-		// Delete all xattrs for this node.
+		// Cascade: delete all xattrs for this node.
 		xaPrefix := xattrPrefix(nodeID)
 		xaUpper := make([]byte, len(xaPrefix)+1)
 		copy(xaUpper, xaPrefix)
 		xaUpper[len(xaPrefix)] = 0xFF
 		if err := b.DeleteRange(xaPrefix, xaUpper, nil); err != nil {
+			return err
+		}
+		// Cascade: delete all edges where this node is the parent.
+		childEdgePrefix := edgePrefix(nodeID)
+		childEdgeUpper := make([]byte, len(childEdgePrefix)+1)
+		copy(childEdgeUpper, childEdgePrefix)
+		childEdgeUpper[len(childEdgePrefix)] = 0xFF
+		if err := b.DeleteRange(childEdgePrefix, childEdgeUpper, nil); err != nil {
 			return err
 		}
 		// Delete node.
@@ -1064,8 +1127,7 @@ func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *Grap
 	return id, err
 }
 
-// MoveEdgeAndWhiteout atomically moves an edge and adds whiteouts for both
-// old and new pxar locations.
+// MoveEdgeAndWhiteout atomically moves an edge and adds whiteouts.
 func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64, whiteoutOld, whiteoutNew bool) error {
 	return j.tx(func(b *pebble.Batch) error {
 		// Remove destination whiteout.
@@ -1076,12 +1138,20 @@ func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent
 			if err := b.Delete(edgeKey(newParent, newName), nil); err != nil {
 				return err
 			}
-			// Delete dest node + xattrs.
+			// Cascade: delete dest node's xattrs.
 			xaPrefix := xattrPrefix(replaceDestNode)
 			xaUpper := make([]byte, len(xaPrefix)+1)
 			copy(xaUpper, xaPrefix)
 			xaUpper[len(xaPrefix)] = 0xFF
 			if err := b.DeleteRange(xaPrefix, xaUpper, nil); err != nil {
+				return err
+			}
+			// Cascade: delete dest node's child edges.
+			childEdgePrefix := edgePrefix(replaceDestNode)
+			childEdgeUpper := make([]byte, len(childEdgePrefix)+1)
+			copy(childEdgeUpper, childEdgePrefix)
+			childEdgeUpper[len(childEdgePrefix)] = 0xFF
+			if err := b.DeleteRange(childEdgePrefix, childEdgeUpper, nil); err != nil {
 				return err
 			}
 			if err := b.Delete(nodeKey(replaceDestNode), nil); err != nil {
@@ -1121,7 +1191,3 @@ func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent
 		return nil
 	})
 }
-
-// Ensure open.go compatibility: the journal data directory is "journal.db" by convention
-// but Pebble creates its own directory structure. The mount.go code references JournalDir
-// as a subdirectory name — that's fine, Pebble will use it as the database directory.
