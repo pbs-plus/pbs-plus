@@ -10,11 +10,13 @@ import (
 )
 
 // commitHub broadcasts commit progress lines to all connected watchers
-// and persists recent output so late-attaching clients can catch up.
+// on the monitor socket and appends them to a log file for later retrieval.
 type commitHub struct {
 	mu        sync.Mutex
-	sockPath  string // monitor socket path
+	sockPath  string // monitor socket path (<mainSocket>.monitor)
+	logPath   string // log file path (<mainSocket>.log)
 	listener  net.Listener
+	logFile   *os.File // append-only log file for commit output
 	watchers  map[net.Conn]struct{}
 	jobID     atomic.Int64 // 0 = idle, >0 = running
 	ended     atomic.Bool  // true after OK/ERR sent
@@ -26,6 +28,7 @@ var globalCommitHub *commitHub
 
 // newCommitHub creates a hub and starts listening on the monitor socket.
 // The monitor socket path is <mainSocket>.monitor.
+// The log file path is <mainSocket>.log.
 func newCommitHub(mainSocketPath string) (*commitHub, error) {
 	monPath := mainSocketPath + ".monitor"
 	_ = os.Remove(monPath)
@@ -39,8 +42,11 @@ func newCommitHub(mainSocketPath string) (*commitHub, error) {
 		return nil, err
 	}
 
+	logPath := mainSocketPath + ".log"
+
 	h := &commitHub{
 		sockPath: monPath,
+		logPath:  logPath,
 		listener: l,
 		watchers: make(map[net.Conn]struct{}),
 	}
@@ -55,6 +61,14 @@ func MonitorSocketPath() string {
 		return ""
 	}
 	return globalCommitHub.sockPath
+}
+
+// LogFilePath returns the path to the commit log file (or "" if no hub).
+func LogFilePath() string {
+	if globalCommitHub == nil {
+		return ""
+	}
+	return globalCommitHub.logPath
 }
 
 // IsCommitRunning returns true if a commit job is currently active.
@@ -74,26 +88,28 @@ func (h *commitHub) acceptLoop() {
 		}
 		h.mu.Lock()
 
-		// Send catch-up lines first so the watcher sees what happened
-		// before it connected.
-		for _, line := range h.lastLines {
-			_, _ = fmt.Fprintln(conn, line)
-		}
-
-		// If commit already ended, send a terminal status and close.
-		if h.ended.Load() {
-			// lastLines already has OK/ERR — just close.
+		if h.jobID.Load() > 0 {
+			// Active commit: send catch-up lines and add to watchers.
+			for _, line := range h.lastLines {
+				_, _ = fmt.Fprintln(conn, line)
+			}
+			if h.ended.Load() {
+				h.mu.Unlock()
+				_ = conn.Close()
+				continue
+			}
+			h.watchers[conn] = struct{}{}
+			h.mu.Unlock()
+		} else {
+			// No active commit — nothing to attach to.
+			_, _ = fmt.Fprintln(conn, "IDLE")
 			h.mu.Unlock()
 			_ = conn.Close()
-			continue
 		}
-
-		h.watchers[conn] = struct{}{}
-		h.mu.Unlock()
 	}
 }
 
-// broadcast sends a line to all connected watchers.
+// broadcast sends a line to all connected watchers and appends it to the log file.
 func (h *commitHub) broadcast(line string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -104,8 +120,13 @@ func (h *commitHub) broadcast(line string) {
 		h.lastLines = h.lastLines[len(h.lastLines)-256:]
 	}
 
+	// Append to log file.
+	if h.logFile != nil {
+		_, _ = fmt.Fprintln(h.logFile, line)
+	}
+
 	// Detect terminal lines.
-	isDone := len(line) >= 3 && (line[:3] == "OK " || line[:3] == "ERR")
+	isDone := len(line) >= 3 && (line[:3] == "OK " || line[:3] == "ERR ")
 	if isDone {
 		h.ended.Store(true)
 	}
@@ -121,19 +142,36 @@ func (h *commitHub) broadcast(line string) {
 	}
 }
 
-// startJob marks a commit as running and returns a job ID.
+// startJob marks a commit as running, truncates the log file, and returns a job ID.
 func (h *commitHub) startJob() int64 {
 	h.mu.Lock()
 	h.lastLines = nil
 	h.ended.Store(false)
+
+	// Truncate/create the log file for the new commit.
+	if h.logFile != nil {
+		_ = h.logFile.Close()
+	}
+	f, err := os.Create(h.logPath)
+	if err == nil {
+		_ = f.Chmod(0o660)
+		h.logFile = f
+	}
 	h.mu.Unlock()
+
 	id := time.Now().UnixMilli()
 	h.jobID.Store(id)
 	return id
 }
 
-// endJob clears the running commit state.
+// endJob clears the running commit state and closes the log file.
 func (h *commitHub) endJob() {
+	h.mu.Lock()
+	if h.logFile != nil {
+		_ = h.logFile.Close()
+		h.logFile = nil
+	}
+	h.mu.Unlock()
 	h.jobID.Store(0)
 }
 
@@ -142,6 +180,12 @@ func (h *commitHub) close() {
 	if h.listener != nil {
 		_ = h.listener.Close()
 	}
+	h.mu.Lock()
+	if h.logFile != nil {
+		_ = h.logFile.Close()
+		h.logFile = nil
+	}
+	h.mu.Unlock()
 	_ = os.Remove(h.sockPath)
 }
 

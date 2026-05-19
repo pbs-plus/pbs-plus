@@ -19,6 +19,9 @@ func main() {
 		case "attach":
 			pxarmount.RunAttachSubcommand()
 			return
+		case "logs":
+			pxarmount.RunLogsSubcommand()
+			return
 		case "init":
 			pxarmount.RunInitSubcommand()
 			return

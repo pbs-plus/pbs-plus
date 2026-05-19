@@ -1308,19 +1308,88 @@ func RunAttachSubcommand() {
 	monPath := *socketPath + ".monitor"
 	conn, err := net.DialTimeout("unix", monPath, 5*time.Second)
 	if err != nil {
-		if os.IsTimeout(err) {
-			fmt.Fprintf(os.Stderr, "  No commit in progress.\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "  \u2717 error connecting to monitor socket %s: %v\n", monPath, err)
-		}
+		fmt.Fprintf(os.Stderr, "  Nothing to attach to. No commit in progress.\n")
 		os.Exit(1)
 	}
 	defer func() { _ = conn.Close() }()
 
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
+		fmt.Fprintf(os.Stderr, "  Nothing to attach to. No commit in progress.\n")
+		return
+	}
+	first := scanner.Text()
+	if first == "IDLE" {
+		fmt.Fprintf(os.Stderr, "  Nothing to attach to. No commit in progress.\n")
+		fmt.Fprintf(os.Stderr, "  Use 'pxar-mount logs --socket %s' to view the last commit.\n", *socketPath)
+		return
+	}
+
 	display := NewProgressDisplay(os.Stderr)
 	fmt.Fprintf(os.Stderr, "  Attached to commit progress...\n")
 
-	scanner := bufio.NewScanner(conn)
+	// Process the first line we already read.
+	for processMonitorLine(first, display) {
+		if !scanner.Scan() {
+			break
+		}
+	}
+}
+
+// processMonitorLine handles a single line from the monitor socket.
+// Returns false if the connection should be closed (OK/ERR).
+func processMonitorLine(line string, display *ProgressDisplay) bool {
+	if strings.HasPrefix(line, "PROGRESS ") {
+		display.Update(line)
+		return true
+	}
+	if strings.HasPrefix(line, "OK ") {
+		display.Done(line)
+		return false
+	}
+	if strings.HasPrefix(line, "ERR ") {
+		display.Error(line)
+		return false
+	}
+	// Catch-up lines from before we connected.
+	fmt.Fprintf(os.Stderr, "  %s\n", line)
+	return true
+}
+
+// RunLogsSubcommand is the CLI entry point for `pxar-mount logs`.
+// It reads and displays the log file from the last commit.
+func RunLogsSubcommand() {
+	fs := flag.NewFlagSet("logs", flag.ExitOnError)
+	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
+
+	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
+
+	if *socketPath == "" {
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount logs --socket <path>\n\n")
+		fmt.Fprintf(os.Stderr, "Shows the output of the last commit.\n")
+		fs.PrintDefaults()
+		os.Exit(1)
+	}
+
+	logPath := *socketPath + ".log"
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "  No commit logs available.\n")
+		} else {
+			fmt.Fprintf(os.Stderr, "  \u2717 error reading log file %s: %v\n", logPath, err)
+		}
+		os.Exit(1)
+	}
+
+	if len(data) == 0 {
+		fmt.Fprintf(os.Stderr, "  No commit logs available.\n")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "  --- last commit ---\n")
+	scanner := bufio.NewScanner(strings.NewReader(string(data)))
+	display := NewProgressDisplay(os.Stderr)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "PROGRESS ") {
@@ -1329,15 +1398,11 @@ func RunAttachSubcommand() {
 		}
 		if strings.HasPrefix(line, "OK ") {
 			display.Done(line)
-			return
+			continue
 		}
 		if strings.HasPrefix(line, "ERR ") {
 			display.Error(line)
-			os.Exit(1)
+			continue
 		}
-		// Catch-up lines from before we connected.
-		fmt.Fprintf(os.Stderr, "  %s\n", line)
 	}
-	fmt.Fprintf(os.Stderr, "  \u2717 connection lost\n")
-	os.Exit(1)
 }
