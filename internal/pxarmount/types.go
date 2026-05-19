@@ -151,7 +151,7 @@ const (
 	ACLMask     uint16 = 0x10
 	ACLOther    uint16 = 0x20
 
-	ACLXAttrVersion uint32 = 0x00020000
+	ACLXAttrVersion uint32 = 0x0002
 )
 
 // MountConfig holds all parameters needed to start a pxar-mount FUSE server.

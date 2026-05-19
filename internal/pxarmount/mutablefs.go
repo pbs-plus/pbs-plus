@@ -1148,7 +1148,18 @@ func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, att
 		return 0, status
 	}
 
-	// Check journal xattrs first (if we have a node).
+	// Priority: passthrough → journal → default ACL → pxar.
+
+	// 1. Passthrough (mutable data on real filesystem).
+	if re.DataIsMut {
+		abs := fs.mutablePath(path)
+		sz, xerr := unix.Getxattr(abs, attr, dest)
+		if xerr == nil {
+			return uint32(sz), fuse.OK
+		}
+	}
+
+	// 2. Journal.
 	if re.Node != nil {
 		val, err := fs.journal.GetXAttr(re.Node.ID, attr)
 		if err != nil {
@@ -1159,16 +1170,20 @@ func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, att
 		}
 	}
 
-	// Check mutable data xattrs.
-	if re.DataIsMut {
-		abs := fs.mutablePath(path)
-		sz, xerr := unix.Getxattr(abs, attr, dest)
-		if xerr == nil {
-			return uint32(sz), fuse.OK
+	// 3. Default ACL (virtual, no write).
+	switch attr {
+	case "system.posix_acl_access":
+		if fs.acl.HasACLs() {
+			return xattrValue(MarshalACL(fs.acl.ACLEntries), dest)
 		}
+	case "system.posix_acl_default":
+		if re.IsDir && len(fs.acl.DefaultACLEntries) > 0 {
+			return xattrValue(MarshalACL(fs.acl.DefaultACLEntries), dest)
+		}
+		return 0, fuse.Status(syscall.ENODATA)
 	}
 
-	// Fall back to pxar.
+	// 4. Pxar archive.
 	if re.PxarNode != nil {
 		pxarHeader := *header
 		pxarHeader.NodeId = re.PxarNode.inode
@@ -1191,7 +1206,27 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 
 	nameSet := make(map[string]bool)
 
-	// Journal xattrs.
+	// 1. Passthrough (mutable data on real filesystem).
+	if re.DataIsMut {
+		abs := fs.mutablePath(path)
+		sz, xerr := unix.Listxattr(abs, nil)
+		if xerr == nil && sz > 0 {
+			buf := make([]byte, sz)
+			if sz, xerr = unix.Listxattr(abs, buf); xerr == nil {
+				start := 0
+				for i := 0; i <= int(sz); i++ {
+					if i == int(sz) || buf[i] == 0 {
+						if i > start {
+							nameSet[string(buf[start:i])] = true
+						}
+						start = i + 1
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Journal xattrs.
 	if re.Node != nil {
 		names, _ := fs.journal.ListXAttrs(re.Node.ID)
 		for _, n := range names {
@@ -1199,7 +1234,15 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 		}
 	}
 
-	// Pxar xattrs.
+	// 3. Default ACL xattr names (virtual).
+	if fs.acl.HasACLs() {
+		nameSet["system.posix_acl_access"] = true
+		if re.IsDir && len(fs.acl.DefaultACLEntries) > 0 {
+			nameSet["system.posix_acl_default"] = true
+		}
+	}
+
+	// 4. Pxar xattrs.
 	if re.PxarNode != nil {
 		pxarHeader := *header
 		pxarHeader.NodeId = re.PxarNode.inode
