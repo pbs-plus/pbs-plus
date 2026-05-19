@@ -1,6 +1,12 @@
 package pxarmount
 
 import (
+	"encoding/binary"
+	"fmt"
+	"os"
+	"os/user"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -116,13 +122,37 @@ type snapshotRef struct {
 	BackupTime  int64
 }
 
-// ACLConfig configures default ownership behavior.
+// ACLConfig configures default ownership and POSIX ACL behavior.
 type ACLConfig struct {
 	OwnerUID   int
 	OwnerGID   int
 	ForceOwner bool
 	ForceGroup bool
+
+	// Full POSIX ACL entries. When set, these are served as virtual
+	// system.posix_acl_access / system.posix_acl_default xattrs.
+	ACLEntries        []ACLEntry
+	DefaultACLEntries []ACLEntry
 }
+
+// ACLEntry represents a single POSIX ACL entry.
+type ACLEntry struct {
+	Tag  uint16 // ACL_USER_OBJ, ACL_USER, ACL_GROUP_OBJ, ACL_GROUP, ACL_MASK, ACL_OTHER
+	Perm uint16 // permission bits (r=4, w=2, x=1)
+	ID   uint32 // UID or GID for ACL_USER / ACL_GROUP entries
+}
+
+// POSIX ACL tag constants (matching Linux kernel definitions).
+const (
+	ACLUserObj  uint16 = 0x01
+	ACLUser     uint16 = 0x02
+	ACLGroupObj uint16 = 0x04
+	ACLGroup    uint16 = 0x08
+	ACLMask     uint16 = 0x10
+	ACLOther    uint16 = 0x20
+
+	ACLXAttrVersion uint32 = 0x00020000
+)
 
 // MountConfig holds all parameters needed to start a pxar-mount FUSE server.
 type MountConfig struct {
@@ -140,6 +170,130 @@ type MountConfig struct {
 }
 
 // --- Helpers ---
+
+// MarshalACL encodes POSIX ACL entries into the kernel binary format
+// used by system.posix_acl_access and system.posix_acl_default.
+func MarshalACL(entries []ACLEntry) []byte {
+	// version (4 bytes) + N entries × 8 bytes each
+	buf := make([]byte, 4+len(entries)*8)
+	binary.LittleEndian.PutUint32(buf[:4], ACLXAttrVersion)
+	for i, e := range entries {
+		off := 4 + i*8
+		binary.LittleEndian.PutUint16(buf[off:off+2], e.Tag)
+		binary.LittleEndian.PutUint16(buf[off+2:off+4], e.Perm)
+		binary.LittleEndian.PutUint32(buf[off+4:off+8], e.ID)
+	}
+	return buf
+}
+
+// ParseACLSpec parses a setfacl-style ACL string into entries.
+// Format: one entry per line, e.g.
+//
+//	user::rwx
+//	user:backupadmin:rwx
+//	group::rwx
+//	group:it:rwx
+//	mask::rwx
+//	other::---
+func ParseACLSpec(spec string) ([]ACLEntry, error) {
+	var entries []ACLEntry
+	// Accept both \n and ; as delimiters.
+	spec = strings.ReplaceAll(spec, ";", "\n")
+	for line := range strings.SplitSeq(spec, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		e, err := parseACLEntry(line)
+		if err != nil {
+			return nil, fmt.Errorf("parse ACL line %q: %w", line, err)
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+func parseACLEntry(line string) (ACLEntry, error) {
+	// Split into type:name:perm or type::perm
+	parts := strings.SplitN(line, ":", 3)
+	if len(parts) < 3 {
+		return ACLEntry{}, fmt.Errorf("invalid format")
+	}
+	kind, name, perm := parts[0], parts[1], parts[2]
+
+	var e ACLEntry
+	switch kind {
+	case "user":
+		if name == "" {
+			e.Tag = ACLUserObj
+		} else {
+			e.Tag = ACLUser
+			uid, err := lookupUID(name)
+			if err != nil {
+				return ACLEntry{}, fmt.Errorf("unknown user %q: %w", name, err)
+			}
+			e.ID = uid
+		}
+	case "group":
+		if name == "" {
+			e.Tag = ACLGroupObj
+		} else {
+			e.Tag = ACLGroup
+			gid, err := lookupGID(name)
+			if err != nil {
+				return ACLEntry{}, fmt.Errorf("unknown group %q: %w", name, err)
+			}
+			e.ID = gid
+		}
+	case "mask":
+		e.Tag = ACLMask
+	case "other":
+		e.Tag = ACLOther
+	default:
+		return ACLEntry{}, fmt.Errorf("unknown ACL type %q", kind)
+	}
+
+	e.Perm = parsePerm(perm)
+	return e, nil
+}
+
+func parsePerm(s string) uint16 {
+	var p uint16
+	for _, c := range s {
+		switch c {
+		case 'r':
+			p |= 4
+		case 'w':
+			p |= 2
+		case 'x':
+			p |= 1
+		}
+	}
+	return p
+}
+
+func lookupUID(name string) (uint32, error) {
+	u, err := user.Lookup(name)
+	if err != nil {
+		return 0, err
+	}
+	uid, _ := strconv.ParseUint(u.Uid, 10, 32)
+	return uint32(uid), nil
+}
+
+func lookupGID(name string) (uint32, error) {
+	g, err := user.LookupGroup(name)
+	if err != nil {
+		return 0, err
+	}
+	gid, _ := strconv.ParseUint(g.Gid, 10, 32)
+	return uint32(gid), nil
+}
+
+// HasACLs returns true if virtual ACLs are configured.
+func (c ACLConfig) HasACLs() bool {
+	return len(c.ACLEntries) > 0
+}
 
 // newNodeFromEntry creates a node from a pxar entry with cached metadata.
 func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
@@ -276,4 +430,31 @@ func nodeKindFromPxar(n *node) uint8 {
 		return NodeSymlink
 	}
 	return NodeFile
+}
+
+// buildACLConfig constructs an ACLConfig from CLI flags and optional spec strings.
+func BuildACLConfig(ownerUID, ownerGID int, forceOwner, forceGroup bool, aclSpec, defaultAclSpec string) ACLConfig {
+	cfg := ACLConfig{
+		OwnerUID:   ownerUID,
+		OwnerGID:   ownerGID,
+		ForceOwner: forceOwner,
+		ForceGroup: forceGroup,
+	}
+	if aclSpec != "" {
+		entries, err := ParseACLSpec(aclSpec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing acl-spec: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.ACLEntries = entries
+	}
+	if defaultAclSpec != "" {
+		entries, err := ParseACLSpec(defaultAclSpec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing default-acl-spec: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.DefaultACLEntries = entries
+	}
+	return cfg
 }

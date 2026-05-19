@@ -27,6 +27,8 @@ func RunInitSubcommand() {
 	aclGroup := fs.Int("acl-group", 0, "Default group GID for new files/dirs (0 = inherit)")
 	forceAclOwner := fs.Bool("force-acl-owner", false, "Force set owner on all existing files at mount")
 	forceAclGroup := fs.Bool("force-acl-group", false, "Force set group on all existing files at mount")
+	aclSpec := fs.String("acl-spec", "", "POSIX ACL spec string (setfacl-style) served as virtual xattrs")
+	defaultAclSpec := fs.String("default-acl-spec", "", "Default POSIX ACL spec string served as virtual xattrs")
 
 	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
@@ -52,11 +54,6 @@ func RunInitSubcommand() {
 		FuseOpts:   *fuseOpts,
 		Verbose:    *verbose,
 		InitMode:   true,
-		ACL: ACLConfig{
-			OwnerUID:   *aclOwner,
-			OwnerGID:   *aclGroup,
-			ForceOwner: *forceAclOwner,
-			ForceGroup: *forceAclGroup,
-		},
+		ACL:        BuildACLConfig(*aclOwner, *aclGroup, *forceAclOwner, *forceAclGroup, *aclSpec, *defaultAclSpec),
 	})
 }

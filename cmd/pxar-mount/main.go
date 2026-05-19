@@ -39,6 +39,8 @@ func runMountSubcommand() {
 	aclGroup := flag.Int("acl-group", 0, "Default group GID for new files/dirs (0 = inherit)")
 	forceAclOwner := flag.Bool("force-acl-owner", false, "Force set owner on all existing files at mount")
 	forceAclGroup := flag.Bool("force-acl-group", false, "Force set group on all existing files at mount")
+	aclSpec := flag.String("acl-spec", "", "POSIX ACL spec string (setfacl-style) served as virtual xattrs")
+	defaultAclSpec := flag.String("default-acl-spec", "", "Default POSIX ACL spec string served as virtual xattrs")
 
 	flag.Parse()
 
@@ -124,11 +126,6 @@ func runMountSubcommand() {
 		SocketPath:    *socketPath,
 		FuseOpts:      *fuseOpts,
 		Verbose:       *verbose,
-		ACL: pxarmount.ACLConfig{
-			OwnerUID:   *aclOwner,
-			OwnerGID:   *aclGroup,
-			ForceOwner: *forceAclOwner,
-			ForceGroup: *forceAclGroup,
-		},
+		ACL:           pxarmount.BuildACLConfig(*aclOwner, *aclGroup, *forceAclOwner, *forceAclGroup, *aclSpec, *defaultAclSpec),
 	})
 }
