@@ -257,6 +257,28 @@ type commitWalkState struct {
 	// Reusable scratch slices — allocated once, cleared per-directory
 	// via save/restore in commitWalk. Eliminates per-level heap allocation.
 	pendingRefs []commitEntry // ref-files batched for contentOffset-ordered emission
+
+	// Reusable pxar.Entry buffer — avoids heap allocation on every emit.
+	entryBuf pxar.Entry
+	pathBuf  strings.Builder
+}
+
+// allocEntry returns a pointer to the reusable entry buffer after zeroing it.
+// All emit functions use this instead of &pxar.Entry{...} to avoid heap allocation.
+func (ow *commitWalkState) allocEntry() *pxar.Entry {
+	ow.entryBuf = pxar.Entry{}
+	return &ow.entryBuf
+}
+
+// buildPath joins parent and name using the reusable path builder.
+func (ow *commitWalkState) buildPath(parent, name string) string {
+	ow.pathBuf.Reset()
+	ow.pathBuf.WriteString(parent)
+	if parent != "/" {
+		ow.pathBuf.WriteByte('/')
+	}
+	ow.pathBuf.WriteString(name)
+	return ow.pathBuf.String()
 }
 
 // maxPendingRefs bounds the pending ref batch to limit memory on
@@ -684,7 +706,7 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 			if err := ow.flushPendingRefs(parentRelPath); err != nil {
 				return err
 			}
-			childPath := joinPath(parentRelPath, ce.name)
+			childPath := ow.buildPath(parentRelPath, ce.name)
 			xattrs := ow.xattrCache[node.ID]
 			meta := nodeToMetadata(node, xattrs)
 			// Merge pxar fcaps/acl if this file was copied up from pxar.
@@ -708,12 +730,11 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 		}
 		xattrs := ow.xattrCache[node.ID]
 		meta := nodeToMetadata(node, xattrs)
-		entry := &pxar.Entry{
-			Path:     ce.name,
-			Kind:     pxar.KindFile,
-			Metadata: meta,
-			FileSize: node.Size,
-		}
+		entry := ow.allocEntry()
+		entry.Path = ce.name
+		entry.Kind = pxar.KindFile
+		entry.Metadata = meta
+		entry.FileSize = node.Size
 		return ow.writer.WriteEntry(entry, nil)
 
 	case NodeSymlink:
@@ -727,12 +748,11 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 				meta = mergeMetaWithPxar(meta, pxEntry)
 			}
 		}
-		entry := &pxar.Entry{
-			Path:       ce.name,
-			Kind:       pxar.KindSymlink,
-			Metadata:   meta,
-			LinkTarget: node.SymlinkTgt,
-		}
+		entry := ow.allocEntry()
+		entry.Path = ce.name
+		entry.Kind = pxar.KindSymlink
+		entry.Metadata = meta
+		entry.LinkTarget = node.SymlinkTgt
 		return ow.writer.WriteEntry(entry, nil)
 	}
 	return nil
@@ -840,12 +860,11 @@ func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string)
 	}
 	mergedMeta := mergeMetaWithPxar(meta, pxarEntry)
 
-	entry := &pxar.Entry{
-		Path:     ce.name,
-		Kind:     pxar.KindFile,
-		Metadata: mergedMeta,
-		FileSize: node.Size,
-	}
+	entry := ow.allocEntry()
+	entry.Path = ce.name
+	entry.Kind = pxar.KindFile
+	entry.Metadata = mergedMeta
+	entry.FileSize = node.Size
 	if entry.FileSize == 0 {
 		entry.FileSize = pxarEntry.FileSize
 	}
@@ -867,14 +886,14 @@ func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) er
 		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 	}
 
-	clone := clonePxarEntry(pxarEntry, ce.name)
+	clone := ow.clonePxarEntryBuf(pxarEntry, ce.name)
 	return ow.tryRefOrReencode(clone, pxarEntry, ce.name, "")
 }
 
 // emitJournalDir emits a journal directory entry during alphabetical walk.
 func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string) error {
 	node := ce.node
-	childPath := joinPath(parentRelPath, ce.name)
+	childPath := ow.buildPath(parentRelPath, ce.name)
 	xattrs := ow.xattrCache[node.ID]
 	meta := nodeToMetadata(node, xattrs)
 
@@ -902,7 +921,7 @@ func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string)
 // emitPxarDir emits a pure pxar directory entry during alphabetical walk.
 func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
-	childPath := joinPath(parentRelPath, ce.name)
+	childPath := ow.buildPath(parentRelPath, ce.name)
 
 	ow.mfs.pxar.readerMu.Lock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
@@ -934,7 +953,7 @@ func (ow *commitWalkState) emitPxarSymlink(ce *commitEntry, parentRelPath string
 		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 	}
 
-	clone := clonePxarEntry(pxarEntry, ce.name)
+	clone := ow.clonePxarEntryBuf(pxarEntry, ce.name)
 	return ow.writer.WriteEntry(clone, nil)
 }
 
@@ -952,12 +971,11 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 		return fmt.Errorf("stat backed file %s: %w", childPath, err)
 	}
 
-	entry := &pxar.Entry{
-		Path:     name,
-		Kind:     pxar.KindFile,
-		Metadata: meta,
-		FileSize: uint64(fi.Size()),
-	}
+	entry := ow.allocEntry()
+	entry.Path = name
+	entry.Kind = pxar.KindFile
+	entry.Metadata = meta
+	entry.FileSize = uint64(fi.Size())
 
 	h := xxh3.New()
 	tee := io.TeeReader(f, h)
@@ -1079,6 +1097,13 @@ func clonePxarEntry(e *pxar.Entry, name string) *pxar.Entry {
 	clone := *e
 	clone.Path = name
 	return &clone
+}
+
+// clonePxarEntryBuf clones a pxar entry into the reusable buffer.
+func (ow *commitWalkState) clonePxarEntryBuf(e *pxar.Entry, name string) *pxar.Entry {
+	ow.entryBuf = *e
+	ow.entryBuf.Path = name
+	return &ow.entryBuf
 }
 
 // resolvePxarEntry walks the pxar archive to find the entry at relPath.
