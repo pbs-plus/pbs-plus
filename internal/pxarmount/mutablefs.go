@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,15 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sys/unix"
 )
+
+// pendingMeta holds deferred metadata from Write calls.
+// Applied to the journal in Flush (file close) or SetAttr
+// (whichever runs first), serialized by per-inode lock.
+type pendingMeta struct {
+	size    uint64
+	mtimeNs int64
+	ctimeNs int64
+}
 
 // MutableFS implements fuse.RawFileSystem as a layered filesystem:
 //   - PxarFS provides the immutable lower layer
@@ -59,6 +69,10 @@ type MutableFS struct {
 	acl     ACLConfig
 	verbose bool
 
+	// Tracks inodes with deferred Write metadata not yet flushed to
+	// the journal. Keyed by FUSE inode (input.NodeId).
+	dirtyMeta *xsync.Map[uint64, pendingMeta]
+
 	// Freeze mechanism: blocks FUSE mutations during commit.
 	freezeMu   sync.Mutex
 	freezeCond *sync.Cond
@@ -88,6 +102,7 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		inoLookup:   xsync.NewMap[string, uint64](),
 		pathLookup:  xsync.NewMap[uint64, string](),
 		ensureLocks: xsync.NewMap[string, *sync.Mutex](),
+		dirtyMeta:   xsync.NewMap[uint64, pendingMeta](),
 		nextIno:     2, // 1 is RootInode
 	}
 	fs.freezeCond = sync.NewCond(&fs.freezeMu)
@@ -270,6 +285,17 @@ func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out 
 		return status
 	}
 
+	// If the file has live data on disk (open for write), stat the
+	// real file so the kernel sees the current size instead of the
+	// stale journal value (journal is only updated on Flush/Close).
+	if re.DataIsMut && !re.IsDir {
+		if st, err := os.Stat(fs.mutablePath(path)); err == nil {
+			re.Size = uint64(st.Size())
+			re.MtimeNs = st.ModTime().UnixNano()
+			re.CtimeNs = re.MtimeNs
+		}
+	}
+
 	fillResolvedAttrOut(re, out)
 	fs.debugf("GetAttr: ok mode=0%o isDir=%v", out.Mode, re.IsDir)
 	return fuse.OK
@@ -400,7 +426,18 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		})
 	}
 
-	for name, nodeID := range edgeNames {
+	// Sort edge names for stable readdir offsets across calls.
+	// Go map iteration is randomized; without sorting, a multi-call
+	// readdir (small buffer) would see different entry order on each
+	// call, causing duplicates and missing entries via offset resume.
+	edgeNamesSorted := make([]string, 0, len(edgeNames))
+	for name := range edgeNames {
+		edgeNamesSorted = append(edgeNamesSorted, name)
+	}
+	sort.Strings(edgeNamesSorted)
+
+	for _, name := range edgeNamesSorted {
+		nodeID := edgeNames[name]
 		// Edges take priority over whiteouts — if there's a journal node,
 		// it's always visible.
 		node, _ := fs.journal.GetNode(nodeID)
@@ -592,19 +629,17 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 		return 0, fuse.ToStatus(err)
 	}
 
-	// Update journal node metadata after write.
+	// Track pending metadata for deferred journal sync in Flush.
+	// Avoids an fsync per 128 KB FUSE write chunk which kills throughput.
+	newSize := uint64(int64(input.Offset) + int64(n))
 	now := time.Now().UnixNano()
-	re.Size = uint64(int64(input.Offset) + int64(n))
-	re.MtimeNs = now
-	re.CtimeNs = now
-	if re.Node != nil {
-		re.Node.Size = re.Size
-		re.Node.MtimeNs = now
-		re.Node.CtimeNs = now
-		if err := fs.journal.UpdateNode(re.Node); err != nil {
-			return 0, fuse.EIO
+	fs.dirtyMeta.Compute(input.NodeId, func(old pendingMeta, exists bool) (pendingMeta, xsync.ComputeOp) {
+		s := newSize
+		if exists && old.size > s {
+			s = old.size
 		}
-	}
+		return pendingMeta{size: s, mtimeNs: now, ctimeNs: now}, xsync.UpdateOp
+	})
 
 	return uint32(n), fuse.OK
 }
@@ -616,6 +651,10 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	if path == "" {
 		return fuse.ENOENT
 	}
+
+	inoMu := fs.getInoLock(input.NodeId)
+	inoMu.Lock()
+	defer inoMu.Unlock()
 
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
@@ -631,8 +670,10 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	if v, ok := input.GetGID(); ok {
 		re.GID = uint32(v)
 	}
+	sizeChanged := false
 	if v, ok := input.GetSize(); ok {
 		re.Size = v
+		sizeChanged = true
 		if re.DataIsMut {
 			if err := os.Truncate(fs.mutablePath(path), int64(v)); err != nil {
 				fs.logNonFatal("truncate", path, err)
@@ -642,8 +683,10 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	if a, ok := input.GetATime(); ok {
 		re.CtimeNs = a.UnixNano()
 	}
+	mtimeSet := false
 	if m, ok := input.GetMTime(); ok {
 		re.MtimeNs = m.UnixNano()
+		mtimeSet = true
 	}
 
 	// Apply to mutable data if present.
@@ -676,6 +719,17 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 					fs.logNonFatal("lutimes", path, err)
 				}
 			}
+		}
+	}
+
+	// Consume pending write metadata to prevent Flush from overwriting
+	// our journal write with stale Write data.
+	if meta, ok := fs.dirtyMeta.LoadAndDelete(input.NodeId); ok {
+		if !sizeChanged && meta.size > re.Size {
+			re.Size = meta.size
+		}
+		if !mtimeSet {
+			re.MtimeNs = meta.mtimeNs
 		}
 	}
 
@@ -1065,7 +1119,17 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		oldRE.Node = node
 	}
 
-	// --- Phase 2: Disk mutations (after journal is committed) ---
+	// --- Phase 2: Update inode mapping (in-memory, fast — before slow disk I/O) ---
+	fs.unmapInode(newPath) // clear dest mapping
+	ino := fs.pathToIno(oldPath, oldRE.IsDir)
+	fs.unmapInode(oldPath)
+	fs.mapInode(ino, newPath)
+
+	if oldRE.IsDir {
+		fs.remapPathPrefix(oldPath, newPath)
+	}
+
+	// --- Phase 3: Disk mutations (journal + mappings already consistent) ---
 	// If we crash here, the journal is consistent — disk files are redundant
 	// copies that the next commit will re-snapshot from the correct paths.
 
@@ -1097,16 +1161,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 				}
 			}
 		}
-	}
-
-	// --- Phase 3: Update inode mapping ---
-	fs.unmapInode(newPath) // clear dest mapping
-	ino := fs.pathToIno(oldPath, oldRE.IsDir)
-	fs.unmapInode(oldPath)
-	fs.mapInode(ino, newPath)
-
-	if oldRE.IsDir {
-		fs.remapPathPrefix(oldPath, newPath)
 	}
 
 	return fuse.OK
@@ -1351,6 +1405,25 @@ func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, 
 // --- File Handle Lifecycle ---
 
 func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
+	// Sync dirty node metadata to journal on close.
+	// inoLock serializes with concurrent SetAttr on the same inode so
+	// neither overwrites the other's journal write.
+	inoMu := fs.getInoLock(input.NodeId)
+	inoMu.Lock()
+	if meta, ok := fs.dirtyMeta.LoadAndDelete(input.NodeId); ok {
+		path := fs.inodeToPath(input.NodeId)
+		if path != "" {
+			if re, status := fs.resolve(path); status == fuse.OK && re.Node != nil {
+				if meta.size > re.Node.Size {
+					re.Node.Size = meta.size
+				}
+				re.Node.MtimeNs = meta.mtimeNs
+				re.Node.CtimeNs = meta.ctimeNs
+				_ = fs.journal.UpdateNode(re.Node)
+			}
+		}
+	}
+	inoMu.Unlock()
 	if input.Fh == 0 {
 		return fuse.OK // pxar passthrough, no fd to sync
 	}
@@ -1958,6 +2031,12 @@ func (fs *MutableFS) ForceACLOwnership() {
 	}); err != nil {
 		fs.logNonFatal("walk-chown", fs.mutableDir, err)
 	}
+}
+
+// resetAfterCommit clears in-memory state that became stale after a
+// successful commit (journal cleared, pxar reader swapped).
+func (fs *MutableFS) resetAfterCommit() {
+	fs.dirtyMeta = xsync.NewMap[uint64, pendingMeta]()
 }
 
 func (fs *MutableFS) Close() {

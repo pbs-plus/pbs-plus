@@ -1101,6 +1101,16 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		return fmt.Errorf("create new reader: %w", err)
 	}
 
+	// Clear the journal first so concurrent reads during the swap window
+	// see old-pxar + empty-journal (consistent) rather than new-pxar +
+	// stale-journal (inconsistent edges).
+	if err := mfs.journal.Clear(); err != nil {
+		return fmt.Errorf("clear journal: %w", err)
+	}
+	if err := mfs.journal.Sync(); err != nil {
+		return fmt.Errorf("sync journal after clear: %w", err)
+	}
+
 	// Release previous mmap'd DIDX data.
 	for _, d := range mfs.mmapData {
 		_ = munmap(d)
@@ -1116,6 +1126,9 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		mfs.mmapData = append(mfs.mmapData, payloadData)
 	}
 
+	// Clear stale in-memory state from the previous snapshot.
+	mfs.resetAfterCommit()
+
 	// Update snapshot reference.
 	mfs.origSnapshot = snapshotRef{
 		BackupType:  backupType,
@@ -1125,14 +1138,6 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		ArchiveName: archiveName,
 	}
 	mfs.origPpxarDidx = ppxarPath
-
-	// Clear the journal and sync to ensure durability.
-	if err := mfs.journal.Clear(); err != nil {
-		return fmt.Errorf("clear journal: %w", err)
-	}
-	if err := mfs.journal.Sync(); err != nil {
-		return fmt.Errorf("sync journal after clear: %w", err)
-	}
 
 	// Reset mutable dir — preserve journal directory.
 	entries, err := os.ReadDir(mfs.mutableDir)
