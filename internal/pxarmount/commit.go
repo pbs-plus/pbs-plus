@@ -746,6 +746,11 @@ func (ow *commitWalkState) emitJournalEntry(ce *commitEntry, parentRelPath strin
 			if pnode := ow.mfs.findPxarNode(node.RedirectTo); pnode != nil {
 				pxarChildIno = pnode.inode
 			}
+			// Merge pxar-preserved fields (fcaps, acl, flags, quota)
+			// into journal metadata so default ACLs and fcaps survive.
+			if pxDirEntry, rerr := resolvePxarEntry(ow.mfs, node.RedirectTo); rerr == nil {
+				meta = mergeMetaWithPxar(meta, pxDirEntry)
+			}
 		} else if ce.pxarSlim != nil {
 			// Journal node shadows a pxar entry at the same position.
 			pxarChildIno = ce.pxarSlim.inode
@@ -838,10 +843,15 @@ func (ow *commitWalkState) emitRedirectedFile(node *GraphNode, name string, meta
 		return fmt.Errorf("resolve redirect %s for %s: %w", node.RedirectTo, name, err)
 	}
 
+	// Merge journal overrides (mode/uid/gid/mtime) with pxar-preserved
+	// fields (fcaps, acl, flags, quota). Without this, fcaps and ACLs
+	// are silently dropped on redirected entries.
+	mergedMeta := mergeMetaWithPxar(meta, pxarEntry)
+
 	entry := &pxar.Entry{
 		Path:     name,
 		Kind:     pxar.KindFile,
-		Metadata: meta,
+		Metadata: mergedMeta,
 		FileSize: node.Size,
 	}
 	if entry.FileSize == 0 {
@@ -986,6 +996,22 @@ func buildMetaFromPxarEntry(e *pxar.Entry) pxar.Metadata {
 		FCaps:  e.Metadata.FCaps,
 		ACL:    e.Metadata.ACL,
 	}
+}
+
+// mergeMetaWithPxar merges journal node metadata with preserved pxar fields.
+// Journal values take precedence for stat fields that the user may have
+// modified (mode, uid, gid, mtime). Pxar values are preserved for fields
+// the journal does not track: fcaps, acl, flags, and quota_project_id.
+// This matches proxmox-backup-client behavior where metadata changes
+// to a previously-backed-up file only affect the stat fields while
+// fcaps/acl are read from the source filesystem on each backup.
+func mergeMetaWithPxar(journalMeta pxar.Metadata, pxarEntry *pxar.Entry) pxar.Metadata {
+	out := journalMeta
+	out.Stat.Flags = pxarEntry.Metadata.Stat.Flags
+	out.QuotaProjectID = pxarEntry.Metadata.QuotaProjectID
+	out.FCaps = pxarEntry.Metadata.FCaps
+	out.ACL = pxarEntry.Metadata.ACL
+	return out
 }
 
 // clonePxarEntry clones a pxar entry with a new name.
