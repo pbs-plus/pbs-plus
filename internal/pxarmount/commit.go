@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1281,8 +1282,23 @@ func RunCommitSubcommand() {
 	}
 
 	// Foreground: stream progress directly from the connection.
+	// On Ctrl+C, send DETACH so the daemon keeps running the commit in background.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+
 	display := NewProgressDisplay(os.Stderr)
 	fmt.Fprintf(os.Stderr, "  Committing snapshot...\n")
+
+	go func() {
+		<-sigCh
+		// Stop the spinner first.
+		display.stop()
+		// Send DETACH so the daemon switches to background mode.
+		_, _ = fmt.Fprintln(conn, "DETACH")
+		fmt.Fprintf(os.Stderr, "\r  ↗ Commit detached — use 'pxar-mount attach --socket %s' to watch\n", *socketPath)
+		os.Exit(0)
+	}()
 
 	scanner := bufio.NewScanner(conn)
 	for scanner.Scan() {
