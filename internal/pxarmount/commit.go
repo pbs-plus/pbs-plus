@@ -241,6 +241,19 @@ type commitWalkState struct {
 	backedHashes map[string]uint64        // relPath → xxh3 hash of uploaded files
 	mutableFiles int                      // count of new/modified files
 
+	// lastRefPayloadOffset tracks the highest payload offset emitted via
+	// WriteEntryRef across the ENTIRE recursive walk. Before emitting any
+	// payload ref, we check that the offset is strictly greater than this
+	// value. If not, we fall back to re-encoding the file content from the
+	// archive, which advances the encoder's payload position sequentially.
+	//
+	// This mirrors the Rust PBS client's try_record_reusable_offset +
+	// re-encode pattern from pbs-client/src/pxar/create.rs, and prevents
+	// the encoder's strict monotonic PAYLOAD_REF offset check from ever
+	// firing (since we pre-validate before calling WriteEntryRef).
+	lastRefPayloadOffset uint64
+	hasLastRefPayload    bool
+
 	// Reusable scratch slices — allocated once, cleared per-directory
 	// via save/restore in commitWalk. Eliminates per-level heap allocation.
 	refEntries     []commitEntry
@@ -835,10 +848,7 @@ func (ow *commitWalkState) emitRedirectedFile(node *GraphNode, name string, meta
 		entry.FileSize = pxarEntry.FileSize
 	}
 
-	if err := ow.writer.WriteEntryRef(entry, pxarEntry.PayloadOffset); err != nil {
-		return fmt.Errorf("write ref %s (redirect from %s): %w", name, node.RedirectTo, err)
-	}
-	return nil
+	return ow.tryRefOrReencode(entry, pxarEntry, name, node.RedirectTo)
 }
 
 // emitPxarEntry writes a pure pxar entry to the archive.
@@ -888,27 +898,54 @@ func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) 
 		return nil
 	}
 
-	// Regular file with payload — try to emit as chunk reference.
-	// If monotonicity fails (overlapping sibling directory ranges),
-	// fall back to re-encoding from archive content. This mirrors the
-	// Rust pxar client's try_record_reusable_offset + re-encode pattern.
-	ow.mfs.debugf("emit ref %s/%s offset=%d", parentRelPath, ce.name, pxarEntry.PayloadOffset)
-	if err := ow.writer.WriteEntryRef(clone, pxarEntry.PayloadOffset); err != nil {
-		if strings.Contains(err.Error(), "not strictly greater") {
-			ow.mfs.debugf("emit ref %s/%s monotonicity fail, re-encoding", parentRelPath, ce.name)
-			ow.mfs.pxar.readerMu.Lock()
-			rc, rerr := ow.mfs.pxar.reader.ReadFileContentReader(pxarEntry)
-			ow.mfs.pxar.readerMu.Unlock()
-			if rerr != nil {
-				return fmt.Errorf("read pxar file content for re-encode %s/%s: %w", parentRelPath, ce.name, rerr)
-			}
-			defer func() { _ = rc.Close() }()
-			if werr := ow.writer.WriteEntryReader(clone, rc, pxarEntry.FileSize); werr != nil {
-				return fmt.Errorf("write pxar file (re-encode) %s/%s: %w", parentRelPath, ce.name, werr)
-			}
-			return nil
-		}
-		return fmt.Errorf("write pxar ref %s/%s (offset %d): %w", parentRelPath, ce.name, pxarEntry.PayloadOffset, err)
+	// Regular file with payload — use tryRefOrReencode which checks global
+	// monotonicity before attempting WriteEntryRef, falling back to re-encoding
+	// from archive content when the offset would violate the strict ascending
+	// offset invariant required by the pxar decoder.
+	return ow.tryRefOrReencode(clone, pxarEntry, ce.name, "")
+}
+
+// tryRefOrReencode attempts to emit a file as a payload reference (dedup).
+// If the payload offset would violate global monotonicity, it falls back to
+// re-encoding the file content from the archive. This mirrors the Rust PBS
+// client's try_record_reusable_offset + re-encode pattern.
+//
+// redirectPath is non-empty for journal redirect entries (for error messages).
+func (ow *commitWalkState) tryRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.Entry, name, redirectPath string) error {
+	offset := pxarEntry.PayloadOffset
+
+	// Pre-check: is the offset strictly greater than the last emitted ref?
+	if ow.hasLastRefPayload && offset <= ow.lastRefPayloadOffset {
+		ow.mfs.debugf("ref %s offset=%d <= lastRef=%d, re-encoding", name, offset, ow.lastRefPayloadOffset)
+		return ow.reencodeFromArchive(pxarEntry, entry, name)
+	}
+
+	if err := ow.writer.WriteEntryRef(entry, offset); err != nil {
+		// If the writer rejected the offset despite our pre-check (e.g. the
+		// encoder's per-state-level check caught something we missed), fall
+		// back to re-encoding.
+		ow.mfs.debugf("ref %s offset=%d writer rejected: %v, re-encoding", name, offset, err)
+		return ow.reencodeFromArchive(pxarEntry, entry, name)
+	}
+
+	ow.lastRefPayloadOffset = offset
+	ow.hasLastRefPayload = true
+	return nil
+}
+
+// reencodeFromArchive reads the original file content from the pxar archive
+// and writes it as new data via WriteEntryReader, bypassing payload refs
+// entirely. This advances the encoder's payload stream sequentially.
+func (ow *commitWalkState) reencodeFromArchive(pxarEntry *pxar.Entry, entry *pxar.Entry, name string) error {
+	ow.mfs.pxar.readerMu.Lock()
+	rc, err := ow.mfs.pxar.reader.ReadFileContentReader(pxarEntry)
+	ow.mfs.pxar.readerMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("read pxar content for re-encode %s: %w", name, err)
+	}
+	defer func() { _ = rc.Close() }()
+	if err := ow.writer.WriteEntryReader(entry, rc, pxarEntry.FileSize); err != nil {
+		return fmt.Errorf("write re-encoded %s: %w", name, err)
 	}
 	return nil
 }

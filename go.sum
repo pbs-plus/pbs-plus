@@ -165,10 +165,8 @@ github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOF
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 h1:onHthvaw9LFnH4t2DcNVpwGmV9E1BkGknEliJkfwQj0=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58/go.mod h1:DXv8WO4yhMYhSNPKjeNKa5WY9YCIEBRbNzFFPJbWO6Y=
-github.com/pbs-plus/pxar v0.26.0 h1:aCAyCcS0ImvXM1XczvzvKO/OWaplvOzGoZoHjTOPKfk=
-github.com/pbs-plus/pxar v0.26.0/go.mod h1:yt3dqfE6UkDZuaJgi4Aoe9i2u5Ok8x8LQJgjhUFiqvQ=
-github.com/pbs-plus/pxar v0.27.0 h1:O7B3LXK1YQM57TXlqlPDcCPaGhGuJUhL1jWyt5u0Nbk=
-github.com/pbs-plus/pxar v0.27.0/go.mod h1:yt3dqfE6UkDZuaJgi4Aoe9i2u5Ok8x8LQJgjhUFiqvQ=
+github.com/pbs-plus/pxar v0.27.1 h1:aacN/6XfGZWBRejNXccvHBfRXw4+FVCvFbEuVCWrU5A=
+github.com/pbs-plus/pxar v0.27.1/go.mod h1:yt3dqfE6UkDZuaJgi4Aoe9i2u5Ok8x8LQJgjhUFiqvQ=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pingcap/errors v0.11.4 h1:lFuQV/oaUMGcD2tqt+01ROSmJs75VG1ToEOkZIZ4nE4=
