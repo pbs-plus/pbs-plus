@@ -116,7 +116,7 @@ func (r *ProgressReporter) send() {
 		}
 		extra += ")"
 	}
-	_, _ = fmt.Fprintf(r.w, "PROGRESS %s%s\n", msg, extra)
+	_, _ = fmt.Fprintf(r.w, "PROGRESS [%s] %s%s\n", label, msg, extra)
 	r.lastSend = time.Now()
 }
 
@@ -204,9 +204,14 @@ func (d *ProgressDisplay) render() string {
 
 	var parts []string
 
-	if d.msg != "" {
+	// Build display label: prefer msg, fall back to phase.
+	// Avoid showing both when they're the same.
+	switch {
+	case d.msg != "" && d.phase != "" && d.msg != d.phase:
+		parts = append(parts, d.phase, d.msg)
+	case d.msg != "":
 		parts = append(parts, d.msg)
-	} else if d.phase != "" {
+	case d.phase != "":
 		parts = append(parts, d.phase)
 	}
 
@@ -252,17 +257,24 @@ func (d *ProgressDisplay) Update(line string) {
 	msg := strings.TrimPrefix(line, "PROGRESS ")
 	d.mu.Lock()
 
-	// Detect phase from message prefix
+	// Reset phase/msg for this update.
 	d.phase = ""
 	d.msg = ""
 
+	// Parse phase tag: [PhaseLabel] at the start.
+	if len(msg) > 0 && msg[0] == '[' {
+		if end := strings.Index(msg, "]"); end > 0 {
+			d.phase = msg[1:end]
+			msg = strings.TrimSpace(msg[end+1:])
+		}
+	}
+
 	// Extract trailing parenthesized stats if present.
-	inner := msg
 	hasStats := false
 	if idx := strings.LastIndex(msg, "("); idx > 0 {
 		stats := msg[idx:]
 		if strings.HasSuffix(stats, ")") {
-			inner = msg[:idx]
+			msg = msg[:idx]
 			d.parseStats(stats)
 			hasStats = true
 		}
@@ -280,15 +292,7 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 
-	// Detect known phase labels
-	for _, label := range phaseLabels {
-		if strings.HasPrefix(inner, label) {
-			d.phase = label
-			inner = strings.TrimSpace(inner[len(label):])
-			break
-		}
-	}
-	d.msg = strings.TrimSpace(inner)
+	d.msg = strings.TrimSpace(msg)
 
 	d.frame = (d.frame + 1) % len(d.frames)
 	d.mu.Unlock()

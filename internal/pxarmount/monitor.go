@@ -206,14 +206,18 @@ func (r *hubProgressReporter) SetPhase(phase ProgressPhase) {
 		if !ok {
 			label = "Working"
 		}
-		globalCommitHub.broadcast("PROGRESS " + label)
+		globalCommitHub.broadcast(fmt.Sprintf("PROGRESS [%s] %s", label, label))
 	}
 }
 
 func (r *hubProgressReporter) SetMsg(msg string) {
 	r.state.Msg = msg
 	if globalCommitHub != nil {
-		globalCommitHub.broadcast("PROGRESS " + msg)
+		label, ok := phaseLabels[r.state.Phase]
+		if !ok {
+			label = "Working"
+		}
+		globalCommitHub.broadcast(fmt.Sprintf("PROGRESS [%s] %s", label, msg))
 	}
 }
 
@@ -221,8 +225,16 @@ func (r *hubProgressReporter) AddFile(bytes int64) {
 	r.state.Files++
 	r.state.Bytes += bytes
 	if globalCommitHub != nil && time.Since(r.lastSend) > 100*time.Millisecond {
+		label, ok := phaseLabels[r.state.Phase]
+		if !ok {
+			label = "Working"
+		}
+		msg := r.state.Msg
+		if msg == "" {
+			msg = label
+		}
 		extra := fmt.Sprintf(" (%d files, %s)", r.state.Files, formatBytes(r.state.Bytes))
-		globalCommitHub.broadcast("PROGRESS " + r.state.Msg + extra)
+		globalCommitHub.broadcast(fmt.Sprintf("PROGRESS [%s] %s%s", label, msg, extra))
 		r.lastSend = time.Now()
 	}
 }
@@ -262,20 +274,33 @@ func (f *fanoutReporter) SetPhase(phase ProgressPhase) {
 	if !ok {
 		label = "Working"
 	}
-	f.hub.broadcast("PROGRESS " + label)
+	f.hub.broadcast(fmt.Sprintf("PROGRESS [%s] %s", label, label))
 }
 
 func (f *fanoutReporter) SetMsg(msg string) {
 	f.primary.SetMsg(msg)
-	f.hub.broadcast("PROGRESS " + msg)
+	state := f.primary.State()
+	label, ok := phaseLabels[state.Phase]
+	if !ok {
+		label = "Working"
+	}
+	f.hub.broadcast(fmt.Sprintf("PROGRESS [%s] %s", label, msg))
 }
 
 func (f *fanoutReporter) AddFile(bytes int64) {
 	f.primary.AddFile(bytes)
 	state := f.primary.State()
 	if time.Since(f.lastSend) > 100*time.Millisecond {
+		label, ok := phaseLabels[state.Phase]
+		if !ok {
+			label = "Working"
+		}
+		msg := state.Msg
+		if msg == "" {
+			msg = label
+		}
 		extra := fmt.Sprintf(" (%d files, %s)", state.Files, formatBytes(state.Bytes))
-		f.hub.broadcast("PROGRESS " + state.Msg + extra)
+		f.hub.broadcast(fmt.Sprintf("PROGRESS [%s] %s%s", label, msg, extra))
 		f.lastSend = time.Now()
 	}
 }
