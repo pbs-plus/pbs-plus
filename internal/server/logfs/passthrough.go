@@ -28,13 +28,11 @@ var _ = (fs.NodeCreater)((*PassthroughNode)(nil))
 var _ = (fs.NodeRenamer)((*PassthroughNode)(nil))
 var _ = (fs.NodeUnlinker)((*PassthroughNode)(nil))
 
-// Create intercepts file creation. If the new file is a task log, we
-// emit a Create event.
+// Create intercepts file creation.
 func (n *PassthroughNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (inode *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	inode, fh, fuseFlags, errno = n.LoopbackNode.Create(ctx, name, flags, mode, out)
 	if errno == 0 {
-		relPath := n.relativePath()
-		fullRelPath := filepath.Join(relPath, name)
+		fullRelPath := filepath.Join(n.relativePath(), name)
 		n.root.bus.Emit(Event{
 			Kind: EventCreate,
 			Path: fullRelPath,
@@ -60,10 +58,9 @@ func (n *PassthroughNode) Rename(ctx context.Context, name string, newParent fs.
 func (n *PassthroughNode) Unlink(ctx context.Context, name string) syscall.Errno {
 	errno := n.LoopbackNode.Unlink(ctx, name)
 	if errno == 0 {
-		relPath := filepath.Join(n.relativePath(), name)
 		n.root.bus.Emit(Event{
 			Kind: EventUnlink,
-			Path: relPath,
+			Path: filepath.Join(n.relativePath(), name),
 		})
 	}
 	return errno
@@ -74,8 +71,8 @@ func (n *PassthroughNode) relativePath() string {
 	return n.Path(n.root.EmbeddedInode())
 }
 
-// Open returns a file handle. For task log files, it wraps the handle
-// to intercept writes.
+// Open returns a file handle. For task log files, active, and archive,
+// it wraps the handle to intercept writes.
 func (n *PassthroughNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	fh, fuseFlags, errno = n.LoopbackNode.Open(ctx, flags)
 	if errno != 0 {
@@ -83,7 +80,7 @@ func (n *PassthroughNode) Open(ctx context.Context, flags uint32) (fh fs.FileHan
 	}
 
 	relPath := n.relativePath()
-	if isTaskLog(relPath) {
+	if isTaskLog(relPath) || isTaskIndex(relPath) {
 		fh = &writeInterceptor{
 			FileHandle: fh,
 			root:       n.root,
@@ -93,7 +90,8 @@ func (n *PassthroughNode) Open(ctx context.Context, flags uint32) (fh fs.FileHan
 	return
 }
 
-// writeInterceptor wraps a FileHandle and emits Write events for task logs.
+// writeInterceptor wraps a FileHandle and emits Write events for
+// task log files, the active index, and the archive index.
 type writeInterceptor struct {
 	fs.FileHandle
 	root    *Root
@@ -121,12 +119,17 @@ func isTaskLog(relPath string) bool {
 		return false
 	}
 	rest := relPath[len(taskLogPrefix):]
-	// Expect XX/<UPID>
 	parts := strings.SplitN(rest, "/", 3)
 	if len(parts) != 2 {
 		return false
 	}
 	return len(parts[0]) == 2 && strings.HasPrefix(parts[1], "UPID:")
+}
+
+// isTaskIndex returns true if the relative path is the active or
+// archive task index file.
+func isTaskIndex(relPath string) bool {
+	return relPath == "tasks/active" || strings.HasPrefix(relPath, "tasks/archive")
 }
 
 // Root is the FUSE root inode. It carries the EventBus reference
@@ -150,8 +153,6 @@ func MountOptions(allowOther bool) *fs.Options {
 
 // Mount mounts the FUSE passthrough filesystem. backingDir is the real
 // directory that holds the PBS logs. mountPoint is where to mount.
-// The caller must ensure backingDir exists and mountPoint is empty or
-// doesn't exist.
 func Mount(backingDir, mountPoint string, bus *EventBus, opts *fs.Options) (*fuse.Server, error) {
 	if err := os.MkdirAll(mountPoint, 0755); err != nil {
 		return nil, err
@@ -177,9 +178,7 @@ func Mount(backingDir, mountPoint string, bus *EventBus, opts *fs.Options) (*fus
 	return fs.Mount(mountPoint, root, opts)
 }
 
-// newNode creates a PassthroughNode for all children. This ensures
-// that every node in the tree shares the same EventBus reference
-// through the Root.
+// newNode creates a PassthroughNode for all children.
 func newNode(rootData *fs.LoopbackRoot, parent *fs.Inode, name string, st *syscall.Stat_t) fs.InodeEmbedder {
 	root := rootData.RootNode.(*Root)
 	n := &PassthroughNode{

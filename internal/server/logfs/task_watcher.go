@@ -3,7 +3,6 @@
 package logfs
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -17,14 +16,16 @@ import (
 type TaskEventType int
 
 const (
-	// TaskStarted is emitted when a new UPID line appears in the active file.
+	// TaskStarted is emitted when a new UPID appears in the active file
+	// or when a task log file is created.
 	TaskStarted TaskEventType = iota
 
 	// TaskLogLine is emitted when a line is written to a task log file.
 	TaskLogLine
 
 	// TaskFinished is emitted when a TASK OK, TASK WARNINGS, or TASK ERROR
-	// line is written to a task log file.
+	// line is written to a task log file, or when a UPID with a status
+	// appears in the archive file.
 	TaskFinished
 )
 
@@ -60,27 +61,25 @@ type TaskStatus struct {
 // TaskWatcher watches the FUSE event stream and emits structured
 // TaskEvents for PBS task activity.
 type TaskWatcher struct {
-	bus    *EventBus
-	mu     sync.Mutex
-	subs   map[string][]chan TaskEvent // upid -> subscribers
-	cancel context.CancelFunc
+	bus  *EventBus
+	mu   sync.Mutex
+	subs map[string][]chan TaskEvent // upid -> subscribers
 }
 
 // NewTaskWatcher creates a TaskWatcher that consumes raw filesystem
 // events from the given EventBus and produces structured TaskEvents.
 func NewTaskWatcher(bus *EventBus) *TaskWatcher {
-	tw := &TaskWatcher{
+	return &TaskWatcher{
 		bus:  bus,
 		subs: make(map[string][]chan TaskEvent),
 	}
-	return tw
 }
 
 // Start begins processing events. Call Stop to clean up.
 func (tw *TaskWatcher) Start(ctx context.Context) {
-	ctx, tw.cancel = context.WithCancel(ctx)
-
 	ch := make(chan Event, 256)
+
+	// Subscribe to all task-related file activity.
 	tw.bus.Subscribe("tasks/", func(ev Event) {
 		select {
 		case ch <- ev:
@@ -91,12 +90,8 @@ func (tw *TaskWatcher) Start(ctx context.Context) {
 	go tw.processLoop(ctx, ch)
 }
 
-// Stop cancels event processing.
-func (tw *TaskWatcher) Stop() {
-	if tw.cancel != nil {
-		tw.cancel()
-	}
-}
+// Stop is a no-op (cleanup happens via context cancellation in Start).
+func (tw *TaskWatcher) Stop() {}
 
 // WaitForTaskStatus waits for a task to reach a final state (TASK OK,
 // TASK WARNINGS, or TASK ERROR). It returns the parsed status.
@@ -148,58 +143,13 @@ func (tw *TaskWatcher) processLoop(ctx context.Context, ch <-chan Event) {
 func (tw *TaskWatcher) handleEvent(ev Event) {
 	switch ev.Kind {
 	case EventWrite:
-		if strings.HasSuffix(ev.Path, "/active") {
-			// New UPID appended to the active file
-			lines := bytes.SplitSeq(ev.Data, []byte("\n"))
-			for line := range lines {
-				line = bytes.TrimSpace(line)
-				if len(line) == 0 {
-					continue
-				}
-				fields := bytes.Fields(line)
-				if len(fields) == 0 {
-					continue
-				}
-				upid := string(fields[0])
-				if _, err := proxmox.ParseUPID(upid); err == nil {
-					tw.emit(TaskEvent{
-						Type: TaskStarted,
-						UPID: upid,
-					})
-				}
-			}
-		} else if isTaskLog(ev.Path) {
-			// Lines written to a task log file
-			upid := upidFromTaskLogPath(ev.Path)
-			if upid == "" {
-				return
-			}
-
-			lines := bytes.SplitSeq(ev.Data, []byte("\n"))
-			for line := range lines {
-				line = bytes.TrimSpace(line)
-				if len(line) == 0 {
-					continue
-				}
-				lineStr := string(line)
-				taskEv := TaskEvent{
-					Type: TaskLogLine,
-					UPID: upid,
-					Line: lineStr,
-				}
-
-				if strings.Contains(lineStr, "TASK ERROR:") {
-					taskEv.Type = TaskFinished
-					if errMsg := extractTaskError(lineStr); errMsg != "" {
-						taskEv.Error = fmt.Errorf("%s", errMsg)
-					}
-				} else if strings.HasPrefix(lineStr, "TASK OK") ||
-					strings.HasPrefix(lineStr, "TASK WARNINGS") {
-					taskEv.Type = TaskFinished
-				}
-
-				tw.emit(taskEv)
-			}
+		switch {
+		case ev.Path == "tasks/active":
+			tw.handleActiveWrite(ev.Data)
+		case strings.HasPrefix(ev.Path, "tasks/archive"):
+			tw.handleArchiveWrite(ev.Data)
+		case isTaskLog(ev.Path):
+			tw.handleTaskLogWrite(ev.Path, ev.Data)
 		}
 	case EventCreate:
 		if isTaskLog(ev.Path) {
@@ -211,6 +161,110 @@ func (tw *TaskWatcher) handleEvent(ev Event) {
 				})
 			}
 		}
+	}
+}
+
+// handleActiveWrite parses writes to the active file.
+// PBS rewrites the entire active file on task start and task finish.
+// Active entries are just "<UPID>\n". Finished entries are
+// "<UPID> <endtime_hex> <status>\n".
+func (tw *TaskWatcher) handleActiveWrite(data []byte) {
+	lines := splitLines(data)
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) == 0 {
+			continue
+		}
+
+		upid := parts[0]
+		if _, err := proxmox.ParseUPID(upid); err != nil {
+			continue
+		}
+
+		// 1 field = just UPID = newly started task
+		// 3 fields = UPID + endtime + status = finished task (briefly in active before archive)
+		if len(parts) == 1 {
+			tw.emit(TaskEvent{
+				Type: TaskStarted,
+				UPID: upid,
+			})
+		} else if len(parts) >= 3 {
+			status := strings.Join(parts[2:], " ")
+			tw.emit(TaskEvent{
+				Type: TaskFinished,
+				UPID: upid,
+				Line: status,
+			})
+		}
+	}
+}
+
+// handleArchiveWrite parses appends to the archive file.
+// PBS appends "<UPID> <endtime_hex> <status>\n" for each finished task.
+func (tw *TaskWatcher) handleArchiveWrite(data []byte) {
+	lines := splitLines(data)
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+
+		upid := parts[0]
+		if _, err := proxmox.ParseUPID(upid); err != nil {
+			continue
+		}
+
+		status := strings.Join(parts[2:], " ")
+		taskEv := TaskEvent{
+			Type: TaskFinished,
+			UPID: upid,
+			Line: status,
+		}
+
+		if after, ok := strings.CutPrefix(status, "ERROR: "); ok {
+			taskEv.Error = fmt.Errorf("%s", after)
+		}
+
+		tw.emit(taskEv)
+	}
+}
+
+// handleTaskLogWrite parses writes to individual task log files.
+func (tw *TaskWatcher) handleTaskLogWrite(relPath string, data []byte) {
+	upid := upidFromTaskLogPath(relPath)
+	if upid == "" {
+		return
+	}
+
+	lines := splitLines(data)
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		taskEv := TaskEvent{
+			Type: TaskLogLine,
+			UPID: upid,
+			Line: line,
+		}
+
+		if strings.Contains(line, "TASK ERROR:") {
+			taskEv.Type = TaskFinished
+			if errMsg := extractTaskError(line); errMsg != "" {
+				taskEv.Error = fmt.Errorf("%s", errMsg)
+			}
+		} else if strings.Contains(line, "TASK OK") ||
+			strings.Contains(line, "TASK WARNINGS") {
+			taskEv.Type = TaskFinished
+		}
+
+		tw.emit(taskEv)
 	}
 }
 
@@ -235,7 +289,7 @@ func (tw *TaskWatcher) emit(ev TaskEvent) {
 }
 
 // upidFromTaskLogPath extracts the UPID from a relative path like
-// "tasks/ab/UPID:...".
+// "tasks/XX/UPID:...".
 func upidFromTaskLogPath(relPath string) string {
 	rest := relPath[len(taskLogPrefix):]
 	parts := strings.SplitN(rest, "/", 2)
@@ -253,9 +307,7 @@ func extractTaskError(line string) string {
 	if !ok {
 		return ""
 	}
-	// Strip any leading timestamp
-	rest := after
-	return rest
+	return after
 }
 
 // parseTaskStatus converts a TaskFinished event into a TaskStatus.
@@ -263,26 +315,31 @@ func parseTaskStatus(ev TaskEvent) TaskStatus {
 	ts := TaskStatus{UPID: ev.UPID}
 	line := ev.Line
 
-	if strings.Contains(line, "TASK ERROR:") {
-		ts.Error = extractTaskError(line)
-	} else if strings.Contains(line, "TASK WARNINGS:") {
+	if strings.Contains(line, "ERROR:") || ev.Error != nil {
+		ts.Error = ev.Error.Error()
+		if ts.Error == "" {
+			ts.Error = extractTaskError(line)
+		}
+	} else if strings.Contains(line, "WARNINGS:") {
 		ts.OK = true
-		ts.Warnings = parseWarningCount(line)
-	} else if strings.Contains(line, "TASK OK") {
+		var count int
+		_, _ = fmt.Sscanf(strings.TrimSpace(line), "WARNINGS: %d", &count)
+		ts.Warnings = count
+	} else if line == "OK" || strings.Contains(line, "TASK OK") {
 		ts.OK = true
 	}
 	return ts
 }
 
-// parseWarningCount extracts the warning count from "TASK WARNINGS: N".
-func parseWarningCount(line string) int {
-	const prefix = "TASK WARNINGS: "
-	_, after, ok := strings.Cut(line, prefix)
-	if !ok {
-		return 0
+// splitLines splits byte data into trimmed non-empty lines.
+func splitLines(data []byte) []string {
+	raw := strings.Split(string(data), "\n")
+	result := make([]string, 0, len(raw))
+	for _, l := range raw {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			result = append(result, l)
+		}
 	}
-	rest := after
-	var count int
-	_, _ = fmt.Sscanf(strings.TrimSpace(rest), "%d", &count)
-	return count
+	return result
 }
