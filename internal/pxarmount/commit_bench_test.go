@@ -419,9 +419,9 @@ func (m *mockWriter) WriteEntryRef(_ *pxar.Entry, _ uint64) error {
 func (m *mockWriter) BeginDirectory(_ string, _ *pxar.Metadata) error { return nil }
 func (m *mockWriter) EndDirectory() error                             { return nil }
 
-// BenchmarkEmitJournalEntryFull measures the full emitJournalEntry path
-// for a symlink entry (simplest non-recursive case).
-func BenchmarkEmitJournalEntryFull(b *testing.B) {
+// BenchmarkEmitAlphabeticalJournalSymlink measures the new alphabetical dispatch
+// for a symlink entry.
+func BenchmarkEmitAlphabeticalJournalSymlink(b *testing.B) {
 	mfs := &MutableFS{
 		verbose: false,
 	}
@@ -445,12 +445,12 @@ func BenchmarkEmitJournalEntryFull(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = ow.emitJournalEntry(ce, "/parent")
+		_ = ow.emitAlphabeticalJournal(ce, "/parent")
 	}
 }
 
-// BenchmarkEmitJournalEntryFileEmpty measures the empty file case.
-func BenchmarkEmitJournalEntryFileEmpty(b *testing.B) {
+// BenchmarkEmitAlphabeticalJournalFileEmpty measures the empty file case.
+func BenchmarkEmitAlphabeticalJournalFileEmpty(b *testing.B) {
 	mfs := &MutableFS{
 		verbose: false,
 	}
@@ -475,7 +475,7 @@ func BenchmarkEmitJournalEntryFileEmpty(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = ow.emitJournalEntry(ce, "/parent")
+		_ = ow.emitAlphabeticalJournal(ce, "/parent")
 	}
 }
 

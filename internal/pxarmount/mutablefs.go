@@ -1,6 +1,7 @@
 package pxarmount
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	pxar "github.com/pbs-plus/pxar"
 	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sys/unix"
 )
@@ -1599,7 +1601,59 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	if err := os.Chmod(abs, mode); err != nil {
 		fs.logNonFatal("chmod", abs, err)
 	}
+
+	// Preserve extended attributes and file capabilities from the pxar
+	// archive on the mutable filesystem. Without this, opening a file
+	// for write silently drops all xattrs and fcaps.
+	applyPxarXattrsToFile(abs, entry)
+
 	return nil
+}
+
+// applyPxarXattrsToFile sets extended attributes and file capabilities
+// from a pxar entry onto a real file. Errors are logged but not fatal —
+// the file content has already been successfully copied.
+func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
+	for _, xa := range entry.Metadata.XAttrs {
+		name := xa.Name()
+		if len(name) == 0 {
+			continue
+		}
+		// Skip ACL and fcaps — those are handled separately via the
+		// structured Metadata fields, not raw xattr values.
+		if isACLXattr(name) || isFcapsXattr(name) {
+			continue
+		}
+		if err := unix.Lsetxattr(abs, string(name), xa.Value(), 0); err != nil {
+			// Silently skip unsupported xattrs (EOPNOTSUPP, etc.).
+			if !isIgnorableXattrErr(err) {
+				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp xattr %q on %q: %v\n", string(name), abs, err)
+			}
+		}
+	}
+	if len(entry.Metadata.FCaps) > 0 {
+		if err := unix.Lsetxattr(abs, "security.capability", entry.Metadata.FCaps, 0); err != nil {
+			if !isIgnorableXattrErr(err) {
+				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp fcaps on %q: %v\n", abs, err)
+			}
+		}
+	}
+}
+
+// isACLXattr reports whether the xattr name is a POSIX ACL attribute.
+func isACLXattr(name []byte) bool {
+	return bytesEq(name, "system.posix_acl_access") || bytesEq(name, "system.posix_acl_default")
+}
+
+// isFcapsXattr reports whether the xattr name is the file capabilities attribute.
+func isFcapsXattr(name []byte) bool {
+	return bytesEq(name, "security.capability")
+}
+
+// isIgnorableXattrErr reports whether an xattr error can be safely ignored
+// (feature not supported by the underlying filesystem, or no data).
+func isIgnorableXattrErr(err error) bool {
+	return errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODATA) || errors.Is(err, unix.EOPNOTSUPP)
 }
 
 // copyRegularFile copies a regular file from src to dst.
