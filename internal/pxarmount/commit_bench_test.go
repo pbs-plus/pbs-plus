@@ -100,10 +100,9 @@ func makeGraphNodes(edges []GraphEdge, hasDataFraction float64) map[int64]*Graph
 
 // --- Benchmarks ---
 
-// BenchmarkCommitWalkSliceBuilding measures the allocation cost of building
-// the merged entry lists (allEntries, refEntries, newDataEntries) from
-// pxar directory entries and journal edges. This is the hottest allocation
-// path in commitWalk, called once per directory level.
+// BenchmarkCommitWalkSliceBuilding measures the ORIGINAL allocation pattern
+// (pre-optimization) for building merged entry lists. Kept as a regression
+// guard — any new code in commitWalk should use the pooled pattern below.
 func BenchmarkCommitWalkSliceBuilding(b *testing.B) {
 	for _, size := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("pxar_%d_edges_%d", size, size/5), func(b *testing.B) {
@@ -177,9 +176,9 @@ func BenchmarkCommitWalkSliceBuilding(b *testing.B) {
 	}
 }
 
-// BenchmarkCommitWalkSliceBuildingPooled measures the same hot path but with
-// pre-allocated reusable slices (save/restore pattern). This is the proposed
-// optimization target.
+// BenchmarkCommitWalkSliceBuildingPooled measures the OPTIMIZED pattern now
+// used in commitWalk: pre-allocated reusable slices with save/restore.
+// This is the pattern the production code uses.
 func BenchmarkCommitWalkSliceBuildingPooled(b *testing.B) {
 	for _, size := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("pxar_%d_edges_%d", size, size/5), func(b *testing.B) {

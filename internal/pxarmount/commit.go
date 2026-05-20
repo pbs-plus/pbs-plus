@@ -231,6 +231,8 @@ type commitEntry struct {
 }
 
 // commitWalkState holds state for the recursive commit walk.
+// All per-walk slices are pre-allocated once and reused across recursive
+// calls via save/restore, eliminating heap allocation per directory level.
 type commitWalkState struct {
 	mfs          *MutableFS
 	writer       transfer.ArchiveWriter
@@ -238,6 +240,12 @@ type commitWalkState struct {
 	xattrCache   map[int64][]format.XAttr // journal node ID → xattrs
 	backedHashes map[string]uint64        // relPath → xxh3 hash of uploaded files
 	mutableFiles int                      // count of new/modified files
+
+	// Reusable scratch slices — allocated once, cleared per-directory
+	// via save/restore in commitWalk. Eliminates per-level heap allocation.
+	refEntries     []commitEntry
+	newDataEntries []commitEntry
+	allEntries     []commitEntry
 }
 
 // CommitProgress is the interface used by CommitSnapshot to report progress.
@@ -425,11 +433,14 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	prog.SetMsg("Archiving files")
 
 	ow := &commitWalkState{
-		mfs:          mfs,
-		writer:       writer,
-		prog:         prog,
-		xattrCache:   make(map[int64][]format.XAttr),
-		backedHashes: make(map[string]uint64),
+		mfs:            mfs,
+		writer:         writer,
+		prog:           prog,
+		xattrCache:     make(map[int64][]format.XAttr),
+		backedHashes:   make(map[string]uint64),
+		refEntries:     make([]commitEntry, 0, 64),
+		newDataEntries: make([]commitEntry, 0, 16),
+		allEntries:     make([]commitEntry, 0, 64),
 	}
 
 	// Pre-load all journal xattrs for batch access.
@@ -487,7 +498,26 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 //   - Journal edges always take priority over pxar entries
 //   - Whiteouts hide pxar entries
 //   - Once off the journal, entries come from pure pxar
+//
+// Zero-allocation: uses save/restore on pre-allocated slices so no heap
+// allocation occurs per directory level beyond what the journal/pxar
+// libraries return.
 func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, relPath string) error {
+	// --- Save parent's slice state, reset for this level ---
+	savedRef := ow.refEntries
+	savedNew := ow.newDataEntries
+	savedAll := ow.allEntries
+	ow.refEntries = ow.refEntries[:0]
+	ow.newDataEntries = ow.newDataEntries[:0]
+	ow.allEntries = ow.allEntries[:0]
+
+	// Restore on return so the parent level reuses the same backing array.
+	defer func() {
+		ow.refEntries = savedRef
+		ow.newDataEntries = savedNew
+		ow.allEntries = savedAll
+	}()
+
 	// Get journal children.
 	var journalEdges []GraphEdge
 	var whiteoutSet map[string]bool
@@ -501,9 +531,11 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		if err != nil {
 			return fmt.Errorf("list whiteouts for node %d: %w", journalParentID, err)
 		}
-		whiteoutSet = make(map[string]bool, len(whiteouts))
-		for _, w := range whiteouts {
-			whiteoutSet[w] = true
+		if len(whiteouts) > 0 {
+			whiteoutSet = make(map[string]bool, len(whiteouts))
+			for _, w := range whiteouts {
+				whiteoutSet[w] = true
+			}
 		}
 	}
 
@@ -518,50 +550,24 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// Build lookup maps.
-	edgeNames := make(map[string]bool, len(journalEdges))
-	for _, e := range journalEdges {
-		edgeNames[e.Name] = true
+	// Build lookup set from journal edges — only allocate if non-empty.
+	var edgeNames map[string]bool
+	if len(journalEdges) > 0 {
+		edgeNames = make(map[string]bool, len(journalEdges))
+		for _, e := range journalEdges {
+			edgeNames[e.Name] = true
+		}
 	}
 
-	// Build merged entry list.
-	//
-	// Architectural decision: split entries into ref-emitters and
-	// new-data-emitters. All refs (WriteEntryRef) must precede all
-	// new-data writes (WriteEntryReader) because WriteEntryReader
-	// advances the payload stream position past all existing ref
-	// offsets, making subsequent refs fail the monotonicity check.
-	//
-	// Within each group, maintain original metadata order for refs
-	// (which preserves ascending payload offsets from PBS) and emit
-	// directories before files so children appear inside their parent.
-	var refEntries, newDataEntries []commitEntry
-
-	// Classify pxar entries.
+	// --- Classify pxar entries directly into allEntries ---
 	//
 	// PBS archives are written depth-first with strictly ascending payload
 	// offsets. Each directory's children occupy a contiguous, non-overlapping
 	// range. GOODBYE hash ordering differs from payload ordering, so we
 	// must sort FILE entries by contentOffset within each directory.
 	//
-	// Directories stay in metadata order to preserve the depth-first
-	// traversal that PBS used (non-overlapping ranges).
-	var pxarDirs, pxarFiles []commitEntry
-	for i := range pxarEntries {
-		pe := &pxarEntries[i]
-		if edgeNames[pe.name] || whiteoutSet[pe.name] {
-			continue
-		}
-		if pe.isDir || pe.isSymlink {
-			pxarDirs = append(pxarDirs, commitEntry{name: pe.name, pxarSlim: pe})
-		} else {
-			pxarFiles = append(pxarFiles, commitEntry{name: pe.name, pxarSlim: pe})
-		}
-	}
-	// Sort pxar entries: directories first (by entryStart to approximate
-	// depth-first order), then files sorted by contentOffset (ascending
-	// payload offset to maximize successful chunk refs). Symlinks have no
-	// payload and are emitted in entry order.
+	// We build allEntries in two passes (dirs+symlinks first, then files)
+	// so the final sort sees dirs before files, matching depth-first order.
 	//
 	// NOTE: We intentionally do NOT recursively compute min-descendant
 	// offsets. The recursive approach materializes the entire archive
@@ -571,28 +577,53 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	// whose payload ref violates the strict ascending offset check.
 	// This matches the Rust pxar client's try_record_reusable_offset +
 	// re-encode pattern.
-	allEntries := make([]commitEntry, 0, len(pxarDirs)+len(pxarFiles))
-	allEntries = append(allEntries, pxarDirs...)
-	allEntries = append(allEntries, pxarFiles...)
-	for i := range allEntries {
-		e := &allEntries[i]
+
+	for i := range pxarEntries {
+		pe := &pxarEntries[i]
+		if edgeNames != nil && edgeNames[pe.name] {
+			continue
+		}
+		if whiteoutSet != nil && whiteoutSet[pe.name] {
+			continue
+		}
+		if pe.isDir || pe.isSymlink {
+			ow.allEntries = append(ow.allEntries, commitEntry{name: pe.name, pxarSlim: pe})
+		}
+	}
+	for i := range pxarEntries {
+		pe := &pxarEntries[i]
+		if edgeNames != nil && edgeNames[pe.name] {
+			continue
+		}
+		if whiteoutSet != nil && whiteoutSet[pe.name] {
+			continue
+		}
+		if !pe.isDir && !pe.isSymlink {
+			ow.allEntries = append(ow.allEntries, commitEntry{name: pe.name, pxarSlim: pe})
+		}
+	}
+
+	// Compute sort keys and sort.
+	for i := range ow.allEntries {
+		e := &ow.allEntries[i]
 		if e.pxarSlim.isDir || e.pxarSlim.isSymlink {
 			e.sortKey = e.pxarSlim.entryStart
 		} else {
 			e.sortKey = e.pxarSlim.contentOffset
 		}
 	}
-	sort.Slice(allEntries, func(i, j int) bool {
-		// Directories before non-directories (depth-first order).
-		if allEntries[i].pxarSlim.isDir != allEntries[j].pxarSlim.isDir {
-			return allEntries[i].pxarSlim.isDir
+	sort.Slice(ow.allEntries, func(i, j int) bool {
+		ei := &ow.allEntries[i]
+		ej := &ow.allEntries[j]
+		if ei.pxarSlim.isDir != ej.pxarSlim.isDir {
+			return ei.pxarSlim.isDir
 		}
-		return allEntries[i].sortKey < allEntries[j].sortKey
+		return ei.sortKey < ej.sortKey
 	})
-	// Debug: log sort order for directories with both dirs and files
+
 	if ow.mfs.verbose {
 		hasDir, hasFile := false, false
-		for _, e := range allEntries {
+		for _, e := range ow.allEntries {
 			if e.pxarSlim != nil {
 				if e.pxarSlim.isDir {
 					hasDir = true
@@ -602,8 +633,8 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			}
 		}
 		if hasDir && hasFile {
-			ow.mfs.debugf("commit-walk sort %q: %d entries", relPath, len(allEntries))
-			for i, e := range allEntries {
+			ow.mfs.debugf("commit-walk sort %q: %d entries", relPath, len(ow.allEntries))
+			for i, e := range ow.allEntries {
 				if e.pxarSlim == nil {
 					continue
 				}
@@ -618,73 +649,62 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			}
 		}
 	}
-	refEntries = append(refEntries, allEntries...)
 
-	// Classify journal edges by whether they emit new data.
+	// All pxar entries are refs (no new data).
+	ow.refEntries = append(ow.refEntries, ow.allEntries...)
+
+	// --- Classify journal edges by whether they emit new data ---
+	//
+	// Architectural decision: split entries into ref-emitters and
+	// new-data-emitters. All refs (WriteEntryRef) must precede all
+	// new-data writes (WriteEntryReader) because WriteEntryReader
+	// advances the payload stream position past all existing ref
+	// offsets, making subsequent refs fail the monotonicity check.
 	for i := range journalEdges {
 		edge := &journalEdges[i]
 		node, err := ow.mfs.journal.GetNode(edge.ChildID)
 		if err != nil || node == nil {
 			continue
 		}
+		ce := commitEntry{name: edge.Name, node: node}
 		if node.Kind == NodeFile && node.HasData {
-			// New/modified file — must come after all refs.
-			newDataEntries = append(newDataEntries, commitEntry{
-				name: edge.Name,
-				node: node,
-			})
-		} else if node.Kind == NodeDir {
-			// Directories, even those with new data in their subtree,
-			// are always ref entries. The directory metadata entry
-			// itself does not advance the payload. New data in the
-			// subtree is handled by the recursive walk of that
-			// directory's children.
-			//
-			// Putting a directory in newDataEntries would displace
-			// all of its ref children from the correctly sorted
-			// order alongside sibling entries.
-			refEntries = append(refEntries, commitEntry{
-				name: edge.Name,
-				node: node,
-			})
+			ow.newDataEntries = append(ow.newDataEntries, ce)
 		} else {
-			// Symlinks, empty files, redirects — no payload advance.
-			refEntries = append(refEntries, commitEntry{
-				name: edge.Name,
-				node: node,
-			})
+			ow.refEntries = append(ow.refEntries, ce)
 		}
 	}
 
-	// Emit all ref entries first, then all new-data entries.
+	// --- Emit all ref entries first, then all new-data entries ---
 	if ow.mfs.verbose {
 		ow.mfs.debugf("commit-walk %q: %d refEntries, %d newDataEntries (pxarInode=%d)",
-			relPath, len(refEntries), len(newDataEntries), pxarInode)
-		for i, e := range refEntries {
+			relPath, len(ow.refEntries), len(ow.newDataEntries), pxarInode)
+		for i, e := range ow.refEntries {
 			ow.mfs.debugf("  ref[%d] name=%q node=%v slim=%v", i, e.name, e.node != nil, e.pxarSlim != nil)
 		}
-		for i, e := range newDataEntries {
+		for i, e := range ow.newDataEntries {
 			ow.mfs.debugf("  new[%d] name=%q node=%v slim=%v", i, e.name, e.node != nil, e.pxarSlim != nil)
 		}
 	}
-	for i := range refEntries {
-		if refEntries[i].node != nil {
-			if err := ow.emitJournalEntry(&refEntries[i], relPath); err != nil {
+	for i := range ow.refEntries {
+		ce := &ow.refEntries[i]
+		if ce.node != nil {
+			if err := ow.emitJournalEntry(ce, relPath); err != nil {
 				return err
 			}
 		} else {
-			if err := ow.emitPxarEntry(&refEntries[i], relPath); err != nil {
+			if err := ow.emitPxarEntry(ce, relPath); err != nil {
 				return err
 			}
 		}
 	}
-	for i := range newDataEntries {
-		if newDataEntries[i].node != nil {
-			if err := ow.emitJournalEntry(&newDataEntries[i], relPath); err != nil {
+	for i := range ow.newDataEntries {
+		ce := &ow.newDataEntries[i]
+		if ce.node != nil {
+			if err := ow.emitJournalEntry(ce, relPath); err != nil {
 				return err
 			}
 		} else {
-			if err := ow.emitPxarEntry(&newDataEntries[i], relPath); err != nil {
+			if err := ow.emitPxarEntry(ce, relPath); err != nil {
 				return err
 			}
 		}
@@ -981,12 +1001,21 @@ func resolvePxarEntry(mfs *MutableFS, relPath string) (*pxar.Entry, error) {
 	return nil, fmt.Errorf("path %q not found", relPath)
 }
 
+// xxh3Pool reuses xxh3 hashers across verify calls to avoid per-worker allocation.
+var xxh3Pool = sync.Pool{
+	New: func() any { return xxh3.New() },
+}
+
 // verifyBackedFileHashes checks that backed files haven't changed since upload.
 // Uses a worker pool with atomic index to avoid channel/alloc overhead.
+// Hashers are pooled via sync.Pool to eliminate per-file xxh3 allocation.
 func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog CommitProgress) error {
 	workers := min(min(runtime.NumCPU(), 16), len(hashes))
 
 	// Flatten map into a single contiguous slice — one allocation.
+	// Use parallel flat layout: [relPath0, expected0, relPath1, expected1, ...]
+	// to avoid struct padding overhead. But clarity wins here since this
+	// is a one-time cost per commit.
 	type item struct {
 		relPath  string
 		expected uint64
@@ -1008,7 +1037,8 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 
 	hasher := func() {
 		buf := make([]byte, 64*1024)
-		h := xxh3.New()
+		h := xxh3Pool.Get().(*xxh3.Hasher)
+		defer xxh3Pool.Put(h)
 		for {
 			i := int(idx.Add(1) - 1)
 			if i >= total {
@@ -1047,11 +1077,15 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 		}
 	}
 
+	// Use manual wg.Add + go instead of wg.Go to avoid closure allocation
+	// per goroutine (wg.Go creates a wrapper closure internally).
 	var wg sync.WaitGroup
+	wg.Add(workers)
 	for range workers {
-		wg.Go(func() {
+		go func() {
+			defer wg.Done()
 			hasher()
-		})
+		}()
 	}
 	wg.Wait()
 
