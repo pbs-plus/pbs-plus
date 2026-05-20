@@ -856,7 +856,7 @@ func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string)
 	// Resolve pxar entry for payload offset and metadata merge.
 	pxarEntry, err := resolvePxarEntry(ow.mfs, node.RedirectTo)
 	if err != nil {
-		return fmt.Errorf("resolve redirect %s for %s: %w", node.RedirectTo, ce.name, err)
+		return fmt.Errorf("resolve redirect %q for %q: %w", node.RedirectTo, ce.name, err)
 	}
 	mergedMeta := mergeMetaWithPxar(meta, pxarEntry)
 
@@ -910,7 +910,7 @@ func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string)
 	}
 
 	if err := ow.writer.BeginDirectory(ce.name, &meta); err != nil {
-		return fmt.Errorf("begin dir %s: %w", ce.name, err)
+		return fmt.Errorf("begin dir %q: %w", ce.name, err)
 	}
 	if err := ow.commitWalk(node.ID, pxarChildIno, childPath); err != nil {
 		return err
@@ -934,7 +934,7 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 	meta := buildMetaFromPxarEntry(pxarEntry)
 
 	if err := ow.writer.BeginDirectory(ce.name, &meta); err != nil {
-		return fmt.Errorf("begin pxar dir %s: %w", ce.name, err)
+		return fmt.Errorf("begin pxar dir %q: %w", ce.name, err)
 	}
 	if err := ow.commitWalk(0, childIno, childPath); err != nil {
 		return err
@@ -962,13 +962,13 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 	abs := ow.mfs.mutablePath(childPath)
 	f, err := os.Open(abs)
 	if err != nil {
-		return fmt.Errorf("open backed file %s: %w", childPath, err)
+		return fmt.Errorf("open backed file %q: %w", childPath, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	fi, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("stat backed file %s: %w", childPath, err)
+		return fmt.Errorf("stat backed file %q: %w", childPath, err)
 	}
 
 	entry := ow.allocEntry()
@@ -981,7 +981,7 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 	tee := io.TeeReader(f, h)
 
 	if err := ow.writer.WriteEntryReader(entry, tee, uint64(fi.Size())); err != nil {
-		return fmt.Errorf("write backed file %s: %w", name, err)
+		return fmt.Errorf("write backed file %q: %w", name, err)
 	}
 
 	ow.backedHashes[childPath] = h.Sum64()
@@ -1004,7 +1004,7 @@ func (ow *commitWalkState) tryRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.E
 
 	// Pre-check: is the offset strictly greater than the last emitted ref?
 	if ow.hasLastRefPayload && offset <= ow.lastRefPayloadOffset {
-		ow.mfs.debugf("ref %s offset=%d <= lastRef=%d, re-encoding", name, offset, ow.lastRefPayloadOffset)
+		ow.mfs.debugf("ref %q offset=%d <= lastRef=%d, re-encoding", name, offset, ow.lastRefPayloadOffset)
 		return ow.reencodeFromArchive(pxarEntry, entry, name)
 	}
 
@@ -1012,7 +1012,7 @@ func (ow *commitWalkState) tryRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.E
 		// If the writer rejected the offset despite our pre-check (e.g. the
 		// encoder's per-state-level check caught something we missed), fall
 		// back to re-encoding.
-		ow.mfs.debugf("ref %s offset=%d writer rejected: %v, re-encoding", name, offset, err)
+		ow.mfs.debugf("ref %q offset=%d writer rejected: %v, re-encoding", name, offset, err)
 		return ow.reencodeFromArchive(pxarEntry, entry, name)
 	}
 
@@ -1029,11 +1029,11 @@ func (ow *commitWalkState) reencodeFromArchive(pxarEntry *pxar.Entry, entry *pxa
 	rc, err := ow.mfs.pxar.reader.ReadFileContentReader(pxarEntry)
 	ow.mfs.pxar.readerMu.Unlock()
 	if err != nil {
-		return fmt.Errorf("read pxar content for re-encode %s: %w", name, err)
+		return fmt.Errorf("read pxar content for re-encode %q: %w", name, err)
 	}
 	defer func() { _ = rc.Close() }()
 	if err := ow.writer.WriteEntryReader(entry, rc, pxarEntry.FileSize); err != nil {
-		return fmt.Errorf("write re-encoded %s: %w", name, err)
+		return fmt.Errorf("write re-encoded %q: %w", name, err)
 	}
 	return nil
 }
@@ -1092,13 +1092,6 @@ func mergeMetaWithPxar(journalMeta pxar.Metadata, pxarEntry *pxar.Entry) pxar.Me
 	return out
 }
 
-// clonePxarEntry clones a pxar entry with a new name.
-func clonePxarEntry(e *pxar.Entry, name string) *pxar.Entry {
-	clone := *e
-	clone.Path = name
-	return &clone
-}
-
 // clonePxarEntryBuf clones a pxar entry into the reusable buffer.
 func (ow *commitWalkState) clonePxarEntryBuf(e *pxar.Entry, name string) *pxar.Entry {
 	ow.entryBuf = *e
@@ -1139,7 +1132,7 @@ func resolvePxarEntry(mfs *MutableFS, relPath string) (*pxar.Entry, error) {
 					found = true
 					break
 				}
-				return nil, fmt.Errorf("%s is not a directory", comp)
+				return nil, fmt.Errorf("%q is not a directory", comp)
 			}
 		}
 		if !found {

@@ -1536,7 +1536,7 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	// Ensure we have a journal node for this path.
 	fs.ensureNode(re)
 	if re.Node == nil {
-		return fmt.Errorf("copyUp: could not create node for %s", re.Path)
+		return fmt.Errorf("copyUp: could not create node for %q", re.Path)
 	}
 
 	abs := fs.mutablePath(re.Path)

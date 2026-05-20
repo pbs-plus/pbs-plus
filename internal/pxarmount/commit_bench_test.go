@@ -328,6 +328,14 @@ func BenchmarkPxarEntryReuse(b *testing.B) {
 	}
 }
 
+// clonePxarEntry clones a pxar entry with a new name (heap-allocates, for
+// benchmarking comparison against the pooled clonePxarEntryBuf).
+func clonePxarEntry(e *pxar.Entry, name string) *pxar.Entry {
+	clone := *e
+	clone.Path = name
+	return &clone
+}
+
 // BenchmarkClonePxarEntry measures the allocation of cloning a pxar entry
 // (used in emitPxarEntry).
 func BenchmarkClonePxarEntry(b *testing.B) {
