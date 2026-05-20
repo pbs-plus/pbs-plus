@@ -526,3 +526,268 @@ func (noopProgress) Error(string)           {}
 func (noopProgress) AddFile(int64)          {}
 func (noopProgress) SetTotals(int64, int64) {}
 func (noopProgress) State() ProgressState   { return ProgressState{} }
+
+// --- New benchmarks: two-pointer merge, pendingRefs, commit walk ---
+
+// BenchmarkTwoPointerMerge measures allocation of the streaming two-pointer
+// merge used in commitWalk (no allEntries copy). Compare against the old
+// allEntries approach to quantify the O(N) copy savings.
+func BenchmarkTwoPointerMerge(b *testing.B) {
+	for _, size := range []int{100, 1000, 10000} {
+		b.Run(fmt.Sprintf("n=%d", size), func(b *testing.B) {
+			pxarEntries := makeDirEntries(size)
+			// Sort alphabetically as commitWalk does.
+			sort.Slice(pxarEntries, func(i, j int) bool {
+				return pxarEntries[i].name < pxarEntries[j].name
+			})
+
+			edges := makeGraphEdges(size / 10)
+			sort.Slice(edges, func(i, j int) bool {
+				return edges[i].Name < edges[j].Name
+			})
+
+			// Simulate edgeNames lookup (O(1) skip).
+			edgeNames := make(map[string]bool, len(edges))
+			for _, e := range edges {
+				edgeNames[e.Name] = true
+			}
+
+			// Pre-filter pxar (as commitWalk does).
+			filtered := 0
+			for i := range pxarEntries {
+				if edgeNames[pxarEntries[i].name] {
+					continue
+				}
+				if filtered != i {
+					pxarEntries[filtered] = pxarEntries[i]
+				}
+				filtered++
+			}
+			pxarEntries = pxarEntries[:filtered]
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			for iter := 0; iter < b.N; iter++ {
+				// Two-pointer merge.
+				var result []commitEntry
+				pi, ji := 0, 0
+				for pi < len(pxarEntries) || ji < len(edges) {
+					var ce commitEntry
+					if pi >= len(pxarEntries) {
+						ce = commitEntry{name: edges[ji].Name, node: &GraphNode{Kind: NodeFile, RedirectTo: "/" + edges[ji].Name, ID: edges[ji].ChildID}}
+						ji++
+					} else if ji >= len(edges) {
+						ce = commitEntry{name: pxarEntries[pi].name, pxarSlim: &pxarEntries[pi]}
+						pi++
+					} else if pxarEntries[pi].name < edges[ji].Name {
+						ce = commitEntry{name: pxarEntries[pi].name, pxarSlim: &pxarEntries[pi]}
+						pi++
+					} else {
+						ce = commitEntry{name: edges[ji].Name, node: &GraphNode{Kind: NodeFile, RedirectTo: "/" + edges[ji].Name, ID: edges[ji].ChildID}}
+						ji++
+					}
+					result = append(result, ce)
+				}
+				_ = result
+			}
+		})
+	}
+}
+
+// BenchmarkAddToPendingRefs measures allocation of adding refs to pendingRefs
+// (stays below maxPendingRefs to avoid auto-flush hitting nil PxarFS).
+func BenchmarkAddToPendingRefs(b *testing.B) {
+	for _, n := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			ow := &commitWalkState{
+				mfs:         &MutableFS{verbose: false},
+				pendingRefs: make([]commitEntry, 0, maxPendingRefs),
+			}
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			for iter := 0; iter < b.N; iter++ {
+				ow.pendingRefs = ow.pendingRefs[:0]
+				for i := range n {
+					// Direct append avoids addToPendingRefs auto-flush
+					// which needs PxarFS. sortKey assignment is identical.
+					ce := commitEntry{
+						name:     fmt.Sprintf("f_%d", i),
+						pxarSlim: &dirEntrySlim{name: fmt.Sprintf("f_%d", i), contentOffset: uint64(i * 100), isReg: true},
+						sortKey:  uint64(i * 100),
+					}
+					ow.pendingRefs = append(ow.pendingRefs, ce)
+				}
+			}
+		})
+	}
+}
+
+// BenchmarkFlushPendingRefs measures allocation of the sort+flush cycle
+// for a full batch of maxPendingRefs entries.
+func BenchmarkFlushPendingRefs(b *testing.B) {
+	w := &mockWriter{}
+	ow := &commitWalkState{
+		mfs:    &MutableFS{verbose: false},
+		writer: w,
+	}
+
+	// Pre-fill with maxPendingRefs entries.
+	for i := range maxPendingRefs {
+		ce := commitEntry{
+			name:     fmt.Sprintf("f_%d", i),
+			pxarSlim: &dirEntrySlim{name: fmt.Sprintf("f_%d", i), contentOffset: uint64((maxPendingRefs - i) * 100), isReg: true},
+			sortKey:  uint64((maxPendingRefs - i) * 100), // reverse order to force sort work
+		}
+		ow.pendingRefs = append(ow.pendingRefs, ce)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for iter := 0; iter < b.N; iter++ {
+		// Restore the batch (flush empties it).
+		ow.pendingRefs = ow.pendingRefs[:0]
+		for i := range maxPendingRefs {
+			ce := commitEntry{
+				name:     fmt.Sprintf("f_%d", i),
+				pxarSlim: &dirEntrySlim{name: fmt.Sprintf("f_%d", i), contentOffset: uint64((maxPendingRefs - i) * 100), isReg: true},
+				sortKey:  uint64((maxPendingRefs - i) * 100),
+			}
+			ow.pendingRefs = append(ow.pendingRefs, ce)
+		}
+		// flushPendingRefs sorts + calls emitJournalRef/emitPxarRef which need
+		// PxarFS, so we just measure the sort part which is the allocation-sensitive bit.
+		sort.Slice(ow.pendingRefs, func(i, j int) bool {
+			return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
+		})
+	}
+}
+
+// BenchmarkMergeMetaWithPxar measures allocation of the metadata merge function.
+func BenchmarkMergeMetaWithPxar(b *testing.B) {
+	journalMeta := pxar.Metadata{
+		Stat: format.Stat{
+			Mode:  format.ModeIFREG | 0o644,
+			UID:   1000,
+			GID:   1000,
+			Mtime: format.StatxTimestamp{Secs: 1700000000, Nanos: 123},
+		},
+		XAttrs: []format.XAttr{
+			format.NewXAttr([]byte("user.a"), []byte("v1")),
+			format.NewXAttr([]byte("user.b"), []byte("v2")),
+		},
+	}
+	pxarEntry := &pxar.Entry{
+		Metadata: pxar.Metadata{
+			Stat: format.Stat{
+				Mode:  format.ModeIFREG | 0o755,
+				Flags: 0x10,
+			},
+			FCaps: []byte{1, 2, 3, 4},
+			ACL: pxar.ACL{
+				Users: []format.ACLUser{{UID: 1000, Permissions: 7}},
+			},
+		},
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = mergeMetaWithPxar(journalMeta, pxarEntry)
+	}
+}
+
+// BenchmarkCommitWalkFull measures the full per-directory commit walk flow
+// without the pxar layer (journal-only, mixed dir/file/symlink entries).
+// This measures allocation of the alphabetical merge + dispatch loop.
+func BenchmarkCommitWalkFull(b *testing.B) {
+	for _, n := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			w := &mockWriter{}
+			ow := &commitWalkState{
+				mfs:          &MutableFS{verbose: false},
+				writer:       w,
+				xattrCache:   make(map[int64][]format.XAttr),
+				backedHashes: make(map[string]uint64),
+				pendingRefs:  make([]commitEntry, 0, maxPendingRefs),
+			}
+
+			// Build pxar-like entries.
+			pxarEntries := makeDirEntries(n)
+			sort.Slice(pxarEntries, func(i, j int) bool {
+				return pxarEntries[i].name < pxarEntries[j].name
+			})
+
+			// Build journal edges (10% overlay).
+			edges := makeGraphEdges(n / 10)
+			sort.Slice(edges, func(i, j int) bool {
+				return edges[i].Name < edges[j].Name
+			})
+
+			// edgeNames set.
+			edgeNames := make(map[string]bool, len(edges))
+			for _, e := range edges {
+				edgeNames[e.Name] = true
+			}
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			for iter := 0; iter < b.N; iter++ {
+				ow.pendingRefs = ow.pendingRefs[:0]
+
+				// Filter pxar entries.
+				filtered := 0
+				for i := range pxarEntries {
+					if edgeNames[pxarEntries[i].name] {
+						continue
+					}
+					if filtered != i {
+						pxarEntries[filtered] = pxarEntries[i]
+					}
+					filtered++
+				}
+				pxarFiltered := pxarEntries[:filtered]
+
+				// Two-pointer merge + dispatch.
+				pi, ji := 0, 0
+				for pi < len(pxarFiltered) || ji < len(edges) {
+					var ce commitEntry
+					if pi >= len(pxarFiltered) {
+						ce = commitEntry{name: edges[ji].Name, node: &GraphNode{Kind: NodeFile, HasData: true, Size: 4096, MtimeNs: 1}}
+						ji++
+					} else if ji >= len(edges) {
+						ce = commitEntry{name: pxarFiltered[pi].name, pxarSlim: &pxarFiltered[pi]}
+						pi++
+					} else if pxarFiltered[pi].name < edges[ji].Name {
+						ce = commitEntry{name: pxarFiltered[pi].name, pxarSlim: &pxarFiltered[pi]}
+						pi++
+					} else {
+						ce = commitEntry{name: edges[ji].Name, node: &GraphNode{Kind: NodeFile, HasData: true, Size: 4096, MtimeNs: 1}}
+						ji++
+					}
+
+					// Dispatch (simplified — actual dispatch needs PxarFS for refs).
+					if ce.pxarSlim != nil && ce.pxarSlim.isReg {
+						ce.sortKey = ce.pxarSlim.contentOffset
+						ow.pendingRefs = append(ow.pendingRefs, ce)
+					} else if ce.pxarSlim != nil && ce.pxarSlim.isDir {
+						_ = w.BeginDirectory(ce.name, nil)
+						_ = w.EndDirectory()
+					} else if ce.node != nil && ce.node.HasData {
+						_ = w.WriteEntryReader(&pxar.Entry{Path: ce.name, Kind: pxar.KindFile, FileSize: ce.node.Size}, nil, ce.node.Size)
+					} else {
+						_ = w.WriteEntry(&pxar.Entry{Path: ce.name, Kind: pxar.KindFile}, nil)
+					}
+				}
+
+				// Flush pending refs (sort only — emit needs PxarFS).
+				sort.Slice(ow.pendingRefs, func(i, j int) bool {
+					return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
+				})
+				for _, ce := range ow.pendingRefs {
+					_ = w.WriteEntryRef(&pxar.Entry{Path: ce.name, Kind: pxar.KindFile}, ce.sortKey)
+				}
+			}
+		})
+	}
+}
