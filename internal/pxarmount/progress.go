@@ -224,10 +224,11 @@ func (d *ProgressDisplay) render() string {
 		parts = append(parts, detail)
 	}
 
-	// Show elapsed time for long-running operations
+	// Show throughput for long-running operations
 	if elapsed := time.Since(d.started); elapsed > 2*time.Second && d.bytes > 0 {
+		rate := float64(d.bytes) / elapsed.Seconds()
 		elapsedStr := formatDuration(elapsed)
-		parts = append(parts, elapsedStr)
+		parts = append(parts, fmt.Sprintf("%s · %s/s", elapsedStr, formatBytes(int64(rate))))
 	}
 
 	body := strings.Join(parts, " · ")
