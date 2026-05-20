@@ -369,7 +369,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		Namespace:     namespace,
 		SkipTLSVerify: req.SkipTLS,
 	}, func() buzhash.Config {
-		cfg, _ := buzhash.NewConfig(4096)
+		cfg, _ := buzhash.NewConfig(4 << 20)
 		return cfg
 	}(), false)
 
