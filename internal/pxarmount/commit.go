@@ -12,9 +12,11 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zeebo/xxh3"
@@ -463,7 +465,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	prog.SetMsg(fmt.Sprintf("Verifying %d backed files", len(ow.backedHashes)))
 
 	if len(ow.backedHashes) > 0 {
-		if err := verifyBackedFileHashes(mfs, ow.backedHashes); err != nil {
+		if err := verifyBackedFileHashes(mfs, ow.backedHashes, prog); err != nil {
 			return fmt.Errorf("verification failed: %w", err)
 		}
 	}
@@ -1024,25 +1026,80 @@ func resolvePxarEntry(mfs *MutableFS, relPath string) (*pxar.Entry, error) {
 }
 
 // verifyBackedFileHashes checks that backed files haven't changed since upload.
-func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64) error {
-	buf := make([]byte, 64*1024)
-	for relPath, expected := range hashes {
-		abs := mfs.mutablePath(relPath)
-		f, err := os.Open(abs)
-		if err != nil {
-			return fmt.Errorf("open backed file %q for verification: %w", relPath, err)
-		}
+// Uses a worker pool with atomic index to avoid channel/alloc overhead.
+func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog CommitProgress) error {
+	workers := min(min(runtime.NumCPU(), 16), len(hashes))
+
+	// Flatten map into a single contiguous slice — one allocation.
+	type item struct {
+		relPath  string
+		expected uint64
+	}
+	items := make([]item, 0, len(hashes))
+	for p, h := range hashes {
+		items = append(items, item{p, h})
+	}
+	total := len(items)
+
+	var (
+		idx      atomic.Int64
+		verified atomic.Int64
+		firstErr error
+		errOnce  sync.Once
+	)
+
+	lastProgress := time.Now()
+
+	hasher := func() {
+		buf := make([]byte, 64*1024)
 		h := xxh3.New()
-		_, err = io.CopyBuffer(h, f, buf)
-		_ = f.Close()
-		if err != nil {
-			return fmt.Errorf("hash backed file %q: %w", relPath, err)
-		}
-		if h.Sum64() != expected {
-			return fmt.Errorf("backed file %q content hash differs", relPath)
+		for {
+			i := int(idx.Add(1) - 1)
+			if i >= total {
+				return
+			}
+			it := &items[i]
+
+			if firstErr != nil {
+				return
+			}
+
+			abs := mfs.mutablePath(it.relPath)
+			f, err := os.Open(abs)
+			if err != nil {
+				errOnce.Do(func() { firstErr = fmt.Errorf("open backed file %q for verification: %w", it.relPath, err) })
+				return
+			}
+			h.Reset()
+			_, err = io.CopyBuffer(h, f, buf)
+			_ = f.Close()
+			if err != nil {
+				errOnce.Do(func() { firstErr = fmt.Errorf("hash backed file %q: %w", it.relPath, err) })
+				return
+			}
+			if h.Sum64() != it.expected {
+				errOnce.Do(func() { firstErr = fmt.Errorf("backed file %q content hash differs", it.relPath) })
+				return
+			}
+
+			done := verified.Add(1)
+			if time.Since(lastProgress) >= 200*time.Millisecond || int(done) == total {
+				pct := int(done) * 100 / total
+				prog.SetMsg(fmt.Sprintf("Verifying backed files %d/%d (%d%%)", int(done), total, pct))
+				lastProgress = time.Now()
+			}
 		}
 	}
-	return nil
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Go(func() {
+			hasher()
+		})
+	}
+	wg.Wait()
+
+	return firstErr
 }
 
 // ensureNamespaceDir creates the namespace directory structure on the PBS
