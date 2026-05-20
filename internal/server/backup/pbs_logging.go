@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -19,37 +18,6 @@ var (
 	commonErrorMap = map[string]string{
 		"exit status 255": "lost connection with backup agent",
 		"signal: killed":  ErrCanceled.Error(),
-	}
-
-	pbsCompletionMarkers = []string{
-		"TASK OK",
-		"TASK WARNINGS",
-		"backup finished successfully",
-		"successfully finished backup",
-	}
-
-	pbsTaskErrorMarkers = []string{
-		"TASK ERROR:",
-	}
-
-	// PBS proxy logs these when the h2 connection drops after backup
-	// completion. They are not real backup failures.
-	pbsSpuriousErrorPatterns = []string{
-		"connection error:",
-	}
-
-	// Client log markers that indicate successful backup completion.
-	pbsClientCompletionMarkers = []string{
-		"Duration: ",
-		"End Time: ",
-	}
-
-	pbsUploadErrorMarkers = []string{
-		"upload failed:",
-	}
-
-	pbsWarningMarkers = []string{
-		"WARNING: ",
 	}
 )
 
@@ -74,230 +42,158 @@ func systemLocation() *time.Location {
 	return loc
 }
 
-func containsAny(s string, markers []string) (string, bool) {
-	for _, m := range markers {
-		if strings.Contains(s, m) {
-			return m, true
-		}
-	}
-	return "", false
-}
-
+// processPBSProxyLogs is the main entry point for post-backup log
+// processing. It collects structured evidence from both the PBS proxy
+// task log and the client stdout log, determines the backup status
+// using the pure Determine function, and appends the client log to the
+// PBS task log file.
+//
+// Returns (succeeded, cancelled, warningCount, error).
 func processPBSProxyLogs(
 	isGraceful bool,
 	upid string,
 	clientLogFile *syslog.JobLogger,
 	customErr error,
 ) (bool, bool, int, error) {
-	customErrStr := ""
-	if customErr != nil {
-		customErrStr = customErr.Error()
-		if mapped, ok := commonErrorMap[customErrStr]; ok {
-			customErrStr = mapped
-		}
-	}
-
 	logFilePath := getTaskLogPath(upid)
 
-	inFile, err := os.Open(logFilePath)
+	// Collect evidence from both log sources.
+	clientEv, err := CollectClientEvidence(clientLogFile.Path)
 	if err != nil {
-		return false, false, 0, fmt.Errorf("opening input log file: %w", err)
+		syslog.L.Error(err).WithMessage("failed to collect client evidence").Write()
 	}
-	defer inFile.Close()
 
-	info, err := inFile.Stat()
+	proxyEv, err := CollectProxyEvidence(logFilePath)
 	if err != nil {
-		return false, false, 0, fmt.Errorf("getting stat of file %s: %w", logFilePath, err)
+		syslog.L.Error(err).WithMessage("failed to collect proxy evidence").Write()
 	}
 
-	origMode := info.Mode()
-	origModTime := info.ModTime()
+	exitCode := exitCodeFromErr(customErr)
 
-	statT, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false, false, 0, fmt.Errorf(
-			"failed to retrieve underlying stat for file %s",
-			logFilePath,
-		)
+	status := Determine(DeterminationConfig{
+		ExitCode:       exitCode,
+		Canceled:       false, // cancellation is handled by the caller
+		ClientEv:       clientEv,
+		ProxyEv:        proxyEv,
+		AgentConnected: isGraceful,
+	})
+
+	warningsNum := clientEv.WarningCount + len(clientEv.UploadErrors)
+	if clientEv.HasTaskError {
+		warningsNum++
 	}
 
-	origUid := int(statT.Uid)
-	origGid := int(statT.Gid)
-	origAccessTime := time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
+	// Write the merged log (client log appended to PBS task log).
+	if err := writeMergedLog(logFilePath, clientLogFile, status, warningsNum, customErr); err != nil {
+		syslog.L.Error(err).WithMessage("failed to write merged log").Write()
+	}
 
-	dir := filepath.Dir(logFilePath)
-	tmpFile, err := os.CreateTemp(dir, "processed_*.tmp")
+	succeeded := status.IsSuccess()
+	cancelled := status == StatusCanceled || (status == StatusFailed && customErr != nil)
+
+	return succeeded, cancelled, warningsNum, nil
+}
+
+// writeMergedLog appends the client log to the PBS task log and writes
+// a final status line. Unlike the old implementation, this appends to
+// the existing file rather than rewriting it.
+func writeMergedLog(
+	logFilePath string,
+	clientLogFile *syslog.JobLogger,
+	status BackupStatus,
+	warningsNum int,
+	customErr error,
+) error {
+	// Open the PBS task log for append.
+	f, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return false, false, 0, fmt.Errorf("creating temporary file: %w", err)
+		return fmt.Errorf("opening task log for append: %w", err)
 	}
+	defer f.Close()
 
-	tmpName := tmpFile.Name()
-	defer func() {
-		if tmpFile != nil {
-			tmpFile.Close()
-			os.Remove(tmpName)
-		}
-	}()
+	writer := bufio.NewWriter(f)
 
-	const maxCapacity = 1024 * 1024
-	buf := make([]byte, 0, 64*1024)
-	tmpWriter := bufio.NewWriter(tmpFile)
-
-	hasError := false
-	hasOnlySpuriousError := true
-	incomplete := true
-	alreadyHasClientLogs := false
-
-	scanner := bufio.NewScanner(inFile)
-	scanner.Buffer(buf, maxCapacity)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if IsJunkLog(line) {
-			continue
-		}
-
-		skip := false
-
-		if _, has := containsAny(line, pbsCompletionMarkers); has {
-			incomplete = false
-		} else if _, has := containsAny(line, pbsTaskErrorMarkers); has {
-			hasError = true
-			if _, spurious := containsAny(line, pbsSpuriousErrorPatterns); !spurious {
-				hasOnlySpuriousError = false
-			}
-			skip = true
-		}
-
-		if line == "--- proxmox-backup-client log starts here ---" {
-			alreadyHasClientLogs = true
-		}
-
-		if skip {
-			continue
-		}
-
-		tmpWriter.WriteString(line)
-		tmpWriter.WriteByte('\n')
-	}
-	if err := scanner.Err(); err != nil {
-		return false, false, 0, fmt.Errorf("scanning input file: %w", err)
-	}
-
-	pbsWarningRawCount := 0
-	clientCompleted := false
-
+	// Append client log.
 	clientFile, err := os.Open(clientLogFile.Path)
 	if err != nil {
-		return false, false, 0, fmt.Errorf("failed to open client log file: %w", err)
+		return fmt.Errorf("opening client log: %w", err)
 	}
 	defer clientFile.Close()
 
-	if !alreadyHasClientLogs {
-		tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n")
+	writer.WriteString("--- proxmox-backup-client log starts here ---\n")
 
-		clientScanner := bufio.NewScanner(clientFile)
-		clientScanner.Buffer(buf, maxCapacity)
+	scanner := bufio.NewScanner(clientFile)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-		for clientScanner.Scan() {
-			line := clientScanner.Text()
-			skip := false
-
-			if _, has := containsAny(line, pbsWarningMarkers); has {
-				pbsWarningRawCount++
-			}
-
-			if _, has := containsAny(line, pbsClientCompletionMarkers); has {
-				clientCompleted = true
-			}
-
-			if _, has := containsAny(line, pbsUploadErrorMarkers); has {
-				line = "WARNING [proxmox-backup-client error]:" + line
-				pbsWarningRawCount++
-			} else if markerFound, has := containsAny(line, pbsTaskErrorMarkers); has {
-				line = strings.Replace(line, markerFound, "WARNING [proxmox-backup-client error]:", 1)
-				pbsWarningRawCount++
-			} else if _, has := containsAny(line, pbsCompletionMarkers); has {
-				incomplete = false
-				skip = true
-			}
-
-			if skip {
-				continue
-			}
-
-			tmpWriter.WriteString(strings.TrimSpace(line))
-			tmpWriter.WriteByte('\n')
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
 		}
 
-		if err := clientScanner.Err(); err != nil {
-			return false, false, 0, fmt.Errorf("scanning client log file: %w", err)
+		// Rewrite errors as warnings — the real status is in Determine().
+		if strings.Contains(line, "TASK ERROR:") {
+			line = "WARNING [proxmox-backup-client error]:" + line
+		} else if strings.Contains(line, "upload failed:") {
+			line = "WARNING [proxmox-backup-client error]:" + line
 		}
+
+		// Skip completion markers from client log — we write our own.
+		if strings.Contains(line, "TASK OK") ||
+			strings.Contains(line, "TASK WARNINGS") ||
+			strings.Contains(line, "backup finished successfully") ||
+			strings.Contains(line, "successfully finished backup") {
+			continue
+		}
+
+		writer.WriteString(line)
+		writer.WriteByte('\n')
 	}
 
-	succeeded := false
-	cancelled := false
-	warningsNum := pbsWarningRawCount
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scanning client log: %w", err)
+	}
+
+	// Write final status line.
 	timestamp := time.Now().In(systemLocation()).Format(time.RFC3339)
-
-	// If the only error from the PBS proxy is a spurious connection
-	// error (h2 connection dropped after backup completion) and the
-	// client log shows evidence of successful completion, treat the
-	// backup as successful rather than failed.
-	if hasError && hasOnlySpuriousError && clientCompleted {
-		hasError = false
-		incomplete = false
-		isGraceful = true
-	}
-
-	switch {
-	case hasError, incomplete:
-		tmpWriter.WriteString(timestamp)
-		tmpWriter.WriteString(": TASK ERROR: ")
+	switch status {
+	case StatusOK:
+		writer.WriteString(timestamp)
+		writer.WriteString(": TASK OK\n")
+	case StatusWarnings:
+		writer.WriteString(timestamp)
+		writer.WriteString(": TASK WARNINGS: ")
+		writer.WriteString(strconv.Itoa(warningsNum))
+		writer.WriteByte('\n')
+	case StatusCanceled, StatusFailed:
+		writer.WriteString(timestamp)
+		writer.WriteString(": TASK ERROR: ")
 		if customErr != nil {
-			tmpWriter.WriteString(customErrStr)
+			errStr := customErr.Error()
+			if mapped, ok := commonErrorMap[errStr]; ok {
+				errStr = mapped
+			}
+			writer.WriteString(errStr)
 		} else {
-			tmpWriter.WriteString(ErrUnexpected.Error())
+			writer.WriteString(ErrUnexpected.Error())
 		}
-		cancelled = true
-
-	default:
-		tmpWriter.WriteString(timestamp)
-		succeeded = true
-		if warningsNum > 0 {
-			tmpWriter.WriteString(": TASK WARNINGS: ")
-			tmpWriter.WriteString(strconv.Itoa(warningsNum))
-		} else if isGraceful {
-			tmpWriter.WriteString(": TASK OK")
-		} else {
-			succeeded = false
-			tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly")
-		}
+		writer.WriteByte('\n')
 	}
 
-	tmpWriter.WriteByte('\n')
-
-	if err := tmpWriter.Flush(); err != nil {
-		return false, false, warningsNum, fmt.Errorf("flushing temporary writer: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return false, false, warningsNum, fmt.Errorf("closing temporary file: %w", err)
-	}
-	tmpFile = nil
-
-	if err := os.Chmod(tmpName, origMode); err != nil {
-		return false, false, warningsNum, fmt.Errorf("setting permissions on temporary file: %w", err)
-	}
-	if err := os.Chown(tmpName, origUid, origGid); err != nil {
-		return false, false, warningsNum, fmt.Errorf("setting ownership on temporary file: %w", err)
-	}
-	if err := os.Chtimes(tmpName, origAccessTime, origModTime); err != nil {
-		return false, false, warningsNum, fmt.Errorf("setting timestamps on temporary file: %w", err)
-	}
-	if err := os.Rename(tmpName, logFilePath); err != nil {
-		return false, false, warningsNum, fmt.Errorf("replacing original file: %w", err)
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("flushing merged log: %w", err)
 	}
 
-	return succeeded, cancelled, warningsNum, nil
+	return nil
+}
+
+// getTaskLogPath returns the path to the PBS task log file for a UPID.
+func getTaskLogPath(upid string) string {
+	upidSplit := strings.Split(upid, ":")
+	if len(upidSplit) < 4 {
+		return ""
+	}
+	parsed := upidSplit[3]
+	logFolder := parsed[len(parsed)-2:]
+	return filepath.Join("/var/log/proxmox-backup/tasks", logFolder, upid)
 }
