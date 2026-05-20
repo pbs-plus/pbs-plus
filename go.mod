@@ -26,7 +26,7 @@ require (
 	github.com/minio/minio-go/v7 v7.1.0
 	github.com/mxk/go-vss v1.2.1
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
-	github.com/pbs-plus/pxar v0.26.0
+	github.com/pbs-plus/pxar v0.27.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
 	github.com/quic-go/quic-go v0.59.1
