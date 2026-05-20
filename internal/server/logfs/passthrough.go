@@ -18,6 +18,22 @@ import (
 // Task logs live at "tasks/XX/<UPID>".
 const taskLogPrefix = "tasks/"
 
+// LogFS holds the state of the active FUSE log filesystem. Set by Mount.
+var LogFS *MountInfo
+
+// MountInfo holds the backing and mount paths for the log FUSE.
+type MountInfo struct {
+	BackingDir string
+	MountPoint string
+}
+
+// BackingTasksPath returns the path to the tasks directory in the
+// backing filesystem, bypassing FUSE. Use for batch operations like
+// junk log cleanup that should not generate FUSE events.
+func (m *MountInfo) BackingTasksPath() string {
+	return filepath.Join(m.BackingDir, "tasks")
+}
+
 // PassthroughNode wraps LoopbackNode to intercept filesystem operations
 // and emit events to the EventBus.
 type PassthroughNode struct {
@@ -149,8 +165,9 @@ func isTaskIndex(relPath string) bool {
 // write locks shared by all child nodes.
 type Root struct {
 	fs.LoopbackNode
-	bus   *EventBus
-	locks sync.Map // string -> *sync.Mutex
+	bus        *EventBus
+	locks      sync.Map // string -> *sync.Mutex
+	BackingDir string
 }
 
 // lockFor returns (or creates) a mutex for serializing writes to the
@@ -180,7 +197,7 @@ func Mount(backingDir, mountPoint string, bus *EventBus, opts *fs.Options) (*fus
 		return nil, err
 	}
 
-	root := &Root{bus: bus}
+	root := &Root{bus: bus, BackingDir: backingDir}
 	root.RootData = &fs.LoopbackRoot{
 		Path:     backingDir,
 		NewNode:  newNode,
@@ -197,7 +214,17 @@ func Mount(backingDir, mountPoint string, bus *EventBus, opts *fs.Options) (*fus
 		opts = MountOptions(true)
 	}
 
-	return fs.Mount(mountPoint, root, opts)
+	server, err := fs.Mount(mountPoint, root, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	LogFS = &MountInfo{
+		BackingDir: backingDir,
+		MountPoint: mountPoint,
+	}
+
+	return server, nil
 }
 
 // newNode creates a PassthroughNode for all children.
