@@ -235,10 +235,9 @@ type commitWalkState struct {
 	mfs          *MutableFS
 	writer       transfer.ArchiveWriter
 	prog         CommitProgress
-	pxarDirCache map[uint64][]dirEntrySlim // pxar inode → cached dir entries
-	xattrCache   map[int64][]format.XAttr  // journal node ID → xattrs
-	backedHashes map[string]uint64         // relPath → xxh3 hash of uploaded files
-	mutableFiles int                       // count of new/modified files
+	xattrCache   map[int64][]format.XAttr // journal node ID → xattrs
+	backedHashes map[string]uint64        // relPath → xxh3 hash of uploaded files
+	mutableFiles int                      // count of new/modified files
 }
 
 // CommitProgress is the interface used by CommitSnapshot to report progress.
@@ -429,7 +428,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		mfs:          mfs,
 		writer:       writer,
 		prog:         prog,
-		pxarDirCache: make(map[uint64][]dirEntrySlim),
 		xattrCache:   make(map[int64][]format.XAttr),
 		backedHashes: make(map[string]uint64),
 	}
@@ -509,18 +507,14 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// Get pxar children (cached).
+	// Get pxar children (read on demand, no cache — avoids O(N) memory
+	// blowup on large archives where N is the total entry count).
 	var pxarEntries []dirEntrySlim
 	if pxarInode != 0 {
-		var ok bool
-		pxarEntries, ok = ow.pxarDirCache[pxarInode]
-		if !ok {
-			var err error
-			pxarEntries, err = ow.mfs.pxar.ReadDirRaw(pxarInode)
-			if err != nil {
-				pxarEntries = nil
-			}
-			ow.pxarDirCache[pxarInode] = pxarEntries
+		var err error
+		pxarEntries, err = ow.mfs.pxar.ReadDirRaw(pxarInode)
+		if err != nil {
+			pxarEntries = nil
 		}
 	}
 
@@ -564,35 +558,35 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			pxarFiles = append(pxarFiles, commitEntry{name: pe.name, pxarSlim: pe})
 		}
 	}
-	// Sort ALL pxar children (dirs + files + symlinks) by min descendant
-	// payload offset. PBS writes depth-first with strictly ascending
-	// offsets, so sorting by min descendant offset restores the original
-	// write order. Symlinks have no payload but occupy a metadata position
-	// between payload entries — assign them a high sort key so they don't
-	// interfere with monotonicity.
-	for i := range pxarDirs {
-		d := &pxarDirs[i]
-		if d.pxarSlim.isDir {
-			d.sortKey = ow.minPayloadOffset(d.pxarSlim)
-		} else {
-			// Symlink — no payload, emit in original order
-			d.sortKey = d.pxarSlim.contentOffset
-		}
-	}
+	// Sort pxar entries: directories first (by entryStart to approximate
+	// depth-first order), then files sorted by contentOffset (ascending
+	// payload offset to maximize successful chunk refs). Symlinks have no
+	// payload and are emitted in entry order.
+	//
+	// NOTE: We intentionally do NOT recursively compute min-descendant
+	// offsets. The recursive approach materializes the entire archive
+	// tree into memory (O(N) where N = total entries), causing extreme
+	// memory blowup on large archives. Instead, we rely on the
+	// monotonicity fallback in emitPxarEntry which re-encodes any file
+	// whose payload ref violates the strict ascending offset check.
+	// This matches the Rust pxar client's try_record_reusable_offset +
+	// re-encode pattern.
 	allEntries := make([]commitEntry, 0, len(pxarDirs)+len(pxarFiles))
 	allEntries = append(allEntries, pxarDirs...)
 	allEntries = append(allEntries, pxarFiles...)
 	for i := range allEntries {
 		e := &allEntries[i]
-		if e.pxarSlim.isDir {
-			// already set above
-		} else if e.pxarSlim.isSymlink {
-			e.sortKey = e.pxarSlim.contentOffset
+		if e.pxarSlim.isDir || e.pxarSlim.isSymlink {
+			e.sortKey = e.pxarSlim.entryStart
 		} else {
 			e.sortKey = e.pxarSlim.contentOffset
 		}
 	}
 	sort.Slice(allEntries, func(i, j int) bool {
+		// Directories before non-directories (depth-first order).
+		if allEntries[i].pxarSlim.isDir != allEntries[j].pxarSlim.isDir {
+			return allEntries[i].pxarSlim.isDir
+		}
 		return allEntries[i].sortKey < allEntries[j].sortKey
 	})
 	// Debug: log sort order for directories with both dirs and files
@@ -827,44 +821,6 @@ func (ow *commitWalkState) emitRedirectedFile(node *GraphNode, name string, meta
 	return nil
 }
 
-// minPayloadOffset returns the minimum contentOffset across a directory's
-// immediate file children. Directories are recursed; symlinks are skipped
-// (they have no payload). Used to sort sibling directories so depth-first
-// traversal produces ascending payload offsets.
-func (ow *commitWalkState) minPayloadOffset(slim *dirEntrySlim) uint64 {
-	ino := slim.inode
-	if cached, ok := ow.pxarDirCache[ino]; ok {
-		return ow.minPayloadFromEntries(cached)
-	}
-	// Ensure the directory node is registered so ReadDirRaw can find it.
-	ow.mfs.pxar.RegisterSlimNode(slim, 0)
-	entries, err := ow.mfs.pxar.ReadDirRaw(ino)
-	if err != nil || len(entries) == 0 {
-		return slim.contentOffset // fallback: use dir's own offset
-	}
-	ow.pxarDirCache[ino] = entries
-	return ow.minPayloadFromEntries(entries)
-}
-
-// minPayloadFromEntries returns the minimum contentOffset across file entries.
-func (ow *commitWalkState) minPayloadFromEntries(entries []dirEntrySlim) uint64 {
-	minOff := uint64(0)
-	for i := range entries {
-		e := &entries[i]
-		if e.isDir {
-			sub := ow.minPayloadOffset(e)
-			if minOff == 0 || sub < minOff {
-				minOff = sub
-			}
-		} else if !e.isSymlink && e.contentOffset > 0 {
-			if minOff == 0 || e.contentOffset < minOff {
-				minOff = e.contentOffset
-			}
-		}
-	}
-	return minOff
-}
-
 // emitPxarEntry writes a pure pxar entry to the archive.
 func (ow *commitWalkState) emitPxarEntry(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
@@ -1092,7 +1048,7 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
+	for range workers {
 		wg.Go(func() {
 			hasher()
 		})
@@ -1296,6 +1252,12 @@ func RunCommitSubcommand() {
 		os.Exit(1)
 	}
 
+	// Resolve auth token: explicit flag > local token file.
+	token := *authToken
+	if token == "" {
+		token = ReadLocalToken()
+	}
+
 	conn, err := net.Dial("unix", *socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  \u2717 error connecting to socket %s: %v\n", *socketPath, err)
@@ -1304,7 +1266,7 @@ func RunCommitSubcommand() {
 	defer func() { _ = conn.Close() }()
 
 	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
-		*pbsURL, *datastoreName, *authToken, *namespace, *backupType, *backupID)
+		*pbsURL, *datastoreName, token, *namespace, *backupType, *backupID)
 	if _, err := fmt.Fprint(conn, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "  \u2717 error sending command: %v\n", err)
 		os.Exit(1)
