@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -72,7 +73,8 @@ func (n *PassthroughNode) relativePath() string {
 }
 
 // Open returns a file handle. For task log files, active, and archive,
-// it wraps the handle to intercept writes.
+// it wraps the handle to intercept writes and serialize concurrent
+// access to the same file.
 func (n *PassthroughNode) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	fh, fuseFlags, errno = n.LoopbackNode.Open(ctx, flags)
 	if errno != 0 {
@@ -81,26 +83,37 @@ func (n *PassthroughNode) Open(ctx context.Context, flags uint32) (fh fs.FileHan
 
 	relPath := n.relativePath()
 	if isTaskLog(relPath) || isTaskIndex(relPath) {
+		mu := n.root.lockFor(relPath)
 		fh = &writeInterceptor{
 			FileHandle: fh,
 			root:       n.root,
 			relPath:    relPath,
+			mu:         mu,
 		}
 	}
 	return
 }
 
-// writeInterceptor wraps a FileHandle and emits Write events for
-// task log files, the active index, and the archive index.
+// writeInterceptor wraps a FileHandle. It serializes writes to the same
+// file through a per-path mutex and emits events to the EventBus.
+//
+// PBS's worker task framework writes to task log files sequentially from
+// a single fd (no file locking). pbs-plus also appends client logs to
+// the same file through the FUSE mount. The mutex ensures these
+// concurrent writers don't interleave partial writes.
 type writeInterceptor struct {
 	fs.FileHandle
 	root    *Root
 	relPath string
+	mu      *sync.Mutex
 }
 
 var _ = (fs.FileWriter)((*writeInterceptor)(nil))
 
 func (w *writeInterceptor) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	written, errno := w.FileHandle.(fs.FileWriter).Write(ctx, data, off)
 	if errno == 0 && written > 0 {
 		w.root.bus.Emit(Event{
@@ -132,11 +145,20 @@ func isTaskIndex(relPath string) bool {
 	return relPath == "tasks/active" || strings.HasPrefix(relPath, "tasks/archive")
 }
 
-// Root is the FUSE root inode. It carries the EventBus reference
-// shared by all child nodes.
+// Root is the FUSE root inode. It carries the EventBus and per-file
+// write locks shared by all child nodes.
 type Root struct {
 	fs.LoopbackNode
-	bus *EventBus
+	bus   *EventBus
+	locks sync.Map // string -> *sync.Mutex
+}
+
+// lockFor returns (or creates) a mutex for serializing writes to the
+// given relative path. All file handles opened for the same path share
+// the same mutex.
+func (r *Root) lockFor(relPath string) *sync.Mutex {
+	val, _ := r.locks.LoadOrStore(relPath, &sync.Mutex{})
+	return val.(*sync.Mutex)
 }
 
 // MountOptions returns FUSE mount options suitable for a log passthrough.
