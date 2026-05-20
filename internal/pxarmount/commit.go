@@ -420,7 +420,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 
 	// --- Phase 5: Walk merged tree ---
 	prog.SetPhase(PhaseWalk)
-	prog.SetMsg("Scanning overlay")
+	prog.SetMsg("Archiving files")
 
 	ow := &commitWalkState{
 		mfs:          mfs,
@@ -447,7 +447,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 
 	// --- Phase 6: Finish upload ---
 	prog.SetPhase(PhaseUpload)
-	prog.SetMsg(fmt.Sprintf("Uploading (%d new/modified files)", ow.mutableFiles))
+	prog.SetMsg(fmt.Sprintf("Flushing upload (%d new/modified files)", ow.mutableFiles))
 
 	if err := writer.Finish(); err != nil {
 		return fmt.Errorf("finish writer: %w", err)

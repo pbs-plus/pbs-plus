@@ -22,8 +22,8 @@ const (
 
 var phaseLabels = map[ProgressPhase]string{
 	PhasePrepare:  "Preparing",
-	PhaseWalk:     "Scanning files",
-	PhaseUpload:   "Uploading",
+	PhaseWalk:     "Archiving",
+	PhaseUpload:   "Flushing upload",
 	PhaseVerify:   "Verifying",
 	PhaseFinalize: "Finalizing",
 	PhaseDone:     "Done",
@@ -135,30 +135,200 @@ func (r *ProgressReporter) Error(msg string) {
 	_, _ = fmt.Fprintf(r.w, "ERR %s\n", msg)
 }
 
-// ProgressDisplay renders a live progress bar on a terminal.
+// ProgressDisplay renders a live progress bar with spinner animation on a terminal.
 type ProgressDisplay struct {
-	lastLine string
+	mu       sync.Mutex
 	w        io.Writer
+	lastLine string
+
+	// spinner state
+	frames  []string
+	frame   int
+	phase   string
+	msg     string
+	files   int64
+	bytes   int64
+	started time.Time
+
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
-// NewProgressDisplay creates a display that writes to w.
+// NewProgressDisplay creates a display that writes to w with spinner animation.
 func NewProgressDisplay(w io.Writer) *ProgressDisplay {
-	return &ProgressDisplay{w: w}
+	d := &ProgressDisplay{
+		w: w,
+		frames: []string{
+			"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+		},
+		started: time.Now(),
+		done:    make(chan struct{}),
+	}
+	d.ticker = time.NewTicker(80 * time.Millisecond)
+	go d.spin()
+	return d
 }
 
-// Update renders a progress frame.
+// stop halts the spinner goroutine.
+func (d *ProgressDisplay) stop() {
+	if d.ticker != nil {
+		d.ticker.Stop()
+		d.ticker = nil
+	}
+	select {
+	case <-d.done:
+	default:
+		close(d.done)
+	}
+}
+
+// spin is the background goroutine that animates the spinner.
+func (d *ProgressDisplay) spin() {
+	for range d.ticker.C {
+		d.mu.Lock()
+		d.frame = (d.frame + 1) % len(d.frames)
+		line := d.render()
+		d.mu.Unlock()
+		if line != "" {
+			d.writeLine(line)
+		}
+	}
+}
+
+// render builds the current display line (must hold mu).
+func (d *ProgressDisplay) render() string {
+	if d.phase == "" && d.msg == "" {
+		return ""
+	}
+	spinner := d.frames[d.frame]
+
+	var parts []string
+
+	if d.msg != "" {
+		parts = append(parts, d.msg)
+	} else if d.phase != "" {
+		parts = append(parts, d.phase)
+	}
+
+	if d.files > 0 || d.bytes > 0 {
+		var detail string
+		if d.files > 0 {
+			detail = fmt.Sprintf("%d files", d.files)
+		}
+		if d.bytes > 0 {
+			if detail != "" {
+				detail += ", "
+			}
+			detail += formatBytes(d.bytes)
+		}
+		parts = append(parts, detail)
+	}
+
+	// Show elapsed time for long-running operations
+	if elapsed := time.Since(d.started); elapsed > 2*time.Second && d.bytes > 0 {
+		elapsedStr := formatDuration(elapsed)
+		parts = append(parts, elapsedStr)
+	}
+
+	body := strings.Join(parts, " · ")
+	return fmt.Sprintf("\r  %s %s", spinner, body)
+}
+
+// writeLine writes a line to the terminal, clearing previous content.
+func (d *ProgressDisplay) writeLine(line string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	padded := line
+	if len(padded) < len(d.lastLine) {
+		padded += strings.Repeat(" ", len(d.lastLine)-len(padded))
+	}
+	_, _ = fmt.Fprint(d.w, padded)
+	d.lastLine = line
+}
+
+// Update parses a PROGRESS line and updates the display.
 func (d *ProgressDisplay) Update(line string) {
 	msg := strings.TrimPrefix(line, "PROGRESS ")
-	line = fmt.Sprintf("\r  %s", msg)
-	if len(line) < len(d.lastLine) {
-		line += strings.Repeat(" ", len(d.lastLine)-len(line))
+	d.mu.Lock()
+
+	// Detect phase from message prefix
+	d.phase = ""
+	d.msg = ""
+
+	// Extract trailing parenthesized stats if present.
+	inner := msg
+	hasStats := false
+	if idx := strings.LastIndex(msg, "("); idx > 0 {
+		stats := msg[idx:]
+		if strings.HasSuffix(stats, ")") {
+			inner = msg[:idx]
+			d.parseStats(stats)
+			hasStats = true
+		}
 	}
-	_, _ = fmt.Fprint(d.w, line)
-	d.lastLine = line
+	if !hasStats {
+		// Preserve previously parsed stats when the line has none.
+		// Only reset if the message itself looks like a phase transition.
+		for _, label := range phaseLabels {
+			if msg == label {
+				d.files = 0
+				d.bytes = 0
+				d.started = time.Now()
+				break
+			}
+		}
+	}
+
+	// Detect known phase labels
+	for _, label := range phaseLabels {
+		if strings.HasPrefix(inner, label) {
+			d.phase = label
+			inner = strings.TrimSpace(inner[len(label):])
+			break
+		}
+	}
+	d.msg = strings.TrimSpace(inner)
+
+	d.frame = (d.frame + 1) % len(d.frames)
+	d.mu.Unlock()
+}
+
+// parseStats extracts files/bytes from "(N files, X.X MiB)" or "(N files)".
+func (d *ProgressDisplay) parseStats(stats string) {
+	stats = strings.Trim(stats, "()")
+	fields := strings.SplitSeq(stats, ",")
+	for f := range fields {
+		f = strings.TrimSpace(f)
+		if strings.HasSuffix(f, " files") {
+			_, _ = fmt.Sscanf(f, "%d files", &d.files)
+		} else {
+			// Try to parse as byte count
+			var b int64
+			if strings.HasSuffix(f, "GiB") {
+				var v float64
+				_, _ = fmt.Sscanf(f, "%f GiB", &v)
+				b = int64(v * 1024 * 1024 * 1024)
+			} else if strings.HasSuffix(f, "MiB") {
+				var v float64
+				_, _ = fmt.Sscanf(f, "%f MiB", &v)
+				b = int64(v * 1024 * 1024)
+			} else if strings.HasSuffix(f, "KiB") {
+				var v float64
+				_, _ = fmt.Sscanf(f, "%f KiB", &v)
+				b = int64(v * 1024)
+			}
+			if b > 0 {
+				d.bytes = b
+			}
+		}
+	}
 }
 
 // Done prints the final status line.
 func (d *ProgressDisplay) Done(line string) {
+	d.stop()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if len(d.lastLine) > 0 {
 		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
 	}
@@ -169,6 +339,9 @@ func (d *ProgressDisplay) Done(line string) {
 
 // Error prints the error.
 func (d *ProgressDisplay) Error(line string) {
+	d.stop()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if len(d.lastLine) > 0 {
 		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
 	}
@@ -194,4 +367,15 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%d B", b)
 	}
+}
+
+// formatDuration formats elapsed time for display.
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	m := int(d.Minutes())
+	s := int(d.Seconds()) % 60
+	return fmt.Sprintf("%dm%02ds", m, s)
 }
