@@ -256,9 +256,13 @@ type commitWalkState struct {
 
 	// Reusable scratch slices — allocated once, cleared per-directory
 	// via save/restore in commitWalk. Eliminates per-level heap allocation.
-	allEntries  []commitEntry // merged entries sorted alphabetically
 	pendingRefs []commitEntry // ref-files batched for contentOffset-ordered emission
 }
+
+// maxPendingRefs bounds the pending ref batch to limit memory on
+// directories with millions of entries. When exceeded, the batch is
+// flushed immediately. Mirrors proxmox-backup-client's max_cache_size.
+const maxPendingRefs = 4096
 
 // CommitProgress is the interface used by CommitSnapshot to report progress.
 // Both *ProgressReporter and the hub-based reporters implement it.
@@ -450,7 +454,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		prog:         prog,
 		xattrCache:   make(map[int64][]format.XAttr),
 		backedHashes: make(map[string]uint64),
-		allEntries:   make([]commitEntry, 0, 64),
 		pendingRefs:  make([]commitEntry, 0, 64),
 	}
 
@@ -519,16 +522,10 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 // allocation occurs per directory level beyond what the journal/pxar
 // libraries return.
 func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, relPath string) error {
-	// --- Save parent's slice state, reset for this level ---
-	savedAll := ow.allEntries
+	// --- Save parent's pendingRefs, reset for this level ---
 	savedPending := ow.pendingRefs
-	ow.allEntries = ow.allEntries[:0]
 	ow.pendingRefs = ow.pendingRefs[:0]
-
-	defer func() {
-		ow.allEntries = savedAll
-		ow.pendingRefs = savedPending
-	}()
+	defer func() { ow.pendingRefs = savedPending }()
 
 	// Get journal children.
 	var journalEdges []GraphEdge
@@ -551,7 +548,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// Get pxar children.
+	// Get pxar children sorted alphabetically (matching proxmox-backup-client).
 	var pxarEntries []dirEntrySlim
 	if pxarInode != 0 {
 		var err error
@@ -561,7 +558,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// Build lookup set from journal edges.
+	// Build edgeNames set for O(1) pxar shadowing check.
 	var edgeNames map[string]bool
 	if len(journalEdges) > 0 {
 		edgeNames = make(map[string]bool, len(journalEdges))
@@ -570,15 +567,11 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// --- Build allEntries sorted ALPHABETICALLY (matching proxmox-backup-client) ---
+	// --- Pre-filter pxar entries and sort both lists ---
 	//
-	// proxmox-backup-client reads directory entries sorted by name
-	// (file_list.sort_unstable_by(|a,b| a.name.cmp(&b.name))) and writes
-	// them in that order. We follow the same convention so the output
-	// archive is compatible with Proxmox tools that expect alphabetical
-	// entry order during sequential read (e.g. pbs-pxar-fuse readdir).
-
-	// Pxar entries not shadowed by journal edges or whiteouts.
+	// Filter pxar entries shadowed by journal edges or whiteouts.
+	// Register slim nodes for inode lookup during recursion.
+	filtered := 0
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
 		if edgeNames != nil && edgeNames[pe.name] {
@@ -587,45 +580,83 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		if whiteoutSet != nil && whiteoutSet[pe.name] {
 			continue
 		}
-		// Register slim nodes for inode lookup during recursion.
 		if pxarInode != 0 {
 			ow.mfs.pxar.RegisterSlimNode(pe, pxarInode)
 		}
-		ow.allEntries = append(ow.allEntries, commitEntry{name: pe.name, pxarSlim: pe})
-	}
-
-	// Journal edges (always take priority).
-	for i := range journalEdges {
-		edge := &journalEdges[i]
-		node, err := ow.mfs.journal.GetNode(edge.ChildID)
-		if err != nil || node == nil {
-			continue
+		if filtered != i {
+			pxarEntries[filtered] = *pe
 		}
-		ow.allEntries = append(ow.allEntries, commitEntry{name: edge.Name, node: node})
+		filtered++
 	}
+	pxarEntries = pxarEntries[:filtered]
 
-	// Sort alphabetically by name.
-	sort.Slice(ow.allEntries, func(i, j int) bool {
-		return ow.allEntries[i].name < ow.allEntries[j].name
+	// Sort both lists alphabetically for two-pointer merge.
+	sort.Slice(pxarEntries, func(i, j int) bool {
+		return pxarEntries[i].name < pxarEntries[j].name
+	})
+	sort.Slice(journalEdges, func(i, j int) bool {
+		return journalEdges[i].Name < journalEdges[j].Name
 	})
 
-	// --- Walk alphabetically, batching payload refs for offset ordering ---
+	// --- Two-pointer merge: walk alphabetically, emitting incrementally ---
 	//
-	// Payload refs (WriteEntryRef) must be emitted in strictly ascending
-	// contentOffset order. New data (WriteEntryReader) and directory
-	// boundaries flush pending refs before proceeding. This mirrors the
-	// Rust client's lookahead cache: reusable entries accumulate until a
-	// non-reusable entry forces a flush (create.rs:add_entry).
-	for i := range ow.allEntries {
-		ce := &ow.allEntries[i]
-		if ce.node != nil {
-			if err := ow.emitAlphabeticalJournal(ce, relPath); err != nil {
-				return err
+	// Instead of materializing a merged allEntries slice (O(N) copy),
+	// we merge the two pre-sorted lists in a single pass. Payload refs
+	// are deferred to pendingRefs which is bounded by maxPendingRefs.
+	// This avoids the 2× memory overhead of allEntries + pendingRefs
+	// on directories with millions of entries.
+	pi, ji := 0, 0
+	for pi < len(pxarEntries) || ji < len(journalEdges) {
+		var ce commitEntry
+		if pi >= len(pxarEntries) {
+			// Journal only.
+			edge := &journalEdges[ji]
+			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
+			if node == nil {
+				ji++
+				continue
 			}
+			ce = commitEntry{name: edge.Name, node: node}
+			ji++
+		} else if ji >= len(journalEdges) {
+			// Pxar only.
+			ce = commitEntry{name: pxarEntries[pi].name, pxarSlim: &pxarEntries[pi]}
+			pi++
+		} else if pxarEntries[pi].name < journalEdges[ji].Name {
+			ce = commitEntry{name: pxarEntries[pi].name, pxarSlim: &pxarEntries[pi]}
+			pi++
+		} else if pxarEntries[pi].name > journalEdges[ji].Name {
+			edge := &journalEdges[ji]
+			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
+			if node == nil {
+				ji++
+				continue
+			}
+			ce = commitEntry{name: edge.Name, node: node}
+			ji++
 		} else {
-			if err := ow.emitAlphabeticalPxar(ce, relPath); err != nil {
-				return err
+			// Same name: journal takes priority, consume both.
+			edge := &journalEdges[ji]
+			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
+			if node != nil {
+				ce = commitEntry{name: edge.Name, node: node}
 			}
+			pi++
+			ji++
+			if ce.node == nil {
+				continue
+			}
+		}
+
+		// Dispatch to journal or pxar emitter.
+		var err error
+		if ce.node != nil {
+			err = ow.emitAlphabeticalJournal(&ce, relPath)
+		} else {
+			err = ow.emitAlphabeticalPxar(&ce, relPath)
+		}
+		if err != nil {
+			return err
 		}
 	}
 
@@ -666,7 +697,9 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 		}
 		if node.RedirectTo != "" {
 			// Redirected file — defer to pending refs for offset ordering.
-			ow.addToPendingRefs(ce)
+			if err := ow.addToPendingRefs(ce, parentRelPath); err != nil {
+				return err
+			}
 			return nil
 		}
 		// Empty file (touch, no data) — flush and emit inline.
@@ -729,15 +762,16 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 	}
 
 	// Regular file — defer to pending refs for contentOffset ordering.
-	ow.addToPendingRefs(ce)
-	return nil
+	return ow.addToPendingRefs(ce, parentRelPath)
 }
 
 // --- Pending ref batching ---
 
 // addToPendingRefs adds a ref-eligible entry to the pending batch,
-// maintaining the batch sorted by contentOffset.
-func (ow *commitWalkState) addToPendingRefs(ce *commitEntry) {
+// maintaining the batch sorted by contentOffset. Flushes the batch
+// automatically when it reaches maxPendingRefs to bound memory on
+// directories with millions of entries.
+func (ow *commitWalkState) addToPendingRefs(ce *commitEntry, parentRelPath string) error {
 	// Compute sort key: contentOffset for files, entryStart for non-files.
 	if ce.pxarSlim != nil {
 		if ce.pxarSlim.isReg {
@@ -756,6 +790,12 @@ func (ow *commitWalkState) addToPendingRefs(ce *commitEntry) {
 		}
 	}
 	ow.pendingRefs = append(ow.pendingRefs, *ce)
+
+	// Flush if batch exceeds limit — bounds memory on large directories.
+	if len(ow.pendingRefs) >= maxPendingRefs {
+		return ow.flushPendingRefs(parentRelPath)
+	}
+	return nil
 }
 
 // flushPendingRefs emits all batched ref entries sorted by contentOffset,
