@@ -316,6 +316,10 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	if backupID == "" {
 		backupID = mfs.origSnapshot.BackupID
 	}
+	if backupID == "" {
+		// Init-mounted namespace with no previous snapshot — derive from hostname.
+		backupID, _ = os.Hostname()
+	}
 	backupType := req.BackupType
 	if backupType == "" {
 		backupType = mfs.origSnapshot.BackupType
