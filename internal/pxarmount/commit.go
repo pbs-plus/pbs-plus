@@ -178,11 +178,16 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 		return
 	}
 
-	// Check for DETACH flag on next line.
+	// Check for DETACH flag on next line with a short deadline.
+	// The client sends DETACH immediately after COMMIT if at all;
+	// blocking here would deadlock the foreground (non-detached)
+	// path where the client is already waiting for progress.
 	detached := false
+	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	if scanner.Scan() {
 		detached = scanner.Text() == "DETACH"
 	}
+	_ = conn.SetReadDeadline(time.Time{}) // clear deadline
 
 	if detached {
 		// Start commit in background, send JOB id, close connection.
