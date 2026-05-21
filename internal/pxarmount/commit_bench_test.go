@@ -799,3 +799,38 @@ func BenchmarkCommitWalkFull(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkCommitWalkBloat measures total allocations in the nested
+// recursion pattern (current code).  Each root entry is iterated by index
+// with sub-entries allocated per iteration.  After the fix, root entries
+// will be freed before recursion, so this benchmark provides a baseline.
+func BenchmarkCommitWalkBloat(b *testing.B) {
+	tests := []struct {
+		rootDirs    int
+		filesPerDir int
+	}{
+		{100, 100},
+		{1000, 50},
+	}
+	for _, tt := range tests {
+		name := fmt.Sprintf("nested-root=%d-sub=%d", tt.rootDirs, tt.filesPerDir)
+		b.Run(name, func(b *testing.B) {
+			b.ReportAllocs()
+			for iter := 0; iter < b.N; iter++ {
+				entries := makeDirEntries(tt.rootDirs)
+				for i := range entries {
+					entries[i].isDir = true
+				}
+				pi := 0
+				for pi < len(entries) {
+					if entries[pi].name == "" {
+						panic("unreachable")
+					}
+					_ = makeDirEntries(tt.filesPerDir)
+					pi++
+				}
+				_ = entries
+			}
+		})
+	}
+}
