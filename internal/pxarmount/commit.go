@@ -230,6 +230,20 @@ type commitEntry struct {
 	sortKey  uint64        // min descendant payload offset (dirs only)
 }
 
+// deferredDir holds the minimal data needed to recurse into a subdirectory
+// after the parent's pxarEntries slice has been released.  This breaks the
+// memory retention chain: pxarEntries → backing array → all parent entries
+// alive during all child commitWalk calls.
+//
+// For a root with 5M files, each deferredDir is ~56 bytes vs the ~440MB
+// pxarEntries slice that would otherwise stay on the stack.
+type deferredDir struct {
+	name       string     // directory name (copied from pxarEntries[i].name)
+	node       *GraphNode // non-nil for journal dirs
+	entryStart uint64     // pxar entry offset (0 for journal-only dirs)
+	pxarIno    uint64     // pxar child inode for recursion
+}
+
 // commitWalkState holds state for the recursive commit walk.
 // All per-walk slices are pre-allocated once and reused across recursive
 // calls via save/restore, eliminating heap allocation per directory level.
@@ -619,11 +633,17 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 
 	// --- Two-pointer merge: walk alphabetically, emitting incrementally ---
 	//
-	// Instead of materializing a merged allEntries slice (O(N) copy),
-	// we merge the two pre-sorted lists in a single pass. Payload refs
-	// are deferred to pendingRefs which is bounded by maxPendingRefs.
-	// This avoids the 2× memory overhead of allEntries + pendingRefs
-	// on directories with millions of entries.
+	// Directories are collected into deferredDirs instead of recursing inline.
+	// After the loop completes, pxarEntries is released (nil'd), THEN we
+	// recurse into deferred directories. This breaks the memory retention
+	// chain where pxarEntries stays on the stack during all child commitWalk
+	// calls — the root cause of OOM on large archives with millions of files.
+	//
+	// deferredDirs only holds ~56 bytes per directory vs ~88 bytes per entry
+	// in pxarEntries. For a root with 5M files and 10K dirs, that's ~560KB
+	// vs ~440MB.
+	var deferredDirs []deferredDir
+
 	pi, ji := 0, 0
 	for pi < len(pxarEntries) || ji < len(journalEdges) {
 		var ce commitEntry
@@ -667,20 +687,63 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			}
 		}
 
-		// Dispatch to journal or pxar emitter.
-		var err error
-		if ce.node != nil {
-			err = ow.emitAlphabeticalJournal(&ce, relPath)
+		// Directories are collected for deferred recursion (after releasing
+		// pxarEntries). Non-directories are emitted inline.
+		isDir := (ce.node != nil && ce.node.Kind == NodeDir) ||
+			(ce.node == nil && ce.pxarSlim != nil && ce.pxarSlim.isDir)
+
+		if isDir {
+			// Flush pending refs to maintain emission order (refs before dir).
+			if err := ow.flushPendingRefs(relPath); err != nil {
+				return err
+			}
+
+			// Collect minimal info — no pxarEntries reference retained.
+			dd := deferredDir{name: ce.name}
+			if ce.node != nil {
+				dd.node = ce.node
+				if ce.pxarSlim != nil {
+					dd.pxarIno = ce.pxarSlim.inode
+				}
+			} else {
+				dd.entryStart = ce.pxarSlim.entryStart
+			}
+			deferredDirs = append(deferredDirs, dd)
 		} else {
-			err = ow.emitAlphabeticalPxar(&ce, relPath)
-		}
-		if err != nil {
-			return err
+			// Non-directory: emit inline.
+			var err error
+			if ce.node != nil {
+				err = ow.emitAlphabeticalJournal(&ce, relPath)
+			} else {
+				err = ow.emitAlphabeticalPxar(&ce, relPath)
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 
 	// Flush any remaining batched refs.
-	return ow.flushPendingRefs(relPath)
+	if err := ow.flushPendingRefs(relPath); err != nil {
+		return err
+	}
+
+	// --- Release pxarEntries before recursing into subdirectories ---
+	//
+	// This is the key memory optimization: the parent's large entries slice
+	// is no longer needed (merge loop is done), so we nil it to allow GC
+	// before descending into any child directory's commitWalk.
+	pxarEntries = nil
+	_ = pxarEntries // suppress linter
+
+	// --- Deferred directory recursion ---
+	for i := range deferredDirs {
+		if err := ow.processDeferredDir(&deferredDirs[i], relPath); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // emitAlphabeticalJournal emits a journal entry during alphabetical walk.
@@ -842,6 +905,59 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 	}
 	ow.pendingRefs = ow.pendingRefs[:0]
 	return nil
+}
+
+// processDeferredDir handles deferred directory recursion after pxarEntries
+// has been released. It performs the same work as emitJournalDir/emitPxarDir
+// but uses only the minimal data captured in deferredDir.
+func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath string) error {
+	childPath := ow.buildPath(parentRelPath, dd.name)
+
+	if dd.node != nil {
+		// Journal directory (may have pxar shadow).
+		node := dd.node
+		xattrs := ow.xattrCache[node.ID]
+		meta := nodeToMetadata(node, xattrs)
+
+		var pxarChildIno uint64
+		if node.RedirectTo != "" {
+			if pnode := ow.mfs.findPxarNode(node.RedirectTo); pnode != nil {
+				pxarChildIno = pnode.inode
+			}
+			if pxDirEntry, rerr := resolvePxarEntry(ow.mfs, node.RedirectTo); rerr == nil {
+				meta = mergeMetaWithPxar(meta, pxDirEntry)
+			}
+		} else if dd.pxarIno != 0 {
+			pxarChildIno = dd.pxarIno
+		}
+
+		if err := ow.writer.BeginDirectory(dd.name, &meta); err != nil {
+			return fmt.Errorf("begin dir %q: %w", dd.name, err)
+		}
+		if err := ow.commitWalk(node.ID, pxarChildIno, childPath); err != nil {
+			return err
+		}
+		return ow.writer.EndDirectory()
+	}
+
+	// Pxar-only directory — re-read the entry to get metadata.
+	ow.mfs.pxar.readerMu.Lock()
+	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
+	ow.mfs.pxar.readerMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("read pxar entry at %d: %w", dd.entryStart, err)
+	}
+
+	childIno := ToInode(pxarEntry)
+	meta := buildMetaFromPxarEntry(pxarEntry)
+
+	if err := ow.writer.BeginDirectory(dd.name, &meta); err != nil {
+		return fmt.Errorf("begin pxar dir %q: %w", dd.name, err)
+	}
+	if err := ow.commitWalk(0, childIno, childPath); err != nil {
+		return err
+	}
+	return ow.writer.EndDirectory()
 }
 
 // emitJournalRef emits a journal ref entry (redirected file) from the pending batch.
