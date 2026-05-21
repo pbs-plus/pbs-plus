@@ -404,22 +404,12 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	}
 	var merged []mergedEntry
 
-	pxarParentIno := uint64(0)
-	if pxarDirPath != "" {
-		if pn := fs.findPxarNode(pxarDirPath); pn != nil {
-			pxarParentIno = pn.inode
-		}
-	}
-
 	for _, pe := range pxarEntries {
 		if whiteoutNames[pe.name] {
 			continue
 		}
 		if _, ok := edgeNames[pe.name]; ok {
 			continue
-		}
-		if pxarParentIno != 0 {
-			fs.pxar.RegisterSlimNode(&pe, pxarParentIno)
 		}
 		childPath := joinPath(parentPath, pe.name)
 		ino := fs.pathToIno(childPath, pe.isDir)
@@ -1462,6 +1452,25 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 			fs.logNonFatal("close-fd", "fd", err)
 		}
 	}
+	// Clean up per-inode lock — operations that need it will
+	// re-create via LoadOrStore.
+	fs.inoLocks.Delete(input.NodeId)
+}
+
+// Forget is called by the FUSE kernel when it evicts an inode from its
+// dentry cache. We clean up per-inode and per-path synchronization
+// state that would otherwise leak indefinitely.
+//
+// NOTE: We don't delete inoLookup/pathLookup here because there may
+// still be open file handles (Read/Write/Flush/Release) that need the
+// inode→path mapping. Those are cleaned up in unmapInode (Unlink,
+// Rename) and resetAfterCommit.
+func (fs *MutableFS) Forget(nodeID, nlookup uint64) {
+	fs.inoLocks.Delete(nodeID)
+	if path, ok := fs.pathLookup.Load(nodeID); ok {
+		fs.ensureLocks.Delete(path)
+	}
+	fs.dirtyMeta.Delete(nodeID)
 }
 
 // --- Unsupported Operations ---
@@ -1833,9 +1842,9 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 		found := false
 		for _, e := range entries {
 			if e.name == name {
-				fs.pxar.RegisterSlimNode(&e, curIno)
 				if i == len(parts)-1 {
-					return fs.pxar.GetNode(e.inode)
+					n := slimToNode(&e, curIno)
+					return &n
 				}
 				curIno = e.inode
 				found = true

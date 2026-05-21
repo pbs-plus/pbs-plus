@@ -602,9 +602,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		if whiteoutSet != nil && whiteoutSet[pe.name] {
 			continue
 		}
-		if pxarInode != 0 {
-			ow.mfs.pxar.RegisterSlimNode(pe, pxarInode)
-		}
 		if filtered != i {
 			pxarEntries[filtered] = *pe
 		}

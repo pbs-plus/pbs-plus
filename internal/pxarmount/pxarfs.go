@@ -24,6 +24,10 @@ type PxarFS struct {
 	readerAt io.ReaderAt
 }
 
+// maxCachedNodes bounds the node cache. When exceeded, unreferenced
+// entries (refs <= 0) are evicted to prevent unbounded memory growth.
+const maxCachedNodes = 1 << 20 // 1M entries (~56 MB)
+
 // NewPxarFS creates a pxar-backed FUSE filesystem.
 func NewPxarFS(reader *transfer.SplitReader) (*PxarFS, error) {
 	fs := &PxarFS{
@@ -59,7 +63,6 @@ func (fs *PxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name str
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
-	defer fs.releaseDirEntries(entries)
 
 	for i := range entries {
 		if entries[i].name == name {
@@ -96,7 +99,6 @@ func (fs *PxarFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
-	defer fs.releaseDirEntries(entries)
 
 	if input.Offset == 0 {
 		mode := uint32(syscall.S_IFDIR | 0o555)
@@ -135,7 +137,6 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
-	defer fs.releaseDirEntries(entries)
 
 	if input.Offset == 0 {
 		mode := uint32(syscall.S_IFDIR | 0o555)
@@ -178,6 +179,7 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 			break
 		}
 		fs.registerSlimNode(&entries[i], input.NodeId)
+		fs.refNode(entries[i].inode)
 		fs.mu.RLock()
 		child, cok := fs.nodes[entries[i].inode]
 		fs.mu.RUnlock()
@@ -342,8 +344,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		return nil, nil
 	}
 
-	entriesPtr := dirEntryPool.Get().(*[]dirEntrySlim)
-	entries := (*entriesPtr)[:0]
+	entries := make([]dirEntrySlim, 0, 64)
 
 	fs.readerMu.Lock()
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
@@ -366,21 +367,10 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	})
 	fs.readerMu.Unlock()
 	if listErr != nil {
-		*entriesPtr = entries
-		dirEntryPool.Put(entriesPtr)
 		return nil, listErr
 	}
 
 	return entries, nil
-}
-
-// releaseDirEntries returns a dir entry slice to the pool.
-func (fs *PxarFS) releaseDirEntries(entries []dirEntrySlim) {
-	if entries == nil {
-		return
-	}
-	s := entries[:0]
-	dirEntryPool.Put(&s)
 }
 
 // readFileContent reads file data from the pxar payload stream.
@@ -420,6 +410,8 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 }
 
 // registerSlimNode caches a directory entry as a full node.
+// The node is created with refs=0 — the caller must call refNode for each
+// kernel reference (Lookup, ReadDirPlus entry returned to kernel).
 func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -431,7 +423,7 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 			mode:          uint64(e.mode),
 			inode:         e.inode,
 			parent:        parent,
-			refs:          1,
+			refs:          0,
 			mtimeSecs:     e.mtimeSecs,
 			uid:           e.uid,
 			mtimeNanos:    e.mtimeNanos,
@@ -440,6 +432,45 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 			isSymlink:     e.isSymlink,
 			isReg:         e.isReg,
 		}
+	}
+	if len(fs.nodes) > maxCachedNodes {
+		fs.evictStaleLocked()
+	}
+}
+
+// evictStaleLocked removes unreferenced nodes until the cache is at 90%.
+// Caller must hold fs.mu.
+func (fs *PxarFS) evictStaleLocked() {
+	target := maxCachedNodes * 9 / 10
+	for ino, n := range fs.nodes {
+		if ino != RootInode && n.refs <= 0 {
+			delete(fs.nodes, ino)
+			if len(fs.nodes) <= target {
+				return
+			}
+		}
+	}
+}
+
+// slimToNode converts a dirEntrySlim to a node without caching.
+// Used by findPxarNode to avoid polluting the node cache with
+// one-shot lookup entries.
+func slimToNode(e *dirEntrySlim, parent uint64) node {
+	return node{
+		entryStart:    e.entryStart,
+		contentOffset: e.contentOffset,
+		fileSize:      e.fileSize,
+		mode:          uint64(e.mode),
+		inode:         e.inode,
+		parent:        parent,
+		refs:          0,
+		mtimeSecs:     e.mtimeSecs,
+		uid:           e.uid,
+		mtimeNanos:    e.mtimeNanos,
+		gid:           e.gid,
+		isDir:         e.isDir,
+		isSymlink:     e.isSymlink,
+		isReg:         e.isReg,
 	}
 }
 

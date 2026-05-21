@@ -101,14 +101,6 @@ var copyBufPool = sync.Pool{
 	},
 }
 
-// dirEntryPool reuses dir entry slices across ReadDir calls.
-var dirEntryPool = sync.Pool{
-	New: func() any {
-		s := make([]dirEntrySlim, 0, 64)
-		return &s
-	},
-}
-
 // passFh is an open file handle.
 type passFh struct {
 	fd int
