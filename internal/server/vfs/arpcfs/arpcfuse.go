@@ -392,7 +392,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
 		syslog.L.Error(err).WithMessage("FUSE Readdir failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
-		return nil, 0
+		return nil, syscall.EIO
 	}
 
 	return &entries, 0
