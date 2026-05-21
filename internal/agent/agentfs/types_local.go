@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -116,8 +117,7 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	path := s.abs(payload.Path)
 	fh, err := s.platformOpen(path)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleOpenFile: open failed").WithField("path", path).Write()
-		return arpc.Response{}, err
+		return arpc.Response{}, wrapPathError("open", payload.Path, err)
 	}
 
 	handleId := s.handleIdGen.NextID()
@@ -142,10 +142,7 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 	fullPath := s.abs(payload.Path)
 	info, err := s.platformStat(fullPath)
 	if err != nil {
-		if !s.isExpectedMissingFile(fullPath) {
-			syslog.L.Error(err).WithMessage("handleAttr: stat failed").WithField("path", fullPath).Write()
-		}
-		return arpc.Response{}, err
+		return arpc.Response{}, wrapPathError("stat", payload.Path, err)
 	}
 
 	data, err := cbor.Marshal(info)
@@ -169,8 +166,7 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 	fullPath := s.abs(payload.Path)
 	info, err := s.platformXstat(fullPath, payload.AclOnly)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleXattr: xstat failed").WithField("path", fullPath).Write()
-		return arpc.Response{}, err
+		return arpc.Response{}, wrapPathError("xstat", payload.Path, err)
 	}
 
 	data, err := cbor.Marshal(info)
@@ -369,6 +365,14 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-func (s *AgentFSServer) isExpectedMissingFile(p string) bool {
-	return (len(p) >= 12 && p[len(p)-12:] == ".pxarexclude")
+// wrapPathError wraps an OS-level error with operation and path context
+// so the actual errno and path survive RPC serialization.
+func wrapPathError(op, path string, err error) error {
+	if _, ok := err.(*os.PathError); ok {
+		return err // already wrapped
+	}
+	if errno, ok := err.(syscall.Errno); ok {
+		return &os.PathError{Op: op, Path: path, Err: errno}
+	}
+	return &os.PathError{Op: op, Path: path, Err: err}
 }

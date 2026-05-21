@@ -16,22 +16,44 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const attrPrefix = "attr:"
 const xattrPrefix = "xattr:"
 
-func (fs *ARPCFS) logError(fpath string, err error) {
-	if !strings.HasSuffix(fpath, ".pxarexclude") {
-		syslog.L.Error(err).
-			WithField("path", fpath).
-			WithJob(fs.Backup.ID).
-			Write()
+// logOnce logs a single error line per unique path. Retries for the same
+// path are suppressed to avoid noisy duplicate entries in task logs.
+func (fs *ARPCFS) logOnce(path string, err error, op string) {
+	if isIgnoredPath(path) {
+		return
 	}
+	if _, loaded := fs.loggedPaths.LoadOrStore(path, struct{}{}); loaded {
+		return
+	}
+	syslog.L.Error(err).
+		WithMessage("FUSE "+op+" failed").
+		WithField("path", path).
+		WithJob(fs.Backup.ID).
+		Write()
+}
+
+// isIgnoredPath reports whether errors for this path should be silently
+// suppressed — these are files probed by proxmox-backup-client on every
+// directory and are expected to be absent.
+func isIgnoredPath(p string) bool {
+	base := p
+	if idx := strings.LastIndexAny(p, "/\\"); idx >= 0 {
+		base = p[idx+1:]
+	}
+	switch base {
+	case ".pxarexclude", ".pxarexclude-cli":
+		return true
+	}
+	return false
 }
 
 func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup database.Backup, backupMode string) *ARPCFS {
@@ -184,14 +206,12 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 
 	raw, err := pipe.CallData(ctxN, "OpenFile", &req)
 	if err != nil {
-		fs.logError(req.Path, err)
-		return ARPCFile{}, syscall.ENOENT
+		return ARPCFile{}, fmt.Errorf("open: %w", err)
 	}
 
 	err = cbor.Unmarshal(raw, &resp)
 	if err != nil {
-		fs.logError(req.Path, err)
-		return ARPCFile{}, syscall.ENOENT
+		return ARPCFile{}, fmt.Errorf("open decode: %w", err)
 	}
 
 	syslog.L.Debug().
@@ -252,8 +272,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 			Write()
 		raw, err = pipe.CallData(ctxN, "Attr", &req)
 		if err != nil {
-			fs.logError(req.Path, err)
-			return types.AgentFileInfo{}, syscall.ENOENT
+			return types.AgentFileInfo{}, fmt.Errorf("stat: %w", err)
 		}
 		if isLookup {
 			if mcErr := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); mcErr != nil {
@@ -269,8 +288,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 
 	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
-		fs.logError(req.Path, err)
-		return types.AgentFileInfo{}, syscall.ENOENT
+		return types.AgentFileInfo{}, fmt.Errorf("stat decode: %w", err)
 	}
 
 	if !isLookup {
@@ -335,13 +353,13 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 
 	raw, err := pipe.CallData(ctxN, "Xattr", &req)
 	if err != nil {
-		fs.logError(req.Path, err)
+		fs.logOnce(req.Path, err, "Xattr")
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
-		fs.logError(req.Path, err)
+		fs.logOnce(req.Path, err, "Xattr")
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
@@ -394,7 +412,7 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (type
 
 	err = cbor.Unmarshal(rawCached.Value, &fiCached)
 	if err != nil {
-		fs.logError(filename, err)
+		fs.logOnce(filename, err, "Xattr")
 		return types.AgentFileInfo{}, syscall.ENODATA
 	}
 
@@ -470,21 +488,11 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	openReq := types.OpenFileReq{Path: path}
 	raw, err := pipe.CallData(ctxN, "OpenFile", &openReq)
 	if err != nil {
-		syslog.L.Error(err).
-			WithMessage("ReadDir open failed").
-			WithField("path", path).
-			WithJob(fs.Backup.ID).
-			Write()
-		return DirStream{}, syscall.ENOENT
+		return DirStream{}, fmt.Errorf("readdir open: %w", err)
 	}
 	err = cbor.Unmarshal(raw, &handleId)
 	if err != nil {
-		syslog.L.Error(err).
-			WithMessage("ReadDir handle decode failed").
-			WithField("path", path).
-			WithJob(fs.Backup.ID).
-			Write()
-		return DirStream{}, syscall.ENOENT
+		return DirStream{}, fmt.Errorf("readdir decode: %w", err)
 	}
 
 	fs.Memcache.Delete(cacheKey)

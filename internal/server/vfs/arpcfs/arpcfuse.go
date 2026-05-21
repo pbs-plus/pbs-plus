@@ -391,7 +391,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Readdir failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
+		n.fs.logOnce(n.getPath(), err, "Readdir")
 		return nil, syscall.EIO
 	}
 
@@ -402,7 +402,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Open failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
+		n.fs.logOnce(n.getPath(), err, "Open")
 		return nil, 0, syscall.ESTALE
 	}
 
@@ -444,7 +444,7 @@ var _ = (fs.FileLseeker)((*FileHandle)(nil))
 func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {
-		syslog.L.Error(err).WithMessage("FUSE Read failed").WithField("path", fh.file.name).WithField("offset", offset).WithJob(fh.fs.Backup.ID).Write()
+		fh.fs.logOnce(fh.file.name, err, "Read")
 		return fuse.ReadResultData(nil), 0
 	}
 
@@ -454,7 +454,7 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uint64, syscall.Errno) {
 	n, err := fh.file.Lseek(ctx, int64(off), int(whence))
 	if err != nil && err != io.EOF {
-		syslog.L.Error(err).WithMessage("FUSE Lseek failed").WithField("path", fh.file.name).WithField("offset", off).WithJob(fh.fs.Backup.ID).Write()
+		fh.fs.logOnce(fh.file.name, err, "Lseek")
 		return off, 0
 	}
 

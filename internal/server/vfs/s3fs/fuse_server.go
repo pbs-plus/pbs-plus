@@ -231,7 +231,7 @@ func (n *Node) Lookup(
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Readdir failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
+		n.fs.logOnce(n.getPath(), err, "Readdir")
 		return &S3DirStream{}, 0
 	}
 
@@ -245,7 +245,7 @@ func (n *Node) Open(
 ) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Open failed").WithField("path", n.getPath()).WithJob(n.fs.Backup.ID).Write()
+		n.fs.logOnce(n.getPath(), err, "Open")
 		return nil, 0, s3ErrorToErrno(err)
 	}
 
@@ -293,7 +293,7 @@ func (fh *FileHandle) Read(
 ) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(dest, offset)
 	if err != nil && err != io.EOF {
-		syslog.L.Error(err).WithMessage("FUSE Read failed").WithField("key", fh.file.key).WithField("offset", offset).WithJob(fh.fs.Backup.ID).Write()
+		fh.fs.logOnce(fh.file.key, err, "Read")
 		return fuse.ReadResultData(nil), 0
 	}
 

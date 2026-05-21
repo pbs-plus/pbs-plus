@@ -2,7 +2,9 @@ package arpc
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"syscall"
 )
 
 func (se *SerializableError) Error() string {
@@ -23,6 +25,7 @@ func WrapError(err error) *SerializableError {
 	if pathErr, ok := err.(*os.PathError); ok {
 		serErr.Op = pathErr.Op
 		serErr.Path = pathErr.Path
+		serErr.Message = fmt.Sprintf("%s %s: %s", pathErr.Op, pathErr.Path, pathErr.Err)
 
 		if errors.Is(pathErr.Err, os.ErrNotExist) {
 			serErr.ErrorType = "os.ErrNotExist"
@@ -30,9 +33,17 @@ func WrapError(err error) *SerializableError {
 			serErr.ErrorType = "os.ErrPermission"
 		} else if errors.Is(pathErr.Err, os.ErrProcessDone) {
 			serErr.ErrorType = "os.ErrProcessDone"
+		} else if errno, ok := pathErr.Err.(syscall.Errno); ok {
+			serErr.ErrorType = fmt.Sprintf("syscall.Errno(%d)", errno)
 		} else {
 			serErr.ErrorType = "os.PathError"
 		}
+		return &serErr
+	}
+
+	if errno, ok := err.(syscall.Errno); ok {
+		serErr.ErrorType = fmt.Sprintf("syscall.Errno(%d)", errno)
+		serErr.Message = errno.Error()
 		return &serErr
 	}
 
@@ -56,7 +67,7 @@ func UnwrapError(serErr SerializableError) error {
 	case "os.ErrNotExist":
 		op := serErr.Op
 		if op == "" {
-			op = "open" // Default op
+			op = "open"
 		}
 		return &os.PathError{
 			Op:   op,
@@ -69,12 +80,6 @@ func UnwrapError(serErr SerializableError) error {
 			op = "open"
 		}
 		return &os.PathError{Op: op, Path: serErr.Path, Err: os.ErrPermission}
-	case "os.PathError":
-		op := serErr.Op
-		if op == "" {
-			op = "open"
-		}
-		return &os.PathError{Op: op, Path: serErr.Path, Err: errors.New("unknown error")}
 	case "os.ErrTimeout":
 		return os.ErrDeadlineExceeded
 	case "os.ErrClosed":
@@ -82,6 +87,15 @@ func UnwrapError(serErr SerializableError) error {
 	case "os.ErrProcessDone":
 		return os.ErrProcessDone
 	default:
+		// Preserve the original agent error message for all other types
+		// (raw errnos, PathErrors with specific errnos, etc.)
+		if serErr.Op != "" || serErr.Path != "" {
+			op := serErr.Op
+			if op == "" {
+				op = "open"
+			}
+			return &os.PathError{Op: op, Path: serErr.Path, Err: errors.New(serErr.Message)}
+		}
 		return errors.New(serErr.Message)
 	}
 }

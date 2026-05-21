@@ -19,9 +19,9 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -299,7 +299,6 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 
 	for obj := range fs.client.ListObjects(ctxN, fs.bucket, opts) {
 		if obj.Err != nil {
-			syslog.L.Error(obj.Err).WithMessage("ReadDir S3 List failed").Write()
 			return nil, obj.Err
 		}
 
@@ -354,6 +353,37 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 
 func (fs *S3FS) Root() string {
 	return fs.BasePath
+}
+
+// logOnce logs a single error line per unique path. Retries for the same
+// path are suppressed to avoid noisy duplicate entries in task logs.
+func (fs *S3FS) logOnce(path string, err error, op string) {
+	if isIgnoredS3Path(path) {
+		return
+	}
+	if _, loaded := fs.loggedPaths.LoadOrStore(path, struct{}{}); loaded {
+		return
+	}
+	syslog.L.Error(err).
+		WithMessage("FUSE "+op+" failed").
+		WithField("path", path).
+		WithJob(fs.Backup.ID).
+		Write()
+}
+
+// isIgnoredS3Path reports whether errors for this path should be silently
+// suppressed — these are files probed by proxmox-backup-client on every
+// directory and are expected to be absent.
+func isIgnoredS3Path(p string) bool {
+	base := p
+	if idx := strings.LastIndexAny(p, "/"); idx >= 0 {
+		base = p[idx+1:]
+	}
+	switch base {
+	case ".pxarexclude", ".pxarexclude-cli":
+		return true
+	}
+	return false
 }
 
 func (fs *S3FS) Unmount(ctx context.Context) {

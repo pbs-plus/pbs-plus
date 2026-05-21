@@ -13,9 +13,10 @@ import (
 type S3FS struct {
 	*vfs.VFSBase
 
-	client *minio.Client
-	bucket string
-	prefix string
+	client      *minio.Client
+	bucket      string
+	prefix      string
+	loggedPaths sync.Map // dedup: path→struct{} for one-time error logging
 }
 
 type S3File struct {
