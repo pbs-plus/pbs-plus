@@ -3,6 +3,7 @@ package pxarmount
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,13 +46,15 @@ type ProgressReporter struct {
 	w        io.Writer
 	state    ProgressState
 	lastSend time.Time
+	started  time.Time
 }
 
 // NewProgressReporter creates a reporter that writes to w.
 func NewProgressReporter(w io.Writer) *ProgressReporter {
 	return &ProgressReporter{
-		w:     w,
-		state: ProgressState{},
+		w:       w,
+		state:   ProgressState{},
+		started: time.Now(),
 	}
 }
 
@@ -116,7 +119,7 @@ func (r *ProgressReporter) send() {
 		}
 		extra += ")"
 	}
-	_, _ = fmt.Fprintf(r.w, "PROGRESS [%s] %s%s\n", label, msg, extra)
+	_, _ = fmt.Fprintf(r.w, "PROGRESS [%s] {%s} %s%s\n", label, formatElapsed(time.Since(r.started)), msg, extra)
 	r.lastSend = time.Now()
 }
 
@@ -142,13 +145,14 @@ type ProgressDisplay struct {
 	lastLine string
 
 	// spinner state
-	frames  []string
-	frame   int
-	phase   string
-	msg     string
-	files   int64
-	bytes   int64
-	started time.Time
+	frames           []string
+	frame            int
+	phase            string
+	msg              string
+	files            int64
+	bytes            int64
+	started          time.Time
+	hasServerElapsed bool // true once we've parsed a server-side {elapsed} marker
 
 	ticker *time.Ticker
 	done   chan struct{}
@@ -269,6 +273,18 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 
+	// Parse server-side elapsed marker: {12.3s}
+	if len(msg) > 0 && msg[0] == '{' {
+		if end := strings.Index(msg, "}"); end > 0 {
+			elapsedStr := msg[1:end]
+			msg = strings.TrimSpace(msg[end+1:])
+			if secs, err := strconv.ParseFloat(strings.TrimSuffix(elapsedStr, "s"), 64); err == nil {
+				d.hasServerElapsed = true
+				d.started = time.Now().Add(-time.Duration(secs * float64(time.Second)))
+			}
+		}
+	}
+
 	// Extract trailing parenthesized stats if present.
 	hasStats := false
 	if idx := strings.LastIndex(msg, "("); idx > 0 {
@@ -286,7 +302,9 @@ func (d *ProgressDisplay) Update(line string) {
 			if msg == label {
 				d.files = 0
 				d.bytes = 0
-				d.started = time.Now()
+				if !d.hasServerElapsed {
+					d.started = time.Now()
+				}
 				break
 			}
 		}

@@ -141,7 +141,7 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 	}
 
 	// Start the monitor hub for progress broadcasting.
-	hub, err := newCommitHub(sockPath)
+	hub, err := newCommitHub(sockPath, mfs.verbose)
 	if err != nil {
 		_ = l.Close()
 		return nil, fmt.Errorf("start monitor hub: %w", err)
@@ -212,7 +212,7 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 		defer globalCommitHub.endJob()
 
 		primary := NewProgressReporter(conn)
-		prog := &fanoutReporter{primary: primary, hub: globalCommitHub}
+		prog := &fanoutReporter{primary: primary, hub: globalCommitHub, started: time.Now()}
 		if err := CommitSnapshot(mfs, req, prog); err != nil {
 			prog.Error(err.Error())
 			return
@@ -1093,6 +1093,10 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 	h := xxh3.New()
 	tee := io.TeeReader(f, h)
 
+	if ow.prog != nil {
+		ow.prog.SetMsg(childPath)
+	}
+
 	if err := ow.writer.WriteEntryReader(entry, tee, uint64(fi.Size())); err != nil {
 		return fmt.Errorf("write backed file %q: %w", name, err)
 	}
@@ -1325,7 +1329,7 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 			done := verified.Add(1)
 			if time.Since(lastProgress) >= 200*time.Millisecond || int(done) == total {
 				pct := int(done) * 100 / total
-				prog.SetMsg(fmt.Sprintf("Verifying backed files %d/%d (%d%%)", int(done), total, pct))
+				prog.SetMsg(fmt.Sprintf("%s (%d/%d, %d%%)", it.relPath, int(done), total, pct))
 				lastProgress = time.Now()
 			}
 		}
