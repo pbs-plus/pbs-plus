@@ -994,6 +994,13 @@ runs:
         response=$(docker exec pbs-plus-test curl -s -k \
           "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=detail")
 
+        # Also check the JSON results to compare
+        json_results=$(docker exec pbs-plus-test curl -s -k \
+          "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+        result_count=$(echo "$json_results" | jq '.data | length' 2>/dev/null || echo "parse-error")
+        details_count=$(echo "$json_results" | jq '[.data[].details | length] | add' 2>/dev/null || echo "parse-error")
+        echo "DEBUG: JSON results count=${result_count}, total details=${details_count}"
+
         echo "DEBUG: response length=$(echo "$response" | wc -l) lines"
         echo "DEBUG: full response:"
         echo "$response"
