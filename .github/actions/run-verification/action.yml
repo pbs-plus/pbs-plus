@@ -987,6 +987,10 @@ runs:
 
         # Use the first job we created (test-verify-spot)
         VERIFY_ID_ENCODED=$(echo -n "test-verify-spot" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -o /dev/null -w "%{http_code}" \
+          "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=detail")
+        echo "DEBUG: HTTP status code = ${response}"
+
         response=$(docker exec pbs-plus-test curl -s -k \
           "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=detail")
 
