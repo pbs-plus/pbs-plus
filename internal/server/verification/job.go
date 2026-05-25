@@ -110,7 +110,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	}
 
 	// Create result record
-	result := database.VerificationResult{
+	result := &database.VerificationResult{
 		VerificationJobID: job.ID,
 		Snapshot:          snapshot.Snapshot,
 		SnapshotTime:      snapshot.BackupTime,
@@ -175,7 +175,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	result.Status = "completed"
 	result.CompletedAt = time.Now().Unix()
 
-	if err := v.storeInstance.Database.UpdateVerificationResult(result); err != nil {
+	if err := v.storeInstance.Database.UpdateVerificationResult(*result); err != nil {
 		syslog.L.Error(err).WithField("jobID", job.ID).WithMessage("failed to update verification result").Write()
 	}
 

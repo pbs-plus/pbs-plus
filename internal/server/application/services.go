@@ -348,7 +348,7 @@ func (s *VerificationService) GetVerificationResults(jobID string) ([]database.V
 func (s *VerificationService) GetLatestVerificationResult(jobID string) (database.VerificationResult, error) {
 	return s.db.GetLatestVerificationResult(jobID)
 }
-func (s *VerificationService) CreateVerificationResult(r database.VerificationResult) error {
+func (s *VerificationService) CreateVerificationResult(r *database.VerificationResult) error {
 	return s.db.CreateVerificationResult(r)
 }
 func (s *VerificationService) UpdateVerificationResult(r database.VerificationResult) error {

@@ -346,13 +346,13 @@ func (database *Database) DeleteVerificationJob(tx *Transaction, id string) (err
 	return nil
 }
 
-func (database *Database) CreateVerificationResult(result VerificationResult) error {
+func (database *Database) CreateVerificationResult(result *VerificationResult) error {
 	detailsJSON, err := json.Marshal(result.Details)
 	if err != nil {
 		return fmt.Errorf("CreateVerificationResult: failed to marshal details: %w", err)
 	}
 
-	return database.queries.CreateVerificationResult(database.ctx, sqlc.CreateVerificationResultParams{
+	res, err := database.queries.CreateVerificationResult(database.ctx, sqlc.CreateVerificationResultParams{
 		VerificationJobID: result.VerificationJobID,
 		Upid:              toNullString(result.UPID),
 		Snapshot:          result.Snapshot,
@@ -366,6 +366,17 @@ func (database *Database) CreateVerificationResult(result VerificationResult) er
 		CompletedAt:       toNullInt64(int(result.CompletedAt)),
 		Details:           toNullString(string(detailsJSON)),
 	})
+	if err != nil {
+		return fmt.Errorf("CreateVerificationResult: error inserting: %w", err)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("CreateVerificationResult: error getting last insert id: %w", err)
+	}
+	result.ID = int(id)
+
+	return nil
 }
 
 func (database *Database) UpdateVerificationResult(result VerificationResult) error {

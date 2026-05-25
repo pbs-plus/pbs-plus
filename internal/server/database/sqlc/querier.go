@@ -22,7 +22,7 @@ type Querier interface {
 	CreateTarget(ctx context.Context, arg CreateTargetParams) error
 	CreateToken(ctx context.Context, arg CreateTokenParams) error
 	CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error
-	CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) error
+	CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) (sql.Result, error)
 	DeleteAgentHost(ctx context.Context, name string) (int64, error)
 	DeleteBackup(ctx context.Context, id string) (int64, error)
 	DeleteBackupExclusions(ctx context.Context, jobID string) error

@@ -29,7 +29,7 @@ DELETE FROM verification_jobs WHERE id = ?;
 -- name: VerificationJobExists :one
 SELECT 1 FROM verification_jobs WHERE id = ? LIMIT 1;
 
--- name: CreateVerificationResult :exec
+-- name: CreateVerificationResult :execresult
 INSERT INTO verification_results (
     verification_job_id, upid, snapshot, snapshot_time,
     total_files, verified_files, failed_files, skipped_files,

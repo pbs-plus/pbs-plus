@@ -55,7 +55,7 @@ func (q *Queries) CreateVerificationJob(ctx context.Context, arg CreateVerificat
 	return err
 }
 
-const createVerificationResult = `-- name: CreateVerificationResult :exec
+const createVerificationResult = `-- name: CreateVerificationResult :execresult
 INSERT INTO verification_results (
     verification_job_id, upid, snapshot, snapshot_time,
     total_files, verified_files, failed_files, skipped_files,
@@ -78,8 +78,8 @@ type CreateVerificationResultParams struct {
 	Details           sql.NullString `json:"details"`
 }
 
-func (q *Queries) CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) error {
-	_, err := q.db.ExecContext(ctx, createVerificationResult,
+func (q *Queries) CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) (sql.Result, error) {
+	return q.db.ExecContext(ctx, createVerificationResult,
 		arg.VerificationJobID,
 		arg.Upid,
 		arg.Snapshot,
@@ -93,7 +93,6 @@ func (q *Queries) CreateVerificationResult(ctx context.Context, arg CreateVerifi
 		arg.CompletedAt,
 		arg.Details,
 	)
-	return err
 }
 
 const deleteVerificationJob = `-- name: DeleteVerificationJob :execrows
