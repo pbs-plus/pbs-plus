@@ -4,8 +4,10 @@ package verification
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -33,14 +35,25 @@ var (
 	ErrNotAgentTarget    = errors.New("verification requires an agent target")
 )
 
-const defaultAvgChunkSize = 64 * 1024 // 64KB, matches PBS default for pxar
-
 // fileEntry represents a file found in the pxar archive.
 type fileEntry struct {
 	Path         string
 	ContentStart uint64
 	ContentEnd   uint64
 	Size         int64
+}
+
+// verifyState holds the archive reader used to extract file content for hashing.
+type verifyState struct {
+	fs *vfs.LocalFS
+}
+
+// Close releases the verifyState resources.
+func (vs *verifyState) Close() error {
+	if vs.fs != nil {
+		return vs.fs.Close()
+	}
+	return nil
 }
 
 // verificationJob holds state for a verification run.
@@ -122,14 +135,15 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		return fmt.Errorf("failed to create verification result: %w", err)
 	}
 
-	// Read the dynamic index from the snapshot
-	didx, err := v.readDynamicIndex(backup, snapshot)
+	// Open the pxar archive for file extraction
+	vs, err := v.openArchive(backup, snapshot)
 	if err != nil {
-		return fmt.Errorf("failed to read dynamic index: %w", err)
+		return fmt.Errorf("failed to open archive: %w", err)
 	}
+	defer func() { _ = vs.Close() }()
 
 	// Enumerate files from the pxar archive and sample
-	sampledFiles, err := v.sampleFiles(ctx, job, backup, snapshot)
+	sampledFiles, err := v.sampleFiles(ctx, job, vs, snapshot)
 	if err != nil {
 		return fmt.Errorf("failed to sample files: %w", err)
 	}
@@ -159,7 +173,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		default:
 		}
 
-		fileResult := v.verifyFile(ctx, agentCaller, didx, file, backup)
+		fileResult := v.verifyFile(ctx, agentCaller, vs, file, backup)
 		result.Details = append(result.Details, fileResult)
 
 		switch fileResult.Status {
@@ -196,6 +210,8 @@ func (v *verificationJob) cleanup() {
 	}
 }
 
+// --- Snapshot selection ---
+
 // snapshotInfo represents a resolved snapshot.
 type snapshotInfo struct {
 	Snapshot   string // "type/id/time"
@@ -205,7 +221,6 @@ type snapshotInfo struct {
 	Files      []string
 }
 
-// selectSnapshot picks a snapshot based on the verification job config.
 func (v *verificationJob) selectSnapshot(ctx context.Context, job database.VerificationJob, backup database.Backup) (*snapshotInfo, error) {
 	snapshots, err := v.listSnapshots(ctx, backup)
 	if err != nil {
@@ -224,7 +239,6 @@ func (v *verificationJob) selectSnapshot(ctx context.Context, job database.Verif
 		return &snapshots[0], nil
 	}
 
-	// Filter by date range if specified
 	filtered := snapshots
 	if cfg.DateFrom != "" || cfg.DateTo != "" {
 		filtered = filterByDateRange(snapshots, cfg.DateFrom, cfg.DateTo)
@@ -264,7 +278,7 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 
 		t, err := time.Parse(time.RFC3339, entry.Name())
 		if err != nil {
-			continue // skip non-timestamp directories
+			continue
 		}
 		unixTime := t.Unix()
 
@@ -329,48 +343,14 @@ func filterByDateRange(snapshots []snapshotInfo, dateFrom, dateTo string) []snap
 	return filtered
 }
 
-// readDynamicIndex reads the .didx file(s) from the snapshot.
-func (v *verificationJob) readDynamicIndex(backup database.Backup, snap *snapshotInfo) (*datastore.DynamicIndexReader, error) {
+// --- Archive access ---
+
+// openArchive opens the pxar archive for the given snapshot, returning a
+// verifyState that can be used for both file enumeration and content extraction.
+func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo) (*verifyState, error) {
 	dsInfo, err := proxmox.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore info: %w", err)
-	}
-
-	t := time.Unix(snap.BackupTime, 0).UTC()
-	snapshotTime := t.Format(time.RFC3339)
-
-	mpxarPath, ppxarPath, isSplit, err := proxmox.BuildPxarPaths(
-		dsInfo.Path,
-		backup.Namespace,
-		snap.BackupType,
-		snap.BackupID,
-		snapshotTime,
-		"",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
-	}
-
-	var didxPath string
-	if isSplit {
-		didxPath = ppxarPath
-	} else {
-		didxPath = mpxarPath
-	}
-
-	didxData, err := os.ReadFile(didxPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read dynamic index %s: %w", didxPath, err)
-	}
-
-	return datastore.ParseDynamicIndex(didxData)
-}
-
-// sampleFiles enumerates files from the pxar archive and returns a random sample.
-func (v *verificationJob) sampleFiles(ctx context.Context, job database.VerificationJob, backup database.Backup, snap *snapshotInfo) ([]fileEntry, error) {
-	dsInfo, err := proxmox.GetDatastoreInfo(backup.Store)
-	if err != nil {
-		return nil, err
 	}
 
 	t := time.Unix(snap.BackupTime, 0).UTC()
@@ -423,7 +403,6 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 		}
 		archiveReader = splitReader
 	} else {
-		// Non-split archive
 		idxData, err := os.ReadFile(mpxarPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read index: %w", err)
@@ -436,15 +415,21 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 	}
 
 	fs := vfs.NewLocalFS(archiveReader)
-	defer func() { _ = fs.Close() }()
 
-	root, err := fs.Root()
+	return &verifyState{fs: fs}, nil
+}
+
+// --- File sampling ---
+
+// sampleFiles walks the pxar archive to enumerate files, then returns a random sample.
+func (v *verificationJob) sampleFiles(ctx context.Context, job database.VerificationJob, vs *verifyState, snap *snapshotInfo) ([]fileEntry, error) {
+	root, err := vs.fs.Root()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get archive root: %w", err)
 	}
 
 	var allFiles []fileEntry
-	allFiles, err = v.walkDir(fs, root, "", allFiles, job.SpotConfig)
+	allFiles, err = v.walkDir(vs.fs, root, "", allFiles, job.SpotConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to walk archive: %w", err)
 	}
@@ -536,13 +521,17 @@ func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg 
 	return false
 }
 
-// verifyFile verifies a single file by comparing agent chunk digests with stored ones.
+// --- File verification ---
+
+// verifyFile verifies a single file by comparing the agent's SHA-256 hash
+// of the live file against the hash of the same file extracted from the
+// stored pxar archive.
 func (v *verificationJob) verifyFile(
 	ctx context.Context,
 	agentCaller interface {
 		Call(ctx context.Context, method string, payload any, out any) error
 	},
-	didx *datastore.DynamicIndexReader,
+	vs *verifyState,
 	file fileEntry,
 	backup database.Backup,
 ) database.VerificationFileResult {
@@ -551,11 +540,7 @@ func (v *verificationJob) verifyFile(
 		Status: "error",
 	}
 
-	// 1. Ask agent to chunk the file and return digests
-	// Build the local file path on the agent's filesystem.
-	// file.Path is relative to the backup root (e.g., "/random1.txt").
-	// backup.Subpath is the subpath within the mount point (e.g., "/test-backup").
-	// target.GetAgentHostPath() returns the root path on the agent (e.g., "C:\\" or "/").
+	// 1. Ask agent to hash the live file
 	rootPath := backup.Target.GetAgentHostPath()
 	relPath := strings.TrimPrefix(file.Path, "/")
 	if backup.Subpath != "" {
@@ -565,8 +550,7 @@ func (v *verificationJob) verifyFile(
 	agentPath := filepath.Join(rootPath, relPath)
 
 	req := verification.VerifyFileReq{
-		FilePath:     agentPath,
-		AvgChunkSize: defaultAvgChunkSize,
+		FilePath: agentPath,
 	}
 
 	var agentResp verification.VerifyFileResp
@@ -582,32 +566,19 @@ func (v *verificationJob) verifyFile(
 		return result
 	}
 
-	// 2. Get stored chunk digests for the file's content range
-	storedDigests := getStoredDigestsForRange(didx, file.ContentStart, file.ContentEnd)
-
-	// 3. Compare
-	if len(agentResp.Digests) != len(storedDigests) {
-		result.Status = "failed"
-		result.Message = fmt.Sprintf("chunk count mismatch: agent=%d, stored=%d", len(agentResp.Digests), len(storedDigests))
+	// 2. Extract file content from the stored archive and hash it
+	storedHash, err := extractFileHash(vs, file)
+	if err != nil {
+		result.Status = "error"
+		result.Message = fmt.Sprintf("failed to extract file from archive: %v", err)
 		return result
 	}
 
-	for i, agentDigest := range agentResp.Digests {
-		if i >= len(storedDigests) {
-			result.Status = "failed"
-			result.Message = fmt.Sprintf("agent has more chunks than stored (chunk %d)", i)
-			return result
-		}
-		if agentDigest.Digest != storedDigests[i].Digest {
-			result.Status = "failed"
-			result.Message = fmt.Sprintf("chunk %d digest mismatch", i)
-			return result
-		}
-		if agentDigest.Size != storedDigests[i].Size {
-			result.Status = "failed"
-			result.Message = fmt.Sprintf("chunk %d size mismatch: agent=%d, stored=%d", i, agentDigest.Size, storedDigests[i].Size)
-			return result
-		}
+	// 3. Compare hashes
+	if agentResp.SHA256 != storedHash {
+		result.Status = "failed"
+		result.Message = fmt.Sprintf("SHA-256 mismatch: agent=%x, archive=%x", agentResp.SHA256, storedHash)
+		return result
 	}
 
 	result.Status = "ok"
@@ -615,28 +586,21 @@ func (v *verificationJob) verifyFile(
 	return result
 }
 
-// getStoredDigestsForRange returns chunk digests from the dynamic index
-// that fall within the given byte range.
-func getStoredDigestsForRange(didx *datastore.DynamicIndexReader, contentStart, contentEnd uint64) []verification.ChunkDigest {
-	startIdx, ok := didx.ChunkFromOffset(contentStart)
-	if !ok {
-		return nil
+// extractFileHash reads a file's content from the pxar archive and returns
+// its SHA-256 hash.
+func extractFileHash(vs *verifyState, file fileEntry) ([32]byte, error) {
+	rc, err := vs.fs.ReadContentReader(file.ContentStart, file.ContentEnd)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("failed to open content reader for [%d, %d): %w", file.ContentStart, file.ContentEnd, err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, rc); err != nil {
+		return [32]byte{}, fmt.Errorf("failed to read file content: %w", err)
 	}
 
-	var result []verification.ChunkDigest
-	for i := startIdx; i < didx.Count(); i++ {
-		info, ok := didx.ChunkInfo(i)
-		if !ok {
-			break
-		}
-		if info.Start >= contentEnd {
-			break
-		}
-		result = append(result, verification.ChunkDigest{
-			Digest: info.Digest,
-			Size:   int(info.End - info.Start),
-		})
-	}
-
-	return result
+	var digest [32]byte
+	copy(digest[:], h.Sum(nil))
+	return digest, nil
 }

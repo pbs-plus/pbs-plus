@@ -8,75 +8,56 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pxar/buzhash"
 )
 
-// ChunkDigest is a chunk's SHA-256 digest and size.
-type ChunkDigest struct {
-	Digest [32]byte `json:"digest" cbor:"digest"`
-	Size   int      `json:"size" cbor:"size"`
-}
-
-// VerifyFileReq is the request sent to the agent to chunk a file.
+// VerifyFileReq is the request sent to the agent to hash a file.
 type VerifyFileReq struct {
-	FilePath     string `cbor:"file_path"`
-	AvgChunkSize int    `cbor:"avg_chunk_size"`
+	FilePath string `cbor:"file_path"`
 }
 
-// VerifyFileResp contains the chunk digests from the agent.
+// VerifyFileResp contains the file hash from the agent.
 type VerifyFileResp struct {
-	Digests []ChunkDigest `cbor:"digests"`
-	Error   string        `cbor:"error"`
+	SHA256 [32]byte `cbor:"sha256"`
+	Size   int64    `cbor:"size"`
+	Error  string   `cbor:"error"`
 }
 
-// ChunkFile chunks a file using buzhash and returns the digests.
-func ChunkFile(filePath string, avgChunkSize int) ([]ChunkDigest, error) {
+// HashFile computes the SHA-256 hash of a file.
+func HashFile(filePath string) ([32]byte, int64, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
+		return [32]byte{}, 0, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	config, err := buzhash.NewConfig(avgChunkSize)
+	h := sha256.New()
+	size, err := io.Copy(h, f)
 	if err != nil {
-		return nil, fmt.Errorf("invalid chunk size: %w", err)
+		return [32]byte{}, 0, fmt.Errorf("failed to read file: %w", err)
 	}
 
-	chunker := buzhash.NewChunker(f, config)
-	var digests []ChunkDigest
+	var digest [32]byte
+	sum := h.Sum(nil)
+	copy(digest[:], sum)
 
-	for {
-		chunk, err := chunker.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return digests, fmt.Errorf("chunker error: %w", err)
-		}
-
-		digest := sha256.Sum256(chunk)
-		digests = append(digests, ChunkDigest{
-			Digest: digest,
-			Size:   len(chunk),
-		})
-	}
-
-	return digests, nil
+	return digest, size, nil
 }
 
 // VerifyChunkFileHandler is the ARPC handler that runs on the agent.
+// It computes a whole-file SHA-256 hash and returns it to the server.
 func VerifyChunkFileHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData VerifyFileReq
 	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
 		return arpc.Response{}, err
 	}
 
-	digests, err := ChunkFile(reqData.FilePath, reqData.AvgChunkSize)
+	digest, size, err := HashFile(reqData.FilePath)
 	resp := VerifyFileResp{}
 	if err != nil {
 		resp.Error = err.Error()
 	} else {
-		resp.Digests = digests
+		resp.SHA256 = digest
+		resp.Size = size
 	}
 
 	encoded, err := cbor.Marshal(resp)

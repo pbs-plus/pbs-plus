@@ -144,12 +144,19 @@ runs:
           echo "  Failed: ${failed_files}"
 
           if [ "$failed_files" -gt 0 ]; then
-            echo "⚠ Warning: ${failed_files} file(s) failed verification"
+            echo "✗ ${failed_files} file(s) failed verification"
             echo "Details:"
             echo "$response" | jq '.data[-1].details[] | select(.status != "ok")' 2>/dev/null || true
+            echo ""
+            echo "--- Server logs (last 50 lines) ---"
+            docker logs pbs-plus-test 2>&1 | tail -50
+            echo ""
+            echo "--- Agent logs (last 30 lines) ---"
+            docker logs pbs-plus-agent 2>&1 | tail -30
+            exit 1
           fi
 
-          echo "✓ Verification test completed successfully"
+          echo "✓ Verification test passed: ${verified_files}/${total_files} files verified"
         else
           echo "✗ Verification result status is '${latest_status}', expected 'completed'"
           echo "Full response: $response"
