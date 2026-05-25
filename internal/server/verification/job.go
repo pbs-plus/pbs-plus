@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"
@@ -61,19 +62,29 @@ type verificationJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
+	task          *VerificationTask
+	queueTask     *tasks.QueuedTask
 	job           database.VerificationJob
 	backupJob     database.Backup
 	storeInstance *store.Store
+	web           bool
+
+	// result counts set by execute, used by onSuccess/onError to close task
+	failedFiles  int
+	skippedFiles int
+	totalFiles   int
 }
 
 // NewVerificationJob creates a new verification job.
 func NewVerificationJob(
 	job database.VerificationJob,
 	storeInstance *store.Store,
+	web bool,
 ) (*jobs.Job, error) {
 	v := &verificationJob{
 		job:           job,
 		storeInstance: storeInstance,
+		web:           web,
 	}
 
 	return &jobs.Job{
@@ -104,6 +115,32 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 	v.backupJob = backup
 	v.mu.Unlock()
 
+	// Create queued task for PBS task viewer
+	source := "schedule"
+	if v.web {
+		source = "web UI"
+	}
+	queueTask, err := tasks.GenerateVerificationQueuedTask(job, v.web)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
+	} else {
+		v.mu.Lock()
+		v.queueTask = &queueTask
+		v.mu.Unlock()
+
+		// Update job status to show queued
+		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
+			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+		}
+	}
+
+	// Log start
+	syslog.L.Info().
+		WithField("jobID", job.ID).
+		WithField("source", source).
+		WithMessage("verification job starting").
+		Write()
+
 	return nil
 }
 
@@ -116,15 +153,39 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	backup := v.backupJob
 	v.mu.RUnlock()
 
+	// Create the PBS verification task
+	vTask, err := NewVerificationTask(job)
+	if err != nil {
+		return fmt.Errorf("failed to create verification task: %w", err)
+	}
+	v.mu.Lock()
+	v.task = vTask
+	v.mu.Unlock()
+
+	// Close the queue task file (replaced by real task)
+	if v.queueTask != nil {
+		v.queueTask.Close()
+	}
+
+	// Update job status with real task UPID
+	if err := v.updateJobStatus(false, vTask.Task); err != nil {
+		syslog.L.Error(err).WithMessage("failed to update job with task UPID").Write()
+	}
+
+	vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
+
 	// Select snapshot
 	snapshot, err := v.selectSnapshot(ctx, job, backup)
 	if err != nil {
+		vTask.WriteString(fmt.Sprintf("failed to select snapshot: %v", err))
 		return fmt.Errorf("failed to select snapshot: %w", err)
 	}
+	vTask.WriteString(fmt.Sprintf("selected snapshot: %s", snapshot.Snapshot))
 
 	// Create result record
 	result := &database.VerificationResult{
 		VerificationJobID: job.ID,
+		UPID:              vTask.UPID,
 		Snapshot:          snapshot.Snapshot,
 		SnapshotTime:      snapshot.BackupTime,
 		Status:            "running",
@@ -132,12 +193,14 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		Details:           []database.VerificationFileResult{},
 	}
 	if err := v.storeInstance.Database.CreateVerificationResult(result); err != nil {
+		vTask.WriteString(fmt.Sprintf("failed to create verification result: %v", err))
 		return fmt.Errorf("failed to create verification result: %w", err)
 	}
 
 	// Open the pxar archive for file extraction
 	vs, err := v.openArchive(backup, snapshot)
 	if err != nil {
+		vTask.WriteString(fmt.Sprintf("failed to open archive: %v", err))
 		return fmt.Errorf("failed to open archive: %w", err)
 	}
 	defer func() { _ = vs.Close() }()
@@ -149,6 +212,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	}
 
 	result.TotalFiles = len(sampledFiles)
+	vTask.WriteString(fmt.Sprintf("sampled %d files for verification", len(sampledFiles)))
 
 	// Get agent connection
 	hostname := backup.Target.GetHostname()
@@ -166,7 +230,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	}
 
 	// Verify each file
-	for _, file := range sampledFiles {
+	for i, file := range sampledFiles {
 		select {
 		case <-ctx.Done():
 			return jobs.ErrCanceled
@@ -181,10 +245,23 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			result.VerifiedFiles++
 		case "failed":
 			result.FailedFiles++
+			vTask.WriteString(fmt.Sprintf("file verification failed: %s - %s", file.Path, fileResult.Message))
 		default:
 			result.SkippedFiles++
+			vTask.WriteString(fmt.Sprintf("file skipped: %s - %s", file.Path, fileResult.Message))
+		}
+
+		if (i+1)%10 == 0 || i+1 == len(sampledFiles) {
+			vTask.WriteString(fmt.Sprintf("progress: %d/%d files verified", i+1, len(sampledFiles)))
 		}
 	}
+
+	// Store counts for onSuccess/onError to use when closing the task
+	v.mu.Lock()
+	v.totalFiles = result.TotalFiles
+	v.failedFiles = result.FailedFiles
+	v.skippedFiles = result.SkippedFiles
+	v.mu.Unlock()
 
 	result.Status = "completed"
 	result.CompletedAt = time.Now().Unix()
@@ -198,16 +275,119 @@ func (v *verificationJob) execute(ctx context.Context) error {
 
 func (v *verificationJob) onError(err error) {
 	syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("verification job failed").Write()
+
+	v.mu.RLock()
+	t := v.task
+	v.mu.RUnlock()
+
+	if t != nil {
+		t.WriteString(fmt.Sprintf("verification job error: %v", err))
+		t.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+		t.CloseErr(err)
+	}
+
+	if err := v.updateJobHistory(false, 0); err != nil {
+		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on error").Write()
+	}
 }
 
 func (v *verificationJob) onSuccess() {
 	syslog.L.Info().WithField("jobID", v.job.ID).WithMessage("verification job completed successfully").Write()
+
+	v.mu.RLock()
+	t := v.task
+	failed := v.failedFiles
+	skipped := v.skippedFiles
+	total := v.totalFiles
+	v.mu.RUnlock()
+
+	if t != nil {
+		verified := total - failed - skipped
+		t.WriteString("Verification job summary:")
+		t.WriteString(fmt.Sprintf("  total files sampled: %d", total))
+		t.WriteString(fmt.Sprintf("  verified: %d", verified))
+		t.WriteString(fmt.Sprintf("  failed: %d", failed))
+		t.WriteString(fmt.Sprintf("  skipped: %d", skipped))
+		t.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+
+		if failed > 0 {
+			t.CloseErr(fmt.Errorf("%d of %d files failed verification", failed, total))
+			if err := v.updateJobHistory(false, 0); err != nil {
+				syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history").Write()
+			}
+			return
+		}
+
+		if skipped > 0 {
+			t.CloseWarn(skipped)
+			if err := v.updateJobHistory(true, skipped); err != nil {
+				syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history").Write()
+			}
+			return
+		}
+
+		t.CloseOK()
+	}
+
+	if err := v.updateJobHistory(true, 0); err != nil {
+		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on success").Write()
+	}
 }
 
 func (v *verificationJob) cleanup() {
 	if v.cancel != nil {
 		v.cancel()
 	}
+	if v.queueTask != nil {
+		v.queueTask.Close()
+	}
+}
+
+// updateJobStatus updates the verification job's last-run UPID in the database
+// (for showing "running" / "queued" status in the UI).
+func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) error {
+	job, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
+	if err != nil {
+		return err
+	}
+	job.History.LastRunUpid = task.UPID
+	job.History.LastRunStarttime = task.StartTime
+	if succeeded {
+		job.History.LastSuccessfulUpid = task.UPID
+	}
+	return v.storeInstance.Database.UpdateVerificationJob(nil, job)
+}
+
+// updateJobHistory updates the verification job's history fields after completion
+// using the standard PBS task system (mirrors backup/restore pattern).
+func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) error {
+	v.mu.RLock()
+	vTask := v.task
+	v.mu.RUnlock()
+
+	if vTask == nil {
+		return nil
+	}
+
+	return jobs.UpdateJobHistory(
+		v.job.ID,
+		0, // currentPID (not used for verification)
+		succeeded,
+		warningsNum,
+		vTask.Task,
+		func() (database.JobHistory, int, error) {
+			j, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
+			return j.History, 0, err
+		},
+		func(history database.JobHistory, _ int) error {
+			j, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
+			if err != nil {
+				return err
+			}
+			j.History = history
+			return v.storeInstance.Database.UpdateVerificationJob(nil, j)
+		},
+	)
 }
 
 // --- Snapshot selection ---

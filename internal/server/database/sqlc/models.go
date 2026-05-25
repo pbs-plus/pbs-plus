@@ -101,21 +101,24 @@ type Token struct {
 }
 
 type VerificationJob struct {
-	ID                 string         `json:"id"`
-	BackupJobID        string         `json:"backup_job_id"`
-	Store              string         `json:"store"`
-	Namespace          sql.NullString `json:"namespace"`
-	Mode               string         `json:"mode"`
-	Schedule           sql.NullString `json:"schedule"`
-	Comment            sql.NullString `json:"comment"`
-	SpotConfig         sql.NullString `json:"spot_config"`
-	LastRunUpid        sql.NullString `json:"last_run_upid"`
-	LastSuccessfulUpid sql.NullString `json:"last_successful_upid"`
-	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
-	RetryCount         sql.NullInt64  `json:"retry_count"`
-	Retry              sql.NullInt64  `json:"retry"`
-	RetryInterval      sql.NullInt64  `json:"retry_interval"`
-	CreatedAt          sql.NullInt64  `json:"created_at"`
+	ID                    string         `json:"id"`
+	BackupJobID           string         `json:"backup_job_id"`
+	Store                 string         `json:"store"`
+	Namespace             sql.NullString `json:"namespace"`
+	Mode                  string         `json:"mode"`
+	Schedule              sql.NullString `json:"schedule"`
+	Comment               sql.NullString `json:"comment"`
+	SpotConfig            sql.NullString `json:"spot_config"`
+	LastRunUpid           sql.NullString `json:"last_run_upid"`
+	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
+	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
+	RetryCount            sql.NullInt64  `json:"retry_count"`
+	Retry                 sql.NullInt64  `json:"retry"`
+	RetryInterval         sql.NullInt64  `json:"retry_interval"`
+	CreatedAt             sql.NullInt64  `json:"created_at"`
+	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
+	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
+	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
 }
 
 type VerificationResult struct {

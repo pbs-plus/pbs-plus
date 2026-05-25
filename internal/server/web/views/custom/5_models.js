@@ -242,6 +242,14 @@ Ext.define("pbs-verification-job-status", {
       name: "history",
       defaultValue: {},
     },
+    // Flattened history fields (populated by reader transform)
+    "last-run-upid",
+    "last-run-state",
+    "last-run-endtime",
+    "last-run-starttime",
+    "last-successful-endtime",
+    "last-successful-upid",
+    "duration",
   ],
   idProperty: "id",
   proxy: {
@@ -250,6 +258,22 @@ Ext.define("pbs-verification-job-status", {
     reader: {
       type: "json",
       rootProperty: "data",
+      transform: function (raw) {
+        var rows = raw.data || [];
+        return rows.map(function (item) {
+          if (item.history) {
+            item["last-run-upid"] = item.history["last-run-upid"];
+            item["last-run-state"] = item.history["last-run-state"];
+            item["last-run-endtime"] = item.history["last-run-endtime"];
+            item["last-run-starttime"] = item.history["last-run-starttime"];
+            item["last-successful-endtime"] =
+              item.history["last-successful-endtime"];
+            item["last-successful-upid"] = item.history["last-successful-upid"];
+            item["duration"] = item.history["duration"] || null;
+          }
+          return item;
+        });
+      },
     },
   },
 });

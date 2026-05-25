@@ -268,7 +268,6 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 flex: 3,
                 renderer: function (v) {
                   if (!v) return "-";
-                  // Highlight SHA-256 hashes in mismatch messages
                   var enc = Ext.String.htmlEncode(v);
                   enc = enc.replace(
                     /(agent|archive)=([0-9a-f]{8,64})/gi,
@@ -361,7 +360,6 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 var details = rec.get("details") || [];
                 detailsStore.loadData(details);
 
-                // Update summary panel
                 var total = rec.get("total_files") || 0;
                 var verified = rec.get("verified_files") || 0;
                 var failed = rec.get("failed_files") || 0;
@@ -425,6 +423,34 @@ Ext.define("PBS.D2DVerification.JobPanel", {
           Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
         },
       });
+    },
+
+    openTaskLog: function () {
+      var me = this;
+      var view = me.getView();
+      var selection = view.getSelection();
+      if (selection.length < 1) return;
+
+      var upid = selection[0].data["last-run-upid"];
+      if (!upid) return;
+
+      Ext.create("PBS.plusWindow.TaskViewer", {
+        upid: upid,
+      }).show();
+    },
+
+    openSuccessTaskLog: function () {
+      var me = this;
+      var view = me.getView();
+      var selection = view.getSelection();
+      if (selection.length < 1) return;
+
+      var upid = selection[0].data["last-successful-upid"];
+      if (!upid) return;
+
+      Ext.create("PBS.plusWindow.TaskViewer", {
+        upid: upid,
+      }).show();
     },
 
     startStore: function () {
@@ -506,6 +532,27 @@ Ext.define("PBS.D2DVerification.JobPanel", {
       },
       disabled: true,
     },
+    "-",
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Show Log"),
+      handler: "openTaskLog",
+      enableFn: function () {
+        var recs = this.up("grid").getSelection();
+        return recs.length === 1 && !!recs[0].data["last-run-upid"];
+      },
+      disabled: true,
+    },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Show last success log"),
+      handler: "openSuccessTaskLog",
+      enableFn: function () {
+        var recs = this.up("grid").getSelection();
+        return recs.length === 1 && !!recs[0].data["last-successful-upid"];
+      },
+      disabled: true,
+    },
     "->",
     {
       xtype: "textfield",
@@ -556,6 +603,26 @@ Ext.define("PBS.D2DVerification.JobPanel", {
       dataIndex: "schedule",
       width: 120,
       sortable: true,
+    },
+    {
+      header: gettext("Last Attempt"),
+      dataIndex: "last-run-endtime",
+      renderer: PBS.Utils.render_optional_timestamp,
+      width: 140,
+      sortable: true,
+    },
+    {
+      header: gettext("Last Success"),
+      dataIndex: "last-successful-endtime",
+      renderer: PBS.Utils.render_optional_timestamp,
+      width: 140,
+      sortable: true,
+    },
+    {
+      header: gettext("Status"),
+      dataIndex: "last-run-state",
+      renderer: PBS.PlusUtils.render_task_status,
+      flex: 1,
     },
     {
       header: gettext("Next Run"),

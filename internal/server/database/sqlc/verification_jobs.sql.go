@@ -14,25 +14,29 @@ const createVerificationJob = `-- name: CreateVerificationJob :exec
 INSERT INTO verification_jobs (
     id, backup_job_id, store, namespace, mode, schedule, comment,
     spot_config, last_run_upid, last_successful_upid,
-    last_run_status, retry_count, retry, retry_interval
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    last_run_status, retry_count, retry, retry_interval,
+    last_run_starttime, last_run_endtime, last_successful_endtime
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateVerificationJobParams struct {
-	ID                 string         `json:"id"`
-	BackupJobID        string         `json:"backup_job_id"`
-	Store              string         `json:"store"`
-	Namespace          sql.NullString `json:"namespace"`
-	Mode               string         `json:"mode"`
-	Schedule           sql.NullString `json:"schedule"`
-	Comment            sql.NullString `json:"comment"`
-	SpotConfig         sql.NullString `json:"spot_config"`
-	LastRunUpid        sql.NullString `json:"last_run_upid"`
-	LastSuccessfulUpid sql.NullString `json:"last_successful_upid"`
-	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
-	RetryCount         sql.NullInt64  `json:"retry_count"`
-	Retry              sql.NullInt64  `json:"retry"`
-	RetryInterval      sql.NullInt64  `json:"retry_interval"`
+	ID                    string         `json:"id"`
+	BackupJobID           string         `json:"backup_job_id"`
+	Store                 string         `json:"store"`
+	Namespace             sql.NullString `json:"namespace"`
+	Mode                  string         `json:"mode"`
+	Schedule              sql.NullString `json:"schedule"`
+	Comment               sql.NullString `json:"comment"`
+	SpotConfig            sql.NullString `json:"spot_config"`
+	LastRunUpid           sql.NullString `json:"last_run_upid"`
+	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
+	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
+	RetryCount            sql.NullInt64  `json:"retry_count"`
+	Retry                 sql.NullInt64  `json:"retry"`
+	RetryInterval         sql.NullInt64  `json:"retry_interval"`
+	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
+	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
+	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
 }
 
 func (q *Queries) CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error {
@@ -51,6 +55,9 @@ func (q *Queries) CreateVerificationJob(ctx context.Context, arg CreateVerificat
 		arg.RetryCount,
 		arg.Retry,
 		arg.RetryInterval,
+		arg.LastRunStarttime,
+		arg.LastRunEndtime,
+		arg.LastSuccessfulEndtime,
 	)
 	return err
 }
@@ -149,7 +156,7 @@ func (q *Queries) GetLatestVerificationResult(ctx context.Context, verificationJ
 }
 
 const getVerificationJob = `-- name: GetVerificationJob :one
-SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at
+SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime
 FROM verification_jobs
 WHERE id = ?
 LIMIT 1
@@ -174,6 +181,9 @@ func (q *Queries) GetVerificationJob(ctx context.Context, id string) (Verificati
 		&i.Retry,
 		&i.RetryInterval,
 		&i.CreatedAt,
+		&i.LastRunStarttime,
+		&i.LastRunEndtime,
+		&i.LastSuccessfulEndtime,
 	)
 	return i, err
 }
@@ -223,7 +233,7 @@ func (q *Queries) GetVerificationResults(ctx context.Context, verificationJobID 
 }
 
 const listAllVerificationJobs = `-- name: ListAllVerificationJobs :many
-SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at
+SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime
 FROM verification_jobs
 ORDER BY id
 `
@@ -253,6 +263,9 @@ func (q *Queries) ListAllVerificationJobs(ctx context.Context) ([]VerificationJo
 			&i.Retry,
 			&i.RetryInterval,
 			&i.CreatedAt,
+			&i.LastRunStarttime,
+			&i.LastRunEndtime,
+			&i.LastSuccessfulEndtime,
 		); err != nil {
 			return nil, err
 		}
@@ -271,25 +284,29 @@ const updateVerificationJob = `-- name: UpdateVerificationJob :exec
 UPDATE verification_jobs
 SET backup_job_id = ?, store = ?, namespace = ?, mode = ?, schedule = ?,
     comment = ?, spot_config = ?, last_run_upid = ?, last_successful_upid = ?,
-    last_run_status = ?, retry_count = ?, retry = ?, retry_interval = ?
+    last_run_status = ?, retry_count = ?, retry = ?, retry_interval = ?,
+    last_run_starttime = ?, last_run_endtime = ?, last_successful_endtime = ?
 WHERE id = ?
 `
 
 type UpdateVerificationJobParams struct {
-	BackupJobID        string         `json:"backup_job_id"`
-	Store              string         `json:"store"`
-	Namespace          sql.NullString `json:"namespace"`
-	Mode               string         `json:"mode"`
-	Schedule           sql.NullString `json:"schedule"`
-	Comment            sql.NullString `json:"comment"`
-	SpotConfig         sql.NullString `json:"spot_config"`
-	LastRunUpid        sql.NullString `json:"last_run_upid"`
-	LastSuccessfulUpid sql.NullString `json:"last_successful_upid"`
-	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
-	RetryCount         sql.NullInt64  `json:"retry_count"`
-	Retry              sql.NullInt64  `json:"retry"`
-	RetryInterval      sql.NullInt64  `json:"retry_interval"`
-	ID                 string         `json:"id"`
+	BackupJobID           string         `json:"backup_job_id"`
+	Store                 string         `json:"store"`
+	Namespace             sql.NullString `json:"namespace"`
+	Mode                  string         `json:"mode"`
+	Schedule              sql.NullString `json:"schedule"`
+	Comment               sql.NullString `json:"comment"`
+	SpotConfig            sql.NullString `json:"spot_config"`
+	LastRunUpid           sql.NullString `json:"last_run_upid"`
+	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
+	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
+	RetryCount            sql.NullInt64  `json:"retry_count"`
+	Retry                 sql.NullInt64  `json:"retry"`
+	RetryInterval         sql.NullInt64  `json:"retry_interval"`
+	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
+	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
+	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
+	ID                    string         `json:"id"`
 }
 
 func (q *Queries) UpdateVerificationJob(ctx context.Context, arg UpdateVerificationJobParams) error {
@@ -307,6 +324,9 @@ func (q *Queries) UpdateVerificationJob(ctx context.Context, arg UpdateVerificat
 		arg.RetryCount,
 		arg.Retry,
 		arg.RetryInterval,
+		arg.LastRunStarttime,
+		arg.LastRunEndtime,
+		arg.LastSuccessfulEndtime,
 		arg.ID,
 	)
 	return err

@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -115,7 +116,7 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 
 				// Run the verification job
-				vj, err := verification.NewVerificationJob(vJob, storeInstance)
+				vj, err := verification.NewVerificationJob(vJob, storeInstance, true)
 				if err != nil {
 					syslog.L.Error(err).WithField("verificationJobID", jobID).Write()
 					continue
@@ -206,11 +207,24 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 
 		useLatest := r.FormValue("use_latest") == "true"
 
+		backupJobID := r.FormValue("backup_job_id")
+		if backupJobID == "" {
+			WriteErrorResponse(w, fmt.Errorf("backup_job_id is required"))
+			return
+		}
+
+		// Derive store and namespace from the backup job
+		backup, err := storeInstance.Database.GetBackup(backupJobID)
+		if err != nil {
+			WriteErrorResponse(w, fmt.Errorf("failed to get backup job: %w", err))
+			return
+		}
+
 		job := database.VerificationJob{
 			ID:            r.FormValue("id"),
-			BackupJobID:   r.FormValue("backup_job_id"),
-			Store:         r.FormValue("store"),
-			Namespace:     r.FormValue("ns"),
+			BackupJobID:   backupJobID,
+			Store:         backup.Store,
+			Namespace:     backup.Namespace,
 			Mode:          r.FormValue("mode"),
 			Schedule:      r.FormValue("schedule"),
 			Comment:       r.FormValue("comment"),

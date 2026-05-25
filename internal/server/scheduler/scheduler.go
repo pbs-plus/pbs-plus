@@ -308,7 +308,7 @@ func (s *Scheduler) checkVerifications() {
 
 		syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: scheduled verification is due, enqueuing").Write()
 
-		job, err := verification.NewVerificationJob(vJob, s.storeInstance)
+		job, err := verification.NewVerificationJob(vJob, s.storeInstance, false)
 		if err != nil {
 			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: failed to create verification job").Write()
 			continue

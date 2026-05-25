@@ -1,0 +1,1 @@
+-- Not easily reversible with SQLite ALTER TABLE, but best effort
