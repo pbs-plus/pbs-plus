@@ -260,11 +260,12 @@ type VerificationJob struct {
 
 // SpotCheckConfig holds configuration for random spot check mode.
 type SpotCheckConfig struct {
-	SampleCount int               `json:"sample_count"`
-	UseLatest   bool              `json:"use_latest"`
-	DateFrom    string            `json:"date_from"` // RFC3339 or empty
-	DateTo      string            `json:"date_to"`   // RFC3339 or empty
-	Filters     []SpotCheckFilter `json:"filters"`
+	SampleCount      int               `json:"sample_count"`
+	SamplingStrategy string            `json:"sampling_strategy"` // random, systematic, stratified
+	UseLatest        bool              `json:"use_latest"`
+	DateFrom         string            `json:"date_from"` // RFC3339 or empty
+	DateTo           string            `json:"date_to"`   // RFC3339 or empty
+	Filters          []SpotCheckFilter `json:"filters"`
 }
 
 // SpotCheckFilter defines a filter for selecting files in spot checks.
@@ -281,7 +282,8 @@ type VerificationResult struct {
 	UPID              string                   `json:"upid"`
 	Snapshot          string                   `json:"snapshot"`
 	SnapshotTime      int64                    `json:"snapshot_time"`
-	TotalFiles        int                      `json:"total_files"`
+	TotalPopulation   int                      `json:"total_population"` // total eligible files in archive
+	TotalFiles        int                      `json:"total_files"`      // files actually sampled
 	VerifiedFiles     int                      `json:"verified_files"`
 	FailedFiles       int                      `json:"failed_files"`
 	SkippedFiles      int                      `json:"skipped_files"`

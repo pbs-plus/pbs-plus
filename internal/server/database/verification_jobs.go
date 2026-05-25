@@ -398,6 +398,7 @@ func (database *Database) CreateVerificationResult(result *VerificationResult) e
 		StartedAt:         toNullInt64(int(result.StartedAt)),
 		CompletedAt:       toNullInt64(int(result.CompletedAt)),
 		Details:           toNullString(string(detailsJSON)),
+		TotalPopulation:   int64(result.TotalPopulation),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateVerificationResult: error inserting: %w", err)
@@ -419,15 +420,16 @@ func (database *Database) UpdateVerificationResult(result VerificationResult) er
 	}
 
 	return database.queries.UpdateVerificationResult(database.ctx, sqlc.UpdateVerificationResultParams{
-		Upid:          toNullString(result.UPID),
-		TotalFiles:    toNullInt64(result.TotalFiles),
-		VerifiedFiles: toNullInt64(result.VerifiedFiles),
-		FailedFiles:   toNullInt64(result.FailedFiles),
-		SkippedFiles:  toNullInt64(result.SkippedFiles),
-		Status:        toNullString(result.Status),
-		CompletedAt:   toNullInt64(int(result.CompletedAt)),
-		Details:       toNullString(string(detailsJSON)),
-		ID:            int64(result.ID),
+		Upid:            toNullString(result.UPID),
+		TotalFiles:      toNullInt64(result.TotalFiles),
+		VerifiedFiles:   toNullInt64(result.VerifiedFiles),
+		FailedFiles:     toNullInt64(result.FailedFiles),
+		SkippedFiles:    toNullInt64(result.SkippedFiles),
+		Status:          toNullString(result.Status),
+		CompletedAt:     toNullInt64(int(result.CompletedAt)),
+		Details:         toNullString(string(detailsJSON)),
+		TotalPopulation: int64(result.TotalPopulation),
+		ID:              int64(result.ID),
 	})
 }
 
@@ -460,6 +462,7 @@ func (database *Database) GetVerificationResults(jobID string) ([]VerificationRe
 			Status:            fromNullString(row.Status),
 			StartedAt:         int64(fromNullInt64(row.StartedAt)),
 			CompletedAt:       int64(fromNullInt64(row.CompletedAt)),
+			TotalPopulation:   int(row.TotalPopulation),
 		}
 
 		if detailsStr := fromNullString(row.Details); detailsStr != "" {
@@ -496,6 +499,7 @@ func (database *Database) GetLatestVerificationResult(jobID string) (Verificatio
 		Status:            fromNullString(row.Status),
 		StartedAt:         int64(fromNullInt64(row.StartedAt)),
 		CompletedAt:       int64(fromNullInt64(row.CompletedAt)),
+		TotalPopulation:   int(row.TotalPopulation),
 	}
 
 	if detailsStr := fromNullString(row.Details); detailsStr != "" {

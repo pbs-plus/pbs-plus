@@ -892,6 +892,199 @@ runs:
         echo "✗ Case 19: Timed out"; exit 1
 
     # =====================================================================
+    # Test Cases 20-24: Sampling strategies, CSV export, confidence
+    # =====================================================================
+
+    - name: "[Case 20] Systematic sampling strategy"
+      shell: bash
+      run: |
+        set -eo pipefail
+        echo "=== Test Case 20: Systematic sampling ==="
+
+        response=$(docker exec pbs-plus-test curl -s -k -o /dev/null -w "%{http_code}" \
+          -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-systematic" \
+          -d "backup_job_id=test-backup-job" \
+          -d "mode=random_spot" \
+          -d "spot_config={\"sample_count\":20,\"sampling_strategy\":\"systematic\",\"use_latest\":true}")
+        if [ "$response" != "200" ]; then
+          echo "✗ Case 20: Create failed (HTTP ${response})"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-systematic" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -o /dev/null -w "%{http_code}" \
+          -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded")
+        if [ "$response" != "200" ]; then
+          echo "✗ Case 20: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -s -k "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            population=$(echo "$response" | jq -r '.data[-1].total_population')
+            if [ "$verified" -ne 20 ]; then
+              echo "✗ Case 20: Expected 20 verified, got ${verified}"; exit 1
+            fi
+            if [ "$population" -lt 20 ]; then
+              echo "✗ Case 20: total_population too low (${population})"; exit 1
+            fi
+            echo "✓ Case 20: PASSED (${verified}/20 verified, population=${population}, systematic)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 20: Timed out"; exit 1
+
+    - name: "[Case 21] Stratified sampling strategy"
+      shell: bash
+      run: |
+        set -eo pipefail
+        echo "=== Test Case 21: Stratified sampling ==="
+
+        response=$(docker exec pbs-plus-test curl -s -k -o /dev/null -w "%{http_code}" \
+          -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-stratified" \
+          -d "backup_job_id=test-backup-job" \
+          -d "mode=random_spot" \
+          -d "spot_config={\"sample_count\":30,\"sampling_strategy\":\"stratified\",\"use_latest\":true}")
+        if [ "$response" != "200" ]; then
+          echo "✗ Case 21: Create failed (HTTP ${response})"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-stratified" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -o /dev/null -w "%{http_code}" \
+          -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded")
+        if [ "$response" != "200" ]; then
+          echo "✗ Case 21: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -s -k "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            if [ "$verified" -ne 30 ]; then
+              echo "✗ Case 21: Expected 30 verified, got ${verified}"; exit 1
+            fi
+            echo "✓ Case 21: PASSED (${verified}/30 verified, stratified)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 21: Timed out"; exit 1
+
+    - name: "[Case 22] CSV export (detail)"
+      shell: bash
+      run: |
+        set -eo pipefail
+        echo "=== Test Case 22: CSV detail export ==="
+
+        # Use the first job we created (test-verify-spot)
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-spot" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k \
+          "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=detail")
+
+        # Check header row
+        header=$(echo "$response" | head -1)
+        if ! echo "$header" | grep -q "File Path"; then
+          echo "✗ Case 22: Missing 'File Path' in header"
+          echo "Header: ${header}"
+          exit 1
+        fi
+
+        # Check data rows exist
+        datalines=$(echo "$response" | tail -n +2 | grep -c "/random")
+        if [ "$datalines" -lt 1 ]; then
+          echo "✗ Case 22: No data rows found"
+          echo "$response" | head -5
+          exit 1
+        fi
+
+        # Check confidence columns present
+        if ! echo "$header" | grep -q "Confidence 95%"; then
+          echo "✗ Case 22: Missing confidence columns"
+          exit 1
+        fi
+
+        echo "✓ Case 22: PASSED (${datalines} detail rows with confidence)"
+
+    - name: "[Case 23] CSV export (summary)"
+      shell: bash
+      run: |
+        set -eo pipefail
+        echo "=== Test Case 23: CSV summary export ==="
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-spot" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k \
+          "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=summary")
+
+        header=$(echo "$response" | head -1)
+        if ! echo "$header" | grep -q "Total Population"; then
+          echo "✗ Case 23: Missing 'Total Population' in header"
+          echo "Header: ${header}"
+          exit 1
+        fi
+
+        # Should have at least 1 summary row
+        summary_rows=$(echo "$response" | tail -n +2 | grep -c "test-verify-spot")
+        if [ "$summary_rows" -lt 1 ]; then
+          echo "✗ Case 23: No summary rows"
+          echo "$response"
+          exit 1
+        fi
+
+        # Check confidence values are present and reasonable
+        first_data=$(echo "$response" | head -2 | tail -1)
+        conf95=$(echo "$first_data" | awk -F',' '{print $10}')
+        if [ -z "$conf95" ]; then
+          echo "✗ Case 23: Missing confidence value"
+          echo "Row: ${first_data}"
+          exit 1
+        fi
+
+        echo "✓ Case 23: PASSED (${summary_rows} summary rows, conf95=${conf95})"
+
+    - name: "[Case 24] Total population and confidence in results"
+      shell: bash
+      run: |
+        set -eo pipefail
+        echo "=== Test Case 24: Confidence data in API results ==="
+
+        # Check that total_population is populated in a result
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-systematic" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k \
+          "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+
+        population=$(echo "$response" | jq -r '.data[-1].total_population // empty')
+        sampled=$(echo "$response" | jq -r '.data[-1].total_files')
+        verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+
+        if [ -z "$population" ] || [ "$population" -le 0 ]; then
+          echo "✗ Case 24: total_population missing or zero (${population})"
+          exit 1
+        fi
+
+        if [ "$population" -lt "$sampled" ]; then
+          echo "✗ Case 24: population (${population}) < sampled (${sampled})"
+          exit 1
+        fi
+
+        # Population should be 50 (50 test files)
+        if [ "$population" -ne 50 ]; then
+          echo "✗ Case 24: Expected population 50, got ${population}"
+          exit 1
+        fi
+
+        echo "  Population: ${population}, Sampled: ${sampled}, Verified: ${verified}"
+        echo "✓ Case 24: PASSED (population=${population}, sample=${sampled}, verified=${verified})"
+
+    # =====================================================================
     # Summary
     # =====================================================================
     - name: Verification test summary
@@ -920,6 +1113,11 @@ runs:
         echo "  Case 17: Multiple OR filters               ✓"
         echo "  Case 18: No-match filter (graceful fail)   ✓"
         echo "  Case 19: Date range (use_latest=false)     ✓"
+        echo "  Case 20: Systematic sampling strategy      ✓"
+        echo "  Case 21: Stratified sampling strategy      ✓"
+        echo "  Case 22: CSV export (detail)               ✓"
+        echo "  Case 23: CSV export (summary)              ✓"
+        echo "  Case 24: Total population + confidence     ✓"
         echo "============================================"
-        echo "  All 19 test cases PASSED"
+        echo "  All 24 test cases PASSED"
         echo "============================================"

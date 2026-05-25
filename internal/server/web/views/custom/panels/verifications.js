@@ -207,12 +207,40 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             );
           }
 
+          function computeConfidence(population, sample, failures) {
+            if (sample <= 0 || failures >= sample) return { c95: 0, c99: 0 };
+            var n = sample;
+            var N = population > 0 ? population : n;
+            if (n > N) N = n;
+            if (failures === 0) {
+              var fpc = Math.sqrt((N - n) / N);
+              if (fpc < 0) fpc = 0;
+              return {
+                c95: Math.max(0, Math.min(100, (1 - 3.0 / n * fpc) * 100)),
+                c99: Math.max(0, Math.min(100, (1 - 4.6 / n * fpc) * 100)),
+              };
+            }
+            var pHat = 1 - failures / n;
+            return {
+              c95: Math.max(0, Math.min(100, wilsonLower(pHat, n, 1.96) * 100)),
+              c99: Math.max(0, Math.min(100, wilsonLower(pHat, n, 2.576) * 100)),
+            };
+          }
+
+          function wilsonLower(pHat, n, z) {
+            var denom = 1 + z * z / n;
+            var centre = pHat + z * z / (2 * n);
+            var spread = z * Math.sqrt(pHat * (1 - pHat) / n + z * z / (4 * n * n));
+            return (centre - spread) / denom;
+          }
+
           var runsStore = Ext.create("Ext.data.Store", {
             fields: [
               "id",
               "snapshot",
               "snapshot_time",
               "total_files",
+              "total_population",
               "verified_files",
               "failed_files",
               "skipped_files",
@@ -361,10 +389,12 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 detailsStore.loadData(details);
 
                 var total = rec.get("total_files") || 0;
+                var population = rec.get("total_population") || 0;
                 var verified = rec.get("verified_files") || 0;
                 var failed = rec.get("failed_files") || 0;
                 var skipped = rec.get("skipped_files") || 0;
                 var snap = Ext.String.htmlEncode(rec.get("snapshot") || "");
+                var conf = computeConfidence(population, total, failed);
 
                 summaryPanel.removeAll();
                 summaryPanel.add({
@@ -373,10 +403,18 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                     '<table style="width:100%;font-size:12px;">' +
                     '<tr>' +
                     '<td style="padding:2px 15px;"><b>Snapshot:</b> ' + snap + '</td>' +
+                    '<td style="padding:2px 15px;"><b>Population:</b> ' + (population || '-') + '</td>' +
                     '<td style="padding:2px 15px;"><b>Sampled:</b> ' + total + '</td>' +
                     '<td style="padding:2px 15px;color:green;"><b>Verified:</b> ' + verified + '</td>' +
                     '<td style="padding:2px 15px;color:' + (failed > 0 ? 'red' : '#888') + ';"><b>Failed:</b> ' + failed + '</td>' +
                     '<td style="padding:2px 15px;color:#888;"><b>Skipped:</b> ' + skipped + '</td>' +
+                    '</tr>' +
+                    '<tr>' +
+                    '<td style="padding:2px 15px;" colspan="6">' +
+                    '<span style="color:#555;"><b>95% Confidence:</b> ≥' + conf.c95.toFixed(1) + '% intact</span>' +
+                    '&nbsp;&nbsp;&nbsp;' +
+                    '<span style="color:#555;"><b>99% Confidence:</b> ≥' + conf.c99.toFixed(1) + '% intact</span>' +
+                    '</td>' +
                     '</tr>' +
                     '</table>',
                 });
@@ -403,6 +441,30 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             },
             items: [summaryPanel, runsGrid, detailsGrid],
             buttons: [
+              {
+                text: gettext("Export Detail CSV"),
+                iconCls: "fa fa-download",
+                handler: function () {
+                  var encodedId = encodeURIComponent(jobId);
+                  window.open(
+                    pbsPlusBaseUrl + "/api2/extjs/config/d2d-verification/" +
+                    encodedId + "/results/export?type=detail",
+                    "_blank"
+                  );
+                },
+              },
+              {
+                text: gettext("Export Summary CSV"),
+                iconCls: "fa fa-download",
+                handler: function () {
+                  var encodedId = encodeURIComponent(jobId);
+                  window.open(
+                    pbsPlusBaseUrl + "/api2/extjs/config/d2d-verification/" +
+                    encodedId + "/results/export?type=summary",
+                    "_blank"
+                  );
+                },
+              },
               {
                 text: gettext("Close"),
                 handler: function () {

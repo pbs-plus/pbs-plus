@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -70,10 +71,11 @@ type verificationJob struct {
 	web           bool
 
 	// result counts set by execute, used by onSuccess/onError to close task
-	failedFiles  int
-	skippedFiles int
-	totalFiles   int
-	resultID     int
+	failedFiles     int
+	skippedFiles    int
+	totalFiles      int
+	resultID        int
+	totalPopulation int
 }
 
 // NewVerificationJob creates a new verification job.
@@ -216,6 +218,9 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	}
 
 	result.TotalFiles = len(sampledFiles)
+	v.mu.RLock()
+	result.TotalPopulation = v.totalPopulation
+	v.mu.RUnlock()
 	vTask.WriteString(fmt.Sprintf("sampled %d files for verification", len(sampledFiles)))
 
 	// Get agent connection
@@ -613,7 +618,8 @@ func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo
 
 // --- File sampling ---
 
-// sampleFiles walks the pxar archive to enumerate files, then returns a random sample.
+// sampleFiles walks the pxar archive to enumerate files, then returns a sample
+// based on the configured strategy (random, systematic, or stratified).
 func (v *verificationJob) sampleFiles(ctx context.Context, job database.VerificationJob, vs *verifyState, snap *snapshotInfo) ([]fileEntry, error) {
 	root, err := vs.fs.Root()
 	if err != nil {
@@ -630,6 +636,11 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 		return nil, ErrNoFilesToVerify
 	}
 
+	// Store total population for confidence calculation
+	v.mu.Lock()
+	v.totalPopulation = len(allFiles)
+	v.mu.Unlock()
+
 	sampleCount := job.SpotConfig.SampleCount
 	if sampleCount <= 0 {
 		sampleCount = 10
@@ -638,11 +649,98 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 		sampleCount = len(allFiles)
 	}
 
-	rand.Shuffle(len(allFiles), func(i, j int) {
-		allFiles[i], allFiles[j] = allFiles[j], allFiles[i]
+	strategy := job.SpotConfig.SamplingStrategy
+	if strategy == "" {
+		strategy = "random"
+	}
+
+	switch strategy {
+	case "systematic":
+		return systematicSample(allFiles, sampleCount), nil
+	case "stratified":
+		return stratifiedSample(allFiles, sampleCount), nil
+	default: // random
+		rand.Shuffle(len(allFiles), func(i, j int) {
+			allFiles[i], allFiles[j] = allFiles[j], allFiles[i]
+		})
+		return allFiles[:sampleCount], nil
+	}
+}
+
+// systematicSample takes every k-th file after sorting by path for even coverage.
+func systematicSample(files []fileEntry, n int) []fileEntry {
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
 	})
 
-	return allFiles[:sampleCount], nil
+	if n >= len(files) {
+		return files
+	}
+
+	result := make([]fileEntry, n)
+	step := float64(len(files)) / float64(n)
+	for i := range n {
+		idx := int(float64(i) * step)
+		result[i] = files[idx]
+	}
+	return result
+}
+
+// stratifiedSample groups files by top-level directory and samples
+// proportionally from each group.
+func stratifiedSample(files []fileEntry, n int) []fileEntry {
+	if n >= len(files) {
+		return files
+	}
+
+	// Group by top-level directory
+	groups := make(map[string][]fileEntry)
+	for _, f := range files {
+		dir := topLevelDir(f.Path)
+		groups[dir] = append(groups[dir], f)
+	}
+
+	var result []fileEntry
+	remaining := n
+	groupNames := make([]string, 0, len(groups))
+	for k := range groups {
+		groupNames = append(groupNames, k)
+	}
+	sort.Strings(groupNames)
+
+	for i, name := range groupNames {
+		g := groups[name]
+		// Proportional allocation
+		var allocated int
+		if i == len(groupNames)-1 {
+			allocated = remaining // last group gets remainder
+		} else {
+			allocated = min(int(math.Round(float64(len(g))/float64(len(files))*float64(n))), remaining)
+		}
+
+		if allocated > len(g) {
+			allocated = len(g)
+		}
+
+		rand.Shuffle(len(g), func(i, j int) {
+			g[i], g[j] = g[j], g[i]
+		})
+
+		result = append(result, g[:allocated]...)
+		remaining -= allocated
+	}
+
+	return result
+}
+
+// topLevelDir extracts the top-level directory from a path (e.g. "/data/file.txt" → "/data").
+func topLevelDir(path string) string {
+	path = strings.TrimPrefix(path, "/")
+	before, _, ok := strings.Cut(path, "/")
+	if !ok {
+		return "/"
+	}
+	return before
 }
 
 // walkDir recursively walks the pxar directory tree collecting regular files.

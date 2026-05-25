@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
@@ -231,10 +233,11 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			Retry:         retry,
 			RetryInterval: retryInterval,
 			SpotConfig: database.SpotCheckConfig{
-				SampleCount: sampleCount,
-				UseLatest:   useLatest,
-				DateFrom:    r.FormValue("date_from"),
-				DateTo:      r.FormValue("date_to"),
+				SampleCount:      sampleCount,
+				SamplingStrategy: r.FormValue("sampling_strategy"),
+				UseLatest:        useLatest,
+				DateFrom:         r.FormValue("date_from"),
+				DateTo:           r.FormValue("date_to"),
 			},
 		}
 
@@ -336,6 +339,9 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 					job.SpotConfig.SampleCount = n
 				}
 			}
+			if ss := r.FormValue("sampling_strategy"); ss != "" {
+				job.SpotConfig.SamplingStrategy = ss
+			}
 			if r.FormValue("use_latest") != "" {
 				job.SpotConfig.UseLatest = r.FormValue("use_latest") == "true"
 			}
@@ -415,4 +421,153 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 		}
 		json.NewEncoder(w).Encode(response)
 	}
+}
+
+func VerificationResultsExportHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+
+		jobID := validate.DecodePath(r.PathValue("id"))
+		if err := validate.ValidateJobId(jobID); err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+
+		results, err := storeInstance.VerificationSvc.GetVerificationResults(jobID)
+		if err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+
+		exportType := r.URL.Query().Get("type")
+		if exportType == "" {
+			exportType = "detail"
+		}
+
+		filename := fmt.Sprintf("verification-%s-%s.csv", jobID, time.Now().Format("20060102-150405"))
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+
+		switch exportType {
+		case "summary":
+			writeSummaryCSV(w, results)
+		default:
+			writeDetailCSV(w, results)
+		}
+	}
+}
+
+func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResult) {
+	fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Status,Total Population,Sampled,Verified,Failed,Skipped,Confidence 95%,Confidence 99%,Started At,Completed At")
+	for _, r := range results {
+		startedAt := formatTimestamp(r.StartedAt)
+		completedAt := formatTimestamp(r.CompletedAt)
+		conf95, conf99 := computeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
+		fmt.Fprintf(w, "%s,%d,%s,%s,%d,%d,%d,%d,%d,%.1f%%,%.1f%%,%s,%s\n",
+			csvEscape(r.VerificationJobID),
+			r.ID,
+			csvEscape(r.Snapshot),
+			r.Status,
+			r.TotalPopulation,
+			r.TotalFiles,
+			r.VerifiedFiles,
+			r.FailedFiles,
+			r.SkippedFiles,
+			conf95*100,
+			conf99*100,
+			startedAt,
+			completedAt,
+		)
+	}
+}
+
+func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult) {
+	fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Total Population,Sample Size,File Path,File Size,Status,Message,Confidence 95%,Confidence 99%")
+	for _, r := range results {
+		conf95, conf99 := computeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
+		for _, f := range r.Details {
+			fmt.Fprintf(w, "%s,%d,%s,%d,%d,%s,%d,%s,%s,%.1f%%,%.1f%%\n",
+				csvEscape(r.VerificationJobID),
+				r.ID,
+				csvEscape(r.Snapshot),
+				r.TotalPopulation,
+				r.TotalFiles,
+				csvEscape(f.Path),
+				f.Size,
+				f.Status,
+				csvEscape(f.Message),
+				conf95*100,
+				conf99*100,
+			)
+		}
+	}
+}
+
+// computeConfidence returns the lower bound of the intact rate at 95% and 99% confidence.
+// Uses the Rule of Three for zero-failure samples and the Wilson score interval otherwise.
+func computeConfidence(population, sample, failures int) (float64, float64) {
+	if sample <= 0 || failures >= sample {
+		return 0, 0
+	}
+
+	n := float64(sample)
+	N := float64(population)
+	if N <= 0 || n > N {
+		N = n
+	}
+
+	fHat := float64(failures) / n
+
+	if failures == 0 {
+		// Rule of Three with finite population correction
+		fpc := math.Sqrt((N - n) / N)
+		if fpc < 0 {
+			fpc = 0
+		}
+		upper95 := 3.0 / n * fpc
+		upper99 := 4.6 / n * fpc
+		return clamp01(1 - upper95), clamp01(1 - upper99)
+	}
+
+	// Wilson score interval for non-zero failures
+	pHat := 1 - fHat
+	return wilsonLower(pHat, n, 1.96), wilsonLower(pHat, n, 2.576)
+}
+
+func wilsonLower(pHat, n, z float64) float64 {
+	if n <= 0 {
+		return 0
+	}
+	denom := 1 + z*z/n
+	centre := pHat + z*z/(2*n)
+	spread := z * math.Sqrt(pHat*(1-pHat)/n+z*z/(4*n*n))
+	lower := (centre - spread) / denom
+	return clamp01(lower)
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+func formatTimestamp(unix int64) string {
+	if unix <= 0 {
+		return ""
+	}
+	return time.Unix(unix, 0).UTC().Format(time.RFC3339)
+}
+
+func csvEscape(s string) string {
+	if strings.ContainsAny(s, ",\"\n\r") {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	return s
 }

@@ -296,9 +296,35 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       fieldLabel: gettext("Sample Count"),
       name: "sample_count",
       minValue: 1,
-      maxValue: 10000,
+      maxValue: 100000,
       value: 10,
       allowBlank: false,
+    },
+    {
+      xtype: "combo",
+      fieldLabel: gettext("Sampling Strategy"),
+      name: "sampling_strategy",
+      queryMode: "local",
+      store: [
+        ["random", gettext("Random")],
+        ["systematic", gettext("Systematic")],
+        ["stratified", gettext("Stratified")],
+      ],
+      value: "random",
+      editable: false,
+      forceSelection: true,
+    },
+    {
+      xtype: "component",
+      html:
+        '<span style="color:#555;font-size:11px;">' +
+        gettext(
+          "Random: statistically uniform sampling. " +
+          "Systematic: evenly-spaced across sorted paths for better coverage. " +
+          "Stratified: proportional sampling per top-level directory."
+        ) +
+        "</span>",
+      margin: "0 0 5 0",
     },
     {
       xtype: "checkbox",

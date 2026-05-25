@@ -35,8 +35,8 @@ SELECT 1 FROM verification_jobs WHERE id = ? LIMIT 1;
 INSERT INTO verification_results (
     verification_job_id, upid, snapshot, snapshot_time,
     total_files, verified_files, failed_files, skipped_files,
-    status, started_at, completed_at, details
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    status, started_at, completed_at, details, total_population
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetVerificationResults :many
 SELECT *
@@ -54,7 +54,8 @@ LIMIT 1;
 -- name: UpdateVerificationResult :exec
 UPDATE verification_results
 SET upid = ?, total_files = ?, verified_files = ?, failed_files = ?,
-    skipped_files = ?, status = ?, completed_at = ?, details = ?
+    skipped_files = ?, status = ?, completed_at = ?, details = ?,
+    total_population = ?
 WHERE id = ?;
 
 -- name: MarkVerificationResultStatus :exec

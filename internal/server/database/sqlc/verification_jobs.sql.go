@@ -66,8 +66,8 @@ const createVerificationResult = `-- name: CreateVerificationResult :execresult
 INSERT INTO verification_results (
     verification_job_id, upid, snapshot, snapshot_time,
     total_files, verified_files, failed_files, skipped_files,
-    status, started_at, completed_at, details
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    status, started_at, completed_at, details, total_population
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateVerificationResultParams struct {
@@ -83,6 +83,7 @@ type CreateVerificationResultParams struct {
 	StartedAt         sql.NullInt64  `json:"started_at"`
 	CompletedAt       sql.NullInt64  `json:"completed_at"`
 	Details           sql.NullString `json:"details"`
+	TotalPopulation   int64          `json:"total_population"`
 }
 
 func (q *Queries) CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) (sql.Result, error) {
@@ -99,6 +100,7 @@ func (q *Queries) CreateVerificationResult(ctx context.Context, arg CreateVerifi
 		arg.StartedAt,
 		arg.CompletedAt,
 		arg.Details,
+		arg.TotalPopulation,
 	)
 }
 
@@ -127,7 +129,7 @@ func (q *Queries) DeleteVerificationResults(ctx context.Context, verificationJob
 }
 
 const getLatestVerificationResult = `-- name: GetLatestVerificationResult :one
-SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details
+SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details, total_population
 FROM verification_results
 WHERE verification_job_id = ?
 ORDER BY started_at DESC
@@ -151,6 +153,7 @@ func (q *Queries) GetLatestVerificationResult(ctx context.Context, verificationJ
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.Details,
+		&i.TotalPopulation,
 	)
 	return i, err
 }
@@ -189,7 +192,7 @@ func (q *Queries) GetVerificationJob(ctx context.Context, id string) (Verificati
 }
 
 const getVerificationResults = `-- name: GetVerificationResults :many
-SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details
+SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details, total_population
 FROM verification_results
 WHERE verification_job_id = ?
 ORDER BY started_at DESC
@@ -218,6 +221,7 @@ func (q *Queries) GetVerificationResults(ctx context.Context, verificationJobID 
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.Details,
+			&i.TotalPopulation,
 		); err != nil {
 			return nil, err
 		}
@@ -352,20 +356,22 @@ func (q *Queries) UpdateVerificationJob(ctx context.Context, arg UpdateVerificat
 const updateVerificationResult = `-- name: UpdateVerificationResult :exec
 UPDATE verification_results
 SET upid = ?, total_files = ?, verified_files = ?, failed_files = ?,
-    skipped_files = ?, status = ?, completed_at = ?, details = ?
+    skipped_files = ?, status = ?, completed_at = ?, details = ?,
+    total_population = ?
 WHERE id = ?
 `
 
 type UpdateVerificationResultParams struct {
-	Upid          sql.NullString `json:"upid"`
-	TotalFiles    sql.NullInt64  `json:"total_files"`
-	VerifiedFiles sql.NullInt64  `json:"verified_files"`
-	FailedFiles   sql.NullInt64  `json:"failed_files"`
-	SkippedFiles  sql.NullInt64  `json:"skipped_files"`
-	Status        sql.NullString `json:"status"`
-	CompletedAt   sql.NullInt64  `json:"completed_at"`
-	Details       sql.NullString `json:"details"`
-	ID            int64          `json:"id"`
+	Upid            sql.NullString `json:"upid"`
+	TotalFiles      sql.NullInt64  `json:"total_files"`
+	VerifiedFiles   sql.NullInt64  `json:"verified_files"`
+	FailedFiles     sql.NullInt64  `json:"failed_files"`
+	SkippedFiles    sql.NullInt64  `json:"skipped_files"`
+	Status          sql.NullString `json:"status"`
+	CompletedAt     sql.NullInt64  `json:"completed_at"`
+	Details         sql.NullString `json:"details"`
+	TotalPopulation int64          `json:"total_population"`
+	ID              int64          `json:"id"`
 }
 
 func (q *Queries) UpdateVerificationResult(ctx context.Context, arg UpdateVerificationResultParams) error {
@@ -378,6 +384,7 @@ func (q *Queries) UpdateVerificationResult(ctx context.Context, arg UpdateVerifi
 		arg.Status,
 		arg.CompletedAt,
 		arg.Details,
+		arg.TotalPopulation,
 		arg.ID,
 	)
 	return err
