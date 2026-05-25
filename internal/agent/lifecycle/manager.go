@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/sync"
+	agentverification "github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -300,6 +301,7 @@ func ConnectARPC(
 			router.Handle("target_status", sync.StatusHandler)
 			router.Handle("cleanup", sync.BackupCloseHandler)
 			router.Handle("cleanup_restore", sync.RestoreCloseHandler)
+			router.Handle("verify_chunk_file", agentverification.VerifyChunkFileHandler)
 			session.SetRouter(router)
 			backoff = base
 

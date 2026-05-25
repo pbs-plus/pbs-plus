@@ -25,6 +25,14 @@ Ext.onReady(function () {
         expanded: true,
         children: [],
       });
+      root.insertChild(index + 2, {
+        text: "Data Verification",
+        iconCls: "fa fa-check-circle",
+        id: "data_verification",
+        path: "pbsD2DDataVerification",
+        expanded: true,
+        children: [],
+      });
     }
   }
 });

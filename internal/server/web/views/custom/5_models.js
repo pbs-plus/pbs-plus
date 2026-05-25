@@ -222,3 +222,34 @@ Ext.define("pbs-model-scripts", {
   fields: ["path", "description", "job_count", "target_count"],
   idProperty: "path",
 });
+
+Ext.define("pbs-verification-job-status", {
+  extend: "Ext.data.Model",
+  fields: [
+    "id",
+    "backup_job_id",
+    "store",
+    "ns",
+    "mode",
+    "schedule",
+    "comment",
+    "spot_config",
+    "next-run",
+    "retry",
+    "retry-interval",
+    "created_at",
+    {
+      name: "history",
+      defaultValue: {},
+    },
+  ],
+  idProperty: "id",
+  proxy: {
+    type: "pbsplus",
+    url: pbsPlusBaseUrl + "/api2/json/d2d/verification",
+    reader: {
+      type: "json",
+      rootProperty: "data",
+    },
+  },
+});

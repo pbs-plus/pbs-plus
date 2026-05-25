@@ -4,11 +4,9 @@ package verification
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -18,15 +16,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
-	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/transfer"
 	"github.com/pbs-plus/pxar/vfs"
@@ -40,24 +36,6 @@ var (
 )
 
 const defaultAvgChunkSize = 64 * 1024 // 64KB, matches PBS default for pxar
-
-// ChunkDigest is a chunk's SHA-256 digest and size.
-type ChunkDigest struct {
-	Digest [32]byte `json:"digest" cbor:"digest"`
-	Size   int      `json:"size" cbor:"size"`
-}
-
-// VerifyFileReq is the request sent to the agent to chunk a file.
-type VerifyFileReq struct {
-	FilePath     string `cbor:"file_path"`
-	AvgChunkSize int    `cbor:"avg_chunk_size"`
-}
-
-// VerifyFileResp contains the chunk digests from the agent.
-type VerifyFileResp struct {
-	Digests []ChunkDigest `cbor:"digests"`
-	Error   string        `cbor:"error"`
-}
 
 // fileEntry represents a file found in the pxar archive.
 type fileEntry struct {
@@ -551,12 +529,12 @@ func (v *verificationJob) verifyFile(
 	}
 
 	// 1. Ask agent to chunk the file and return digests
-	req := VerifyFileReq{
+	req := verification.VerifyFileReq{
 		FilePath:     filepath.Join(backup.Subpath, strings.TrimPrefix(file.Path, "/")),
 		AvgChunkSize: defaultAvgChunkSize,
 	}
 
-	var agentResp VerifyFileResp
+	var agentResp verification.VerifyFileResp
 	if err := agentCaller.Call(ctx, "verify_chunk_file", req, &agentResp); err != nil {
 		result.Status = "skipped"
 		result.Message = fmt.Sprintf("agent call failed: %v", err)
@@ -604,13 +582,13 @@ func (v *verificationJob) verifyFile(
 
 // getStoredDigestsForRange returns chunk digests from the dynamic index
 // that fall within the given byte range.
-func getStoredDigestsForRange(didx *datastore.DynamicIndexReader, contentStart, contentEnd uint64) []ChunkDigest {
+func getStoredDigestsForRange(didx *datastore.DynamicIndexReader, contentStart, contentEnd uint64) []verification.ChunkDigest {
 	startIdx, ok := didx.ChunkFromOffset(contentStart)
 	if !ok {
 		return nil
 	}
 
-	var result []ChunkDigest
+	var result []verification.ChunkDigest
 	for i := startIdx; i < didx.Count(); i++ {
 		info, ok := didx.ChunkInfo(i)
 		if !ok {
@@ -619,71 +597,11 @@ func getStoredDigestsForRange(didx *datastore.DynamicIndexReader, contentStart, 
 		if info.Start >= contentEnd {
 			break
 		}
-		result = append(result, ChunkDigest{
+		result = append(result, verification.ChunkDigest{
 			Digest: info.Digest,
 			Size:   int(info.End - info.Start),
 		})
 	}
 
 	return result
-}
-
-// ChunkFileOnAgent chunks a file using buzhash on the agent side.
-// This runs ON the agent.
-func ChunkFileOnAgent(filePath string, avgChunkSize int) ([]ChunkDigest, error) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
-	}
-	defer func() { _ = f.Close() }()
-
-	config, err := buzhash.NewConfig(avgChunkSize)
-	if err != nil {
-		return nil, fmt.Errorf("invalid chunk size: %w", err)
-	}
-
-	chunker := buzhash.NewChunker(f, config)
-	var digests []ChunkDigest
-
-	for {
-		chunk, err := chunker.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return digests, fmt.Errorf("chunker error: %w", err)
-		}
-
-		digest := sha256.Sum256(chunk)
-		digests = append(digests, ChunkDigest{
-			Digest: digest,
-			Size:   len(chunk),
-		})
-	}
-
-	return digests, nil
-}
-
-// VerifyChunkFileHandler is the ARPC handler that runs on the agent.
-// It receives a file path, chunks it, and returns the digests.
-func VerifyChunkFileHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData VerifyFileReq
-	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
-		return arpc.Response{}, err
-	}
-
-	digests, err := ChunkFileOnAgent(reqData.FilePath, reqData.AvgChunkSize)
-	resp := VerifyFileResp{}
-	if err != nil {
-		resp.Error = err.Error()
-	} else {
-		resp.Digests = digests
-	}
-
-	encoded, err := cbor.Marshal(resp)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	return arpc.Response{Status: 200, Data: encoded}, nil
 }
