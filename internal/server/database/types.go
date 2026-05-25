@@ -294,6 +294,7 @@ type VerificationResult struct {
 // VerificationFileResult stores per-file verification outcome.
 type VerificationFileResult struct {
 	Path    string `json:"path"`
+	Size    int64  `json:"size"`
 	Status  string `json:"status"`  // ok, failed, skipped, error
 	Message string `json:"message"` // human-readable detail
 }

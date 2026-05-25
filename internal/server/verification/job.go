@@ -537,6 +537,7 @@ func (v *verificationJob) verifyFile(
 ) database.VerificationFileResult {
 	result := database.VerificationFileResult{
 		Path:   file.Path,
+		Size:   file.Size,
 		Status: "error",
 	}
 
