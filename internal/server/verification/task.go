@@ -68,10 +68,10 @@ func (t *VerificationTask) CloseOK() {
 	})
 }
 
-// CloseErr closes the task with error status.
+// CloseErr closes the task with "TASK ERROR: <msg>" status.
 func (t *VerificationTask) CloseErr(taskErr error) {
-	errMsg := taskErr.Error()
-	t.CloseWithStatus(errMsg, nil, func() {
+	status := "ERROR: " + taskErr.Error()
+	t.CloseWithStatus(status, nil, func() {
 		_ = t.removeActiveTask()
 	})
 }
