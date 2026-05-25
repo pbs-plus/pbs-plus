@@ -248,6 +248,31 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			}
 		}
 
+		// Parse full spot_config JSON if provided (overrides individual fields)
+		if spotConfigJSON := r.FormValue("spot_config"); spotConfigJSON != "" {
+			var sc database.SpotCheckConfig
+			if err := json.Unmarshal([]byte(spotConfigJSON), &sc); err == nil {
+				if sc.SampleCount > 0 {
+					job.SpotConfig.SampleCount = sc.SampleCount
+				}
+				if sc.SamplingStrategy != "" {
+					job.SpotConfig.SamplingStrategy = sc.SamplingStrategy
+				}
+				if sc.UseLatest {
+					job.SpotConfig.UseLatest = true
+				}
+				if sc.DateFrom != "" {
+					job.SpotConfig.DateFrom = sc.DateFrom
+				}
+				if sc.DateTo != "" {
+					job.SpotConfig.DateTo = sc.DateTo
+				}
+				if len(sc.Filters) > 0 {
+					job.SpotConfig.Filters = sc.Filters
+				}
+			}
+		}
+
 		if err := storeInstance.VerificationSvc.CreateVerificationJob(job); err != nil {
 			WriteErrorResponse(w, err)
 			return
