@@ -999,7 +999,7 @@ runs:
         fi
 
         # Check data rows exist
-        datalines=$(echo "$response" | tail -n +2 | grep -c "/random")
+        datalines=$(echo "$response" | tail -n +2 | grep -c "/random" || true)
         if [ "$datalines" -lt 1 ]; then
           echo "✗ Case 22: No data rows found"
           echo "$response" | head -5
@@ -1032,7 +1032,7 @@ runs:
         fi
 
         # Should have at least 1 summary row
-        summary_rows=$(echo "$response" | tail -n +2 | grep -c "test-verify-spot")
+        summary_rows=$(echo "$response" | tail -n +2 | grep -c "test-verify-spot" || true)
         if [ "$summary_rows" -lt 1 ]; then
           echo "✗ Case 23: No summary rows"
           echo "$response"
