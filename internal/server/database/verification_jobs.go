@@ -11,6 +11,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -180,6 +181,26 @@ func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
 			if nextRun, err := calendar.ComputeNextEvent(ev, time.Now(), time.Local); err == nil {
 				job.NextRun = nextRun.Unix()
 			}
+		}
+	}
+
+	// Enrich history from task logs (same pattern as backup/restore)
+	if job.History.LastRunUpid != "" {
+		task, err := proxmox.GetTaskByUPID(job.History.LastRunUpid)
+		if err == nil {
+			job.History.LastRunStarttime = task.StartTime
+			job.History.LastRunEndtime = task.EndTime
+			if task.ExitStatus != "" {
+				job.History.LastRunState = task.ExitStatus
+				job.History.Duration = task.EndTime - task.StartTime
+			} else {
+				job.History.Duration = time.Now().Unix() - task.StartTime
+			}
+		}
+	}
+	if job.History.LastSuccessfulUpid != "" {
+		if successTask, err := proxmox.GetTaskByUPID(job.History.LastSuccessfulUpid); err == nil {
+			job.History.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}
 }
