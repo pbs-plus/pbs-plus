@@ -21,6 +21,8 @@ type Querier interface {
 	CreateScript(ctx context.Context, arg CreateScriptParams) error
 	CreateTarget(ctx context.Context, arg CreateTargetParams) error
 	CreateToken(ctx context.Context, arg CreateTokenParams) error
+	CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error
+	CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) error
 	DeleteAgentHost(ctx context.Context, name string) (int64, error)
 	DeleteBackup(ctx context.Context, id string) (int64, error)
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
@@ -29,16 +31,21 @@ type Querier interface {
 	DeleteScript(ctx context.Context, path string) (int64, error)
 	DeleteTarget(ctx context.Context, name string) (int64, error)
 	DeleteToken(ctx context.Context, token string) error
+	DeleteVerificationJob(ctx context.Context, id string) (int64, error)
+	DeleteVerificationResults(ctx context.Context, verificationJobID string) (int64, error)
 	GetAgentHost(ctx context.Context, name string) (AgentHost, error)
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
 	GetBackup(ctx context.Context, id string) (GetBackupRow, error)
 	GetBackupExclusions(ctx context.Context, jobID string) ([]GetBackupExclusionsRow, error)
 	GetExclusion(ctx context.Context, arg GetExclusionParams) (GetExclusionRow, error)
+	GetLatestVerificationResult(ctx context.Context, verificationJobID string) (VerificationResult, error)
 	GetRestore(ctx context.Context, id string) (GetRestoreRow, error)
 	GetScript(ctx context.Context, path string) (GetScriptRow, error)
 	GetTarget(ctx context.Context, name string) (GetTargetRow, error)
 	GetTargetS3Secret(ctx context.Context, name string) (string, error)
 	GetToken(ctx context.Context, token string) (Token, error)
+	GetVerificationJob(ctx context.Context, id string) (VerificationJob, error)
+	GetVerificationResults(ctx context.Context, verificationJobID string) ([]VerificationResult, error)
 	ListAllAgentHosts(ctx context.Context) ([]AgentHost, error)
 	ListAllBackupExclusions(ctx context.Context) ([]ListAllBackupExclusionsRow, error)
 	ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, error)
@@ -47,6 +54,7 @@ type Querier interface {
 	ListAllTargets(ctx context.Context) ([]ListAllTargetsRow, error)
 	ListAllTokens(ctx context.Context) ([]Token, error)
 	ListAllTokensWithDetails(ctx context.Context) ([]ListAllTokensWithDetailsRow, error)
+	ListAllVerificationJobs(ctx context.Context) ([]VerificationJob, error)
 	ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusionsRow, error)
 	ListNonRevokedTokens(ctx context.Context) ([]Token, error)
 	ListQueuedBackups(ctx context.Context) ([]ListQueuedBackupsRow, error)
@@ -63,7 +71,10 @@ type Querier interface {
 	UpdateScript(ctx context.Context, arg UpdateScriptParams) error
 	UpdateTarget(ctx context.Context, arg UpdateTargetParams) error
 	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) error
+	UpdateVerificationJob(ctx context.Context, arg UpdateVerificationJobParams) error
+	UpdateVerificationResult(ctx context.Context, arg UpdateVerificationResultParams) error
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
+	VerificationJobExists(ctx context.Context, id string) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

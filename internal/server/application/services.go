@@ -318,3 +318,39 @@ func (s *TargetService) RefreshStatuses() {
 }
 
 // Ensure fmt is used (needed by sprintf patterns elsewhere)
+
+// --- VerificationService ---
+
+type VerificationService struct{ db *database.Database }
+
+func NewVerificationService(db *database.Database) *VerificationService {
+	return &VerificationService{db: db}
+}
+
+func (s *VerificationService) ListVerificationJobs() ([]database.VerificationJob, error) {
+	return s.db.GetAllVerificationJobs()
+}
+func (s *VerificationService) GetVerificationJob(id string) (database.VerificationJob, error) {
+	return s.db.GetVerificationJob(id)
+}
+func (s *VerificationService) CreateVerificationJob(j database.VerificationJob) error {
+	return s.db.CreateVerificationJob(nil, j)
+}
+func (s *VerificationService) UpdateVerificationJob(j database.VerificationJob) error {
+	return s.db.UpdateVerificationJob(nil, j)
+}
+func (s *VerificationService) DeleteVerificationJob(id string) error {
+	return s.db.DeleteVerificationJob(nil, id)
+}
+func (s *VerificationService) GetVerificationResults(jobID string) ([]database.VerificationResult, error) {
+	return s.db.GetVerificationResults(jobID)
+}
+func (s *VerificationService) GetLatestVerificationResult(jobID string) (database.VerificationResult, error) {
+	return s.db.GetLatestVerificationResult(jobID)
+}
+func (s *VerificationService) CreateVerificationResult(r database.VerificationResult) error {
+	return s.db.CreateVerificationResult(r)
+}
+func (s *VerificationService) UpdateVerificationResult(r database.VerificationResult) error {
+	return s.db.UpdateVerificationResult(r)
+}
