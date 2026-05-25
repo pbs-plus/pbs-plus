@@ -120,13 +120,36 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 					syslog.L.Error(err).WithField("verificationJobID", jobID).Write()
 					continue
 				}
-				go func() {
+				go func(id string) {
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 					defer cancel()
-					if err := vj.Execute(ctx); err != nil {
-						syslog.L.Error(err).WithField("verificationJobID", jobID).Write()
+
+					defer func() {
+						if vj.Cleanup != nil {
+							vj.Cleanup()
+						}
+					}()
+
+					if vj.PreExec != nil {
+						if err := vj.PreExec(ctx); err != nil {
+							if vj.OnError != nil {
+								vj.OnError(err)
+							}
+							return
+						}
 					}
-				}()
+
+					if err := vj.Execute(ctx); err != nil {
+						if vj.OnError != nil {
+							vj.OnError(err)
+						}
+						return
+					}
+
+					if vj.OnSuccess != nil {
+						vj.OnSuccess()
+					}
+				}(jobID)
 			}
 		}()
 
