@@ -1,0 +1,157 @@
+name: Run Verification Test
+description: Create and run a data verification job, then verify results
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "120"
+    description: Timeout for verification completion
+
+runs:
+  using: composite
+  steps:
+    - name: Create verification job
+      shell: bash
+      run: |
+        echo "Creating verification job..."
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-job" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "schedule=" \
+          -d "retry=0" \
+          -d "retry-interval=1" \
+          -d "sample_count=5" \
+          -d "use_latest=true" \
+          -d "comment=E2E test verification job" \
+          -w "\nHTTP_CODE:%{http_code}")
+        echo "Create verification API response: $response"
+
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Create verification job API returned non-200 status"
+          exit 1
+        fi
+        echo "✓ Verification job created"
+
+    - name: Start verification
+      shell: bash
+      run: |
+        echo "Starting verification job..."
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-job" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        echo "Run verification API response: $response"
+
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Run verification API returned non-200 status"
+          exit 1
+        fi
+        echo "✓ Verification job accepted"
+
+    - name: Wait for verification completion
+      shell: bash
+      run: |
+        echo "Waiting for verification to complete..."
+        timeout=${{ inputs.timeout-seconds }}
+        elapsed=0
+        poll_interval=5
+
+        while [ $elapsed -lt $timeout ]; do
+          server_logs=$(docker logs pbs-plus-test 2>&1)
+
+          # Success: verification completed
+          if echo "$server_logs" | grep -q "verification job completed successfully"; then
+            echo "✓ Verification job completed successfully"
+            sleep 1
+            break
+          fi
+
+          # Error: verification failed
+          if echo "$server_logs" | grep -q "verification job failed"; then
+            echo "✗ Verification job failed"
+            echo "--- Server logs (last 30 lines) ---"
+            docker logs pbs-plus-test 2>&1 | tail -30
+            exit 1
+          fi
+
+          # Progress reporting
+          if [ $((elapsed % 15)) -eq 0 ]; then
+            echo "Verification in progress... (${elapsed}s elapsed)"
+          fi
+
+          sleep $poll_interval
+          elapsed=$((elapsed + poll_interval))
+        done
+
+        if [ $elapsed -ge $timeout ]; then
+          echo "✗ Verification timed out after ${timeout}s"
+          echo "--- Server logs (last 50 lines) ---"
+          docker logs pbs-plus-test 2>&1 | tail -50
+          echo ""
+          echo "--- Agent logs (last 30 lines) ---"
+          docker logs pbs-plus-agent 2>&1 | tail -30
+          exit 1
+        fi
+
+    - name: Verify verification results
+      shell: bash
+      run: |
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-job" | base64 -w0)
+        echo "Fetching verification results..."
+
+        # Poll for results to appear
+        success=false
+        for i in $(seq 1 10); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results" \
+            -H "Accept: application/json")
+
+          # Check that we got a valid response with data
+          data_count=$(echo "$response" | jq '.data | length' 2>/dev/null || echo "0")
+
+          if [ "$data_count" -gt 0 ]; then
+            success=true
+            echo "✓ Got ${data_count} verification result(s)"
+            break
+          fi
+
+          echo "Waiting for results to appear... (attempt $i/10)"
+          sleep 2
+        done
+
+        if [ "$success" != "true" ]; then
+          echo "✗ No verification results found"
+          echo "API response: $response"
+          exit 1
+        fi
+
+        # Check the latest result status
+        latest_status=$(echo "$response" | jq -r '.data[-1].status')
+        echo "Latest verification status: ${latest_status}"
+
+        if [ "$latest_status" = "completed" ]; then
+          total_files=$(echo "$response" | jq -r '.data[-1].total_files')
+          verified_files=$(echo "$response" | jq -r '.data[-1].verified_files')
+          failed_files=$(echo "$response" | jq -r '.data[-1].failed_files')
+          snapshot=$(echo "$response" | jq -r '.data[-1].snapshot')
+
+          echo "  Snapshot: ${snapshot}"
+          echo "  Total files sampled: ${total_files}"
+          echo "  Verified: ${verified_files}"
+          echo "  Failed: ${failed_files}"
+
+          if [ "$failed_files" -gt 0 ]; then
+            echo "⚠ Warning: ${failed_files} file(s) failed verification"
+            echo "Details:"
+            echo "$response" | jq '.data[-1].details[] | select(.status != "ok")' 2>/dev/null || true
+          fi
+
+          echo "✓ Verification test completed successfully"
+        else
+          echo "✗ Verification result status is '${latest_status}', expected 'completed'"
+          echo "Full response: $response"
+          exit 1
+        fi

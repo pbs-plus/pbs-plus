@@ -553,12 +553,16 @@ func (v *verificationJob) verifyFile(
 
 	// 1. Ask agent to chunk the file and return digests
 	// Build the local file path on the agent's filesystem.
-	// file.Path is relative to the backup root (e.g., "/Users/admin/file.txt").
+	// file.Path is relative to the backup root (e.g., "/random1.txt").
+	// backup.Subpath is the subpath within the mount point (e.g., "/test-backup").
 	// target.GetAgentHostPath() returns the root path on the agent (e.g., "C:\\" or "/").
-	agentPath := filepath.Join(backup.Target.GetAgentHostPath(), strings.TrimPrefix(file.Path, "/"))
+	rootPath := backup.Target.GetAgentHostPath()
+	relPath := strings.TrimPrefix(file.Path, "/")
 	if backup.Subpath != "" {
-		agentPath = filepath.Join(agentPath, strings.TrimPrefix(backup.Subpath, "/"))
+		subpath := strings.TrimPrefix(backup.Subpath, "/")
+		relPath = filepath.Join(subpath, relPath)
 	}
+	agentPath := filepath.Join(rootPath, relPath)
 
 	req := verification.VerifyFileReq{
 		FilePath:     agentPath,
