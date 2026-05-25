@@ -985,8 +985,8 @@ runs:
         set -eo pipefail
         echo "=== Test Case 22: CSV detail export ==="
 
-        # Use the first job we created (test-verify-spot)
-        VERIFY_ID_ENCODED=$(echo -n "test-verify-spot" | base64 -w0)
+        # Use the systematic job which was just created and verified in Case 20
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-systematic" | base64 -w0)
         response=$(docker exec pbs-plus-test curl -s -k -o /dev/null -w "%{http_code}" \
           "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=detail")
         echo "DEBUG: HTTP status code = ${response}"
@@ -1035,7 +1035,7 @@ runs:
         set -eo pipefail
         echo "=== Test Case 23: CSV summary export ==="
 
-        VERIFY_ID_ENCODED=$(echo -n "test-verify-spot" | base64 -w0)
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-systematic" | base64 -w0)
         response=$(docker exec pbs-plus-test curl -s -k \
           "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=summary")
 
@@ -1047,7 +1047,7 @@ runs:
         fi
 
         # Should have at least 1 summary row
-        summary_rows=$(echo "$response" | tail -n +2 | grep -c "test-verify-spot" || true)
+        summary_rows=$(echo "$response" | tail -n +2 | grep -c "test-verify-systematic" || true)
         if [ "$summary_rows" -lt 1 ]; then
           echo "✗ Case 23: No summary rows"
           echo "$response"
