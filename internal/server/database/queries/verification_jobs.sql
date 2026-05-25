@@ -57,5 +57,10 @@ SET upid = ?, total_files = ?, verified_files = ?, failed_files = ?,
     skipped_files = ?, status = ?, completed_at = ?, details = ?
 WHERE id = ?;
 
+-- name: MarkVerificationResultStatus :exec
+UPDATE verification_results
+SET status = ?, completed_at = ?
+WHERE id = ?;
+
 -- name: DeleteVerificationResults :execrows
 DELETE FROM verification_results WHERE verification_job_id = ?;

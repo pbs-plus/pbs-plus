@@ -431,6 +431,14 @@ func (database *Database) UpdateVerificationResult(result VerificationResult) er
 	})
 }
 
+func (database *Database) MarkVerificationResultStatus(id int, status string, completedAt int64) error {
+	return database.queries.MarkVerificationResultStatus(database.ctx, sqlc.MarkVerificationResultStatusParams{
+		Status:      toNullString(status),
+		CompletedAt: toNullInt64(int(completedAt)),
+		ID:          int64(id),
+	})
+}
+
 func (database *Database) GetVerificationResults(jobID string) ([]VerificationResult, error) {
 	rows, err := database.readQueries.GetVerificationResults(database.ctx, jobID)
 	if err != nil {

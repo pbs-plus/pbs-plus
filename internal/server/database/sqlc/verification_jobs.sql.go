@@ -280,6 +280,23 @@ func (q *Queries) ListAllVerificationJobs(ctx context.Context) ([]VerificationJo
 	return items, nil
 }
 
+const markVerificationResultStatus = `-- name: MarkVerificationResultStatus :exec
+UPDATE verification_results
+SET status = ?, completed_at = ?
+WHERE id = ?
+`
+
+type MarkVerificationResultStatusParams struct {
+	Status      sql.NullString `json:"status"`
+	CompletedAt sql.NullInt64  `json:"completed_at"`
+	ID          int64          `json:"id"`
+}
+
+func (q *Queries) MarkVerificationResultStatus(ctx context.Context, arg MarkVerificationResultStatusParams) error {
+	_, err := q.db.ExecContext(ctx, markVerificationResultStatus, arg.Status, arg.CompletedAt, arg.ID)
+	return err
+}
+
 const updateVerificationJob = `-- name: UpdateVerificationJob :exec
 UPDATE verification_jobs
 SET backup_job_id = ?, store = ?, namespace = ?, mode = ?, schedule = ?,

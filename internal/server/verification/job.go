@@ -73,6 +73,7 @@ type verificationJob struct {
 	failedFiles  int
 	skippedFiles int
 	totalFiles   int
+	resultID     int
 }
 
 // NewVerificationJob creates a new verification job.
@@ -161,8 +162,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	v.mu.Lock()
 	v.task = vTask
 	v.mu.Unlock()
-
-	// Close the queue task file (replaced by real task)
 	if v.queueTask != nil {
 		v.queueTask.Close()
 	}
@@ -196,6 +195,11 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		vTask.WriteString(fmt.Sprintf("failed to create verification result: %v", err))
 		return fmt.Errorf("failed to create verification result: %w", err)
 	}
+
+	// Store result ID for onError to update
+	v.mu.Lock()
+	v.resultID = result.ID
+	v.mu.Unlock()
 
 	// Open the pxar archive for file extraction
 	vs, err := v.openArchive(backup, snapshot)
@@ -278,7 +282,15 @@ func (v *verificationJob) onError(err error) {
 
 	v.mu.RLock()
 	t := v.task
+	rID := v.resultID
 	v.mu.RUnlock()
+
+	// Mark the result record as failed
+	if rID > 0 {
+		if markErr := v.storeInstance.Database.MarkVerificationResultStatus(rID, "failed", time.Now().Unix()); markErr != nil {
+			syslog.L.Error(markErr).WithField("jobID", v.job.ID).WithMessage("failed to mark result as failed").Write()
+		}
+	}
 
 	if t != nil {
 		t.WriteString(fmt.Sprintf("verification job error: %v", err))

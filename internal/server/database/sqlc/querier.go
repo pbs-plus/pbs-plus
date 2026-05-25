@@ -60,6 +60,7 @@ type Querier interface {
 	ListQueuedBackups(ctx context.Context) ([]ListQueuedBackupsRow, error)
 	ListQueuedRestores(ctx context.Context) ([]ListQueuedRestoresRow, error)
 	ListTargetsByAgentHost(ctx context.Context, agentHost sql.NullString) ([]ListTargetsByAgentHostRow, error)
+	MarkVerificationResultStatus(ctx context.Context, arg MarkVerificationResultStatusParams) error
 	RestoreExists(ctx context.Context, id string) (int64, error)
 	RevokeToken(ctx context.Context, token string) error
 	ScriptExists(ctx context.Context, path string) (int64, error)
