@@ -75,6 +75,11 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore", ServerOnly(storeInstance, api.ExtJsRestoreHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", ServerOnly(storeInstance, api.ExtJsRestoreSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/plus/agent/install/win", api.AgentInstallScriptHandler(storeInstance, version))
+	apiMux.HandleFunc("/api2/json/d2d/verification", ServerOnly(storeInstance, api.D2DVerificationHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/d2d/verification", ServerOnly(storeInstance, api.ExtJsVerificationRunHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-verification", ServerOnly(storeInstance, api.ExtJsVerificationConfigHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}", ServerOnly(storeInstance, api.ExtJsVerificationConfigSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results", ServerOnly(storeInstance, api.ExtJsVerificationResultsHandler(storeInstance)))
 	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
 
 	// Agent routes

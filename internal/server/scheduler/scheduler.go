@@ -12,6 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/verification"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -61,6 +62,7 @@ func (s *Scheduler) run() {
 		case <-ticker.C:
 			s.checkBackups()
 			s.checkRestores()
+			s.checkVerifications()
 		}
 	}
 }
@@ -261,4 +263,61 @@ func (s *Scheduler) enqueueRestore(id string, job *jobs.Job) {
 // a retry should be attempted.
 func isFailedState(state string) bool {
 	return database.JobStatusFromString(state).ShouldRetry()
+}
+
+func (s *Scheduler) checkVerifications() {
+	vJobs, err := s.storeInstance.Database.GetAllVerificationJobs()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("Scheduler: failed to get verification jobs").Write()
+		return
+	}
+
+	now := time.Now()
+
+	for _, vJob := range vJobs {
+		if s.manager.IsRunning(vJob.ID) {
+			continue
+		}
+
+		if vJob.Schedule == "" {
+			continue
+		}
+
+		ev, err := calendar.Parse(vJob.Schedule)
+		if err != nil {
+			continue
+		}
+
+		refTime := now
+		if vJob.History.LastRunEndtime > 0 {
+			refTime = time.Unix(vJob.History.LastRunEndtime, 0)
+		}
+
+		nextRun, err := calendar.ComputeNextEvent(ev, refTime, time.Local)
+		if err != nil {
+			continue
+		}
+
+		if nextRun.After(now) {
+			continue
+		}
+
+		if now.Sub(nextRun) >= schedulerTickInterval {
+			continue
+		}
+
+		syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: scheduled verification is due, enqueuing").Write()
+
+		job, err := verification.NewVerificationJob(vJob, s.storeInstance)
+		if err != nil {
+			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: failed to create verification job").Write()
+			continue
+		}
+
+		go func(id string) {
+			if err := s.manager.Enqueue(job); err != nil {
+				syslog.L.Error(err).WithField("verificationJobID", id).WithMessage("Scheduler: failed to enqueue verification").Write()
+			}
+		}(vJob.ID)
+	}
 }
