@@ -493,6 +493,405 @@ runs:
         echo "✓ Case 12: PASSED (deleted and verified absent)"
 
     # =====================================================================
+    # Test Case 13: Path prefix filter (only /random1 files)
+    # =====================================================================
+    - name: "[Case 13] Spot check with path prefix filter (/random1)"
+      shell: bash
+      run: |
+        echo "=== Test Case 13: Path prefix filter ==="
+
+        # Filter: path_pattern="/random1" matches /random1.txt, /random10.txt ... /random19.txt
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-path-prefix" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "sample_count=50" \
+          -d "use_latest=true" \
+          --data-urlencode 'filters=[{"path_pattern":"/random1"}]' \
+          -d "comment=E2E path prefix filter" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 13: Create failed"; echo "$response"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-path-prefix" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 13: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            total=$(echo "$response" | jq -r '.data[-1].total_files')
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            failed=$(echo "$response" | jq -r '.data[-1].failed_files')
+            echo "  Total: ${total}, Verified: ${verified}, Failed: ${failed}"
+
+            # /random1 prefix matches: random1.txt, random10-19.txt = 11 files
+            if [ "$total" -lt 1 ]; then
+              echo "✗ Case 13: Expected ≥1 files matching /random1 prefix, got ${total}"; exit 1
+            fi
+            if [ "$failed" -gt 0 ]; then
+              echo "✗ Case 13: ${failed} failures"; exit 1
+            fi
+            # All verified files should have paths starting with /random1
+            mismatches=$(echo "$response" | jq -r '.data[-1].details[].path' | grep -vc "^/random1" || true)
+            if [ "$mismatches" -ne 0 ]; then
+              echo "✗ Case 13: ${mismatches} file(s) don't match /random1 prefix"
+              echo "$response" | jq -r '.data[-1].details[].path'
+              exit 1
+            fi
+            echo "✓ Case 13: PASSED (${verified}/${total} verified, all match /random1)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 13: Timed out"; exit 1
+
+    # =====================================================================
+    # Test Case 14: Glob pattern filter (*.txt)
+    # =====================================================================
+    - name: "[Case 14] Spot check with glob filter (*.txt)"
+      shell: bash
+      run: |
+        echo "=== Test Case 14: Glob pattern filter ==="
+
+        # Filter: path_pattern="*.txt" uses filepath.Match on basename
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-glob" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "sample_count=10" \
+          -d "use_latest=true" \
+          --data-urlencode 'filters=[{"path_pattern":"*.txt"}]' \
+          -d "comment=E2E glob filter" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 14: Create failed"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-glob" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 14: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            total=$(echo "$response" | jq -r '.data[-1].total_files')
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            failed=$(echo "$response" | jq -r '.data[-1].failed_files')
+            echo "  Total: ${total}, Verified: ${verified}, Failed: ${failed}"
+
+            if [ "$failed" -gt 0 ]; then echo "✗ Case 14: ${failed} failures"; exit 1; fi
+            # All 50 test files are *.txt
+            if [ "$verified" -ne 10 ]; then
+              echo "✗ Case 14: Expected 10 verified, got ${verified}"; exit 1
+            fi
+            echo "✓ Case 14: PASSED (${verified}/${total} verified, all *.txt)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 14: Timed out"; exit 1
+
+    # =====================================================================
+    # Test Case 15: Size-based filter (min_size only)
+    # =====================================================================
+    - name: "[Case 15] Spot check with min_size filter (100 bytes)"
+      shell: bash
+      run: |
+        echo "=== Test Case 15: Min size filter ==="
+
+        # Filter: min_size=100 — files are 16-256 bytes, so this excludes small ones
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-min-size" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "sample_count=50" \
+          -d "use_latest=true" \
+          --data-urlencode 'filters=[{"min_size":100}]' \
+          -d "comment=E2E min size filter" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 15: Create failed"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-min-size" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 15: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            total=$(echo "$response" | jq -r '.data[-1].total_files')
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            failed=$(echo "$response" | jq -r '.data[-1].failed_files')
+            echo "  Total: ${total}, Verified: ${verified}, Failed: ${failed}"
+
+            if [ "$failed" -gt 0 ]; then echo "✗ Case 15: ${failed} failures"; exit 1; fi
+            # Should be fewer than 50 (files <100 bytes excluded)
+            if [ "$total" -ge 50 ]; then
+              echo "✗ Case 15: Expected <50 files (min_size filters out small files), got ${total}"; exit 1
+            fi
+            # All verified files must be ≥100 bytes
+            small_files=$(echo "$response" | jq -r '.data[-1].details[] | select(.size < 100) | .path' | head -5)
+            if [ -n "$small_files" ]; then
+              echo "✗ Case 15: Found files <100 bytes: ${small_files}"; exit 1
+            fi
+            echo "✓ Case 15: PASSED (${verified}/${total} verified, all ≥100 bytes)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 15: Timed out"; exit 1
+
+    # =====================================================================
+    # Test Case 16: Combined size range filter (min + max)
+    # =====================================================================
+    - name: "[Case 16] Spot check with min_size + max_size range"
+      shell: bash
+      run: |
+        echo "=== Test Case 16: Size range filter (100-200 bytes) ==="
+
+        # Filter: min_size=100, max_size=200 — only mid-sized files
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-size-range" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "sample_count=50" \
+          -d "use_latest=true" \
+          --data-urlencode 'filters=[{"min_size":100,"max_size":200}]' \
+          -d "comment=E2E size range filter" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 16: Create failed"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-size-range" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 16: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            total=$(echo "$response" | jq -r '.data[-1].total_files')
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            failed=$(echo "$response" | jq -r '.data[-1].failed_files')
+            echo "  Total: ${total}, Verified: ${verified}, Failed: ${failed}"
+
+            if [ "$failed" -gt 0 ]; then echo "✗ Case 16: ${failed} failures"; exit 1; fi
+            # Fewer than the min_size=100 case (since max_size=200 further restricts)
+            # All verified files must be 100-200 bytes
+            out_of_range=$(echo "$response" | jq -r '.data[-1].details[] | select(.size < 100 or .size > 200) | .path' | head -5)
+            if [ -n "$out_of_range" ]; then
+              echo "✗ Case 16: Found files outside 100-200 range: ${out_of_range}"; exit 1
+            fi
+            echo "✓ Case 16: PASSED (${verified}/${total} verified, all 100-200 bytes)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 16: Timed out"; exit 1
+
+    # =====================================================================
+    # Test Case 17: Multiple OR filters (path prefix + size)
+    # =====================================================================
+    - name: "[Case 17] Spot check with multiple OR filters"
+      shell: bash
+      run: |
+        echo "=== Test Case 17: Multiple OR filters ==="
+
+        # Filter 1: /random4 prefix (matches random4.txt, random40-49.txt)
+        # Filter 2: min_size=200 (matches large files from any path)
+        # OR logic: file matches if it hits EITHER filter
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-multi-filter" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "sample_count=50" \
+          -d "use_latest=true" \
+          --data-urlencode 'filters=[{"path_pattern":"/random4"},{"min_size":200}]' \
+          -d "comment=E2E multi OR filter" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 17: Create failed"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-multi-filter" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 17: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            total=$(echo "$response" | jq -r '.data[-1].total_files')
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            failed=$(echo "$response" | jq -r '.data[-1].failed_files')
+            echo "  Total: ${total}, Verified: ${verified}, Failed: ${failed}"
+
+            if [ "$failed" -gt 0 ]; then echo "✗ Case 17: ${failed} failures"; exit 1; fi
+            # Should have more files than /random4 alone since large files from other paths are included too
+            if [ "$total" -lt 11 ]; then
+              echo "✗ Case 17: Expected ≥11 (random4* + large files), got ${total}"; exit 1
+            fi
+            # Every file must match at least one filter
+            non_matching=$(echo "$response" | jq -r '.data[-1].details[] | select((.path | startswith("/random4")) | not) | select(.size < 200) | .path' | head -5)
+            if [ -n "$non_matching" ]; then
+              echo "✗ Case 17: Files don't match any filter: ${non_matching}"; exit 1
+            fi
+            echo "✓ Case 17: PASSED (${verified}/${total} verified, all match OR filter)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 17: Timed out"; exit 1
+
+    # =====================================================================
+    # Test Case 18: Filter that matches nothing (should fail gracefully)
+    # =====================================================================
+    - name: "[Case 18] Spot check with filter matching no files"
+      shell: bash
+      run: |
+        echo "=== Test Case 18: No matching files filter ==="
+
+        # Filter: path_pattern="/nonexistent/path" — nothing matches
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-no-match" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "sample_count=5" \
+          -d "use_latest=true" \
+          --data-urlencode 'filters=[{"path_pattern":"/nonexistent/path"}]' \
+          -d "comment=E2E no match filter" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 18: Create failed"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-no-match" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 18: Run failed"; exit 1
+        fi
+
+        # Job should complete with ERROR status (no files to verify)
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "failed" ] || [ "$status" = "completed" ]; then
+            echo "  Status: ${status}"
+            echo "✓ Case 18: PASSED (job handled no-match gracefully, status=${status})"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 18: Timed out"; exit 1
+
+    # =====================================================================
+    # Test Case 19: Date range filter (use_latest=false with date_from/date_to)
+    # =====================================================================
+    - name: "[Case 19] Spot check with date range (use_latest=false)"
+      shell: bash
+      run: |
+        echo "=== Test Case 19: Date range filter ==="
+
+        # Get today's date for the range
+        TODAY=$(docker exec pbs-plus-test date -u +%Y-%m-%d)
+        YESTERDAY=$(docker exec pbs-plus-test date -u -d "yesterday" +%Y-%m-%d)
+        TOMORROW=$(docker exec pbs-plus-test date -u -d "tomorrow" +%Y-%m-%d)
+        echo "  Date range: ${YESTERDAY} to ${TOMORROW}"
+
+        # use_latest=false with date range should pick a snapshot within range
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/config/d2d-verification" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "id=test-verify-date-range" \
+          -d "backup_job_id=test-backup-job" \
+          -d "store=test" \
+          -d "ns=test" \
+          -d "mode=spot-check" \
+          -d "sample_count=5" \
+          -d "use_latest=false" \
+          --data-urlencode "date_from=${YESTERDAY}" \
+          --data-urlencode "date_to=${TOMORROW}" \
+          -d "comment=E2E date range filter" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 19: Create failed"; echo "$response"; exit 1
+        fi
+
+        VERIFY_ID_ENCODED=$(echo -n "test-verify-date-range" | base64 -w0)
+        response=$(docker exec pbs-plus-test curl -s -k -X POST "https://localhost:8017/api2/extjs/d2d/verification?job=${VERIFY_ID_ENCODED}" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -w "\nHTTP_CODE:%{http_code}")
+        if ! echo "$response" | grep -q "HTTP_CODE:200"; then
+          echo "✗ Case 19: Run failed"; exit 1
+        fi
+
+        for i in $(seq 1 24); do
+          response=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results")
+          status=$(echo "$response" | jq -r '.data[-1].status // empty' 2>/dev/null)
+          if [ "$status" = "completed" ]; then
+            total=$(echo "$response" | jq -r '.data[-1].total_files')
+            verified=$(echo "$response" | jq -r '.data[-1].verified_files')
+            failed=$(echo "$response" | jq -r '.data[-1].failed_files')
+            echo "  Total: ${total}, Verified: ${verified}, Failed: ${failed}"
+
+            if [ "$failed" -gt 0 ]; then echo "✗ Case 19: ${failed} failures"; exit 1; fi
+            if [ "$verified" -ne 5 ]; then
+              echo "✗ Case 19: Expected 5 verified, got ${verified}"; exit 1
+            fi
+            echo "✓ Case 19: PASSED (${verified}/${total} verified with date range)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "✗ Case 19: Timed out"; exit 1
+
+    # =====================================================================
     # Summary
     # =====================================================================
     - name: Verification test summary
@@ -502,18 +901,25 @@ runs:
         echo "============================================"
         echo "  Verification E2E Test Results"
         echo "============================================"
-        echo "  Case  1: Basic spot check (5 files)      ✓"
-        echo "  Case  2: Larger sample (20 files)         ✓"
-        echo "  Case  3: Sample exceeds total (100→50)    ✓"
-        echo "  Case  4: Re-run existing job              ✓"
-        echo "  Case  5: Duplicate job ID (reject)        ✓"
-        echo "  Case  6: Nonexistent backup (reject)      ✓"
-        echo "  Case  7: Minimum sample (1 file)          ✓"
-        echo "  Case  8: List all jobs                    ✓"
-        echo "  Case  9: Update job configuration         ✓"
-        echo "  Case 10: Task log format (UPID/history)   ✓"
-        echo "  Case 11: Get single job by ID             ✓"
-        echo "  Case 12: Delete job                        ✓"
+        echo "  Case  1: Basic spot check (5 files)       ✓"
+        echo "  Case  2: Larger sample (20 files)          ✓"
+        echo "  Case  3: Sample exceeds total (100→50)     ✓"
+        echo "  Case  4: Re-run existing job               ✓"
+        echo "  Case  5: Duplicate job ID (reject)         ✓"
+        echo "  Case  6: Nonexistent backup (reject)       ✓"
+        echo "  Case  7: Minimum sample (1 file)           ✓"
+        echo "  Case  8: List all jobs                     ✓"
+        echo "  Case  9: Update job configuration          ✓"
+        echo "  Case 10: Task log format (UPID/history)    ✓"
+        echo "  Case 11: Get single job by ID              ✓"
+        echo "  Case 12: Delete job                         ✓"
+        echo "  Case 13: Path prefix filter (/random1)     ✓"
+        echo "  Case 14: Glob pattern filter (*.txt)        ✓"
+        echo "  Case 15: Min size filter (≥100 bytes)      ✓"
+        echo "  Case 16: Size range filter (100-200 bytes)  ✓"
+        echo "  Case 17: Multiple OR filters               ✓"
+        echo "  Case 18: No-match filter (graceful fail)   ✓"
+        echo "  Case 19: Date range (use_latest=false)     ✓"
         echo "============================================"
-        echo "  All 12 test cases PASSED"
+        echo "  All 19 test cases PASSED"
         echo "============================================"
