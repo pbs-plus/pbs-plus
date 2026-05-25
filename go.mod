@@ -34,9 +34,9 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/xtaci/smux v1.5.57
 	github.com/zeebo/xxh3 v1.1.0
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.52.0
 	golang.org/x/exp v0.0.0-20260508232706-74f9aab9d74a
-	golang.org/x/sys v0.44.0
+	golang.org/x/sys v0.45.0
 	golang.org/x/time v0.15.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.36.1
