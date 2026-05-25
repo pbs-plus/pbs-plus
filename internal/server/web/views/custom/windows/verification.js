@@ -7,6 +7,37 @@ var verificationModes = Ext.create("Ext.data.Store", {
   ],
 });
 
+// --- Size unit helpers ---
+
+var sizeUnits = [
+  { display: "B", factor: 1 },
+  { display: "KiB", factor: 1024 },
+  { display: "MiB", factor: 1048576 },
+  { display: "GiB", factor: 1073741824 },
+  { display: "TiB", factor: 1099511627776 },
+];
+
+var sizeUnitStore = Ext.create("Ext.data.Store", {
+  fields: ["display", "factor"],
+  data: sizeUnits,
+});
+
+function renderSizeValue(bytes) {
+  if (!bytes) return "-";
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KiB";
+  if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MiB";
+  return (bytes / 1073741824).toFixed(2) + " GiB";
+}
+
+function bestUnitForBytes(bytes) {
+  if (!bytes || bytes < 1024) return sizeUnits[0];
+  for (var i = sizeUnits.length - 1; i >= 1; i--) {
+    if (bytes >= sizeUnits[i].factor) return sizeUnits[i];
+  }
+  return sizeUnits[0];
+}
+
 // --- Filter edit popup ---
 
 Ext.define("PBS.D2DVerification.FilterEditWindow", {
@@ -14,7 +45,7 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
   alias: "widget.pbsD2DVerificationFilterEditWindow",
 
   title: gettext("Add Filter"),
-  width: 450,
+  width: 480,
   modal: true,
   layout: "fit",
   resizable: false,
@@ -30,6 +61,12 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
     if (isEdit) {
       me.title = gettext("Edit Filter");
     }
+
+    // Resolve best unit for existing values
+    var minBytes = isEdit ? me.editRecord.get("min_size") || 0 : 0;
+    var maxBytes = isEdit ? me.editRecord.get("max_size") || 0 : 0;
+    var minUnit = bestUnitForBytes(minBytes);
+    var maxUnit = bestUnitForBytes(maxBytes);
 
     me.items = [
       {
@@ -48,20 +85,74 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
             value: isEdit ? me.editRecord.get("path_pattern") : "",
           },
           {
-            xtype: "numberfield",
-            name: "min_size",
-            fieldLabel: gettext("Min Size (bytes)"),
-            emptyText: gettext("No limit"),
-            minValue: 0,
-            value: isEdit ? me.editRecord.get("min_size") : 0,
+            xtype: "fieldcontainer",
+            fieldLabel: gettext("Min Size"),
+            layout: "hbox",
+            items: [
+              {
+                xtype: "numberfield",
+                name: "min_size_val",
+                minValue: 0,
+                decimalPrecision: 2,
+                flex: 1,
+                value: minBytes > 0 ? (minBytes / minUnit.factor) : 0,
+                listeners: {
+                  change: function (f) {
+                    f.up("form").down("[name=min_size_unit]").setReadOnly(f.getValue() === 0);
+                  },
+                  afterrender: function (f) {
+                    f.up("form").down("[name=min_size_unit]").setReadOnly(f.getValue() === 0);
+                  },
+                },
+              },
+              {
+                xtype: "combobox",
+                name: "min_size_unit",
+                store: sizeUnitStore,
+                displayField: "display",
+                valueField: "factor",
+                value: minUnit.factor,
+                width: 70,
+                editable: false,
+                forceSelection: true,
+                margin: "0 0 0 5",
+              },
+            ],
           },
           {
-            xtype: "numberfield",
-            name: "max_size",
-            fieldLabel: gettext("Max Size (bytes)"),
-            emptyText: gettext("No limit"),
-            minValue: 0,
-            value: isEdit ? me.editRecord.get("max_size") : 0,
+            xtype: "fieldcontainer",
+            fieldLabel: gettext("Max Size"),
+            layout: "hbox",
+            items: [
+              {
+                xtype: "numberfield",
+                name: "max_size_val",
+                minValue: 0,
+                decimalPrecision: 2,
+                flex: 1,
+                value: maxBytes > 0 ? (maxBytes / maxUnit.factor) : 0,
+                listeners: {
+                  change: function (f) {
+                    f.up("form").down("[name=max_size_unit]").setReadOnly(f.getValue() === 0);
+                  },
+                  afterrender: function (f) {
+                    f.up("form").down("[name=max_size_unit]").setReadOnly(f.getValue() === 0);
+                  },
+                },
+              },
+              {
+                xtype: "combobox",
+                name: "max_size_unit",
+                store: sizeUnitStore,
+                displayField: "display",
+                valueField: "factor",
+                value: maxUnit.factor,
+                width: 70,
+                editable: false,
+                forceSelection: true,
+                margin: "0 0 0 5",
+              },
+            ],
           },
         ],
         buttons: [
@@ -77,9 +168,17 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
               var form = me.down("form");
               if (!form.isValid()) return;
 
-              var values = form.getValues();
-              values.min_size = parseInt(values.min_size, 10) || 0;
-              values.max_size = parseInt(values.max_size, 10) || 0;
+              var vals = form.getValues();
+              var minVal = parseFloat(vals.min_size_val) || 0;
+              var maxVal = parseFloat(vals.max_size_val) || 0;
+              var minFactor = parseInt(vals.min_size_unit, 10) || 1;
+              var maxFactor = parseInt(vals.max_size_unit, 10) || 1;
+
+              var values = {
+                path_pattern: vals.path_pattern,
+                min_size: Math.round(minVal * minFactor),
+                max_size: Math.round(maxVal * maxFactor),
+              };
 
               if (isEdit) {
                 me.editRecord.set(values);
@@ -265,21 +364,17 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
             {
               text: gettext("Min Size"),
               dataIndex: "min_size",
-              width: 100,
+              width: 110,
               renderer: function (v) {
-                return v > 0
-                  ? Ext.String.format("{0} bytes", v)
-                  : "-";
+                return v > 0 ? renderSizeValue(v) : "-";
               },
             },
             {
               text: gettext("Max Size"),
               dataIndex: "max_size",
-              width: 100,
+              width: 110,
               renderer: function (v) {
-                return v > 0
-                  ? Ext.String.format("{0} bytes", v)
-                  : "-";
+                return v > 0 ? renderSizeValue(v) : "-";
               },
             },
           ],
