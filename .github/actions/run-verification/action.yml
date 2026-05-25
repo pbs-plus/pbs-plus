@@ -990,6 +990,10 @@ runs:
         response=$(docker exec pbs-plus-test curl -s -k \
           "https://localhost:8017/api2/extjs/config/d2d-verification/${VERIFY_ID_ENCODED}/results/export?type=detail")
 
+        echo "DEBUG: response length=$(echo "$response" | wc -l) lines"
+        echo "DEBUG: first 3 lines:"
+        echo "$response" | head -3
+
         # Check header row
         header=$(echo "$response" | head -1)
         if ! echo "$header" | grep -q "File Path"; then
