@@ -552,8 +552,16 @@ func (v *verificationJob) verifyFile(
 	}
 
 	// 1. Ask agent to chunk the file and return digests
+	// Build the local file path on the agent's filesystem.
+	// file.Path is relative to the backup root (e.g., "/Users/admin/file.txt").
+	// target.GetAgentHostPath() returns the root path on the agent (e.g., "C:\\" or "/").
+	agentPath := filepath.Join(backup.Target.GetAgentHostPath(), strings.TrimPrefix(file.Path, "/"))
+	if backup.Subpath != "" {
+		agentPath = filepath.Join(agentPath, strings.TrimPrefix(backup.Subpath, "/"))
+	}
+
 	req := verification.VerifyFileReq{
-		FilePath:     filepath.Join(backup.Subpath, strings.TrimPrefix(file.Path, "/")),
+		FilePath:     agentPath,
 		AvgChunkSize: defaultAvgChunkSize,
 	}
 
