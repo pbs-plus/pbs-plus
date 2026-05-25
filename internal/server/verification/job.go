@@ -4,12 +4,10 @@ package verification
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -241,47 +239,46 @@ func (v *verificationJob) selectSnapshot(ctx context.Context, job database.Verif
 
 func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Backup) ([]snapshotInfo, error) {
 	backupID := proxmox.NormalizeHostname(backup.Target.GetHostname())
+	backupType := "host"
 
-	cmd := exec.CommandContext(ctx, "proxmox-backup-manager",
-		"snapshot", "list",
-		"--store", backup.Store,
-		"--output-format", "json",
-	)
-	if backup.Namespace != "" {
-		cmd.Args = append(cmd.Args, "--ns", backup.Namespace)
-	}
-
-	output, err := cmd.Output()
+	dsInfo, err := proxmox.GetDatastoreInfo(backup.Store)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list snapshots: %w: %s", err, output)
+		return nil, fmt.Errorf("failed to get datastore info: %w", err)
 	}
 
-	var snapList []struct {
-		BackupType string `json:"backup-type"`
-		BackupID   string `json:"backup-id"`
-		BackupTime int64  `json:"backup-time"`
-		Files      []struct {
-			Filename string `json:"filename"`
-		} `json:"files"`
-	}
-	if err := json.Unmarshal(output, &snapList); err != nil {
-		return nil, fmt.Errorf("failed to parse snapshots: %w", err)
+	groupDir := buildSnapshotGroupDir(dsInfo.Path, backupType, backupID, backup.Namespace)
+
+	entries, err := os.ReadDir(groupDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrNoSnapshots
+		}
+		return nil, fmt.Errorf("failed to read snapshot directory: %w", err)
 	}
 
 	var result []snapshotInfo
-	for _, s := range snapList {
-		if s.BackupID != backupID {
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		files := make([]string, len(s.Files))
-		for i, f := range s.Files {
-			files[i] = f.Filename
+
+		t, err := time.Parse(time.RFC3339, entry.Name())
+		if err != nil {
+			continue // skip non-timestamp directories
 		}
+		unixTime := t.Unix()
+
+		snapFiles, _ := os.ReadDir(filepath.Join(groupDir, entry.Name()))
+		var files []string
+		for _, f := range snapFiles {
+			files = append(files, f.Name())
+		}
+
 		result = append(result, snapshotInfo{
-			Snapshot:   fmt.Sprintf("%s/%s/%d", s.BackupType, s.BackupID, s.BackupTime),
-			BackupType: s.BackupType,
-			BackupID:   s.BackupID,
-			BackupTime: s.BackupTime,
+			Snapshot:   fmt.Sprintf("%s/%s/%d", backupType, backupID, unixTime),
+			BackupType: backupType,
+			BackupID:   backupID,
+			BackupTime: unixTime,
 			Files:      files,
 		})
 	}
@@ -289,15 +286,32 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 	return result, nil
 }
 
+func buildSnapshotGroupDir(pbsStore, backupType, backupID, namespace string) string {
+	base := pbsStore
+	if namespace != "" {
+		parts := strings.SplitSeq(namespace, "/")
+		for p := range parts {
+			if p != "" {
+				base = filepath.Join(base, "ns", p)
+			}
+		}
+	}
+	return filepath.Join(base, backupType, backupID)
+}
+
 func filterByDateRange(snapshots []snapshotInfo, dateFrom, dateTo string) []snapshotInfo {
 	var fromTime, toTime int64
 	if dateFrom != "" {
 		if t, err := time.Parse(time.RFC3339, dateFrom); err == nil {
 			fromTime = t.Unix()
+		} else if t, err := time.Parse("2006-01-02", dateFrom); err == nil {
+			fromTime = t.Unix()
 		}
 	}
 	if dateTo != "" {
 		if t, err := time.Parse(time.RFC3339, dateTo); err == nil {
+			toTime = t.Unix()
+		} else if t, err := time.Parse("2006-01-02", dateTo); err == nil {
 			toTime = t.Unix()
 		}
 	}
@@ -409,7 +423,16 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 		}
 		archiveReader = splitReader
 	} else {
-		return nil, fmt.Errorf("non-split pxar archives not yet supported for verification")
+		// Non-split archive
+		idxData, err := os.ReadFile(mpxarPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read index: %w", err)
+		}
+		reader, err := transfer.NewChunkedReader(idxData, chunkSource)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create chunked reader: %w", err)
+		}
+		archiveReader = reader
 	}
 
 	fs := vfs.NewLocalFS(archiveReader)
