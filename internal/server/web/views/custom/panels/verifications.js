@@ -164,6 +164,8 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 return '<span style="color:red;">\u2717 Failed</span>';
               case "skipped":
                 return '<span style="color:#888;">\u25CB Skipped</span>';
+              case "warning":
+                return '<span style="color:#c93;">\u26A0 Warning</span>';
               case "error":
                 return '<span style="color:#c43;">\u26A0 Error</span>';
               default:
