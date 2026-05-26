@@ -110,14 +110,6 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 decimalPrecision: 2,
                 flex: 1,
                 value: minBytes > 0 ? (minBytes / minUnit.get("value")) : 0,
-                listeners: {
-                  change: function (f) {
-                    f.up("form").down("[name=min_size_unit]").setReadOnly(f.getValue() === 0);
-                  },
-                  afterrender: function (f) {
-                    f.up("form").down("[name=min_size_unit]").setReadOnly(f.getValue() === 0);
-                  },
-                },
               },
               {
                 xtype: "combo",
@@ -147,14 +139,6 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 decimalPrecision: 2,
                 flex: 1,
                 value: maxBytes > 0 ? (maxBytes / maxUnit.get("value")) : 0,
-                listeners: {
-                  change: function (f) {
-                    f.up("form").down("[name=max_size_unit]").setReadOnly(f.getValue() === 0);
-                  },
-                  afterrender: function (f) {
-                    f.up("form").down("[name=max_size_unit]").setReadOnly(f.getValue() === 0);
-                  },
-                },
               },
               {
                 xtype: "combo",
