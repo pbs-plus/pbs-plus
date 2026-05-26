@@ -28,8 +28,10 @@ type Store struct {
 	TokenSvc          *application.TokenService
 	ScriptSvc         *application.ScriptService
 	TargetSvc         *application.TargetService
+	VerificationSvc   *application.VerificationService
 	ARPCAgentsManager *arpc.AgentsManager
 	Manager           *jobs.Manager
+	OnBackupComplete  func(backupJobID string) // called after backup completion to trigger pending verifications
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
 	CertManager       *mtls.CertManager
 }
@@ -56,6 +58,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	tokenSvc := application.NewTokenService(db)
 	scriptSvc := application.NewScriptService(db)
 	targetSvc := application.NewTargetService(db, agentsManager)
+	verificationSvc := application.NewVerificationService(db)
 
 	go func() {
 		defer func() {
@@ -77,6 +80,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		TokenSvc:          tokenSvc,
 		ScriptSvc:         scriptSvc,
 		TargetSvc:         targetSvc,
+		VerificationSvc:   verificationSvc,
 		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
 		ARPCAgentsManager: agentsManager,
 		CertManager:       mtls.NewCertManager(),

@@ -222,3 +222,58 @@ Ext.define("pbs-model-scripts", {
   fields: ["path", "description", "job_count", "target_count"],
   idProperty: "path",
 });
+
+Ext.define("pbs-verification-job-status", {
+  extend: "Ext.data.Model",
+  fields: [
+    "id",
+    "backup_job_id",
+    "store",
+    "ns",
+    "mode",
+    "schedule",
+    "comment",
+    "spot_config",
+    "next-run",
+    "retry",
+    "retry-interval",
+    "created_at",
+    {
+      name: "history",
+      defaultValue: {},
+    },
+    // Flattened history fields (populated by reader transform)
+    "last-run-upid",
+    "last-run-state",
+    "last-run-endtime",
+    "last-run-starttime",
+    "last-successful-endtime",
+    "last-successful-upid",
+    "duration",
+  ],
+  idProperty: "id",
+  proxy: {
+    type: "pbsplus",
+    url: pbsPlusBaseUrl + "/api2/json/d2d/verification",
+    reader: {
+      type: "json",
+      rootProperty: "data",
+      transform: function (raw) {
+        var rows = raw.data || [];
+        return rows.map(function (item) {
+          if (item.history) {
+            item["last-run-upid"] = item.history["last-run-upid"];
+            item["last-run-state"] = item.history["last-run-state"];
+            item["last-run-endtime"] = item.history["last-run-endtime"];
+            item["last-run-starttime"] = item.history["last-run-starttime"];
+            item["last-successful-endtime"] =
+              item.history["last-successful-endtime"];
+            item["last-successful-upid"] = item.history["last-successful-upid"];
+            item["duration"] = item.history["duration"] || null;
+          }
+          return item;
+        });
+      },
+    },
+  },
+});

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
 )
 
 // JobStatus is a typed enum for job completion status.
@@ -196,25 +195,25 @@ type JobHistory struct {
 }
 
 type Target struct {
-	Name             string       `json:"name"`
-	Type             TargetType   `json:"target_type"`
-	Path             string       `json:"path"`
-	AgentHost        AgentHost    `json:"agent_host"`
-	VolumeID         string       `json:"volume_id,omitempty"`
-	MountScript      string       `json:"mount_script"`
-	AgentVersion     string       `json:"agent_version"`
-	ConnectionStatus bool         `json:"connection_status"`
-	JobCount         int          `json:"job_count"`
-	VolumeType       string       `json:"volume_type"`
-	VolumeName       string       `json:"volume_name"`
-	VolumeFS         string       `json:"volume_fs"`
-	VolumeTotalBytes int          `json:"volume_total_bytes,omitempty"`
-	VolumeUsedBytes  int          `json:"volume_used_bytes,omitempty"`
-	VolumeFreeBytes  int          `json:"volume_free_bytes,omitempty"`
-	VolumeTotal      string       `json:"volume_total"`
-	VolumeUsed       string       `json:"volume_used"`
-	VolumeFree       string       `json:"volume_free"`
-	S3Info           *S3Url `json:"s3_info"`
+	Name             string     `json:"name"`
+	Type             TargetType `json:"target_type"`
+	Path             string     `json:"path"`
+	AgentHost        AgentHost  `json:"agent_host"`
+	VolumeID         string     `json:"volume_id,omitempty"`
+	MountScript      string     `json:"mount_script"`
+	AgentVersion     string     `json:"agent_version"`
+	ConnectionStatus bool       `json:"connection_status"`
+	JobCount         int        `json:"job_count"`
+	VolumeType       string     `json:"volume_type"`
+	VolumeName       string     `json:"volume_name"`
+	VolumeFS         string     `json:"volume_fs"`
+	VolumeTotalBytes int        `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes  int        `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes  int        `json:"volume_free_bytes,omitempty"`
+	VolumeTotal      string     `json:"volume_total"`
+	VolumeUsed       string     `json:"volume_used"`
+	VolumeFree       string     `json:"volume_free"`
+	S3Info           *S3Url     `json:"s3_info"`
 }
 
 type AgentHost struct {
@@ -240,4 +239,70 @@ type AgentToken struct {
 	CreatedAt  int    `json:"created_at"`
 	Revoked    bool   `json:"revoked"`
 	WinInstall string `json:"win_install"`
+}
+
+// VerificationJob represents a data verification job configuration.
+type VerificationJob struct {
+	ID                  string          `json:"id"`
+	BackupJobID         string          `json:"backup_job_id"`
+	Store               string          `json:"store"`
+	Namespace           string          `json:"ns"`
+	Mode                string          `json:"mode"`
+	Schedule            string          `json:"schedule"`
+	Comment             string          `json:"comment"`
+	SpotConfig          SpotCheckConfig `json:"spot_config"`
+	NextRun             int64           `json:"next-run"`
+	Retry               int             `json:"retry"`
+	RetryInterval       int             `json:"retry-interval"`
+	History             JobHistory      `json:"history"`
+	TargetMode          string          `json:"target_mode"` // "backup_job" or "namespace"
+	Recursive           bool            `json:"recursive"`
+	RunOnBackupComplete bool            `json:"run_on_backup_complete"`
+	PendingSince        int64           `json:"pending_since"`
+	CreatedAt           int64           `json:"created_at"`
+}
+
+// SpotCheckConfig holds configuration for random spot check mode.
+type SpotCheckConfig struct {
+	SampleCount      int               `json:"sample_count"`
+	SamplingStrategy string            `json:"sampling_strategy"` // random, systematic, stratified
+	UseLatest        bool              `json:"use_latest"`
+	DateFrom         string            `json:"date_from"` // RFC3339 or empty
+	DateTo           string            `json:"date_to"`   // RFC3339 or empty
+	Filters          []SpotCheckFilter `json:"filters"`
+	MaxFileSize      int64             `json:"max_file_size"`  // skip files larger than this (0 = no limit)
+	FailThreshold    int               `json:"fail_threshold"` // stop after N failures (0 = no limit)
+}
+
+// SpotCheckFilter defines a filter for selecting files in spot checks.
+type SpotCheckFilter struct {
+	PathPattern string `json:"path_pattern"` // path prefix or glob
+	MinSize     int64  `json:"min_size"`     // minimum file size in bytes (0 = no min)
+	MaxSize     int64  `json:"max_size"`     // maximum file size in bytes (0 = no max)
+}
+
+// VerificationResult stores the outcome of a single verification run.
+type VerificationResult struct {
+	ID                int                      `json:"id"`
+	VerificationJobID string                   `json:"verification_job_id"`
+	UPID              string                   `json:"upid"`
+	Snapshot          string                   `json:"snapshot"`
+	SnapshotTime      int64                    `json:"snapshot_time"`
+	TotalPopulation   int                      `json:"total_population"` // total eligible files in archive
+	TotalFiles        int                      `json:"total_files"`      // files actually sampled
+	VerifiedFiles     int                      `json:"verified_files"`
+	FailedFiles       int                      `json:"failed_files"`
+	SkippedFiles      int                      `json:"skipped_files"`
+	Status            string                   `json:"status"` // pending, running, completed, failed
+	StartedAt         int64                    `json:"started_at"`
+	CompletedAt       int64                    `json:"completed_at"`
+	Details           []VerificationFileResult `json:"details"`
+}
+
+// VerificationFileResult stores per-file verification outcome.
+type VerificationFileResult struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	Status  string `json:"status"`  // ok, failed, skipped, error
+	Message string `json:"message"` // human-readable detail
 }

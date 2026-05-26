@@ -114,6 +114,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	storeInstance.Manager = manager
 	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
 	s.Start()
+	storeInstance.OnBackupComplete = s.TriggerPendingVerifications
 
 	// Start job RPC server with exponential backoff on restart.
 	go func() {

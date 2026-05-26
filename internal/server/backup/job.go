@@ -245,6 +245,11 @@ func (b *backupJob) onSuccess() {
 
 	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script").Write()
 	b.runPostScript(succeeded, warningsNum)
+
+	// Trigger any pending verification jobs waiting for this backup to complete
+	if succeeded && b.storeInstance.OnBackupComplete != nil {
+		go b.storeInstance.OnBackupComplete(b.job.ID)
+	}
 }
 
 func (b *backupJob) cleanup() {

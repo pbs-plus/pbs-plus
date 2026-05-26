@@ -41,13 +41,23 @@ func GenerateRestoreQueuedTask(job database.Restore, web bool) (QueuedTask, erro
 	return generateQueuedTask(job, job.DestTarget.GetHostname(), "reader", web, false)
 }
 
+// GenerateVerificationQueuedTask creates a queued task for verification jobs.
+func GenerateVerificationQueuedTask(job database.VerificationJob, web bool) (QueuedTask, error) {
+	return generateQueuedTask(job, job.ID, "verification", web, false)
+}
+
 // generateQueuedTask creates a queued task with common setup logic.
 func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (QueuedTask, error) {
 	var store string
-	if isBackup {
-		store = job.(database.Backup).Store
-	} else {
-		store = job.(database.Restore).Store
+	switch j := job.(type) {
+	case database.Backup:
+		store = j.Store
+	case database.Restore:
+		store = j.Store
+	case database.VerificationJob:
+		store = j.Store
+	default:
+		store = "unknown"
 	}
 
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(target))

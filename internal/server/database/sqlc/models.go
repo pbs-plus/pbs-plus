@@ -99,3 +99,45 @@ type Token struct {
 	CreatedAt sql.NullInt64  `json:"created_at"`
 	Revoked   sql.NullBool   `json:"revoked"`
 }
+
+type VerificationJob struct {
+	ID                    string         `json:"id"`
+	BackupJobID           string         `json:"backup_job_id"`
+	Store                 string         `json:"store"`
+	Namespace             sql.NullString `json:"namespace"`
+	Mode                  string         `json:"mode"`
+	Schedule              sql.NullString `json:"schedule"`
+	Comment               sql.NullString `json:"comment"`
+	SpotConfig            sql.NullString `json:"spot_config"`
+	LastRunUpid           sql.NullString `json:"last_run_upid"`
+	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
+	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
+	RetryCount            sql.NullInt64  `json:"retry_count"`
+	Retry                 sql.NullInt64  `json:"retry"`
+	RetryInterval         sql.NullInt64  `json:"retry_interval"`
+	CreatedAt             sql.NullInt64  `json:"created_at"`
+	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
+	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
+	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
+	RunOnBackupComplete   sql.NullInt64  `json:"run_on_backup_complete"`
+	PendingSince          sql.NullInt64  `json:"pending_since"`
+	TargetMode            sql.NullString `json:"target_mode"`
+	Recursive             sql.NullInt64  `json:"recursive"`
+}
+
+type VerificationResult struct {
+	ID                int64          `json:"id"`
+	VerificationJobID string         `json:"verification_job_id"`
+	Upid              sql.NullString `json:"upid"`
+	Snapshot          string         `json:"snapshot"`
+	SnapshotTime      int64          `json:"snapshot_time"`
+	TotalFiles        sql.NullInt64  `json:"total_files"`
+	VerifiedFiles     sql.NullInt64  `json:"verified_files"`
+	FailedFiles       sql.NullInt64  `json:"failed_files"`
+	SkippedFiles      sql.NullInt64  `json:"skipped_files"`
+	Status            sql.NullString `json:"status"`
+	StartedAt         sql.NullInt64  `json:"started_at"`
+	CompletedAt       sql.NullInt64  `json:"completed_at"`
+	Details           sql.NullString `json:"details"`
+	TotalPopulation   int64          `json:"total_population"`
+}
