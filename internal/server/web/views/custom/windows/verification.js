@@ -478,37 +478,6 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
 
   column2: [
     {
-      xtype: "fieldcontainer",
-      fieldLabel: gettext("Max File Size"),
-      layout: "hbox",
-      items: [
-        {
-          xtype: "numberfield",
-          name: "max_file_size_val",
-          minValue: 0,
-          decimalPrecision: 2,
-          flex: 1,
-          value: 0,
-          emptyText: gettext("No limit"),
-          listeners: {},
-        },
-        {
-          xtype: "combo",
-          name: "max_file_size_unit",
-          store: sizeUnitStore,
-          displayField: "display",
-          valueField: "value",
-          queryMode: "local",
-          editable: false,
-          anyMatch: true,
-          forceSelection: true,
-          value: 1048576,
-          width: 80,
-          margin: "0 0 0 5",
-        },
-      ],
-    },
-    {
       xtype: "numberfield",
       fieldLabel: gettext("Fail Threshold"),
       name: "fail_threshold",
@@ -533,12 +502,6 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       name: "filters",
       reference: "filtersHidden",
       value: "[]",
-    },
-    {
-      xtype: "hiddenfield",
-      name: "max_file_size",
-      reference: "maxFileSizeHidden",
-      value: "0",
     },
     {
       xtype: "fieldset",
@@ -692,16 +655,6 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       }
     }
 
-    // Restore max_file_size composite field from raw bytes
-    var maxBytes = values.max_file_size || 0;
-    if (maxBytes > 0) {
-      var unit = bestUnitForBytes(maxBytes);
-      var valField = me.down("[name=max_file_size_val]");
-      var unitField = me.down("[name=max_file_size_unit]");
-      if (valField) valField.setValue(maxBytes / unit.get("value"));
-      if (unitField) unitField.setValue(unit.get("value"));
-    }
-
     // Update strategy description
     if (values.sampling_strategy) {
       var descBox = me.down("[reference=strategyDesc]");
@@ -716,17 +669,6 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
   getValues: function () {
     var me = this;
     var vals = me.callParent(arguments);
-
-    // Convert max_file_size composite field to raw bytes
-    var maxVal = parseFloat(vals.max_file_size_val) || 0;
-    var maxFactor = parseInt(vals.max_file_size_unit, 10) || 1;
-    vals.max_file_size = Math.round(maxVal * maxFactor);
-    delete vals.max_file_size_val;
-    delete vals.max_file_size_unit;
-
-    // Clean up hidden field value
-    delete vals["max_file_size"];
-
     return vals;
   },
 });

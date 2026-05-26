@@ -838,11 +838,6 @@ func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix 
 	} else if entry.IsFile() && len(entry.ContentRange) == 2 {
 		filePath := prefix
 
-		// Skip files exceeding max_file_size limit
-		if cfg.MaxFileSize > 0 && entry.Size() > cfg.MaxFileSize {
-			return files, nil
-		}
-
 		if !v.matchesFilters(filePath, entry, cfg) {
 			return files, nil
 		}
