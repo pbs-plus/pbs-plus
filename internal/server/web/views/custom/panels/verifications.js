@@ -131,6 +131,51 @@ Ext.define("PBS.D2DVerification.JobPanel", {
       });
     },
 
+    stopJobs: function () {
+      var me = this;
+      var view = me.getView();
+      var recs = view.getSelection();
+      if (!recs.length) return;
+
+      var ids = recs.map(function (r) {
+        return r.getId();
+      });
+      var list = ids.map(Ext.String.htmlEncode).join("', '");
+
+      var msg =
+        ids.length > 1
+          ? Ext.String.format(
+              gettext("Stop verification jobs '{0}'?"),
+              list
+            )
+          : Ext.String.format(
+              gettext("Stop verification job '{0}'?"),
+              list
+            );
+
+      Ext.Msg.confirm(gettext("Confirm"), msg, function (btn) {
+        if (btn !== "yes") return;
+
+        var params = ids
+          .map(function (id) {
+            return "job=" + encodeURIComponent(encodePathValue(id));
+          })
+          .join("&");
+
+        PBS.PlusUtils.API2Request({
+          url: "/api2/extjs/d2d/verification?" + params,
+          method: "DELETE",
+          waitMsgTarget: view,
+          success: function () {
+            me.reload();
+          },
+          failure: function (resp) {
+            Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+          },
+        });
+      });
+    },
+
     showResults: function () {
       var me = this;
       var view = me.getView();
@@ -164,6 +209,8 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 return '<span style="color:red;">\u2717 Failed</span>';
               case "skipped":
                 return '<span style="color:#888;">\u25CB Skipped</span>';
+              case "warning":
+                return '<span style="color:#c93;">\u26A0 Warning</span>';
               case "error":
                 return '<span style="color:#c43;">\u26A0 Error</span>';
               default:
@@ -582,6 +629,23 @@ Ext.define("PBS.D2DVerification.JobPanel", {
       handler: "runJobs",
       enableFn: function () {
         return this.up("grid").getSelection().length > 0;
+      },
+      disabled: true,
+    },
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Stop Job(s)"),
+      handler: "stopJobs",
+      enableFn: function () {
+        let recs = this.up("grid").getSelection();
+        return (
+          recs.length > 0 &&
+          recs.every((r) => {
+            const u = r.data["last-run-upid"];
+            const s = r.data["last-run-state"] || "";
+            return !!u && (s === "" || s.startsWith("QUEUED:"));
+          })
+        );
       },
       disabled: true,
     },

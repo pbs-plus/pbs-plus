@@ -29,8 +29,23 @@ type VerifyFileResp struct {
 	Error  string   `cbor:"error"`
 }
 
+// VerifyStartReq is the request payload for the verify_start control message.
+type VerifyStartReq struct {
+	VerifyID string `cbor:"verify_id"`
+}
+
 // HashFile computes the SHA-256 hash of a file.
 func HashFile(filePath string) ([32]byte, int64, error) {
+	// Fast existence check — avoids opening a file handle on a
+	// slow/network mount only to discover it's gone.
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return [32]byte{}, 0, fmt.Errorf("failed to stat file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return [32]byte{}, 0, fmt.Errorf("not a regular file")
+	}
+
 	f, err := os.Open(filePath)
 	if err != nil {
 		return [32]byte{}, 0, fmt.Errorf("failed to open file: %w", err)
@@ -38,7 +53,6 @@ func HashFile(filePath string) ([32]byte, int64, error) {
 	defer func() { _ = f.Close() }()
 
 	h := sha256simd.New()
-
 	bufp := bufPool.Get().(*[]byte)
 	size, err := io.CopyBuffer(h, f, *bufp)
 	bufPool.Put(bufp)
