@@ -190,10 +190,10 @@ func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
 		if err == nil {
 			job.History.LastRunStarttime = task.StartTime
 			job.History.LastRunEndtime = task.EndTime
-			if task.ExitStatus != "" {
+			if task.Status == "stopped" {
 				job.History.LastRunState = task.ExitStatus
 				job.History.Duration = task.EndTime - task.StartTime
-			} else {
+			} else if task.StartTime > 0 {
 				job.History.Duration = time.Now().Unix() - task.StartTime
 			}
 		}

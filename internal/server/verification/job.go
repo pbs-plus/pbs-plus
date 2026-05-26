@@ -369,6 +369,8 @@ func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) err
 	}
 	job.History.LastRunUpid = task.UPID
 	job.History.LastRunStarttime = task.StartTime
+	job.History.LastRunEndtime = task.EndTime
+	job.History.LastRunState = task.Status
 	if succeeded {
 		job.History.LastSuccessfulUpid = task.UPID
 	}
