@@ -182,8 +182,8 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 	}
 
 	affected, err := q.UpdateExclusion(database.ctx, sqlc.UpdateExclusionParams{
-		JobID:   exclusion.JobID,
 		Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
+		JobID:   exclusion.JobID,
 		Path:    exclusion.Path,
 	})
 	if err != nil {

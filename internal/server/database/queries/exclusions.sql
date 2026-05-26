@@ -1,6 +1,7 @@
 -- name: CreateExclusion :exec
 INSERT INTO exclusions (job_id, path, comment) 
-VALUES (?, ?, ?);
+VALUES (?, ?, ?)
+ON CONFLICT (job_id, path) DO NOTHING;
 
 -- name: GetExclusion :one
 SELECT job_id, path, comment 
@@ -33,5 +34,5 @@ ORDER BY job_id, path;
 
 -- name: UpdateExclusion :execrows
 UPDATE exclusions 
-SET job_id = ?, comment = ? 
-WHERE path = ?;
+SET comment = ? 
+WHERE job_id = ? AND path = ?;
