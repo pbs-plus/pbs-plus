@@ -261,21 +261,45 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		syslog.L.Error(err).WithMessage("failed to update job with task UPID").Write()
 	}
 
+	// Build ordered candidate list: (backup, snapshot) pairs
+	var candidates []nsCandidate
+
 	if job.TargetMode == "namespace" {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' targeting namespace '%s' (%d backup jobs)", job.ID, job.Namespace, len(backups)))
+
+		// Collect all snapshots across all matching backup jobs
+		for _, backup := range backups {
+			snaps, snapErr := v.listSnapshots(ctx, backup)
+			if snapErr != nil {
+				vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to list snapshots: %v", backup.ID, snapErr))
+				continue
+			}
+			for _, s := range snaps {
+				candidates = append(candidates, nsCandidate{backup: backup, snapshot: s})
+			}
+		}
+		if len(candidates) == 0 {
+			return fmt.Errorf("no snapshots found in namespace '%s'", job.Namespace)
+		}
+
+		// Apply selection criteria across all snapshots globally
+		candidates = v.selectSnapshotNS(job, candidates)
 	} else {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
+
+		// Single backup job mode — select snapshot as before
+		snapshot, snapErr := v.selectSnapshot(ctx, job, backups[0])
+		if snapErr != nil {
+			return fmt.Errorf("failed to select snapshot: %w", snapErr)
+		}
+		candidates = []nsCandidate{{backup: backups[0], snapshot: *snapshot}}
 	}
 
-	// Try each backup job / snapshot until one succeeds at the startup phase
+	// Try candidates in priority order until one succeeds at startup
 	var lastStartupErr error
-	for _, backup := range backups {
-		snapshot, snapErr := v.selectSnapshot(ctx, job, backup)
-		if snapErr != nil {
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to select snapshot: %v", backup.ID, snapErr))
-			lastStartupErr = snapErr
-			continue
-		}
+	for _, c := range candidates {
+		backup := c.backup
+		snapshot := c.snapshot
 
 		// Get the agent's main control session (QUIC or TCP) to send the fork command.
 		hostname := backup.Target.GetHostname()
@@ -290,7 +314,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		} else if sess, ok := v.storeInstance.ARPCAgentsManager.GetStreamPipe(hostname); ok {
 			controlSess = sess
 		} else {
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': agent '%s' not connected", backup.ID, hostname))
+			vTask.WriteString(fmt.Sprintf("skipping snapshot '%s': agent '%s' not connected", snapshot.Snapshot, hostname))
 			lastStartupErr = ErrAgentNotConnected
 			continue
 		}
@@ -304,7 +328,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		forkCancel()
 		if forkErr != nil {
 			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to fork verification worker: %v", backup.ID, forkErr))
+			vTask.WriteString(fmt.Sprintf("skipping snapshot '%s': failed to fork verification worker: %v", snapshot.Snapshot, forkErr))
 			lastStartupErr = forkErr
 			continue
 		}
@@ -315,20 +339,20 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		pipeCancel()
 		if waitErr != nil {
 			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': verification worker did not connect: %v", backup.ID, waitErr))
+			vTask.WriteString(fmt.Sprintf("skipping snapshot '%s': verification worker did not connect: %v", snapshot.Snapshot, waitErr))
 			lastStartupErr = waitErr
 			continue
 		}
 		// TCP session registered; NotExpect is no longer needed
 		v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
 
-		vTask.WriteString(fmt.Sprintf("verification worker connected via TCP for job '%s'", backup.ID))
+		vTask.WriteString(fmt.Sprintf("verification worker connected via TCP for snapshot '%s'", snapshot.Snapshot))
 
 		// Try to open the archive
-		vs, archiveErr := v.openArchive(backup, snapshot)
+		vs, archiveErr := v.openArchive(backup, &snapshot)
 		if archiveErr != nil {
 			agentTCP.Close()
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s' snapshot '%s': failed to open archive: %v", backup.ID, snapshot.Snapshot, archiveErr))
+			vTask.WriteString(fmt.Sprintf("skipping snapshot '%s': failed to open archive: %v", snapshot.Snapshot, archiveErr))
 			lastStartupErr = archiveErr
 			continue
 		}
@@ -336,7 +360,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		vTask.WriteString(fmt.Sprintf("selected backup job '%s', snapshot: %s", backup.ID, snapshot.Snapshot))
 
 		// All startup checks passed — run verification for this snapshot
-		return v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentTCP)
+		return v.executeVerification(ctx, vTask, job, backup, &snapshot, vs, agentTCP)
 	}
 
 	// All candidates exhausted
@@ -344,7 +368,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		vTask.WriteString(fmt.Sprintf("all candidates exhausted, last error: %v", lastStartupErr))
 		return lastStartupErr
 	}
-	return fmt.Errorf("no eligible backup jobs found")
+	return fmt.Errorf("no eligible snapshots found")
 }
 
 // executeVerification runs the actual file verification for a single snapshot.
@@ -677,6 +701,57 @@ func (v *verificationJob) selectSnapshot(ctx context.Context, job database.Verif
 
 	idx := rand.Intn(len(filtered))
 	return &filtered[idx], nil
+}
+
+// nsCandidate pairs a backup job with one of its snapshots for namespace-mode selection.
+type nsCandidate struct {
+	backup   database.Backup
+	snapshot snapshotInfo
+}
+
+// selectSnapshotNS applies global selection criteria across all snapshots in a namespace
+// and returns an ordered list of candidates to try (best first).
+func (v *verificationJob) selectSnapshotNS(job database.VerificationJob, candidates []nsCandidate) []nsCandidate {
+	cfg := job.SpotConfig
+
+	if cfg.UseLatest {
+		// Sort all candidates by BackupTime descending (latest first)
+		sort.Slice(candidates, func(i, j int) bool {
+			return candidates[i].snapshot.BackupTime > candidates[j].snapshot.BackupTime
+		})
+		return candidates
+	}
+
+	// Apply date filter if configured
+	if cfg.DateFrom != "" || cfg.DateTo != "" {
+		var filtered []nsCandidate
+		for _, c := range candidates {
+			snap := c.snapshot
+			t := time.Unix(snap.BackupTime, 0)
+			if cfg.DateFrom != "" {
+				if from, err := time.Parse("2006-01-02", cfg.DateFrom); err == nil && t.Before(from) {
+					continue
+				}
+			}
+			if cfg.DateTo != "" {
+				if to, err := time.Parse("2006-01-02", cfg.DateTo); err == nil && t.After(to.AddDate(0, 0, 1)) {
+					continue
+				}
+			}
+			filtered = append(filtered, c)
+		}
+		candidates = filtered
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Random: shuffle and return
+	rand.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	})
+	return candidates
 }
 
 func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Backup) ([]snapshotInfo, error) {
