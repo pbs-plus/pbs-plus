@@ -221,7 +221,6 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
   extend: "Proxmox.panel.InputPanel",
   xtype: "pbsD2DVerificationOptionsPanel",
 
-  // Single-column: use column1 only, leave column2 empty
   column1: [
     {
       xtype: "pmxDisplayEditField",
@@ -314,6 +313,9 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
         },
       ],
     },
+  ],
+
+  column2: [
     {
       fieldLabel: gettext("Schedule"),
       xtype: "pbsD2DCalendarEvent",
@@ -366,6 +368,9 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       emptyText: gettext("1"),
       name: "retry-interval",
     },
+  ],
+
+  columnB: [
     {
       fieldLabel: gettext("Comment"),
       xtype: "proxmoxtextfield",
@@ -375,10 +380,6 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       },
     },
   ],
-
-  column2: [],
-
-  columnB: [],
 
   setValues: function (values) {
     var me = this;
