@@ -235,11 +235,11 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
           var backupCombo = panel.down("[reference=backupJobField]");
           var nsFields = panel.down("[reference=namespaceFields]");
           if (val === "namespace") {
-            if (backupCombo) backupCombo.hide();
-            if (nsFields) nsFields.show();
+            if (backupCombo) { backupCombo.hide(); backupCombo.disable(); }
+            if (nsFields) { nsFields.show(); nsFields.enable(); }
           } else {
-            if (backupCombo) backupCombo.show();
-            if (nsFields) nsFields.hide();
+            if (backupCombo) { backupCombo.show(); backupCombo.enable(); }
+            if (nsFields) { nsFields.hide(); nsFields.disable(); }
           }
         },
       },
@@ -266,6 +266,7 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       reference: "namespaceFields",
       layout: "vbox",
       hidden: true,
+      disabled: true,
       width: "100%",
       items: [
         {
