@@ -824,7 +824,7 @@ Ext.define("PBS.D2DVerification.JobEdit", {
     me.method = id ? "PUT" : "POST";
     me.autoLoad = !!id;
     me.scheduleValue = id ? null : "";
-    me.modeValue = id ? null : "random_spot";
+    me.modeValue = "random_spot";
     return {};
   },
 
