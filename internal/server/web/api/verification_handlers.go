@@ -311,6 +311,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 		}
 
 		response := VerificationJobConfigResponse{
+			Data:    job,
 			Status:  http.StatusOK,
 			Success: true,
 		}
@@ -442,6 +443,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			}
 
 			response := VerificationJobConfigResponse{
+				Data:    job,
 				Status:  http.StatusOK,
 				Success: true,
 			}

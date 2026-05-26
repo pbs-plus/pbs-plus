@@ -445,7 +445,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 text: gettext("Export Detail CSV"),
                 iconCls: "fa fa-download",
                 handler: function () {
-                  var encodedId = encodeURIComponent(jobId);
+                  var encodedId = encodeURIComponent(encodePathValue(jobId));
                   window.open(
                     pbsPlusBaseUrl + "/api2/extjs/config/d2d-verification/" +
                     encodedId + "/results/export?type=detail",
@@ -457,7 +457,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 text: gettext("Export Summary CSV"),
                 iconCls: "fa fa-download",
                 handler: function () {
-                  var encodedId = encodeURIComponent(jobId);
+                  var encodedId = encodeURIComponent(encodePathValue(jobId));
                   window.open(
                     pbsPlusBaseUrl + "/api2/extjs/config/d2d-verification/" +
                     encodedId + "/results/export?type=summary",

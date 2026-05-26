@@ -608,10 +608,33 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
                 grid.up("panel");
               if (panel) {
                 panel.filterGrid = grid;
+
+                // Load any pending filters stored by setValues (handles deferred tab rendering)
+                if (panel._pendingFilters) {
+                  grid.getStore().loadData(panel._pendingFilters);
+                  delete panel._pendingFilters;
+                }
+
+                // Sync hidden field and reset originalValue so dirty tracking works correctly
+                var hiddenField = panel.down("hiddenfield[name=filters]");
+                if (hiddenField) {
+                  // Sync grid → hidden field
+                  var records = [];
+                  grid.getStore().each(function (rec) {
+                    records.push({
+                      path_pattern: rec.get("path_pattern") || "",
+                      min_size: rec.get("min_size") || 0,
+                      max_size: rec.get("max_size") || 0,
+                    });
+                  });
+                  hiddenField.setValue(Ext.encode(records));
+                  // Mark current value as the baseline for dirty detection
+                  hiddenField.resetOriginalValue();
+                }
               }
 
               grid.syncHiddenField = function () {
-                var hidden = grid.up("fieldset").down("hiddenfield[name=filters]");
+                var hidden = grid.up("pbsD2DVerificationSpotCheckPanel").down("hiddenfield[name=filters]");
                 if (!hidden) return;
                 var records = [];
                 grid.getStore().each(function (rec) {
@@ -641,14 +664,50 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
 
   setValues: function (values) {
     var me = this;
+
+    // Flatten spot_config fields into top-level values so form fields can bind
+    if (values.spot_config && Ext.isObject(values.spot_config)) {
+      var sc = values.spot_config;
+      if (sc.sample_count !== undefined && values.sample_count === undefined) {
+        values.sample_count = sc.sample_count;
+      }
+      if (sc.sampling_strategy !== undefined && values.sampling_strategy === undefined) {
+        values.sampling_strategy = sc.sampling_strategy;
+      }
+      if (sc.use_latest !== undefined && values.use_latest === undefined) {
+        values.use_latest = String(sc.use_latest);
+      }
+      if (sc.date_from !== undefined && values.date_from === undefined) {
+        values.date_from = sc.date_from;
+      }
+      if (sc.date_to !== undefined && values.date_to === undefined) {
+        values.date_to = sc.date_to;
+      }
+      if (sc.fail_threshold !== undefined && values.fail_threshold === undefined) {
+        values.fail_threshold = sc.fail_threshold;
+      }
+      if (sc.filters !== undefined && values.filters === undefined) {
+        values.filters = Ext.encode(sc.filters);
+      }
+    }
+
     me.callParent([values]);
 
     // Parse filters JSON into the grid
-    if (values.filters && me.filterGrid) {
+    if (values.filters) {
       try {
         var filters = Ext.decode(values.filters);
-        if (Ext.isArray(filters)) {
-          me.filterGrid.getStore().loadData(filters);
+        if (Ext.isArray(filters) && filters.length > 0) {
+          if (me.filterGrid) {
+            // Grid is already rendered — load directly
+            me.filterGrid.getStore().loadData(filters);
+            if (me.filterGrid.syncHiddenField) {
+              me.filterGrid.syncHiddenField();
+            }
+          } else {
+            // Tab not rendered yet — store for boxready to pick up
+            me._pendingFilters = filters;
+          }
         }
       } catch (e) {
         // ignore bad JSON
