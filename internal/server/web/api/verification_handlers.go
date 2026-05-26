@@ -209,12 +209,6 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 
 		useLatest := r.FormValue("use_latest") == "true"
 
-		var maxFileSize int64
-		if mfs := r.FormValue("max_file_size"); mfs != "" {
-			if n, err := strconv.ParseInt(mfs, 10, 64); err == nil && n > 0 {
-				maxFileSize = n
-			}
-		}
 		var failThreshold int
 		if ft := r.FormValue("fail_threshold"); ft != "" {
 			if n, err := strconv.Atoi(ft); err == nil && n > 0 {
@@ -270,7 +264,6 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 				UseLatest:        useLatest,
 				DateFrom:         r.FormValue("date_from"),
 				DateTo:           r.FormValue("date_to"),
-				MaxFileSize:      maxFileSize,
 				FailThreshold:    failThreshold,
 			},
 			RunOnBackupComplete: r.FormValue("run_on_backup_complete") == "true",
@@ -305,9 +298,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 				if len(sc.Filters) > 0 {
 					job.SpotConfig.Filters = sc.Filters
 				}
-				if sc.MaxFileSize > 0 {
-					job.SpotConfig.MaxFileSize = sc.MaxFileSize
-				}
+
 				if sc.FailThreshold > 0 {
 					job.SpotConfig.FailThreshold = sc.FailThreshold
 				}
@@ -435,11 +426,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			if filtersJSON := r.FormValue("filters"); filtersJSON != "" {
 				_ = json.Unmarshal([]byte(filtersJSON), &job.SpotConfig.Filters)
 			}
-			if v := r.FormValue("max_file_size"); v != "" {
-				if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-					job.SpotConfig.MaxFileSize = n
-				}
-			}
+
 			if v := r.FormValue("fail_threshold"); v != "" {
 				if n, err := strconv.Atoi(v); err == nil {
 					job.SpotConfig.FailThreshold = n
