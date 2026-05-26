@@ -127,6 +127,7 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 store: sizeUnitStore,
                 displayField: "display",
                 valueField: "factor",
+                queryMode: "local",
                 value: minUnit.factor,
                 width: 70,
                 editable: false,
@@ -162,6 +163,7 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 store: sizeUnitStore,
                 displayField: "display",
                 valueField: "factor",
+                queryMode: "local",
                 value: maxUnit.factor,
                 width: 70,
                 editable: false,
@@ -219,6 +221,7 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
   extend: "Proxmox.panel.InputPanel",
   xtype: "pbsD2DVerificationOptionsPanel",
 
+  // Single-column: use column1 only, leave column2 empty
   column1: [
     {
       xtype: "pmxDisplayEditField",
@@ -231,102 +234,86 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       },
     },
     {
+      xtype: "combo",
+      name: "target_mode",
+      fieldLabel: gettext("Target Mode"),
+      queryMode: "local",
+      store: [
+        ["backup_job", gettext("Backup Job")],
+        ["namespace", gettext("Namespace")],
+      ],
+      value: "backup_job",
+      editable: false,
+      forceSelection: true,
+      listeners: {
+        change: function (combo, val) {
+          var panel = combo.up("pbsD2DVerificationOptionsPanel");
+          if (!panel) return;
+          var backupCombo = panel.down("[reference=backupJobField]");
+          var nsFields = panel.down("[reference=namespaceFields]");
+          if (val === "namespace") {
+            if (backupCombo) backupCombo.hide();
+            if (nsFields) nsFields.show();
+          } else {
+            if (backupCombo) backupCombo.show();
+            if (nsFields) nsFields.hide();
+          }
+        },
+      },
+    },
+    {
+      xtype: "combobox",
+      reference: "backupJobField",
+      fieldLabel: gettext("Backup Job"),
+      name: "backup_job_id",
+      store: {
+        fields: ["id"],
+        proxy: {
+          type: "pbsplus",
+          url: pbsPlusBaseUrl + "/api2/json/d2d/backup",
+        },
+        autoLoad: true,
+      },
+      displayField: "id",
+      valueField: "id",
+      allowBlank: false,
+    },
+    {
       xtype: "fieldcontainer",
-      fieldLabel: gettext("Target"),
+      reference: "namespaceFields",
       layout: "vbox",
+      hidden: true,
+      width: "100%",
       items: [
         {
-          xtype: "combo",
-          name: "target_mode",
-          queryMode: "local",
-          store: [
-            ["backup_job", gettext("Backup Job")],
-            ["namespace", gettext("Namespace")],
-          ],
-          value: "backup_job",
-          editable: false,
-          forceSelection: true,
-          width: "100%",
-          listeners: {
-            change: function (combo, val) {
-              var panel = combo.up("pbsD2DVerificationOptionsPanel");
-              if (!panel) return;
-              var backupCombo = panel.down("[name=backup_job_id]");
-              var nsFields = panel.down("[reference=namespaceFields]");
-              var recCheck = panel.down("[name=recursive]");
-              if (val === "namespace") {
-                if (backupCombo) backupCombo.setDisabled(true).hide();
-                if (nsFields) nsFields.setDisabled(false).show();
-                if (recCheck) recCheck.setDisabled(false).show();
-              } else {
-                if (backupCombo) backupCombo.setDisabled(false).show();
-                if (nsFields) nsFields.setDisabled(true).hide();
-                if (recCheck) recCheck.setDisabled(true).hide();
-              }
-            },
-          },
-        },
-        {
-          xtype: "combobox",
-          fieldLabel: false,
-          name: "backup_job_id",
-          store: {
-            fields: ["id"],
-            proxy: {
-              type: "pbsplus",
-              url: pbsPlusBaseUrl + "/api2/json/d2d/backup",
-            },
-            autoLoad: true,
-          },
-          displayField: "id",
-          valueField: "id",
+          xtype: "pbsDataStoreSelector",
+          fieldLabel: gettext("Datastore"),
+          name: "store",
+          reference: "nsDatastore",
           allowBlank: false,
           width: "100%",
+        },
+        {
+          xtype: "pbsD2DNamespaceSelector",
+          fieldLabel: gettext("Namespace"),
+          name: "ns",
+          reference: "nsNamespace",
+          emptyText: gettext("Root"),
+          width: "100%",
           margin: "5 0 0 0",
         },
         {
-          xtype: "fieldcontainer",
-          reference: "namespaceFields",
-          layout: "vbox",
-          hidden: true,
-          disabled: true,
+          xtype: "checkbox",
+          name: "recursive",
+          fieldLabel: gettext("Recursive"),
+          boxLabel: gettext("Include sub-namespaces"),
+          inputValue: "true",
+          uncheckedValue: "false",
           width: "100%",
           margin: "5 0 0 0",
-          items: [
-            {
-              xtype: "proxmoxtextfield",
-              name: "store",
-              fieldLabel: gettext("Datastore"),
-              allowBlank: false,
-              width: "100%",
-            },
-            {
-              xtype: "proxmoxtextfield",
-              name: "ns",
-              fieldLabel: gettext("Namespace"),
-              emptyText: gettext("root namespace"),
-              width: "100%",
-              margin: "5 0 0 0",
-            },
-            {
-              xtype: "checkbox",
-              name: "recursive",
-              fieldLabel: gettext("Recursive"),
-              boxLabel: gettext("Include sub-namespaces"),
-              inputValue: "true",
-              uncheckedValue: "false",
-              hidden: true,
-              disabled: true,
-              width: "100%",
-              margin: "5 0 0 0",
-            },
-          ],
         },
       ],
     },
-  ],
-
-  column2: [
     {
       fieldLabel: gettext("Schedule"),
       xtype: "pbsD2DCalendarEvent",
@@ -379,9 +366,6 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       emptyText: gettext("1"),
       name: "retry-interval",
     },
-  ],
-
-  columnB: [
     {
       fieldLabel: gettext("Comment"),
       xtype: "proxmoxtextfield",
@@ -392,6 +376,10 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
     },
   ],
 
+  column2: [],
+
+  columnB: [],
+
   setValues: function (values) {
     var me = this;
     me.callParent([values]);
@@ -400,6 +388,14 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
     if (values.target_mode) {
       var combo = me.down("[name=target_mode]");
       if (combo) combo.setValue(values.target_mode);
+    }
+
+    // When loading in namespace mode, set datastore on namespace selector
+    if (values.target_mode === "namespace" && values.store) {
+      var nsSel = me.down("[reference=nsNamespace]");
+      if (nsSel && nsSel.setDatastore) {
+        nsSel.setDatastore(values.store);
+      }
     }
 
     return values;
@@ -452,13 +448,12 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       reference: "strategyDesc",
       html: strategyDescriptions["random"],
       margin: "0 0 10 0",
+      cls: "x-fieldset",
       style: {
         padding: "8px 10px",
-        background: "#f5f5f5",
         borderRadius: "4px",
         fontSize: "11px",
         lineHeight: "16px",
-        border: "1px solid #e0e0e0",
       },
     },
     {
@@ -525,6 +520,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
           store: sizeUnitStore,
           displayField: "display",
           valueField: "factor",
+          queryMode: "local",
           value: 1048576,
           width: 70,
           editable: false,
@@ -792,6 +788,19 @@ Ext.define("PBS.D2DVerification.JobEdit", {
 
   controller: {
     xclass: "Ext.app.ViewController",
+    control: {
+      "pbsDataStoreSelector[name=store]": {
+        change: "storeChange",
+      },
+    },
+
+    storeChange: function (field, value) {
+      var me = this;
+      var nsSelector = me.lookup("nsNamespace");
+      if (nsSelector && nsSelector.setDatastore) {
+        nsSelector.setDatastore(value);
+      }
+    },
   },
 
   initComponent: function () {
