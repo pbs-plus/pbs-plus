@@ -13,6 +13,7 @@ import (
 const createExclusion = `-- name: CreateExclusion :exec
 INSERT INTO exclusions (job_id, path, comment) 
 VALUES (?, ?, ?)
+ON CONFLICT (job_id, path) DO NOTHING
 `
 
 type CreateExclusionParams struct {
@@ -57,21 +58,15 @@ WHERE job_id = ?
 ORDER BY path
 `
 
-type GetBackupExclusionsRow struct {
-	JobID   string         `json:"job_id"`
-	Path    string         `json:"path"`
-	Comment sql.NullString `json:"comment"`
-}
-
-func (q *Queries) GetBackupExclusions(ctx context.Context, jobID string) ([]GetBackupExclusionsRow, error) {
+func (q *Queries) GetBackupExclusions(ctx context.Context, jobID string) ([]Exclusion, error) {
 	rows, err := q.db.QueryContext(ctx, getBackupExclusions, jobID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetBackupExclusionsRow{}
+	items := []Exclusion{}
 	for rows.Next() {
-		var i GetBackupExclusionsRow
+		var i Exclusion
 		if err := rows.Scan(&i.JobID, &i.Path, &i.Comment); err != nil {
 			return nil, err
 		}
@@ -98,15 +93,9 @@ type GetExclusionParams struct {
 	Path  string `json:"path"`
 }
 
-type GetExclusionRow struct {
-	JobID   string         `json:"job_id"`
-	Path    string         `json:"path"`
-	Comment sql.NullString `json:"comment"`
-}
-
-func (q *Queries) GetExclusion(ctx context.Context, arg GetExclusionParams) (GetExclusionRow, error) {
+func (q *Queries) GetExclusion(ctx context.Context, arg GetExclusionParams) (Exclusion, error) {
 	row := q.db.QueryRowContext(ctx, getExclusion, arg.JobID, arg.Path)
-	var i GetExclusionRow
+	var i Exclusion
 	err := row.Scan(&i.JobID, &i.Path, &i.Comment)
 	return i, err
 }
@@ -181,18 +170,18 @@ func (q *Queries) ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusi
 
 const updateExclusion = `-- name: UpdateExclusion :execrows
 UPDATE exclusions 
-SET job_id = ?, comment = ? 
-WHERE path = ?
+SET comment = ? 
+WHERE job_id = ? AND path = ?
 `
 
 type UpdateExclusionParams struct {
-	JobID   string         `json:"job_id"`
 	Comment sql.NullString `json:"comment"`
+	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`
 }
 
 func (q *Queries) UpdateExclusion(ctx context.Context, arg UpdateExclusionParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateExclusion, arg.JobID, arg.Comment, arg.Path)
+	result, err := q.db.ExecContext(ctx, updateExclusion, arg.Comment, arg.JobID, arg.Path)
 	if err != nil {
 		return 0, err
 	}
