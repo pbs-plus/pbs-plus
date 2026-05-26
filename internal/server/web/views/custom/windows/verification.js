@@ -506,14 +506,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
           flex: 1,
           value: 0,
           emptyText: gettext("No limit"),
-          listeners: {
-            change: function (f) {
-              f.up("fieldcontainer").down("[name=max_file_size_unit]").setReadOnly(f.getValue() === 0);
-            },
-            afterrender: function (f) {
-              f.up("fieldcontainer").down("[name=max_file_size_unit]").setReadOnly(f.getValue() === 0);
-            },
-          },
+          listeners: {},
         },
         {
           xtype: "combo",
