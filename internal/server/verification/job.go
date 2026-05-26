@@ -45,6 +45,11 @@ var (
 	}
 )
 
+// readerFunc adapts a function to io.Reader for context-aware reads.
+type readerFunc func([]byte) (int, error)
+
+func (rf readerFunc) Read(p []byte) (int, error) { return rf(p) }
+
 // fileEntry represents a file found in the pxar archive.
 type fileEntry struct {
 	Path         string
@@ -282,6 +287,10 @@ func (v *verificationJob) executeVerification(
 ) error {
 	defer func() { _ = vs.Close() }()
 
+	// Create a derived context so we can cancel remaining workers on fail threshold
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	vTask.WriteString(fmt.Sprintf("selected snapshot: %s", snapshot.Snapshot))
 
 	// Create result record
@@ -316,36 +325,94 @@ func (v *verificationJob) executeVerification(
 	v.mu.RUnlock()
 	vTask.WriteString(fmt.Sprintf("sampled %d files for verification", len(sampledFiles)))
 
-	// Verify each file
-	for i, file := range sampledFiles {
-		select {
-		case <-ctx.Done():
-			return jobs.ErrCanceled
-		default:
+	// Verify files concurrently with a bounded worker pool.
+	concurrency := 4
+	if n := len(sampledFiles); n < concurrency {
+		concurrency = n
+	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	type indexedResult struct {
+		index  int
+		result database.VerificationFileResult
+	}
+
+	filesCh := make(chan int, len(sampledFiles))
+	resultsCh := make(chan indexedResult, len(sampledFiles))
+
+	// Feed file indices
+	for i := range sampledFiles {
+		filesCh <- i
+	}
+	close(filesCh)
+
+	// Launch workers
+	var wg sync.WaitGroup
+	for w := 0; w < concurrency; w++ {
+		wg.Go(func() {
+			for idx := range filesCh {
+				select {
+				case <-ctx.Done():
+					resultsCh <- indexedResult{index: idx, result: database.VerificationFileResult{
+						Path: sampledFiles[idx].Path, Size: sampledFiles[idx].Size, Status: "skipped", Message: "canceled",
+					}}
+					continue
+				default:
+				}
+
+				fr := v.verifyFile(ctx, agentCaller, vs, sampledFiles[idx], backup)
+				resultsCh <- indexedResult{index: idx, result: fr}
+			}
+		})
+	}
+
+	// Close results channel when all workers finish
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	// Collect results. Since resultsCh is buffered to len(sampledFiles),
+	// workers never block on send. We drain all results to avoid goroutine leaks.
+	ordered := make([]database.VerificationFileResult, len(sampledFiles))
+	collected := 0
+	thresholdHit := false
+
+	for ir := range resultsCh {
+		collected++
+		if ir.result.Status != "" {
+			ordered[ir.index] = ir.result
 		}
 
-		fileResult := v.verifyFile(ctx, agentCaller, vs, file, backup)
-		result.Details = append(result.Details, fileResult)
-
-		switch fileResult.Status {
+		switch ir.result.Status {
 		case "ok":
 			result.VerifiedFiles++
 		case "failed":
 			result.FailedFiles++
-			vTask.WriteString(fmt.Sprintf("file verification failed: %s - %s", file.Path, fileResult.Message))
+			vTask.WriteString(fmt.Sprintf("file verification failed: %s - %s", ir.result.Path, ir.result.Message))
 		default:
 			result.SkippedFiles++
-			vTask.WriteString(fmt.Sprintf("file skipped: %s - %s", file.Path, fileResult.Message))
+			vTask.WriteString(fmt.Sprintf("file skipped: %s - %s", ir.result.Path, ir.result.Message))
 		}
 
-		// Fail threshold: stop early after N failures
-		if job.SpotConfig.FailThreshold > 0 && result.FailedFiles >= job.SpotConfig.FailThreshold {
+		// Fail threshold: cancel remaining work (workers will see ctx.Done())
+		if job.SpotConfig.FailThreshold > 0 && result.FailedFiles >= job.SpotConfig.FailThreshold && !thresholdHit {
+			thresholdHit = true
 			vTask.WriteString(fmt.Sprintf("fail threshold reached (%d failures), stopping verification", result.FailedFiles))
-			break
+			cancel()
 		}
 
-		if (i+1)%10 == 0 || i+1 == len(sampledFiles) {
-			vTask.WriteString(fmt.Sprintf("progress: %d/%d files verified", i+1, len(sampledFiles)))
+		if collected%10 == 0 || collected == len(sampledFiles) {
+			vTask.WriteString(fmt.Sprintf("progress: %d/%d files verified", collected, len(sampledFiles)))
+		}
+	}
+
+	// Append collected results in order
+	for _, fr := range ordered {
+		if fr.Status != "" {
+			result.Details = append(result.Details, fr)
 		}
 	}
 
@@ -356,8 +423,13 @@ func (v *verificationJob) executeVerification(
 	v.skippedFiles = result.SkippedFiles
 	v.mu.Unlock()
 
-	result.Status = "completed"
 	result.CompletedAt = time.Now().Unix()
+	switch {
+	case result.FailedFiles > 0:
+		result.Status = "warning"
+	default:
+		result.Status = "completed"
+	}
 
 	if err := v.storeInstance.Database.UpdateVerificationResult(*result); err != nil {
 		syslog.L.Error(err).WithField("jobID", job.ID).WithMessage("failed to update verification result").Write()
@@ -412,8 +484,8 @@ func (v *verificationJob) onSuccess() {
 		t.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 
 		if failed > 0 {
-			t.CloseErr(fmt.Errorf("%d of %d files failed verification", failed, total))
-			if err := v.updateJobHistory(false, 0); err != nil {
+			t.CloseWarn(failed)
+			if err := v.updateJobHistory(true, failed); err != nil {
 				syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history").Write()
 			}
 			return
@@ -920,7 +992,7 @@ func (v *verificationJob) verifyFile(
 		Status: "error",
 	}
 
-	// 1. Ask agent to hash the live file
+	// Compute agent path
 	rootPath := backup.Target.GetAgentHostPath()
 	relPath := strings.TrimPrefix(file.Path, "/")
 	if backup.Subpath != "" {
@@ -929,35 +1001,55 @@ func (v *verificationJob) verifyFile(
 	}
 	agentPath := filepath.Join(rootPath, relPath)
 
-	req := verification.VerifyFileReq{
-		FilePath: agentPath,
+	// Run agent hash and archive hash concurrently
+	type agentResult struct {
+		resp verification.VerifyFileResp
+		err  error
+	}
+	type archiveResult struct {
+		hash [32]byte
+		err  error
 	}
 
-	var agentResp verification.VerifyFileResp
-	if err := agentCaller.Call(ctx, "verify_chunk_file", req, &agentResp); err != nil {
+	agentCh := make(chan agentResult, 1)
+	archiveCh := make(chan archiveResult, 1)
+
+	go func() {
+		var resp verification.VerifyFileResp
+		err := agentCaller.Call(ctx, "verify_chunk_file", verification.VerifyFileReq{FilePath: agentPath}, &resp)
+		agentCh <- agentResult{resp: resp, err: err}
+	}()
+
+	go func() {
+		hash, err := extractFileHash(ctx, vs, file)
+		archiveCh <- archiveResult{hash: hash, err: err}
+	}()
+
+	agentRes := <-agentCh
+	if agentRes.err != nil {
 		result.Status = "skipped"
-		result.Message = fmt.Sprintf("agent call failed: %v", err)
+		result.Message = fmt.Sprintf("agent call failed: %v", agentRes.err)
+		<-archiveCh // drain
+		return result
+	}
+	if agentRes.resp.Error != "" {
+		result.Status = "skipped"
+		result.Message = agentRes.resp.Error
+		<-archiveCh // drain
 		return result
 	}
 
-	if agentResp.Error != "" {
-		result.Status = "skipped"
-		result.Message = agentResp.Error
-		return result
-	}
-
-	// 2. Extract file content from the stored archive and hash it
-	storedHash, err := extractFileHash(vs, file)
-	if err != nil {
+	archiveRes := <-archiveCh
+	if archiveRes.err != nil {
 		result.Status = "error"
-		result.Message = fmt.Sprintf("failed to extract file from archive: %v", err)
+		result.Message = fmt.Sprintf("failed to extract file from archive: %v", archiveRes.err)
 		return result
 	}
 
-	// 3. Compare hashes
-	if agentResp.SHA256 != storedHash {
+	// Compare hashes
+	if agentRes.resp.SHA256 != archiveRes.hash {
 		result.Status = "failed"
-		result.Message = fmt.Sprintf("SHA-256 mismatch: agent=%x, archive=%x", agentResp.SHA256, storedHash)
+		result.Message = fmt.Sprintf("SHA-256 mismatch: agent=%x, archive=%x", agentRes.resp.SHA256, archiveRes.hash)
 		return result
 	}
 
@@ -967,8 +1059,8 @@ func (v *verificationJob) verifyFile(
 }
 
 // extractFileHash reads a file's content from the pxar archive and returns
-// its SHA-256 hash.
-func extractFileHash(vs *verifyState, file fileEntry) ([32]byte, error) {
+// its SHA-256 hash. It respects context cancellation.
+func extractFileHash(ctx context.Context, vs *verifyState, file fileEntry) ([32]byte, error) {
 	rc, err := vs.fs.ReadContentReader(file.ContentStart, file.ContentEnd)
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("failed to open content reader for [%d, %d): %w", file.ContentStart, file.ContentEnd, err)
@@ -977,8 +1069,16 @@ func extractFileHash(vs *verifyState, file fileEntry) ([32]byte, error) {
 
 	h := sha256simd.New()
 	bufp := bufPool.Get().(*[]byte)
-	_, err = io.CopyBuffer(h, rc, *bufp)
-	bufPool.Put(bufp)
+	defer bufPool.Put(bufp)
+
+	_, err = io.CopyBuffer(h, readerFunc(func(p []byte) (int, error) {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+			return rc.Read(p)
+		}
+	}), *bufp)
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("failed to read file content: %w", err)
 	}
