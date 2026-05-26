@@ -1,16 +1,23 @@
 package verification
 
 import (
-	"crypto/sha256"
 	"fmt"
+	sha256simd "github.com/minio/sha256-simd"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 )
 
-// VerifyFileReq is the request sent to the agent to hash a file.
+var bufPool = sync.Pool{
+	New: func() any {
+		buf := make([]byte, 256*1024)
+		return &buf
+	},
+}
+
 type VerifyFileReq struct {
 	FilePath string `cbor:"file_path"`
 }
@@ -30,15 +37,17 @@ func HashFile(filePath string) ([32]byte, int64, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	h := sha256.New()
-	size, err := io.Copy(h, f)
+	h := sha256simd.New()
+
+	bufp := bufPool.Get().(*[]byte)
+	size, err := io.CopyBuffer(h, f, *bufp)
+	bufPool.Put(bufp)
 	if err != nil {
 		return [32]byte{}, 0, fmt.Errorf("failed to read file: %w", err)
 	}
 
 	var digest [32]byte
-	sum := h.Sum(nil)
-	copy(digest[:], sum)
+	copy(digest[:], h.Sum(nil))
 
 	return digest, size, nil
 }
