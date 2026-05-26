@@ -395,6 +395,35 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
 
   column1: [
     {
+      xtype: "combo",
+      fieldLabel: gettext("Sample Mode"),
+      name: "sample_count_mode",
+      queryMode: "local",
+      store: [
+        ["absolute", "Absolute Count"],
+        ["percent", "Percentage"],
+      ],
+      value: "absolute",
+      editable: false,
+      forceSelection: true,
+      listeners: {
+        change: function (combo, val) {
+          var panel = combo.up("pbsD2DVerificationSpotCheckPanel") ||
+            combo.up("panel");
+          if (!panel) return;
+          var absField = panel.down("numberfield[name=sample_count]");
+          var pctField = panel.down("numberfield[name=sample_count_percent]");
+          if (val === "percent") {
+            if (absField) absField.disable().hide();
+            if (pctField) pctField.enable().show();
+          } else {
+            if (absField) absField.enable().show();
+            if (pctField) pctField.disable().hide();
+          }
+        },
+      },
+    },
+    {
       xtype: "numberfield",
       fieldLabel: gettext("Sample Count"),
       name: "sample_count",
@@ -402,6 +431,18 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       maxValue: 100000,
       value: 10,
       allowBlank: false,
+    },
+    {
+      xtype: "numberfield",
+      fieldLabel: gettext("Sample Percentage"),
+      name: "sample_count_percent",
+      minValue: 0.01,
+      maxValue: 100,
+      decimalPrecision: 2,
+      value: 10,
+      allowBlank: false,
+      hidden: true,
+      disabled: true,
     },
     {
       xtype: "combo",
@@ -671,6 +712,9 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       if (sc.sample_count !== undefined && values.sample_count === undefined) {
         values.sample_count = sc.sample_count;
       }
+      if (sc.sample_count_percent !== undefined && values.sample_count_percent === undefined) {
+        values.sample_count_percent = sc.sample_count_percent;
+      }
       if (sc.sampling_strategy !== undefined && values.sampling_strategy === undefined) {
         values.sampling_strategy = sc.sampling_strategy;
       }
@@ -688,6 +732,11 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       }
       if (sc.filters !== undefined && values.filters === undefined) {
         values.filters = Ext.encode(sc.filters);
+      }
+
+      // Set sample_count_mode based on which field has a value
+      if (sc.sample_count_percent > 0 && values.sample_count_mode === undefined) {
+        values.sample_count_mode = "percent";
       }
     }
 
@@ -722,12 +771,25 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       }
     }
 
+    // Apply sample_count_mode toggle visibility
+    var modeField = me.down("combo[name=sample_count_mode]");
+    if (modeField && modeField.getValue()) {
+      modeField.fireEvent("change", modeField, modeField.getValue());
+    }
+
     return values;
   },
 
   getValues: function () {
     var me = this;
     var vals = me.callParent(arguments);
+    var mode = vals.sample_count_mode || "absolute";
+    if (mode === "percent") {
+      delete vals.sample_count;
+    } else {
+      delete vals.sample_count_percent;
+    }
+    delete vals.sample_count_mode;
     return vals;
   },
 });

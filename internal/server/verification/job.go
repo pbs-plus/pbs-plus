@@ -4,9 +4,9 @@ package verification
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
+	sha256simd "github.com/minio/sha256-simd"
 	"io"
 	"math"
 	"math/rand"
@@ -35,6 +35,14 @@ var (
 	ErrNoFilesToVerify   = errors.New("no files matched filters for verification")
 	ErrAgentNotConnected = errors.New("agent not connected for verification")
 	ErrNotAgentTarget    = errors.New("verification requires an agent target")
+
+	// bufPool provides reusable 256KB buffers for streaming file hashes.
+	bufPool = sync.Pool{
+		New: func() any {
+			buf := make([]byte, 256*1024)
+			return &buf
+		},
+	}
 )
 
 // fileEntry represents a file found in the pxar archive.
@@ -720,6 +728,9 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 	v.mu.Unlock()
 
 	sampleCount := job.SpotConfig.SampleCount
+	if job.SpotConfig.SampleCountPercent > 0 {
+		sampleCount = int(math.Ceil(float64(len(allFiles)) * job.SpotConfig.SampleCountPercent / 100))
+	}
 	if sampleCount <= 0 {
 		sampleCount = 10
 	}
@@ -964,8 +975,11 @@ func extractFileHash(vs *verifyState, file fileEntry) ([32]byte, error) {
 	}
 	defer func() { _ = rc.Close() }()
 
-	h := sha256.New()
-	if _, err := io.Copy(h, rc); err != nil {
+	h := sha256simd.New()
+	bufp := bufPool.Get().(*[]byte)
+	_, err = io.CopyBuffer(h, rc, *bufp)
+	bufPool.Put(bufp)
+	if err != nil {
 		return [32]byte{}, fmt.Errorf("failed to read file content: %w", err)
 	}
 
