@@ -26,17 +26,15 @@ var strategyDescriptions = {
 
 // --- Size unit helpers ---
 
-var sizeUnits = [
-  { display: "B", factor: 1 },
-  { display: "KiB", factor: 1024 },
-  { display: "MiB", factor: 1048576 },
-  { display: "GiB", factor: 1073741824 },
-  { display: "TiB", factor: 1099511627776 },
-];
-
 var sizeUnitStore = Ext.create("Ext.data.Store", {
-  fields: ["display", "factor"],
-  data: sizeUnits,
+  fields: ["display", "value"],
+  data: [
+    { display: "B", value: 1 },
+    { display: "KiB", value: 1024 },
+    { display: "MiB", value: 1048576 },
+    { display: "GiB", value: 1073741824 },
+    { display: "TiB", value: 1099511627776 },
+  ],
 });
 
 function renderSizeValue(bytes) {
@@ -48,11 +46,11 @@ function renderSizeValue(bytes) {
 }
 
 function bestUnitForBytes(bytes) {
-  if (!bytes || bytes < 1024) return sizeUnits[0];
-  for (var i = sizeUnits.length - 1; i >= 1; i--) {
-    if (bytes >= sizeUnits[i].factor) return sizeUnits[i];
+  if (!bytes || bytes < 1024) return sizeUnitStore.getAt(0);
+  for (var i = sizeUnitStore.getCount() - 1; i >= 1; i--) {
+    if (bytes >= sizeUnitStore.getAt(i).get("value")) return sizeUnitStore.getAt(i);
   }
-  return sizeUnits[0];
+  return sizeUnitStore.getAt(0);
 }
 
 // --- Filter edit popup ---
@@ -111,7 +109,7 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 minValue: 0,
                 decimalPrecision: 2,
                 flex: 1,
-                value: minBytes > 0 ? (minBytes / minUnit.factor) : 0,
+                value: minBytes > 0 ? (minBytes / minUnit.get("value")) : 0,
                 listeners: {
                   change: function (f) {
                     f.up("form").down("[name=min_size_unit]").setReadOnly(f.getValue() === 0);
@@ -122,18 +120,17 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 },
               },
               {
-                xtype: "combobox",
+                xtype: "combo",
                 name: "min_size_unit",
                 store: sizeUnitStore,
                 displayField: "display",
-                valueField: "factor",
+                valueField: "value",
                 queryMode: "local",
-                value: minUnit.factor,
-                width: 80,
                 editable: false,
+                anyMatch: true,
                 forceSelection: true,
-                matchFieldWidth: false,
-                pickerAlign: "tl-tr",
+                value: minUnit.get("value"),
+                width: 80,
                 margin: "0 0 0 5",
               },
             ],
@@ -149,7 +146,7 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 minValue: 0,
                 decimalPrecision: 2,
                 flex: 1,
-                value: maxBytes > 0 ? (maxBytes / maxUnit.factor) : 0,
+                value: maxBytes > 0 ? (maxBytes / maxUnit.get("value")) : 0,
                 listeners: {
                   change: function (f) {
                     f.up("form").down("[name=max_size_unit]").setReadOnly(f.getValue() === 0);
@@ -160,18 +157,17 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
                 },
               },
               {
-                xtype: "combobox",
+                xtype: "combo",
                 name: "max_size_unit",
                 store: sizeUnitStore,
                 displayField: "display",
-                valueField: "factor",
+                valueField: "value",
                 queryMode: "local",
-                value: maxUnit.factor,
-                width: 80,
                 editable: false,
+                anyMatch: true,
                 forceSelection: true,
-                matchFieldWidth: false,
-                pickerAlign: "tl-tr",
+                value: maxUnit.get("value"),
+                width: 80,
                 margin: "0 0 0 5",
               },
             ],
@@ -265,7 +261,7 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       },
     },
     {
-      xtype: "combobox",
+      xtype: "combo",
       reference: "backupJobField",
       fieldLabel: gettext("Backup Job"),
       name: "backup_job_id",
@@ -520,18 +516,17 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
           },
         },
         {
-          xtype: "combobox",
+          xtype: "combo",
           name: "max_file_size_unit",
           store: sizeUnitStore,
           displayField: "display",
-          valueField: "factor",
+          valueField: "value",
           queryMode: "local",
+          editable: false,
+          anyMatch: true,
+          forceSelection: true,
           value: 1048576,
           width: 80,
-          editable: false,
-          forceSelection: true,
-          matchFieldWidth: false,
-          pickerAlign: "tl-tr",
           margin: "0 0 0 5",
         },
       ],
@@ -726,8 +721,8 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       var unit = bestUnitForBytes(maxBytes);
       var valField = me.down("[name=max_file_size_val]");
       var unitField = me.down("[name=max_file_size_unit]");
-      if (valField) valField.setValue(maxBytes / unit.factor);
-      if (unitField) unitField.setValue(unit.factor);
+      if (valField) valField.setValue(maxBytes / unit.get("value"));
+      if (unitField) unitField.setValue(unit.get("value"));
     }
 
     // Update strategy description
