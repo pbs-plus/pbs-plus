@@ -113,7 +113,11 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 
 				if stop {
-					// TODO: implement stop via RPC
+					for _, jobID := range decodedJobIDs {
+						if !verification.StopJob(jobID) {
+							syslog.L.Warn().WithField("verificationJobID", jobID).WithMessage("job not running, cannot stop").Write()
+						}
+					}
 					continue
 				}
 
@@ -126,6 +130,9 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				go func(id string) {
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 					defer cancel()
+
+					verification.RegisterJob(id, cancel)
+					defer verification.UnregisterJob(id)
 
 					defer func() {
 						if vj.Cleanup != nil {

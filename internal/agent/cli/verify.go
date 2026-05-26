@@ -1,0 +1,210 @@
+package cli
+
+import (
+	"bufio"
+	"context"
+	cryptoRand "crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/containers/winquit/pkg/winquit"
+	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
+	agentverification "github.com/pbs-plus/pbs-plus/internal/agent/verification"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
+)
+
+func ExecVerification(verifyID string) (int, error) {
+	syslog.L.Info().WithMessage("verify: exec begin").
+		WithField("verifyID", verifyID).
+		Write()
+
+	if err := validate.ValidateJobId(verifyID); err != nil {
+		return -1, fmt.Errorf("invalid verifyID: %w", err)
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := cryptoRand.Read(tokenBytes); err != nil {
+		return -1, err
+	}
+	token := base64.StdEncoding.EncodeToString(tokenBytes)
+
+	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-verify-%s", verifyID))
+	if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
+		return -1, err
+	}
+
+	defer func() {
+		time.Sleep(5 * time.Second)
+		os.Remove(tokenFile)
+	}()
+
+	execCmd, err := os.Executable()
+	if err != nil {
+		return -1, err
+	}
+
+	args := []string{
+		"--cmdMode=verify",
+		"--id=" + verifyID,
+		"--token=" + token,
+	}
+
+	cmd := exec.Command(execCmd, args...)
+	setProcAttributes(cmd)
+	cmd.Env = os.Environ()
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return -1, err
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return -1, err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	syslog.L.Info().WithMessage("verify: child process started").
+		WithField("pid", cmd.Process.Pid).
+		WithField("args", strings.Join(args, " ")).
+		Write()
+
+	go func() {
+		for scanner := bufio.NewScanner(stdoutPipe); scanner.Scan(); {
+			syslog.L.Info().
+				WithField("verifyID", verifyID).
+				WithField("forked", true).
+				WithMessage(scanner.Text()).Write()
+		}
+	}()
+
+	go func() {
+		for errScanner := bufio.NewScanner(stderrPipe); errScanner.Scan(); {
+			syslog.L.Error(errors.New(errScanner.Text())).
+				WithField("verifyID", verifyID).
+				WithField("forked", true).
+				Write()
+		}
+	}()
+
+	syslog.L.Info().WithMessage("verify: returning to parent").
+		WithField("pid", cmd.Process.Pid).
+		Write()
+
+	return cmd.Process.Pid, nil
+}
+
+func cmdVerify(verifyID *string) {
+	if *verifyID == "" {
+		fmt.Fprintln(os.Stderr, "Error: verifyID is required")
+		os.Exit(1)
+	}
+
+	if err := validate.ValidateJobId(*verifyID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: invalid verifyID: %v\n", err)
+		os.Exit(1)
+	}
+
+	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("verify: failed to get server URL").Write()
+		os.Exit(1)
+	}
+	uri, err := agent.ParseURI(serverUrl.Value)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("verify: failed to parse URI").Write()
+		os.Exit(1)
+	}
+	tlsConfig, err := agent.GetTLSConfig()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("verify: failed to get TLS config").Write()
+		os.Exit(1)
+	}
+
+	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), conf.ARPCServerPort)
+	headers := http.Header{}
+	headers.Add("X-PBS-Plus-VerifyID", *verifyID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
+	winquit.SimulateSigTermOnQuit(done)
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		defer syslog.L.Info().WithMessage("verify: arpc session handler shutting down").Write()
+
+		syslog.L.Info().WithMessage("verify: attempting connection").WithField("verifyID", *verifyID).Write()
+
+		session, err := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+		if err != nil {
+			if strings.Contains(err.Error(), "(code 403)") {
+				syslog.L.Error(err).WithMessage("verify: authorization failed, shutting down").Write()
+			} else {
+				syslog.L.Error(err).WithMessage("verify: connection failed").Write()
+			}
+			cancel()
+			return
+		}
+		defer session.Close()
+
+		router := arpc.NewRouter()
+		router.Handle("verify_chunk_file", agentverification.VerifyChunkFileHandler)
+		session.SetRouter(router)
+
+		syslog.L.Info().WithMessage("verify: session ready, serving").
+			WithField("verifyID", *verifyID).
+			Write()
+
+		if err := session.Serve(); err != nil {
+			syslog.L.Warn().WithMessage("verify: ARPC session ended").WithField("error", err.Error()).Write()
+		}
+	})
+
+	go func() {
+		sig := <-done
+		syslog.L.Info().WithMessage(fmt.Sprintf("verify: received signal %v", sig)).Write()
+		cancel()
+	}()
+
+	wg.Wait()
+
+	syslog.L.Info().WithMessage("verify: finished").Write()
+	os.Exit(0)
+}
+
+// VerifyStartHandler is the ARPC handler that forks a verification worker
+// process. The forked process connects back to the server via TCP.
+func VerifyStartHandler(req *arpc.Request) (arpc.Response, error) {
+	var reqData agentverification.VerifyStartReq
+	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
+		return arpc.Response{}, err
+	}
+
+	pid, err := ExecVerification(reqData.VerifyID)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	return arpc.Response{Status: 200, Message: fmt.Sprintf("%d", pid)}, nil
+}

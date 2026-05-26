@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
@@ -43,7 +44,47 @@ var (
 			return &buf
 		},
 	}
+
+	// activeJobs tracks currently running verification jobs for cancellation.
+	activeJobs = struct {
+		sync.RWMutex
+		m map[string]context.CancelFunc
+	}{m: make(map[string]context.CancelFunc)}
 )
+
+// RegisterJob registers a running verification job for cancellation tracking.
+func RegisterJob(jobID string, cancel context.CancelFunc) {
+	activeJobs.Lock()
+	activeJobs.m[jobID] = cancel
+	activeJobs.Unlock()
+}
+
+// UnregisterJob removes a finished verification job from tracking.
+func UnregisterJob(jobID string) {
+	activeJobs.Lock()
+	delete(activeJobs.m, jobID)
+	activeJobs.Unlock()
+}
+
+// StopJob cancels a running verification job. Returns false if not running.
+func StopJob(jobID string) bool {
+	activeJobs.RLock()
+	cancel, ok := activeJobs.m[jobID]
+	activeJobs.RUnlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
+
+// IsJobRunning checks if a verification job is currently running.
+func IsJobRunning(jobID string) bool {
+	activeJobs.RLock()
+	_, ok := activeJobs.m[jobID]
+	activeJobs.RUnlock()
+	return ok
+}
 
 // readerFunc adapts a function to io.Reader for context-aware reads.
 type readerFunc func([]byte) (int, error)
@@ -236,24 +277,57 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			continue
 		}
 
-		// Try to get agent connection
+		// Get the agent's main control session (QUIC or TCP) to send the fork command.
 		hostname := backup.Target.GetHostname()
-		var agentCaller interface {
-			Call(ctx context.Context, method string, payload any, out any) error
+		streamID := hostname + "|" + job.ID + "|verify"
+
+		type caller interface {
+			CallMessage(ctx context.Context, method string, payload any) (string, error)
 		}
-		if sess, ok := v.storeInstance.ARPCAgentsManager.GetStreamPipe(hostname); ok {
-			agentCaller = sess
-		} else if sess, ok := v.storeInstance.ARPCAgentsManager.GetQuicPipe(hostname); ok {
-			agentCaller = sess
+		var controlSess caller
+		if sess, ok := v.storeInstance.ARPCAgentsManager.GetQuicPipe(hostname); ok {
+			controlSess = sess
+		} else if sess, ok := v.storeInstance.ARPCAgentsManager.GetStreamPipe(hostname); ok {
+			controlSess = sess
 		} else {
 			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': agent '%s' not connected", backup.ID, hostname))
 			lastStartupErr = ErrAgentNotConnected
 			continue
 		}
 
+		// Send verify_start control message to fork the worker process
+		v.storeInstance.ARPCAgentsManager.Expect(streamID)
+
+		verifyReq := verification.VerifyStartReq{VerifyID: job.ID}
+		forkCtx, forkCancel := context.WithTimeout(ctx, 30*time.Second)
+		_, forkErr := controlSess.CallMessage(forkCtx, "verify_start", &verifyReq)
+		forkCancel()
+		if forkErr != nil {
+			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
+			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to fork verification worker: %v", backup.ID, forkErr))
+			lastStartupErr = forkErr
+			continue
+		}
+
+		// Wait for the forked process to connect back via TCP
+		pipeCtx, pipeCancel := context.WithTimeout(ctx, 30*time.Second)
+		agentTCP, waitErr := v.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, streamID)
+		pipeCancel()
+		if waitErr != nil {
+			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
+			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': verification worker did not connect: %v", backup.ID, waitErr))
+			lastStartupErr = waitErr
+			continue
+		}
+		// TCP session registered; NotExpect is no longer needed
+		v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
+
+		vTask.WriteString(fmt.Sprintf("verification worker connected via TCP for job '%s'", backup.ID))
+
 		// Try to open the archive
 		vs, archiveErr := v.openArchive(backup, snapshot)
 		if archiveErr != nil {
+			agentTCP.Close()
 			vTask.WriteString(fmt.Sprintf("skipping backup job '%s' snapshot '%s': failed to open archive: %v", backup.ID, snapshot.Snapshot, archiveErr))
 			lastStartupErr = archiveErr
 			continue
@@ -262,7 +336,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		vTask.WriteString(fmt.Sprintf("selected backup job '%s', snapshot: %s", backup.ID, snapshot.Snapshot))
 
 		// All startup checks passed — run verification for this snapshot
-		return v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentCaller)
+		return v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentTCP)
 	}
 
 	// All candidates exhausted
@@ -281,11 +355,10 @@ func (v *verificationJob) executeVerification(
 	backup database.Backup,
 	snapshot *snapshotInfo,
 	vs *verifyState,
-	agentCaller interface {
-		Call(ctx context.Context, method string, payload any, out any) error
-	},
+	agentTCP *arpc.StreamPipe,
 ) error {
 	defer func() { _ = vs.Close() }()
+	defer agentTCP.Close()
 
 	// Create a derived context so we can cancel remaining workers on fail threshold
 	ctx, cancel := context.WithCancel(ctx)
@@ -362,7 +435,7 @@ func (v *verificationJob) executeVerification(
 				default:
 				}
 
-				fr := v.verifyFile(ctx, agentCaller, vs, sampledFiles[idx], backup)
+				fr := v.verifyFile(ctx, agentTCP, vs, sampledFiles[idx], backup)
 				resultsCh <- indexedResult{index: idx, result: fr}
 			}
 		})
@@ -979,9 +1052,7 @@ func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg 
 // stored pxar archive.
 func (v *verificationJob) verifyFile(
 	ctx context.Context,
-	agentCaller interface {
-		Call(ctx context.Context, method string, payload any, out any) error
-	},
+	agentTCP *arpc.StreamPipe,
 	vs *verifyState,
 	file fileEntry,
 	backup database.Backup,
@@ -1016,7 +1087,9 @@ func (v *verificationJob) verifyFile(
 
 	go func() {
 		var resp verification.VerifyFileResp
-		err := agentCaller.Call(ctx, "verify_chunk_file", verification.VerifyFileReq{FilePath: agentPath}, &resp)
+		fileCtx, fileCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer fileCancel()
+		err := agentTCP.Call(fileCtx, "verify_chunk_file", verification.VerifyFileReq{FilePath: agentPath}, &resp)
 		agentCh <- agentResult{resp: resp, err: err}
 	}()
 

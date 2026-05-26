@@ -24,7 +24,7 @@ func Entry() {
 	token := flag.String("token", "", "Auth Token")
 	flag.Parse()
 
-	if *cmdMode != "restore" && *cmdMode != "backup" {
+	if *cmdMode != "restore" && *cmdMode != "backup" && *cmdMode != "verify" {
 		syslog.L.Debug().WithMessage("cli: invalid command mode").WithField("cmdMode", *cmdMode).Write()
 		return
 	}
@@ -86,5 +86,7 @@ func Entry() {
 		cmdBackup(sourceMode, readMode, drive, id)
 	case "restore":
 		cmdRestore(id, srcPath, destPath, restoreMode)
+	case "verify":
+		cmdVerify(id)
 	}
 }
