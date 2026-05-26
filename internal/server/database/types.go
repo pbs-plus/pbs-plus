@@ -243,19 +243,21 @@ type AgentToken struct {
 
 // VerificationJob represents a data verification job configuration.
 type VerificationJob struct {
-	ID            string          `json:"id"`
-	BackupJobID   string          `json:"backup_job_id"`
-	Store         string          `json:"store"`
-	Namespace     string          `json:"ns"`
-	Mode          string          `json:"mode"`
-	Schedule      string          `json:"schedule"`
-	Comment       string          `json:"comment"`
-	SpotConfig    SpotCheckConfig `json:"spot_config"`
-	NextRun       int64           `json:"next-run"`
-	Retry         int             `json:"retry"`
-	RetryInterval int             `json:"retry-interval"`
-	History       JobHistory      `json:"history"`
-	CreatedAt     int64           `json:"created_at"`
+	ID                  string          `json:"id"`
+	BackupJobID         string          `json:"backup_job_id"`
+	Store               string          `json:"store"`
+	Namespace           string          `json:"ns"`
+	Mode                string          `json:"mode"`
+	Schedule            string          `json:"schedule"`
+	Comment             string          `json:"comment"`
+	SpotConfig          SpotCheckConfig `json:"spot_config"`
+	NextRun             int64           `json:"next-run"`
+	Retry               int             `json:"retry"`
+	RetryInterval       int             `json:"retry-interval"`
+	History             JobHistory      `json:"history"`
+	RunOnBackupComplete bool            `json:"run_on_backup_complete"`
+	PendingSince        int64           `json:"pending_since"`
+	CreatedAt           int64           `json:"created_at"`
 }
 
 // SpotCheckConfig holds configuration for random spot check mode.
@@ -266,6 +268,8 @@ type SpotCheckConfig struct {
 	DateFrom         string            `json:"date_from"` // RFC3339 or empty
 	DateTo           string            `json:"date_to"`   // RFC3339 or empty
 	Filters          []SpotCheckFilter `json:"filters"`
+	MaxFileSize      int64             `json:"max_file_size"`  // skip files larger than this (0 = no limit)
+	FailThreshold    int               `json:"fail_threshold"` // stop after N failures (0 = no limit)
 }
 
 // SpotCheckFilter defines a filter for selecting files in spot checks.

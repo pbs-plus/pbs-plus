@@ -15,8 +15,9 @@ INSERT INTO verification_jobs (
     id, backup_job_id, store, namespace, mode, schedule, comment,
     spot_config, last_run_upid, last_successful_upid,
     last_run_status, retry_count, retry, retry_interval,
-    last_run_starttime, last_run_endtime, last_successful_endtime
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    last_run_starttime, last_run_endtime, last_successful_endtime,
+    run_on_backup_complete, pending_since
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateVerificationJobParams struct {
@@ -37,6 +38,8 @@ type CreateVerificationJobParams struct {
 	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
 	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
+	RunOnBackupComplete   sql.NullInt64  `json:"run_on_backup_complete"`
+	PendingSince          sql.NullInt64  `json:"pending_since"`
 }
 
 func (q *Queries) CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error {
@@ -58,6 +61,8 @@ func (q *Queries) CreateVerificationJob(ctx context.Context, arg CreateVerificat
 		arg.LastRunStarttime,
 		arg.LastRunEndtime,
 		arg.LastSuccessfulEndtime,
+		arg.RunOnBackupComplete,
+		arg.PendingSince,
 	)
 	return err
 }
@@ -159,7 +164,7 @@ func (q *Queries) GetLatestVerificationResult(ctx context.Context, verificationJ
 }
 
 const getVerificationJob = `-- name: GetVerificationJob :one
-SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime
+SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime, run_on_backup_complete, pending_since
 FROM verification_jobs
 WHERE id = ?
 LIMIT 1
@@ -187,6 +192,8 @@ func (q *Queries) GetVerificationJob(ctx context.Context, id string) (Verificati
 		&i.LastRunStarttime,
 		&i.LastRunEndtime,
 		&i.LastSuccessfulEndtime,
+		&i.RunOnBackupComplete,
+		&i.PendingSince,
 	)
 	return i, err
 }
@@ -237,7 +244,7 @@ func (q *Queries) GetVerificationResults(ctx context.Context, verificationJobID 
 }
 
 const listAllVerificationJobs = `-- name: ListAllVerificationJobs :many
-SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime
+SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime, run_on_backup_complete, pending_since
 FROM verification_jobs
 ORDER BY id
 `
@@ -270,6 +277,8 @@ func (q *Queries) ListAllVerificationJobs(ctx context.Context) ([]VerificationJo
 			&i.LastRunStarttime,
 			&i.LastRunEndtime,
 			&i.LastSuccessfulEndtime,
+			&i.RunOnBackupComplete,
+			&i.PendingSince,
 		); err != nil {
 			return nil, err
 		}
@@ -306,7 +315,8 @@ UPDATE verification_jobs
 SET backup_job_id = ?, store = ?, namespace = ?, mode = ?, schedule = ?,
     comment = ?, spot_config = ?, last_run_upid = ?, last_successful_upid = ?,
     last_run_status = ?, retry_count = ?, retry = ?, retry_interval = ?,
-    last_run_starttime = ?, last_run_endtime = ?, last_successful_endtime = ?
+    last_run_starttime = ?, last_run_endtime = ?, last_successful_endtime = ?,
+    run_on_backup_complete = ?, pending_since = ?
 WHERE id = ?
 `
 
@@ -327,6 +337,8 @@ type UpdateVerificationJobParams struct {
 	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
 	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
+	RunOnBackupComplete   sql.NullInt64  `json:"run_on_backup_complete"`
+	PendingSince          sql.NullInt64  `json:"pending_since"`
 	ID                    string         `json:"id"`
 }
 
@@ -348,6 +360,8 @@ func (q *Queries) UpdateVerificationJob(ctx context.Context, arg UpdateVerificat
 		arg.LastRunStarttime,
 		arg.LastRunEndtime,
 		arg.LastSuccessfulEndtime,
+		arg.RunOnBackupComplete,
+		arg.PendingSince,
 		arg.ID,
 	)
 	return err

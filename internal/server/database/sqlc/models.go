@@ -119,6 +119,8 @@ type VerificationJob struct {
 	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
 	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
+	RunOnBackupComplete   sql.NullInt64  `json:"run_on_backup_complete"`
+	PendingSince          sql.NullInt64  `json:"pending_since"`
 }
 
 type VerificationResult struct {

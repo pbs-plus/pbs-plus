@@ -7,6 +7,23 @@ var verificationModes = Ext.create("Ext.data.Store", {
   ],
 });
 
+// --- Sampling strategy descriptions ---
+
+var strategyDescriptions = {
+  random:
+    '<i class="fa fa-shuffle" style="margin-right:4px;color:#888;"></i>' +
+    '<b>Random</b> — Shuffle all eligible files and pick the first N. ' +
+    "Provides statistically uniform coverage. Best for general-purpose verification.",
+  systematic:
+    '<i class="fa fa-arrows-left-right" style="margin-right:4px;color:#888;"></i>' +
+    '<b>Systematic</b> — Sort files by path, then pick evenly-spaced entries. ' +
+    "Ensures broad spatial coverage across the entire archive.",
+  stratified:
+    '<i class="fa fa-layer-group" style="margin-right:4px;color:#888;"></i>' +
+    '<b>Stratified</b> — Group files by top-level directory, then sample proportionally from each group. ' +
+    "Ensures every directory tree is represented.",
+};
+
 // --- Size unit helpers ---
 
 var sizeUnits = [
@@ -62,7 +79,6 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
       me.title = gettext("Edit Filter");
     }
 
-    // Resolve best unit for existing values
     var minBytes = isEdit ? me.editRecord.get("min_size") || 0 : 0;
     var maxBytes = isEdit ? me.editRecord.get("max_size") || 0 : 0;
     var minUnit = bestUnitForBytes(minBytes);
@@ -244,6 +260,21 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       },
     },
     {
+      xtype: "checkbox",
+      fieldLabel: gettext("Run after backup"),
+      name: "run_on_backup_complete",
+      inputValue: "true",
+      uncheckedValue: "false",
+      boxLabel: gettext("Wait for backup completion"),
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Instead of running at the scheduled time, wait for the backup job to complete " +
+          "successfully after the scheduled time has passed."
+        ),
+      },
+    },
+    {
       xtype: "combo",
       fieldLabel: gettext("Verification Mode"),
       name: "mode",
@@ -306,25 +337,38 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       name: "sampling_strategy",
       queryMode: "local",
       store: [
-        ["random", gettext("Random")],
-        ["systematic", gettext("Systematic")],
-        ["stratified", gettext("Stratified")],
+        ["random", "Random"],
+        ["systematic", "Systematic"],
+        ["stratified", "Stratified"],
       ],
       value: "random",
       editable: false,
       forceSelection: true,
+      listeners: {
+        change: function (combo, val) {
+          var descBox = combo.up("pbsD2DVerificationSpotCheckPanel") ||
+            combo.up("panel");
+          if (descBox && descBox.down("[reference=strategyDesc]")) {
+            descBox.down("[reference=strategyDesc]").setHtml(
+              strategyDescriptions[val] || ""
+            );
+          }
+        },
+      },
     },
     {
       xtype: "component",
-      html:
-        '<span style="color:#555;font-size:11px;">' +
-        gettext(
-          "Random: statistically uniform sampling. " +
-          "Systematic: evenly-spaced across sorted paths for better coverage. " +
-          "Stratified: proportional sampling per top-level directory."
-        ) +
-        "</span>",
-      margin: "0 0 5 0",
+      reference: "strategyDesc",
+      html: strategyDescriptions["random"],
+      margin: "0 0 10 0",
+      style: {
+        padding: "8px 10px",
+        background: "#f5f5f5",
+        borderRadius: "4px",
+        fontSize: "11px",
+        lineHeight: "16px",
+        border: "1px solid #e0e0e0",
+      },
     },
     {
       xtype: "checkbox",
@@ -335,22 +379,87 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       value: true,
     },
     {
-      xtype: "datefield",
-      fieldLabel: gettext("Date From"),
-      name: "date_from",
-      format: "Y-m-d",
-      emptyText: gettext("Optional"),
-    },
-    {
-      xtype: "datefield",
-      fieldLabel: gettext("Date To"),
-      name: "date_to",
-      format: "Y-m-d",
-      emptyText: gettext("Optional"),
+      xtype: "fieldcontainer",
+      fieldLabel: gettext("Date Range"),
+      layout: "hbox",
+      items: [
+        {
+          xtype: "datefield",
+          name: "date_from",
+          format: "Y-m-d",
+          emptyText: gettext("From"),
+          flex: 1,
+        },
+        {
+          xtype: "component",
+          html: "&nbsp;&ndash;&nbsp;",
+        },
+        {
+          xtype: "datefield",
+          name: "date_to",
+          format: "Y-m-d",
+          emptyText: gettext("To"),
+          flex: 1,
+        },
+      ],
     },
   ],
 
-  column2: [],
+  column2: [
+    {
+      xtype: "fieldcontainer",
+      fieldLabel: gettext("Max File Size"),
+      layout: "hbox",
+      items: [
+        {
+          xtype: "numberfield",
+          name: "max_file_size_val",
+          minValue: 0,
+          decimalPrecision: 2,
+          flex: 1,
+          value: 0,
+          emptyText: gettext("No limit"),
+          listeners: {
+            change: function (f) {
+              f.up("fieldcontainer").down("[name=max_file_size_unit]").setReadOnly(f.getValue() === 0);
+            },
+            afterrender: function (f) {
+              f.up("fieldcontainer").down("[name=max_file_size_unit]").setReadOnly(f.getValue() === 0);
+            },
+          },
+        },
+        {
+          xtype: "combobox",
+          name: "max_file_size_unit",
+          store: sizeUnitStore,
+          displayField: "display",
+          valueField: "factor",
+          value: 1048576,
+          width: 70,
+          editable: false,
+          forceSelection: true,
+          margin: "0 0 0 5",
+        },
+      ],
+    },
+    {
+      xtype: "numberfield",
+      fieldLabel: gettext("Fail Threshold"),
+      name: "fail_threshold",
+      minValue: 0,
+      maxValue: 100000,
+      value: 0,
+      allowBlank: true,
+      emptyText: gettext("No limit"),
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Stop verification after this many file failures. " +
+          "Set to 0 to verify all sampled files regardless of failures."
+        ),
+      },
+    },
+  ],
 
   columnB: [
     {
@@ -358,6 +467,12 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       name: "filters",
       reference: "filtersHidden",
       value: "[]",
+    },
+    {
+      xtype: "hiddenfield",
+      name: "max_file_size",
+      reference: "maxFileSizeHidden",
+      value: "0",
     },
     {
       xtype: "fieldset",
@@ -460,14 +575,12 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
           ],
           listeners: {
             boxready: function (grid) {
-              // Stash a reference so the parent panel can access it
               var panel = grid.up("pbsD2DVerificationSpotCheckPanel") ||
                 grid.up("panel");
               if (panel) {
                 panel.filterGrid = grid;
               }
 
-              // Provide sync helper
               grid.syncHiddenField = function () {
                 var hidden = grid.up("fieldset").down("hiddenfield[name=filters]");
                 if (!hidden) return;
@@ -513,7 +626,42 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       }
     }
 
+    // Restore max_file_size composite field from raw bytes
+    var maxBytes = values.max_file_size || 0;
+    if (maxBytes > 0) {
+      var unit = bestUnitForBytes(maxBytes);
+      var valField = me.down("[name=max_file_size_val]");
+      var unitField = me.down("[name=max_file_size_unit]");
+      if (valField) valField.setValue(maxBytes / unit.factor);
+      if (unitField) unitField.setValue(unit.factor);
+    }
+
+    // Update strategy description
+    if (values.sampling_strategy) {
+      var descBox = me.down("[reference=strategyDesc]");
+      if (descBox) {
+        descBox.setHtml(strategyDescriptions[values.sampling_strategy] || "");
+      }
+    }
+
     return values;
+  },
+
+  getValues: function () {
+    var me = this;
+    var vals = me.callParent(arguments);
+
+    // Convert max_file_size composite field to raw bytes
+    var maxVal = parseFloat(vals.max_file_size_val) || 0;
+    var maxFactor = parseInt(vals.max_file_size_unit, 10) || 1;
+    vals.max_file_size = Math.round(maxVal * maxFactor);
+    delete vals.max_file_size_val;
+    delete vals.max_file_size_unit;
+
+    // Clean up hidden field value
+    delete vals["max_file_size"];
+
+    return vals;
   },
 });
 

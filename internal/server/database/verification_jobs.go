@@ -124,6 +124,8 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		LastRunStarttime:      toNullInt64(int(job.History.LastRunStarttime)),
 		LastRunEndtime:        toNullInt64(int(job.History.LastRunEndtime)),
 		LastSuccessfulEndtime: toNullInt64(int(job.History.LastSuccessfulEndtime)),
+		RunOnBackupComplete:   boolToNullInt64(job.RunOnBackupComplete),
+		PendingSince:          toNullInt64(int(job.PendingSince)),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateVerificationJob: error inserting verification job: %w", err)
@@ -143,15 +145,17 @@ func (database *Database) GetVerificationJob(id string) (VerificationJob, error)
 	}
 
 	job := VerificationJob{
-		ID:            row.ID,
-		BackupJobID:   row.BackupJobID,
-		Store:         row.Store,
-		Namespace:     fromNullString(row.Namespace),
-		Mode:          row.Mode,
-		Schedule:      fromNullString(row.Schedule),
-		Comment:       fromNullString(row.Comment),
-		Retry:         fromNullInt64(row.Retry),
-		RetryInterval: fromNullInt64(row.RetryInterval),
+		ID:                  row.ID,
+		BackupJobID:         row.BackupJobID,
+		Store:               row.Store,
+		Namespace:           fromNullString(row.Namespace),
+		Mode:                row.Mode,
+		Schedule:            fromNullString(row.Schedule),
+		Comment:             fromNullString(row.Comment),
+		Retry:               fromNullInt64(row.Retry),
+		RetryInterval:       fromNullInt64(row.RetryInterval),
+		RunOnBackupComplete: fromNullInt64ToBool(row.RunOnBackupComplete),
+		PendingSince:        int64(fromNullInt64(row.PendingSince)),
 		History: JobHistory{
 			LastRunUpid:           fromNullString(row.LastRunUpid),
 			LastSuccessfulUpid:    fromNullString(row.LastSuccessfulUpid),
@@ -214,15 +218,17 @@ func (database *Database) GetAllVerificationJobs() ([]VerificationJob, error) {
 	jobs := make([]VerificationJob, len(rows))
 	for i, row := range rows {
 		job := VerificationJob{
-			ID:            row.ID,
-			BackupJobID:   row.BackupJobID,
-			Store:         row.Store,
-			Namespace:     fromNullString(row.Namespace),
-			Mode:          row.Mode,
-			Schedule:      fromNullString(row.Schedule),
-			Comment:       fromNullString(row.Comment),
-			Retry:         fromNullInt64(row.Retry),
-			RetryInterval: fromNullInt64(row.RetryInterval),
+			ID:                  row.ID,
+			BackupJobID:         row.BackupJobID,
+			Store:               row.Store,
+			Namespace:           fromNullString(row.Namespace),
+			Mode:                row.Mode,
+			Schedule:            fromNullString(row.Schedule),
+			Comment:             fromNullString(row.Comment),
+			Retry:               fromNullInt64(row.Retry),
+			RetryInterval:       fromNullInt64(row.RetryInterval),
+			RunOnBackupComplete: fromNullInt64ToBool(row.RunOnBackupComplete),
+			PendingSince:        int64(fromNullInt64(row.PendingSince)),
 			History: JobHistory{
 				LastRunUpid:           fromNullString(row.LastRunUpid),
 				LastSuccessfulUpid:    fromNullString(row.LastSuccessfulUpid),
@@ -320,6 +326,8 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 		LastRunStarttime:      toNullInt64(int(job.History.LastRunStarttime)),
 		LastRunEndtime:        toNullInt64(int(job.History.LastRunEndtime)),
 		LastSuccessfulEndtime: toNullInt64(int(job.History.LastSuccessfulEndtime)),
+		RunOnBackupComplete:   boolToNullInt64(job.RunOnBackupComplete),
+		PendingSince:          toNullInt64(int(job.PendingSince)),
 		ID:                    job.ID,
 	})
 	if err != nil {

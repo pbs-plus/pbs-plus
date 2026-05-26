@@ -31,6 +31,7 @@ type Store struct {
 	VerificationSvc   *application.VerificationService
 	ARPCAgentsManager *arpc.AgentsManager
 	Manager           *jobs.Manager
+	OnBackupComplete  func(backupJobID string) // called after backup completion to trigger pending verifications
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
 	CertManager       *mtls.CertManager
 }

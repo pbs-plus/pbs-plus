@@ -260,6 +260,12 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			vTask.WriteString(fmt.Sprintf("file skipped: %s - %s", file.Path, fileResult.Message))
 		}
 
+		// Fail threshold: stop early after N failures
+		if job.SpotConfig.FailThreshold > 0 && result.FailedFiles >= job.SpotConfig.FailThreshold {
+			vTask.WriteString(fmt.Sprintf("fail threshold reached (%d failures), stopping verification", result.FailedFiles))
+			break
+		}
+
 		if (i+1)%10 == 0 || i+1 == len(sampledFiles) {
 			vTask.WriteString(fmt.Sprintf("progress: %d/%d files verified", i+1, len(sampledFiles)))
 		}
@@ -761,6 +767,11 @@ func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix 
 		}
 	} else if entry.IsFile() && len(entry.ContentRange) == 2 {
 		filePath := prefix
+
+		// Skip files exceeding max_file_size limit
+		if cfg.MaxFileSize > 0 && entry.Size() > cfg.MaxFileSize {
+			return files, nil
+		}
 
 		if !v.matchesFilters(filePath, entry, cfg) {
 			return files, nil

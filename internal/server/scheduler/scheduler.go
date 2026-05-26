@@ -306,7 +306,19 @@ func (s *Scheduler) checkVerifications() {
 			continue
 		}
 
-		syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: scheduled verification is due, enqueuing").Write()
+		syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: scheduled verification is due").Write()
+
+		if vJob.RunOnBackupComplete {
+			// Don't run yet — mark as pending, wait for backup completion
+			if vJob.PendingSince == 0 {
+				vJob.PendingSince = now.Unix()
+				if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
+					syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: failed to set pending_since").Write()
+				}
+				syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: verification pending until backup completes").Write()
+			}
+			continue
+		}
 
 		job, err := verification.NewVerificationJob(vJob, s.storeInstance, false)
 		if err != nil {
@@ -317,6 +329,52 @@ func (s *Scheduler) checkVerifications() {
 		go func(id string) {
 			if err := s.manager.Enqueue(job); err != nil {
 				syslog.L.Error(err).WithField("verificationJobID", id).WithMessage("Scheduler: failed to enqueue verification").Write()
+			}
+		}(vJob.ID)
+	}
+}
+
+// TriggerPendingVerifications checks for verification jobs that are pending
+// (waiting for backup completion) targeting the given backup job, and enqueues them.
+func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
+	vJobs, err := s.storeInstance.Database.GetAllVerificationJobs()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("TriggerPendingVerifications: failed to list verification jobs").Write()
+		return
+	}
+
+	for _, vJob := range vJobs {
+		if vJob.BackupJobID != backupJobID {
+			continue
+		}
+		if vJob.PendingSince == 0 {
+			continue
+		}
+		if s.manager.IsRunning(vJob.ID) {
+			continue
+		}
+
+		syslog.L.Info().
+			WithField("verificationJobID", vJob.ID).
+			WithField("backupJobID", backupJobID).
+			WithMessage("backup completed, triggering pending verification").Write()
+
+		// Clear pending state
+		vJob.PendingSince = 0
+		if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
+			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("failed to clear pending_since").Write()
+			continue
+		}
+
+		job, err := verification.NewVerificationJob(vJob, s.storeInstance, false)
+		if err != nil {
+			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("failed to create verification job").Write()
+			continue
+		}
+
+		go func(id string) {
+			if err := s.manager.Enqueue(job); err != nil {
+				syslog.L.Error(err).WithField("verificationJobID", id).WithMessage("failed to enqueue verification").Write()
 			}
 		}(vJob.ID)
 	}
