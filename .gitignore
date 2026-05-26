@@ -11,3 +11,4 @@ pbs-plus-agent
 *.exe
 /pxar-mount
 internal/pxarmount/journal.db
+pbs-plus-server
