@@ -66,7 +66,7 @@ type verificationJob struct {
 	task          *VerificationTask
 	queueTask     *tasks.QueuedTask
 	job           database.VerificationJob
-	backupJob     database.Backup
+	backupJobs    []database.Backup // candidates (1 for backup_job mode, N for namespace mode)
 	storeInstance *store.Store
 	web           bool
 
@@ -105,17 +105,51 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 	job := v.job
 	v.mu.RUnlock()
 
-	backup, err := v.storeInstance.Database.GetBackup(job.BackupJobID)
-	if err != nil {
-		return fmt.Errorf("failed to get backup job %s: %w", job.BackupJobID, err)
-	}
+	var backups []database.Backup
 
-	if !backup.Target.IsAgent() {
-		return ErrNotAgentTarget
+	if job.TargetMode == "namespace" {
+		// Find all backup jobs targeting this datastore + namespace
+		allBackups, err := v.storeInstance.Database.GetAllBackups()
+		if err != nil {
+			return fmt.Errorf("failed to list backup jobs: %w", err)
+		}
+		for _, b := range allBackups {
+			if b.Store != job.Store {
+				continue
+			}
+			if job.Recursive {
+				// Match if backup namespace is equal to or a child of job.Namespace
+				if job.Namespace == "" || b.Namespace == job.Namespace || strings.HasPrefix(b.Namespace, job.Namespace+"/") {
+					if b.Target.IsAgent() {
+						backups = append(backups, b)
+					}
+				}
+			} else {
+				// Exact namespace match
+				if b.Namespace == job.Namespace {
+					if b.Target.IsAgent() {
+						backups = append(backups, b)
+					}
+				}
+			}
+		}
+		if len(backups) == 0 {
+			return fmt.Errorf("no agent backup jobs found in namespace '%s'", job.Namespace)
+		}
+	} else {
+		// Single backup job mode
+		backup, err := v.storeInstance.Database.GetBackup(job.BackupJobID)
+		if err != nil {
+			return fmt.Errorf("failed to get backup job %s: %w", job.BackupJobID, err)
+		}
+		if !backup.Target.IsAgent() {
+			return ErrNotAgentTarget
+		}
+		backups = []database.Backup{backup}
 	}
 
 	v.mu.Lock()
-	v.backupJob = backup
+	v.backupJobs = backups
 	v.mu.Unlock()
 
 	// Create queued task for PBS task viewer
@@ -153,7 +187,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 
 	v.mu.RLock()
 	job := v.job
-	backup := v.backupJob
+	backups := v.backupJobs
 	v.mu.RUnlock()
 
 	// Create the PBS verification task
@@ -173,14 +207,73 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		syslog.L.Error(err).WithMessage("failed to update job with task UPID").Write()
 	}
 
-	vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
-
-	// Select snapshot
-	snapshot, err := v.selectSnapshot(ctx, job, backup)
-	if err != nil {
-		vTask.WriteString(fmt.Sprintf("failed to select snapshot: %v", err))
-		return fmt.Errorf("failed to select snapshot: %w", err)
+	if job.TargetMode == "namespace" {
+		vTask.WriteString(fmt.Sprintf("starting verification job '%s' targeting namespace '%s' (%d backup jobs)", job.ID, job.Namespace, len(backups)))
+	} else {
+		vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
 	}
+
+	// Try each backup job / snapshot until one succeeds at the startup phase
+	var lastStartupErr error
+	for _, backup := range backups {
+		snapshot, snapErr := v.selectSnapshot(ctx, job, backup)
+		if snapErr != nil {
+			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to select snapshot: %v", backup.ID, snapErr))
+			lastStartupErr = snapErr
+			continue
+		}
+
+		// Try to get agent connection
+		hostname := backup.Target.GetHostname()
+		var agentCaller interface {
+			Call(ctx context.Context, method string, payload any, out any) error
+		}
+		if sess, ok := v.storeInstance.ARPCAgentsManager.GetStreamPipe(hostname); ok {
+			agentCaller = sess
+		} else if sess, ok := v.storeInstance.ARPCAgentsManager.GetQuicPipe(hostname); ok {
+			agentCaller = sess
+		} else {
+			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': agent '%s' not connected", backup.ID, hostname))
+			lastStartupErr = ErrAgentNotConnected
+			continue
+		}
+
+		// Try to open the archive
+		vs, archiveErr := v.openArchive(backup, snapshot)
+		if archiveErr != nil {
+			vTask.WriteString(fmt.Sprintf("skipping backup job '%s' snapshot '%s': failed to open archive: %v", backup.ID, snapshot.Snapshot, archiveErr))
+			lastStartupErr = archiveErr
+			continue
+		}
+
+		vTask.WriteString(fmt.Sprintf("selected backup job '%s', snapshot: %s", backup.ID, snapshot.Snapshot))
+
+		// All startup checks passed — run verification for this snapshot
+		return v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentCaller)
+	}
+
+	// All candidates exhausted
+	if lastStartupErr != nil {
+		vTask.WriteString(fmt.Sprintf("all candidates exhausted, last error: %v", lastStartupErr))
+		return lastStartupErr
+	}
+	return fmt.Errorf("no eligible backup jobs found")
+}
+
+// executeVerification runs the actual file verification for a single snapshot.
+func (v *verificationJob) executeVerification(
+	ctx context.Context,
+	vTask *VerificationTask,
+	job database.VerificationJob,
+	backup database.Backup,
+	snapshot *snapshotInfo,
+	vs *verifyState,
+	agentCaller interface {
+		Call(ctx context.Context, method string, payload any, out any) error
+	},
+) error {
+	defer func() { _ = vs.Close() }()
+
 	vTask.WriteString(fmt.Sprintf("selected snapshot: %s", snapshot.Snapshot))
 
 	// Create result record
@@ -203,14 +296,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	v.resultID = result.ID
 	v.mu.Unlock()
 
-	// Open the pxar archive for file extraction
-	vs, err := v.openArchive(backup, snapshot)
-	if err != nil {
-		vTask.WriteString(fmt.Sprintf("failed to open archive: %v", err))
-		return fmt.Errorf("failed to open archive: %w", err)
-	}
-	defer func() { _ = vs.Close() }()
-
 	// Enumerate files from the pxar archive and sample
 	sampledFiles, err := v.sampleFiles(ctx, job, vs, snapshot)
 	if err != nil {
@@ -222,21 +307,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	result.TotalPopulation = v.totalPopulation
 	v.mu.RUnlock()
 	vTask.WriteString(fmt.Sprintf("sampled %d files for verification", len(sampledFiles)))
-
-	// Get agent connection
-	hostname := backup.Target.GetHostname()
-
-	var agentCaller interface {
-		Call(ctx context.Context, method string, payload any, out any) error
-	}
-
-	if sess, ok := v.storeInstance.ARPCAgentsManager.GetStreamPipe(hostname); ok {
-		agentCaller = sess
-	} else if sess, ok := v.storeInstance.ARPCAgentsManager.GetQuicPipe(hostname); ok {
-		agentCaller = sess
-	} else {
-		return ErrAgentNotConnected
-	}
 
 	// Verify each file
 	for i, file := range sampledFiles {

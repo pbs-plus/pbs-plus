@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -343,11 +344,33 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 		return
 	}
 
+	// Get the completed backup job to find its store/namespace
+	completedBackup, err := s.storeInstance.Database.GetBackup(backupJobID)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("TriggerPendingVerifications: failed to get backup job").Write()
+		return
+	}
+
 	for _, vJob := range vJobs {
-		if vJob.BackupJobID != backupJobID {
+		if vJob.PendingSince == 0 {
 			continue
 		}
-		if vJob.PendingSince == 0 {
+
+		// Check if this verification job is relevant to the completed backup
+		matched := false
+		if vJob.TargetMode == "backup_job" && vJob.BackupJobID == backupJobID {
+			matched = true
+		} else if vJob.TargetMode == "namespace" {
+			if vJob.Store == completedBackup.Store {
+				if vJob.Recursive {
+					matched = vJob.Namespace == "" || completedBackup.Namespace == vJob.Namespace || strings.HasPrefix(completedBackup.Namespace, vJob.Namespace+"/")
+				} else {
+					matched = completedBackup.Namespace == vJob.Namespace
+				}
+			}
+		}
+
+		if !matched {
 			continue
 		}
 		if s.manager.IsRunning(vJob.ID) {

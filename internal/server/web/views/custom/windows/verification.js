@@ -231,20 +231,98 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       },
     },
     {
-      xtype: "combobox",
-      fieldLabel: gettext("Backup Job"),
-      name: "backup_job_id",
-      store: {
-        fields: ["id"],
-        proxy: {
-          type: "pbsplus",
-          url: pbsPlusBaseUrl + "/api2/json/d2d/backup",
+      xtype: "fieldcontainer",
+      fieldLabel: gettext("Target"),
+      layout: "vbox",
+      items: [
+        {
+          xtype: "combo",
+          name: "target_mode",
+          queryMode: "local",
+          store: [
+            ["backup_job", gettext("Backup Job")],
+            ["namespace", gettext("Namespace")],
+          ],
+          value: "backup_job",
+          editable: false,
+          forceSelection: true,
+          width: "100%",
+          listeners: {
+            change: function (combo, val) {
+              var panel = combo.up("pbsD2DVerificationOptionsPanel");
+              if (!panel) return;
+              var backupCombo = panel.down("[name=backup_job_id]");
+              var nsFields = panel.down("[reference=namespaceFields]");
+              var recCheck = panel.down("[name=recursive]");
+              if (val === "namespace") {
+                if (backupCombo) backupCombo.setDisabled(true).hide();
+                if (nsFields) nsFields.setDisabled(false).show();
+                if (recCheck) recCheck.setDisabled(false).show();
+              } else {
+                if (backupCombo) backupCombo.setDisabled(false).show();
+                if (nsFields) nsFields.setDisabled(true).hide();
+                if (recCheck) recCheck.setDisabled(true).hide();
+              }
+            },
+          },
         },
-        autoLoad: true,
-      },
-      displayField: "id",
-      valueField: "id",
-      allowBlank: false,
+        {
+          xtype: "combobox",
+          fieldLabel: false,
+          name: "backup_job_id",
+          store: {
+            fields: ["id"],
+            proxy: {
+              type: "pbsplus",
+              url: pbsPlusBaseUrl + "/api2/json/d2d/backup",
+            },
+            autoLoad: true,
+          },
+          displayField: "id",
+          valueField: "id",
+          allowBlank: false,
+          width: "100%",
+          margin: "5 0 0 0",
+        },
+        {
+          xtype: "fieldcontainer",
+          reference: "namespaceFields",
+          layout: "vbox",
+          hidden: true,
+          disabled: true,
+          width: "100%",
+          margin: "5 0 0 0",
+          items: [
+            {
+              xtype: "proxmoxtextfield",
+              name: "store",
+              fieldLabel: gettext("Datastore"),
+              allowBlank: false,
+              width: "100%",
+            },
+            {
+              xtype: "proxmoxtextfield",
+              name: "ns",
+              fieldLabel: gettext("Namespace"),
+              emptyText: gettext("root namespace"),
+              width: "100%",
+              margin: "5 0 0 0",
+            },
+            {
+              xtype: "checkbox",
+              name: "recursive",
+              fieldLabel: gettext("Recursive"),
+              boxLabel: gettext("Include sub-namespaces"),
+              inputValue: "true",
+              uncheckedValue: "false",
+              hidden: true,
+              disabled: true,
+              width: "100%",
+              margin: "5 0 0 0",
+            },
+          ],
+        },
+      ],
     },
   ],
 
@@ -313,6 +391,19 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       },
     },
   ],
+
+  setValues: function (values) {
+    var me = this;
+    me.callParent([values]);
+
+    // Toggle UI based on target_mode
+    if (values.target_mode) {
+      var combo = me.down("[name=target_mode]");
+      if (combo) combo.setValue(values.target_mode);
+    }
+
+    return values;
+  },
 });
 
 // --- Spot Check Settings tab ---

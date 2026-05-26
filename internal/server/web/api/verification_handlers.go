@@ -223,23 +223,42 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 		}
 
 		backupJobID := r.FormValue("backup_job_id")
-		if backupJobID == "" {
-			WriteErrorResponse(w, fmt.Errorf("backup_job_id is required"))
-			return
+		targetMode := r.FormValue("target_mode")
+		if targetMode == "" {
+			targetMode = "backup_job"
 		}
 
-		// Derive store and namespace from the backup job
-		backup, err := storeInstance.Database.GetBackup(backupJobID)
-		if err != nil {
-			WriteErrorResponse(w, fmt.Errorf("failed to get backup job: %w", err))
-			return
+		var store, namespace string
+
+		if targetMode == "namespace" {
+			store = r.FormValue("store")
+			if store == "" {
+				WriteErrorResponse(w, fmt.Errorf("store is required for namespace mode"))
+				return
+			}
+			namespace = r.FormValue("ns")
+		} else {
+			if backupJobID == "" {
+				WriteErrorResponse(w, fmt.Errorf("backup_job_id is required"))
+				return
+			}
+			// Derive store and namespace from the backup job
+			backup, err := storeInstance.Database.GetBackup(backupJobID)
+			if err != nil {
+				WriteErrorResponse(w, fmt.Errorf("failed to get backup job: %w", err))
+				return
+			}
+			store = backup.Store
+			namespace = backup.Namespace
 		}
 
 		job := database.VerificationJob{
 			ID:            r.FormValue("id"),
 			BackupJobID:   backupJobID,
-			Store:         backup.Store,
-			Namespace:     backup.Namespace,
+			Store:         store,
+			Namespace:     namespace,
+			TargetMode:    targetMode,
+			Recursive:     r.FormValue("recursive") == "true",
 			Mode:          r.FormValue("mode"),
 			Schedule:      r.FormValue("schedule"),
 			Comment:       r.FormValue("comment"),
@@ -356,11 +375,26 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			if v := r.FormValue("backup_job_id"); v != "" {
 				job.BackupJobID = v
 			}
-			if v := r.FormValue("store"); v != "" {
-				job.Store = v
+			if v := r.FormValue("target_mode"); v != "" {
+				job.TargetMode = v
 			}
-			if v := r.FormValue("ns"); v != "" {
-				job.Namespace = v
+			if r.FormValue("recursive") != "" {
+				job.Recursive = r.FormValue("recursive") == "true"
+			}
+			// In namespace mode, store/ns come from the form; in backup_job mode, derive from backup job
+			if job.TargetMode == "namespace" {
+				if v := r.FormValue("store"); v != "" {
+					job.Store = v
+				}
+				if v := r.FormValue("ns"); v != "" {
+					job.Namespace = v
+				}
+			} else if job.BackupJobID != "" {
+				backup, err := storeInstance.Database.GetBackup(job.BackupJobID)
+				if err == nil {
+					job.Store = backup.Store
+					job.Namespace = backup.Namespace
+				}
 			}
 			if v := r.FormValue("mode"); v != "" {
 				job.Mode = v

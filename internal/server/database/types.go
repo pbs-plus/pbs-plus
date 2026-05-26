@@ -255,6 +255,8 @@ type VerificationJob struct {
 	Retry               int             `json:"retry"`
 	RetryInterval       int             `json:"retry-interval"`
 	History             JobHistory      `json:"history"`
+	TargetMode          string          `json:"target_mode"` // "backup_job" or "namespace"
+	Recursive           bool            `json:"recursive"`
 	RunOnBackupComplete bool            `json:"run_on_backup_complete"`
 	PendingSince        int64           `json:"pending_since"`
 	CreatedAt           int64           `json:"created_at"`

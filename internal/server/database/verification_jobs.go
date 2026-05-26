@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
@@ -48,7 +49,14 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 	q = database.queries.WithTx(tx.Tx)
 
 	if job.ID == "" {
-		baseID := validate.Slugify(job.BackupJobID) + "-verify"
+		var baseID string
+		if job.BackupJobID != "" {
+			baseID = validate.Slugify(job.BackupJobID) + "-verify"
+		} else if job.Namespace != "" {
+			baseID = validate.Slugify(job.Store+"-"+strings.ReplaceAll(job.Namespace, "/", "-")) + "-verify"
+		} else {
+			baseID = validate.Slugify(job.Store) + "-verify"
+		}
 		if baseID == "-verify" {
 			return errors.New("invalid backup_job_id: slugified value is empty")
 		}
@@ -73,7 +81,7 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		}
 	}
 
-	if job.BackupJobID == "" {
+	if job.BackupJobID == "" && job.TargetMode != "namespace" {
 		return errors.New("backup_job_id is required")
 	}
 	if job.Store == "" {
@@ -131,6 +139,18 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		return fmt.Errorf("CreateVerificationJob: error inserting verification job: %w", err)
 	}
 
+	// Update columns not managed by sqlc
+	targetMode := job.TargetMode
+	if targetMode == "" {
+		targetMode = "backup_job"
+	}
+	_, err = tx.ExecContext(database.ctx,
+		"UPDATE verification_jobs SET target_mode = ?, recursive = ? WHERE id = ?",
+		targetMode, job.Recursive, job.ID)
+	if err != nil {
+		return fmt.Errorf("CreateVerificationJob: error setting target_mode/recursive: %w", err)
+	}
+
 	commitNeeded = true
 	return nil
 }
@@ -179,6 +199,19 @@ func (database *Database) GetVerificationJob(id string) (VerificationJob, error)
 }
 
 func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
+	// Read columns not managed by sqlc
+	if database.readDb != nil {
+		var targetMode string
+		var recursive int
+		if err := database.readDb.QueryRowContext(database.ctx,
+			"SELECT COALESCE(target_mode, 'backup_job'), COALESCE(recursive, 0) FROM verification_jobs WHERE id = ?",
+			job.ID,
+		).Scan(&targetMode, &recursive); err == nil {
+			job.TargetMode = targetMode
+			job.Recursive = recursive != 0
+		}
+	}
+
 	if job.Schedule != "" {
 		ev, err := calendar.Parse(job.Schedule)
 		if err == nil {
@@ -288,7 +321,7 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 	if !validate.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("UpdateVerificationJob: invalid id string -> %s", job.ID)
 	}
-	if job.BackupJobID == "" {
+	if job.BackupJobID == "" && job.TargetMode != "namespace" {
 		return errors.New("backup_job_id is required")
 	}
 	if !validate.IsValidNamespace(job.Namespace) && job.Namespace != "" {
@@ -332,6 +365,18 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 	})
 	if err != nil {
 		return fmt.Errorf("UpdateVerificationJob: error updating: %w", err)
+	}
+
+	// Update columns not managed by sqlc
+	targetMode := job.TargetMode
+	if targetMode == "" {
+		targetMode = "backup_job"
+	}
+	_, err = tx.ExecContext(database.ctx,
+		"UPDATE verification_jobs SET target_mode = ?, recursive = ? WHERE id = ?",
+		targetMode, job.Recursive, job.ID)
+	if err != nil {
+		return fmt.Errorf("UpdateVerificationJob: error setting target_mode/recursive: %w", err)
 	}
 
 	commitNeeded = true

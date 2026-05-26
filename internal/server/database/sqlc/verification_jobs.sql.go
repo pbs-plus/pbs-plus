@@ -164,7 +164,7 @@ func (q *Queries) GetLatestVerificationResult(ctx context.Context, verificationJ
 }
 
 const getVerificationJob = `-- name: GetVerificationJob :one
-SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime, run_on_backup_complete, pending_since
+SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime, run_on_backup_complete, pending_since, target_mode, "recursive"
 FROM verification_jobs
 WHERE id = ?
 LIMIT 1
@@ -194,6 +194,8 @@ func (q *Queries) GetVerificationJob(ctx context.Context, id string) (Verificati
 		&i.LastSuccessfulEndtime,
 		&i.RunOnBackupComplete,
 		&i.PendingSince,
+		&i.TargetMode,
+		&i.Recursive,
 	)
 	return i, err
 }
@@ -244,7 +246,7 @@ func (q *Queries) GetVerificationResults(ctx context.Context, verificationJobID 
 }
 
 const listAllVerificationJobs = `-- name: ListAllVerificationJobs :many
-SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime, run_on_backup_complete, pending_since
+SELECT id, backup_job_id, store, namespace, mode, schedule, comment, spot_config, last_run_upid, last_successful_upid, last_run_status, retry_count, retry, retry_interval, created_at, last_run_starttime, last_run_endtime, last_successful_endtime, run_on_backup_complete, pending_since, target_mode, "recursive"
 FROM verification_jobs
 ORDER BY id
 `
@@ -279,6 +281,8 @@ func (q *Queries) ListAllVerificationJobs(ctx context.Context) ([]VerificationJo
 			&i.LastSuccessfulEndtime,
 			&i.RunOnBackupComplete,
 			&i.PendingSince,
+			&i.TargetMode,
+			&i.Recursive,
 		); err != nil {
 			return nil, err
 		}
