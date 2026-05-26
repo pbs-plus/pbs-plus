@@ -728,6 +728,9 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 	v.mu.Unlock()
 
 	sampleCount := job.SpotConfig.SampleCount
+	if job.SpotConfig.SampleCountPercent > 0 {
+		sampleCount = int(math.Ceil(float64(len(allFiles)) * job.SpotConfig.SampleCountPercent / 100))
+	}
 	if sampleCount <= 0 {
 		sampleCount = 10
 	}

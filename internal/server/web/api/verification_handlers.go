@@ -207,6 +207,13 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			}
 		}
 
+		var sampleCountPercent float64
+		if scp := r.FormValue("sample_count_percent"); scp != "" {
+			if v, err := strconv.ParseFloat(scp, 64); err == nil && v > 0 {
+				sampleCountPercent = v
+			}
+		}
+
 		useLatest := r.FormValue("use_latest") == "true"
 
 		var failThreshold int
@@ -259,12 +266,13 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			Retry:         retry,
 			RetryInterval: retryInterval,
 			SpotConfig: database.SpotCheckConfig{
-				SampleCount:      sampleCount,
-				SamplingStrategy: r.FormValue("sampling_strategy"),
-				UseLatest:        useLatest,
-				DateFrom:         r.FormValue("date_from"),
-				DateTo:           r.FormValue("date_to"),
-				FailThreshold:    failThreshold,
+				SampleCount:        sampleCount,
+				SampleCountPercent: sampleCountPercent,
+				SamplingStrategy:   r.FormValue("sampling_strategy"),
+				UseLatest:          useLatest,
+				DateFrom:           r.FormValue("date_from"),
+				DateTo:             r.FormValue("date_to"),
+				FailThreshold:      failThreshold,
 			},
 			RunOnBackupComplete: r.FormValue("run_on_backup_complete") == "true",
 		}
@@ -410,6 +418,11 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			if sc := r.FormValue("sample_count"); sc != "" {
 				if n, err := strconv.Atoi(sc); err == nil && n > 0 {
 					job.SpotConfig.SampleCount = n
+				}
+			}
+			if scp := r.FormValue("sample_count_percent"); scp != "" {
+				if v, err := strconv.ParseFloat(scp, 64); err == nil && v > 0 {
+					job.SpotConfig.SampleCountPercent = v
 				}
 			}
 			if ss := r.FormValue("sampling_strategy"); ss != "" {

@@ -264,13 +264,14 @@ type VerificationJob struct {
 
 // SpotCheckConfig holds configuration for random spot check mode.
 type SpotCheckConfig struct {
-	SampleCount      int               `json:"sample_count"`
-	SamplingStrategy string            `json:"sampling_strategy"` // random, systematic, stratified
-	UseLatest        bool              `json:"use_latest"`
-	DateFrom         string            `json:"date_from"` // RFC3339 or empty
-	DateTo           string            `json:"date_to"`   // RFC3339 or empty
-	Filters          []SpotCheckFilter `json:"filters"`
-	FailThreshold    int               `json:"fail_threshold"` // stop after N failures (0 = no limit)
+	SampleCount        int               `json:"sample_count"`
+	SampleCountPercent float64           `json:"sample_count_percent"` // 0–100, used when > 0
+	SamplingStrategy   string            `json:"sampling_strategy"`    // random, systematic, stratified
+	UseLatest          bool              `json:"use_latest"`
+	DateFrom           string            `json:"date_from"` // RFC3339 or empty
+	DateTo             string            `json:"date_to"`   // RFC3339 or empty
+	Filters            []SpotCheckFilter `json:"filters"`
+	FailThreshold      int               `json:"fail_threshold"` // stop after N failures (0 = no limit)
 }
 
 // SpotCheckFilter defines a filter for selecting files in spot checks.

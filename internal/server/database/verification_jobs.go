@@ -105,7 +105,7 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 	if job.Mode == "" {
 		job.Mode = "random_spot"
 	}
-	if job.SpotConfig.SampleCount <= 0 {
+	if job.SpotConfig.SampleCount <= 0 && job.SpotConfig.SampleCountPercent <= 0 {
 		job.SpotConfig.SampleCount = 10
 	}
 
