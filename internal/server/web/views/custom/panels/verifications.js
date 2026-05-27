@@ -7,6 +7,24 @@ Ext.define("PBS.D2DVerification.JobPanel", {
   selType: "checkboxmodel",
   multiSelect: true,
 
+  // Aggregate stats bar shown above the grid
+  dockedItems: [
+    {
+      xtype: "component",
+      dock: "top",
+      reference: "aggregateBar",
+      hidden: true,
+      cls: "x-fieldset",
+      style: {
+        padding: "8px 12px",
+        margin: "0 0 4px 0",
+        fontSize: "12px",
+        lineHeight: "18px",
+      },
+      html: "Loading...",
+    },
+  ],
+
   controller: {
     xclass: "Ext.app.ViewController",
 
@@ -327,6 +345,23 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             store: runsStore,
             columns: [
               {
+                text: gettext("Result"),
+                dataIndex: "status_badge",
+                width: 80,
+                renderer: function (v) {
+                  switch (v) {
+                    case "passed":
+                      return '<span style="color:green;font-weight:bold;">\u2713 Passed</span>';
+                    case "failed":
+                      return '<span style="color:red;font-weight:bold;">\u2717 Failed</span>';
+                    case "warning":
+                      return '<span style="color:#c93;">\u26A0 Warning</span>';
+                    default:
+                      return '<span style="color:#888;">' + Ext.String.htmlEncode(v || "-") + '</span>';
+                  }
+                },
+              },
+              {
                 text: gettext("Snapshot"),
                 dataIndex: "snapshot",
                 flex: 2,
@@ -422,6 +457,10 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                     '<span style="color:#555;"><b>95% Confidence:</b> ≥' + (conf.c95 || 0).toFixed(1) + '% intact</span>' +
                     '&nbsp;&nbsp;&nbsp;' +
                     '<span style="color:#555;"><b>99% Confidence:</b> ≥' + (conf.c99 || 0).toFixed(1) + '% intact</span>' +
+                    '&nbsp;&nbsp;&nbsp;' +
+                    '<span style="font-weight:bold;color:' + (failed > 0 ? 'red' : 'green') + ';">' +
+                    (failed > 0 ? '\u2717 FAIL — ' + failed + ' file(s) failed verification' : '\u2713 PASS — all sampled files verified successfully') +
+                    '</span>' +
                     '</td>' +
                     '</tr>' +
                     '</table>',
@@ -525,6 +564,50 @@ Ext.define("PBS.D2DVerification.JobPanel", {
 
     startStore: function () {
       this.getView().getStore().rstore.startUpdate();
+      this.loadAggregate();
+    },
+
+    loadAggregate: function () {
+      var me = this;
+      PBS.PlusUtils.API2Request({
+        url: "/api2/json/d2d/verification/aggregate",
+        method: "GET",
+        success: function (response) {
+          var data = response.result.data;
+          if (!data) return;
+          var bar = me.getView().down("[reference=aggregateBar]");
+          if (!bar) return;
+
+          var totalRuns = data.total_runs || 0;
+          var totalFiles = data.total_files || 0;
+          var totalFailed = data.total_failed || 0;
+          var cleanRuns = data.clean_runs || 0;
+          var failedRuns = data.failed_runs || 0;
+          var last30 = data.last_30_days || 0;
+          var passRate = data.pass_rate || 0;
+          var confidence = data.confidence || 0;
+
+          if (totalRuns === 0) {
+            bar.hide();
+            return;
+          }
+
+          bar.show();
+          var html =
+            '<table style="width:100%;"><tr>' +
+            '<td style="padding:2px 20px;"><b>Total Runs:</b> ' + totalRuns + '</td>' +
+            '<td style="padding:2px 20px;"><b>Files Verified:</b> ' + totalFiles.toLocaleString() + '</td>' +
+            '<td style="padding:2px 20px;color:green;"><b>Clean Runs:</b> ' + cleanRuns + ' \u2713</td>' +
+            '<td style="padding:2px 20px;color:' + (failedRuns > 0 ? 'red' : '#888') + ';"><b>Failed Runs:</b> ' + failedRuns + (failedRuns > 0 ? ' \u2717' : '') + '</td>' +
+            '</tr><tr>' +
+            '<td style="padding:2px 20px;"><b>Last 30 Days:</b> ' + last30 + ' runs</td>' +
+            '<td style="padding:2px 20px;"><b>Overall Pass Rate:</b> ' + passRate.toFixed(1) + '%</td>' +
+            '<td style="padding:2px 20px;"><b>95% Confidence:</b> ≥' + confidence.toFixed(1) + '% intact</td>' +
+            '<td style="padding:2px 20px;color:#888;"><b>Jobs Configured:</b> ' + (data.total_jobs || 0) + '</td>' +
+            '</tr></table>';
+          bar.setHtml(html);
+        },
+      });
     },
 
     stopStore: function () {
@@ -704,6 +787,18 @@ Ext.define("PBS.D2DVerification.JobPanel", {
       renderer: PBS.Utils.render_optional_timestamp,
       width: 140,
       sortable: true,
+    },
+    {
+      header: gettext("Last Result"),
+      width: 90,
+      sortable: true,
+      renderer: function (v, md, rec) {
+        var state = rec.get("last-run-state") || "";
+        if (state === "OK") return '<span style="color:green;font-weight:bold;">\u2713 Passed</span>';
+        if (state && state.startsWith("WARN")) return '<span style="color:#c93;">\u26A0 Warning</span>';
+        if (state && state !== "") return '<span style="color:red;">\u2717 Failed</span>';
+        return '<span style="color:#888;">-</span>';
+      },
     },
     {
       header: gettext("Status"),

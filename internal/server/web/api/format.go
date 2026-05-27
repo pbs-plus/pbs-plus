@@ -3,6 +3,9 @@ package api
 import (
 	"fmt"
 	"math"
+	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
 // HumanReadableBytes converts bytes to a human-readable string (e.g. "1.50 GiB").
@@ -185,6 +188,41 @@ func clamp01(v float64) float64 {
 }
 
 // FormatSpeed returns "X.XX files/s" string.
+// ComputeAggregate computes verification summary statistics across all results.
+func ComputeAggregate(results []database.VerificationResult) VerificationAggregate {
+	var agg VerificationAggregate
+	thirtyDaysAgo := time.Now().Unix() - 30*24*3600
+
+	for _, r := range results {
+		if r.Status == "" || r.Status == "pending" {
+			continue // skip incomplete runs
+		}
+		agg.TotalRuns++
+		agg.TotalFiles += r.TotalFiles
+		agg.TotalFailed += r.FailedFiles
+		agg.TotalSkipped += r.SkippedFiles
+
+		if r.FailedFiles == 0 && r.Status == "OK" {
+			agg.CleanRuns++
+		} else if r.FailedFiles > 0 {
+			agg.FailedRuns++
+		}
+
+		if r.StartedAt >= thirtyDaysAgo {
+			agg.Last30Days++
+		}
+	}
+
+	if agg.TotalFiles > 0 {
+		agg.PassRate = float64(agg.TotalFiles-agg.TotalFailed) / float64(agg.TotalFiles) * 100
+	}
+
+	// Aggregate confidence: treat all samples as one big test
+	agg.Confidence = ComputeConfidence(0, agg.TotalFiles, agg.TotalFailed).Confidence95
+
+	return agg
+}
+
 func FormatSpeed(speed int) string {
 	return fmt.Sprintf("%.2f files/s", float64(speed))
 }

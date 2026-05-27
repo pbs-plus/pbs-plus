@@ -354,3 +354,20 @@ func (s *VerificationService) CreateVerificationResult(r *database.VerificationR
 func (s *VerificationService) UpdateVerificationResult(r database.VerificationResult) error {
 	return s.db.UpdateVerificationResult(r)
 }
+
+// GetAllVerificationResults returns results from all verification jobs.
+func (s *VerificationService) GetAllVerificationResults() ([]database.VerificationResult, error) {
+	jobs, err := s.db.GetAllVerificationJobs()
+	if err != nil {
+		return nil, err
+	}
+	var all []database.VerificationResult
+	for _, j := range jobs {
+		results, err := s.db.GetVerificationResults(j.ID)
+		if err != nil {
+			continue
+		}
+		all = append(all, results...)
+	}
+	return all, nil
+}

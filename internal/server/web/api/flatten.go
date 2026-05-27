@@ -228,6 +228,16 @@ func FlattenVerificationResult(r database.VerificationResult) FlatVerificationRe
 		Confidence:        ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles),
 	}
 
+	// Status badge: pass/fail semantics
+	switch {
+	case r.Status == "OK" && r.FailedFiles == 0:
+		fr.StatusBadge = "passed"
+	case r.FailedFiles > 0:
+		fr.StatusBadge = "failed"
+	default:
+		fr.StatusBadge = "warning"
+	}
+
 	// Duration
 	if r.StartedAt > 0 && r.CompletedAt > r.StartedAt {
 		secs := r.CompletedAt - r.StartedAt

@@ -147,6 +147,20 @@ type SpotCheckFilterJSON struct {
 	MaxSize     int64  `json:"max_size"`
 }
 
+// VerificationAggregate holds summary statistics across all verification jobs.
+type VerificationAggregate struct {
+	TotalJobs    int     `json:"total_jobs"`
+	TotalRuns    int     `json:"total_runs"`
+	TotalFiles   int     `json:"total_files"`
+	TotalFailed  int     `json:"total_failed"`
+	TotalSkipped int     `json:"total_skipped"`
+	PassRate     float64 `json:"pass_rate"`  // percentage 0-100
+	CleanRuns    int     `json:"clean_runs"` // runs with zero failures
+	FailedRuns   int     `json:"failed_runs"`
+	Last30Days   int     `json:"last_30_days"` // runs in last 30 days
+	Confidence   float64 `json:"confidence"`   // aggregate 95% CI lower bound
+}
+
 // FlatVerificationResult extends VerificationResult with pre-computed display fields.
 type FlatVerificationResult struct {
 	ID                int                          `json:"id"`
@@ -165,6 +179,7 @@ type FlatVerificationResult struct {
 	DurationHuman     string                       `json:"duration_human"`
 	PassRate          float64                      `json:"pass_rate"` // percentage 0-100
 	Confidence        ConfidenceInfo               `json:"confidence"`
+	StatusBadge       string                       `json:"status_badge"` // "passed" | "failed" | "warning"
 	Details           []FlatVerificationFileResult `json:"details"`
 }
 

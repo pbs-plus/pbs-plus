@@ -483,6 +483,40 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 	}
 }
 
+// VerificationAggregateHandler returns aggregate stats across all verification jobs.
+func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		results, err := storeInstance.VerificationSvc.GetAllVerificationResults()
+		if err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+
+		jobs, err := storeInstance.VerificationSvc.ListVerificationJobs()
+		if err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+
+		agg := ComputeAggregate(results)
+		agg.TotalJobs = len(jobs)
+
+		response := map[string]any{
+			"status":  http.StatusOK,
+			"success": true,
+			"data":    agg,
+		}
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
 // ExtJsVerificationResultsHandler returns verification results for a job.
 func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

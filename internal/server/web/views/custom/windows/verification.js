@@ -428,7 +428,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       name: "sample_count",
       minValue: 1,
       maxValue: 100000,
-      value: 10,
+      value: 60,
       allowBlank: false,
     },
     {
