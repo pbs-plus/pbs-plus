@@ -188,60 +188,46 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
     }
 
     if (!searchValue) {
-      // No search, show all
-      me.buildTree(me.allTargetsData);
+      // No search, reload tree from server
+      me.loadData();
       return;
     }
 
-    // Filter targets based on search
-    let filteredTargets = me.allTargetsData.filter((target) => {
-      let targetData = target.getData();
+    // Filter: reload tree and then hide non-matching nodes
+    // For simplicity, we filter client-side after loading
+    let filtered = me.allTargetsData.filter(function (node) {
+      let d = node.data;
       return (
-        (targetData.name &&
-          targetData.name.toLowerCase().includes(searchValue)) ||
-        (targetData.path &&
-          targetData.path.toLowerCase().includes(searchValue)) ||
-        (targetData.agent_hostname &&
-          targetData.agent_hostname.toLowerCase().includes(searchValue)) ||
-        (targetData.ip && targetData.ip.toLowerCase().includes(searchValue)) ||
-        (targetData.volume_name &&
-          targetData.volume_name.toLowerCase().includes(searchValue)) ||
-        (targetData.volume_type &&
-          targetData.volume_type.toLowerCase().includes(searchValue)) ||
-        (targetData.target_type &&
-          targetData.target_type.toLowerCase().includes(searchValue))
+        (d.name && d.name.toLowerCase().includes(searchValue)) ||
+        (d.path && d.path.toLowerCase().includes(searchValue)) ||
+        (d.agent_hostname && d.agent_hostname.toLowerCase().includes(searchValue)) ||
+        (d.ip && d.ip.toLowerCase().includes(searchValue)) ||
+        (d.volume_name && d.volume_name.toLowerCase().includes(searchValue)) ||
+        (d.volume_type && d.volume_type.toLowerCase().includes(searchValue)) ||
+        (d.target_type && d.target_type.toLowerCase().includes(searchValue))
       );
     });
 
-    me.buildTree(filteredTargets);
-  },
-
-  buildTree: function (targets) {
-    let me = this;
-    let view = me.getView();
-
+    // Build filtered tree
     let localTargets = [];
     let agentGroups = {};
     let s3Targets = [];
 
-    targets.forEach((target) => {
-      let targetData = target.getData();
+    filtered.forEach(function (node) {
+      let targetData = node.data;
+      let treeNode = Ext.apply({}, targetData);
+      treeNode.leaf = true;
+      treeNode.isGroup = false;
 
       if (targetData.target_type === "agent") {
-        let hostname =
-          targetData.agent_hostname ||
-          (targetData.agent_host && targetData.agent_host.name);
-        let os =
-          targetData.os || (targetData.agent_host && targetData.agent_host.os);
-        let ip =
-          targetData.ip || (targetData.agent_host && targetData.agent_host.ip);
-
+        let hostname = targetData.agent_hostname;
+        treeNode.iconCls = "fa fa-hdd-o";
         if (hostname) {
           if (!agentGroups[hostname]) {
             agentGroups[hostname] = {
               text: hostname,
-              os: os,
-              ip: ip,
+              os: targetData.os,
+              ip: targetData.ip,
               children: [],
               isGroup: true,
               groupType: "agent",
@@ -249,81 +235,31 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
               expanded: true,
             };
           }
-          agentGroups[hostname].children.push({
-            ...targetData,
-            agent_hostname: hostname,
-            os: os,
-            ip: ip,
-            leaf: true,
-            isGroup: false,
-            iconCls: "fa fa-hdd-o",
-          });
+          agentGroups[hostname].children.push(treeNode);
         } else {
-          localTargets.push({
-            ...targetData,
-            leaf: true,
-            isGroup: false,
-            iconCls: "fa fa-hdd-o",
-          });
+          localTargets.push(treeNode);
         }
       } else if (targetData.target_type === "s3") {
-        s3Targets.push({
-          ...targetData,
-          leaf: true,
-          isGroup: false,
-          iconCls: "fa fa-cloud",
-        });
+        treeNode.iconCls = "fa fa-cloud";
+        s3Targets.push(treeNode);
       } else {
-        localTargets.push({
-          ...targetData,
-          leaf: true,
-          isGroup: false,
-          iconCls: "fa fa-folder",
-        });
+        treeNode.iconCls = "fa fa-folder";
+        localTargets.push(treeNode);
       }
     });
 
     let rootChildren = [];
-
     if (localTargets.length > 0) {
-      rootChildren.push({
-        text: "Local Targets",
-        children: localTargets,
-        isGroup: true,
-        groupType: "local",
-        iconCls: "fa fa-desktop",
-        expanded: true,
-      });
+      rootChildren.push({ text: "Local Targets", children: localTargets, isGroup: true, groupType: "local", iconCls: "fa fa-desktop", expanded: true });
     }
-
     if (Object.keys(agentGroups).length > 0) {
-      let agentRootNode = {
-        text: "Agent Targets",
-        children: Object.values(agentGroups),
-        isGroup: true,
-        groupType: "agent-root",
-        iconCls: "fa fa-sitemap",
-        expanded: true,
-      };
-      rootChildren.push(agentRootNode);
+      rootChildren.push({ text: "Agent Targets", children: Object.values(agentGroups), isGroup: true, groupType: "agent-root", iconCls: "fa fa-sitemap", expanded: true });
     }
-
     if (s3Targets.length > 0) {
-      rootChildren.push({
-        text: "S3 Targets",
-        children: s3Targets,
-        isGroup: true,
-        groupType: "s3",
-        iconCls: "fa fa-cloud",
-        expanded: true,
-      });
+      rootChildren.push({ text: "S3 Targets", children: s3Targets, isGroup: true, groupType: "s3", iconCls: "fa fa-cloud", expanded: true });
     }
 
-    view.setRootNode({
-      text: "Root",
-      expanded: true,
-      children: rootChildren,
-    });
+    view.setRootNode({ text: "Root", expanded: true, children: rootChildren });
   },
 
   reload: function () {
@@ -335,7 +271,7 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
     let view = me.getView();
 
     Ext.Ajax.request({
-      url: pbsPlusBaseUrl + "/api2/json/d2d/target",
+      url: pbsPlusBaseUrl + "/api2/json/d2d/target/tree",
       method: "GET",
       withCredentials: true,
       headers: {
@@ -343,17 +279,25 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
       },
       success: function (response) {
         let data = Ext.decode(response.responseText);
-        let rawTargets = data.data || [];
+        let treeNodes = data.data || [];
 
-        let targets = rawTargets.map((target) => {
-          return Ext.create("pbs-model-targets", target);
+        let rootChildren = treeNodes.map(function (node) {
+          return me.convertTreeNode(node);
+        });
+
+        view.setRootNode({
+          text: "Root",
+          expanded: true,
+          children: rootChildren,
         });
 
         // Store all targets for filtering
-        me.allTargetsData = targets;
-
-        // Apply current filter if exists
-        me.filterTree();
+        me.allTargetsData = [];
+        view.getRootNode().cascadeBy(function (node) {
+          if (!node.data.isGroup) {
+            me.allTargetsData.push(node);
+          }
+        });
 
         // Async: fetch detailed statuses
         me.loadStatuses();
@@ -362,6 +306,51 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
         Ext.Msg.alert(gettext("Error"), gettext("Failed to load targets"));
       },
     });
+  },
+
+  convertTreeNode: function (node) {
+    let result = {
+      text: node.text,
+      iconCls: node.iconCls,
+      expanded: node.expanded,
+      isGroup: node.isGroup,
+      groupType: node.groupType,
+      leaf: node.leaf,
+    };
+
+    if (!node.isGroup) {
+      Ext.apply(result, {
+        name: node.name,
+        path: node.path,
+        target_type: node.target_type,
+        mount_script: node.mount_script,
+        volume_id: node.volume_id,
+        job_count: node.job_count,
+        agent_version: node.agent_version,
+        connection_status: node.connection_status,
+        volume_type: node.volume_type,
+        volume_name: node.volume_name,
+        volume_fs: node.volume_fs,
+        volume_total_bytes: node.volume_total_bytes,
+        volume_used_bytes: node.volume_used_bytes,
+        volume_free_bytes: node.volume_free_bytes,
+        volume_total: node.volume_total || node.volume_total_human,
+        volume_used: node.volume_used || node.volume_used_human,
+        volume_free: node.volume_free || node.volume_free_human,
+        agent_hostname: node.agent_hostname,
+        os: node.os,
+        ip: node.ip,
+      });
+    }
+
+    if (node.children && node.children.length > 0) {
+      result.children = node.children.map(function (child) {
+        return me.convertTreeNode(child);
+      }.bind(this));
+      result.leaf = false;
+    }
+
+    return result;
   },
 
   loadStatuses: function () {
@@ -425,10 +414,7 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
     if (record.data.isGroup) {
       return "";
     }
-    if (!value && value !== 0) {
-      return "-";
-    }
-    return humanReadableBytes(value);
+    return value || "-";
   },
 
   render_field: function (value, metaData, record) {

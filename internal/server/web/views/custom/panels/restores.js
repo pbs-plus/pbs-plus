@@ -453,45 +453,33 @@ Ext.define("PBS.config.DiskRestoreJobView", {
     },
     {
       text: gettext("Read Speed"),
-      dataIndex: "current_bytes_speed",
+      dataIndex: "read_speed_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableSpeed(value);
+        return value || "-";
       },
       width: 60,
     },
     {
       text: gettext("Read Total"),
-      dataIndex: "current_bytes_total",
+      dataIndex: "read_total_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
+        return value || "-";
       },
       width: 60,
     },
     {
       text: gettext("Target Size"),
-      dataIndex: "expected_size",
+      dataIndex: "target_size_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
+        return value || "-";
       },
       width: 60,
     },
     {
       text: gettext("Processing Speed"),
-      dataIndex: "current_files_speed",
+      dataIndex: "processing_speed_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return `${value.toFixed(2)} files/s`;
+        return value || "-";
       },
       width: 60,
     },

@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,11 +17,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
-
-type VerificationJobsResponse struct {
-	Data   []database.VerificationJob `json:"data"`
-	Digest string                     `json:"digest"`
-}
 
 type VerificationJobConfigResponse struct {
 	Errors  map[string]string        `json:"errors"`
@@ -40,14 +34,6 @@ type VerificationRunResponse struct {
 	Success bool              `json:"success"`
 }
 
-type VerificationResultsResponse struct {
-	Errors  map[string]string             `json:"errors"`
-	Message string                        `json:"message"`
-	Data    []database.VerificationResult `json:"data"`
-	Status  int                           `json:"status"`
-	Success bool                          `json:"success"`
-}
-
 // D2DVerificationHandler handles listing verification jobs.
 func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -62,15 +48,17 @@ func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		digest, err := calculateDigest(jobs)
+		flatJobs := FlattenVerificationJobs(jobs)
+
+		digest, err := calculateDigest(flatJobs)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		toReturn := VerificationJobsResponse{
-			Data:   jobs,
-			Digest: digest,
+		toReturn := map[string]any{
+			"data":   flatJobs,
+			"digest": digest,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -517,10 +505,12 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 			return
 		}
 
-		response := VerificationResultsResponse{
-			Status:  http.StatusOK,
-			Success: true,
-			Data:    results,
+		flatResults := FlattenVerificationResults(results)
+
+		response := map[string]any{
+			"status":  http.StatusOK,
+			"success": true,
+			"data":    flatResults,
 		}
 		json.NewEncoder(w).Encode(response)
 	}
@@ -568,7 +558,7 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 	for _, r := range results {
 		startedAt := formatTimestamp(r.StartedAt)
 		completedAt := formatTimestamp(r.CompletedAt)
-		conf95, conf99 := computeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
+		conf := ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
 		fmt.Fprintf(w, "%s,%d,%s,%s,%d,%d,%d,%d,%d,%.1f%%,%.1f%%,%s,%s\n",
 			csvEscape(r.VerificationJobID),
 			r.ID,
@@ -579,8 +569,8 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 			r.VerifiedFiles,
 			r.FailedFiles,
 			r.SkippedFiles,
-			conf95*100,
-			conf99*100,
+			conf.Confidence95,
+			conf.Confidence99,
 			startedAt,
 			completedAt,
 		)
@@ -590,7 +580,7 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult) {
 	fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Total Population,Sample Size,File Path,File Size,Status,Message,Confidence 95%,Confidence 99%")
 	for _, r := range results {
-		conf95, conf99 := computeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
+		conf := ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
 		for _, f := range r.Details {
 			fmt.Fprintf(w, "%s,%d,%s,%d,%d,%s,%d,%s,%s,%.1f%%,%.1f%%\n",
 				csvEscape(r.VerificationJobID),
@@ -602,63 +592,11 @@ func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult
 				f.Size,
 				f.Status,
 				csvEscape(f.Message),
-				conf95*100,
-				conf99*100,
+				conf.Confidence95,
+				conf.Confidence99,
 			)
 		}
 	}
-}
-
-// computeConfidence returns the lower bound of the intact rate at 95% and 99% confidence.
-// Uses the Rule of Three for zero-failure samples and the Wilson score interval otherwise.
-func computeConfidence(population, sample, failures int) (float64, float64) {
-	if sample <= 0 || failures >= sample {
-		return 0, 0
-	}
-
-	n := float64(sample)
-	N := float64(population)
-	if N <= 0 || n > N {
-		N = n
-	}
-
-	fHat := float64(failures) / n
-
-	if failures == 0 {
-		// Rule of Three with finite population correction
-		fpc := math.Sqrt((N - n) / N)
-		if fpc < 0 {
-			fpc = 0
-		}
-		upper95 := 3.0 / n * fpc
-		upper99 := 4.6 / n * fpc
-		return clamp01(1 - upper95), clamp01(1 - upper99)
-	}
-
-	// Wilson score interval for non-zero failures
-	pHat := 1 - fHat
-	return wilsonLower(pHat, n, 1.96), wilsonLower(pHat, n, 2.576)
-}
-
-func wilsonLower(pHat, n, z float64) float64 {
-	if n <= 0 {
-		return 0
-	}
-	denom := 1 + z*z/n
-	centre := pHat + z*z/(2*n)
-	spread := z * math.Sqrt(pHat*(1-pHat)/n+z*z/(4*n*n))
-	lower := (centre - spread) / denom
-	return clamp01(lower)
-}
-
-func clamp01(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
 }
 
 func formatTimestamp(unix int64) string {

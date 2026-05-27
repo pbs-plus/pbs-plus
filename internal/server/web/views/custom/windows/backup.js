@@ -39,13 +39,6 @@ var legacyXattrModes = Ext.create("Ext.data.Store", {
 Ext.define("PBS.D2DManagement.BackupJobInputPanel", {
   extend: "Proxmox.panel.InputPanel",
   xtype: "pbsD2DBackupInputPanel",
-
-  setValues: function (values) {
-    if (values.target && typeof values.target === "object") {
-      values.target = values.target.name;
-    }
-    this.callParent([values]);
-  },
 });
 
 Ext.define("PBS.D2DManagement.BackupJobEdit", {
@@ -120,19 +113,8 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
 
     if (me.jobData) {
       let data = Ext.apply({}, me.jobData);
-      if (data.target && typeof data.target === "object") {
-        data.target = data.target.name;
-      }
       me.setValues(data);
     }
-
-    me.on("afterload", function (success, data) {
-      if (success && data && data.target && typeof data.target === "object") {
-        data.target = data.target.name;
-
-        me.setValues(data);
-      }
-    });
   },
 
   items: {

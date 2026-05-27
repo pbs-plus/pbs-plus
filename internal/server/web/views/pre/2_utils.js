@@ -185,53 +185,12 @@ Ext.define("PBS.PlusUtils", {
       return "";
     }
 
-    let parse_task_status = function (status) {
-      if (status === "OK") {
-        return "ok";
-      }
-
-      if (status === "unknown") {
-        return "unknown";
-      }
-
-      let match = status.match(/^WARNINGS: (.*)$/);
-      if (match) {
-        return "warning";
-      }
-
-      match = status.match(/^QUEUED: (.*)$/);
-      if (match) {
-        return "queued";
-      }
-
-      return "error";
-    };
-
-    let parsed = parse_task_status(value);
-    let text = value;
-    let icon = "";
-    switch (parsed) {
-      case "unknown":
-        icon = "question faded";
-        text = Proxmox.Utils.unknownText;
-        break;
-      case "error":
-        icon = "times critical";
-        text = Proxmox.Utils.errorText + ": " + value;
-        break;
-      case "warning":
-        icon = "exclamation warning";
-        break;
-      case "ok":
-        icon = "check good";
-        text = gettext("OK");
-        break;
-      case "queued":
-        icon = "tasks faded";
-        break;
+    let parsed = record.get("status_parsed");
+    if (parsed && parsed.icon) {
+      return `<i class="fa fa-${parsed.icon}"></i> ${parsed.text}`;
     }
 
-    return `<i class="fa fa-${icon}"></i> ${text}`;
+    return "-";
   },
 });
 
@@ -411,7 +370,7 @@ Ext.define("PBS.plusWindow.Edit", {
 });
 
 Ext.define("PBS.plusWindow.Create", {
-  extend: "Proxmox.window.Edit",
+  extend: "PBS.plusWindow.Edit",
   alias: "widget.pbsPlusWindowCreate",
 
   method: "POST",
@@ -420,80 +379,5 @@ Ext.define("PBS.plusWindow.Create", {
     let me = this;
     let form = me.formPanel.getForm();
     form.clearInvalid();
-  },
-
-  submit: function () {
-    let me = this;
-    let form = me.formPanel.getForm();
-    let values = me.getValues();
-
-    Ext.Object.each(values, function (name, val) {
-      if (Object.hasOwn(values, name)) {
-        if (Ext.isArray(val) && !val.length) {
-          values[name] = "";
-        }
-      }
-    });
-
-    if (me.digest) {
-      values.digest = me.digest;
-    }
-
-    if (me.backgroundDelay) {
-      values.background_delay = me.backgroundDelay;
-    }
-
-    let url = Ext.isFunction(me.submitUrl)
-      ? me.submitUrl(me.url, values)
-      : me.submitUrl || me.url;
-
-    if (me.method === "DELETE") {
-      url = url + "?" + Ext.Object.toQueryString(values);
-      values = undefined;
-    }
-
-    let requestOptions = Ext.apply(
-      {
-        url: url,
-        waitMsgTarget: me,
-        method: me.method || "POST",
-        params: values,
-        failure: function (response, options) {
-          me.apiCallDone(false, response, options);
-          if (response.result && response.result.errors) {
-            form.markInvalid(response.result.errors);
-          }
-          Ext.Msg.alert(gettext("Error"), response.htmlStatus);
-        },
-        success: function (response, options) {
-          let hasProgressBar =
-            (me.backgroundDelay || me.showProgress || me.showTaskViewer) &&
-            response.result.data;
-
-          me.apiCallDone(true, response, options);
-
-          if (hasProgressBar) {
-            me.hide();
-            let upid = response.result.data;
-            let viewerClass = me.showTaskViewer ? "Viewer" : "Progress";
-            Ext.create("Proxmox.window.Task" + viewerClass, {
-              autoShow: true,
-              upid: upid,
-              taskDone: me.taskDone,
-              listeners: {
-                destroy: function () {
-                  me.close();
-                },
-              },
-            });
-          } else {
-            me.close();
-          }
-        },
-      },
-      me.submitOptions ?? {},
-    );
-
-    PBS.PlusUtils.API2Request(requestOptions);
   },
 });

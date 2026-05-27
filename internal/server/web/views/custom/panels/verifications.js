@@ -202,6 +202,8 @@ Ext.define("PBS.D2DVerification.JobPanel", {
           }
 
           function renderFileStatus(v) {
+            // Use pre-computed status_human if available
+            if (typeof v === "object" && v.status_human) return v.status_human;
             switch (v) {
               case "ok":
                 return '<span style="color:green;">\u2713 OK</span>';
@@ -219,24 +221,24 @@ Ext.define("PBS.D2DVerification.JobPanel", {
           }
 
           function renderSize(bytes) {
+            if (typeof bytes === "string") return bytes || "-"; // already formatted
             if (!bytes && bytes !== 0) return "-";
             if (bytes < 1024) return bytes + " B";
             if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KiB";
-            if (bytes < 1073741824)
-              return (bytes / 1048576).toFixed(1) + " MiB";
+            if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + " MiB";
             return (bytes / 1073741824).toFixed(2) + " GiB";
           }
 
           function renderPassRate(rec) {
+            var pct = rec.get("pass_rate");
             var total = rec.get("total_files") || 0;
             var verified = rec.get("verified_files") || 0;
             var failed = rec.get("failed_files") || 0;
             if (total === 0) return "-";
-            var pct = Math.round((verified / total) * 100);
             if (failed > 0)
               return (
                 '<span style="color:red;">' +
-                pct +
+                pct.toFixed(0) +
                 "% (" +
                 verified +
                 "/" +
@@ -245,7 +247,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
               );
             return (
               '<span style="color:green;">' +
-              pct +
+              pct.toFixed(0) +
               "% (" +
               verified +
               "/" +
@@ -254,53 +256,18 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             );
           }
 
-          function computeConfidence(population, sample, failures) {
-            if (sample <= 0 || failures >= sample) return { c95: 0, c99: 0 };
-            var n = sample;
-            var N = population > 0 ? population : n;
-            if (n > N) N = n;
-            if (failures === 0) {
-              var fpc = Math.sqrt((N - n) / N);
-              if (fpc < 0) fpc = 0;
-              return {
-                c95: Math.max(0, Math.min(100, (1 - 3.0 / n * fpc) * 100)),
-                c99: Math.max(0, Math.min(100, (1 - 4.6 / n * fpc) * 100)),
-              };
-            }
-            var pHat = 1 - failures / n;
-            return {
-              c95: Math.max(0, Math.min(100, wilsonLower(pHat, n, 1.96) * 100)),
-              c99: Math.max(0, Math.min(100, wilsonLower(pHat, n, 2.576) * 100)),
-            };
-          }
-
-          function wilsonLower(pHat, n, z) {
-            var denom = 1 + z * z / n;
-            var centre = pHat + z * z / (2 * n);
-            var spread = z * Math.sqrt(pHat * (1 - pHat) / n + z * z / (4 * n * n));
-            return (centre - spread) / denom;
-          }
-
           var runsStore = Ext.create("Ext.data.Store", {
             fields: [
-              "id",
-              "snapshot",
-              "snapshot_time",
-              "total_files",
-              "total_population",
-              "verified_files",
-              "failed_files",
-              "skipped_files",
-              "status",
-              "started_at",
-              "completed_at",
-              "details",
+              "id", "snapshot", "snapshot_time", "total_files", "total_population",
+              "verified_files", "failed_files", "skipped_files", "status",
+              "started_at", "completed_at", "details", "pass_rate",
+              "confidence", "duration_human",
             ],
             data: results,
           });
 
           var detailsStore = Ext.create("Ext.data.Store", {
-            fields: ["path", "size", "status", "message"],
+            fields: ["path", "size", "size_human", "status", "status_human", "message"],
             data: [],
           });
 
@@ -319,9 +286,11 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             columns: [
               {
                 text: gettext("Status"),
-                dataIndex: "status",
+                dataIndex: "status_human",
                 width: 100,
-                renderer: renderFileStatus,
+                renderer: function (v) {
+                  return v || "-";
+                },
               },
               {
                 text: gettext("File Path"),
@@ -331,11 +300,9 @@ Ext.define("PBS.D2DVerification.JobPanel", {
               },
               {
                 text: gettext("Size"),
-                dataIndex: "size",
+                dataIndex: "size_human",
                 width: 100,
-                renderer: function (v) {
-                  return v > 0 ? renderSize(v) : "-";
-                },
+                renderer: function (v) { return v || "-"; },
               },
               {
                 text: gettext("Details"),
@@ -412,15 +379,9 @@ Ext.define("PBS.D2DVerification.JobPanel", {
               },
               {
                 text: gettext("Duration"),
+                dataIndex: "duration_human",
                 width: 90,
-                renderer: function (v, md, rec) {
-                  var start = rec.get("started_at");
-                  var end = rec.get("completed_at");
-                  if (!start || !end) return "-";
-                  var secs = end - start;
-                  if (secs < 60) return secs + "s";
-                  return Math.floor(secs / 60) + "m " + (secs % 60) + "s";
-                },
+                renderer: function (v) { return v || "-"; },
               },
             ],
             listeners: {
@@ -441,7 +402,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 var failed = rec.get("failed_files") || 0;
                 var skipped = rec.get("skipped_files") || 0;
                 var snap = Ext.String.htmlEncode(rec.get("snapshot") || "");
-                var conf = computeConfidence(population, total, failed);
+                var conf = rec.get("confidence") || { c95: 0, c99: 0 };
 
                 summaryPanel.removeAll();
                 summaryPanel.add({
@@ -458,9 +419,9 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                     '</tr>' +
                     '<tr>' +
                     '<td style="padding:2px 15px;" colspan="6">' +
-                    '<span style="color:#555;"><b>95% Confidence:</b> ≥' + conf.c95.toFixed(1) + '% intact</span>' +
+                    '<span style="color:#555;"><b>95% Confidence:</b> ≥' + (conf.c95 || 0).toFixed(1) + '% intact</span>' +
                     '&nbsp;&nbsp;&nbsp;' +
-                    '<span style="color:#555;"><b>99% Confidence:</b> ≥' + conf.c99.toFixed(1) + '% intact</span>' +
+                    '<span style="color:#555;"><b>99% Confidence:</b> ≥' + (conf.c99 || 0).toFixed(1) + '% intact</span>' +
                     '</td>' +
                     '</tr>' +
                     '</table>',

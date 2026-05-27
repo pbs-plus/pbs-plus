@@ -51,15 +51,17 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			allRestores[i].CurrentStats.StatCacheHits = int(stats.StatCacheHits)
 		}
 
-		digest, err := calculateDigest(allRestores)
+		flatRestores := FlattenRestores(allRestores)
+
+		digest, err := calculateDigest(flatRestores)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		toReturn := RestoresResponse{
-			Data:   allRestores,
-			Digest: digest,
+		toReturn := map[string]any{
+			"data":   flatRestores,
+			"digest": digest,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -421,7 +423,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = restore
+			response.Data = FlattenRestoreForEdit(restore)
 			json.NewEncoder(w).Encode(response)
 
 			return
