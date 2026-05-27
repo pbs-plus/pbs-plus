@@ -303,6 +303,16 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
           margin: "5 0 0 0",
         },
         {
+          xtype: 'displayfield',
+          cls: 'pmx-hint',
+          value: gettext(
+            "A backup job is randomly selected each run, weighted toward jobs " +
+            "that have not been verified recently or have never been verified. " +
+            "If a snapshot has no eligible files, the next candidate is tried."
+          ),
+          padding: '5 0 0 0',
+        },
+        {
           xtype: "checkbox",
           name: "recursive",
           fieldLabel: gettext("Recursive"),
