@@ -415,7 +415,7 @@ Ext.define("PBS.config.DiskRestoreJobView", {
     },
     {
       header: gettext("Snapshot"),
-      dataIndex: "snapshot",
+      dataIndex: "snapshot_human",
       width: 120,
       sortable: true,
     },

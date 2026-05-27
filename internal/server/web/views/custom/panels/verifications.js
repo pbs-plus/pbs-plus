@@ -53,6 +53,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
           return (
             re.test(rec.get("id")) ||
             re.test(rec.get("backup_job_id")) ||
+            re.test(rec.get("ns")) ||
             re.test(rec.get("mode")) ||
             re.test(rec.get("comment"))
           );
@@ -378,7 +379,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
               },
               {
                 text: gettext("Snapshot"),
-                dataIndex: "snapshot",
+                dataIndex: "snapshot_human",
                 flex: 2,
                 renderer: Ext.String.htmlEncode,
               },
@@ -451,7 +452,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 var verified = rec.get("verified_files") || 0;
                 var failed = rec.get("failed_files") || 0;
                 var skipped = rec.get("skipped_files") || 0;
-                var snap = Ext.String.htmlEncode(rec.get("snapshot") || "");
+                var snap = Ext.String.htmlEncode(rec.get("snapshot_human") || rec.get("snapshot") || "");
                 var conf = rec.get("confidence") || { c95: 0, c99: 0 };
 
                 summaryPanel.removeAll();
@@ -774,10 +775,18 @@ Ext.define("PBS.D2DVerification.JobPanel", {
       sortable: true,
     },
     {
-      header: gettext("Backup Job"),
+      header: gettext("Target"),
       dataIndex: "backup_job_id",
       width: 150,
       sortable: true,
+      renderer: function (v, md, rec) {
+        var mode = rec.get("target_mode");
+        var ns = rec.get("ns");
+        if (mode === "namespace") {
+          return ns && ns !== "root" ? ns : "/";
+        }
+        return Ext.String.htmlEncode(v || "-");
+      },
     },
     {
       header: gettext("Mode"),

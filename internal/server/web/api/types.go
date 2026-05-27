@@ -62,6 +62,7 @@ type FlatRestore struct {
 	Store         string `json:"store"`
 	Namespace     string `json:"ns"`
 	Snapshot      string `json:"snapshot"`
+	SnapshotHuman string `json:"snapshot_human"`
 	SrcPath       string `json:"src-path"`
 	DestSubpath   string `json:"dest-subpath"`
 	PreScript     string `json:"pre_script"`
@@ -167,6 +168,7 @@ type FlatVerificationResult struct {
 	VerificationJobID string                       `json:"verification_job_id"`
 	UPID              string                       `json:"upid"`
 	Snapshot          string                       `json:"snapshot"`
+	SnapshotHuman     string                       `json:"snapshot_human"`
 	SnapshotTime      int64                        `json:"snapshot_time"`
 	TotalPopulation   int                          `json:"total_population"`
 	TotalFiles        int                          `json:"total_files"`

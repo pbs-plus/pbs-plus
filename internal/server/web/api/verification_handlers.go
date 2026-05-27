@@ -539,7 +539,13 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 			return
 		}
 
-		flatResults := FlattenVerificationResults(results)
+		job, err := storeInstance.VerificationSvc.GetVerificationJob(jobID)
+		if err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+
+		flatResults := FlattenVerificationResults(results, job.Namespace)
 
 		response := map[string]any{
 			"status":  http.StatusOK,
