@@ -386,3 +386,48 @@ func renderFileStatusHuman(status string) string {
 		return status
 	}
 }
+
+// FlattenBackupForEdit flattens a Backup for the edit form GET response.
+// The edit form expects target as a string, not an object.
+func FlattenBackupForEdit(b database.Backup) map[string]any {
+	return map[string]any{
+		"id":                b.ID,
+		"store":             b.Store,
+		"mode":              b.Mode,
+		"sourcemode":        b.SourceMode,
+		"readmode":          b.ReadMode,
+		"target":            b.Target.Name,
+		"subpath":           b.Subpath,
+		"ns":                b.Namespace,
+		"schedule":          b.Schedule,
+		"comment":           b.Comment,
+		"notification-mode": b.NotificationMode,
+		"pre_script":        b.PreScript,
+		"post_script":       b.PostScript,
+		"retry":             b.Retry,
+		"retry-interval":    b.RetryInterval,
+		"max-dir-entries":   b.MaxDirEntries,
+		"rawexclusions":     b.RawExclusions,
+		"include-xattr":     b.IncludeXattr,
+		"legacy-xattr":      b.LegacyXattr,
+	}
+}
+
+// FlattenRestoreForEdit flattens a Restore for the edit form GET response.
+func FlattenRestoreForEdit(r database.Restore) map[string]any {
+	return map[string]any{
+		"id":             r.ID,
+		"store":          r.Store,
+		"ns":             r.Namespace,
+		"snapshot":       r.Snapshot,
+		"src-path":       r.SrcPath,
+		"dest-target":    r.DestTarget.Name,
+		"dest-subpath":   r.DestSubpath,
+		"mode":           r.Mode,
+		"comment":        r.Comment,
+		"pre_script":     r.PreScript,
+		"post_script":    r.PostScript,
+		"retry":          r.Retry,
+		"retry-interval": r.RetryInterval,
+	}
+}

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
@@ -92,10 +91,7 @@ func ExtJsBackupCSVExportHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 func csvEscapeField(s string) string {
-	if strings.ContainsAny(s, ",\"\n\r") {
-		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
-	}
-	return s
+	return csvEscape(s)
 }
 
 // D2DTargetTreeHandler returns targets pre-grouped into a tree structure.
@@ -128,120 +124,4 @@ func D2DTargetTreeHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toReturn)
 	}
-}
-
-// D2DBackupFlatHandler returns the flat list of backups (used by the diff store).
-func D2DBackupFlatHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-
-		allBackups, err := storeInstance.BackupSvc.ListBackups()
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
-
-		flatBackups := FlattenBackups(allBackups)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"data": flatBackups,
-		})
-	}
-}
-
-// D2DRestoreFlatHandler returns the flat list of restores (used by the diff store).
-func D2DRestoreFlatHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-
-		allRestores, err := storeInstance.RestoreSvc.GetAllRestores()
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
-
-		flatRestores := FlattenRestores(allRestores)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"data": flatRestores,
-		})
-	}
-}
-
-// D2DVerificationFlatHandler returns the flat list of verification jobs.
-func D2DVerificationFlatHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-
-		jobs, err := storeInstance.VerificationSvc.ListVerificationJobs()
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
-
-		flatJobs := FlattenVerificationJobs(jobs)
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"data": flatJobs,
-		})
-	}
-}
-
-// FlattenBackupForEdit flattens a Backup for the edit form GET response.
-// The edit form expects target as a string, not an object.
-func FlattenBackupForEdit(b database.Backup) map[string]any {
-	result := map[string]any{
-		"id":                b.ID,
-		"store":             b.Store,
-		"mode":              b.Mode,
-		"sourcemode":        b.SourceMode,
-		"readmode":          b.ReadMode,
-		"target":            b.Target.Name,
-		"subpath":           b.Subpath,
-		"ns":                b.Namespace,
-		"schedule":          b.Schedule,
-		"comment":           b.Comment,
-		"notification-mode": b.NotificationMode,
-		"pre_script":        b.PreScript,
-		"post_script":       b.PostScript,
-		"retry":             b.Retry,
-		"retry-interval":    b.RetryInterval,
-		"max-dir-entries":   b.MaxDirEntries,
-		"rawexclusions":     b.RawExclusions,
-		"include-xattr":     b.IncludeXattr,
-		"legacy-xattr":      b.LegacyXattr,
-	}
-	return result
-}
-
-// FlattenRestoreForEdit flattens a Restore for the edit form GET response.
-func FlattenRestoreForEdit(r database.Restore) map[string]any {
-	result := map[string]any{
-		"id":             r.ID,
-		"store":          r.Store,
-		"ns":             r.Namespace,
-		"snapshot":       r.Snapshot,
-		"src-path":       r.SrcPath,
-		"dest-target":    r.DestTarget.Name,
-		"dest-subpath":   r.DestSubpath,
-		"mode":           r.Mode,
-		"comment":        r.Comment,
-		"pre_script":     r.PreScript,
-		"post_script":    r.PostScript,
-		"retry":          r.Retry,
-		"retry-interval": r.RetryInterval,
-	}
-	return result
 }

@@ -118,19 +118,70 @@ func FormatDuration(seconds int64) string {
 	}
 }
 
-// ComputeConfidenceJSON returns confidence info suitable for JSON responses.
+// ConfidenceInfo holds confidence percentages for JSON responses.
 type ConfidenceInfo struct {
 	Confidence95 float64 `json:"c95"` // percentage 0-100
 	Confidence99 float64 `json:"c99"` // percentage 0-100
 }
 
 // ComputeConfidence computes statistical confidence for verification results.
+// Returns the lower bound of the intact rate at 95% and 99% confidence.
+// Uses the Rule of Three for zero-failure samples and the Wilson score interval otherwise.
 func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
-	c95, c99 := computeConfidence(population, sample, failures)
+	if sample <= 0 || failures >= sample {
+		return ConfidenceInfo{}
+	}
+
+	n := float64(sample)
+	N := float64(population)
+	if N <= 0 || n > N {
+		N = n
+	}
+
+	fHat := float64(failures) / n
+
+	var c95, c99 float64
+
+	if failures == 0 {
+		// Rule of Three with finite population correction
+		fpc := math.Sqrt((N - n) / N)
+		if fpc < 0 {
+			fpc = 0
+		}
+		c95 = clamp01(1 - 3.0/n*fpc)
+		c99 = clamp01(1 - 4.6/n*fpc)
+	} else {
+		// Wilson score interval for non-zero failures
+		pHat := 1 - fHat
+		c95 = wilsonLower(pHat, n, 1.96)
+		c99 = wilsonLower(pHat, n, 2.576)
+	}
+
 	return ConfidenceInfo{
-		Confidence95: math.Round(c95*1000) / 10, // round to 1 decimal
+		Confidence95: math.Round(c95*1000) / 10, // round to 1 decimal (percentage)
 		Confidence99: math.Round(c99*1000) / 10,
 	}
+}
+
+func wilsonLower(pHat, n, z float64) float64 {
+	if n <= 0 {
+		return 0
+	}
+	denom := 1 + z*z/n
+	centre := pHat + z*z/(2*n)
+	spread := z * math.Sqrt(pHat*(1-pHat)/n+z*z/(4*n*n))
+	lower := (centre - spread) / denom
+	return clamp01(lower)
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 // FormatSpeed returns "X.XX files/s" string.

@@ -45,9 +45,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 
 	// API routes
 	apiMux.HandleFunc("/api2/json/d2d/backup", ServerOnly(storeInstance, api.D2DBackupHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/backup/flat", ServerOnly(storeInstance, api.D2DBackupFlatHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/restore", ServerOnly(storeInstance, api.D2DRestoreHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/restore/flat", ServerOnly(storeInstance, api.D2DRestoreFlatHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/target", ServerOnly(storeInstance, api.D2DTargetHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/target/tree", ServerOnly(storeInstance, api.D2DTargetTreeHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/script", ServerOnly(storeInstance, api.D2DScriptHandler(storeInstance)))
@@ -80,7 +78,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", ServerOnly(storeInstance, api.ExtJsRestoreSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/plus/agent/install/win", api.AgentInstallScriptHandler(storeInstance, version))
 	apiMux.HandleFunc("/api2/json/d2d/verification", ServerOnly(storeInstance, api.D2DVerificationHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/verification/flat", ServerOnly(storeInstance, api.D2DVerificationFlatHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/d2d/verification", ServerOnly(storeInstance, api.ExtJsVerificationRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification", ServerOnly(storeInstance, api.ExtJsVerificationConfigHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}", ServerOnly(storeInstance, api.ExtJsVerificationConfigSingleHandler(storeInstance)))

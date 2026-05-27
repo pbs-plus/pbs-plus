@@ -217,11 +217,6 @@ type TargetsTreeResponse struct {
 	Digest string           `json:"digest"`
 }
 
-type BackupsResponse struct {
-	Data   []database.Backup `json:"data"`
-	Digest string            `json:"digest"`
-}
-
 type BackupConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
@@ -244,11 +239,6 @@ type BackupRunResponse struct {
 	Data    string            `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
-}
-
-type RestoresResponse struct {
-	Data   []database.Restore `json:"data"`
-	Digest string             `json:"digest"`
 }
 
 type RestoreConfigResponse struct {
