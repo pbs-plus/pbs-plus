@@ -403,136 +403,11 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
     exportCSV: async function () {
       const view = this.getView();
-      const store = view.getStore();
-      const records = store.getData().items.map((item) => item.data);
-
-      if (!records || records.length === 0) {
-        Ext.Msg.alert(gettext("Info"), gettext("No records to export."));
-        return;
-      }
-
-      async function fetchSnapshotData(job) {
-        // Build URL using job.store and job.ns.
-        const url = `/api2/json/admin/datastore/${encodeURIComponent(
-          job.store,
-        )}/snapshots?ns=${encodeURIComponent(job.ns)}`;
-
-        try {
-          const response = await fetch(url);
-          if (!response.ok) {
-            throw new Error("HTTP error " + response.status);
-          }
-          const resData = await response.json();
-          const snapshots = resData.data || [];
-          let totalSize = 0;
-
-          const backupTimes = [];
-
-          snapshots.forEach((snap) => {
-            totalSize += snap.size || 0;
-            if (Object.prototype.hasOwnProperty.call(snap, "backup-time")) {
-              let t = snap["backup-time"];
-              if (typeof t !== "number") {
-                t = parseInt(t, 10);
-              }
-              if (Number.isInteger(t)) {
-                backupTimes.push(t);
-              }
-            }
-          });
-
-          return {
-            snapshotCount: snapshots.length,
-            snapshotTotalSize: totalSize,
-            snapshotAttributes: { "backup-time": backupTimes },
-          };
-        } catch (error) {
-          console.error("Error fetching snapshots for job:", job.id, error);
-          return {
-            snapshotCount: "error",
-            snapshotTotalSize: "error",
-            snapshotAttributes: {},
-          };
-        }
-      }
-
-      async function processRecords(records) {
-        // Fetch snapshot data for all jobs in parallel.
-        const extraDataArray = await Promise.all(
-          records.map((job) => fetchSnapshotData(job)),
-        );
-
-        // Merge each job's data with the corresponding snapshot data.
-        const mergedRecords = records.map((job, idx) => {
-          const extra = extraDataArray[idx];
-
-          // Process only the "backup-time" attribute.
-          const backupTimes = extra.snapshotAttributes["backup-time"] || [];
-          const snapshotBackupTime = JSON.stringify(
-            backupTimes.map((timestamp) =>
-              new Date(timestamp * 1000).toString(),
-            ),
-          );
-
-          // Remove unwanted job properties.
-          delete job.exclusions;
-          delete job.upids;
-          delete job["last-plus-error"];
-
-          return {
-            ...job,
-            snapshotCount: extra.snapshotCount,
-            snapshotTotalSize: extra.snapshotTotalSize,
-            snapshot_backup_time: snapshotBackupTime,
-          };
-        });
-
-        return mergedRecords;
-      }
-
-      // Collect the union of all keys across merged records to serve as CSV
-      // headers.
-      var mergedRecords = [];
-      try {
-        mergedRecords = await processRecords(records);
-        console.log("Merged Records:", mergedRecords);
-      } catch (error) {
-        console.error("Error processing records:", error);
-      }
-
-      const headerSet = new Set();
-      mergedRecords.forEach((record) => {
-        Object.keys(record).forEach((key) => headerSet.add(key));
-      });
-
-      const headers = Array.from(headerSet);
-
-      // Build CSV rows.
-      const csvRows = [];
-      csvRows.push(headers.join(","));
-
-      mergedRecords.forEach((row) => {
-        const values = headers.map((header) => {
-          let val = row[header] != null ? row[header] : "";
-          // Escape double quotes.
-          val = String(val).replace(/"/g, '""');
-          return `"${val}"`;
-        });
-        csvRows.push(values.join(","));
-      });
-
-      const csvText = csvRows.join("\n");
-
-      // Create a Blob and trigger the download.
-      const blob = new Blob([csvText], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "disk-backups.csv";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const encodedId = encodeURIComponent(1);
+      window.open(
+        pbsPlusBaseUrl + "/api2/extjs/d2d/backup/export",
+        "_blank"
+      );
     },
 
     startStore: function () {
@@ -827,45 +702,33 @@ Ext.define("PBS.config.DiskBackupJobView", {
     },
     {
       text: gettext("Read Speed"),
-      dataIndex: "current_bytes_speed",
+      dataIndex: "read_speed_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableSpeed(value);
+        return value || "-";
       },
       width: 60,
     },
     {
       text: gettext("Read Total"),
-      dataIndex: "current_bytes_total",
+      dataIndex: "read_total_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
+        return value || "-";
       },
       width: 60,
     },
     {
       text: gettext("Target Size"),
-      dataIndex: "expected_size",
+      dataIndex: "target_size_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return humanReadableBytes(value);
+        return value || "-";
       },
       width: 60,
     },
     {
       text: gettext("Processing Speed"),
-      dataIndex: "current_files_speed",
+      dataIndex: "processing_speed_human",
       renderer: function (value) {
-        if (!value && value !== 0) {
-          return "-";
-        }
-        return `${value.toFixed(2)} files/s`;
+        return value || "-";
       },
       width: 60,
     },

@@ -185,32 +185,25 @@ Ext.define("PBS.PlusUtils", {
       return "";
     }
 
+    // Use pre-parsed status from backend if available
+    let parsed = record.get("status_parsed");
+    if (parsed && parsed.icon) {
+      return `<i class="fa fa-${parsed.icon}"></i> ${parsed.text}`;
+    }
+
+    // Fallback: parse client-side for backward compat
     let parse_task_status = function (status) {
-      if (status === "OK") {
-        return "ok";
-      }
-
-      if (status === "unknown") {
-        return "unknown";
-      }
-
-      let match = status.match(/^WARNINGS: (.*)$/);
-      if (match) {
-        return "warning";
-      }
-
-      match = status.match(/^QUEUED: (.*)$/);
-      if (match) {
-        return "queued";
-      }
-
+      if (status === "OK") return "ok";
+      if (status === "unknown") return "unknown";
+      if (status && status.match(/^WARNINGS: /)) return "warning";
+      if (status && status.match(/^QUEUED: /)) return "queued";
       return "error";
     };
 
-    let parsed = parse_task_status(value);
+    let category = parse_task_status(value);
     let text = value;
     let icon = "";
-    switch (parsed) {
+    switch (category) {
       case "unknown":
         icon = "question faded";
         text = Proxmox.Utils.unknownText;

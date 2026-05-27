@@ -20,19 +20,28 @@ Ext.define("pbs-disk-backup-status", {
     "rawexclusions",
     "include-xattr",
     "legacy-xattr",
+    // Flattened from target
+    "target",
+    "expected_size",
+    // Flattened from history (now returned flat by API)
     "last-run-upid",
     "last-run-state",
     "last-run-endtime",
     "last-successful-endtime",
     "last-successful-upid",
-    "expected_size",
     "duration",
+    // Flattened from current-stats
     "current_file_count",
     "current_folder_count",
     "current_files_speed",
     "current_bytes_speed",
     "current_bytes_total",
-    "target",
+    // Pre-formatted display fields
+    "target_size_human",
+    "read_speed_human",
+    "read_total_human",
+    "processing_speed_human",
+    "status_parsed",
   ],
   idProperty: "id",
   proxy: {
@@ -41,33 +50,6 @@ Ext.define("pbs-disk-backup-status", {
     reader: {
       type: "json",
       rootProperty: "data",
-      transform: function (raw) {
-        let rows = raw.data || [];
-        return rows.map((item) => {
-          if (item.history) {
-            item["last-run-upid"] = item.history["last-run-upid"];
-            item["last-run-state"] = item.history["last-run-state"];
-            item["last-run-endtime"] = item.history["last-run-endtime"];
-            item["last-successful-endtime"] =
-              item.history["last-successful-endtime"];
-            item["last-successful-upid"] = item.history["last-successful-upid"];
-            item["duration"] = item.history["duration"] || null;
-          }
-          if (item["current-stats"]) {
-            let s = item["current-stats"];
-            item.current_file_count = s.current_file_count || null;
-            item.current_folder_count = s.current_folder_count || null;
-            item.current_files_speed = s.current_files_speed || null;
-            item.current_bytes_speed = s.current_bytes_speed || null;
-            item.current_bytes_total = s.current_bytes_total || null;
-          }
-          if (item.target && Ext.isObject(item.target)) {
-            item.target = item.target.name;
-            item.expected_size = item.target.volume_used_bytes;
-          }
-          return item;
-        });
-      },
     },
   },
 });
@@ -87,18 +69,27 @@ Ext.define("pbs-disk-restore-job-status", {
     "retry",
     "retry-interval",
     "expected_size",
+    // Flattened from dest-target
+    "dest-target",
+    // Flattened from history
     "last-run-upid",
     "last-run-state",
     "last-run-endtime",
     "last-successful-endtime",
     "last-successful-upid",
     "duration",
+    // Flattened from current-stats
     "current_file_count",
     "current_folder_count",
     "current_files_speed",
     "current_bytes_speed",
     "current_bytes_total",
-    "dest-target",
+    // Pre-formatted display fields
+    "target_size_human",
+    "read_speed_human",
+    "read_total_human",
+    "processing_speed_human",
+    "status_parsed",
   ],
   idProperty: "id",
   proxy: {
@@ -107,33 +98,6 @@ Ext.define("pbs-disk-restore-job-status", {
     reader: {
       type: "json",
       rootProperty: "data",
-      transform: function (raw) {
-        let rows = raw.data || [];
-        return rows.map((item) => {
-          if (item.history) {
-            item["last-run-upid"] = item.history["last-run-upid"];
-            item["last-run-state"] = item.history["last-run-state"];
-            item["last-run-endtime"] = item.history["last-run-endtime"];
-            item["last-successful-endtime"] =
-              item.history["last-successful-endtime"];
-            item["last-successful-upid"] = item.history["last-successful-upid"];
-            item["duration"] = item.history["duration"] || null;
-          }
-          if (item["current-stats"]) {
-            let s = item["current-stats"];
-            item.current_file_count = s.current_file_count || null;
-            item.current_folder_count = s.current_folder_count || null;
-            item.current_files_speed = s.current_files_speed || null;
-            item.current_bytes_speed = s.current_bytes_speed || null;
-            item.current_bytes_total = s.current_bytes_total || null;
-          }
-          if (item["dest-target"] && Ext.isObject(item["dest-target"])) {
-            item["dest-target"] = item["dest-target"].name;
-            item.expected_size = item["dest-target"].volume_used_bytes;
-          }
-          return item;
-        });
-      },
     },
   },
 });
@@ -238,11 +202,7 @@ Ext.define("pbs-verification-job-status", {
     "retry",
     "retry-interval",
     "created_at",
-    {
-      name: "history",
-      defaultValue: {},
-    },
-    // Flattened history fields (populated by reader transform)
+    // Flattened from history (now returned flat by API)
     "last-run-upid",
     "last-run-state",
     "last-run-endtime",
@@ -250,6 +210,8 @@ Ext.define("pbs-verification-job-status", {
     "last-successful-endtime",
     "last-successful-upid",
     "duration",
+    // Pre-formatted
+    "status_parsed",
   ],
   idProperty: "id",
   proxy: {
@@ -258,22 +220,6 @@ Ext.define("pbs-verification-job-status", {
     reader: {
       type: "json",
       rootProperty: "data",
-      transform: function (raw) {
-        var rows = raw.data || [];
-        return rows.map(function (item) {
-          if (item.history) {
-            item["last-run-upid"] = item.history["last-run-upid"];
-            item["last-run-state"] = item.history["last-run-state"];
-            item["last-run-endtime"] = item.history["last-run-endtime"];
-            item["last-run-starttime"] = item.history["last-run-starttime"];
-            item["last-successful-endtime"] =
-              item.history["last-successful-endtime"];
-            item["last-successful-upid"] = item.history["last-successful-upid"];
-            item["duration"] = item.history["duration"] || null;
-          }
-          return item;
-        });
-      },
     },
   },
 });
