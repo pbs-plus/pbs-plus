@@ -12,13 +12,12 @@ Ext.define("PBS.D2DVerification.JobPanel", {
     {
       xtype: "component",
       dock: "top",
-      cls: "x-fieldset",
+      cls: "pmx-hint",
       style: {
         padding: "8px 12px",
         margin: "0 0 2px 0",
         fontSize: "11px",
         lineHeight: "15px",
-        color: "#555",
       },
       html:
         "Periodically verify that backed-up files can be restored without corruption. " +
@@ -244,7 +243,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
               case "failed":
                 return '<span style="color:red;">\u2717 Failed</span>';
               case "skipped":
-                return '<span style="color:#888;">\u25CB Skipped</span>';
+                return '<span style="opacity:0.7;">\u25CB Skipped</span>';
               case "warning":
                 return '<span style="color:#c93;">\u26A0 Warning</span>';
               case "error":
@@ -373,7 +372,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                     case "warning":
                       return '<span style="color:#c93;">\u26A0 Warning</span>';
                     default:
-                      return '<span style="color:#888;">' + Ext.String.htmlEncode(v || "-") + '</span>';
+                      return '<span style="opacity:0.7;">' + Ext.String.htmlEncode(v || "-") + '</span>';
                   }
                 },
               },
@@ -465,14 +464,14 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                     '<td style="padding:2px 15px;"><b>Population:</b> ' + (population || '-') + '</td>' +
                     '<td style="padding:2px 15px;"><b>Sampled:</b> ' + total + '</td>' +
                     '<td style="padding:2px 15px;color:green;"><b>Verified:</b> ' + verified + '</td>' +
-                    '<td style="padding:2px 15px;color:' + (failed > 0 ? 'red' : '#888') + ';"><b>Failed:</b> ' + failed + '</td>' +
-                    '<td style="padding:2px 15px;color:#888;"><b>Skipped:</b> ' + skipped + '</td>' +
+                    '<td style="padding:2px 15px;color:' + (failed > 0 ? 'red' : 'inherit') + ';"><b>Failed:</b> ' + failed + '</td>' +
+                    '<td style="padding:2px 15px;opacity:0.7;"><b>Skipped:</b> ' + skipped + '</td>' +
                     '</tr>' +
                     '<tr>' +
                     '<td style="padding:2px 15px;" colspan="6">' +
-                    '<span style="color:#555;"><b>95% Confidence:</b> ≥' + (conf.c95 || 0).toFixed(1) + '% intact</span>' +
+                    '<span><b>95% Confidence:</b> ≥' + (conf.c95 || 0).toFixed(1) + '% intact</span>' +
                     '&nbsp;&nbsp;&nbsp;' +
-                    '<span style="color:#555;"><b>99% Confidence:</b> ≥' + (conf.c99 || 0).toFixed(1) + '% intact</span>' +
+                    '<span><b>99% Confidence:</b> ≥' + (conf.c99 || 0).toFixed(1) + '% intact</span>' +
                     '&nbsp;&nbsp;&nbsp;' +
                     '<span style="font-weight:bold;color:' + (failed > 0 ? 'red' : 'green') + ';">' +
                     (failed > 0 ? '\u2717 FAIL — ' + failed + ' file(s) failed verification' : '\u2713 PASS — all sampled files verified successfully') +
@@ -497,7 +496,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             items: [{
               xtype: "component",
               html:
-                '<span style="color:#555;font-size:11px;">' +
+                '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
                 "Each row is one verification run. Select a run to see file-level details. " +
                 "The confidence values indicate the statistical lower bound on the percentage " +
                 "of intact files in the snapshot, based on the sample size and results." +
@@ -628,12 +627,12 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             '<td style="padding:2px 20px;"><b>Total Runs:</b> ' + totalRuns + '</td>' +
             '<td style="padding:2px 20px;"><b>Files Verified:</b> ' + totalFiles.toLocaleString() + '</td>' +
             '<td style="padding:2px 20px;color:green;"><b>Clean Runs:</b> ' + cleanRuns + ' \u2713</td>' +
-            '<td style="padding:2px 20px;color:' + (failedRuns > 0 ? 'red' : '#888') + ';"><b>Failed Runs:</b> ' + failedRuns + (failedRuns > 0 ? ' \u2717' : '') + '</td>' +
+            '<td style="padding:2px 20px;color:' + (failedRuns > 0 ? 'red' : 'inherit') + ';"><b>Failed Runs:</b> ' + failedRuns + (failedRuns > 0 ? ' \u2717' : '') + '</td>' +
             '</tr><tr>' +
             '<td style="padding:2px 20px;"><b>Last 30 Days:</b> ' + last30 + ' runs</td>' +
             '<td style="padding:2px 20px;"><b>Overall Pass Rate:</b> ' + passRate.toFixed(1) + '%</td>' +
             '<td style="padding:2px 20px;"><b>95% Confidence:</b> ≥' + confidence.toFixed(1) + '% intact</td>' +
-            '<td style="padding:2px 20px;color:#888;"><b>Jobs Configured:</b> ' + (data.total_jobs || 0) + '</td>' +
+            '<td style="padding:2px 20px;"><b>Jobs Configured:</b> ' + (data.total_jobs || 0) + '</td>' +
             '</tr></table>';
           bar.setHtml(html);
         },
@@ -827,7 +826,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
         if (state === "OK") return '<span style="color:green;font-weight:bold;">\u2713 Passed</span>';
         if (state && state.startsWith("WARN")) return '<span style="color:#c93;">\u26A0 Warning</span>';
         if (state && state !== "") return '<span style="color:red;">\u2717 Failed</span>';
-        return '<span style="color:#888;">-</span>';
+        return '<span style="opacity:0.7;">-</span>';
       },
     },
     {

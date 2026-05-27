@@ -11,15 +11,15 @@ var verificationModes = Ext.create("Ext.data.Store", {
 
 var strategyDescriptions = {
   random:
-    '<i class="fa fa-shuffle" style="margin-right:4px;color:#888;"></i>' +
+    '<i class="fa fa-shuffle" style="margin-right:4px;opacity:0.6;"></i>' +
     '<b>Random</b> — Shuffle all eligible files and pick the first N. ' +
     "Provides statistically uniform coverage. Best for general-purpose verification.",
   systematic:
-    '<i class="fa fa-arrows-left-right" style="margin-right:4px;color:#888;"></i>' +
+    '<i class="fa fa-arrows-left-right" style="margin-right:4px;opacity:0.6;"></i>' +
     '<b>Systematic</b> — Sort files by path, then pick evenly-spaced entries. ' +
     "Ensures broad spatial coverage across the entire archive.",
   stratified:
-    '<i class="fa fa-layer-group" style="margin-right:4px;color:#888;"></i>' +
+    '<i class="fa fa-layer-group" style="margin-right:4px;opacity:0.6;"></i>' +
     '<b>Stratified</b> — Group files by top-level directory, then sample proportionally from each group. ' +
     "Ensures every directory tree is represented.",
 };
@@ -209,7 +209,7 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
     {
       xtype: "component",
       html:
-        '<span style="color:#555;font-size:11px;">' +
+        '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
         "Configure which backup snapshots to verify and how often to run checks. " +
         "Each run samples files from a snapshot and validates their integrity." +
         '</span>',
@@ -420,7 +420,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
     {
       xtype: "component",
       html:
-        '<span style="color:#555;font-size:11px;">' +
+        '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
         "Control how many files are checked per run and how they are selected. " +
         "More samples yield higher statistical confidence. " +
         'With 60+ samples and zero failures, confidence exceeds 95%.</span>',
@@ -732,7 +732,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
         {
           xtype: "component",
           html:
-            '<span style="color:#555;font-size:11px;">' +
+            '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
             gettext("Filters restrict which files are eligible for spot checks. " +
               "A file must match at least one filter to be included. " +
               "Leave empty to sample from all files.") +
