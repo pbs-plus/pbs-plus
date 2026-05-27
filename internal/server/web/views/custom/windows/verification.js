@@ -337,9 +337,7 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       editable: false,
       forceSelection: true,
       allowBlank: false,
-      cbind: {
-        value: "{modeValue}",
-      },
+      value: "random_spot",
     },
     {
       xtype: "proxmoxtextfield",
