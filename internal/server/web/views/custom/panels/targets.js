@@ -344,9 +344,10 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
     }
 
     if (node.children && node.children.length > 0) {
+      var self = this;
       result.children = node.children.map(function (child) {
-        return me.convertTreeNode(child);
-      }.bind(this));
+        return self.convertTreeNode(child);
+      });
       result.leaf = false;
     }
 
