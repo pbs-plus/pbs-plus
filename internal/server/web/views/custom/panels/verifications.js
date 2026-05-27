@@ -12,6 +12,22 @@ Ext.define("PBS.D2DVerification.JobPanel", {
     {
       xtype: "component",
       dock: "top",
+      cls: "x-fieldset",
+      style: {
+        padding: "8px 12px",
+        margin: "0 0 2px 0",
+        fontSize: "11px",
+        lineHeight: "15px",
+        color: "#555",
+      },
+      html:
+        "Periodically verify that backed-up files can be restored without corruption. " +
+        "Each job samples files from a snapshot and checks their integrity against the source agent. " +
+        "Use the results to demonstrate backup reliability over time.",
+    },
+    {
+      xtype: "component",
+      dock: "top",
       reference: "aggregateBar",
       hidden: true,
       cls: "x-fieldset",
@@ -475,6 +491,20 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             },
           });
 
+          var descPanel = Ext.create("Ext.panel.Panel", {
+            layout: "fit",
+            margin: "0 0 5 0",
+            items: [{
+              xtype: "component",
+              html:
+                '<span style="color:#555;font-size:11px;">' +
+                "Each row is one verification run. Select a run to see file-level details. " +
+                "The confidence values indicate the statistical lower bound on the percentage " +
+                "of intact files in the snapshot, based on the sample size and results." +
+                '</span>',
+            }],
+          });
+
           Ext.create("Ext.window.Window", {
             title:
               gettext("Verification Results: ") +
@@ -486,7 +516,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
               type: "vbox",
               align: "stretch",
             },
-            items: [summaryPanel, runsGrid, detailsGrid],
+            items: [descPanel, summaryPanel, runsGrid, detailsGrid],
             buttons: [
               {
                 text: gettext("Export Detail CSV"),

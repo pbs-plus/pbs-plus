@@ -207,6 +207,15 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
 
   column1: [
     {
+      xtype: "component",
+      html:
+        '<span style="color:#555;font-size:11px;">' +
+        "Configure which backup snapshots to verify and how often to run checks. " +
+        "Each run samples files from a snapshot and validates their integrity." +
+        '</span>',
+      margin: "0 0 8 0",
+    },
+    {
       xtype: "pmxDisplayEditField",
       name: "id",
       fieldLabel: gettext("Job ID"),
@@ -228,6 +237,13 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       value: "backup_job",
       editable: false,
       forceSelection: true,
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Backup Job: verify snapshots from a single backup job. " +
+          "Namespace: randomly select from all backup jobs in a datastore namespace."
+        ),
+      },
       listeners: {
         change: function (combo, val) {
           var panel = combo.up("pbsD2DVerificationOptionsPanel");
@@ -338,6 +354,14 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       forceSelection: true,
       allowBlank: false,
       value: "random_spot",
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Random Spot Check: sample a random set of files from each snapshot and " +
+          "verify their contents against the source agent. This provides statistical " +
+          "confidence in backup integrity without reading every file."
+        ),
+      },
     },
     {
       xtype: "proxmoxtextfield",
@@ -394,6 +418,15 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
 
   column1: [
     {
+      xtype: "component",
+      html:
+        '<span style="color:#555;font-size:11px;">' +
+        "Control how many files are checked per run and how they are selected. " +
+        "More samples yield higher statistical confidence. " +
+        'With 60+ samples and zero failures, confidence exceeds 95%.</span>',
+      margin: "0 0 8 0",
+    },
+    {
       xtype: "combo",
       fieldLabel: gettext("Sample Mode"),
       name: "sample_count_mode",
@@ -430,6 +463,13 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       maxValue: 100000,
       value: 60,
       allowBlank: false,
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Number of files to verify per run. 60 samples with zero failures gives " +
+          "95% confidence that at least 95% of data is intact."
+        ),
+      },
     },
     {
       xtype: "numberfield",
