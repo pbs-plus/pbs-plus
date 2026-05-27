@@ -47,7 +47,7 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 	results, err := db.GetVerificationResults(verificationJobID)
 	if err == nil {
 		for _, r := range results {
-			if r.Status != "OK" {
+			if r.Status != "completed" {
 				continue
 			}
 			// Snapshot format: host/<hostname>/<timestamp>

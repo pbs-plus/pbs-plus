@@ -232,7 +232,7 @@ func FlattenVerificationResult(r database.VerificationResult, namespace string) 
 
 	// Status badge: pass/fail semantics
 	switch {
-	case r.Status == "OK" && r.FailedFiles == 0:
+	case r.Status == "completed" && r.FailedFiles == 0:
 		fr.StatusBadge = "passed"
 	case r.FailedFiles > 0:
 		fr.StatusBadge = "failed"
