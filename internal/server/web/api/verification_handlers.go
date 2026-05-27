@@ -62,15 +62,17 @@ func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		digest, err := calculateDigest(jobs)
+		flatJobs := FlattenVerificationJobs(jobs)
+
+		digest, err := calculateDigest(flatJobs)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		toReturn := VerificationJobsResponse{
-			Data:   jobs,
-			Digest: digest,
+		toReturn := map[string]any{
+			"data":   flatJobs,
+			"digest": digest,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -517,10 +519,12 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 			return
 		}
 
-		response := VerificationResultsResponse{
-			Status:  http.StatusOK,
-			Success: true,
-			Data:    results,
+		flatResults := FlattenVerificationResults(results)
+
+		response := map[string]any{
+			"status":  http.StatusOK,
+			"success": true,
+			"data":    flatResults,
 		}
 		json.NewEncoder(w).Encode(response)
 	}

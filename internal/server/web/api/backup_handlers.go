@@ -33,15 +33,17 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		digest, err := calculateDigest(allBackups)
+		flatBackups := FlattenBackups(allBackups)
+
+		digest, err := calculateDigest(flatBackups)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		toReturn := BackupsResponse{
-			Data:   allBackups,
-			Digest: digest,
+		toReturn := map[string]any{
+			"data":   flatBackups,
+			"digest": digest,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -481,7 +483,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = backup
+			response.Data = FlattenBackupForEdit(backup)
 			json.NewEncoder(w).Encode(response)
 
 			return

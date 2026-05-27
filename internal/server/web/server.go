@@ -45,8 +45,11 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 
 	// API routes
 	apiMux.HandleFunc("/api2/json/d2d/backup", ServerOnly(storeInstance, api.D2DBackupHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/backup/flat", ServerOnly(storeInstance, api.D2DBackupFlatHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/restore", ServerOnly(storeInstance, api.D2DRestoreHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/restore/flat", ServerOnly(storeInstance, api.D2DRestoreFlatHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/target", ServerOnly(storeInstance, api.D2DTargetHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/target/tree", ServerOnly(storeInstance, api.D2DTargetTreeHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/script", ServerOnly(storeInstance, api.D2DScriptHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/token", ServerOnly(storeInstance, api.D2DTokenHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", ServerOnly(storeInstance, api.D2DFileTree(storeInstance)))
@@ -54,6 +57,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 
 	// ExtJS routes
 	apiMux.HandleFunc("/api2/extjs/d2d/backup", ServerOnly(storeInstance, api.ExtJsBackupRunHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/d2d/backup/export", ServerOnly(storeInstance, api.ExtJsBackupCSVExportHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/d2d/restore", ServerOnly(storeInstance, api.ExtJsRestoreRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target", ServerOnly(storeInstance, api.ExtJsTargetHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target-status", ServerOnly(storeInstance, api.D2DTargetStatusHandler(storeInstance)))
@@ -76,6 +80,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", ServerOnly(storeInstance, api.ExtJsRestoreSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/plus/agent/install/win", api.AgentInstallScriptHandler(storeInstance, version))
 	apiMux.HandleFunc("/api2/json/d2d/verification", ServerOnly(storeInstance, api.D2DVerificationHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/verification/flat", ServerOnly(storeInstance, api.D2DVerificationFlatHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/d2d/verification", ServerOnly(storeInstance, api.ExtJsVerificationRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification", ServerOnly(storeInstance, api.ExtJsVerificationConfigHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}", ServerOnly(storeInstance, api.ExtJsVerificationConfigSingleHandler(storeInstance)))
