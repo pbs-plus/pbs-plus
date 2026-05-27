@@ -4,12 +4,13 @@ package verification
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	sha256simd "github.com/minio/sha256-simd"
 	"io"
 	"math"
-	"math/rand"
+	mrand "math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,6 +31,115 @@ import (
 	"github.com/pbs-plus/pxar/transfer"
 	"github.com/pbs-plus/pxar/vfs"
 )
+
+// weightedShuffleBackups reorders backup jobs using weighted random selection
+// where the weight for each job is inversely proportional to how recently it
+// was last successfully verified. Jobs that have never been verified receive
+// the maximum weight. This ensures uniform coverage over successive runs and
+// prevents the same backup job from being selected repeatedly.
+func weightedShuffleBackups(backups []database.Backup, db *database.Database, verificationJobID string) []database.Backup {
+	if len(backups) <= 1 {
+		return backups
+	}
+
+	// Build a map of target hostname → last successful verification time.
+	lastVerified := make(map[string]int64)
+	results, err := db.GetVerificationResults(verificationJobID)
+	if err == nil {
+		for _, r := range results {
+			if r.Status != "OK" {
+				continue
+			}
+			// Snapshot format: host/<hostname>/<timestamp>
+			parts := strings.SplitN(r.Snapshot, "/", 3)
+			if len(parts) >= 2 {
+				hostname := proxmox.NormalizeHostname(parts[1])
+				if r.CompletedAt > lastVerified[hostname] {
+					lastVerified[hostname] = r.CompletedAt
+				}
+			}
+		}
+	}
+
+	now := time.Now().Unix()
+
+	// Compute weights: inverse of seconds since last verification.
+	// Never-verified jobs get a very large weight.
+	weights := make([]float64, len(backups))
+	for i, b := range backups {
+		hostname := proxmox.NormalizeHostname(b.Target.GetHostname())
+		last := lastVerified[hostname]
+		if last == 0 {
+			// Never verified — maximum weight
+			weights[i] = float64(now)
+		} else {
+			elapsed := float64(now - last)
+			if elapsed < 1 {
+				elapsed = 1 // minimum 1 second gap to avoid zero
+			}
+			weights[i] = elapsed
+		}
+	}
+
+	// Repeated weighted selection without replacement.
+	// Pick a random index proportional to weight, move it to the output,
+	// then repeat with remaining candidates.
+	remaining := make([]int, len(backups))
+	for i := range remaining {
+		remaining[i] = i
+	}
+
+	// Read enough crypto-random bytes for all selections.
+	buf := make([]byte, len(backups)*4)
+	if _, err := rand.Read(buf); err != nil {
+		// Fallback: just shuffle with math/rand
+		mrand.Shuffle(len(backups), func(i, j int) {
+			backups[i], backups[j] = backups[j], backups[i]
+		})
+		return backups
+	}
+
+	result := make([]database.Backup, 0, len(backups))
+	remWeights := make([]float64, len(weights))
+	copy(remWeights, weights)
+
+	for sel := range backups {
+		// Compute total of remaining weights
+		remTotal := 0.0
+		for _, idx := range remaining[sel:] {
+			remTotal += remWeights[idx]
+		}
+		if remTotal <= 0 {
+			remTotal = 1
+		}
+
+		// Pick a random threshold using crypto/rand
+		raw := uint32(buf[sel*4]) | uint32(buf[sel*4+1])<<8 | uint32(buf[sel*4+2])<<16 | uint32(buf[sel*4+3])<<24
+		threshold := float64(raw%1_000_000) / 1_000_000.0 * remTotal
+
+		// Walk remaining items until threshold is exhausted
+		cumulative := 0.0
+		chosen := remaining[sel] // default to first remaining
+		for _, idx := range remaining[sel:] {
+			cumulative += remWeights[idx]
+			if cumulative >= threshold {
+				chosen = idx
+				break
+			}
+		}
+
+		// Swap chosen into position sel
+		for j := sel; j < len(remaining); j++ {
+			if remaining[j] == chosen {
+				remaining[sel], remaining[j] = remaining[j], remaining[sel]
+				break
+			}
+		}
+		result = append(result, backups[chosen])
+	}
+
+	return result
+}
 
 var (
 	ErrNoSnapshots       = errors.New("no snapshots found for backup job")
@@ -263,10 +373,10 @@ func (v *verificationJob) execute(ctx context.Context) error {
 
 	if job.TargetMode == "namespace" {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' targeting namespace '%s' (%d backup jobs)", job.ID, job.Namespace, len(backups)))
-		// Shuffle backup jobs so each run picks a random one
-		rand.Shuffle(len(backups), func(i, j int) {
-			backups[i], backups[j] = backups[j], backups[i]
-		})
+		// Weight backup jobs inversely to how recently they were verified.
+		// Jobs never verified get the highest weight; recently verified ones
+		// get the lowest. This maximises coverage over successive runs.
+		backups = weightedShuffleBackups(backups, v.storeInstance.Database, job.ID)
 	} else {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
 	}
@@ -679,7 +789,15 @@ func (v *verificationJob) selectSnapshot(ctx context.Context, job database.Verif
 		}
 	}
 
-	idx := rand.Intn(len(filtered))
+	var idx int
+	if len(filtered) > 1 {
+		var b [4]byte
+		if _, err := rand.Read(b[:]); err == nil {
+			idx = int(b[0]) % len(filtered)
+		} else {
+			idx = mrand.Intn(len(filtered))
+		}
+	}
 	return &filtered[idx], nil
 }
 
@@ -898,7 +1016,7 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 	case "stratified":
 		return stratifiedSample(allFiles, sampleCount), nil
 	default: // random
-		rand.Shuffle(len(allFiles), func(i, j int) {
+		mrand.Shuffle(len(allFiles), func(i, j int) {
 			allFiles[i], allFiles[j] = allFiles[j], allFiles[i]
 		})
 		return allFiles[:sampleCount], nil
@@ -960,7 +1078,7 @@ func stratifiedSample(files []fileEntry, n int) []fileEntry {
 			allocated = len(g)
 		}
 
-		rand.Shuffle(len(g), func(i, j int) {
+		mrand.Shuffle(len(g), func(i, j int) {
 			g[i], g[j] = g[j], g[i]
 		})
 
