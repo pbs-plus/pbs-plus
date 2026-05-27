@@ -129,7 +129,7 @@ type verificationJob struct {
 	skippedFiles    int
 	totalFiles      int
 	resultID        int
-	totalPopulation int
+	totalPopulation int64 // total eligible bytes
 }
 
 // NewVerificationJob creates a new verification job.
@@ -397,6 +397,9 @@ func (v *verificationJob) executeVerification(
 	}
 
 	result.TotalFiles = len(sampledFiles)
+	for _, f := range sampledFiles {
+		result.SampledBytes += f.Size
+	}
 	v.mu.RLock()
 	result.TotalPopulation = v.totalPopulation
 	v.mu.RUnlock()
@@ -468,6 +471,7 @@ func (v *verificationJob) executeVerification(
 			result.VerifiedFiles++
 		case "failed":
 			result.FailedFiles++
+			result.FailedBytes += ir.result.Size
 			vTask.WriteString(fmt.Sprintf("file verification failed: %s - %s", ir.result.Path, ir.result.Message))
 		default:
 			result.SkippedFiles++
@@ -871,20 +875,25 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 		return nil, ErrNoFilesToVerify
 	}
 
-	// Store total population for confidence calculation
+	var totalBytes int64
+	for _, f := range allFiles {
+		totalBytes += f.Size
+	}
+
+	// Store total population (bytes) and file count for confidence calculation
 	v.mu.Lock()
-	v.totalPopulation = len(allFiles)
+	v.totalPopulation = totalBytes
 	v.mu.Unlock()
 
-	sampleCount := job.SpotConfig.SampleCount
-	if job.SpotConfig.SampleCountPercent > 0 {
-		sampleCount = int(math.Ceil(float64(len(allFiles)) * job.SpotConfig.SampleCountPercent / 100))
+	targetSize := job.SpotConfig.SampleSize
+	if job.SpotConfig.SampleSizePercent > 0 {
+		targetSize = int64(math.Ceil(float64(totalBytes) * job.SpotConfig.SampleSizePercent / 100))
 	}
-	if sampleCount <= 0 {
-		sampleCount = 10
+	if targetSize <= 0 {
+		targetSize = 1 << 30 // 1 GiB default
 	}
-	if sampleCount > len(allFiles) {
-		sampleCount = len(allFiles)
+	if targetSize > totalBytes {
+		targetSize = totalBytes
 	}
 
 	strategy := job.SpotConfig.SamplingStrategy
@@ -894,78 +903,117 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 
 	switch strategy {
 	case "systematic":
-		return systematicSample(allFiles, sampleCount), nil
+		return systematicSampleBySize(allFiles, targetSize), nil
 	case "stratified":
-		return stratifiedSample(allFiles, sampleCount), nil
+		return stratifiedSampleBySize(allFiles, targetSize), nil
 	default: // random
 		rand.Shuffle(len(allFiles), func(i, j int) {
 			allFiles[i], allFiles[j] = allFiles[j], allFiles[i]
 		})
-		return allFiles[:sampleCount], nil
+		return accumulateBySize(allFiles, targetSize), nil
 	}
 }
 
 // systematicSample takes every k-th file after sorting by path for even coverage.
-func systematicSample(files []fileEntry, n int) []fileEntry {
+// accumulateBySize accumulates files from the list until total bytes reaches target.
+// The input list should already be ordered (shuffled/sorted) by the caller.
+func accumulateBySize(files []fileEntry, targetBytes int64) []fileEntry {
+	var accumulated int64
+	for i, f := range files {
+		if accumulated >= targetBytes {
+			return files[:i]
+		}
+		accumulated += f.Size
+	}
+	return files
+}
+
+// systematicSampleBySize sorts files by path and picks every k-th file until
+// accumulated bytes reach the target.
+func systematicSampleBySize(files []fileEntry, targetBytes int64) []fileEntry {
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Path < files[j].Path
 	})
 
-	if n >= len(files) {
+	var totalBytes int64
+	for _, f := range files {
+		totalBytes += f.Size
+	}
+	if totalBytes <= targetBytes {
 		return files
 	}
 
-	result := make([]fileEntry, n)
-	step := float64(len(files)) / float64(n)
-	for i := range n {
-		idx := int(float64(i) * step)
-		result[i] = files[idx]
+	// Estimate step so accumulated bytes ≈ targetBytes
+	step := float64(len(files)) / float64(targetBytes) * (float64(totalBytes) / float64(len(files)))
+	if step < 1 {
+		step = 1
+	}
+
+	var result []fileEntry
+	var accumulated int64
+	idx := 0.0
+	for int(idx) < len(files) && accumulated < targetBytes {
+		f := files[int(idx)]
+		result = append(result, f)
+		accumulated += f.Size
+		idx += step
 	}
 	return result
 }
 
-// stratifiedSample groups files by top-level directory and samples
-// proportionally from each group.
-func stratifiedSample(files []fileEntry, n int) []fileEntry {
-	if n >= len(files) {
+// stratifiedSampleBySize groups files by top-level directory and samples
+// proportionally by byte size from each group.
+func stratifiedSampleBySize(files []fileEntry, targetBytes int64) []fileEntry {
+	var totalBytes int64
+	for _, f := range files {
+		totalBytes += f.Size
+	}
+	if totalBytes <= targetBytes {
 		return files
 	}
 
-	// Group by top-level directory
-	groups := make(map[string][]fileEntry)
+	// Group by top-level directory and compute per-group byte totals
+	type groupInfo struct {
+		files []fileEntry
+		bytes int64
+	}
+	groups := make(map[string]*groupInfo)
+	var groupOrder []string
 	for _, f := range files {
 		dir := topLevelDir(f.Path)
-		groups[dir] = append(groups[dir], f)
+		if _, ok := groups[dir]; !ok {
+			groups[dir] = &groupInfo{}
+			groupOrder = append(groupOrder, dir)
+		}
+		groups[dir].files = append(groups[dir].files, f)
+		groups[dir].bytes += f.Size
 	}
+	sort.Strings(groupOrder)
 
 	var result []fileEntry
-	remaining := n
-	groupNames := make([]string, 0, len(groups))
-	for k := range groups {
-		groupNames = append(groupNames, k)
-	}
-	sort.Strings(groupNames)
-
-	for i, name := range groupNames {
+	remaining := targetBytes
+	for i, name := range groupOrder {
 		g := groups[name]
-		// Proportional allocation
-		var allocated int
-		if i == len(groupNames)-1 {
-			allocated = remaining // last group gets remainder
+		var allocBytes int64
+		if i == len(groupOrder)-1 {
+			allocBytes = remaining // last group gets remainder
 		} else {
-			allocated = min(int(math.Round(float64(len(g))/float64(len(files))*float64(n))), remaining)
+			allocBytes = min(int64(math.Round(float64(g.bytes)/float64(totalBytes)*float64(targetBytes))), remaining)
 		}
 
-		if allocated > len(g) {
-			allocated = len(g)
-		}
-
-		rand.Shuffle(len(g), func(i, j int) {
-			g[i], g[j] = g[j], g[i]
+		// Shuffle within group, then accumulate until allocBytes reached
+		rand.Shuffle(len(g.files), func(i, j int) {
+			g.files[i], g.files[j] = g.files[j], g.files[i]
 		})
-
-		result = append(result, g[:allocated]...)
-		remaining -= allocated
+		var acc int64
+		for _, f := range g.files {
+			if acc >= allocBytes {
+				break
+			}
+			result = append(result, f)
+			acc += f.Size
+		}
+		remaining -= acc
 	}
 
 	return result

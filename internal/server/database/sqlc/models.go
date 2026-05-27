@@ -140,4 +140,6 @@ type VerificationResult struct {
 	CompletedAt       sql.NullInt64  `json:"completed_at"`
 	Details           sql.NullString `json:"details"`
 	TotalPopulation   int64          `json:"total_population"`
+	SampledBytes      int64          `json:"sampled_bytes"`
+	FailedBytes       int64          `json:"failed_bytes"`
 }

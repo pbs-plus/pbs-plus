@@ -207,17 +207,17 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			}
 		}
 
-		sampleCount := 10
-		if sc := r.FormValue("sample_count"); sc != "" {
-			if n, err := strconv.Atoi(sc); err == nil && n > 0 {
-				sampleCount = n
+		sampleSize := int64(1 << 30) // 1 GiB default
+		if ss := r.FormValue("sample_size"); ss != "" {
+			if n, err := strconv.ParseInt(ss, 10, 64); err == nil && n > 0 {
+				sampleSize = n
 			}
 		}
 
-		var sampleCountPercent float64
-		if scp := r.FormValue("sample_count_percent"); scp != "" {
-			if v, err := strconv.ParseFloat(scp, 64); err == nil && v > 0 {
-				sampleCountPercent = v
+		var sampleSizePercent float64
+		if ssp := r.FormValue("sample_size_percent"); ssp != "" {
+			if v, err := strconv.ParseFloat(ssp, 64); err == nil && v > 0 {
+				sampleSizePercent = v
 			}
 		}
 
@@ -273,13 +273,13 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			Retry:         retry,
 			RetryInterval: retryInterval,
 			SpotConfig: database.SpotCheckConfig{
-				SampleCount:        sampleCount,
-				SampleCountPercent: sampleCountPercent,
-				SamplingStrategy:   r.FormValue("sampling_strategy"),
-				UseLatest:          useLatest,
-				DateFrom:           r.FormValue("date_from"),
-				DateTo:             r.FormValue("date_to"),
-				FailThreshold:      failThreshold,
+				SampleSize:        sampleSize,
+				SampleSizePercent: sampleSizePercent,
+				SamplingStrategy:  r.FormValue("sampling_strategy"),
+				UseLatest:         useLatest,
+				DateFrom:          r.FormValue("date_from"),
+				DateTo:            r.FormValue("date_to"),
+				FailThreshold:     failThreshold,
 			},
 			RunOnBackupComplete: r.FormValue("run_on_backup_complete") == "true",
 		}
@@ -295,8 +295,8 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 		if spotConfigJSON := r.FormValue("spot_config"); spotConfigJSON != "" {
 			var sc database.SpotCheckConfig
 			if err := json.Unmarshal([]byte(spotConfigJSON), &sc); err == nil {
-				if sc.SampleCount > 0 {
-					job.SpotConfig.SampleCount = sc.SampleCount
+				if sc.SampleSize > 0 {
+					job.SpotConfig.SampleSize = sc.SampleSize
 				}
 				if sc.SamplingStrategy != "" {
 					job.SpotConfig.SamplingStrategy = sc.SamplingStrategy
@@ -422,14 +422,14 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				job.RetryInterval = retryInterval
 			}
 
-			if sc := r.FormValue("sample_count"); sc != "" {
-				if n, err := strconv.Atoi(sc); err == nil && n > 0 {
-					job.SpotConfig.SampleCount = n
+			if ss := r.FormValue("sample_size"); ss != "" {
+				if n, err := strconv.ParseInt(ss, 10, 64); err == nil && n > 0 {
+					job.SpotConfig.SampleSize = n
 				}
 			}
-			if scp := r.FormValue("sample_count_percent"); scp != "" {
-				if v, err := strconv.ParseFloat(scp, 64); err == nil && v > 0 {
-					job.SpotConfig.SampleCountPercent = v
+			if ssp := r.FormValue("sample_size_percent"); ssp != "" {
+				if v, err := strconv.ParseFloat(ssp, 64); err == nil && v > 0 {
+					job.SpotConfig.SampleSizePercent = v
 				}
 			}
 			if ss := r.FormValue("sampling_strategy"); ss != "" {
@@ -568,14 +568,14 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 	for _, r := range results {
 		startedAt := formatTimestamp(r.StartedAt)
 		completedAt := formatTimestamp(r.CompletedAt)
-		conf95, conf99 := computeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
+		conf95, conf99 := computeConfidence(r.TotalPopulation, r.SampledBytes, r.FailedBytes)
 		fmt.Fprintf(w, "%s,%d,%s,%s,%d,%d,%d,%d,%d,%.1f%%,%.1f%%,%s,%s\n",
 			csvEscape(r.VerificationJobID),
 			r.ID,
 			csvEscape(r.Snapshot),
 			r.Status,
 			r.TotalPopulation,
-			r.TotalFiles,
+			r.SampledBytes,
 			r.VerifiedFiles,
 			r.FailedFiles,
 			r.SkippedFiles,
@@ -590,14 +590,14 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult) {
 	fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Total Population,Sample Size,File Path,File Size,Status,Message,Confidence 95%,Confidence 99%")
 	for _, r := range results {
-		conf95, conf99 := computeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
+		conf95, conf99 := computeConfidence(r.TotalPopulation, r.SampledBytes, r.FailedBytes)
 		for _, f := range r.Details {
 			fmt.Fprintf(w, "%s,%d,%s,%d,%d,%s,%d,%s,%s,%.1f%%,%.1f%%\n",
 				csvEscape(r.VerificationJobID),
 				r.ID,
 				csvEscape(r.Snapshot),
 				r.TotalPopulation,
-				r.TotalFiles,
+				r.SampledBytes,
 				csvEscape(f.Path),
 				f.Size,
 				f.Status,
@@ -610,21 +610,22 @@ func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult
 }
 
 // computeConfidence returns the lower bound of the intact rate at 95% and 99% confidence.
+// Uses byte-based population, sample, and failure counts for data integrity metrics.
 // Uses the Rule of Three for zero-failure samples and the Wilson score interval otherwise.
-func computeConfidence(population, sample, failures int) (float64, float64) {
-	if sample <= 0 || failures >= sample {
+func computeConfidence(populationBytes, sampledBytes, failedBytes int64) (float64, float64) {
+	if sampledBytes <= 0 || failedBytes >= sampledBytes {
 		return 0, 0
 	}
 
-	n := float64(sample)
-	N := float64(population)
+	n := float64(sampledBytes)
+	N := float64(populationBytes)
 	if N <= 0 || n > N {
 		N = n
 	}
 
-	fHat := float64(failures) / n
+	fHat := float64(failedBytes) / n
 
-	if failures == 0 {
+	if failedBytes == 0 {
 		// Rule of Three with finite population correction
 		fpc := math.Sqrt((N - n) / N)
 		if fpc < 0 {

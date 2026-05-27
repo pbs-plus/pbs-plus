@@ -71,8 +71,9 @@ const createVerificationResult = `-- name: CreateVerificationResult :execresult
 INSERT INTO verification_results (
     verification_job_id, upid, snapshot, snapshot_time,
     total_files, verified_files, failed_files, skipped_files,
+    sampled_bytes, failed_bytes,
     status, started_at, completed_at, details, total_population
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateVerificationResultParams struct {
@@ -84,6 +85,8 @@ type CreateVerificationResultParams struct {
 	VerifiedFiles     sql.NullInt64  `json:"verified_files"`
 	FailedFiles       sql.NullInt64  `json:"failed_files"`
 	SkippedFiles      sql.NullInt64  `json:"skipped_files"`
+	SampledBytes      int64          `json:"sampled_bytes"`
+	FailedBytes       int64          `json:"failed_bytes"`
 	Status            sql.NullString `json:"status"`
 	StartedAt         sql.NullInt64  `json:"started_at"`
 	CompletedAt       sql.NullInt64  `json:"completed_at"`
@@ -101,6 +104,8 @@ func (q *Queries) CreateVerificationResult(ctx context.Context, arg CreateVerifi
 		arg.VerifiedFiles,
 		arg.FailedFiles,
 		arg.SkippedFiles,
+		arg.SampledBytes,
+		arg.FailedBytes,
 		arg.Status,
 		arg.StartedAt,
 		arg.CompletedAt,
@@ -134,7 +139,7 @@ func (q *Queries) DeleteVerificationResults(ctx context.Context, verificationJob
 }
 
 const getLatestVerificationResult = `-- name: GetLatestVerificationResult :one
-SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details, total_population
+SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details, total_population, sampled_bytes, failed_bytes
 FROM verification_results
 WHERE verification_job_id = ?
 ORDER BY started_at DESC
@@ -159,6 +164,8 @@ func (q *Queries) GetLatestVerificationResult(ctx context.Context, verificationJ
 		&i.CompletedAt,
 		&i.Details,
 		&i.TotalPopulation,
+		&i.SampledBytes,
+		&i.FailedBytes,
 	)
 	return i, err
 }
@@ -201,7 +208,7 @@ func (q *Queries) GetVerificationJob(ctx context.Context, id string) (Verificati
 }
 
 const getVerificationResults = `-- name: GetVerificationResults :many
-SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details, total_population
+SELECT id, verification_job_id, upid, snapshot, snapshot_time, total_files, verified_files, failed_files, skipped_files, status, started_at, completed_at, details, total_population, sampled_bytes, failed_bytes
 FROM verification_results
 WHERE verification_job_id = ?
 ORDER BY started_at DESC
@@ -231,6 +238,8 @@ func (q *Queries) GetVerificationResults(ctx context.Context, verificationJobID 
 			&i.CompletedAt,
 			&i.Details,
 			&i.TotalPopulation,
+			&i.SampledBytes,
+			&i.FailedBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -374,7 +383,8 @@ func (q *Queries) UpdateVerificationJob(ctx context.Context, arg UpdateVerificat
 const updateVerificationResult = `-- name: UpdateVerificationResult :exec
 UPDATE verification_results
 SET upid = ?, total_files = ?, verified_files = ?, failed_files = ?,
-    skipped_files = ?, status = ?, completed_at = ?, details = ?,
+    skipped_files = ?, sampled_bytes = ?, failed_bytes = ?,
+    status = ?, completed_at = ?, details = ?,
     total_population = ?
 WHERE id = ?
 `
@@ -385,6 +395,8 @@ type UpdateVerificationResultParams struct {
 	VerifiedFiles   sql.NullInt64  `json:"verified_files"`
 	FailedFiles     sql.NullInt64  `json:"failed_files"`
 	SkippedFiles    sql.NullInt64  `json:"skipped_files"`
+	SampledBytes    int64          `json:"sampled_bytes"`
+	FailedBytes     int64          `json:"failed_bytes"`
 	Status          sql.NullString `json:"status"`
 	CompletedAt     sql.NullInt64  `json:"completed_at"`
 	Details         sql.NullString `json:"details"`
@@ -399,6 +411,8 @@ func (q *Queries) UpdateVerificationResult(ctx context.Context, arg UpdateVerifi
 		arg.VerifiedFiles,
 		arg.FailedFiles,
 		arg.SkippedFiles,
+		arg.SampledBytes,
+		arg.FailedBytes,
 		arg.Status,
 		arg.CompletedAt,
 		arg.Details,

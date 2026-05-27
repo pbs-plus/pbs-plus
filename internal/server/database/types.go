@@ -264,14 +264,14 @@ type VerificationJob struct {
 
 // SpotCheckConfig holds configuration for random spot check mode.
 type SpotCheckConfig struct {
-	SampleCount        int               `json:"sample_count"`
-	SampleCountPercent float64           `json:"sample_count_percent"` // 0–100, used when > 0
-	SamplingStrategy   string            `json:"sampling_strategy"`    // random, systematic, stratified
-	UseLatest          bool              `json:"use_latest"`
-	DateFrom           string            `json:"date_from"` // RFC3339 or empty
-	DateTo             string            `json:"date_to"`   // RFC3339 or empty
-	Filters            []SpotCheckFilter `json:"filters"`
-	FailThreshold      int               `json:"fail_threshold"` // stop after N failures (0 = no limit)
+	SampleSize        int64             `json:"sample_size"`         // target total bytes to sample
+	SampleSizePercent float64           `json:"sample_size_percent"` // 0–100 percentage of population bytes
+	SamplingStrategy  string            `json:"sampling_strategy"`   // random, systematic, stratified
+	UseLatest         bool              `json:"use_latest"`
+	DateFrom          string            `json:"date_from"` // RFC3339 or empty
+	DateTo            string            `json:"date_to"`   // RFC3339 or empty
+	Filters           []SpotCheckFilter `json:"filters"`
+	FailThreshold     int               `json:"fail_threshold"` // stop after N failures (0 = no limit)
 }
 
 // SpotCheckFilter defines a filter for selecting files in spot checks.
@@ -288,10 +288,12 @@ type VerificationResult struct {
 	UPID              string                   `json:"upid"`
 	Snapshot          string                   `json:"snapshot"`
 	SnapshotTime      int64                    `json:"snapshot_time"`
-	TotalPopulation   int                      `json:"total_population"` // total eligible files in archive
+	TotalPopulation   int64                    `json:"total_population"` // total eligible bytes in archive
 	TotalFiles        int                      `json:"total_files"`      // files actually sampled
+	SampledBytes      int64                    `json:"sampled_bytes"`    // total bytes in sampled files
 	VerifiedFiles     int                      `json:"verified_files"`
 	FailedFiles       int                      `json:"failed_files"`
+	FailedBytes       int64                    `json:"failed_bytes"` // total bytes in failed files
 	SkippedFiles      int                      `json:"skipped_files"`
 	Status            string                   `json:"status"` // pending, running, completed, failed
 	StartedAt         int64                    `json:"started_at"`

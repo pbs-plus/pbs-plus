@@ -105,8 +105,8 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 	if job.Mode == "" {
 		job.Mode = "random_spot"
 	}
-	if job.SpotConfig.SampleCount <= 0 && job.SpotConfig.SampleCountPercent <= 0 {
-		job.SpotConfig.SampleCount = 10
+	if job.SpotConfig.SampleSize <= 0 && job.SpotConfig.SampleSizePercent <= 0 {
+		job.SpotConfig.SampleSize = 1 << 30 // 1 GiB default
 	}
 
 	spotConfigJSON, err := json.Marshal(job.SpotConfig)
@@ -447,11 +447,13 @@ func (database *Database) CreateVerificationResult(result *VerificationResult) e
 		VerifiedFiles:     toNullInt64(result.VerifiedFiles),
 		FailedFiles:       toNullInt64(result.FailedFiles),
 		SkippedFiles:      toNullInt64(result.SkippedFiles),
+		SampledBytes:      result.SampledBytes,
+		FailedBytes:       result.FailedBytes,
 		Status:            toNullString(result.Status),
 		StartedAt:         toNullInt64(int(result.StartedAt)),
 		CompletedAt:       toNullInt64(int(result.CompletedAt)),
 		Details:           toNullString(string(detailsJSON)),
-		TotalPopulation:   int64(result.TotalPopulation),
+		TotalPopulation:   result.TotalPopulation,
 	})
 	if err != nil {
 		return fmt.Errorf("CreateVerificationResult: error inserting: %w", err)
@@ -478,10 +480,12 @@ func (database *Database) UpdateVerificationResult(result VerificationResult) er
 		VerifiedFiles:   toNullInt64(result.VerifiedFiles),
 		FailedFiles:     toNullInt64(result.FailedFiles),
 		SkippedFiles:    toNullInt64(result.SkippedFiles),
+		SampledBytes:    result.SampledBytes,
+		FailedBytes:     result.FailedBytes,
 		Status:          toNullString(result.Status),
 		CompletedAt:     toNullInt64(int(result.CompletedAt)),
 		Details:         toNullString(string(detailsJSON)),
-		TotalPopulation: int64(result.TotalPopulation),
+		TotalPopulation: result.TotalPopulation,
 		ID:              int64(result.ID),
 	})
 }
@@ -512,10 +516,12 @@ func (database *Database) GetVerificationResults(jobID string) ([]VerificationRe
 			VerifiedFiles:     fromNullInt64(row.VerifiedFiles),
 			FailedFiles:       fromNullInt64(row.FailedFiles),
 			SkippedFiles:      fromNullInt64(row.SkippedFiles),
+			SampledBytes:      row.SampledBytes,
+			FailedBytes:       row.FailedBytes,
 			Status:            fromNullString(row.Status),
 			StartedAt:         int64(fromNullInt64(row.StartedAt)),
 			CompletedAt:       int64(fromNullInt64(row.CompletedAt)),
-			TotalPopulation:   int(row.TotalPopulation),
+			TotalPopulation:   row.TotalPopulation,
 		}
 
 		if detailsStr := fromNullString(row.Details); detailsStr != "" {
@@ -549,10 +555,12 @@ func (database *Database) GetLatestVerificationResult(jobID string) (Verificatio
 		VerifiedFiles:     fromNullInt64(row.VerifiedFiles),
 		FailedFiles:       fromNullInt64(row.FailedFiles),
 		SkippedFiles:      fromNullInt64(row.SkippedFiles),
+		SampledBytes:      row.SampledBytes,
+		FailedBytes:       row.FailedBytes,
 		Status:            fromNullString(row.Status),
 		StartedAt:         int64(fromNullInt64(row.StartedAt)),
 		CompletedAt:       int64(fromNullInt64(row.CompletedAt)),
-		TotalPopulation:   int(row.TotalPopulation),
+		TotalPopulation:   row.TotalPopulation,
 	}
 
 	if detailsStr := fromNullString(row.Details); detailsStr != "" {

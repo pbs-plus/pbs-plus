@@ -254,12 +254,12 @@ Ext.define("PBS.D2DVerification.JobPanel", {
             );
           }
 
-          function computeConfidence(population, sample, failures) {
-            if (sample <= 0 || failures >= sample) return { c95: 0, c99: 0 };
-            var n = sample;
-            var N = population > 0 ? population : n;
+          function computeConfidence(populationBytes, sampledBytes, failedBytes) {
+            if (sampledBytes <= 0 || failedBytes >= sampledBytes) return { c95: 0, c99: 0 };
+            var n = sampledBytes;
+            var N = populationBytes > 0 ? populationBytes : n;
             if (n > N) N = n;
-            if (failures === 0) {
+            if (failedBytes === 0) {
               var fpc = Math.sqrt((N - n) / N);
               if (fpc < 0) fpc = 0;
               return {
@@ -267,7 +267,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                 c99: Math.max(0, Math.min(100, (1 - 4.6 / n * fpc) * 100)),
               };
             }
-            var pHat = 1 - failures / n;
+            var pHat = 1 - failedBytes / n;
             return {
               c95: Math.max(0, Math.min(100, wilsonLower(pHat, n, 1.96) * 100)),
               c99: Math.max(0, Math.min(100, wilsonLower(pHat, n, 2.576) * 100)),
@@ -288,8 +288,10 @@ Ext.define("PBS.D2DVerification.JobPanel", {
               "snapshot_time",
               "total_files",
               "total_population",
+              "sampled_bytes",
               "verified_files",
               "failed_files",
+              "failed_bytes",
               "skipped_files",
               "status",
               "started_at",
@@ -437,11 +439,13 @@ Ext.define("PBS.D2DVerification.JobPanel", {
 
                 var total = rec.get("total_files") || 0;
                 var population = rec.get("total_population") || 0;
+                var sampledBytes = rec.get("sampled_bytes") || 0;
                 var verified = rec.get("verified_files") || 0;
                 var failed = rec.get("failed_files") || 0;
+                var failedBytes = rec.get("failed_bytes") || 0;
                 var skipped = rec.get("skipped_files") || 0;
                 var snap = Ext.String.htmlEncode(rec.get("snapshot") || "");
-                var conf = computeConfidence(population, total, failed);
+                var conf = computeConfidence(population, sampledBytes, failedBytes);
 
                 summaryPanel.removeAll();
                 summaryPanel.add({
@@ -450,8 +454,8 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                     '<table style="width:100%;font-size:12px;">' +
                     '<tr>' +
                     '<td style="padding:2px 15px;"><b>Snapshot:</b> ' + snap + '</td>' +
-                    '<td style="padding:2px 15px;"><b>Population:</b> ' + (population || '-') + '</td>' +
-                    '<td style="padding:2px 15px;"><b>Sampled:</b> ' + total + '</td>' +
+                    '<td style="padding:2px 15px;"><b>Population:</b> ' + (population ? Proxmox.Utils.format_size(population) : '-') + '</td>' +
+                    '<td style="padding:2px 15px;"><b>Sampled:</b> ' + total + ' files</td>' +
                     '<td style="padding:2px 15px;color:green;"><b>Verified:</b> ' + verified + '</td>' +
                     '<td style="padding:2px 15px;color:' + (failed > 0 ? 'red' : '#888') + ';"><b>Failed:</b> ' + failed + '</td>' +
                     '<td style="padding:2px 15px;color:#888;"><b>Skipped:</b> ' + skipped + '</td>' +

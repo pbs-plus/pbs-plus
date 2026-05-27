@@ -401,7 +401,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       name: "sample_count_mode",
       queryMode: "local",
       store: [
-        ["absolute", "Absolute Count"],
+        ["absolute", "Absolute Size"],
         ["percent", "Percentage"],
       ],
       value: "absolute",
@@ -412,8 +412,8 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
           var panel = combo.up("pbsD2DVerificationSpotCheckPanel") ||
             combo.up("panel");
           if (!panel) return;
-          var absField = panel.down("numberfield[name=sample_count]");
-          var pctField = panel.down("numberfield[name=sample_count_percent]");
+          var absField = panel.down("[name=sample_size]");
+          var pctField = panel.down("[name=sample_size_percent]");
           if (val === "percent") {
             if (absField) absField.disable().hide();
             if (pctField) pctField.enable().show();
@@ -425,18 +425,41 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       },
     },
     {
-      xtype: "numberfield",
-      fieldLabel: gettext("Sample Count"),
-      name: "sample_count",
-      minValue: 1,
-      maxValue: 100000,
-      value: 10,
-      allowBlank: false,
+      xtype: "fieldcontainer",
+      fieldLabel: gettext("Sample Size"),
+      name: "sample_size",
+      layout: "hbox",
+      items: [
+        {
+          xtype: "numberfield",
+          name: "sample_size_value",
+          minValue: 1,
+          maxValue: 107374182400,
+          value: 1,
+          allowBlank: false,
+          flex: 1,
+        },
+        {
+          xtype: "combo",
+          name: "sample_size_unit",
+          queryMode: "local",
+          store: [
+            ["mb", "MiB"],
+            ["gb", "GiB"],
+            ["tb", "TiB"],
+          ],
+          value: "gb",
+          editable: false,
+          forceSelection: true,
+          width: 70,
+          margin: "0 0 0 5",
+        },
+      ],
     },
     {
       xtype: "numberfield",
       fieldLabel: gettext("Sample Percentage"),
-      name: "sample_count_percent",
+      name: "sample_size_percent",
       minValue: 0.01,
       maxValue: 100,
       decimalPrecision: 2,
@@ -710,11 +733,23 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
     // Flatten spot_config fields into top-level values so form fields can bind
     if (values.spot_config && Ext.isObject(values.spot_config)) {
       var sc = values.spot_config;
-      if (sc.sample_count !== undefined && values.sample_count === undefined) {
-        values.sample_count = sc.sample_count;
+
+      // Convert sample_size (bytes) to value + unit for the UI
+      if (sc.sample_size !== undefined && values.sample_size_value === undefined) {
+        var bytes = sc.sample_size;
+        if (bytes >= 1 << 40) {
+          values.sample_size_value = bytes / (1 << 40);
+          values.sample_size_unit = "tb";
+        } else if (bytes >= 1 << 30) {
+          values.sample_size_value = bytes / (1 << 30);
+          values.sample_size_unit = "gb";
+        } else {
+          values.sample_size_value = bytes / (1 << 20);
+          values.sample_size_unit = "mb";
+        }
       }
-      if (sc.sample_count_percent !== undefined && values.sample_count_percent === undefined) {
-        values.sample_count_percent = sc.sample_count_percent;
+      if (sc.sample_size_percent !== undefined && values.sample_size_percent === undefined) {
+        values.sample_size_percent = sc.sample_size_percent;
       }
       if (sc.sampling_strategy !== undefined && values.sampling_strategy === undefined) {
         values.sampling_strategy = sc.sampling_strategy;
@@ -736,7 +771,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       }
 
       // Set sample_count_mode based on which field has a value
-      if (sc.sample_count_percent > 0 && values.sample_count_mode === undefined) {
+      if (sc.sample_size_percent > 0 && values.sample_count_mode === undefined) {
         values.sample_count_mode = "percent";
       }
     }
@@ -786,9 +821,17 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
     var vals = me.callParent(arguments);
     var mode = vals.sample_count_mode || "absolute";
     if (mode === "percent") {
-      delete vals.sample_count;
+      delete vals.sample_size_value;
+      delete vals.sample_size_unit;
     } else {
-      delete vals.sample_count_percent;
+      delete vals.sample_size_percent;
+      // Convert value + unit to bytes
+      var val = parseFloat(vals.sample_size_value) || 1;
+      var unit = vals.sample_size_unit || "gb";
+      var mult = { mb: 1 << 20, gb: 1 << 30, tb: 1 << 40 };
+      vals.sample_size = String(Math.round(val * (mult[unit] || (1 << 30))));
+      delete vals.sample_size_value;
+      delete vals.sample_size_unit;
     }
     delete vals.sample_count_mode;
     return vals;
