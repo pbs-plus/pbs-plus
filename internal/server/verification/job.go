@@ -449,8 +449,19 @@ func (v *verificationJob) execute(ctx context.Context) error {
 
 		vTask.WriteString(fmt.Sprintf("selected backup job '%s', snapshot: %s", backup.ID, snapshot.Snapshot))
 
-		// All startup checks passed — run verification for this snapshot
-		return v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentTCP)
+		// Run verification for this snapshot
+		err := v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentTCP)
+		if err == nil {
+			return nil
+		}
+
+		// In namespace mode, if no files could be sampled, try the next backup job
+		if errors.Is(err, ErrNoFilesToVerify) && job.TargetMode == "namespace" {
+			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': no eligible files found, trying next candidate", backup.ID))
+			lastStartupErr = err
+			continue
+		}
+		return err
 	}
 
 	// All candidates exhausted
@@ -503,6 +514,8 @@ func (v *verificationJob) executeVerification(
 	// Enumerate files from the pxar archive and sample
 	sampledFiles, err := v.sampleFiles(ctx, job, vs, snapshot)
 	if err != nil {
+		// Mark the stale result as skipped so we don't leave orphaned "running" records
+		_ = v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix())
 		return fmt.Errorf("failed to sample files: %w", err)
 	}
 

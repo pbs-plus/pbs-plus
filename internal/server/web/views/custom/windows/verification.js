@@ -11,15 +11,15 @@ var verificationModes = Ext.create("Ext.data.Store", {
 
 var strategyDescriptions = {
   random:
-    '<i class="fa fa-shuffle" style="margin-right:4px;color:#888;"></i>' +
+    '<i class="fa fa-shuffle" style="margin-right:4px;opacity:0.6;"></i>' +
     '<b>Random</b> — Shuffle all eligible files and pick the first N. ' +
     "Provides statistically uniform coverage. Best for general-purpose verification.",
   systematic:
-    '<i class="fa fa-arrows-left-right" style="margin-right:4px;color:#888;"></i>' +
+    '<i class="fa fa-arrows-left-right" style="margin-right:4px;opacity:0.6;"></i>' +
     '<b>Systematic</b> — Sort files by path, then pick evenly-spaced entries. ' +
     "Ensures broad spatial coverage across the entire archive.",
   stratified:
-    '<i class="fa fa-layer-group" style="margin-right:4px;color:#888;"></i>' +
+    '<i class="fa fa-layer-group" style="margin-right:4px;opacity:0.6;"></i>' +
     '<b>Stratified</b> — Group files by top-level directory, then sample proportionally from each group. ' +
     "Ensures every directory tree is represented.",
 };
@@ -207,6 +207,15 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
 
   column1: [
     {
+      xtype: "component",
+      html:
+        '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
+        "Configure which backup snapshots to verify and how often to run checks. " +
+        "Each run samples files from a snapshot and validates their integrity." +
+        '</span>',
+      margin: "0 0 8 0",
+    },
+    {
       xtype: "pmxDisplayEditField",
       name: "id",
       fieldLabel: gettext("Job ID"),
@@ -228,6 +237,13 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       value: "backup_job",
       editable: false,
       forceSelection: true,
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Backup Job: verify snapshots from a single backup job. " +
+          "Namespace: randomly select from all backup jobs in a datastore namespace."
+        ),
+      },
       listeners: {
         change: function (combo, val) {
           var panel = combo.up("pbsD2DVerificationOptionsPanel");
@@ -287,6 +303,17 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
           margin: "5 0 0 0",
         },
         {
+          xtype: 'displayfield',
+          userCls: 'pmx-hint',
+          value: gettext(
+            "A backup job is randomly selected each run, weighted toward jobs " +
+            "that have not been verified recently or have never been verified. " +
+            "If a snapshot has no eligible files, the next candidate is tried."
+          ),
+          width: '100%',
+          padding: '5 0 0 0',
+        },
+        {
           xtype: "checkbox",
           name: "recursive",
           fieldLabel: gettext("Recursive"),
@@ -338,6 +365,14 @@ Ext.define("PBS.D2DVerification.OptionsInputPanel", {
       forceSelection: true,
       allowBlank: false,
       value: "random_spot",
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Random Spot Check: sample a random set of files from each snapshot and " +
+          "verify their contents against the source agent. This provides statistical " +
+          "confidence in backup integrity without reading every file."
+        ),
+      },
     },
     {
       xtype: "proxmoxtextfield",
@@ -394,6 +429,15 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
 
   column1: [
     {
+      xtype: "component",
+      html:
+        '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
+        "Control how many files are checked per run and how they are selected. " +
+        "More samples yield higher statistical confidence. " +
+        'With 60+ samples and zero failures, confidence exceeds 95%.</span>',
+      margin: "0 0 8 0",
+    },
+    {
       xtype: "combo",
       fieldLabel: gettext("Sample Mode"),
       name: "sample_count_mode",
@@ -428,8 +472,15 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
       name: "sample_count",
       minValue: 1,
       maxValue: 100000,
-      value: 10,
+      value: 60,
       allowBlank: false,
+      autoEl: {
+        tag: "div",
+        "data-qtip": gettext(
+          "Number of files to verify per run. 60 samples with zero failures gives " +
+          "95% confidence that at least 95% of data is intact."
+        ),
+      },
     },
     {
       xtype: "numberfield",
@@ -692,7 +743,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
         {
           xtype: "component",
           html:
-            '<span style="color:#555;font-size:11px;">' +
+            '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
             gettext("Filters restrict which files are eligible for spot checks. " +
               "A file must match at least one filter to be included. " +
               "Leave empty to sample from all files.") +

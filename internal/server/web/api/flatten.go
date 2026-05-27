@@ -87,6 +87,7 @@ func FlattenRestore(r database.Restore) FlatRestore {
 		Store:         r.Store,
 		Namespace:     r.Namespace,
 		Snapshot:      r.Snapshot,
+		SnapshotHuman: formatSnapshotLabel(r.Snapshot, r.Namespace),
 		SrcPath:       r.SrcPath,
 		DestSubpath:   r.DestSubpath,
 		PreScript:     r.PreScript,
@@ -210,13 +211,14 @@ func FlattenVerificationJobs(jobs []database.VerificationJob) []FlatVerification
 }
 
 // FlattenVerificationResult converts a VerificationResult with pre-computed display fields.
-func FlattenVerificationResult(r database.VerificationResult) FlatVerificationResult {
+func FlattenVerificationResult(r database.VerificationResult, namespace string) FlatVerificationResult {
 	fr := FlatVerificationResult{
 		ID:                r.ID,
 		VerificationJobID: r.VerificationJobID,
 		UPID:              r.UPID,
 		Snapshot:          r.Snapshot,
 		SnapshotTime:      r.SnapshotTime,
+		SnapshotHuman:     formatSnapshotLabel(r.Snapshot, namespace),
 		TotalPopulation:   r.TotalPopulation,
 		TotalFiles:        r.TotalFiles,
 		VerifiedFiles:     r.VerifiedFiles,
@@ -226,6 +228,16 @@ func FlattenVerificationResult(r database.VerificationResult) FlatVerificationRe
 		StartedAt:         r.StartedAt,
 		CompletedAt:       r.CompletedAt,
 		Confidence:        ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles),
+	}
+
+	// Status badge: pass/fail semantics
+	switch {
+	case r.Status == "OK" && r.FailedFiles == 0:
+		fr.StatusBadge = "passed"
+	case r.FailedFiles > 0:
+		fr.StatusBadge = "failed"
+	default:
+		fr.StatusBadge = "warning"
 	}
 
 	// Duration
@@ -255,12 +267,20 @@ func FlattenVerificationResult(r database.VerificationResult) FlatVerificationRe
 }
 
 // FlattenVerificationResults converts a slice of verification results.
-func FlattenVerificationResults(results []database.VerificationResult) []FlatVerificationResult {
+func FlattenVerificationResults(results []database.VerificationResult, namespace string) []FlatVerificationResult {
 	fr := make([]FlatVerificationResult, len(results))
 	for i := range results {
-		fr[i] = FlattenVerificationResult(results[i])
+		fr[i] = FlattenVerificationResult(results[i], namespace)
 	}
 	return fr
+}
+
+// formatSnapshotLabel produces a human-readable snapshot label that includes the namespace.
+func formatSnapshotLabel(snapshot, namespace string) string {
+	if namespace == "" || namespace == "root" {
+		return snapshot
+	}
+	return namespace + ": " + snapshot
 }
 
 // BuildTargetTree groups targets into a tree structure by type (local/agent/s3).
