@@ -411,13 +411,6 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
     return value || "-";
   },
 
-  render_bytes: function (value, metaData, record) {
-    if (record.data.isGroup) {
-      return "";
-    }
-    return value || "-";
-  },
-
   render_field: function (value, metaData, record) {
     if (record.data.isGroup) {
       return "";
@@ -630,14 +623,12 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
     },
     {
       text: gettext("Used Size"),
-      dataIndex: "volume_used_bytes",
-      renderer: "render_bytes",
+      dataIndex: "volume_used",
       flex: 1,
     },
     {
       text: gettext("Total Size"),
-      dataIndex: "volume_total_bytes",
-      renderer: "render_bytes",
+      dataIndex: "volume_total",
       flex: 1,
     },
     {
