@@ -1,6 +1,8 @@
 package api
 
 import (
+	"sort"
+
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
@@ -343,8 +345,13 @@ func BuildTargetTree(targets []database.Target) []TargetTreeNode {
 
 	if len(agentGroups) > 0 {
 		var agentChildren []TargetTreeNode
-		for _, group := range agentGroups {
-			agentChildren = append(agentChildren, *group)
+		hostnames := make([]string, 0, len(agentGroups))
+		for name := range agentGroups {
+			hostnames = append(hostnames, name)
+		}
+		sort.Strings(hostnames)
+		for _, name := range hostnames {
+			agentChildren = append(agentChildren, *agentGroups[name])
 		}
 		rootChildren = append(rootChildren, TargetTreeNode{
 			Text:      "Agent Targets",
@@ -429,5 +436,12 @@ func FlattenRestoreForEdit(r database.Restore) map[string]any {
 		"post_script":    r.PostScript,
 		"retry":          r.Retry,
 		"retry-interval": r.RetryInterval,
+		"history": map[string]any{
+			"last-run-state":          r.History.LastRunState,
+			"last-run-upid":           r.History.LastRunUpid,
+			"last-run-endtime":        r.History.LastRunEndtime,
+			"last-successful-endtime": r.History.LastSuccessfulEndtime,
+			"last-successful-upid":    r.History.LastSuccessfulUpid,
+		},
 	}
 }
