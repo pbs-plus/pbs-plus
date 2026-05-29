@@ -134,6 +134,7 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		LastSuccessfulEndtime: toNullInt64(int(job.History.LastSuccessfulEndtime)),
 		RunOnBackupComplete:   boolToNullInt64(job.RunOnBackupComplete),
 		PendingSince:          toNullInt64(int(job.PendingSince)),
+		NotificationMode:      toNullString(job.NotificationMode),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateVerificationJob: error inserting verification job: %w", err)
@@ -172,6 +173,7 @@ func (database *Database) GetVerificationJob(id string) (VerificationJob, error)
 		Mode:                row.Mode,
 		Schedule:            fromNullString(row.Schedule),
 		Comment:             fromNullString(row.Comment),
+		NotificationMode:    fromNullString(row.NotificationMode),
 		Retry:               fromNullInt64(row.Retry),
 		RetryInterval:       fromNullInt64(row.RetryInterval),
 		RunOnBackupComplete: fromNullInt64ToBool(row.RunOnBackupComplete),
@@ -258,6 +260,7 @@ func (database *Database) GetAllVerificationJobs() ([]VerificationJob, error) {
 			Mode:                row.Mode,
 			Schedule:            fromNullString(row.Schedule),
 			Comment:             fromNullString(row.Comment),
+			NotificationMode:    fromNullString(row.NotificationMode),
 			Retry:               fromNullInt64(row.Retry),
 			RetryInterval:       fromNullInt64(row.RetryInterval),
 			RunOnBackupComplete: fromNullInt64ToBool(row.RunOnBackupComplete),
@@ -361,6 +364,7 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 		LastSuccessfulEndtime: toNullInt64(int(job.History.LastSuccessfulEndtime)),
 		RunOnBackupComplete:   boolToNullInt64(job.RunOnBackupComplete),
 		PendingSince:          toNullInt64(int(job.PendingSince)),
+		NotificationMode:      toNullString(job.NotificationMode),
 		ID:                    job.ID,
 	})
 	if err != nil {

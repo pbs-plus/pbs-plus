@@ -243,6 +243,7 @@ Ext.define("PBS.D2DManagement.RestoreJobEdit", {
           },
         ],
       },
+      PBS.D2DManagement.makeNotificationTab(),
     ],
   },
 });

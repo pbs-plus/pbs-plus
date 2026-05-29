@@ -4,8 +4,8 @@ INSERT INTO verification_jobs (
     spot_config, last_run_upid, last_successful_upid,
     last_run_status, retry_count, retry, retry_interval,
     last_run_starttime, last_run_endtime, last_successful_endtime,
-    run_on_backup_complete, pending_since
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    run_on_backup_complete, pending_since, notification_mode
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetVerificationJob :one
 SELECT *
@@ -24,7 +24,7 @@ SET backup_job_id = ?, store = ?, namespace = ?, mode = ?, schedule = ?,
     comment = ?, spot_config = ?, last_run_upid = ?, last_successful_upid = ?,
     last_run_status = ?, retry_count = ?, retry = ?, retry_interval = ?,
     last_run_starttime = ?, last_run_endtime = ?, last_successful_endtime = ?,
-    run_on_backup_complete = ?, pending_since = ?
+    run_on_backup_complete = ?, pending_since = ?, notification_mode = ?
 WHERE id = ?;
 
 -- name: DeleteVerificationJob :execrows

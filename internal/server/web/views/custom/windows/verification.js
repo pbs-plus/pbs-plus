@@ -948,6 +948,7 @@ Ext.define("PBS.D2DVerification.JobEdit", {
         title: gettext("Spot Check Settings"),
         xtype: "pbsD2DVerificationSpotCheckPanel",
       },
+      PBS.D2DManagement.makeNotificationTab(),
     ],
   },
 });

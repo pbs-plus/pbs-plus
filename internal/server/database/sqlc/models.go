@@ -68,6 +68,7 @@ type Restore struct {
 	RestoreMode        int64          `json:"restore_mode"`
 	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
 	RetryCount         sql.NullInt64  `json:"retry_count"`
+	NotificationMode   sql.NullString `json:"notification_mode"`
 }
 
 type Script struct {
@@ -123,6 +124,7 @@ type VerificationJob struct {
 	PendingSince          sql.NullInt64  `json:"pending_since"`
 	TargetMode            sql.NullString `json:"target_mode"`
 	Recursive             sql.NullInt64  `json:"recursive"`
+	NotificationMode      sql.NullString `json:"notification_mode"`
 }
 
 type VerificationResult struct {

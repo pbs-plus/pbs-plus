@@ -144,24 +144,25 @@ type Exclusion struct {
 }
 
 type Restore struct {
-	ID            string     `json:"id"`
-	Store         string     `json:"store"`
-	Snapshot      string     `json:"snapshot"`
-	Namespace     string     `json:"ns"`
-	Mode          int        `json:"mode"`
-	SrcPath       string     `json:"src-path"`
-	DestTarget    Target     `json:"dest-target"`
-	DestSubpath   string     `json:"dest-subpath"`
-	PreScript     string     `json:"pre_script"`
-	PostScript    string     `json:"post_script"`
-	Comment       string     `json:"comment"`
-	Retry         int        `json:"retry"`
-	RetryInterval int        `json:"retry-interval"`
-	CurrentPID    int        `json:"current_pid"`
-	ExpectedSize  int        `json:"expected_size,omitempty"`
-	UPIDs         []string   `json:"upids"`
-	CurrentStats  JobStats   `json:"current-stats"`
-	History       JobHistory `json:"history"`
+	ID               string     `json:"id"`
+	Store            string     `json:"store"`
+	Snapshot         string     `json:"snapshot"`
+	Namespace        string     `json:"ns"`
+	Mode             int        `json:"mode"`
+	SrcPath          string     `json:"src-path"`
+	DestTarget       Target     `json:"dest-target"`
+	DestSubpath      string     `json:"dest-subpath"`
+	PreScript        string     `json:"pre_script"`
+	PostScript       string     `json:"post_script"`
+	Comment          string     `json:"comment"`
+	NotificationMode string     `json:"notification-mode"`
+	Retry            int        `json:"retry"`
+	RetryInterval    int        `json:"retry-interval"`
+	CurrentPID       int        `json:"current_pid"`
+	ExpectedSize     int        `json:"expected_size,omitempty"`
+	UPIDs            []string   `json:"upids"`
+	CurrentStats     JobStats   `json:"current-stats"`
+	History          JobHistory `json:"history"`
 }
 
 type Script struct {
@@ -250,6 +251,7 @@ type VerificationJob struct {
 	Mode                string          `json:"mode"`
 	Schedule            string          `json:"schedule"`
 	Comment             string          `json:"comment"`
+	NotificationMode    string          `json:"notification-mode"`
 	SpotConfig          SpotCheckConfig `json:"spot_config"`
 	NextRun             int64           `json:"next-run"`
 	Retry               int             `json:"retry"`

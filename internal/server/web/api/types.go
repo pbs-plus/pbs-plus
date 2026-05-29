@@ -58,19 +58,20 @@ type FlatBackup struct {
 
 // FlatRestore is the flattened API response for a restore job.
 type FlatRestore struct {
-	ID            string `json:"id"`
-	Store         string `json:"store"`
-	Namespace     string `json:"ns"`
-	Snapshot      string `json:"snapshot"`
-	SnapshotHuman string `json:"snapshot_human"`
-	SrcPath       string `json:"src-path"`
-	DestSubpath   string `json:"dest-subpath"`
-	PreScript     string `json:"pre_script"`
-	PostScript    string `json:"post_script"`
-	Comment       string `json:"comment"`
-	Retry         int    `json:"retry"`
-	RetryInterval int    `json:"retry-interval"`
-	ExpectedSize  int    `json:"expected_size,omitempty"`
+	ID               string `json:"id"`
+	Store            string `json:"store"`
+	Namespace        string `json:"ns"`
+	Snapshot         string `json:"snapshot"`
+	SnapshotHuman    string `json:"snapshot_human"`
+	SrcPath          string `json:"src-path"`
+	DestSubpath      string `json:"dest-subpath"`
+	PreScript        string `json:"pre_script"`
+	PostScript       string `json:"post_script"`
+	Comment          string `json:"comment"`
+	NotificationMode string `json:"notification-mode"`
+	Retry            int    `json:"retry"`
+	RetryInterval    int    `json:"retry-interval"`
+	ExpectedSize     int    `json:"expected_size,omitempty"`
 
 	// Flattened from dest-target
 	DestTarget string `json:"dest-target"`
@@ -107,6 +108,7 @@ type FlatVerificationJob struct {
 	Mode                string              `json:"mode"`
 	Schedule            string              `json:"schedule"`
 	Comment             string              `json:"comment"`
+	NotificationMode    string              `json:"notification-mode"`
 	SpotConfig          SpotCheckConfigJSON `json:"spot_config"`
 	NextRun             int64               `json:"next-run"`
 	Retry               int                 `json:"retry"`

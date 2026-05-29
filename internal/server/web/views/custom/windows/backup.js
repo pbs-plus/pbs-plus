@@ -322,6 +322,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
           },
         ],
       },
+      PBS.D2DManagement.makeNotificationTab(),
     ],
   },
 });

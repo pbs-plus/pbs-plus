@@ -249,17 +249,18 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 		}
 
 		job := database.VerificationJob{
-			ID:            r.FormValue("id"),
-			BackupJobID:   backupJobID,
-			Store:         store,
-			Namespace:     namespace,
-			TargetMode:    targetMode,
-			Recursive:     r.FormValue("recursive") == "true",
-			Mode:          r.FormValue("mode"),
-			Schedule:      r.FormValue("schedule"),
-			Comment:       r.FormValue("comment"),
-			Retry:         retry,
-			RetryInterval: retryInterval,
+			ID:               r.FormValue("id"),
+			BackupJobID:      backupJobID,
+			Store:            store,
+			Namespace:        namespace,
+			TargetMode:       targetMode,
+			Recursive:        r.FormValue("recursive") == "true",
+			Mode:             r.FormValue("mode"),
+			Schedule:         r.FormValue("schedule"),
+			Comment:          r.FormValue("comment"),
+			NotificationMode: r.FormValue("notification-mode"),
+			Retry:            retry,
+			RetryInterval:    retryInterval,
 			SpotConfig: database.SpotCheckConfig{
 				SampleCount:        sampleCount,
 				SampleCountPercent: sampleCountPercent,
@@ -399,6 +400,9 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			}
 			if v := r.FormValue("comment"); v != "" {
 				job.Comment = v
+			}
+			if v := r.FormValue("notification-mode"); v != "" {
+				job.NotificationMode = v
 			}
 
 			retry, err := strconv.Atoi(r.FormValue("retry"))
