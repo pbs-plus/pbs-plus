@@ -221,6 +221,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             anyMatch: true,
             forceSelection: true,
             allowBlank: true,
+            autoEl: {
+              tag: "div",
+              "data-qtip": gettext(
+                "Metadata: store file metadata and directory structure only, skipping file contents. " +
+                "Data: store file contents only, reusing metadata from previous backups. " +
+                "Legacy: store everything in a single pass (slower, for compatibility)."
+              ),
+            },
             cbind: {
               value: "{backupModeValue}",
             },
@@ -237,6 +245,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             anyMatch: true,
             forceSelection: true,
             allowBlank: true,
+            autoEl: {
+              tag: "div",
+              "data-qtip": gettext(
+                "Snapshot: read files from a VSS snapshot, capturing a point-in-time view even if files are in use. " +
+                "Direct: read files directly from disk without snapshotting. " +
+                "Use Direct only when VSS is unavailable or not needed."
+              ),
+            },
             cbind: {
               value: "{sourceModeValue}",
             },
@@ -269,6 +285,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             anyMatch: true,
             forceSelection: true,
             allowBlank: true,
+            autoEl: {
+              tag: "div",
+              "data-qtip": gettext(
+                "Controls whether NTFS security attributes (ACLs, owner, group, SACLs) " +
+                "are included in the backup. Include to preserve full file permissions on restore. " +
+                "Exclude if only basic file metadata is needed."
+              ),
+            },
             cbind: {
               value: "{includeXAttrValue}",
             },
@@ -285,6 +309,14 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             anyMatch: true,
             forceSelection: true,
             allowBlank: true,
+            autoEl: {
+              tag: "div",
+              "data-qtip": gettext(
+                "Older PBS Plus versions stored extended attributes in a non-standard format. " +
+                "'Use broken xattr' preserves compatibility with backups made by those versions. " +
+                "'Use fixed xattr' uses the corrected format for new backups."
+              ),
+            },
             cbind: {
               value: "{legacyXAttrValue}",
             },
