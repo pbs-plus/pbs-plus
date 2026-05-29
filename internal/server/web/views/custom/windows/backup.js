@@ -248,9 +248,10 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             autoEl: {
               tag: "div",
               "data-qtip": gettext(
-                "Snapshot: read files from a VSS snapshot, capturing a point-in-time view even if files are in use. " +
-                "Direct: read files directly from disk without snapshotting. " +
-                "Use Direct only when VSS is unavailable or not needed."
+                "Snapshot: create a point-in-time snapshot of the source, then read from it. " +
+                "Captures a consistent view even if files are in use during backup. " +
+                "Direct: read files directly from the source without snapshotting. " +
+                "Use Direct only when snapshotting is unavailable or not needed."
               ),
             },
             cbind: {
@@ -288,7 +289,7 @@ Ext.define("PBS.D2DManagement.BackupJobEdit", {
             autoEl: {
               tag: "div",
               "data-qtip": gettext(
-                "Controls whether NTFS security attributes (ACLs, owner, group, SACLs) " +
+                "Controls whether extended security attributes (ACLs, owner, group, audit rules) " +
                 "are included in the backup. Include to preserve full file permissions on restore. " +
                 "Exclude if only basic file metadata is needed."
               ),
