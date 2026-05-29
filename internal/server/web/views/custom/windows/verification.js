@@ -91,6 +91,19 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
         fieldDefaults: { labelWidth: 110, anchor: "100%" },
         items: [
           {
+            xtype: "combo",
+            name: "filter_type",
+            fieldLabel: gettext("Type"),
+            store: [
+              ["include", gettext("Include")],
+              ["exclude", gettext("Exclude")],
+            ],
+            value: isEdit ? (me.editRecord.get("filter_type") || "include") : "include",
+            forceSelection: true,
+            editable: false,
+            queryMode: "local",
+          },
+          {
             xtype: "textfield",
             name: "path_pattern",
             fieldLabel: gettext("Path Pattern"),
@@ -177,6 +190,7 @@ Ext.define("PBS.D2DVerification.FilterEditWindow", {
               var maxFactor = parseInt(vals.max_size_unit, 10) || 1;
 
               var values = {
+                filter_type: vals.filter_type || "include",
                 path_pattern: vals.path_pattern,
                 min_size: Math.round(minVal * minFactor),
                 max_size: Math.round(maxVal * maxFactor),
@@ -612,10 +626,19 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
             deferEmptyText: false,
           },
           store: {
-            fields: ["path_pattern", "min_size", "max_size"],
+            fields: ["filter_type", "path_pattern", "min_size", "max_size"],
             data: [],
           },
           columns: [
+            {
+              text: gettext("Type"),
+              dataIndex: "filter_type",
+              width: 80,
+              renderer: function (v) {
+                if (v === "exclude") return '<span style="color:#c74b4b;">' + gettext("Exclude") + '</span>';
+                return '<span style="color:#5b9b5b;">' + gettext("Include") + '</span>';
+              },
+            },
             {
               text: gettext("Path Pattern"),
               dataIndex: "path_pattern",
@@ -713,6 +736,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
                   var records = [];
                   grid.getStore().each(function (rec) {
                     records.push({
+                      filter_type: rec.get("filter_type") || "include",
                       path_pattern: rec.get("path_pattern") || "",
                       min_size: rec.get("min_size") || 0,
                       max_size: rec.get("max_size") || 0,
@@ -730,6 +754,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
                 var records = [];
                 grid.getStore().each(function (rec) {
                   records.push({
+                    filter_type: rec.get("filter_type") || "include",
                     path_pattern: rec.get("path_pattern") || "",
                     min_size: rec.get("min_size") || 0,
                     max_size: rec.get("max_size") || 0,
@@ -744,8 +769,10 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
           xtype: "component",
           html:
             '<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
-            gettext("Filters restrict which files are eligible for spot checks. " +
-              "A file must match at least one filter to be included. " +
+            gettext("Filters control which files are eligible for spot checks. " +
+              "Include filters (green) allow matching files; exclude filters (red) " +
+              "always block matching files. A file must match at least one include " +
+              "filter and no exclude filters to be eligible. " +
               "Leave empty to sample from all files.") +
             "</span>",
         },

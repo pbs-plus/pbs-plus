@@ -1145,39 +1145,68 @@ func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix 
 }
 
 // matchesFilters checks if a file matches the spot check filter criteria.
+// Exclude filters take absolute precedence: if a file matches any exclude
+// filter it is rejected immediately. If no include filters exist, all
+// non-excluded files are eligible. Otherwise the file must match at least
+// one include filter.
 func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg database.SpotCheckConfig) bool {
 	if len(cfg.Filters) == 0 {
 		return true
 	}
 
-	for _, filter := range cfg.Filters {
-		matches := true
-
-		if filter.PathPattern != "" {
-			if strings.Contains(filter.PathPattern, "*") {
-				if matched, _ := filepath.Match(filter.PathPattern, filepath.Base(path)); !matched {
-					matches = false
-				}
-			} else {
-				if !strings.HasPrefix(path, filter.PathPattern) {
-					matches = false
-				}
-			}
-		}
-
-		if filter.MinSize > 0 && entry.Size() < filter.MinSize {
-			matches = false
-		}
-		if filter.MaxSize > 0 && entry.Size() > filter.MaxSize {
-			matches = false
-		}
-
-		if matches {
-			return true
+	// Separate exclude and include filters
+	var includes, excludes []database.SpotCheckFilter
+	for _, f := range cfg.Filters {
+		if f.FilterType == "exclude" {
+			excludes = append(excludes, f)
+		} else {
+			includes = append(includes, f)
 		}
 	}
 
+	// Exclude takes absolute precedence
+	for _, filter := range excludes {
+		if filterMatchesFile(path, entry, filter) {
+			return false
+		}
+	}
+
+	// No include filters → all non-excluded files pass
+	if len(includes) == 0 {
+		return true
+	}
+
+	// Must match at least one include filter
+	for _, filter := range includes {
+		if filterMatchesFile(path, entry, filter) {
+			return true
+		}
+	}
 	return false
+}
+
+// filterMatchesFile checks if a single filter's criteria match a file.
+func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCheckFilter) bool {
+	if filter.PathPattern != "" {
+		if strings.Contains(filter.PathPattern, "*") {
+			if matched, _ := filepath.Match(filter.PathPattern, filepath.Base(path)); !matched {
+				return false
+			}
+		} else {
+			if !strings.HasPrefix(path, filter.PathPattern) {
+				return false
+			}
+		}
+	}
+
+	if filter.MinSize > 0 && entry.Size() < filter.MinSize {
+		return false
+	}
+	if filter.MaxSize > 0 && entry.Size() > filter.MaxSize {
+		return false
+	}
+
+	return true
 }
 
 // --- File verification ---

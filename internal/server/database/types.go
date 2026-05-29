@@ -275,7 +275,12 @@ type SpotCheckConfig struct {
 }
 
 // SpotCheckFilter defines a filter for selecting files in spot checks.
+// FilterType controls whether matching files are included or excluded.
+// Exclude filters take precedence: a file matching any exclude filter is
+// always rejected, regardless of include filters.
+// If no include filters are defined, all non-excluded files are eligible.
 type SpotCheckFilter struct {
+	FilterType  string `json:"filter_type"`  // "include" (default) or "exclude"
 	PathPattern string `json:"path_pattern"` // path prefix or glob
 	MinSize     int64  `json:"min_size"`     // minimum file size in bytes (0 = no min)
 	MaxSize     int64  `json:"max_size"`     // maximum file size in bytes (0 = no max)
