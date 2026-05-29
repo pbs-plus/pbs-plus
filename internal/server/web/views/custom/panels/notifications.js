@@ -13,7 +13,9 @@ Ext.define("PBS.D2D.NotificationInputPanel", {
     formulas: {
       notificationSystemSelected: function (get) {
         var mode = get("notificationMode");
-        if (!mode || !mode["notification-mode"]) return true;
+        if (!mode || !mode["notification-mode"]) {
+          return true;
+        }
         return mode["notification-mode"] === "notification-system";
       },
     },
@@ -62,12 +64,11 @@ Ext.define("PBS.D2D.NotificationInputPanel", {
       xtype: "component",
       html:
         '<span class="pmx-hint" style="display:block;padding:8px 6px;font-size:11px;line-height:16px;">' +
-        gettext(
-          "The notification mode controls how job completion and failure notifications are delivered. " +
-          '"Use global notification settings" routes notifications through the PBS notification system, ' +
-          "which supports email, Gotify, SMTP, and webhook endpoints configured in " +
-          'Datacenter → Notifications. "Use sendmail to send an email (legacy)" sends ' +
-          "notifications directly via the system's sendmail command." +
+        gettext("The notification mode controls how job completion and failure notifications are delivered.") +
+        " " +
+        gettext("'Use global notification settings' routes notifications through the PBS notification system, which supports email, Gotify, SMTP, and webhook endpoints configured in Datacenter &rarr; Notifications.") +
+        " " +
+        gettext("'Use sendmail to send an email (legacy)' sends notifications directly via the system's sendmail command.") +
         "</span>",
       margin: "10 0 0 50",
     },
