@@ -7,142 +7,38 @@ Ext.define("PBS.D2DManagement.Alerts", {
   alias: "widget.pbsD2DAlertSettings",
 
   title: gettext("Alert Settings"),
-  reference: "d2d-alert-settings",
+
+  stateful: true,
+  stateId: "grid-d2d-alert-settings-v1",
 
   controller: {
-    type: "controller",
+    xclass: "Ext.app.ViewController",
 
-    onEdit: function () {
-      let me = this;
-      let view = me.getView();
-      let sel = view.getSelection();
-      if (!sel.length) return;
+    editAlert: function () {
+      var me = this;
+      var view = me.getView();
+      var selection = view.getSelection();
+      if (!selection || selection.length !== 1) return;
 
       Ext.create("PBS.D2DManagement.AlertEditWindow", {
-        record: sel[0],
+        record: selection[0],
+        autoShow: true,
         listeners: {
           destroy: function () {
-            view.getStore().load();
+            me.reload();
           },
         },
-      }).show();
+      });
     },
 
-    onReload: function () {
+    reload: function () {
       this.getView().getStore().load();
     },
   },
 
-  tbar: [
-    {
-      text: gettext("Edit"),
-      xtype: "button",
-      iconCls: "fa fa-pencil",
-      handler: "onEdit",
-      disabled: true,
-      bind: {
-        disabled: "{!alertGrid.selection}",
-      },
-    },
-    "-",
-    {
-      text: gettext("Reload"),
-      xtype: "button",
-      iconCls: "fa fa-refresh",
-      handler: "onReload",
-    },
-  ],
-
-  columns: [
-    {
-      header: gettext("Alert Type"),
-      dataIndex: "name",
-      flex: 1,
-      renderer: function (val) {
-        let labels = {
-          "stale-backup": "Stale Backup",
-          "unconfigured-target": "Unconfigured Target",
-          "target-offline": "Target Offline",
-        };
-        return labels[val] || val;
-      },
-    },
-    {
-      header: gettext("Enabled"),
-      dataIndex: "enabled",
-      width: 80,
-      renderer: Proxmox.Utils.format_boolean,
-    },
-    {
-      header: gettext("Threshold"),
-      dataIndex: "threshold",
-      width: 100,
-      renderer: function (val, meta, record) {
-        let name = record.get("name");
-        if (name === "stale-backup") {
-          return val ? Ext.String.format("{0} days", val) : "-";
-        }
-        return "-";
-      },
-    },
-    {
-      header: gettext("Cooldown"),
-      dataIndex: "cooldown-minutes",
-      width: 110,
-      renderer: function (val) {
-        if (!val) return "-";
-        if (val < 60) return Ext.String.format("{0} min", val);
-        let h = Math.floor(val / 60);
-        let m = val % 60;
-        if (m === 0) return Ext.String.format("{0}h", h);
-        return Ext.String.format("{0}h {1}m", h, m);
-      },
-    },
-    {
-      header: gettext("Quiet Days"),
-      dataIndex: "quiet-days",
-      width: 180,
-      renderer: function (val) {
-        if (!val || !val.length) return "-";
-        return val.join(", ");
-      },
-    },
-    {
-      header: gettext("Severity"),
-      dataIndex: "severity",
-      width: 90,
-      renderer: function (val) {
-        let colors = {
-          info: "blue",
-          notice: "blue",
-          warning: "orange",
-          error: "red",
-        };
-        let color = colors[val] || "black";
-        return (
-          '<span style="color:' +
-          color +
-          ';font-weight:bold">' +
-          val +
-          "</span>"
-        );
-      },
-    },
-    {
-      header: gettext("Comment"),
-      dataIndex: "comment",
-      flex: 1,
-    },
-    {
-      header: gettext("Last Sent"),
-      dataIndex: "last-sent",
-      width: 160,
-      renderer: function (val) {
-        if (!val) return "-";
-        return new Date(val * 1000).toLocaleString();
-      },
-    },
-  ],
+  listeners: {
+    itemdblclick: "editAlert",
+  },
 
   store: {
     fields: [
@@ -168,9 +64,116 @@ Ext.define("PBS.D2DManagement.Alerts", {
     ],
   },
 
-  bind: {
-    selection: "{alertGrid.selection}",
-  },
+  tbar: [
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Edit"),
+      handler: "editAlert",
+      enableFn: function () {
+        return this.up("grid").getSelection().length === 1;
+      },
+      disabled: true,
+    },
+    "-",
+    {
+      xtype: "proxmoxButton",
+      text: gettext("Reload"),
+      handler: "reload",
+      selModel: false,
+    },
+  ],
+
+  columns: [
+    {
+      header: gettext("Alert Type"),
+      dataIndex: "name",
+      flex: 1,
+      renderer: function (val) {
+        var labels = {
+          "stale-backup": "Stale Backup",
+          "unconfigured-target": "Unconfigured Target",
+          "target-offline": "Target Offline",
+        };
+        return labels[val] || val;
+      },
+      sortable: true,
+    },
+    {
+      header: gettext("Enabled"),
+      dataIndex: "enabled",
+      width: 80,
+      renderer: Proxmox.Utils.format_boolean,
+      sortable: true,
+    },
+    {
+      header: gettext("Threshold"),
+      dataIndex: "threshold",
+      width: 100,
+      renderer: function (val, meta, record) {
+        if (record.get("name") === "stale-backup") {
+          return val ? Ext.String.format("{0} days", val) : "-";
+        }
+        return "-";
+      },
+    },
+    {
+      header: gettext("Cooldown"),
+      dataIndex: "cooldown-minutes",
+      width: 110,
+      renderer: function (val) {
+        if (!val) return "-";
+        if (val < 60) return Ext.String.format("{0} min", val);
+        var h = Math.floor(val / 60);
+        var m = val % 60;
+        if (m === 0) return Ext.String.format("{0}h", h);
+        return Ext.String.format("{0}h {1}m", h, m);
+      },
+    },
+    {
+      header: gettext("Quiet Days"),
+      dataIndex: "quiet-days",
+      width: 180,
+      renderer: function (val) {
+        if (!val || !val.length) return "-";
+        return val.join(", ");
+      },
+    },
+    {
+      header: gettext("Severity"),
+      dataIndex: "severity",
+      width: 90,
+      renderer: function (val) {
+        var colors = {
+          info: "blue",
+          notice: "blue",
+          warning: "orange",
+          error: "red",
+        };
+        var color = colors[val] || "black";
+        return (
+          '<span style="color:' +
+          color +
+          ';font-weight:bold">' +
+          val +
+          "</span>"
+        );
+      },
+    },
+    {
+      header: gettext("Comment"),
+      dataIndex: "comment",
+      flex: 1,
+    },
+    {
+      header: gettext("Last Sent"),
+      dataIndex: "last-sent",
+      width: 160,
+      renderer: function (val) {
+        if (!val) return "-";
+        return new Date(val * 1000).toLocaleString();
+      },
+    },
+  ],
 });
 
 /**
@@ -205,7 +208,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
           name: "name",
           fieldLabel: gettext("Alert Type"),
           renderer: function (val) {
-            let labels = {
+            var labels = {
               "stale-backup": "Stale Backup",
               "unconfigured-target": "Unconfigured Target",
               "target-offline": "Target Offline",
@@ -263,16 +266,6 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
               bind: {
                 value: "{cooldownHours}",
               },
-              listeners: {
-                change: function (field, val) {
-                  let win = field.up("pbsPlusWindowEdit");
-                  let vm = win.getViewModel();
-                  vm.set(
-                    "cooldownHours",
-                    val || 0
-                  );
-                },
-              },
             },
             {
               xtype: "displayfield",
@@ -288,16 +281,6 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
               width: 60,
               bind: {
                 value: "{cooldownMinutes}",
-              },
-              listeners: {
-                change: function (field, val) {
-                  let win = field.up("pbsPlusWindowEdit");
-                  let vm = win.getViewModel();
-                  vm.set(
-                    "cooldownMinutes",
-                    val || 0
-                  );
-                },
               },
             },
             {
@@ -363,26 +346,23 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
       ],
 
       setValues: function (values) {
-        let panel = this;
-        let vm = panel.up("pbsPlusWindowEdit").getViewModel();
+        var panel = this;
+        var vm = panel.up("pbsPlusWindowEdit").getViewModel();
 
         if (vm) {
           vm.set("isStaleBackup", values.name === "stale-backup");
 
-          // Split cooldown-minutes into hours + minutes
-          let totalMin = values["cooldown-minutes"] || 1440;
+          var totalMin = values["cooldown-minutes"] || 1440;
           vm.set("cooldownHours", Math.floor(totalMin / 60));
           vm.set("cooldownMinutes", totalMin % 60);
         }
 
         // Check quiet-days checkboxes
-        let quietDays = values["quiet-days"] || [];
-        let quietGroup = panel.down("checkboxgroup[reference=quietDays]");
+        var quietDays = values["quiet-days"] || [];
+        var quietGroup = panel.down("checkboxgroup[reference=quietDays]");
         if (quietGroup) {
           Ext.Array.each(quietGroup.items.items, function (cb) {
-            cb.setValue(
-              Ext.Array.contains(quietDays, cb.inputValue)
-            );
+            cb.setValue(Ext.Array.contains(quietDays, cb.inputValue));
           });
         }
 
@@ -392,7 +372,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
   ],
 
   initComponent: function () {
-    let me = this;
+    var me = this;
 
     if (me.record) {
       me.loadValues = me.record.data;
@@ -408,23 +388,23 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
   },
 
   getValues: function () {
-    let me = this;
-    let values = me.callParent(arguments);
+    var me = this;
+    var values = me.callParent(arguments);
 
     if (me.record) {
       values.name = me.record.get("name");
     }
 
     // Compute cooldown-minutes from hours + minutes
-    let vm = me.getViewModel();
+    var vm = me.getViewModel();
     values["cooldown-minutes"] =
       (vm.get("cooldownHours") || 0) * 60 +
       (vm.get("cooldownMinutes") || 0);
 
     // Collect checked quiet days
-    let quietGroup = me.down("checkboxgroup[reference=quietDays]");
+    var quietGroup = me.down("checkboxgroup[reference=quietDays]");
     if (quietGroup) {
-      let checked = [];
+      var checked = [];
       Ext.Array.each(quietGroup.items.items, function (cb) {
         if (cb.checked) {
           checked.push(cb.inputValue);
