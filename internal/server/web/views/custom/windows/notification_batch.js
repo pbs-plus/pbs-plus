@@ -161,6 +161,11 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
               value: "{batchName}",
             },
           },
+          {
+            xtype: "hidden",
+            name: "_jobsDirty",
+            value: 0,
+          },
         ],
 
         column2: [
@@ -235,6 +240,15 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
                 selected.forEach(function (rec) {
                   rec.set("assigned", true);
                 });
+
+                // Mark the form dirty so the OK button enables
+                var win = grid.up("pbsPlusWindowEdit");
+                if (win && win.formPanel) {
+                  var dirtyField = win.formPanel.getForm().findField("_jobsDirty");
+                  if (dirtyField) {
+                    dirtyField.setValue(Date.now());
+                  }
+                }
               },
             },
           },
@@ -266,6 +280,9 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
     } else {
       values["send-on-timeout"] = "0";
     }
+
+    // Remove internal dirty tracker
+    delete values["_jobsDirty"];
 
     return values;
   },
