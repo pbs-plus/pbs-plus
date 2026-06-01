@@ -34,6 +34,7 @@ type Store struct {
 	ARPCAgentsManager *arpc.AgentsManager
 	Manager           *jobs.Manager
 	BatchTracker      *notification.BatchTracker
+	AlertScanner      *notification.AlertScanner
 	OnBackupComplete  func(backupJobID string) // called after backup completion to trigger pending verifications
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
 	CertManager       *mtls.CertManager
@@ -91,6 +92,9 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 
 	store.BatchTracker = notification.NewBatchTracker(db)
 	go store.BatchTracker.StartCleanup(ctx, 10*time.Minute)
+
+	store.AlertScanner = notification.NewAlertScanner(db)
+	go store.AlertScanner.Start(ctx, 1*time.Hour)
 
 	return store, nil
 }

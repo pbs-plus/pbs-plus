@@ -1,0 +1,13 @@
+D2D Alert: Unconfigured Targets Detected
+
+{{count}} target(s) have no backup job configured:
+
+{{#each details}}
+{{#if (starts-with @key "target-name")}}
+  • {{this}}
+{{/if}}
+{{/each}}
+
+Please configure backup jobs for these targets in the D2D Management panel.
+
+<{{base-url}}/#pbsServerAdministration:disk-backup-jobs>

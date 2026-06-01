@@ -26,6 +26,7 @@ type Querier interface {
 	CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error
 	CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) (sql.Result, error)
 	DeleteAgentHost(ctx context.Context, name string) (int64, error)
+	DeleteAlertSetting(ctx context.Context, name string) error
 	DeleteBackup(ctx context.Context, id string) (int64, error)
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
@@ -38,6 +39,7 @@ type Querier interface {
 	DeleteVerificationResults(ctx context.Context, verificationJobID string) (int64, error)
 	GetAgentHost(ctx context.Context, name string) (AgentHost, error)
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
+	GetAlertSetting(ctx context.Context, name string) (AlertSetting, error)
 	GetBackup(ctx context.Context, id string) (GetBackupRow, error)
 	GetBackupExclusions(ctx context.Context, jobID string) ([]Exclusion, error)
 	GetBatchForJob(ctx context.Context, arg GetBatchForJobParams) (NotificationBatch, error)
@@ -53,6 +55,7 @@ type Querier interface {
 	GetToken(ctx context.Context, token string) (Token, error)
 	GetVerificationJob(ctx context.Context, id string) (VerificationJob, error)
 	GetVerificationResults(ctx context.Context, verificationJobID string) ([]VerificationResult, error)
+	ListAlertSettings(ctx context.Context) ([]AlertSetting, error)
 	ListAllAgentHosts(ctx context.Context) ([]AgentHost, error)
 	ListAllBackupExclusions(ctx context.Context) ([]ListAllBackupExclusionsRow, error)
 	ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, error)
@@ -78,6 +81,7 @@ type Querier interface {
 	ScriptExists(ctx context.Context, path string) (int64, error)
 	TargetExists(ctx context.Context, name string) (int64, error)
 	UpdateAgentHost(ctx context.Context, arg UpdateAgentHostParams) error
+	UpdateAlertLastSent(ctx context.Context, arg UpdateAlertLastSentParams) error
 	UpdateBackup(ctx context.Context, arg UpdateBackupParams) error
 	UpdateExclusion(ctx context.Context, arg UpdateExclusionParams) (int64, error)
 	UpdateNotificationBatch(ctx context.Context, arg UpdateNotificationBatchParams) error
@@ -87,6 +91,7 @@ type Querier interface {
 	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) error
 	UpdateVerificationJob(ctx context.Context, arg UpdateVerificationJobParams) error
 	UpdateVerificationResult(ctx context.Context, arg UpdateVerificationResultParams) error
+	UpsertAlertSetting(ctx context.Context, arg UpsertAlertSettingParams) error
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
 	VerificationJobExists(ctx context.Context, id string) (int64, error)
 }

@@ -16,6 +16,15 @@ type AgentHost struct {
 	Os        string         `json:"os"`
 }
 
+type AlertSetting struct {
+	Name      string `json:"name"`
+	Enabled   int64  `json:"enabled"`
+	Threshold int64  `json:"threshold"`
+	Severity  string `json:"severity"`
+	Comment   string `json:"comment"`
+	LastSent  int64  `json:"last_sent"`
+}
+
 type Backup struct {
 	ID                 string         `json:"id"`
 	Store              string         `json:"store"`

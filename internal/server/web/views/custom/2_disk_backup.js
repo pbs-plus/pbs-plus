@@ -55,5 +55,11 @@ Ext.define("PBS.D2DManagement", {
       itemId: "notification-batches",
       iconCls: "fa fa-bell-o",
     },
+    {
+      xtype: "pbsD2DAlertSettings",
+      title: "Alert Settings",
+      itemId: "alert-settings",
+      iconCls: "fa fa-exclamation-triangle",
+    },
   ],
 });

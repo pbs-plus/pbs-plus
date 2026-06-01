@@ -90,6 +90,10 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/json/d2d/notification-batch/jobs", ServerOnly(storeInstance, api.NotificationBatchJobsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/notification-batch/status", ServerOnly(storeInstance, api.NotificationBatchStatusHandler(storeInstance)))
 
+	// Alert settings routes
+	apiMux.HandleFunc("/api2/json/d2d/alert-settings", ServerOnly(storeInstance, api.AlertSettingsHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/alert-settings/{name}", ServerOnly(storeInstance, api.AlertSettingSingleHandler(storeInstance)))
+
 	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
 
 	// Agent routes
