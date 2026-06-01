@@ -97,12 +97,8 @@ PBS.D2DManagement.makeNotificationTab = function () {
           fields: ["name", "comment"],
           autoLoad: true,
           proxy: {
-            type: "ajax",
+            type: "pbsplus",
             url: pbsPlusBaseUrl + "/api2/json/d2d/notification-batch",
-            reader: {
-              type: "json",
-              rootProperty: "data",
-            },
           },
         },
         displayField: "name",

@@ -96,12 +96,8 @@ Ext.define("PBS.D2DManagement.NotificationBatchView", {
     ],
     autoLoad: true,
     proxy: {
-      type: "ajax",
+      type: "pbsplus",
       url: pbsPlusBaseUrl + "/api2/json/d2d/notification-batch",
-      reader: {
-        type: "json",
-        rootProperty: "data",
-      },
     },
     sorters: "name",
   },

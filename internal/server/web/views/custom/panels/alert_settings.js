@@ -158,7 +158,7 @@ Ext.define("PBS.D2DManagement.Alerts", {
     autoLoad: true,
     proxy: {
       type: "pbsplus",
-      url: "/api2/json/d2d/alert-settings",
+      url: pbsPlusBaseUrl + "/api2/json/d2d/alert-settings",
     },
     sorters: [
       {
