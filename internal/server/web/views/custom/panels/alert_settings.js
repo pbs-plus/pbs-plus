@@ -195,9 +195,9 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
     },
   },
 
-  cbindData: function (initialConfig) {
+  initComponent: function () {
     var me = this;
-    var rec = initialConfig.record;
+    var rec = me.initialConfig.record;
     var name = rec ? rec.get("name") : "";
 
     me.url = "/api2/json/d2d/alert-settings/" + encodeURIComponent(name);
@@ -205,7 +205,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
     me.autoLoad = !!name;
     me.alertName = name;
 
-    return {};
+    me.callParent(arguments);
   },
 
   items: [

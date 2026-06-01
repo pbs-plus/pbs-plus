@@ -15,9 +15,9 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
 
   bodyPadding: 0,
 
-  cbindData: function (initialConfig) {
+  initComponent: function () {
     var me = this;
-    var name = initialConfig.batchName;
+    var name = me.initialConfig.batchName;
 
     me.isCreate = !name;
     me.url = name
@@ -28,7 +28,7 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
     me.autoLoad = !!name;
     me.batchName = name || "";
 
-    return {};
+    me.callParent(arguments);
   },
 
   controller: {
