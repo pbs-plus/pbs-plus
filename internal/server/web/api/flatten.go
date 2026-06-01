@@ -2,6 +2,7 @@ package api
 
 import (
 	"sort"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
@@ -72,10 +73,35 @@ func FlattenBackup(b database.Backup) FlatBackup {
 }
 
 // FlattenBackups converts a slice of backups to flat responses.
-func FlattenBackups(backups []database.Backup) []FlatBackup {
+// If staleDays > 0, sets Stale=true for jobs whose last-successful-endtime
+// is older than staleDays. If skipUnscheduled is true, jobs with no schedule
+// are never marked stale. excludedJobs is a set of job IDs to skip.
+func FlattenBackups(backups []database.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool) []FlatBackup {
 	result := make([]FlatBackup, len(backups))
+	var cutoff int64
+	if staleDays > 0 {
+		cutoff = time.Now().Unix() - int64(staleDays)*24*60*60
+	}
 	for i := range backups {
 		result[i] = FlattenBackup(backups[i])
+		if staleDays <= 0 {
+			continue
+		}
+		b := &backups[i]
+		if excludedJobs != nil && excludedJobs[b.ID] {
+			continue
+		}
+		if skipUnscheduled && b.Schedule == "" {
+			continue
+		}
+		if b.History.LastSuccessfulEndtime == 0 {
+			// Never ran — only stale if has a schedule (or not skipping unscheduled)
+			if !skipUnscheduled || b.Schedule != "" {
+				result[i].Stale = true
+			}
+		} else if b.History.LastSuccessfulEndtime < cutoff {
+			result[i].Stale = true
+		}
 	}
 	return result
 }

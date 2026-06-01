@@ -54,6 +54,9 @@ type FlatBackup struct {
 	ReadTotalHuman       string           `json:"read_total_human"`
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
+
+	// Computed server-side from alert settings
+	Stale bool `json:"stale"`
 }
 
 // FlatRestore is the flattened API response for a restore job.

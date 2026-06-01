@@ -25,7 +25,7 @@ func ExtJsBackupCSVExportHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		flatBackups := FlattenBackups(allBackups)
+		flatBackups := FlattenBackups(allBackups, 0, false, nil)
 
 		if len(flatBackups) == 0 {
 			http.Error(w, "No records to export", http.StatusNoContent)

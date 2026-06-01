@@ -12,19 +12,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
 
   viewConfig: {
     getRowClass: function (record) {
-      const lastRunEndtime = record.get("last-successful-endtime");
-
-      if (!lastRunEndtime) {
+      if (record.get("stale")) {
         return "pbs-row-warning-old-backup";
       }
-
-      const now = Date.now() / 1000;
-      const sevenDaysAgo = now - 7 * 24 * 60 * 60;
-
-      if (lastRunEndtime < sevenDaysAgo) {
-        return "pbs-row-warning-old-backup";
-      }
-
       return "";
     },
   },
@@ -445,6 +435,9 @@ Ext.define("PBS.config.DiskBackupJobView", {
         `;
         document.head.appendChild(style);
       }
+
+      // Load stale-backup threshold from alert settings
+      // (computed server-side via "stale" field in API response)
 
       // Apply custom grouper for "ns" on initialization
       const store = view.getStore();

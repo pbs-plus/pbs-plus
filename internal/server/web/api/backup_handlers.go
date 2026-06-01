@@ -33,7 +33,20 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		flatBackups := FlattenBackups(allBackups)
+		// Resolve stale-backup alert settings for highlighting
+		var staleDays int
+		var skipUnscheduled bool
+		var excludedJobs map[string]bool
+		if setting, err := storeInstance.Database.GetAlertSetting("stale-backup"); err == nil {
+			staleDays = setting.Threshold
+			skipUnscheduled = setting.SkipUnscheduled
+			if staleDays <= 0 {
+				staleDays = 7
+			}
+			excludedJobs, _ = storeInstance.Database.GetExcludedValues("stale-backup", "job")
+		}
+
+		flatBackups := FlattenBackups(allBackups, staleDays, skipUnscheduled, excludedJobs)
 
 		digest, err := calculateDigest(flatBackups)
 		if err != nil {

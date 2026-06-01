@@ -42,6 +42,8 @@ Ext.define("pbs-disk-backup-status", {
     "read_total_human",
     "processing_speed_human",
     "status_parsed",
+    // Server-side computed from alert settings
+    { name: "stale", type: "bool" },
   ],
   idProperty: "id",
   proxy: {
