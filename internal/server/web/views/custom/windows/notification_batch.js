@@ -150,6 +150,35 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
           isCreate: "{isCreate}",
         },
 
+        onGetValues: function (values) {
+          var panel = this;
+
+          // Collect selected jobs from the grid
+          var grid = panel.up("pbsPlusWindowEdit").down("grid[reference=jobGrid]");
+          if (grid) {
+            var selected = grid.getSelectionModel().getSelection();
+            var jobs = selected.map(function (rec) {
+              return {
+                "job-type": rec.get("job-type"),
+                "job-id": rec.get("job-id"),
+              };
+            });
+            values.jobs = JSON.stringify(jobs);
+          }
+
+          // Convert checkbox value
+          if (values["send-on-timeout"]) {
+            values["send-on-timeout"] = "1";
+          } else {
+            values["send-on-timeout"] = "0";
+          }
+
+          // Remove internal dirty tracker
+          delete values["_jobsDirty"];
+
+          return values;
+        },
+
         column1: [
           {
             xtype: "proxmoxtextfield",
@@ -258,32 +287,4 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
     ],
   },
 
-  onGetValues: function (values) {
-    var me = this;
-
-    // Collect selected jobs from the grid
-    var grid = me.down("grid[reference=jobGrid]");
-    if (grid) {
-      var selected = grid.getSelectionModel().getSelection();
-      var jobs = selected.map(function (rec) {
-        return {
-          "job-type": rec.get("job-type"),
-          "job-id": rec.get("job-id"),
-        };
-      });
-      values.jobs = JSON.stringify(jobs);
-    }
-
-    // Convert checkbox value
-    if (values["send-on-timeout"]) {
-      values["send-on-timeout"] = "1";
-    } else {
-      values["send-on-timeout"] = "0";
-    }
-
-    // Remove internal dirty tracker
-    delete values["_jobsDirty"];
-
-    return values;
-  },
 });
