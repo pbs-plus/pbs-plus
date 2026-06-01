@@ -260,6 +260,33 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
           return values;
         },
 
+        onGetValues: function (values) {
+          var panel = this;
+          var vm = panel.up("pbsPlusWindowEdit").getViewModel();
+
+          // Build cooldown-minutes from hours + minutes
+          if (vm) {
+            values["cooldown-minutes"] =
+              (vm.get("cooldownHours") || 0) * 60 +
+              (vm.get("cooldownMinutes") || 0);
+          }
+
+          // Collect quiet-days from checkboxgroup, remove raw quiet-day entries
+          var quietGroup = panel.down("checkboxgroup[reference=quietDays]");
+          if (quietGroup) {
+            var checked = [];
+            Ext.Array.each(quietGroup.items.items, function (cb) {
+              if (cb.checked) {
+                checked.push(cb.inputValue);
+              }
+            });
+            values["quiet-days"] = JSON.stringify(checked);
+          }
+          delete values["quiet-day"];
+
+          return values;
+        },
+
         column1: [
           {
             xtype: "displayfield",
@@ -367,17 +394,16 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
             fieldLabel: gettext("Quiet Days"),
             columns: 4,
             items: [
-              { boxLabel: "Mon", name: "quiet-day", inputValue: "Monday" },
-              { boxLabel: "Tue", name: "quiet-day", inputValue: "Tuesday" },
+              { boxLabel: "Mon", inputValue: "Monday" },
+              { boxLabel: "Tue", inputValue: "Tuesday" },
               {
                 boxLabel: "Wed",
-                name: "quiet-day",
                 inputValue: "Wednesday",
               },
-              { boxLabel: "Thu", name: "quiet-day", inputValue: "Thursday" },
-              { boxLabel: "Fri", name: "quiet-day", inputValue: "Friday" },
-              { boxLabel: "Sat", name: "quiet-day", inputValue: "Saturday" },
-              { boxLabel: "Sun", name: "quiet-day", inputValue: "Sunday" },
+              { boxLabel: "Thu", inputValue: "Thursday" },
+              { boxLabel: "Fri", inputValue: "Friday" },
+              { boxLabel: "Sat", inputValue: "Saturday" },
+              { boxLabel: "Sun", inputValue: "Sunday" },
             ],
           },
         ],
@@ -477,28 +503,6 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
         ],
       },
     ],
-  },
-
-  onGetValues: function (values) {
-    var me = this;
-    var vm = me.getViewModel();
-
-    values["cooldown-minutes"] =
-      (vm.get("cooldownHours") || 0) * 60 +
-      (vm.get("cooldownMinutes") || 0);
-
-    var quietGroup = me.down("checkboxgroup[reference=quietDays]");
-    if (quietGroup) {
-      var checked = [];
-      Ext.Array.each(quietGroup.items.items, function (cb) {
-        if (cb.checked) {
-          checked.push(cb.inputValue);
-        }
-      });
-      values["quiet-days"] = JSON.stringify(checked);
-    }
-
-    return values;
   },
 
   controller: {

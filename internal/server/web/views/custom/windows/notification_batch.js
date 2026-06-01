@@ -199,12 +199,14 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
         title: gettext("Jobs"),
         xtype: "panel",
         layout: "fit",
+        maxHeight: 300,
         items: [
           {
             xtype: "grid",
             reference: "jobGrid",
             selType: "checkboxmodel",
             multiSelect: true,
+            scroll: true,
             store: {
               fields: ["job-type", "job-id", "display", "assigned"],
             },

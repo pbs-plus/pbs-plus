@@ -23,7 +23,11 @@ func NotificationBatchHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			listNotificationBatches(storeInstance, w, r)
+			if name := r.URL.Query().Get("batch"); name != "" {
+				getNotificationBatch(storeInstance, w, r, name)
+			} else {
+				listNotificationBatches(storeInstance, w, r)
+			}
 		case http.MethodPost:
 			createNotificationBatch(storeInstance, w, r)
 		case http.MethodPut:
@@ -71,8 +75,22 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"data":   result,
-		"digest": digest,
+		"data":    result,
+		"digest":  digest,
+	})
+}
+
+func getNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request, name string) {
+	batch, err := storeInstance.Database.GetNotificationBatch(name)
+	if err != nil || batch.Name == "" {
+		http.Error(w, "Batch not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
+		"data":    batch,
 	})
 }
 
@@ -130,7 +148,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"data": created,
+		"data":    created,
 	})
 }
 
@@ -187,7 +205,7 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"data": updated,
+		"data":    updated,
 	})
 }
 
@@ -206,7 +224,7 @@ func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"data": nil,
+		"data":    nil,
 	})
 }
 
