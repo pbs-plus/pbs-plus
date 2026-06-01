@@ -187,14 +187,25 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
   isCreate: false,
   width: 550,
 
-  url: "/api2/json/d2d/alert-settings",
-
   viewModel: {
     data: {
       isStaleBackup: false,
       cooldownHours: 24,
       cooldownMinutes: 0,
     },
+  },
+
+  cbindData: function (initialConfig) {
+    var me = this;
+    var rec = initialConfig.record;
+    var name = rec ? rec.get("name") : "";
+
+    me.url = "/api2/json/d2d/alert-settings/" + encodeURIComponent(name);
+    me.method = "PUT";
+    me.autoLoad = !!name;
+    me.alertName = name;
+
+    return {};
   },
 
   items: [
@@ -345,7 +356,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
         },
       ],
 
-      setValues: function (values) {
+      onSetValues: function (values) {
         var panel = this;
         var vm = panel.up("pbsPlusWindowEdit").getViewModel();
 
@@ -357,46 +368,26 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
           vm.set("cooldownMinutes", totalMin % 60);
         }
 
-        // Check quiet-days checkboxes
+        // Quiet-days checkboxes are set after render via a defer
         var quietDays = values["quiet-days"] || [];
-        var quietGroup = panel.down("checkboxgroup[reference=quietDays]");
-        if (quietGroup) {
-          Ext.Array.each(quietGroup.items.items, function (cb) {
-            cb.setValue(Ext.Array.contains(quietDays, cb.inputValue));
-          });
-        }
+        Ext.defer(function () {
+          var quietGroup = panel.down("checkboxgroup[reference=quietDays]");
+          if (quietGroup) {
+            Ext.Array.each(quietGroup.items.items, function (cb) {
+              cb.setValue(Ext.Array.contains(quietDays, cb.inputValue));
+            });
+          }
+        }, 50);
 
-        panel.callParent(arguments);
+        return values;
       },
     },
   ],
 
-  initComponent: function () {
+  onGetValues: function (values) {
     var me = this;
-
-    if (me.record) {
-      me.loadValues = me.record.data;
-    }
-
-    me.callParent(arguments);
-
-    if (me.record) {
-      me.load({
-        params: { name: me.record.get("name") },
-      });
-    }
-  },
-
-  getValues: function () {
-    var me = this;
-    var values = me.callParent(arguments);
-
-    if (me.record) {
-      values.name = me.record.get("name");
-    }
-
-    // Compute cooldown-minutes from hours + minutes
     var vm = me.getViewModel();
+
     values["cooldown-minutes"] =
       (vm.get("cooldownHours") || 0) * 60 +
       (vm.get("cooldownMinutes") || 0);
