@@ -89,9 +89,11 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
       if (!grid) return;
 
       var store = grid.getStore();
+      if (!store) return;
+
       jobs.forEach(function (j) {
         // Don't add duplicates
-        if (!store.findExact("job-id", j["job-id"]) >= 0) {
+        if (store.findExact("job-id", j["job-id"]) < 0) {
           store.add({
             "job-type": j["job-type"],
             "job-id": j["job-id"],
@@ -115,17 +117,22 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
           if (!grid) return;
 
           var store = grid.getStore();
-          assigned.forEach(function (a) {
-            store.each(function (rec) {
-              if (
-                rec.get("job-type") === a["job-type"] &&
-                rec.get("job-id") === a["job-id"]
-              ) {
-                rec.set("assigned", true);
-              }
+          if (!store) return;
+
+          // Deferred to ensure populateJobStore has finished first
+          Ext.defer(function () {
+            assigned.forEach(function (a) {
+              store.each(function (rec) {
+                if (
+                  rec.get("job-type") === a["job-type"] &&
+                  rec.get("job-id") === a["job-id"]
+                ) {
+                  rec.set("assigned", true);
+                }
+              });
             });
-          });
-          store.commitChanges();
+            store.commitChanges();
+          }, 500);
         },
       });
     },
@@ -215,9 +222,11 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
               },
             ],
             listeners: {
-              selectionchange: function (grid, selected) {
-                // Mark selected jobs as assigned
+              selectionchange: function (sm, selected) {
+                var grid = sm.view && sm.view.grid;
+                if (!grid) return;
                 var store = grid.getStore();
+                if (!store) return;
                 store.each(function (rec) {
                   rec.set("assigned", false);
                 });
