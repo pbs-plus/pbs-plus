@@ -161,6 +161,11 @@ Ext.define("PBS.D2DSnapshotMount.DatastorePanel", {
         let {
           result: { data: groups },
         } = await Proxmox.Async.api2({ url });
+
+        if (view.destroyed || !view.store) {
+          return;
+        }
+
         let map = {};
         for (const group of groups) {
           map[`${group["backup-type"]}/${group["backup-id"]}`] = group.comment;
