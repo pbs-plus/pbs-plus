@@ -13,8 +13,8 @@ const (
 	// DefaultStaleDays is the default threshold for stale-backup alerts.
 	DefaultStaleDays = 7
 
-	// AlertCooldown is the minimum time between repeated alerts of the same type.
-	AlertCooldown = 24 * time.Hour
+	// DefaultCooldownMinutes is the default cooldown between repeated alerts.
+	DefaultCooldownMinutes = 1440 // 24 hours
 )
 
 // AlertScanner periodically checks for D2D alert conditions and sends notifications.
@@ -76,13 +76,24 @@ func (s *AlertScanner) ensureDefaults() {
 	}
 }
 
+// shouldSkip returns true if the alert is disabled, in cooldown, or on a quiet day.
+func shouldSkip(setting database.AlertSetting) bool {
+	if !setting.Enabled {
+		return true
+	}
+	if setting.IsQuietDay() {
+		return true
+	}
+	if setting.IsCoolingDown() {
+		return true
+	}
+	return false
+}
+
 // checkUnconfiguredTargets finds targets that have no backup job assigned.
 func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 	setting, err := s.db.GetAlertSetting(string(AlertUnconfiguredTarget))
-	if err != nil || !setting.Enabled {
-		return
-	}
-	if setting.IsCoolingDown(AlertCooldown) {
+	if err != nil || shouldSkip(setting) {
 		return
 	}
 
@@ -115,12 +126,8 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 	}
 
 	// Send a single alert listing all unconfigured targets
-	targetList := make([]string, len(unconfigured))
 	details := map[string]string{
 		"count": fmt.Sprintf("%d", len(unconfigured)),
-	}
-	for i, t := range unconfigured {
-		targetList[i] = t.Name
 	}
 
 	// Include target names in details (up to a reasonable limit)
@@ -141,10 +148,7 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 // checkStaleBackups finds backup jobs that haven't run successfully in a configurable number of days.
 func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 	setting, err := s.db.GetAlertSetting(string(AlertStaleBackup))
-	if err != nil || !setting.Enabled {
-		return
-	}
-	if setting.IsCoolingDown(AlertCooldown) {
+	if err != nil || shouldSkip(setting) {
 		return
 	}
 
@@ -180,7 +184,7 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		return
 	}
 
-	// Send a single alert listing all stale jobs
+	// Send a single alert per stale job
 	for _, b := range staleJobs {
 		var daysStale string
 		if b.History.LastSuccessfulEndtime == 0 {

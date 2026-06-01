@@ -35,9 +35,10 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			setting := database.AlertSetting{
-				Name:     r.FormValue("name"),
-				Severity: r.FormValue("severity"),
-				Comment:  r.FormValue("comment"),
+				Name:            r.FormValue("name"),
+				Severity:        r.FormValue("severity"),
+				Comment:         r.FormValue("comment"),
+				CooldownMinutes: formValueInt(r, "cooldown-minutes", 1440),
 			}
 
 			if setting.Name == "" {
@@ -49,6 +50,17 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 			setting.Threshold = formValueInt(r, "threshold", 0)
 			if setting.Severity == "" {
 				setting.Severity = "warning"
+			}
+			if setting.CooldownMinutes <= 0 {
+				setting.CooldownMinutes = 1440
+			}
+
+			// Parse quiet-days as JSON array
+			if qd := r.FormValue("quiet-days"); qd != "" {
+				if err := json.Unmarshal([]byte(qd), &setting.QuietDays); err != nil {
+					WriteErrorResponse(w, fmt.Errorf("invalid quiet-days: %w", err))
+					return
+				}
 			}
 
 			if err := storeInstance.Database.UpsertAlertSetting(setting); err != nil {
@@ -99,15 +111,33 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			setting := database.AlertSetting{
-				Name:     name,
-				Severity: r.FormValue("severity"),
-				Comment:  r.FormValue("comment"),
+				Name:            name,
+				Severity:        r.FormValue("severity"),
+				Comment:         r.FormValue("comment"),
+				CooldownMinutes: formValueInt(r, "cooldown-minutes", 1440),
 			}
 
 			setting.Enabled = r.FormValue("enabled") != "0"
 			setting.Threshold = formValueInt(r, "threshold", 0)
 			if setting.Severity == "" {
 				setting.Severity = "warning"
+			}
+			if setting.CooldownMinutes <= 0 {
+				setting.CooldownMinutes = 1440
+			}
+
+			// Parse quiet-days as JSON array
+			if qd := r.FormValue("quiet-days"); qd != "" {
+				if err := json.Unmarshal([]byte(qd), &setting.QuietDays); err != nil {
+					WriteErrorResponse(w, fmt.Errorf("invalid quiet-days: %w", err))
+					return
+				}
+			}
+
+			// Preserve last-sent: reload existing, keep its value
+			existing, err := storeInstance.Database.GetAlertSetting(name)
+			if err == nil {
+				setting.LastSent = existing.LastSent
 			}
 
 			if err := storeInstance.Database.UpsertAlertSetting(setting); err != nil {

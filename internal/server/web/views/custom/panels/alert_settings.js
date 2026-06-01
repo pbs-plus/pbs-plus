@@ -9,30 +9,27 @@ Ext.define("PBS.D2DManagement.Alerts", {
   title: gettext("Alert Settings"),
   reference: "d2d-alert-settings",
 
-  controllers: {
-    d2dAlertSettings: {
-      type: "controller",
+  controller: {
+    type: "controller",
 
-      onEdit: function () {
-        let me = this;
-        let view = me.getView();
-        let sel = view.getSelection();
-        if (!sel.length) return;
+    onEdit: function () {
+      let me = this;
+      let view = me.getView();
+      let sel = view.getSelection();
+      if (!sel.length) return;
 
-        let rec = sel[0];
-        Ext.create("PBS.D2DManagement.AlertEditWindow", {
-          record: rec,
-          listeners: {
-            destroy: function () {
-              view.getStore().load();
-            },
+      Ext.create("PBS.D2DManagement.AlertEditWindow", {
+        record: sel[0],
+        listeners: {
+          destroy: function () {
+            view.getStore().load();
           },
-        }).show();
-      },
+        },
+      }).show();
+    },
 
-      onReload: function () {
-        this.getView().getStore().load();
-      },
+    onReload: function () {
+      this.getView().getStore().load();
     },
   },
 
@@ -89,6 +86,28 @@ Ext.define("PBS.D2DManagement.Alerts", {
       },
     },
     {
+      header: gettext("Cooldown"),
+      dataIndex: "cooldown-minutes",
+      width: 110,
+      renderer: function (val) {
+        if (!val) return "-";
+        if (val < 60) return Ext.String.format("{0} min", val);
+        let h = Math.floor(val / 60);
+        let m = val % 60;
+        if (m === 0) return Ext.String.format("{0}h", h);
+        return Ext.String.format("{0}h {1}m", h, m);
+      },
+    },
+    {
+      header: gettext("Quiet Days"),
+      dataIndex: "quiet-days",
+      width: 180,
+      renderer: function (val) {
+        if (!val || !val.length) return "-";
+        return val.join(", ");
+      },
+    },
+    {
       header: gettext("Severity"),
       dataIndex: "severity",
       width: 90,
@@ -101,7 +120,11 @@ Ext.define("PBS.D2DManagement.Alerts", {
         };
         let color = colors[val] || "black";
         return (
-          '<span style="color:' + color + ';font-weight:bold">' + val + "</span>"
+          '<span style="color:' +
+          color +
+          ';font-weight:bold">' +
+          val +
+          "</span>"
         );
       },
     },
@@ -129,6 +152,8 @@ Ext.define("PBS.D2DManagement.Alerts", {
       "severity",
       "comment",
       { name: "last-sent", type: "int" },
+      { name: "cooldown-minutes", type: "int" },
+      "quiet-days",
     ],
     autoLoad: true,
     proxy: {
@@ -157,9 +182,17 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
 
   title: gettext("Edit Alert Setting"),
   isCreate: false,
-  width: 500,
+  width: 550,
 
   url: "/api2/json/d2d/alert-settings",
+
+  viewModel: {
+    data: {
+      isStaleBackup: false,
+      cooldownHours: 24,
+      cooldownMinutes: 0,
+    },
+  },
 
   items: [
     {
@@ -189,6 +222,18 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
           uncheckedValue: 0,
           checked: true,
         },
+        {
+          xtype: "proxmoxintegerfield",
+          name: "threshold",
+          fieldLabel: gettext("Threshold (days)"),
+          minValue: 1,
+          maxValue: 365,
+          allowBlank: true,
+          bind: {
+            disabled: "{!isStaleBackup}",
+            visible: "{isStaleBackup}",
+          },
+        },
       ],
 
       column2: [
@@ -205,16 +250,106 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
           ],
         },
         {
-          xtype: "proxmoxintegerfield",
-          name: "threshold",
-          fieldLabel: gettext("Threshold (days)"),
-          minValue: 1,
-          maxValue: 365,
-          allowBlank: true,
-          bind: {
-            disabled: "{!isStaleBackup}",
-            visible: "{isStaleBackup}",
-          },
+          xtype: "fieldcontainer",
+          fieldLabel: gettext("Cooldown"),
+          layout: "hbox",
+          items: [
+            {
+              xtype: "proxmoxintegerfield",
+              reference: "cooldownHours",
+              minValue: 0,
+              maxValue: 720,
+              width: 70,
+              bind: {
+                value: "{cooldownHours}",
+              },
+              listeners: {
+                change: function (field, val) {
+                  let win = field.up("pbsPlusWindowEdit");
+                  let vm = win.getViewModel();
+                  vm.set(
+                    "cooldownHours",
+                    val || 0
+                  );
+                },
+              },
+            },
+            {
+              xtype: "displayfield",
+              value: "h",
+              width: 25,
+              margins: "0 5 0 2",
+            },
+            {
+              xtype: "proxmoxintegerfield",
+              reference: "cooldownMinutes",
+              minValue: 0,
+              maxValue: 59,
+              width: 60,
+              bind: {
+                value: "{cooldownMinutes}",
+              },
+              listeners: {
+                change: function (field, val) {
+                  let win = field.up("pbsPlusWindowEdit");
+                  let vm = win.getViewModel();
+                  vm.set(
+                    "cooldownMinutes",
+                    val || 0
+                  );
+                },
+              },
+            },
+            {
+              xtype: "displayfield",
+              value: "m",
+              width: 25,
+              margins: "0 0 0 2",
+            },
+          ],
+        },
+        {
+          xtype: "checkboxgroup",
+          reference: "quietDays",
+          fieldLabel: gettext("Quiet Days"),
+          columns: 4,
+          items: [
+            {
+              boxLabel: "Mon",
+              name: "quiet-day",
+              inputValue: "Monday",
+            },
+            {
+              boxLabel: "Tue",
+              name: "quiet-day",
+              inputValue: "Tuesday",
+            },
+            {
+              boxLabel: "Wed",
+              name: "quiet-day",
+              inputValue: "Wednesday",
+            },
+            {
+              boxLabel: "Thu",
+              name: "quiet-day",
+              inputValue: "Thursday",
+            },
+            {
+              boxLabel: "Fri",
+              name: "quiet-day",
+              inputValue: "Friday",
+            },
+            {
+              boxLabel: "Sat",
+              name: "quiet-day",
+              inputValue: "Saturday",
+            },
+            {
+              boxLabel: "Sun",
+              name: "quiet-day",
+              inputValue: "Sunday",
+            },
+          ],
         },
       ],
 
@@ -229,25 +364,35 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
 
       setValues: function (values) {
         let panel = this;
-        panel.callParent(arguments);
-
-        // Show threshold field only for stale-backup alerts
         let vm = panel.up("pbsPlusWindowEdit").getViewModel();
+
         if (vm) {
           vm.set("isStaleBackup", values.name === "stale-backup");
+
+          // Split cooldown-minutes into hours + minutes
+          let totalMin = values["cooldown-minutes"] || 1440;
+          vm.set("cooldownHours", Math.floor(totalMin / 60));
+          vm.set("cooldownMinutes", totalMin % 60);
         }
+
+        // Check quiet-days checkboxes
+        let quietDays = values["quiet-days"] || [];
+        let quietGroup = panel.down("checkboxgroup[reference=quietDays]");
+        if (quietGroup) {
+          Ext.Array.each(quietGroup.items.items, function (cb) {
+            cb.setValue(
+              Ext.Array.contains(quietDays, cb.inputValue)
+            );
+          });
+        }
+
+        panel.callParent(arguments);
       },
     },
   ],
 
   initComponent: function () {
     let me = this;
-
-    me.viewModel = {
-      data: {
-        isStaleBackup: false,
-      },
-    };
 
     if (me.record) {
       me.loadValues = me.record.data;
@@ -263,10 +408,31 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
   },
 
   getValues: function () {
-    let values = this.callParent(arguments);
-    if (this.record) {
-      values.name = this.record.get("name");
+    let me = this;
+    let values = me.callParent(arguments);
+
+    if (me.record) {
+      values.name = me.record.get("name");
     }
+
+    // Compute cooldown-minutes from hours + minutes
+    let vm = me.getViewModel();
+    values["cooldown-minutes"] =
+      (vm.get("cooldownHours") || 0) * 60 +
+      (vm.get("cooldownMinutes") || 0);
+
+    // Collect checked quiet days
+    let quietGroup = me.down("checkboxgroup[reference=quietDays]");
+    if (quietGroup) {
+      let checked = [];
+      Ext.Array.each(quietGroup.items.items, function (cb) {
+        if (cb.checked) {
+          checked.push(cb.inputValue);
+        }
+      });
+      values["quiet-days"] = JSON.stringify(checked);
+    }
+
     return values;
   },
 });
