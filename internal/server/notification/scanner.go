@@ -10,35 +10,25 @@ import (
 )
 
 const (
-	// DefaultStaleDays is the default threshold for stale-backup alerts.
-	DefaultStaleDays = 7
-
-	// DefaultCooldownMinutes is the default cooldown between repeated alerts.
-	DefaultCooldownMinutes = 1440 // 24 hours
+	DefaultStaleDays       = 7
+	DefaultCooldownMinutes = 1440
 )
 
-// AlertScanner periodically checks for D2D alert conditions and sends notifications.
 type AlertScanner struct {
 	db *database.Database
 }
 
-// NewAlertScanner creates a new alert scanner.
 func NewAlertScanner(db *database.Database) *AlertScanner {
 	return &AlertScanner{db: db}
 }
 
-// Start runs the alert scanner loop. It checks every interval and exits when ctx is done.
 func (s *AlertScanner) Start(ctx context.Context, interval time.Duration) {
-	slog := syslog.L.Info().WithMessage("alert scanner started")
-	slog.Write()
-
-	// Ensure all default alert settings exist
+	syslog.L.Info().WithMessage("alert scanner started").Write()
 	s.ensureDefaults()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	// Run once immediately on startup (after a short delay to let services initialize)
 	time.AfterFunc(30*time.Second, func() {
 		s.RunChecks(ctx)
 	})
@@ -54,13 +44,11 @@ func (s *AlertScanner) Start(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// RunChecks executes all alert checks once.
 func (s *AlertScanner) RunChecks(ctx context.Context) {
 	s.checkUnconfiguredTargets(ctx)
 	s.checkStaleBackups(ctx)
 }
 
-// ensureDefaults creates default alert settings if they don't exist.
 func (s *AlertScanner) ensureDefaults() {
 	defaults := []struct {
 		name      string
@@ -76,7 +64,6 @@ func (s *AlertScanner) ensureDefaults() {
 	}
 }
 
-// shouldSkip returns true if the alert is disabled, in cooldown, or on a quiet day.
 func shouldSkip(setting database.AlertSetting) bool {
 	if !setting.Enabled {
 		return true
@@ -90,12 +77,19 @@ func shouldSkip(setting database.AlertSetting) bool {
 	return false
 }
 
-// checkUnconfiguredTargets finds targets that have no backup job assigned.
+// isExcluded checks if a value is in the exclusion set.
+func isExcluded(exclusions map[string]bool, value string) bool {
+	return exclusions != nil && exclusions[value]
+}
+
 func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 	setting, err := s.db.GetAlertSetting(string(AlertUnconfiguredTarget))
 	if err != nil || shouldSkip(setting) {
 		return
 	}
+
+	// Load excluded targets
+	excludedTargets, _ := s.db.GetExcludedValues(string(AlertUnconfiguredTarget), "target")
 
 	targets, err := s.db.GetAllTargets()
 	if err != nil {
@@ -107,30 +101,29 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 		return
 	}
 
-	// Build a set of targets that have at least one backup job
 	coveredTargets := make(map[string]bool)
 	for _, b := range backups {
 		coveredTargets[b.Target.Name] = true
 	}
 
-	// Find unconfigured targets
 	var unconfigured []database.Target
 	for _, t := range targets {
-		if !coveredTargets[t.Name] {
-			unconfigured = append(unconfigured, t)
+		if coveredTargets[t.Name] {
+			continue
 		}
+		if isExcluded(excludedTargets, t.Name) {
+			continue
+		}
+		unconfigured = append(unconfigured, t)
 	}
 
 	if len(unconfigured) == 0 {
 		return
 	}
 
-	// Send a single alert listing all unconfigured targets
 	details := map[string]string{
 		"count": fmt.Sprintf("%d", len(unconfigured)),
 	}
-
-	// Include target names in details (up to a reasonable limit)
 	for i, t := range unconfigured {
 		if i >= 10 {
 			details[fmt.Sprintf("target-name-%d", i)] = fmt.Sprintf("... and %d more", len(unconfigured)-10)
@@ -140,12 +133,9 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 	}
 
 	SendAlert(AlertUnconfiguredTarget, setting.Severity, details)
-
-	// Update last-sent timestamp for cooldown
 	s.db.UpdateAlertLastSent(string(AlertUnconfiguredTarget), time.Now().Unix())
 }
 
-// checkStaleBackups finds backup jobs that haven't run successfully in a configurable number of days.
 func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 	setting, err := s.db.GetAlertSetting(string(AlertStaleBackup))
 	if err != nil || shouldSkip(setting) {
@@ -157,6 +147,9 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		threshold = DefaultStaleDays
 	}
 
+	// Load excluded jobs
+	excludedJobs, _ := s.db.GetExcludedValues(string(AlertStaleBackup), "job")
+
 	backups, err := s.db.GetAllBackups()
 	if err != nil {
 		return
@@ -167,15 +160,26 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 
 	var staleJobs []database.Backup
 	for _, b := range backups {
-		lastSuccessful := b.History.LastSuccessfulEndtime
-		if lastSuccessful == 0 {
-			// Never ran successfully — always report as stale
-			staleJobs = append(staleJobs, b)
+		// Skip excluded jobs
+		if isExcluded(excludedJobs, b.ID) {
 			continue
 		}
 
-		lastRun := time.Unix(lastSuccessful, 0)
-		if now.Sub(lastRun) > thresholdDuration {
+		// Skip unscheduled jobs if configured
+		if setting.SkipUnscheduled && b.Schedule == "" {
+			continue
+		}
+
+		lastSuccessful := b.History.LastSuccessfulEndtime
+		if lastSuccessful == 0 {
+			// Never ran — only report as stale if job has a schedule
+			if !setting.SkipUnscheduled || b.Schedule != "" {
+				staleJobs = append(staleJobs, b)
+			}
+			continue
+		}
+
+		if now.Sub(time.Unix(lastSuccessful, 0)) > thresholdDuration {
 			staleJobs = append(staleJobs, b)
 		}
 	}
@@ -184,7 +188,6 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		return
 	}
 
-	// Send a single alert per stale job
 	for _, b := range staleJobs {
 		var daysStale string
 		if b.History.LastSuccessfulEndtime == 0 {
@@ -205,7 +208,6 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		})
 	}
 
-	// Update last-sent timestamp for cooldown
 	s.db.UpdateAlertLastSent(string(AlertStaleBackup), time.Now().Unix())
 }
 

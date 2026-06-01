@@ -238,7 +238,7 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
           },
         ],
       },
-      PBS.D2DManagement.makeNotificationTab(),
+      PBS.D2DManagement.makeSimpleNotificationTab(),
     ],
   },
 

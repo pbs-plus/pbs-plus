@@ -19,6 +19,15 @@ type AlertSetting struct {
 	LastSent        int64    `json:"last-sent"`
 	CooldownMinutes int      `json:"cooldown-minutes"`
 	QuietDays       []string `json:"quiet-days"`
+	SkipUnscheduled bool     `json:"skip-unscheduled"`
+}
+
+type AlertExclusion struct {
+	ID           int64  `json:"id"`
+	AlertType    string `json:"alert-type"`
+	ExcludeType  string `json:"exclude-type"`
+	ExcludeValue string `json:"exclude-value"`
+	Comment      string `json:"comment"`
 }
 
 func sqlcToAlertSetting(row sqlc.AlertSetting) AlertSetting {
@@ -38,6 +47,17 @@ func sqlcToAlertSetting(row sqlc.AlertSetting) AlertSetting {
 		LastSent:        row.LastSent,
 		CooldownMinutes: int(row.CooldownMinutes),
 		QuietDays:       quietDays,
+		SkipUnscheduled: row.SkipUnscheduled == 1,
+	}
+}
+
+func sqlcToAlertExclusion(row sqlc.AlertExclusion) AlertExclusion {
+	return AlertExclusion{
+		ID:           row.ID,
+		AlertType:    row.AlertType,
+		ExcludeType:  row.ExcludeType,
+		ExcludeValue: row.ExcludeValue,
+		Comment:      row.Comment,
 	}
 }
 
@@ -74,6 +94,10 @@ func (database *Database) UpsertAlertSetting(setting AlertSetting) error {
 	if setting.Enabled {
 		enabled = 1
 	}
+	skipUnscheduled := int64(0)
+	if setting.SkipUnscheduled {
+		skipUnscheduled = 1
+	}
 	return database.queries.UpsertAlertSetting(context.Background(), sqlc.UpsertAlertSettingParams{
 		Name:            setting.Name,
 		Enabled:         enabled,
@@ -83,6 +107,7 @@ func (database *Database) UpsertAlertSetting(setting AlertSetting) error {
 		LastSent:        setting.LastSent,
 		CooldownMinutes: int64(setting.CooldownMinutes),
 		QuietDays:       alertSettingQuietDaysJSON(setting.QuietDays),
+		SkipUnscheduled: skipUnscheduled,
 	})
 }
 
@@ -111,7 +136,7 @@ func (database *Database) EnsureAlertSetting(name string, defaultThreshold int, 
 		Enabled:         true,
 		Threshold:       defaultThreshold,
 		Severity:        defaultSeverity,
-		CooldownMinutes: 1440, // 24h default
+		CooldownMinutes: 1440,
 		QuietDays:       []string{},
 	}
 	if err := database.UpsertAlertSetting(setting); err != nil {
@@ -132,11 +157,74 @@ func (s AlertSetting) IsCoolingDown() bool {
 	return time.Since(time.Unix(s.LastSent, 0)) < cooldown
 }
 
-// IsQuietDay returns true if today (in the alert's local weekday name) is in the quiet-days list.
+// IsQuietDay returns true if today is in the quiet-days list.
 func (s AlertSetting) IsQuietDay() bool {
 	if len(s.QuietDays) == 0 {
 		return false
 	}
 	today := time.Now().Weekday().String()
 	return slices.Contains(s.QuietDays, today)
+}
+
+// --- Alert Exclusions ---
+
+func (database *Database) CreateAlertExclusion(alertType, excludeType, excludeValue, comment string) error {
+	return database.queries.CreateAlertExclusion(context.Background(), sqlc.CreateAlertExclusionParams{
+		AlertType:    alertType,
+		ExcludeType:  excludeType,
+		ExcludeValue: excludeValue,
+		Comment:      comment,
+	})
+}
+
+func (database *Database) DeleteAlertExclusion(id int64) error {
+	return database.queries.DeleteAlertExclusion(context.Background(), id)
+}
+
+func (database *Database) ListAlertExclusions(alertType string) ([]AlertExclusion, error) {
+	rows, err := database.readQueries.ListAlertExclusions(context.Background(), alertType)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]AlertExclusion, len(rows))
+	for i, row := range rows {
+		result[i] = sqlcToAlertExclusion(row)
+	}
+	return result, nil
+}
+
+func (database *Database) ListAllAlertExclusions() ([]AlertExclusion, error) {
+	rows, err := database.readQueries.ListAllAlertExclusions(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	result := make([]AlertExclusion, len(rows))
+	for i, row := range rows {
+		result[i] = sqlcToAlertExclusion(row)
+	}
+	return result, nil
+}
+
+func (database *Database) GetAlertExclusion(id int64) (AlertExclusion, error) {
+	row, err := database.readQueries.GetAlertExclusion(context.Background(), id)
+	if err != nil {
+		return AlertExclusion{}, err
+	}
+	return sqlcToAlertExclusion(row), nil
+}
+
+// GetExcludedValues returns a set of excluded values for a given alert type and exclude type.
+func (database *Database) GetExcludedValues(alertType, excludeType string) (map[string]bool, error) {
+	rows, err := database.readQueries.GetAlertExclusionsByType(context.Background(), sqlc.GetAlertExclusionsByTypeParams{
+		AlertType:   alertType,
+		ExcludeType: excludeType,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		result[row.ExcludeValue] = true
+	}
+	return result, nil
 }

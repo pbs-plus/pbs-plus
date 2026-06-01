@@ -93,6 +93,8 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	// Alert settings routes
 	apiMux.HandleFunc("/api2/json/d2d/alert-settings", ServerOnly(storeInstance, api.AlertSettingsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/alert-settings/{name}", ServerOnly(storeInstance, api.AlertSettingSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions", ServerOnly(storeInstance, api.AlertExclusionsHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions/{id}", ServerOnly(storeInstance, api.AlertExclusionSingleHandler(storeInstance)))
 
 	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
 

@@ -277,8 +277,9 @@ type RestoreRunResponse struct {
 }
 
 type TargetsResponse struct {
-	Data   []database.Target `json:"data"`
-	Digest string            `json:"digest"`
+	Data    []database.Target `json:"data"`
+	Digest  string            `json:"digest"`
+	Success bool              `json:"success"`
 }
 
 type TargetConfigResponse struct {

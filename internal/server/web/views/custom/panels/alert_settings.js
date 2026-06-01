@@ -50,6 +50,7 @@ Ext.define("PBS.D2DManagement.Alerts", {
       { name: "last-sent", type: "int" },
       { name: "cooldown-minutes", type: "int" },
       "quiet-days",
+      { name: "skip-unscheduled", type: "bool" },
     ],
     autoLoad: true,
     proxy: {
@@ -117,6 +118,15 @@ Ext.define("PBS.D2DManagement.Alerts", {
       },
     },
     {
+      header: gettext("Skip Unscheduled"),
+      dataIndex: "skip-unscheduled",
+      width: 120,
+      renderer: function (val, meta, record) {
+        if (record.get("name") !== "stale-backup") return "-";
+        return Proxmox.Utils.format_boolean(val);
+      },
+    },
+    {
       header: gettext("Cooldown"),
       dataIndex: "cooldown-minutes",
       width: 110,
@@ -177,7 +187,7 @@ Ext.define("PBS.D2DManagement.Alerts", {
 });
 
 /**
- * Alert Setting Edit Window
+ * Alert Setting Edit Window — includes exclusions management.
  */
 Ext.define("PBS.D2DManagement.AlertEditWindow", {
   extend: "PBS.plusWindow.Edit",
@@ -185,11 +195,12 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
 
   title: gettext("Edit Alert Setting"),
   isCreate: false,
-  width: 550,
+  width: 650,
 
   viewModel: {
     data: {
       isStaleBackup: false,
+      isTargetAlert: false,
       cooldownHours: 24,
       cooldownMinutes: 0,
     },
@@ -208,181 +219,265 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
     me.callParent(arguments);
   },
 
-  items: [
-    {
-      xtype: "inputpanel",
-      reference: "alert-inputpanel",
+  items: {
+    xtype: "tabpanel",
+    bodyPadding: 10,
+    border: 0,
+    items: [
+      {
+        title: gettext("Options"),
+        xtype: "inputpanel",
+        reference: "alert-inputpanel",
 
-      column1: [
-        {
-          xtype: "displayfield",
-          name: "name",
-          fieldLabel: gettext("Alert Type"),
-          renderer: function (val) {
-            var labels = {
-              "stale-backup": "Stale Backup",
-              "unconfigured-target": "Unconfigured Target",
-              "target-offline": "Target Offline",
-            };
-            return labels[val] || val;
-          },
-          submitValue: true,
-        },
-        {
-          xtype: "proxmoxcheckbox",
-          name: "enabled",
-          fieldLabel: gettext("Enabled"),
-          inputValue: 1,
-          uncheckedValue: 0,
-          checked: true,
-        },
-        {
-          xtype: "proxmoxintegerfield",
-          name: "threshold",
-          fieldLabel: gettext("Threshold (days)"),
-          minValue: 1,
-          maxValue: 365,
-          allowBlank: true,
-          bind: {
-            disabled: "{!isStaleBackup}",
-            visible: "{isStaleBackup}",
-          },
-        },
-      ],
+        onSetValues: function (values) {
+          var panel = this;
+          var vm = panel.up("pbsPlusWindowEdit").getViewModel();
 
-      column2: [
-        {
-          xtype: "proxmoxKVComboBox",
-          name: "severity",
-          fieldLabel: gettext("Severity"),
-          value: "warning",
-          comboItems: [
-            ["info", "Info"],
-            ["notice", "Notice"],
-            ["warning", "Warning"],
-            ["error", "Error"],
-          ],
-        },
-        {
-          xtype: "fieldcontainer",
-          fieldLabel: gettext("Cooldown"),
-          layout: "hbox",
-          items: [
-            {
-              xtype: "proxmoxintegerfield",
-              reference: "cooldownHours",
-              minValue: 0,
-              maxValue: 720,
-              width: 70,
-              bind: {
-                value: "{cooldownHours}",
-              },
-            },
-            {
-              xtype: "displayfield",
-              value: "h",
-              width: 25,
-              margins: "0 5 0 2",
-            },
-            {
-              xtype: "proxmoxintegerfield",
-              reference: "cooldownMinutes",
-              minValue: 0,
-              maxValue: 59,
-              width: 60,
-              bind: {
-                value: "{cooldownMinutes}",
-              },
-            },
-            {
-              xtype: "displayfield",
-              value: "m",
-              width: 25,
-              margins: "0 0 0 2",
-            },
-          ],
-        },
-        {
-          xtype: "checkboxgroup",
-          reference: "quietDays",
-          fieldLabel: gettext("Quiet Days"),
-          columns: 4,
-          items: [
-            {
-              boxLabel: "Mon",
-              name: "quiet-day",
-              inputValue: "Monday",
-            },
-            {
-              boxLabel: "Tue",
-              name: "quiet-day",
-              inputValue: "Tuesday",
-            },
-            {
-              boxLabel: "Wed",
-              name: "quiet-day",
-              inputValue: "Wednesday",
-            },
-            {
-              boxLabel: "Thu",
-              name: "quiet-day",
-              inputValue: "Thursday",
-            },
-            {
-              boxLabel: "Fri",
-              name: "quiet-day",
-              inputValue: "Friday",
-            },
-            {
-              boxLabel: "Sat",
-              name: "quiet-day",
-              inputValue: "Saturday",
-            },
-            {
-              boxLabel: "Sun",
-              name: "quiet-day",
-              inputValue: "Sunday",
-            },
-          ],
-        },
-      ],
+          if (vm) {
+            vm.set("isStaleBackup", values.name === "stale-backup");
+            vm.set(
+              "isTargetAlert",
+              values.name === "unconfigured-target" ||
+                values.name === "target-offline"
+            );
 
-      columnB: [
-        {
-          xtype: "proxmoxtextfield",
-          name: "comment",
-          fieldLabel: gettext("Comment"),
-          allowBlank: true,
-        },
-      ],
-
-      onSetValues: function (values) {
-        var panel = this;
-        var vm = panel.up("pbsPlusWindowEdit").getViewModel();
-
-        if (vm) {
-          vm.set("isStaleBackup", values.name === "stale-backup");
-
-          var totalMin = values["cooldown-minutes"] || 1440;
-          vm.set("cooldownHours", Math.floor(totalMin / 60));
-          vm.set("cooldownMinutes", totalMin % 60);
-        }
-
-        // Quiet-days checkboxes are set after render via a defer
-        var quietDays = values["quiet-days"] || [];
-        Ext.defer(function () {
-          var quietGroup = panel.down("checkboxgroup[reference=quietDays]");
-          if (quietGroup) {
-            Ext.Array.each(quietGroup.items.items, function (cb) {
-              cb.setValue(Ext.Array.contains(quietDays, cb.inputValue));
-            });
+            var totalMin = values["cooldown-minutes"] || 1440;
+            vm.set("cooldownHours", Math.floor(totalMin / 60));
+            vm.set("cooldownMinutes", totalMin % 60);
           }
-        }, 50);
 
-        return values;
+          // Check quiet-days checkboxes after render
+          var quietDays = values["quiet-days"] || [];
+          Ext.defer(function () {
+            var quietGroup = panel.down("checkboxgroup[reference=quietDays]");
+            if (quietGroup) {
+              Ext.Array.each(quietGroup.items.items, function (cb) {
+                cb.setValue(Ext.Array.contains(quietDays, cb.inputValue));
+              });
+            }
+          }, 50);
+
+          return values;
+        },
+
+        column1: [
+          {
+            xtype: "displayfield",
+            name: "name",
+            fieldLabel: gettext("Alert Type"),
+            renderer: function (val) {
+              var labels = {
+                "stale-backup": "Stale Backup",
+                "unconfigured-target": "Unconfigured Target",
+                "target-offline": "Target Offline",
+              };
+              return labels[val] || val;
+            },
+            submitValue: true,
+          },
+          {
+            xtype: "proxmoxcheckbox",
+            name: "enabled",
+            fieldLabel: gettext("Enabled"),
+            inputValue: 1,
+            uncheckedValue: 0,
+            checked: true,
+          },
+          {
+            xtype: "proxmoxintegerfield",
+            name: "threshold",
+            fieldLabel: gettext("Threshold (days)"),
+            minValue: 1,
+            maxValue: 365,
+            allowBlank: true,
+            bind: {
+              disabled: "{!isStaleBackup}",
+              visible: "{isStaleBackup}",
+            },
+          },
+          {
+            xtype: "proxmoxcheckbox",
+            name: "skip-unscheduled",
+            fieldLabel: gettext("Skip Unscheduled"),
+            boxLabel: gettext("Skip jobs without a schedule"),
+            inputValue: 1,
+            uncheckedValue: 0,
+            bind: {
+              disabled: "{!isStaleBackup}",
+              visible: "{isStaleBackup}",
+            },
+          },
+        ],
+
+        column2: [
+          {
+            xtype: "proxmoxKVComboBox",
+            name: "severity",
+            fieldLabel: gettext("Severity"),
+            value: "warning",
+            comboItems: [
+              ["info", "Info"],
+              ["notice", "Notice"],
+              ["warning", "Warning"],
+              ["error", "Error"],
+            ],
+          },
+          {
+            xtype: "fieldcontainer",
+            fieldLabel: gettext("Cooldown"),
+            layout: "hbox",
+            items: [
+              {
+                xtype: "proxmoxintegerfield",
+                reference: "cooldownHours",
+                minValue: 0,
+                maxValue: 720,
+                width: 70,
+                bind: {
+                  value: "{cooldownHours}",
+                },
+              },
+              {
+                xtype: "displayfield",
+                value: "h",
+                width: 25,
+                margins: "0 5 0 2",
+              },
+              {
+                xtype: "proxmoxintegerfield",
+                reference: "cooldownMinutes",
+                minValue: 0,
+                maxValue: 59,
+                width: 60,
+                bind: {
+                  value: "{cooldownMinutes}",
+                },
+              },
+              {
+                xtype: "displayfield",
+                value: "m",
+                width: 25,
+                margins: "0 0 0 2",
+              },
+            ],
+          },
+          {
+            xtype: "checkboxgroup",
+            reference: "quietDays",
+            fieldLabel: gettext("Quiet Days"),
+            columns: 4,
+            items: [
+              { boxLabel: "Mon", name: "quiet-day", inputValue: "Monday" },
+              { boxLabel: "Tue", name: "quiet-day", inputValue: "Tuesday" },
+              {
+                boxLabel: "Wed",
+                name: "quiet-day",
+                inputValue: "Wednesday",
+              },
+              { boxLabel: "Thu", name: "quiet-day", inputValue: "Thursday" },
+              { boxLabel: "Fri", name: "quiet-day", inputValue: "Friday" },
+              { boxLabel: "Sat", name: "quiet-day", inputValue: "Saturday" },
+              { boxLabel: "Sun", name: "quiet-day", inputValue: "Sunday" },
+            ],
+          },
+        ],
+
+        columnB: [
+          {
+            xtype: "proxmoxtextfield",
+            name: "comment",
+            fieldLabel: gettext("Comment"),
+            allowBlank: true,
+          },
+        ],
       },
-    },
-  ],
+      {
+        title: gettext("Exclusions"),
+        xtype: "panel",
+        layout: "fit",
+        reference: "exclusions-panel",
+        items: [
+          {
+            xtype: "grid",
+            reference: "exclusionGrid",
+            border: 0,
+
+            store: {
+              fields: [
+                { name: "id", type: "int" },
+                "alert-type",
+                "exclude-type",
+                "exclude-value",
+                "comment",
+              ],
+              autoLoad: false,
+              proxy: {
+                type: "pbsplus",
+                url: pbsPlusBaseUrl + "/api2/json/d2d/alert-exclusions",
+              },
+            },
+
+            tbar: [
+              {
+                text: gettext("Add Job"),
+                iconCls: "fa fa-plus",
+                handler: "addJobExclusion",
+                bind: {
+                  disabled: "{isTargetAlert}",
+                },
+              },
+              {
+                text: gettext("Add Target"),
+                iconCls: "fa fa-plus",
+                handler: "addTargetExclusion",
+                bind: {
+                  disabled: "{isStaleBackup}",
+                },
+              },
+              {
+                text: gettext("Remove"),
+                iconCls: "fa fa-trash-o",
+                handler: "removeExclusion",
+                disabled: true,
+                enableFn: function () {
+                  return (
+                    this.up("grid").getSelection().length > 0
+                  );
+                },
+              },
+              "-",
+              {
+                text: gettext("Reload"),
+                iconCls: "fa fa-refresh",
+                handler: "reloadExclusions",
+              },
+            ],
+
+            columns: [
+              {
+                header: gettext("Type"),
+                dataIndex: "exclude-type",
+                width: 90,
+                renderer: function (val) {
+                  return val === "job" ? "Job" : "Target";
+                },
+              },
+              {
+                header: gettext("Name"),
+                dataIndex: "exclude-value",
+                flex: 1,
+              },
+              {
+                header: gettext("Comment"),
+                dataIndex: "comment",
+                flex: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
 
   onGetValues: function (values) {
     var me = this;
@@ -392,7 +487,6 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
       (vm.get("cooldownHours") || 0) * 60 +
       (vm.get("cooldownMinutes") || 0);
 
-    // Collect checked quiet days
     var quietGroup = me.down("checkboxgroup[reference=quietDays]");
     if (quietGroup) {
       var checked = [];
@@ -405,5 +499,165 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
     }
 
     return values;
+  },
+
+  controller: {
+    xclass: "Ext.app.ViewController",
+
+    init: function (view) {
+      var me = this;
+
+      // Load exclusions after the window has rendered and the alert name is known
+      Ext.defer(function () {
+        me.loadExclusions();
+      }, 200);
+    },
+
+    loadExclusions: function () {
+      var me = this;
+      var view = me.getView();
+      var grid = me.lookup("exclusionGrid");
+      if (!grid || !view.alertName) return;
+
+      var store = grid.getStore();
+      if (!store) return;
+
+      store.getProxy().setUrl(
+        pbsPlusBaseUrl +
+          "/api2/json/d2d/alert-exclusions?type=" +
+          encodeURIComponent(view.alertName)
+      );
+      store.load();
+    },
+
+    reloadExclusions: function () {
+      this.loadExclusions();
+    },
+
+    addJobExclusion: function () {
+      var me = this;
+      var view = me.getView();
+
+      PBS.PlusUtils.API2Request({
+        url: "/api2/json/d2d/backup",
+        method: "GET",
+        success: function (resp) {
+          var jobs = resp.result.data || [];
+          var items = jobs.map(function (j) {
+            return [j.id, "Backup: " + j.id + " (" + j.target + ")"];
+          });
+
+          me.showExclusionPicker("job", items);
+        },
+      });
+    },
+
+    addTargetExclusion: function () {
+      var me = this;
+      var view = me.getView();
+
+      PBS.PlusUtils.API2Request({
+        url: "/api2/json/d2d/target",
+        method: "GET",
+        success: function (resp) {
+          var targets = resp.result.data || [];
+          var items = targets.map(function (t) {
+            return [t.name, t.name];
+          });
+
+          me.showExclusionPicker("target", items);
+        },
+      });
+    },
+
+    showExclusionPicker: function (excludeType, items) {
+      var me = this;
+      var view = me.getView();
+
+      var win = Ext.create("Ext.window.Window", {
+        title: Ext.String.format(
+          "Add {0} Exclusion",
+          excludeType === "job" ? "Job" : "Target"
+        ),
+        modal: true,
+        width: 400,
+        layout: "fit",
+        items: [
+          {
+            xtype: "form",
+            bodyPadding: 10,
+            items: [
+              {
+                xtype: "proxmoxKVComboBox",
+                name: "exclude-value",
+                fieldLabel: excludeType === "job" ? "Job" : "Target",
+                comboItems: items,
+                allowBlank: false,
+                editable: false,
+              },
+              {
+                xtype: "proxmoxtextfield",
+                name: "comment",
+                fieldLabel: gettext("Comment"),
+                allowBlank: true,
+              },
+            ],
+          },
+        ],
+        buttons: [
+          {
+            text: gettext("Cancel"),
+            handler: function () {
+              win.close();
+            },
+          },
+          {
+            text: gettext("Add"),
+            handler: function () {
+              var form = win.down("form");
+              var vals = form.getValues();
+
+              if (!vals["exclude-value"]) {
+                return;
+              }
+
+              PBS.PlusUtils.API2Request({
+                url: "/api2/json/d2d/alert-exclusions",
+                method: "POST",
+                params: {
+                  "alert-type": view.alertName,
+                  "exclude-type": excludeType,
+                  "exclude-value": vals["exclude-value"],
+                  comment: vals.comment || "",
+                },
+                success: function () {
+                  win.close();
+                  me.loadExclusions();
+                },
+              });
+            },
+          },
+        ],
+      }).show();
+    },
+
+    removeExclusion: function () {
+      var me = this;
+      var grid = me.lookup("exclusionGrid");
+      if (!grid) return;
+
+      var selection = grid.getSelection();
+      if (!selection || selection.length === 0) return;
+
+      var exclusion = selection[0];
+      PBS.PlusUtils.API2Request({
+        url:
+          "/api2/json/d2d/alert-exclusions/" + exclusion.get("id"),
+        method: "DELETE",
+        success: function () {
+          me.loadExclusions();
+        },
+      });
+    },
   },
 });

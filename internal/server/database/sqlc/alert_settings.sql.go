@@ -19,7 +19,7 @@ func (q *Queries) DeleteAlertSetting(ctx context.Context, name string) error {
 }
 
 const getAlertSetting = `-- name: GetAlertSetting :one
-SELECT name, enabled, threshold, severity, comment, last_sent, cooldown_minutes, quiet_days
+SELECT name, enabled, threshold, severity, comment, last_sent, cooldown_minutes, quiet_days, skip_unscheduled
 FROM alert_settings
 WHERE name = ?
 `
@@ -36,12 +36,13 @@ func (q *Queries) GetAlertSetting(ctx context.Context, name string) (AlertSettin
 		&i.LastSent,
 		&i.CooldownMinutes,
 		&i.QuietDays,
+		&i.SkipUnscheduled,
 	)
 	return i, err
 }
 
 const listAlertSettings = `-- name: ListAlertSettings :many
-SELECT name, enabled, threshold, severity, comment, last_sent, cooldown_minutes, quiet_days
+SELECT name, enabled, threshold, severity, comment, last_sent, cooldown_minutes, quiet_days, skip_unscheduled
 FROM alert_settings
 ORDER BY name
 `
@@ -64,6 +65,7 @@ func (q *Queries) ListAlertSettings(ctx context.Context) ([]AlertSetting, error)
 			&i.LastSent,
 			&i.CooldownMinutes,
 			&i.QuietDays,
+			&i.SkipUnscheduled,
 		); err != nil {
 			return nil, err
 		}
@@ -93,8 +95,8 @@ func (q *Queries) UpdateAlertLastSent(ctx context.Context, arg UpdateAlertLastSe
 }
 
 const upsertAlertSetting = `-- name: UpsertAlertSetting :exec
-INSERT INTO alert_settings (name, enabled, threshold, severity, comment, last_sent, cooldown_minutes, quiet_days)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO alert_settings (name, enabled, threshold, severity, comment, last_sent, cooldown_minutes, quiet_days, skip_unscheduled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (name) DO UPDATE SET
     enabled          = excluded.enabled,
     threshold        = excluded.threshold,
@@ -102,7 +104,8 @@ ON CONFLICT (name) DO UPDATE SET
     comment          = excluded.comment,
     last_sent        = excluded.last_sent,
     cooldown_minutes = excluded.cooldown_minutes,
-    quiet_days       = excluded.quiet_days
+    quiet_days       = excluded.quiet_days,
+    skip_unscheduled = excluded.skip_unscheduled
 `
 
 type UpsertAlertSettingParams struct {
@@ -114,6 +117,7 @@ type UpsertAlertSettingParams struct {
 	LastSent        int64  `json:"last_sent"`
 	CooldownMinutes int64  `json:"cooldown_minutes"`
 	QuietDays       string `json:"quiet_days"`
+	SkipUnscheduled int64  `json:"skip_unscheduled"`
 }
 
 func (q *Queries) UpsertAlertSetting(ctx context.Context, arg UpsertAlertSettingParams) error {
@@ -126,6 +130,7 @@ func (q *Queries) UpsertAlertSetting(ctx context.Context, arg UpsertAlertSetting
 		arg.LastSent,
 		arg.CooldownMinutes,
 		arg.QuietDays,
+		arg.SkipUnscheduled,
 	)
 	return err
 }

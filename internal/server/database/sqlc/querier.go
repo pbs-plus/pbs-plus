@@ -16,6 +16,7 @@ type Querier interface {
 	CountBackups(ctx context.Context) (int64, error)
 	CountRestores(ctx context.Context) (int64, error)
 	CreateAgentHost(ctx context.Context, arg CreateAgentHostParams) error
+	CreateAlertExclusion(ctx context.Context, arg CreateAlertExclusionParams) error
 	CreateBackup(ctx context.Context, arg CreateBackupParams) error
 	CreateExclusion(ctx context.Context, arg CreateExclusionParams) error
 	CreateNotificationBatch(ctx context.Context, arg CreateNotificationBatchParams) error
@@ -26,6 +27,8 @@ type Querier interface {
 	CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error
 	CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) (sql.Result, error)
 	DeleteAgentHost(ctx context.Context, name string) (int64, error)
+	DeleteAlertExclusion(ctx context.Context, id int64) error
+	DeleteAlertExclusionsByType(ctx context.Context, alertType string) error
 	DeleteAlertSetting(ctx context.Context, name string) error
 	DeleteBackup(ctx context.Context, id string) (int64, error)
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
@@ -39,6 +42,8 @@ type Querier interface {
 	DeleteVerificationResults(ctx context.Context, verificationJobID string) (int64, error)
 	GetAgentHost(ctx context.Context, name string) (AgentHost, error)
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
+	GetAlertExclusion(ctx context.Context, id int64) (AlertExclusion, error)
+	GetAlertExclusionsByType(ctx context.Context, arg GetAlertExclusionsByTypeParams) ([]AlertExclusion, error)
 	GetAlertSetting(ctx context.Context, name string) (AlertSetting, error)
 	GetBackup(ctx context.Context, id string) (GetBackupRow, error)
 	GetBackupExclusions(ctx context.Context, jobID string) ([]Exclusion, error)
@@ -55,8 +60,10 @@ type Querier interface {
 	GetToken(ctx context.Context, token string) (Token, error)
 	GetVerificationJob(ctx context.Context, id string) (VerificationJob, error)
 	GetVerificationResults(ctx context.Context, verificationJobID string) ([]VerificationResult, error)
+	ListAlertExclusions(ctx context.Context, alertType string) ([]AlertExclusion, error)
 	ListAlertSettings(ctx context.Context) ([]AlertSetting, error)
 	ListAllAgentHosts(ctx context.Context) ([]AgentHost, error)
+	ListAllAlertExclusions(ctx context.Context) ([]AlertExclusion, error)
 	ListAllBackupExclusions(ctx context.Context) ([]ListAllBackupExclusionsRow, error)
 	ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, error)
 	ListAllRestores(ctx context.Context) ([]ListAllRestoresRow, error)

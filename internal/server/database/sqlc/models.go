@@ -16,6 +16,14 @@ type AgentHost struct {
 	Os        string         `json:"os"`
 }
 
+type AlertExclusion struct {
+	ID           int64  `json:"id"`
+	AlertType    string `json:"alert_type"`
+	ExcludeType  string `json:"exclude_type"`
+	ExcludeValue string `json:"exclude_value"`
+	Comment      string `json:"comment"`
+}
+
 type AlertSetting struct {
 	Name            string `json:"name"`
 	Enabled         int64  `json:"enabled"`
@@ -25,6 +33,7 @@ type AlertSetting struct {
 	LastSent        int64  `json:"last_sent"`
 	CooldownMinutes int64  `json:"cooldown_minutes"`
 	QuietDays       string `json:"quiet_days"`
+	SkipUnscheduled int64  `json:"skip_unscheduled"`
 }
 
 type Backup struct {

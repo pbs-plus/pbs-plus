@@ -64,8 +64,9 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		toReturn := TargetsResponse{
-			Data:   all,
-			Digest: digest,
+			Data:    all,
+			Digest:  digest,
+			Success: true,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
