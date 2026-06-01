@@ -1,15 +1,8 @@
-Batch:              {{batch}}
-Total Jobs:         {{total}}
-Successful:         {{successful}}
-{{#if timeout~}}
-Note:               Results may be incomplete (timeout reached)
-{{/if}}
+Batch:    {{batch}}
+Total:    {{total}}
+Success:  {{successful}}
+{{#if timeout}}Note: partial results (timeout reached){{/if}}
 
-Job Results:
-{{#each jobs~}}
-  [{{severity}}] {{job-type}}/{{job-id}} (datastore: {{datastore}}){{#if error}} - {{error}}{{/if}}
+Results:
+{{#each jobs}}  OK {{job-type}}/{{job-id}} ({{datastore}}){{#if error}} - {{error}}{{/if}}
 {{/each}}
-
-Please visit the web interface for further details.
-
-<{{base-url}}/#pbsServerAdministration:tasks>

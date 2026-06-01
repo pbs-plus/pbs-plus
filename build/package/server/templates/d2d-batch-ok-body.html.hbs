@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f5f5;padding:24px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:6px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1);">
+<tr><td style="background:#2e7d32;padding:16px 24px;">
+<span style="color:#fff;font-size:18px;font-weight:600;">Batch Successful</span>
+<span style="color:rgba(255,255,255,.7);font-size:14px;margin-left:12px;">{{batch}}</span>
+</td></tr>
+<tr><td style="padding:24px;">
+<table cellpadding="0" cellspacing="0" style="width:100%;font-size:14px;color:#333;margin-bottom:16px;">
+<tr>
+<td style="padding:4px 12px 4px 0;color:#999;">Total</td>
+<td style="padding:4px 0;font-weight:600;">{{total}}</td>
+<td style="padding:4px 12px;color:#999;">All OK</td>
+<td style="padding:4px 0;font-weight:600;color:#2e7d32;">{{successful}}</td>
+</tr>
+</table>
+{{#if timeout}}
+<p style="margin:0 0 12px;padding:8px 12px;background:#fff3e0;border-radius:4px;font-size:13px;color:#e65100;">Partial results — timeout was reached before all jobs completed.</p>
+{{/if}}
+<table cellpadding="0" cellspacing="0" style="width:100%;font-size:13px;border:1px solid #eee;border-radius:4px;">
+<tr style="background:#fafafa;">
+<td style="padding:8px 12px;font-weight:600;color:#666;">Job</td>
+<td style="padding:8px 12px;font-weight:600;color:#666;">Datastore</td>
+</tr>
+{{#each jobs}}
+<tr style="border-top:1px solid #eee;">
+<td style="padding:6px 12px;font-family:monospace;">{{job-id}}</td>
+<td style="padding:6px 12px;">{{datastore}}</td>
+</tr>
+{{/each}}
+</table>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

@@ -22,6 +22,16 @@ const (
 // SendAlert dispatches a system-level alert notification via the PBS spool.
 // Unlike Send (which is for job completion), alerts are for monitoring conditions.
 func SendAlert(alertType AlertType, severity string, details map[string]string) {
+	sendAlertWithData(alertType, severity, details, nil)
+}
+
+// SendAlertWithData is like SendAlert but also accepts structured data for templates.
+// The extraData map is merged at the top level of template data, allowing arrays/objects.
+func SendAlertWithData(alertType AlertType, severity string, details map[string]string, extraData map[string]any) {
+	sendAlertWithData(alertType, severity, details, extraData)
+}
+
+func sendAlertWithData(alertType AlertType, severity string, details map[string]string, extraData map[string]any) {
 	ts := time.Now()
 
 	fields := map[string]string{
@@ -33,11 +43,15 @@ func SendAlert(alertType AlertType, severity string, details map[string]string) 
 	templateName := "d2d-alert-" + string(alertType)
 	title := formatAlertTitle(alertType, details)
 
-	tmplData, _ := json.Marshal(map[string]any{
-		"timestamp": ts.Format(time.RFC3339),
-		"title":     title,
-		"details":   details,
-	})
+	tmplData, _ := json.Marshal(func() map[string]any {
+		m := map[string]any{
+			"timestamp": ts.Format(time.RFC3339),
+			"title":     title,
+			"details":   details,
+		}
+		maps.Copy(m, extraData)
+		return m
+	}())
 
 	tc := templateContent{
 		TemplateName: templateName,

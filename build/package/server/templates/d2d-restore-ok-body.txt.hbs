@@ -1,13 +1,3 @@
-Job ID:             {{job-id}}
-Datastore:          {{datastore}}
-Job Type:           {{job-type}}
-
-Restore completed successfully.
-{{#if error~}}
-
-Warning: {{error}}
-{{/if}}
-
-Please visit the web interface for further details:
-
-<{{base-url}}/#DataStore-{{datastore}}>
+Restore job '{{job-id}}' completed successfully.
+Datastore: {{datastore}}
+{{#if error}}Note: {{error}}{{/if}}

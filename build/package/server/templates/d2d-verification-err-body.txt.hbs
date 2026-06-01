@@ -1,9 +1,5 @@
-Job ID:             {{job-id}}
-Datastore:          {{datastore}}
-Job Type:           {{job-type}}
-
-Verification failed: {{error}}
-
-Please visit the web interface for further details:
-
+Job:       {{job-id}}
+Datastore: {{datastore}}
+{{#if error}}Error: {{error}}
+{{/if}}
 <{{base-url}}/#pbsServerAdministration:tasks>

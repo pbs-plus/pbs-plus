@@ -124,15 +124,22 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 	details := map[string]string{
 		"count": fmt.Sprintf("%d", len(unconfigured)),
 	}
+	var names []string
 	for i, t := range unconfigured {
-		if i >= 10 {
-			details[fmt.Sprintf("target-name-%d", i)] = fmt.Sprintf("... and %d more", len(unconfigured)-10)
+		if i >= 20 {
+			names = append(names, fmt.Sprintf("... and %d more", len(unconfigured)-20))
 			break
 		}
-		details[fmt.Sprintf("target-name-%d", i)] = t.Name
+		names = append(names, t.Name)
 	}
+	for i, n := range names {
+		details[fmt.Sprintf("target-name-%d", i)] = n
+	}
+	details["target-count"] = fmt.Sprintf("%d", len(names))
 
-	SendAlert(AlertUnconfiguredTarget, setting.Severity, details)
+	SendAlertWithData(AlertUnconfiguredTarget, setting.Severity, details, map[string]any{
+		"targets": names,
+	})
 	s.db.UpdateAlertLastSent(string(AlertUnconfiguredTarget), time.Now().Unix())
 }
 
