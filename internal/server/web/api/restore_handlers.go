@@ -254,6 +254,8 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		ApplyJobBatchAssignment(storeInstance, "restore", newRestore.ID, r.FormValue("notification-batch"))
+
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
@@ -407,6 +409,8 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
+			ApplyJobBatchAssignment(storeInstance, "restore", restore.ID, r.FormValue("notification-batch"))
+
 			response.Status = http.StatusOK
 			response.Success = true
 			json.NewEncoder(w).Encode(response)
@@ -429,7 +433,9 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = FlattenRestoreForEdit(restore)
+			flat := FlattenRestoreForEdit(restore)
+			flat["notification-batch"] = GetJobBatchName(storeInstance, "restore", restore.ID)
+			response.Data = flat
 			json.NewEncoder(w).Encode(response)
 
 			return

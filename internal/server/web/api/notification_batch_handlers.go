@@ -339,6 +339,37 @@ func formValueBool(r *http.Request, key string, defaultVal bool) bool {
 	return v == "1" || v == "true" || v == "on"
 }
 
+// ApplyJobBatchAssignment syncs a job's batch membership based on the
+// `notification-batch` form value.
+//   - If value is empty or matches delete: job is removed from all batches.
+//   - If value is a batch name: job is added to that batch (and removed from others).
+//
+// Used by backup/restore/verification create+update handlers so the
+// `notification-batch` field on the job edit form is persisted.
+func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchName string) {
+	// First remove from any existing batches
+	_ = storeInstance.Database.RemoveJobFromAllBatches(jobType, jobID)
+
+	if batchName != "" {
+		// Verify the batch exists before assigning
+		batch, err := storeInstance.Database.GetNotificationBatch(batchName)
+		if err != nil || batch.Name == "" {
+			return
+		}
+		_ = storeInstance.Database.AddJobToBatch(batchName, jobType, jobID)
+	}
+}
+
+// GetJobBatchName returns the name of the batch a job is assigned to, or "" if none.
+// Used to populate the notification-batch field in edit form GET responses.
+func GetJobBatchName(storeInstance *store.Store, jobType, jobID string) string {
+	batch, err := storeInstance.Database.GetBatchForJob(jobType, jobID)
+	if err != nil {
+		return ""
+	}
+	return batch.Name
+}
+
 // init ensures the notification package constants are referenced so the
 // compiler doesn't drop the import.
 var _ = notification.SpoolDir

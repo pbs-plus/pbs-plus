@@ -314,6 +314,8 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			return
 		}
 
+		ApplyJobBatchAssignment(storeInstance, "verification", job.ID, r.FormValue("notification-batch"))
+
 		response := VerificationJobConfigResponse{
 			Data:    job,
 			Status:  http.StatusOK,
@@ -344,9 +346,21 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			response := VerificationJobConfigResponse{
 				Status:  http.StatusOK,
 				Success: true,
-				Data:    job,
 			}
-			json.NewEncoder(w).Encode(response)
+
+			// Marshal job to map to inject notification-batch
+			jobBytes, _ := json.Marshal(job)
+			var jobMap map[string]any
+			json.Unmarshal(jobBytes, &jobMap)
+			jobMap["notification-batch"] = GetJobBatchName(storeInstance, "verification", jobID)
+			response.Data = job // keep struct for type compatibility
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"status":  http.StatusOK,
+				"success": true,
+				"data":    jobMap,
+			})
 			return
 		}
 
@@ -453,6 +467,8 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				WriteErrorResponse(w, err)
 				return
 			}
+
+			ApplyJobBatchAssignment(storeInstance, "verification", job.ID, r.FormValue("notification-batch"))
 
 			response := VerificationJobConfigResponse{
 				Data:    job,

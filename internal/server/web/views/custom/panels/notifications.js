@@ -1,6 +1,7 @@
 // Shared Notifications tab config factory for PBS Plus D2D job edit windows.
 // Matches the Proxmox Backup Server tape backup job notification tab pattern exactly.
 // Provides two modes: notification-system (default) and legacy-sendmail.
+// Includes a notification-batch selector so jobs can be assigned to a batch.
 // Usage: items: [ optionsTab, PBS.D2DManagement.makeNotificationTab() ]
 PBS.D2DManagement.makeNotificationTab = function () {
   return {
@@ -69,6 +70,55 @@ PBS.D2DManagement.makeNotificationTab = function () {
         disabled: true,
         bind: {
           disabled: "{notificationSystemSelected}",
+        },
+      },
+      {
+        xtype: "box",
+        autoEl: { tag: "hr" },
+        margin: "10 0",
+      },
+      {
+        xtype: "displayfield",
+        value: gettext(
+          "Assign this job to a notification batch to consolidate notifications " +
+          "across multiple jobs. When all jobs in a batch complete (or the timeout " +
+          "fires), a single consolidated notification is sent instead of one per job."
+        ),
+        fieldLabel: gettext("Notification Batch"),
+        labelAlign: "top",
+      },
+      {
+        xtype: "combo",
+        name: "notification-batch",
+        fieldLabel: gettext("Batch"),
+        emptyText: gettext("No batch (individual notification)"),
+        queryMode: "remote",
+        store: {
+          fields: ["name", "comment"],
+          autoLoad: true,
+          proxy: {
+            type: "ajax",
+            url: pbsPlusBaseUrl + "/api2/json/d2d/notification-batch",
+            reader: {
+              type: "json",
+              rootProperty: "data",
+            },
+          },
+        },
+        displayField: "name",
+        valueField: "name",
+        allowBlank: true,
+        editable: false,
+        forceSelection: true,
+        autoSelect: false,
+        listConfig: {
+          getRowClass: function (record) {
+            // not needed, but keeps consistency
+            return "";
+          },
+        },
+        renderer: function (v) {
+          return v ? Ext.String.htmlEncode(v) : "-";
         },
       },
     ],

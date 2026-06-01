@@ -265,6 +265,8 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		ApplyJobBatchAssignment(storeInstance, "backup", newBackup.ID, r.FormValue("notification-batch"))
+
 		response.Status = http.StatusOK
 		response.Success = true
 		json.NewEncoder(w).Encode(response)
@@ -461,6 +463,8 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
+			ApplyJobBatchAssignment(storeInstance, "backup", backup.ID, r.FormValue("notification-batch"))
+
 			response.Status = http.StatusOK
 			response.Success = true
 			json.NewEncoder(w).Encode(response)
@@ -483,7 +487,9 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = FlattenBackupForEdit(backup)
+			flat := FlattenBackupForEdit(backup)
+			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", backup.ID)
+			response.Data = flat
 			json.NewEncoder(w).Encode(response)
 
 			return
