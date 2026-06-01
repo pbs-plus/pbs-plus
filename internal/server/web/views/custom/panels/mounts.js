@@ -151,6 +151,9 @@ Ext.define("PBS.D2DSnapshotMount.DatastorePanel", {
 
     updateGroupNotes: async function (view) {
       try {
+        if (!view || !view.store) {
+          return;
+        }
         let url = `/api2/extjs/admin/datastore/${view.datastore}/groups`;
         if (view.namespace && view.namespace !== "") {
           url += `?ns=${encodeURIComponent(view.namespace)}`;
@@ -162,12 +165,15 @@ Ext.define("PBS.D2DSnapshotMount.DatastorePanel", {
         for (const group of groups) {
           map[`${group["backup-type"]}/${group["backup-id"]}`] = group.comment;
         }
-        view.getRootNode().cascade((node) => {
-          if (node.data.ty === "group") {
-            let group = `${node.data.backup_type}/${node.data.backup_id}`;
-            node.set("comment", map[group], { dirty: false });
-          }
-        });
+        let root = view.getRootNode();
+        if (root) {
+          root.cascade((node) => {
+            if (node.data.ty === "group") {
+              let group = `${node.data.backup_type}/${node.data.backup_id}`;
+              node.set("comment", map[group], { dirty: false });
+            }
+          });
+        }
       } catch (err) {
         console.debug(err);
       }
@@ -194,7 +200,15 @@ Ext.define("PBS.D2DSnapshotMount.DatastorePanel", {
       let me = this;
       let view = this.getView();
 
+      if (!view || view.destroyed || !view.store) {
+        return;
+      }
+
       let namespaces = await me.loadNamespaceFromSameLevel();
+
+      if (view.destroyed) {
+        return;
+      }
 
       if (!success) {
         // TODO also check error code for != 403 ?
