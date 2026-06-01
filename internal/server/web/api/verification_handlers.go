@@ -57,8 +57,9 @@ func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		toReturn := map[string]any{
-			"data":   flatJobs,
-			"digest": digest,
+			"data":    flatJobs,
+			"digest":  digest,
+			"success": true,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

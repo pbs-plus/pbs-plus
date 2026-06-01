@@ -60,8 +60,9 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		toReturn := map[string]any{
-			"data":   flatRestores,
-			"digest": digest,
+			"data":    flatRestores,
+			"digest":  digest,
+			"success": true,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

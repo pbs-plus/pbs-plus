@@ -70,6 +70,7 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
 		"data":   result,
 		"digest": digest,
 	})
@@ -128,6 +129,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
 		"data": created,
 	})
 }
@@ -184,6 +186,7 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
 		"data": updated,
 	})
 }
@@ -202,6 +205,7 @@ func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
 		"data": nil,
 	})
 }
@@ -235,7 +239,7 @@ func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Re
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"data": allJobs})
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "data": allJobs})
 		return
 	}
 
@@ -246,7 +250,7 @@ func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Re
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"data": jobs})
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": jobs})
 }
 
 func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
@@ -271,6 +275,7 @@ func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
+		"success": true,
 		"data": database.NotificationBatchJob{
 			BatchName: batchName,
 			JobType:   jobType,
@@ -295,7 +300,7 @@ func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"data": nil})
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": nil})
 }
 
 // NotificationBatchStatusHandler returns the current status of pending batches.
@@ -308,14 +313,14 @@ func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc
 
 		if storeInstance.BatchTracker == nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"data": map[string]int{}})
+			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]int{}})
 			return
 		}
 
 		pending := storeInstance.BatchTracker.PendingBatches()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"data": pending})
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "data": pending})
 	}
 }
 

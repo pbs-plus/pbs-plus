@@ -42,8 +42,9 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		toReturn := map[string]any{
-			"data":   flatBackups,
-			"digest": digest,
+			"data":    flatBackups,
+			"digest":  digest,
+			"success": true,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
