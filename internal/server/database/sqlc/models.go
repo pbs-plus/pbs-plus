@@ -48,6 +48,21 @@ type Exclusion struct {
 	Comment sql.NullString `json:"comment"`
 }
 
+type NotificationBatch struct {
+	Name             string         `json:"name"`
+	Comment          sql.NullString `json:"comment"`
+	NotificationMode sql.NullString `json:"notification_mode"`
+	WaitTimeoutSecs  sql.NullInt64  `json:"wait_timeout_secs"`
+	SendOnTimeout    sql.NullInt64  `json:"send_on_timeout"`
+	CreatedAt        sql.NullInt64  `json:"created_at"`
+}
+
+type NotificationBatchJob struct {
+	BatchName string `json:"batch_name"`
+	JobType   string `json:"job_type"`
+	JobID     string `json:"job_id"`
+}
+
 type Restore struct {
 	ID                 string         `json:"id"`
 	Store              string         `json:"store"`

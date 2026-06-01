@@ -25,6 +25,13 @@ const (
 
 	// DefaultMode is used when no notification-mode is set on a job.
 	DefaultMode = "notification-system"
+
+	// VendorTemplateDir is where PBS ships its built-in templates.
+	// Our custom templates must be installed here (or in the override dir).
+	VendorTemplateDir = "/usr/share/proxmox-backup/templates/default"
+
+	// OverrideTemplateDir is where user-provided template overrides live.
+	OverrideTemplateDir = "/etc/proxmox-backup/notification-templates/default"
 )
 
 // NotificationMode determines how job notifications are delivered.
@@ -48,17 +55,20 @@ const (
 // When written to the spool directory, PBS's notification_worker picks it up
 // and routes it through configured matchers and endpoints.
 //
-// This struct mirrors proxmox_notify::Notification from the proxmox-notify crate:
-//   - content: either a Template (template-name + data) or ForwardedMail
-//   - metadata: severity, timestamp, additional-fields (used by matchers for routing)
-//   - id: unique UUID
+// This struct mirrors proxmox_notify::Notification from the proxmox-notify crate.
+// All JSON field names use kebab-case to match the Rust serde rename_all = "kebab-case".
+// The content field uses an externally-tagged enum representation matching
+// serde's default enum serialization for Content::Template { ... }.
 type notification struct {
-	Content  content  `json:"content"`
-	Metadata metadata `json:"metadata"`
-	ID       string   `json:"id"`
+	// Content is the externally-tagged enum: {"template": {"template-name": "...", "data": {...}}}
+	Content  json.RawMessage `json:"content"`
+	Metadata metadata        `json:"metadata"`
+	ID       string          `json:"id"`
 }
 
-type content struct {
+// templateContent is the inner payload for Content::Template.
+// Serialized under the "template" key to match Rust's externally-tagged enum.
+type templateContent struct {
 	TemplateName string          `json:"template-name"`
 	Data         json.RawMessage `json:"data"`
 }
@@ -79,8 +89,9 @@ type metadata struct {
 // PBS uses internally for non-root processes.
 //
 // The additional-fields map includes type, job-id, datastore, and hostname,
-// which PBS notification matchers can filter on (e.g. "only notify on errors
-// for datastore X" or "route d2d-backup notifications to endpoint Y").
+// which PBS notification matchers can filter on. The "type" field uses values
+// like "d2d-backup", "d2d-restore", "d2d-verify" — these appear in the
+// PBS matcher UI dropdown alongside the built-in types (gc, sync, verify, etc.).
 //
 // For ModeLegacySendmail, it invokes /usr/sbin/sendmail directly.
 func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, details map[string]string) {
@@ -121,17 +132,34 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 		"details":   details,
 	})
 
+	// Build the externally-tagged Content enum:
+	// {"template": {"template-name": "d2d-backup-ok", "data": {...}}}
+	tc := templateContent{
+		TemplateName: templateName,
+		Data:         tmplData,
+	}
+	tcJSON, err := json.Marshal(tc)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to marshal template content").Write()
+		return
+	}
+
+	wrappedContent, err := json.Marshal(map[string]json.RawMessage{
+		"template": tcJSON,
+	})
+	if err != nil {
+		syslog.L.Error(err).WithMessage("failed to wrap template content").Write()
+		return
+	}
+
 	n := notification{
-		ID: uuid.New().String(),
-		Content: content{
-			TemplateName: templateName,
-			Data:         tmplData,
-		},
+		Content: wrappedContent,
 		Metadata: metadata{
 			Severity:         severity,
 			Timestamp:        ts.Unix(),
 			AdditionalFields: fields,
 		},
+		ID: uuid.New().String(),
 	}
 
 	switch nm {

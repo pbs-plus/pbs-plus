@@ -10,6 +10,7 @@ import (
 )
 
 type Querier interface {
+	AddJobToBatch(ctx context.Context, arg AddJobToBatchParams) error
 	AgentHostExists(ctx context.Context, name string) (int64, error)
 	BackupExists(ctx context.Context, id string) (int64, error)
 	CountBackups(ctx context.Context) (int64, error)
@@ -17,6 +18,7 @@ type Querier interface {
 	CreateAgentHost(ctx context.Context, arg CreateAgentHostParams) error
 	CreateBackup(ctx context.Context, arg CreateBackupParams) error
 	CreateExclusion(ctx context.Context, arg CreateExclusionParams) error
+	CreateNotificationBatch(ctx context.Context, arg CreateNotificationBatchParams) error
 	CreateRestore(ctx context.Context, arg CreateRestoreParams) error
 	CreateScript(ctx context.Context, arg CreateScriptParams) error
 	CreateTarget(ctx context.Context, arg CreateTargetParams) error
@@ -27,6 +29,7 @@ type Querier interface {
 	DeleteBackup(ctx context.Context, id string) (int64, error)
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
+	DeleteNotificationBatch(ctx context.Context, name string) error
 	DeleteRestore(ctx context.Context, id string) (int64, error)
 	DeleteScript(ctx context.Context, path string) (int64, error)
 	DeleteTarget(ctx context.Context, name string) (int64, error)
@@ -37,8 +40,12 @@ type Querier interface {
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
 	GetBackup(ctx context.Context, id string) (GetBackupRow, error)
 	GetBackupExclusions(ctx context.Context, jobID string) ([]Exclusion, error)
+	GetBatchForJob(ctx context.Context, arg GetBatchForJobParams) (NotificationBatch, error)
+	GetBatchJobsByBatch(ctx context.Context, batchName string) ([]NotificationBatchJob, error)
+	GetBatchJobsByJobType(ctx context.Context, jobType string) ([]NotificationBatchJob, error)
 	GetExclusion(ctx context.Context, arg GetExclusionParams) (Exclusion, error)
 	GetLatestVerificationResult(ctx context.Context, verificationJobID string) (VerificationResult, error)
+	GetNotificationBatch(ctx context.Context, name string) (NotificationBatch, error)
 	GetRestore(ctx context.Context, id string) (GetRestoreRow, error)
 	GetScript(ctx context.Context, path string) (GetScriptRow, error)
 	GetTarget(ctx context.Context, name string) (GetTargetRow, error)
@@ -55,12 +62,17 @@ type Querier interface {
 	ListAllTokens(ctx context.Context) ([]Token, error)
 	ListAllTokensWithDetails(ctx context.Context) ([]ListAllTokensWithDetailsRow, error)
 	ListAllVerificationJobs(ctx context.Context) ([]VerificationJob, error)
+	ListBatchJobs(ctx context.Context) ([]NotificationBatchJob, error)
 	ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusionsRow, error)
 	ListNonRevokedTokens(ctx context.Context) ([]Token, error)
+	ListNotificationBatches(ctx context.Context) ([]NotificationBatch, error)
 	ListQueuedBackups(ctx context.Context) ([]ListQueuedBackupsRow, error)
 	ListQueuedRestores(ctx context.Context) ([]ListQueuedRestoresRow, error)
 	ListTargetsByAgentHost(ctx context.Context, agentHost sql.NullString) ([]ListTargetsByAgentHostRow, error)
 	MarkVerificationResultStatus(ctx context.Context, arg MarkVerificationResultStatusParams) error
+	RemoveJobFromAllBatches(ctx context.Context, arg RemoveJobFromAllBatchesParams) error
+	RemoveJobFromBatch(ctx context.Context, arg RemoveJobFromBatchParams) error
+	RemoveJobsByBatch(ctx context.Context, batchName string) error
 	RestoreExists(ctx context.Context, id string) (int64, error)
 	RevokeToken(ctx context.Context, token string) error
 	ScriptExists(ctx context.Context, path string) (int64, error)
@@ -68,6 +80,7 @@ type Querier interface {
 	UpdateAgentHost(ctx context.Context, arg UpdateAgentHostParams) error
 	UpdateBackup(ctx context.Context, arg UpdateBackupParams) error
 	UpdateExclusion(ctx context.Context, arg UpdateExclusionParams) (int64, error)
+	UpdateNotificationBatch(ctx context.Context, arg UpdateNotificationBatchParams) error
 	UpdateRestore(ctx context.Context, arg UpdateRestoreParams) error
 	UpdateScript(ctx context.Context, arg UpdateScriptParams) error
 	UpdateTarget(ctx context.Context, arg UpdateTargetParams) error

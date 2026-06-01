@@ -84,6 +84,12 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results", ServerOnly(storeInstance, api.ExtJsVerificationResultsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results/export", ServerOnly(storeInstance, api.VerificationResultsExportHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/verification/aggregate", ServerOnly(storeInstance, api.VerificationAggregateHandler(storeInstance)))
+
+	// Notification batch routes
+	apiMux.HandleFunc("/api2/json/d2d/notification-batch", ServerOnly(storeInstance, api.NotificationBatchHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/notification-batch/jobs", ServerOnly(storeInstance, api.NotificationBatchJobsHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/notification-batch/status", ServerOnly(storeInstance, api.NotificationBatchStatusHandler(storeInstance)))
+
 	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
 
 	// Agent routes

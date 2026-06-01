@@ -33,6 +33,20 @@ else
   chmod 0644 "${ENV_FILE}" || true
 fi
 
+# Install notification templates for PBS notification_worker
+# These handlebars templates are loaded by proxmox-notify's renderer
+# from /usr/share/proxmox-backup/templates/default/
+TEMPLATE_SRC_DIR="/usr/share/pbs-plus/templates"
+TEMPLATE_DST_DIR="/usr/share/proxmox-backup/templates/default"
+
+if [ -d "${TEMPLATE_SRC_DIR}" ] && [ -d "${TEMPLATE_DST_DIR}" ]; then
+  for tmpl in "${TEMPLATE_SRC_DIR}"/d2d-*.hbs; do
+    if [ -f "${tmpl}" ]; then
+      install -m 0644 -o root -g root "${tmpl}" "${TEMPLATE_DST_DIR}/"
+    fi
+  done
+fi
+
 # Systemd integration
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true

@@ -1,0 +1,325 @@
+//go:build linux
+
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/notification"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
+)
+
+// NotificationBatchHandler handles CRUD for notification batches.
+// GET    - list all batches
+// POST   - create a batch
+// PUT    - update a batch (requires ?batch=<name>)
+// DELETE - delete a batch (requires ?batch=<name>)
+func NotificationBatchHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			listNotificationBatches(storeInstance, w, r)
+		case http.MethodPost:
+			createNotificationBatch(storeInstance, w, r)
+		case http.MethodPut:
+			updateNotificationBatch(storeInstance, w, r)
+		case http.MethodDelete:
+			deleteNotificationBatch(storeInstance, w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+	batches, err := storeInstance.Database.ListNotificationBatches()
+	if err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	digest, err := calculateDigest(batches)
+	if err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"data":   batches,
+		"digest": digest,
+	})
+}
+
+func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		http.Error(w, "Missing batch name", http.StatusBadRequest)
+		return
+	}
+	if err := validate.ValidateJobId(name); err != nil {
+		http.Error(w, "Invalid batch name: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Check if batch already exists
+	existing, _ := storeInstance.Database.GetNotificationBatch(name)
+	if existing.Name != "" {
+		http.Error(w, "Batch already exists", http.StatusConflict)
+		return
+	}
+
+	comment := r.FormValue("comment")
+	mode := r.FormValue("notification-mode")
+	timeoutSecs := formValueInt(r, "wait-timeout-secs", 300)
+	sendOnTimeout := formValueBool(r, "send-on-timeout", true)
+
+	batch := database.NotificationBatch{
+		Name:             name,
+		Comment:          comment,
+		NotificationMode: mode,
+		WaitTimeoutSecs:  timeoutSecs,
+		SendOnTimeout:    sendOnTimeout,
+	}
+
+	if err := storeInstance.Database.CreateNotificationBatch(batch); err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	// Assign jobs to the batch if provided
+	if jobs := r.FormValue("jobs"); jobs != "" {
+		var jobList []struct {
+			JobType string `json:"job-type"`
+			JobID   string `json:"job-id"`
+		}
+		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
+			for _, j := range jobList {
+				_ = storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID)
+			}
+		}
+	}
+
+	created, _ := storeInstance.Database.GetNotificationBatch(name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"data": created,
+	})
+}
+
+func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("batch")
+	if name == "" {
+		http.Error(w, "Missing batch parameter", http.StatusBadRequest)
+		return
+	}
+
+	existing, err := storeInstance.Database.GetNotificationBatch(name)
+	if err != nil || existing.Name == "" {
+		http.Error(w, "Batch not found", http.StatusNotFound)
+		return
+	}
+
+	if v := r.FormValue("comment"); v != "" || r.FormValue("delete") == "comment" {
+		existing.Comment = v
+	}
+	if v := r.FormValue("notification-mode"); v != "" {
+		existing.NotificationMode = v
+	}
+	if v := r.FormValue("wait-timeout-secs"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			existing.WaitTimeoutSecs = i
+		}
+	}
+	if v := r.FormValue("send-on-timeout"); v != "" {
+		existing.SendOnTimeout = v == "1" || v == "true"
+	}
+
+	if err := storeInstance.Database.UpdateNotificationBatch(existing); err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	// Handle job assignments
+	if jobs := r.FormValue("jobs"); jobs != "" {
+		var jobList []struct {
+			JobType string `json:"job-type"`
+			JobID   string `json:"job-id"`
+		}
+		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
+			// Clear existing assignments and re-add
+			_ = storeInstance.Database.RemoveJobsByBatch(name)
+			for _, j := range jobList {
+				_ = storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID)
+			}
+		}
+	}
+
+	updated, _ := storeInstance.Database.GetNotificationBatch(name)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"data": updated,
+	})
+}
+
+func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("batch")
+	if name == "" {
+		http.Error(w, "Missing batch parameter", http.StatusBadRequest)
+		return
+	}
+
+	if err := storeInstance.Database.DeleteNotificationBatch(name); err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"data": nil,
+	})
+}
+
+// NotificationBatchJobsHandler handles job assignments within a batch.
+// GET    - list jobs in a batch (requires ?batch=<name>)
+// POST   - add a job to a batch
+// DELETE - remove a job from a batch
+func NotificationBatchJobsHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			listBatchJobs(storeInstance, w, r)
+		case http.MethodPost:
+			addBatchJob(storeInstance, w, r)
+		case http.MethodDelete:
+			removeBatchJob(storeInstance, w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+	batchName := r.URL.Query().Get("batch")
+	if batchName == "" {
+		// List all batch jobs
+		allJobs, err := storeInstance.Database.ListBatchJobs()
+		if err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"data": allJobs})
+		return
+	}
+
+	jobs, err := storeInstance.Database.GetBatchJobs(batchName)
+	if err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"data": jobs})
+}
+
+func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+	batchName := r.FormValue("batch-name")
+	jobType := r.FormValue("job-type")
+	jobID := r.FormValue("job-id")
+
+	if batchName == "" || jobType == "" || jobID == "" {
+		http.Error(w, "Missing batch-name, job-type, or job-id", http.StatusBadRequest)
+		return
+	}
+
+	if jobType != "backup" && jobType != "restore" && jobType != "verification" {
+		http.Error(w, "Invalid job-type, must be backup, restore, or verification", http.StatusBadRequest)
+		return
+	}
+
+	if err := storeInstance.Database.AddJobToBatch(batchName, jobType, jobID); err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"data": database.NotificationBatchJob{
+			BatchName: batchName,
+			JobType:   jobType,
+			JobID:     jobID,
+		},
+	})
+}
+
+func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+	batchName := r.FormValue("batch-name")
+	jobType := r.FormValue("job-type")
+	jobID := r.FormValue("job-id")
+
+	if batchName == "" || jobType == "" || jobID == "" {
+		http.Error(w, "Missing batch-name, job-type, or job-id", http.StatusBadRequest)
+		return
+	}
+
+	if err := storeInstance.Database.RemoveJobFromBatch(batchName, jobType, jobID); err != nil {
+		WriteErrorResponse(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"data": nil})
+}
+
+// NotificationBatchStatusHandler returns the current status of pending batches.
+func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if storeInstance.BatchTracker == nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"data": map[string]int{}})
+			return
+		}
+
+		pending := storeInstance.BatchTracker.PendingBatches()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"data": pending})
+	}
+}
+
+func formValueInt(r *http.Request, key string, defaultVal int) int {
+	v := r.FormValue(key)
+	if v == "" {
+		return defaultVal
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return defaultVal
+	}
+	return i
+}
+
+func formValueBool(r *http.Request, key string, defaultVal bool) bool {
+	v := r.FormValue(key)
+	if v == "" {
+		return defaultVal
+	}
+	return v == "1" || v == "true" || v == "on"
+}
+
+// init ensures the notification package constants are referenced so the
+// compiler doesn't drop the import.
+var _ = notification.SpoolDir

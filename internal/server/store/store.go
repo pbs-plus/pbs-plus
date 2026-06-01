@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
@@ -12,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
@@ -31,6 +33,7 @@ type Store struct {
 	VerificationSvc   *application.VerificationService
 	ARPCAgentsManager *arpc.AgentsManager
 	Manager           *jobs.Manager
+	BatchTracker      *notification.BatchTracker
 	OnBackupComplete  func(backupJobID string) // called after backup completion to trigger pending verifications
 	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
 	CertManager       *mtls.CertManager
@@ -85,6 +88,9 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		ARPCAgentsManager: agentsManager,
 		CertManager:       mtls.NewCertManager(),
 	}
+
+	store.BatchTracker = notification.NewBatchTracker(db)
+	go store.BatchTracker.StartCleanup(ctx, 10*time.Minute)
 
 	return store, nil
 }
