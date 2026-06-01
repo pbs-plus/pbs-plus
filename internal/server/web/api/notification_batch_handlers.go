@@ -43,7 +43,26 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	digest, err := calculateDigest(batches)
+	// Enrich with job counts
+	type batchWithCount struct {
+		database.NotificationBatch
+		JobCount int `json:"job-count"`
+	}
+
+	result := make([]batchWithCount, len(batches))
+	for i, b := range batches {
+		jobs, _ := storeInstance.Database.GetBatchJobs(b.Name)
+		count := 0
+		if jobs != nil {
+			count = len(jobs)
+		}
+		result[i] = batchWithCount{
+			NotificationBatch: b,
+			JobCount:          count,
+		}
+	}
+
+	digest, err := calculateDigest(result)
 	if err != nil {
 		WriteErrorResponse(w, err)
 		return
@@ -51,7 +70,7 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"data":   batches,
+		"data":   result,
 		"digest": digest,
 	})
 }

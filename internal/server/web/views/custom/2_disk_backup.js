@@ -49,5 +49,11 @@ Ext.define("PBS.D2DManagement", {
       itemId: "scripts",
       iconCls: "fa fa-file-code-o",
     },
+    {
+      xtype: "pbsNotificationBatchView",
+      title: "Notification Batches",
+      itemId: "notification-batches",
+      iconCls: "fa fa-bell-o",
+    },
   ],
 });
