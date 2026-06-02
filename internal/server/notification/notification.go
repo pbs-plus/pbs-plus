@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,9 +101,19 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 		nm = ModeNotificationSystem
 	}
 
+	// Map job result to PBS severity levels.
+	// See proxmox-notify Severity enum: info, notice, warning, error, unknown.
 	severity := "info"
 	if jobErr != nil {
 		severity = "error"
+	}
+	// If details indicate warnings but the job didn't hard-fail, upgrade to notice.
+	if severity == "info" && details != nil {
+		if warningsStr, ok := details["warnings"]; ok {
+			if n, _ := strconv.Atoi(warningsStr); n > 0 {
+				severity = "notice"
+			}
+		}
 	}
 
 	ts := time.Now()

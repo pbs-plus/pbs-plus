@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -85,9 +86,26 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 		return
 	}
 
+	// Determine severity for this individual result.
 	severity := "info"
 	if jobErr != nil {
 		severity = "error"
+	} else if details != nil {
+		if warningsStr, ok := details["warnings"]; ok {
+			if n, _ := strconv.Atoi(warningsStr); n > 0 {
+				severity = "notice"
+			}
+		}
+		if errorsStr, ok := details["errors"]; ok {
+			if n, _ := strconv.Atoi(errorsStr); n > 0 {
+				severity = "notice"
+			}
+		}
+		if failedStr, ok := details["failed"]; ok {
+			if n, _ := strconv.Atoi(failedStr); n > 0 {
+				severity = "notice"
+			}
+		}
 	}
 
 	result := JobResult{
@@ -191,13 +209,22 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 	}
 
 	// Determine overall severity.
+	// If any job failed: error. If all succeeded but some had warnings: notice.
+	// Otherwise: info.
 	severity := "info"
 	hasErrors := 0
+	hasWarnings := 0
 	for _, r := range results {
 		if r.Severity == "error" {
 			severity = "error"
 			hasErrors++
 		}
+		if r.Severity == "notice" {
+			hasWarnings++
+		}
+	}
+	if severity == "info" && hasWarnings > 0 {
+		severity = "notice"
 	}
 
 	// Collect unique datastores for metadata.
