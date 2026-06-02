@@ -442,9 +442,6 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
                 boxLabel: gettext("Only alert around"),
                 uncheckedValue: 0,
                 inputValue: 1,
-                bind: {
-                  value: "{hasSchedule}",
-                },
               },
               {
                 xtype: "timefield",
