@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mount"
+	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
@@ -201,6 +202,26 @@ func (b *backupJob) onError(err error) {
 		succeeded, warningsNum := b.processPBSLogs(err)
 		syslog.L.Info().WithJob(job.ID).WithMessage("checking post-backup script").Write()
 		b.runPostScript(succeeded, warningsNum)
+
+		// Send notification for backup result (started but failed)
+		var notifyErr error
+		if !succeeded {
+			notifyErr = fmt.Errorf("backup failed: %v", err)
+		}
+		if b.storeInstance.BatchTracker != nil {
+			b.storeInstance.BatchTracker.RecordJobResult(
+				job.NotificationMode,
+				notification.JobTypeBackup,
+				job.ID,
+				job.Store,
+				notifyErr,
+				map[string]string{
+					"target":    job.Target.Name,
+					"succeeded": fmt.Sprintf("%v", succeeded),
+					"warnings":  fmt.Sprintf("%d", warningsNum),
+				},
+			)
+		}
 		return
 	}
 
@@ -217,6 +238,22 @@ func (b *backupJob) onError(err error) {
 		syslog.L.Error(terr).WithField("jobID", job.ID).Write()
 	} else {
 		b.updateBackupWithTask(task)
+	}
+
+	// Send notification for pre-start failure
+	if b.storeInstance.BatchTracker != nil {
+		b.storeInstance.BatchTracker.RecordJobResult(
+			job.NotificationMode,
+			notification.JobTypeBackup,
+			job.ID,
+			job.Store,
+			fmt.Errorf("backup failed to start: %v", err),
+			map[string]string{
+				"target":    job.Target.Name,
+				"succeeded": "false",
+				"phase":     "pre-start",
+			},
+		)
 	}
 }
 
@@ -245,6 +282,26 @@ func (b *backupJob) onSuccess() {
 
 	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script").Write()
 	b.runPostScript(succeeded, warningsNum)
+
+	// Send notification for backup result
+	var notifyErr error
+	if !succeeded {
+		notifyErr = fmt.Errorf("backup failed")
+	}
+	if b.storeInstance.BatchTracker != nil {
+		b.storeInstance.BatchTracker.RecordJobResult(
+			job.NotificationMode,
+			notification.JobTypeBackup,
+			job.ID,
+			job.Store,
+			notifyErr,
+			map[string]string{
+				"target":    job.Target.Name,
+				"succeeded": fmt.Sprintf("%v", succeeded),
+				"warnings":  fmt.Sprintf("%d", warningsNum),
+			},
+		)
+	}
 
 	// Trigger any pending verification jobs waiting for this backup to complete
 	if succeeded && b.storeInstance.OnBackupComplete != nil {

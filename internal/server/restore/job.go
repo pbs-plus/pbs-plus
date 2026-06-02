@@ -20,6 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
@@ -154,6 +155,23 @@ func (b *restoreJob) onError(err error) {
 	b.task.CloseErr(err)
 
 	_ = updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance)
+
+	// Send notification for restore failure
+	if b.storeInstance.BatchTracker != nil {
+		b.storeInstance.BatchTracker.RecordJobResult(
+			b.job.NotificationMode,
+			notification.JobTypeRestore,
+			b.job.ID,
+			b.job.Store,
+			fmt.Errorf("restore failed: %v", err),
+			map[string]string{
+				"snapshot":  b.job.Snapshot,
+				"namespace": b.job.Namespace,
+				"target":    b.job.DestTarget.Name,
+				"succeeded": "false",
+			},
+		)
+	}
 }
 
 func (b *restoreJob) onSuccess() {
@@ -173,11 +191,32 @@ func (b *restoreJob) onSuccess() {
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
 		_ = updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance)
-		return
+	} else {
+		b.task.CloseOK()
+		_ = updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance)
 	}
 
-	b.task.CloseOK()
-	_ = updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance)
+	// Send notification for restore result
+	var notifyErr error
+	if errCount > 0 {
+		notifyErr = fmt.Errorf("restore completed with %d errors", errCount)
+	}
+	if b.storeInstance.BatchTracker != nil {
+		b.storeInstance.BatchTracker.RecordJobResult(
+			b.job.NotificationMode,
+			notification.JobTypeRestore,
+			b.job.ID,
+			b.job.Store,
+			notifyErr,
+			map[string]string{
+				"snapshot":  b.job.Snapshot,
+				"namespace": b.job.Namespace,
+				"target":    b.job.DestTarget.Name,
+				"succeeded": fmt.Sprintf("%v", errCount == 0),
+				"errors":    fmt.Sprintf("%d", errCount),
+			},
+		)
+	}
 }
 
 func (b *restoreJob) cleanup() {

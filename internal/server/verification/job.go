@@ -22,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
@@ -662,6 +663,21 @@ func (v *verificationJob) onError(err error) {
 	if err := v.updateJobHistory(false, 0); err != nil {
 		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on error").Write()
 	}
+
+	// Send notification for verification failure
+	if v.storeInstance.BatchTracker != nil {
+		v.storeInstance.BatchTracker.RecordJobResult(
+			v.job.NotificationMode,
+			notification.JobTypeVerification,
+			v.job.ID,
+			v.job.Store,
+			fmt.Errorf("verification failed: %v", err),
+			map[string]string{
+				"namespace": v.job.Namespace,
+				"succeeded": "false",
+			},
+		)
+	}
 }
 
 func (v *verificationJob) onSuccess() {
@@ -688,22 +704,42 @@ func (v *verificationJob) onSuccess() {
 			if err := v.updateJobHistory(true, failed); err != nil {
 				syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history").Write()
 			}
-			return
-		}
-
-		if skipped > 0 {
+		} else if skipped > 0 {
 			t.CloseWarn(skipped)
 			if err := v.updateJobHistory(true, skipped); err != nil {
 				syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history").Write()
 			}
-			return
+		} else {
+			t.CloseOK()
 		}
-
-		t.CloseOK()
 	}
 
 	if err := v.updateJobHistory(true, 0); err != nil {
 		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on success").Write()
+	}
+
+	// Send notification for verification result
+	var notifyErr error
+	if failed > 0 {
+		notifyErr = fmt.Errorf("verification found %d failed files", failed)
+	}
+	if v.storeInstance.BatchTracker != nil {
+		verified := total - failed - skipped
+		v.storeInstance.BatchTracker.RecordJobResult(
+			v.job.NotificationMode,
+			notification.JobTypeVerification,
+			v.job.ID,
+			v.job.Store,
+			notifyErr,
+			map[string]string{
+				"namespace": v.job.Namespace,
+				"total":     fmt.Sprintf("%d", total),
+				"verified":  fmt.Sprintf("%d", verified),
+				"failed":    fmt.Sprintf("%d", failed),
+				"skipped":   fmt.Sprintf("%d", skipped),
+				"succeeded": fmt.Sprintf("%v", failed == 0),
+			},
+		)
 	}
 }
 
