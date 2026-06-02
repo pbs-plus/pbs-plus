@@ -216,7 +216,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
       isTargetAlert: false,
       cooldownHours: 24,
       cooldownMinutes: 0,
-      hasSchedule: false,
+
     },
   },
 
@@ -259,7 +259,23 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
             vm.set("cooldownHours", Math.floor(totalMin / 60));
             vm.set("cooldownMinutes", totalMin % 60);
 
-            vm.set("hasSchedule", !!values["schedule-time"]);
+            // Set timefield value directly (empty = Any)
+            var scheduleTime = panel.down("timefield[reference=scheduleTime]");
+            if (scheduleTime) {
+              scheduleTime.setValue(values["schedule-time"] || null);
+            }
+            var scheduleWindow = panel.down("field[reference=scheduleWindow]");
+            if (scheduleWindow) {
+              scheduleWindow.setVisible(!!values["schedule-time"]);
+            }
+            var plusLabel = panel.down("component[reference=plusLabel]");
+            if (plusLabel) {
+              plusLabel.setVisible(!!values["schedule-time"]);
+            }
+            var minLabel = panel.down("component[reference=minLabel]");
+            if (minLabel) {
+              minLabel.setVisible(!!values["schedule-time"]);
+            }
           }
 
           // Check quiet-days checkboxes after render
@@ -286,8 +302,8 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
               (vm.get("cooldownHours") || 0) * 60 +
               (vm.get("cooldownMinutes") || 0);
 
-            // Clear schedule-time if checkbox is unchecked
-            if (!vm.get("hasSchedule")) {
+            // Clear schedule if time is empty (Any)
+            if (!values["schedule-time"]) {
               values["schedule-time"] = "";
               values["schedule-window-minutes"] = "60";
             }
@@ -306,8 +322,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
           }
           delete values["quiet-day"];
 
-          // Remove internal hasSchedule tracker
-          delete values["hasSchedule"];
+
 
           return values;
         },
@@ -437,33 +452,34 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
             layout: "hbox",
             items: [
               {
-                xtype: "proxmoxcheckbox",
-                reference: "hasSchedule",
-                boxLabel: gettext("Only alert around"),
-                uncheckedValue: 0,
-                inputValue: 1,
-              },
-              {
                 xtype: "timefield",
                 name: "schedule-time",
                 reference: "scheduleTime",
                 format: "H:i",
                 submitFormat: "H:i",
-                width: 100,
-                margins: "0 0 0 8",
+                width: 110,
                 allowBlank: true,
-                bind: {
-                  disabled: "{!hasSchedule}",
+                emptyText: gettext("Any (all times)"),
+                listeners: {
+                  change: function (field, val) {
+                    var ct = field.up("fieldcontainer");
+                    var win = ct.down("field[reference=scheduleWindow]");
+                    var plus = ct.down("component[reference=plusLabel]");
+                    var min = ct.down("component[reference=minLabel]");
+                    var hasTime = !!val;
+                    if (win) win.setVisible(hasTime);
+                    if (plus) plus.setVisible(hasTime);
+                    if (min) min.setVisible(hasTime);
+                  },
                 },
               },
               {
                 xtype: "displayfield",
+                reference: "plusLabel",
                 value: gettext("±"),
                 width: 20,
                 margins: "0 2 0 5",
-                bind: {
-                  hidden: "{!hasSchedule}",
-                },
+                hidden: true,
               },
               {
                 xtype: "proxmoxintegerfield",
@@ -474,19 +490,15 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
                 value: 60,
                 width: 60,
                 allowBlank: false,
-                bind: {
-                  disabled: "{!hasSchedule}",
-                  hidden: "{!hasSchedule}",
-                },
+                hidden: true,
               },
               {
                 xtype: "displayfield",
+                reference: "minLabel",
                 value: gettext("min window"),
                 width: 75,
                 margins: "0 0 0 2",
-                bind: {
-                  hidden: "{!hasSchedule}",
-                },
+                hidden: true,
               },
             ],
           },
