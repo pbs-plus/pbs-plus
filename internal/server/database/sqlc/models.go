@@ -25,15 +25,17 @@ type AlertExclusion struct {
 }
 
 type AlertSetting struct {
-	Name            string `json:"name"`
-	Enabled         int64  `json:"enabled"`
-	Threshold       int64  `json:"threshold"`
-	Severity        string `json:"severity"`
-	Comment         string `json:"comment"`
-	LastSent        int64  `json:"last_sent"`
-	CooldownMinutes int64  `json:"cooldown_minutes"`
-	QuietDays       string `json:"quiet_days"`
-	SkipUnscheduled int64  `json:"skip_unscheduled"`
+	Name                  string `json:"name"`
+	Enabled               int64  `json:"enabled"`
+	Threshold             int64  `json:"threshold"`
+	Severity              string `json:"severity"`
+	Comment               string `json:"comment"`
+	LastSent              int64  `json:"last_sent"`
+	CooldownMinutes       int64  `json:"cooldown_minutes"`
+	QuietDays             string `json:"quiet_days"`
+	SkipUnscheduled       int64  `json:"skip_unscheduled"`
+	ScheduleTime          string `json:"schedule_time"`
+	ScheduleWindowMinutes int64  `json:"schedule_window_minutes"`
 }
 
 type Backup struct {

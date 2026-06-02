@@ -73,6 +73,14 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 			if v := r.FormValue("skip-unscheduled"); v != "" {
 				setting.SkipUnscheduled = v == "1"
 			}
+			if v := r.FormValue("schedule-time"); v != "" {
+				setting.ScheduleTime = v
+			}
+			if v := r.FormValue("schedule-window-minutes"); v != "" {
+				if i, err := strconv.Atoi(v); err == nil {
+					setting.ScheduleWindowMinutes = i
+				}
+			}
 
 			if err := storeInstance.Database.UpsertAlertSetting(setting); err != nil {
 				WriteErrorResponse(w, err)
@@ -152,6 +160,14 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			if v := r.FormValue("skip-unscheduled"); v != "" {
 				setting.SkipUnscheduled = v == "1"
+			}
+			if v := r.FormValue("schedule-time"); v != "" {
+				setting.ScheduleTime = v
+			}
+			if v := r.FormValue("schedule-window-minutes"); v != "" {
+				if i, err := strconv.Atoi(v); err == nil {
+					setting.ScheduleWindowMinutes = i
+				}
 			}
 
 			if err := storeInstance.Database.UpsertAlertSetting(setting); err != nil {

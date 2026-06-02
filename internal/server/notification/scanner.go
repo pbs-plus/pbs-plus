@@ -74,6 +74,9 @@ func shouldSkip(setting database.AlertSetting) bool {
 	if setting.IsCoolingDown() {
 		return true
 	}
+	if !setting.IsInScheduleWindow() {
+		return true
+	}
 	return false
 }
 

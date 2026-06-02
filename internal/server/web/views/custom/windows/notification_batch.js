@@ -36,6 +36,10 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
 
     init: function (view) {
       var me = this;
+      me.pendingAssignments = null;
+      me.jobsLoaded = { backup: false, restore: false, verification: false };
+      me.jobsCount = 0;
+
       // Load available jobs when the window opens
       me.loadAvailableJobs();
 
@@ -102,6 +106,20 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
           });
         }
       });
+
+      me.jobsLoaded[type] = true;
+      me.jobsCount++;
+
+      // Once all three job types have loaded, apply pending assignments
+      if (
+        me.jobsLoaded.backup &&
+        me.jobsLoaded.restore &&
+        me.jobsLoaded.verification &&
+        me.pendingAssignments
+      ) {
+        me.applyAssignments(me.pendingAssignments);
+        me.pendingAssignments = null;
+      }
     },
 
     loadAssignedJobs: function (batchName) {
@@ -113,28 +131,50 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
         method: "GET",
         success: function (resp) {
           var assigned = resp.result.data || [];
-          var grid = me.lookup("jobGrid");
-          if (!grid) return;
 
-          var store = grid.getStore();
-          if (!store) return;
-
-          // Deferred to ensure populateJobStore has finished first
-          Ext.defer(function () {
-            assigned.forEach(function (a) {
-              store.each(function (rec) {
-                if (
-                  rec.get("job-type") === a["job-type"] &&
-                  rec.get("job-id") === a["job-id"]
-                ) {
-                  rec.set("assigned", true);
-                }
-              });
-            });
-            store.commitChanges();
-          }, 500);
+          // If all job stores are already loaded, apply immediately
+          if (
+            me.jobsLoaded.backup &&
+            me.jobsLoaded.restore &&
+            me.jobsLoaded.verification
+          ) {
+            me.applyAssignments(assigned);
+          } else {
+            // Store for later — populateJobStore will apply when all are ready
+            me.pendingAssignments = assigned;
+          }
         },
       });
+    },
+
+    applyAssignments: function (assigned) {
+      var me = this;
+      var grid = me.lookup("jobGrid");
+      if (!grid) return;
+
+      var store = grid.getStore();
+      if (!store) return;
+
+      var sm = grid.getSelectionModel();
+      var toSelect = [];
+
+      assigned.forEach(function (a) {
+        store.each(function (rec) {
+          if (
+            rec.get("job-type") === a["job-type"] &&
+            rec.get("job-id") === a["job-id"]
+          ) {
+            rec.set("assigned", true);
+            toSelect.push(rec);
+          }
+        });
+      });
+
+      // Select the assigned records in the checkbox model
+      if (toSelect.length > 0) {
+        sm.select(toSelect, false, true); // suppressEvents = true
+      }
+      store.commitChanges();
     },
   },
 

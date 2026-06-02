@@ -5,21 +5,25 @@ import (
 	"database/sql"
 	"encoding/json"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
 )
 
 type AlertSetting struct {
-	Name            string   `json:"name"`
-	Enabled         bool     `json:"enabled"`
-	Threshold       int      `json:"threshold"`
-	Severity        string   `json:"severity"`
-	Comment         string   `json:"comment"`
-	LastSent        int64    `json:"last-sent"`
-	CooldownMinutes int      `json:"cooldown-minutes"`
-	QuietDays       []string `json:"quiet-days"`
-	SkipUnscheduled bool     `json:"skip-unscheduled"`
+	Name                  string   `json:"name"`
+	Enabled               bool     `json:"enabled"`
+	Threshold             int      `json:"threshold"`
+	Severity              string   `json:"severity"`
+	Comment               string   `json:"comment"`
+	LastSent              int64    `json:"last-sent"`
+	CooldownMinutes       int      `json:"cooldown-minutes"`
+	QuietDays             []string `json:"quiet-days"`
+	SkipUnscheduled       bool     `json:"skip-unscheduled"`
+	ScheduleTime          string   `json:"schedule-time"`
+	ScheduleWindowMinutes int      `json:"schedule-window-minutes"`
 }
 
 type AlertExclusion struct {
@@ -39,15 +43,17 @@ func sqlcToAlertSetting(row sqlc.AlertSetting) AlertSetting {
 		quietDays = []string{}
 	}
 	return AlertSetting{
-		Name:            row.Name,
-		Enabled:         row.Enabled == 1,
-		Threshold:       int(row.Threshold),
-		Severity:        row.Severity,
-		Comment:         row.Comment,
-		LastSent:        row.LastSent,
-		CooldownMinutes: int(row.CooldownMinutes),
-		QuietDays:       quietDays,
-		SkipUnscheduled: row.SkipUnscheduled == 1,
+		Name:                  row.Name,
+		Enabled:               row.Enabled == 1,
+		Threshold:             int(row.Threshold),
+		Severity:              row.Severity,
+		Comment:               row.Comment,
+		LastSent:              row.LastSent,
+		CooldownMinutes:       int(row.CooldownMinutes),
+		QuietDays:             quietDays,
+		SkipUnscheduled:       row.SkipUnscheduled == 1,
+		ScheduleTime:          row.ScheduleTime,
+		ScheduleWindowMinutes: int(row.ScheduleWindowMinutes),
 	}
 }
 
@@ -99,15 +105,17 @@ func (database *Database) UpsertAlertSetting(setting AlertSetting) error {
 		skipUnscheduled = 1
 	}
 	return database.queries.UpsertAlertSetting(context.Background(), sqlc.UpsertAlertSettingParams{
-		Name:            setting.Name,
-		Enabled:         enabled,
-		Threshold:       int64(setting.Threshold),
-		Severity:        setting.Severity,
-		Comment:         setting.Comment,
-		LastSent:        setting.LastSent,
-		CooldownMinutes: int64(setting.CooldownMinutes),
-		QuietDays:       alertSettingQuietDaysJSON(setting.QuietDays),
-		SkipUnscheduled: skipUnscheduled,
+		Name:                  setting.Name,
+		Enabled:               enabled,
+		Threshold:             int64(setting.Threshold),
+		Severity:              setting.Severity,
+		Comment:               setting.Comment,
+		LastSent:              setting.LastSent,
+		CooldownMinutes:       int64(setting.CooldownMinutes),
+		QuietDays:             alertSettingQuietDaysJSON(setting.QuietDays),
+		SkipUnscheduled:       skipUnscheduled,
+		ScheduleTime:          setting.ScheduleTime,
+		ScheduleWindowMinutes: int64(setting.ScheduleWindowMinutes),
 	})
 }
 
@@ -164,6 +172,51 @@ func (s AlertSetting) IsQuietDay() bool {
 	}
 	today := time.Now().Weekday().String()
 	return slices.Contains(s.QuietDays, today)
+}
+
+// IsInScheduleWindow returns true if the current time is within the configured
+// schedule window. If no schedule_time is set, it always returns true (any time).
+func (s AlertSetting) IsInScheduleWindow() bool {
+	if s.ScheduleTime == "" {
+		return true
+	}
+
+	// Parse HH:MM
+	parts := strings.SplitN(s.ScheduleTime, ":", 2)
+	if len(parts) != 2 {
+		return true
+	}
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return true
+	}
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return true
+	}
+
+	window := s.ScheduleWindowMinutes
+	if window <= 0 {
+		window = 60
+	}
+
+	now := time.Now()
+	scheduledMinutes := hour*60 + minute
+	nowMinutes := now.Hour()*60 + now.Minute()
+
+	// Check if now is within [scheduled - window/2, scheduled + window/2]
+	halfWindow := window / 2
+	diff := nowMinutes - scheduledMinutes
+	if diff < 0 {
+		diff = -diff
+	}
+
+	// Handle wrap-around midnight
+	if diff > 720 {
+		diff = 1440 - diff
+	}
+
+	return diff <= halfWindow
 }
 
 // --- Alert Exclusions ---

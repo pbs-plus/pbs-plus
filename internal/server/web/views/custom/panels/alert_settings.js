@@ -51,6 +51,8 @@ Ext.define("PBS.D2DManagement.Alerts", {
       { name: "cooldown-minutes", type: "int" },
       "quiet-days",
       { name: "skip-unscheduled", type: "bool" },
+      "schedule-time",
+      { name: "schedule-window-minutes", type: "int" },
     ],
     autoLoad: true,
     proxy: {
@@ -170,6 +172,17 @@ Ext.define("PBS.D2DManagement.Alerts", {
       },
     },
     {
+      header: gettext("Schedule Time"),
+      dataIndex: "schedule-time",
+      width: 130,
+      renderer: function (val, meta, record) {
+        if (!val) return gettext("Any time");
+        var window = record.get("schedule-window-minutes") || 60;
+        var halfWindow = Math.floor(window / 2);
+        return Ext.String.format("~{0} (±{1}m)", val, halfWindow);
+      },
+    },
+    {
       header: gettext("Comment"),
       dataIndex: "comment",
       flex: 1,
@@ -203,6 +216,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
       isTargetAlert: false,
       cooldownHours: 24,
       cooldownMinutes: 0,
+      hasSchedule: false,
     },
   },
 
@@ -244,6 +258,8 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
             var totalMin = values["cooldown-minutes"] || 1440;
             vm.set("cooldownHours", Math.floor(totalMin / 60));
             vm.set("cooldownMinutes", totalMin % 60);
+
+            vm.set("hasSchedule", !!values["schedule-time"]);
           }
 
           // Check quiet-days checkboxes after render
@@ -269,6 +285,12 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
             values["cooldown-minutes"] =
               (vm.get("cooldownHours") || 0) * 60 +
               (vm.get("cooldownMinutes") || 0);
+
+            // Clear schedule-time if checkbox is unchecked
+            if (!vm.get("hasSchedule")) {
+              values["schedule-time"] = "";
+              delete values["schedule-window-minutes"];
+            }
           }
 
           // Collect quiet-days from checkboxgroup, remove raw quiet-day entries
@@ -283,6 +305,9 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
             values["quiet-days"] = JSON.stringify(checked);
           }
           delete values["quiet-day"];
+
+          // Remove internal hasSchedule tracker
+          delete values["hasSchedule"];
 
           return values;
         },
@@ -404,6 +429,68 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
               { boxLabel: "Fri", inputValue: "Friday" },
               { boxLabel: "Sat", inputValue: "Saturday" },
               { boxLabel: "Sun", inputValue: "Sunday" },
+            ],
+          },
+          {
+            xtype: "fieldcontainer",
+            fieldLabel: gettext("Alert Time"),
+            layout: "hbox",
+            items: [
+              {
+                xtype: "proxmoxcheckbox",
+                reference: "hasSchedule",
+                boxLabel: gettext("Only alert around"),
+                uncheckedValue: 0,
+                inputValue: 1,
+                bind: {
+                  value: "{hasSchedule}",
+                },
+              },
+              {
+                xtype: "timefield",
+                name: "schedule-time",
+                reference: "scheduleTime",
+                format: "H:i",
+                submitFormat: "H:i",
+                width: 100,
+                margins: "0 0 0 8",
+                allowBlank: true,
+                bind: {
+                  disabled: "{!hasSchedule}",
+                },
+              },
+              {
+                xtype: "displayfield",
+                value: gettext("±"),
+                width: 20,
+                margins: "0 2 0 5",
+                bind: {
+                  hidden: "{!hasSchedule}",
+                },
+              },
+              {
+                xtype: "proxmoxintegerfield",
+                name: "schedule-window-minutes",
+                reference: "scheduleWindow",
+                minValue: 10,
+                maxValue: 720,
+                value: 60,
+                width: 60,
+                allowBlank: false,
+                bind: {
+                  disabled: "{!hasSchedule}",
+                  hidden: "{!hasSchedule}",
+                },
+              },
+              {
+                xtype: "displayfield",
+                value: gettext("min window"),
+                width: 75,
+                margins: "0 0 0 2",
+                bind: {
+                  hidden: "{!hasSchedule}",
+                },
+              },
             ],
           },
         ],
