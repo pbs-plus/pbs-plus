@@ -289,7 +289,7 @@ Ext.define("PBS.D2DManagement.AlertEditWindow", {
             // Clear schedule-time if checkbox is unchecked
             if (!vm.get("hasSchedule")) {
               values["schedule-time"] = "";
-              delete values["schedule-window-minutes"];
+              values["schedule-window-minutes"] = "60";
             }
           }
 

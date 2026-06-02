@@ -75,6 +75,8 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			if v := r.FormValue("schedule-time"); v != "" {
 				setting.ScheduleTime = v
+			} else {
+				setting.ScheduleTime = ""
 			}
 			if v := r.FormValue("schedule-window-minutes"); v != "" {
 				if i, err := strconv.Atoi(v); err == nil {
@@ -163,6 +165,8 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			if v := r.FormValue("schedule-time"); v != "" {
 				setting.ScheduleTime = v
+			} else {
+				setting.ScheduleTime = ""
 			}
 			if v := r.FormValue("schedule-window-minutes"); v != "" {
 				if i, err := strconv.Atoi(v); err == nil {
