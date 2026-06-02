@@ -1,54 +1,52 @@
-// Patch PBS notification matcher value store to include D2D notification types.
+// Patch PBS notification matcher UI to include D2D notification types.
 //
-// PBS hardcodes the "type" dropdown values in Rust (acme, gc, sync, verify, etc.)
-// in proxmox-notify's matcher-field-values API. We intercept the Ajax response
-// and append our custom D2D types so they appear in the matcher rule editor's
-// "type" dropdown under Datacenter → Notifications → Matchers.
+// PBS registers notification type descriptions via
+//   Proxmox.Utils.overrideNotificationFieldValue({ key: 'Description' })
+// in www/Utils.js. The matcher rule editor's "type" dropdown grid uses
+// formatNotificationFieldValue() which does a lookup in that table,
+// falling back to the raw value string if no entry exists.
+//
+// We do two things:
+//   1. Register our D2D type descriptions in the lookup table so the
+//      Comment column shows human-readable text.
+//   2. Inject the D2D types into the matcher-field-values API response
+//      so they appear as selectable rows in the dropdown grid.
 //
 // Severity levels used by D2D notifications (matching PBS upstream):
 //   info    — Job completed successfully with no issues
 //   notice  — Job succeeded with warnings (e.g. partial file verification)
 //   warning — System alert (stale backup, unconfigured target, target offline)
 //   error   — Job failed entirely
-//
-// These map to the same severity enum used by PBS's built-in notifications
-// (gc, sync, verify, etc.) and can be filtered in matcher rules.
 (function () {
+  // Register human-readable descriptions for the Comment column.
+  // These appear in Datacenter → Notifications → Matchers → type dropdown.
+  Proxmox.Utils.overrideNotificationFieldValue({
+    "d2d-backup": "D2D Backup — disk-to-disk backup job completed",
+    "d2d-restore": "D2D Restore — file/folder restore job completed",
+    "d2d-verification": "D2D Verification — spot-check verification run completed",
+    "d2d-batch": "D2D Batch — consolidated notification for a job batch",
+    "d2d-alert-stale-backup": "D2D Alert: backup job has not run within threshold",
+    "d2d-alert-unconfigured-target": "D2D Alert: target has no backup job configured",
+    "d2d-alert-target-offline": "D2D Alert: configured target is unreachable",
+  });
+
+  // Inject D2D type entries into the matcher-field-values API response
+  // so they appear as selectable rows alongside PBS built-in types.
   var D2D_NOTIFY_TYPES = [
-    {
-      field: "type",
-      value: "d2d-backup",
-      comment: "D2D Backup — triggered when a disk-to-disk backup job completes (info on success, error on failure)",
-    },
-    {
-      field: "type",
-      value: "d2d-restore",
-      comment: "D2D Restore — triggered when a file/folder restore job completes (info on success, error on failure)",
-    },
-    {
-      field: "type",
-      value: "d2d-verification",
-      comment: "D2D Verification — triggered when a spot-check verification run completes (info if all files match, notice on warnings, error on failure)",
-    },
-    {
-      field: "type",
-      value: "d2d-batch",
-      comment: "D2D Batch — consolidated notification sent when all jobs in a notification batch complete (info if all succeeded, error if any failed)",
-    },
-    {
-      field: "type",
-      value: "d2d-alert-stale-backup",
-      comment: "D2D Alert: Stale Backup — warning when a backup job has not completed within the configured threshold (default 7 days)",
-    },
+    { field: "type", value: "d2d-backup", comment: "D2D Backup" },
+    { field: "type", value: "d2d-restore", comment: "D2D Restore" },
+    { field: "type", value: "d2d-verification", comment: "D2D Verification" },
+    { field: "type", value: "d2d-batch", comment: "D2D Batch" },
+    { field: "type", value: "d2d-alert-stale-backup", comment: "D2D Alert: Stale Backup" },
     {
       field: "type",
       value: "d2d-alert-unconfigured-target",
-      comment: "D2D Alert: Unconfigured Target — warning when a target exists but has no backup job assigned to it",
+      comment: "D2D Alert: Unconfigured Target",
     },
     {
       field: "type",
       value: "d2d-alert-target-offline",
-      comment: "D2D Alert: Target Offline — warning when a configured target cannot be reached",
+      comment: "D2D Alert: Target Offline",
     },
   ];
 
