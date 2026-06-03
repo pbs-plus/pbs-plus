@@ -93,6 +93,8 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	store.BatchTracker = notification.NewBatchTracker(db)
 	go store.BatchTracker.StartCleanup(ctx, 10*time.Minute)
 
+	notification.InstallTemplates()
+
 	store.AlertScanner = notification.NewAlertScanner(db)
 	go store.AlertScanner.Start(ctx, 1*time.Hour)
 

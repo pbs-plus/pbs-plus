@@ -1,0 +1,19 @@
+Batch:     {{batch-name}}
+Mode:      {{notification-mode}}
+
+Consolidated job results:
+  Total:  {{total-jobs}}
+  OK:     {{ok-jobs}}
+  Failed: {{failed-jobs}}
+
+{{#if failed-details}}
+Failed jobs:
+{{#each failed-details}}
+  - {{this}}
+{{/each}}
+{{/if}}
+
+
+Please visit the web interface for further details:
+
+<{{base-url}}/#pbsServerAdministration:tasks>
