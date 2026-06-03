@@ -133,21 +133,27 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 		title = fmt.Sprintf("D2D %s job '%s' failed", jobType, jobID)
 	}
 
-	tmplData, _ := json.Marshal(map[string]any{
+	tmplData := map[string]any{
 		"timestamp": ts.Format(time.RFC3339),
 		"title":     title,
 		"job-id":    jobID,
 		"datastore": datastore,
 		"job-type":  string(jobType),
 		"error":     errStr(jobErr),
-		"details":   details,
-	})
+	}
+	// Flatten details into top level so templates can use {{total}}, {{target}}, etc.
+	for k, v := range details {
+		if _, exists := tmplData[k]; !exists {
+			tmplData[k] = v
+		}
+	}
+	tmplJSON, _ := json.Marshal(tmplData)
 
 	// Build the externally-tagged Content enum:
 	// {"template": {"template-name": "d2d-backup-ok", "data": {...}}}
 	tc := templateContent{
 		TemplateName: templateName,
-		Data:         tmplData,
+		Data:         tmplJSON,
 	}
 	tcJSON, err := json.Marshal(tc)
 	if err != nil {

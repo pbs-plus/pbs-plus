@@ -15,8 +15,7 @@ import (
 var templateFS embed.FS
 
 var (
-	templateOnce      sync.Once
-	templateInstalled bool
+	templateOnce sync.Once
 )
 
 // InstallTemplates copies embedded notification templates to the PBS vendor
@@ -59,6 +58,5 @@ func InstallTemplates() {
 			}
 		}
 
-		templateInstalled = true
 	})
 }

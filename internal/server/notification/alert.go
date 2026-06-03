@@ -43,19 +43,25 @@ func sendAlertWithData(alertType AlertType, severity string, details map[string]
 	templateName := "d2d-alert-" + string(alertType)
 	title := formatAlertTitle(alertType, details)
 
-	tmplData, _ := json.Marshal(func() map[string]any {
+	tmplData := func() map[string]any {
 		m := map[string]any{
 			"timestamp": ts.Format(time.RFC3339),
 			"title":     title,
-			"details":   details,
+		}
+		// Flatten details into top level so templates can use {{target-name}}, {{job-id}}, etc.
+		for k, v := range details {
+			if _, exists := m[k]; !exists {
+				m[k] = v
+			}
 		}
 		maps.Copy(m, extraData)
 		return m
-	}())
+	}()
+	tmplJSON, _ := json.Marshal(tmplData)
 
 	tc := templateContent{
 		TemplateName: templateName,
-		Data:         tmplData,
+		Data:         tmplJSON,
 	}
 	tcJSON, err := json.Marshal(tc)
 	if err != nil {
