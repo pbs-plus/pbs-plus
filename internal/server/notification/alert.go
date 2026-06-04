@@ -93,15 +93,21 @@ func sendAlertWithData(alertType AlertType, severity string, details map[string]
 func formatAlertTitle(alertType AlertType, details map[string]string) string {
 	switch alertType {
 	case AlertUnconfiguredTarget:
-		name := details["target-name"]
-		if name == "" {
-			name = "unknown"
+		count := details["count"]
+		if count == "" {
+			count = "unknown"
 		}
-		return fmt.Sprintf("Unconfigured target detected: %s", name)
+		return fmt.Sprintf("%s unconfigured target(s) detected", count)
 	case AlertStaleBackup:
-		jobID := details["job-id"]
-		days := details["days-stale"]
-		return fmt.Sprintf("Stale backup: job '%s' has not run in %s days", jobID, days)
+		count := details["count"]
+		if count == "" {
+			count = "unknown"
+		}
+		threshold := details["threshold"]
+		if threshold == "" {
+			threshold = "unknown"
+		}
+		return fmt.Sprintf("%s stale backup job(s) detected (threshold: %s days)", count, threshold)
 	case AlertTargetOffline:
 		name := details["target-name"]
 		return fmt.Sprintf("Target offline: %s", name)

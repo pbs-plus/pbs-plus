@@ -1,10 +1,14 @@
-Alert: Unconfigured Target
+Alert: Unconfigured Target(s)
 
-A target exists but has no backup job configured.
+{{count}} target(s) exist but have no backup job configured.
 
-Target:  {{target-name}}
-Store:   {{datastore}}
+{{#if targets}}
+Unconfigured targets:
+{{#each targets}}
+  - {{this}}
+{{/each}}
+{{/if}}
 
-Please configure a backup job for this target or add it to the exclusions list.
+Please configure backup jobs for these targets or add them to the exclusions list.
 
 <{{base-url}}/#pbsPlusD2DManagement:d2d-backup-jobs>

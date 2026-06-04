@@ -198,6 +198,16 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		return
 	}
 
+	// Build a list of stale job summaries for the template.
+	type staleEntry struct {
+		JobID     string `json:"job-id"`
+		Datastore string `json:"datastore"`
+		Target    string `json:"target"`
+		DaysStale string `json:"days-stale"`
+		LastRun   string `json:"last-run"`
+	}
+
+	var entries []staleEntry
 	for _, b := range staleJobs {
 		var daysStale string
 		if b.History.LastSuccessfulEndtime == 0 {
@@ -206,17 +216,21 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 			days := int(now.Sub(time.Unix(b.History.LastSuccessfulEndtime, 0)).Hours() / 24)
 			daysStale = fmt.Sprintf("%d", days)
 		}
-
-		SendAlert(AlertStaleBackup, setting.Severity, map[string]string{
-			"job-id":     b.ID,
-			"datastore":  b.Store,
-			"target":     b.Target.Name,
-			"days-stale": daysStale,
-			"schedule":   b.Schedule,
-			"last-run":   formatTimestamp(b.History.LastSuccessfulEndtime),
-			"job-status": b.History.LastRunStatus.String(),
+		entries = append(entries, staleEntry{
+			JobID:     b.ID,
+			Datastore: b.Store,
+			Target:    b.Target.Name,
+			DaysStale: daysStale,
+			LastRun:   formatTimestamp(b.History.LastSuccessfulEndtime),
 		})
 	}
+
+	SendAlertWithData(AlertStaleBackup, setting.Severity, map[string]string{
+		"count":     fmt.Sprintf("%d", len(staleJobs)),
+		"threshold": fmt.Sprintf("%d", threshold),
+	}, map[string]any{
+		"jobs": entries,
+	})
 
 	s.db.UpdateAlertLastSent(string(AlertStaleBackup), time.Now().Unix())
 }
