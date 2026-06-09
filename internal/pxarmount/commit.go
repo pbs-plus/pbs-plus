@@ -1260,9 +1260,10 @@ func (ow *commitWalkState) resolvePxarEntryCached(relPath string) (*pxar.Entry, 
 	return entry, nil
 }
 
-// resolvePxarEntryUncached walks the pxar archive to find the entry at relPath.
-// Uses ReadDirRaw + dirEntrySlim fields for intermediate components, avoiding
-// per-component ReadEntryAt. Only calls ReadEntryAt for the terminal component.
+// resolvePxarEntryUncached finds a pxar entry by archive path using the goodbye
+// table's binary search (O(log n) per level) instead of reading all directory
+// entries (O(n)). Lookup returns a minimal-decode entry, so we follow up with
+// ReadEntryAt for full metadata (xattrs, fcaps, ACLs) on the terminal entry.
 func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry, error) {
 	if relPath == "/" || relPath == "" {
 		ow.mfs.pxar.readerMu.Lock()
@@ -1270,41 +1271,21 @@ func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry
 		return ow.mfs.pxar.Reader().ReadRoot()
 	}
 
-	parts := splitPath(relPath)
-	curIno := RootInode
-
-	for i, comp := range parts {
-		entries, err := ow.mfs.pxar.ReadDirRaw(curIno)
-		if err != nil {
-			return nil, fmt.Errorf("readdir ino %d: %w", curIno, err)
-		}
-		found := false
-		for _, e := range entries {
-			if e.name == comp {
-				if i == len(parts)-1 {
-					// Terminal component: full ReadEntryAt.
-					ow.mfs.pxar.readerMu.Lock()
-					pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(e.entryStart))
-					ow.mfs.pxar.readerMu.Unlock()
-					if err != nil {
-						return nil, fmt.Errorf("read entry at %d: %w", e.entryStart, err)
-					}
-					return pxarEntry, nil
-				}
-				// Intermediate component: use dirEntrySlim fields (no ReadEntryAt).
-				if !e.isDir {
-					return nil, fmt.Errorf("%q is not a directory", comp)
-				}
-				curIno = e.inode
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("component %q not found in ino %d", comp, curIno)
-		}
+	ow.mfs.pxar.readerMu.Lock()
+	slim, err := ow.mfs.pxar.Reader().Lookup(relPath)
+	ow.mfs.pxar.readerMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("lookup %q: %w", relPath, err)
 	}
-	return nil, fmt.Errorf("path %q not found", relPath)
+
+	// Lookup returns minimal decode — re-read with full metadata.
+	ow.mfs.pxar.readerMu.Lock()
+	full, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.FileOffset))
+	ow.mfs.pxar.readerMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("read entry at %d: %w", slim.FileOffset, err)
+	}
+	return full, nil
 }
 
 // xxh3Pool reuses xxh3 hashers across verify calls to avoid per-worker allocation.
