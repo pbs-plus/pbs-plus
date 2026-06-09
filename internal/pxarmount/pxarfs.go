@@ -354,6 +354,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 			mode:          statMode(e.Metadata.Stat.Mode),
 			entryStart:    e.FileOffset,
 			contentOffset: e.ContentOffset,
+			payloadOffset: e.PayloadOffset,
 			fileSize:      e.FileSize,
 			uid:           e.Metadata.Stat.UID,
 			gid:           e.Metadata.Stat.GID,

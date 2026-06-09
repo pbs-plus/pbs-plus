@@ -551,16 +551,30 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		mfs: &MutableFS{verbose: false},
 	}
 
-	// Pxar regular file — sortKey should be contentOffset.
+	// Pxar regular file — sortKey should be payloadOffset (set by emitAlphabeticalPxar
+	// before addToPendingRefs; here we test the addToPendingRefs fallback path).
 	ceFile := commitEntry{
 		name:     "reg",
-		pxarSlim: &dirEntrySlim{name: "reg", contentOffset: 4096, isReg: true},
+		pxarSlim: &dirEntrySlim{name: "reg", payloadOffset: 4096, isReg: true},
 	}
 	if err := ow.addToPendingRefs(&ceFile, "/test"); err != nil {
 		t.Fatal(err)
 	}
 	if ceFile.sortKey != 4096 {
 		t.Errorf("reg file sortKey = %d, want 4096", ceFile.sortKey)
+	}
+
+	// Pxar regular file with pre-set sortKey (from emitAlphabeticalPxar eager read).
+	cePreset := commitEntry{
+		name:     "preset",
+		pxarSlim: &dirEntrySlim{name: "preset", payloadOffset: 999, isReg: true},
+		sortKey:  8888,
+	}
+	if err := ow.addToPendingRefs(&cePreset, "/test"); err != nil {
+		t.Fatal(err)
+	}
+	if cePreset.sortKey != 8888 {
+		t.Errorf("preset sortKey = %d, want 8888", cePreset.sortKey)
 	}
 
 	// Pxar symlink — sortKey should be entryStart.

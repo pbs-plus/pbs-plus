@@ -64,6 +64,7 @@ type dirEntrySlim struct {
 	inode         uint64
 	entryStart    uint64
 	contentOffset uint64
+	payloadOffset uint64
 	fileSize      uint64
 	mtimeSecs     int64
 	mode          uint32

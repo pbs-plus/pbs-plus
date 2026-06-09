@@ -224,10 +224,11 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 
 // commitEntry represents one item in the merged directory view during commit walk.
 type commitEntry struct {
-	name     string
-	node     *GraphNode    // journal node (nil for pure pxar)
-	pxarSlim *dirEntrySlim // pxar slim entry (nil for journal-only)
-	sortKey  uint64        // min descendant payload offset (dirs only)
+	name        string
+	node        *GraphNode    // journal node (nil for pure pxar)
+	pxarSlim    *dirEntrySlim // pxar slim entry (nil for journal-only)
+	sortKey     uint64        // min descendant payload offset (dirs only)
+	cachedEntry *pxar.Entry   // eagerly read pxar entry (avoids duplicate ReadEntryAt)
 }
 
 // deferredDir holds the minimal data needed to recurse into a subdirectory
@@ -254,6 +255,12 @@ type commitWalkState struct {
 	xattrCache   map[int64][]format.XAttr // journal node ID → xattrs
 	backedHashes map[string]uint64        // relPath → xxh3 hash of uploaded files
 	mutableFiles int                      // count of new/modified files
+
+	// redirectCache caches resolved pxar entries by redirect path to avoid
+	// redundant resolvePxarEntry calls. Keys are journal RedirectTo paths;
+	// values are the resolved pxar.Entry. The commit walk is single-threaded
+	// and read-only, so a plain map without synchronization is safe.
+	redirectCache map[string]*pxar.Entry
 
 	// lastRefPayloadOffset tracks the highest payload offset emitted via
 	// WriteEntryRef across the ENTIRE recursive walk. Before emitting any
@@ -485,12 +492,13 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	prog.SetMsg("Archiving files")
 
 	ow := &commitWalkState{
-		mfs:          mfs,
-		writer:       writer,
-		prog:         prog,
-		xattrCache:   make(map[int64][]format.XAttr),
-		backedHashes: make(map[string]uint64),
-		pendingRefs:  make([]commitEntry, 0, 64),
+		mfs:           mfs,
+		writer:        writer,
+		prog:          prog,
+		xattrCache:    make(map[int64][]format.XAttr),
+		backedHashes:  make(map[string]uint64),
+		redirectCache: make(map[string]*pxar.Entry),
+		pendingRefs:   make([]commitEntry, 0, 64),
 	}
 
 	// Pre-load all journal xattrs for batch access.
@@ -771,7 +779,7 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 			meta := nodeToMetadata(node, xattrs)
 			// Merge pxar fcaps/acl if this file was copied up from pxar.
 			if node.RedirectTo != "" {
-				if pxEntry, rerr := resolvePxarEntry(ow.mfs, node.RedirectTo); rerr == nil {
+				if pxEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 					meta = mergeMetaWithPxar(meta, pxEntry)
 				}
 			}
@@ -804,7 +812,7 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 		xattrs := ow.xattrCache[node.ID]
 		meta := nodeToMetadata(node, xattrs)
 		if node.RedirectTo != "" {
-			if pxEntry, rerr := resolvePxarEntry(ow.mfs, node.RedirectTo); rerr == nil {
+			if pxEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 				meta = mergeMetaWithPxar(meta, pxEntry)
 			}
 		}
@@ -841,7 +849,19 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 		return ow.emitPxarSymlink(ce, parentRelPath)
 	}
 
-	// Regular file — defer to pending refs for contentOffset ordering.
+	// Regular file — eagerly read the full entry now and cache it in
+	// commitEntry so emitPxarRef can reuse it without a duplicate ReadEntryAt.
+	ow.mfs.pxar.readerMu.Lock()
+	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
+	ow.mfs.pxar.readerMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
+	}
+	ce.cachedEntry = pxarEntry
+
+	// Use payloadOffset from pxarEntry for sortKey (same as contentOffset in v2).
+	ce.sortKey = pxarEntry.PayloadOffset
+
 	return ow.addToPendingRefs(ce, parentRelPath)
 }
 
@@ -852,17 +872,20 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 // automatically when it reaches maxPendingRefs to bound memory on
 // directories with millions of entries.
 func (ow *commitWalkState) addToPendingRefs(ce *commitEntry, parentRelPath string) error {
-	// Compute sort key: contentOffset for files, entryStart for non-files.
+	// Compute sort key: payloadOffset for files, entryStart for non-files.
+	// For pxar entries, sortKey was already set by emitAlphabeticalPxar.
 	if ce.pxarSlim != nil {
 		if ce.pxarSlim.isReg {
-			ce.sortKey = ce.pxarSlim.contentOffset
+			if ce.sortKey == 0 {
+				ce.sortKey = ce.pxarSlim.payloadOffset
+			}
 		} else {
 			ce.sortKey = ce.pxarSlim.entryStart
 		}
 	} else {
-		// Journal redirect entry — resolve the pxar entry to get sort key.
+		// Journal redirect entry — use cached resolve to get sort key.
 		if ce.node != nil && ce.node.RedirectTo != "" {
-			if pxEntry, err := resolvePxarEntry(ow.mfs, ce.node.RedirectTo); err == nil {
+			if pxEntry, err := ow.resolvePxarEntryCached(ce.node.RedirectTo); err == nil {
 				ce.sortKey = pxEntry.PayloadOffset
 			} else {
 				ce.sortKey = 0
@@ -921,11 +944,9 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 
 		var pxarChildIno uint64
 		if node.RedirectTo != "" {
-			if pnode := ow.mfs.findPxarNode(node.RedirectTo); pnode != nil {
-				pxarChildIno = pnode.inode
-			}
-			if pxDirEntry, rerr := resolvePxarEntry(ow.mfs, node.RedirectTo); rerr == nil {
+			if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 				meta = mergeMetaWithPxar(meta, pxDirEntry)
+				pxarChildIno = ToInode(pxDirEntry)
 			}
 		} else if dd.pxarIno != 0 {
 			pxarChildIno = dd.pxarIno
@@ -966,8 +987,8 @@ func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string)
 	xattrs := ow.xattrCache[node.ID]
 	meta := nodeToMetadata(node, xattrs)
 
-	// Resolve pxar entry for payload offset and metadata merge.
-	pxarEntry, err := resolvePxarEntry(ow.mfs, node.RedirectTo)
+	// Resolve pxar entry for payload offset and metadata merge (cached).
+	pxarEntry, err := ow.resolvePxarEntryCached(node.RedirectTo)
 	if err != nil {
 		return fmt.Errorf("resolve redirect %q for %q: %w", node.RedirectTo, ce.name, err)
 	}
@@ -986,17 +1007,25 @@ func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string)
 }
 
 // emitPxarRef emits a pxar ref entry (regular file payload ref) from the pending batch.
+// Uses ce.cachedEntry which was eagerly read in emitAlphabeticalPxar, avoiding
+// a duplicate ReadEntryAt for every pxar-only file.
 func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 	if slim == nil {
 		return nil
 	}
 
-	ow.mfs.pxar.readerMu.Lock()
-	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-	ow.mfs.pxar.readerMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
+	// Reuse the entry that was eagerly read during emitAlphabeticalPxar.
+	pxarEntry := ce.cachedEntry
+	if pxarEntry == nil {
+		// Fallback: should not happen with the eager-read path, but handle gracefully.
+		ow.mfs.pxar.readerMu.Lock()
+		var err error
+		pxarEntry, err = ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
+		ow.mfs.pxar.readerMu.Unlock()
+		if err != nil {
+			return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
+		}
 	}
 
 	clone := ow.clonePxarEntryBuf(pxarEntry, ce.name)
@@ -1012,11 +1041,9 @@ func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string)
 
 	var pxarChildIno uint64
 	if node.RedirectTo != "" {
-		if pnode := ow.mfs.findPxarNode(node.RedirectTo); pnode != nil {
-			pxarChildIno = pnode.inode
-		}
-		if pxDirEntry, rerr := resolvePxarEntry(ow.mfs, node.RedirectTo); rerr == nil {
+		if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 			meta = mergeMetaWithPxar(meta, pxDirEntry)
+			pxarChildIno = ToInode(pxDirEntry)
 		}
 	} else if ce.pxarSlim != nil {
 		pxarChildIno = ce.pxarSlim.inode
@@ -1216,40 +1243,61 @@ func (ow *commitWalkState) clonePxarEntryBuf(e *pxar.Entry, name string) *pxar.E
 	return &ow.entryBuf
 }
 
-// resolvePxarEntry walks the pxar archive to find the entry at relPath.
-func resolvePxarEntry(mfs *MutableFS, relPath string) (*pxar.Entry, error) {
+// resolvePxarEntryCached resolves a pxar entry by redirect path, caching the result
+// in redirectCache. Intermediate path components use dirEntrySlim.isDir + inode from
+// ReadDirRaw, avoiding per-component ReadEntryAt calls. Only the terminal component
+// triggers a full ReadEntryAt, and only on cache miss.
+func (ow *commitWalkState) resolvePxarEntryCached(relPath string) (*pxar.Entry, error) {
+	if entry, ok := ow.redirectCache[relPath]; ok {
+		return entry, nil
+	}
+
+	entry, err := ow.resolvePxarEntryUncached(relPath)
+	if err != nil {
+		return nil, err
+	}
+	ow.redirectCache[relPath] = entry
+	return entry, nil
+}
+
+// resolvePxarEntryUncached walks the pxar archive to find the entry at relPath.
+// Uses ReadDirRaw + dirEntrySlim fields for intermediate components, avoiding
+// per-component ReadEntryAt. Only calls ReadEntryAt for the terminal component.
+func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry, error) {
 	if relPath == "/" || relPath == "" {
-		mfs.pxar.readerMu.Lock()
-		defer mfs.pxar.readerMu.Unlock()
-		return mfs.pxar.Reader().ReadRoot()
+		ow.mfs.pxar.readerMu.Lock()
+		defer ow.mfs.pxar.readerMu.Unlock()
+		return ow.mfs.pxar.Reader().ReadRoot()
 	}
 
 	parts := splitPath(relPath)
 	curIno := RootInode
 
 	for i, comp := range parts {
-		entries, err := mfs.pxar.ReadDirRaw(curIno)
+		entries, err := ow.mfs.pxar.ReadDirRaw(curIno)
 		if err != nil {
 			return nil, fmt.Errorf("readdir ino %d: %w", curIno, err)
 		}
 		found := false
 		for _, e := range entries {
 			if e.name == comp {
-				mfs.pxar.readerMu.Lock()
-				pxarEntry, err := mfs.pxar.Reader().ReadEntryAt(int64(e.entryStart))
-				mfs.pxar.readerMu.Unlock()
-				if err != nil {
-					return nil, fmt.Errorf("read entry at %d: %w", e.entryStart, err)
-				}
 				if i == len(parts)-1 {
+					// Terminal component: full ReadEntryAt.
+					ow.mfs.pxar.readerMu.Lock()
+					pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(e.entryStart))
+					ow.mfs.pxar.readerMu.Unlock()
+					if err != nil {
+						return nil, fmt.Errorf("read entry at %d: %w", e.entryStart, err)
+					}
 					return pxarEntry, nil
 				}
-				if pxarEntry.IsDir() {
-					curIno = ToInode(pxarEntry)
-					found = true
-					break
+				// Intermediate component: use dirEntrySlim fields (no ReadEntryAt).
+				if !e.isDir {
+					return nil, fmt.Errorf("%q is not a directory", comp)
 				}
-				return nil, fmt.Errorf("%q is not a directory", comp)
+				curIno = e.inode
+				found = true
+				break
 			}
 		}
 		if !found {
