@@ -614,15 +614,20 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	// --- Pre-filter pxar entries and sort both lists ---
 	//
 	// Filter pxar entries shadowed by journal edges or whiteouts.
-	// Register slim nodes for inode lookup during recursion.
+	// Directory entries are NOT filtered when shadowed by a journal directory,
+	// because the recursive commitWalk needs the pxar inode to merge children.
 	filtered := 0
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
-		if edgeNames != nil && edgeNames[pe.name] {
-			continue
-		}
 		if whiteoutSet != nil && whiteoutSet[pe.name] {
 			continue
+		}
+		if edgeNames != nil && edgeNames[pe.name] {
+			// Keep directory entries that shadow journal directories —
+			// processDeferredDir needs the pxar inode to merge children.
+			if !pe.isDir {
+				continue
+			}
 		}
 		if filtered != i {
 			pxarEntries[filtered] = *pe
@@ -686,7 +691,12 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			edge := &journalEdges[ji]
 			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
 			if node != nil {
+				// Capture pxarSlim for journal dirs so processDeferredDir can
+				// merge pxar children when the journal dir has no RedirectTo.
 				ce = commitEntry{name: edge.Name, node: node}
+				if node.Kind == NodeDir && pi < len(pxarEntries) && pxarEntries[pi].name == edge.Name {
+					ce.pxarSlim = &pxarEntries[pi]
+				}
 			}
 			pi++
 			ji++
@@ -712,6 +722,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 				dd.node = ce.node
 				if ce.pxarSlim != nil {
 					dd.pxarIno = ce.pxarSlim.inode
+					dd.entryStart = ce.pxarSlim.entryStart
 				}
 			} else {
 				dd.entryStart = ce.pxarSlim.entryStart
@@ -978,6 +989,20 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 			}
 		} else if dd.pxarIno != 0 {
 			pxarChildIno = dd.pxarIno
+			// The inode comes from readDirRaw which doesn't auto-register.
+			// Register it so the recursive commitWalk can list pxar children.
+			ow.mfs.pxar.mu.RLock()
+			_, cached := ow.mfs.pxar.nodes[pxarChildIno]
+			ow.mfs.pxar.mu.RUnlock()
+			if !cached {
+				// Re-read the entry to construct a slim node for registration.
+				ow.mfs.pxar.readerMu.Lock()
+				pxarEntry, rerr := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
+				ow.mfs.pxar.readerMu.Unlock()
+				if rerr == nil {
+					ow.registerPxarDir(pxarEntry, RootInode)
+				}
+			}
 		}
 
 		if err := ow.writer.BeginDirectory(dd.name, &meta); err != nil {

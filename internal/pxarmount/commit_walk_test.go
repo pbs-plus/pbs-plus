@@ -510,6 +510,115 @@ func registerAllNodes(t *testing.T, fs *PxarFS, ino uint64) {
 	}
 }
 
+// TestJournalDirMergesPxarChildren proves that when a journal directory
+// overlays a pxar directory (same name, no RedirectTo), the commit walk
+// merges both pxar and journal children instead of dropping pxar children.
+//
+// Scenario: archive has /dir1/file_from_archive.txt. User creates
+// /dir1/file_from_journal.txt via FUSE. The journal has a dir node for
+// /dir1 with RedirectTo="" (dir itself wasn't modified). Commit must
+// produce both files.
+func TestJournalDirMergesPxarChildren(t *testing.T) {
+	pbsStoreDir, metaPath, payloadPath := createTestArchive(t)
+	pxarFS := openTestArchive(t, pbsStoreDir, metaPath, payloadPath)
+	mfs := newTestMFS(t, pxarFS)
+
+	// Clear all non-root nodes.
+	pxarFS.mu.Lock()
+	root := pxarFS.nodes[RootInode]
+	pxarFS.nodes = make(map[uint64]node)
+	pxarFS.nodes[RootInode] = root
+	pxarFS.mu.Unlock()
+
+	// Create a journal node for /dir1 (overlays the pxar dir1).
+	// RedirectTo is "" — the dir itself wasn't modified, only children added.
+	dir1ID, err := mfs.journal.CreateNodeEdgeAndWhiteout(
+		1, // root node ID
+		"dir1",
+		&GraphNode{
+			Kind: NodeDir,
+			Mode: 0o755,
+			UID:  0,
+			GID:  0,
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a new file under the journal's dir1 (empty file — no data).
+	_, err = mfs.journal.CreateNodeEdgeAndWhiteout(
+		dir1ID,
+		"newfile.txt",
+		&GraphNode{
+			Kind: NodeFile,
+			Mode: 0o644,
+			UID:  0,
+			GID:  0,
+			Size: 0,
+		},
+		false,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Run commit walk.
+	w := &trackingWriter{}
+	ow := &commitWalkState{
+		mfs:           mfs,
+		writer:        w,
+		prog:          &noopProgress{},
+		xattrCache:    make(map[int64][]format.XAttr),
+		backedHashes:  make(map[string]uint64),
+		redirectCache: make(map[string]*pxar.Entry),
+		pendingRefs:   make([]commitEntry, 0, 64),
+	}
+
+	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
+		t.Fatalf("commitWalk failed: %v", err)
+	}
+
+	t.Logf("ops: %v", w.ops)
+
+	// dir1 should contain BOTH pxar files (file_dir1.txt, dir2/) AND
+	// the new journal file (newfile.txt).
+	hasPxrFile := false
+	hasNewFile := false
+	hasDir2 := false
+	for _, r := range w.refs {
+		if r.name == "file_dir1.txt" {
+			hasPxrFile = true
+		}
+		if r.name == "newfile.txt" {
+			hasNewFile = true
+		}
+	}
+	for _, f := range w.emptyFiles {
+		if f == "file_dir1.txt" {
+			hasPxrFile = true
+		}
+		if f == "newfile.txt" {
+			hasNewFile = true
+		}
+	}
+	if w.dirOpens >= 3 { // root, dir1, dir2
+		hasDir2 = true
+	}
+
+	if !hasPxrFile {
+		t.Errorf("BUG: pxar file file_dir1.txt missing from dir1 — " +
+			"journal dir overlays pxar dir but pxar children were dropped")
+	}
+	if !hasNewFile {
+		t.Errorf("journal file newfile.txt missing from dir1")
+	}
+	if !hasDir2 {
+		t.Errorf("pxar subdir dir2 missing from dir1")
+	}
+}
+
 // Ensure compile-time interface compliance.
 var _ CommitProgress = (*noopProgress)(nil)
 
