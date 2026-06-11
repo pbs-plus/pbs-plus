@@ -368,6 +368,133 @@ func TestCommitWalkWithRegisteredNodes(t *testing.T) {
 	}
 }
 
+// TestCommitWalkDeepNesting verifies that the fix works for arbitrarily deep
+// directory trees, not just 2 levels.
+func TestCommitWalkDeepNesting(t *testing.T) {
+	pbsStoreDir, metaPath, payloadPath := createDeepArchive(t)
+	pxarFS := openTestArchive(t, pbsStoreDir, metaPath, payloadPath)
+	mfs := newTestMFS(t, pxarFS)
+
+	// Clear all non-root nodes.
+	pxarFS.mu.Lock()
+	root := pxarFS.nodes[RootInode]
+	pxarFS.nodes = make(map[uint64]node)
+	pxarFS.nodes[RootInode] = root
+	pxarFS.mu.Unlock()
+
+	w := &trackingWriter{}
+	ow := &commitWalkState{
+		mfs:           mfs,
+		writer:        w,
+		prog:          &noopProgress{},
+		xattrCache:    make(map[int64][]format.XAttr),
+		backedHashes:  make(map[string]uint64),
+		redirectCache: make(map[string]*pxar.Entry),
+		pendingRefs:   make([]commitEntry, 0, 64),
+	}
+
+	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
+		t.Fatalf("commitWalk failed: %v", err)
+	}
+
+	totalFiles := len(w.refs) + len(w.backedFiles) + len(w.emptyFiles)
+	if totalFiles < 4 {
+		t.Errorf("expected 4 files in deep archive, got %d", totalFiles)
+		t.Errorf("ops: %v", w.ops)
+	}
+
+	// Verify deepest file exists.
+	hasDeep := false
+	for _, r := range w.refs {
+		if r.name == "deep.txt" {
+			hasDeep = true
+		}
+	}
+	if !hasDeep {
+		t.Errorf("deepest file missing (dir1/dir2/dir3/deep.txt)")
+	}
+}
+
+// createDeepArchive builds a 3-level deep archive:
+//
+//	/
+//	└── dir1/
+//	    └── dir2/
+//	        └── dir3/
+//	            ├── deep.txt
+//	            ├── a.txt
+//	            ├── b.txt
+//	            └── c.txt
+func createDeepArchive(t *testing.T) (string, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	config, _ := buzhash.NewConfig(4096)
+	ls, err := backupproxy.NewLocalStore(dir, config, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sess, err := ls.StartSession(context.TODO(), backupproxy.BackupConfig{
+		BackupType: datastore.BackupVM,
+		BackupID:   "deep",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writer := transfer.NewSessionWriter(context.TODO(), sess, "root.mpxar.didx", "root.ppxar.didx")
+
+	rootMeta := pxar.DirMetadata(0o755).Build()
+	if err := writer.Begin(&rootMeta, transfer.Options{Format: format.FormatVersion2}); err != nil {
+		t.Fatal(err)
+	}
+
+	fileMeta := pxar.FileMetadata(0o644).Build()
+	dirMeta := pxar.DirMetadata(0o755).Build()
+
+	// dir1
+	if err := writer.BeginDirectory("dir1", &dirMeta); err != nil {
+		t.Fatal(err)
+	}
+	// dir1/dir2
+	if err := writer.BeginDirectory("dir2", &dirMeta); err != nil {
+		t.Fatal(err)
+	}
+	// dir1/dir2/dir3
+	if err := writer.BeginDirectory("dir3", &dirMeta); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"deep.txt", "a.txt", "b.txt", "c.txt"} {
+		if err := writer.WriteEntry(&pxar.Entry{
+			Path:     name,
+			Kind:     pxar.KindFile,
+			Metadata: fileMeta,
+			FileSize: 5,
+		}, []byte("data")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.EndDirectory(); err != nil { // end dir3
+		t.Fatal(err)
+	}
+	if err := writer.EndDirectory(); err != nil { // end dir2
+		t.Fatal(err)
+	}
+	if err := writer.EndDirectory(); err != nil { // end dir1
+		t.Fatal(err)
+	}
+
+	if err := writer.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sess.Finish(context.TODO()); err != nil {
+		t.Fatal(err)
+	}
+
+	return dir, filepath.Join(dir, "root.mpxar.didx"), filepath.Join(dir, "root.ppxar.didx")
+}
+
 // registerAllNodes recursively registers all pxar nodes in the cache.
 func registerAllNodes(t *testing.T, fs *PxarFS, ino uint64) {
 	t.Helper()
