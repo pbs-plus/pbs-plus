@@ -30,8 +30,9 @@ type TaskWriter interface {
 type PxarReader struct {
 	ofs *vfs.LocalFS
 
-	task   TaskWriter
-	closed bool
+	task      TaskWriter
+	closed    bool
+	startTime time.Time
 }
 
 // PxarReaderStats holds read performance statistics.
@@ -45,15 +46,27 @@ type PxarReaderStats struct {
 	StatCacheHits   int64
 }
 
-// GetStats returns the current reader statistics.
+// GetStats returns the current reader statistics with computed speeds.
 func (r *PxarReader) GetStats() PxarReaderStats {
+	elapsed := r.Elapsed().Seconds()
+	if elapsed < 1 {
+		elapsed = 1
+	}
 	stats := r.ofs.Stats()
+	totalAccessed := stats.FilesAccessed + stats.FoldersAccessed
 	return PxarReaderStats{
+		ByteReadSpeed:   float64(stats.TotalBytes) / elapsed,
+		FileAccessSpeed: float64(totalAccessed) / elapsed,
 		FilesAccessed:   stats.FilesAccessed,
 		FoldersAccessed: stats.FoldersAccessed,
-		TotalAccessed:   stats.FilesAccessed + stats.FoldersAccessed,
+		TotalAccessed:   totalAccessed,
 		TotalBytes:      uint64(stats.TotalBytes),
 	}
+}
+
+// Elapsed returns the time since the reader was created.
+func (r *PxarReader) Elapsed() time.Duration {
+	return time.Since(r.startTime)
 }
 
 // NewPxarReader creates a PxarReader for the given snapshot using the Go pxar library.
@@ -118,8 +131,9 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		}
 
 		pr := &PxarReader{
-			ofs:  vfs.NewLocalFS(archiveReader),
-			task: task,
+			ofs:       vfs.NewLocalFS(archiveReader),
+			task:      task,
+			startTime: time.Now(),
 		}
 
 		syslog.L.Info().

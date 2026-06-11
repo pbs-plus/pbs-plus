@@ -142,15 +142,7 @@ func (b *restoreJob) onError(err error) {
 	}
 
 	b.task.WriteString("Restore job summary:")
-
-	r := sessions.GetSessionPxarReader(b.job.GetStreamID())
-	if r != nil {
-		s := r.GetStats()
-		b.task.WriteString(fmt.Sprintf(" - %d total files", s.FilesAccessed))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", s.FoldersAccessed))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(int64(s.TotalBytes))))
-	}
-
+	b.writeStatsSummary()
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
 
@@ -176,15 +168,7 @@ func (b *restoreJob) onError(err error) {
 
 func (b *restoreJob) onSuccess() {
 	b.task.WriteString("Restore job summary:")
-
-	r := sessions.GetSessionPxarReader(b.job.GetStreamID())
-	if r != nil {
-		s := r.GetStats()
-		b.task.WriteString(fmt.Sprintf(" - %d total files", s.FilesAccessed))
-		b.task.WriteString(fmt.Sprintf(" - %d total folders", s.FoldersAccessed))
-		b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(int64(s.TotalBytes))))
-	}
-
+	b.writeStatsSummary()
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 
 	errCount := b.errCount.Load()
@@ -246,6 +230,25 @@ func (b *restoreJob) cleanup() {
 	}
 
 	sessions.DisconnectSession(childKey)
+}
+
+func (b *restoreJob) writeStatsSummary() {
+	r := sessions.GetSessionPxarReader(b.job.GetStreamID())
+	if r == nil {
+		return
+	}
+	s := r.GetStats()
+
+	b.task.WriteString(fmt.Sprintf(" - %d total files", s.FilesAccessed))
+	b.task.WriteString(fmt.Sprintf(" - %d total folders", s.FoldersAccessed))
+	b.task.WriteString(fmt.Sprintf("Restored total: %s", formatBytes(int64(s.TotalBytes))))
+	b.task.WriteString(fmt.Sprintf("Duration: %s", formatDuration(r.Elapsed())))
+	if s.ByteReadSpeed > 0 {
+		b.task.WriteString(fmt.Sprintf("Read speed: %s", formatSpeed(s.ByteReadSpeed)))
+	}
+	if s.FileAccessSpeed > 0 {
+		b.task.WriteString(fmt.Sprintf("Entry processing rate: %.0f entries/s", s.FileAccessSpeed))
+	}
 }
 
 // Helper methods
