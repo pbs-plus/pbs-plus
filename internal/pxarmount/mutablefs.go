@@ -2078,27 +2078,10 @@ func (fs *MutableFS) applyACLOwnership(absPath string) {
 	}
 }
 
-func (fs *MutableFS) ForceACLOwnership() {
-	if !fs.acl.ForceOwner && !fs.acl.ForceGroup {
-		return
-	}
-	uid := fs.acl.OwnerUID
-	gid := fs.acl.OwnerGID
-	if uid == 0 && gid == 0 {
-		return
-	}
-	if err := filepath.Walk(fs.mutableDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if err := os.Chown(path, uid, gid); err != nil {
-			fs.logNonFatal("chown", path, err)
-		}
-		return nil
-	}); err != nil {
-		fs.logNonFatal("walk-chown", fs.mutableDir, err)
-	}
-}
+// ForceACLOwnership is a no-op. Ownership is enforced virtually by
+// applyACL() on every resolve(), so all FUSE responses already return
+// the correct UID/GID regardless of on-disk state.
+func (fs *MutableFS) ForceACLOwnership() {}
 
 // resetAfterCommit clears in-memory state that became stale after a
 // successful commit (journal cleared, pxar reader swapped).

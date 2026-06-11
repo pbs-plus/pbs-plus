@@ -75,8 +75,11 @@ func Serve(cfg MountConfig) {
 			fmt.Fprintf(os.Stderr, "  warning: reconcile error: %v\n", err)
 		}
 
-		// Apply default ownership and force-walk if requested.
+		// Apply default ownership on the backing root (fast).
 		mfs.applyACLOwnership(backingDir)
+
+		// ForceACLOwnership is a no-op: ownership is enforced
+		// virtually by applyACL() on every resolve().
 		mfs.ForceACLOwnership()
 
 		// Map root inode.
