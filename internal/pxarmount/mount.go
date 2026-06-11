@@ -78,10 +78,6 @@ func Serve(cfg MountConfig) {
 		// Apply default ownership on the backing root (fast).
 		mfs.applyACLOwnership(backingDir)
 
-		// ForceACLOwnership is a no-op: ownership is enforced
-		// virtually by applyACL() on every resolve().
-		mfs.ForceACLOwnership()
-
 		// Map root inode.
 		mfs.mapInode(RootInode, "/")
 

@@ -2078,11 +2078,6 @@ func (fs *MutableFS) applyACLOwnership(absPath string) {
 	}
 }
 
-// ForceACLOwnership is a no-op. Ownership is enforced virtually by
-// applyACL() on every resolve(), so all FUSE responses already return
-// the correct UID/GID regardless of on-disk state.
-func (fs *MutableFS) ForceACLOwnership() {}
-
 // resetAfterCommit clears in-memory state that became stale after a
 // successful commit (journal cleared, pxar reader swapped).
 func (fs *MutableFS) resetAfterCommit() {

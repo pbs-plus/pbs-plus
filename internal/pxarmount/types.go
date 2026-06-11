@@ -118,10 +118,8 @@ type snapshotRef struct {
 
 // ACLConfig configures default ownership and POSIX ACL behavior.
 type ACLConfig struct {
-	OwnerUID   int
-	OwnerGID   int
-	ForceOwner bool
-	ForceGroup bool
+	OwnerUID int
+	OwnerGID int
 
 	// Full POSIX ACL entries. When set, these are served as virtual
 	// system.posix_acl_access / system.posix_acl_default xattrs.
@@ -453,12 +451,10 @@ func nodeKindFromPxar(n *node) uint8 {
 }
 
 // buildACLConfig constructs an ACLConfig from CLI flags and optional spec strings.
-func BuildACLConfig(ownerUID, ownerGID int, forceOwner, forceGroup bool, aclSpec, defaultAclSpec string) ACLConfig {
+func BuildACLConfig(ownerUID, ownerGID int, aclSpec, defaultAclSpec string) ACLConfig {
 	cfg := ACLConfig{
-		OwnerUID:   ownerUID,
-		OwnerGID:   ownerGID,
-		ForceOwner: forceOwner,
-		ForceGroup: forceGroup,
+		OwnerUID: ownerUID,
+		OwnerGID: ownerGID,
 	}
 	if aclSpec != "" {
 		entries, err := ParseACLSpec(aclSpec)
