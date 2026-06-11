@@ -9,9 +9,12 @@ import (
 )
 
 const (
-	magicV1   uint32 = 0x4E465353
-	version   uint16 = 1
-	maxLength        = 1 << 30
+	magicV1      uint32 = 0x4E465353
+	version      uint16 = 1
+	maxLength           = 1 << 30
+	chunkSize           = 256 << 20  // 256 MB per chunk
+	chunkMagic   uint32 = 0x4E465345 // "FSNE" — signals chunked mode
+	chunkVersion uint16 = 2
 )
 
 func SendDataFromReader(r io.Reader, length int, stream ARPCStream) error {
@@ -141,4 +144,80 @@ func ReceiveDataInto(stream ARPCStream, dst []byte) (int, error) {
 		WithField("total_read", toRead).
 		Write()
 	return toRead, nil
+}
+
+// SendDataChunked streams the full content of r over stream in fixed-size
+// chunks. Each chunk is prefixed with the standard 14-byte header. A final
+// zero-length chunk signals end-of-stream. Unlike SendDataFromReader there
+// is no per-file size limit.
+func SendDataChunked(r io.Reader, stream ARPCStream) error {
+	if stream == nil {
+		return fmt.Errorf("stream is nil")
+	}
+
+	buf := make([]byte, chunkSize)
+	for {
+		n, readErr := io.ReadFull(r, buf)
+		if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
+			return fmt.Errorf("chunked read error: %w", readErr)
+		}
+
+		if n > 0 {
+			var hdr [14]byte
+			binary.LittleEndian.PutUint32(hdr[0:4], chunkMagic)
+			binary.LittleEndian.PutUint16(hdr[4:6], chunkVersion)
+			binary.LittleEndian.PutUint64(hdr[6:14], uint64(n))
+
+			if _, err := stream.Write(hdr[:]); err != nil {
+				return fmt.Errorf("chunked header write: %w", err)
+			}
+			if _, err := stream.Write(buf[:n]); err != nil {
+				return fmt.Errorf("chunked data write: %w", err)
+			}
+		}
+
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF || n == 0 {
+			break
+		}
+	}
+
+	// Write terminal zero-length chunk.
+	var term [14]byte
+	binary.LittleEndian.PutUint32(term[0:4], chunkMagic)
+	binary.LittleEndian.PutUint16(term[4:6], chunkVersion)
+	// length = 0 (already zero)
+	if _, err := stream.Write(term[:]); err != nil {
+		return fmt.Errorf("chunked terminal write: %w", err)
+	}
+
+	return nil
+}
+
+// ReceiveDataChunked reads a chunked stream from stream and copies every
+// chunk's payload into dst. Returns the total bytes written.
+func ReceiveDataChunked(stream ARPCStream, dst io.Writer) (int64, error) {
+	var total int64
+	var hdr [14]byte
+	for {
+		if _, err := io.ReadFull(stream, hdr[:]); err != nil {
+			return total, fmt.Errorf("read stream header: %w", err)
+		}
+
+		mg := binary.LittleEndian.Uint32(hdr[0:4])
+		if mg != chunkMagic {
+			return total, fmt.Errorf("invalid chunk magic: 0x%08X", mg)
+		}
+
+		chunkLen := binary.LittleEndian.Uint64(hdr[6:14])
+		if chunkLen == 0 {
+			break
+		}
+
+		n, err := io.CopyN(dst, stream, int64(chunkLen))
+		total += n
+		if err != nil {
+			return total, fmt.Errorf("read chunk data: %w", err)
+		}
+	}
+	return total, nil
 }

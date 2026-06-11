@@ -2,8 +2,6 @@ package pxar
 
 import (
 	"context"
-	"encoding/binary"
-	"fmt"
 	"io"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -185,7 +183,6 @@ func (c *Client) Close() error {
 
 // ReadFileContentReader returns a streaming reader for file content identified
 // by content offset range. Works for both local and remote clients.
-// fileSize is used for the remote streaming protocol.
 // The caller must close the returned reader.
 func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, contentEnd, fileSize uint64) (io.ReadCloser, error) {
 	if c.pipe != nil {
@@ -196,26 +193,10 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			params := map[string]uint64{
 				"content_start": contentStart,
 				"content_end":   contentEnd,
-				"file_size":     fileSize,
 			}
 			handler := arpc.RawStreamHandler(func(stream arpc.ARPCStream) error {
 				defer stream.Close()
-
-				// Read the 14-byte SendDataFromReader header
-				var hdr [14]byte
-				if _, err := io.ReadFull(stream, hdr[:]); err != nil {
-					return fmt.Errorf("read stream header: %w", err)
-				}
-				if binary.LittleEndian.Uint32(hdr[0:4]) != 0x4E465353 {
-					return fmt.Errorf("invalid stream magic")
-				}
-				totalLength := binary.LittleEndian.Uint64(hdr[6:14])
-				if totalLength == 0 {
-					return nil
-				}
-
-				// Stream content to pipe writer
-				_, err := io.CopyN(pw, stream, int64(totalLength))
+				_, err := arpc.ReceiveDataChunked(stream, pw)
 				return err
 			})
 

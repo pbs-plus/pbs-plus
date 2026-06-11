@@ -183,7 +183,6 @@ func (s *RemoteServer) handleReadStream(req *arpc.Request) (arpc.Response, error
 	var params struct {
 		ContentStart uint64 `cbor:"content_start"`
 		ContentEnd   uint64 `cbor:"content_end"`
-		FileSize     uint64 `cbor:"file_size"`
 	}
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
@@ -196,7 +195,9 @@ func (s *RemoteServer) handleReadStream(req *arpc.Request) (arpc.Response, error
 
 	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 		defer rc.Close()
-		_ = arpc.SendDataFromReader(rc, int(params.FileSize), stream)
+		if err := arpc.SendDataChunked(rc, stream); err != nil {
+			syslog.L.Error(err).WithMessage("handleReadStream: chunked send failed").Write()
+		}
 	}}, nil
 }
 
