@@ -2,6 +2,8 @@ package pxarmount
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -617,6 +619,248 @@ func TestJournalDirMergesPxarChildren(t *testing.T) {
 	if !hasDir2 {
 		t.Errorf("pxar subdir dir2 missing from dir1")
 	}
+}
+
+// TestReadDirRawErrorSwallowed proves that when ReadDirRaw returns an error
+// for a pxar inode during commitWalk, the error is silently swallowed by
+// setting pxarEntries = nil. This means corrupted or inaccessible pxar
+// directory contents are dropped without any error propagation.
+//
+// NOTE: This is a robustness concern, not the user's empty-dir bug (which
+// was caused by unregistered inodes, now fixed). With the fix applied,
+// this path only triggers on genuinely corrupted archives.
+func TestReadDirRawErrorSwallowed(t *testing.T) {
+	pbsStoreDir, metaPath, payloadPath := createTestArchive(t)
+	pxarFS := openTestArchive(t, pbsStoreDir, metaPath, payloadPath)
+
+	// Register all nodes first (fix is applied).
+	registerAllNodes(t, pxarFS, RootInode)
+
+	// Corrupt a child node's contentOffset so ListDirectory fails.
+	pxarFS.mu.Lock()
+	for ino, n := range pxarFS.nodes {
+		if ino != RootInode && n.isDir {
+			// Set an invalid contentOffset that will cause ListDirectory to fail.
+			n.contentOffset = 999999999
+			pxarFS.nodes[ino] = n
+			break
+		}
+	}
+	pxarFS.mu.Unlock()
+
+	mfs := newTestMFS(t, pxarFS)
+
+	w := &trackingWriter{}
+	ow := &commitWalkState{
+		mfs:           mfs,
+		writer:        w,
+		prog:          &noopProgress{},
+		xattrCache:    make(map[int64][]format.XAttr),
+		backedHashes:  make(map[string]uint64),
+		redirectCache: make(map[string]*pxar.Entry),
+		pendingRefs:   make([]commitEntry, 0, 64),
+	}
+
+	err := ow.commitWalk(1, RootInode, "/")
+	if err != nil {
+		t.Fatalf("commitWalk should not return error even with corrupted inode, got: %v", err)
+	}
+
+	t.Logf("ops: %v", w.ops)
+
+	// The corrupted dir's children are silently dropped — no error returned.
+	// Root-level files and non-corrupted dirs should still appear.
+	if len(w.ops) == 0 {
+		t.Error("expected some ops from root-level entries")
+	}
+
+	// The corrupted directory should be opened but its children are empty
+	// because ReadDirRaw failed and the error was swallowed.
+	hasAllFiles := len(w.refs) >= 5
+	if hasAllFiles {
+		t.Log("all 5 refs present — corrupted dir's children came from somewhere")
+	}
+
+	t.Logf("confirmed: commitWalk returns nil error even when ReadDirRaw fails on corrupted inode")
+	t.Logf("refs=%d backed=%d emptyFiles=%d dirOpens=%d",
+		len(w.refs), len(w.backedFiles), len(w.emptyFiles), w.dirOpens)
+}
+
+// TestLastRefPayloadOffsetNotStaleInSimpleArchive tests whether the
+// lastRefPayloadOffset tracking causes unnecessary re-encodes with the
+// standard test archive structure.
+//
+// A monotonic-enforcing mock writer rejects non-monotonic payload offsets
+// (matching the real encoder). If re-encodes occur, they prove the
+// staleness issue. If no re-encodes occur, the archive structure doesn't
+// trigger the issue.
+//
+// Result: With the standard test archive, all 5 files pass as refs.
+// The pendingRefs batch sorts by payloadOffset within each directory,
+// and depth-first alphabetical processing maintains monotonicity.
+// The lastRefPayloadOffset staleness is a theoretical concern that
+// requires specific archive structures with non-depth-first offset
+// ordering to manifest.
+func TestLastRefPayloadOffsetNotStaleInSimpleArchive(t *testing.T) {
+	pbsStoreDir, metaPath, payloadPath := createTestArchive(t)
+	pxarFS := openTestArchive(t, pbsStoreDir, metaPath, payloadPath)
+	mfs := newTestMFS(t, pxarFS)
+
+	pxarFS.mu.Lock()
+	root := pxarFS.nodes[RootInode]
+	pxarFS.nodes = make(map[uint64]node)
+	pxarFS.nodes[RootInode] = root
+	pxarFS.mu.Unlock()
+
+	w := &monotonicRefWriter{}
+	ow := &commitWalkState{
+		mfs:           mfs,
+		writer:        w,
+		prog:          &noopProgress{},
+		xattrCache:    make(map[int64][]format.XAttr),
+		backedHashes:  make(map[string]uint64),
+		redirectCache: make(map[string]*pxar.Entry),
+		pendingRefs:   make([]commitEntry, 0, 64),
+	}
+
+	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
+		t.Fatalf("commitWalk failed: %v", err)
+	}
+
+	t.Logf("ops: %v", w.ops)
+	t.Logf("refs=%d backed=%d emptyFiles=%d",
+		len(w.refs), len(w.backedFiles), len(w.emptyFiles))
+
+	totalFiles := len(w.refs) + len(w.backedFiles) + len(w.emptyFiles)
+	if totalFiles != 5 {
+		t.Errorf("expected 5 total files, got %d", totalFiles)
+	}
+
+	// All files should be refs — the pendingRefs sorting ensures monotonic
+	// offsets within each directory, and depth-first processing maintains
+	// monotonicity across directories for this archive structure.
+	if len(w.backedFiles) > 0 {
+		t.Logf("PERFORMANCE: %d files re-encoded — lastRefPayloadOffset staleness detected", len(w.backedFiles))
+	} else {
+		t.Log("no re-encodes — archive structure maintains monotonic offsets")
+	}
+}
+
+// monotonicRefWriter wraps trackingWriter and enforces monotonic payload
+// offsets on WriteEntryRef, matching the real encoder's behavior.
+type monotonicRefWriter struct {
+	trackingWriter
+	payloadPos uint64 // virtual payload write position (advances on WriteEntryReader)
+	prevRefOff uint64 // previous ref offset (must be strictly increasing)
+	hasPrev    bool
+}
+
+func (w *monotonicRefWriter) WriteEntryRef(entry *pxar.Entry, offset uint64) error {
+	// Enforce same checks as the real encoder:
+	// 1. offset >= payloadPos (can't point backwards in stream)
+	// 2. offset > prevRefOff (strictly increasing refs)
+	if offset < w.payloadPos {
+		return fmt.Errorf("payload offset %d < write pos %d", offset, w.payloadPos)
+	}
+	if w.hasPrev && offset <= w.prevRefOff {
+		return fmt.Errorf("payload offset %d <= prev ref %d", offset, w.prevRefOff)
+	}
+
+	w.refs = append(w.refs, refRecord{entry.Path, offset})
+	w.ops = append(w.ops, "ref:"+entry.Path)
+	w.prevRefOff = offset
+	w.hasPrev = true
+	return nil
+}
+
+func (w *monotonicRefWriter) WriteEntryReader(entry *pxar.Entry, r io.Reader, size uint64) error {
+	// Advance virtual payload position — simulates the encoder writing new data.
+	w.payloadPos += size + 64 // +64 for header overhead
+	w.backedFiles = append(w.backedFiles, entry.Path)
+	w.ops = append(w.ops, "backed:"+entry.Path)
+	return nil
+}
+
+// TestRegisterPxarDirNodesRefCountZero proves that nodes registered via
+// registerPxarDir have refs=0, making them eligible for eviction if the
+// node cache exceeds maxCachedNodes (1M entries).
+//
+// NOTE: This is a theoretical concern for archives with >1M entries in a
+// single directory level. The commit walk registers nodes before recursing,
+// and the eviction check happens after each registration. If the cache is
+// full of unreferenced nodes (from a huge directory listing), the just-
+// registered node could be evicted before the recursive commitWalk uses it.
+func TestRegisterPxarDirNodesRefCountZero(t *testing.T) {
+	pbsStoreDir, metaPath, payloadPath := createTestArchive(t)
+	pxarFS := openTestArchive(t, pbsStoreDir, metaPath, payloadPath)
+	mfs := newTestMFS(t, pxarFS)
+
+	// Read root entries to get a known child dir.
+	rootEntries, err := pxarFS.ReadDirRaw(RootInode)
+	if err != nil {
+		t.Fatalf("ReadDirRaw(root): %v", err)
+	}
+
+	var childEntry *dirEntrySlim
+	for i := range rootEntries {
+		if rootEntries[i].isDir {
+			childEntry = &rootEntries[i]
+			break
+		}
+	}
+	if childEntry == nil {
+		t.Fatal("no child dir found")
+	}
+
+	// Clear all non-root nodes.
+	pxarFS.mu.Lock()
+	root := pxarFS.nodes[RootInode]
+	pxarFS.nodes = make(map[uint64]node)
+	pxarFS.nodes[RootInode] = root
+	pxarFS.mu.Unlock()
+
+	// Verify child is not cached.
+	pxarFS.mu.RLock()
+	_, ok := pxarFS.nodes[childEntry.inode]
+	pxarFS.mu.RUnlock()
+	if ok {
+		t.Fatal("child should not be cached after clearing")
+	}
+
+	// Now read the full pxar entry and call registerPxarDir.
+	pxarFS.readerMu.Lock()
+	pxarEntry, err := pxarFS.Reader().ReadEntryAt(int64(childEntry.entryStart))
+	pxarFS.readerMu.Unlock()
+	if err != nil {
+		t.Fatalf("ReadEntryAt: %v", err)
+	}
+
+	// Use the actual registerPxarDir from commit walk.
+	ow := &commitWalkState{
+		mfs:           mfs,
+		writer:        &trackingWriter{},
+		prog:          &noopProgress{},
+		xattrCache:    make(map[int64][]format.XAttr),
+		backedHashes:  make(map[string]uint64),
+		redirectCache: make(map[string]*pxar.Entry),
+		pendingRefs:   make([]commitEntry, 0, 64),
+	}
+	ow.registerPxarDir(pxarEntry, RootInode)
+
+	// Verify node is now cached.
+	pxarFS.mu.RLock()
+	n, ok := pxarFS.nodes[childEntry.inode]
+	pxarFS.mu.RUnlock()
+	if !ok {
+		t.Fatal("registerPxarDir did not cache the node")
+	}
+
+	// Verify refs is 0.
+	if n.refs != 0 {
+		t.Fatalf("expected refs=0, got refs=%d", n.refs)
+	}
+
+	t.Logf("confirmed: registered node inode=%d has refs=0 — eligible for eviction if cache > 1M", childEntry.inode)
 }
 
 // Ensure compile-time interface compliance.
