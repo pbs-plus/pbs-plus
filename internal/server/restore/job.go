@@ -16,6 +16,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
@@ -41,11 +42,11 @@ type restoreJob struct {
 	errCh        chan error
 	errCount     atomic.Int32
 	receivedDone atomic.Bool
-	disconnected chan struct{}
 
 	job           database.Restore
 	remoteServer  *pxar.RemoteServer
 	localClient   *pxar.Client
+	agentPipe     *arpc.StreamPipe
 	storeInstance *store.Store
 	skipCheck     bool
 	web           bool
@@ -70,7 +71,6 @@ func NewRestoreJob(
 		web:           web,
 		waitGroup:     &sync.WaitGroup{},
 		task:          task,
-		disconnected:  make(chan struct{}, 1),
 	}
 
 	return &jobs.Job{
@@ -384,6 +384,8 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		return err
 	}
 
+	b.agentPipe = agentRPC
+
 	socketPath := filepath.Join(
 		conf.RestoreSocketPath,
 		strings.ReplaceAll(childKey, "|", "-")+".sock",
@@ -485,10 +487,12 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 	b.task.WriteString("starting local restore")
 
 	b.waitGroup.Go(func() {
-		pxar.RestoreWithOptions(ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
+		if err := pxar.RestoreWithOptions(ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
 			DestDir: destPath,
 			Mode:    pxar.RestoreMode(b.job.Mode),
-		})
+		}); err != nil && b.err == nil {
+			b.err = err
+		}
 	})
 
 	b.waitGroup.Go(func() {
@@ -517,13 +521,18 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 	// Wait for agent's done signal first (remote restores only)
 	if b.remoteServer != nil {
+		var pipeCloseCh <-chan struct{}
+		if b.agentPipe != nil {
+			pipeCloseCh = b.agentPipe.CloseChan()
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-b.remoteServer.DoneCh:
 			b.receivedDone.Store(true)
 			b.task.WriteString("received done signal from agent")
-		case <-b.disconnected:
+		case <-pipeCloseCh:
 			if !b.receivedDone.Load() {
 				b.task.WriteString("agent disconnected")
 				b.err = fmt.Errorf("lost connection to agent without receiving done signal")
