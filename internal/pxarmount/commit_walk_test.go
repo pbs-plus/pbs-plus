@@ -308,14 +308,16 @@ func TestReadDirRawRequiresNodeCache(t *testing.T) {
 	t.Logf("dir1: entryStart=%d childIno=%d", dir1EntryStart, childIno)
 
 	// Step 5: Try ReadDirRaw(childIno) — this is what commitWalk does.
-	// It should FAIL because the node was never registered.
+	// ReadDirRaw itself is NOT fixed — it still requires cached nodes.
+	// The fix is in processDeferredDir/emitPxarDir which now registers
+	// nodes before recursing. This test documents the root cause.
 	_, err = pxarFS.ReadDirRaw(childIno)
 	if err != nil {
-		t.Errorf("BUG REPRODUCED: ReadDirRaw(childIno=%d) failed: %v", childIno, err)
-		t.Errorf("processDeferredDir computes childIno via ToInode but never registers " +
-			"the node in PxarFS.nodes. commitWalk then calls ReadDirRaw which returns ENOENT " +
-			"because the inode isn't in the cache. The error is silently swallowed and " +
-			"the directory appears empty in the new archive.")
+		t.Logf("Root cause confirmed: ReadDirRaw(childIno=%d) requires cached node: %v", childIno, err)
+		t.Logf("The fix is in processDeferredDir/emitPxarDir which now register nodes " +
+			"via registerPxarDir before the recursive commitWalk call.")
+	} else {
+		t.Errorf("ReadDirRaw succeeded for uncached inode — test precondition broken")
 	}
 }
 

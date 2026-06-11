@@ -930,6 +930,31 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 	return nil
 }
 
+// registerPxarDir ensures a pxar directory entry's inode is in the PxarFS
+// node cache so that the recursive commitWalk can call ReadDirRaw(childIno).
+// Without this, ReadDirRaw returns ENOENT for uncached inodes and the
+// directory's children are silently dropped from the new archive.
+func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry, parentIno uint64) {
+	childIno := ToInode(pxarEntry)
+	slim := dirEntrySlim{
+		name:          pxarEntry.FileName(),
+		inode:         childIno,
+		entryStart:    pxarEntry.FileOffset,
+		contentOffset: pxarEntry.ContentOffset,
+		payloadOffset: pxarEntry.PayloadOffset,
+		fileSize:      pxarEntry.FileSize,
+		mode:          statMode(pxarEntry.Metadata.Stat.Mode),
+		uid:           pxarEntry.Metadata.Stat.UID,
+		gid:           pxarEntry.Metadata.Stat.GID,
+		mtimeSecs:     pxarEntry.Metadata.Stat.Mtime.Secs,
+		mtimeNanos:    pxarEntry.Metadata.Stat.Mtime.Nanos,
+		isDir:         pxarEntry.IsDir(),
+		isSymlink:     pxarEntry.IsSymlink(),
+		isReg:         pxarEntry.IsRegularFile(),
+	}
+	ow.mfs.pxar.RegisterSlimNode(&slim, parentIno)
+}
+
 // processDeferredDir handles deferred directory recursion after pxarEntries
 // has been released. It performs the same work as emitJournalDir/emitPxarDir
 // but uses only the minimal data captured in deferredDir.
@@ -947,6 +972,9 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 			if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 				meta = mergeMetaWithPxar(meta, pxDirEntry)
 				pxarChildIno = ToInode(pxDirEntry)
+				// Register the resolved pxar directory so recursive commitWalk
+				// can call ReadDirRaw on its inode.
+				ow.registerPxarDir(pxDirEntry, RootInode) // parent ino not critical for commit walk
 			}
 		} else if dd.pxarIno != 0 {
 			pxarChildIno = dd.pxarIno
@@ -970,6 +998,11 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 	}
 
 	childIno := ToInode(pxarEntry)
+
+	// Register the pxar directory node so that the recursive commitWalk
+	// can call ReadDirRaw(childIno) to list its children.
+	ow.registerPxarDir(pxarEntry, RootInode)
+
 	meta := buildMetaFromPxarEntry(pxarEntry)
 
 	if err := ow.writer.BeginDirectory(dd.name, &meta); err != nil {
@@ -1044,6 +1077,8 @@ func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string)
 		if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 			meta = mergeMetaWithPxar(meta, pxDirEntry)
 			pxarChildIno = ToInode(pxDirEntry)
+			// Register so recursive commitWalk can list children.
+			ow.registerPxarDir(pxDirEntry, RootInode)
 		}
 	} else if ce.pxarSlim != nil {
 		pxarChildIno = ce.pxarSlim.inode
@@ -1071,6 +1106,11 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 	}
 
 	childIno := ToInode(pxarEntry)
+
+	// Register the pxar directory node so that the recursive commitWalk
+	// can call ReadDirRaw(childIno) to list its children.
+	ow.registerPxarDir(pxarEntry, RootInode)
+
 	meta := buildMetaFromPxarEntry(pxarEntry)
 
 	if err := ow.writer.BeginDirectory(ce.name, &meta); err != nil {
