@@ -159,15 +159,14 @@ func (zc *zipContext) addFile(relPath string, fileEntry pxar.FileInfo) {
 	}
 
 	if fileEntry.RawSize > 0 && fileEntry.ContentRange != nil {
-		rr := &rangeReader{
-			ctx:          zc.ctx,
-			client:       zc.client,
-			contentStart: fileEntry.ContentRange[0],
-			contentEnd:   fileEntry.ContentRange[1],
-			totalSize:    fileEntry.RawSize,
+		rc, err := zc.client.ReadFileContentReader(zc.ctx, fileEntry.ContentRange[0], fileEntry.ContentRange[1], fileEntry.RawSize)
+		if err != nil {
+			zc.sendError(fmt.Errorf("open content reader %q: %w", filePath, err))
+			return
 		}
+		defer rc.Close()
 
-		if _, err := io.Copy(writer, rr); err != nil {
+		if _, err := io.Copy(writer, rc); err != nil {
 			zc.sendError(fmt.Errorf("copy file data %q: %w", filePath, err))
 			return
 		}

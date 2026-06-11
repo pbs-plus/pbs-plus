@@ -2,6 +2,7 @@ package pxar
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 
@@ -204,13 +205,46 @@ func (c *Client) Close() error {
 }
 
 // ReadFileContentReader returns a streaming reader for file content identified
-// by content offset range. For local clients, this bypasses the rangeReader
-// indirection and reads directly from the chunk store. The caller must close
-// the returned reader.
-func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, contentEnd uint64) (io.ReadCloser, error) {
-	// Remote path not supported for streaming — fall back to Read
+// by content offset range. Works for both local and remote clients.
+// fileSize is used for the remote streaming protocol.
+// The caller must close the returned reader.
+func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, contentEnd, fileSize uint64) (io.ReadCloser, error) {
 	if c.pipe != nil {
-		return nil, fmt.Errorf("ReadFileContentReader not supported over remote ARPC")
+		pr, pw := io.Pipe()
+		go func() {
+			defer pw.Close()
+
+			params := map[string]uint64{
+				"content_start": contentStart,
+				"content_end":   contentEnd,
+				"file_size":     fileSize,
+			}
+			handler := arpc.RawStreamHandler(func(stream arpc.ARPCStream) error {
+				defer stream.Close()
+
+				// Read the 14-byte SendDataFromReader header
+				var hdr [14]byte
+				if _, err := io.ReadFull(stream, hdr[:]); err != nil {
+					return fmt.Errorf("read stream header: %w", err)
+				}
+				if binary.LittleEndian.Uint32(hdr[0:4]) != 0x4E465353 {
+					return fmt.Errorf("invalid stream magic")
+				}
+				totalLength := binary.LittleEndian.Uint64(hdr[6:14])
+				if totalLength == 0 {
+					return nil
+				}
+
+				// Stream content to pipe writer
+				_, err := io.CopyN(pw, stream, int64(totalLength))
+				return err
+			})
+
+			if err := c.pipe.Call(ctx, "pxar.ReadStream", params, handler); err != nil {
+				pw.CloseWithError(err)
+			}
+		}()
+		return pr, nil
 	}
 	return c.pr.ReadFileContentReader(ctx, contentStart, contentEnd)
 }

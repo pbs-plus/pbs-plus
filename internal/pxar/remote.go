@@ -54,6 +54,7 @@ func (s *RemoteServer) registerHandlers() {
 	s.router.Handle("pxar.ReadDir", s.handleReadDir)
 	s.router.Handle("pxar.GetAttr", s.handleGetAttr)
 	s.router.Handle("pxar.Read", s.handleRead)
+	s.router.Handle("pxar.ReadStream", s.handleReadStream)
 	s.router.Handle("pxar.ReadLink", s.handleReadLink)
 	s.router.Handle("pxar.ListXAttrs", s.handleListXAttrs)
 	s.router.Handle("pxar.Done", s.handleDone)
@@ -198,6 +199,27 @@ func (s *RemoteServer) handleRead(req *arpc.Request) (arpc.Response, error) {
 
 	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 		_ = arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream)
+	}}, nil
+}
+
+func (s *RemoteServer) handleReadStream(req *arpc.Request) (arpc.Response, error) {
+	var params struct {
+		ContentStart uint64 `cbor:"content_start"`
+		ContentEnd   uint64 `cbor:"content_end"`
+		FileSize     uint64 `cbor:"file_size"`
+	}
+	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
+		return arpc.Response{}, err
+	}
+
+	rc, err := s.reader.ReadFileContentReader(req.Context, params.ContentStart, params.ContentEnd)
+	if err != nil {
+		return makeErrorResponse(err)
+	}
+
+	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
+		defer rc.Close()
+		_ = arpc.SendDataFromReader(rc, int(params.FileSize), stream)
 	}}, nil
 }
 
