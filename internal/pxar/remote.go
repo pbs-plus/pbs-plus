@@ -3,7 +3,6 @@
 package pxar
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
@@ -53,7 +52,6 @@ func (s *RemoteServer) registerHandlers() {
 	s.router.Handle("pxar.LookupByPath", s.handleLookupByPath)
 	s.router.Handle("pxar.ReadDir", s.handleReadDir)
 	s.router.Handle("pxar.GetAttr", s.handleGetAttr)
-	s.router.Handle("pxar.Read", s.handleRead)
 	s.router.Handle("pxar.ReadStream", s.handleReadStream)
 	s.router.Handle("pxar.ReadLink", s.handleReadLink)
 	s.router.Handle("pxar.ListXAttrs", s.handleListXAttrs)
@@ -179,27 +177,6 @@ func (s *RemoteServer) handleGetAttr(req *arpc.Request) (arpc.Response, error) {
 		Status: 200,
 		Data:   data,
 	}, nil
-}
-
-func (s *RemoteServer) handleRead(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		ContentStart uint64 `cbor:"content_start"`
-		ContentEnd   uint64 `cbor:"content_end"`
-		Offset       uint64 `cbor:"offset"`
-		Size         uint   `cbor:"size"`
-	}
-	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
-		return arpc.Response{}, err
-	}
-
-	data, err := s.reader.Read(req.Context, params.ContentStart, params.ContentEnd, params.Offset, params.Size)
-	if err != nil {
-		return makeErrorResponse(err)
-	}
-
-	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
-		_ = arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream)
-	}}, nil
 }
 
 func (s *RemoteServer) handleReadStream(req *arpc.Request) (arpc.Response, error) {

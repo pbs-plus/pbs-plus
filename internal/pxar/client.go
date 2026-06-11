@@ -127,27 +127,6 @@ func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (pxar
 	return *info, nil
 }
 
-func (c *Client) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint, data []byte) (int, error) {
-	if c.pipe != nil {
-		params := map[string]any{
-			"content_start": contentStart,
-			"content_end":   contentEnd,
-			"offset":        offset,
-			"size":          size,
-		}
-		return c.pipe.CallBinary(ctx, "pxar.Read", params, data)
-	}
-
-	raw, err := c.pr.Read(ctx, contentStart, contentEnd, offset, size)
-	if err != nil {
-		return 0, err
-	}
-
-	n := copy(data, raw)
-
-	return n, nil
-}
-
 func (c *Client) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
 	if c.pipe != nil {
 		params := map[string]any{
