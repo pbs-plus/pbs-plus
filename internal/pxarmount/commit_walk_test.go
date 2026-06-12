@@ -719,7 +719,7 @@ func TestRegisterPxarDirNodesRefCountZero(t *testing.T) {
 		redirectCache: make(map[string]*pxar.Entry),
 		pendingRefs:   make([]commitEntry, 0, 64),
 	}
-	ow.registerPxarDir(pxarEntry, RootInode)
+	ow.registerPxarDir(pxarEntry)
 
 	pxarFS.mu.RLock()
 	n, ok := pxarFS.nodes[childEntry.inode]

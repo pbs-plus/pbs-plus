@@ -508,7 +508,7 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		name:     "reg",
 		pxarSlim: &dirEntrySlim{name: "reg", payloadOffset: 4096, isReg: true},
 	}
-	if err := ow.addToPendingRefs(&ceFile, "/test"); err != nil {
+	if err := ow.addToPendingRefs(&ceFile); err != nil {
 		t.Fatal(err)
 	}
 	if ceFile.sortKey != 4096 {
@@ -520,7 +520,7 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		pxarSlim: &dirEntrySlim{name: "preset", payloadOffset: 999, isReg: true},
 		sortKey:  8888,
 	}
-	if err := ow.addToPendingRefs(&cePreset, "/test"); err != nil {
+	if err := ow.addToPendingRefs(&cePreset); err != nil {
 		t.Fatal(err)
 	}
 	if cePreset.sortKey != 8888 {
@@ -531,7 +531,7 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		name:     "link",
 		pxarSlim: &dirEntrySlim{name: "link", entryStart: 2048, isSymlink: true},
 	}
-	if err := ow.addToPendingRefs(&ceSym, "/test"); err != nil {
+	if err := ow.addToPendingRefs(&ceSym); err != nil {
 		t.Fatal(err)
 	}
 	if ceSym.sortKey != 2048 {
@@ -542,7 +542,7 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		name:     "dir",
 		pxarSlim: &dirEntrySlim{name: "dir", entryStart: 1024, isDir: true},
 	}
-	if err := ow.addToPendingRefs(&ceDir, "/test"); err != nil {
+	if err := ow.addToPendingRefs(&ceDir); err != nil {
 		t.Fatal(err)
 	}
 	if ceDir.sortKey != 1024 {

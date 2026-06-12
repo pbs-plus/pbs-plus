@@ -82,7 +82,7 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 				ce("a", 100, 7500),
 			},
 		}
-		if err := ow.flushPendingRefs("", false); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
 		if ow.hasSavedChunk {
@@ -94,7 +94,7 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 		_ = w.enc.Advance(500)
 
 		ow.pendingRefs = []commitEntry{ce("d", 8100, 3800)}
-		if err := ow.flushPendingRefs("", false); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -130,7 +130,7 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 				ce("a", 100, 7500),
 			},
 		}
-		if err := ow.flushPendingRefs("", true); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			t.Fatal(err)
 		}
 
@@ -138,7 +138,7 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 		_ = w.enc.Advance(500)
 
 		ow.pendingRefs = []commitEntry{ce("d", 8100, 3800)}
-		if err := ow.flushPendingRefs("", false); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
 

@@ -654,13 +654,13 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	}
 
 	if v, ok := input.GetMode(); ok {
-		re.Mode = uint32(v)
+		re.Mode = v
 	}
 	if v, ok := input.GetUID(); ok {
-		re.UID = uint32(v)
+		re.UID = v
 	}
 	if v, ok := input.GetGID(); ok {
-		re.GID = uint32(v)
+		re.GID = v
 	}
 	sizeChanged := false
 	if v, ok := input.GetSize(); ok {
@@ -755,7 +755,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 		return fuse.ToStatus(err)
 	}
 
-	fd, err := syscall.Open(abs, int(input.Flags)|os.O_CREATE|os.O_EXCL, uint32(input.Mode&0o777))
+	fd, err := syscall.Open(abs, int(input.Flags)|os.O_CREATE|os.O_EXCL, input.Mode&0o777)
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -765,7 +765,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 	now := time.Now().UnixNano()
 	node := &GraphNode{
 		Kind:    NodeFile,
-		Mode:    uint32(syscall.S_IFREG) | uint32(input.Mode&0o777),
+		Mode:    uint32(syscall.S_IFREG) | input.Mode&0o777,
 		UID:     input.Uid,
 		GID:     input.Gid,
 		Size:    0,
@@ -823,7 +823,7 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	now := time.Now().UnixNano()
 	node := &GraphNode{
 		Kind:    NodeDir,
-		Mode:    uint32(input.Mode&0o777) | syscall.S_IFDIR,
+		Mode:    input.Mode&0o777 | syscall.S_IFDIR,
 		UID:     input.Uid,
 		GID:     input.Gid,
 		Size:    0,
@@ -874,7 +874,7 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	now := time.Now().UnixNano()
 	node := &GraphNode{
 		Kind:    NodeFile,
-		Mode:    uint32(input.Mode),
+		Mode:    input.Mode,
 		UID:     input.Uid,
 		GID:     input.Gid,
 		Size:    0,
@@ -1081,7 +1081,7 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 			UID:        oldRE.PxarNode.uid,
 			GID:        oldRE.PxarNode.gid,
 			Size:       oldRE.PxarNode.fileSize,
-			MtimeNs:    int64(oldRE.PxarNode.mtimeSecs)*1e9 + int64(oldRE.PxarNode.mtimeNanos),
+			MtimeNs:    oldRE.PxarNode.mtimeSecs*1e9 + int64(oldRE.PxarNode.mtimeNanos),
 			CtimeNs:    now,
 			HasData:    false,
 			RedirectTo: oldPath,
@@ -1260,8 +1260,8 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 			buf := make([]byte, sz)
 			if sz, xerr = unix.Listxattr(abs, buf); xerr == nil {
 				start := 0
-				for i := 0; i <= int(sz); i++ {
-					if i == int(sz) || buf[i] == 0 {
+				for i := 0; i <= sz; i++ {
+					if i == sz || buf[i] == 0 {
 						if i > start {
 							nameSet[string(buf[start:i])] = true
 						}
@@ -1432,7 +1432,7 @@ func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Sta
 }
 
 // fsyncInternal syncs a file handle to disk.
-func (fs *MutableFS) fsyncInternal(nodeID, fhID uint64) fuse.Status {
+func (fs *MutableFS) fsyncInternal(_, fhID uint64) fuse.Status {
 	fh := fs.getFh(fhID)
 	if fh == nil {
 		return fuse.EBADF
@@ -1713,8 +1713,8 @@ func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
 		UID:       pxarNode.uid,
 		GID:       pxarNode.gid,
 		Size:      pxarNode.fileSize,
-		MtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
-		CtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
+		MtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
+		CtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 	}
 	re.Inode = fs.pathToIno("/", true)
 	fs.applyACL(re)
@@ -1765,8 +1765,8 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		UID:       pxarNode.uid,
 		GID:       pxarNode.gid,
 		Size:      pxarNode.fileSize,
-		MtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
-		CtimeNs:   int64(pxarNode.mtimeSecs)*1e9 + int64(pxarNode.mtimeNanos),
+		MtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
+		CtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 	}
 	re.Inode = fs.pathToIno(path, re.IsDir)
 	fs.applyACL(re)
@@ -1775,7 +1775,7 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 
 // resolveCheck is a helper for xattr ops that returns (status, ok) where
 // ok=false means the caller should return status immediately.
-func (fs *MutableFS) resolveCheck(path string, re *ResolvedEntry) (fuse.Status, bool) {
+func (fs *MutableFS) resolveCheck(_ string, re *ResolvedEntry) (fuse.Status, bool) {
 	if re == nil {
 		return fuse.ENOENT, false
 	}
@@ -2007,7 +2007,7 @@ func (fs *MutableFS) inodeToPath(ino uint64) string {
 
 // --- File Handle Management ---
 
-func (fs *MutableFS) registerFh(path string, fd int) uint64 {
+func (fs *MutableFS) registerFh(_ string, fd int) uint64 {
 	id := fs.nextFh.Add(1)
 	fs.handles.Store(id, &passFh{fd: fd})
 	return id

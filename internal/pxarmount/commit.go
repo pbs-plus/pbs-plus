@@ -603,7 +603,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			(entry.node == nil && entry.pxarSlim != nil && entry.pxarSlim.isDir)
 
 		if isDir {
-			if err := ow.flushPendingRefs(relPath, true); err != nil {
+			if err := ow.flushPendingRefs(true); err != nil {
 				return err
 			}
 
@@ -631,7 +631,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	if err := ow.flushPendingRefs(relPath, false); err != nil {
+	if err := ow.flushPendingRefs(false); err != nil {
 		return err
 	}
 
@@ -652,14 +652,14 @@ func (ow *commitWalkState) emitJournalEntry(e *commitEntry, parentRelPath string
 
 	switch node.Kind {
 	case NodeDir:
-		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 		return ow.emitJournalDir(e, parentRelPath)
 
 	case NodeFile:
 		if node.HasData {
-			if err := ow.flushPendingRefs(parentRelPath, false); err != nil {
+			if err := ow.flushPendingRefs(false); err != nil {
 				return err
 			}
 			childPath := ow.buildPath(parentRelPath, e.name)
@@ -670,15 +670,15 @@ func (ow *commitWalkState) emitJournalEntry(e *commitEntry, parentRelPath string
 					meta = mergeMetaWithPxar(meta, pxEntry)
 				}
 			}
-			return ow.writeBackedFile(node, e.name, childPath, meta)
+			return ow.writeBackedFile(e.name, childPath, meta)
 		}
 		if node.RedirectTo != "" {
-			if err := ow.addToPendingRefs(e, parentRelPath); err != nil {
+			if err := ow.addToPendingRefs(e); err != nil {
 				return err
 			}
 			return nil
 		}
-		if err := ow.flushPendingRefs(parentRelPath, false); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			return err
 		}
 		xattrs := ow.ensureXAttrs(node.ID)
@@ -691,7 +691,7 @@ func (ow *commitWalkState) emitJournalEntry(e *commitEntry, parentRelPath string
 		return ow.writer.WriteEntry(entry, nil)
 
 	case NodeSymlink:
-		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 		xattrs := ow.ensureXAttrs(node.ID)
@@ -718,17 +718,17 @@ func (ow *commitWalkState) emitPxarEntry(e *commitEntry, parentRelPath string) e
 	}
 
 	if slim.isDir {
-		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 		return ow.emitPxarDir(e, parentRelPath)
 	}
 
 	if slim.isSymlink {
-		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
-		return ow.emitPxarSymlink(e, parentRelPath)
+		return ow.emitPxarSymlink(e)
 	}
 
 	if cached, ok := ow.entryCache[slim.entryStart]; ok {
@@ -743,10 +743,10 @@ func (ow *commitWalkState) emitPxarEntry(e *commitEntry, parentRelPath string) e
 		e.sortKey = pxarEntry.PayloadOffset
 	}
 
-	return ow.addToPendingRefs(e, parentRelPath)
+	return ow.addToPendingRefs(e)
 }
 
-func (ow *commitWalkState) addToPendingRefs(e *commitEntry, parentRelPath string) error {
+func (ow *commitWalkState) addToPendingRefs(e *commitEntry) error {
 	if e.pxarSlim != nil {
 		if e.pxarSlim.isReg {
 			if e.sortKey == 0 {
@@ -766,7 +766,7 @@ func (ow *commitWalkState) addToPendingRefs(e *commitEntry, parentRelPath string
 	}
 
 	if ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && e.sortKey > ow.batchRangeEnd {
-		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 	}
@@ -779,7 +779,7 @@ func (ow *commitWalkState) addToPendingRefs(e *commitEntry, parentRelPath string
 	}
 
 	if len(ow.pendingRefs) >= maxPendingRefs {
-		return ow.flushPendingRefs(parentRelPath, true)
+		return ow.flushPendingRefs(true)
 	}
 	return nil
 }
@@ -914,7 +914,7 @@ func (ow *commitWalkState) shouldReuse(refs []commitEntry) bool {
 	return float64(padding)/float64(totalSize) <= chunkPaddingThreshold
 }
 
-func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk bool) error {
+func (ow *commitWalkState) flushPendingRefs(keepLastChunk bool) error {
 	if len(ow.pendingRefs) == 0 {
 		return nil
 	}
@@ -922,7 +922,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 	insertionSortPendingRefs(ow.pendingRefs)
 
 	if ow.origChunkIndex == nil || len(ow.pendingRefs) == 0 {
-		return ow.encodeEntries(parentRelPath, 0, true)
+		return ow.encodeEntries(0, true)
 	}
 
 	rangeStart, rangeEnd := pendingRefsRange(ow.pendingRefs)
@@ -934,7 +934,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 			}
 			ow.hasSavedChunk = false
 		}
-		return ow.encodeEntries(parentRelPath, 0, false)
+		return ow.encodeEntries(0, false)
 	}
 
 	prevLast := ow.savedChunk
@@ -948,7 +948,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 				return err
 			}
 		}
-		return ow.encodeEntries(parentRelPath, 0, false)
+		return ow.encodeEntries(0, false)
 	}
 
 	padding := startPadding + endPadding
@@ -969,7 +969,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 				return err
 			}
 		}
-		return ow.encodeEntries(parentRelPath, 0, false)
+		return ow.encodeEntries(0, false)
 	}
 
 	ratio := float64(padding) / float64(totalSize)
@@ -980,7 +980,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 				return err
 			}
 		}
-		return ow.encodeEntries(parentRelPath, 0, false)
+		return ow.encodeEntries(0, false)
 	}
 
 	if hasPrev {
@@ -996,7 +996,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 
 	baseOffset := ow.writer.Encoder().PayloadPosition() + startPadding
 
-	if err := ow.encodeEntries(parentRelPath, baseOffset, true); err != nil {
+	if err := ow.encodeEntries(baseOffset, true); err != nil {
 		return err
 	}
 
@@ -1009,7 +1009,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 	return ow.injectChunks(indices)
 }
 
-func (ow *commitWalkState) encodeEntries(parentRelPath string, baseOffset uint64, reuse bool) error {
+func (ow *commitWalkState) encodeEntries(baseOffset uint64, reuse bool) error {
 	for i := range ow.pendingRefs {
 		e := &ow.pendingRefs[i]
 		var err error
@@ -1027,9 +1027,9 @@ func (ow *commitWalkState) encodeEntries(parentRelPath string, baseOffset uint64
 			}
 		} else {
 			if e.node != nil {
-				err = ow.emitJournalReencode(e, parentRelPath)
+				err = ow.emitJournalReencode(e)
 			} else {
-				err = ow.emitPxarReencode(e, parentRelPath)
+				err = ow.emitPxarReencode(e)
 			}
 		}
 		if err != nil {
@@ -1072,7 +1072,7 @@ func (ow *commitWalkState) injectChunks(chunks []reusableChunk) error {
 	return nil
 }
 
-func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry, parentIno uint64) {
+func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry) {
 	childIno := ToInode(pxarEntry)
 	slim := dirEntrySlim{
 		name:          pxarEntry.FileName(),
@@ -1090,7 +1090,7 @@ func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry, parentIno uint
 		isSymlink:     pxarEntry.IsSymlink(),
 		isReg:         pxarEntry.IsRegularFile(),
 	}
-	ow.mfs.pxar.RegisterSlimNode(&slim, parentIno)
+	ow.mfs.pxar.RegisterSlimNode(&slim, RootInode)
 }
 
 func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath string) error {
@@ -1106,7 +1106,7 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 			if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 				meta = mergeMetaWithPxar(meta, pxDirEntry)
 				pxarChildIno = ToInode(pxDirEntry)
-				ow.registerPxarDir(pxDirEntry, RootInode)
+				ow.registerPxarDir(pxDirEntry)
 			}
 		} else if dd.pxarIno != 0 {
 			pxarChildIno = dd.pxarIno
@@ -1116,7 +1116,7 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 			if !cached {
 				pxarEntry, rerr := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
 				if rerr == nil {
-					ow.registerPxarDir(pxarEntry, RootInode)
+					ow.registerPxarDir(pxarEntry)
 				}
 			}
 		}
@@ -1137,7 +1137,7 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 
 	childIno := ToInode(pxarEntry)
 
-	ow.registerPxarDir(pxarEntry, RootInode)
+	ow.registerPxarDir(pxarEntry)
 
 	meta := buildMetaFromPxarEntry(pxarEntry)
 
@@ -1170,7 +1170,7 @@ func (ow *commitWalkState) emitJournalRefAt(e *commitEntry, refOffset uint64) er
 		entry.FileSize = pxarEntry.FileSize
 	}
 
-	return ow.writeRefOrReencode(entry, pxarEntry, e.name, node.RedirectTo, refOffset)
+	return ow.writeRefOrReencode(entry, pxarEntry, e.name, refOffset)
 }
 
 func (ow *commitWalkState) emitPxarRefAt(e *commitEntry, refOffset uint64) error {
@@ -1189,10 +1189,10 @@ func (ow *commitWalkState) emitPxarRefAt(e *commitEntry, refOffset uint64) error
 	}
 
 	clone := ow.clonePxarEntryBuf(pxarEntry, e.name)
-	return ow.writeRefOrReencode(clone, pxarEntry, e.name, "", refOffset)
+	return ow.writeRefOrReencode(clone, pxarEntry, e.name, refOffset)
 }
 
-func (ow *commitWalkState) emitJournalReencode(e *commitEntry, parentRelPath string) error {
+func (ow *commitWalkState) emitJournalReencode(e *commitEntry) error {
 	node := e.node
 	xattrs := ow.ensureXAttrs(node.ID)
 	meta := nodeToMetadata(node, xattrs)
@@ -1215,7 +1215,7 @@ func (ow *commitWalkState) emitJournalReencode(e *commitEntry, parentRelPath str
 	return ow.writeReencoded(pxarEntry, entry, e.name)
 }
 
-func (ow *commitWalkState) emitPxarReencode(e *commitEntry, parentRelPath string) error {
+func (ow *commitWalkState) emitPxarReencode(e *commitEntry) error {
 	slim := e.pxarSlim
 	if slim == nil {
 		return nil
@@ -1245,7 +1245,7 @@ func (ow *commitWalkState) emitJournalDir(e *commitEntry, parentRelPath string) 
 		if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 			meta = mergeMetaWithPxar(meta, pxDirEntry)
 			pxarChildIno = ToInode(pxDirEntry)
-			ow.registerPxarDir(pxDirEntry, RootInode)
+			ow.registerPxarDir(pxDirEntry)
 		}
 	} else if e.pxarSlim != nil {
 		pxarChildIno = e.pxarSlim.inode
@@ -1271,7 +1271,7 @@ func (ow *commitWalkState) emitPxarDir(e *commitEntry, parentRelPath string) err
 
 	childIno := ToInode(pxarEntry)
 
-	ow.registerPxarDir(pxarEntry, RootInode)
+	ow.registerPxarDir(pxarEntry)
 
 	meta := buildMetaFromPxarEntry(pxarEntry)
 
@@ -1284,7 +1284,7 @@ func (ow *commitWalkState) emitPxarDir(e *commitEntry, parentRelPath string) err
 	return ow.writer.EndDirectory()
 }
 
-func (ow *commitWalkState) emitPxarSymlink(e *commitEntry, parentRelPath string) error {
+func (ow *commitWalkState) emitPxarSymlink(e *commitEntry) error {
 	slim := e.pxarSlim
 
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
@@ -1296,7 +1296,7 @@ func (ow *commitWalkState) emitPxarSymlink(e *commitEntry, parentRelPath string)
 	return ow.writer.WriteEntry(clone, nil)
 }
 
-func (ow *commitWalkState) writeBackedFile(node *GraphNode, name, childPath string, meta pxar.Metadata) error {
+func (ow *commitWalkState) writeBackedFile(name, childPath string, meta pxar.Metadata) error {
 	abs := ow.mfs.mutablePath(childPath)
 	f, err := os.Open(abs)
 	if err != nil {
@@ -1335,7 +1335,7 @@ func (ow *commitWalkState) writeBackedFile(node *GraphNode, name, childPath stri
 	return nil
 }
 
-func (ow *commitWalkState) writeRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.Entry, name, redirectPath string, refOffset uint64) error {
+func (ow *commitWalkState) writeRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.Entry, name string, refOffset uint64) error {
 	if ow.hasPrevRef && refOffset <= ow.prevRefOffset {
 		ow.mfs.debugf("ref %q offset=%d <= prevRef=%d, re-encoding", name, refOffset, ow.prevRefOffset)
 		return ow.writeReencoded(pxarEntry, entry, name)
