@@ -289,7 +289,7 @@ func (ow *commitWalkState) buildPath(parent, name string) string {
 	return joinPath(parent, name)
 }
 
-const maxPendingRefs = 4096
+const maxPendingRefs = 512
 
 const chunkPaddingThreshold = 0.1
 
@@ -473,6 +473,9 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 			ow.origChunkIndex = idx
 		}
 	}
+
+	ow.mfs.pxar.readerMu.RLock()
+	defer ow.mfs.pxar.readerMu.RUnlock()
 
 	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
 		return fmt.Errorf("walk overlay: %w", err)
@@ -757,9 +760,7 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 		ce.cachedEntry = cached
 		ce.sortKey = cached.PayloadOffset
 	} else {
-		ow.mfs.pxar.readerMu.RLock()
 		pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-		ow.mfs.pxar.readerMu.RUnlock()
 		if err != nil {
 			return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 		}
@@ -1066,6 +1067,8 @@ func (ow *commitWalkState) encodeEntries(parentRelPath string, baseOffset uint64
 	return nil
 }
 
+const injectBatchSize = 128
+
 func (ow *commitWalkState) injectChunk(c reusableChunk) error {
 	return ow.writer.InjectChunks([]backupproxy.KnownChunkRef{{
 		Digest: c.digest,
@@ -1074,17 +1077,24 @@ func (ow *commitWalkState) injectChunk(c reusableChunk) error {
 }
 
 func (ow *commitWalkState) injectChunks(chunks []reusableChunk) error {
-	if len(chunks) == 0 {
-		return nil
-	}
-	refs := make([]backupproxy.KnownChunkRef, len(chunks))
-	for i := range chunks {
-		refs[i] = backupproxy.KnownChunkRef{
-			Digest: chunks[i].digest,
-			Size:   chunks[i].size,
+	for len(chunks) > 0 {
+		batch := chunks
+		if len(batch) > injectBatchSize {
+			batch = batch[:injectBatchSize]
 		}
+		refs := make([]backupproxy.KnownChunkRef, len(batch))
+		for i := range batch {
+			refs[i] = backupproxy.KnownChunkRef{
+				Digest: batch[i].digest,
+				Size:   batch[i].size,
+			}
+		}
+		if err := ow.writer.InjectChunks(refs); err != nil {
+			return err
+		}
+		chunks = chunks[len(batch):]
 	}
-	return ow.writer.InjectChunks(refs)
+	return nil
 }
 
 func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry, parentIno uint64) {
@@ -1129,9 +1139,7 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 			_, cached := ow.mfs.pxar.nodes[pxarChildIno]
 			ow.mfs.pxar.mu.RUnlock()
 			if !cached {
-				ow.mfs.pxar.readerMu.RLock()
 				pxarEntry, rerr := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
-				ow.mfs.pxar.readerMu.RUnlock()
 				if rerr == nil {
 					ow.registerPxarDir(pxarEntry, RootInode)
 				}
@@ -1147,9 +1155,7 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 		return ow.writer.EndDirectory()
 	}
 
-	ow.mfs.pxar.readerMu.RLock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
-	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar entry at %d: %w", dd.entryStart, err)
 	}
@@ -1200,10 +1206,8 @@ func (ow *commitWalkState) emitPxarRefAt(ce *commitEntry, refOffset uint64) erro
 
 	pxarEntry := ce.cachedEntry
 	if pxarEntry == nil {
-		ow.mfs.pxar.readerMu.RLock()
 		var err error
 		pxarEntry, err = ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-		ow.mfs.pxar.readerMu.RUnlock()
 		if err != nil {
 			return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 		}
@@ -1244,10 +1248,8 @@ func (ow *commitWalkState) emitPxarReencode(ce *commitEntry, parentRelPath strin
 
 	pxarEntry := ce.cachedEntry
 	if pxarEntry == nil {
-		ow.mfs.pxar.readerMu.RLock()
 		var err error
 		pxarEntry, err = ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-		ow.mfs.pxar.readerMu.RUnlock()
 		if err != nil {
 			return fmt.Errorf("read pxar entry at %d for re-encode: %w", slim.entryStart, err)
 		}
@@ -1287,9 +1289,7 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 	slim := ce.pxarSlim
 	childPath := ow.buildPath(parentRelPath, ce.name)
 
-	ow.mfs.pxar.readerMu.RLock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 	}
@@ -1312,9 +1312,7 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 func (ow *commitWalkState) emitPxarSymlink(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 
-	ow.mfs.pxar.readerMu.RLock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 	}
@@ -1379,9 +1377,7 @@ func (ow *commitWalkState) writeRefOrReencode(entry *pxar.Entry, pxarEntry *pxar
 }
 
 func (ow *commitWalkState) reencodeFromArchive(pxarEntry *pxar.Entry, entry *pxar.Entry, name string) error {
-	ow.mfs.pxar.readerMu.RLock()
 	rc, err := ow.mfs.pxar.reader.ReadFileContentReader(pxarEntry)
-	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar content for re-encode %q: %w", name, err)
 	}
@@ -1456,21 +1452,15 @@ func (ow *commitWalkState) resolvePxarEntryCached(relPath string) (*pxar.Entry, 
 
 func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry, error) {
 	if relPath == "/" || relPath == "" {
-		ow.mfs.pxar.readerMu.RLock()
-		defer ow.mfs.pxar.readerMu.RUnlock()
 		return ow.mfs.pxar.Reader().ReadRoot()
 	}
 
-	ow.mfs.pxar.readerMu.RLock()
 	slim, err := ow.mfs.pxar.Reader().Lookup(relPath)
-	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("lookup %q: %w", relPath, err)
 	}
 
-	ow.mfs.pxar.readerMu.RLock()
 	full, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.FileOffset))
-	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("read entry at %d: %w", slim.FileOffset, err)
 	}
