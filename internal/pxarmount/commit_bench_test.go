@@ -499,7 +499,7 @@ func BenchmarkVerifyBackedFileHashes(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	mfs := &MutableFS{
 		mutableDir: dir,

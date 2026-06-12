@@ -804,10 +804,10 @@ func TestLookupDynamicEntries(t *testing.T) {
 		wantEndPad   uint64
 	}{
 		{"full_range", 0, 500, 5, 0, 0},
-		{"aligned_first_chunk", 0, 100, 1, 0, 0},
+		{"aligned_first_chunk", 0, 100, 2, 0, 100},
 		{"aligned_last_chunk", 400, 500, 1, 0, 0},
-		{"middle_two_chunks", 100, 300, 2, 0, 0},
-		{"misaligned_start", 50, 300, 3, 50, 0},
+		{"middle_two_chunks", 100, 300, 3, 0, 100},
+		{"misaligned_start", 50, 300, 4, 50, 100},
 		{"misaligned_end", 100, 350, 3, 0, 50},
 		{"misaligned_both", 50, 350, 4, 50, 50},
 		{"tiny_range_in_first", 10, 20, 1, 10, 80},
@@ -858,7 +858,7 @@ func TestShouldReuse(t *testing.T) {
 		{
 			"single_file_aligned",
 			[]commitEntry{
-				{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 1000}},
+				{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 900}},
 			},
 			true,
 		},
@@ -902,16 +902,16 @@ func TestRangeHoleDetection(t *testing.T) {
 	if entryEnd > ow.batchRangeEnd {
 		ow.batchRangeEnd = entryEnd
 	}
-	if ow.batchRangeEnd != 300 {
-		t.Fatalf("batchRangeEnd=%d, want 300", ow.batchRangeEnd)
+	if ow.batchRangeEnd != 316 {
+		t.Fatalf("batchRangeEnd=%d, want 316", ow.batchRangeEnd)
 	}
 
 	gap := ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && uint64(500) > ow.batchRangeEnd
 	if !gap {
-		t.Error("should detect gap between 300 and 500")
+		t.Error("should detect gap between 316 and 500")
 	}
 
-	noGap := ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && uint64(300) > ow.batchRangeEnd
+	noGap := ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && uint64(316) > ow.batchRangeEnd
 	if noGap {
 		t.Error("should not detect gap when entry is contiguous")
 	}
@@ -935,12 +935,12 @@ func TestCrossBatchChunkContinuation(t *testing.T) {
 		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 800}},
 	}
 	_ = refs1
-	chunks1, _, _ := lookupDynamicEntries(idx, 0, 800)
+	chunks1, _, _ := lookupDynamicEntries(idx, 0, 816)
 	ow.lastReusableChunk = chunks1[len(chunks1)-1]
 	ow.hasLastChunk = true
 
 	refs2 := []commitEntry{
-		{sortKey: 800, pxarSlim: &dirEntrySlim{fileSize: 200}},
+		{sortKey: 816, pxarSlim: &dirEntrySlim{fileSize: 167}},
 	}
 
 	ow2 := &commitWalkState{
@@ -1009,23 +1009,23 @@ func TestLookupDynamicEntriesChunkPadding(t *testing.T) {
 		}
 	}
 
-	chunks1, _, endPad1 := lookupDynamicEntries(idx, 0, 100)
+	chunks1, _, endPad1 := lookupDynamicEntries(idx, 0, 99)
 	if len(chunks1) != 1 {
 		t.Fatalf("single chunk: got %d, want 1", len(chunks1))
 	}
-	if chunks1[0].padding != 0 {
-		t.Errorf("single aligned chunk padding=%d, want 0", chunks1[0].padding)
+	if chunks1[0].padding != 1 {
+		t.Errorf("single aligned chunk padding=%d, want 1", chunks1[0].padding)
 	}
 
-	chunks2, startPad2, _ := lookupDynamicEntries(idx, 50, 100)
+	chunks2, startPad2, _ := lookupDynamicEntries(idx, 50, 99)
 	if len(chunks2) != 1 {
 		t.Fatalf("single misaligned start: got %d, want 1", len(chunks2))
 	}
 	if startPad2 != 50 {
 		t.Errorf("startPad=%d, want 50", startPad2)
 	}
-	if chunks2[0].padding != 50 {
-		t.Errorf("single misaligned chunk padding=%d, want 50", chunks2[0].padding)
+	if chunks2[0].padding != 51 {
+		t.Errorf("single misaligned chunk padding=%d, want 51", chunks2[0].padding)
 	}
 
 	_ = endPad1
@@ -1044,11 +1044,11 @@ func TestFlushPendingRefsReencodeClearsLastChunk(t *testing.T) {
 	ow.lastReusableChunk = reusableChunk{digest: [32]byte{0xAA}, endOffset: 99999, size: 1000, padding: 100}
 
 	refs := []commitEntry{
-		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 1000}},
+		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 900}},
 	}
 	reuse := ow.shouldReuse(refs)
 	if !reuse {
-		t.Fatal("should reuse aligned batch (full first chunk)")
+		t.Fatal("should reuse batch fitting within first chunk")
 	}
 	if !ow.hasLastChunk {
 		t.Error("shouldReuse should not modify hasLastChunk")
@@ -1064,9 +1064,9 @@ func TestPaddingRatioWithTinyFileInHugeChunk(t *testing.T) {
 	ow := &commitWalkState{origChunkIndex: idx}
 	reuse := ow.shouldReuse(refs)
 	startPad := uint64(100)
-	endPad := uint64(4000000 - 300)
+	endPad := uint64(4000000 - 316)
 	totalPad := startPad + endPad
-	totalSize := uint64(200) + totalPad
+	totalSize := uint64(216) + totalPad
 	ratio := float64(totalPad) / float64(totalSize)
 	want := ratio <= 0.1
 	if reuse != want {

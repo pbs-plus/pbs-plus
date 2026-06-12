@@ -428,10 +428,10 @@ func (j *Journal) cleanOrphanEdges() error {
 	if err != nil {
 		return err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	batch := j.db.NewBatch()
-	defer batch.Close()
+	defer func() { _ = batch.Close() }()
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		childIDVal := iter.Value()
@@ -483,7 +483,7 @@ func (j *Journal) VerifyIntegrity() error {
 	if err != nil {
 		return fmt.Errorf("edge scan: %w", err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		childIDVal := iter.Value()
@@ -513,7 +513,7 @@ func (j *Journal) VerifyIntegrity() error {
 	if err != nil {
 		return fmt.Errorf("xattr scan: %w", err)
 	}
-	defer xiter.Close()
+	defer func() { _ = xiter.Close() }()
 
 	for xiter.First(); xiter.Valid(); xiter.Next() {
 		key := xiter.Key()
@@ -575,7 +575,7 @@ func (j *Journal) tx(fn func(b *pebble.Batch) error) error {
 	defer j.mu.Unlock()
 
 	batch := j.db.NewBatch()
-	defer batch.Close()
+	defer func() { _ = batch.Close() }()
 
 	if err := fn(batch); err != nil {
 		return err
@@ -669,7 +669,7 @@ func (j *Journal) GetNode(id int64) (*GraphNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 	n := decodeNode(data, id)
 	return n, nil
 }
@@ -703,7 +703,7 @@ func (j *Journal) SetHasData(nodeID int64) error {
 		if err != nil {
 			return err
 		}
-		defer closer.Close()
+		defer func() { _ = closer.Close() }()
 		n := decodeNode(data, nodeID)
 		n.HasData = true
 		return b.Set(nodeKey(nodeID), encodeNode(n), nil)
@@ -722,7 +722,7 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var edges []GraphEdge
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -760,7 +760,7 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -784,7 +784,7 @@ func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 	cp := make([]byte, len(val))
 	copy(cp, val)
 	return cp, nil
@@ -800,7 +800,7 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -826,7 +826,7 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var xattrs []format.XAttr
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -879,7 +879,7 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 
 	// Snapshot provides a consistent view without blocking writers.
 	snap := j.db.NewSnapshot()
-	defer snap.Close()
+	defer func() { _ = snap.Close() }()
 
 	curID := int64(1)
 	var pxarPrefix strings.Builder
@@ -949,7 +949,7 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	result := make(map[int64]map[string][]byte)
 	for iter.First(); iter.Valid(); iter.Next() {

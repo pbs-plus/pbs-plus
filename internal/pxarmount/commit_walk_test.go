@@ -168,7 +168,7 @@ func newTestMFS(t *testing.T, pxarFS *PxarFS) *MutableFS {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { journal.Close() })
+	t.Cleanup(func() { _ = journal.Close() })
 
 	mutableDir := t.TempDir()
 	mfs := NewMutableFS(pxarFS, journal, mutableDir)

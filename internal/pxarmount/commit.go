@@ -230,10 +230,10 @@ type commitEntry struct {
 
 func (ce *commitEntry) rangeEnd() uint64 {
 	if ce.cachedEntry != nil {
-		return ce.sortKey + ce.cachedEntry.FileSize
+		return ce.sortKey + ce.cachedEntry.FileSize + format.HeaderSize
 	}
 	if ce.pxarSlim != nil {
-		return ce.sortKey + ce.pxarSlim.fileSize
+		return ce.sortKey + ce.pxarSlim.fileSize + format.HeaderSize
 	}
 	return ce.sortKey
 }
@@ -870,12 +870,12 @@ func lookupDynamicEntries(idx *datastore.DynamicIndexReader, rangeStart, rangeEn
 		}
 		prevEnd = info.End
 
-		if rangeEnd <= info.End {
+		if rangeEnd < info.End {
 			endPadding = info.End - rangeEnd
 		}
 		chunks = append(chunks, chunk)
 
-		if rangeEnd <= info.End {
+		if rangeEnd < info.End {
 			break
 		}
 	}
