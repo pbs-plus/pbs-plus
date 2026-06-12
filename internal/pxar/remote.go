@@ -107,6 +107,13 @@ func (s *RemoteServer) Close() error {
 	if s.closed.Swap(true) {
 		return nil
 	}
+
+	s.contentHandles.ForEach(func(id uint64, h *contentHandle) bool {
+		h.rc.Close()
+		return true
+	})
+	s.contentHandles.Clear()
+
 	return s.reader.Close()
 }
 
@@ -136,7 +143,10 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 
 	err := fmt.Errorf("client error: %s", params.Error)
 	syslog.L.Error(err).Write()
-	s.errCh <- err
+	select {
+	case s.errCh <- err:
+	default:
+	}
 
 	return arpc.Response{Status: 200}, nil
 }

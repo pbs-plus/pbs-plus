@@ -169,7 +169,19 @@ func (c *Client) Close() error {
 func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, contentEnd, fileSize uint64) (io.ReadCloser, error) {
 	if c.pipe != nil {
 		pr, pw := io.Pipe()
+
+		streamDone := make(chan struct{})
+
 		go func() {
+			select {
+			case <-ctx.Done():
+				pw.CloseWithError(ctx.Err())
+			case <-streamDone:
+			}
+		}()
+
+		go func() {
+			defer close(streamDone)
 			const chunkSize = 4 << 20
 
 			buf := make([]byte, chunkSize)

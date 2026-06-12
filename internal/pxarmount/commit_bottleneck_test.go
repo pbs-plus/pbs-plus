@@ -937,3 +937,99 @@ func buildSyntheticDIDX(tb testing.TB, numChunks int, chunkSize uint64) *datasto
 	}
 	return idx
 }
+
+func TestLookupDynamicEntries(t *testing.T) {
+	// 5 chunks of 100 bytes each, total 500 bytes.
+	idx := buildSyntheticDIDX(t, 5, 100)
+
+	tests := []struct {
+		name         string
+		rangeStart   uint64
+		rangeEnd     uint64
+		wantChunks   int
+		wantStartPad uint64
+		wantEndPad   uint64
+	}{
+		{"full_range", 0, 500, 5, 0, 0},
+		{"aligned_first_chunk", 0, 100, 1, 0, 0},
+		{"aligned_last_chunk", 400, 500, 1, 0, 0},
+		{"middle_two_chunks", 100, 300, 2, 0, 0},
+		{"misaligned_start", 50, 300, 3, 50, 0},
+		{"misaligned_end", 100, 350, 3, 0, 50},
+		{"misaligned_both", 50, 350, 4, 50, 50},
+		{"tiny_range_in_first", 10, 20, 1, 10, 80},
+		{"empty_range", 100, 100, 0, 0, 0},
+		{"past_end", 600, 700, 0, 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, startPad, endPad := lookupDynamicEntries(idx, tt.rangeStart, tt.rangeEnd)
+			if len(chunks) != tt.wantChunks {
+				t.Errorf("got %d chunks, want %d", len(chunks), tt.wantChunks)
+			}
+			if startPad != tt.wantStartPad {
+				t.Errorf("got startPad=%d, want %d", startPad, tt.wantStartPad)
+			}
+			if endPad != tt.wantEndPad {
+				t.Errorf("got endPad=%d, want %d", endPad, tt.wantEndPad)
+			}
+		})
+	}
+}
+
+func TestShouldReuse(t *testing.T) {
+	// 10 chunks of 1000 bytes each, total 10000 bytes.
+	idx := buildSyntheticDIDX(t, 10, 1000)
+
+	ow := &commitWalkState{origChunkIndex: idx}
+
+	tests := []struct {
+		name      string
+		refs      []commitEntry
+		wantReuse bool
+	}{
+		{
+			"aligned_full_chunks",
+			func() []commitEntry {
+				// 1000 files × 10 bytes = 10000 bytes, aligned to chunk boundaries.
+				refs := make([]commitEntry, 1000)
+				for i := range refs {
+					refs[i] = commitEntry{
+						sortKey:  uint64(i * 10),
+						pxarSlim: &dirEntrySlim{fileSize: 10},
+					}
+				}
+				return refs
+			}(),
+			true, // no padding → reuse
+		},
+		{
+			"single_file_aligned",
+			[]commitEntry{
+				{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 1000}},
+			},
+			true, // exactly one chunk → no padding
+		},
+		{
+			"nil_index_fallback",
+			[]commitEntry{{sortKey: 500, pxarSlim: &dirEntrySlim{fileSize: 10}}},
+			false, // huge padding (500 start + 490 end) → re-encode
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ow.shouldReuse(tt.refs)
+			if got != tt.wantReuse {
+				t.Errorf("shouldReuse() = %v, want %v", got, tt.wantReuse)
+			}
+		})
+	}
+
+	// Verify the nil index fallback.
+	owNil := &commitWalkState{origChunkIndex: nil}
+	if !owNil.shouldReuse([]commitEntry{{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 100}}}) {
+		t.Error("shouldReuse with nil index should return true")
+	}
+}
