@@ -6,8 +6,10 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/zeebo/xxh3"
 )
@@ -850,3 +852,88 @@ func BenchmarkB10_VerifyHashOverhead(b *testing.B) {
 
 // Ensure interface compliance at compile time.
 var _ io.Reader = (*mockFileReader)(nil)
+
+// ---------------------------------------------------------------------------
+// B11: Padding ratio heuristic — lookupDynamicEntries + shouldReuse
+// ---------------------------------------------------------------------------
+
+// BenchmarkB11_PaddingRatio measures the cost of the padding ratio calculation
+// that decides between PAYLOAD_REF reuse and re-encoding.
+func BenchmarkB11_PaddingRatio(b *testing.B) {
+	// Build a synthetic DIDX with 256 chunks of ~4MB each (~1GB total).
+	const chunkSize = 4 << 20
+	const numChunks = 256
+	idx := buildSyntheticDIDX(b, numChunks, chunkSize)
+
+	// Build a batch of pending refs that span 100 contiguous files.
+	const numFiles = 100
+	refs := make([]commitEntry, numFiles)
+	for i := range refs {
+		refs[i] = commitEntry{
+			name:    fmt.Sprintf("f_%06d", i),
+			sortKey: uint64(i * 4096), // 4KB files, contiguous
+			pxarSlim: &dirEntrySlim{
+				fileSize: 4096,
+			},
+		}
+	}
+
+	ow := &commitWalkState{
+		origChunkIndex: idx,
+	}
+
+	b.Run("lookupDynamicEntries", func(b *testing.B) {
+		b.ReportAllocs()
+		rangeStart := refs[0].sortKey
+		rangeEnd := refs[numFiles-1].sortKey + refs[numFiles-1].pxarSlim.fileSize
+		for i := 0; i < b.N; i++ {
+			lookupDynamicEntries(idx, rangeStart, rangeEnd)
+		}
+	})
+
+	b.Run("shouldReuse_aligned", func(b *testing.B) {
+		// Files aligned to chunk boundaries → low padding → reuse.
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			ow.shouldReuse(refs)
+		}
+	})
+
+	b.Run("shouldReuse_misaligned", func(b *testing.B) {
+		// Shift range to create misalignment → potentially high padding.
+		misaligned := make([]commitEntry, numFiles)
+		copy(misaligned, refs)
+		// Start in the middle of a chunk — creates start padding.
+		misaligned[0].sortKey = chunkSize/2 + 1234
+		for i := 1; i < numFiles; i++ {
+			misaligned[i].sortKey = misaligned[0].sortKey + uint64(i)*4096
+		}
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			ow.shouldReuse(misaligned)
+		}
+	})
+}
+
+// buildSyntheticDIDX creates a DynamicIndexReader with synthetic chunk entries.
+func buildSyntheticDIDX(tb testing.TB, numChunks int, chunkSize uint64) *datastore.DynamicIndexReader {
+	tb.Helper()
+	w := datastore.NewDynamicIndexWriter(time.Now().Unix())
+	var offset uint64
+	for i := range numChunks {
+		offset += chunkSize
+		var digest [32]byte
+		digest[0] = byte(i)
+		digest[1] = byte(i >> 8)
+		w.Add(offset, digest)
+	}
+	data, err := w.Finish()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	idx, err := datastore.ParseDynamicIndex(data)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return idx
+}

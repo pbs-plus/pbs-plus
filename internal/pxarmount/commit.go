@@ -285,6 +285,12 @@ type commitWalkState struct {
 	// file (readDirRaw minimal decode + ReadEntryAt full decode → single full decode).
 	entryCache map[uint64]*pxar.Entry
 
+	// origChunkIndex is the parsed DIDX from the previous backup's payload.
+	// Used by flushPendingRefs to compute the padding ratio for the reuse
+	// vs re-encode decision, mirroring the Rust client's
+	// flush_cached_reusing_if_below_threshold heuristic.
+	origChunkIndex *datastore.DynamicIndexReader
+
 	// Reusable pxar.Entry buffer — avoids heap allocation on every emit.
 	entryBuf pxar.Entry
 }
@@ -324,6 +330,23 @@ func (ow *commitWalkState) buildPath(parent, name string) string {
 // directories with millions of entries. When exceeded, the batch is
 // flushed immediately. Mirrors proxmox-backup-client's max_cache_size.
 const maxPendingRefs = 4096
+
+// chunkPaddingThreshold is the maximum acceptable padding ratio when
+// reusing original chunks. When the padding (wasted bytes at chunk
+// boundaries) exceeds this fraction of the total range size, entries
+// are re-encoded from scratch instead of using PAYLOAD_REF.
+// Mirrors Rust's CHUNK_PADDING_THRESHOLD (0.1 = 10%).
+const chunkPaddingThreshold = 0.1
+
+// reusableChunk represents an original chunk that can be injected into
+// the new payload stream without re-uploading (its digest is already
+// known to the datastore).
+type reusableChunk struct {
+	size      uint64 // chunk size including padding
+	padding   uint64 // wasted bytes at boundaries
+	digest    [32]byte
+	endOffset uint64 // end offset in the original payload
+}
 
 // CommitProgress is the interface used by CommitSnapshot to report progress.
 // Both *ProgressReporter and the hub-based reporters implement it.
@@ -518,6 +541,14 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		redirectCache: make(map[string]*pxar.Entry),
 		pendingRefs:   make([]commitEntry, 0, 64),
 		entryCache:    make(map[uint64]*pxar.Entry, 4096),
+	}
+
+	// Parse the previous backup's DIDX for chunk-boundary-aware padding
+	// ratio heuristic. Mirrors the Rust client's previous_payload_index.
+	if len(origPayloadIdx) > 0 {
+		if idx, err := datastore.ParseDynamicIndex(origPayloadIdx); err == nil {
+			ow.origChunkIndex = idx
+		}
 	}
 
 	// Xattrs are loaded lazily per-node via ensureXAttrs() instead of
@@ -973,6 +1004,103 @@ func insertionSortPendingRefs(s []commitEntry) {
 // flushPendingRefs emits all batched ref entries sorted by contentOffset,
 // then clears the batch. This ensures payload ref monotonicity before any
 // new data write or directory boundary.
+// lookupDynamicEntries finds the original chunks that cover the given byte
+// range [rangeStart, rangeEnd) in the previous backup's payload stream.
+// Returns the chunk references plus startPadding and endPadding — the
+// wasted bytes at chunk boundaries that aren't covered by actual file data.
+// Mirrors Rust's lookup_dynamic_entries exactly.
+func lookupDynamicEntries(idx *datastore.DynamicIndexReader, rangeStart, rangeEnd uint64) ([]reusableChunk, uint64, uint64) {
+	if idx == nil || idx.Count() == 0 || rangeStart >= rangeEnd {
+		return nil, 0, 0
+	}
+
+	// Find the chunk containing rangeStart.
+	startIdx, ok := idx.ChunkFromOffset(rangeStart)
+	if !ok {
+		return nil, 0, 0
+	}
+
+	// Calculate start padding: bytes before rangeStart in the first chunk.
+	var prevEnd uint64
+	if startIdx > 0 {
+		info, _ := idx.ChunkInfo(startIdx - 1)
+		prevEnd = info.End
+	}
+	startPadding := rangeStart - prevEnd
+
+	var endPadding uint64
+	var chunks []reusableChunk
+
+	for i := startIdx; i < idx.Count(); i++ {
+		info, ok := idx.ChunkInfo(i)
+		if !ok {
+			break
+		}
+
+		chunk := reusableChunk{
+			size:      info.End - prevEnd,
+			digest:    info.Digest,
+			endOffset: info.End,
+		}
+		prevEnd = info.End
+
+		if rangeEnd <= info.End {
+			// This is the last chunk in the range.
+			endPadding = info.End - rangeEnd
+			chunk.padding = startPadding + endPadding
+			if i == startIdx {
+				chunk.padding = startPadding + endPadding
+			}
+			chunks = append(chunks, chunk)
+			break
+		}
+
+		if i == startIdx {
+			chunk.padding = startPadding
+		}
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks, startPadding, endPadding
+}
+
+// shouldReuse calculates the padding ratio for a batch of pending refs and
+// returns true if the batch should reuse original chunks (PAYLOAD_REF),
+// false if it should re-encode from scratch.
+// Mirrors Rust's flush_cached_reusing_if_below_threshold decision logic.
+func (ow *commitWalkState) shouldReuse(refs []commitEntry) bool {
+	if ow.origChunkIndex == nil || len(refs) == 0 {
+		return true // no DIDX → always reuse (fallback)
+	}
+
+	// Compute the byte range covered by this batch.
+	rangeStart := refs[0].sortKey
+	var lastSize uint64
+	if ce := refs[len(refs)-1]; ce.cachedEntry != nil {
+		lastSize = ce.cachedEntry.FileSize
+	} else if ce.pxarSlim != nil {
+		lastSize = ce.pxarSlim.fileSize
+	}
+	rangeEnd := refs[len(refs)-1].sortKey + lastSize
+	if rangeEnd <= rangeStart {
+		return true // degenerate range
+	}
+
+	chunks, startPadding, endPadding := lookupDynamicEntries(ow.origChunkIndex, rangeStart, rangeEnd)
+	if len(chunks) == 0 {
+		return true // no chunks found → reuse (fallback)
+	}
+
+	totalPadding := startPadding + endPadding
+	totalSize := (rangeEnd - rangeStart) + totalPadding
+	if totalSize == 0 {
+		return true
+	}
+
+	ratio := float64(totalPadding) / float64(totalSize)
+	return ratio <= chunkPaddingThreshold
+}
+
 func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 	if len(ow.pendingRefs) == 0 {
 		return nil
@@ -984,13 +1112,31 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 	// nearly-sorted data vs O(n log n) for sort.Slice.
 	insertionSortPendingRefs(ow.pendingRefs)
 
+	// Padding ratio heuristic: if the original chunks covering this batch
+	// have too much wasted padding at boundaries, re-encode from scratch.
+	// This mirrors the Rust client's flush_cached_reusing_if_below_threshold.
+	reuse := ow.shouldReuse(ow.pendingRefs)
+
 	for i := range ow.pendingRefs {
 		ce := &ow.pendingRefs[i]
 		var err error
-		if ce.node != nil {
-			err = ow.emitJournalRef(ce, parentRelPath)
+		if reuse {
+			// Reuse mode: emit PAYLOAD_REF (zero payload bytes, original
+			// chunks injected by UploadPayloadWithInjection).
+			if ce.node != nil {
+				err = ow.emitJournalRef(ce, parentRelPath)
+			} else {
+				err = ow.emitPxarRef(ce, parentRelPath)
+			}
 		} else {
-			err = ow.emitPxarRef(ce, parentRelPath)
+			// Re-encode mode: read original file content and write as new
+			// data. This avoids the padding waste at chunk boundaries but
+			// costs more CPU and I/O.
+			if ce.node != nil {
+				err = ow.emitJournalReencode(ce, parentRelPath)
+			} else {
+				err = ow.emitPxarReencode(ce, parentRelPath)
+			}
 		}
 		if err != nil {
 			return err
@@ -1147,6 +1293,56 @@ func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) er
 
 	clone := ow.clonePxarEntryBuf(pxarEntry, ce.name)
 	return ow.tryRefOrReencode(clone, pxarEntry, ce.name, "")
+}
+
+// emitJournalReencode re-encodes a journal redirect entry by reading the
+// original file content from the archive and writing it as new data.
+// Used when the padding ratio exceeds the threshold (shouldReuse == false).
+func (ow *commitWalkState) emitJournalReencode(ce *commitEntry, parentRelPath string) error {
+	node := ce.node
+	xattrs := ow.ensureXAttrs(node.ID)
+	meta := nodeToMetadata(node, xattrs)
+
+	pxarEntry, err := ow.resolvePxarEntryCached(node.RedirectTo)
+	if err != nil {
+		return fmt.Errorf("resolve redirect %q for re-encode %q: %w", node.RedirectTo, ce.name, err)
+	}
+	mergedMeta := mergeMetaWithPxar(meta, pxarEntry)
+
+	entry := ow.allocEntry()
+	entry.Path = ce.name
+	entry.Kind = pxar.KindFile
+	entry.Metadata = mergedMeta
+	entry.FileSize = node.Size
+	if entry.FileSize == 0 {
+		entry.FileSize = pxarEntry.FileSize
+	}
+
+	return ow.reencodeFromArchive(pxarEntry, entry, ce.name)
+}
+
+// emitPxarReencode re-encodes a pure pxar entry by reading the original
+// file content from the archive and writing it as new data.
+// Used when the padding ratio exceeds the threshold (shouldReuse == false).
+func (ow *commitWalkState) emitPxarReencode(ce *commitEntry, parentRelPath string) error {
+	slim := ce.pxarSlim
+	if slim == nil {
+		return nil
+	}
+
+	pxarEntry := ce.cachedEntry
+	if pxarEntry == nil {
+		ow.mfs.pxar.readerMu.RLock()
+		var err error
+		pxarEntry, err = ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
+		ow.mfs.pxar.readerMu.RUnlock()
+		if err != nil {
+			return fmt.Errorf("read pxar entry at %d for re-encode: %w", slim.entryStart, err)
+		}
+	}
+
+	clone := ow.clonePxarEntryBuf(pxarEntry, ce.name)
+	return ow.reencodeFromArchive(pxarEntry, clone, ce.name)
 }
 
 // emitJournalDir emits a journal directory entry during alphabetical walk.
