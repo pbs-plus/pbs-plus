@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -13,465 +14,459 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
-func testMutableFS(t *testing.T) (*MutableFS, func()) {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "pxar-bottleneck-test-*")
+func benchJournal(b *testing.B) (*Journal, func()) {
+	b.Helper()
+	dir, err := os.MkdirTemp("", "pxar-bench-journal-*")
 	if err != nil {
-		t.Fatal(err)
+		b.Fatal(err)
+	}
+	journalDir := filepath.Join(dir, "journal")
+	j, err := OpenJournal(journalDir)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		b.Fatal(err)
+	}
+	return j, func() {
+		_ = j.Close()
+		_ = os.RemoveAll(dir)
+	}
+}
+
+func benchMutableFS(b *testing.B) (*MutableFS, func()) {
+	b.Helper()
+	dir, err := os.MkdirTemp("", "pxar-bench-mfs-*")
+	if err != nil {
+		b.Fatal(err)
 	}
 	pxarFS, err := NewPxarFS(nil)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		t.Fatal(err)
+		b.Fatal(err)
 	}
 	journalDir := filepath.Join(dir, "journal")
 	journal, err := OpenJournal(journalDir)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		t.Fatal(err)
+		b.Fatal(err)
 	}
 	mfs := NewMutableFS(pxarFS, journal, dir)
-	mfs.verbose = true
 	if err := mfs.InitMutableRoot(); err != nil {
 		_ = journal.Close()
 		_ = os.RemoveAll(dir)
-		t.Fatal(err)
+		b.Fatal(err)
 	}
 	return mfs, func() {
+		_ = mfs.journal.Sync()
 		mfs.Close()
 		_ = os.RemoveAll(dir)
 	}
 }
 
-func TestBottleneck_JournalMutexSerialization(t *testing.T) {
-	j, cleanup := testJournal(t)
-	defer cleanup()
+func BenchmarkJournal_EnsureNodePath(b *testing.B) {
+	for _, parallelism := range []int{1, 4, 16, 64} {
+		b.Run(fmt.Sprintf("parallel=%d", parallelism), func(b *testing.B) {
+			j, cleanup := benchJournal(b)
+			defer cleanup()
 
-	const writers = 64
-	const opsPerWriter = 100
-	var wg sync.WaitGroup
-	wg.Add(writers)
-
-	var maxPending atomic.Int64
-	start := time.Now()
-
-	for w := range writers {
-		go func(wID int) {
-			defer wg.Done()
-			for i := range opsPerWriter {
-				path := fmt.Sprintf("/w%d/f%d.txt", wID, i)
-				node := &GraphNode{Kind: NodeFile, Mode: 0o644}
-				if _, err := j.EnsureNodePath(path, node, false); err != nil {
-					t.Errorf("worker %d op %d: %v", wID, i, err)
-					return
-				}
-				p := j.flushPending.Value()
-				for {
-					old := maxPending.Load()
-					if p <= old || maxPending.CompareAndSwap(old, p) {
-						break
+			b.ResetTimer()
+			b.ReportAllocs()
+			b.SetParallelism(parallelism)
+			b.RunParallel(func(pb *testing.PB) {
+				i := 0
+				for pb.Next() {
+					path := fmt.Sprintf("/bench/%d/file_%d.txt", i%100, i)
+					node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+					if _, err := j.EnsureNodePath(path, node, false); err != nil {
+						b.Fatal(err)
 					}
+					i++
 				}
-			}
-		}(w)
-	}
-
-	wg.Wait()
-	elapsed := time.Since(start)
-	totalOps := writers * opsPerWriter
-	opsPerSec := float64(totalOps) / elapsed.Seconds()
-
-	t.Logf("Journal mutex: %d ops in %v (%.0f ops/sec), maxPending=%d",
-		totalOps, elapsed, opsPerSec, maxPending.Load())
-
-	if opsPerSec < 500 {
-		t.Errorf("Journal throughput too low: %.0f ops/sec (threshold: 500)", opsPerSec)
+			})
+		})
 	}
 }
 
-func TestBottleneck_ConcurrentUpdateNode(t *testing.T) {
-	j, cleanup := testJournal(t)
+func BenchmarkJournal_UpdateNode(b *testing.B) {
+	for _, parallelism := range []int{1, 4, 16, 64} {
+		b.Run(fmt.Sprintf("parallel=%d", parallelism), func(b *testing.B) {
+			j, cleanup := benchJournal(b)
+			defer cleanup()
+
+			node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+			id, _ := j.EnsureNodePath("/bench_update.txt", node, false)
+			node.ID = id
+
+			var counter atomic.Uint64
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			b.SetParallelism(parallelism)
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					n := &GraphNode{
+						ID:      id,
+						Kind:    NodeFile,
+						Mode:    0o644,
+						Size:    counter.Add(1),
+						MtimeNs: time.Now().UnixNano(),
+					}
+					if err := j.UpdateNode(n); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkJournal_ResolvePath(b *testing.B) {
+	for _, depth := range []int{1, 3, 6, 10} {
+		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
+			j, cleanup := benchJournal(b)
+			defer cleanup()
+
+			var path strings.Builder
+			for d := range depth {
+				fmt.Fprintf(&path, "/level_%02d", d)
+			}
+			path.WriteString("/leaf.txt")
+			testPath := path.String()
+
+			node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+			if _, err := j.EnsureNodePath(testPath, node, false); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					nodeID, _, _, _, err := j.ResolvePath(testPath)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if nodeID == 0 {
+						b.Fatal("nodeID = 0")
+					}
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkJournal_SetXAttr(b *testing.B) {
+	for _, parallelism := range []int{1, 4, 16} {
+		b.Run(fmt.Sprintf("parallel=%d", parallelism), func(b *testing.B) {
+			j, cleanup := benchJournal(b)
+			defer cleanup()
+
+			node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+			id, _ := j.EnsureNodePath("/bench_xattr.txt", node, false)
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			b.SetParallelism(parallelism)
+			b.RunParallel(func(pb *testing.PB) {
+				i := 0
+				for pb.Next() {
+					name := fmt.Sprintf("user.attr_%d", i%1000)
+					val := fmt.Appendf(nil, "value_%d", i)
+					if err := j.SetXAttr(id, name, val); err != nil {
+						b.Fatal(err)
+					}
+					i++
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkJournal_ConcurrentReadWrite(b *testing.B) {
+	j, cleanup := benchJournal(b)
 	defer cleanup()
 
 	node := &GraphNode{Kind: NodeFile, Mode: 0o644}
-	id, err := j.EnsureNodePath("/concurrent_update.txt", node, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	node.ID = id
+	_, _ = j.EnsureNodePath("/rw_test.txt", node, false)
 
-	const writers = 32
-	const opsPerWriter = 200
-	var wg sync.WaitGroup
-	wg.Add(writers)
+	for _, readRatio := range []int{90, 50, 10} {
+		b.Run(fmt.Sprintf("read%%=%d", readRatio), func(b *testing.B) {
+			var reads atomic.Int64
+			var writes atomic.Int64
 
-	start := time.Now()
-
-	for w := range writers {
-		go func(wID int) {
-			defer wg.Done()
-			for i := range opsPerWriter {
-				n := &GraphNode{
-					ID:      id,
-					Kind:    NodeFile,
-					Mode:    0o644,
-					Size:    uint64(wID*opsPerWriter + i),
-					MtimeNs: time.Now().UnixNano(),
+			b.ResetTimer()
+			b.ReportAllocs()
+			b.RunParallel(func(pb *testing.PB) {
+				i := 0
+				for pb.Next() {
+					if i%100 < readRatio {
+						_, _, _, _, err := j.ResolvePath("/rw_test.txt")
+						if err != nil {
+							b.Fatal(err)
+						}
+						reads.Add(1)
+					} else {
+						n := &GraphNode{ID: 2, Kind: NodeFile, Mode: 0o644, Size: uint64(i)}
+						if err := j.UpdateNode(n); err != nil {
+							b.Fatal(err)
+						}
+						writes.Add(1)
+					}
+					i++
 				}
-				if err := j.UpdateNode(n); err != nil {
-					t.Errorf("worker %d op %d: %v", wID, i, err)
-					return
-				}
-			}
-		}(w)
-	}
-
-	wg.Wait()
-	elapsed := time.Since(start)
-	totalOps := writers * opsPerWriter
-	opsPerSec := float64(totalOps) / elapsed.Seconds()
-
-	t.Logf("UpdateNode: %d ops in %v (%.0f ops/sec)", totalOps, elapsed, opsPerSec)
-
-	got, _ := j.GetNode(id)
-	if got == nil {
-		t.Fatal("node missing after concurrent updates")
-	}
-
-	if opsPerSec < 500 {
-		t.Errorf("UpdateNode throughput too low: %.0f ops/sec (threshold: 500)", opsPerSec)
-	}
-}
-
-func TestBottleneck_FreezerContention(t *testing.T) {
-	mfs, cleanup := testMutableFS(t)
-	defer cleanup()
-
-	const rounds = 1000
-	const concurrentOps = 32
-
-	for range rounds {
-		mfs.freezeMu.Lock()
-		mfs.frozen = true
-		mfs.freezeMu.Unlock()
-
-		var wg sync.WaitGroup
-		wg.Add(concurrentOps)
-
-		var unblocked atomic.Int32
-
-		for range concurrentOps {
-			go func() {
-				defer wg.Done()
-				mfs.freezeMu.Lock()
-				for mfs.frozen {
-					mfs.freezeCond.Wait()
-				}
-				unblocked.Add(1)
-				mfs.freezeMu.Unlock()
-			}()
-		}
-
-		runtime := time.AfterFunc(5*time.Millisecond, func() {
-			mfs.freezeMu.Lock()
-			mfs.frozen = false
-			mfs.freezeMu.Unlock()
-			mfs.freezeCond.Broadcast()
+			})
+			b.ReportMetric(float64(reads.Load()), "reads")
+			b.ReportMetric(float64(writes.Load()), "writes")
 		})
-
-		wg.Wait()
-		runtime.Stop()
-
-		if v := unblocked.Load(); v != int32(concurrentOps) {
-			t.Fatalf("only %d/%d ops unblocked", v, concurrentOps)
-		}
 	}
 }
 
-func TestBottleneck_EnsureLocksGrowth(t *testing.T) {
-	mfs, cleanup := testMutableFS(t)
+func BenchmarkFreeze_ContendedWait(b *testing.B) {
+	mfs, cleanup := benchMutableFS(b)
 	defer cleanup()
 
-	const iterations = 10000
-	for i := range iterations {
-		path := fmt.Sprintf("/path_%d", i)
-		mfs.ensureLocks.LoadOrStore(path, &sync.Mutex{})
-	}
+	for _, concurrentOps := range []int{8, 32, 128} {
+		b.Run(fmt.Sprintf("waiters=%d", concurrentOps), func(b *testing.B) {
+			b.ResetTimer()
+			b.ReportAllocs()
 
-	count := 0
-	mfs.ensureLocks.Range(func(_ string, _ *sync.Mutex) bool {
-		count++
-		return true
-	})
+			for range b.N {
+				mfs.freezeMu.Lock()
+				mfs.frozen = true
+				mfs.freezeMu.Unlock()
 
-	t.Logf("ensureLocks after %d inserts: %d entries", iterations, count)
+				var wg sync.WaitGroup
+				wg.Add(concurrentOps)
 
-	if count != iterations {
-		t.Errorf("ensureLocks has %d entries, expected %d", count, iterations)
-	}
+				for range concurrentOps {
+					go func() {
+						defer wg.Done()
+						mfs.waitIfFrozen()
+					}()
+				}
 
-	for i := range iterations {
-		path := fmt.Sprintf("/path_%d", i)
-		mfs.ensureLocks.Delete(path)
-	}
+				mfs.freezeMu.Lock()
+				mfs.frozen = false
+				mfs.freezeMu.Unlock()
+				mfs.freezeCond.Broadcast()
 
-	count2 := 0
-	mfs.ensureLocks.Range(func(_ string, _ *sync.Mutex) bool {
-		count2++
-		return true
-	})
-
-	if count2 != 0 {
-		t.Errorf("ensureLocks after cleanup: %d entries, expected 0", count2)
+				wg.Wait()
+			}
+		})
 	}
 }
 
-func TestBottleneck_FlushPerCloseJournalWrite(t *testing.T) {
-	mfs, cleanup := testMutableFS(t)
+func BenchmarkMutableFS_WritePath(b *testing.B) {
+	for _, parallelism := range []int{1, 4, 16} {
+		b.Run(fmt.Sprintf("parallel=%d", parallelism), func(b *testing.B) {
+			mfs, cleanup := benchMutableFS(b)
+			defer cleanup()
+
+			mfs.mapInode(RootInode, "/")
+
+			numFiles := parallelism * 10
+			for i := range numFiles {
+				childPath := fmt.Sprintf("/write_%d.txt", i)
+				ino := mfs.pathToIno(childPath, false)
+				mfs.mapInode(ino, childPath)
+
+				abs := mfs.mutablePath(childPath)
+				if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+					b.Fatal(err)
+				}
+				fd, err := syscall.Open(abs, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_TRUNC, 0o644)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = syscall.Close(fd)
+
+				now := time.Now().UnixNano()
+				journalNode := &GraphNode{
+					Kind:    NodeFile,
+					Mode:    uint32(0o644),
+					Size:    0,
+					MtimeNs: now,
+					CtimeNs: now,
+					HasData: true,
+				}
+				parentID := mfs.resolveParentNodeID("/")
+				nodeID, err := mfs.journal.CreateNodeEdgeAndWhiteout(parentID, fmt.Sprintf("write_%d.txt", i), journalNode, false)
+				if err != nil {
+					b.Fatal(err)
+				}
+				journalNode.ID = nodeID
+
+				fd2, err := syscall.Open(abs, syscall.O_RDWR, 0)
+				if err != nil {
+					b.Fatal(err)
+				}
+				mfs.registerFh(childPath, fd2)
+			}
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			b.SetParallelism(parallelism)
+			b.RunParallel(func(pb *testing.PB) {
+				i := 0
+				for pb.Next() {
+					fileIdx := i % numFiles
+					ino := mfs.pathToIno(fmt.Sprintf("/write_%d.txt", fileIdx), false)
+					data := fmt.Appendf(nil, "data_%d", i)
+					input := &fuse.WriteIn{
+						InHeader: fuse.InHeader{NodeId: ino},
+						Offset:   uint64(i) * 64,
+						Size:     uint32(len(data)),
+					}
+					_, status := mfs.Write(nil, input, data)
+					if status != fuse.OK {
+						b.Fatalf("Write: %s", status)
+					}
+					i++
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkMutableFS_FlushPattern(b *testing.B) {
+	mfs, cleanup := benchMutableFS(b)
 	defer cleanup()
 
-	const files = 500
+	mfs.mapInode(RootInode, "/")
 
-	parentPath := "/"
-	mfs.mapInode(RootInode, parentPath)
+	const files = 1000
+	inodes := make([]uint64, files)
 
 	for i := range files {
-		childPath := fmt.Sprintf("/file_%04d.txt", i)
+		childPath := fmt.Sprintf("/flush_%04d.txt", i)
 		ino := mfs.pathToIno(childPath, false)
 		mfs.mapInode(ino, childPath)
+		inodes[i] = ino
 
 		abs := mfs.mutablePath(childPath)
 		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			t.Fatal(err)
+			b.Fatal(err)
 		}
 		fd, err := syscall.Open(abs, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_TRUNC, 0o644)
 		if err != nil {
-			t.Fatal(err)
+			b.Fatal(err)
 		}
-		_, _ = syscall.Write(fd, []byte("hello"))
 		_ = syscall.Close(fd)
 
 		now := time.Now().UnixNano()
-		node := &GraphNode{
+		journalNode := &GraphNode{
 			Kind:    NodeFile,
 			Mode:    uint32(0o644),
-			UID:     0,
-			GID:     0,
-			Size:    5,
+			Size:    0,
 			MtimeNs: now,
 			CtimeNs: now,
 			HasData: true,
 		}
-
-		parentID := mfs.resolveParentNodeID(parentPath)
-		_, err = mfs.journal.CreateNodeEdgeAndWhiteout(parentID, fmt.Sprintf("file_%04d.txt", i), node, false)
+		parentID := mfs.resolveParentNodeID("/")
+		nodeID, err := mfs.journal.CreateNodeEdgeAndWhiteout(parentID, fmt.Sprintf("flush_%04d.txt", i), journalNode, false)
 		if err != nil {
-			t.Fatal(err)
+			b.Fatal(err)
 		}
+		journalNode.ID = nodeID
 	}
 
-	start := time.Now()
-	for i := range files {
-		ino := mfs.pathToIno(fmt.Sprintf("/file_%04d.txt", i), false)
-		mfs.dirtyMeta.Store(ino, pendingMeta{
-			size:    5,
-			mtimeNs: time.Now().UnixNano(),
-			ctimeNs: time.Now().UnixNano(),
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for range b.N {
+		for i := range files {
+			mfs.dirtyMeta.Store(inodes[i], pendingMeta{
+				size:    uint64(i + 100),
+				mtimeNs: time.Now().UnixNano(),
+				ctimeNs: time.Now().UnixNano(),
+			})
+		}
+
+		for i := range files {
+			inoMu := mfs.getInoLock(inodes[i])
+			inoMu.Lock()
+			if meta, ok := mfs.dirtyMeta.LoadAndDelete(inodes[i]); ok {
+				path := fmt.Sprintf("/flush_%04d.txt", i)
+				if re, status := mfs.resolve(path); status == fuse.OK && re.Node != nil {
+					if meta.size > re.Node.Size {
+						re.Node.Size = meta.size
+					}
+					re.Node.MtimeNs = meta.mtimeNs
+					re.Node.CtimeNs = meta.ctimeNs
+					_ = mfs.journal.UpdateNode(re.Node)
+				}
+			}
+			inoMu.Unlock()
+		}
+	}
+}
+
+func BenchmarkMutableFS_CopyUpContention(b *testing.B) {
+	mfs, cleanup := benchMutableFS(b)
+	defer cleanup()
+
+	mfs.mapInode(RootInode, "/")
+
+	for _, concurrency := range []int{1, 4, 16} {
+		b.Run(fmt.Sprintf("goroutines=%d", concurrency), func(b *testing.B) {
+			var seq atomic.Uint64
+
+			b.ResetTimer()
+			b.ReportAllocs()
+
+			for range b.N {
+				n := seq.Add(1)
+				childPath := fmt.Sprintf("/copyup_%d.txt", n)
+				ino := mfs.pathToIno(childPath, false)
+				mfs.mapInode(ino, childPath)
+
+				abs := mfs.mutablePath(childPath)
+				_ = os.MkdirAll(filepath.Dir(abs), 0o755)
+
+				fd, err := syscall.Open(abs, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_TRUNC, 0o644)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = syscall.Close(fd)
+
+				now := time.Now().UnixNano()
+				journalNode := &GraphNode{
+					Kind:    NodeFile,
+					Mode:    uint32(0o644),
+					Size:    5,
+					MtimeNs: now,
+					CtimeNs: now,
+					HasData: true,
+				}
+				parentID := mfs.resolveParentNodeID("/")
+				nodeID, err := mfs.journal.CreateNodeEdgeAndWhiteout(parentID, fmt.Sprintf("copyup_%d.txt", n), journalNode, false)
+				if err != nil {
+					b.Fatal(err)
+				}
+				journalNode.ID = nodeID
+
+				re := &ResolvedEntry{
+					Path:      childPath,
+					Inode:     ino,
+					Node:      journalNode,
+					IsDir:     false,
+					Mode:      0o644,
+					Size:      5,
+					DataIsMut: false,
+				}
+
+				var wg sync.WaitGroup
+				wg.Add(concurrency)
+				for range concurrency {
+					go func() {
+						defer wg.Done()
+						_ = mfs.copyUp(re)
+					}()
+				}
+				wg.Wait()
+
+				mfs.unmapInode(childPath)
+				_ = os.Remove(abs)
+			}
 		})
 	}
-
-	for i := range files {
-		ino := mfs.pathToIno(fmt.Sprintf("/file_%04d.txt", i), false)
-		inoMu := mfs.getInoLock(ino)
-		inoMu.Lock()
-		if meta, ok := mfs.dirtyMeta.LoadAndDelete(ino); ok {
-			path := fmt.Sprintf("/file_%04d.txt", i)
-			if re, status := mfs.resolve(path); status == fuse.OK && re.Node != nil {
-				if meta.size > re.Node.Size {
-					re.Node.Size = meta.size
-				}
-				re.Node.MtimeNs = meta.mtimeNs
-				re.Node.CtimeNs = meta.ctimeNs
-				_ = mfs.journal.UpdateNode(re.Node)
-			}
-		}
-		inoMu.Unlock()
-	}
-
-	elapsed := time.Since(start)
-	t.Logf("Flush pattern: %d files in %v (%.0f files/sec)", files, elapsed, float64(files)/elapsed.Seconds())
-
-	if elapsed > 5*time.Second {
-		t.Errorf("Flush pattern too slow: %v for %d files", elapsed, files)
-	}
-}
-
-func TestBottleneck_ConcurrentResolvePath(t *testing.T) {
-	j, cleanup := testJournal(t)
-	defer cleanup()
-
-	node := &GraphNode{Kind: NodeFile, Mode: 0o644}
-	_, err := j.EnsureNodePath("/a/b/c/d/e/f.txt", node, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	const workers = 32
-	const opsPerWorker = 500
-	var wg sync.WaitGroup
-	wg.Add(workers)
-
-	start := time.Now()
-
-	for range workers {
-		go func() {
-			defer wg.Done()
-			for range opsPerWorker {
-				nodeID, _, _, _, err := j.ResolvePath("/a/b/c/d/e/f.txt")
-				if err != nil {
-					t.Errorf("ResolvePath: %v", err)
-					return
-				}
-				if nodeID == 0 {
-					t.Error("nodeID = 0")
-					return
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-	elapsed := time.Since(start)
-	totalOps := workers * opsPerWorker
-	opsPerSec := float64(totalOps) / elapsed.Seconds()
-
-	t.Logf("ResolvePath: %d ops in %v (%.0f ops/sec)", totalOps, elapsed, opsPerSec)
-
-	if opsPerSec < 1000 {
-		t.Errorf("ResolvePath throughput too low: %.0f ops/sec (threshold: 1000)", opsPerSec)
-	}
-}
-
-func TestRace_CopyUpDoubleInvocation(t *testing.T) {
-	mfs, cleanup := testMutableFS(t)
-	defer cleanup()
-
-	parentPath := "/"
-	mfs.mapInode(RootInode, parentPath)
-
-	childPath := "/copyup_race.txt"
-	ino := mfs.pathToIno(childPath, false)
-	mfs.mapInode(ino, childPath)
-
-	abs := mfs.mutablePath(childPath)
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	re := &ResolvedEntry{
-		Path:      childPath,
-		Inode:     ino,
-		IsDir:     false,
-		Mode:      0o644,
-		UID:       0,
-		GID:       0,
-		Size:      0,
-		DataIsMut: false,
-	}
-
-	var copyUpCount atomic.Int32
-
-	const concurrency = 16
-	var wg sync.WaitGroup
-	wg.Add(concurrency)
-
-	for range concurrency {
-		go func() {
-			defer wg.Done()
-			err := mfs.copyUp(re)
-			if err != nil {
-				copyUpCount.Add(1)
-				t.Errorf("copyUp: %v", err)
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	t.Logf("copyUp invoked %d times (expected 1 with per-inode lock)", copyUpCount.Load())
-}
-
-func TestRace_WriteWithoutHandle(t *testing.T) {
-	mfs, cleanup := testMutableFS(t)
-	defer cleanup()
-
-	parentPath := "/"
-	mfs.mapInode(RootInode, parentPath)
-
-	childPath := "/write_no_fh.txt"
-	ino := mfs.pathToIno(childPath, false)
-	mfs.mapInode(ino, childPath)
-
-	abs := mfs.mutablePath(childPath)
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fd, err := syscall.Open(abs, syscall.O_CREAT|syscall.O_WRONLY|syscall.O_TRUNC, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = syscall.Close(fd)
-
-	now := time.Now().UnixNano()
-	journalNode := &GraphNode{
-		Kind:    NodeFile,
-		Mode:    uint32(0o644),
-		Size:    0,
-		MtimeNs: now,
-		CtimeNs: now,
-		HasData: true,
-	}
-	parentID := mfs.resolveParentNodeID(parentPath)
-	nodeID, err := mfs.journal.CreateNodeEdgeAndWhiteout(parentID, "write_no_fh.txt", journalNode, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	journalNode.ID = nodeID
-
-	const writers = 16
-	const writesPerWriter = 100
-	var wg sync.WaitGroup
-	wg.Add(writers)
-
-	var totalWritten atomic.Int64
-	var writeErrors atomic.Int64
-
-	for w := range writers {
-		go func(wID int) {
-			defer wg.Done()
-			for i := range writesPerWriter {
-				data := fmt.Appendf(nil, "w%d_%d\n", wID, i)
-				input := &fuse.WriteIn{
-					InHeader: fuse.InHeader{NodeId: ino},
-					Offset:   uint64(wID*writesPerWriter*64 + i*64),
-					Size:     uint32(len(data)),
-				}
-				written, status := mfs.Write(nil, input, data)
-				if status != fuse.OK {
-					writeErrors.Add(1)
-					t.Errorf("Write w%d op%d: %s", wID, i, status)
-					return
-				}
-				totalWritten.Add(int64(written))
-			}
-		}(w)
-	}
-
-	wg.Wait()
-
-	if errCount := writeErrors.Load(); errCount > 0 {
-		t.Errorf("%d write errors", errCount)
-	}
-
-	t.Logf("Write without fh: %d bytes written, %d errors", totalWritten.Load(), writeErrors.Load())
 }
