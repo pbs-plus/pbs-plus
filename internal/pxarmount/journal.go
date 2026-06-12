@@ -11,6 +11,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/pbs-plus/pxar/format"
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
@@ -810,6 +811,37 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 		return nil, err
 	}
 	return names, nil
+}
+
+// XAttrsForNode returns all extended attributes (name→value) for a single node.
+// Used for lazy per-node xattr loading during commit, replacing the upfront
+// AllXAttrs() bulk load which pre-loaded xattrs for every node even if the
+// node is whiteouted or outside the current commit scope.
+func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
+	prefix := xattrPrefix(nodeID)
+	iter, err := j.db.NewIter(&pebble.IterOptions{
+		LowerBound: prefix,
+		UpperBound: append(prefix[:len(prefix):len(prefix)], 0xFF),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var xattrs []format.XAttr
+	for iter.First(); iter.Valid(); iter.Next() {
+		key := iter.Key()
+		val := iter.Value()
+		name := make([]byte, len(key)-11)
+		copy(name, key[11:])
+		value := make([]byte, len(val))
+		copy(value, val)
+		xattrs = append(xattrs, format.NewXAttr(name, value))
+	}
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+	return xattrs, nil
 }
 
 // SetXAttr upserts an extended attribute value.

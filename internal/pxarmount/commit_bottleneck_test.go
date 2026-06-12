@@ -436,7 +436,6 @@ func BenchmarkB5_PendingRefsSort(b *testing.B) {
 		b.Run(fmt.Sprintf("batch=%d", n), func(b *testing.B) {
 			refs := make([]commitEntry, n)
 			for i := range refs {
-				// Reverse order to force worst-case sort.
 				refs[i] = commitEntry{
 					name:    fmt.Sprintf("f_%06d", n-i),
 					sortKey: uint64((n - i) * 100),
@@ -446,13 +445,55 @@ func BenchmarkB5_PendingRefsSort(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for iter := 0; iter < b.N; iter++ {
-				// Restore reverse order.
 				for i := range refs {
 					refs[i].sortKey = uint64((n - i) * 100)
 				}
 				sort.Slice(refs, func(i, j int) bool {
 					return refs[i].sortKey < refs[j].sortKey
 				})
+			}
+		})
+
+		// Nearly-sorted case: insertion sort should be O(n) here.
+		b.Run(fmt.Sprintf("batch=%d/nearly_sorted_insertion", n), func(b *testing.B) {
+			refs := make([]commitEntry, n)
+			for i := range refs {
+				refs[i] = commitEntry{
+					name:    fmt.Sprintf("f_%06d", i),
+					sortKey: uint64(i * 100),
+				}
+			}
+			for i := 0; i+1 < n; i += 20 {
+				refs[i].sortKey, refs[i+1].sortKey = refs[i+1].sortKey, refs[i].sortKey
+			}
+			orig := make([]commitEntry, len(refs))
+			copy(orig, refs)
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			for iter := 0; iter < b.N; iter++ {
+				copy(refs, orig)
+				insertionSortPendingRefs(refs)
+			}
+		})
+
+		// Worst-case reverse: insertion sort falls back to sort.Slice.
+		b.Run(fmt.Sprintf("batch=%d/reverse_insertion", n), func(b *testing.B) {
+			refs := make([]commitEntry, n)
+			for i := range refs {
+				refs[i] = commitEntry{
+					name:    fmt.Sprintf("f_%06d", n-i),
+					sortKey: uint64((n - i) * 100),
+				}
+			}
+			orig := make([]commitEntry, len(refs))
+			copy(orig, refs)
+
+			b.ResetTimer()
+			b.ReportAllocs()
+			for iter := 0; iter < b.N; iter++ {
+				copy(refs, orig)
+				insertionSortPendingRefs(refs)
 			}
 		})
 	}
