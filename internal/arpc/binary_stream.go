@@ -33,10 +33,6 @@ func SendDataFromReader(r io.Reader, length int, stream ARPCStream) error {
 		return err
 	}
 
-	syslog.L.Debug().WithMessage("SendDataFromReader: start").
-		WithField("length", length).
-		Write()
-
 	var hdr [14]byte
 	binary.LittleEndian.PutUint32(hdr[0:4], magicV1)
 	binary.LittleEndian.PutUint16(hdr[4:6], version)
@@ -52,20 +48,15 @@ func SendDataFromReader(r io.Reader, length int, stream ARPCStream) error {
 		if r == nil {
 			syslog.L.Warn().WithMessage("SendDataFromReader: reader is nil, sending zero-length").Write()
 		}
-		syslog.L.Debug().WithMessage("SendDataFromReader: completed zero-length send").Write()
 		return nil
 	}
 
-	n, err := io.CopyN(stream, r, int64(length))
-	if err != nil {
+	if _, err := io.CopyN(stream, r, int64(length)); err != nil {
 		err = fmt.Errorf("data transfer error: %w", err)
 		syslog.L.Error(err).WithMessage("SendDataFromReader: data write failed").Write()
 		return err
 	}
 
-	syslog.L.Debug().WithMessage("SendDataFromReader: completed").
-		WithField("total_sent", n).
-		Write()
 	return nil
 }
 
@@ -89,11 +80,6 @@ func ReceiveDataInto(stream ARPCStream, dst []byte) (int, error) {
 	}
 
 	totalLength := binary.LittleEndian.Uint64(hdr[6:14])
-
-	syslog.L.Debug().WithMessage("ReceiveDataInto: start").
-		WithField("declared_length", totalLength).
-		WithField("dst_capacity", len(dst)).
-		Write()
 
 	if totalLength > maxLength {
 		err := fmt.Errorf("declared total length %d exceeds maximum allowed %d", totalLength, maxLength)
@@ -121,9 +107,6 @@ func ReceiveDataInto(stream ARPCStream, dst []byte) (int, error) {
 			}
 		}
 
-		syslog.L.Debug().WithMessage("ReceiveDataInto: completed").
-			WithField("total_read", toRead).
-			Write()
 		return toRead, nil
 	}
 
@@ -137,8 +120,5 @@ func ReceiveDataInto(stream ARPCStream, dst []byte) (int, error) {
 		}
 	}
 
-	syslog.L.Debug().WithMessage("ReceiveDataInto: completed").
-		WithField("total_read", toRead).
-		Write()
 	return toRead, nil
 }

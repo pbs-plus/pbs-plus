@@ -30,6 +30,58 @@ type contentHandle struct {
 	mu       sync.Mutex
 }
 
+// RPC request/response types for content streaming.
+
+type readContentReq struct {
+	ContentStart uint64 `cbor:"content_start"`
+	ContentEnd   uint64 `cbor:"content_end"`
+	FileSize     uint64 `cbor:"file_size"`
+	Length       int    `cbor:"length"`
+}
+
+type readContentAtReq struct {
+	HandleID uint64 `cbor:"handle_id"`
+	Offset   int64  `cbor:"offset"`
+	Length   int    `cbor:"length"`
+}
+
+type closeContentReq struct {
+	HandleID uint64 `cbor:"handle_id"`
+}
+
+type handleIDResp struct {
+	HandleID uint64 `cbor:"handle_id"`
+}
+
+// RPC request types for directory/attribute operations.
+
+type lookupByPathReq struct {
+	Path string `cbor:"path"`
+}
+
+type readDirReq struct {
+	EntryEnd uint64 `cbor:"entry_end"`
+}
+
+type getAttrReq struct {
+	EntryStart uint64 `cbor:"entry_start"`
+	EntryEnd   uint64 `cbor:"entry_end"`
+}
+
+type readLinkReq struct {
+	EntryStart uint64 `cbor:"entry_start"`
+	EntryEnd   uint64 `cbor:"entry_end"`
+}
+
+type listXAttrsReq struct {
+	EntryStart uint64 `cbor:"entry_start"`
+	EntryEnd   uint64 `cbor:"entry_end"`
+}
+
+type errorReq struct {
+	Error string `cbor:"error"`
+}
+
 type RemoteServer struct {
 	reader         *PxarReader
 	router         *arpc.Router
@@ -82,9 +134,7 @@ func (s *RemoteServer) registerHandlers() {
 }
 
 func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		Error string `cbor:"error"`
-	}
+	var params errorReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -129,9 +179,7 @@ func (s *RemoteServer) handleGetRoot(req *arpc.Request) (arpc.Response, error) {
 }
 
 func (s *RemoteServer) handleLookupByPath(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		Path string `cbor:"path"`
-	}
+	var params lookupByPathReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -153,9 +201,7 @@ func (s *RemoteServer) handleLookupByPath(req *arpc.Request) (arpc.Response, err
 }
 
 func (s *RemoteServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		EntryEnd uint64 `cbor:"entry_end"`
-	}
+	var params readDirReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -177,10 +223,7 @@ func (s *RemoteServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 }
 
 func (s *RemoteServer) handleGetAttr(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		EntryStart uint64 `cbor:"entry_start"`
-		EntryEnd   uint64 `cbor:"entry_end"`
-	}
+	var params getAttrReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -202,12 +245,7 @@ func (s *RemoteServer) handleGetAttr(req *arpc.Request) (arpc.Response, error) {
 }
 
 func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		ContentStart uint64 `cbor:"content_start"`
-		ContentEnd   uint64 `cbor:"content_end"`
-		FileSize     uint64 `cbor:"file_size"`
-		Length       int    `cbor:"length"`
-	}
+	var params readContentReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -244,7 +282,6 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 		return arpc.Response{}, fmt.Errorf("read content: %w", readErr)
 	}
 
-	// If the entire file fit in the first chunk, close immediately.
 	if uint64(n) >= params.FileSize {
 		rc.Close()
 	} else {
@@ -254,9 +291,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 		})
 	}
 
-	respData, _ := cbor.Marshal(map[string]uint64{
-		"handle_id": handleID,
-	})
+	respData, _ := cbor.Marshal(handleIDResp{HandleID: handleID})
 	return arpc.Response{Status: 213, Data: respData, RawStream: func(stream arpc.ARPCStream) {
 		if !isTemp {
 			defer readBufPool.Put(bptr)
@@ -266,11 +301,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 }
 
 func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		HandleID uint64 `cbor:"handle_id"`
-		Offset   int64  `cbor:"offset"`
-		Length   int    `cbor:"length"`
-	}
+	var params readContentAtReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -327,9 +358,7 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 }
 
 func (s *RemoteServer) handleCloseContent(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		HandleID uint64 `cbor:"handle_id"`
-	}
+	var params closeContentReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -345,10 +374,7 @@ func (s *RemoteServer) handleCloseContent(req *arpc.Request) (arpc.Response, err
 }
 
 func (s *RemoteServer) handleReadLink(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		EntryStart uint64 `cbor:"entry_start"`
-		EntryEnd   uint64 `cbor:"entry_end"`
-	}
+	var params readLinkReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}
@@ -365,10 +391,7 @@ func (s *RemoteServer) handleReadLink(req *arpc.Request) (arpc.Response, error) 
 }
 
 func (s *RemoteServer) handleListXAttrs(req *arpc.Request) (arpc.Response, error) {
-	var params struct {
-		EntryStart uint64 `cbor:"entry_start"`
-		EntryEnd   uint64 `cbor:"entry_end"`
-	}
+	var params listXAttrsReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
 	}

@@ -193,6 +193,12 @@ func (l *Logger) Info() *LogEntry {
 	return e
 }
 
+var debugEnabled = os.Getenv("DEBUG") == "true"
+
+func (l *Logger) DebugEnabled() bool {
+	return debugEnabled
+}
+
 func (l *Logger) Debug() *LogEntry {
 	e := getLogEntry()
 	e.Level = "debug"

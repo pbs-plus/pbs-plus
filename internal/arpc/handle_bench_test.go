@@ -19,14 +19,41 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-// -----------------------------------------------------------------------
-// Benchmarks: merged ReadContent (1 RPC per small file) vs separate
-// Open + ReadContentAt (2 RPCs per small file).
-// -----------------------------------------------------------------------
-
 const benchChunkSize = 4 << 20 // 4 MB
 
-// benchHandleStore mimics the pxar contentHandle store.
+// Shared request/response types for benchmarks (avoids map allocations).
+
+type benchOpenReq struct {
+	FileSize uint64 `cbor:"file_size"`
+}
+
+type benchOpenResp struct {
+	HandleID uint64 `cbor:"handle_id"`
+}
+
+type benchReadContentReq struct {
+	FileSize uint64 `cbor:"file_size"`
+	Length   int    `cbor:"length"`
+}
+
+type benchReadAtReq struct {
+	HandleID uint64 `cbor:"handle_id"`
+	Offset   int64  `cbor:"offset"`
+	Length   int    `cbor:"length"`
+}
+
+type benchCloseReq struct {
+	HandleID uint64 `cbor:"handle_id"`
+}
+
+type benchHandleIDResp struct {
+	HandleID uint64 `cbor:"handle_id"`
+}
+
+// -----------------------------------------------------------------------
+// Handle store
+// -----------------------------------------------------------------------
+
 type benchHandleStore struct {
 	mu      sync.Mutex
 	counter uint64
@@ -65,8 +92,6 @@ func (s *benchHandleStore) remove(id uint64) {
 	s.mu.Unlock()
 }
 
-// readFromHandle reads up to length bytes from a benchHandle at offset,
-// returning the bytes read. (No pool — benchmark focuses on RPC overhead.)
 func readFromHandle(h *benchHandle, offset, length int) ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -89,7 +114,7 @@ func readFromHandle(h *benchHandle, offset, length int) ([]byte, error) {
 }
 
 // -----------------------------------------------------------------------
-// Bench helpers: TLS + TCP arpc setup
+// TLS + TCP arpc setup
 // -----------------------------------------------------------------------
 
 func benchNewCA(b *testing.B) *testPKI {
@@ -212,24 +237,18 @@ func BenchmarkFileRestore_Separate(b *testing.B) {
 
 	router := NewRouter()
 	router.Handle("bench.OpenContent", func(req *Request) (Response, error) {
-		var params struct {
-			FileSize uint64 `cbor:"file_size"`
-		}
+		var params benchOpenReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
 		data := bytes.Repeat([]byte("A"), int(params.FileSize))
 		rc := bytes.NewReader(data)
 		handleID := store.register(rc, int64(params.FileSize))
-		respData, _ := cbor.Marshal(map[string]uint64{"handle_id": handleID})
+		respData, _ := cbor.Marshal(benchOpenResp{HandleID: handleID})
 		return Response{Status: 200, Data: respData}, nil
 	})
 	router.Handle("bench.ReadContentAt", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-			Offset   int64  `cbor:"offset"`
-			Length   int    `cbor:"length"`
-		}
+		var params benchReadAtReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -246,9 +265,7 @@ func BenchmarkFileRestore_Separate(b *testing.B) {
 		}}, nil
 	})
 	router.Handle("bench.CloseContent", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}
+		var params benchCloseReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -259,22 +276,14 @@ func BenchmarkFileRestore_Separate(b *testing.B) {
 	pipe := benchSetupPipe(b, router)
 	ctx := context.Background()
 
-	// Pre-generate file sizes: mix of small files (≤ 4 MB)
 	fileSizes := []int64{
-		1 << 10,   // 1 KB
-		4 << 10,   // 4 KB
-		64 << 10,  // 64 KB
-		256 << 10, // 256 KB
-		1 << 20,   // 1 MB
-		4 << 20,   // 4 MB
+		1 << 10, 4 << 10, 64 << 10, 256 << 10, 1 << 20, 4 << 20,
 	}
 
 	buf := make([]byte, benchChunkSize)
-	readReq := struct {
-		HandleID uint64 `cbor:"handle_id"`
-		Offset   int64  `cbor:"offset"`
-		Length   int    `cbor:"length"`
-	}{}
+	openReq := benchOpenReq{}
+	readReq := benchReadAtReq{}
+	closeReq := benchCloseReq{}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -282,17 +291,12 @@ func BenchmarkFileRestore_Separate(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		fs := fileSizes[i%len(fileSizes)]
 
-		// 1. OpenContent RPC
-		openResp := struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}{}
-		if err := pipe.Call(ctx, "bench.OpenContent", map[string]uint64{
-			"file_size": uint64(fs),
-		}, &openResp); err != nil {
+		openReq.FileSize = uint64(fs)
+		openResp := benchOpenResp{}
+		if err := pipe.Call(ctx, "bench.OpenContent", &openReq, &openResp); err != nil {
 			b.Fatal(err)
 		}
 
-		// 2. ReadContentAt loop
 		readReq.HandleID = openResp.HandleID
 		var offset int64
 		for offset < fs {
@@ -312,10 +316,8 @@ func BenchmarkFileRestore_Separate(b *testing.B) {
 			}
 		}
 
-		// 3. CloseContent RPC
-		_ = pipe.Call(ctx, "bench.CloseContent", map[string]uint64{
-			"handle_id": openResp.HandleID,
-		}, nil)
+		closeReq.HandleID = openResp.HandleID
+		_ = pipe.Call(ctx, "bench.CloseContent", &closeReq, nil)
 	}
 }
 
@@ -328,10 +330,7 @@ func BenchmarkFileRestore_Merged(b *testing.B) {
 
 	router := NewRouter()
 	router.Handle("bench.ReadContent", func(req *Request) (Response, error) {
-		var params struct {
-			FileSize uint64 `cbor:"file_size"`
-			Length   int    `cbor:"length"`
-		}
+		var params benchReadContentReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -350,22 +349,17 @@ func BenchmarkFileRestore_Merged(b *testing.B) {
 		}
 
 		var handleID uint64
-		// If entire file fit, no handle needed.
 		if int64(n) < int64(params.FileSize) {
 			handleID = store.register(rc, int64(params.FileSize))
 		}
 
-		respData, _ := cbor.Marshal(map[string]uint64{"handle_id": handleID})
+		respData, _ := cbor.Marshal(benchHandleIDResp{HandleID: handleID})
 		return Response{Status: 213, Data: respData, RawStream: func(stream ARPCStream) {
 			_ = SendDataFromReader(bytes.NewReader(chunk), n, stream)
 		}}, nil
 	})
 	router.Handle("bench.ReadContentAt", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-			Offset   int64  `cbor:"offset"`
-			Length   int    `cbor:"length"`
-		}
+		var params benchReadAtReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -382,9 +376,7 @@ func BenchmarkFileRestore_Merged(b *testing.B) {
 		}}, nil
 	})
 	router.Handle("bench.CloseContent", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}
+		var params benchCloseReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -396,15 +388,13 @@ func BenchmarkFileRestore_Merged(b *testing.B) {
 	ctx := context.Background()
 
 	fileSizes := []int64{
-		1 << 10,   // 1 KB
-		4 << 10,   // 4 KB
-		64 << 10,  // 64 KB
-		256 << 10, // 256 KB
-		1 << 20,   // 1 MB
-		4 << 20,   // 4 MB
+		1 << 10, 4 << 10, 64 << 10, 256 << 10, 1 << 20, 4 << 20,
 	}
 
 	buf := make([]byte, benchChunkSize)
+	readContentReq := benchReadContentReq{}
+	readAtReq := benchReadAtReq{}
+	closeReq := benchCloseReq{}
 
 	b.ResetTimer()
 	b.ReportAllocs()
@@ -417,43 +407,32 @@ func BenchmarkFileRestore_Merged(b *testing.B) {
 			reqLen = int(fs)
 		}
 
-		// 1. ReadContent: merged open + first read (single RPC)
-		n, resp, err := pipe.CallBinaryWithMeta(ctx, "bench.ReadContent", map[string]any{
-			"file_size": uint64(fs),
-			"length":    reqLen,
-		}, buf)
+		readContentReq.FileSize = uint64(fs)
+		readContentReq.Length = reqLen
+		n, resp, err := pipe.CallBinaryWithMeta(ctx, "bench.ReadContent", &readContentReq, buf)
 		if err != nil {
 			b.Fatal(err)
 		}
 
 		offset := int64(n)
 		if offset >= fs {
-			// Entire file fit in first chunk. No close needed.
 			continue
 		}
 
-		var handleResp struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}
+		var handleResp benchHandleIDResp
 		if err := cbor.Unmarshal(resp.Data, &handleResp); err != nil {
 			b.Fatal(err)
 		}
 
-		// 2. Remaining chunks via ReadContentAt
-		readReq := struct {
-			HandleID uint64 `cbor:"handle_id"`
-			Offset   int64  `cbor:"offset"`
-			Length   int    `cbor:"length"`
-		}{HandleID: handleResp.HandleID}
-
+		readAtReq.HandleID = handleResp.HandleID
 		for offset < fs {
 			reqLen := benchChunkSize
 			if offset+int64(reqLen) > fs {
 				reqLen = int(fs - offset)
 			}
-			readReq.Offset = offset
-			readReq.Length = reqLen
-			n, err := pipe.CallBinary(ctx, "bench.ReadContentAt", &readReq, buf)
+			readAtReq.Offset = offset
+			readAtReq.Length = reqLen
+			n, err := pipe.CallBinary(ctx, "bench.ReadContentAt", &readAtReq, buf)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -463,15 +442,13 @@ func BenchmarkFileRestore_Merged(b *testing.B) {
 			}
 		}
 
-		// 3. CloseContent
-		_ = pipe.Call(ctx, "bench.CloseContent", map[string]uint64{
-			"handle_id": handleResp.HandleID,
-		}, nil)
+		closeReq.HandleID = handleResp.HandleID
+		_ = pipe.Call(ctx, "bench.CloseContent", &closeReq, nil)
 	}
 }
 
 // -----------------------------------------------------------------------
-// Sub-benchmarks: break down by file size to show where the merge wins
+// Per-file-size sub-benchmarks
 // -----------------------------------------------------------------------
 
 func benchFileSizeSeparate(b *testing.B, fileSize int64) {
@@ -479,24 +456,18 @@ func benchFileSizeSeparate(b *testing.B, fileSize int64) {
 
 	router := NewRouter()
 	router.Handle("bench.OpenContent", func(req *Request) (Response, error) {
-		var params struct {
-			FileSize uint64 `cbor:"file_size"`
-		}
+		var params benchOpenReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
 		data := bytes.Repeat([]byte("A"), int(params.FileSize))
 		rc := bytes.NewReader(data)
 		handleID := store.register(rc, int64(params.FileSize))
-		respData, _ := cbor.Marshal(map[string]uint64{"handle_id": handleID})
+		respData, _ := cbor.Marshal(benchOpenResp{HandleID: handleID})
 		return Response{Status: 200, Data: respData}, nil
 	})
 	router.Handle("bench.ReadContentAt", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-			Offset   int64  `cbor:"offset"`
-			Length   int    `cbor:"length"`
-		}
+		var params benchReadAtReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -513,9 +484,7 @@ func benchFileSizeSeparate(b *testing.B, fileSize int64) {
 		}}, nil
 	})
 	router.Handle("bench.CloseContent", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}
+		var params benchCloseReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -526,24 +495,18 @@ func benchFileSizeSeparate(b *testing.B, fileSize int64) {
 	pipe := benchSetupPipe(b, router)
 	ctx := context.Background()
 	buf := make([]byte, benchChunkSize)
+	openReq := benchOpenReq{FileSize: uint64(fileSize)}
+	readReq := benchReadAtReq{}
+	closeReq := benchCloseReq{}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		openResp := struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}{}
-		_ = pipe.Call(ctx, "bench.OpenContent", map[string]uint64{
-			"file_size": uint64(fileSize),
-		}, &openResp)
+		openResp := benchOpenResp{}
+		_ = pipe.Call(ctx, "bench.OpenContent", &openReq, &openResp)
 
-		readReq := struct {
-			HandleID uint64 `cbor:"handle_id"`
-			Offset   int64  `cbor:"offset"`
-			Length   int    `cbor:"length"`
-		}{HandleID: openResp.HandleID}
-
+		readReq.HandleID = openResp.HandleID
 		var offset int64
 		for offset < fileSize {
 			reqLen := benchChunkSize
@@ -558,9 +521,8 @@ func benchFileSizeSeparate(b *testing.B, fileSize int64) {
 				break
 			}
 		}
-		_ = pipe.Call(ctx, "bench.CloseContent", map[string]uint64{
-			"handle_id": openResp.HandleID,
-		}, nil)
+		closeReq.HandleID = openResp.HandleID
+		_ = pipe.Call(ctx, "bench.CloseContent", &closeReq, nil)
 	}
 }
 
@@ -569,10 +531,7 @@ func benchFileSizeMerged(b *testing.B, fileSize int64) {
 
 	router := NewRouter()
 	router.Handle("bench.ReadContent", func(req *Request) (Response, error) {
-		var params struct {
-			FileSize uint64 `cbor:"file_size"`
-			Length   int    `cbor:"length"`
-		}
+		var params benchReadContentReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -594,17 +553,13 @@ func benchFileSizeMerged(b *testing.B, fileSize int64) {
 			handleID = store.register(rc, int64(params.FileSize))
 		}
 
-		respData, _ := cbor.Marshal(map[string]uint64{"handle_id": handleID})
+		respData, _ := cbor.Marshal(benchHandleIDResp{HandleID: handleID})
 		return Response{Status: 213, Data: respData, RawStream: func(stream ARPCStream) {
 			_ = SendDataFromReader(bytes.NewReader(chunk), n, stream)
 		}}, nil
 	})
 	router.Handle("bench.ReadContentAt", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-			Offset   int64  `cbor:"offset"`
-			Length   int    `cbor:"length"`
-		}
+		var params benchReadAtReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -621,9 +576,7 @@ func benchFileSizeMerged(b *testing.B, fileSize int64) {
 		}}, nil
 	})
 	router.Handle("bench.CloseContent", func(req *Request) (Response, error) {
-		var params struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}
+		var params benchCloseReq
 		if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 			return Response{}, err
 		}
@@ -635,57 +588,47 @@ func benchFileSizeMerged(b *testing.B, fileSize int64) {
 	ctx := context.Background()
 	buf := make([]byte, benchChunkSize)
 
+	reqLen := benchChunkSize
+	if int64(reqLen) > fileSize {
+		reqLen = int(fileSize)
+	}
+	readContentReq := benchReadContentReq{FileSize: uint64(fileSize), Length: reqLen}
+	readAtReq := benchReadAtReq{}
+	closeReq := benchCloseReq{}
+
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		reqLen := benchChunkSize
-		if int64(reqLen) > fileSize {
-			reqLen = int(fileSize)
-		}
-
-		n, resp, _ := pipe.CallBinaryWithMeta(ctx, "bench.ReadContent", map[string]any{
-			"file_size": uint64(fileSize),
-			"length":    reqLen,
-		}, buf)
+		n, resp, _ := pipe.CallBinaryWithMeta(ctx, "bench.ReadContent", &readContentReq, buf)
 
 		offset := int64(n)
 		if offset >= fileSize {
 			continue
 		}
 
-		var handleResp struct {
-			HandleID uint64 `cbor:"handle_id"`
-		}
+		var handleResp benchHandleIDResp
 		_ = cbor.Unmarshal(resp.Data, &handleResp)
 
-		readReq := struct {
-			HandleID uint64 `cbor:"handle_id"`
-			Offset   int64  `cbor:"offset"`
-			Length   int    `cbor:"length"`
-		}{HandleID: handleResp.HandleID}
-
+		readAtReq.HandleID = handleResp.HandleID
 		for offset < fileSize {
 			reqLen := benchChunkSize
 			if offset+int64(reqLen) > fileSize {
 				reqLen = int(fileSize - offset)
 			}
-			readReq.Offset = offset
-			readReq.Length = reqLen
-			rn, _ := pipe.CallBinary(ctx, "bench.ReadContentAt", &readReq, buf)
+			readAtReq.Offset = offset
+			readAtReq.Length = reqLen
+			rn, _ := pipe.CallBinary(ctx, "bench.ReadContentAt", &readAtReq, buf)
 			offset += int64(rn)
 			if rn == 0 {
 				break
 			}
 		}
-
-		_ = pipe.Call(ctx, "bench.CloseContent", map[string]uint64{
-			"handle_id": handleResp.HandleID,
-		}, nil)
+		closeReq.HandleID = handleResp.HandleID
+		_ = pipe.Call(ctx, "bench.CloseContent", &closeReq, nil)
 	}
 }
 
-// Per-file-size benchmarks: separate (before merge)
 func BenchmarkSeparate_1KB(b *testing.B)   { benchFileSizeSeparate(b, 1<<10) }
 func BenchmarkSeparate_4KB(b *testing.B)   { benchFileSizeSeparate(b, 4<<10) }
 func BenchmarkSeparate_64KB(b *testing.B)  { benchFileSizeSeparate(b, 64<<10) }
@@ -693,7 +636,6 @@ func BenchmarkSeparate_256KB(b *testing.B) { benchFileSizeSeparate(b, 256<<10) }
 func BenchmarkSeparate_1MB(b *testing.B)   { benchFileSizeSeparate(b, 1<<20) }
 func BenchmarkSeparate_4MB(b *testing.B)   { benchFileSizeSeparate(b, 4<<20) }
 
-// Per-file-size benchmarks: merged (after merge)
 func BenchmarkMerged_1KB(b *testing.B)   { benchFileSizeMerged(b, 1<<10) }
 func BenchmarkMerged_4KB(b *testing.B)   { benchFileSizeMerged(b, 4<<10) }
 func BenchmarkMerged_64KB(b *testing.B)  { benchFileSizeMerged(b, 64<<10) }

@@ -67,11 +67,9 @@ func (c *Client) GetRoot(ctx context.Context) (pxar.FileInfo, error) {
 
 func (c *Client) LookupByPath(ctx context.Context, path string) (pxar.FileInfo, error) {
 	if c.pipe != nil {
-		params := map[string]any{
-			"path": path,
-		}
+		params := lookupByPathReq{Path: path}
 		var info pxar.FileInfo
-		if err := c.pipe.Call(ctx, "pxar.LookupByPath", params, &info); err != nil {
+		if err := c.pipe.Call(ctx, "pxar.LookupByPath", &params, &info); err != nil {
 			return pxar.FileInfo{}, err
 		}
 		return info, nil
@@ -87,11 +85,9 @@ func (c *Client) LookupByPath(ctx context.Context, path string) (pxar.FileInfo, 
 
 func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]pxar.FileInfo, error) {
 	if c.pipe != nil {
-		params := map[string]any{
-			"entry_end": entryEnd,
-		}
+		params := readDirReq{EntryEnd: entryEnd}
 		var entries []pxar.FileInfo
-		if err := c.pipe.Call(ctx, "pxar.ReadDir", params, &entries); err != nil {
+		if err := c.pipe.Call(ctx, "pxar.ReadDir", &params, &entries); err != nil {
 			return nil, err
 		}
 		return entries, nil
@@ -107,12 +103,9 @@ func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]pxar.FileInfo,
 
 func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (pxar.FileInfo, error) {
 	if c.pipe != nil {
-		params := map[string]any{
-			"entry_start": entryStart,
-			"entry_end":   entryEnd,
-		}
+		params := getAttrReq{EntryStart: entryStart, EntryEnd: entryEnd}
 		var info pxar.FileInfo
-		if err := c.pipe.Call(ctx, "pxar.GetAttr", params, &info); err != nil {
+		if err := c.pipe.Call(ctx, "pxar.GetAttr", &params, &info); err != nil {
 			return pxar.FileInfo{}, err
 		}
 		return info, nil
@@ -128,12 +121,9 @@ func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (pxar
 
 func (c *Client) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
 	if c.pipe != nil {
-		params := map[string]any{
-			"entry_start": entryStart,
-			"entry_end":   entryEnd,
-		}
+		params := readLinkReq{EntryStart: entryStart, EntryEnd: entryEnd}
 		var target []byte
-		if err := c.pipe.Call(ctx, "pxar.ReadLink", params, &target); err != nil {
+		if err := c.pipe.Call(ctx, "pxar.ReadLink", &params, &target); err != nil {
 			return nil, err
 		}
 		return target, nil
@@ -149,12 +139,9 @@ func (c *Client) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]b
 
 func (c *Client) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
 	if c.pipe != nil {
-		params := map[string]any{
-			"entry_start": entryStart,
-			"entry_end":   entryEnd,
-		}
+		params := listXAttrsReq{EntryStart: entryStart, EntryEnd: entryEnd}
 		var xattrs map[string][]byte
-		if err := c.pipe.Call(ctx, "pxar.ListXAttrs", params, &xattrs); err != nil {
+		if err := c.pipe.Call(ctx, "pxar.ListXAttrs", &params, &xattrs); err != nil {
 			return nil, err
 		}
 		return xattrs, nil
@@ -198,12 +185,14 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			}
 
 			// Merged open + first read: single RPC.
-			n, resp, err := c.pipe.CallBinaryWithMeta(ctx, "pxar.ReadContent", map[string]any{
-				"content_start": contentStart,
-				"content_end":   contentEnd,
-				"file_size":     fileSize,
-				"length":        reqLen,
-			}, buf)
+			req := readContentReq{
+				ContentStart: contentStart,
+				ContentEnd:   contentEnd,
+				FileSize:     fileSize,
+				Length:       reqLen,
+			}
+
+			n, resp, err := c.pipe.CallBinaryWithMeta(ctx, "pxar.ReadContent", &req, buf)
 			if err != nil {
 				pw.CloseWithError(err)
 				return
@@ -225,30 +214,20 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			}
 
 			// Parse handle ID for remaining chunks.
-			var handleResp struct {
-				HandleID uint64 `cbor:"handle_id"`
-			}
+			var handleResp handleIDResp
 			if err := cbor.Unmarshal(resp.Data, &handleResp); err != nil {
 				pw.CloseWithError(err)
 				return
 			}
-			handleID := handleResp.HandleID
 
 			// Ensure handle is closed when done.
 			defer func() {
-				_ = c.pipe.Call(context.Background(), "pxar.CloseContent", map[string]uint64{
-					"handle_id": handleID,
-				}, nil)
+				closeReq := closeContentReq{HandleID: handleResp.HandleID}
+				_ = c.pipe.Call(context.Background(), "pxar.CloseContent", &closeReq, nil)
 			}()
 
 			// Read remaining chunks via ReadContentAt.
-			readReq := struct {
-				HandleID uint64 `cbor:"handle_id"`
-				Offset   int64  `cbor:"offset"`
-				Length   int    `cbor:"length"`
-			}{
-				HandleID: handleID,
-			}
+			readReq := readContentAtReq{HandleID: handleResp.HandleID}
 
 			for offset < int64(fileSize) {
 				reqLen := chunkSize

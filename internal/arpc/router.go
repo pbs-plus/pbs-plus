@@ -8,7 +8,6 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var (
@@ -66,25 +65,19 @@ func (r *Router) serveStream(stream ARPCStream) {
 	}
 
 	if err = enc.Encode(resp); err != nil {
-		syslog.L.Debug().WithField("req", req.Method).WithField("code", resp.Status).WithMessage("sending response").Write()
 		return
 	}
 
 	if resp.Status == 213 && resp.RawStream != nil {
-		syslog.L.Debug().WithField("req", req.Method).WithMessage("sending binary").Write()
-
 		var readyByte [1]byte
 		if _, err := stream.Read(readyByte[:]); err != nil {
-			syslog.L.Debug().WithField("req", req.Method).WithMessage("client not ready").Write()
 			return
 		}
 		if readyByte[0] != 0xFF {
-			syslog.L.Debug().WithField("req", req.Method).WithMessage("invalid ready signal").Write()
 			return
 		}
 
 		if _, err := stream.Write(ackSignal); err != nil {
-			syslog.L.Debug().WithField("req", req.Method).WithMessage("failed to send ack").Write()
 			return
 		}
 
