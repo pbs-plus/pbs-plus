@@ -65,7 +65,7 @@ type pebbleSet struct {
 
 type Journal struct {
 	db         *pebble.DB
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	nextNodeID atomic.Int64
 
 	overlay   map[string][]byte
@@ -584,15 +584,15 @@ func (j *Journal) overlayGet(key []byte) ([]byte, bool) {
 }
 
 func (j *Journal) GetNode(id int64) (*GraphNode, error) {
-	j.mu.Lock()
+	j.mu.RLock()
 	if v, ok := j.overlayGet(nodeKey(id)); ok {
-		j.mu.Unlock()
+		j.mu.RUnlock()
 		if v == nil {
 			return nil, nil
 		}
 		return decodeNode(v, id), nil
 	}
-	j.mu.Unlock()
+	j.mu.RUnlock()
 
 	data, closer, err := j.db.Get(nodeKey(id))
 	if err == pebble.ErrNotFound {
@@ -705,7 +705,7 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
-	j.mu.Lock()
+	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
 	overlayAdds := make(map[string]int64)
 	for k, v := range j.overlay {
@@ -719,7 +719,7 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 			overlayAdds[name] = decodeInt64(v)
 		}
 	}
-	j.mu.Unlock()
+	j.mu.RUnlock()
 
 	var edges []GraphEdge
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -784,7 +784,7 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
-	j.mu.Lock()
+	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
 	overlayAdds := make(map[string]bool)
 	for k, v := range j.overlay {
@@ -798,7 +798,7 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 			overlayAdds[name] = true
 		}
 	}
-	j.mu.Unlock()
+	j.mu.RUnlock()
 
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -827,9 +827,9 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 }
 
 func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
-	j.mu.Lock()
+	j.mu.RLock()
 	if v, ok := j.overlayGet(xattrKey(nodeID, name)); ok {
-		j.mu.Unlock()
+		j.mu.RUnlock()
 		if v == nil {
 			return nil, nil
 		}
@@ -837,7 +837,7 @@ func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 		copy(cp, v)
 		return cp, nil
 	}
-	j.mu.Unlock()
+	j.mu.RUnlock()
 
 	val, closer, err := j.db.Get(xattrKey(nodeID, name))
 	if err == pebble.ErrNotFound {
@@ -863,7 +863,7 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
-	j.mu.Lock()
+	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
 	overlayAdds := make(map[string]bool)
 	for k, v := range j.overlay {
@@ -877,7 +877,7 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 			overlayAdds[name] = true
 		}
 	}
-	j.mu.Unlock()
+	j.mu.RUnlock()
 
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -916,7 +916,7 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
-	j.mu.Lock()
+	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
 	overlayAdds := make(map[string][]byte)
 	for k, v := range j.overlay {
@@ -930,7 +930,7 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 			overlayAdds[name] = v
 		}
 	}
-	j.mu.Unlock()
+	j.mu.RUnlock()
 
 	var xattrs []format.XAttr
 	for iter.First(); iter.Valid(); iter.Next() {
@@ -982,8 +982,8 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 		return 1, "/", 0, "", nil
 	}
 
-	j.mu.Lock()
-	defer j.mu.Unlock()
+	j.mu.RLock()
+	defer j.mu.RUnlock()
 
 	snap := j.db.NewSnapshot()
 	defer func() { _ = snap.Close() }()
@@ -1049,7 +1049,7 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
-	j.mu.Lock()
+	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
 	overlayAdds := make(map[string]struct {
 		nodeID int64
@@ -1071,7 +1071,7 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 			}{nodeID, v}
 		}
 	}
-	j.mu.Unlock()
+	j.mu.RUnlock()
 
 	result := make(map[int64]map[string][]byte)
 	for iter.First(); iter.Valid(); iter.Next() {
