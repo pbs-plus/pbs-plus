@@ -58,6 +58,7 @@ func benchMutableFS(b *testing.B) (*MutableFS, func()) {
 	return mfs, func() {
 		_ = mfs.journal.Sync()
 		mfs.Close()
+		time.Sleep(50 * time.Millisecond)
 		_ = os.RemoveAll(dir)
 	}
 }
