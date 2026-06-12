@@ -31,27 +31,33 @@ func TestSequentialReadNoSeeker(t *testing.T) {
 	section := io.NewSectionReader(bytesReaderAt{}, 0, fileSize)
 	rc := io.NopCloser(section)
 
-	h := &contentHandle{rc: rc, fileSize: fileSize}
-
 	buf := make([]byte, 4<<20)
 
-	n, err := io.ReadFull(h.rc, buf)
+	n, err := io.ReadFull(rc, buf)
 	if err != nil {
 		t.Fatalf("first read: %v", err)
 	}
-	h.bytesRead += int64(n)
 
 	if n != 4<<20 {
 		t.Fatalf("first read: got %d bytes, want %d", n, 4<<20)
 	}
 
+	h := &contentHandle{rc: rc, fileSize: fileSize, bytesRead: int64(n)}
+
+	offset := int64(n)
+
 	n, err = io.ReadFull(h.rc, buf)
 	if err != nil && err != io.ErrUnexpectedEOF {
 		t.Fatalf("second read: %v", err)
 	}
+
 	h.bytesRead += int64(n)
 
 	if h.bytesRead != fileSize {
 		t.Fatalf("total read: %d, want %d", h.bytesRead, fileSize)
+	}
+
+	if offset != 4<<20 {
+		t.Fatalf("offset mismatch: %d", offset)
 	}
 }

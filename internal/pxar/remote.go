@@ -218,7 +218,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 	if uint64(n) >= params.FileSize {
 		rc.Close()
 	} else {
-		s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize})
+		s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize, bytesRead: int64(n)})
 	}
 
 	respData, _ := cbor.Marshal(handleIDResp{HandleID: handleID})
