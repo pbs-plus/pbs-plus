@@ -15,8 +15,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// --- trackingWriter records calls for correctness assertions ---
-
 type trackingWriter struct {
 	dirOpens    int
 	dirCloses   int
@@ -24,7 +22,7 @@ type trackingWriter struct {
 	symlinks    []string
 	emptyFiles  []string
 	backedFiles []string
-	ops         []string // ordered log: "dir:name", "ref:name@offset", "sym:name", "empty:name", "backed:name"
+	ops         []string
 }
 
 type refRecord struct {
@@ -68,8 +66,6 @@ func (w *trackingWriter) Encoder() *encoder.Encoder                        { ret
 func (w *trackingWriter) Finish() error                                    { return nil }
 func (w *trackingWriter) Close() error                                     { return nil }
 
-// --- mergeMetaWithPxar ---
-
 func TestMergeMetaWithPxar(t *testing.T) {
 	journalMeta := pxar.Metadata{
 		Stat: format.Stat{
@@ -102,7 +98,6 @@ func TestMergeMetaWithPxar(t *testing.T) {
 
 	merged := mergeMetaWithPxar(journalMeta, pxarEntry)
 
-	// Journal overrides should win for stat fields.
 	if merged.Stat.Mode != format.ModeIFREG|0o644 {
 		t.Errorf("Mode = 0%o, want 0%o", merged.Stat.Mode, format.ModeIFREG|0o644)
 	}
@@ -113,7 +108,6 @@ func TestMergeMetaWithPxar(t *testing.T) {
 		t.Errorf("Mtime.Secs = %d, want 1700000000", merged.Stat.Mtime.Secs)
 	}
 
-	// Pxar fields the journal doesn't track should be preserved.
 	if merged.Stat.Flags != 0x10 {
 		t.Errorf("Flags = %d, want 0x10", merged.Stat.Flags)
 	}
@@ -124,7 +118,6 @@ func TestMergeMetaWithPxar(t *testing.T) {
 		t.Errorf("ACL.Users not preserved: %+v", merged.ACL.Users)
 	}
 
-	// Journal xattrs must be preserved (not overwritten by pxar).
 	if len(merged.XAttrs) != 2 {
 		t.Errorf("XAttrs len = %d, want 2", len(merged.XAttrs))
 	}
@@ -151,8 +144,6 @@ func TestMergeMetaWithPxarNilPxarFields(t *testing.T) {
 		t.Error("FCaps should be empty when pxar has none")
 	}
 }
-
-// --- nodeToMetadata ---
 
 func TestNodeToMetadata(t *testing.T) {
 	node := &GraphNode{
@@ -201,26 +192,21 @@ func TestNodeToMetadataKinds(t *testing.T) {
 	}
 }
 
-// --- pendingRefs batching ---
-
 func TestPendingRefsFlushOrder(t *testing.T) {
 	ow := &commitWalkState{
 		mfs: &MutableFS{verbose: false},
 	}
 
-	// Add refs in non-offset order. Verify pendingRefs sort order.
 	ce1 := commitEntry{name: "ccc", pxarSlim: &dirEntrySlim{name: "ccc", contentOffset: 300, isReg: true}, sortKey: 300}
 	ce2 := commitEntry{name: "aaa", pxarSlim: &dirEntrySlim{name: "aaa", contentOffset: 100, isReg: true}, sortKey: 100}
 	ce3 := commitEntry{name: "bbb", pxarSlim: &dirEntrySlim{name: "bbb", contentOffset: 200, isReg: true}, sortKey: 200}
 
 	ow.pendingRefs = append(ow.pendingRefs, ce1, ce2, ce3)
 
-	// Sort by sortKey as flushPendingRefs would.
 	sort.Slice(ow.pendingRefs, func(i, j int) bool {
 		return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
 	})
 
-	// Verify ascending sortKey order.
 	if ow.pendingRefs[0].sortKey != 100 || ow.pendingRefs[1].sortKey != 200 || ow.pendingRefs[2].sortKey != 300 {
 		t.Errorf("sortKeys: %v, want [100 200 300]", []uint64{
 			ow.pendingRefs[0].sortKey, ow.pendingRefs[1].sortKey, ow.pendingRefs[2].sortKey,
@@ -239,10 +225,6 @@ func TestPendingRefsMaxBound(t *testing.T) {
 		writer: w,
 	}
 
-	// Add maxPendingRefs entries using journal nodes (not pxar) so emitJournalRef
-	// is called instead of emitPxarRef — both need PxarFS though, so we just verify
-	// the batch fills to maxPendingRefs without crossing the auto-flush boundary
-	// (the auto-flush would need a real PxarFS + archive).
 	for i := range maxPendingRefs {
 		ce := commitEntry{
 			name: "entry",
@@ -253,58 +235,45 @@ func TestPendingRefsMaxBound(t *testing.T) {
 			t.Errorf("pendingRefs exceeded max at i=%d: len=%d", i, len(ow.pendingRefs))
 		}
 	}
-	// Batch is exactly at threshold.
 	if len(ow.pendingRefs) != maxPendingRefs {
 		t.Errorf("pendingRefs at threshold = %d, want %d", len(ow.pendingRefs), maxPendingRefs)
 	}
 }
 
-// TestPendingRefsSortKeyFromRedirect tests that journal redirect entries
-// get their sortKey from the pxar entry's PayloadOffset.
 func TestPendingRefsSortKeyFromRedirect(t *testing.T) {
 	ow := &commitWalkState{
 		mfs: &MutableFS{verbose: false},
 	}
 
-	// A journal redirect entry with no pxarSlim — sortKey should come from
-	// resolvePxarEntry. Since we have no real PxarFS, resolvePxarEntry will
-	// fail and sortKey stays 0. We test that sortKey=0 entries sort first.
 	ce1 := commitEntry{name: "zed", node: &GraphNode{Kind: NodeFile, RedirectTo: "/nonexistent"}, sortKey: 0}
 	ce2 := commitEntry{name: "apple", pxarSlim: &dirEntrySlim{name: "apple", contentOffset: 100, isReg: true}, sortKey: 100}
 
 	ow.pendingRefs = append(ow.pendingRefs, ce1, ce2)
 
-	// Sort by sortKey as flushPendingRefs would.
 	sort.Slice(ow.pendingRefs, func(i, j int) bool {
 		return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
 	})
 
-	// sortKey=0 should come first.
 	if ow.pendingRefs[0].name != "zed" || ow.pendingRefs[1].name != "apple" {
 		t.Errorf("sort order (sortKey 0 first): [%q %q]",
 			ow.pendingRefs[0].name, ow.pendingRefs[1].name)
 	}
 }
 
-// --- alphabetical ordering (two-pointer merge) ---
-
 func TestCommitWalkAlphabeticalOrdering(t *testing.T) {
 	ow := &commitWalkState{
 		mfs: &MutableFS{verbose: false},
 	}
 
-	// Verify pendingRefs flush sorts by contentOffset regardless of insert order.
 	ceA := commitEntry{name: "a", pxarSlim: &dirEntrySlim{name: "a", contentOffset: 100, isReg: true}, sortKey: 100}
 	ceB := commitEntry{name: "b", pxarSlim: &dirEntrySlim{name: "b", contentOffset: 50, isReg: true}, sortKey: 50}
 	ceC := commitEntry{name: "c", pxarSlim: &dirEntrySlim{name: "c", contentOffset: 200, isReg: true}, sortKey: 200}
 
-	// Add in wrong order, sort as flushPendingRefs would.
 	ow.pendingRefs = append(ow.pendingRefs, ceC, ceA, ceB)
 	sort.Slice(ow.pendingRefs, func(i, j int) bool {
 		return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
 	})
 
-	// Offsets must be ascending: b(50), a(100), c(200).
 	if ow.pendingRefs[0].sortKey != 50 || ow.pendingRefs[1].sortKey != 100 || ow.pendingRefs[2].sortKey != 200 {
 		t.Errorf("sortKeys: [%d %d %d], want [50 100 200]",
 			ow.pendingRefs[0].sortKey, ow.pendingRefs[1].sortKey, ow.pendingRefs[2].sortKey)
@@ -320,13 +289,11 @@ func TestCommitWalkDirAndNewDataFlushRefs(t *testing.T) {
 		backedHashes: make(map[string]uint64),
 	}
 
-	// Verify that emitAlphabeticalJournal dispatches correctly for an empty file
-	// (no pending refs to flush — just verifies the empty-file WriteEntry path).
 	ceEmpty := commitEntry{
 		name: "empty_file",
 		node: &GraphNode{Kind: NodeFile, Size: 0},
 	}
-	if err := ow.emitAlphabeticalJournal(&ceEmpty, "/test"); err != nil {
+	if err := ow.emitJournalEntry(&ceEmpty, "/test"); err != nil {
 		t.Fatalf("emit empty file: %v", err)
 	}
 
@@ -344,13 +311,12 @@ func TestCommitWalkSymlinkFlushesRefs(t *testing.T) {
 		backedHashes: make(map[string]uint64),
 	}
 
-	// Verify emitAlphabeticalJournal dispatches to WriteEntry for symlinks.
 	ceSym := commitEntry{
 		name: "link",
 		node: &GraphNode{Kind: NodeSymlink, SymlinkTgt: "/target", Mode: 0o777},
 	}
-	if err := ow.emitAlphabeticalJournal(&ceSym, "/test"); err != nil {
-		t.Fatalf("emitAlphabeticalJournal(symlink): %v", err)
+	if err := ow.emitJournalEntry(&ceSym, "/test"); err != nil {
+		t.Fatalf("emitJournalEntry(symlink): %v", err)
 	}
 
 	if len(w.ops) != 1 || w.ops[0] != "sym:link" {
@@ -367,13 +333,12 @@ func TestCommitWalkEmptyFileFlushesRefs(t *testing.T) {
 		backedHashes: make(map[string]uint64),
 	}
 
-	// Verify emitAlphabeticalJournal dispatches correctly for empty files.
 	ceEmpty := commitEntry{
 		name: "empty",
 		node: &GraphNode{Kind: NodeFile, Size: 0},
 	}
-	if err := ow.emitAlphabeticalJournal(&ceEmpty, "/test"); err != nil {
-		t.Fatalf("emitAlphabeticalJournal(empty): %v", err)
+	if err := ow.emitJournalEntry(&ceEmpty, "/test"); err != nil {
+		t.Fatalf("emitJournalEntry(empty): %v", err)
 	}
 
 	if len(w.ops) != 1 || w.ops[0] != "empty:empty" {
@@ -382,9 +347,6 @@ func TestCommitWalkEmptyFileFlushesRefs(t *testing.T) {
 }
 
 func TestCommitWalkBackedFileFlushesRefs(t *testing.T) {
-	// emitAlphabeticalJournal for HasData file calls flushPendingRefs then
-	// emitBackedFile which opens a real file. Without a real mutable directory,
-	// the open fails. We verify the dispatch logic doesn't panic.
 	w := &trackingWriter{}
 	ow := &commitWalkState{
 		mfs:          &MutableFS{verbose: false},
@@ -397,15 +359,11 @@ func TestCommitWalkBackedFileFlushesRefs(t *testing.T) {
 		name: "backed_no_file",
 		node: &GraphNode{Kind: NodeFile, HasData: true, Size: 4096, MtimeNs: 1},
 	}
-	// This will try to open a nonexistent mutable file and return error.
-	// The flush happens before the open attempt.
-	err := ow.emitAlphabeticalJournal(&ceBacked, "/test")
+	err := ow.emitJournalEntry(&ceBacked, "/test")
 	if err == nil {
 		t.Error("expected error opening nonexistent backed file")
 	}
 }
-
-// --- copyUp xattr application ---
 
 func TestApplyPxarXattrsToFile(t *testing.T) {
 	dir, err := os.MkdirTemp("", "pxar-copyup-xattr-*")
@@ -433,7 +391,6 @@ func TestApplyPxarXattrsToFile(t *testing.T) {
 
 	applyPxarXattrsToFile(fpath, entry)
 
-	// Verify xattrs were set.
 	buf := make([]byte, 256)
 	n, err := unix.Lgetxattr(fpath, "user.testkey", buf)
 	if err != nil {
@@ -451,10 +408,8 @@ func TestApplyPxarXattrsToFile(t *testing.T) {
 		t.Errorf("user.testkey2 = %q, want %q", buf[:n2], "value2")
 	}
 
-	// Verify fcaps were set (skip on tmpfs which rejects security.capability).
 	n3, err := unix.Lgetxattr(fpath, "security.capability", buf)
 	if err != nil {
-		// ENODATA means the xattr wasn't applied (filesystem doesn't support it).
 		if err == unix.ENODATA {
 			t.Skip("filesystem does not support security.capability xattr")
 		}
@@ -490,13 +445,11 @@ func TestApplyPxarXattrsToFileSkipsACLXattrs(t *testing.T) {
 
 	applyPxarXattrsToFile(fpath, entry)
 
-	// ACL xattr should NOT have been applied (it's handled separately).
 	_, err = unix.Lgetxattr(fpath, "system.posix_acl_access", nil)
 	if err == nil {
 		t.Error("system.posix_acl_access should not have been set by applyPxarXattrsToFile")
 	}
 
-	// user.keep should have been applied.
 	buf := make([]byte, 256)
 	n, err := unix.Lgetxattr(fpath, "user.keep", buf)
 	if err != nil {
@@ -526,7 +479,6 @@ func TestApplyPxarXattrsToFileNoFCaps(t *testing.T) {
 			XAttrs: []format.XAttr{
 				format.NewXAttr([]byte("user.only"), []byte("val")),
 			},
-			// FCaps is nil — should not error.
 		},
 	}
 
@@ -541,22 +493,17 @@ func TestApplyPxarXattrsToFileNoFCaps(t *testing.T) {
 		t.Errorf("user.only = %q", buf[:n])
 	}
 
-	// security.capability should not exist.
 	_, err = unix.Lgetxattr(fpath, "security.capability", nil)
 	if err == nil {
 		t.Error("security.capability should not exist when FCaps is nil")
 	}
 }
 
-// --- sortKey assignment in pendingRefs ---
-
 func TestPendingRefsSortKeyAssignment(t *testing.T) {
 	ow := &commitWalkState{
 		mfs: &MutableFS{verbose: false},
 	}
 
-	// Pxar regular file — sortKey should be payloadOffset (set by emitAlphabeticalPxar
-	// before addToPendingRefs; here we test the addToPendingRefs fallback path).
 	ceFile := commitEntry{
 		name:     "reg",
 		pxarSlim: &dirEntrySlim{name: "reg", payloadOffset: 4096, isReg: true},
@@ -568,7 +515,6 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		t.Errorf("reg file sortKey = %d, want 4096", ceFile.sortKey)
 	}
 
-	// Pxar regular file with pre-set sortKey (from emitAlphabeticalPxar eager read).
 	cePreset := commitEntry{
 		name:     "preset",
 		pxarSlim: &dirEntrySlim{name: "preset", payloadOffset: 999, isReg: true},
@@ -581,7 +527,6 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		t.Errorf("preset sortKey = %d, want 8888", cePreset.sortKey)
 	}
 
-	// Pxar symlink — sortKey should be entryStart.
 	ceSym := commitEntry{
 		name:     "link",
 		pxarSlim: &dirEntrySlim{name: "link", entryStart: 2048, isSymlink: true},
@@ -593,7 +538,6 @@ func TestPendingRefsSortKeyAssignment(t *testing.T) {
 		t.Errorf("symlink sortKey = %d, want 2048", ceSym.sortKey)
 	}
 
-	// Pxar directory — sortKey should be entryStart.
 	ceDir := commitEntry{
 		name:     "dir",
 		pxarSlim: &dirEntrySlim{name: "dir", entryStart: 1024, isDir: true},
@@ -611,8 +555,6 @@ func TestPendingRefsFlushSortsBySortKey(t *testing.T) {
 		mfs: &MutableFS{verbose: false},
 	}
 
-	// Add entries with random sortKeys. Verify pendingRefs sorts ascending after
-	// manual sort (same sort flushPendingRefs would apply).
 	keys := []uint64{500, 100, 900, 50, 750}
 	names := []string{"e", "b", "i", "a", "g"}
 	for i, k := range keys {
@@ -628,7 +570,6 @@ func TestPendingRefsFlushSortsBySortKey(t *testing.T) {
 		return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
 	})
 
-	// Verify ascending order.
 	for i := 1; i < len(ow.pendingRefs); i++ {
 		if ow.pendingRefs[i].sortKey <= ow.pendingRefs[i-1].sortKey {
 			t.Errorf("sortKeys not ascending: [%d]=%d <= [%d]=%d",
@@ -636,7 +577,6 @@ func TestPendingRefsFlushSortsBySortKey(t *testing.T) {
 		}
 	}
 
-	// Verify names match sorted order.
 	expected := []string{"a", "b", "e", "g", "i"}
 	for i, name := range expected {
 		if ow.pendingRefs[i].name != name {
@@ -645,11 +585,7 @@ func TestPendingRefsFlushSortsBySortKey(t *testing.T) {
 	}
 }
 
-// --- two-pointer merge correctness ---
-
 func TestTwoPointerMergeAllPxarNoJournal(t *testing.T) {
-	// Verify that two-pointer merge of only pxar entries (no journal) maintains
-	// alphabetical order and that entries have correct sortKey for later flush.
 	pxarEntries := []dirEntrySlim{
 		{name: "zeta", contentOffset: 500, isReg: true},
 		{name: "alpha", contentOffset: 100, isReg: true},
@@ -660,13 +596,11 @@ func TestTwoPointerMergeAllPxarNoJournal(t *testing.T) {
 		return pxarEntries[i].name < pxarEntries[j].name
 	})
 
-	// Simulate two-pointer merge: pi only (no journal).
 	var names []string
 	for pi := range pxarEntries {
 		names = append(names, pxarEntries[pi].name)
 	}
 
-	// Verify alphabetical order.
 	expected := []string{"alpha", "beta", "gamma", "zeta"}
 	for i, exp := range expected {
 		if names[i] != exp {
@@ -676,7 +610,6 @@ func TestTwoPointerMergeAllPxarNoJournal(t *testing.T) {
 }
 
 func TestTwoPointerMergeAllJournalNoPxar(t *testing.T) {
-	// Verify two-pointer merge with only journal entries produces alphabetical order.
 	journalEdges := []GraphEdge{
 		{Name: "b_file", ChildID: 2},
 		{Name: "a_dir", ChildID: 3},
@@ -700,8 +633,6 @@ func TestTwoPointerMergeAllJournalNoPxar(t *testing.T) {
 }
 
 func TestTwoPointerMergeInterleaved(t *testing.T) {
-	// Verify interleaved merge: pxar has alpha,gamma; journal has beta,delta.
-	// Result should be: alpha(pxar), beta(journal), delta(journal), gamma(pxar).
 	pxarEntries := []dirEntrySlim{
 		{name: "gamma", contentOffset: 300, isReg: true},
 		{name: "alpha", contentOffset: 100, isReg: true},
@@ -762,7 +693,6 @@ func TestTwoPointerMergeInterleaved(t *testing.T) {
 }
 
 func TestTwoPointerMergeJournalPriority(t *testing.T) {
-	// Same name in both pxar and journal: journal wins, pxar is skipped.
 	pxarEntries := []dirEntrySlim{
 		{name: "shadowed", contentOffset: 100, isReg: true},
 		{name: "visible", contentOffset: 200, isReg: true},
@@ -778,10 +708,8 @@ func TestTwoPointerMergeJournalPriority(t *testing.T) {
 		return journalEdges[i].Name < journalEdges[j].Name
 	})
 
-	// edgeNames set that commitWalk would build.
 	edgeNames := map[string]bool{"shadowed": true}
 
-	// Filter pxar (as commitWalk does) — shadowed removed.
 	filtered := 0
 	for i := range pxarEntries {
 		if edgeNames[pxarEntries[i].name] {
@@ -794,7 +722,6 @@ func TestTwoPointerMergeJournalPriority(t *testing.T) {
 	}
 	pxarEntries = pxarEntries[:filtered]
 
-	// Now merge: pxar=[visible], journal=[shadowed].
 	type merged struct {
 		name   string
 		isPxar bool

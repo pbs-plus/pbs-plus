@@ -38,7 +38,7 @@ func BenchmarkB1_PerFileWriteEntryRef(b *testing.B) {
 				redirectCache: make(map[string]*pxar.Entry),
 				pendingRefs:   make([]commitEntry, 0, maxPendingRefs),
 			}
-			ow.hasLastRefPayload = false
+			ow.hasPrevRef = false
 
 			refs := make([]commitEntry, n)
 			for i := range refs {
@@ -59,8 +59,8 @@ func BenchmarkB1_PerFileWriteEntryRef(b *testing.B) {
 			b.ReportAllocs()
 			for iter := 0; iter < b.N; iter++ {
 				ow.pendingRefs = ow.pendingRefs[:0]
-				ow.lastRefPayloadOffset = 0
-				ow.hasLastRefPayload = false
+				ow.prevRefOffset = 0
+				ow.hasPrevRef = false
 
 				ow.pendingRefs = append(ow.pendingRefs, refs...)
 
@@ -585,8 +585,8 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 			b.ReportAllocs()
 			for iter := 0; iter < b.N; iter++ {
 				ow.pendingRefs = ow.pendingRefs[:0]
-				ow.lastRefPayloadOffset = 0
-				ow.hasLastRefPayload = false
+				ow.prevRefOffset = 0
+				ow.hasPrevRef = false
 
 				filtered := make([]dirEntrySlim, 0, len(pxarEntries))
 				for i := range pxarEntries {
@@ -936,17 +936,17 @@ func TestCrossBatchChunkContinuation(t *testing.T) {
 	}
 	_ = refs1
 	chunks1, _, _ := lookupDynamicEntries(idx, 0, 816)
-	ow.lastReusableChunk = chunks1[len(chunks1)-1]
-	ow.hasLastChunk = true
+	ow.savedChunk = chunks1[len(chunks1)-1]
+	ow.hasSavedChunk = true
 
 	refs2 := []commitEntry{
 		{sortKey: 816, pxarSlim: &dirEntrySlim{fileSize: 167}},
 	}
 
 	ow2 := &commitWalkState{
-		origChunkIndex:    idx,
-		lastReusableChunk: ow.lastReusableChunk,
-		hasLastChunk:      true,
+		origChunkIndex: idx,
+		savedChunk:     ow.savedChunk,
+		hasSavedChunk:  true,
 	}
 
 	reuse := ow2.shouldReuse(refs2)
@@ -961,8 +961,8 @@ func TestCrossBatchChunkContinuation(t *testing.T) {
 	fakeChunk.digest = [32]byte{0xFF}
 	fakeChunk.endOffset = 999999
 	fakeChunk.size = 1000
-	ow3.lastReusableChunk = fakeChunk
-	ow3.hasLastChunk = true
+	ow3.savedChunk = fakeChunk
+	ow3.hasSavedChunk = true
 
 	reuse3 := ow3.shouldReuse(refs2)
 	if reuse3 {
@@ -1040,8 +1040,8 @@ func TestFlushPendingRefsReencodeClearsLastChunk(t *testing.T) {
 		pendingRefs:    make([]commitEntry, 0, 64),
 	}
 
-	ow.hasLastChunk = true
-	ow.lastReusableChunk = reusableChunk{digest: [32]byte{0xAA}, endOffset: 99999, size: 1000, padding: 100}
+	ow.hasSavedChunk = true
+	ow.savedChunk = reusableChunk{digest: [32]byte{0xAA}, endOffset: 99999, size: 1000, padding: 100}
 
 	refs := []commitEntry{
 		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 900}},
@@ -1050,8 +1050,8 @@ func TestFlushPendingRefsReencodeClearsLastChunk(t *testing.T) {
 	if !reuse {
 		t.Fatal("should reuse batch fitting within first chunk")
 	}
-	if !ow.hasLastChunk {
-		t.Error("shouldReuse should not modify hasLastChunk")
+	if !ow.hasSavedChunk {
+		t.Error("shouldReuse should not modify hasSavedChunk")
 	}
 }
 

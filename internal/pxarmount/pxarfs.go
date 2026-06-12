@@ -13,8 +13,6 @@ import (
 	"github.com/pbs-plus/pxar/transfer"
 )
 
-// PxarFS implements fuse.RawFileSystem backed by a lazy-loading SplitReader.
-// This is the immutable layer that provides read-only access to the pxar archive.
 type PxarFS struct {
 	fuse.RawFileSystem
 	reader   *transfer.SplitReader
@@ -24,11 +22,8 @@ type PxarFS struct {
 	readerAt io.ReaderAt
 }
 
-// maxCachedNodes bounds the node cache. When exceeded, unreferenced
-// entries (refs <= 0) are evicted to prevent unbounded memory growth.
-const maxCachedNodes = 1 << 20 // 1M entries (~56 MB)
+const maxCachedNodes = 1 << 20
 
-// NewPxarFS creates a pxar-backed FUSE filesystem.
 func NewPxarFS(reader *transfer.SplitReader) (*PxarFS, error) {
 	fs := &PxarFS{
 		reader: reader,
@@ -208,13 +203,11 @@ func (fs *PxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	return fs.readFileContent(input.NodeId, int64(input.Offset), int64(len(buf)), buf)
 }
 
-// rootEntry is reused for the root inode to avoid allocation.
 var rootEntry = pxar.Entry{
 	Path: "/",
 	Kind: pxar.KindDirectory,
 }
 
-// readEntryForNode reads the full pxar entry for a cached node.
 func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	if n.inode == RootInode {
 		rootEntry.Metadata = pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
@@ -326,8 +319,6 @@ func (fs *PxarFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.Stat
 	return fuse.OK
 }
 
-// --- Internal Helpers ---
-
 func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[inode]
@@ -339,7 +330,6 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		return nil, syscall.ENOTDIR
 	}
 
-	// Init mode: no backing archive, every dir is empty.
 	if fs.reader == nil {
 		return nil, nil
 	}
@@ -374,7 +364,6 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	return entries, nil
 }
 
-// readFileContent reads file data from the pxar payload stream.
 func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fuse.ReadResult, fuse.Status) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
@@ -383,7 +372,6 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 		return nil, fuse.ENOENT
 	}
 
-	// Clamp to file bounds.
 	fileSize := int64(n.fileSize)
 	if off >= fileSize {
 		return fuse.ReadResultData(nil), fuse.OK
@@ -396,9 +384,6 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 		size = int64(len(dest))
 	}
 
-	// Zero-copy read: PayloadOffset + HeaderSize (16) gives the file
-	// content start in the ppxar stream. ReadAt avoids the SectionReader
-	// allocation and the mpxar entry read (readEntryForNode).
 	start := int64(n.contentOffset) + 16 + off
 	nr, err := fs.readerAt.ReadAt(dest[:size], start)
 	if err != nil && err != io.EOF {
@@ -410,9 +395,6 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 	return fuse.ReadResultData(dest[:nr]), fuse.OK
 }
 
-// registerSlimNode caches a directory entry as a full node.
-// The node is created with refs=0 — the caller must call refNode for each
-// kernel reference (Lookup, ReadDirPlus entry returned to kernel).
 func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -439,8 +421,6 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 	}
 }
 
-// evictStaleLocked removes unreferenced nodes until the cache is at 90%.
-// Caller must hold fs.mu.
 func (fs *PxarFS) evictStaleLocked() {
 	target := maxCachedNodes * 9 / 10
 	for ino, n := range fs.nodes {
@@ -453,9 +433,6 @@ func (fs *PxarFS) evictStaleLocked() {
 	}
 }
 
-// slimToNode converts a dirEntrySlim to a node without caching.
-// Used by findPxarNode to avoid polluting the node cache with
-// one-shot lookup entries.
 func slimToNode(e *dirEntrySlim, parent uint64) node {
 	return node{
 		entryStart:    e.entryStart,
@@ -475,12 +452,10 @@ func slimToNode(e *dirEntrySlim, parent uint64) node {
 	}
 }
 
-// RegisterSlimNode is a public wrapper for registerSlimNode.
 func (fs *PxarFS) RegisterSlimNode(e *dirEntrySlim, parent uint64) {
 	fs.registerSlimNode(e, parent)
 }
 
-// refNode increments the reference count for an inode.
 func (fs *PxarFS) refNode(ino uint64) {
 	fs.mu.Lock()
 	if n, ok := fs.nodes[ino]; ok {
@@ -490,7 +465,6 @@ func (fs *PxarFS) refNode(ino uint64) {
 	fs.mu.Unlock()
 }
 
-// getParentInfo returns the parent inode and mode for a given inode.
 func (fs *PxarFS) getParentInfo(ino uint64) (parentIno uint64, parentMode uint32) {
 	parentIno = RootInode
 	parentMode = uint32(syscall.S_IFDIR | 0o555)
@@ -505,7 +479,6 @@ func (fs *PxarFS) getParentInfo(ino uint64) (parentIno uint64, parentMode uint32
 	return
 }
 
-// GetNode returns the cached node for an inode, or nil.
 func (fs *PxarFS) GetNode(ino uint64) *node {
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
@@ -516,7 +489,6 @@ func (fs *PxarFS) GetNode(ino uint64) *node {
 	return &n
 }
 
-// GetPxarEntry reads and returns the full pxar.Entry for an inode.
 func (fs *PxarFS) GetPxarEntry(ino uint64) (*pxar.Entry, error) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
@@ -529,17 +501,10 @@ func (fs *PxarFS) GetPxarEntry(ino uint64) (*pxar.Entry, error) {
 	return fs.readEntryForNode(&n)
 }
 
-// ReadDirRaw is the public version of readDirRaw.
 func (fs *PxarFS) ReadDirRaw(ino uint64) ([]dirEntrySlim, error) {
 	return fs.readDirRaw(ino)
 }
 
-// ReadDirFull returns directory entries with full pxar entries cached.
-// This avoids the double-decode problem in the commit path: readDirRaw
-// decodes entries as minimal (ListOption{Minimal: true}), then
-// emitAlphabeticalPxar re-decodes each regular file with ReadEntryAt.
-// ReadDirFull decodes entries fully once and caches them in entryCache
-// keyed by entryStart offset, so the commit walk can skip ReadEntryAt.
 func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*pxar.Entry) ([]dirEntrySlim, error) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
@@ -589,7 +554,6 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*pxar.Entry) ([]
 	return entries, nil
 }
 
-// HotSwap replaces the underlying archive reader.
 func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
@@ -606,12 +570,10 @@ func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
 	}
 }
 
-// Reader returns the underlying SplitReader.
 func (fs *PxarFS) Reader() *transfer.SplitReader {
 	return fs.reader
 }
 
-// bytesEq compares a byte slice to a string without allocation.
 func bytesEq(b []byte, s string) bool {
 	if len(b) != len(s) {
 		return false
@@ -624,7 +586,6 @@ func bytesEq(b []byte, s string) bool {
 	return true
 }
 
-// xattrValue copies an xattr value into dest, or returns the size if dest is nil.
 func xattrValue(val []byte, dest []byte) (uint32, fuse.Status) {
 	if dest == nil {
 		return uint32(len(val)), fuse.OK

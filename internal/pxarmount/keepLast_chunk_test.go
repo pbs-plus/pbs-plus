@@ -49,14 +49,6 @@ func (w *mockInjectionWriter) InjectChunks(chunks []backupproxy.KnownChunkRef) e
 
 func (w *mockInjectionWriter) Encoder() *encoder.Encoder { return w.enc }
 
-// TestKeepLastChunkInvariant verifies that keepLastChunk=true is only safe
-// when no payload-writing entry intervenes between flushes. When a payload
-// entry advances the encoder position between two batches, the saved chunk
-// from batch 1 would be injected at the wrong position, corrupting refs.
-//
-// The fix: all flushPendingRefs calls before payload-writing entries use
-// keepLastChunk=false (matching Rust's flush_cached_reusing_if_below_threshold
-// with keep_last_chunk=false for non-reusable entries).
 func TestKeepLastChunkInvariant(t *testing.T) {
 	const chunkSize = 4000
 	idx := buildSyntheticDIDX(t, 3, chunkSize)
@@ -82,7 +74,6 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 		const startPos = 10000
 		w := newMockInjectionWriter(t, startPos)
 
-		// Batch 1: file spanning 2 chunks, keepLastChunk=false
 		ow := &commitWalkState{
 			mfs:            &MutableFS{},
 			writer:         w,
@@ -94,29 +85,23 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 		if err := ow.flushPendingRefs("", false); err != nil {
 			t.Fatal(err)
 		}
-		if ow.hasLastChunk {
-			t.Error("expected hasLastChunk=false")
+		if ow.hasSavedChunk {
+			t.Error("expected hasSavedChunk=false")
 		}
 
 		posAfterBatch1 := w.enc.PayloadPosition()
 
-		// Simulate payload-writing entry (e.g. modified file)
 		_ = w.enc.Advance(500)
 
-		// Batch 2: file filling most of third chunk
 		ow.pendingRefs = []commitEntry{ce("d", 8100, 3800)}
 		if err := ow.flushPendingRefs("", false); err != nil {
 			t.Fatal(err)
 		}
 
-		// All injections should be contiguous — no gap
-		// Batch 1 injected 2 chunks at startPos (size 8000 total)
-		// Batch 2 injected 1 chunk at posAfterBatch1+500
 		if len(w.injectCalls) != 2 {
 			t.Fatalf("expected 2 inject calls, got %d", len(w.injectCalls))
 		}
 
-		// Batch 1: both chunks at startPos (encoder starts at startPos+16 due to payload start marker)
 		encoderStart := startPos + uint64(format.HeaderSize)
 		batch1 := w.injectCalls[0]
 		if batch1.encoderPos != encoderStart {
@@ -126,7 +111,6 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 			t.Errorf("batch 1: %d chunks, expected 2", len(batch1.chunks))
 		}
 
-		// Batch 2: chunk after the 500-byte payload entry
 		batch2 := w.injectCalls[1]
 		expectedBatch2Pos := posAfterBatch1 + 500
 		if batch2.encoderPos != expectedBatch2Pos {
@@ -151,15 +135,13 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 		}
 
 		posAfterBatch1 := w.enc.PayloadPosition()
-		_ = w.enc.Advance(500) // payload entry
+		_ = w.enc.Advance(500)
 
 		ow.pendingRefs = []commitEntry{ce("d", 8100, 3800)}
 		if err := ow.flushPendingRefs("", false); err != nil {
 			t.Fatal(err)
 		}
 
-		// The saved chunk from batch 1 is injected after the 500-byte payload,
-		// creating a gap where refs from batch 1 expect contiguous chunk data.
 		var savedChunkPos uint64
 		for _, call := range w.injectCalls {
 			if call.encoderPos > posAfterBatch1 {
@@ -173,12 +155,9 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 			t.Errorf("expected 500-byte gap from payload entry, got %d", gap)
 		}
 
-		// This demonstrates WHY keepLastChunk=true before payload entries is wrong:
-		// ref 'a' at [10100, 17616) expects chunk data at [14016, 18016)
-		// but the saved chunk is at [14516, 18516) — 500-byte gap of payload data
 		refA := uint64(startPos + 100)
-		refAEnd := refA + 7500 + uint64(format.HeaderSize) // 17616
-		injectedEnd := posAfterBatch1                      // 14016
+		refAEnd := refA + 7500 + uint64(format.HeaderSize)
+		injectedEnd := posAfterBatch1
 
 		if refAEnd > injectedEnd && refAEnd <= injectedEnd+500 {
 			t.Logf("CONFIRMED: %d bytes of ref 'a' [%d,%d) land in the 500-byte payload gap — data corruption", refAEnd-injectedEnd, injectedEnd, refAEnd)
