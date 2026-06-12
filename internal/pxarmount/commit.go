@@ -684,7 +684,7 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 
 	case NodeFile:
 		if node.HasData {
-			if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
+			if err := ow.flushPendingRefs(parentRelPath, false); err != nil {
 				return err
 			}
 			childPath := ow.buildPath(parentRelPath, ce.name)
@@ -703,7 +703,7 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 			}
 			return nil
 		}
-		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
+		if err := ow.flushPendingRefs(parentRelPath, false); err != nil {
 			return err
 		}
 		xattrs := ow.ensureXAttrs(node.ID)
