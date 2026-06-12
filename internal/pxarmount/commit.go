@@ -625,7 +625,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			(ce.node == nil && ce.pxarSlim != nil && ce.pxarSlim.isDir)
 
 		if isDir {
-			if err := ow.flushPendingRefs(relPath); err != nil {
+			if err := ow.flushPendingRefs(relPath, true); err != nil {
 				return err
 			}
 
@@ -653,7 +653,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	if err := ow.flushPendingRefs(relPath); err != nil {
+	if err := ow.flushPendingRefs(relPath, false); err != nil {
 		return err
 	}
 
@@ -674,14 +674,14 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 
 	switch node.Kind {
 	case NodeDir:
-		if err := ow.flushPendingRefs(parentRelPath); err != nil {
+		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
 			return err
 		}
 		return ow.emitJournalDir(ce, parentRelPath)
 
 	case NodeFile:
 		if node.HasData {
-			if err := ow.flushPendingRefs(parentRelPath); err != nil {
+			if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
 				return err
 			}
 			childPath := ow.buildPath(parentRelPath, ce.name)
@@ -700,7 +700,7 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 			}
 			return nil
 		}
-		if err := ow.flushPendingRefs(parentRelPath); err != nil {
+		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
 			return err
 		}
 		xattrs := ow.ensureXAttrs(node.ID)
@@ -713,7 +713,7 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 		return ow.writer.WriteEntry(entry, nil)
 
 	case NodeSymlink:
-		if err := ow.flushPendingRefs(parentRelPath); err != nil {
+		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
 			return err
 		}
 		xattrs := ow.ensureXAttrs(node.ID)
@@ -740,14 +740,14 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 	}
 
 	if slim.isDir {
-		if err := ow.flushPendingRefs(parentRelPath); err != nil {
+		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
 			return err
 		}
 		return ow.emitPxarDir(ce, parentRelPath)
 	}
 
 	if slim.isSymlink {
-		if err := ow.flushPendingRefs(parentRelPath); err != nil {
+		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
 			return err
 		}
 		return ow.emitPxarSymlink(ce, parentRelPath)
@@ -790,7 +790,7 @@ func (ow *commitWalkState) addToPendingRefs(ce *commitEntry, parentRelPath strin
 	}
 
 	if ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && ce.sortKey > ow.batchRangeEnd {
-		if err := ow.flushPendingRefs(parentRelPath); err != nil {
+		if err := ow.flushPendingRefs(parentRelPath, true); err != nil {
 			return err
 		}
 	}
@@ -803,7 +803,7 @@ func (ow *commitWalkState) addToPendingRefs(ce *commitEntry, parentRelPath strin
 	}
 
 	if len(ow.pendingRefs) >= maxPendingRefs {
-		return ow.flushPendingRefs(parentRelPath)
+		return ow.flushPendingRefs(parentRelPath, true)
 	}
 	return nil
 }
@@ -906,75 +906,131 @@ func (ow *commitWalkState) shouldReuse(refs []commitEntry) bool {
 		return true
 	}
 
-	totalPadding := startPadding + endPadding
-
-	if ow.hasLastChunk && len(chunks) > 0 && ow.lastReusableChunk.sameIndexedChunkAs(&chunks[0]) {
+	padding := startPadding + endPadding
+	if ow.hasLastChunk && chunks[0].sameIndexedChunkAs(&ow.lastReusableChunk) {
 		used := ow.lastReusableChunk.size - ow.lastReusableChunk.padding
-		if used > totalPadding {
-			totalPadding = 0
+		if used > padding {
+			padding = 0
 		} else {
-			totalPadding -= used
+			padding -= used
 		}
 	}
 
-	totalSize := (rangeEnd - rangeStart) + totalPadding
+	totalSize := (rangeEnd - rangeStart) + padding
 	if totalSize == 0 {
 		return true
 	}
 
-	ratio := float64(totalPadding) / float64(totalSize)
-	return ratio <= chunkPaddingThreshold
+	return float64(padding)/float64(totalSize) <= chunkPaddingThreshold
 }
 
-func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
+func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk bool) error {
 	if len(ow.pendingRefs) == 0 {
 		return nil
 	}
 
 	insertionSortPendingRefs(ow.pendingRefs)
 
-	reuse := ow.shouldReuse(ow.pendingRefs)
+	if ow.origChunkIndex == nil || len(ow.pendingRefs) == 0 {
+		return ow.encodeEntries(parentRelPath, 0, true)
+	}
 
-	var baseOffset uint64
-	var batchChunks []reusableChunk
-	var rangeStart uint64
+	rangeStart := ow.pendingRefs[0].sortKey
+	rangeEnd := ow.pendingRefs[len(ow.pendingRefs)-1].rangeEnd()
 
-	if reuse && ow.origChunkIndex != nil && len(ow.pendingRefs) > 0 {
-		rangeStart = ow.pendingRefs[0].sortKey
-		rangeEnd := ow.pendingRefs[len(ow.pendingRefs)-1].rangeEnd()
-		if rangeEnd > rangeStart {
-			var ci []reusableChunk
-			var sp, _ uint64
-			ci, sp, _ = lookupDynamicEntries(ow.origChunkIndex, rangeStart, rangeEnd)
-
-			if ow.hasLastChunk && len(ci) > 0 && !ow.lastReusableChunk.sameIndexedChunkAs(&ci[0]) {
-				if err := ow.writer.InjectChunks([]backupproxy.KnownChunkRef{{
-					Digest: ow.lastReusableChunk.digest,
-					Size:   ow.lastReusableChunk.size,
-				}}); err != nil {
-					return fmt.Errorf("inject prev last chunk: %w", err)
-				}
+	if rangeEnd <= rangeStart {
+		if ow.hasLastChunk {
+			if err := ow.injectChunk(ow.lastReusableChunk); err != nil {
+				return err
 			}
+			ow.hasLastChunk = false
+		}
+		return ow.encodeEntries(parentRelPath, 0, false)
+	}
 
-			if ow.hasLastChunk && len(ci) > 0 && ow.lastReusableChunk.sameIndexedChunkAs(&ci[0]) {
-				used := ow.lastReusableChunk.size - ow.lastReusableChunk.padding
-				if sp > used {
-					sp -= used
-				} else {
-					sp = 0
-				}
+	prevLast := ow.lastReusableChunk
+	hasPrev := ow.hasLastChunk
+	ow.hasLastChunk = false
+
+	indices, startPadding, endPadding := lookupDynamicEntries(ow.origChunkIndex, rangeStart, rangeEnd)
+	if len(indices) == 0 {
+		if hasPrev {
+			if err := ow.injectChunk(prevLast); err != nil {
+				return err
 			}
+		}
+		return ow.encodeEntries(parentRelPath, 0, false)
+	}
 
-			baseOffset = ow.writer.Encoder().PayloadPosition() + sp
-			batchChunks = ci
+	padding := startPadding + endPadding
+	totalSize := (rangeEnd - rangeStart) + padding
+
+	if hasPrev && indices[0].sameIndexedChunkAs(&prevLast) {
+		used := prevLast.size - prevLast.padding
+		if used > padding {
+			padding = 0
+		} else {
+			padding -= used
 		}
 	}
 
+	if totalSize == 0 {
+		if hasPrev {
+			if err := ow.injectChunk(prevLast); err != nil {
+				return err
+			}
+		}
+		return ow.encodeEntries(parentRelPath, 0, false)
+	}
+
+	ratio := float64(padding) / float64(totalSize)
+
+	if ratio > chunkPaddingThreshold {
+		if hasPrev {
+			if err := ow.injectChunk(prevLast); err != nil {
+				return err
+			}
+		}
+		return ow.encodeEntries(parentRelPath, 0, false)
+	}
+
+	if hasPrev {
+		if !prevLast.sameIndexedChunkAs(&indices[0]) {
+			if err := ow.injectChunk(prevLast); err != nil {
+				return err
+			}
+		} else {
+			used := prevLast.size - prevLast.padding
+			indices[0].padding -= used
+		}
+	}
+
+	baseOffset := ow.writer.Encoder().PayloadPosition() + startPadding
+
+	if err := ow.encodeEntries(parentRelPath, baseOffset, true); err != nil {
+		return err
+	}
+
+	if keepLastChunk && len(indices) > 0 {
+		ow.lastReusableChunk = indices[len(indices)-1]
+		ow.hasLastChunk = true
+		indices = indices[:len(indices)-1]
+	}
+
+	return ow.injectChunks(indices)
+}
+
+func (ow *commitWalkState) encodeEntries(parentRelPath string, baseOffset uint64, reuse bool) error {
 	for i := range ow.pendingRefs {
 		ce := &ow.pendingRefs[i]
 		var err error
 		if reuse {
-			refOff := baseOffset + (ce.sortKey - rangeStart)
+			var refOff uint64
+			if baseOffset != 0 {
+				refOff = baseOffset + (ce.sortKey - ow.pendingRefs[0].sortKey)
+			} else {
+				refOff = ce.sortKey
+			}
 			if ce.node != nil {
 				err = ow.emitJournalRefAt(ce, refOff)
 			} else {
@@ -992,27 +1048,30 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 		}
 	}
 
-	if reuse && len(batchChunks) > 0 {
-		injected := make([]backupproxy.KnownChunkRef, len(batchChunks))
-		for i := range batchChunks {
-			injected[i] = backupproxy.KnownChunkRef{
-				Digest: batchChunks[i].digest,
-				Size:   batchChunks[i].size,
-			}
-		}
-		if err := ow.writer.InjectChunks(injected); err != nil {
-			return fmt.Errorf("inject chunks: %w", err)
-		}
-
-		ow.lastReusableChunk = batchChunks[len(batchChunks)-1]
-		ow.hasLastChunk = true
-	} else {
-		ow.hasLastChunk = false
-	}
-
 	ow.pendingRefs = ow.pendingRefs[:0]
 	ow.batchRangeEnd = 0
 	return nil
+}
+
+func (ow *commitWalkState) injectChunk(c reusableChunk) error {
+	return ow.writer.InjectChunks([]backupproxy.KnownChunkRef{{
+		Digest: c.digest,
+		Size:   c.size,
+	}})
+}
+
+func (ow *commitWalkState) injectChunks(chunks []reusableChunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+	refs := make([]backupproxy.KnownChunkRef, len(chunks))
+	for i := range chunks {
+		refs[i] = backupproxy.KnownChunkRef{
+			Digest: chunks[i].digest,
+			Size:   chunks[i].size,
+		}
+	}
+	return ow.writer.InjectChunks(refs)
 }
 
 func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry, parentIno uint64) {
@@ -1302,24 +1361,6 @@ func (ow *commitWalkState) writeRefOrReencode(entry *pxar.Entry, pxarEntry *pxar
 	}
 
 	ow.lastRefPayloadOffset = refOffset
-	ow.hasLastRefPayload = true
-	return nil
-}
-
-func (ow *commitWalkState) tryRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.Entry, name, redirectPath string) error {
-	offset := pxarEntry.PayloadOffset
-
-	if ow.hasLastRefPayload && offset <= ow.lastRefPayloadOffset {
-		ow.mfs.debugf("ref %q offset=%d <= lastRef=%d, re-encoding", name, offset, ow.lastRefPayloadOffset)
-		return ow.reencodeFromArchive(pxarEntry, entry, name)
-	}
-
-	if err := ow.writer.WriteEntryRef(entry, offset); err != nil {
-		ow.mfs.debugf("ref %q offset=%d writer rejected: %v, re-encoding", name, offset, err)
-		return ow.reencodeFromArchive(pxarEntry, entry, name)
-	}
-
-	ow.lastRefPayloadOffset = offset
 	ow.hasLastRefPayload = true
 	return nil
 }
