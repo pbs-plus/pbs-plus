@@ -279,9 +279,14 @@ type commitWalkState struct {
 	// via save/restore in commitWalk. Eliminates per-level heap allocation.
 	pendingRefs []commitEntry // ref-files batched for contentOffset-ordered emission
 
+	// entryCache maps pxar entryStart offsets to fully-decoded pxar.Entry
+	// values. Populated by ReadDirFull during the commit walk, consumed by
+	// emitAlphabeticalPxar / emitPxarRef to avoid double-decoding each regular
+	// file (readDirRaw minimal decode + ReadEntryAt full decode → single full decode).
+	entryCache map[uint64]*pxar.Entry
+
 	// Reusable pxar.Entry buffer — avoids heap allocation on every emit.
 	entryBuf pxar.Entry
-	pathBuf  strings.Builder
 }
 
 // allocEntry returns a pointer to the reusable entry buffer after zeroing it.
@@ -291,15 +296,11 @@ func (ow *commitWalkState) allocEntry() *pxar.Entry {
 	return &ow.entryBuf
 }
 
-// buildPath joins parent and name using the reusable path builder.
+// buildPath joins parent and name to form a child path.
+// Uses joinPath which is allocation-free for root children and faster than
+// strings.Builder for short paths (see B9 benchmark: 17ns vs 46ns).
 func (ow *commitWalkState) buildPath(parent, name string) string {
-	ow.pathBuf.Reset()
-	ow.pathBuf.WriteString(parent)
-	if parent != "/" {
-		ow.pathBuf.WriteByte('/')
-	}
-	ow.pathBuf.WriteString(name)
-	return ow.pathBuf.String()
+	return joinPath(parent, name)
 }
 
 // maxPendingRefs bounds the pending ref batch to limit memory on
@@ -499,6 +500,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		backedHashes:  make(map[string]uint64),
 		redirectCache: make(map[string]*pxar.Entry),
 		pendingRefs:   make([]commitEntry, 0, 64),
+		entryCache:    make(map[uint64]*pxar.Entry, 4096),
 	}
 
 	// Pre-load all journal xattrs for batch access.
@@ -593,10 +595,12 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	}
 
 	// Get pxar children sorted alphabetically (matching proxmox-backup-client).
+	// Use ReadDirFull to decode entries fully once and cache them in entryCache,
+	// eliminating the second ReadEntryAt that emitAlphabeticalPxar previously did.
 	var pxarEntries []dirEntrySlim
 	if pxarInode != 0 {
 		var err error
-		pxarEntries, err = ow.mfs.pxar.ReadDirRaw(pxarInode)
+		pxarEntries, err = ow.mfs.pxar.ReadDirFull(pxarInode, ow.entryCache)
 		if err != nil {
 			pxarEntries = nil
 		}
@@ -860,18 +864,24 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 		return ow.emitPxarSymlink(ce, parentRelPath)
 	}
 
-	// Regular file — eagerly read the full entry now and cache it in
-	// commitEntry so emitPxarRef can reuse it without a duplicate ReadEntryAt.
-	ow.mfs.pxar.readerMu.Lock()
-	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-	ow.mfs.pxar.readerMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
+	// Regular file — look up the full entry from entryCache (populated by
+	// ReadDirFull) instead of doing a second ReadEntryAt. This eliminates
+	// the double-decode bottleneck where readDirRaw (minimal) + ReadEntryAt
+	// (full) decoded each file's metadata twice.
+	if cached, ok := ow.entryCache[slim.entryStart]; ok {
+		ce.cachedEntry = cached
+		ce.sortKey = cached.PayloadOffset
+	} else {
+		// Fallback: uncached entry (shouldn't happen with ReadDirFull).
+		ow.mfs.pxar.readerMu.RLock()
+		pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
+		ow.mfs.pxar.readerMu.RUnlock()
+		if err != nil {
+			return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
+		}
+		ce.cachedEntry = pxarEntry
+		ce.sortKey = pxarEntry.PayloadOffset
 	}
-	ce.cachedEntry = pxarEntry
-
-	// Use payloadOffset from pxarEntry for sortKey (same as contentOffset in v2).
-	ce.sortKey = pxarEntry.PayloadOffset
 
 	return ow.addToPendingRefs(ce, parentRelPath)
 }
@@ -996,9 +1006,9 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 			ow.mfs.pxar.mu.RUnlock()
 			if !cached {
 				// Re-read the entry to construct a slim node for registration.
-				ow.mfs.pxar.readerMu.Lock()
+				ow.mfs.pxar.readerMu.RLock()
 				pxarEntry, rerr := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
-				ow.mfs.pxar.readerMu.Unlock()
+				ow.mfs.pxar.readerMu.RUnlock()
 				if rerr == nil {
 					ow.registerPxarDir(pxarEntry, RootInode)
 				}
@@ -1015,9 +1025,9 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 	}
 
 	// Pxar-only directory — re-read the entry to get metadata.
-	ow.mfs.pxar.readerMu.Lock()
+	ow.mfs.pxar.readerMu.RLock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
-	ow.mfs.pxar.readerMu.Unlock()
+	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar entry at %d: %w", dd.entryStart, err)
 	}
@@ -1077,10 +1087,10 @@ func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) er
 	pxarEntry := ce.cachedEntry
 	if pxarEntry == nil {
 		// Fallback: should not happen with the eager-read path, but handle gracefully.
-		ow.mfs.pxar.readerMu.Lock()
+		ow.mfs.pxar.readerMu.RLock()
 		var err error
 		pxarEntry, err = ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-		ow.mfs.pxar.readerMu.Unlock()
+		ow.mfs.pxar.readerMu.RUnlock()
 		if err != nil {
 			return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 		}
@@ -1123,9 +1133,9 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 	slim := ce.pxarSlim
 	childPath := ow.buildPath(parentRelPath, ce.name)
 
-	ow.mfs.pxar.readerMu.Lock()
+	ow.mfs.pxar.readerMu.RLock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-	ow.mfs.pxar.readerMu.Unlock()
+	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 	}
@@ -1151,9 +1161,9 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 func (ow *commitWalkState) emitPxarSymlink(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 
-	ow.mfs.pxar.readerMu.Lock()
+	ow.mfs.pxar.readerMu.RLock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
-	ow.mfs.pxar.readerMu.Unlock()
+	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar entry at %d: %w", slim.entryStart, err)
 	}
@@ -1234,9 +1244,9 @@ func (ow *commitWalkState) tryRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.E
 // and writes it as new data via WriteEntryReader, bypassing payload refs
 // entirely. This advances the encoder's payload stream sequentially.
 func (ow *commitWalkState) reencodeFromArchive(pxarEntry *pxar.Entry, entry *pxar.Entry, name string) error {
-	ow.mfs.pxar.readerMu.Lock()
+	ow.mfs.pxar.readerMu.RLock()
 	rc, err := ow.mfs.pxar.reader.ReadFileContentReader(pxarEntry)
-	ow.mfs.pxar.readerMu.Unlock()
+	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("read pxar content for re-encode %q: %w", name, err)
 	}
@@ -1331,22 +1341,22 @@ func (ow *commitWalkState) resolvePxarEntryCached(relPath string) (*pxar.Entry, 
 // ReadEntryAt for full metadata (xattrs, fcaps, ACLs) on the terminal entry.
 func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry, error) {
 	if relPath == "/" || relPath == "" {
-		ow.mfs.pxar.readerMu.Lock()
-		defer ow.mfs.pxar.readerMu.Unlock()
+		ow.mfs.pxar.readerMu.RLock()
+		defer ow.mfs.pxar.readerMu.RUnlock()
 		return ow.mfs.pxar.Reader().ReadRoot()
 	}
 
-	ow.mfs.pxar.readerMu.Lock()
+	ow.mfs.pxar.readerMu.RLock()
 	slim, err := ow.mfs.pxar.Reader().Lookup(relPath)
-	ow.mfs.pxar.readerMu.Unlock()
+	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("lookup %q: %w", relPath, err)
 	}
 
 	// Lookup returns minimal decode — re-read with full metadata.
-	ow.mfs.pxar.readerMu.Lock()
+	ow.mfs.pxar.readerMu.RLock()
 	full, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.FileOffset))
-	ow.mfs.pxar.readerMu.Unlock()
+	ow.mfs.pxar.readerMu.RUnlock()
 	if err != nil {
 		return nil, fmt.Errorf("read entry at %d: %w", slim.FileOffset, err)
 	}

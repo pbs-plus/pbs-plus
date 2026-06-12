@@ -20,7 +20,7 @@ type PxarFS struct {
 	reader   *transfer.SplitReader
 	nodes    map[uint64]node
 	mu       sync.RWMutex
-	readerMu sync.Mutex
+	readerMu sync.RWMutex
 	readerAt io.ReaderAt
 }
 
@@ -346,7 +346,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 
 	entries := make([]dirEntrySlim, 0, 64)
 
-	fs.readerMu.Lock()
+	fs.readerMu.RLock()
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		entries = append(entries, dirEntrySlim{
 			name:          e.FileName(),
@@ -366,7 +366,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		})
 		return nil
 	})
-	fs.readerMu.Unlock()
+	fs.readerMu.RUnlock()
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -532,6 +532,61 @@ func (fs *PxarFS) GetPxarEntry(ino uint64) (*pxar.Entry, error) {
 // ReadDirRaw is the public version of readDirRaw.
 func (fs *PxarFS) ReadDirRaw(ino uint64) ([]dirEntrySlim, error) {
 	return fs.readDirRaw(ino)
+}
+
+// ReadDirFull returns directory entries with full pxar entries cached.
+// This avoids the double-decode problem in the commit path: readDirRaw
+// decodes entries as minimal (ListOption{Minimal: true}), then
+// emitAlphabeticalPxar re-decodes each regular file with ReadEntryAt.
+// ReadDirFull decodes entries fully once and caches them in entryCache
+// keyed by entryStart offset, so the commit walk can skip ReadEntryAt.
+func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*pxar.Entry) ([]dirEntrySlim, error) {
+	fs.mu.RLock()
+	n, ok := fs.nodes[ino]
+	fs.mu.RUnlock()
+	if !ok {
+		return nil, syscall.ENOENT
+	}
+	if !n.isDir {
+		return nil, syscall.ENOTDIR
+	}
+
+	if fs.reader == nil {
+		return nil, nil
+	}
+
+	entries := make([]dirEntrySlim, 0, 64)
+
+	fs.readerMu.RLock()
+	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: false}, func(e *pxar.Entry) error {
+		slim := dirEntrySlim{
+			name:          e.FileName(),
+			inode:         ToInode(e),
+			entryStart:    e.FileOffset,
+			contentOffset: e.ContentOffset,
+			payloadOffset: e.PayloadOffset,
+			fileSize:      e.FileSize,
+			mode:          statMode(e.Metadata.Stat.Mode),
+			uid:           e.Metadata.Stat.UID,
+			gid:           e.Metadata.Stat.GID,
+			mtimeSecs:     e.Metadata.Stat.Mtime.Secs,
+			mtimeNanos:    e.Metadata.Stat.Mtime.Nanos,
+			isDir:         e.IsDir(),
+			isSymlink:     e.IsSymlink(),
+			isReg:         e.IsRegularFile(),
+		}
+		entries = append(entries, slim)
+		if entryCache != nil && slim.isReg {
+			entryCache[slim.entryStart] = e
+		}
+		return nil
+	})
+	fs.readerMu.RUnlock()
+	if listErr != nil {
+		return nil, listErr
+	}
+
+	return entries, nil
 }
 
 // HotSwap replaces the underlying archive reader.
