@@ -7,12 +7,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pbs-plus/pxar/format"
-	"github.com/puzpuzpuz/xsync/v4"
 )
 
 const (
@@ -53,27 +51,9 @@ const (
 const schemaVersion = 1
 
 type Journal struct {
-	db *pebble.DB
-
+	db         *pebble.DB
+	mu         sync.Mutex
 	nextNodeID atomic.Int64
-
-	flushDone    chan struct{}
-	flushClose   chan struct{}
-	flushPending *xsync.Counter
-
-	writeQueue chan *journalWrite
-	writeDone  chan struct{}
-}
-
-type journalWrite struct {
-	fn   func(b *pebble.Batch) error
-	done chan error
-}
-
-var journalWritePool = sync.Pool{
-	New: func() any {
-		return &journalWrite{done: make(chan error, 1)}
-	},
 }
 
 func nodeKey(id int64) []byte {
@@ -237,7 +217,7 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
-	j := &Journal{db: db, flushPending: xsync.NewCounter()}
+	j := &Journal{db: db}
 
 	if err := j.initSchema(); err != nil {
 		_ = db.Close()
@@ -274,8 +254,6 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("clean orphan edges: %w", err)
 	}
 
-	j.startWriteLoop()
-	j.startFlushLoop()
 	return j, nil
 }
 
@@ -427,97 +405,40 @@ func (j *Journal) VerifyIntegrity() error {
 	return nil
 }
 
-func (j *Journal) Close() error {
-	close(j.writeQueue)
-	<-j.writeDone
-
-	if j.flushClose != nil {
-		close(j.flushClose)
-	}
-	if j.flushDone != nil {
-		<-j.flushDone
-	}
-
-	_ = j.persistNextNodeID()
-	return j.db.Close()
-}
-
 func (j *Journal) allocNodeID() int64 {
 	return j.nextNodeID.Add(1) - 1
 }
 
+func (j *Journal) Close() error {
+	j.mu.Lock()
+	_ = j.persistNextNodeID()
+	j.mu.Unlock()
+
+	return j.db.Close()
+}
+
 func (j *Journal) tx(fn func(b *pebble.Batch) error) error {
-	w := journalWritePool.Get().(*journalWrite)
-	w.fn = fn
-	defer journalWritePool.Put(w)
-	j.writeQueue <- w
-	return <-w.done
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	batch := j.db.NewBatch()
+	defer func() { _ = batch.Close() }()
+
+	if err := fn(batch); err != nil {
+		return err
+	}
+
+	return batch.Commit(pebble.NoSync)
 }
 
 func (j *Journal) Sync() error {
-	w := journalWritePool.Get().(*journalWrite)
-	w.fn = func(b *pebble.Batch) error { return nil }
-	defer journalWritePool.Put(w)
-	j.writeQueue <- w
-	err := <-w.done
-	if err != nil {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if err := j.persistNextNodeID(); err != nil {
 		return err
 	}
 	return j.db.Flush()
-}
-
-func (j *Journal) startWriteLoop() {
-	j.writeQueue = make(chan *journalWrite, 256)
-	j.writeDone = make(chan struct{})
-	go func() {
-		defer close(j.writeDone)
-		for w := range j.writeQueue {
-			batch := j.db.NewBatch()
-			err := w.fn(batch)
-			if err != nil {
-				_ = batch.Close()
-				w.done <- err
-				continue
-			}
-			if err := batch.Commit(pebble.Sync); err != nil {
-				_ = batch.Close()
-				w.done <- err
-				continue
-			}
-			_ = batch.Close()
-			j.flushPending.Add(1)
-			w.done <- nil
-			if j.flushPending.Value() >= 64 {
-				_ = j.persistNextNodeID()
-				if err := j.db.Flush(); err == nil {
-					j.flushPending.Reset()
-				}
-			}
-		}
-	}()
-}
-
-func (j *Journal) startFlushLoop() {
-	j.flushDone = make(chan struct{})
-	j.flushClose = make(chan struct{})
-	go func() {
-		defer close(j.flushDone)
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-j.flushClose:
-				return
-			case <-ticker.C:
-				if j.flushPending.Value() > 0 {
-					_ = j.persistNextNodeID()
-					if err := j.db.Flush(); err == nil {
-						j.flushPending.Reset()
-					}
-				}
-			}
-		}
-	}()
 }
 
 func (j *Journal) GetNode(id int64) (*GraphNode, error) {

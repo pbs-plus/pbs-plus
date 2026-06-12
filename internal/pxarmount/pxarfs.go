@@ -2,7 +2,6 @@ package pxarmount
 
 import (
 	"io"
-	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -16,21 +15,19 @@ import (
 
 type PxarFS struct {
 	fuse.RawFileSystem
-	reader    *transfer.SplitReader
-	nodes     map[uint64]node
-	pathCache map[string]uint64
-	mu        sync.RWMutex
-	readerMu  sync.RWMutex
-	readerAt  io.ReaderAt
+	reader   *transfer.SplitReader
+	nodes    map[uint64]node
+	mu       sync.RWMutex
+	readerMu sync.RWMutex
+	readerAt io.ReaderAt
 }
 
 const maxCachedNodes = 1 << 20
 
 func NewPxarFS(reader *transfer.SplitReader) (*PxarFS, error) {
 	fs := &PxarFS{
-		reader:    reader,
-		nodes:     make(map[uint64]node),
-		pathCache: make(map[string]uint64),
+		reader: reader,
+		nodes:  make(map[uint64]node),
 	}
 	if reader != nil {
 		root, err := reader.ReadRoot()
@@ -332,17 +329,6 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	if !n.isDir {
 		return nil, syscall.ENOTDIR
 	}
-	return fs.readDirRawLocked(inode)
-}
-
-func (fs *PxarFS) readDirRawLocked(inode uint64) ([]dirEntrySlim, error) {
-	n, ok := fs.nodes[inode]
-	if !ok {
-		return nil, syscall.ENOENT
-	}
-	if !n.isDir {
-		return nil, syscall.ENOTDIR
-	}
 
 	if fs.reader == nil {
 		return nil, nil
@@ -444,6 +430,25 @@ func (fs *PxarFS) evictStaleLocked() {
 				return
 			}
 		}
+	}
+}
+
+func slimToNode(e *dirEntrySlim, parent uint64) node {
+	return node{
+		entryStart:    e.entryStart,
+		contentOffset: e.contentOffset,
+		fileSize:      e.fileSize,
+		mode:          uint64(e.mode),
+		inode:         e.inode,
+		parent:        parent,
+		refs:          0,
+		mtimeSecs:     e.mtimeSecs,
+		uid:           e.uid,
+		mtimeNanos:    e.mtimeNanos,
+		gid:           e.gid,
+		isDir:         e.isDir,
+		isSymlink:     e.isSymlink,
+		isReg:         e.isReg,
 	}
 }
 
@@ -555,7 +560,6 @@ func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
 
 	fs.reader = reader
 	fs.nodes = make(map[uint64]node)
-	fs.pathCache = make(map[string]uint64)
 
 	if reader != nil {
 		root, err := reader.ReadRoot()
@@ -563,94 +567,6 @@ func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
 			fs.readerAt = reader.PayloadReaderAt()
 			fs.nodes[RootInode] = newNodeFromEntry(root, RootInode, RootInode)
 		}
-	}
-}
-
-func (fs *PxarFS) LookupPath(path string) *node {
-	fs.mu.RLock()
-	if ino, ok := fs.pathCache[path]; ok {
-		if n, ok2 := fs.nodes[ino]; ok2 {
-			fs.mu.RUnlock()
-			return &n
-		}
-	}
-	fs.mu.RUnlock()
-
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-
-	if ino, ok := fs.pathCache[path]; ok {
-		if n, ok2 := fs.nodes[ino]; ok2 {
-			return &n
-		}
-	}
-
-	if path == "/" {
-		if n, ok := fs.nodes[RootInode]; ok {
-			return &n
-		}
-		return nil
-	}
-
-	curIno := RootInode
-	parts := splitPath(path)
-	var walked strings.Builder
-	walked.WriteByte('/')
-
-	for i, name := range parts {
-		if name == "" {
-			continue
-		}
-		entries, err := fs.readDirRawLocked(curIno)
-		if err != nil {
-			return nil
-		}
-		found := false
-		for _, e := range entries {
-			if e.name == name {
-				fs.registerSlimNodeLocked(&e, curIno)
-				if i > 0 {
-					walked.WriteByte('/')
-				}
-				walked.WriteString(name)
-				fs.pathCache[walked.String()] = e.inode
-				curIno = e.inode
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil
-		}
-	}
-
-	if n, ok := fs.nodes[curIno]; ok {
-		return &n
-	}
-	return nil
-}
-
-func (fs *PxarFS) registerSlimNodeLocked(e *dirEntrySlim, parent uint64) {
-	if _, ok := fs.nodes[e.inode]; !ok {
-		fs.nodes[e.inode] = node{
-			entryStart:    e.entryStart,
-			contentOffset: e.contentOffset,
-			fileSize:      e.fileSize,
-			mode:          uint64(e.mode),
-			inode:         e.inode,
-			parent:        parent,
-			refs:          0,
-			mtimeSecs:     e.mtimeSecs,
-			uid:           e.uid,
-			mtimeNanos:    e.mtimeNanos,
-			gid:           e.gid,
-			isDir:         e.isDir,
-			isSymlink:     e.isSymlink,
-			isReg:         e.isReg,
-		}
-	}
-	if len(fs.nodes) > maxCachedNodes {
-		fs.evictStaleLocked()
 	}
 }
 

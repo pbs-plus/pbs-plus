@@ -1148,18 +1148,17 @@ func TestBackgroundFlush(t *testing.T) {
 	j, cleanup := testJournal(t)
 	defer cleanup()
 
-	// Write enough to trigger syncs.
 	for i := range 300 {
 		n := &GraphNode{Kind: NodeFile, Mode: 0o644}
 		_, _ = j.EnsureNodePath(fmt.Sprintf("/ckpt_%04d.txt", i), n, false)
 	}
 
-	// Wait for background sync to fire.
-	time.Sleep(500 * time.Millisecond)
+	if err := j.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
 
-	// Verify integrity after background syncs.
 	if err := j.VerifyIntegrity(); err != nil {
-		t.Fatalf("VerifyIntegrity after background sync: %v", err)
+		t.Fatalf("VerifyIntegrity after Sync: %v", err)
 	}
 }
 
@@ -1167,15 +1166,14 @@ func TestEagerFlushThreshold(t *testing.T) {
 	j, cleanup := testJournal(t)
 	defer cleanup()
 
-	// Write 64+ transactions to trigger eager sync.
 	for i := range 100 {
 		n := &GraphNode{Kind: NodeFile, Mode: 0o644}
 		_, _ = j.EnsureNodePath(fmt.Sprintf("/eager_%04d.txt", i), n, false)
 	}
 
-	// flushPending should have been reset by eager flush.
-	if pending := j.flushPending.Value(); pending >= 64 {
-		t.Errorf("flushPending = %d, should be < 64 after eager flush", pending)
+	_, _, _, _, err := j.ResolvePath("/eager_0099.txt")
+	if err != nil {
+		t.Fatalf("resolve after batched writes: %v", err)
 	}
 }
 

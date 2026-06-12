@@ -58,6 +58,7 @@ func benchMutableFS(b *testing.B) (*MutableFS, func()) {
 	return mfs, func() {
 		_ = mfs.journal.Sync()
 		mfs.Close()
+		_ = os.RemoveAll(dir)
 	}
 }
 
@@ -230,7 +231,7 @@ func BenchmarkFreeze_ContendedWait(b *testing.B) {
 
 			for range b.N {
 				mfs.freezeMu.Lock()
-				mfs.frozen.Store(true)
+				mfs.frozen = true
 				mfs.freezeMu.Unlock()
 
 				var wg sync.WaitGroup
@@ -244,8 +245,9 @@ func BenchmarkFreeze_ContendedWait(b *testing.B) {
 				}
 
 				mfs.freezeMu.Lock()
-				mfs.frozen.Store(false)
+				mfs.frozen = false
 				mfs.freezeMu.Unlock()
+				mfs.freezeCond.Broadcast()
 
 				wg.Wait()
 			}
