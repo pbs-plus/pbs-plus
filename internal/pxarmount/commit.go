@@ -890,13 +890,27 @@ func lookupDynamicEntries(idx *datastore.DynamicIndexReader, rangeStart, rangeEn
 	return chunks, startPadding, endPadding
 }
 
+func pendingRefsRange(refs []commitEntry) (start, end uint64) {
+	if len(refs) == 0 {
+		return 0, 0
+	}
+	start = refs[0].sortKey
+	end = refs[0].rangeEnd()
+	for i := 1; i < len(refs); i++ {
+		re := refs[i].rangeEnd()
+		if re > end {
+			end = re
+		}
+	}
+	return start, end
+}
+
 func (ow *commitWalkState) shouldReuse(refs []commitEntry) bool {
 	if ow.origChunkIndex == nil || len(refs) == 0 {
 		return true
 	}
 
-	rangeStart := refs[0].sortKey
-	rangeEnd := refs[len(refs)-1].rangeEnd()
+	rangeStart, rangeEnd := pendingRefsRange(refs)
 	if rangeEnd <= rangeStart {
 		return true
 	}
@@ -935,8 +949,7 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string, keepLastChunk 
 		return ow.encodeEntries(parentRelPath, 0, true)
 	}
 
-	rangeStart := ow.pendingRefs[0].sortKey
-	rangeEnd := ow.pendingRefs[len(ow.pendingRefs)-1].rangeEnd()
+	rangeStart, rangeEnd := pendingRefsRange(ow.pendingRefs)
 
 	if rangeEnd <= rangeStart {
 		if ow.hasLastChunk {
