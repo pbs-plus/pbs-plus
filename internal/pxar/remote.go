@@ -205,14 +205,10 @@ func (s *RemoteServer) handleOpenContent(req *arpc.Request) (arpc.Response, erro
 	var params struct {
 		ContentStart uint64 `cbor:"content_start"`
 		ContentEnd   uint64 `cbor:"content_end"`
+		FileSize     uint64 `cbor:"file_size"`
 	}
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
-	}
-
-	entry, err := s.reader.GetAttr(req.Context, params.ContentStart, params.ContentEnd)
-	if err != nil {
-		return makeErrorResponse(err)
 	}
 
 	rc, err := s.reader.ReadFileContentReader(req.Context, params.ContentStart, params.ContentEnd)
@@ -223,12 +219,11 @@ func (s *RemoteServer) handleOpenContent(req *arpc.Request) (arpc.Response, erro
 	handleID := atomic.AddUint64(&s.handleCounter, 1)
 	s.contentHandles.Set(handleID, &contentHandle{
 		rc:       rc,
-		fileSize: uint64(entry.RawSize),
+		fileSize: params.FileSize,
 	})
 
 	respData, _ := cbor.Marshal(map[string]uint64{
 		"handle_id": handleID,
-		"file_size": uint64(entry.RawSize),
 	})
 	return arpc.Response{Status: 200, Data: respData}, nil
 }

@@ -193,17 +193,16 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			// Open content handle on server.
 			openResp := struct {
 				HandleID uint64 `cbor:"handle_id"`
-				FileSize uint64 `cbor:"file_size"`
 			}{}
 			if err := c.pipe.Call(ctx, "pxar.OpenContent", map[string]uint64{
 				"content_start": contentStart,
 				"content_end":   contentEnd,
+				"file_size":     fileSize,
 			}, &openResp); err != nil {
 				pw.CloseWithError(err)
 				return
 			}
 			handleID = openResp.HandleID
-			fileSize = openResp.FileSize
 
 			// Ensure handle is closed when done.
 			defer func() {
