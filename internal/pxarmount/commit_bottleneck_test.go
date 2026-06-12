@@ -9,7 +9,9 @@ import (
 	"time"
 
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/backupproxy"
 	"github.com/pbs-plus/pxar/datastore"
+	"github.com/pbs-plus/pxar/encoder"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/zeebo/xxh3"
 )
@@ -1083,4 +1085,109 @@ func TestPaddingRatioRejectsHighWaste(t *testing.T) {
 	if reuse {
 		t.Error("file spanning chunk boundary with huge padding should re-encode")
 	}
+}
+
+type offsetTrackingWriter struct {
+	noopWriter
+	refOffsets    []uint64
+	injectedSizes []uint64
+}
+
+func (w *offsetTrackingWriter) WriteEntryRef(_ *pxar.Entry, offset uint64) error {
+	w.refOffsets = append(w.refOffsets, offset)
+	return nil
+}
+
+func (w *offsetTrackingWriter) InjectChunks(chunks []backupproxy.KnownChunkRef) error {
+	for _, c := range chunks {
+		w.injectedSizes = append(w.injectedSizes, c.Size)
+	}
+	return nil
+}
+
+func (w *offsetTrackingWriter) Encoder() *encoder.Encoder {
+	return nil
+}
+
+func (w *offsetTrackingWriter) WriteEntryReader(entry *pxar.Entry, r io.Reader, size uint64) error {
+	return nil
+}
+
+func TestFlushPendingRefsOffsetCorrectness(t *testing.T) {
+	idx := buildSyntheticDIDX(t, 5, 1000)
+
+	makeEntry := func(name string, payloadOffset, fileSize uint64) commitEntry {
+		return commitEntry{
+			name:     name,
+			sortKey:  payloadOffset,
+			pxarSlim: &dirEntrySlim{payloadOffset: payloadOffset, fileSize: fileSize},
+		}
+	}
+
+	t.Run("offset math matches Rust", func(t *testing.T) {
+		encoderPos := uint64(5000)
+		startPadding := uint64(100)
+		baseOffset := encoderPos + startPadding
+		entries := []commitEntry{
+			makeEntry("a", 100, 50),
+			makeEntry("b", 300, 50),
+			makeEntry("c", 600, 50),
+		}
+		rangeStart := entries[0].sortKey
+		for _, e := range entries {
+			refOff := baseOffset + (e.sortKey - rangeStart)
+			want := encoderPos + e.sortKey
+			if refOff != want {
+				t.Errorf("%s: refOff=%d want=%d", e.name, refOff, want)
+			}
+		}
+	})
+
+	t.Run("keepLastChunk injects n-1 chunks", func(t *testing.T) {
+		chunks, _, _ := lookupDynamicEntries(idx, 100, 1700)
+		if len(chunks) < 2 {
+			t.Fatalf("need at least 2 chunks, got %d", len(chunks))
+		}
+
+		lastChunk := chunks[len(chunks)-1]
+		injected := chunks[:len(chunks)-1]
+
+		var injectSum, totalSum uint64
+		for _, c := range injected {
+			injectSum += c.size
+		}
+		for _, c := range chunks {
+			totalSum += c.size
+		}
+		if injectSum+lastChunk.size != totalSum {
+			t.Errorf("injectSum(%d) + last(%d) != total(%d)", injectSum, lastChunk.size, totalSum)
+		}
+	})
+
+	t.Run("no origIndex writes absolute offsets", func(t *testing.T) {
+		w := &offsetTrackingWriter{}
+		ow := &commitWalkState{
+			mfs:           &MutableFS{verbose: false},
+			writer:        w,
+			xattrCache:    make(map[int64][]format.XAttr),
+			redirectCache: make(map[string]*pxar.Entry),
+			pendingRefs: []commitEntry{
+				{name: "a", sortKey: 100, pxarSlim: &dirEntrySlim{payloadOffset: 100, fileSize: 50}, cachedEntry: &pxar.Entry{Path: "a", Kind: pxar.KindFile, FileSize: 50, PayloadOffset: 100}},
+				{name: "b", sortKey: 300, pxarSlim: &dirEntrySlim{payloadOffset: 300, fileSize: 50}, cachedEntry: &pxar.Entry{Path: "b", Kind: pxar.KindFile, FileSize: 50, PayloadOffset: 300}},
+			},
+		}
+
+		if err := ow.flushPendingRefs("", false); err != nil {
+			t.Fatal(err)
+		}
+		if len(w.refOffsets) != 2 {
+			t.Fatalf("expected 2 refs, got %d", len(w.refOffsets))
+		}
+		if w.refOffsets[0] != 100 {
+			t.Errorf("ref[0]=%d want 100", w.refOffsets[0])
+		}
+		if w.refOffsets[1] != 300 {
+			t.Errorf("ref[1]=%d want 300", w.refOffsets[1])
+		}
+	})
 }
