@@ -220,136 +220,90 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	}
 }
 
-// --- Commit Core ---
-
-// commitEntry represents one item in the merged directory view during commit walk.
 type commitEntry struct {
 	name        string
-	node        *GraphNode    // journal node (nil for pure pxar)
-	pxarSlim    *dirEntrySlim // pxar slim entry (nil for journal-only)
-	sortKey     uint64        // min descendant payload offset (dirs only)
-	cachedEntry *pxar.Entry   // eagerly read pxar entry (avoids duplicate ReadEntryAt)
+	node        *GraphNode
+	pxarSlim    *dirEntrySlim
+	sortKey     uint64
+	cachedEntry *pxar.Entry
 }
 
-// deferredDir holds the minimal data needed to recurse into a subdirectory
-// after the parent's pxarEntries slice has been released.  This breaks the
-// memory retention chain: pxarEntries → backing array → all parent entries
-// alive during all child commitWalk calls.
-//
-// For a root with 5M files, each deferredDir is ~56 bytes vs the ~440MB
-// pxarEntries slice that would otherwise stay on the stack.
+func (ce *commitEntry) rangeEnd() uint64 {
+	if ce.cachedEntry != nil {
+		return ce.sortKey + ce.cachedEntry.FileSize
+	}
+	if ce.pxarSlim != nil {
+		return ce.sortKey + ce.pxarSlim.fileSize
+	}
+	return ce.sortKey
+}
+
 type deferredDir struct {
-	name       string     // directory name (copied from pxarEntries[i].name)
-	node       *GraphNode // non-nil for journal dirs
-	entryStart uint64     // pxar entry offset (0 for journal-only dirs)
-	pxarIno    uint64     // pxar child inode for recursion
+	name       string
+	node       *GraphNode
+	entryStart uint64
+	pxarIno    uint64
 }
 
-// commitWalkState holds state for the recursive commit walk.
-// All per-walk slices are pre-allocated once and reused across recursive
-// calls via save/restore, eliminating heap allocation per directory level.
 type commitWalkState struct {
 	mfs          *MutableFS
 	writer       transfer.ArchiveWriter
 	prog         CommitProgress
-	xattrCache   map[int64][]format.XAttr // journal node ID → xattrs
-	backedHashes map[string]uint64        // relPath → xxh3 hash of uploaded files
-	mutableFiles int                      // count of new/modified files
+	xattrCache   map[int64][]format.XAttr
+	backedHashes map[string]uint64
+	mutableFiles int
 
-	// redirectCache caches resolved pxar entries by redirect path to avoid
-	// redundant resolvePxarEntry calls. Keys are journal RedirectTo paths;
-	// values are the resolved pxar.Entry. The commit walk is single-threaded
-	// and read-only, so a plain map without synchronization is safe.
-	redirectCache map[string]*pxar.Entry
-
-	// lastRefPayloadOffset tracks the highest payload offset emitted via
-	// WriteEntryRef across the ENTIRE recursive walk. Before emitting any
-	// payload ref, we check that the offset is strictly greater than this
-	// value. If not, we fall back to re-encoding the file content from the
-	// archive, which advances the encoder's payload position sequentially.
-	//
-	// This mirrors the Rust PBS client's try_record_reusable_offset +
-	// re-encode pattern from pbs-client/src/pxar/create.rs, and prevents
-	// the encoder's strict monotonic PAYLOAD_REF offset check from ever
-	// firing (since we pre-validate before calling WriteEntryRef).
+	redirectCache        map[string]*pxar.Entry
 	lastRefPayloadOffset uint64
 	hasLastRefPayload    bool
 
-	// Reusable scratch slices — allocated once, cleared per-directory
-	// via save/restore in commitWalk. Eliminates per-level heap allocation.
-	pendingRefs []commitEntry // ref-files batched for contentOffset-ordered emission
-
-	// entryCache maps pxar entryStart offsets to fully-decoded pxar.Entry
-	// values. Populated by ReadDirFull during the commit walk, consumed by
-	// emitAlphabeticalPxar / emitPxarRef to avoid double-decoding each regular
-	// file (readDirRaw minimal decode + ReadEntryAt full decode → single full decode).
-	entryCache map[uint64]*pxar.Entry
-
-	// origChunkIndex is the parsed DIDX from the previous backup's payload.
-	// Used by flushPendingRefs to compute the padding ratio for the reuse
-	// vs re-encode decision, mirroring the Rust client's
-	// flush_cached_reusing_if_below_threshold heuristic.
+	pendingRefs    []commitEntry
+	entryCache     map[uint64]*pxar.Entry
 	origChunkIndex *datastore.DynamicIndexReader
 
-	// Reusable pxar.Entry buffer — avoids heap allocation on every emit.
+	batchRangeEnd     uint64
+	lastReusableChunk reusableChunk
+	hasLastChunk      bool
+
 	entryBuf pxar.Entry
 }
 
-// ensureXAttrs loads xattrs for the given journal node on first access.
-// Replaces the upfront AllXAttrs() bulk load (B7 bottleneck) with lazy
-// per-node loading. Most files in the archive are unchanged pxar entries
-// that never hit this path, so we avoid loading xattrs for nodes that
-// are whiteouted, pxar redirects, or outside the commit scope.
 func (ow *commitWalkState) ensureXAttrs(nodeID int64) []format.XAttr {
 	if xattrs, ok := ow.xattrCache[nodeID]; ok {
-		return xattrs // already loaded (or nil)
+		return xattrs
 	}
 	if ow.mfs.journal == nil {
 		return nil
 	}
 	xattrs, _ := ow.mfs.journal.XAttrsForNode(nodeID)
-	ow.xattrCache[nodeID] = xattrs // cache even if nil
+	ow.xattrCache[nodeID] = xattrs
 	return xattrs
 }
 
-// allocEntry returns a pointer to the reusable entry buffer after zeroing it.
-// All emit functions use this instead of &pxar.Entry{...} to avoid heap allocation.
 func (ow *commitWalkState) allocEntry() *pxar.Entry {
 	ow.entryBuf = pxar.Entry{}
 	return &ow.entryBuf
 }
 
-// buildPath joins parent and name to form a child path.
-// Uses joinPath which is allocation-free for root children and faster than
-// strings.Builder for short paths (see B9 benchmark: 17ns vs 46ns).
 func (ow *commitWalkState) buildPath(parent, name string) string {
 	return joinPath(parent, name)
 }
 
-// maxPendingRefs bounds the pending ref batch to limit memory on
-// directories with millions of entries. When exceeded, the batch is
-// flushed immediately. Mirrors proxmox-backup-client's max_cache_size.
 const maxPendingRefs = 4096
 
-// chunkPaddingThreshold is the maximum acceptable padding ratio when
-// reusing original chunks. When the padding (wasted bytes at chunk
-// boundaries) exceeds this fraction of the total range size, entries
-// are re-encoded from scratch instead of using PAYLOAD_REF.
-// Mirrors Rust's CHUNK_PADDING_THRESHOLD (0.1 = 10%).
 const chunkPaddingThreshold = 0.1
 
-// reusableChunk represents an original chunk that can be injected into
-// the new payload stream without re-uploading (its digest is already
-// known to the datastore).
 type reusableChunk struct {
-	size      uint64 // chunk size including padding
-	padding   uint64 // wasted bytes at boundaries
+	size      uint64
+	padding   uint64
 	digest    [32]byte
-	endOffset uint64 // end offset in the original payload
+	endOffset uint64
 }
 
-// CommitProgress is the interface used by CommitSnapshot to report progress.
-// Both *ProgressReporter and the hub-based reporters implement it.
+func (c *reusableChunk) sameIndexedChunkAs(other *reusableChunk) bool {
+	return c.digest == other.digest && c.endOffset == other.endOffset
+}
+
 type CommitProgress interface {
 	SetPhase(ProgressPhase)
 	SetMsg(msg string)
@@ -360,35 +314,16 @@ type CommitProgress interface {
 	State() ProgressState
 }
 
-// Ensure *ProgressReporter satisfies CommitProgress.
 var _ CommitProgress = (*ProgressReporter)(nil)
 
-// CommitSnapshot creates a new pxar snapshot from the current journal state.
-//
-// The algorithm:
-//  1. Freeze FUSE writes to get a consistent view
-//  2. Snapshot journal state (edges, whiteouts, xattrs) into memory
-//  3. Start a PBS backup session with previous-archive dedup
-//  4. Walk the merged tree (journal overlay + pxar base):
-//     - Journal nodes with HasData → stream from mutable dir
-//     - Journal nodes with RedirectTo → emit pxar chunk ref (dedup)
-//     - Whiteout → skip pxar entry
-//     - Pure pxar entries → emit chunk ref (dedup)
-//  5. Finish upload, hot-swap pxar reader, reset journal
 func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) error {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
-	// --- Phase 0: Freeze FUSE mutations ---
 	mfs.freezeMu.Lock()
 	mfs.frozen = true
 	mfs.freezeMu.Unlock()
 
-	// Sync journal while frozen — all pending metadata is durably
-	// checkpointed before we start reading the journal for commit.
-	// This is the write barrier equivalent: all metadata must be on
-	// stable storage before we snapshot it, like ext4's journal flush
-	// before checkpoint.
 	if err := mfs.journal.Sync(); err != nil {
 		mfs.freezeMu.Lock()
 		mfs.frozen = false
@@ -404,7 +339,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		mfs.freezeCond.Broadcast()
 	}()
 
-	// --- Phase 1: Resolve PBS connection parameters ---
 	prog.SetPhase(PhasePrepare)
 	prog.SetMsg("Resolving PBS connection")
 
@@ -427,7 +361,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		backupID = mfs.origSnapshot.BackupID
 	}
 	if backupID == "" {
-		// Init-mounted namespace with no previous snapshot — derive from hostname.
 		backupID, _ = os.Hostname()
 	}
 	backupType := req.BackupType
@@ -443,15 +376,12 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		archiveName = backupID
 	}
 	now := time.Now().Unix()
-	// Ensure strictly increasing timestamps — PBS rejects identical
-	// backup times for the same group ("timestamp too old").
 	if now <= lastCommitTime {
 		now = lastCommitTime + 1
 	}
 	lastCommitTime = now
 	backupTime := now
 
-	// Ensure namespace directory exists on disk.
 	if err := ensureNamespaceDir(mfs.pbsStore, namespace); err != nil {
 		return fmt.Errorf("ensure namespace dir: %w", err)
 	}
@@ -461,7 +391,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		return fmt.Errorf("invalid backup type %q: %w", backupType, err)
 	}
 
-	// --- Phase 2: Start PBS session with previous backup for dedup ---
 	var prev *backupproxy.PreviousBackupRef
 	if mfs.origSnapshot.BackupID != "" && mfs.origSnapshot.BackupTime > 0 {
 		prev = &backupproxy.PreviousBackupRef{
@@ -496,7 +425,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		return fmt.Errorf("start PBS session: %w", err)
 	}
 
-	// --- Phase 3: Create dedup writer ---
 	metaName := archiveName + ".mpxar.didx"
 	payloadName := archiveName + ".ppxar.didx"
 
@@ -510,13 +438,11 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		return fmt.Errorf("create dedup writer: %w", err)
 	}
 
-	// --- Phase 4: Begin archive with root metadata ---
-	rootNode, _ := mfs.journal.GetNode(1) // root journal node (may be nil)
+	rootNode, _ := mfs.journal.GetNode(1)
 	var rootMeta pxar.Metadata
 	if rootNode != nil {
 		rootMeta = nodeToMetadata(rootNode, nil)
 	} else {
-		// Use pxar root metadata.
 		rootEntry, err := mfs.pxar.GetPxarEntry(RootInode)
 		if err != nil {
 			return fmt.Errorf("read pxar root: %w", err)
@@ -528,7 +454,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		return fmt.Errorf("begin archive: %w", err)
 	}
 
-	// --- Phase 5: Walk merged tree ---
 	prog.SetPhase(PhaseWalk)
 	prog.SetMsg("Archiving files")
 
@@ -543,24 +468,16 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		entryCache:    make(map[uint64]*pxar.Entry, 4096),
 	}
 
-	// Parse the previous backup's DIDX for chunk-boundary-aware padding
-	// ratio heuristic. Mirrors the Rust client's previous_payload_index.
 	if len(origPayloadIdx) > 0 {
 		if idx, err := datastore.ParseDynamicIndex(origPayloadIdx); err == nil {
 			ow.origChunkIndex = idx
 		}
 	}
 
-	// Xattrs are loaded lazily per-node via ensureXAttrs() instead of
-	// pre-loading ALL xattrs upfront via AllXAttrs(). This avoids the
-	// B7 bottleneck: 50ms/400K allocs for 100K nodes even when most are
-	// unchanged pxar entries that never need xattrs.
-
 	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
 		return fmt.Errorf("walk overlay: %w", err)
 	}
 
-	// --- Phase 6: Finish upload ---
 	prog.SetPhase(PhaseUpload)
 	prog.SetMsg(fmt.Sprintf("Flushing upload (%d new/modified files)", ow.mutableFiles))
 
@@ -572,7 +489,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		return fmt.Errorf("finish session: %w", err)
 	}
 
-	// --- Phase 7: Verify backed files ---
 	prog.SetPhase(PhaseVerify)
 	prog.SetMsg(fmt.Sprintf("Verifying %d backed files", len(ow.backedHashes)))
 
@@ -582,7 +498,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		}
 	}
 
-	// --- Phase 8: Hot-swap and reset ---
 	prog.SetPhase(PhaseFinalize)
 	prog.SetMsg("Swapping snapshot")
 
@@ -594,29 +509,11 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	return nil
 }
 
-// commitWalk recursively walks the merged filesystem tree rooted at the given
-// journal node ID and pxar inode, writing entries to the archive writer.
-//
-// Merge semantics match the runtime FUSE behavior:
-//   - Journal edges always take priority over pxar entries
-//   - Whiteouts hide pxar entries
-//   - Once off the journal, entries come from pure pxar
-//
-// Entry ordering matches proxmox-backup-client: directory entries are written
-// in alphabetical order. Payload refs are batched and emitted in contentOffset
-// order to satisfy the encoder's strict monotonic offset invariant, mirroring
-// the Rust client's lookahead cache (pbs-client/src/pxar/look_ahead_cache.rs).
-//
-// Zero-allocation: uses save/restore on pre-allocated slices so no heap
-// allocation occurs per directory level beyond what the journal/pxar
-// libraries return.
 func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, relPath string) error {
-	// --- Save parent's pendingRefs, reset for this level ---
 	savedPending := ow.pendingRefs
 	ow.pendingRefs = ow.pendingRefs[:0]
 	defer func() { ow.pendingRefs = savedPending }()
 
-	// Get journal children.
 	var journalEdges []GraphEdge
 	var whiteoutSet map[string]bool
 	if journalParentID > 0 {
@@ -637,9 +534,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// Get pxar children sorted alphabetically (matching proxmox-backup-client).
-	// Use ReadDirFull to decode entries fully once and cache them in entryCache,
-	// eliminating the second ReadEntryAt that emitAlphabeticalPxar previously did.
 	var pxarEntries []dirEntrySlim
 	if pxarInode != 0 {
 		var err error
@@ -649,7 +543,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// Build edgeNames set for O(1) pxar shadowing check.
 	var edgeNames map[string]bool
 	if len(journalEdges) > 0 {
 		edgeNames = make(map[string]bool, len(journalEdges))
@@ -658,11 +551,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// --- Pre-filter pxar entries and sort both lists ---
-	//
-	// Filter pxar entries shadowed by journal edges or whiteouts.
-	// Directory entries are NOT filtered when shadowed by a journal directory,
-	// because the recursive commitWalk needs the pxar inode to merge children.
 	filtered := 0
 	for i := range pxarEntries {
 		pe := &pxarEntries[i]
@@ -670,8 +558,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			continue
 		}
 		if edgeNames != nil && edgeNames[pe.name] {
-			// Keep directory entries that shadow journal directories —
-			// processDeferredDir needs the pxar inode to merge children.
 			if !pe.isDir {
 				continue
 			}
@@ -683,7 +569,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	}
 	pxarEntries = pxarEntries[:filtered]
 
-	// Sort both lists alphabetically for two-pointer merge.
 	sort.Slice(pxarEntries, func(i, j int) bool {
 		return pxarEntries[i].name < pxarEntries[j].name
 	})
@@ -691,24 +576,12 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		return journalEdges[i].Name < journalEdges[j].Name
 	})
 
-	// --- Two-pointer merge: walk alphabetically, emitting incrementally ---
-	//
-	// Directories are collected into deferredDirs instead of recursing inline.
-	// After the loop completes, pxarEntries is released (nil'd), THEN we
-	// recurse into deferred directories. This breaks the memory retention
-	// chain where pxarEntries stays on the stack during all child commitWalk
-	// calls — the root cause of OOM on large archives with millions of files.
-	//
-	// deferredDirs only holds ~56 bytes per directory vs ~88 bytes per entry
-	// in pxarEntries. For a root with 5M files and 10K dirs, that's ~560KB
-	// vs ~440MB.
 	var deferredDirs []deferredDir
 
 	pi, ji := 0, 0
 	for pi < len(pxarEntries) || ji < len(journalEdges) {
 		var ce commitEntry
 		if pi >= len(pxarEntries) {
-			// Journal only.
 			edge := &journalEdges[ji]
 			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
 			if node == nil {
@@ -718,7 +591,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			ce = commitEntry{name: edge.Name, node: node}
 			ji++
 		} else if ji >= len(journalEdges) {
-			// Pxar only.
 			ce = commitEntry{name: pxarEntries[pi].name, pxarSlim: &pxarEntries[pi]}
 			pi++
 		} else if pxarEntries[pi].name < journalEdges[ji].Name {
@@ -734,12 +606,9 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			ce = commitEntry{name: edge.Name, node: node}
 			ji++
 		} else {
-			// Same name: journal takes priority, consume both.
 			edge := &journalEdges[ji]
 			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
 			if node != nil {
-				// Capture pxarSlim for journal dirs so processDeferredDir can
-				// merge pxar children when the journal dir has no RedirectTo.
 				ce = commitEntry{name: edge.Name, node: node}
 				if node.Kind == NodeDir && pi < len(pxarEntries) && pxarEntries[pi].name == edge.Name {
 					ce.pxarSlim = &pxarEntries[pi]
@@ -752,18 +621,14 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			}
 		}
 
-		// Directories are collected for deferred recursion (after releasing
-		// pxarEntries). Non-directories are emitted inline.
 		isDir := (ce.node != nil && ce.node.Kind == NodeDir) ||
 			(ce.node == nil && ce.pxarSlim != nil && ce.pxarSlim.isDir)
 
 		if isDir {
-			// Flush pending refs to maintain emission order (refs before dir).
 			if err := ow.flushPendingRefs(relPath); err != nil {
 				return err
 			}
 
-			// Collect minimal info — no pxarEntries reference retained.
 			dd := deferredDir{name: ce.name}
 			if ce.node != nil {
 				dd.node = ce.node
@@ -776,7 +641,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			}
 			deferredDirs = append(deferredDirs, dd)
 		} else {
-			// Non-directory: emit inline.
 			var err error
 			if ce.node != nil {
 				err = ow.emitAlphabeticalJournal(&ce, relPath)
@@ -789,20 +653,13 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	// Flush any remaining batched refs.
 	if err := ow.flushPendingRefs(relPath); err != nil {
 		return err
 	}
 
-	// --- Release pxarEntries before recursing into subdirectories ---
-	//
-	// This is the key memory optimization: the parent's large entries slice
-	// is no longer needed (merge loop is done), so we nil it to allow GC
-	// before descending into any child directory's commitWalk.
 	pxarEntries = nil
-	_ = pxarEntries // suppress linter
+	_ = pxarEntries
 
-	// --- Deferred directory recursion ---
 	for i := range deferredDirs {
 		if err := ow.processDeferredDir(&deferredDirs[i], relPath); err != nil {
 			return err
@@ -812,10 +669,6 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	return nil
 }
 
-// emitAlphabeticalJournal emits a journal entry during alphabetical walk.
-// Directories and new-data files flush pending refs and emit inline.
-// Ref-eligible entries (redirected files, symlinks, empty files) are deferred
-// to the pendingRefs batch where they are sorted by contentOffset.
 func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPath string) error {
 	node := ce.node
 
@@ -828,14 +681,12 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 
 	case NodeFile:
 		if node.HasData {
-			// New/modified data — flush pending refs, emit inline.
 			if err := ow.flushPendingRefs(parentRelPath); err != nil {
 				return err
 			}
 			childPath := ow.buildPath(parentRelPath, ce.name)
 			xattrs := ow.ensureXAttrs(node.ID)
 			meta := nodeToMetadata(node, xattrs)
-			// Merge pxar fcaps/acl if this file was copied up from pxar.
 			if node.RedirectTo != "" {
 				if pxEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 					meta = mergeMetaWithPxar(meta, pxEntry)
@@ -844,13 +695,11 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 			return ow.emitBackedFile(node, ce.name, childPath, meta)
 		}
 		if node.RedirectTo != "" {
-			// Redirected file — defer to pending refs for offset ordering.
 			if err := ow.addToPendingRefs(ce, parentRelPath); err != nil {
 				return err
 			}
 			return nil
 		}
-		// Empty file (touch, no data) — flush and emit inline.
 		if err := ow.flushPendingRefs(parentRelPath); err != nil {
 			return err
 		}
@@ -884,9 +733,6 @@ func (ow *commitWalkState) emitAlphabeticalJournal(ce *commitEntry, parentRelPat
 	return nil
 }
 
-// emitAlphabeticalPxar emits a pxar-only entry during alphabetical walk.
-// Directories flush pending refs and recurse. Symlinks flush and emit inline.
-// Regular files are deferred to the pendingRefs batch for contentOffset ordering.
 func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 	if slim == nil {
@@ -907,15 +753,10 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 		return ow.emitPxarSymlink(ce, parentRelPath)
 	}
 
-	// Regular file — look up the full entry from entryCache (populated by
-	// ReadDirFull) instead of doing a second ReadEntryAt. This eliminates
-	// the double-decode bottleneck where readDirRaw (minimal) + ReadEntryAt
-	// (full) decoded each file's metadata twice.
 	if cached, ok := ow.entryCache[slim.entryStart]; ok {
 		ce.cachedEntry = cached
 		ce.sortKey = cached.PayloadOffset
 	} else {
-		// Fallback: uncached entry (shouldn't happen with ReadDirFull).
 		ow.mfs.pxar.readerMu.RLock()
 		pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
 		ow.mfs.pxar.readerMu.RUnlock()
@@ -929,15 +770,7 @@ func (ow *commitWalkState) emitAlphabeticalPxar(ce *commitEntry, parentRelPath s
 	return ow.addToPendingRefs(ce, parentRelPath)
 }
 
-// --- Pending ref batching ---
-
-// addToPendingRefs adds a ref-eligible entry to the pending batch,
-// maintaining the batch sorted by contentOffset. Flushes the batch
-// automatically when it reaches maxPendingRefs to bound memory on
-// directories with millions of entries.
 func (ow *commitWalkState) addToPendingRefs(ce *commitEntry, parentRelPath string) error {
-	// Compute sort key: payloadOffset for files, entryStart for non-files.
-	// For pxar entries, sortKey was already set by emitAlphabeticalPxar.
 	if ce.pxarSlim != nil {
 		if ce.pxarSlim.isReg {
 			if ce.sortKey == 0 {
@@ -947,7 +780,6 @@ func (ow *commitWalkState) addToPendingRefs(ce *commitEntry, parentRelPath strin
 			ce.sortKey = ce.pxarSlim.entryStart
 		}
 	} else {
-		// Journal redirect entry — use cached resolve to get sort key.
 		if ce.node != nil && ce.node.RedirectTo != "" {
 			if pxEntry, err := ow.resolvePxarEntryCached(ce.node.RedirectTo); err == nil {
 				ce.sortKey = pxEntry.PayloadOffset
@@ -956,26 +788,31 @@ func (ow *commitWalkState) addToPendingRefs(ce *commitEntry, parentRelPath strin
 			}
 		}
 	}
+
+	if ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && ce.sortKey > ow.batchRangeEnd {
+		if err := ow.flushPendingRefs(parentRelPath); err != nil {
+			return err
+		}
+	}
+
 	ow.pendingRefs = append(ow.pendingRefs, *ce)
 
-	// Flush if batch exceeds limit — bounds memory on large directories.
+	entryEnd := ce.rangeEnd()
+	if entryEnd > ow.batchRangeEnd {
+		ow.batchRangeEnd = entryEnd
+	}
+
 	if len(ow.pendingRefs) >= maxPendingRefs {
 		return ow.flushPendingRefs(parentRelPath)
 	}
 	return nil
 }
 
-// insertionSortPendingRefs sorts commitEntry slice by sortKey using insertion
-// sort. O(n) on nearly-sorted data (common case: two-pointer merge produces
-// entries in roughly monotonic payload offset order), O(n²) worst case.
-// Falls back to sort.Slice for large (>256) or heavily disordered slices.
 func insertionSortPendingRefs(s []commitEntry) {
 	n := len(s)
 	if n <= 1 {
 		return
 	}
-	// Count inversions to decide between insertion sort and sort.Slice.
-	// If more than 25% of adjacent pairs are inverted, use sort.Slice.
 	inv := 0
 	threshold := max(n/4, 1)
 	for i := 1; i < n; i++ {
@@ -989,7 +826,6 @@ func insertionSortPendingRefs(s []commitEntry) {
 			}
 		}
 	}
-	// Insertion sort — elements are nearly sorted.
 	for i := 1; i < n; i++ {
 		key := s[i]
 		j := i - 1
@@ -1001,26 +837,16 @@ func insertionSortPendingRefs(s []commitEntry) {
 	}
 }
 
-// flushPendingRefs emits all batched ref entries sorted by contentOffset,
-// then clears the batch. This ensures payload ref monotonicity before any
-// new data write or directory boundary.
-// lookupDynamicEntries finds the original chunks that cover the given byte
-// range [rangeStart, rangeEnd) in the previous backup's payload stream.
-// Returns the chunk references plus startPadding and endPadding — the
-// wasted bytes at chunk boundaries that aren't covered by actual file data.
-// Mirrors Rust's lookup_dynamic_entries exactly.
 func lookupDynamicEntries(idx *datastore.DynamicIndexReader, rangeStart, rangeEnd uint64) ([]reusableChunk, uint64, uint64) {
 	if idx == nil || idx.Count() == 0 || rangeStart >= rangeEnd {
 		return nil, 0, 0
 	}
 
-	// Find the chunk containing rangeStart.
 	startIdx, ok := idx.ChunkFromOffset(rangeStart)
 	if !ok {
 		return nil, 0, 0
 	}
 
-	// Calculate start padding: bytes before rangeStart in the first chunk.
 	var prevEnd uint64
 	if startIdx > 0 {
 		info, _ := idx.ChunkInfo(startIdx - 1)
@@ -1045,12 +871,8 @@ func lookupDynamicEntries(idx *datastore.DynamicIndexReader, rangeStart, rangeEn
 		prevEnd = info.End
 
 		if rangeEnd <= info.End {
-			// This is the last chunk in the range.
 			endPadding = info.End - rangeEnd
 			chunk.padding = startPadding + endPadding
-			if i == startIdx {
-				chunk.padding = startPadding + endPadding
-			}
 			chunks = append(chunks, chunk)
 			break
 		}
@@ -1064,34 +886,31 @@ func lookupDynamicEntries(idx *datastore.DynamicIndexReader, rangeStart, rangeEn
 	return chunks, startPadding, endPadding
 }
 
-// shouldReuse calculates the padding ratio for a batch of pending refs and
-// returns true if the batch should reuse original chunks (PAYLOAD_REF),
-// false if it should re-encode from scratch.
-// Mirrors Rust's flush_cached_reusing_if_below_threshold decision logic.
 func (ow *commitWalkState) shouldReuse(refs []commitEntry) bool {
 	if ow.origChunkIndex == nil || len(refs) == 0 {
-		return true // no DIDX → always reuse (fallback)
+		return true
 	}
 
-	// Compute the byte range covered by this batch.
 	rangeStart := refs[0].sortKey
-	var lastSize uint64
-	if ce := refs[len(refs)-1]; ce.cachedEntry != nil {
-		lastSize = ce.cachedEntry.FileSize
-	} else if ce.pxarSlim != nil {
-		lastSize = ce.pxarSlim.fileSize
-	}
-	rangeEnd := refs[len(refs)-1].sortKey + lastSize
+	rangeEnd := refs[len(refs)-1].rangeEnd()
 	if rangeEnd <= rangeStart {
-		return true // degenerate range
+		return true
 	}
 
 	chunks, startPadding, endPadding := lookupDynamicEntries(ow.origChunkIndex, rangeStart, rangeEnd)
 	if len(chunks) == 0 {
-		return true // no chunks found → reuse (fallback)
+		return true
 	}
 
 	totalPadding := startPadding + endPadding
+
+	if ow.hasLastChunk && len(chunks) > 0 && ow.lastReusableChunk.sameIndexedChunkAs(&chunks[0]) {
+		used := ow.lastReusableChunk.size - ow.lastReusableChunk.padding
+		if totalPadding >= used {
+			totalPadding -= used
+		}
+	}
+
 	totalSize := (rangeEnd - rangeStart) + totalPadding
 	if totalSize == 0 {
 		return true
@@ -1106,32 +925,20 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 		return nil
 	}
 
-	// Pending refs come from the two-pointer merge which processes entries
-	// alphabetically. For most archives, payload offsets are nearly monotonic
-	// with the alphabetical order. Use insertion sort which is O(n) on
-	// nearly-sorted data vs O(n log n) for sort.Slice.
 	insertionSortPendingRefs(ow.pendingRefs)
 
-	// Padding ratio heuristic: if the original chunks covering this batch
-	// have too much wasted padding at boundaries, re-encode from scratch.
-	// This mirrors the Rust client's flush_cached_reusing_if_below_threshold.
 	reuse := ow.shouldReuse(ow.pendingRefs)
 
 	for i := range ow.pendingRefs {
 		ce := &ow.pendingRefs[i]
 		var err error
 		if reuse {
-			// Reuse mode: emit PAYLOAD_REF (zero payload bytes, original
-			// chunks injected by UploadPayloadWithInjection).
 			if ce.node != nil {
 				err = ow.emitJournalRef(ce, parentRelPath)
 			} else {
 				err = ow.emitPxarRef(ce, parentRelPath)
 			}
 		} else {
-			// Re-encode mode: read original file content and write as new
-			// data. This avoids the padding waste at chunk boundaries but
-			// costs more CPU and I/O.
 			if ce.node != nil {
 				err = ow.emitJournalReencode(ce, parentRelPath)
 			} else {
@@ -1142,14 +949,21 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 			return err
 		}
 	}
+
+	if reuse && ow.origChunkIndex != nil && len(ow.pendingRefs) > 0 {
+		last := ow.pendingRefs[len(ow.pendingRefs)-1]
+		rangeEnd := last.rangeEnd()
+		if chunks, _, _ := lookupDynamicEntries(ow.origChunkIndex, ow.pendingRefs[0].sortKey, rangeEnd); len(chunks) > 0 {
+			ow.lastReusableChunk = chunks[len(chunks)-1]
+			ow.hasLastChunk = true
+		}
+	}
+
 	ow.pendingRefs = ow.pendingRefs[:0]
+	ow.batchRangeEnd = 0
 	return nil
 }
 
-// registerPxarDir ensures a pxar directory entry's inode is in the PxarFS
-// node cache so that the recursive commitWalk can call ReadDirRaw(childIno).
-// Without this, ReadDirRaw returns ENOENT for uncached inodes and the
-// directory's children are silently dropped from the new archive.
 func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry, parentIno uint64) {
 	childIno := ToInode(pxarEntry)
 	slim := dirEntrySlim{
@@ -1171,14 +985,10 @@ func (ow *commitWalkState) registerPxarDir(pxarEntry *pxar.Entry, parentIno uint
 	ow.mfs.pxar.RegisterSlimNode(&slim, parentIno)
 }
 
-// processDeferredDir handles deferred directory recursion after pxarEntries
-// has been released. It performs the same work as emitJournalDir/emitPxarDir
-// but uses only the minimal data captured in deferredDir.
 func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath string) error {
 	childPath := ow.buildPath(parentRelPath, dd.name)
 
 	if dd.node != nil {
-		// Journal directory (may have pxar shadow).
 		node := dd.node
 		xattrs := ow.ensureXAttrs(node.ID)
 		meta := nodeToMetadata(node, xattrs)
@@ -1188,19 +998,14 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 			if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 				meta = mergeMetaWithPxar(meta, pxDirEntry)
 				pxarChildIno = ToInode(pxDirEntry)
-				// Register the resolved pxar directory so recursive commitWalk
-				// can call ReadDirRaw on its inode.
-				ow.registerPxarDir(pxDirEntry, RootInode) // parent ino not critical for commit walk
+				ow.registerPxarDir(pxDirEntry, RootInode)
 			}
 		} else if dd.pxarIno != 0 {
 			pxarChildIno = dd.pxarIno
-			// The inode comes from readDirRaw which doesn't auto-register.
-			// Register it so the recursive commitWalk can list pxar children.
 			ow.mfs.pxar.mu.RLock()
 			_, cached := ow.mfs.pxar.nodes[pxarChildIno]
 			ow.mfs.pxar.mu.RUnlock()
 			if !cached {
-				// Re-read the entry to construct a slim node for registration.
 				ow.mfs.pxar.readerMu.RLock()
 				pxarEntry, rerr := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
 				ow.mfs.pxar.readerMu.RUnlock()
@@ -1219,7 +1024,6 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 		return ow.writer.EndDirectory()
 	}
 
-	// Pxar-only directory — re-read the entry to get metadata.
 	ow.mfs.pxar.readerMu.RLock()
 	pxarEntry, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(dd.entryStart))
 	ow.mfs.pxar.readerMu.RUnlock()
@@ -1229,8 +1033,6 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 
 	childIno := ToInode(pxarEntry)
 
-	// Register the pxar directory node so that the recursive commitWalk
-	// can call ReadDirRaw(childIno) to list its children.
 	ow.registerPxarDir(pxarEntry, RootInode)
 
 	meta := buildMetaFromPxarEntry(pxarEntry)
@@ -1244,13 +1046,11 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 	return ow.writer.EndDirectory()
 }
 
-// emitJournalRef emits a journal ref entry (redirected file) from the pending batch.
 func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string) error {
 	node := ce.node
 	xattrs := ow.ensureXAttrs(node.ID)
 	meta := nodeToMetadata(node, xattrs)
 
-	// Resolve pxar entry for payload offset and metadata merge (cached).
 	pxarEntry, err := ow.resolvePxarEntryCached(node.RedirectTo)
 	if err != nil {
 		return fmt.Errorf("resolve redirect %q for %q: %w", node.RedirectTo, ce.name, err)
@@ -1269,19 +1069,14 @@ func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string)
 	return ow.tryRefOrReencode(entry, pxarEntry, ce.name, node.RedirectTo)
 }
 
-// emitPxarRef emits a pxar ref entry (regular file payload ref) from the pending batch.
-// Uses ce.cachedEntry which was eagerly read in emitAlphabeticalPxar, avoiding
-// a duplicate ReadEntryAt for every pxar-only file.
 func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 	if slim == nil {
 		return nil
 	}
 
-	// Reuse the entry that was eagerly read during emitAlphabeticalPxar.
 	pxarEntry := ce.cachedEntry
 	if pxarEntry == nil {
-		// Fallback: should not happen with the eager-read path, but handle gracefully.
 		ow.mfs.pxar.readerMu.RLock()
 		var err error
 		pxarEntry, err = ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.entryStart))
@@ -1295,9 +1090,6 @@ func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) er
 	return ow.tryRefOrReencode(clone, pxarEntry, ce.name, "")
 }
 
-// emitJournalReencode re-encodes a journal redirect entry by reading the
-// original file content from the archive and writing it as new data.
-// Used when the padding ratio exceeds the threshold (shouldReuse == false).
 func (ow *commitWalkState) emitJournalReencode(ce *commitEntry, parentRelPath string) error {
 	node := ce.node
 	xattrs := ow.ensureXAttrs(node.ID)
@@ -1321,9 +1113,6 @@ func (ow *commitWalkState) emitJournalReencode(ce *commitEntry, parentRelPath st
 	return ow.reencodeFromArchive(pxarEntry, entry, ce.name)
 }
 
-// emitPxarReencode re-encodes a pure pxar entry by reading the original
-// file content from the archive and writing it as new data.
-// Used when the padding ratio exceeds the threshold (shouldReuse == false).
 func (ow *commitWalkState) emitPxarReencode(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 	if slim == nil {
@@ -1345,7 +1134,6 @@ func (ow *commitWalkState) emitPxarReencode(ce *commitEntry, parentRelPath strin
 	return ow.reencodeFromArchive(pxarEntry, clone, ce.name)
 }
 
-// emitJournalDir emits a journal directory entry during alphabetical walk.
 func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string) error {
 	node := ce.node
 	childPath := ow.buildPath(parentRelPath, ce.name)
@@ -1357,7 +1145,6 @@ func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string)
 		if pxDirEntry, rerr := ow.resolvePxarEntryCached(node.RedirectTo); rerr == nil {
 			meta = mergeMetaWithPxar(meta, pxDirEntry)
 			pxarChildIno = ToInode(pxDirEntry)
-			// Register so recursive commitWalk can list children.
 			ow.registerPxarDir(pxDirEntry, RootInode)
 		}
 	} else if ce.pxarSlim != nil {
@@ -1373,7 +1160,6 @@ func (ow *commitWalkState) emitJournalDir(ce *commitEntry, parentRelPath string)
 	return ow.writer.EndDirectory()
 }
 
-// emitPxarDir emits a pure pxar directory entry during alphabetical walk.
 func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 	childPath := ow.buildPath(parentRelPath, ce.name)
@@ -1387,8 +1173,6 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 
 	childIno := ToInode(pxarEntry)
 
-	// Register the pxar directory node so that the recursive commitWalk
-	// can call ReadDirRaw(childIno) to list its children.
 	ow.registerPxarDir(pxarEntry, RootInode)
 
 	meta := buildMetaFromPxarEntry(pxarEntry)
@@ -1402,7 +1186,6 @@ func (ow *commitWalkState) emitPxarDir(ce *commitEntry, parentRelPath string) er
 	return ow.writer.EndDirectory()
 }
 
-// emitPxarSymlink emits a pure pxar symlink entry during alphabetical walk.
 func (ow *commitWalkState) emitPxarSymlink(ce *commitEntry, parentRelPath string) error {
 	slim := ce.pxarSlim
 
@@ -1417,7 +1200,6 @@ func (ow *commitWalkState) emitPxarSymlink(ce *commitEntry, parentRelPath string
 	return ow.writer.WriteEntry(clone, nil)
 }
 
-// emitBackedFile uploads a new/modified file from the mutable dir.
 func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath string, meta pxar.Metadata) error {
 	abs := ow.mfs.mutablePath(childPath)
 	f, err := os.Open(abs)
@@ -1457,25 +1239,15 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 	return nil
 }
 
-// tryRefOrReencode attempts to emit a file as a payload reference (dedup).
-// If the payload offset would violate global monotonicity, it falls back to
-// re-encoding the file content from the archive. This mirrors the Rust PBS
-// client's try_record_reusable_offset + re-encode pattern.
-//
-// redirectPath is non-empty for journal redirect entries (for error messages).
 func (ow *commitWalkState) tryRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.Entry, name, redirectPath string) error {
 	offset := pxarEntry.PayloadOffset
 
-	// Pre-check: is the offset strictly greater than the last emitted ref?
 	if ow.hasLastRefPayload && offset <= ow.lastRefPayloadOffset {
 		ow.mfs.debugf("ref %q offset=%d <= lastRef=%d, re-encoding", name, offset, ow.lastRefPayloadOffset)
 		return ow.reencodeFromArchive(pxarEntry, entry, name)
 	}
 
 	if err := ow.writer.WriteEntryRef(entry, offset); err != nil {
-		// If the writer rejected the offset despite our pre-check (e.g. the
-		// encoder's per-state-level check caught something we missed), fall
-		// back to re-encoding.
 		ow.mfs.debugf("ref %q offset=%d writer rejected: %v, re-encoding", name, offset, err)
 		return ow.reencodeFromArchive(pxarEntry, entry, name)
 	}
@@ -1485,9 +1257,6 @@ func (ow *commitWalkState) tryRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.E
 	return nil
 }
 
-// reencodeFromArchive reads the original file content from the pxar archive
-// and writes it as new data via WriteEntryReader, bypassing payload refs
-// entirely. This advances the encoder's payload stream sequentially.
 func (ow *commitWalkState) reencodeFromArchive(pxarEntry *pxar.Entry, entry *pxar.Entry, name string) error {
 	ow.mfs.pxar.readerMu.RLock()
 	rc, err := ow.mfs.pxar.reader.ReadFileContentReader(pxarEntry)
@@ -1502,9 +1271,6 @@ func (ow *commitWalkState) reencodeFromArchive(pxarEntry *pxar.Entry, entry *pxa
 	return nil
 }
 
-// --- Helpers ---
-
-// nodeToMetadata converts a journal GraphNode to pxar.Metadata.
 func nodeToMetadata(n *GraphNode, xattrs []format.XAttr) pxar.Metadata {
 	var modeFormat uint64
 	switch n.Kind {
@@ -1530,7 +1296,6 @@ func nodeToMetadata(n *GraphNode, xattrs []format.XAttr) pxar.Metadata {
 	}
 }
 
-// buildMetaFromPxarEntry extracts metadata from a pxar.Entry.
 func buildMetaFromPxarEntry(e *pxar.Entry) pxar.Metadata {
 	return pxar.Metadata{
 		Stat:   e.Metadata.Stat,
@@ -1540,13 +1305,6 @@ func buildMetaFromPxarEntry(e *pxar.Entry) pxar.Metadata {
 	}
 }
 
-// mergeMetaWithPxar merges journal node metadata with preserved pxar fields.
-// Journal values take precedence for stat fields that the user may have
-// modified (mode, uid, gid, mtime). Pxar values are preserved for fields
-// the journal does not track: fcaps, acl, flags, and quota_project_id.
-// This matches proxmox-backup-client behavior where metadata changes
-// to a previously-backed-up file only affect the stat fields while
-// fcaps/acl are read from the source filesystem on each backup.
 func mergeMetaWithPxar(journalMeta pxar.Metadata, pxarEntry *pxar.Entry) pxar.Metadata {
 	out := journalMeta
 	out.Stat.Flags = pxarEntry.Metadata.Stat.Flags
@@ -1556,17 +1314,12 @@ func mergeMetaWithPxar(journalMeta pxar.Metadata, pxarEntry *pxar.Entry) pxar.Me
 	return out
 }
 
-// clonePxarEntryBuf clones a pxar entry into the reusable buffer.
 func (ow *commitWalkState) clonePxarEntryBuf(e *pxar.Entry, name string) *pxar.Entry {
 	ow.entryBuf = *e
 	ow.entryBuf.Path = name
 	return &ow.entryBuf
 }
 
-// resolvePxarEntryCached resolves a pxar entry by redirect path, caching the result
-// in redirectCache. Intermediate path components use dirEntrySlim.isDir + inode from
-// ReadDirRaw, avoiding per-component ReadEntryAt calls. Only the terminal component
-// triggers a full ReadEntryAt, and only on cache miss.
 func (ow *commitWalkState) resolvePxarEntryCached(relPath string) (*pxar.Entry, error) {
 	if entry, ok := ow.redirectCache[relPath]; ok {
 		return entry, nil
@@ -1580,10 +1333,6 @@ func (ow *commitWalkState) resolvePxarEntryCached(relPath string) (*pxar.Entry, 
 	return entry, nil
 }
 
-// resolvePxarEntryUncached finds a pxar entry by archive path using the goodbye
-// table's binary search (O(log n) per level) instead of reading all directory
-// entries (O(n)). Lookup returns a minimal-decode entry, so we follow up with
-// ReadEntryAt for full metadata (xattrs, fcaps, ACLs) on the terminal entry.
 func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry, error) {
 	if relPath == "/" || relPath == "" {
 		ow.mfs.pxar.readerMu.RLock()
@@ -1598,7 +1347,6 @@ func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry
 		return nil, fmt.Errorf("lookup %q: %w", relPath, err)
 	}
 
-	// Lookup returns minimal decode — re-read with full metadata.
 	ow.mfs.pxar.readerMu.RLock()
 	full, err := ow.mfs.pxar.Reader().ReadEntryAt(int64(slim.FileOffset))
 	ow.mfs.pxar.readerMu.RUnlock()
@@ -1608,21 +1356,13 @@ func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry
 	return full, nil
 }
 
-// xxh3Pool reuses xxh3 hashers across verify calls to avoid per-worker allocation.
 var xxh3Pool = sync.Pool{
 	New: func() any { return xxh3.New() },
 }
 
-// verifyBackedFileHashes checks that backed files haven't changed since upload.
-// Uses a worker pool with atomic index to avoid channel/alloc overhead.
-// Hashers are pooled via sync.Pool to eliminate per-file xxh3 allocation.
 func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog CommitProgress) error {
 	workers := min(min(runtime.NumCPU(), 16), len(hashes))
 
-	// Flatten map into a single contiguous slice — one allocation.
-	// Use parallel flat layout: [relPath0, expected0, relPath1, expected1, ...]
-	// to avoid struct padding overhead. But clarity wins here since this
-	// is a one-time cost per commit.
 	type item struct {
 		relPath  string
 		expected uint64
@@ -1684,8 +1424,6 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 		}
 	}
 
-	// Use manual wg.Add + go instead of wg.Go to avoid closure allocation
-	// per goroutine (wg.Go creates a wrapper closure internally).
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for range workers {
@@ -1699,9 +1437,6 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 	return firstErr
 }
 
-// ensureNamespaceDir creates the namespace directory structure on the PBS
-// datastore. PBS expects on-disk ns/<component>/ns/<component>/... directories
-// owned by the backup user (uid/gid 34) so the PBS daemon can write to them.
 func ensureNamespaceDir(pbsStore, namespace string) error {
 	if pbsStore == "" || namespace == "" {
 		return nil
@@ -1716,15 +1451,12 @@ func ensureNamespaceDir(pbsStore, namespace string) error {
 		if err := os.MkdirAll(cur, 0o755); err != nil {
 			return err
 		}
-		// PBS daemon runs as uid/gid 34 (backup user).
 		_ = os.Chown(cur, 34, 34)
 	}
 	return nil
 }
 
-// postCommit hot-swaps the pxar reader and resets the journal + mutable dir.
 func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName string, backupTime int64) error {
-	// Determine the new snapshot directory.
 	var groupDir string
 	if mfs.origPpxarDidx != "" {
 		origDir := filepath.Dir(mfs.origPpxarDidx)
@@ -1739,7 +1471,6 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	mpxarPath := filepath.Join(snapDir, archiveName+".mpxar.didx")
 	ppxarPath := filepath.Join(snapDir, archiveName+".ppxar.didx")
 
-	// mmap new DIDX files.
 	metaData, err := mmapFile(mpxarPath)
 	if err != nil {
 		return fmt.Errorf("mmap new mpxar: %w", err)
@@ -1765,9 +1496,6 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		return fmt.Errorf("create new reader: %w", err)
 	}
 
-	// Clear the journal first so concurrent reads during the swap window
-	// see old-pxar + empty-journal (consistent) rather than new-pxar +
-	// stale-journal (inconsistent edges).
 	if err := mfs.journal.Clear(); err != nil {
 		return fmt.Errorf("clear journal: %w", err)
 	}
@@ -1775,12 +1503,10 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		return fmt.Errorf("sync journal after clear: %w", err)
 	}
 
-	// Release previous mmap'd DIDX data.
 	for _, d := range mfs.mmapData {
 		_ = munmap(d)
 	}
 
-	// Hot-swap the pxar reader.
 	mfs.pxar.HotSwap(newReader)
 	mfs.mmapData = nil
 	if len(metaData) > 0 {
@@ -1790,10 +1516,8 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		mfs.mmapData = append(mfs.mmapData, payloadData)
 	}
 
-	// Clear stale in-memory state from the previous snapshot.
 	mfs.resetAfterCommit()
 
-	// Update snapshot reference.
 	mfs.origSnapshot = snapshotRef{
 		BackupType:  backupType,
 		BackupID:    backupID,
@@ -1803,7 +1527,6 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	}
 	mfs.origPpxarDidx = ppxarPath
 
-	// Reset mutable dir — preserve journal directory.
 	entries, err := os.ReadDir(mfs.mutableDir)
 	if err != nil {
 		return fmt.Errorf("read mutable dir: %w", err)
@@ -1820,7 +1543,6 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	return nil
 }
 
-// snapshotGroupDir returns the PBS snapshot group directory path.
 func snapshotGroupDir(pbsStore, backupType, backupID, namespace string) string {
 	base := pbsStore
 	if namespace != "" {
@@ -1834,7 +1556,6 @@ func snapshotGroupDir(pbsStore, backupType, backupID, namespace string) string {
 	return filepath.Join(base, backupType, backupID)
 }
 
-// ParseOrigSnapshot extracts snapshot metadata from the original DIDX path.
 func ParseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
 	rel := strings.TrimPrefix(ppxarDidx, pbsStore)
 	rel = strings.TrimPrefix(rel, "/")
@@ -1872,7 +1593,6 @@ func ParseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
 	return ref
 }
 
-// RunCommitSubcommand is the CLI entry point for `pxar-mount commit`.
 func RunCommitSubcommand() {
 	fs := flag.NewFlagSet("commit", flag.ExitOnError)
 	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")

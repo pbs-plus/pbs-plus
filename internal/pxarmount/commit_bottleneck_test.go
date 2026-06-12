@@ -14,24 +14,6 @@ import (
 	"github.com/zeebo/xxh3"
 )
 
-// ============================================================================
-// Bottleneck benchmarks: measuring the specific overhead identified in the
-// pxar-mount commit path vs the Rust standard backup path.
-//
-// B1: Per-file WriteEntryRef overhead (no chunk coalescing)
-// B2: Double decode per pxar file (readDirRaw + ReadEntryAt)
-// B3: Global readerMu mutex contention
-// B4: Per-redirect Lookup + ReadEntryAt (resolvePxarEntryCached)
-// B5: Redundant verify hash pass
-// B6: AllXAttrs upfront load
-// B7: Pending refs sort + flush batch overhead
-// ============================================================================
-
-// ---------------------------------------------------------------------------
-// B1: Per-file WriteEntryRef overhead
-// ---------------------------------------------------------------------------
-
-// countingWriter tracks WriteEntryRef calls.
 type countingWriter struct {
 	noopWriter
 	refCalls int
@@ -42,13 +24,6 @@ func (c *countingWriter) WriteEntryRef(_ *pxar.Entry, _ uint64) error {
 	return nil
 }
 
-// BenchmarkB1_PerFileWriteEntryRef measures the per-file overhead of emitting
-// one WriteEntryRef per unchanged file. This is the dominant bottleneck:
-// 5M files × (alloc + monotonic check + metadata write) vs Rust's ~thousands
-// of chunk injections.
-//
-// The mock writer has zero I/O cost, so this measures pure CPU/alloc overhead
-// of the Go-level call path.
 func BenchmarkB1_PerFileWriteEntryRef(b *testing.B) {
 	for _, n := range []int{1000, 10000, 100000} {
 		b.Run(fmt.Sprintf("files=%d", n), func(b *testing.B) {
@@ -63,7 +38,6 @@ func BenchmarkB1_PerFileWriteEntryRef(b *testing.B) {
 			}
 			ow.hasLastRefPayload = false
 
-			// Pre-build entries with monotonically increasing offsets.
 			refs := make([]commitEntry, n)
 			for i := range refs {
 				refs[i] = commitEntry{
@@ -86,10 +60,8 @@ func BenchmarkB1_PerFileWriteEntryRef(b *testing.B) {
 				ow.lastRefPayloadOffset = 0
 				ow.hasLastRefPayload = false
 
-				// Add all refs (simulates addToPendingRefs for all pxar files).
 				ow.pendingRefs = append(ow.pendingRefs, refs...)
 
-				// Flush: sort + emit one WriteEntryRef per file.
 				sort.Slice(ow.pendingRefs, func(i, j int) bool {
 					return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
 				})
@@ -102,14 +74,10 @@ func BenchmarkB1_PerFileWriteEntryRef(b *testing.B) {
 	}
 }
 
-// BenchmarkB1_ChunkCoalesced measures the TARGET cost if we coalesced files
-// into chunk ranges and injected chunks instead. This uses a simulated
-// "injectChunk" that processes a batch of contiguous files as one operation.
 func BenchmarkB1_ChunkCoalesced(b *testing.B) {
 	for _, n := range []int{1000, 10000, 100000} {
 		b.Run(fmt.Sprintf("files=%d", n), func(b *testing.B) {
-			// Simulate chunk coalescing: group files into 4MB chunks.
-			chunkSize := uint64(4 << 20) // 4 MB
+			chunkSize := uint64(4 << 20)
 			files := make([]commitEntry, n)
 			for i := range files {
 				files[i] = commitEntry{
@@ -118,7 +86,6 @@ func BenchmarkB1_ChunkCoalesced(b *testing.B) {
 				}
 			}
 
-			// Simulate coalescing: one operation per chunk range.
 			type chunkRange struct {
 				startIdx, endIdx int
 			}
@@ -126,7 +93,6 @@ func BenchmarkB1_ChunkCoalesced(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for iter := 0; iter < b.N; iter++ {
-				// Coalesce into chunk ranges.
 				var ranges []chunkRange
 				start := 0
 				for i := 1; i <= len(files); i++ {
@@ -147,26 +113,10 @@ func BenchmarkB1_ChunkCoalesced(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B2: Double decode per pxar file
-// ---------------------------------------------------------------------------
-
-// BenchmarkB2_DoubleDecodeOverhead measures the cost of doing TWO decode passes
-// per pxar file: one in readDirRaw (ListDirectory minimal) and one in
-// emitAlphabeticalPxar (ReadEntryAt full). The second pass is the "double decode"
-// overhead unique to pxar-mount.
 func BenchmarkB2_DoubleDecodeOverhead(b *testing.B) {
-	// This benchmark measures the per-file overhead of constructing a
-	// dirEntrySlim from a pxar.Entry (simulating readDirRaw decode) PLUS
-	// the subsequent ReadEntryAt overhead.
-	//
-	// We can't use the actual archive reader in a unit test, so we measure
-	// the struct conversion + allocation overhead that represents the
-	// decode cost per file.
 
 	for _, n := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("files=%d", n), func(b *testing.B) {
-			// Pass 1: readDirRaw — creates dirEntrySlim from each entry.
 			entries := make([]*pxar.Entry, n)
 			for i := range entries {
 				entries[i] = &pxar.Entry{
@@ -193,7 +143,6 @@ func BenchmarkB2_DoubleDecodeOverhead(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for iter := 0; iter < b.N; iter++ {
-				// Pass 1: readDirRaw — create slim entries.
 				slims := make([]dirEntrySlim, 0, n)
 				for _, e := range entries {
 					slims = append(slims, dirEntrySlim{
@@ -214,12 +163,9 @@ func BenchmarkB2_DoubleDecodeOverhead(b *testing.B) {
 					})
 				}
 
-				// Pass 2: emitAlphabeticalPxar — ReadEntryAt + cache.
-				// Simulate the cachedEntry assignment (pointer copy).
 				cached := make([]*pxar.Entry, n)
 				for i, s := range slims {
 					if s.isReg {
-						// Simulates ReadEntryAt — copies the entry.
 						clone := *entries[i]
 						clone.Path = s.name
 						cached[i] = &clone
@@ -232,8 +178,6 @@ func BenchmarkB2_DoubleDecodeOverhead(b *testing.B) {
 	}
 }
 
-// BenchmarkB2_SingleDecodeOverhead measures the same flow but with only one
-// decode pass (the theoretical optimum if we could avoid the double decode).
 func BenchmarkB2_SingleDecodeOverhead(b *testing.B) {
 	for _, n := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("files=%d", n), func(b *testing.B) {
@@ -252,7 +196,6 @@ func BenchmarkB2_SingleDecodeOverhead(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for iter := 0; iter < b.N; iter++ {
-				// Single pass: extract what we need directly.
 				type slimRef struct {
 					name    string
 					sortKey uint64
@@ -272,26 +215,16 @@ func BenchmarkB2_SingleDecodeOverhead(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B3: Global readerMu mutex contention
-// ---------------------------------------------------------------------------
-
-// BenchmarkB3_MutexContention measures the overhead of acquiring readerMu
-// for every archive operation. With 20+ lock/unlock pairs per directory in
-// the hot path, this adds up on large archives.
 func BenchmarkB3_MutexContention(b *testing.B) {
 	for _, n := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("locks=%d", n), func(b *testing.B) {
 			var mu sync.Mutex
-			// Simulate the critical section: a no-op read.
-			// In production, this holds the lock during ListDirectory/ReadEntryAt.
 
 			b.ResetTimer()
 			b.ReportAllocs()
 			for iter := 0; iter < b.N; iter++ {
 				for i := range n {
 					mu.Lock()
-					// Critical section: ~50ns of archive decode work
 					_ = i
 					mu.Unlock()
 				}
@@ -300,7 +233,6 @@ func BenchmarkB3_MutexContention(b *testing.B) {
 	}
 }
 
-// BenchmarkB3_NoMutex measures the same workload without the mutex.
 func BenchmarkB3_NoMutex(b *testing.B) {
 	for _, n := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("ops=%d", n), func(b *testing.B) {
@@ -315,7 +247,6 @@ func BenchmarkB3_NoMutex(b *testing.B) {
 	}
 }
 
-// BenchmarkB3_RWMutex measures using RWMutex instead (potential fix).
 func BenchmarkB3_RWMutex(b *testing.B) {
 	for _, n := range []int{1000, 10000} {
 		b.Run(fmt.Sprintf("locks=%d", n), func(b *testing.B) {
@@ -334,11 +265,6 @@ func BenchmarkB3_RWMutex(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B4: Per-redirect resolvePxarEntryCached overhead
-// ---------------------------------------------------------------------------
-
-// BenchmarkB4_RedirectResolveHit measures the cache hit path (map lookup only).
 func BenchmarkB4_RedirectResolveHit(b *testing.B) {
 	cache := make(map[string]*pxar.Entry, 10000)
 	for i := range 10000 {
@@ -376,9 +302,6 @@ func BenchmarkB4_RedirectResolveHit(b *testing.B) {
 	}
 }
 
-// BenchmarkB4_RedirectResolveMiss measures the cache miss path which would
-// trigger Lookup + ReadEntryAt. We measure the allocation overhead of the
-// mergeMetaWithPxar call that follows every resolve.
 func BenchmarkB4_RedirectResolveWithMerge(b *testing.B) {
 	cache := make(map[string]*pxar.Entry, 10000)
 	for i := range 10000 {
@@ -421,18 +344,11 @@ func BenchmarkB4_RedirectResolveWithMerge(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		// Cache hit + merge (happens per journal redirect file).
 		entry := cache["/deep/nested/path/file_005000.bin"]
 		_ = mergeMetaWithPxar(journalMeta, entry)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B5: Pending refs sort overhead (per directory)
-// ---------------------------------------------------------------------------
-
-// BenchmarkB5_PendingRefsSort measures the sort cost of the pendingRefs batch.
-// With maxPendingRefs=4096, this is called when the batch fills or at dir boundary.
 func BenchmarkB5_PendingRefsSort(b *testing.B) {
 	for _, n := range []int{64, 256, 1024, maxPendingRefs} {
 		b.Run(fmt.Sprintf("batch=%d", n), func(b *testing.B) {
@@ -456,7 +372,6 @@ func BenchmarkB5_PendingRefsSort(b *testing.B) {
 			}
 		})
 
-		// Nearly-sorted case: insertion sort should be O(n) here.
 		b.Run(fmt.Sprintf("batch=%d/nearly_sorted_insertion", n), func(b *testing.B) {
 			refs := make([]commitEntry, n)
 			for i := range refs {
@@ -479,7 +394,6 @@ func BenchmarkB5_PendingRefsSort(b *testing.B) {
 			}
 		})
 
-		// Worst-case reverse: insertion sort falls back to sort.Slice.
 		b.Run(fmt.Sprintf("batch=%d/reverse_insertion", n), func(b *testing.B) {
 			refs := make([]commitEntry, n)
 			for i := range refs {
@@ -501,13 +415,6 @@ func BenchmarkB5_PendingRefsSort(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B6: Per-file metadata construction overhead
-// ---------------------------------------------------------------------------
-
-// BenchmarkB6_MetadataConstruction measures the full per-file path from
-// journal node → nodeToMetadata → mergeMetaWithPxar → allocEntry → WriteEntryRef.
-// This represents the complete per-file CPU cost in the commit walk.
 func BenchmarkB6_MetadataConstruction(b *testing.B) {
 	ow := &commitWalkState{
 		mfs:           &MutableFS{verbose: false},
@@ -515,14 +422,12 @@ func BenchmarkB6_MetadataConstruction(b *testing.B) {
 		redirectCache: make(map[string]*pxar.Entry),
 	}
 
-	// Set up xattr cache for node.
 	const nodeID int64 = 42
 	ow.xattrCache[nodeID] = []format.XAttr{
 		format.NewXAttr([]byte("user.attr1"), []byte("value1")),
 		format.NewXAttr([]byte("user.attr2"), []byte("value2")),
 	}
 
-	// Set up redirect cache with a pxar entry that has fcaps/acl.
 	ow.redirectCache["/some/file.bin"] = &pxar.Entry{
 		Path:          "/some/file.bin",
 		Kind:          pxar.KindFile,
@@ -561,7 +466,6 @@ func BenchmarkB6_MetadataConstruction(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		// Full per-file path: nodeToMetadata + resolve + merge + alloc + fields.
 		xattrs := ow.xattrCache[node.ID]
 		meta := nodeToMetadata(node, xattrs)
 		if node.RedirectTo != "" {
@@ -578,16 +482,9 @@ func BenchmarkB6_MetadataConstruction(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B7: AllXAttrs upfront load simulation
-// ---------------------------------------------------------------------------
-
-// BenchmarkB7_AllXAttrsLoad measures the cost of building a large
-// map[int64][]format.XAttr from all journal xattrs.
 func BenchmarkB7_AllXAttrsLoad(b *testing.B) {
 	for _, n := range []int{1000, 10000, 100000} {
 		b.Run(fmt.Sprintf("nodes=%d", n), func(b *testing.B) {
-			// Simulate journal's AllXAttrs output.
 			source := make(map[int64]map[string][]byte, n)
 			for i := range n {
 				xmap := map[string][]byte{
@@ -614,13 +511,6 @@ func BenchmarkB7_AllXAttrsLoad(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B8: Full commitWalk merge+dispatch simulation (integration)
-// ---------------------------------------------------------------------------
-
-// BenchmarkB8_FullCommitWalkMerge measures the complete per-directory merge
-// loop: filter pxar + sort + two-pointer merge + addToPendingRefs + flush.
-// This is the hot loop that runs for every directory in the archive.
 func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 	for _, n := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("entries=%d", n), func(b *testing.B) {
@@ -634,7 +524,6 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 				pendingRefs:   make([]commitEntry, 0, maxPendingRefs),
 			}
 
-			// Build pxar entries: 90% files, 10% dirs.
 			pxarEntries := make([]dirEntrySlim, n)
 			for i := range pxarEntries {
 				isDir := i%10 == 0
@@ -654,17 +543,15 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 				}
 			}
 
-			// 5% journal overlay entries.
 			journalEdges := make([]GraphEdge, n/20)
 			for i := range journalEdges {
 				journalEdges[i] = GraphEdge{
 					ParentID: 1,
-					Name:     fmt.Sprintf("entry_%06d", i*20+5), // sparse overlay
+					Name:     fmt.Sprintf("entry_%06d", i*20+5),
 					ChildID:  int64(100 + i),
 				}
 			}
 
-			// Pre-sort for merge.
 			sort.Slice(pxarEntries, func(i, j int) bool {
 				return pxarEntries[i].name < pxarEntries[j].name
 			})
@@ -672,13 +559,11 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 				return journalEdges[i].Name < journalEdges[j].Name
 			})
 
-			// Pre-build edgeNames.
 			edgeNames := make(map[string]bool, len(journalEdges))
 			for _, e := range journalEdges {
 				edgeNames[e.Name] = true
 			}
 
-			// Pre-build journal nodes.
 			nodes := make(map[int64]*GraphNode)
 			for _, e := range journalEdges {
 				nodes[e.ChildID] = &GraphNode{
@@ -701,7 +586,6 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 				ow.lastRefPayloadOffset = 0
 				ow.hasLastRefPayload = false
 
-				// Filter pxar.
 				filtered := make([]dirEntrySlim, 0, len(pxarEntries))
 				for i := range pxarEntries {
 					pe := &pxarEntries[i]
@@ -711,7 +595,6 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 					filtered = append(filtered, *pe)
 				}
 
-				// Two-pointer merge + dispatch.
 				pi, ji := 0, 0
 				for pi < len(filtered) || ji < len(journalEdges) {
 					var ce commitEntry
@@ -736,19 +619,15 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 						ji++
 					}
 
-					// Dispatch.
 					isDir := (ce.node != nil && ce.node.Kind == NodeDir) ||
 						(ce.node == nil && ce.pxarSlim != nil && ce.pxarSlim.isDir)
 
 					if !isDir {
 						if ce.node != nil {
-							// Journal file — compute metadata.
 							xattrs := ow.xattrCache[ce.node.ID]
 							_ = nodeToMetadata(ce.node, xattrs)
-							// Would do resolvePxarEntryCached + merge + emitBackedFile/WriteEntry
 						} else if ce.pxarSlim != nil && ce.pxarSlim.isReg {
 							ce.sortKey = ce.pxarSlim.payloadOffset
-							// Simulate cachedEntry assignment.
 							ce.cachedEntry = &pxar.Entry{
 								Path:          ce.name,
 								Kind:          pxar.KindFile,
@@ -760,7 +639,6 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 					}
 				}
 
-				// Flush: sort + emit refs.
 				sort.Slice(ow.pendingRefs, func(i, j int) bool {
 					return ow.pendingRefs[i].sortKey < ow.pendingRefs[j].sortKey
 				})
@@ -773,11 +651,6 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// B9: BuildPath / path string concatenation overhead
-// ---------------------------------------------------------------------------
-
-// BenchmarkB9_BuildPath measures the buildPath method vs naive joinPath.
 func BenchmarkB9_BuildPath(b *testing.B) {
 	ow := &commitWalkState{}
 
@@ -796,11 +669,6 @@ func BenchmarkB9_BuildPath(b *testing.B) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// B10: Verify hash pass overhead (double hashing)
-// ---------------------------------------------------------------------------
-
-// mockFileReader simulates reading a file for hashing.
 type mockFileReader struct {
 	size int
 	pos  int
@@ -821,9 +689,6 @@ func (m *mockFileReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// BenchmarkB10_VerifyHashOverhead measures the cost of re-hashing a file
-// that was already hashed during upload (TeeReader). This represents the
-// redundant verification pass.
 func BenchmarkB10_VerifyHashOverhead(b *testing.B) {
 	for _, size := range []int64{4 * 1024, 64 * 1024, 1024 * 1024} {
 		b.Run(fmt.Sprintf("size=%dKB", size/1024), func(b *testing.B) {
@@ -850,28 +715,19 @@ func BenchmarkB10_VerifyHashOverhead(b *testing.B) {
 	}
 }
 
-// Ensure interface compliance at compile time.
 var _ io.Reader = (*mockFileReader)(nil)
 
-// ---------------------------------------------------------------------------
-// B11: Padding ratio heuristic — lookupDynamicEntries + shouldReuse
-// ---------------------------------------------------------------------------
-
-// BenchmarkB11_PaddingRatio measures the cost of the padding ratio calculation
-// that decides between PAYLOAD_REF reuse and re-encoding.
 func BenchmarkB11_PaddingRatio(b *testing.B) {
-	// Build a synthetic DIDX with 256 chunks of ~4MB each (~1GB total).
 	const chunkSize = 4 << 20
 	const numChunks = 256
 	idx := buildSyntheticDIDX(b, numChunks, chunkSize)
 
-	// Build a batch of pending refs that span 100 contiguous files.
 	const numFiles = 100
 	refs := make([]commitEntry, numFiles)
 	for i := range refs {
 		refs[i] = commitEntry{
 			name:    fmt.Sprintf("f_%06d", i),
-			sortKey: uint64(i * 4096), // 4KB files, contiguous
+			sortKey: uint64(i * 4096),
 			pxarSlim: &dirEntrySlim{
 				fileSize: 4096,
 			},
@@ -892,7 +748,6 @@ func BenchmarkB11_PaddingRatio(b *testing.B) {
 	})
 
 	b.Run("shouldReuse_aligned", func(b *testing.B) {
-		// Files aligned to chunk boundaries → low padding → reuse.
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			ow.shouldReuse(refs)
@@ -900,10 +755,8 @@ func BenchmarkB11_PaddingRatio(b *testing.B) {
 	})
 
 	b.Run("shouldReuse_misaligned", func(b *testing.B) {
-		// Shift range to create misalignment → potentially high padding.
 		misaligned := make([]commitEntry, numFiles)
 		copy(misaligned, refs)
-		// Start in the middle of a chunk — creates start padding.
 		misaligned[0].sortKey = chunkSize/2 + 1234
 		for i := 1; i < numFiles; i++ {
 			misaligned[i].sortKey = misaligned[0].sortKey + uint64(i)*4096
@@ -915,7 +768,6 @@ func BenchmarkB11_PaddingRatio(b *testing.B) {
 	})
 }
 
-// buildSyntheticDIDX creates a DynamicIndexReader with synthetic chunk entries.
 func buildSyntheticDIDX(tb testing.TB, numChunks int, chunkSize uint64) *datastore.DynamicIndexReader {
 	tb.Helper()
 	w := datastore.NewDynamicIndexWriter(time.Now().Unix())
@@ -939,7 +791,6 @@ func buildSyntheticDIDX(tb testing.TB, numChunks int, chunkSize uint64) *datasto
 }
 
 func TestLookupDynamicEntries(t *testing.T) {
-	// 5 chunks of 100 bytes each, total 500 bytes.
 	idx := buildSyntheticDIDX(t, 5, 100)
 
 	tests := []struct {
@@ -979,7 +830,6 @@ func TestLookupDynamicEntries(t *testing.T) {
 }
 
 func TestShouldReuse(t *testing.T) {
-	// 10 chunks of 1000 bytes each, total 10000 bytes.
 	idx := buildSyntheticDIDX(t, 10, 1000)
 
 	ow := &commitWalkState{origChunkIndex: idx}
@@ -992,7 +842,6 @@ func TestShouldReuse(t *testing.T) {
 		{
 			"aligned_full_chunks",
 			func() []commitEntry {
-				// 1000 files × 10 bytes = 10000 bytes, aligned to chunk boundaries.
 				refs := make([]commitEntry, 1000)
 				for i := range refs {
 					refs[i] = commitEntry{
@@ -1002,19 +851,19 @@ func TestShouldReuse(t *testing.T) {
 				}
 				return refs
 			}(),
-			true, // no padding → reuse
+			true,
 		},
 		{
 			"single_file_aligned",
 			[]commitEntry{
 				{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 1000}},
 			},
-			true, // exactly one chunk → no padding
+			true,
 		},
 		{
 			"nil_index_fallback",
 			[]commitEntry{{sortKey: 500, pxarSlim: &dirEntrySlim{fileSize: 10}}},
-			false, // huge padding (500 start + 490 end) → re-encode
+			false,
 		},
 	}
 
@@ -1027,9 +876,112 @@ func TestShouldReuse(t *testing.T) {
 		})
 	}
 
-	// Verify the nil index fallback.
 	owNil := &commitWalkState{origChunkIndex: nil}
 	if !owNil.shouldReuse([]commitEntry{{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 100}}}) {
 		t.Error("shouldReuse with nil index should return true")
+	}
+}
+
+func TestRangeHoleDetection(t *testing.T) {
+	idx := buildSyntheticDIDX(t, 10, 1000)
+
+	ow := &commitWalkState{
+		mfs:            &MutableFS{},
+		origChunkIndex: idx,
+		pendingRefs:    make([]commitEntry, 0, 64),
+	}
+
+	ce1 := &commitEntry{name: "a", sortKey: 100, pxarSlim: &dirEntrySlim{fileSize: 200, isReg: true}}
+	if ow.batchRangeEnd != 0 {
+		t.Fatal("batchRangeEnd should be 0 before first add")
+	}
+	ow.pendingRefs = append(ow.pendingRefs, *ce1)
+	entryEnd := ce1.rangeEnd()
+	if entryEnd > ow.batchRangeEnd {
+		ow.batchRangeEnd = entryEnd
+	}
+	if ow.batchRangeEnd != 300 {
+		t.Fatalf("batchRangeEnd=%d, want 300", ow.batchRangeEnd)
+	}
+
+	gap := ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && uint64(500) > ow.batchRangeEnd
+	if !gap {
+		t.Error("should detect gap between 300 and 500")
+	}
+
+	noGap := ow.origChunkIndex != nil && ow.batchRangeEnd != 0 && uint64(300) > ow.batchRangeEnd
+	if noGap {
+		t.Error("should not detect gap when entry is contiguous")
+	}
+
+	owNil := &commitWalkState{
+		mfs:         &MutableFS{},
+		pendingRefs: make([]commitEntry, 0, 64),
+	}
+	noGapNil := owNil.origChunkIndex != nil && owNil.batchRangeEnd != 0 && uint64(500) > owNil.batchRangeEnd
+	if noGapNil {
+		t.Error("nil origChunkIndex should not trigger hole detection")
+	}
+}
+
+func TestCrossBatchChunkContinuation(t *testing.T) {
+	idx := buildSyntheticDIDX(t, 10, 1000)
+
+	ow := &commitWalkState{origChunkIndex: idx}
+
+	refs1 := []commitEntry{
+		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 800}},
+	}
+	_ = refs1
+	chunks1, _, _ := lookupDynamicEntries(idx, 0, 800)
+	ow.lastReusableChunk = chunks1[len(chunks1)-1]
+	ow.hasLastChunk = true
+
+	refs2 := []commitEntry{
+		{sortKey: 800, pxarSlim: &dirEntrySlim{fileSize: 200}},
+	}
+
+	ow2 := &commitWalkState{
+		origChunkIndex:    idx,
+		lastReusableChunk: ow.lastReusableChunk,
+		hasLastChunk:      true,
+	}
+
+	reuse := ow2.shouldReuse(refs2)
+	if !reuse {
+		t.Error("shouldReuse with continuation should return true (padding absorbed)")
+	}
+
+	ow3 := &commitWalkState{
+		origChunkIndex: idx,
+	}
+	var fakeChunk reusableChunk
+	fakeChunk.digest = [32]byte{0xFF}
+	fakeChunk.endOffset = 999999
+	fakeChunk.size = 1000
+	ow3.lastReusableChunk = fakeChunk
+	ow3.hasLastChunk = true
+
+	reuse3 := ow3.shouldReuse(refs2)
+	if reuse3 {
+		t.Error("shouldReuse with non-matching continuation chunk should return false (padding not absorbed)")
+	}
+}
+
+func TestSameIndexedChunkAs(t *testing.T) {
+	a := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 1000}
+	b := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 1000}
+	if !a.sameIndexedChunkAs(&b) {
+		t.Error("identical chunks should match")
+	}
+
+	c := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 2000}
+	if a.sameIndexedChunkAs(&c) {
+		t.Error("same digest different endOffset should not match (dedup collision)")
+	}
+
+	d := reusableChunk{digest: [32]byte{4, 5, 6}, endOffset: 1000}
+	if a.sameIndexedChunkAs(&d) {
+		t.Error("different digest same endOffset should not match")
 	}
 }
