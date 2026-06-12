@@ -3,12 +3,20 @@ package pxar
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 )
+
+var clientBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 4<<20)
+		return &b
+	},
+}
 
 type Client struct {
 	pipe  *arpc.StreamPipe
@@ -184,7 +192,10 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			defer close(streamDone)
 			const chunkSize = 4 << 20
 
-			buf := make([]byte, chunkSize)
+			bptr := clientBufPool.Get().(*[]byte)
+			buf := *bptr
+			defer clientBufPool.Put(bptr)
+
 			reqLen := chunkSize
 			if int64(reqLen) > int64(fileSize) {
 				reqLen = int(fileSize)

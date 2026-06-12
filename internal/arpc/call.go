@@ -52,12 +52,12 @@ func performHandshake(stream ARPCStream) error {
 		return fmt.Errorf("write ready signal: %w", err)
 	}
 
-	ackByte := make([]byte, 1)
-	if _, err := stream.Read(ackByte); err != nil {
+	var ack [1]byte
+	if _, err := stream.Read(ack[:]); err != nil {
 		return fmt.Errorf("read ack signal: %w", err)
 	}
-	if ackByte[0] != 0xAA {
-		return fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ackByte[0])
+	if ack[0] != 0xAA {
+		return fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ack[0])
 	}
 	return nil
 }
