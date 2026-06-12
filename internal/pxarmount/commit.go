@@ -872,15 +872,19 @@ func lookupDynamicEntries(idx *datastore.DynamicIndexReader, rangeStart, rangeEn
 
 		if rangeEnd <= info.End {
 			endPadding = info.End - rangeEnd
-			chunk.padding = startPadding + endPadding
-			chunks = append(chunks, chunk)
-			break
-		}
-
-		if i == startIdx {
-			chunk.padding = startPadding
 		}
 		chunks = append(chunks, chunk)
+
+		if rangeEnd <= info.End {
+			break
+		}
+	}
+
+	if len(chunks) > 0 {
+		chunks[0].padding += startPadding
+	}
+	if len(chunks) > 0 {
+		chunks[len(chunks)-1].padding += endPadding
 	}
 
 	return chunks, startPadding, endPadding
@@ -906,7 +910,9 @@ func (ow *commitWalkState) shouldReuse(refs []commitEntry) bool {
 
 	if ow.hasLastChunk && len(chunks) > 0 && ow.lastReusableChunk.sameIndexedChunkAs(&chunks[0]) {
 		used := ow.lastReusableChunk.size - ow.lastReusableChunk.padding
-		if totalPadding >= used {
+		if used > totalPadding {
+			totalPadding = 0
+		} else {
 			totalPadding -= used
 		}
 	}
@@ -957,6 +963,8 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 			ow.lastReusableChunk = chunks[len(chunks)-1]
 			ow.hasLastChunk = true
 		}
+	} else {
+		ow.hasLastChunk = false
 	}
 
 	ow.pendingRefs = ow.pendingRefs[:0]

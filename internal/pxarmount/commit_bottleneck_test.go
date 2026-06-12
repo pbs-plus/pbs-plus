@@ -985,3 +985,102 @@ func TestSameIndexedChunkAs(t *testing.T) {
 		t.Error("different digest same endOffset should not match")
 	}
 }
+
+func TestLookupDynamicEntriesChunkPadding(t *testing.T) {
+	idx := buildSyntheticDIDX(t, 5, 100)
+
+	chunks, startPad, endPad := lookupDynamicEntries(idx, 50, 350)
+	if len(chunks) != 4 {
+		t.Fatalf("got %d chunks, want 4", len(chunks))
+	}
+	if startPad != 50 {
+		t.Errorf("startPad=%d, want 50", startPad)
+	}
+	if endPad != 50 {
+		t.Errorf("endPad=%d, want 50", endPad)
+	}
+
+	wantPadding := []uint64{50, 0, 0, 50}
+	for i, c := range chunks {
+		if c.padding != wantPadding[i] {
+			t.Errorf("chunk[%d].padding=%d, want %d", i, c.padding, wantPadding[i])
+		}
+	}
+
+	chunks1, _, endPad1 := lookupDynamicEntries(idx, 0, 100)
+	if len(chunks1) != 1 {
+		t.Fatalf("single chunk: got %d, want 1", len(chunks1))
+	}
+	if chunks1[0].padding != 0 {
+		t.Errorf("single aligned chunk padding=%d, want 0", chunks1[0].padding)
+	}
+
+	chunks2, startPad2, _ := lookupDynamicEntries(idx, 50, 100)
+	if len(chunks2) != 1 {
+		t.Fatalf("single misaligned start: got %d, want 1", len(chunks2))
+	}
+	if startPad2 != 50 {
+		t.Errorf("startPad=%d, want 50", startPad2)
+	}
+	if chunks2[0].padding != 50 {
+		t.Errorf("single misaligned chunk padding=%d, want 50", chunks2[0].padding)
+	}
+
+	_ = endPad1
+}
+
+func TestFlushPendingRefsReencodeClearsLastChunk(t *testing.T) {
+	idx := buildSyntheticDIDX(t, 10, 1000)
+
+	ow := &commitWalkState{
+		mfs:            &MutableFS{},
+		origChunkIndex: idx,
+		pendingRefs:    make([]commitEntry, 0, 64),
+	}
+
+	ow.hasLastChunk = true
+	ow.lastReusableChunk = reusableChunk{digest: [32]byte{0xAA}, endOffset: 99999, size: 1000, padding: 100}
+
+	refs := []commitEntry{
+		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 1000}},
+	}
+	reuse := ow.shouldReuse(refs)
+	if !reuse {
+		t.Fatal("should reuse aligned batch (full first chunk)")
+	}
+	if !ow.hasLastChunk {
+		t.Error("shouldReuse should not modify hasLastChunk")
+	}
+}
+
+func TestPaddingRatioWithTinyFileInHugeChunk(t *testing.T) {
+	idx := buildSyntheticDIDX(t, 3, 4000000)
+
+	refs := []commitEntry{
+		{sortKey: 100, pxarSlim: &dirEntrySlim{fileSize: 200}},
+	}
+	ow := &commitWalkState{origChunkIndex: idx}
+	reuse := ow.shouldReuse(refs)
+	startPad := uint64(100)
+	endPad := uint64(4000000 - 300)
+	totalPad := startPad + endPad
+	totalSize := uint64(200) + totalPad
+	ratio := float64(totalPad) / float64(totalSize)
+	want := ratio <= 0.1
+	if reuse != want {
+		t.Errorf("shouldReuse=%v, want %v (ratio=%.4f)", reuse, want, ratio)
+	}
+}
+
+func TestPaddingRatioRejectsHighWaste(t *testing.T) {
+	idx := buildSyntheticDIDX(t, 2, 4000000)
+
+	refs := []commitEntry{
+		{sortKey: 4000000 - 10, pxarSlim: &dirEntrySlim{fileSize: 20}},
+	}
+	ow := &commitWalkState{origChunkIndex: idx}
+	reuse := ow.shouldReuse(refs)
+	if reuse {
+		t.Error("file spanning chunk boundary with huge padding should re-encode")
+	}
+}
