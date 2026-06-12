@@ -137,6 +137,7 @@ func BenchmarkJournal_ResolvePath(b *testing.B) {
 			if _, err := j.EnsureNodePath(testPath, node, false); err != nil {
 				b.Fatal(err)
 			}
+			_ = j.Sync()
 
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -302,6 +303,8 @@ func BenchmarkMutableFS_WritePath(b *testing.B) {
 				}
 				mfs.registerFh(childPath, fd2)
 			}
+
+			_ = mfs.journal.Sync()
 
 			b.ResetTimer()
 			b.ReportAllocs()

@@ -4,9 +4,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
@@ -50,10 +52,29 @@ const (
 
 const schemaVersion = 1
 
+type journalOp struct {
+	keys []pebbleSet
+}
+
+type pebbleSet struct {
+	key       []byte
+	value     []byte
+	delete    bool
+	deleteEnd []byte
+}
+
 type Journal struct {
 	db         *pebble.DB
 	mu         sync.Mutex
 	nextNodeID atomic.Int64
+
+	overlay   map[string][]byte
+	pending   []journalOp
+	commitErr error
+
+	commitCh chan struct{}
+	stopCh   chan struct{}
+	stopped  chan struct{}
 }
 
 func nodeKey(id int64) []byte {
@@ -217,7 +238,7 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
-	j := &Journal{db: db}
+	j := &Journal{db: db, overlay: make(map[string][]byte), commitCh: make(chan struct{}, 1), stopCh: make(chan struct{}), stopped: make(chan struct{})}
 
 	if err := j.initSchema(); err != nil {
 		_ = db.Close()
@@ -254,6 +275,7 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("clean orphan edges: %w", err)
 	}
 
+	go j.commitLoop()
 	return j, nil
 }
 
@@ -410,38 +432,168 @@ func (j *Journal) allocNodeID() int64 {
 }
 
 func (j *Journal) Close() error {
+	close(j.stopCh)
+	<-j.stopped
+
 	j.mu.Lock()
 	_ = j.persistNextNodeID()
+	commitErr := j.commitErr
 	j.mu.Unlock()
 
-	return j.db.Close()
+	if closeErr := j.db.Close(); closeErr != nil {
+		return closeErr
+	}
+	return commitErr
 }
 
-func (j *Journal) tx(fn func(b *pebble.Batch) error) error {
+func (j *Journal) tx(keys []pebbleSet) error {
 	j.mu.Lock()
-	defer j.mu.Unlock()
+	for _, s := range keys {
+		if s.deleteEnd != nil {
+			for k := range j.overlay {
+				if k >= string(s.key) && k < string(s.deleteEnd) {
+					delete(j.overlay, k)
+				}
+			}
+		} else if s.delete {
+			j.overlay[string(s.key)] = nil
+		} else {
+			cp := make([]byte, len(s.value))
+			copy(cp, s.value)
+			j.overlay[string(s.key)] = cp
+		}
+	}
+	j.pending = append(j.pending, journalOp{keys: keys})
 
-	batch := j.db.NewBatch()
-	defer func() { _ = batch.Close() }()
+	drain := len(j.pending) >= 64
+	j.mu.Unlock()
 
-	if err := fn(batch); err != nil {
-		return err
+	if drain {
+		select {
+		case j.commitCh <- struct{}{}:
+		default:
+		}
 	}
 
-	return batch.Commit(pebble.NoSync)
+	return nil
 }
 
 func (j *Journal) Sync() error {
+	done := make(chan struct{})
 	j.mu.Lock()
-	defer j.mu.Unlock()
+	j.pending = append(j.pending, journalOp{keys: nil})
+	j.mu.Unlock()
 
-	if err := j.persistNextNodeID(); err != nil {
+	go func() {
+		for {
+			j.mu.Lock()
+			hasPending := len(j.pending) > 0
+			j.mu.Unlock()
+			if !hasPending {
+				close(done)
+				return
+			}
+			select {
+			case j.commitCh <- struct{}{}:
+			default:
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	select {
+	case j.commitCh <- struct{}{}:
+	default:
+	}
+
+	<-done
+
+	j.mu.Lock()
+	err := j.commitErr
+	j.commitErr = nil
+	j.mu.Unlock()
+	if err != nil {
 		return err
 	}
-	return j.db.Flush()
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.persistNextNodeID()
+}
+
+func (j *Journal) commitLoop() {
+	defer close(j.stopped)
+	ticker := time.NewTicker(1 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-j.stopCh:
+			j.drainAllLocked()
+			return
+		case <-ticker.C:
+			j.drainAllLocked()
+		case <-j.commitCh:
+			j.drainAllLocked()
+		}
+	}
+}
+
+func (j *Journal) drainAllLocked() {
+	j.mu.Lock()
+	if len(j.pending) == 0 {
+		j.mu.Unlock()
+		return
+	}
+	batch := j.pending
+	j.pending = nil
+	j.overlay = make(map[string][]byte)
+	j.mu.Unlock()
+
+	pb := j.db.NewBatch()
+	for _, op := range batch {
+		for _, s := range op.keys {
+			if s.deleteEnd != nil {
+				_ = pb.DeleteRange(s.key, s.deleteEnd, nil)
+			} else if s.delete {
+				_ = pb.Delete(s.key, nil)
+			} else {
+				_ = pb.Set(s.key, s.value, nil)
+			}
+		}
+	}
+
+	err := pb.Commit(pebble.Sync)
+	_ = pb.Close()
+	if err != nil {
+		j.mu.Lock()
+		j.commitErr = err
+		j.mu.Unlock()
+	}
+}
+
+func (j *Journal) overlayGet(key []byte) ([]byte, bool) {
+	v, ok := j.overlay[string(key)]
+	if !ok {
+		return nil, false
+	}
+	if v == nil {
+		return nil, true
+	}
+	return v, true
 }
 
 func (j *Journal) GetNode(id int64) (*GraphNode, error) {
+	j.mu.Lock()
+	if v, ok := j.overlayGet(nodeKey(id)); ok {
+		j.mu.Unlock()
+		if v == nil {
+			return nil, nil
+		}
+		return decodeNode(v, id), nil
+	}
+	j.mu.Unlock()
+
 	data, closer, err := j.db.Get(nodeKey(id))
 	if err == pebble.ErrNotFound {
 		return nil, nil
@@ -454,36 +606,92 @@ func (j *Journal) GetNode(id int64) (*GraphNode, error) {
 	return n, nil
 }
 
-func (j *Journal) createNodeInBatch(b *pebble.Batch, n *GraphNode) (int64, error) {
+func (j *Journal) createNodeInBatch(keys *[]pebbleSet, n *GraphNode) (int64, error) {
 	id := j.allocNodeID()
 	n.ID = id
-	if err := b.Set(nodeKey(id), encodeNode(n), nil); err != nil {
-		return 0, err
-	}
+	*keys = append(*keys, pebbleSet{key: nodeKey(id), value: encodeNode(n)})
 	return id, nil
 }
 
-func (j *Journal) updateNodeInBatch(b *pebble.Batch, n *GraphNode) error {
-	return b.Set(nodeKey(n.ID), encodeNode(n), nil)
+func (j *Journal) updateNodeInBatch(keys *[]pebbleSet, n *GraphNode) {
+	*keys = append(*keys, pebbleSet{key: nodeKey(n.ID), value: encodeNode(n)})
 }
 
 func (j *Journal) UpdateNode(n *GraphNode) error {
-	return j.tx(func(b *pebble.Batch) error {
-		return j.updateNodeInBatch(b, n)
-	})
+	var keys []pebbleSet
+	j.updateNodeInBatch(&keys, n)
+	return j.tx(keys)
 }
 
 func (j *Journal) SetHasData(nodeID int64) error {
-	return j.tx(func(b *pebble.Batch) error {
-		data, closer, err := j.db.Get(nodeKey(nodeID))
-		if err != nil {
-			return err
+	var keys []pebbleSet
+
+	j.mu.Lock()
+	n, err := j.getNodeLocked(nodeID)
+	j.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if n == nil {
+		return fmt.Errorf("SetHasData: node %d not found", nodeID)
+	}
+
+	n.HasData = true
+	keys = append(keys, pebbleSet{key: nodeKey(nodeID), value: encodeNode(n)})
+	return j.tx(keys)
+}
+
+func (j *Journal) getNodeLocked(id int64) (*GraphNode, error) {
+	if v, ok := j.overlayGet(nodeKey(id)); ok {
+		if v == nil {
+			return nil, nil
 		}
-		defer func() { _ = closer.Close() }()
-		n := decodeNode(data, nodeID)
-		n.HasData = true
-		return b.Set(nodeKey(nodeID), encodeNode(n), nil)
-	})
+		return decodeNode(v, id), nil
+	}
+	data, closer, err := j.db.Get(nodeKey(id))
+	if err == pebble.ErrNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = closer.Close() }()
+	return decodeNode(data, id), nil
+}
+
+func (j *Journal) getEdgeLocked(parentID int64, name string) (int64, bool, error) {
+	k := edgeKey(parentID, name)
+	if v, ok := j.overlayGet(k); ok {
+		if v == nil {
+			return 0, false, nil
+		}
+		return decodeInt64(v), true, nil
+	}
+	val, closer, err := j.db.Get(k)
+	if err == pebble.ErrNotFound {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = closer.Close() }()
+	return decodeInt64(val), true, nil
+}
+
+func (j *Journal) getWhiteoutLocked(parentID int64, name string) (bool, error) {
+	k := whiteoutKey(parentID, name)
+	if v, ok := j.overlayGet(k); ok {
+		return v != nil, nil
+	}
+	_, closer, err := j.db.Get(k)
+	if err == pebble.ErrNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_ = closer.Close()
+	return true, nil
 }
 
 func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
@@ -497,10 +705,29 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
+	j.mu.Lock()
+	overlayDeletes := make(map[string]bool)
+	overlayAdds := make(map[string]int64)
+	for k, v := range j.overlay {
+		if !strings.HasPrefix(k, string(prefix)) {
+			continue
+		}
+		name := k[11:]
+		if v == nil {
+			overlayDeletes[name] = true
+		} else {
+			overlayAdds[name] = decodeInt64(v)
+		}
+	}
+	j.mu.Unlock()
+
 	var edges []GraphEdge
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
 		name := string(key[11:])
+		if overlayDeletes[name] {
+			continue
+		}
 		childID := decodeInt64(iter.Value())
 		edges = append(edges, GraphEdge{
 			ParentID: parentID,
@@ -511,13 +738,39 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
+
+	for name, childID := range overlayAdds {
+		if overlayDeletes[name] {
+			continue
+		}
+		found := false
+		for i := range edges {
+			if edges[i].Name == name {
+				edges[i].ChildID = childID
+				found = true
+				break
+			}
+		}
+		if !found {
+			edges = append(edges, GraphEdge{ParentID: parentID, Name: name, ChildID: childID})
+		}
+	}
+
+	slices.SortFunc(edges, func(a, b GraphEdge) int {
+		if a.Name < b.Name {
+			return -1
+		}
+		if a.Name > b.Name {
+			return 1
+		}
+		return 0
+	})
+
 	return edges, nil
 }
 
 func (j *Journal) AddWhiteout(parentID int64, name string) error {
-	return j.tx(func(b *pebble.Batch) error {
-		return b.Set(whiteoutKey(parentID, name), nil, nil)
-	})
+	return j.tx([]pebbleSet{{key: whiteoutKey(parentID, name), value: []byte{1}}})
 }
 
 func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
@@ -531,18 +784,61 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
+	j.mu.Lock()
+	overlayDeletes := make(map[string]bool)
+	overlayAdds := make(map[string]bool)
+	for k, v := range j.overlay {
+		if !strings.HasPrefix(k, string(prefix)) {
+			continue
+		}
+		name := k[11:]
+		if v == nil {
+			overlayDeletes[name] = true
+		} else {
+			overlayAdds[name] = true
+		}
+	}
+	j.mu.Unlock()
+
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
-		names = append(names, string(key[11:]))
+		name := string(key[11:])
+		if overlayDeletes[name] {
+			continue
+		}
+		names = append(names, name)
 	}
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
+
+	for name := range overlayAdds {
+		if overlayDeletes[name] {
+			continue
+		}
+		found := slices.Contains(names, name)
+		if !found {
+			names = append(names, name)
+		}
+	}
+
 	return names, nil
 }
 
 func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
+	j.mu.Lock()
+	if v, ok := j.overlayGet(xattrKey(nodeID, name)); ok {
+		j.mu.Unlock()
+		if v == nil {
+			return nil, nil
+		}
+		cp := make([]byte, len(v))
+		copy(cp, v)
+		return cp, nil
+	}
+	j.mu.Unlock()
+
 	val, closer, err := j.db.Get(xattrKey(nodeID, name))
 	if err == pebble.ErrNotFound {
 		return nil, nil
@@ -567,14 +863,45 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
+	j.mu.Lock()
+	overlayDeletes := make(map[string]bool)
+	overlayAdds := make(map[string]bool)
+	for k, v := range j.overlay {
+		if !strings.HasPrefix(k, string(prefix)) {
+			continue
+		}
+		name := k[11:]
+		if v == nil {
+			overlayDeletes[name] = true
+		} else {
+			overlayAdds[name] = true
+		}
+	}
+	j.mu.Unlock()
+
 	var names []string
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
-		names = append(names, string(key[11:]))
+		name := string(key[11:])
+		if overlayDeletes[name] {
+			continue
+		}
+		names = append(names, name)
 	}
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
+
+	for name := range overlayAdds {
+		if overlayDeletes[name] {
+			continue
+		}
+		found := slices.Contains(names, name)
+		if !found {
+			names = append(names, name)
+		}
+	}
+
 	return names, nil
 }
 
@@ -589,38 +916,74 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
+	j.mu.Lock()
+	overlayDeletes := make(map[string]bool)
+	overlayAdds := make(map[string][]byte)
+	for k, v := range j.overlay {
+		if !strings.HasPrefix(k, string(prefix)) {
+			continue
+		}
+		name := k[11:]
+		if v == nil {
+			overlayDeletes[name] = true
+		} else {
+			overlayAdds[name] = v
+		}
+	}
+	j.mu.Unlock()
+
 	var xattrs []format.XAttr
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
+		name := string(key[11:])
+		if overlayDeletes[name] {
+			continue
+		}
 		val := iter.Value()
-		name := make([]byte, len(key)-11)
-		copy(name, key[11:])
 		value := make([]byte, len(val))
 		copy(value, val)
-		xattrs = append(xattrs, format.NewXAttr(name, value))
+		xattrs = append(xattrs, format.NewXAttr([]byte(name), value))
 	}
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
+
+	for name, v := range overlayAdds {
+		if overlayDeletes[name] {
+			continue
+		}
+		found := false
+		for _, x := range xattrs {
+			if string(x.Name()) == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			val := make([]byte, len(v))
+			copy(val, v)
+			xattrs = append(xattrs, format.NewXAttr([]byte(name), val))
+		}
+	}
+
 	return xattrs, nil
 }
 
 func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
-	return j.tx(func(b *pebble.Batch) error {
-		return b.Set(xattrKey(nodeID, name), value, nil)
-	})
+	return j.tx([]pebbleSet{{key: xattrKey(nodeID, name), value: value}})
 }
 
 func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
-	return j.tx(func(b *pebble.Batch) error {
-		return b.Delete(xattrKey(nodeID, name), nil)
-	})
+	return j.tx([]pebbleSet{{key: xattrKey(nodeID, name), delete: true}})
 }
 
 func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellOffAt int64, remaining string, err error) {
 	if path == "/" || path == "" {
 		return 1, "/", 0, "", nil
 	}
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
 
 	snap := j.db.NewSnapshot()
 	defer func() { _ = snap.Close() }()
@@ -637,31 +1000,29 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 		}
 		part := path[pos:end]
 
-		edgeVal, edgeCloser, gerr := snap.Get(edgeKey(curID, part))
-		if gerr == pebble.ErrNotFound {
-			_, _, werr := snap.Get(whiteoutKey(curID, part))
-			if werr != nil && werr != pebble.ErrNotFound {
+		childID, found, gerr := j.getEdgeLocked(curID, part)
+		if gerr != nil {
+			return 0, "", 0, "", gerr
+		}
+		if !found {
+			wo, werr := j.getWhiteoutLocked(curID, part)
+			if werr != nil {
 				return 0, "", 0, "", werr
 			}
-			if werr == nil {
+			if wo {
 				return 0, "", 0, "", nil
 			}
 			return 0, pxarPrefix.String() + path[pos-1:], curID, path[pos:], nil
 		}
-		if gerr != nil {
-			return 0, "", 0, "", gerr
-		}
-		childID := decodeInt64(edgeVal)
-		_ = edgeCloser.Close()
-
 		curID = childID
 
-		nodeData, nodeCloser, nerr := snap.Get(nodeKey(curID))
+		n, nerr := j.getNodeLocked(curID)
 		if nerr != nil {
 			return 0, "", 0, "", nerr
 		}
-		n := decodeNode(nodeData, curID)
-		_ = nodeCloser.Close()
+		if n == nil {
+			return 0, "", 0, "", fmt.Errorf("resolve: node %d missing", curID)
+		}
 
 		if n.RedirectTo != "" {
 			pxarPrefix.Reset()
@@ -688,11 +1049,39 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 	}
 	defer func() { _ = iter.Close() }()
 
+	j.mu.Lock()
+	overlayDeletes := make(map[string]bool)
+	overlayAdds := make(map[string]struct {
+		nodeID int64
+		value  []byte
+	})
+	for k, v := range j.overlay {
+		if !strings.HasPrefix(k, string(prefix)) {
+			continue
+		}
+		nodeID := int64(binary.BigEndian.Uint64([]byte(k[2:10])))
+		name := k[11:]
+		fullKey := fmt.Sprintf("%d:%s", nodeID, name)
+		if v == nil {
+			overlayDeletes[fullKey] = true
+		} else {
+			overlayAdds[fullKey] = struct {
+				nodeID int64
+				value  []byte
+			}{nodeID, v}
+		}
+	}
+	j.mu.Unlock()
+
 	result := make(map[int64]map[string][]byte)
 	for iter.First(); iter.Valid(); iter.Next() {
 		key := iter.Key()
 		nodeID := int64(binary.BigEndian.Uint64(key[2:10]))
 		name := string(key[11:])
+		fullKey := fmt.Sprintf("%d:%s", nodeID, name)
+		if overlayDeletes[fullKey] {
+			continue
+		}
 		val := iter.Value()
 
 		if result[nodeID] == nil {
@@ -705,225 +1094,216 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 	if err := iter.Error(); err != nil {
 		return nil, err
 	}
+
+	for fullKey, add := range overlayAdds {
+		if overlayDeletes[fullKey] {
+			continue
+		}
+		nodeID := add.nodeID
+		if result[nodeID] == nil {
+			result[nodeID] = make(map[string][]byte)
+		}
+		parts := strings.SplitN(fullKey, ":", 2)
+		if len(parts) == 2 {
+			cp := make([]byte, len(add.value))
+			copy(cp, add.value)
+			result[nodeID][parts[1]] = cp
+		}
+	}
+
 	return result, nil
 }
 
 func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int64, error) {
-	var nodeID int64
-	err := j.tx(func(b *pebble.Batch) error {
-		id, err := j.createNodeInBatch(b, n)
-		if err != nil {
-			return err
+	var keys []pebbleSet
+	id, err := j.createNodeInBatch(&keys, n)
+	if err != nil {
+		return 0, err
+	}
+	nodeID := id
+
+	j.mu.Lock()
+
+	parts := splitPath(path)
+	curParentID := int64(1)
+
+	for i, name := range parts {
+		if name == "" {
+			continue
 		}
-		nodeID = id
 
-		parts := splitPath(path)
-		curParentID := int64(1)
+		childID, found, gerr := j.getEdgeLocked(curParentID, name)
+		if gerr != nil {
+			j.mu.Unlock()
+			return 0, gerr
+		}
+		if found {
+			curParentID = childID
+			continue
+		}
 
-		for i, name := range parts {
-			if name == "" {
-				continue
+		keys = append(keys, pebbleSet{key: whiteoutKey(curParentID, name), delete: true})
+
+		if i == len(parts)-1 {
+			keys = append(keys, pebbleSet{key: edgeKey(curParentID, name), value: encodeInt64(nodeID)})
+			if whiteout {
+				keys = append(keys, pebbleSet{key: whiteoutKey(curParentID, name), value: []byte{1}})
 			}
-
-			edgeVal, closer, gerr := j.db.Get(edgeKey(curParentID, name))
-			if gerr == nil {
-				childID := decodeInt64(edgeVal)
-				_ = closer.Close()
-				curParentID = childID
-				continue
-			}
-			if gerr != pebble.ErrNotFound {
-				return gerr
-			}
-
-			_ = b.Delete(whiteoutKey(curParentID, name), nil)
-
-			if i == len(parts)-1 {
-				if err := b.Set(edgeKey(curParentID, name), encodeInt64(nodeID), nil); err != nil {
-					return err
-				}
-				if whiteout {
-					if err := b.Set(whiteoutKey(curParentID, name), nil, nil); err != nil {
-						return err
-					}
-				}
-			} else {
-				var intermediatePath strings.Builder
-				intermediatePath.WriteByte('/')
-				intermediatePath.WriteString(parts[0])
-				for jj := 1; jj <= i; jj++ {
+		} else {
+			var intermediatePath strings.Builder
+			intermediatePath.WriteByte('/')
+			for jj := 0; jj <= i; jj++ {
+				if jj > 0 {
 					intermediatePath.WriteByte('/')
-					intermediatePath.WriteString(parts[jj])
 				}
-				intermediate := &GraphNode{
-					Kind:       NodeDir,
-					Mode:       uint32(0o755 | 0x4000),
-					UID:        n.UID,
-					GID:        n.GID,
-					MtimeNs:    n.MtimeNs,
-					CtimeNs:    n.CtimeNs,
-					RedirectTo: intermediatePath.String(),
-				}
-				midID, err := j.createNodeInBatch(b, intermediate)
-				if err != nil {
-					return err
-				}
-				if err := b.Set(edgeKey(curParentID, name), encodeInt64(midID), nil); err != nil {
-					return err
-				}
-				curParentID = midID
+				intermediatePath.WriteString(parts[jj])
 			}
+			intermediate := &GraphNode{
+				Kind:       NodeDir,
+				Mode:       uint32(0o755 | 0x4000),
+				UID:        n.UID,
+				GID:        n.GID,
+				MtimeNs:    n.MtimeNs,
+				CtimeNs:    n.CtimeNs,
+				RedirectTo: intermediatePath.String(),
+			}
+			midID, cerr := j.createNodeInBatch(&keys, intermediate)
+			if cerr != nil {
+				j.mu.Unlock()
+				return 0, cerr
+			}
+			keys = append(keys, pebbleSet{key: edgeKey(curParentID, name), value: encodeInt64(midID)})
+			curParentID = midID
 		}
-		return nil
-	})
-	return nodeID, err
+	}
+
+	for _, s := range keys {
+		if s.delete {
+			j.overlay[string(s.key)] = nil
+		} else {
+			cp := make([]byte, len(s.value))
+			copy(cp, s.value)
+			j.overlay[string(s.key)] = cp
+		}
+	}
+	j.pending = append(j.pending, journalOp{keys: keys})
+
+	drain := len(j.pending) >= 64
+	j.mu.Unlock()
+
+	if drain {
+		select {
+		case j.commitCh <- struct{}{}:
+		default:
+		}
+	}
+
+	return nodeID, nil
 }
 
 func (j *Journal) Clear() error {
-	return j.tx(func(b *pebble.Batch) error {
-		if err := deletePrefix(b, []byte(prefixWhiteout)); err != nil {
-			return err
-		}
-		if err := deletePrefix(b, []byte(prefixXattr)); err != nil {
-			return err
-		}
-		if err := deletePrefix(b, []byte(prefixEdge)); err != nil {
-			return err
-		}
-		if err := deletePrefixExcept(b, []byte(prefixNode), nodeKey(1)); err != nil {
-			return err
-		}
-		root := &GraphNode{
-			ID:         1,
-			Kind:       NodeDir,
-			Mode:       16877,
-			RedirectTo: "/",
-		}
-		return b.Set(nodeKey(1), encodeNode(root), nil)
-	})
-}
-
-func deletePrefix(b *pebble.Batch, prefix []byte) error {
-	upper := make([]byte, len(prefix)+1)
-	copy(upper, prefix)
-	upper[len(prefix)] = 0xFF
-	return b.DeleteRange(prefix, upper, nil)
-}
-
-func deletePrefixExcept(b *pebble.Batch, prefix []byte, exceptKey []byte) error {
-	if err := b.DeleteRange(prefix, exceptKey, nil); err != nil {
-		return err
+	j.mu.Lock()
+	j.overlay = make(map[string][]byte)
+	root := &GraphNode{
+		ID:         1,
+		Kind:       NodeDir,
+		Mode:       16877,
+		RedirectTo: "/",
 	}
-	nextKey := make([]byte, len(exceptKey)+1)
-	copy(nextKey, exceptKey)
-	nextKey[len(exceptKey)] = 0xFF
-	upper := make([]byte, len(prefix)+1)
-	copy(upper, prefix)
-	upper[len(prefix)] = 0xFF
-	return b.DeleteRange(nextKey, upper, nil)
+	j.overlay[string(nodeKey(1))] = encodeNode(root)
+	j.mu.Unlock()
+
+	var keys []pebbleSet
+	keys = append(keys, pebbleSet{key: []byte(prefixWhiteout), deleteEnd: append([]byte(prefixWhiteout), 0xFF)})
+	keys = append(keys, pebbleSet{key: []byte(prefixXattr), deleteEnd: append([]byte(prefixXattr), 0xFF)})
+	keys = append(keys, pebbleSet{key: []byte(prefixEdge), deleteEnd: append([]byte(prefixEdge), 0xFF)})
+	keys = append(keys, pebbleSet{key: nodeKey(1), value: encodeNode(root)})
+
+	nextKey := make([]byte, len(nodeKey(1))+1)
+	copy(nextKey, nodeKey(1))
+	nextKey[len(nodeKey(1))] = 0xFF
+	nodeUpper := append([]byte(prefixNode), 0xFF)
+	keys = append(keys, pebbleSet{key: nextKey, deleteEnd: nodeUpper})
+
+	return j.tx(keys)
 }
 
 func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {
-	return j.tx(func(b *pebble.Batch) error {
-		if err := b.Delete(edgeKey(parentID, name), nil); err != nil {
-			return err
-		}
-		if addWhiteout {
-			if err := b.Set(whiteoutKey(parentID, name), nil, nil); err != nil {
-				return err
-			}
-		}
-		xaPrefix := xattrPrefix(nodeID)
-		xaUpper := make([]byte, len(xaPrefix)+1)
-		copy(xaUpper, xaPrefix)
-		xaUpper[len(xaPrefix)] = 0xFF
-		if err := b.DeleteRange(xaPrefix, xaUpper, nil); err != nil {
-			return err
-		}
-		childEdgePrefix := edgePrefix(nodeID)
-		childEdgeUpper := make([]byte, len(childEdgePrefix)+1)
-		copy(childEdgeUpper, childEdgePrefix)
-		childEdgeUpper[len(childEdgePrefix)] = 0xFF
-		if err := b.DeleteRange(childEdgePrefix, childEdgeUpper, nil); err != nil {
-			return err
-		}
-		return b.Delete(nodeKey(nodeID), nil)
-	})
+	var keys []pebbleSet
+	keys = append(keys, pebbleSet{key: edgeKey(parentID, name), delete: true})
+	if addWhiteout {
+		keys = append(keys, pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
+	}
+	keys = append(keys, pebbleSet{key: nodeKey(nodeID), delete: true})
+
+	xaPrefix := xattrPrefix(nodeID)
+	xaUpper := make([]byte, len(xaPrefix)+1)
+	copy(xaUpper, xaPrefix)
+	xaUpper[len(xaPrefix)] = 0xFF
+	keys = append(keys, pebbleSet{key: xaPrefix, deleteEnd: xaUpper})
+
+	childEdgePrefix := edgePrefix(nodeID)
+	childEdgeUpper := make([]byte, len(childEdgePrefix)+1)
+	copy(childEdgeUpper, childEdgePrefix)
+	childEdgeUpper[len(childEdgePrefix)] = 0xFF
+	keys = append(keys, pebbleSet{key: childEdgePrefix, deleteEnd: childEdgeUpper})
+
+	return j.tx(keys)
 }
 
 func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *GraphNode, whiteout bool) (int64, error) {
-	var id int64
-	err := j.tx(func(b *pebble.Batch) error {
-		var err error
-		id, err = j.createNodeInBatch(b, n)
-		if err != nil {
-			return err
-		}
-		if err := b.Set(edgeKey(parentID, name), encodeInt64(id), nil); err != nil {
-			return err
-		}
-		if whiteout {
-			if err := b.Set(whiteoutKey(parentID, name), nil, nil); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	return id, err
+	var keys []pebbleSet
+	id, err := j.createNodeInBatch(&keys, n)
+	if err != nil {
+		return 0, err
+	}
+	keys = append(keys, pebbleSet{key: edgeKey(parentID, name), value: encodeInt64(id)})
+	if whiteout {
+		keys = append(keys, pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
+	}
+	return id, j.tx(keys)
 }
 
 func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64, whiteoutOld, whiteoutNew bool) error {
-	return j.tx(func(b *pebble.Batch) error {
-		_ = b.Delete(whiteoutKey(newParent, newName), nil)
+	var keys []pebbleSet
+	keys = append(keys, pebbleSet{key: whiteoutKey(newParent, newName), delete: true})
 
-		if replaceDestNode != 0 {
-			if err := b.Delete(edgeKey(newParent, newName), nil); err != nil {
-				return err
-			}
-			xaPrefix := xattrPrefix(replaceDestNode)
-			xaUpper := make([]byte, len(xaPrefix)+1)
-			copy(xaUpper, xaPrefix)
-			xaUpper[len(xaPrefix)] = 0xFF
-			if err := b.DeleteRange(xaPrefix, xaUpper, nil); err != nil {
-				return err
-			}
-			childEdgePrefix := edgePrefix(replaceDestNode)
-			childEdgeUpper := make([]byte, len(childEdgePrefix)+1)
-			copy(childEdgeUpper, childEdgePrefix)
-			childEdgeUpper[len(childEdgePrefix)] = 0xFF
-			if err := b.DeleteRange(childEdgePrefix, childEdgeUpper, nil); err != nil {
-				return err
-			}
-			if err := b.Delete(nodeKey(replaceDestNode), nil); err != nil {
-				return err
-			}
-		}
+	if replaceDestNode != 0 {
+		keys = append(keys, pebbleSet{key: edgeKey(newParent, newName), delete: true})
+		xaPrefix := xattrPrefix(replaceDestNode)
+		xaUpper := make([]byte, len(xaPrefix)+1)
+		copy(xaUpper, xaPrefix)
+		xaUpper[len(xaPrefix)] = 0xFF
+		keys = append(keys, pebbleSet{key: xaPrefix, deleteEnd: xaUpper})
+		childEdgePrefix := edgePrefix(replaceDestNode)
+		childEdgeUpper := make([]byte, len(childEdgePrefix)+1)
+		copy(childEdgeUpper, childEdgePrefix)
+		childEdgeUpper[len(childEdgePrefix)] = 0xFF
+		keys = append(keys, pebbleSet{key: childEdgePrefix, deleteEnd: childEdgeUpper})
+		keys = append(keys, pebbleSet{key: nodeKey(replaceDestNode), delete: true})
+	}
 
-		srcEdgeVal, closer, err := j.db.Get(edgeKey(oldParent, oldName))
-		if err != nil {
-			return fmt.Errorf("move edge: source (%d, %q) not found: %w", oldParent, oldName, err)
-		}
-		childIDVal := make([]byte, len(srcEdgeVal))
-		copy(childIDVal, srcEdgeVal)
-		_ = closer.Close()
+	j.mu.Lock()
+	childID, found, err := j.getEdgeLocked(oldParent, oldName)
+	if err != nil {
+		j.mu.Unlock()
+		return fmt.Errorf("move edge: source (%d, %q) not found: %w", oldParent, oldName, err)
+	}
+	if !found {
+		j.mu.Unlock()
+		return fmt.Errorf("move edge: source (%d, %q) not found", oldParent, oldName)
+	}
+	j.mu.Unlock()
 
-		if err := b.Delete(edgeKey(oldParent, oldName), nil); err != nil {
-			return err
-		}
-		if err := b.Set(edgeKey(newParent, newName), childIDVal, nil); err != nil {
-			return err
-		}
+	keys = append(keys, pebbleSet{key: edgeKey(oldParent, oldName), delete: true})
+	keys = append(keys, pebbleSet{key: edgeKey(newParent, newName), value: encodeInt64(childID)})
 
-		if whiteoutOld {
-			if err := b.Set(whiteoutKey(oldParent, oldName), nil, nil); err != nil {
-				return err
-			}
-		}
-		if whiteoutNew {
-			if err := b.Set(whiteoutKey(newParent, newName), nil, nil); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	if whiteoutOld {
+		keys = append(keys, pebbleSet{key: whiteoutKey(oldParent, oldName), value: []byte{1}})
+	}
+	if whiteoutNew {
+		keys = append(keys, pebbleSet{key: whiteoutKey(newParent, newName), value: []byte{1}})
+	}
+
+	return j.tx(keys)
 }
