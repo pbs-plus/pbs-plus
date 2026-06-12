@@ -17,6 +17,13 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+var readBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 4<<20) // 4 MB
+		return &b
+	},
+}
+
 type contentHandle struct {
 	rc       io.ReadCloser
 	fileSize uint64
@@ -263,14 +270,27 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 		return arpc.Response{}, fmt.Errorf("seek to %d: %w", params.Offset, err)
 	}
 
-	buf := make([]byte, reqLen)
-	n, err := io.ReadFull(h.rc, buf)
+	bptr := readBufPool.Get().(*[]byte)
+	workBuf := *bptr
+	isTemp := false
+	if len(workBuf) < reqLen {
+		workBuf = make([]byte, reqLen)
+		isTemp = true
+	}
+
+	n, err := io.ReadFull(h.rc, workBuf[:reqLen])
 	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		if !isTemp {
+			readBufPool.Put(bptr)
+		}
 		return arpc.Response{}, fmt.Errorf("read content at %d: %w", params.Offset, err)
 	}
 
 	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
-		_ = arpc.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream)
+		if !isTemp {
+			defer readBufPool.Put(bptr)
+		}
+		_ = arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream)
 	}}, nil
 }
 

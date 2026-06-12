@@ -216,6 +216,13 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			const chunkSize = 4 << 20 // 4 MB
 			var offset int64
 			buf := make([]byte, chunkSize)
+			readReq := struct {
+				HandleID uint64 `cbor:"handle_id"`
+				Offset   int64  `cbor:"offset"`
+				Length   int    `cbor:"length"`
+			}{
+				HandleID: handleID,
+			}
 
 			for offset < int64(fileSize) {
 				reqLen := chunkSize
@@ -223,11 +230,10 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 					reqLen = int(int64(fileSize) - offset)
 				}
 
-				n, err := c.pipe.CallBinary(ctx, "pxar.ReadContentAt", map[string]any{
-					"handle_id": handleID,
-					"offset":    offset,
-					"length":    reqLen,
-				}, buf)
+				readReq.Offset = offset
+				readReq.Length = reqLen
+
+				n, err := c.pipe.CallBinary(ctx, "pxar.ReadContentAt", &readReq, buf)
 				if err != nil {
 					pw.CloseWithError(err)
 					return
