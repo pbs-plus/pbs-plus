@@ -188,21 +188,60 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 	if c.pipe != nil {
 		pr, pw := io.Pipe()
 		go func() {
-			defer pw.Close()
+			var handleID uint64
 
-			params := map[string]uint64{
+			// Open content handle on server.
+			openResp := struct {
+				HandleID uint64 `cbor:"handle_id"`
+				FileSize uint64 `cbor:"file_size"`
+			}{}
+			if err := c.pipe.Call(ctx, "pxar.OpenContent", map[string]uint64{
 				"content_start": contentStart,
 				"content_end":   contentEnd,
-			}
-			handler := arpc.RawStreamHandler(func(stream arpc.ARPCStream) error {
-				defer stream.Close()
-				_, err := arpc.ReceiveDataChunked(stream, pw)
-				return err
-			})
-
-			if err := c.pipe.Call(ctx, "pxar.ReadStream", params, handler); err != nil {
+			}, &openResp); err != nil {
 				pw.CloseWithError(err)
+				return
 			}
+			handleID = openResp.HandleID
+			fileSize = openResp.FileSize
+
+			// Ensure handle is closed when done.
+			defer func() {
+				_ = c.pipe.Call(context.Background(), "pxar.CloseContent", map[string]uint64{
+					"handle_id": handleID,
+				}, nil)
+			}()
+
+			// Read in chunks via ReadContentAt.
+			const chunkSize = 4 << 20 // 4 MB
+			var offset int64
+			buf := make([]byte, chunkSize)
+
+			for offset < int64(fileSize) {
+				reqLen := chunkSize
+				if offset+int64(reqLen) > int64(fileSize) {
+					reqLen = int(int64(fileSize) - offset)
+				}
+
+				n, err := c.pipe.CallBinary(ctx, "pxar.ReadContentAt", map[string]any{
+					"handle_id": handleID,
+					"offset":    offset,
+					"length":    reqLen,
+				}, buf)
+				if err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				if n == 0 {
+					break
+				}
+				if _, err := pw.Write(buf[:n]); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				offset += int64(n)
+			}
+			pw.Close()
 		}()
 		return pr, nil
 	}
