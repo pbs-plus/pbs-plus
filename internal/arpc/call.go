@@ -6,7 +6,6 @@ import (
 	"net/http"
 )
 
-// Request represents an RPC request to be sent over the stream.
 type Request struct {
 	Context context.Context     `cbor:"-"`
 	Method  string              `cbor:"method"`
@@ -14,7 +13,6 @@ type Request struct {
 	Headers map[string][]string `cbor:"headers,omitempty"`
 }
 
-// Response represents an RPC response received from the stream.
 type Response struct {
 	Status    int              `cbor:"status"`
 	Message   string           `cbor:"message"`
@@ -30,15 +28,12 @@ type SerializableError struct {
 	OriginalError error  `cbor:"-"`
 }
 
-// RawStreamHandler is a function type for handling raw stream data.
 type RawStreamHandler func(ARPCStream) error
 
 var readySignal = []byte{0xFF}
 
-// StatusRawStream is the HTTP status code for raw stream mode.
 const StatusRawStream = 213
 
-// checkRPCError returns an error if the response status is not OK.
 func (s *StreamPipe) checkRPCError(resp *Response) error {
 	if resp.Status != http.StatusOK {
 		if len(resp.Data) > 0 {
@@ -52,7 +47,6 @@ func (s *StreamPipe) checkRPCError(resp *Response) error {
 	return nil
 }
 
-// performHandshake performs the ready/ack handshake for raw stream mode.
 func performHandshake(stream ARPCStream) error {
 	if _, err := stream.Write(readySignal); err != nil {
 		return fmt.Errorf("write ready signal: %w", err)
@@ -79,7 +73,6 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := stream.SetDeadline(deadline); err != nil {
-			// Log error but continue - SetDeadline is best-effort
 			fmt.Printf("arpc: failed to set stream deadline: %v\n", err)
 		}
 	}
@@ -182,8 +175,6 @@ func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any,
 	return n, err
 }
 
-// CallBinaryWithMeta is like CallBinary but also returns the Response
-// metadata (e.g. handle IDs encoded in resp.Data) alongside the bytes read.
 func (s *StreamPipe) CallBinaryWithMeta(ctx context.Context, method string, payload any, dst []byte) (int, *Response, error) {
 	stream, resp, err := s.call(ctx, method, payload)
 	if err != nil {

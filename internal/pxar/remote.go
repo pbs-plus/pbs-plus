@@ -19,7 +19,7 @@ import (
 
 var readBufPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, 4<<20) // 4 MB
+		b := make([]byte, 4<<20)
 		return &b
 	},
 }
@@ -29,8 +29,6 @@ type contentHandle struct {
 	fileSize uint64
 	mu       sync.Mutex
 }
-
-// RPC request/response types for content streaming.
 
 type readContentReq struct {
 	ContentStart uint64 `cbor:"content_start"`
@@ -52,8 +50,6 @@ type closeContentReq struct {
 type handleIDResp struct {
 	HandleID uint64 `cbor:"handle_id"`
 }
-
-// RPC request types for directory/attribute operations.
 
 type lookupByPathReq struct {
 	Path string `cbor:"path"`
@@ -111,7 +107,6 @@ func (s *RemoteServer) Close() error {
 	if s.closed.Swap(true) {
 		return nil
 	}
-
 	return s.reader.Close()
 }
 
@@ -141,24 +136,16 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 
 	err := fmt.Errorf("client error: %s", params.Error)
 	syslog.L.Error(err).Write()
-
 	s.errCh <- err
 
-	return arpc.Response{
-		Status: 200,
-		Data:   nil,
-	}, nil
+	return arpc.Response{Status: 200}, nil
 }
 
 func (s *RemoteServer) handleDone(req *arpc.Request) (arpc.Response, error) {
 	if !s.isDone.Swap(true) {
 		close(s.DoneCh)
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   nil,
-	}, nil
+	return arpc.Response{Status: 200}, nil
 }
 
 func (s *RemoteServer) handleGetRoot(req *arpc.Request) (arpc.Response, error) {
@@ -171,11 +158,7 @@ func (s *RemoteServer) handleGetRoot(req *arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *RemoteServer) handleLookupByPath(req *arpc.Request) (arpc.Response, error) {
@@ -193,11 +176,7 @@ func (s *RemoteServer) handleLookupByPath(req *arpc.Request) (arpc.Response, err
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *RemoteServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
@@ -215,11 +194,7 @@ func (s *RemoteServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *RemoteServer) handleGetAttr(req *arpc.Request) (arpc.Response, error) {
@@ -237,11 +212,7 @@ func (s *RemoteServer) handleGetAttr(req *arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, error) {
@@ -266,16 +237,15 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 	}
 
 	bptr := readBufPool.Get().(*[]byte)
-	workBuf := *bptr
-	isTemp := false
-	if len(workBuf) < reqLen {
-		workBuf = make([]byte, reqLen)
-		isTemp = true
+	buf := *bptr
+	tempBuf := len(buf) < reqLen
+	if tempBuf {
+		buf = make([]byte, reqLen)
 	}
 
-	n, readErr := io.ReadFull(rc, workBuf[:reqLen])
+	n, readErr := io.ReadFull(rc, buf[:reqLen])
 	if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
-		if !isTemp {
+		if !tempBuf {
 			readBufPool.Put(bptr)
 		}
 		rc.Close()
@@ -285,18 +255,15 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 	if uint64(n) >= params.FileSize {
 		rc.Close()
 	} else {
-		s.contentHandles.Set(handleID, &contentHandle{
-			rc:       rc,
-			fileSize: params.FileSize,
-		})
+		s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize})
 	}
 
 	respData, _ := cbor.Marshal(handleIDResp{HandleID: handleID})
 	return arpc.Response{Status: 213, Data: respData, RawStream: func(stream arpc.ARPCStream) {
-		if !isTemp {
+		if !tempBuf {
 			defer readBufPool.Put(bptr)
 		}
-		_ = arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream)
+		_ = arpc.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream)
 	}}, nil
 }
 
@@ -334,26 +301,25 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 	}
 
 	bptr := readBufPool.Get().(*[]byte)
-	workBuf := *bptr
-	isTemp := false
-	if len(workBuf) < reqLen {
-		workBuf = make([]byte, reqLen)
-		isTemp = true
+	buf := *bptr
+	tempBuf := len(buf) < reqLen
+	if tempBuf {
+		buf = make([]byte, reqLen)
 	}
 
-	n, err := io.ReadFull(h.rc, workBuf[:reqLen])
+	n, err := io.ReadFull(h.rc, buf[:reqLen])
 	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-		if !isTemp {
+		if !tempBuf {
 			readBufPool.Put(bptr)
 		}
 		return arpc.Response{}, fmt.Errorf("read content at %d: %w", params.Offset, err)
 	}
 
 	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
-		if !isTemp {
+		if !tempBuf {
 			defer readBufPool.Put(bptr)
 		}
-		_ = arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream)
+		_ = arpc.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream)
 	}}, nil
 }
 
@@ -383,11 +349,7 @@ func (s *RemoteServer) handleReadLink(req *arpc.Request) (arpc.Response, error) 
 	if err != nil {
 		return makeErrorResponse(err)
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   target,
-	}, nil
+	return arpc.Response{Status: 200, Data: target}, nil
 }
 
 func (s *RemoteServer) handleListXAttrs(req *arpc.Request) (arpc.Response, error) {
@@ -405,23 +367,13 @@ func (s *RemoteServer) handleListXAttrs(req *arpc.Request) (arpc.Response, error
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	return arpc.Response{
-		Status: 200,
-		Data:   data,
-	}, nil
+	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func makeErrorResponse(err error) (arpc.Response, error) {
 	if errno, ok := err.(syscall.Errno); ok {
-		errData, _ := json.Marshal(map[string]any{
-			"errno": int64(errno),
-		})
-		return arpc.Response{
-			Status:  500,
-			Message: err.Error(),
-			Data:    errData,
-		}, nil
+		errData, _ := json.Marshal(map[string]any{"errno": int64(errno)})
+		return arpc.Response{Status: 500, Message: err.Error(), Data: errData}, nil
 	}
 	return arpc.Response{}, err
 }

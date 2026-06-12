@@ -19,9 +19,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-const benchChunkSize = 4 << 20 // 4 MB
-
-// Shared request/response types for benchmarks (avoids map allocations).
+const benchChunkSize = 4 << 20
 
 type benchOpenReq struct {
 	FileSize uint64 `cbor:"file_size"`
@@ -229,7 +227,7 @@ func benchSetupPipe(b *testing.B, router Router) *StreamPipe {
 }
 
 // -----------------------------------------------------------------------
-// Benchmark: SEPARATE Open + ReadAt (before merge)
+// Benchmark: SEPARATE Open + ReadAt
 // -----------------------------------------------------------------------
 
 func BenchmarkFileRestore_Separate(b *testing.B) {
@@ -322,7 +320,7 @@ func BenchmarkFileRestore_Separate(b *testing.B) {
 }
 
 // -----------------------------------------------------------------------
-// Benchmark: MERGED ReadContent (after merge)
+// Benchmark: MERGED ReadContent
 // -----------------------------------------------------------------------
 
 func BenchmarkFileRestore_Merged(b *testing.B) {

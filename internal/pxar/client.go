@@ -28,11 +28,8 @@ func NewLocalClient(pr *PxarReader, name string) (*Client, chan error) {
 
 func (c *Client) SendError(ctx context.Context, err error) error {
 	if c.pipe != nil {
-		params := map[string]any{
-			"error": err.Error(),
-		}
 		syslog.L.Error(err).WithField("restore", "error").Write()
-		if err := c.pipe.Call(ctx, "pxar.Error", params, nil); err != nil {
+		if err := c.pipe.Call(ctx, "pxar.Error", errorReq{Error: err.Error()}, nil); err != nil {
 			return err
 		}
 		return nil
@@ -169,14 +166,11 @@ func (c *Client) Close() error {
 	return c.pr.Close()
 }
 
-// ReadFileContentReader returns a streaming reader for file content identified
-// by content offset range. Works for both local and remote clients.
-// The caller must close the returned reader.
 func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, contentEnd, fileSize uint64) (io.ReadCloser, error) {
 	if c.pipe != nil {
 		pr, pw := io.Pipe()
 		go func() {
-			const chunkSize = 4 << 20 // 4 MB
+			const chunkSize = 4 << 20
 
 			buf := make([]byte, chunkSize)
 			reqLen := chunkSize
@@ -184,7 +178,6 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 				reqLen = int(fileSize)
 			}
 
-			// Merged open + first read: single RPC.
 			req := readContentReq{
 				ContentStart: contentStart,
 				ContentEnd:   contentEnd,
@@ -207,26 +200,22 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 
 			offset := int64(n)
 
-			// If the entire file fit in the first chunk, we're done.
 			if offset >= int64(fileSize) {
 				pw.Close()
 				return
 			}
 
-			// Parse handle ID for remaining chunks.
 			var handleResp handleIDResp
 			if err := cbor.Unmarshal(resp.Data, &handleResp); err != nil {
 				pw.CloseWithError(err)
 				return
 			}
 
-			// Ensure handle is closed when done.
 			defer func() {
 				closeReq := closeContentReq{HandleID: handleResp.HandleID}
 				_ = c.pipe.Call(context.Background(), "pxar.CloseContent", &closeReq, nil)
 			}()
 
-			// Read remaining chunks via ReadContentAt.
 			readReq := readContentAtReq{HandleID: handleResp.HandleID}
 
 			for offset < int64(fileSize) {
