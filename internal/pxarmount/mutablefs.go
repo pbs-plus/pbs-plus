@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -76,7 +75,8 @@ type MutableFS struct {
 	dirtyMeta *xsync.Map[uint64, pendingMeta]
 
 	// Freeze mechanism: blocks FUSE mutations during commit.
-	freezeMu sync.RWMutex
+	freezeMu sync.Mutex
+	freezeCh atomic.Pointer[chan struct{}]
 	frozen   atomic.Bool
 
 	// Inode ↔ path bidirectional mapping.
@@ -240,13 +240,14 @@ func (fs *MutableFS) SetDebug(dbg bool) {}
 // waitIfFrozen blocks until the filesystem is no longer frozen for commit.
 // All mutation FUSE ops must call this first to ensure consistency.
 func (fs *MutableFS) waitIfFrozen() {
-	fs.freezeMu.RLock()
-	for fs.frozen.Load() {
-		fs.freezeMu.RUnlock()
-		runtime.Gosched()
-		fs.freezeMu.RLock()
+	if !fs.frozen.Load() {
+		return
 	}
-	fs.freezeMu.RUnlock()
+	chp := fs.freezeCh.Load()
+	if chp != nil {
+		ch := *chp
+		<-ch
+	}
 }
 
 // Lookup resolves a name in a directory.

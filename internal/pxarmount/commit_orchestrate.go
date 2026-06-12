@@ -43,12 +43,16 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	defer commitMu.Unlock()
 
 	mfs.freezeMu.Lock()
+	ch := make(chan struct{})
+	mfs.freezeCh.Store(&ch)
 	mfs.frozen.Store(true)
 	mfs.freezeMu.Unlock()
 
 	if err := mfs.journal.Sync(); err != nil {
 		mfs.freezeMu.Lock()
 		mfs.frozen.Store(false)
+		close(ch)
+		mfs.freezeCh.Store(nil)
 		mfs.freezeMu.Unlock()
 		return fmt.Errorf("sync journal before commit: %w", err)
 	}
@@ -56,6 +60,8 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	defer func() {
 		mfs.freezeMu.Lock()
 		mfs.frozen.Store(false)
+		close(ch)
+		mfs.freezeCh.Store(nil)
 		mfs.freezeMu.Unlock()
 	}()
 

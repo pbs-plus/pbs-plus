@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -67,6 +68,12 @@ type Journal struct {
 type journalWrite struct {
 	fn   func(b *pebble.Batch) error
 	done chan error
+}
+
+var journalWritePool = sync.Pool{
+	New: func() any {
+		return &journalWrite{done: make(chan error, 1)}
+	},
 }
 
 func nodeKey(id int64) []byte {
@@ -440,13 +447,17 @@ func (j *Journal) allocNodeID() int64 {
 }
 
 func (j *Journal) tx(fn func(b *pebble.Batch) error) error {
-	w := &journalWrite{fn: fn, done: make(chan error, 1)}
+	w := journalWritePool.Get().(*journalWrite)
+	w.fn = fn
+	defer journalWritePool.Put(w)
 	j.writeQueue <- w
 	return <-w.done
 }
 
 func (j *Journal) Sync() error {
-	w := &journalWrite{fn: func(b *pebble.Batch) error { return nil }, done: make(chan error, 1)}
+	w := journalWritePool.Get().(*journalWrite)
+	w.fn = func(b *pebble.Batch) error { return nil }
+	defer journalWritePool.Put(w)
 	j.writeQueue <- w
 	err := <-w.done
 	if err != nil {
