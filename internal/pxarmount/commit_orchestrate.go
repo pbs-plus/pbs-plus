@@ -43,22 +43,20 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	defer commitMu.Unlock()
 
 	mfs.freezeMu.Lock()
-	mfs.frozen = true
+	mfs.frozen.Store(true)
 	mfs.freezeMu.Unlock()
 
 	if err := mfs.journal.Sync(); err != nil {
 		mfs.freezeMu.Lock()
-		mfs.frozen = false
+		mfs.frozen.Store(false)
 		mfs.freezeMu.Unlock()
-		mfs.freezeCond.Broadcast()
 		return fmt.Errorf("sync journal before commit: %w", err)
 	}
 
 	defer func() {
 		mfs.freezeMu.Lock()
-		mfs.frozen = false
+		mfs.frozen.Store(false)
 		mfs.freezeMu.Unlock()
-		mfs.freezeCond.Broadcast()
 	}()
 
 	prog.SetPhase(PhasePrepare)

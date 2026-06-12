@@ -1148,9 +1148,6 @@ func TestBackgroundFlush(t *testing.T) {
 	j, cleanup := testJournal(t)
 	defer cleanup()
 
-	// Override interval to be fast for testing.
-	j.flushInterval.Store(int64(100 * time.Millisecond))
-
 	// Write enough to trigger syncs.
 	for i := range 300 {
 		n := &GraphNode{Kind: NodeFile, Mode: 0o644}

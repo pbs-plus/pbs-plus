@@ -231,7 +231,7 @@ func BenchmarkFreeze_ContendedWait(b *testing.B) {
 
 			for range b.N {
 				mfs.freezeMu.Lock()
-				mfs.frozen = true
+				mfs.frozen.Store(true)
 				mfs.freezeMu.Unlock()
 
 				var wg sync.WaitGroup
@@ -245,9 +245,8 @@ func BenchmarkFreeze_ContendedWait(b *testing.B) {
 				}
 
 				mfs.freezeMu.Lock()
-				mfs.frozen = false
+				mfs.frozen.Store(false)
 				mfs.freezeMu.Unlock()
-				mfs.freezeCond.Broadcast()
 
 				wg.Wait()
 			}

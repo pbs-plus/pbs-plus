@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -49,8 +50,7 @@ type MutableFS struct {
 	mutableDir string
 
 	// Inode allocation for pxar-only entries.
-	nextIno uint64
-	inoMu   sync.Mutex
+	nextIno atomic.Uint64
 
 	// File handle management — lock-free via xsync.Map since every
 	// Read/Write/Flush/Fsync calls getFh. nextFh uses atomic for
@@ -76,9 +76,8 @@ type MutableFS struct {
 	dirtyMeta *xsync.Map[uint64, pendingMeta]
 
 	// Freeze mechanism: blocks FUSE mutations during commit.
-	freezeMu   sync.Mutex
-	freezeCond *sync.Cond
-	frozen     bool
+	freezeMu sync.RWMutex
+	frozen   atomic.Bool
 
 	// Inode ↔ path bidirectional mapping.
 	// Per-instance to prevent cross-mount corruption — analogous to
@@ -105,9 +104,9 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		pathLookup:  xsync.NewMap[uint64, string](),
 		ensureLocks: xsync.NewMap[string, *sync.Mutex](),
 		dirtyMeta:   xsync.NewMap[uint64, pendingMeta](),
-		nextIno:     2, // 1 is RootInode
+		nextIno:     atomic.Uint64{},
 	}
-	fs.freezeCond = sync.NewCond(&fs.freezeMu)
+	fs.nextIno.Store(1)
 	return fs
 }
 
@@ -241,11 +240,13 @@ func (fs *MutableFS) SetDebug(dbg bool) {}
 // waitIfFrozen blocks until the filesystem is no longer frozen for commit.
 // All mutation FUSE ops must call this first to ensure consistency.
 func (fs *MutableFS) waitIfFrozen() {
-	fs.freezeMu.Lock()
-	for fs.frozen {
-		fs.freezeCond.Wait()
+	fs.freezeMu.RLock()
+	for fs.frozen.Load() {
+		fs.freezeMu.RUnlock()
+		runtime.Gosched()
+		fs.freezeMu.RLock()
 	}
-	fs.freezeMu.Unlock()
+	fs.freezeMu.RUnlock()
 }
 
 // Lookup resolves a name in a directory.
@@ -1822,44 +1823,11 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 	return re, fuse.OK
 }
 
-// findPxarNode walks the pxar tree to find a cached node for the given path.
 func (fs *MutableFS) findPxarNode(path string) *node {
-	if path == "/" {
-		return fs.pxar.GetNode(RootInode)
+	if fs.pxar == nil {
+		return nil
 	}
-
-	curIno := RootInode
-	parts := splitPath(path)
-
-	for i, name := range parts {
-		if name == "" {
-			continue
-		}
-		entries, err := fs.pxar.ReadDirRaw(curIno)
-		if err != nil {
-			return nil
-		}
-		found := false
-		for _, e := range entries {
-			if e.name == name {
-				// Register the node so subsequent ReadDirRaw calls
-				// can find it via fs.nodes. Without this, only the
-				// root inode is cached and subdirectories appear empty.
-				fs.pxar.RegisterSlimNode(&e, curIno)
-				if i == len(parts)-1 {
-					n := slimToNode(&e, curIno)
-					return &n
-				}
-				curIno = e.inode
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil
-		}
-	}
-	return nil
+	return fs.pxar.LookupPath(path)
 }
 
 // hasPxarEntry reports whether a pxar entry exists at the given path.
@@ -1952,10 +1920,7 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 // --- Inode Management ---
 
 func (fs *MutableFS) allocInode(isDir bool) uint64 {
-	fs.inoMu.Lock()
-	ino := fs.nextIno
-	fs.nextIno++
-	fs.inoMu.Unlock()
+	ino := fs.nextIno.Add(1)
 	if !isDir {
 		ino |= NonDirBit
 	}
