@@ -72,7 +72,7 @@ func (s *RemoteServer) registerHandlers() {
 	s.router.Handle("pxar.LookupByPath", s.handleLookupByPath)
 	s.router.Handle("pxar.ReadDir", s.handleReadDir)
 	s.router.Handle("pxar.GetAttr", s.handleGetAttr)
-	s.router.Handle("pxar.OpenContent", s.handleOpenContent)
+	s.router.Handle("pxar.ReadContent", s.handleReadContent)
 	s.router.Handle("pxar.ReadContentAt", s.handleReadContentAt)
 	s.router.Handle("pxar.CloseContent", s.handleCloseContent)
 	s.router.Handle("pxar.ReadLink", s.handleReadLink)
@@ -201,11 +201,12 @@ func (s *RemoteServer) handleGetAttr(req *arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *RemoteServer) handleOpenContent(req *arpc.Request) (arpc.Response, error) {
+func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, error) {
 	var params struct {
 		ContentStart uint64 `cbor:"content_start"`
 		ContentEnd   uint64 `cbor:"content_end"`
 		FileSize     uint64 `cbor:"file_size"`
+		Length       int    `cbor:"length"`
 	}
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
 		return arpc.Response{}, err
@@ -217,15 +218,51 @@ func (s *RemoteServer) handleOpenContent(req *arpc.Request) (arpc.Response, erro
 	}
 
 	handleID := atomic.AddUint64(&s.handleCounter, 1)
-	s.contentHandles.Set(handleID, &contentHandle{
-		rc:       rc,
-		fileSize: params.FileSize,
-	})
+
+	reqLen := params.Length
+	if reqLen <= 0 {
+		reqLen = 4 << 20
+	}
+	if int64(reqLen) > int64(params.FileSize) {
+		reqLen = int(params.FileSize)
+	}
+
+	bptr := readBufPool.Get().(*[]byte)
+	workBuf := *bptr
+	isTemp := false
+	if len(workBuf) < reqLen {
+		workBuf = make([]byte, reqLen)
+		isTemp = true
+	}
+
+	n, readErr := io.ReadFull(rc, workBuf[:reqLen])
+	if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
+		if !isTemp {
+			readBufPool.Put(bptr)
+		}
+		rc.Close()
+		return arpc.Response{}, fmt.Errorf("read content: %w", readErr)
+	}
+
+	// If the entire file fit in the first chunk, close immediately.
+	if uint64(n) >= params.FileSize {
+		rc.Close()
+	} else {
+		s.contentHandles.Set(handleID, &contentHandle{
+			rc:       rc,
+			fileSize: params.FileSize,
+		})
+	}
 
 	respData, _ := cbor.Marshal(map[string]uint64{
 		"handle_id": handleID,
 	})
-	return arpc.Response{Status: 200, Data: respData}, nil
+	return arpc.Response{Status: 213, Data: respData, RawStream: func(stream arpc.ARPCStream) {
+		if !isTemp {
+			defer readBufPool.Put(bptr)
+		}
+		_ = arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream)
+	}}, nil
 }
 
 func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, error) {

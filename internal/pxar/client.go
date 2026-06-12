@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
@@ -188,21 +189,50 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 	if c.pipe != nil {
 		pr, pw := io.Pipe()
 		go func() {
-			var handleID uint64
+			const chunkSize = 4 << 20 // 4 MB
 
-			// Open content handle on server.
-			openResp := struct {
-				HandleID uint64 `cbor:"handle_id"`
-			}{}
-			if err := c.pipe.Call(ctx, "pxar.OpenContent", map[string]uint64{
+			buf := make([]byte, chunkSize)
+			reqLen := chunkSize
+			if int64(reqLen) > int64(fileSize) {
+				reqLen = int(fileSize)
+			}
+
+			// Merged open + first read: single RPC.
+			n, resp, err := c.pipe.CallBinaryWithMeta(ctx, "pxar.ReadContent", map[string]any{
 				"content_start": contentStart,
 				"content_end":   contentEnd,
 				"file_size":     fileSize,
-			}, &openResp); err != nil {
+				"length":        reqLen,
+			}, buf)
+			if err != nil {
 				pw.CloseWithError(err)
 				return
 			}
-			handleID = openResp.HandleID
+
+			if n > 0 {
+				if _, err := pw.Write(buf[:n]); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+			}
+
+			offset := int64(n)
+
+			// If the entire file fit in the first chunk, we're done.
+			if offset >= int64(fileSize) {
+				pw.Close()
+				return
+			}
+
+			// Parse handle ID for remaining chunks.
+			var handleResp struct {
+				HandleID uint64 `cbor:"handle_id"`
+			}
+			if err := cbor.Unmarshal(resp.Data, &handleResp); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			handleID := handleResp.HandleID
 
 			// Ensure handle is closed when done.
 			defer func() {
@@ -211,10 +241,7 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 				}, nil)
 			}()
 
-			// Read in chunks via ReadContentAt.
-			const chunkSize = 4 << 20 // 4 MB
-			var offset int64
-			buf := make([]byte, chunkSize)
+			// Read remaining chunks via ReadContentAt.
 			readReq := struct {
 				HandleID uint64 `cbor:"handle_id"`
 				Offset   int64  `cbor:"offset"`

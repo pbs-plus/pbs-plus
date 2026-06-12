@@ -178,23 +178,31 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 }
 
 func (s *StreamPipe) CallBinary(ctx context.Context, method string, payload any, dst []byte) (int, error) {
+	n, _, err := s.CallBinaryWithMeta(ctx, method, payload, dst)
+	return n, err
+}
+
+// CallBinaryWithMeta is like CallBinary but also returns the Response
+// metadata (e.g. handle IDs encoded in resp.Data) alongside the bytes read.
+func (s *StreamPipe) CallBinaryWithMeta(ctx context.Context, method string, payload any, dst []byte) (int, *Response, error) {
 	stream, resp, err := s.call(ctx, method, payload)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer stream.Close()
 
 	if resp.Status != StatusRawStream {
 		var serErr SerializableError
 		if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
-			return 0, UnwrapError(serErr)
+			return 0, resp, UnwrapError(serErr)
 		}
-		return 0, fmt.Errorf("RPC error: status %d", resp.Status)
+		return 0, resp, fmt.Errorf("RPC error: status %d", resp.Status)
 	}
 
 	if err := performHandshake(stream); err != nil {
-		return 0, err
+		return 0, resp, err
 	}
 
-	return ReceiveDataInto(stream, dst)
+	n, err := ReceiveDataInto(stream, dst)
+	return n, resp, err
 }
