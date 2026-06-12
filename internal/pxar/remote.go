@@ -25,10 +25,9 @@ var readBufPool = sync.Pool{
 }
 
 type contentHandle struct {
-	rc        io.ReadCloser
-	fileSize  uint64
-	bytesRead int64
-	mu        sync.Mutex
+	rc       io.ReadCloser
+	fileSize uint64
+	mu       sync.Mutex
 }
 
 type RemoteServer struct {
@@ -218,7 +217,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 	if uint64(n) >= params.FileSize {
 		rc.Close()
 	} else {
-		s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize, bytesRead: int64(n)})
+		s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize})
 	}
 
 	respData, _ := cbor.Marshal(handleIDResp{HandleID: handleID})
@@ -259,8 +258,8 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 		reqLen = int(int64(h.fileSize) - params.Offset)
 	}
 
-	if params.Offset != h.bytesRead {
-		return arpc.Response{}, fmt.Errorf("sequential read expected offset %d, got %d", h.bytesRead, params.Offset)
+	if _, err := h.rc.(io.Seeker).Seek(params.Offset, io.SeekStart); err != nil {
+		return arpc.Response{}, fmt.Errorf("seek to %d: %w", params.Offset, err)
 	}
 
 	bptr := readBufPool.Get().(*[]byte)

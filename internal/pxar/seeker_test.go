@@ -1,63 +1,120 @@
 package pxar
 
 import (
+	"bytes"
 	"io"
 	"testing"
 )
 
-type bytesReaderAt struct{}
-
-func (bytesReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	for i := range p {
-		p[i] = 0xAA
-	}
-	return len(p), nil
+type bytesReaderAt struct {
+	data []byte
 }
 
-func TestNopCloserHidesSeeker(t *testing.T) {
-	section := io.NewSectionReader(bytesReaderAt{}, 0, 8<<20)
-	rc := io.NopCloser(section)
-
-	_, ok := rc.(io.Seeker)
-	if ok {
-		t.Log("io.NopCloser preserved io.Seeker (Go stdlib changed)")
-	} else {
-		t.Log("io.NopCloser strips io.Seeker — handleReadContentAt must not require it")
+func (r bytesReaderAt) ReadAt(p []byte, off int64) (int, error) {
+	if off >= int64(len(r.data)) {
+		return 0, io.EOF
 	}
+	n := copy(p, r.data[off:])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
 }
 
-func TestSequentialReadNoSeeker(t *testing.T) {
-	const fileSize = 8 << 20
-	section := io.NewSectionReader(bytesReaderAt{}, 0, fileSize)
-	rc := io.NopCloser(section)
+type readSeekCloser struct {
+	io.ReadSeeker
+}
 
-	buf := make([]byte, 4<<20)
+func (readSeekCloser) Close() error { return nil }
 
+func newReadSeekCloser(data []byte) io.ReadCloser {
+	section := io.NewSectionReader(bytesReaderAt{data}, 0, int64(len(data)))
+	return readSeekCloser{ReadSeeker: section}
+}
+
+func TestReadSeekCloserPreservesSeeker(t *testing.T) {
+	data := make([]byte, 1<<20)
+	for i := range data {
+		data[i] = byte(i)
+	}
+
+	rc := newReadSeekCloser(data)
+
+	seeker, ok := rc.(io.Seeker)
+	if !ok {
+		t.Fatal("readSeekCloser must preserve io.Seeker")
+	}
+
+	_, err := seeker.Seek(512<<10, io.SeekStart)
+	if err != nil {
+		t.Fatalf("seek: %v", err)
+	}
+	buf := make([]byte, 4<<10)
 	n, err := io.ReadFull(rc, buf)
 	if err != nil {
-		t.Fatalf("first read: %v", err)
+		t.Fatalf("read: %v", err)
+	}
+	if n != 4<<10 {
+		t.Fatalf("got %d bytes, want %d", n, 4<<10)
+	}
+	if !bytes.Equal(buf, data[512<<10:512<<10+4<<10]) {
+		t.Fatal("data mismatch after seek")
+	}
+}
+
+func TestReadContentAtSizes(t *testing.T) {
+	sizes := []int64{
+		0,
+		1,
+		100,
+		4<<20 - 1,
+		4 << 20,
+		4<<20 + 1,
+		8 << 20,
+		12<<20 + 37,
+		20 << 20,
 	}
 
-	if n != 4<<20 {
-		t.Fatalf("first read: got %d bytes, want %d", n, 4<<20)
-	}
+	for _, fileSize := range sizes {
+		t.Run("", func(t *testing.T) {
+			data := make([]byte, fileSize)
+			for i := range data {
+				data[i] = byte(i % 251)
+			}
 
-	h := &contentHandle{rc: rc, fileSize: fileSize, bytesRead: int64(n)}
+			rc := newReadSeekCloser(data)
+			seeker, ok := rc.(io.Seeker)
+			if !ok {
+				t.Fatal("readSeekCloser must preserve io.Seeker")
+			}
 
-	offset := int64(n)
+			chunkSize := 4 << 20
+			var totalRead int64
+			buf := make([]byte, chunkSize)
 
-	n, err = io.ReadFull(h.rc, buf)
-	if err != nil && err != io.ErrUnexpectedEOF {
-		t.Fatalf("second read: %v", err)
-	}
+			for totalRead < fileSize {
+				remaining := fileSize - totalRead
+				reqLen := min(int64(chunkSize), remaining)
 
-	h.bytesRead += int64(n)
+				if _, err := seeker.Seek(totalRead, io.SeekStart); err != nil {
+					t.Fatalf("seek to %d: %v", totalRead, err)
+				}
 
-	if h.bytesRead != fileSize {
-		t.Fatalf("total read: %d, want %d", h.bytesRead, fileSize)
-	}
+				n, err := io.ReadFull(rc, buf[:reqLen])
+				if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+					t.Fatalf("read at %d: %v", totalRead, err)
+				}
 
-	if offset != 4<<20 {
-		t.Fatalf("offset mismatch: %d", offset)
+				if !bytes.Equal(buf[:n], data[totalRead:totalRead+int64(n)]) {
+					t.Fatalf("data mismatch at offset %d", totalRead)
+				}
+
+				totalRead += int64(n)
+			}
+
+			if totalRead != fileSize {
+				t.Fatalf("read %d bytes, want %d", totalRead, fileSize)
+			}
+		})
 	}
 }
