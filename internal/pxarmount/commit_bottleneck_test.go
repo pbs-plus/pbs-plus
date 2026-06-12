@@ -67,7 +67,7 @@ func BenchmarkB1_PerFileWriteEntryRef(b *testing.B) {
 				})
 				for i := range ow.pendingRefs {
 					ce := &ow.pendingRefs[i]
-					_ = ow.emitPxarRef(ce, "/test")
+					_ = ow.emitPxarRefAt(ce, 0)
 				}
 			}
 		})
@@ -644,7 +644,7 @@ func BenchmarkB8_FullCommitWalkMerge(b *testing.B) {
 				})
 				for i := range ow.pendingRefs {
 					ce := &ow.pendingRefs[i]
-					_ = ow.emitPxarRef(ce, "/test")
+					_ = ow.emitPxarRefAt(ce, 0)
 				}
 			}
 		})

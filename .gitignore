@@ -12,3 +12,4 @@ pbs-plus-agent
 /pxar-mount
 internal/pxarmount/journal.db
 pbs-plus-server
+arpc.test

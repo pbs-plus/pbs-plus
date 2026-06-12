@@ -433,7 +433,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		origPayloadIdx, _ = os.ReadFile(mfs.origPpxarDidx)
 	}
 
-	writer, err := transfer.NewRemoteDedupWriter(ctx, session, metaName, payloadName, origPayloadIdx)
+	writer, err := transfer.NewRemoteDedupWriter(ctx, session, metaName, payloadName)
 	if err != nil {
 		return fmt.Errorf("create dedup writer: %w", err)
 	}
@@ -935,14 +935,50 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 
 	reuse := ow.shouldReuse(ow.pendingRefs)
 
+	var baseOffset uint64
+	var batchChunks []reusableChunk
+	var rangeStart uint64
+
+	if reuse && ow.origChunkIndex != nil && len(ow.pendingRefs) > 0 {
+		rangeStart = ow.pendingRefs[0].sortKey
+		rangeEnd := ow.pendingRefs[len(ow.pendingRefs)-1].rangeEnd()
+		if rangeEnd > rangeStart {
+			var ci []reusableChunk
+			var sp, _ uint64
+			ci, sp, _ = lookupDynamicEntries(ow.origChunkIndex, rangeStart, rangeEnd)
+
+			if ow.hasLastChunk && len(ci) > 0 && !ow.lastReusableChunk.sameIndexedChunkAs(&ci[0]) {
+				if err := ow.writer.InjectChunks([]backupproxy.KnownChunkRef{{
+					Digest: ow.lastReusableChunk.digest,
+					Size:   ow.lastReusableChunk.size,
+				}}); err != nil {
+					return fmt.Errorf("inject prev last chunk: %w", err)
+				}
+			}
+
+			if ow.hasLastChunk && len(ci) > 0 && ow.lastReusableChunk.sameIndexedChunkAs(&ci[0]) {
+				used := ow.lastReusableChunk.size - ow.lastReusableChunk.padding
+				if sp > used {
+					sp -= used
+				} else {
+					sp = 0
+				}
+			}
+
+			baseOffset = ow.writer.Encoder().PayloadPosition() + sp
+			batchChunks = ci
+		}
+	}
+
 	for i := range ow.pendingRefs {
 		ce := &ow.pendingRefs[i]
 		var err error
 		if reuse {
+			refOff := baseOffset + (ce.sortKey - rangeStart)
 			if ce.node != nil {
-				err = ow.emitJournalRef(ce, parentRelPath)
+				err = ow.emitJournalRefAt(ce, refOff)
 			} else {
-				err = ow.emitPxarRef(ce, parentRelPath)
+				err = ow.emitPxarRefAt(ce, refOff)
 			}
 		} else {
 			if ce.node != nil {
@@ -956,13 +992,20 @@ func (ow *commitWalkState) flushPendingRefs(parentRelPath string) error {
 		}
 	}
 
-	if reuse && ow.origChunkIndex != nil && len(ow.pendingRefs) > 0 {
-		last := ow.pendingRefs[len(ow.pendingRefs)-1]
-		rangeEnd := last.rangeEnd()
-		if chunks, _, _ := lookupDynamicEntries(ow.origChunkIndex, ow.pendingRefs[0].sortKey, rangeEnd); len(chunks) > 0 {
-			ow.lastReusableChunk = chunks[len(chunks)-1]
-			ow.hasLastChunk = true
+	if reuse && len(batchChunks) > 0 {
+		injected := make([]backupproxy.KnownChunkRef, len(batchChunks))
+		for i := range batchChunks {
+			injected[i] = backupproxy.KnownChunkRef{
+				Digest: batchChunks[i].digest,
+				Size:   batchChunks[i].size,
+			}
 		}
+		if err := ow.writer.InjectChunks(injected); err != nil {
+			return fmt.Errorf("inject chunks: %w", err)
+		}
+
+		ow.lastReusableChunk = batchChunks[len(batchChunks)-1]
+		ow.hasLastChunk = true
 	} else {
 		ow.hasLastChunk = false
 	}
@@ -1054,7 +1097,7 @@ func (ow *commitWalkState) processDeferredDir(dd *deferredDir, parentRelPath str
 	return ow.writer.EndDirectory()
 }
 
-func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string) error {
+func (ow *commitWalkState) emitJournalRefAt(ce *commitEntry, refOffset uint64) error {
 	node := ce.node
 	xattrs := ow.ensureXAttrs(node.ID)
 	meta := nodeToMetadata(node, xattrs)
@@ -1074,10 +1117,10 @@ func (ow *commitWalkState) emitJournalRef(ce *commitEntry, parentRelPath string)
 		entry.FileSize = pxarEntry.FileSize
 	}
 
-	return ow.tryRefOrReencode(entry, pxarEntry, ce.name, node.RedirectTo)
+	return ow.writeRefOrReencode(entry, pxarEntry, ce.name, node.RedirectTo, refOffset)
 }
 
-func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) error {
+func (ow *commitWalkState) emitPxarRefAt(ce *commitEntry, refOffset uint64) error {
 	slim := ce.pxarSlim
 	if slim == nil {
 		return nil
@@ -1095,7 +1138,7 @@ func (ow *commitWalkState) emitPxarRef(ce *commitEntry, parentRelPath string) er
 	}
 
 	clone := ow.clonePxarEntryBuf(pxarEntry, ce.name)
-	return ow.tryRefOrReencode(clone, pxarEntry, ce.name, "")
+	return ow.writeRefOrReencode(clone, pxarEntry, ce.name, "", refOffset)
 }
 
 func (ow *commitWalkState) emitJournalReencode(ce *commitEntry, parentRelPath string) error {
@@ -1244,6 +1287,22 @@ func (ow *commitWalkState) emitBackedFile(node *GraphNode, name, childPath strin
 	if ow.prog != nil {
 		ow.prog.AddFile(fi.Size())
 	}
+	return nil
+}
+
+func (ow *commitWalkState) writeRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.Entry, name, redirectPath string, refOffset uint64) error {
+	if ow.hasLastRefPayload && refOffset <= ow.lastRefPayloadOffset {
+		ow.mfs.debugf("ref %q offset=%d <= lastRef=%d, re-encoding", name, refOffset, ow.lastRefPayloadOffset)
+		return ow.reencodeFromArchive(pxarEntry, entry, name)
+	}
+
+	if err := ow.writer.WriteEntryRef(entry, refOffset); err != nil {
+		ow.mfs.debugf("ref %q offset=%d writer rejected: %v, re-encoding", name, refOffset, err)
+		return ow.reencodeFromArchive(pxarEntry, entry, name)
+	}
+
+	ow.lastRefPayloadOffset = refOffset
+	ow.hasLastRefPayload = true
 	return nil
 }
 

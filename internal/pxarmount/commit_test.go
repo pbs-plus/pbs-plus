@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/backupproxy"
+	"github.com/pbs-plus/pxar/encoder"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 	"golang.org/x/sys/unix"
@@ -61,8 +63,10 @@ func (w *trackingWriter) EndDirectory() error {
 	w.ops = append(w.ops, "enddir")
 	return nil
 }
-func (w *trackingWriter) Finish() error { return nil }
-func (w *trackingWriter) Close() error  { return nil }
+func (w *trackingWriter) InjectChunks(_ []backupproxy.KnownChunkRef) error { return nil }
+func (w *trackingWriter) Encoder() *encoder.Encoder                        { return nil }
+func (w *trackingWriter) Finish() error                                    { return nil }
+func (w *trackingWriter) Close() error                                     { return nil }
 
 // --- mergeMetaWithPxar ---
 

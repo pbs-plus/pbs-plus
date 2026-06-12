@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/backupproxy"
+	"github.com/pbs-plus/pxar/encoder"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 )
@@ -23,10 +25,12 @@ func (noopWriter) WriteEntryRef(_ *pxar.Entry, _ uint64) error      { return nil
 func (noopWriter) WriteEntryReader(_ *pxar.Entry, _ io.Reader, _ uint64) error {
 	return nil
 }
-func (noopWriter) BeginDirectory(_ string, _ *pxar.Metadata) error { return nil }
-func (noopWriter) EndDirectory() error                             { return nil }
-func (noopWriter) Finish() error                                   { return nil }
-func (noopWriter) Close() error                                    { return nil }
+func (noopWriter) BeginDirectory(_ string, _ *pxar.Metadata) error  { return nil }
+func (noopWriter) EndDirectory() error                              { return nil }
+func (noopWriter) InjectChunks(_ []backupproxy.KnownChunkRef) error { return nil }
+func (noopWriter) Encoder() *encoder.Encoder                        { return nil }
+func (noopWriter) Finish() error                                    { return nil }
+func (noopWriter) Close() error                                     { return nil }
 
 // --- fixtures ---
 
