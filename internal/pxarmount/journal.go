@@ -446,7 +446,7 @@ func (j *Journal) Close() error {
 	return commitErr
 }
 
-func (j *Journal) tx(keys []pebbleSet) error {
+func (j *Journal) tx(keys ...pebbleSet) error {
 	j.mu.Lock()
 	for _, s := range keys {
 		if s.deleteEnd != nil {
@@ -613,14 +613,8 @@ func (j *Journal) createNodeInBatch(keys *[]pebbleSet, n *GraphNode) (int64, err
 	return id, nil
 }
 
-func (j *Journal) updateNodeInBatch(keys *[]pebbleSet, n *GraphNode) {
-	*keys = append(*keys, pebbleSet{key: nodeKey(n.ID), value: encodeNode(n)})
-}
-
 func (j *Journal) UpdateNode(n *GraphNode) error {
-	var keys []pebbleSet
-	j.updateNodeInBatch(&keys, n)
-	return j.tx(keys)
+	return j.tx(pebbleSet{key: nodeKey(n.ID), value: encodeNode(n)})
 }
 
 func (j *Journal) SetHasData(nodeID int64) error {
@@ -638,7 +632,7 @@ func (j *Journal) SetHasData(nodeID int64) error {
 
 	n.HasData = true
 	keys = append(keys, pebbleSet{key: nodeKey(nodeID), value: encodeNode(n)})
-	return j.tx(keys)
+	return j.tx(keys...)
 }
 
 func (j *Journal) getNodeLocked(id int64) (*GraphNode, error) {
@@ -770,7 +764,7 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 }
 
 func (j *Journal) AddWhiteout(parentID int64, name string) error {
-	return j.tx([]pebbleSet{{key: whiteoutKey(parentID, name), value: []byte{1}}})
+	return j.tx(pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
 }
 
 func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
@@ -970,11 +964,11 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 }
 
 func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
-	return j.tx([]pebbleSet{{key: xattrKey(nodeID, name), value: value}})
+	return j.tx(pebbleSet{key: xattrKey(nodeID, name), value: value})
 }
 
 func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
-	return j.tx([]pebbleSet{{key: xattrKey(nodeID, name), delete: true}})
+	return j.tx(pebbleSet{key: xattrKey(nodeID, name), delete: true})
 }
 
 func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellOffAt int64, remaining string, err error) {
@@ -1225,7 +1219,7 @@ func (j *Journal) Clear() error {
 	nodeUpper := append([]byte(prefixNode), 0xFF)
 	keys = append(keys, pebbleSet{key: nextKey, deleteEnd: nodeUpper})
 
-	return j.tx(keys)
+	return j.tx(keys...)
 }
 
 func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {
@@ -1248,7 +1242,7 @@ func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, a
 	childEdgeUpper[len(childEdgePrefix)] = 0xFF
 	keys = append(keys, pebbleSet{key: childEdgePrefix, deleteEnd: childEdgeUpper})
 
-	return j.tx(keys)
+	return j.tx(keys...)
 }
 
 func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *GraphNode, whiteout bool) (int64, error) {
@@ -1261,7 +1255,7 @@ func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *Grap
 	if whiteout {
 		keys = append(keys, pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
 	}
-	return id, j.tx(keys)
+	return id, j.tx(keys...)
 }
 
 func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64, whiteoutOld, whiteoutNew bool) error {
@@ -1305,5 +1299,5 @@ func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent
 		keys = append(keys, pebbleSet{key: whiteoutKey(newParent, newName), value: []byte{1}})
 	}
 
-	return j.tx(keys)
+	return j.tx(keys...)
 }
