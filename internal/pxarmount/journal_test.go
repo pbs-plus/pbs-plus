@@ -1658,3 +1658,41 @@ func TestCloseIdempotent(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+func BenchmarkSetXAttr(b *testing.B) {
+	dir := b.TempDir()
+	j, err := OpenJournal(filepath.Join(dir, "j"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer j.Close()
+
+	val := make([]byte, 512)
+	for i := range val {
+		val[i] = byte(i)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := j.SetXAttr(1, fmt.Sprintf("user.attr-%d", i%100), val); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEnsureNodePath(b *testing.B) {
+	dir := b.TempDir()
+	j, err := OpenJournal(filepath.Join(dir, "j"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer j.Close()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		n := &GraphNode{Kind: NodeFile, Mode: 0o644}
+		if _, err := j.EnsureNodePath(fmt.Sprintf("/dir%d/file%d.txt", i%100, i), n, false); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

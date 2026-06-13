@@ -507,28 +507,7 @@ func (j *Journal) Close() error {
 	return commitErr
 }
 
-// copySet returns a deep copy of s so the journal owns its own buffers.
-func copySet(s pebbleSet) pebbleSet {
-	if s.key != nil {
-		cp := make([]byte, len(s.key))
-		copy(cp, s.key)
-		s.key = cp
-	}
-	if s.value != nil {
-		cp := make([]byte, len(s.value))
-		copy(cp, s.value)
-		s.value = cp
-	}
-	if s.deleteEnd != nil {
-		cp := make([]byte, len(s.deleteEnd))
-		copy(cp, s.deleteEnd)
-		s.deleteEnd = cp
-	}
-	return s
-}
-
 func (j *Journal) txOne(s pebbleSet) error {
-	s = copySet(s)
 	j.mu.Lock()
 	if s.deleteEnd != nil {
 		ks, ke := bytesToString(s.key), bytesToString(s.deleteEnd)
@@ -558,9 +537,6 @@ func (j *Journal) txOne(s pebbleSet) error {
 }
 
 func (j *Journal) tx(keys ...pebbleSet) error {
-	for i := range keys {
-		keys[i] = copySet(keys[i])
-	}
 	j.mu.Lock()
 	for _, s := range keys {
 		if s.deleteEnd != nil {
@@ -663,7 +639,7 @@ func (j *Journal) drainAllLocked() {
 		return
 	}
 	pending := j.pending
-	j.pending = nil
+	j.pending = j.pending[:0] // reuse backing array
 	j.overlay = make(map[string][]byte)
 
 	pb := j.db.NewBatch()
@@ -703,7 +679,7 @@ func (j *Journal) drainAllLocked() {
 }
 
 func (j *Journal) overlayGet(key []byte) ([]byte, bool) {
-	v, ok := j.overlay[string(key)]
+	v, ok := j.overlay[bytesToString(key)]
 	if !ok {
 		return nil, false
 	}
@@ -1099,8 +1075,12 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 	return xattrs, nil
 }
 
+// SetXAttr stores an extended attribute. The caller's value slice is copied
+// because go-fuse reuses its data buffer across FUSE operations.
 func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
-	return j.txOne(pebbleSet{key: xattrKey(nodeID, name), value: value})
+	cp := make([]byte, len(value))
+	copy(cp, value)
+	return j.txOne(pebbleSet{key: xattrKey(nodeID, name), value: cp})
 }
 
 func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
@@ -1327,36 +1307,30 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 }
 
 func (j *Journal) Clear() error {
-	j.mu.Lock()
-	j.overlay = make(map[string][]byte)
 	root := &GraphNode{
 		ID:         1,
 		Kind:       NodeDir,
 		Mode:       16877,
 		RedirectTo: "/",
 	}
-	j.overlay[string(nodeKey(1))] = encodeNode(root)
+	rootKey := nodeKey(1)
+	rootEnc := encodeNode(root)
+	rootCsum := checksumKey(1)
+
+	j.mu.Lock()
+	j.overlay = make(map[string][]byte, 1)
+	j.overlay[bytesToString(rootKey)] = rootEnc
 	j.mu.Unlock()
 
-	var keys []pebbleSet
-	keys = append(keys, pebbleSet{key: []byte(prefixWhiteout), deleteEnd: append([]byte(prefixWhiteout), 0xFF)})
-	keys = append(keys, pebbleSet{key: []byte(prefixXattr), deleteEnd: append([]byte(prefixXattr), 0xFF)})
-	keys = append(keys, pebbleSet{key: []byte(prefixEdge), deleteEnd: append([]byte(prefixEdge), 0xFF)})
-	rootEnc := encodeNode(root)
-	keys = append(keys, pebbleSet{key: nodeKey(1), value: rootEnc})
-	keys = append(keys, pebbleSet{key: checksumKey(1), value: encodeUint32(fnv32(rootEnc))})
-
-	nextKey := make([]byte, len(nodeKey(1))+1)
-	copy(nextKey, nodeKey(1))
-	nextKey[len(nodeKey(1))] = 0xFF
-	nodeUpper := append([]byte(prefixNode), 0xFF)
-	keys = append(keys, pebbleSet{key: nextKey, deleteEnd: nodeUpper})
-
-	csumNext := make([]byte, len(checksumKey(1))+1)
-	copy(csumNext, checksumKey(1))
-	csumNext[len(checksumKey(1))] = 0xFF
-	csumUpper := append([]byte(prefixCsum), 0xFF)
-	keys = append(keys, pebbleSet{key: csumNext, deleteEnd: csumUpper})
+	keys := []pebbleSet{
+		{key: []byte(prefixWhiteout), deleteEnd: append([]byte(prefixWhiteout), 0xFF)},
+		{key: []byte(prefixXattr), deleteEnd: append([]byte(prefixXattr), 0xFF)},
+		{key: []byte(prefixEdge), deleteEnd: append([]byte(prefixEdge), 0xFF)},
+		{key: rootKey, value: rootEnc},
+		{key: rootCsum, value: encodeUint32(fnv32(rootEnc))},
+		{key: append(append([]byte(nil), rootKey...), 0xFF), deleteEnd: append([]byte(prefixNode), 0xFF)},
+		{key: append(append([]byte(nil), rootCsum...), 0xFF), deleteEnd: append([]byte(prefixCsum), 0xFF)},
+	}
 
 	if err := j.tx(keys...); err != nil {
 		return err
