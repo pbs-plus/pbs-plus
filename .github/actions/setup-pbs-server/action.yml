@@ -21,7 +21,7 @@ runs:
           -v ./test:/mnt/test \
           --tmpfs /run/proxmox-backup:size=64M \
           --cap-add SYS_ADMIN --device /dev/fuse \
-          --security-opt apparmor:unconfined \
+          --security-opt apparmor:unconfined --security-opt seccomp=unconfined \
           pbs-plus:test
 
     - name: Wait for PBS Plus

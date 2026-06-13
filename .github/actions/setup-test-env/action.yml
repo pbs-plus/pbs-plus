@@ -25,5 +25,22 @@ runs:
       shell: bash
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential
+        sudo apt-get install -y fuse3 libfuse3-dev uuid-dev libsystemd-dev libacl1-dev pkg-config build-essential kmod
         go mod download
+
+    - name: Enable FUSE over io_uring (host kernel)
+      # Best-effort: flip fuse.enable_uring so FUSE mounts can negotiate io_uring.
+      # Idempotent no-op on kernels without the parameter (< 6.14); go-fuse falls
+      # back to the classic read/write loop automatically.
+      shell: bash
+      run: |
+        set +e
+        sudo modprobe fuse 2>/dev/null
+        param="/sys/module/fuse/parameters/enable_uring"
+        if [ -e "$param" ]; then
+          echo "kernel exposes fuse.enable_uring; enabling it"
+          [ -w "$param" ] && echo 1 | sudo tee "$param" >/dev/null 2>&1 || true
+          echo "options fuse enable_uring=1" | sudo tee /etc/modprobe.d/pbs-plus-fuse-io-uring.conf >/dev/null
+        else
+          echo "kernel lacks fuse.enable_uring (< 6.14); leaving FUSE on the classic transport"
+        fi

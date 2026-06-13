@@ -34,12 +34,13 @@ func MountFuse(
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug:              false,
-			FsName:             fsName,
-			Name:               "pbsagent",
-			AllowOther:         true,
-			DisableXAttrs:      true,
-			DisableReadDirPlus: true,
+			Debug:                 false,
+			FsName:                fsName,
+			Name:                  "pbsagent",
+			AllowOther:            true,
+			DisableXAttrs:         true,
+			DisableReadDirPlus:    true,
+			EnableFuseOverIoUring: true,
 			Options: []string{
 				"ro",
 				"allow_other",

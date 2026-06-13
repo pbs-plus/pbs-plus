@@ -35,12 +35,13 @@ func MountFuse(mountpoint string, fsName string, afs *ARPCFS) (*fuse.Server, err
 
 	options := &fs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug:              false,
-			FsName:             fsName,
-			Name:               "pbsagent",
-			AllowOther:         true,
-			DisableXAttrs:      false,
-			DisableReadDirPlus: true,
+			Debug:                 false,
+			FsName:                fsName,
+			Name:                  "pbsagent",
+			AllowOther:            true,
+			DisableXAttrs:         false,
+			DisableReadDirPlus:    true,
+			EnableFuseOverIoUring: true,
 			Options: []string{
 				"ro",
 				"allow_other",
