@@ -1044,9 +1044,6 @@ func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellO
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 
-	snap := j.db.NewSnapshot()
-	defer func() { _ = snap.Close() }()
-
 	curID := int64(1)
 	var pxarPrefix strings.Builder
 	pxarPrefix.WriteByte('/')
@@ -1269,7 +1266,7 @@ func (j *Journal) Clear() error {
 }
 
 func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {
-	var keys []pebbleSet
+	keys := make([]pebbleSet, 0, 5)
 	keys = append(keys, pebbleSet{key: edgeKey(parentID, name), delete: true})
 	if addWhiteout {
 		keys = append(keys, pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
@@ -1292,7 +1289,7 @@ func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, a
 }
 
 func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *GraphNode, whiteout bool) (int64, error) {
-	var keys []pebbleSet
+	keys := make([]pebbleSet, 0, 3)
 	id, err := j.createNodeInBatch(&keys, n)
 	if err != nil {
 		return 0, err
@@ -1305,7 +1302,7 @@ func (j *Journal) CreateNodeEdgeAndWhiteout(parentID int64, name string, n *Grap
 }
 
 func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent int64, newName string, replaceDestNode int64, whiteoutOld, whiteoutNew bool) error {
-	var keys []pebbleSet
+	keys := make([]pebbleSet, 0, 8)
 	keys = append(keys, pebbleSet{key: whiteoutKey(newParent, newName), delete: true})
 
 	if replaceDestNode != 0 {
