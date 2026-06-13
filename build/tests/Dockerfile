@@ -17,6 +17,35 @@ COPY --from=builder /build/pxar-mount /usr/bin/pxar-mount
 
 RUN chmod 0755 /usr/bin/pbs-plus
 
+# FUSE over io_uring support: provide modprobe and bake the module parameter
+# config so FUSE mounts (pxar-mount, etc.) can negotiate io_uring when the
+# host kernel (>= 6.14) supports it. The parameter is shared with the host
+# kernel (containers share the kernel), so flipping it here enables it host-wide;
+# go-fuse falls back to the classic read/write loop when unsupported.
+RUN apt-get update -y && apt-get install -y --no-install-recommends kmod && \
+    rm -rf /var/lib/apt/lists/* && \
+    install -d -m 0755 /etc/modprobe.d && \
+    printf '%s\n' \
+      '# Managed by pbs-plus: enable FUSE over io_uring (kernel >= 6.14).' \
+      '# Hosts without support fall back to the classic read/write transport.' \
+      'options fuse enable_uring=1' \
+      > /etc/modprobe.d/pbs-plus-fuse-io-uring.conf
+
+# Enable fuse.enable_uring live at container start (best-effort, no-op when the
+# kernel lacks the parameter).
+RUN install -d -m 0755 /etc/s6-overlay/scripts && \
+    printf '%s\n' \
+      '#!/command/with-contenv bash' \
+      'set +e' \
+      'modprobe fuse 2>/dev/null' \
+      'param="/sys/module/fuse/parameters/enable_uring"' \
+      'if [ -e "$param" ] && [ -w "$param" ]; then' \
+      '  echo 1 > "$param" 2>/dev/null' \
+      'fi' \
+      'exit 0' \
+      > /etc/s6-overlay/scripts/enable-fuse-io-uring.sh && \
+    chmod +x /etc/s6-overlay/scripts/enable-fuse-io-uring.sh
+
 # Create pbs-plus configuration directory
 RUN install -d -m 0755 -o root -g root /etc/proxmox-backup/pbs-plus
 
