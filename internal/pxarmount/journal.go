@@ -52,8 +52,8 @@ const (
 	prefixCsum     = "c:"
 )
 
-const schemaVersion = 1
 const commitInterval = 5 * time.Second
+const schemaVersion = 1
 
 type journalOp struct {
 	s    pebbleSet
@@ -67,18 +67,14 @@ type pebbleSet struct {
 	deleteEnd []byte
 }
 
-const pendingRingCap = 256
-
 type Journal struct {
 	db         *pebble.DB
 	mu         sync.RWMutex
 	nextNodeID atomic.Int64
 
-	overlay     map[string][]byte
-	pendingRing [pendingRingCap]journalOp
-	pendingHead atomic.Uint64
-	pendingTail uint64
-	commitErr   error
+	overlay   map[string][]byte
+	pending   []journalOp
+	commitErr error
 
 	commitCh chan struct{}
 	stopCh   chan struct{}
@@ -190,13 +186,11 @@ func encodeNode(n *GraphNode) []byte {
 }
 
 func (j *Journal) pushPendingOne(s pebbleSet) {
-	h := j.pendingHead.Add(1) - 1
-	j.pendingRing[h%pendingRingCap] = journalOp{s: s}
+	j.pending = append(j.pending, journalOp{s: s})
 }
 
 func (j *Journal) pushPendingMany(keys []pebbleSet) {
-	h := j.pendingHead.Add(1) - 1
-	j.pendingRing[h%pendingRingCap] = journalOp{keys: keys}
+	j.pending = append(j.pending, journalOp{keys: keys})
 }
 
 func (j *Journal) verifyChecksum(id int64, data []byte) error {
@@ -513,7 +507,28 @@ func (j *Journal) Close() error {
 	return commitErr
 }
 
+// copySet returns a deep copy of s so the journal owns its own buffers.
+func copySet(s pebbleSet) pebbleSet {
+	if s.key != nil {
+		cp := make([]byte, len(s.key))
+		copy(cp, s.key)
+		s.key = cp
+	}
+	if s.value != nil {
+		cp := make([]byte, len(s.value))
+		copy(cp, s.value)
+		s.value = cp
+	}
+	if s.deleteEnd != nil {
+		cp := make([]byte, len(s.deleteEnd))
+		copy(cp, s.deleteEnd)
+		s.deleteEnd = cp
+	}
+	return s
+}
+
 func (j *Journal) txOne(s pebbleSet) error {
+	s = copySet(s)
 	j.mu.Lock()
 	if s.deleteEnd != nil {
 		ks, ke := bytesToString(s.key), bytesToString(s.deleteEnd)
@@ -529,7 +544,7 @@ func (j *Journal) txOne(s pebbleSet) error {
 	}
 	j.pushPendingOne(s)
 
-	drain := j.pendingHead.Load()-j.pendingTail >= 64
+	drain := len(j.pending) >= 64
 	j.mu.Unlock()
 
 	if drain {
@@ -543,6 +558,9 @@ func (j *Journal) txOne(s pebbleSet) error {
 }
 
 func (j *Journal) tx(keys ...pebbleSet) error {
+	for i := range keys {
+		keys[i] = copySet(keys[i])
+	}
 	j.mu.Lock()
 	for _, s := range keys {
 		if s.deleteEnd != nil {
@@ -564,7 +582,7 @@ func (j *Journal) tx(keys ...pebbleSet) error {
 		j.pushPendingMany(keys)
 	}
 
-	drain := j.pendingHead.Load()-j.pendingTail >= 64
+	drain := len(j.pending) >= 64
 	j.mu.Unlock()
 
 	if drain {
@@ -586,7 +604,7 @@ func (j *Journal) Sync() error {
 	go func() {
 		for {
 			j.mu.Lock()
-			hasPending := j.pendingHead.Load() > j.pendingTail
+			hasPending := len(j.pending) > 0
 			j.mu.Unlock()
 			if !hasPending {
 				close(done)
@@ -640,18 +658,16 @@ func (j *Journal) commitLoop() {
 
 func (j *Journal) drainAllLocked() {
 	j.mu.Lock()
-	if j.pendingHead.Load() == j.pendingTail {
+	if len(j.pending) == 0 {
 		j.mu.Unlock()
 		return
 	}
-	tail := j.pendingTail
-	head := j.pendingHead.Load()
-	j.pendingTail = head
+	pending := j.pending
+	j.pending = nil
 	j.overlay = make(map[string][]byte)
 
 	pb := j.db.NewBatch()
-	for i := tail; i < head; i++ {
-		op := j.pendingRing[i%pendingRingCap]
+	for _, op := range pending {
 		if len(op.keys) > 0 {
 			for _, s := range op.keys {
 				if s.deleteEnd != nil {
@@ -1297,7 +1313,7 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 	}
 	j.pushPendingMany(keys)
 
-	drain := j.pendingHead.Load()-j.pendingTail >= 64
+	drain := len(j.pending) >= 64
 	j.mu.Unlock()
 
 	if drain {
@@ -1342,7 +1358,10 @@ func (j *Journal) Clear() error {
 	csumUpper := append([]byte(prefixCsum), 0xFF)
 	keys = append(keys, pebbleSet{key: csumNext, deleteEnd: csumUpper})
 
-	return j.tx(keys...)
+	if err := j.tx(keys...); err != nil {
+		return err
+	}
+	return j.Sync()
 }
 
 func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {

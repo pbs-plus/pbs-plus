@@ -1590,12 +1590,13 @@ func TestConcurrentDrainWriteHole(t *testing.T) {
 	defer cleanup()
 
 	var writeIdx atomic.Int64
+	var completedIdx atomic.Int64
 	var misses atomic.Int64
 
 	done := make(chan struct{})
 	readerDone := make(chan struct{})
 
-	// Reader: polls ResolvePath for the latest written path in a tight loop.
+	// Reader: polls ResolvePath for the latest completed path in a tight loop.
 	go func() {
 		defer close(readerDone)
 		for {
@@ -1604,26 +1605,15 @@ func TestConcurrentDrainWriteHole(t *testing.T) {
 				return
 			default:
 			}
-			idx := writeIdx.Load()
+			idx := completedIdx.Load()
 			if idx == 0 {
 				time.Sleep(time.Microsecond)
 				continue
 			}
-			// Check a range of recent paths. The writer increments
-			// writeIdx before EnsureNodePath completes, so the newest
-			// idx may be in-flight. Scanning 128 entries back ensures
-			// we only check fully-committed paths.
-			for offset := range int64(128) {
-				checkIdx := idx - offset
-				if checkIdx <= 0 {
-					break
-				}
-				path := fmt.Sprintf("/hole/leaf-%d", checkIdx)
-				nodeID, _, fellOffAt, remaining, err := j.ResolvePath(path)
-				if err != nil || nodeID == 0 || fellOffAt != 0 || remaining != "" {
-					misses.Add(1)
-					break
-				}
+			path := fmt.Sprintf("/hole/leaf-%d", idx)
+			nodeID, _, fellOffAt, remaining, err := j.ResolvePath(path)
+			if err != nil || nodeID == 0 || fellOffAt != 0 || remaining != "" {
+				misses.Add(1)
 			}
 		}
 	}()
@@ -1631,15 +1621,15 @@ func TestConcurrentDrainWriteHole(t *testing.T) {
 	// Writer: creates nodes rapidly.
 	start := time.Now()
 	for time.Since(start) < 2*time.Second {
-		newIdx := writeIdx.Add(1)
-		path := fmt.Sprintf("/hole/leaf-%d", newIdx)
 		node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+		path := fmt.Sprintf("/hole/leaf-%d", writeIdx.Add(1))
 		// EnsureNodePath with no whiteout.
 		if _, err := j.EnsureNodePath(path, node, false); err != nil {
 			t.Errorf("EnsureNodePath(%q): %v", path, err)
 		}
+		completedIdx.Store(writeIdx.Load())
 		// Periodically force a drain to trigger the write-hole window.
-		if newIdx%16 == 0 {
+		if writeIdx.Load()%16 == 0 {
 			_ = j.Sync()
 		}
 	}
