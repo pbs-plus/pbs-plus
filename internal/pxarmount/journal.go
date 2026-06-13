@@ -648,7 +648,6 @@ func (j *Journal) drainAllLocked() {
 	head := j.pendingHead.Load()
 	j.pendingTail = head
 	j.overlay = make(map[string][]byte)
-	j.mu.Unlock()
 
 	pb := j.db.NewBatch()
 	for i := tail; i < head; i++ {
@@ -682,10 +681,9 @@ func (j *Journal) drainAllLocked() {
 	err := pb.Commit(pebble.Sync)
 	_ = pb.Close()
 	if err != nil {
-		j.mu.Lock()
 		j.commitErr = err
-		j.mu.Unlock()
 	}
+	j.mu.Unlock()
 }
 
 func (j *Journal) overlayGet(key []byte) ([]byte, bool) {

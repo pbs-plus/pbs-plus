@@ -1524,6 +1524,136 @@ func TestConcurrentEnsureNodePathSharedIntermediate(t *testing.T) {
 
 // --- Close Idempotency ---
 
+// TestDrainWriteHole verifies that data written via the overlay is
+// visible during and after a drain. The drain clears the overlay, but
+// the pending data must be committed to Pebble BEFORE the overlay is
+// cleared so that readers falling back to Pebble never see a gap.
+func TestDrainWriteHole(t *testing.T) {
+	j, cleanup := testJournal(t)
+	defer cleanup()
+
+	// Create a node and edge — these go into overlay + pending ring.
+	node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+	id, err := j.EnsureNodePath("/ref/drain-test.txt", node, false)
+	if err != nil {
+		t.Fatalf("EnsureNodePath: %v", err)
+	}
+	_ = id
+
+	// Verify the node is resolvable (in overlay).
+	nodeID, _, fellOffAt, remaining, err := j.ResolvePath("/ref/drain-test.txt")
+	if err != nil {
+		t.Fatalf("ResolvePath before drain: %v", err)
+	}
+	if nodeID == 0 || fellOffAt != 0 || remaining != "" {
+		t.Fatal("expected full match before drain")
+	}
+
+	// Force drain via Sync (which blocks until pending ring is empty).
+	if err := j.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	// After drain, the node must still be resolvable via Pebble.
+	nodeID, _, fellOffAt, remaining, err = j.ResolvePath("/ref/drain-test.txt")
+	if err != nil {
+		t.Fatalf("ResolvePath after drain: %v", err)
+	}
+	if nodeID == 0 || fellOffAt != 0 || remaining != "" {
+		t.Fatal("expected full match after drain (data lost in write-hole)")
+	}
+
+	// Create another node and Sync again to validate repeated drains.
+	node2 := &GraphNode{Kind: NodeFile, Mode: 0o644}
+	_, err = j.EnsureNodePath("/ref/drain-test2.txt", node2, false)
+	if err != nil {
+		t.Fatalf("EnsureNodePath 2: %v", err)
+	}
+	if err := j.Sync(); err != nil {
+		t.Fatalf("Sync 2: %v", err)
+	}
+	nodeID, _, _, _, err = j.ResolvePath("/ref/drain-test2.txt")
+	if err != nil {
+		t.Fatalf("ResolvePath after drain 2: %v", err)
+	}
+	if nodeID == 0 {
+		t.Fatal("expected full match after second drain")
+	}
+}
+
+// TestConcurrentDrainWriteHole stresses the drain path under concurrent
+// readers to catch the write-hole where the overlay is cleared before
+// the Pebble batch commits. We continuously create nodes and poll
+// ResolvePath from a reader goroutine while forcing periodic drains.
+func TestConcurrentDrainWriteHole(t *testing.T) {
+	j, cleanup := testJournal(t)
+	defer cleanup()
+
+	var writeIdx atomic.Int64
+	var misses atomic.Int64
+
+	done := make(chan struct{})
+	readerDone := make(chan struct{})
+
+	// Reader: polls ResolvePath for the latest written path in a tight loop.
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			idx := writeIdx.Load()
+			if idx == 0 {
+				time.Sleep(time.Microsecond)
+				continue
+			}
+			// Check a range of recent paths. The writer increments
+			// writeIdx before EnsureNodePath completes, so the newest
+			// idx may be in-flight. Scanning 128 entries back ensures
+			// we only check fully-committed paths.
+			for offset := range int64(128) {
+				checkIdx := idx - offset
+				if checkIdx <= 0 {
+					break
+				}
+				path := fmt.Sprintf("/hole/leaf-%d", checkIdx)
+				nodeID, _, fellOffAt, remaining, err := j.ResolvePath(path)
+				if err != nil || nodeID == 0 || fellOffAt != 0 || remaining != "" {
+					misses.Add(1)
+					break
+				}
+			}
+		}
+	}()
+
+	// Writer: creates nodes rapidly.
+	start := time.Now()
+	for time.Since(start) < 2*time.Second {
+		newIdx := writeIdx.Add(1)
+		path := fmt.Sprintf("/hole/leaf-%d", newIdx)
+		node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+		// EnsureNodePath with no whiteout.
+		if _, err := j.EnsureNodePath(path, node, false); err != nil {
+			t.Errorf("EnsureNodePath(%q): %v", path, err)
+		}
+		// Periodically force a drain to trigger the write-hole window.
+		if newIdx%16 == 0 {
+			_ = j.Sync()
+		}
+	}
+
+	_ = j.Sync()
+
+	close(done)
+	<-readerDone
+
+	if n := misses.Load(); n > 0 {
+		t.Errorf("reader missed %d ResolvePath results during concurrent drain (write-hole)", n)
+	}
+}
+
 func TestCloseIdempotent(t *testing.T) {
 	dir, err := os.MkdirTemp("", "pxar-journal-close-*")
 	if err != nil {
