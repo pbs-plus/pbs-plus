@@ -37,8 +37,19 @@ INIT_SOCKET="/var/lib/archive-outpost/sockets/init-test.sock"
 INIT_MOUNT="/mnt/archive-mounts/init-test"
 INIT_PASS_DIR="/tmp/passthrough/init-test"
 
-# init mode writes snapshots into its own backup group
-INIT_HOST_DIR="${PBS_STORE}/ns/${INIT_NAMESPACE}/host/${INIT_BACKUP_ID}"
+# init mode writes snapshots into its own backup group. Nested namespaces are
+# stored by PBS as ns/<a>/ns/<b>/... so build the host dir accordingly.
+ns_to_host_dir() {
+	local base=$1 ns=$2 bid=$3
+	local cur="$base"
+	local IFS=/
+	for p in $ns; do
+		[ -z "$p" ] && continue
+		cur="$cur/ns/$p"
+	done
+	echo "$cur/host/$bid"
+}
+INIT_HOST_DIR=$(ns_to_host_dir "$PBS_STORE" "$INIT_NAMESPACE" "$INIT_BACKUP_ID")
 INIT_MPXAR_PATTERN="${INIT_BACKUP_ID}.mpxar.didx"
 INIT_PPXAR_PATTERN="${INIT_BACKUP_ID}.ppxar.didx"
 
