@@ -686,8 +686,6 @@ func (j *Journal) UpdateNode(n *GraphNode) error {
 }
 
 func (j *Journal) SetHasData(nodeID int64) error {
-	var keys []pebbleSet
-
 	j.mu.Lock()
 	n, err := j.getNodeLocked(nodeID)
 	j.mu.Unlock()
@@ -699,8 +697,7 @@ func (j *Journal) SetHasData(nodeID int64) error {
 	}
 
 	n.HasData = true
-	keys = append(keys, pebbleSet{key: nodeKey(nodeID), value: encodeNode(n)})
-	return j.tx(keys...)
+	return j.txOne(pebbleSet{key: nodeKey(nodeID), value: encodeNode(n)})
 }
 
 func (j *Journal) getNodeLocked(id int64) (*GraphNode, error) {
@@ -1239,26 +1236,9 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 		}
 	}
 
-	for _, s := range keys {
-		if s.delete {
-			j.overlay[bytesToString(s.key)] = nil
-		} else {
-			j.overlay[bytesToString(s.key)] = s.value
-		}
-	}
-	j.pushPendingMany(keys)
-
-	drain := j.pendingHead.Load()-j.pendingTail >= 64
 	j.mu.Unlock()
 
-	if drain {
-		select {
-		case j.commitCh <- struct{}{}:
-		default:
-		}
-	}
-
-	return nodeID, nil
+	return nodeID, j.tx(keys...)
 }
 
 func (j *Journal) Clear() error {
