@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
@@ -179,6 +180,13 @@ func encodeNode(n *GraphNode) []byte {
 	off += 4
 	copy(b[off:], n.RedirectTo)
 	return b
+}
+
+func bytesToString(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(&b[0], len(b))
 }
 
 func decodeNode(data []byte, id int64) *GraphNode {
@@ -450,17 +458,16 @@ func (j *Journal) tx(keys ...pebbleSet) error {
 	j.mu.Lock()
 	for _, s := range keys {
 		if s.deleteEnd != nil {
+			ks, ke := bytesToString(s.key), bytesToString(s.deleteEnd)
 			for k := range j.overlay {
-				if k >= string(s.key) && k < string(s.deleteEnd) {
+				if k >= ks && k < ke {
 					delete(j.overlay, k)
 				}
 			}
 		} else if s.delete {
-			j.overlay[string(s.key)] = nil
+			j.overlay[bytesToString(s.key)] = nil
 		} else {
-			cp := make([]byte, len(s.value))
-			copy(cp, s.value)
-			j.overlay[string(s.key)] = cp
+			j.overlay[bytesToString(s.key)] = s.value
 		}
 	}
 	j.pending = append(j.pending, journalOp{keys: keys})
@@ -1173,11 +1180,9 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 
 	for _, s := range keys {
 		if s.delete {
-			j.overlay[string(s.key)] = nil
+			j.overlay[bytesToString(s.key)] = nil
 		} else {
-			cp := make([]byte, len(s.value))
-			copy(cp, s.value)
-			j.overlay[string(s.key)] = cp
+			j.overlay[bytesToString(s.key)] = s.value
 		}
 	}
 	j.pending = append(j.pending, journalOp{keys: keys})
