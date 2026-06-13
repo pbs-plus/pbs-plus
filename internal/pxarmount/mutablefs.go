@@ -172,9 +172,10 @@ func (fs *MutableFS) InitMutableRoot() error {
 //
 // Directories are kept (they may be parents of tracked files and are cheap).
 func (fs *MutableFS) ReconcileMutableDir() error {
-	return filepath.Walk(fs.mutableDir, func(absPath string, info os.FileInfo, err error) error {
+	updated := false
+	err := filepath.Walk(fs.mutableDir, func(absPath string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil // skip errors
+			return nil
 		}
 
 		relPath, rerr := filepath.Rel(fs.mutableDir, absPath)
@@ -182,29 +183,22 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 			return nil
 		}
 
-		// Skip root, journal directory, and its contents.
 		if relPath == "." || relPath == JournalDir || strings.HasPrefix(relPath, JournalDir+string(filepath.Separator)) {
 			return nil
 		}
 
-		// Only reconcile files — directories are kept as structural scaffolding.
 		if info.IsDir() {
 			return nil
 		}
 
-		// Convert OS path to FUSE path.
 		fusePath := "/" + filepath.ToSlash(relPath)
 
-		// Resolve through the journal.
 		nodeID, _, _, _, rerr := fs.journal.ResolvePath(fusePath)
 		if rerr != nil {
-			fs.debugf("reconcile: ResolvePath(%q) err: %v", fusePath, rerr)
-			return nil // skip resolution errors
+			return nil
 		}
 
 		if nodeID == 0 {
-			// Not tracked — orphan.
-			fs.debugf("reconcile: removing orphan %q (no node)", fusePath)
 			if err := os.Remove(absPath); err != nil {
 				fs.logNonFatal("reconcile-remove", fusePath, err)
 			}
@@ -217,15 +211,30 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 		}
 
 		if !node.HasData {
-			// Node exists but doesn't expect local data — orphan.
-			fs.debugf("reconcile: removing orphan %q (HasData=false)", fusePath)
 			if err := os.Remove(absPath); err != nil {
 				fs.logNonFatal("reconcile-remove", fusePath, err)
 			}
+			return nil
+		}
+
+		stat := info.Sys().(*syscall.Stat_t)
+		if uint64(stat.Size) != node.Size || stat.Mtim.Nano() != node.MtimeNs {
+			node.Size = uint64(info.Size())
+			node.MtimeNs = info.ModTime().UnixNano()
+			node.CtimeNs = info.ModTime().UnixNano()
+			_ = fs.journal.UpdateNode(node)
+			updated = true
 		}
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if updated {
+		return fs.journal.Sync()
+	}
+	return nil
 }
 
 // --- FUSE Interface ---

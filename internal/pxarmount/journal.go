@@ -49,6 +49,7 @@ const (
 	prefixXattr    = "x:"
 	prefixWhiteout = "w:"
 	prefixMeta     = "m:"
+	prefixCsum     = "c:"
 )
 
 const schemaVersion = 1
@@ -198,6 +199,26 @@ func (j *Journal) pushPendingMany(keys []pebbleSet) {
 	j.pendingRing[h%pendingRingCap] = journalOp{keys: keys}
 }
 
+func (j *Journal) verifyChecksum(id int64, data []byte) error {
+	csumData, closer, err := j.db.Get(checksumKey(id))
+	if err == pebble.ErrNotFound {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closer.Close() }()
+	if len(csumData) < 4 {
+		return nil
+	}
+	expected := binary.LittleEndian.Uint32(csumData)
+	actual := fnv32(data)
+	if expected != actual {
+		return fmt.Errorf("checksum mismatch for node %d: expected %08x, got %08x", id, expected, actual)
+	}
+	return nil
+}
+
 func bytesToString(b []byte) string {
 	if len(b) == 0 {
 		return ""
@@ -236,6 +257,28 @@ func decodeNode(data []byte, id int64) *GraphNode {
 	return n
 }
 
+func checksumKey(id int64) []byte {
+	b := make([]byte, 10)
+	copy(b, prefixCsum)
+	binary.BigEndian.PutUint64(b[2:], uint64(id))
+	return b
+}
+
+func fnv32(data []byte) uint32 {
+	h := uint32(2166136261)
+	for _, b := range data {
+		h ^= uint32(b)
+		h *= 16777619
+	}
+	return h
+}
+
+func encodeUint32(v uint32) []byte {
+	b := make([]byte, 4)
+	binary.LittleEndian.PutUint32(b, v)
+	return b
+}
+
 func encodeInt64(v int64) []byte {
 	b := make([]byte, 8)
 	binary.LittleEndian.PutUint64(b, uint64(v))
@@ -262,7 +305,7 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
-	j := &Journal{db: db, overlay: make(map[string][]byte), commitCh: make(chan struct{}, 1), stopCh: make(chan struct{}), stopped: make(chan struct{})}
+	j := &Journal{db: db, overlay: make(map[string][]byte), commitCh: make(chan struct{}, 4), stopCh: make(chan struct{}), stopped: make(chan struct{})}
 
 	if err := j.initSchema(); err != nil {
 		_ = db.Close()
@@ -628,6 +671,10 @@ func (j *Journal) drainAllLocked() {
 				_ = pb.Delete(s.key, nil)
 			} else {
 				_ = pb.Set(s.key, s.value, nil)
+				if len(s.key) >= 2 && s.key[0] == 'n' && s.key[1] == ':' {
+					nid := int64(binary.BigEndian.Uint64(s.key[2:]))
+					_ = pb.Set(checksumKey(nid), encodeUint32(fnv32(s.value)), nil)
+				}
 			}
 		}
 	}
@@ -671,8 +718,12 @@ func (j *Journal) GetNode(id int64) (*GraphNode, error) {
 		return nil, err
 	}
 	defer func() { _ = closer.Close() }()
-	n := decodeNode(data, id)
-	return n, nil
+
+	if err := j.verifyChecksum(id, data); err != nil {
+		return nil, err
+	}
+
+	return decodeNode(data, id), nil
 }
 
 func (j *Journal) createNodeInBatch(keys *[]pebbleSet, n *GraphNode) (int64, error) {
@@ -716,6 +767,11 @@ func (j *Journal) getNodeLocked(id int64) (*GraphNode, error) {
 		return nil, err
 	}
 	defer func() { _ = closer.Close() }()
+
+	if err := j.verifyChecksum(id, data); err != nil {
+		return nil, err
+	}
+
 	return decodeNode(data, id), nil
 }
 
@@ -1255,7 +1311,9 @@ func (j *Journal) Clear() error {
 	keys = append(keys, pebbleSet{key: []byte(prefixWhiteout), deleteEnd: append([]byte(prefixWhiteout), 0xFF)})
 	keys = append(keys, pebbleSet{key: []byte(prefixXattr), deleteEnd: append([]byte(prefixXattr), 0xFF)})
 	keys = append(keys, pebbleSet{key: []byte(prefixEdge), deleteEnd: append([]byte(prefixEdge), 0xFF)})
-	keys = append(keys, pebbleSet{key: nodeKey(1), value: encodeNode(root)})
+	rootEnc := encodeNode(root)
+	keys = append(keys, pebbleSet{key: nodeKey(1), value: rootEnc})
+	keys = append(keys, pebbleSet{key: checksumKey(1), value: encodeUint32(fnv32(rootEnc))})
 
 	nextKey := make([]byte, len(nodeKey(1))+1)
 	copy(nextKey, nodeKey(1))
@@ -1263,16 +1321,23 @@ func (j *Journal) Clear() error {
 	nodeUpper := append([]byte(prefixNode), 0xFF)
 	keys = append(keys, pebbleSet{key: nextKey, deleteEnd: nodeUpper})
 
+	csumNext := make([]byte, len(checksumKey(1))+1)
+	copy(csumNext, checksumKey(1))
+	csumNext[len(checksumKey(1))] = 0xFF
+	csumUpper := append([]byte(prefixCsum), 0xFF)
+	keys = append(keys, pebbleSet{key: csumNext, deleteEnd: csumUpper})
+
 	return j.tx(keys...)
 }
 
 func (j *Journal) DeleteEdgeAndNode(parentID int64, name string, nodeID int64, addWhiteout bool) error {
-	keys := make([]pebbleSet, 0, 5)
+	keys := make([]pebbleSet, 0, 6)
 	keys = append(keys, pebbleSet{key: edgeKey(parentID, name), delete: true})
 	if addWhiteout {
 		keys = append(keys, pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
 	}
 	keys = append(keys, pebbleSet{key: nodeKey(nodeID), delete: true})
+	keys = append(keys, pebbleSet{key: checksumKey(nodeID), delete: true})
 
 	xaPrefix := xattrPrefix(nodeID)
 	xaUpper := make([]byte, len(xaPrefix)+1)
@@ -1319,6 +1384,7 @@ func (j *Journal) MoveEdgeAndWhiteout(oldParent int64, oldName string, newParent
 		childEdgeUpper[len(childEdgePrefix)] = 0xFF
 		keys = append(keys, pebbleSet{key: childEdgePrefix, deleteEnd: childEdgeUpper})
 		keys = append(keys, pebbleSet{key: nodeKey(replaceDestNode), delete: true})
+		keys = append(keys, pebbleSet{key: checksumKey(replaceDestNode), delete: true})
 	}
 
 	j.mu.Lock()
