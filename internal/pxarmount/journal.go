@@ -52,7 +52,7 @@ const (
 )
 
 const schemaVersion = 1
-const commitInterval = 1 * time.Millisecond
+const commitInterval = 5 * time.Second
 
 type journalOp struct {
 	s    pebbleSet
