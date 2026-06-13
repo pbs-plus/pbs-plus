@@ -52,6 +52,7 @@ const (
 )
 
 const schemaVersion = 1
+const commitInterval = 1 * time.Millisecond
 
 type journalOp struct {
 	s    pebbleSet
@@ -578,7 +579,7 @@ func (j *Journal) Sync() error {
 
 func (j *Journal) commitLoop() {
 	defer close(j.stopped)
-	ticker := time.NewTicker(1 * time.Millisecond)
+	ticker := time.NewTicker(commitInterval)
 	defer ticker.Stop()
 
 	for {
