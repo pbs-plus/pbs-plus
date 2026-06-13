@@ -54,6 +54,7 @@ const (
 const schemaVersion = 1
 
 type journalOp struct {
+	s    pebbleSet
 	keys []pebbleSet
 }
 
@@ -64,14 +65,18 @@ type pebbleSet struct {
 	deleteEnd []byte
 }
 
+const pendingRingCap = 256
+
 type Journal struct {
 	db         *pebble.DB
 	mu         sync.RWMutex
 	nextNodeID atomic.Int64
 
-	overlay   map[string][]byte
-	pending   []journalOp
-	commitErr error
+	overlay     map[string][]byte
+	pendingRing [pendingRingCap]journalOp
+	pendingHead atomic.Uint64
+	pendingTail uint64
+	commitErr   error
 
 	commitCh chan struct{}
 	stopCh   chan struct{}
@@ -180,6 +185,16 @@ func encodeNode(n *GraphNode) []byte {
 	off += 4
 	copy(b[off:], n.RedirectTo)
 	return b
+}
+
+func (j *Journal) pushPendingOne(s pebbleSet) {
+	h := j.pendingHead.Add(1) - 1
+	j.pendingRing[h%pendingRingCap] = journalOp{s: s}
+}
+
+func (j *Journal) pushPendingMany(keys []pebbleSet) {
+	h := j.pendingHead.Add(1) - 1
+	j.pendingRing[h%pendingRingCap] = journalOp{keys: keys}
 }
 
 func bytesToString(b []byte) string {
@@ -454,6 +469,35 @@ func (j *Journal) Close() error {
 	return commitErr
 }
 
+func (j *Journal) txOne(s pebbleSet) error {
+	j.mu.Lock()
+	if s.deleteEnd != nil {
+		ks, ke := bytesToString(s.key), bytesToString(s.deleteEnd)
+		for k := range j.overlay {
+			if k >= ks && k < ke {
+				delete(j.overlay, k)
+			}
+		}
+	} else if s.delete {
+		j.overlay[bytesToString(s.key)] = nil
+	} else {
+		j.overlay[bytesToString(s.key)] = s.value
+	}
+	j.pushPendingOne(s)
+
+	drain := j.pendingHead.Load()-j.pendingTail >= 64
+	j.mu.Unlock()
+
+	if drain {
+		select {
+		case j.commitCh <- struct{}{}:
+		default:
+		}
+	}
+
+	return nil
+}
+
 func (j *Journal) tx(keys ...pebbleSet) error {
 	j.mu.Lock()
 	for _, s := range keys {
@@ -470,9 +514,13 @@ func (j *Journal) tx(keys ...pebbleSet) error {
 			j.overlay[bytesToString(s.key)] = s.value
 		}
 	}
-	j.pending = append(j.pending, journalOp{keys: keys})
+	if len(keys) == 1 {
+		j.pushPendingOne(keys[0])
+	} else {
+		j.pushPendingMany(keys)
+	}
 
-	drain := len(j.pending) >= 64
+	drain := j.pendingHead.Load()-j.pendingTail >= 64
 	j.mu.Unlock()
 
 	if drain {
@@ -488,13 +536,13 @@ func (j *Journal) tx(keys ...pebbleSet) error {
 func (j *Journal) Sync() error {
 	done := make(chan struct{})
 	j.mu.Lock()
-	j.pending = append(j.pending, journalOp{keys: nil})
+	j.pushPendingOne(pebbleSet{})
 	j.mu.Unlock()
 
 	go func() {
 		for {
 			j.mu.Lock()
-			hasPending := len(j.pending) > 0
+			hasPending := j.pendingHead.Load() > j.pendingTail
 			j.mu.Unlock()
 			if !hasPending {
 				close(done)
@@ -548,18 +596,31 @@ func (j *Journal) commitLoop() {
 
 func (j *Journal) drainAllLocked() {
 	j.mu.Lock()
-	if len(j.pending) == 0 {
+	if j.pendingHead.Load() == j.pendingTail {
 		j.mu.Unlock()
 		return
 	}
-	batch := j.pending
-	j.pending = nil
+	tail := j.pendingTail
+	head := j.pendingHead.Load()
+	j.pendingTail = head
 	j.overlay = make(map[string][]byte)
 	j.mu.Unlock()
 
 	pb := j.db.NewBatch()
-	for _, op := range batch {
-		for _, s := range op.keys {
+	for i := tail; i < head; i++ {
+		op := j.pendingRing[i%pendingRingCap]
+		if len(op.keys) > 0 {
+			for _, s := range op.keys {
+				if s.deleteEnd != nil {
+					_ = pb.DeleteRange(s.key, s.deleteEnd, nil)
+				} else if s.delete {
+					_ = pb.Delete(s.key, nil)
+				} else {
+					_ = pb.Set(s.key, s.value, nil)
+				}
+			}
+		} else {
+			s := op.s
 			if s.deleteEnd != nil {
 				_ = pb.DeleteRange(s.key, s.deleteEnd, nil)
 			} else if s.delete {
@@ -621,7 +682,7 @@ func (j *Journal) createNodeInBatch(keys *[]pebbleSet, n *GraphNode) (int64, err
 }
 
 func (j *Journal) UpdateNode(n *GraphNode) error {
-	return j.tx(pebbleSet{key: nodeKey(n.ID), value: encodeNode(n)})
+	return j.txOne(pebbleSet{key: nodeKey(n.ID), value: encodeNode(n)})
 }
 
 func (j *Journal) SetHasData(nodeID int64) error {
@@ -771,7 +832,7 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 }
 
 func (j *Journal) AddWhiteout(parentID int64, name string) error {
-	return j.tx(pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
+	return j.txOne(pebbleSet{key: whiteoutKey(parentID, name), value: []byte{1}})
 }
 
 func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
@@ -971,11 +1032,11 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 }
 
 func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
-	return j.tx(pebbleSet{key: xattrKey(nodeID, name), value: value})
+	return j.txOne(pebbleSet{key: xattrKey(nodeID, name), value: value})
 }
 
 func (j *Journal) RemoveXAttr(nodeID int64, name string) error {
-	return j.tx(pebbleSet{key: xattrKey(nodeID, name), delete: true})
+	return j.txOne(pebbleSet{key: xattrKey(nodeID, name), delete: true})
 }
 
 func (j *Journal) ResolvePath(path string) (nodeID int64, pxarPath string, fellOffAt int64, remaining string, err error) {
@@ -1185,9 +1246,9 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 			j.overlay[bytesToString(s.key)] = s.value
 		}
 	}
-	j.pending = append(j.pending, journalOp{keys: keys})
+	j.pushPendingMany(keys)
 
-	drain := len(j.pending) >= 64
+	drain := j.pendingHead.Load()-j.pendingTail >= 64
 	j.mu.Unlock()
 
 	if drain {
