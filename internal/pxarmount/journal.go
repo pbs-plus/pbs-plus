@@ -1290,9 +1290,26 @@ func (j *Journal) EnsureNodePath(path string, n *GraphNode, whiteout bool) (int6
 		}
 	}
 
+	for _, s := range keys {
+		if s.delete {
+			j.overlay[bytesToString(s.key)] = nil
+		} else {
+			j.overlay[bytesToString(s.key)] = s.value
+		}
+	}
+	j.pushPendingMany(keys)
+
+	drain := j.pendingHead.Load()-j.pendingTail >= 64
 	j.mu.Unlock()
 
-	return nodeID, j.tx(keys...)
+	if drain {
+		select {
+		case j.commitCh <- struct{}{}:
+		default:
+		}
+	}
+
+	return nodeID, nil
 }
 
 func (j *Journal) Clear() error {

@@ -1443,6 +1443,85 @@ func TestJoinPath(t *testing.T) {
 	}
 }
 
+// --- Concurrent EnsureNodePath Shared Intermediate ---
+
+// TestConcurrentEnsureNodePathSharedIntermediate verifies that
+// concurrent EnsureNodePath calls for paths sharing an intermediate
+// directory do not create duplicate intermediate nodes. The overlay
+// write must be visible to subsequent callers under the same lock.
+func TestConcurrentEnsureNodePathSharedIntermediate(t *testing.T) {
+	j, cleanup := testJournal(t)
+	defer cleanup()
+
+	const goroutines = 32
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for i := range goroutines {
+		go func(idx int) {
+			defer wg.Done()
+			path := fmt.Sprintf("/shared/a/leaf-%d", idx)
+			node := &GraphNode{Kind: NodeFile, Mode: 0o644}
+			if _, err := j.EnsureNodePath(path, node, false); err != nil {
+				t.Errorf("EnsureNodePath(%q): %v", path, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Verify only one intermediate node "shared" exists under root.
+	edges, err := j.ListEdges(1)
+	if err != nil {
+		t.Fatalf("ListEdges(root): %v", err)
+	}
+	sharedCount := 0
+	for _, e := range edges {
+		if e.Name == "shared" {
+			sharedCount++
+		}
+	}
+	if sharedCount != 1 {
+		t.Errorf("expected 1 'shared' edge under root, got %d", sharedCount)
+	}
+
+	// Verify only one intermediate node "a" exists under "shared".
+	sharedID, _, _, _, err := j.ResolvePath("/shared")
+	if err != nil {
+		t.Fatalf("ResolvePath(/shared): %v", err)
+	}
+	if sharedID == 0 {
+		t.Fatal("shared dir not found")
+	}
+
+	edges, err = j.ListEdges(sharedID)
+	if err != nil {
+		t.Fatalf("ListEdges(shared): %v", err)
+	}
+	aCount := 0
+	for _, e := range edges {
+		if e.Name == "a" {
+			aCount++
+		}
+	}
+	if aCount != 1 {
+		t.Errorf("expected 1 'a' edge under shared, got %d", aCount)
+	}
+
+	// Verify all leaf paths resolve correctly (not whiteout, full match).
+	for i := range goroutines {
+		path := fmt.Sprintf("/shared/a/leaf-%d", i)
+		nodeID, _, fellOffAt, remaining, err := j.ResolvePath(path)
+		if err != nil {
+			t.Errorf("ResolvePath(%q): %v", path, err)
+			continue
+		}
+		if nodeID == 0 || fellOffAt != 0 || remaining != "" {
+			t.Errorf("ResolvePath(%q): nodeID=%d fellOffAt=%d remaining=%q (want full match)",
+				path, nodeID, fellOffAt, remaining)
+		}
+	}
+}
+
 // --- Close Idempotency ---
 
 func TestCloseIdempotent(t *testing.T) {
