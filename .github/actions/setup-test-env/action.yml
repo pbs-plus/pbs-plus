@@ -29,11 +29,9 @@ runs:
         go mod download
 
     - name: Enable FUSE over io_uring (host kernel)
-      description: >
-        Best-effort: flip the fuse module's enable_uring parameter so FUSE
-        mounts (pxar-mount, agentfs, s3fs) can negotiate io_uring. Idempotent
-        and a no-op on kernels without the parameter; the go-fuse transport
-        falls back to the classic read/write loop automatically.
+      # Best-effort: flip fuse.enable_uring so FUSE mounts can negotiate io_uring.
+      # Idempotent no-op on kernels without the parameter (< 6.14); go-fuse falls
+      # back to the classic read/write loop automatically.
       shell: bash
       run: |
         set +e
