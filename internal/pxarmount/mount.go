@@ -105,9 +105,10 @@ func Serve(cfg MountConfig) {
 	}
 
 	server, err := fuse.NewServer(rawFS, cfg.MountPoint, &fuse.MountOptions{
-		Name:      "pxar-mount",
-		Options:   strings.Split(fuseOpts, ","),
-		EnableAcl: mfs != nil && mfs.acl.HasACLs(),
+		Name:                  "pxar-mount",
+		Options:               strings.Split(fuseOpts, ","),
+		EnableAcl:             mfs != nil && mfs.acl.HasACLs(),
+		EnableFuseOverIoUring: false, // DIAG: disabled to isolate io_uring vs fork
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ error creating FUSE server: %v\n", err)

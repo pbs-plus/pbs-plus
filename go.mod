@@ -132,3 +132,5 @@ require (
 )
 
 tool golang.org/x/tools/cmd/deadcode
+
+replace github.com/hanwen/go-fuse/v2 => github.com/pbs-plus/go-fuse/v2 v2.12.0

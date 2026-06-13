@@ -47,6 +47,31 @@ if [ -d "${TEMPLATE_SRC_DIR}" ] && [ -d "${TEMPLATE_DST_DIR}" ]; then
   done
 fi
 
+# Enable FUSE over io_uring (requires Linux >= 6.14 + the fuse module's
+# enable_uring parameter). pbs-plus requests io_uring at mount time and falls
+# back to the classic read/write transport automatically when the host lacks
+# support, so this is best-effort and must never break fuse loading on older
+# kernels (an unknown `options fuse enable_uring=1` would make modprobe fail).
+FUSE_URING_CONF="/etc/modprobe.d/pbs-plus-fuse-io-uring.conf"
+modprobe fuse 2>/dev/null || true
+if [ -e "/sys/module/fuse/parameters/enable_uring" ]; then
+  # Kernel supports it: flip the parameter live (if writable) ...
+  if [ -w "/sys/module/fuse/parameters/enable_uring" ]; then
+    echo 1 > /sys/module/fuse/parameters/enable_uring 2>/dev/null || true
+  fi
+  # ... and persist for reboots / module reloads.
+  cat > "${FUSE_URING_CONF}" <<'EOF'
+# Managed by pbs-plus: enable FUSE over io_uring (kernel >= 6.14).
+# Hosts without support fall back to the classic read/write transport.
+options fuse enable_uring=1
+EOF
+  chmod 0644 "${FUSE_URING_CONF}" 2>/dev/null || true
+else
+  # Kernel too old / fuse lacks the parameter: do not leave a config that
+  # would break `modprobe fuse` on the next load.
+  rm -f "${FUSE_URING_CONF}" 2>/dev/null || true
+fi
+
 # Systemd integration
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
