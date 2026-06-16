@@ -247,13 +247,10 @@ func nodeToMetadata(n *GraphNode, xattrs []format.XAttr) pxar.Metadata {
 
 	return pxar.Metadata{
 		Stat: format.Stat{
-			Mode: modeFormat | uint64(n.Mode&0o7777),
-			UID:  n.UID,
-			GID:  n.GID,
-			Mtime: format.StatxTimestamp{
-				Secs:  n.MtimeNs / 1e9,
-				Nanos: uint32(n.MtimeNs % 1e9),
-			},
+			Mode:  modeFormat | uint64(n.Mode&0o7777),
+			UID:   n.UID,
+			GID:   n.GID,
+			Mtime: format.NewStatxTimestampFromTime(time.Unix(0, n.MtimeNs)),
 		},
 		XAttrs: xattrs,
 	}

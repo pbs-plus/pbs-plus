@@ -15,6 +15,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/format"
 	"golang.org/x/sys/unix"
 )
 
@@ -33,7 +34,7 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 
 	uid, gid := int(e.RawUID), int(e.RawGID)
 
-	atime := time.Unix(e.MtimeSecs, int64(e.MtimeNsecs))
+	atime := format.StatxTimestamp{Secs: e.MtimeSecs, Nanos: e.MtimeNsecs}.Time()
 	mtime := atime
 
 	xattrs, err := client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
