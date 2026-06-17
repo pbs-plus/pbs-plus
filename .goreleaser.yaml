@@ -65,6 +65,21 @@ builds:
     flags:
       - -installsuffix=netgo
 
+  - id: bkf2pxar
+    main: ./cmd/bkf2pxar
+    binary: bkf2pxar
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X 'main.Version=v{{.Version}}'
+    flags:
+      - -installsuffix=netgo
+
   # BSD Agent
   - id: freebsd-agent
     main: ./cmd/agent
@@ -172,6 +187,13 @@ archives:
     formats:
       - binary
 
+  - id: bkf2pxar
+    ids:
+      - bkf2pxar
+    name_template: "{{ .ProjectName }}-bkf2pxar-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - binary
+
 checksum:
   name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
   algorithm: md5
@@ -181,6 +203,7 @@ nfpms:
   - id: server-deb
     ids:
       - server
+      - bkf2pxar
     package_name: "{{ .ProjectName }}"
     vendor: Son Roy Almerol
     homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"

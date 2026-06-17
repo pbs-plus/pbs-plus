@@ -167,12 +167,6 @@ github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOF
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 h1:onHthvaw9LFnH4t2DcNVpwGmV9E1BkGknEliJkfwQj0=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58/go.mod h1:DXv8WO4yhMYhSNPKjeNKa5WY9YCIEBRbNzFFPJbWO6Y=
-github.com/pbs-plus/go-mtf v0.0.0-20260617031630-3483c6c667a3 h1:dLHUUXPFw+Oi1aA/0HOS19UY1k9iGPwEz+GRGgTJ/O8=
-github.com/pbs-plus/go-mtf v0.0.0-20260617031630-3483c6c667a3/go.mod h1:9i0MGM4kLumiwztM1OW5990bXz9ETQJIq4KN7Yf2Q/w=
-github.com/pbs-plus/go-mtf v0.0.0-20260617105637-8a8b72a0a8da h1:nr5nxHFSp/2RA/MhjV00QJaPtzmNhPt39xbC3OilxU0=
-github.com/pbs-plus/go-mtf v0.0.0-20260617105637-8a8b72a0a8da/go.mod h1:9i0MGM4kLumiwztM1OW5990bXz9ETQJIq4KN7Yf2Q/w=
-github.com/pbs-plus/go-mtf v0.0.0-20260617111351-a1194fe1ea55 h1:B1i5J3Fxt6fN/BlaIQZxFL2pvfknoJkOrbbSVvwNh8c=
-github.com/pbs-plus/go-mtf v0.0.0-20260617111351-a1194fe1ea55/go.mod h1:9i0MGM4kLumiwztM1OW5990bXz9ETQJIq4KN7Yf2Q/w=
 github.com/pbs-plus/go-mtf v0.0.0-20260617111819-9701bd1ecf78 h1:/1XQ0ZDfbcAvYz9JvO8DYG1Nt1r9MgipjoSJ/8P1TZo=
 github.com/pbs-plus/go-mtf v0.0.0-20260617111819-9701bd1ecf78/go.mod h1:9i0MGM4kLumiwztM1OW5990bXz9ETQJIq4KN7Yf2Q/w=
 github.com/pbs-plus/pxar v0.29.1 h1:3frFnsBUmtCi8oqxOcLmFMJRD7TN8PD3fkHmwK8sKZA=
