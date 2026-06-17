@@ -33,6 +33,13 @@ Ext.onReady(function () {
         expanded: true,
         children: [],
       });
+      root.insertChild(index + 3, {
+        text: "MTF Tapes",
+        iconCls: "fa fa-archive",
+        id: "mtf_tapes",
+        path: "pbsMtfManagement",
+        leaf: true,
+      });
     }
   }
 });

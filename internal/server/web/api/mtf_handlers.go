@@ -293,62 +293,141 @@ func mtfJobMergeForm(job mtfstore.MTFJob, r *http.Request) (mtfstore.MTFJob, err
 // --- MTF changers / drives ---
 
 func ExtJsMtfChangerHandler(storeInstance *store.Store) http.HandlerFunc {
-	return mtfCRUD(storeInstance, http.MethodPost, func(ctx context.Context, r *http.Request) (any, error) {
-		c := mtfstore.Changer{
-			Name:    r.FormValue("name"),
-			Device:  r.FormValue("device"),
-			Comment: r.FormValue("comment"),
-		}
-		if c.Name == "" || c.Device == "" {
-			return nil, fmt.Errorf("name and device are required")
-		}
-		if err := storeInstance.MtfStore.CreateChanger(ctx, c); err != nil {
-			return nil, err
-		}
-		return c, nil
-	})
-}
-
-func ExtJsMtfDriveHandler(storeInstance *store.Store) http.HandlerFunc {
-	return mtfCRUD(storeInstance, http.MethodPost, func(ctx context.Context, r *http.Request) (any, error) {
-		d := mtfstore.Drive{
-			Name:       r.FormValue("name"),
-			Device:     r.FormValue("device"),
-			Changer:    r.FormValue("changer"),
-			DriveIndex: atoiDefault(r.FormValue("drive_index"), 0),
-			Comment:    r.FormValue("comment"),
-		}
-		if d.Name == "" || d.Device == "" {
-			return nil, fmt.Errorf("name and device are required")
-		}
-		if err := storeInstance.MtfStore.CreateDrive(ctx, d); err != nil {
-			return nil, err
-		}
-		return d, nil
-	})
-}
-
-func mtfCRUD(st *store.Store, method string, create func(context.Context, *http.Request) (any, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != method {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-		if mtfStore(st) == nil {
+		ms := mtfStore(storeInstance)
+		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			WriteErrorResponse(w, err)
-			return
+		switch r.Method {
+		case http.MethodGet:
+			list, err := ms.ListChangers(r.Context())
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"data": list, "success": true})
+		case http.MethodPost:
+			c, err := mtfChangerFromForm(r)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			if err := ms.CreateChanger(r.Context(), c); err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"data": c, "success": true})
+		default:
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
-		data, err := create(r.Context(), r)
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
-		writeJSON(w, map[string]any{"data": data, "success": true})
 	}
+}
+
+func ExtJsMtfChangerSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+		ms := mtfStore(storeInstance)
+		if ms == nil {
+			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
+			return
+		}
+		name := validate.DecodePath(r.PathValue("name"))
+		if name == "" {
+			WriteErrorResponse(w, fmt.Errorf("invalid changer name"))
+			return
+		}
+		if err := ms.DeleteChanger(r.Context(), name); err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"data": nil, "success": true})
+	}
+}
+
+func ExtJsMtfDriveHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ms := mtfStore(storeInstance)
+		if ms == nil {
+			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			list, err := ms.ListDrives(r.Context())
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"data": list, "success": true})
+		case http.MethodPost:
+			d, err := mtfDriveFromForm(r)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			if err := ms.CreateDrive(r.Context(), d); err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"data": d, "success": true})
+		default:
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+		}
+	}
+}
+
+func ExtJsMtfDriveSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+		ms := mtfStore(storeInstance)
+		if ms == nil {
+			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
+			return
+		}
+		name := validate.DecodePath(r.PathValue("name"))
+		if name == "" {
+			WriteErrorResponse(w, fmt.Errorf("invalid drive name"))
+			return
+		}
+		if err := ms.DeleteDrive(r.Context(), name); err != nil {
+			WriteErrorResponse(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"data": nil, "success": true})
+	}
+}
+
+func mtfChangerFromForm(r *http.Request) (mtfstore.Changer, error) {
+	c := mtfstore.Changer{
+		Name:    r.FormValue("name"),
+		Device:  r.FormValue("device"),
+		Comment: r.FormValue("comment"),
+	}
+	if c.Name == "" || c.Device == "" {
+		return c, fmt.Errorf("name and device are required")
+	}
+	return c, nil
+}
+
+func mtfDriveFromForm(r *http.Request) (mtfstore.Drive, error) {
+	d := mtfstore.Drive{
+		Name:       r.FormValue("name"),
+		Device:     r.FormValue("device"),
+		Changer:    r.FormValue("changer"),
+		DriveIndex: atoiDefault(r.FormValue("drive_index"), 0),
+		Comment:    r.FormValue("comment"),
+	}
+	if d.Name == "" || d.Device == "" {
+		return d, fmt.Errorf("name and device are required")
+	}
+	return d, nil
 }
 
 // --- Inventory listing ---
