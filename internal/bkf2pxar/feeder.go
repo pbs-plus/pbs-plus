@@ -234,6 +234,12 @@ func isCleaningTape(barcode string) bool {
 	return false
 }
 
+// IsCleaningTape recognises cleaning-cartridge barcodes (CLN/CCL/CLG/DCL
+// prefixes). Exported for reuse by the inventory engine.
+func IsCleaningTape(barcode string) bool {
+	return isCleaningTape(barcode)
+}
+
 func countFull(st *changer.Status) int {
 	n := 0
 	for _, s := range st.Slots {

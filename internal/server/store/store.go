@@ -13,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	sqlite "github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -23,6 +24,8 @@ import (
 type Store struct {
 	Ctx               context.Context
 	Database          *sqlite.Database
+	MtfStore          *mtfstore.Database
+	MtfMapper         *mtfstore.Mapper
 	BackupSvc         *application.BackupService
 	RestoreSvc        *application.RestoreService
 	ExclusionSvc      *application.ExclusionService
@@ -64,6 +67,15 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	targetSvc := application.NewTargetService(db, agentsManager)
 	verificationSvc := application.NewVerificationService(db)
 
+	mtfDB, err := mtfstore.Initialize(ctx, "")
+	if err != nil {
+		syslog.L.Error(err).WithMessage("Initialize: mtf store").Write()
+	}
+	var mtfMapper *mtfstore.Mapper
+	if mtfDB != nil {
+		mtfMapper = mtfstore.NewMapper(mtfDB)
+	}
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -77,6 +89,8 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	store := &Store{
 		Ctx:               ctx,
 		Database:          db,
+		MtfStore:          mtfDB,
+		MtfMapper:         mtfMapper,
 		BackupSvc:         backupSvc,
 		RestoreSvc:        restoreSvc,
 		ExclusionSvc:      exclusionSvc,

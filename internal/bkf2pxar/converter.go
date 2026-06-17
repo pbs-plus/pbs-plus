@@ -44,6 +44,14 @@ type Config struct {
 	// Negative = migrate all snapshots (default). Each snapshot becomes
 	// its own PBS backup point.
 	SnapshotSel int
+	// NamespaceResolver overrides Namespace per snapshot. It receives the
+	// snapshot's source machine name and volume device path (e.g.
+	// \\HOST.sgl.lan\D:) and returns the PBS namespace to use for that
+	// backup point. When nil or when it returns "", Namespace is used.
+	NamespaceResolver func(host, device string) string
+	// OnSnapshot is invoked when a snapshot's session has started, with the
+	// resolved backup-id and namespace, so callers can report progress.
+	OnSnapshot func(backupID, namespace string)
 }
 
 // Stats holds conversion statistics.
@@ -226,6 +234,7 @@ type converter struct {
 	meta       backupMeta
 	rootPrefix string
 	dirStack   []string
+	currentNS  string
 
 	snapshotIdx int // current SSET index (-1 before first)
 }
@@ -260,6 +269,16 @@ func (c *converter) ensureSession() error {
 	c.stats.Host = c.meta.HostName
 	c.stats.Snapshots++
 
+	c.currentNS = c.cfg.Namespace
+	if c.cfg.NamespaceResolver != nil {
+		if ns := c.cfg.NamespaceResolver(c.meta.HostName, c.rootPrefix); ns != "" {
+			c.currentNS = ns
+		}
+	}
+	if c.cfg.OnSnapshot != nil {
+		c.cfg.OnSnapshot(backupID, c.currentNS)
+	}
+
 	s, err := c.createSession(backupID, backupTime)
 	if err != nil {
 		return err
@@ -292,7 +311,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 			BackupType:  datastore.BackupHost,
 			BackupID:    backupID,
 			BackupTime:  backupTime.Unix(),
-			Namespace:   c.cfg.Namespace,
+			Namespace:   c.currentNS,
 			CryptMode:   datastore.CryptModeNone,
 			ChunkConfig: c.chunkCfg,
 			Compress:    true,
@@ -309,7 +328,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 		BaseURL:       c.cfg.PBSURL,
 		Datastore:     c.cfg.Datastore,
 		AuthToken:     authToken,
-		Namespace:     c.cfg.Namespace,
+		Namespace:     c.currentNS,
 		SkipTLSVerify: c.cfg.SkipTLS,
 	}, c.chunkCfg, true)
 
@@ -317,7 +336,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 		BackupType:  datastore.BackupHost,
 		BackupID:    backupID,
 		BackupTime:  backupTime.Unix(),
-		Namespace:   c.cfg.Namespace,
+		Namespace:   c.currentNS,
 		CryptMode:   datastore.CryptModeNone,
 		ChunkConfig: c.chunkCfg,
 		Compress:    true,

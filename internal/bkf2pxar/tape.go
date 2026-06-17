@@ -181,6 +181,14 @@ type mtop struct {
 
 // rewindFd issues MTIOCTOP(MTREW) on an open tape device descriptor. It is the
 // pure-Go equivalent of `mt -f <dev> rewind`.
+// OpenTapeReader opens a tape device (e.g. /dev/nst0), rewinds it to BOT,
+// and wraps it for block-oriented reading as a continuous byte stream. It is
+// the reusable, exportable form of openTapeReader for callers outside this
+// package (e.g. the inventory engine).
+func OpenTapeReader(dev string) (io.ReadCloser, error) {
+	return openTapeReader(dev)
+}
+
 func rewindFd(fd uintptr) error {
 	op := mtop{Op: mtOpRewind, Count: 1}
 	_, _, errno := syscall.Syscall(
