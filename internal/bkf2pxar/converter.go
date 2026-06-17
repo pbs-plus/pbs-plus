@@ -59,6 +59,7 @@ type Snapshot struct {
 	Owner       string    // SSET owner
 	MachineName string    // from VOLB
 	VolumeName  string    // from VOLB (semicolon-separated if multiple)
+	Truncated   bool      // EOTM hit without continuation: data spans more media
 }
 
 // backupMeta is identity extracted from the BKF structural blocks.
@@ -162,7 +163,13 @@ func scanSnapshots(r *mtf.Reader, source string, out *[]Snapshot) error {
 		}
 	}
 	if cur != nil {
+		if r.TruncatedByEOTM() {
+			cur.Truncated = true
+		}
 		*out = append(*out, *cur)
+	}
+	if r.TruncatedByEOTM() && len(*out) > 0 {
+		(*out)[len(*out)-1].Truncated = true
 	}
 	return nil
 }
@@ -450,6 +457,10 @@ func (c *converter) processReader(r *mtf.Reader) error {
 				return err
 			}
 		}
+	}
+
+	if r.TruncatedByEOTM() {
+		fmt.Fprintf(os.Stderr, "WARNING: data set spans further media — use -spanning and provide all tapes/files. Snapshot may be incomplete.\n")
 	}
 
 	return c.finishSnapshot()

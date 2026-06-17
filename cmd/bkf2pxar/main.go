@@ -101,6 +101,11 @@ func printSnapshots(snapshots []bkf2pxar.Snapshot) {
 	}
 	_ = w.Flush()
 
+	for _, s := range snapshots {
+		if s.Truncated {
+			fmt.Fprintf(os.Stderr, "WARNING: %s (snapshot %d) spans multiple media — data is incomplete. Re-run with -spanning and all tapes/files.\n", s.SourceFile, s.Index)
+		}
+	}
 	fmt.Fprintf(os.Stderr, "\n%d snapshot(s). Use -snapshot N to migrate a specific one.\n", len(snapshots))
 }
 
