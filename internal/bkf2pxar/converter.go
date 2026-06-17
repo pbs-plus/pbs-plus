@@ -31,8 +31,15 @@ type Config struct {
 	LocalDir    string // local store directory (offline mode)
 	Sources     []string
 	TapeDevice  string
-	Verbose     bool
-	Spanning    bool
+	// ChangerDevice enables auto-changer mode: the SCSI Medium Changer device
+	// (e.g. /dev/sg1) used to load/unload tapes robotically. Requires TapeDevice
+	// to name the tape drive (e.g. /dev/nst0) and DriveIndex to select it.
+	ChangerDevice string
+	// DriveIndex is the 0-based index of the target tape drive within the
+	// changer (almost always 0 for single-drive libraries).
+	DriveIndex int
+	Verbose    bool
+	Spanning   bool
 	// SnapshotSel selects a single snapshot (SSET) to migrate.
 	// Negative = migrate all snapshots (default). Each snapshot becomes
 	// its own PBS backup point.
@@ -349,6 +356,9 @@ func (c *converter) snapshotSelected() bool {
 }
 
 func (c *converter) runTape() error {
+	if c.cfg.ChangerDevice != "" {
+		return c.runChanger()
+	}
 	r, err := mtf.Open(c.cfg.TapeDevice)
 	if err != nil {
 		return fmt.Errorf("open tape %s: %w", c.cfg.TapeDevice, err)
@@ -360,6 +370,38 @@ func (c *converter) runTape() error {
 	}
 
 	return c.processReader(r)
+}
+
+// runChanger migrates all data tapes in the magazine using the robotic
+// changer. The first tape is loaded and read; EOTM continuations are resolved
+// by scanning slots for the matching media-family sequence. When a complete
+// media set is exhausted (no further sequence found), the next independent
+// backup set is started automatically until every tape is migrated.
+func (c *converter) runChanger() error {
+	f, err := newFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
+	if err != nil {
+		return err
+	}
+	defer f.close()
+
+	for {
+		rc, err := f.loadFirst()
+		if err != nil {
+			// No more data tapes — migration complete.
+			return nil
+		}
+		r := mtf.NewReader(rc)
+		r.SetContinuation(f.asContinuation())
+		if err := c.processReader(r); err != nil {
+			_ = rc.Close()
+			_ = f.unloadCurrent()
+			return err
+		}
+		_ = rc.Close()
+		_ = f.unloadCurrent()
+		// Drop processed tapes from the inventory so loadFirst picks the next.
+		f.markProcessed()
+	}
 }
 
 func (c *converter) runFiles() error {

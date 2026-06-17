@@ -21,6 +21,8 @@ func main() {
 	backupID := flag.String("backup-id", "", "Backup ID (derived from BKF machine name if empty)")
 	archiveName := flag.String("archive-name", "", "Archive name (defaults to backup-id)")
 	tapeDevice := flag.String("tape", "", "Tape device path (e.g. /dev/nst0)")
+	changerDevice := flag.String("changer", "", "SCSI changer device (e.g. /dev/sg1) for robotic auto-load; requires -tape")
+	driveIndex := flag.Int("drive", 0, "Target drive index within the changer (0-based; almost always 0)")
 	verbose := flag.Bool("v", false, "Verbose output")
 	spanning := flag.Bool("spanning", false, "Enable media spanning for multi-tape sets")
 	listMode := flag.Bool("list", false, "List snapshots (backup sets) in the input and exit")
@@ -32,24 +34,29 @@ func main() {
 	if *datastore == "" && *localDir == "" && !*listMode {
 		die("-datastore, -local-store, or -list is required")
 	}
+	if *changerDevice != "" && *tapeDevice == "" {
+		die("-changer requires -tape (the tape drive device, e.g. /dev/nst0)")
+	}
 	if len(flag.Args()) == 0 && *tapeDevice == "" {
 		die("at least one BKF path or -tape device is required")
 	}
 
 	cfg := bkf2pxar.Config{
-		PBSURL:      *pbsURL,
-		Datastore:   *datastore,
-		Namespace:   *namespace,
-		AuthToken:   *authToken,
-		SkipTLS:     *skipTLS,
-		BackupID:    *backupID,
-		ArchiveName: *archiveName,
-		LocalDir:    *localDir,
-		TapeDevice:  *tapeDevice,
-		Sources:     flag.Args(),
-		Verbose:     *verbose,
-		Spanning:    *spanning,
-		SnapshotSel: *snapshotSel,
+		PBSURL:        *pbsURL,
+		Datastore:     *datastore,
+		Namespace:     *namespace,
+		AuthToken:     *authToken,
+		SkipTLS:       *skipTLS,
+		BackupID:      *backupID,
+		ArchiveName:   *archiveName,
+		LocalDir:      *localDir,
+		TapeDevice:    *tapeDevice,
+		ChangerDevice: *changerDevice,
+		DriveIndex:    *driveIndex,
+		Sources:       flag.Args(),
+		Verbose:       *verbose,
+		Spanning:      *spanning,
+		SnapshotSel:   *snapshotSel,
 	}
 
 	if *listMode {
@@ -110,7 +117,8 @@ func printSnapshots(snapshots []bkf2pxar.Snapshot) {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `Usage: bkf2pxar [flags] <path...>
+	fmt.Fprintf(os.Stderr, `Usage of bkf2pxar:
+Usage: bkf2pxar [flags] <path...>
 
 Converts Backup Exec .bkf files (or LTO tapes) into pxar archives and uploads
 to Proxmox Backup Server via the PBS backup protocol.
@@ -121,8 +129,14 @@ create time). The volume root directory is flattened to the pxar root.
 Each SSET (backup set) becomes its own PBS backup point. Use -list to see
 available snapshots, and -snapshot N to migrate only one.
 
-Paths can be .bkf files or directories containing .bkf files.
-Use -tape for LTO tape device input.
+Input modes:
+  - .bkf files or directories of .bkf files (positional args)
+  - a single tape drive:  -tape /dev/nst0
+  - a robotic tape library: -changer /dev/sg1 -tape /dev/nst0
+    (loads/unloads tapes automatically; follows media-set spanning)
+
+Use -changer with a SCSI Medium Changer device to migrate a whole magazine
+unattended. Cleaning tapes (CLN*/CCL* barcodes) are skipped automatically.
 
 Flags:
 `)
