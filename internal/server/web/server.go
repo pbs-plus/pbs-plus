@@ -85,6 +85,18 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results/export", ServerOnly(storeInstance, api.VerificationResultsExportHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/verification/aggregate", ServerOnly(storeInstance, api.VerificationAggregateHandler(storeInstance)))
 
+	// MTF tape routes
+	apiMux.HandleFunc("/api2/extjs/d2d/mtf-job", ServerOnly(storeInstance, api.ExtJsMtfJobRunHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-job", ServerOnly(storeInstance, api.ExtJsMtfJobHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}", ServerOnly(storeInstance, api.ExtJsMtfJobSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}/upids", ServerOnly(storeInstance, api.ExtJsMtfJobUPIDsHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-changer", ServerOnly(storeInstance, api.ExtJsMtfChangerHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-drive", ServerOnly(storeInstance, api.ExtJsMtfDriveHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-inventory", ServerOnly(storeInstance, api.ExtJsMtfInventoryHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-scan", ServerOnly(storeInstance, api.ExtJsMtfScanHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping", ServerOnly(storeInstance, api.ExtJsMtfMappingHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping/{id}", ServerOnly(storeInstance, api.ExtJsMtfMappingSingleHandler(storeInstance)))
+
 	// Notification batch routes
 	apiMux.HandleFunc("/api2/json/d2d/notification-batch", ServerOnly(storeInstance, api.NotificationBatchHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/notification-batch/jobs", ServerOnly(storeInstance, api.NotificationBatchJobsHandler(storeInstance)))
