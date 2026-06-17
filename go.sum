@@ -169,6 +169,8 @@ github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 h1:onHthvaw9LFnH4t2D
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58/go.mod h1:DXv8WO4yhMYhSNPKjeNKa5WY9YCIEBRbNzFFPJbWO6Y=
 github.com/pbs-plus/go-mtf v0.1.0 h1:1rmnCbZgzhEC8dkKmxL+d3AnlRxEmskpVEg9p0/EXYE=
 github.com/pbs-plus/go-mtf v0.1.0/go.mod h1:9i0MGM4kLumiwztM1OW5990bXz9ETQJIq4KN7Yf2Q/w=
+github.com/pbs-plus/go-mtf v0.3.0 h1:NS/uu4dtGFim5KF8xGE/bvXAYNBMescR7KmVfsZPmeI=
+github.com/pbs-plus/go-mtf v0.3.0/go.mod h1:9i0MGM4kLumiwztM1OW5990bXz9ETQJIq4KN7Yf2Q/w=
 github.com/pbs-plus/pxar v0.29.1 h1:3frFnsBUmtCi8oqxOcLmFMJRD7TN8PD3fkHmwK8sKZA=
 github.com/pbs-plus/pxar v0.29.1/go.mod h1:yt3dqfE6UkDZuaJgi4Aoe9i2u5Ok8x8LQJgjhUFiqvQ=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
