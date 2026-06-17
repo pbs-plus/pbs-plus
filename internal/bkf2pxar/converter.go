@@ -17,6 +17,8 @@ import (
 	"github.com/pbs-plus/pxar/transfer"
 
 	mtf "github.com/pbs-plus/go-mtf"
+
+	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 )
 
 // Config holds all parameters for a BKF → pxar conversion run.
@@ -320,9 +322,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 
 	authToken := c.cfg.AuthToken
 	if authToken == "" {
-		if data, err := os.ReadFile("/etc/pbs-plus/auth-token"); err == nil {
-			authToken = strings.TrimSpace(string(data))
-		}
+		authToken = pbstoken.ReadLocal()
 	}
 	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
 		BaseURL:       c.cfg.PBSURL,

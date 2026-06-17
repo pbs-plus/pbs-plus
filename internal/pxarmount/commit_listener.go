@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 )
 
 type CommitRequest struct {
@@ -53,28 +55,7 @@ func ParseCommitLine(line string) (*CommitRequest, error) {
 }
 
 func ReadLocalToken() string {
-	candidates := []string{
-		filepath.Join("/var/lib/proxmox-backup", "pbs-plus-token.json"),
-		filepath.Join("/etc/proxmox-backup", "pbs-plus-token.json"),
-		filepath.Join("/var/lib/pbs-plus", "pbs-plus-token.json"),
-	}
-	for _, p := range candidates {
-		data, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		var tok struct {
-			TokenID string `json:"tokenid"`
-			Value   string `json:"value"`
-		}
-		if err := json.Unmarshal(data, &tok); err != nil {
-			continue
-		}
-		if tok.Value != "" {
-			return tok.TokenID + ":" + tok.Value
-		}
-	}
-	return ""
+	return pbstoken.ReadLocal()
 }
 
 func ResolveDatastoreName(pbsStore string) string {

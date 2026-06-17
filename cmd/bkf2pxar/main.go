@@ -16,7 +16,7 @@ func main() {
 	pbsURL := flag.String("pbs-url", "https://localhost:8007/api2/json", "PBS API URL")
 	datastore := flag.String("datastore", "", "PBS datastore name (required for remote mode)")
 	namespace := flag.String("namespace", "", "PBS namespace")
-	authToken := flag.String("auth-token", "", "PBS API token (reads /etc/pbs-plus/auth-token if empty)")
+	authToken := flag.String("auth-token", "", "PBS API token in tokenid:value form (defaults to /var/lib/proxmox-backup/pbs-plus-token.json)")
 	localDir := flag.String("local-store", "", "Local store directory (offline mode; no PBS upload)")
 	backupID := flag.String("backup-id", "", "Backup ID (derived from BKF machine name if empty)")
 	archiveName := flag.String("archive-name", "", "Archive name (defaults to backup-id)")

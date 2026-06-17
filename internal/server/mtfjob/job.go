@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
+	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
@@ -150,8 +151,8 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		},
 		NamespaceResolver: resolver,
 	}
-	if data, err := os.ReadFile("/etc/pbs-plus/auth-token"); err == nil {
-		cfg.AuthToken = strings.TrimSpace(string(data))
+	if cfg.AuthToken == "" {
+		cfg.AuthToken = pbstoken.ReadLocal()
 	}
 
 	switch job.SourceKind {
