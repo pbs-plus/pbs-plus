@@ -30,6 +30,12 @@ type RestoreQueueArgs struct {
 	Stop      bool
 }
 
+type MtfJobQueueArgs struct {
+	JobID string
+	Web   bool
+	Stop  bool
+}
+
 type QueueReply struct {
 	Status  int
 	Message string
@@ -42,6 +48,10 @@ var BackupJobFactory func(database.Backup, *store.Store, bool, bool, []string) *
 // RestoreJobFactory creates a restore job operation. Set during initialization
 // to break the import cycle between rpc and jobs/restore.
 var RestoreJobFactory func(database.Restore, *store.Store, bool, bool) (*jobs.Job, error)
+
+// MtfJobFactory creates an MTF tape → pxar migration job operation. Set
+// during initialization to break the import cycle between rpc and mtfjob.
+var MtfJobFactory func(string, *store.Store, bool) (*jobs.Job, error)
 
 type JobRPCService struct {
 	ctx     context.Context
@@ -99,6 +109,32 @@ func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) 
 	}
 	reply.Status = 200
 
+	return nil
+}
+
+func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
+	if args.Stop {
+		if err := s.Manager.StopJob(args.JobID); err != nil {
+			reply.Status = 500
+			reply.Message = err.Error()
+			return nil
+		}
+		reply.Status = 200
+		return nil
+	}
+
+	jobOp, err := MtfJobFactory(args.JobID, s.Store, args.Web)
+	if err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
+	if err := s.Manager.Enqueue(jobOp); err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
+	reply.Status = 200
 	return nil
 }
 

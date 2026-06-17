@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtfjob"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	job "github.com/pbs-plus/pbs-plus/internal/server/rpc"
@@ -128,6 +129,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 			default:
 				job.BackupJobFactory = backup.NewBackupJob
 				job.RestoreJobFactory = restore.NewRestoreJob
+				job.MtfJobFactory = mtfjob.NewMtfJob
 				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting").Write()
 					time.Sleep(backoff)

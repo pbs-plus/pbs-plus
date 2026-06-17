@@ -55,6 +55,20 @@ func NewJob(job mtfstore.MTFJob, st *store.Store, mapper *mtfstore.Mapper, web b
 	}
 }
 
+// NewMtfJob loads an MTF job definition by id and builds a runnable jobs.Job.
+// It is the factory wired into rpc.MtfJobFactory.
+func NewMtfJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
+	ctx := st.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	j, err := st.MtfStore.GetMtfJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	return NewJob(j, st, st.MtfMapper, web), nil
+}
+
 func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		ctx, cancel := context.WithCancel(ctx)
