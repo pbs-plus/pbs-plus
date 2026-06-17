@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS mtf_inventory_runs;
+DROP TABLE IF EXISTS mtf_jobs;
+DROP TABLE IF EXISTS namespace_mappings;
+DROP TABLE IF EXISTS data_set_volumes;
+DROP TABLE IF EXISTS data_sets;
+DROP TABLE IF EXISTS mtf_cartridges;
+DROP TABLE IF EXISTS media_families;
+DROP TABLE IF EXISTS mtf_drives;
+DROP TABLE IF EXISTS mtf_changers;
