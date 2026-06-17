@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
 	mtf "github.com/pbs-plus/go-mtf"
 
@@ -87,18 +86,13 @@ func (f *feeder) loadFirst() (io.ReadCloser, error) {
 		len(f.status.Slots), countFull(f.status))
 }
 
-// loadSlot loads slot (1-based), rewinds, opens the drive, and caches the
-// cartridge's barcode→slot mapping. The returned reader is a tape-block
-// adapter (see newTapeReader); raw device fd access for verification/rewind
-// is managed internally.
+// loadSlot loads slot (1-based), opens the drive reader (which rewinds to
+// BOT), and caches the cartridge's barcode→slot mapping.
 func (f *feeder) loadSlot(slot int) (io.ReadCloser, error) {
 	bc := f.status.Slots[slot-1].VolumeTag
 	fmt.Fprintf(os.Stderr, "== loading slot %d (%s) into drive %d ==\n", slot, barcodeOrUnknown(bc), f.driveIndex)
 	if err := f.chg.Load(f.status, slot, f.driveIndex); err != nil {
 		return nil, fmt.Errorf("load slot %d: %w", slot, err)
-	}
-	if err := rewind(f.tapeDev); err != nil {
-		return nil, fmt.Errorf("rewind: %w", err)
 	}
 	rc, err := openTapeReader(f.tapeDev)
 	if err != nil {
@@ -208,9 +202,8 @@ func (f *feeder) nextMedium(c mtf.Continuation) (io.Reader, error) {
 }
 
 // verifyTape peeks at the cartridge's TAPE block and reports whether its
-// MFMID/Sequence match the wanted values. It closes the reader and rewinds the
-// tape, leaving the drive at BOT and with no open reader; the caller reopens a
-// fresh reader on match.
+// MFMID/Sequence match the wanted values. It closes the probe reader; the
+// caller reopens a fresh reader (which rewinds to BOT) on a match.
 func (f *feeder) verifyTape(rc io.ReadCloser, wantMFMID uint32, wantSeq int) (bool, error) {
 	r := mtf.NewReader(rc)
 	blk, err := r.Next()
@@ -223,24 +216,10 @@ func (f *feeder) verifyTape(rc io.ReadCloser, wantMFMID uint32, wantSeq int) (bo
 	}
 	gotMFMID := blk.Tape.MFMID
 	gotSeq := int(blk.Tape.Sequence)
-	// Rewind to BOT so the caller (or the next probe) starts at the beginning.
-	if err := rewind(f.tapeDev); err != nil {
-		return false, err
-	}
 	if wantMFMID != 0 && gotMFMID != wantMFMID {
 		return false, nil
 	}
 	return gotSeq == wantSeq, nil
-}
-
-// rewind issues `mt -f <dev> rewind`. go-mtf reads from current position, so
-// the tape must be at BOT before the reader is created.
-func rewind(dev string) error {
-	cmd := exec.Command("mt", "-f", dev, "rewind")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w (%s)", cmd.String(), err, string(out))
-	}
-	return nil
 }
 
 // isCleaningTape recognises cleaning-cartridge barcodes (CLN/CCL prefixes).

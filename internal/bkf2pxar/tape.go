@@ -13,6 +13,10 @@
 // filemark gaps that delimit MTF logical records on tape are removed; MTF
 // blocks are self-delimiting (each carries a size in its common header), so
 // their boundaries need no out-of-band signaling.
+//
+// Tape positioning (rewind) is performed in pure Go via the Linux st driver's
+// MTIOCTOP ioctl — the same call the `mt` binary uses — so no external `mt`
+// binary is required.
 package bkf2pxar
 
 import (
@@ -21,6 +25,8 @@ import (
 	"io"
 	"os"
 	"syscall"
+	"time"
+	"unsafe"
 )
 
 // maxTapeBlock is the largest block we expect on an LTO cartridge. LTO drives
@@ -50,13 +56,29 @@ func newTapeReader(r io.Reader) *tapeReader {
 	return tr
 }
 
-// openTapeReader opens a tape device (e.g. /dev/nst0) and wraps it for
-// block-oriented reading. The caller must rewind the tape to BOT before calling
-// and Close the returned reader when done.
+// openTapeReader opens a tape device (e.g. /dev/nst0), rewinds it to BOT, and
+// wraps it for block-oriented reading. A reader always begins at the start of
+// the cartridge, so callers never need to rewind separately. The caller Close()s
+// the returned reader when done.
 func openTapeReader(dev string) (*tapeReader, error) {
-	f, err := os.Open(dev)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", dev, err)
+	// After a robotic load the drive may report EBUSY for a few seconds while it
+	// recognises the cartridge; retry the open+rewind pair briefly.
+	var f *os.File
+	var err error
+	for attempt := 0; ; attempt++ {
+		f, err = os.Open(dev)
+		if err == nil {
+			rerr := rewindFd(f.Fd())
+			if rerr == nil {
+				break
+			}
+			_ = f.Close()
+			err = rerr
+		}
+		if !errors.Is(err, syscall.EBUSY) || attempt >= 60 {
+			return nil, fmt.Errorf("open/rewind %s: %w", dev, err)
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 	return newTapeReader(f), nil
 }
@@ -137,4 +159,34 @@ func isBlankCheck(err error) bool {
 		}
 	}
 	return false
+}
+
+// --- Tape positioning via the Linux st driver (MTIOCTOP) ---
+//
+// golang.org/x/sys/unix does not expose MTIOCTOP or the mt_op codes, so they
+// are defined here to match <linux/mtio.h>. This is the same ioctl `mt` uses.
+
+const (
+	ioctlMTIOCTOP = 0x40086d01 // _IOW('m', 1, struct mtop)
+	mtOpRewind    = 0x06       // MTREW: rewind to BOT
+	mtOpOffline   = 0x07       // MTOFFL: rewind and put the drive offline (eject)
+)
+
+// mtop matches the kernel's struct mtop: short mt_op followed by int mt_count,
+// 8 bytes total with natural alignment.
+type mtop struct {
+	Op    int16
+	Count int32
+}
+
+// rewindFd issues MTIOCTOP(MTREW) on an open tape device descriptor. It is the
+// pure-Go equivalent of `mt -f <dev> rewind`.
+func rewindFd(fd uintptr) error {
+	op := mtop{Op: mtOpRewind, Count: 1}
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL, fd, ioctlMTIOCTOP, uintptr(unsafe.Pointer(&op)))
+	if errno != 0 {
+		return fmt.Errorf("MTREW: %w", errno)
+	}
+	return nil
 }
