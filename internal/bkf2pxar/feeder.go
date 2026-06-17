@@ -70,7 +70,7 @@ func (f *feeder) markProcessed() {
 // loadFirst loads the first available data tape (skipping cleaning tapes) into
 // the drive and returns an open reader positioned at BOT. It picks the first
 // non-cleaning, full slot. The caller is responsible for closing the reader.
-func (f *feeder) loadFirst() (*os.File, error) {
+func (f *feeder) loadFirst() (io.ReadCloser, error) {
 	for i, s := range f.status.Slots {
 		if !s.Full || s.ImportExport {
 			continue
@@ -87,9 +87,11 @@ func (f *feeder) loadFirst() (*os.File, error) {
 		len(f.status.Slots), countFull(f.status))
 }
 
-// loadSlot loads slot (1-based), rewinds, opens the drive, reads the TAPE block
-// to identify the cartridge, and caches its barcode→slot mapping.
-func (f *feeder) loadSlot(slot int) (*os.File, error) {
+// loadSlot loads slot (1-based), rewinds, opens the drive, and caches the
+// cartridge's barcode→slot mapping. The returned reader is a tape-block
+// adapter (see newTapeReader); raw device fd access for verification/rewind
+// is managed internally.
+func (f *feeder) loadSlot(slot int) (io.ReadCloser, error) {
 	bc := f.status.Slots[slot-1].VolumeTag
 	fmt.Fprintf(os.Stderr, "== loading slot %d (%s) into drive %d ==\n", slot, barcodeOrUnknown(bc), f.driveIndex)
 	if err := f.chg.Load(f.status, slot, f.driveIndex); err != nil {
@@ -98,9 +100,9 @@ func (f *feeder) loadSlot(slot int) (*os.File, error) {
 	if err := rewind(f.tapeDev); err != nil {
 		return nil, fmt.Errorf("rewind: %w", err)
 	}
-	rc, err := os.Open(f.tapeDev)
+	rc, err := openTapeReader(f.tapeDev)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", f.tapeDev, err)
+		return nil, err
 	}
 	f.loadedBarcode = bc
 	f.loadedSlot = slot
@@ -182,6 +184,12 @@ func (f *feeder) nextMedium(c mtf.Continuation) (io.Reader, error) {
 			}
 			if ok {
 				fmt.Fprintf(os.Stderr, "   slot %d: matched sequence %d\n", slot, wantSeq)
+				// verifyTape closed the probe reader and rewound to BOT; reopen a
+				// fresh tape-block reader for the consumer.
+				rc, err := openTapeReader(f.tapeDev)
+				if err != nil {
+					return nil, err
+				}
 				return rc, nil
 			}
 			fmt.Fprintf(os.Stderr, "   slot %d: not the wanted tape\n", slot)
@@ -200,11 +208,13 @@ func (f *feeder) nextMedium(c mtf.Continuation) (io.Reader, error) {
 }
 
 // verifyTape peeks at the cartridge's TAPE block and reports whether its
-// MFMID/Sequence match the wanted values. It rewinds the tape afterward so the
-// reader is positioned at BOT for go-mtf.
-func (f *feeder) verifyTape(rc *os.File, wantMFMID uint32, wantSeq int) (bool, error) {
+// MFMID/Sequence match the wanted values. It closes the reader and rewinds the
+// tape, leaving the drive at BOT and with no open reader; the caller reopens a
+// fresh reader on match.
+func (f *feeder) verifyTape(rc io.ReadCloser, wantMFMID uint32, wantSeq int) (bool, error) {
 	r := mtf.NewReader(rc)
 	blk, err := r.Next()
+	_ = rc.Close()
 	if err != nil {
 		return false, err
 	}
@@ -213,10 +223,7 @@ func (f *feeder) verifyTape(rc *os.File, wantMFMID uint32, wantSeq int) (bool, e
 	}
 	gotMFMID := blk.Tape.MFMID
 	gotSeq := int(blk.Tape.Sequence)
-	// Rewind to BOT for the consumer.
-	if _, err := rc.Seek(0, io.SeekStart); err != nil {
-		return false, err
-	}
+	// Rewind to BOT so the caller (or the next probe) starts at the beginning.
 	if err := rewind(f.tapeDev); err != nil {
 		return false, err
 	}

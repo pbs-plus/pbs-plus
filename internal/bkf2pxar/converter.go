@@ -87,11 +87,15 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	var snapshots []Snapshot
 
 	if cfg.TapeDevice != "" {
-		r, err := mtf.Open(cfg.TapeDevice)
-		if err != nil {
-			return nil, fmt.Errorf("open tape %s: %w", cfg.TapeDevice, err)
+		if err := rewind(cfg.TapeDevice); err != nil {
+			return nil, fmt.Errorf("rewind %s: %w", cfg.TapeDevice, err)
 		}
-		defer func() { _ = r.Close() }()
+		rc, err := openTapeReader(cfg.TapeDevice)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = rc.Close() }()
+		r := mtf.NewReader(rc)
 		if cfg.Spanning {
 			setupTapeContinuation(r, cfg.TapeDevice)
 		}
@@ -359,11 +363,19 @@ func (c *converter) runTape() error {
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
 	}
-	r, err := mtf.Open(c.cfg.TapeDevice)
-	if err != nil {
-		return fmt.Errorf("open tape %s: %w", c.cfg.TapeDevice, err)
+	// Rewind to BOT, then read through the tape-block adapter: a raw /dev/nst0
+	// read() returns one whole fixed-size block, which go-mtf's chunked reads
+	// cannot consume correctly (overflow is discarded). The adapter buffers
+	// whole blocks into a continuous byte stream.
+	if err := rewind(c.cfg.TapeDevice); err != nil {
+		return fmt.Errorf("rewind %s: %w", c.cfg.TapeDevice, err)
 	}
-	defer func() { _ = r.Close() }()
+	rc, err := openTapeReader(c.cfg.TapeDevice)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rc.Close() }()
+	r := mtf.NewReader(rc)
 
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
@@ -601,11 +613,14 @@ func setupTapeContinuation(r *mtf.Reader, dev string) {
 			ct.Sequence+1, ct.Media.Name)
 		var buf string
 		fmt.Scanln(&buf) //nolint:errcheck
-		f, err := os.Open(dev)
-		if err != nil {
-			return nil, fmt.Errorf("open next tape: %w", err)
+		if err := rewind(dev); err != nil {
+			return nil, fmt.Errorf("rewind next tape: %w", err)
 		}
-		return f, nil
+		rc, err := openTapeReader(dev)
+		if err != nil {
+			return nil, err
+		}
+		return rc, nil
 	})
 }
 
