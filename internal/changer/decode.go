@@ -103,15 +103,16 @@ func decodeDescriptor(d []byte, typeCode byte, pVolTag, aVolTag bool) (rawElemen
 		}
 		off += 3
 	case 4:
-		// drive: id_valid[1], scsi_bus_addr[1], reserved[1], flags2[1], src_addr[2]
-		if off+5 <= len(d) {
-			svalid := d[off+3]&0x80 != 0
-			src := be16(d[off+4 : off+6])
-			if svalid {
-				e.SrcAddr = src
+		// drive (TransferDescriptor): the SValid bit lives in flags2 and the
+		// source storage address follows it — at the SAME offsets as storage
+		// elements (the id_valid/scsi_bus/reserved fields occupy bytes 6-8,
+		// which precede flags2 at byte 9). SValid = flags2 & 0x80.
+		if off+3 <= len(d) {
+			if d[off]&0x80 != 0 {
+				e.SrcAddr = be16(d[off+1 : off+3])
 			}
 		}
-		off += 5
+		off += 3
 	default:
 		return rawElement{}, fmt.Errorf("unknown element type code %d", typeCode)
 	}
