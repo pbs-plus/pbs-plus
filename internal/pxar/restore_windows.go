@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -39,19 +38,19 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 
 	if xattrs != nil {
 		if d, ok := xattrs["user.creationtime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
+			if ts, ok := parseXattrUnixSecs(d); ok {
 				ft := unixToFiletime(ts)
 				c = &ft
 			}
 		}
 		if d, ok := xattrs["user.lastwritetime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
+			if ts, ok := parseXattrUnixSecs(d); ok {
 				ft := unixToFiletime(ts)
 				w = &ft
 			}
 		}
 		if d, ok := xattrs["user.lastaccesstime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
+			if ts, ok := parseXattrUnixSecs(d); ok {
 				ft := unixToFiletime(ts)
 				a = &ft
 			}

@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
+	"time"
 
 	pxar "github.com/pbs-plus/pxar"
 )
@@ -28,6 +30,47 @@ type RestoreOptions struct {
 type restoreJob struct {
 	dest string
 	info pxar.FileInfo
+}
+
+// Bounds for a plausible Unix-second timestamp (years ~1970..2100). A value
+// inside this range is accepted as seconds. A much larger value that is
+// plausible as nanoseconds is normalized to seconds. Anything else is
+// rejected so a malformed/stale xattr can never produce an invalid time on
+// the restored file.
+const (
+	unixSecsMin = 0       // 1970-01-01
+	unixSecsMax = 1 << 33 // ~ year 2242; comfortably beyond any real file
+	unixNanosLo = 1 << 47 // ~ year 4317 in seconds; clearly nanoseconds
+	unixNanosHi = 1 << 61 // ~ year 2262 in nanoseconds (time.Time max-ish)
+)
+
+// parseXattrUnixSecs decodes a serialized xattr timestamp into a validated
+// Unix-second value. The backup writer (arpcfs, both legacy and current
+// modes) stores these as a decimal string of an int64 Unix-seconds value on
+// both Unix and Windows agents. parseXattrUnixSecs additionally tolerates a
+// value encoded in nanoseconds so that a cross-platform restore (e.g. a
+// Windows source restored to Linux, or an older/legacy agent variant) can
+// never yield an out-of-range time. ok is false for empty, non-numeric, or
+// implausible values, in which case the caller keeps its fallback time.
+func parseXattrUnixSecs(data []byte) (secs int64, ok bool) {
+	s := string(data)
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	switch {
+	case v >= unixSecsMin && v <= unixSecsMax:
+		return v, true
+	case v >= unixNanosLo && v <= unixNanosHi:
+		// Defensively interpret as nanoseconds; older agents or alternate
+		// serializations may have stored nanos. Round to the nearest second.
+		return v / int64(time.Second), true
+	default:
+		return 0, false
+	}
 }
 
 func RestoreWithOptions(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {

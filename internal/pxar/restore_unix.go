@@ -54,13 +54,13 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 		}
 
 		if d, ok := xattrs["user.lastaccesstime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
+			if ts, ok := parseXattrUnixSecs(d); ok {
 				atime = time.Unix(ts, 0)
 			}
 			delete(xattrs, "user.lastaccesstime")
 		}
 		if d, ok := xattrs["user.lastwritetime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
+			if ts, ok := parseXattrUnixSecs(d); ok {
 				mtime = time.Unix(ts, 0)
 			}
 			delete(xattrs, "user.lastwritetime")
