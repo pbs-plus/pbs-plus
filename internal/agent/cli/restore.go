@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,6 +148,22 @@ func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMod
 			restoreInitiatedOnce.Do(func() {
 				go func() {
 					defer close(restoreDone)
+					// Top-level panic recovery: worker panics are already recovered
+					// inside restoreNormal, but this catches setup/teardown too. Log
+					// the full stack to the Windows Event Log and stderr (forwarded
+					// to the server) instead of the process dying silently — which
+					// was producing "agent disconnected without done signal" plus
+					// leaked .pxar-restore-* temps.
+					defer func() {
+						if r := recover(); r != nil {
+							perr := fmt.Errorf("restore panic: %v\n%s", r, debug.Stack())
+							syslog.L.Error(perr).
+								WithMessage("restore: panicked").
+								WithField("restoreID", *restoreID).
+								Write()
+							fmt.Fprintln(os.Stderr, "Restore panicked:", perr)
+						}
+					}()
 					err := Restore(session, *restoreID, *srcPath, *destPath, mode)
 					if err != nil {
 						fmt.Fprintln(os.Stderr, "Restore failed:", err)
@@ -165,7 +182,9 @@ func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMod
 		syslog.L.Info().WithMessage("ARPC connection established").Write()
 
 		if err := session.Serve(); err != nil {
-			syslog.L.Warn().WithMessage("ARPC connection lost").WithField("error", err.Error()).Write()
+			syslog.L.Warn().WithMessage("ARPC connection lost").WithField("error", err.Error()).WithField("restoreID", *restoreID).Write()
+		} else {
+			syslog.L.Info().WithMessage("ARPC session serve returned normally").WithField("restoreID", *restoreID).Write()
 		}
 
 		cancel()

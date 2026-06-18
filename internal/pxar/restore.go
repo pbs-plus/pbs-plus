@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,6 +54,30 @@ func (st *restoreState) reportErr(ctx context.Context, op, path string, err erro
 			WithField("sendErr", serr.Error()).
 			Write()
 	}
+}
+
+// runJobRecovered executes a single restore job with panic recovery. Without
+// this, a panic in any worker (e.g. a nil dereference or a Windows syscall
+// edge case) crashes the ENTIRE process: Go terminates on an unrecovered
+// panic in any goroutine, defers in other goroutines never run, queued errors
+// are lost, the pxar.Done signal is never sent, and in-flight .pxar-restore-*
+// temp files leak — exactly the "agent disconnected, no done signal, stale
+// temps" symptom. Recovering here converts a process-killing panic into a
+// reported error (with stack) and lets the restore continue, so Done always
+// fires and cleanup runs. The stack is sent to the server task log AND logged
+// locally so it appears in the agent's Windows Event Log for diagnosis.
+func (st *restoreState) runJobRecovered(ctx context.Context, client *Client, job restoreJob) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic restoring %q: %v\n%s", job.dest, r, debug.Stack())
+			syslog.L.Error(err).
+				WithJob(client.name).
+				WithField("restore", "panic").
+				WithField("dest", job.dest).
+				Write()
+		}
+	}()
+	return processJob(ctx, st, job)
 }
 
 // restoreJob describes a single entry to restore. dest is the OS-native
@@ -247,22 +272,35 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	syslog.L.Info().
+		WithJob(client.name).
+		WithMessage("restore: starting content restore").
+		WithField("sources", len(sources)).
+		WithField("dest", destDir).
+		WithField("workers", numWorkers).
+		Write()
+
 	var workersWg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		workersWg.Go(func() {
 			for job := range jobs {
-				if err := processJob(workerCtx, st, job); err != nil {
-					if serr := client.SendError(workerCtx, err); serr != nil {
-						// The error itself couldn't be forwarded to the server
-						// (connection lost / context cancelled). Log it locally
-						// so it is never silently lost.
-						syslog.L.Error(err).
-							WithField("restore", "error-report-failed").
-							WithField("sendErr", serr.Error()).
-							Write()
+				// defer wg.Done per job so a recovered panic (or an early
+				// continue) can never underflow/over-hold the WaitGroup and
+				// deadlock restoreNormal.
+				func() {
+					defer wg.Done()
+					if err := st.runJobRecovered(workerCtx, client, job); err != nil {
+						if serr := client.SendError(workerCtx, err); serr != nil {
+							// The error itself couldn't be forwarded to the server
+							// (connection lost / context cancelled). Log it locally
+							// so it is never silently lost.
+							syslog.L.Error(err).
+								WithField("restore", "error-report-failed").
+								WithField("sendErr", serr.Error()).
+								Write()
+						}
 					}
-				}
-				wg.Done()
+				}()
 			}
 		})
 	}
@@ -307,18 +345,38 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 	close(jobs)
 	workersWg.Wait()
 
+	syslog.L.Info().
+		WithJob(client.name).
+		WithMessage("restore: all workers drained, resolving deferred hardlinks").
+		Write()
+
 	// Final hardlink sweep: every regular target is now registered, so any
 	// link deferred during the concurrent pass can be resolved. Links whose
 	// targets live outside the restored source set (or whose filesystem
-	// cannot hard-link) fall back to a byte copy.
-	if err := resolveDeferredHardlinks(workerCtx, st); err != nil {
-		if serr := client.SendError(workerCtx, err); serr != nil {
-			syslog.L.Error(err).
-				WithField("restore", "error-report-failed").
-				WithField("sendErr", serr.Error()).
-				Write()
+	// cannot hard-link) fall back to a byte copy. Recovered so a panic in the
+	// sweep cannot crash the process after the bulk restore already finished.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err := fmt.Errorf("panic resolving deferred hardlinks: %v\n%s", r, debug.Stack())
+				syslog.L.Error(err).WithJob(client.name).WithField("restore", "panic").Write()
+				_ = client.SendError(workerCtx, err)
+			}
+		}()
+		if err := resolveDeferredHardlinks(workerCtx, st); err != nil {
+			if serr := client.SendError(workerCtx, err); serr != nil {
+				syslog.L.Error(err).
+					WithField("restore", "error-report-failed").
+					WithField("sendErr", serr.Error()).
+					Write()
+			}
 		}
-	}
+	}()
+
+	syslog.L.Info().
+		WithJob(client.name).
+		WithMessage("restore: content restore complete, returning to caller").
+		Write()
 
 	return ctx.Err()
 }
