@@ -536,9 +536,24 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 			b.receivedDone.Store(true)
 			b.task.WriteString("received done signal from agent")
 		case <-pipeCloseCh:
-			if !b.receivedDone.Load() {
-				b.task.WriteString("agent disconnected")
-				b.err = fmt.Errorf("lost connection to agent without receiving done signal")
+			// The agent's client.Close() sends pxar.Done as a synchronous RPC
+			// (server closes DoneCh and ACKs) and only closes the pipe after
+			// the ACK. So DoneCh is closed strictly before the pipe closes.
+			// But both channels are then ready in the same select iteration,
+			// and Go's select picks one nondeterministically — which used to
+			// make a fully-successful restore report a spurious "lost
+			// connection" ~50% of the time. Re-probe DoneCh here so a Done
+			// that was already received always wins; only treat the close as
+			// a real disconnect when DoneCh is genuinely still open.
+			select {
+			case <-b.remoteServer.DoneCh:
+				b.receivedDone.Store(true)
+				b.task.WriteString("received done signal from agent")
+			default:
+				if !b.receivedDone.Load() {
+					b.task.WriteString("agent disconnected")
+					b.err = fmt.Errorf("lost connection to agent without receiving done signal")
+				}
 			}
 		}
 	}
