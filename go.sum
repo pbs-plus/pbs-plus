@@ -171,6 +171,8 @@ github.com/pbs-plus/go-mtf v0.5.0 h1:RR0ryzB+T3IS9iaqGH6GagucBYOp/cCl1XkyZy50ZYQ
 github.com/pbs-plus/go-mtf v0.5.0/go.mod h1:+b+tf6QYnQ06tM9AnjsYjMb1SKKuyaNT3c/wdGLYteU=
 github.com/pbs-plus/go-mtf v0.6.0 h1:D7uYiShBRlE6P8VtcjACIJVFo12KHLRK0Bth/MzLw6I=
 github.com/pbs-plus/go-mtf v0.6.0/go.mod h1:AImRr/oaCZU7DECW0B8Ag/HlzGnRsXBfFEj733og5T0=
+github.com/pbs-plus/go-mtf v0.7.0 h1:1CL3FDzSoq7T8PUCTx9ANtVP5dIom3AttKaF7qDnftE=
+github.com/pbs-plus/go-mtf v0.7.0/go.mod h1:AImRr/oaCZU7DECW0B8Ag/HlzGnRsXBfFEj733og5T0=
 github.com/pbs-plus/go-tape v0.3.0 h1:fvyQ3RFqzGP53nJOOHVqdvZqBptt69bpXyPdaPJEqVA=
 github.com/pbs-plus/go-tape v0.3.0/go.mod h1:vTicbMYfCQL0C4RD9jSforgFeSuz9dyHzCTVVSqGsKk=
 github.com/pbs-plus/go-tape v0.4.0 h1:Iru4lNdBOPmVhvipxX5kw8TkV2bsFigvgMQ6bxfUuJo=
