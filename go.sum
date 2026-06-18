@@ -183,6 +183,8 @@ github.com/pbs-plus/go-tape v0.3.0 h1:fvyQ3RFqzGP53nJOOHVqdvZqBptt69bpXyPdaPJEqV
 github.com/pbs-plus/go-tape v0.3.0/go.mod h1:vTicbMYfCQL0C4RD9jSforgFeSuz9dyHzCTVVSqGsKk=
 github.com/pbs-plus/go-tape v0.4.0 h1:Iru4lNdBOPmVhvipxX5kw8TkV2bsFigvgMQ6bxfUuJo=
 github.com/pbs-plus/go-tape v0.4.0/go.mod h1:vTicbMYfCQL0C4RD9jSforgFeSuz9dyHzCTVVSqGsKk=
+github.com/pbs-plus/go-tape v0.5.0 h1:tFXSi1+iXmoKpJO5TJ9pYKNupAHfC93EgOAlkTwcesk=
+github.com/pbs-plus/go-tape v0.5.0/go.mod h1:vTicbMYfCQL0C4RD9jSforgFeSuz9dyHzCTVVSqGsKk=
 github.com/pbs-plus/pxar v0.29.1 h1:3frFnsBUmtCi8oqxOcLmFMJRD7TN8PD3fkHmwK8sKZA=
 github.com/pbs-plus/pxar v0.29.1/go.mod h1:yt3dqfE6UkDZuaJgi4Aoe9i2u5Ok8x8LQJgjhUFiqvQ=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=

@@ -80,6 +80,10 @@ func openTapeReader(dev string) (io.ReadCloser, error) {
 		_ = d.Close()
 		return nil, fmt.Errorf("set-variable-block %s: %w", sg, err)
 	}
+	if err := d.SetBufferedMode(true); err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("set-buffered-mode %s: %w", sg, err)
+	}
 	return &sgReader{dev: d, r: gotape.NewReader(d)}, nil
 }
 
