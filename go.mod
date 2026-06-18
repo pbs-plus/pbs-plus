@@ -28,7 +28,7 @@ require (
 	github.com/mxk/go-vss v1.2.1
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/pbs-plus/go-mtf v0.10.0
-	github.com/pbs-plus/go-tape v0.5.0
+	github.com/pbs-plus/go-tape v0.6.0
 	github.com/pbs-plus/pxar v0.29.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
