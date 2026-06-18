@@ -10,31 +10,29 @@
 package bkf2pxar
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/pbs-plus/go-tape"
 )
 
-// sgReader wraps a gotape.Reader and the Device it owns, implementing
-// io.ReadCloser. The Reader drives the tape with explicit SCSI commands and
-// satisfies go-mtf's BlockSkipper, so header-only walks skip file data via
-// block LOCATE instead of reading it.
+// sgReader wraps a gotape.Reader and the Device it owns. It implements
+// io.ReadSeekCloser: Read streams the recorded data, Seek forwards to a byte
+// offset (go-mtf's skipStreamData / skipRemainingData Seek instead of reading,
+// the fast-retrieval path MTF is designed for, spec §3.4.3), and Close releases
+// the device.
 type sgReader struct {
 	dev *gotape.Device
 	r   *gotape.Reader
 }
 
-func (s *sgReader) Read(p []byte) (int, error) { return s.r.Read(p) }
-func (s *sgReader) Close() error               { return s.dev.Close() }
-
-// SkipForward delegates to the inner gotape.Reader so the wrapper satisfies
-// go-mtf's BlockSkipper and header-only walks skip file data via block LOCATE.
-func (s *sgReader) SkipForward(n int64) error { return s.r.SkipForward(n) }
+func (s *sgReader) Read(p []byte) (int, error)                { return s.r.Read(p) }
+func (s *sgReader) Seek(off int64, whence int) (int64, error) { return s.r.Seek(off, whence) }
+func (s *sgReader) Close() error                              { return s.dev.Close() }
 
 // sgNodeForNST returns the SCSI-generic device node (e.g. /dev/sg3) backing the
 // given st character device (e.g. /dev/nst0), discovered via sysfs. It returns
@@ -53,42 +51,37 @@ func sgNodeForNST(dev string) (string, error) {
 }
 
 // openTapeReader opens a tape device (e.g. /dev/nst0), resolves its
-// SCSI-generic node via sysfs, rewinds it to BOT, puts the drive in
-// variable-block mode, and returns a Reader wrapped as an io.ReadCloser.
-// A reader always begins at the start of the cartridge, so callers never need
-// to rewind separately. The caller Close()s the returned reader when done.
+// SCSI-generic node via sysfs, rewinds it to BOT (verifying BOT via READ
+// POSITION), and returns a Reader wrapped as an io.ReadCloser. The underlying
+// *sgReader also implements io.Seeker, which go-mtf detects to skip file data
+// via Seek instead of reading it. A reader always begins at the start of the
+// cartridge, so callers never need to rewind separately. The caller Close()s
+// the returned reader when done.
 func openTapeReader(dev string) (io.ReadCloser, error) {
 	sg, err := sgNodeForNST(dev)
 	if err != nil {
 		return nil, fmt.Errorf("locate sg node for %s: %w", dev, err)
 	}
-	d, err := gotape.Open(sg)
+	// Open handles drive readiness and variable-block mode selection, returning
+	// a Device immediately ready for reads.
+	ctx := context.Background()
+	d, err := gotape.Open(ctx, sg)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", sg, err)
 	}
-	// Drives need a moment to settle after open; poll for readiness.
-	timeout := 120 * time.Second
-	if err := d.WaitUntilReady(&timeout); err != nil {
-		_ = d.Close()
-		return nil, fmt.Errorf("ready %s: %w", sg, err)
-	}
-	if err := d.Rewind(); err != nil {
+	// Rewind to BOT and verify the drive actually positioned to logical object 0.
+	if err := d.Rewind(ctx); err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("rewind %s: %w", sg, err)
 	}
-	// Verify the drive actually positioned to BOT (logical object 0).
-	if rp, err := d.ReadPositionLong(); err != nil {
+	if rp, err := d.ReadPositionLong(ctx); err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("read-position after rewind %s: %w", sg, err)
 	} else if rp.LogicalObjectNumber != 0 {
 		_ = d.Close()
 		return nil, fmt.Errorf("rewind %s: drive reports logical object %d, want 0 (BOT)", sg, rp.LogicalObjectNumber)
 	}
-	if err := d.SetVariableBlock(); err != nil {
-		_ = d.Close()
-		return nil, fmt.Errorf("set-variable-block %s: %w", sg, err)
-	}
-	if err := d.SetBufferedMode(true); err != nil {
+	if err := d.SetBufferedMode(ctx, true); err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("set-buffered-mode %s: %w", sg, err)
 	}
