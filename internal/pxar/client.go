@@ -19,26 +19,55 @@ var clientBufPool = sync.Pool{
 }
 
 type Client struct {
-	pipe  *arpc.StreamPipe
-	pr    *PxarReader
-	errCh chan error
-	name  string
+	pipe       *arpc.StreamPipe
+	pr         *PxarReader
+	errCh      chan error // local-restore error channel (owned by the job)
+	errFwd     chan error // remote-restore async error forwarder queue
+	errFwdDone chan struct{}
+	name       string
 }
 
 func NewRemoteClient(pipe *arpc.StreamPipe, name string) *Client {
-	return &Client{pipe: pipe, name: name}
+	c := &Client{
+		pipe:       pipe,
+		name:       name,
+		errFwd:     make(chan error, 4096),
+		errFwdDone: make(chan struct{}),
+	}
+	go c.forwardErrors()
+	return c
 }
 
 func NewLocalClient(pr *PxarReader, name string) (*Client, chan error) {
-	errCh := make(chan error, 16)
+	errCh := make(chan error, 256)
 	return &Client{pr: pr, errCh: errCh, name: name}, errCh
 }
 
+// SendError forwards a restore error to the server. It is non-blocking so a
+// flood of non-fatal metadata errors (e.g. ACL/owner writes that the restore
+// account lacks privilege for) can NEVER stall the worker pool — every worker
+// stays busy restoring file CONTENT for all files regardless of error volume.
+//
+// Remote restores hand the error to a dedicated forwarder goroutine
+// (forwardErrors) that performs one synchronous pxar.Error RPC per error off
+// the worker's critical path; this preserves immediate per-error delivery to
+// the server without making any worker wait. If the forwarder queue is full
+// (an exceptional flood), the error is logged locally so it is never lost.
+//
+// Local restores push to the job's error channel (consumed by the restore
+// job's collector); on a full channel the error is logged locally.
 func (c *Client) SendError(ctx context.Context, err error) error {
 	if c.pipe != nil {
-		syslog.L.Error(err).WithJob(c.name).WithField("restore", "error").Write()
-		if err := c.pipe.Call(ctx, "pxar.Error", errorReq{Error: err.Error()}, nil); err != nil {
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case c.errFwd <- err:
+		default:
+			// Forwarder queue saturated: log locally rather than block a worker.
+			syslog.L.Error(err).WithJob(c.name).
+				WithField("restore", "error").
+				WithField("dropped", "forwarder-full").
+				Write()
 		}
 		return nil
 	}
@@ -47,7 +76,35 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case c.errCh <- err:
-		return nil
+	default:
+		syslog.L.Error(err).WithJob(c.name).
+			WithField("restore", "error").
+			WithField("dropped", "errch-full").
+			Write()
+	}
+	return nil
+}
+
+// forwardErrors drains the remote error queue, delivering each error to the
+// server with a single synchronous pxar.Error RPC. Running on its own
+// goroutine decouples error-reporting latency from the worker pool, so even
+// thousands of metadata errors cannot slow the restore. It exits when errFwd
+// is closed (by Client.Close), after which Close waits on errFwdDone to
+// guarantee no pending error is lost on shutdown.
+func (c *Client) forwardErrors() {
+	defer close(c.errFwdDone)
+	for err := range c.errFwd {
+		syslog.L.Error(err).WithJob(c.name).WithField("restore", "error").Write()
+		if err := c.pipe.Call(context.Background(), "pxar.Error", errorReq{Error: err.Error()}, nil); err != nil {
+			// Pipe is gone (restore finishing or connection lost); log and keep
+			// draining so the queue doesn't back up into the workers.
+			syslog.L.Warn().
+				WithMessage("restore: error forward failed").
+				WithJob(c.name).
+				WithField("restore", "error-forward-failed").
+				WithField("error", err.Error()).
+				Write()
+		}
 	}
 }
 
@@ -160,6 +217,15 @@ func (c *Client) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (m
 
 func (c *Client) Close() error {
 	if c.pipe != nil {
+		// Stop accepting new errors and let the forwarder drain every queued
+		// error to the server BEFORE we signal Done, so no error is lost on
+		// shutdown. This is bounded by the queue depth (4096).
+		if c.errFwd != nil {
+			close(c.errFwd)
+			if c.errFwdDone != nil {
+				<-c.errFwdDone
+			}
+		}
 		if err := c.pipe.Call(context.Background(), "pxar.Done", nil, nil); err != nil {
 			return err
 		}

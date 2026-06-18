@@ -187,6 +187,11 @@ func RestoreWithOptions(ctx context.Context, client *Client, sources []string, o
 }
 
 func restoreNormal(ctx context.Context, client *Client, sources []string, destDir string, noAttr bool) error {
+	// On Windows this enables SeRestore/SeBackup/SeTakeOwnership/SeSecurity
+	// in the process token so owner/group/DACL writes succeed on files the
+	// restore user does not own. No-op on Unix. Runs once per process.
+	prepareRestoreProcess()
+
 	fsCap := getFilesystemCapabilities(destDir)
 
 	numCPU := runtime.NumCPU()
