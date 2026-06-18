@@ -6,9 +6,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
-	"strconv"
-	"sync"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -20,66 +20,15 @@ import (
 
 var (
 	modAdvapi32          = syscall.NewLazyDLL("advapi32.dll")
+	modKernel32          = syscall.NewLazyDLL("kernel32.dll")
 	procSetEntriesInAclW = modAdvapi32.NewProc("SetEntriesInAclW")
 	procSetSecurityInfo  = modAdvapi32.NewProc("SetSecurityInfo")
+	procLocalFree        = modKernel32.NewProc("LocalFree")
 )
 
-func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileInfo, fsCap filesystemCapabilities) error {
-	defer file.Close()
-
-	h := windows.Handle(file.Fd())
-
-	xattrs, _ := client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
-
-	var c, a, w *windows.Filetime
-
-	baseFt := unixToFiletime(e.MtimeSecs)
-	w = &baseFt
-	a = &baseFt
-
-	if xattrs != nil {
-		if d, ok := xattrs["user.creationtime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
-				ft := unixToFiletime(ts)
-				c = &ft
-			}
-		}
-		if d, ok := xattrs["user.lastwritetime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
-				ft := unixToFiletime(ts)
-				w = &ft
-			}
-		}
-		if d, ok := xattrs["user.lastaccesstime"]; ok {
-			if ts, err := strconv.ParseInt(string(d), 10, 64); err == nil {
-				ft := unixToFiletime(ts)
-				a = &ft
-			}
-		}
-	}
-
-	_ = windows.SetFileTime(h, c, a, w)
-
-	if xattrs != nil {
-		if fsCap.supportsXAttrs {
-			if d, ok := xattrs["user.fileattributes"]; ok {
-				var fa map[string]bool
-				if cbor.Unmarshal(d, &fa) == nil {
-					if attr := buildFileAttributes(fa); attr != 0 {
-						_ = setFileAttributesByHandle(h, attr)
-					}
-				}
-			}
-		}
-
-		if fsCap.supportsPersistentACLs {
-			restoreWindowsACLsFromHandle(h, xattrs)
-		}
-	}
-
-	return nil
-}
-
+// FILE_BASIC_INFO matches the Windows structure used with
+// SetFileInformationByHandle(FileBasicInfo). A zero-valued Filetime field
+// means "leave this time unchanged".
 type FILE_BASIC_INFO struct {
 	CreationTime   windows.Filetime
 	LastAccessTime windows.Filetime
@@ -88,51 +37,252 @@ type FILE_BASIC_INFO struct {
 	FileAttributes uint32
 }
 
-func setFileAttributesByHandle(h windows.Handle, attrs uint32) error {
-	var info FILE_BASIC_INFO
+func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.FileInfo) error {
+	defer file.Close()
 
-	var existing windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &existing); err != nil {
-		return err
-	}
+	h := windows.Handle(file.Fd())
 
-	info.CreationTime = existing.CreationTime
-	info.LastAccessTime = existing.LastAccessTime
-	info.LastWriteTime = existing.LastWriteTime
-	info.FileAttributes = attrs
+	xattrs, _ := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 
-	return windows.SetFileInformationByHandle(h, 0, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
-}
+	// Gather times. w (LastWriteTime/mtime) and a (LastAccessTime) default to
+	// the archive mtime so an existing file's times are normalized even when
+	// the xattrs are absent; c (CreationTime) is only set when captured.
+	baseFt := unixToFiletime(e.MtimeSecs)
+	var c windows.Filetime
+	a := baseFt
+	w := baseFt
+	var hasCreation bool
 
-func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
-	var secInfo windows.SECURITY_INFORMATION
-	var o, g *windows.SID
-	var dacl *windows.ACL
-
-	if d, ok := xattrs["user.owner"]; ok {
-		if sid, err := windows.StringToSid(string(d)); err == nil {
-			o = sid
-			secInfo |= windows.OWNER_SECURITY_INFORMATION
+	if xattrs != nil {
+		if d, ok := xattrs["user.creationtime"]; ok {
+			if ts, ok := parseXattrUnixSecs(d); ok {
+				c = unixToFiletime(ts)
+				hasCreation = true
+			}
 		}
-	}
-	if d, ok := xattrs["user.acls"]; ok {
-		var winACLs []types.WinACL
-		if cbor.Unmarshal(d, &winACLs) == nil {
-			if a, err := buildDACLFromACEs(winACLs); err == nil {
-				dacl = a
-				secInfo |= windows.DACL_SECURITY_INFORMATION
+		if d, ok := xattrs["user.lastwritetime"]; ok {
+			if ts, ok := parseXattrUnixSecs(d); ok {
+				w = unixToFiletime(ts)
+			}
+		}
+		if d, ok := xattrs["user.lastaccesstime"]; ok {
+			if ts, ok := parseXattrUnixSecs(d); ok {
+				a = unixToFiletime(ts)
 			}
 		}
 	}
 
-	if secInfo != 0 {
-		_, _, _ = procSetSecurityInfo.Call(uintptr(h), uintptr(windows.SE_FILE_OBJECT), uintptr(secInfo),
-			uintptr(unsafe.Pointer(o)), uintptr(unsafe.Pointer(g)), uintptr(unsafe.Pointer(dacl)), 0)
+	// File attributes decode once so they can ride in the same
+	// SetFileInformationByHandle(FileBasicInfo) call as the times, avoiding a
+	// separate GetFileInformationByHandle round-trip just to preserve them.
+	var attrs uint32
+	var hasAttrs bool
+	if xattrs != nil && st.fsCap.supportsXAttrs {
+		if d, ok := xattrs["user.fileattributes"]; ok {
+			var fa map[string]bool
+			if cbor.Unmarshal(d, &fa) == nil {
+				if attr := buildFileAttributes(fa); attr != 0 {
+					attrs = attr
+					hasAttrs = true
+				}
+			}
+		}
 	}
+
+	if hasAttrs {
+		// One call sets times + attributes together. Unspecified times stay
+		// unchanged (c is zero when not captured; a/w are always set from the
+		// archive mtime). Replaces the old SetFileTime + GetFileInformation
+		// ByHandle + SetFileInformationByHandle triple.
+		info := FILE_BASIC_INFO{
+			CreationTime:   c,
+			LastAccessTime: a,
+			LastWriteTime:  w,
+			FileAttributes: attrs,
+		}
+		_ = setBasicInfo(h, &info)
+	} else {
+		// No attributes to set: SetFileTime handles the times alone (a nil
+		// pointer leaves that time unchanged).
+		var cp *windows.Filetime
+		if hasCreation {
+			cp = &c
+		}
+		_ = windows.SetFileTime(h, cp, &a, &w)
+	}
+
+	if xattrs != nil {
+		if st.fsCap.supportsPersistentACLs {
+			restoreWindowsACLsFromHandle(h, xattrs)
+		}
+		// Restore any remaining (non-canonical) xattrs as NTFS alternate data
+		// streams — the closest native analog to a POSIX user.* xattr and the
+		// only way a cross-platform Linux->Windows restore preserves them.
+		// Canonical keys consumed above are skipped.
+		if st.fsCap.supportsXAttrs {
+			writeAlternateDataStreams(file.Name(), xattrs)
+		}
+	}
+
+	return nil
 }
 
-func applyMetaSymlink(_ context.Context, _ *Client, _ string, _ pxar.FileInfo, _ filesystemCapabilities) error {
+func setBasicInfo(h windows.Handle, info *FILE_BASIC_INFO) error {
+	return windows.SetFileInformationByHandle(h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(info)), uint32(unsafe.Sizeof(*info)))
+}
+
+// restoreWindowsACLsFromHandle applies owner, primary group, and DACL from the
+// serialized xattrs. Owner/group come from user.owner/user.group (SID strings
+// captured by the Windows agent); the DACL comes from user.acls when it is a
+// Windows-flavor payload. Every buffer allocated by advapi32 (the ACL from
+// SetEntriesInAclW and every SID from ConvertStringSidToSidW) is LocalFree'd
+// after SetSecurityInfo copies them into the security descriptor — the
+// previous implementation leaked one allocation per file (and per ACE).
+func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
+	var secInfo windows.SECURITY_INFORMATION
+	var ownerSID, groupSID *windows.SID
+	var ownedSIDs []*windows.SID // all ConvertStringSidToSid allocations, freed below
+
+	if d, ok := xattrs["user.owner"]; ok {
+		if sid, err := windows.StringToSid(string(d)); err == nil {
+			ownerSID = sid
+			ownedSIDs = append(ownedSIDs, sid)
+			secInfo |= windows.OWNER_SECURITY_INFORMATION
+		}
+	}
+	// Primary group was previously dropped (a `g` variable was declared but
+	// never assigned). The Windows agent captures the group SID into
+	// user.group, so restore it. A numeric Unix gid (Linux source restored to
+	// Windows) simply fails StringToSid and is skipped — no false group.
+	if d, ok := xattrs["user.group"]; ok {
+		if sid, err := windows.StringToSid(string(d)); err == nil {
+			groupSID = sid
+			ownedSIDs = append(ownedSIDs, sid)
+			secInfo |= windows.GROUP_SECURITY_INFORMATION
+		}
+	}
+
+	var dacl *windows.ACL
+	if d, ok := xattrs["user.acls"]; ok {
+		// Only Windows ACLs are applicable on a Windows destination. A
+		// POSIX-source payload ([]PosixACL) is skipped rather than decoded
+		// into zero-value WinACLs.
+		if detectACLFlavor(d) == aclWindows {
+			var winACLs []types.WinACL
+			if cbor.Unmarshal(d, &winACLs) == nil {
+				acl, aceSIDs, err := buildDACLFromACEs(winACLs)
+				ownedSIDs = append(ownedSIDs, aceSIDs...)
+				if err == nil && acl != nil {
+					dacl = acl
+					secInfo |= windows.DACL_SECURITY_INFORMATION
+				}
+			}
+		}
+	}
+
+	if secInfo == 0 {
+		freeSIDs(ownedSIDs)
+		return
+	}
+
+	_, _, _ = procSetSecurityInfo.Call(
+		uintptr(h), uintptr(windows.SE_FILE_OBJECT), uintptr(secInfo),
+		sidPtr(ownerSID), sidPtr(groupSID), aclPtr(dacl), 0,
+	)
+
+	// SetSecurityInfo copies into a self-owned security descriptor, so the
+	// caller-allocated ACL and SIDs can now be released.
+	localFreePtr(aclPtr(dacl))
+	freeSIDs(ownedSIDs)
+}
+
+func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e pxar.FileInfo) error {
+	// Open the link itself (not its target) via FILE_FLAG_OPEN_REPARSE_POINT
+	// so its times and security descriptor can be set. Previously this was a
+	// no-op on Windows, dropping symlink timestamps and ACLs that Unix
+	// restores via applyMetaSymlink.
+	h, err := openReparsePoint(linkPath, windows.FILE_WRITE_ATTRIBUTES|windows.WRITE_DAC|windows.WRITE_OWNER)
+	if err != nil {
+		return nil // best-effort; the link itself was already created
+	}
+	defer windows.CloseHandle(h)
+
+	xattrs, _ := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	if xattrs == nil {
+		return nil
+	}
+
+	// Times only — file attributes are intentionally NOT set on a reparse
+	// point, since writing them could clear FILE_ATTRIBUTE_REPARSE_POINT and
+	// break the symlink.
+	baseFt := unixToFiletime(e.MtimeSecs)
+	a := baseFt
+	w := baseFt
+	var cp *windows.Filetime
+	if d, ok := xattrs["user.creationtime"]; ok {
+		if ts, ok := parseXattrUnixSecs(d); ok {
+			ft := unixToFiletime(ts)
+			cp = &ft
+		}
+	}
+	if d, ok := xattrs["user.lastwritetime"]; ok {
+		if ts, ok := parseXattrUnixSecs(d); ok {
+			w = unixToFiletime(ts)
+		}
+	}
+	if d, ok := xattrs["user.lastaccesstime"]; ok {
+		if ts, ok := parseXattrUnixSecs(d); ok {
+			a = unixToFiletime(ts)
+		}
+	}
+	_ = windows.SetFileTime(h, cp, &a, &w)
+
+	if st.fsCap.supportsPersistentACLs {
+		restoreWindowsACLsFromHandle(h, xattrs)
+	}
 	return nil
+}
+
+// applyTempMode is a no-op on Windows: the temp-file mode from CreateTemp is
+// irrelevant (Windows does not honor POSIX modes), and the final attributes
+// are applied via applyMeta in attr mode.
+func applyTempMode(path string, rawMode uint64) error { return nil }
+
+// openReparsePoint opens a path without following it (for symlinks/junctions).
+func openReparsePoint(p string, access uint32) (windows.Handle, error) {
+	ptr, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return 0, err
+	}
+	return windows.CreateFile(
+		ptr, access,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0,
+	)
+}
+
+// writeAlternateDataStreams writes every non-canonical user.* xattr as an NTFS
+// alternate data stream named after the xattr (e.g. user.foo -> file:user.foo).
+// This is the Windows analog of Unix's generic xattr loop and makes a
+// cross-platform Linux->Windows restore lossless. Best-effort: stream names
+// that are invalid on Windows are silently skipped.
+func writeAlternateDataStreams(name string, xattrs map[string][]byte) {
+	for k, v := range xattrs {
+		if !strings.HasPrefix(k, "user.") {
+			continue
+		}
+		switch k {
+		case "user.owner", "user.group", "user.acls", "user.fileattributes",
+			"user.creationtime", "user.lastaccesstime", "user.lastwritetime":
+			continue
+		}
+		stream := strings.TrimPrefix(k, "user.")
+		if stream == "" || strings.ContainsAny(stream, `<>:"/\|?*`) {
+			continue
+		}
+		_ = os.WriteFile(name+":"+stream, v, 0o666)
+	}
 }
 
 func unixToFiletime(unixTime int64) windows.Filetime {
@@ -162,20 +312,24 @@ func buildFileAttributes(fa map[string]bool) uint32 {
 	return r
 }
 
-func buildDACLFromACEs(winACLs []types.WinACL) (*windows.ACL, error) {
+// buildDACLFromACEs builds a DACL from WinACL entries. Every SID it allocates
+// via StringToSid is returned so the caller can LocalFree it after
+// SetSecurityInfo consumes the ACL. SetEntriesInAclW reads the SIDs through
+// the trustee pointers, so they must stay alive until that call returns.
+func buildDACLFromACEs(winACLs []types.WinACL) (acl *windows.ACL, sids []*windows.SID, err error) {
 	if len(winACLs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	entries := make([]windows.EXPLICIT_ACCESS, 0, len(winACLs))
 
 	for _, acl := range winACLs {
-		sid, err := windows.StringToSid(acl.SID)
-		if err != nil {
+		sid, serr := windows.StringToSid(acl.SID)
+		if serr != nil {
 			continue
 		}
-
-		entry := windows.EXPLICIT_ACCESS{
+		sids = append(sids, sid)
+		entries = append(entries, windows.EXPLICIT_ACCESS{
 			AccessPermissions: windows.ACCESS_MASK(acl.AccessMask),
 			AccessMode:        windows.ACCESS_MODE(acl.Type),
 			Inheritance:       uint32(acl.Flags),
@@ -184,53 +338,53 @@ func buildDACLFromACEs(winACLs []types.WinACL) (*windows.ACL, error) {
 				TrusteeType:  windows.TRUSTEE_IS_UNKNOWN,
 				TrusteeValue: windows.TrusteeValueFromSID(sid),
 			},
-		}
-		entries = append(entries, entry)
+		})
 	}
 
 	if len(entries) == 0 {
-		return nil, nil
+		return nil, sids, nil
 	}
 
 	var newACL *windows.ACL
-	ret, _, err := procSetEntriesInAclW.Call(
+	ret, _, _ := procSetEntriesInAclW.Call(
 		uintptr(len(entries)),
 		uintptr(unsafe.Pointer(&entries[0])),
-		0, // oldACL
+		0,
 		uintptr(unsafe.Pointer(&newACL)),
 	)
-
 	if ret != 0 {
-		return nil, fmt.Errorf("SetEntriesInAcl failed: %w", err)
+		return nil, sids, fmt.Errorf("SetEntriesInAcl failed: %w", syscall.Errno(ret))
 	}
-
-	return newACL, nil
+	return newACL, sids, nil
 }
 
-func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.FileInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
+func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
+	dst := job.dest
+	dirEntry := job.info
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
 
-	entries, err := client.ReadDir(ctx, dirEntry.EntryRangeEnd)
+	entries, err := st.client.ReadDir(ctx, dirEntry.EntryRangeEnd)
 	if err != nil {
 		return err
 	}
 
 	for _, e := range entries {
 		target := filepath.Join(dst, e.Name())
+		childSrc := path.Join(job.srcPath, e.Name())
 
-		wg.Add(1)
-		go func(t string, info pxar.FileInfo) {
+		st.wg.Add(1)
+		go func(t, s string, info pxar.FileInfo) {
 			select {
-			case jobs <- restoreJob{dest: t, info: info}:
+			case st.jobs <- restoreJob{dest: t, srcPath: s, info: info}:
 			case <-ctx.Done():
-				wg.Done()
+				st.wg.Done()
 			}
-		}(target, e)
+		}(target, childSrc, e)
 	}
 
-	if noAttr {
+	if st.noAttr {
 		return nil
 	}
 
@@ -253,5 +407,34 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.F
 	}
 
 	df := os.NewFile(uintptr(h), dst)
-	return applyMeta(ctx, client, df, dirEntry, fsCap)
+	return applyMeta(ctx, st, df, dirEntry)
+}
+
+// sidPtr returns a uintptr for a *SID that may be nil (0 => absent).
+func sidPtr(s *windows.SID) uintptr {
+	if s == nil {
+		return 0
+	}
+	return uintptr(unsafe.Pointer(s))
+}
+
+// aclPtr returns a uintptr for a *ACL that may be nil (0 => absent).
+func aclPtr(a *windows.ACL) uintptr {
+	if a == nil {
+		return 0
+	}
+	return uintptr(unsafe.Pointer(a))
+}
+
+func freeSIDs(sids []*windows.SID) {
+	for _, s := range sids {
+		localFreePtr(uintptr(unsafe.Pointer(s)))
+	}
+}
+
+func localFreePtr(p uintptr) {
+	if p == 0 {
+		return
+	}
+	_, _, _ = procLocalFree.Call(p)
 }
