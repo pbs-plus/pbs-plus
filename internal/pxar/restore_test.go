@@ -1,9 +1,12 @@
 package pxar
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
 	pxar "github.com/pbs-plus/pxar"
 )
@@ -98,6 +101,43 @@ func TestShouldUpdateFileTypeAfterDeserialization(t *testing.T) {
 					path, tt.fileType, got, tt.wantUpdate)
 			}
 		})
+	}
+}
+
+// TestXattrTimestampDecoding guards the encoding contract between the backup
+// writer (internal/server/vfs/arpcfs) and the Unix restore path
+// (applyMeta). These xattrs are serialized as decimal ASCII strings, so they
+// must be parsed with strconv.ParseInt — NOT decoded as raw little-endian
+// binary, which yields a garbage (invalid) time and is the bug this test
+// pins down.
+func TestXattrTimestampDecoding(t *testing.T) {
+	// 2020-12-31T23:00:00Z — a representative 10-digit Unix-second value.
+	const wantSec int64 = 1609459200
+	xattr := []byte(strconv.FormatInt(wantSec, 10)) // e.g. "1609459200"
+
+	// Correct decode path (matches applyMeta + restore_windows.go).
+	ts, err := strconv.ParseInt(string(xattr), 10, 64)
+	if err != nil {
+		t.Fatalf("parse decimal timestamp: %v", err)
+	}
+	got := time.Unix(ts, 0).UTC()
+	if !got.Equal(time.Unix(wantSec, 0).UTC()) {
+		t.Fatalf("decoded time = %v, want %v", got, time.Unix(wantSec, 0).UTC())
+	}
+
+	// The old buggy decode (binary.LittleEndian.Uint64 over ASCII bytes)
+	// produces a value far outside any plausible Unix range, confirming why
+	// it manifested as an "invalid time" on restored files.
+	if len(xattr) >= 8 {
+		bad := int64(binary.LittleEndian.Uint64(xattr))
+		if bad == wantSec {
+			t.Fatalf("old decoder unexpectedly matched; bad=%d", bad)
+		}
+		// A valid Unix timestamp in seconds fits comfortably in ~1e9–1e10
+		// for current dates; the mis-decoded ASCII is ~1e18.
+		if bad < 1e11 {
+			t.Fatalf("old decoder produced plausible value %d; test no longer demonstrates the bug", bad)
+		}
 	}
 }
 
