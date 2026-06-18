@@ -1777,6 +1777,16 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		MtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 		CtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 	}
+	// Apply restore's timestamp precedence (xattr-derived atime/mtime) so an
+	// unmodified, pxar-backed file reports the same times as a restore.
+	aNs, mNs := fs.pxar.ResolvedTimes(pxarNode)
+	if pxarNode.timesResolved {
+		re.AtimeNs = aNs
+		re.MtimeNs = mNs
+		re.CtimeNs = mNs
+	} else {
+		re.AtimeNs = re.MtimeNs
+	}
 	re.Inode = fs.pathToIno(path, re.IsDir)
 	fs.applyACL(re)
 	return re, fuse.OK
@@ -2152,14 +2162,23 @@ func fillResolvedAttrOut(re *ResolvedEntry, out *fuse.AttrOut) {
 	a.Ino = re.Inode
 	a.Size = re.Size
 	a.Blocks = (re.Size + 511) / 512
-	sec := re.MtimeNs / 1_000_000_000
-	nsec := uint32(re.MtimeNs % 1_000_000_000)
+	// Atime/Mtime mirror restore's precedence (xattr-derived where the pxar
+	// entry carries lastaccesstime/lastwritetime, else Stat.Mtime). Ctime is
+	// kernel-owned under restore; report mtime as the closest stable value.
+	atimeNs := re.AtimeNs
+	if atimeNs == 0 {
+		atimeNs = re.MtimeNs
+	}
+	sec := atimeNs / 1_000_000_000
+	nsec := uint32(atimeNs % 1_000_000_000)
 	a.Atime = uint64(sec)
-	a.Mtime = uint64(sec)
-	a.Ctime = uint64(sec)
 	a.Atimensec = nsec
-	a.Mtimensec = nsec
-	a.Ctimensec = nsec
+	msec := re.MtimeNs / 1_000_000_000
+	mnsec := uint32(re.MtimeNs % 1_000_000_000)
+	a.Mtime = uint64(msec)
+	a.Mtimensec = mnsec
+	a.Ctime = uint64(msec)
+	a.Ctimensec = mnsec
 	a.Mode = re.Mode
 	if re.IsDir {
 		a.Nlink = 2

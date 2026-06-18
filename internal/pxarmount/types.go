@@ -55,6 +55,16 @@ type node struct {
 	isDir         bool
 	isSymlink     bool
 	isReg         bool
+
+	// Effective atime/mtime resolved from the pxar Stat.Mtime plus the
+	// user.lastaccesstime/user.lastwritetime xattrs, mirroring how restore
+	// computes them. Populated lazily by ensureNodeTimes. When
+	// timesResolved is false, callers fall back to mtimeSecs/mtimeNanos
+	// (the pxar Stat.Mtime), which is restore's default before xattrs are
+	// considered.
+	atimeNs       int64
+	mtimeNs       int64
+	timesResolved bool
 }
 
 // dirEntrySlim is a lightweight directory entry for readdir results.
@@ -89,6 +99,7 @@ type ResolvedEntry struct {
 	UID        uint32
 	GID        uint32
 	Size       uint64
+	AtimeNs    int64 // effective atime (xattr-derived, mirroring restore)
 	MtimeNs    int64
 	CtimeNs    int64
 	SymlinkTgt string
@@ -356,12 +367,26 @@ func fillAttr(attr *fuse.Attr, n *node) {
 	attr.Ino = n.inode
 	attr.Size = n.fileSize
 	attr.Blocks = (n.fileSize + 511) / 512
-	attr.Atime = uint64(n.mtimeSecs)
-	attr.Mtime = uint64(n.mtimeSecs)
-	attr.Ctime = uint64(n.mtimeSecs)
-	attr.Atimensec = n.mtimeNanos
-	attr.Mtimensec = n.mtimeNanos
-	attr.Ctimensec = n.mtimeNanos
+	// Atime/Mtime/Ctime mirror restore's precedence (restore_unix.go
+	// applyMeta): default to pxar Stat.Mtime; override atime/mtime from the
+	// user.lastaccesstime/user.lastwritetime xattrs (Unix seconds, nanos
+	// dropped) when present. Ctime is not preserved by restore (kernel-owned),
+	// so we report mtime for it as the closest stable approximation.
+	if n.timesResolved {
+		attr.Atime = uint64(n.atimeNs / 1_000_000_000)
+		attr.Mtime = uint64(n.mtimeNs / 1_000_000_000)
+		attr.Ctime = uint64(n.mtimeNs / 1_000_000_000)
+		attr.Atimensec = uint32(n.atimeNs % 1_000_000_000)
+		attr.Mtimensec = uint32(n.mtimeNs % 1_000_000_000)
+		attr.Ctimensec = uint32(n.mtimeNs % 1_000_000_000)
+	} else {
+		attr.Atime = uint64(n.mtimeSecs)
+		attr.Mtime = uint64(n.mtimeSecs)
+		attr.Ctime = uint64(n.mtimeSecs)
+		attr.Atimensec = n.mtimeNanos
+		attr.Mtimensec = n.mtimeNanos
+		attr.Ctimensec = n.mtimeNanos
+	}
 	attr.Mode = statMode(n.mode)
 	if n.isDir {
 		attr.Nlink = 2
