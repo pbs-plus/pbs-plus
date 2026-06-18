@@ -6,7 +6,6 @@ package bkf2pxar
 
 import (
 	"fmt"
-	"io"
 	"os"
 
 	mtf "github.com/pbs-plus/go-mtf"
@@ -69,7 +68,7 @@ func (f *feeder) markProcessed() {
 // loadFirst loads the first available data tape (skipping cleaning tapes) into
 // the drive and returns an open reader positioned at BOT. It picks the first
 // non-cleaning, full slot. The caller is responsible for closing the reader.
-func (f *feeder) loadFirst() (io.ReadCloser, error) {
+func (f *feeder) loadFirst() (*tapeReader, error) {
 	for i, s := range f.status.Slots {
 		if !s.Full || s.ImportExport {
 			continue
@@ -88,7 +87,7 @@ func (f *feeder) loadFirst() (io.ReadCloser, error) {
 
 // loadSlot loads slot (1-based), opens the drive reader (which rewinds to
 // BOT), and caches the cartridge's barcode→slot mapping.
-func (f *feeder) loadSlot(slot int) (io.ReadCloser, error) {
+func (f *feeder) loadSlot(slot int) (*tapeReader, error) {
 	bc := f.status.Slots[slot-1].VolumeTag
 	fmt.Fprintf(os.Stderr, "== loading slot %d (%s) into drive %d ==\n", slot, barcodeOrUnknown(bc), f.driveIndex)
 	if err := f.chg.Load(f.status, slot, f.driveIndex); err != nil {
@@ -126,8 +125,8 @@ func (f *feeder) unloadCurrent() error {
 // asContinuation adapts the feeder into go-mtf's continuation callback.
 // It is invoked with the context of the medium that just ended; it must
 // return a reader over the next medium of the same family, or an error.
-func (f *feeder) asContinuation() func(mtf.Continuation) (io.Reader, error) {
-	return func(c mtf.Continuation) (io.Reader, error) {
+func (f *feeder) asContinuation() func(mtf.Continuation) (mtf.Tape, error) {
+	return func(c mtf.Continuation) (mtf.Tape, error) {
 		return f.nextMedium(c)
 	}
 }
@@ -135,7 +134,7 @@ func (f *feeder) asContinuation() func(mtf.Continuation) (io.Reader, error) {
 // nextMedium finds and loads the tape carrying media-family sequence
 // c.Sequence+1 (matching the MFMID of the tape that just ended), verifies its
 // identity from the TAPE block, and returns a fresh reader.
-func (f *feeder) nextMedium(c mtf.Continuation) (io.Reader, error) {
+func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	wantSeq := 0
 	wantMFMID := uint32(0)
 	if c.Media != nil {
@@ -204,7 +203,7 @@ func (f *feeder) nextMedium(c mtf.Continuation) (io.Reader, error) {
 // verifyTape peeks at the cartridge's TAPE block and reports whether its
 // MFMID/Sequence match the wanted values. It closes the probe reader; the
 // caller reopens a fresh reader (which rewinds to BOT) on a match.
-func (f *feeder) verifyTape(rc io.ReadCloser, wantMFMID uint32, wantSeq int) (bool, error) {
+func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool, error) {
 	r := mtf.NewReader(rc)
 	blk, err := r.Next()
 	_ = rc.Close()

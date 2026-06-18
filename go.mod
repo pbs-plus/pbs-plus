@@ -27,8 +27,8 @@ require (
 	github.com/minio/sha256-simd v1.0.1
 	github.com/mxk/go-vss v1.2.1
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
-	github.com/pbs-plus/go-mtf v0.11.0
-	github.com/pbs-plus/go-tapedrive v0.1.0
+	github.com/pbs-plus/go-mtf v0.14.0
+	github.com/pbs-plus/go-tapedrive v0.4.0
 	github.com/pbs-plus/pxar v0.29.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
@@ -39,7 +39,7 @@ require (
 	github.com/zeebo/xxh3 v1.1.0
 	golang.org/x/crypto v0.51.0
 	golang.org/x/exp v0.0.0-20260508232706-74f9aab9d74a
-	golang.org/x/sys v0.44.0
+	golang.org/x/sys v0.46.0
 	golang.org/x/time v0.15.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	k8s.io/api v0.36.1

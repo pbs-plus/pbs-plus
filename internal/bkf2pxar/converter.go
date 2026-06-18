@@ -624,7 +624,7 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 // --- Source opening helpers ---
 
 func setupTapeContinuation(r *mtf.Reader, dev string) {
-	r.SetContinuation(func(ct mtf.Continuation) (io.Reader, error) {
+	r.SetContinuation(func(ct mtf.Continuation) (mtf.Tape, error) {
 		fmt.Fprintf(os.Stderr, "\n== Insert tape %d (media %s) and press Enter ==\n",
 			ct.Sequence+1, ct.Media.Name)
 		var buf string
@@ -639,7 +639,7 @@ func setupTapeContinuation(r *mtf.Reader, dev string) {
 }
 
 func setupFileContinuation(r *mtf.Reader, files []string) {
-	r.SetContinuation(func(ct mtf.Continuation) (io.Reader, error) {
+	r.SetContinuation(func(ct mtf.Continuation) (mtf.Tape, error) {
 		idx := ct.Sequence
 		if idx >= len(files) {
 			return nil, fmt.Errorf("sequence %d exceeds %d files", idx, len(files))
@@ -648,7 +648,7 @@ func setupFileContinuation(r *mtf.Reader, files []string) {
 		if err != nil {
 			return nil, fmt.Errorf("open %s: %w", files[idx], err)
 		}
-		return next, nil
+		return mtf.NewFileTape(next), nil
 	})
 }
 
