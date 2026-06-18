@@ -76,6 +76,14 @@ func openTapeReader(dev string) (io.ReadCloser, error) {
 		_ = d.Close()
 		return nil, fmt.Errorf("rewind %s: %w", sg, err)
 	}
+	// Verify the drive actually positioned to BOT (logical object 0).
+	if rp, err := d.ReadPositionLong(); err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("read-position after rewind %s: %w", sg, err)
+	} else if rp.LogicalObjectNumber != 0 {
+		_ = d.Close()
+		return nil, fmt.Errorf("rewind %s: drive reports logical object %d, want 0 (BOT)", sg, rp.LogicalObjectNumber)
+	}
 	if err := d.SetVariableBlock(); err != nil {
 		_ = d.Close()
 		return nil, fmt.Errorf("set-variable-block %s: %w", sg, err)
