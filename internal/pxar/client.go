@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -217,13 +218,22 @@ func (c *Client) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (m
 
 func (c *Client) Close() error {
 	if c.pipe != nil {
-		// Stop accepting new errors and let the forwarder drain every queued
-		// error to the server BEFORE we signal Done, so no error is lost on
-		// shutdown. This is bounded by the queue depth (4096).
+		// Stop accepting new errors, then give the forwarder a BOUNDED window
+		// to flush queued errors before signaling Done. An unbounded wait here
+		// could delay Done indefinitely if a forwarder RPC stalls, leaving the
+		// server to time out the pipe and report "agent disconnected without
+		// done signal" while temp files leak. Metadata errors are non-fatal
+		// warnings; a bounded best-effort flush is the correct trade-off.
 		if c.errFwd != nil {
 			close(c.errFwd)
 			if c.errFwdDone != nil {
-				<-c.errFwdDone
+				select {
+				case <-c.errFwdDone:
+				case <-time.After(5 * time.Second):
+					// Forwarder is still flushing; proceed to Done so the job
+					// completes promptly. The forwarder keeps running and will
+					// log/drop any remaining warnings on its own.
+				}
 			}
 		}
 		if err := c.pipe.Call(context.Background(), "pxar.Done", nil, nil); err != nil {

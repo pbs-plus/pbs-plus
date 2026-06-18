@@ -21,15 +21,29 @@ var prepOnce sync.Once
 // whose owner/DACL differs from the restore user. This is the standard pattern
 // for backup/restore software on Windows.
 //
+// Note: windows.GetCurrentProcessToken() returns a pseudo-token that grants
+// TOKEN_QUERY|DUPLICATE|ASSIGN_PRIMARY but NOT TOKEN_ADJUST_PRIVILEGES, so
+// AdjustTokenPrivileges rejects it with ERROR_INVALID_HANDLE ("The handle is
+// invalid"). We must OpenProcessToken ourselves with ADJUST_PRIVILEGES access.
+//
 // Best-effort: if the token genuinely lacks a privilege (e.g. the agent runs
-// as a plain user), enabling silently fails for that privilege and the
-// affected metadata operations will fail per-file and be reported — but the
-// restore of file CONTENT still proceeds for all files.
+// as a plain user), enabling fails for that privilege and the affected
+// metadata operations fail per-file and are reported — but the restore of
+// file CONTENT still proceeds for all files.
 func prepareRestoreProcess() {
 	prepOnce.Do(func() {
-		// GetCurrentProcessToken returns a pseudo-handle for this process's
-		// primary token; it does not need closing.
-		token := windows.GetCurrentProcessToken()
+		var token windows.Token
+		// TOKEN_ADJUST_PRIVILEGES is required to enable privileges; TOKEN_QUERY
+		// is required by LookupPrivilegeValue/AdjustTokenPrivileges internals.
+		if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token); err != nil {
+			syslog.L.Warn().
+				WithMessage("restore: could not open process token; metadata errors may follow").
+				WithField("error", err.Error()).
+				Write()
+			return
+		}
+		defer token.Close()
+
 		var missing []string
 		for _, name := range []string{
 			"SeRestorePrivilege",       // write owner/group on any object; restore

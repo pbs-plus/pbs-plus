@@ -186,7 +186,39 @@ func RestoreWithOptions(ctx context.Context, client *Client, sources []string, o
 	return restoreNormal(ctx, client, sources, opts.DestDir, noAttr)
 }
 
+// cleanupStaleTemps removes leftover .pxar-restore-* temp files from a prior
+// restore run that was killed or crashed before it could swap them into place.
+// It walks the destination root and deletes any file whose base name matches
+// the temp pattern, reporting failures but never aborting the restore. This
+// is the safety net that guarantees no .pxar-restore-* files survive across
+// restore runs even if a previous run was forcibly terminated mid-swap.
+func cleanupStaleTemps(root string) {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // best-effort; keep walking
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, ".pxar-restore-") {
+			if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+				syslog.L.Warn().
+					WithMessage("restore: could not remove stale temp file").
+					WithField("path", path).
+					WithField("error", rmErr.Error()).
+					Write()
+			}
+		}
+		return nil
+	})
+}
+
 func restoreNormal(ctx context.Context, client *Client, sources []string, destDir string, noAttr bool) error {
+	// Remove temp files leaked by any prior restore that was killed/crashed
+	// before swapping them into place, so .pxar-restore-* never accumulates.
+	cleanupStaleTemps(destDir)
+
 	// On Windows this enables SeRestore/SeBackup/SeTakeOwnership/SeSecurity
 	// in the process token so owner/group/DACL writes succeed on files the
 	// restore user does not own. No-op on Unix. Runs once per process.
