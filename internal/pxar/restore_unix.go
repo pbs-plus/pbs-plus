@@ -68,9 +68,15 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 
 		if fsCap.supportsACLs {
 			if d, ok := xattrs["user.acls"]; ok {
-				var entries []types.PosixACL
-				if cbor.Unmarshal(d, &entries) == nil {
-					applyUnixACLsFd(fd, entries)
+				// Only POSIX ACLs can be represented on a Unix destination. A
+				// Windows-source payload ([]WinACL) would otherwise be decoded
+				// into zero-value PosixACL entries and written as a corrupt
+				// system.posix_acl_access/default xattr.
+				if detectACLFlavor(d) == aclPosix {
+					var entries []types.PosixACL
+					if cbor.Unmarshal(d, &entries) == nil {
+						applyUnixACLsFd(fd, entries)
+					}
 				}
 				delete(xattrs, "user.acls")
 			}
@@ -104,8 +110,18 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 }
 
 func applyUnixACLsFd(fd int, entries []types.PosixACL) {
+	knownTags := map[string]struct{}{
+		"user_obj": {}, "user": {}, "group_obj": {},
+		"group": {}, "mask": {}, "other": {},
+	}
 	var acc, def []types.PosixACL
 	for _, ent := range entries {
+		// Skip entries that don't carry a recognized POSIX ACL tag; an
+		// empty/unknown tag would otherwise be packed as tag 0 and corrupt
+		// the on-disk ACL.
+		if _, ok := knownTags[ent.Tag]; !ok {
+			continue
+		}
 		if ent.IsDefault {
 			def = append(def, ent)
 		} else {

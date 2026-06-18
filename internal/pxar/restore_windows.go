@@ -115,11 +115,16 @@ func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
 		}
 	}
 	if d, ok := xattrs["user.acls"]; ok {
-		var winACLs []types.WinACL
-		if cbor.Unmarshal(d, &winACLs) == nil {
-			if a, err := buildDACLFromACEs(winACLs); err == nil {
-				dacl = a
-				secInfo |= windows.DACL_SECURITY_INFORMATION
+		// Only Windows ACLs are applicable on a Windows destination. A
+		// POSIX-source payload ([]PosixACL) is skipped rather than decoded
+		// into zero-value WinACLs.
+		if detectACLFlavor(d) == aclWindows {
+			var winACLs []types.WinACL
+			if cbor.Unmarshal(d, &winACLs) == nil {
+				if a, err := buildDACLFromACEs(winACLs); err == nil {
+					dacl = a
+					secInfo |= windows.DACL_SECURITY_INFORMATION
+				}
 			}
 		}
 	}

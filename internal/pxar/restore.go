@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
+
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -70,6 +72,61 @@ func parseXattrUnixSecs(data []byte) (secs int64, ok bool) {
 		return v / int64(time.Second), true
 	default:
 		return 0, false
+	}
+}
+
+// aclFlavor discriminates the encoding of a serialized user.acls payload.
+// The backup writer emits one or the other depending on the source agent —
+// server_unix stores []PosixACL, server_windows stores []WinACL — so the
+// restore must not assume its destination-native type. Applying a foreign
+// type (e.g. writing a []WinACL payload as a POSIX ACL on Linux) yields a
+// corrupt ACL, which is what this guards against.
+type aclFlavor int
+
+const (
+	// aclNone means the payload is absent, undecodable, or carries neither
+	// a recognizable POSIX nor Windows ACL. Callers skip applying it.
+	aclNone aclFlavor = iota
+	// aclPosix means the payload decodes as []PosixACL (entries have a "tag").
+	aclPosix
+	// aclWindows means the payload decodes as []WinACL (entries have a "sid").
+	aclWindows
+)
+
+// detectACLFlavor inspects a serialized user.acls blob and reports whether it
+// carries POSIX or Windows ACLs. It probes the field discriminator ("sid" for
+// Windows vs "tag" for POSIX) rather than committing to either struct, so a
+// cross-platform restore can decide whether the ACLs are applicable to the
+// destination OS. fxamacker/cbor ignores unknown fields by default, so probing
+// a WinACL payload into the POSIX-side field leaves "tag" empty (and vice
+// versa). Empty/undecodable/mixed payloads resolve to aclNone.
+func detectACLFlavor(data []byte) aclFlavor {
+	if len(data) == 0 {
+		return aclNone
+	}
+	var probe []struct {
+		SID string `cbor:"sid"` // Windows ACL discriminator
+		Tag string `cbor:"tag"` // POSIX ACL discriminator
+	}
+	if cbor.Unmarshal(data, &probe) != nil {
+		return aclNone
+	}
+	var hasPosix, hasWindows bool
+	for _, p := range probe {
+		if p.SID != "" {
+			hasWindows = true
+		}
+		if p.Tag != "" {
+			hasPosix = true
+		}
+	}
+	switch {
+	case hasPosix && !hasWindows:
+		return aclPosix
+	case hasWindows && !hasPosix:
+		return aclWindows
+	default:
+		return aclNone
 	}
 }
 

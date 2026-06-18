@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -216,6 +218,55 @@ func TestParseXattrUnixSecsOldBinaryDecodeWouldBeInvalid(t *testing.T) {
 	}
 	if _, badOk := parseXattrUnixSecs([]byte(strconv.FormatInt(bad, 10))); badOk {
 		t.Fatalf("parseXattrUnixSecs accepted the garbage value %d that the old decoder produced", bad)
+	}
+}
+
+// TestDetectACLFlavor pins the cross-platform ACL contract. The backup writer
+// emits []PosixACL for a Unix source and []WinACL for a Windows source into
+// the same user.acls xattr. The restore must detect which it received and only
+// apply its destination-native type — otherwise a foreign payload would be
+// decoded into zero-value entries and written as a corrupt ACL.
+func TestDetectACLFlavor(t *testing.T) {
+	posix, err := cbor.Marshal([]types.PosixACL{
+		{Tag: "user_obj", Perms: 0o7},
+		{Tag: "user", ID: 1000, Perms: 0o6},
+		{Tag: "other", Perms: 0o5, IsDefault: true},
+	})
+	if err != nil {
+		t.Fatalf("marshal posix: %v", err)
+	}
+
+	win, err := cbor.Marshal([]types.WinACL{
+		{SID: "S-1-5-32-544", AccessMask: 0x1F01FF, Type: 0}, // ACCESS_ALLOWED_ACE
+		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: 0},
+	})
+	if err != nil {
+		t.Fatalf("marshal win: %v", err)
+	}
+
+	// Empty WinACL slice with no SID discriminator must not be mistaken for
+	// a Windows ACL — it has neither discriminator and resolves to aclNone.
+	winZeroTag, _ := cbor.Marshal([]types.WinACL{{Type: 0}})
+
+	tests := []struct {
+		name string
+		data []byte
+		want aclFlavor
+	}{
+		{"posix source payload", posix, aclPosix},
+		{"windows source payload", win, aclWindows},
+		{"empty nil", nil, aclNone},
+		{"empty bytes", []byte{}, aclNone},
+		{"non-cbor garbage", []byte("not-acl"), aclNone},
+		{"no discriminator entries", winZeroTag, aclNone},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := detectACLFlavor(tt.data); got != tt.want {
+				t.Errorf("detectACLFlavor() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
