@@ -29,6 +29,11 @@ import (
 	"unsafe"
 )
 
+// OpenTapeReader opens a tape device, rewinds it to BOT via MTIOCTOP, and wraps
+// it in a *tapeReader. Exported for the tapeprobe diagnostic tool so it can
+// reuse the exact production tape path without duplicating the block-reading
+// adapter. Not part of the stable converter API.
+
 // maxTapeBlock is the largest block we expect on an LTO cartridge. LTO drives
 // write 64 KiB records by default; 1 MiB leaves headroom for 1 MiB fixed-block
 // configurations and future LTO generations.
@@ -60,7 +65,17 @@ func newTapeReader(r io.Reader) *tapeReader {
 // wraps it for block-oriented reading. A reader always begins at the start of
 // the cartridge, so callers never need to rewind separately. The caller Close()s
 // the returned reader when done.
-func openTapeReader(dev string) (*tapeReader, error) {
+//
+// When the drive's SCSI-generic node (/dev/sgN) can be located it is opened via
+// gotape, which drives the tape with explicit SCSI commands and supports
+// block-LOCATE skips (go-mtf BlockSkipper) for fast header-only walks; otherwise
+// the kernel st character device is used as a fallback.
+func openTapeReader(dev string) (io.ReadCloser, error) {
+	rc, sgErr := openSGTapeReader(dev)
+	if sgErr == nil {
+		return rc, nil
+	}
+	// Fall back to the st char device if no sg node / sg open failed.
 	// After a robotic load the drive may report EBUSY for a few seconds while it
 	// recognises the cartridge; retry the open+rewind pair briefly.
 	var f *os.File

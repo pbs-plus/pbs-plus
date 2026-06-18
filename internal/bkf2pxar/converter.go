@@ -154,6 +154,9 @@ func scanSnapshots(r *mtf.Reader, source string, out *[]Snapshot) error {
 			break
 		}
 		if err != nil {
+			if cur != nil {
+				*out = append(*out, *cur)
+			}
 			return err
 		}
 		switch b.Kind {

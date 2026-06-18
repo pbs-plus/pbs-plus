@@ -61,10 +61,10 @@ func main() {
 
 	if *listMode {
 		snapshots, err := bkf2pxar.ListSnapshots(context.Background(), cfg)
+		printSnapshots(snapshots)
 		if err != nil {
 			log.Fatalf("list failed: %v", err)
 		}
-		printSnapshots(snapshots)
 		return
 	}
 
