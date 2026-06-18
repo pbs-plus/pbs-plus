@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/binary"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -25,19 +25,27 @@ const (
 	XATTR_NAME_ACL_DEFAULT = "system.posix_acl_default"
 )
 
-func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileInfo, fsCap filesystemCapabilities) error {
+func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.FileInfo) error {
 	defer file.Close()
 
 	fd := int(file.Fd())
-
-	_ = unix.Fchmod(fd, uint32(e.RawMode&0777))
 
 	uid, gid := int(e.RawUID), int(e.RawGID)
 
 	atime := format.StatxTimestamp{Secs: e.MtimeSecs, Nanos: e.MtimeNsecs}.Time()
 	mtime := atime
 
-	xattrs, err := client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	xattrs, err := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+
+	// chown BEFORE chmod: on Linux chown(2) clears the set-user-ID and
+	// set-group-ID bits, so applying the mode first and then changing the
+	// owner would silently strip suid/sgid from restored binaries. Doing
+	// chown first lets the subsequent Fchmod reinstate them.
+	if st.fsCap.supportsChown {
+		_ = unix.Fchown(fd, uid, gid)
+	}
+
+	_ = unix.Fchmod(fd, uint32(e.RawMode&0777))
 
 	if err == nil && len(xattrs) > 0 {
 		if d, ok := xattrs["user.owner"]; ok {
@@ -66,7 +74,7 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 			delete(xattrs, "user.lastwritetime")
 		}
 
-		if fsCap.supportsACLs {
+		if st.fsCap.supportsACLs {
 			if d, ok := xattrs["user.acls"]; ok {
 				// Only POSIX ACLs can be represented on a Unix destination. A
 				// Windows-source payload ([]WinACL) would otherwise be decoded
@@ -84,7 +92,16 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 			delete(xattrs, "user.acls")
 		}
 
-		if fsCap.supportsXAttrs {
+		// Re-apply ownership if the xattrs overrode uid/gid (user.owner/group).
+		// Done after the parse above so the restored numeric ids win; chmod
+		// has already run, so suid/sgid are preserved.
+		if st.fsCap.supportsChown && (uid != int(e.RawUID) || gid != int(e.RawGID)) {
+			_ = unix.Fchown(fd, uid, gid)
+			// chown may have cleared suid/sgid again; reinstate the mode.
+			_ = unix.Fchmod(fd, uint32(e.RawMode&0777))
+		}
+
+		if st.fsCap.supportsXAttrs {
 			for name, val := range xattrs {
 				switch name {
 				case "user.creationtime", "user.fileattributes":
@@ -94,10 +111,6 @@ func applyMeta(ctx context.Context, client *Client, file *os.File, e pxar.FileIn
 				}
 			}
 		}
-	}
-
-	if fsCap.supportsChown {
-		_ = unix.Fchown(fd, uid, gid)
 	}
 
 	tv := []unix.Timeval{
@@ -152,9 +165,9 @@ func packACL(entries []types.PosixACL) []byte {
 	return buf
 }
 
-func applyMetaSymlink(ctx context.Context, client *Client, path string, e pxar.FileInfo, fsCap filesystemCapabilities) error {
+func applyMetaSymlink(ctx context.Context, st *restoreState, path string, e pxar.FileInfo) error {
 	uid, gid := int(e.RawUID), int(e.RawGID)
-	xattrs, err := client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	xattrs, err := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 
 	if err == nil && len(xattrs) > 0 {
 		if d, ok := xattrs["user.owner"]; ok {
@@ -169,11 +182,11 @@ func applyMetaSymlink(ctx context.Context, client *Client, path string, e pxar.F
 		}
 	}
 
-	if fsCap.supportsChown {
+	if st.fsCap.supportsChown {
 		_ = unix.Lchown(path, uid, gid)
 	}
 
-	if err == nil && fsCap.supportsXAttrs {
+	if err == nil && st.fsCap.supportsXAttrs {
 		for name, val := range xattrs {
 			switch name {
 			case "user.owner", "user.group", "user.acls", "user.fileattributes",
@@ -187,29 +200,44 @@ func applyMetaSymlink(ctx context.Context, client *Client, path string, e pxar.F
 	return nil
 }
 
-func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.FileInfo, jobs chan<- restoreJob, fsCap filesystemCapabilities, wg *sync.WaitGroup, noAttr bool) error {
+// applyTempMode gives a freshly-written temp file sensible permissions before
+// its atomic rename in no-attr mode (os.CreateTemp creates files 0600). When
+// the archive recorded a mode it is honored; otherwise 0666 matches the
+// previous direct OpenFile(..., 0666) behavior (subject to the process umask).
+func applyTempMode(path string, rawMode uint64) error {
+	mode := os.FileMode(0o666)
+	if rawMode != 0 {
+		mode = os.FileMode(rawMode & 0o777)
+	}
+	return os.Chmod(path, mode)
+}
+
+func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
+	dst := job.dest
+	dirEntry := job.info
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
 
-	entries, err := client.ReadDir(ctx, dirEntry.EntryRangeEnd)
+	entries, err := st.client.ReadDir(ctx, dirEntry.EntryRangeEnd)
 	if err != nil {
 		return err
 	}
 
 	for _, e := range entries {
 		target := filepath.Join(dst, e.Name())
+		childSrc := path.Join(job.srcPath, e.Name())
 
 		switch e.FileType {
-		case pxar.FileTypeDirectory, pxar.FileTypeFile, pxar.FileTypeSymlink:
-			wg.Add(1)
-			go func(t string, info pxar.FileInfo) {
+		case pxar.FileTypeDirectory, pxar.FileTypeFile, pxar.FileTypeSymlink, pxar.FileTypeHardlink:
+			st.wg.Add(1)
+			go func(t, s string, info pxar.FileInfo) {
 				select {
-				case jobs <- restoreJob{dest: t, info: info}:
+				case st.jobs <- restoreJob{dest: t, srcPath: s, info: info}:
 				case <-ctx.Done():
-					wg.Done()
+					st.wg.Done()
 				}
-			}(target, e)
+			}(target, childSrc, e)
 
 		case pxar.FileTypeFifo, pxar.FileTypeSocket:
 			var opErr error
@@ -222,8 +250,8 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.F
 
 			if opErr == nil || os.IsExist(opErr) {
 				if f, openErr := os.OpenFile(target, os.O_RDONLY, 0); openErr == nil {
-					if !noAttr {
-						_ = applyMeta(ctx, client, f, e, fsCap)
+					if !st.noAttr {
+						_ = applyMeta(ctx, st, f, e)
 					} else {
 						f.Close()
 					}
@@ -232,7 +260,7 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.F
 		}
 	}
 
-	if noAttr {
+	if st.noAttr {
 		return nil
 	}
 
@@ -240,5 +268,5 @@ func restoreDir(ctx context.Context, client *Client, dst string, dirEntry pxar.F
 	if err != nil {
 		return err
 	}
-	return applyMeta(ctx, client, df, dirEntry, fsCap)
+	return applyMeta(ctx, st, df, dirEntry)
 }

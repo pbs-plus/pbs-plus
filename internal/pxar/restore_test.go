@@ -278,9 +278,9 @@ func TestProcessJobSkipsUnknownType(t *testing.T) {
 
 	info := pxar.FileInfo{FileType: pxar.FileType(99)}
 	job := restoreJob{dest: filepath.Join(tmpDir, "unknown"), info: info}
-	jobs := make(chan restoreJob, 1)
+	st := &restoreState{fsCap: filesystemCapabilities{}, noAttr: true}
 
-	err := processJob(t.Context(), nil, job, jobs, filesystemCapabilities{}, nil, true)
+	err := processJob(t.Context(), st, job)
 	if err != nil {
 		t.Errorf("expected nil for unknown type, got: %v", err)
 	}
@@ -295,7 +295,6 @@ func TestProcessJobRoutesDirectoryByFileType(t *testing.T) {
 
 	info := pxar.FileInfo{FileType: pxar.FileTypeDirectory}
 	job := restoreJob{dest: dest, info: info}
-	jobs := make(chan restoreJob, 1)
 
 	// processJob calls restoreDir which calls client.ReadDir.
 	// With a nil client this panics, so we use a recover to confirm
@@ -309,7 +308,8 @@ func TestProcessJobRoutesDirectoryByFileType(t *testing.T) {
 				err = nil
 			}
 		}()
-		return processJob(t.Context(), nil, job, jobs, filesystemCapabilities{}, nil, true)
+		st := &restoreState{fsCap: filesystemCapabilities{}}
+		return processJob(t.Context(), st, job)
 	}()
 
 	// nil error means either: correctly routed to restoreDir (panicked and
@@ -332,12 +332,12 @@ func TestProcessJobRoutesFileByFileType(t *testing.T) {
 
 	info := pxar.FileInfo{FileType: pxar.FileTypeFile}
 	job := restoreJob{dest: dest, info: info}
-	jobs := make(chan restoreJob, 1)
+	st := &restoreState{fsCap: filesystemCapabilities{}, noAttr: true}
 
-	// processJob → restoreFile → os.OpenFile creates the empty file →
-	// applies metadata (nil client). We expect an error from the nil
-	// client path, confirming correct routing.
-	err := processJob(t.Context(), nil, job, jobs, filesystemCapabilities{}, nil, true)
+	// processJob → restoreFile → shouldUpdateFile → os.OpenFile creates the
+	// empty file → applies metadata (nil client). We expect an error from the
+	// nil client path, confirming correct routing.
+	err := processJob(t.Context(), st, job)
 
 	if err == nil {
 		// If no error, the file was created (empty file with no content),
