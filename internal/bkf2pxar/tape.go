@@ -15,6 +15,7 @@ package bkf2pxar
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/pbs-plus/go-tapedrive"
 )
@@ -27,10 +28,16 @@ import (
 // so callers never need to rewind separately. The caller Close()s the returned
 // reader when done.
 func openTapeReader(dev string) (io.ReadCloser, error) {
-	// Open the st device directly. WithSCSI2Logical enables logical-block
+	// Open the st device read-only: this is a read path (the returned handle
+	// is an io.ReadCloser, and all callers consume MTF data off the cartridge).
+	// Read-only is also required for write-protected tapes — the st driver
+	// rejects an O_RDWR open of a write-protected cartridge with EROFS, which
+	// the old SG_IO path used to bypass. WithSCSI2Logical enables logical-block
 	// addressing (MT_ST_SCSI2LOGICAL) so Seek/Position are meaningful on HPE
 	// Ultrium (LTO) drives; variable-block mode is the driver default.
-	t, err := tapedrive.Open(dev, tapedrive.WithSCSI2Logical(true))
+	t, err := tapedrive.Open(dev,
+		tapedrive.WithFlags(os.O_RDONLY),
+		tapedrive.WithSCSI2Logical(true))
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", dev, err)
 	}
