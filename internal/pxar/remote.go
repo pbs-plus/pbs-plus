@@ -43,7 +43,7 @@ type RemoteServer struct {
 
 func NewRemoteServer(reader *PxarReader) (*RemoteServer, chan error) {
 	router := arpc.NewRouter()
-	errChan := make(chan error, 16)
+	errChan := make(chan error, 256)
 	s := &RemoteServer{
 		reader:         reader,
 		router:         &router,
@@ -87,6 +87,12 @@ func (s *RemoteServer) registerHandlers() {
 	s.router.Handle("pxar.Error", s.handleError)
 }
 
+// handleError forwards an agent-side error to the job's task log. It blocks
+// (rather than dropping) when the error channel is full: dropping errors here
+// silently hid restore failures (e.g. per-file metadata errors) from the
+// operator. The errCh consumer in the restore job runs for the whole job, so
+// a blocking send cannot deadlock during the restore; on shutdown the channel
+// is closed, after which no further requests arrive on this router.
 func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 	var params errorReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {
@@ -95,10 +101,7 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 
 	err := fmt.Errorf("client error: %s", params.Error)
 	syslog.L.Error(err).Write()
-	select {
-	case s.errCh <- err:
-	default:
-	}
+	s.errCh <- err
 
 	return arpc.Response{Status: 200}, nil
 }

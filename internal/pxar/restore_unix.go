@@ -5,6 +5,7 @@ package pxar
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -25,37 +26,49 @@ const (
 	XATTR_NAME_ACL_DEFAULT = "system.posix_acl_default"
 )
 
+// applyMeta applies metadata to a restored file. Every individual metadata
+// operation error (chown, chmod, setxattr, utimes, ACL write, ...) is reported
+// to the server IMMEDIATELY via st.reportErr the instant it happens — errors
+// are never batched or deferred. Metadata failures are non-fatal (the file
+// content is already in place), so applyMeta always returns nil; the operator
+// sees each failure as its own line in the task log.
 func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.FileInfo) error {
 	defer file.Close()
 
 	fd := int(file.Fd())
+	path := file.Name()
 
 	uid, gid := int(e.RawUID), int(e.RawGID)
 
 	atime := format.StatxTimestamp{Secs: e.MtimeSecs, Nanos: e.MtimeNsecs}.Time()
 	mtime := atime
 
-	xattrs, err := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	xattrs, lerr := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	if lerr != nil {
+		// Listing xattrs failed (RPC error). Report it immediately but
+		// continue applying the metadata we do have (mode/owner/times).
+		st.reportErr(ctx, "list xattrs", path, lerr)
+	}
 
 	// chown BEFORE chmod: on Linux chown(2) clears the set-user-ID and
 	// set-group-ID bits, so applying the mode first and then changing the
 	// owner would silently strip suid/sgid from restored binaries. Doing
 	// chown first lets the subsequent Fchmod reinstate them.
 	if st.fsCap.supportsChown {
-		_ = unix.Fchown(fd, uid, gid)
+		st.reportErr(ctx, "chown", path, unix.Fchown(fd, uid, gid))
 	}
 
-	_ = unix.Fchmod(fd, uint32(e.RawMode&0777))
+	st.reportErr(ctx, "chmod", path, unix.Fchmod(fd, uint32(e.RawMode&0777)))
 
-	if err == nil && len(xattrs) > 0 {
+	if lerr == nil && len(xattrs) > 0 {
 		if d, ok := xattrs["user.owner"]; ok {
-			if id, err := strconv.Atoi(string(d)); err == nil {
+			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				uid = id
 			}
 			delete(xattrs, "user.owner")
 		}
 		if d, ok := xattrs["user.group"]; ok {
-			if id, err := strconv.Atoi(string(d)); err == nil {
+			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				gid = id
 			}
 			delete(xattrs, "user.group")
@@ -82,8 +95,10 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 				// system.posix_acl_access/default xattr.
 				if detectACLFlavor(d) == aclPosix {
 					var entries []types.PosixACL
-					if cbor.Unmarshal(d, &entries) == nil {
-						applyUnixACLsFd(fd, entries)
+					if uerr := cbor.Unmarshal(d, &entries); uerr != nil {
+						st.reportErr(ctx, "decode acls", path, uerr)
+					} else {
+						applyUnixACLsFd(ctx, st, fd, path, entries)
 					}
 				}
 				delete(xattrs, "user.acls")
@@ -96,9 +111,9 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		// Done after the parse above so the restored numeric ids win; chmod
 		// has already run, so suid/sgid are preserved.
 		if st.fsCap.supportsChown && (uid != int(e.RawUID) || gid != int(e.RawGID)) {
-			_ = unix.Fchown(fd, uid, gid)
+			st.reportErr(ctx, "chown (xattr override)", path, unix.Fchown(fd, uid, gid))
 			// chown may have cleared suid/sgid again; reinstate the mode.
-			_ = unix.Fchmod(fd, uint32(e.RawMode&0777))
+			st.reportErr(ctx, "chmod (xattr override)", path, unix.Fchmod(fd, uint32(e.RawMode&0777)))
 		}
 
 		if st.fsCap.supportsXAttrs {
@@ -107,7 +122,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 				case "user.creationtime", "user.fileattributes":
 					continue
 				default:
-					_ = unix.Fsetxattr(fd, name, val, 0)
+					st.reportErr(ctx, "setxattr "+name, path, unix.Fsetxattr(fd, name, val, 0))
 				}
 			}
 		}
@@ -117,12 +132,14 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		unix.NsecToTimeval(atime.UnixNano()),
 		unix.NsecToTimeval(mtime.UnixNano()),
 	}
-	_ = unix.Futimes(fd, tv)
+	st.reportErr(ctx, "utimes", path, unix.Futimes(fd, tv))
 
 	return nil
 }
 
-func applyUnixACLsFd(fd int, entries []types.PosixACL) {
+// applyUnixACLsFd writes the POSIX access/default ACLs. Each ACL write error
+// is reported immediately via st.reportErr.
+func applyUnixACLsFd(ctx context.Context, st *restoreState, fd int, path string, entries []types.PosixACL) {
 	knownTags := map[string]struct{}{
 		"user_obj": {}, "user": {}, "group_obj": {},
 		"group": {}, "mask": {}, "other": {},
@@ -142,10 +159,10 @@ func applyUnixACLsFd(fd int, entries []types.PosixACL) {
 		}
 	}
 	if len(acc) > 0 {
-		_ = unix.Fsetxattr(fd, XATTR_NAME_ACL_ACCESS, packACL(acc), 0)
+		st.reportErr(ctx, "set acl access", path, unix.Fsetxattr(fd, XATTR_NAME_ACL_ACCESS, packACL(acc), 0))
 	}
 	if len(def) > 0 {
-		_ = unix.Fsetxattr(fd, XATTR_NAME_ACL_DEFAULT, packACL(def), 0)
+		st.reportErr(ctx, "set acl default", path, unix.Fsetxattr(fd, XATTR_NAME_ACL_DEFAULT, packACL(def), 0))
 	}
 }
 
@@ -165,35 +182,41 @@ func packACL(entries []types.PosixACL) []byte {
 	return buf
 }
 
+// applyMetaSymlink applies owner and xattrs to a symlink. Each operation error
+// is reported immediately via st.reportErr; the function always returns nil
+// (metadata failures are non-fatal, the link itself is already created).
 func applyMetaSymlink(ctx context.Context, st *restoreState, path string, e pxar.FileInfo) error {
 	uid, gid := int(e.RawUID), int(e.RawGID)
-	xattrs, err := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	xattrs, lerr := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	if lerr != nil {
+		st.reportErr(ctx, "list xattrs", path, lerr)
+	}
 
-	if err == nil && len(xattrs) > 0 {
+	if lerr == nil && len(xattrs) > 0 {
 		if d, ok := xattrs["user.owner"]; ok {
-			if id, err := strconv.Atoi(string(d)); err == nil {
+			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				uid = id
 			}
 		}
 		if d, ok := xattrs["user.group"]; ok {
-			if id, err := strconv.Atoi(string(d)); err == nil {
+			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				gid = id
 			}
 		}
 	}
 
 	if st.fsCap.supportsChown {
-		_ = unix.Lchown(path, uid, gid)
+		st.reportErr(ctx, "lchown", path, unix.Lchown(path, uid, gid))
 	}
 
-	if err == nil && st.fsCap.supportsXAttrs {
+	if lerr == nil && st.fsCap.supportsXAttrs {
 		for name, val := range xattrs {
 			switch name {
 			case "user.owner", "user.group", "user.acls", "user.fileattributes",
 				"user.lastaccesstime", "user.lastwritetime", "user.creationtime":
 				continue
 			default:
-				_ = unix.Lsetxattr(path, name, val, 0)
+				st.reportErr(ctx, "lsetxattr "+name, path, unix.Lsetxattr(path, name, val, 0))
 			}
 		}
 	}
@@ -255,7 +278,12 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 					} else {
 						f.Close()
 					}
+				} else {
+					opErr = fmt.Errorf("open special file %q: %w", target, openErr)
 				}
+			}
+			if opErr != nil && !os.IsExist(opErr) {
+				return fmt.Errorf("create special file %q: %w", target, opErr)
 			}
 		}
 	}

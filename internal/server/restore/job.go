@@ -428,6 +428,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("%s", err))
+					syslog.L.Error(err).WithJob(b.job.ID).WithField("restore", "agent-error").Write()
 					b.errCount.Add(1)
 				}
 			}
@@ -509,6 +510,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("client error: %s", err.Error()))
+					syslog.L.Error(err).WithJob(b.job.ID).WithField("restore", "local-error").Write()
 					b.errCount.Add(1)
 				}
 			}

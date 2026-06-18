@@ -15,6 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -29,6 +30,29 @@ const (
 type RestoreOptions struct {
 	Mode    RestoreMode
 	DestDir string
+}
+
+// reportErr sends a single metadata error to the server IMMEDIATELY as it
+// happens — it is never batched or deferred. Metadata errors (chmod, chown,
+// setxattr, utimes, ACL/file-attribute application, ...) are non-fatal (the
+// file content is already in place), so they are surfaced to the operator
+// via the task log but never abort the restore. Each call performs one
+// client.SendError, which for a remote client is a synchronous RPC (the
+// server receives it before reportErr returns) and for a local client is a
+// channel send consumed by the job's error collector. A failure to forward
+// the error is itself logged locally so nothing is ever swallowed.
+func (st *restoreState) reportErr(ctx context.Context, op, path string, err error) {
+	if err == nil {
+		return
+	}
+	e := fmt.Errorf("%s %q: %w", op, path, err)
+	if serr := st.client.SendError(ctx, e); serr != nil {
+		syslog.L.Error(e).
+			WithField("restore", "error-report-failed").
+			WithField("op", op).
+			WithField("sendErr", serr.Error()).
+			Write()
+	}
 }
 
 // restoreJob describes a single entry to restore. dest is the OS-native
@@ -191,7 +215,15 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 		workersWg.Go(func() {
 			for job := range jobs {
 				if err := processJob(workerCtx, st, job); err != nil {
-					_ = client.SendError(workerCtx, err)
+					if serr := client.SendError(workerCtx, err); serr != nil {
+						// The error itself couldn't be forwarded to the server
+						// (connection lost / context cancelled). Log it locally
+						// so it is never silently lost.
+						syslog.L.Error(err).
+							WithField("restore", "error-report-failed").
+							WithField("sendErr", serr.Error()).
+							Write()
+					}
 				}
 				wg.Done()
 			}
@@ -213,7 +245,12 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 
 			sourceAttr, err := client.LookupByPath(workerCtx, src)
 			if err != nil {
-				_ = client.SendError(workerCtx, err)
+				if serr := client.SendError(workerCtx, err); serr != nil {
+					syslog.L.Error(err).
+						WithField("restore", "error-report-failed").
+						WithField("sendErr", serr.Error()).
+						Write()
+				}
 				return
 			}
 			dest := filepath.Join(destDir, sourceAttr.Name())
@@ -238,7 +275,12 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 	// targets live outside the restored source set (or whose filesystem
 	// cannot hard-link) fall back to a byte copy.
 	if err := resolveDeferredHardlinks(workerCtx, st); err != nil {
-		_ = client.SendError(workerCtx, err)
+		if serr := client.SendError(workerCtx, err); serr != nil {
+			syslog.L.Error(err).
+				WithField("restore", "error-report-failed").
+				WithField("sendErr", serr.Error()).
+				Write()
+		}
 	}
 
 	return ctx.Err()
@@ -341,29 +383,56 @@ func restoreFile(ctx context.Context, st *restoreState, job restoreJob) error {
 	return restoreFileContent(ctx, st, job)
 }
 
-// restoreFileContent writes the entry's bytes to a same-directory temp file,
-// applies its metadata, fsyncs, closes, and atomically renames it over the
-// destination. A hardlink entry that carries no content range and cannot be
-// linked is reported as an error rather than silently producing an empty file.
+// restoreFileContent writes the entry's bytes to a hidden temp file in the
+// destination's directory, atomically swaps it into place, and only THEN
+// applies metadata to the final file. Metadata is deliberately applied to
+// the destination, never the temp: on Windows, applying a restrictive DACL or
+// FILE_ATTRIBUTE_READONLY to the temp would make the subsequent rename and
+// temp-cleanup fail with ACCESS_DENIED, leaking .pxar-restore-* files (the
+// symptom on Windows restores). This order also matches rsync, which sets
+// permissions last. A hardlink entry that carries no content range and cannot
+// be linked is reported as an error rather than silently producing an empty
+// file.
 func restoreFileContent(ctx context.Context, st *restoreState, job restoreJob) error {
 	e := job.info
 	if e.FileType == pxar.FileTypeHardlink && (e.RawSize == 0 || e.ContentRange == nil) {
 		return fmt.Errorf("hardlink %q (target %q) has no restorable content", job.dest, e.LinkTarget)
 	}
 
-	tmpPath, err := writeTempFile(ctx, st, job)
+	tmpPath, err := streamToTemp(ctx, st, job)
 	if err != nil {
 		return err
 	}
-	return atomicSwap(tmpPath, job.dest)
+
+	// Swap temp into place BEFORE any metadata: the temp retains its default
+	// permissive CreateTemp attributes here, so rename cannot be blocked by a
+	// restrictive ACL the restore itself just wrote.
+	if err := atomicSwap(tmpPath, job.dest); err != nil {
+		return err
+	}
+
+	// Apply metadata to the final file. Any metadata failure is returned so the
+	// caller can surface it in the task log, but by this point the file is
+	// already in place with correct content, so the error is effectively a
+	// warning (it does not roll back the restore of the file).
+	if st.noAttr {
+		// Give the file sane perms even in no-attr mode (CreateTemp uses 0600).
+		return applyTempMode(job.dest, e.RawMode)
+	}
+	f, err := os.OpenFile(job.dest, os.O_RDWR, 0666)
+	if err != nil {
+		return fmt.Errorf("open restored file for metadata %q: %w", job.dest, err)
+	}
+	return applyMeta(ctx, st, f, e)
 }
 
-// writeTempFile creates a hidden temp file in the destination's directory,
-// streams the archived content into it, fsyncs, applies metadata (closing the
-// file), and returns the temp path ready for an atomic rename. On any error
-// the temp file is removed. The temp lives in the same directory as the
-// destination so the final rename is a same-filesystem atomic operation.
-func writeTempFile(ctx context.Context, st *restoreState, job restoreJob) (string, error) {
+// streamToTemp streams the archived content into a hidden temp file in the
+// destination's directory, fsyncs, and closes it. No metadata is applied —
+// the temp keeps CreateTemp's default mode. On any error the temp is removed
+// (and a removal failure is folded into the returned error rather than
+// swallowed). The temp lives in the same directory as the destination so the
+// final rename is a same-filesystem atomic operation.
+func streamToTemp(ctx context.Context, st *restoreState, job restoreJob) (tmpPath string, err error) {
 	e := job.info
 	dir := filepath.Dir(job.dest)
 
@@ -371,71 +440,108 @@ func writeTempFile(ctx context.Context, st *restoreState, job restoreJob) (strin
 	if err != nil {
 		return "", fmt.Errorf("create temp for %q: %w", job.dest, err)
 	}
-	tmpPath := f.Name()
+	tmpPath = f.Name()
 
-	// fail removes the temp and returns err while the file handle is still open.
-	fail := func(err error) (string, error) {
-		_ = f.Close()
-		_ = os.Remove(tmpPath)
-		return "", err
-	}
+	// On any error path below, close and remove the temp so it can never leak.
+	// A failed removal is folded into the error so it is visible, not swallowed.
+	defer func() {
+		if err != nil {
+			_ = f.Close()
+			if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				err = fmt.Errorf("%w (temp cleanup of %q failed: %v)", err, tmpPath, rmErr)
+			}
+			tmpPath = ""
+		}
+	}()
 
 	if e.RawSize > 0 && e.ContentRange != nil {
-		rc, err := st.client.ReadFileContentReader(ctx, e.ContentRange[0], e.ContentRange[1], e.RawSize)
-		if err != nil {
-			return fail(fmt.Errorf("open content reader %q: %w", job.dest, err))
+		rc, rerr := st.client.ReadFileContentReader(ctx, e.ContentRange[0], e.ContentRange[1], e.RawSize)
+		if rerr != nil {
+			return tmpPath, fmt.Errorf("open content reader %q: %w", job.dest, rerr)
 		}
 		const bufSize = 256 * 1024
 		buf := make([]byte, bufSize)
 		_, werr := io.CopyBuffer(f, rc, buf)
-		_ = rc.Close()
+		if cerr := rc.Close(); cerr != nil && werr == nil {
+			werr = cerr
+		}
 		if werr != nil {
-			return fail(fmt.Errorf("copy data %q: %w", job.dest, werr))
-		}
-	}
-	if err := f.Sync(); err != nil {
-		return fail(fmt.Errorf("sync temp %q: %w", job.dest, err))
-	}
-
-	if !st.noAttr {
-		// applyMeta closes f (deferred file.Close) and sets mode/owner/times/
-		// xattrs/ACLs on the temp, so the renamed file is fully complete.
-		if err := applyMeta(ctx, st, f, e); err != nil {
-			// f is already closed by applyMeta; only the path remains to clean up.
-			_ = os.Remove(tmpPath)
-			return "", err
-		}
-	} else {
-		// Give the swapped file sensible perms even in no-attr mode (CreateTemp
-		// uses 0600); fall back to 0666 when the archive recorded no mode.
-		_ = applyTempMode(tmpPath, e.RawMode)
-		if err := f.Close(); err != nil {
-			_ = os.Remove(tmpPath)
-			return "", fmt.Errorf("close temp %q: %w", job.dest, err)
+			return tmpPath, fmt.Errorf("copy data %q: %w", job.dest, werr)
 		}
 	}
 
+	if err = f.Sync(); err != nil {
+		return tmpPath, fmt.Errorf("sync temp %q: %w", job.dest, err)
+	}
+	if err = f.Close(); err != nil {
+		return tmpPath, fmt.Errorf("close temp %q: %w", job.dest, err)
+	}
 	return tmpPath, nil
 }
 
-// atomicSwap renames tmpPath over dest. A direct rename atomically replaces
-// an existing regular file on both Unix (rename(2)) and Windows
-// (MoveFileEx + MOVEFILE_REPLACE_EXISTING). If it fails — typically because
-// dest exists as an incompatible type (directory/symlink) — the conflicting
-// entry is removed and the rename retried once.
-func atomicSwap(tmpPath, dest string) error {
+// atomicSwap moves tmpPath over dest. It prefers the atomic rename path
+// (rename(2) on Unix, MoveFileEx+MOVEFILE_REPLACE_EXISTING on Windows). If the
+// rename fails — typically because dest exists as an incompatible type
+// (directory/symlink) or is locked — it removes the conflicting dest and
+// retries once. As a last resort it byte-copies the temp over dest so the
+// restore still completes when rename is unavailable on the target FS/OS.
+// The temp is GUARANTEED to be removed on every failure path, and any cleanup
+// error is folded into the returned error.
+func atomicSwap(tmpPath, dest string) (retErr error) {
+	// Whatever happens, the temp must not be left behind.
+	defer func() {
+		if retErr != nil {
+			if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				retErr = fmt.Errorf("%w (temp cleanup of %q failed: %v)", retErr, tmpPath, rmErr)
+			}
+		}
+	}()
+
+	// Fast path: direct atomic replace.
 	if err := os.Rename(tmpPath, dest); err == nil {
 		return nil
 	}
+
+	// Retry path: a conflicting existing dest of an incompatible type blocks
+	// the replace. Remove it (only a regular file/symlink; an empty dir is also
+	// removable) and retry. A non-empty dir removal fails here, correctly
+	// aborting rather than destroying data.
 	if rerr := os.Remove(dest); rerr != nil && !os.IsNotExist(rerr) {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace %q: %w", dest, rerr)
+		return fmt.Errorf("replace %q: could not remove existing entry: %w", dest, rerr)
 	}
-	if err := os.Rename(tmpPath, dest); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename temp %q -> %q: %w", tmpPath, dest, err)
+	if err := os.Rename(tmpPath, dest); err == nil {
+		return nil
+	}
+
+	// Fallback path: rename is unavailable/broken on this FS or OS (observed on
+	// some Windows configurations). Byte-copy the already-written temp into
+	// place so the restore completes; the deferred cleanup then removes the
+	// temp. This sacrifices crash-atomicity on this rare path in exchange for
+	// never failing or leaking a temp.
+	if err := copyFile(tmpPath, dest); err != nil {
+		return fmt.Errorf("swap %q -> %q: rename and copy fallback both failed: %w", tmpPath, dest, err)
 	}
 	return nil
+}
+
+// copyFile copies the contents of src to dst, truncating dst. Used only as the
+// last-resort fallback in atomicSwap when rename is not usable.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o666)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func restoreSymlink(ctx context.Context, st *restoreState, job restoreJob) error {

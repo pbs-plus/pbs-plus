@@ -36,7 +36,7 @@ func NewLocalClient(pr *PxarReader, name string) (*Client, chan error) {
 
 func (c *Client) SendError(ctx context.Context, err error) error {
 	if c.pipe != nil {
-		syslog.L.Error(err).WithField("restore", "error").Write()
+		syslog.L.Error(err).WithJob(c.name).WithField("restore", "error").Write()
 		if err := c.pipe.Call(ctx, "pxar.Error", errorReq{Error: err.Error()}, nil); err != nil {
 			return err
 		}
@@ -47,8 +47,6 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case c.errCh <- err:
-		return nil
-	default:
 		return nil
 	}
 }

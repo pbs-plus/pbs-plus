@@ -41,8 +41,12 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	defer file.Close()
 
 	h := windows.Handle(file.Fd())
+	path := file.Name()
 
-	xattrs, _ := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	xattrs, lerr := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	if lerr != nil {
+		st.reportErr(ctx, "list xattrs", path, lerr)
+	}
 
 	// Gather times. w (LastWriteTime/mtime) and a (LastAccessTime) default to
 	// the archive mtime so an existing file's times are normalized even when
@@ -100,7 +104,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 			LastWriteTime:  w,
 			FileAttributes: attrs,
 		}
-		_ = setBasicInfo(h, &info)
+		st.reportErr(ctx, "set basic info", path, setBasicInfo(h, &info))
 	} else {
 		// No attributes to set: SetFileTime handles the times alone (a nil
 		// pointer leaves that time unchanged).
@@ -108,19 +112,19 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		if hasCreation {
 			cp = &c
 		}
-		_ = windows.SetFileTime(h, cp, &a, &w)
+		st.reportErr(ctx, "set file time", path, windows.SetFileTime(h, cp, &a, &w))
 	}
 
 	if xattrs != nil {
 		if st.fsCap.supportsPersistentACLs {
-			restoreWindowsACLsFromHandle(h, xattrs)
+			restoreWindowsACLsFromHandle(ctx, st, h, path, xattrs)
 		}
 		// Restore any remaining (non-canonical) xattrs as NTFS alternate data
 		// streams — the closest native analog to a POSIX user.* xattr and the
 		// only way a cross-platform Linux->Windows restore preserves them.
 		// Canonical keys consumed above are skipped.
 		if st.fsCap.supportsXAttrs {
-			writeAlternateDataStreams(file.Name(), xattrs)
+			writeAlternateDataStreams(ctx, st, path, xattrs)
 		}
 	}
 
@@ -138,7 +142,7 @@ func setBasicInfo(h windows.Handle, info *FILE_BASIC_INFO) error {
 // SetEntriesInAclW and every SID from ConvertStringSidToSidW) is LocalFree'd
 // after SetSecurityInfo copies them into the security descriptor — the
 // previous implementation leaked one allocation per file (and per ACE).
-func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
+func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windows.Handle, path string, xattrs map[string][]byte) {
 	var secInfo windows.SECURITY_INFORMATION
 	var ownerSID, groupSID *windows.SID
 	var ownedSIDs []*windows.SID // all ConvertStringSidToSid allocations, freed below
@@ -169,10 +173,14 @@ func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
 		// into zero-value WinACLs.
 		if detectACLFlavor(d) == aclWindows {
 			var winACLs []types.WinACL
-			if cbor.Unmarshal(d, &winACLs) == nil {
-				acl, aceSIDs, err := buildDACLFromACEs(winACLs)
+			if uerr := cbor.Unmarshal(d, &winACLs); uerr != nil {
+				st.reportErr(ctx, "decode acls", path, uerr)
+			} else {
+				acl, aceSIDs, berr := buildDACLFromACEs(winACLs)
 				ownedSIDs = append(ownedSIDs, aceSIDs...)
-				if err == nil && acl != nil {
+				if berr != nil {
+					st.reportErr(ctx, "build dacl", path, berr)
+				} else if acl != nil {
 					dacl = acl
 					secInfo |= windows.DACL_SECURITY_INFORMATION
 				}
@@ -185,10 +193,13 @@ func restoreWindowsACLsFromHandle(h windows.Handle, xattrs map[string][]byte) {
 		return
 	}
 
-	_, _, _ = procSetSecurityInfo.Call(
+	ret, _, _ := procSetSecurityInfo.Call(
 		uintptr(h), uintptr(windows.SE_FILE_OBJECT), uintptr(secInfo),
 		sidPtr(ownerSID), sidPtr(groupSID), aclPtr(dacl), 0,
 	)
+	if ret != 0 {
+		st.reportErr(ctx, "set security info", path, syscall.Errno(ret))
+	}
 
 	// SetSecurityInfo copies into a self-owned security descriptor, so the
 	// caller-allocated ACL and SIDs can now be released.
@@ -203,11 +214,18 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 	// restores via applyMetaSymlink.
 	h, err := openReparsePoint(linkPath, windows.FILE_WRITE_ATTRIBUTES|windows.WRITE_DAC|windows.WRITE_OWNER)
 	if err != nil {
-		return nil // best-effort; the link itself was already created
+		// Surface the failure immediately via reportErr rather than silently
+		// returning nil; the link itself was already created, so this is a
+		// metadata-only warning.
+		st.reportErr(ctx, "open symlink for metadata", linkPath, err)
+		return nil
 	}
 	defer windows.CloseHandle(h)
 
-	xattrs, _ := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	xattrs, lerr := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
+	if lerr != nil {
+		st.reportErr(ctx, "list xattrs", linkPath, lerr)
+	}
 	if xattrs == nil {
 		return nil
 	}
@@ -235,10 +253,10 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 			a = unixToFiletime(ts)
 		}
 	}
-	_ = windows.SetFileTime(h, cp, &a, &w)
+	st.reportErr(ctx, "set file time", linkPath, windows.SetFileTime(h, cp, &a, &w))
 
 	if st.fsCap.supportsPersistentACLs {
-		restoreWindowsACLsFromHandle(h, xattrs)
+		restoreWindowsACLsFromHandle(ctx, st, h, linkPath, xattrs)
 	}
 	return nil
 }
@@ -265,9 +283,10 @@ func openReparsePoint(p string, access uint32) (windows.Handle, error) {
 // writeAlternateDataStreams writes every non-canonical user.* xattr as an NTFS
 // alternate data stream named after the xattr (e.g. user.foo -> file:user.foo).
 // This is the Windows analog of Unix's generic xattr loop and makes a
-// cross-platform Linux->Windows restore lossless. Best-effort: stream names
-// that are invalid on Windows are silently skipped.
-func writeAlternateDataStreams(name string, xattrs map[string][]byte) {
+// cross-platform Linux->Windows restore lossless. Per-stream failures are
+// reported immediately via st.reportErr rather than silently dropped;
+// invalid stream names are skipped.
+func writeAlternateDataStreams(ctx context.Context, st *restoreState, name string, xattrs map[string][]byte) {
 	for k, v := range xattrs {
 		if !strings.HasPrefix(k, "user.") {
 			continue
@@ -281,7 +300,7 @@ func writeAlternateDataStreams(name string, xattrs map[string][]byte) {
 		if stream == "" || strings.ContainsAny(stream, `<>:"/\|?*`) {
 			continue
 		}
-		_ = os.WriteFile(name+":"+stream, v, 0o666)
+		st.reportErr(ctx, "write ads "+k, name, os.WriteFile(name+":"+stream, v, 0o666))
 	}
 }
 
