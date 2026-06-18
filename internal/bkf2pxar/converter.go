@@ -101,7 +101,24 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = rc.Close() }()
+		// Fast path: the MTF Media Based Catalog (spec §3.3.2.2) lists every
+		// data set in a handful of block reads near end-of-media via the EOTM's
+		// Last-ESET PBA. Falls back to a full forward walk if no catalog is
+		// present (e.g. a data-only continuation cartridge).
+		if sm, _ := mtf.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
+			for _, e := range sm.Entries {
+				snapshots = append(snapshots, Snapshot{
+					Index:      len(snapshots),
+					Name:       e.Name,
+					BackupTime: e.WriteTime,
+				})
+			}
+			_ = rc.Close()
+			return snapshots, nil
+		}
+		// Fallback: rewind to BOT and walk forward. openTapeReader verified BOT;
+		// ReadSetMap left the drive near EOM, so re-position to BOT.
+		_ = rc.Rewind()
 		r := mtf.NewReader(rc)
 		if cfg.Spanning {
 			setupTapeContinuation(r, cfg.TapeDevice)
