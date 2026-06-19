@@ -49,6 +49,10 @@ type Config struct {
 	// Negative = migrate all snapshots (default). Each snapshot becomes
 	// its own PBS backup point.
 	SnapshotSel int
+	// IgnoreNewerPrevious skips previous-backup chunk registration when the
+	// backup time is older than existing PBS snapshots. Essential for tape
+	// migration where original backup times are in the past.
+	IgnoreNewerPrevious bool
 	// NamespaceResolver overrides Namespace per snapshot. It receives the
 	// snapshot's source machine name and volume device path (e.g.
 	// \\HOST.sgl.lan\D:) and returns the PBS namespace to use for that
@@ -363,14 +367,15 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 			return nil, fmt.Errorf("local store: %w", err)
 		}
 		return store.StartSession(c.ctx, backupproxy.BackupConfig{
-			BackupType:  datastore.BackupHost,
-			BackupID:    backupID,
-			BackupTime:  backupTime.Unix(),
-			Namespace:   c.currentNS,
-			CryptMode:   datastore.CryptModeNone,
-			ChunkConfig: c.chunkCfg,
-			Compress:    c.cfg.Compress,
-			Debug:       true,
+			BackupType:          datastore.BackupHost,
+			BackupID:            backupID,
+			BackupTime:          backupTime.Unix(),
+			Namespace:           c.currentNS,
+			CryptMode:           datastore.CryptModeNone,
+			ChunkConfig:         c.chunkCfg,
+			Compress:            c.cfg.Compress,
+			Debug:               true,
+			IgnoreNewerPrevious: true,
 		})
 	}
 
@@ -387,14 +392,15 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 	}, c.chunkCfg, true)
 
 	return store.StartSession(c.ctx, backupproxy.BackupConfig{
-		BackupType:  datastore.BackupHost,
-		BackupID:    backupID,
-		BackupTime:  backupTime.Unix(),
-		Namespace:   c.currentNS,
-		CryptMode:   datastore.CryptModeNone,
-		ChunkConfig: c.chunkCfg,
-		Compress:    c.cfg.Compress,
-		Debug:       true,
+		BackupType:          datastore.BackupHost,
+		BackupID:            backupID,
+		BackupTime:          backupTime.Unix(),
+		Namespace:           c.currentNS,
+		CryptMode:           datastore.CryptModeNone,
+		ChunkConfig:         c.chunkCfg,
+		Compress:            c.cfg.Compress,
+		Debug:               true,
+		IgnoreNewerPrevious: true,
 	})
 }
 

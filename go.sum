@@ -171,8 +171,8 @@ github.com/pbs-plus/go-mtf v0.22.1 h1:xcMesnnMvxkNrK7QPDICJOCJzJkvTLUIhStl8ltC8q
 github.com/pbs-plus/go-mtf v0.22.1/go.mod h1:iPtBWUu4pm8NhNOsOYYDyBzQ0SEfX2L1BYx7NyG0OOI=
 github.com/pbs-plus/go-tapedrive v0.5.1 h1:OLeFJQM+tzUQDNrKqViPhrCx0BJWcuQ/AalwoZ1LmsI=
 github.com/pbs-plus/go-tapedrive v0.5.1/go.mod h1:LO90B9vMnFbP/q5+Ci3/8RnuyBHZ2nw7qxQkCfjzKok=
-github.com/pbs-plus/pxar v0.33.0 h1:e/SL9mUkXOtEW9uC5RB/giin/tb4nKXrH+NaUZPTTHY=
-github.com/pbs-plus/pxar v0.33.0/go.mod h1:yt3dqfE6UkDZuaJgi4Aoe9i2u5Ok8x8LQJgjhUFiqvQ=
+github.com/pbs-plus/pxar v0.33.1 h1:pAr7azbCMMklgFL9j9U+JXDhVI+IqaVZnWakkYBem/o=
+github.com/pbs-plus/pxar v0.33.1/go.mod h1:yt3dqfE6UkDZuaJgi4Aoe9i2u5Ok8x8LQJgjhUFiqvQ=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pingcap/errors v0.11.4 h1:lFuQV/oaUMGcD2tqt+01ROSmJs75VG1ToEOkZIZ4nE4=
