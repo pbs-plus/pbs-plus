@@ -113,12 +113,14 @@ Ext.define("PBS.MtfManagement.CartridgePanel", {
       let view = this.getView();
       Ext.create("PBS.MtfManagement.JobEdit", {
         autoShow: true,
+        sourceKind: defaults.source_kind,
         listeners: {
           afterrender: function (win) {
             let form = win.down("form").getForm();
             form.setValues(defaults);
             win.method = "POST";
             win.isCreate = true;
+            win.getController().loadSourceStore(defaults.source_kind);
           },
           destroy: () => view.getStore().load(),
         },

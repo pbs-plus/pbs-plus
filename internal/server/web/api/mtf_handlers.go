@@ -83,35 +83,46 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
 		ms := mtfStore(storeInstance)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
 		}
 
-		if err := r.ParseForm(); err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
+		switch r.Method {
+		case http.MethodGet:
+			jobs, err := ms.ListMtfJobs(r.Context())
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			out := make([]flatMtfJob, 0, len(jobs))
+			for _, j := range jobs {
+				out = append(out, flattenMtfJob(j))
+			}
+			writeJSON(w, map[string]any{"data": out, "success": true})
 
-		job, err := mtfJobFromForm(r)
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
+		case http.MethodPost:
+			if err := r.ParseForm(); err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			job, err := mtfJobFromForm(r)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			created, err := ms.CreateMtfJob(r.Context(), job)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			ApplyJobBatchAssignment(storeInstance, "backup", created.ID, r.FormValue("notification-batch"))
+			writeJSON(w, map[string]any{"data": flattenMtfJob(created), "success": true})
 
-		created, err := ms.CreateMtfJob(r.Context(), job)
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
+		default:
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
-
-		ApplyJobBatchAssignment(storeInstance, "backup", created.ID, r.FormValue("notification-batch"))
-		writeJSON(w, map[string]any{"data": created, "success": true})
 	}
 }
 
@@ -140,7 +151,7 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			writeJSON(w, map[string]any{"data": job, "success": true})
+			writeJSON(w, map[string]any{"data": flattenMtfJob(job), "success": true})
 
 		case http.MethodPut:
 			job, err := ms.GetMtfJob(r.Context(), id)
@@ -161,7 +172,7 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			writeJSON(w, map[string]any{"data": updated, "success": true})
+			writeJSON(w, map[string]any{"data": flattenMtfJob(updated), "success": true})
 
 		case http.MethodDelete:
 			if err := ms.DeleteMtfJob(r.Context(), id); err != nil {
@@ -554,7 +565,7 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 			MatchRegex: r.FormValue("match_regex"),
 			Template:   r.FormValue("template"),
 			IsDefault:  r.FormValue("is_default") == "1" || r.FormValue("is_default") == "true",
-			Enabled:    r.FormValue("enabled") != "0" && r.FormValue("enabled") != "false",
+			Enabled:    r.FormValue("enabled") == "1" || r.FormValue("enabled") == "true",
 			Comment:    r.FormValue("comment"),
 		}
 		if m.Template == "" {
@@ -615,14 +626,14 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if v := r.FormValue("priority"); v != "" {
 				m.Priority = atoiDefault(v, 0)
 			}
-			if v := r.FormValue("match_regex"); r.FormValue("match_regex") != "" || true {
+			if v := r.FormValue("match_regex"); v != "" {
 				m.MatchRegex = v
 			}
 			if v := r.FormValue("template"); v != "" {
 				m.Template = v
 			}
 			if r.FormValue("enabled") != "" {
-				m.Enabled = r.FormValue("enabled") != "0" && r.FormValue("enabled") != "false"
+				m.Enabled = r.FormValue("enabled") == "1" || r.FormValue("enabled") == "true"
 			}
 			if r.FormValue("is_default") != "" {
 				m.IsDefault = r.FormValue("is_default") == "1" || r.FormValue("is_default") == "true"
@@ -653,6 +664,39 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 // --- helpers ---
+
+// flatMtfJob is the flattened API response for an MTF job. The history block
+// is promoted to top-level fields (matching the ExtJS model + grid columns)
+// and a pre-parsed status is attached so the shared task-status renderer works.
+type flatMtfJob struct {
+	mtfstore.MTFJob
+	LastRunUpid           string           `json:"last-run-upid"`
+	LastRunStarttime      int64            `json:"last-run-starttime"`
+	LastRunState          string           `json:"last-run-state"`
+	LastRunStatus         int              `json:"last-run-status"`
+	LastRunEndtime        int64            `json:"last-run-endtime"`
+	LastSuccessfulEndtime int64            `json:"last-successful-endtime"`
+	LastSuccessfulUpid    string           `json:"last-successful-upid"`
+	RetryCount            int              `json:"retry-count"`
+	Duration              int64            `json:"duration"`
+	StatusParsed          ParsedTaskStatus `json:"status_parsed"`
+}
+
+func flattenMtfJob(j mtfstore.MTFJob) flatMtfJob {
+	return flatMtfJob{
+		MTFJob:                j,
+		LastRunUpid:           j.History.LastRunUpid,
+		LastRunStarttime:      j.History.LastRunStarttime,
+		LastRunState:          j.History.LastRunState,
+		LastRunStatus:         int(j.History.LastRunStatus),
+		LastRunEndtime:        j.History.LastRunEndtime,
+		LastSuccessfulEndtime: j.History.LastSuccessfulEndtime,
+		LastSuccessfulUpid:    j.History.LastSuccessfulUpid,
+		RetryCount:            j.History.RetryCount,
+		Duration:              j.History.Duration,
+		StatusParsed:          ParseTaskStatus(j.History.LastRunState),
+	}
+}
 
 func atoiDefault(s string, def int) int {
 	s = strings.TrimSpace(s)

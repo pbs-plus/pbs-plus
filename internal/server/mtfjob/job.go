@@ -108,13 +108,11 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	}
 
 	stats, runErr := bkf2pxar.Run(ctx, cfg)
-	end := time.Now().Unix()
 	if runErr != nil {
 		failTask(task, j.job, runErr, stats)
 		return runErr
 	}
 	finishTaskOK(task, j.job, stats)
-	_ = end
 	return nil
 }
 
@@ -124,7 +122,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 
 	baseNS := job.Namespace
 	resolver := func(host, device string) string {
-		if mapper == nil {
+		if job.OverwriteMappings || mapper == nil {
 			return baseNS
 		}
 		vol := mtfstore.DataSetVolume{Device: device, MachineName: host}
@@ -370,9 +368,6 @@ func (j *mtfJob) cleanup() {
 		j.mu.Unlock()
 		if cancel != nil {
 			cancel()
-		}
-		if logger != nil {
-			_ = logger.Close()
 		}
 		if logger != nil {
 			_ = logger.Close()

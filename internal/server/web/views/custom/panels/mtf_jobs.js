@@ -43,7 +43,7 @@ Ext.define("PBS.MtfManagement.JobView", {
       if (!recs.length) return;
       Ext.create("PBS.MtfManagement.JobEdit", {
         autoShow: true,
-        id: recs[0].data.id,
+        jobId: recs[0].data.id,
         listeners: {
           destroy: function () {
             me.reload();

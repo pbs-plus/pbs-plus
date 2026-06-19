@@ -31,6 +31,9 @@ Ext.define("PBS.MtfManagement.MappingPanel", {
         method: id ? "PUT" : "POST",
         isCreate: !id,
         autoShow: true,
+        // Required by Proxmox.window.Edit initComponent; submitUrl overrides
+        // the actual submit target.
+        url: "/api2/extjs/config/mtf-mapping",
         submitUrl: function () {
           let base = "/api2/extjs/config/mtf-mapping";
           return id ? base + "/" + id : base;

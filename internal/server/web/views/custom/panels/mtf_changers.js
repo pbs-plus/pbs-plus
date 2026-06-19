@@ -83,6 +83,9 @@ Ext.define("PBS.MtfManagement.ChangerPanel", {
         method: "POST",
         isCreate: true,
         autoShow: true,
+        // Required by Proxmox.window.Edit initComponent; submitUrl overrides
+        // the actual submit target.
+        url: "/api2/extjs/config/mtf-" + (isChanger ? "changer" : "drive"),
         submitUrl: function () {
           return (
             "/api2/extjs/config/mtf-" + (isChanger ? "changer" : "drive")

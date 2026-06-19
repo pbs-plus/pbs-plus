@@ -27,6 +27,7 @@ Ext.define("pbs-mtf-job", {
     "last-successful-endtime",
     "last-successful-upid",
     "duration",
+    "status_parsed",
   ],
   idProperty: "id",
   proxy: {
