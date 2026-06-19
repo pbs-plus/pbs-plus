@@ -203,17 +203,35 @@ func TestBuildDACLFromACEsLargeAccessMask(t *testing.T) {
 // TestRestoreWindowsACLsFromHandleNilXattrs verifies the function does not
 // panic or call into Windows when xattrs is nil.
 // newTestHandle creates a temp file and returns its handle + path.
-// The file is closed on test cleanup. The handle has GENERIC_READ|GENERIC_WRITE
-// access (from os.CreateTemp), which includes FILE_WRITE_ATTRIBUTES but NOT
-// WRITE_DAC|WRITE_OWNER — exactly the configuration the restore pipeline uses.
+// The handle is opened with WRITE_DAC|WRITE_OWNER|FILE_FLAG_BACKUP_SEMANTICS
+// so SetSecurityInfo has proper access. The file is deleted on cleanup.
 func newTestHandle(t *testing.T) (windows.Handle, string) {
 	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "test-h-*")
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "test-h-*")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { f.Close() })
-	return windows.Handle(f.Fd()), f.Name()
+	name := f.Name()
+	f.Close()
+	pathPtr, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := windows.CreateFile(
+		pathPtr,
+		windows.WRITE_DAC|windows.WRITE_OWNER|windows.FILE_WRITE_ATTRIBUTES,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { windows.CloseHandle(h) })
+	return h, name
 }
 
 func TestRestoreWindowsACLsFromHandleNilXattrs(t *testing.T) {
@@ -942,13 +960,7 @@ func TestRestoreWindowsACLsConcurrent(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
-		f, err := os.CreateTemp(dir, "test-conc-*")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer f.Close()
-		h := windows.Handle(f.Fd())
-		name := f.Name()
+		h, name := newTestHandle(t)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
