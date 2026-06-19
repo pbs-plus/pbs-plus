@@ -22,6 +22,7 @@ type DataSet struct {
 	NumCorrupt     sql.NullInt64  `json:"num_corrupt"`
 	Size           sql.NullInt64  `json:"size"`
 	FirstMediaSeq  sql.NullInt64  `json:"first_media_seq"`
+	SourceMediaSeq sql.NullInt64  `json:"source_media_seq"`
 }
 
 type DataSetVolume struct {

@@ -9,7 +9,7 @@ import (
 
 // hardlinkIndex tracks restored entries so that pxar hardlink entries
 // (FileTypeHardlink) can be reconstructed as real filesystem hard links
-// instead of duplicated byte copies — rsync -H behavior.
+// instead of duplicated byte copies  -  rsync -H behavior.
 //
 // pxar's encoder guarantees a hardlink's target is emitted before the
 // hardlink in archive order (see encoder.AddHardlink: "hardlink offset must

@@ -145,7 +145,7 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return pr, nil
 	}
 
-	// Non-split (.pxar.didx) — not yet supported.
+	// Non-split (.pxar.didx)  -  not yet supported.
 	return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
 }
 

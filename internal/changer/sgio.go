@@ -1,5 +1,5 @@
-// Package changer drives SCSI Medium Changer (SMC) devices — tape libraries
-// and autoloaders — directly via the Linux SG_IO ioctl, with no external
+// Package changer drives SCSI Medium Changer (SMC) devices  -  tape libraries
+// and autoloaders  -  directly via the Linux SG_IO ioctl, with no external
 // dependencies such as mtx or libsgutils2.
 //
 // The command set implemented is the subset of SMC-3 needed to inventory a

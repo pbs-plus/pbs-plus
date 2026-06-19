@@ -1,6 +1,10 @@
 package mtfstore
 
-import "database/sql"
+import (
+	"database/sql"
+	"os"
+	"strings"
+)
 
 type Changer struct {
 	Name      string `json:"name"`
@@ -69,6 +73,7 @@ type DataSet struct {
 	NumCorrupt     int             `json:"num_corrupt"`
 	Size           int64           `json:"size"`
 	FirstMediaSeq  int             `json:"first_media_seq"`
+	SourceMediaSeq int             `json:"source_media_seq"`
 	Volumes        []DataSetVolume `json:"volumes"`
 }
 
@@ -156,4 +161,21 @@ func ni(s sql.NullInt64) int {
 
 func nb(s sql.NullInt64) bool {
 	return ni64(s) != 0
+}
+
+// ResolveTapeDevice converts a SCSI generic device path (-sg) to the
+// corresponding non-rewind tape device (-nst). udev by-id paths ending
+// in -sg point to SCSI generic devices; the matching tape device has the
+// same name with -nst.
+func ResolveTapeDevice(path string) string {
+	if path == "" {
+		return path
+	}
+	if before, ok := strings.CutSuffix(path, "-sg"); ok {
+		nstPath := before + "-nst"
+		if _, err := os.Stat(nstPath); err == nil {
+			return nstPath
+		}
+	}
+	return path
 }

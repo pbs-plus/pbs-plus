@@ -13,25 +13,20 @@ type Querier interface {
 	CompleteInventoryRun(ctx context.Context, arg CompleteInventoryRunParams) error
 	CountMappings(ctx context.Context) (int64, error)
 	CountMtfJobs(ctx context.Context) (int64, error)
-	CreateChanger(ctx context.Context, arg CreateChangerParams) error
 	CreateDataSet(ctx context.Context, arg CreateDataSetParams) (int64, error)
 	CreateDataSetVolume(ctx context.Context, arg CreateDataSetVolumeParams) error
-	CreateDrive(ctx context.Context, arg CreateDriveParams) error
 	CreateInventoryRun(ctx context.Context, arg CreateInventoryRunParams) (int64, error)
 	CreateMapping(ctx context.Context, arg CreateMappingParams) (int64, error)
 	CreateMtfJob(ctx context.Context, arg CreateMtfJobParams) error
 	DeleteCartridge(ctx context.Context, barcode string) (int64, error)
-	DeleteChanger(ctx context.Context, name string) (int64, error)
 	DeleteDataSetsByFamily(ctx context.Context, mediaFamilyID int64) (int64, error)
-	DeleteDrive(ctx context.Context, name string) (int64, error)
 	DeleteMapping(ctx context.Context, id int64) (int64, error)
 	DeleteMediaFamily(ctx context.Context, id int64) (int64, error)
 	DeleteMtfJob(ctx context.Context, id string) (int64, error)
 	DeleteVolumesByDataSet(ctx context.Context, dataSetID int64) (int64, error)
+	FindDataSet(ctx context.Context, arg FindDataSetParams) (DataSet, error)
 	GetCartridge(ctx context.Context, barcode string) (MtfCartridge, error)
-	GetChanger(ctx context.Context, name string) (MtfChanger, error)
 	GetDataSet(ctx context.Context, id int64) (DataSet, error)
-	GetDrive(ctx context.Context, name string) (MtfDrife, error)
 	GetInventoryRun(ctx context.Context, id int64) (MtfInventoryRun, error)
 	GetMapping(ctx context.Context, id int64) (NamespaceMapping, error)
 	GetMediaFamily(ctx context.Context, id int64) (MediaFamily, error)
@@ -40,9 +35,7 @@ type Querier interface {
 	ListAllMtfJobs(ctx context.Context) ([]MtfJob, error)
 	ListCartridges(ctx context.Context) ([]MtfCartridge, error)
 	ListCartridgesByFamily(ctx context.Context, mediaFamilyID int64) ([]MtfCartridge, error)
-	ListChangers(ctx context.Context) ([]MtfChanger, error)
 	ListDataSetsByFamily(ctx context.Context, mediaFamilyID int64) ([]DataSet, error)
-	ListDrives(ctx context.Context) ([]MtfDrife, error)
 	ListEnabledMappings(ctx context.Context) ([]NamespaceMapping, error)
 	ListInventoryRuns(ctx context.Context, limit int64) ([]MtfInventoryRun, error)
 	ListMappings(ctx context.Context) ([]NamespaceMapping, error)
@@ -51,13 +44,12 @@ type Querier interface {
 	ListVolumesByDataSet(ctx context.Context, dataSetID int64) ([]DataSetVolume, error)
 	MappingExists(ctx context.Context, id int64) (int64, error)
 	MtfJobExists(ctx context.Context, id string) (int64, error)
-	UpdateChanger(ctx context.Context, arg UpdateChangerParams) error
-	UpdateDrive(ctx context.Context, arg UpdateDriveParams) error
 	UpdateMapping(ctx context.Context, arg UpdateMappingParams) error
 	UpdateMediaFamilyScan(ctx context.Context, arg UpdateMediaFamilyScanParams) error
 	UpdateMtfJob(ctx context.Context, arg UpdateMtfJobParams) error
 	UpdateMtfJobHistory(ctx context.Context, arg UpdateMtfJobHistoryParams) error
 	UpsertCartridge(ctx context.Context, arg UpsertCartridgeParams) error
+	UpsertDataSet(ctx context.Context, arg UpsertDataSetParams) (int64, error)
 	UpsertMediaFamily(ctx context.Context, arg UpsertMediaFamilyParams) (int64, error)
 }
 

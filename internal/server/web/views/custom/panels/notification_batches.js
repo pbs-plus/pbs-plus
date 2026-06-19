@@ -1,4 +1,4 @@
-// Notification Batch grid panel — shows all notification batches with
+// Notification Batch grid panel  -  shows all notification batches with
 // add / edit / remove / status controls.
 
 Ext.define("PBS.D2DManagement.NotificationBatchView", {

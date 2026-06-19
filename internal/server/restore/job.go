@@ -542,7 +542,7 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 			// (server closes DoneCh and ACKs) and only closes the pipe after
 			// the ACK. So DoneCh is closed strictly before the pipe closes.
 			// But both channels are then ready in the same select iteration,
-			// and Go's select picks one nondeterministically — which used to
+			// and Go's select picks one nondeterministically  -  which used to
 			// make a fully-successful restore report a spurious "lost
 			// connection" ~50% of the time. Re-probe DoneCh here so a Done
 			// that was already received always wins; only treat the close as

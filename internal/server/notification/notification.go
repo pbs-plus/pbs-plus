@@ -86,12 +86,12 @@ type metadata struct {
 // notification spool directory (/var/lib/proxmox-backup/notifications/).
 // The PBS notification worker (running as root) reads this directory every 5s,
 // loads the notification config (matchers, endpoints), and routes the
-// notification through all matching endpoints — exactly the same mechanism
+// notification through all matching endpoints  -  exactly the same mechanism
 // PBS uses internally for non-root processes.
 //
 // The additional-fields map includes type, job-id, datastore, and hostname,
 // which PBS notification matchers can filter on. The "type" field uses values
-// like "d2d-backup", "d2d-restore", "d2d-verify" — these appear in the
+// like "d2d-backup", "d2d-restore", "d2d-verify"  -  these appear in the
 // PBS matcher UI dropdown alongside the built-in types (gc, sync, verify, etc.).
 //
 // For ModeLegacySendmail, it invokes /usr/sbin/sendmail directly.

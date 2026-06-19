@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -28,7 +29,7 @@ func mtfStore(st *store.Store) *mtfstore.Database {
 	return st.MtfStore
 }
 
-// --- MTF jobs ---
+// --- MTF jobs: run / stop ---
 
 func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +37,8 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
+
+		var response MtfJobRunResponse
 
 		jobIDs := r.URL.Query()["job"]
 		if len(jobIDs) == 0 {
@@ -77,23 +80,62 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}()
 
-		writeJSON(w, map[string]any{"data": nil, "success": true})
+		w.Header().Set("Content-Type", "application/json")
+		response.Status = http.StatusOK
+		response.Success = true
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
+// --- MTF jobs: create / list ---
+
 func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
 		ms := mtfStore(storeInstance)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
 		}
 
-		if err := r.ParseForm(); err != nil {
+		// GET: list all MTF jobs (for grid store)
+		if r.Method == http.MethodGet {
+			jobs, err := ms.ListMtfJobs(r.Context())
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			out := make([]flatMtfJob, 0, len(jobs))
+			for _, j := range jobs {
+				out = append(out, flattenMtfJob(j))
+			}
+
+			digest, err := calculateDigest(out)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+
+			toReturn := map[string]any{
+				"data":    out,
+				"digest":  digest,
+				"success": true,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(toReturn)
+			return
+		}
+
+		// POST: create new MTF job
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+
+		response := MtfJobConfigResponse{}
+		w.Header().Set("Content-Type", "application/json")
+
+		err := r.ParseForm()
+		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
@@ -111,9 +153,14 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		ApplyJobBatchAssignment(storeInstance, "backup", created.ID, r.FormValue("notification-batch"))
-		writeJSON(w, map[string]any{"data": created, "success": true})
+
+		response.Status = http.StatusOK
+		response.Success = true
+		json.NewEncoder(w).Encode(response)
 	}
 }
+
+// --- MTF jobs: single (get / update / delete) ---
 
 func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -133,45 +180,73 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		switch r.Method {
-		case http.MethodGet:
-			job, err := ms.GetMtfJob(r.Context(), id)
-			if err != nil {
-				WriteErrorResponse(w, err)
-				return
-			}
-			writeJSON(w, map[string]any{"data": job, "success": true})
+		w.Header().Set("Content-Type", "application/json")
 
-		case http.MethodPut:
+		if r.Method == http.MethodGet {
 			job, err := ms.GetMtfJob(r.Context(), id)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
+
+			response := MtfJobConfigResponse{}
+			response.Status = http.StatusOK
+			response.Success = true
+			flat := flattenMtfJobForEdit(job)
+			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", job.ID)
+			response.Data = flat
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if r.Method == http.MethodPut {
+			job, err := ms.GetMtfJob(r.Context(), id)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+
 			if err := r.ParseForm(); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
+
 			updated, err := mtfJobMergeForm(job, r)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
+
 			if err := ms.UpdateMtfJob(r.Context(), updated); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
-			writeJSON(w, map[string]any{"data": updated, "success": true})
 
-		case http.MethodDelete:
+			ApplyJobBatchAssignment(storeInstance, "backup", updated.ID, r.FormValue("notification-batch"))
+
+			response := MtfJobConfigResponse{}
+			response.Status = http.StatusOK
+			response.Success = true
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		if r.Method == http.MethodDelete {
 			if err := ms.DeleteMtfJob(r.Context(), id); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
-			writeJSON(w, map[string]any{"data": nil, "success": true})
+
+			response := MtfJobConfigResponse{}
+			response.Status = http.StatusOK
+			response.Success = true
+			json.NewEncoder(w).Encode(response)
+			return
 		}
 	}
 }
+
+// --- MTF jobs: UPIDs ---
 
 func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -198,9 +273,17 @@ func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 		if job.History.LastRunUpid != "" {
 			upids = append(upids, job.History.LastRunUpid)
 		}
-		writeJSON(w, map[string]any{"data": upids, "success": true})
+
+		response := MtfJobConfigResponse{}
+		w.Header().Set("Content-Type", "application/json")
+		response.Status = http.StatusOK
+		response.Success = true
+		response.Data = upids
+		json.NewEncoder(w).Encode(response)
 	}
 }
+
+// --- Form parsing helpers ---
 
 func mtfJobFromForm(r *http.Request) (mtfstore.MTFJob, error) {
 	j := mtfstore.MTFJob{
@@ -287,147 +370,41 @@ func mtfJobMergeForm(job mtfstore.MTFJob, r *http.Request) (mtfstore.MTFJob, err
 	if v := r.FormValue("retry-interval"); v != "" {
 		job.RetryInterval = atoiDefault(v, 1)
 	}
+
+	if delArr, ok := r.Form["delete"]; ok {
+		for _, attr := range delArr {
+			switch attr {
+			case "datastore":
+				job.Datastore = ""
+			case "namespace":
+				job.Namespace = ""
+			case "source_ref":
+				job.SourceRef = ""
+			case "source_kind":
+				job.SourceKind = ""
+			case "schedule":
+				job.Schedule = ""
+			case "comment":
+				job.Comment = ""
+			case "notification-mode":
+				job.NotificationMode = ""
+			case "changer":
+				job.Changer = ""
+			case "drive":
+				job.Drive = ""
+			case "spanning":
+				job.Spanning = false
+			case "overwrite_mappings":
+				job.OverwriteMappings = false
+			case "retry":
+				job.Retry = 0
+			case "retry-interval":
+				job.RetryInterval = 1
+			}
+		}
+	}
+
 	return job, nil
-}
-
-// --- MTF changers / drives ---
-
-func ExtJsMtfChangerHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ms := mtfStore(storeInstance)
-		if ms == nil {
-			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			list, err := ms.ListChangers(r.Context())
-			if err != nil {
-				WriteErrorResponse(w, err)
-				return
-			}
-			writeJSON(w, map[string]any{"data": list, "success": true})
-		case http.MethodPost:
-			c, err := mtfChangerFromForm(r)
-			if err != nil {
-				WriteErrorResponse(w, err)
-				return
-			}
-			if err := ms.CreateChanger(r.Context(), c); err != nil {
-				WriteErrorResponse(w, err)
-				return
-			}
-			writeJSON(w, map[string]any{"data": c, "success": true})
-		default:
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-		}
-	}
-}
-
-func ExtJsMtfChangerSingleHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-		ms := mtfStore(storeInstance)
-		if ms == nil {
-			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
-			return
-		}
-		name := validate.DecodePath(r.PathValue("name"))
-		if name == "" {
-			WriteErrorResponse(w, fmt.Errorf("invalid changer name"))
-			return
-		}
-		if err := ms.DeleteChanger(r.Context(), name); err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
-		writeJSON(w, map[string]any{"data": nil, "success": true})
-	}
-}
-
-func ExtJsMtfDriveHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ms := mtfStore(storeInstance)
-		if ms == nil {
-			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			list, err := ms.ListDrives(r.Context())
-			if err != nil {
-				WriteErrorResponse(w, err)
-				return
-			}
-			writeJSON(w, map[string]any{"data": list, "success": true})
-		case http.MethodPost:
-			d, err := mtfDriveFromForm(r)
-			if err != nil {
-				WriteErrorResponse(w, err)
-				return
-			}
-			if err := ms.CreateDrive(r.Context(), d); err != nil {
-				WriteErrorResponse(w, err)
-				return
-			}
-			writeJSON(w, map[string]any{"data": d, "success": true})
-		default:
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-		}
-	}
-}
-
-func ExtJsMtfDriveSingleHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-		ms := mtfStore(storeInstance)
-		if ms == nil {
-			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
-			return
-		}
-		name := validate.DecodePath(r.PathValue("name"))
-		if name == "" {
-			WriteErrorResponse(w, fmt.Errorf("invalid drive name"))
-			return
-		}
-		if err := ms.DeleteDrive(r.Context(), name); err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
-		writeJSON(w, map[string]any{"data": nil, "success": true})
-	}
-}
-
-func mtfChangerFromForm(r *http.Request) (mtfstore.Changer, error) {
-	c := mtfstore.Changer{
-		Name:    r.FormValue("name"),
-		Device:  r.FormValue("device"),
-		Comment: r.FormValue("comment"),
-	}
-	if c.Name == "" || c.Device == "" {
-		return c, fmt.Errorf("name and device are required")
-	}
-	return c, nil
-}
-
-func mtfDriveFromForm(r *http.Request) (mtfstore.Drive, error) {
-	d := mtfstore.Drive{
-		Name:       r.FormValue("name"),
-		Device:     r.FormValue("device"),
-		Changer:    r.FormValue("changer"),
-		DriveIndex: atoiDefault(r.FormValue("drive_index"), 0),
-		Comment:    r.FormValue("comment"),
-	}
-	if d.Name == "" || d.Device == "" {
-		return d, fmt.Errorf("name and device are required")
-	}
-	return d, nil
 }
 
 // --- Inventory listing ---
@@ -444,7 +421,8 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
-		resp := map[string]any{"success": true}
+		resp := MtfInventoryResponse{Success: true}
+
 		switch r.URL.Query().Get("type") {
 		case "cartridges":
 			list, err := ms.ListCartridges(ctx)
@@ -452,14 +430,14 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			resp["data"] = list
+			resp.Data = list
 		case "families":
 			list, err := ms.ListMediaFamilies(ctx)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
-			resp["data"] = list
+			resp.Data = list
 		case "datasets":
 			famID, _ := strconv.ParseInt(r.URL.Query().Get("family"), 10, 64)
 			var list []mtfstore.DataSet
@@ -473,7 +451,7 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			resp["data"] = list
+			resp.Data = list
 		default:
 			families, err := ms.ListMediaFamilies(ctx)
 			if err != nil {
@@ -485,14 +463,18 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			resp["data"] = map[string]any{
+			resp.Data = map[string]any{
 				"families":   families,
 				"cartridges": cartridges,
 			}
 		}
-		writeJSON(w, resp)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	}
 }
+
+// --- Scan ---
 
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -512,22 +494,47 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		opts := mtfinv.Options{
 			ChangerDevice: r.FormValue("changer"),
-			TapeDevice:    r.FormValue("drive"),
+			TapeDevice:    mtfstore.ResolveTapeDevice(r.FormValue("drive")),
 			DriveIndex:    atoiDefault(r.FormValue("drive_index"), 0),
 			BKFPath:       r.FormValue("bkf_path"),
 			Label:         r.FormValue("label"),
 		}
 
+		// Create a task with full active/archive pipeline (matches restore pattern).
+		st, err := mtfinv.NewScanTask(opts)
+		if err != nil {
+			WriteErrorResponse(w, fmt.Errorf("create scan task: %w", err))
+			return
+		}
+		src := "changer " + opts.ChangerDevice
+		if opts.BKFPath != "" {
+			src = ".bkf: " + opts.BKFPath
+		} else if opts.TapeDevice != "" {
+			src = "drive: " + opts.TapeDevice
+		}
+		st.WriteString("MTF inventory scan started (" + src + ")")
+
 		go func() {
 			sc := mtfinv.NewScanner(ms)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 			defer cancel()
-			if _, err := sc.Scan(ctx, opts); err != nil {
-				syslog.L.Error(err).WithMessage("mtf inventory scan failed").Write()
+			res, scanErr := sc.ScanWithLog(ctx, opts, &st.BaseTask)
+			if scanErr != nil {
+				st.WriteString(scanErr.Error())
+				st.CloseErr(scanErr)
+				return
 			}
+			st.WriteString(fmt.Sprintf("Scan completed: %d cartridges, %d families (%s)",
+				res.Cartridges, res.Families, res.Duration.Truncate(time.Second)))
+			st.CloseOK(res)
 		}()
 
-		writeJSON(w, map[string]any{"data": map[string]any{"status": "queued"}, "success": true})
+		response := MtfJobRunResponse{}
+		w.Header().Set("Content-Type", "application/json")
+		response.Status = http.StatusOK
+		response.Success = true
+		response.Data = st.UPID
+		json.NewEncoder(w).Encode(response)
 	}
 }
 
@@ -535,41 +542,64 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 
 func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
 		ms := mtfStore(storeInstance)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			WriteErrorResponse(w, err)
-			return
+
+		switch r.Method {
+		case http.MethodGet:
+			list, err := ms.ListMappings(r.Context())
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			response := MtfMappingConfigResponse{}
+			w.Header().Set("Content-Type", "application/json")
+			response.Status = http.StatusOK
+			response.Success = true
+			response.Data = list
+			json.NewEncoder(w).Encode(response)
+
+		case http.MethodPost:
+			response := MtfMappingConfigResponse{}
+			w.Header().Set("Content-Type", "application/json")
+
+			if err := r.ParseForm(); err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			m := mtfstore.NamespaceMapping{
+				Name:       r.FormValue("name"),
+				Priority:   atoiDefault(r.FormValue("priority"), 0),
+				MatchRegex: r.FormValue("match_regex"),
+				Template:   r.FormValue("template"),
+				IsDefault:  r.FormValue("is_default") == "1" || r.FormValue("is_default") == "true",
+				Enabled:    r.FormValue("enabled") == "1" || r.FormValue("enabled") == "true",
+				Comment:    r.FormValue("comment"),
+			}
+			if m.Template == "" {
+				WriteErrorResponse(w, fmt.Errorf("template is required"))
+				return
+			}
+			id, err := ms.CreateMapping(r.Context(), m)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			if mapper := storeInstance.MtfMapper; mapper != nil {
+				mapper.Invalidate()
+			}
+
+			response.Status = http.StatusOK
+			response.Success = true
+			response.Data = mtfstore.NamespaceMapping{ID: id}
+			json.NewEncoder(w).Encode(response)
+
+		default:
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 		}
-		m := mtfstore.NamespaceMapping{
-			Name:       r.FormValue("name"),
-			Priority:   atoiDefault(r.FormValue("priority"), 0),
-			MatchRegex: r.FormValue("match_regex"),
-			Template:   r.FormValue("template"),
-			IsDefault:  r.FormValue("is_default") == "1" || r.FormValue("is_default") == "true",
-			Enabled:    r.FormValue("enabled") != "0" && r.FormValue("enabled") != "false",
-			Comment:    r.FormValue("comment"),
-		}
-		if m.Template == "" {
-			WriteErrorResponse(w, fmt.Errorf("template is required"))
-			return
-		}
-		id, err := ms.CreateMapping(r.Context(), m)
-		if err != nil {
-			WriteErrorResponse(w, err)
-			return
-		}
-		if mapper := storeInstance.MtfMapper; mapper != nil {
-			mapper.Invalidate()
-		}
-		writeJSON(w, map[string]any{"data": mtfstore.NamespaceMapping{ID: id}, "success": true})
 	}
 }
 
@@ -590,6 +620,8 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		w.Header().Set("Content-Type", "application/json")
+
 		switch r.Method {
 		case http.MethodGet:
 			m, err := ms.GetMapping(r.Context(), id)
@@ -597,7 +629,11 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			writeJSON(w, map[string]any{"data": m, "success": true})
+			response := MtfMappingConfigResponse{}
+			response.Status = http.StatusOK
+			response.Success = true
+			response.Data = m
+			json.NewEncoder(w).Encode(response)
 
 		case http.MethodPut:
 			m, err := ms.GetMapping(r.Context(), id)
@@ -615,14 +651,14 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if v := r.FormValue("priority"); v != "" {
 				m.Priority = atoiDefault(v, 0)
 			}
-			if v := r.FormValue("match_regex"); r.FormValue("match_regex") != "" || true {
+			if v := r.FormValue("match_regex"); v != "" {
 				m.MatchRegex = v
 			}
 			if v := r.FormValue("template"); v != "" {
 				m.Template = v
 			}
 			if r.FormValue("enabled") != "" {
-				m.Enabled = r.FormValue("enabled") != "0" && r.FormValue("enabled") != "false"
+				m.Enabled = r.FormValue("enabled") == "1" || r.FormValue("enabled") == "true"
 			}
 			if r.FormValue("is_default") != "" {
 				m.IsDefault = r.FormValue("is_default") == "1" || r.FormValue("is_default") == "true"
@@ -630,6 +666,22 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if v := r.FormValue("comment"); v != "" {
 				m.Comment = v
 			}
+
+			if delArr, ok := r.Form["delete"]; ok {
+				for _, attr := range delArr {
+					switch attr {
+					case "name":
+						m.Name = ""
+					case "match_regex":
+						m.MatchRegex = ""
+					case "template":
+						m.Template = ""
+					case "comment":
+						m.Comment = ""
+					}
+				}
+			}
+
 			if err := ms.UpdateMapping(r.Context(), m); err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -637,7 +689,11 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if mapper := storeInstance.MtfMapper; mapper != nil {
 				mapper.Invalidate()
 			}
-			writeJSON(w, map[string]any{"data": m, "success": true})
+
+			response := MtfMappingConfigResponse{}
+			response.Status = http.StatusOK
+			response.Success = true
+			json.NewEncoder(w).Encode(response)
 
 		case http.MethodDelete:
 			if err := ms.DeleteMapping(r.Context(), id); err != nil {
@@ -647,12 +703,72 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if mapper := storeInstance.MtfMapper; mapper != nil {
 				mapper.Invalidate()
 			}
-			writeJSON(w, map[string]any{"data": nil, "success": true})
+
+			response := MtfMappingConfigResponse{}
+			response.Status = http.StatusOK
+			response.Success = true
+			json.NewEncoder(w).Encode(response)
 		}
 	}
 }
 
 // --- helpers ---
+
+// flatMtfJob is the flattened API response for an MTF job. The history block
+// is promoted to top-level fields (matching the ExtJS model + grid columns)
+// and a pre-parsed status is attached so the shared task-status renderer works.
+type flatMtfJob struct {
+	mtfstore.MTFJob
+	LastRunUpid           string           `json:"last-run-upid"`
+	LastRunStarttime      int64            `json:"last-run-starttime"`
+	LastRunState          string           `json:"last-run-state"`
+	LastRunStatus         int              `json:"last-run-status"`
+	LastRunEndtime        int64            `json:"last-run-endtime"`
+	LastSuccessfulEndtime int64            `json:"last-successful-endtime"`
+	LastSuccessfulUpid    string           `json:"last-successful-upid"`
+	RetryCount            int              `json:"retry-count"`
+	Duration              int64            `json:"duration"`
+	StatusParsed          ParsedTaskStatus `json:"status_parsed"`
+}
+
+func flattenMtfJob(j mtfstore.MTFJob) flatMtfJob {
+	return flatMtfJob{
+		MTFJob:                j,
+		LastRunUpid:           j.History.LastRunUpid,
+		LastRunStarttime:      j.History.LastRunStarttime,
+		LastRunState:          j.History.LastRunState,
+		LastRunStatus:         int(j.History.LastRunStatus),
+		LastRunEndtime:        j.History.LastRunEndtime,
+		LastSuccessfulEndtime: j.History.LastSuccessfulEndtime,
+		LastSuccessfulUpid:    j.History.LastSuccessfulUpid,
+		RetryCount:            j.History.RetryCount,
+		Duration:              j.History.Duration,
+		StatusParsed:          ParseTaskStatus(j.History.LastRunState),
+	}
+}
+
+// flattenMtfJobForEdit returns a map with the field names the edit form expects
+// (matching the ExtJS fields.name values). It follows the same pattern as
+// FlattenBackupForEdit / FlattenRestoreForEdit.
+func flattenMtfJobForEdit(j mtfstore.MTFJob) map[string]any {
+	return map[string]any{
+		"id":                 j.ID,
+		"source_kind":        j.SourceKind,
+		"source_ref":         j.SourceRef,
+		"datastore":          j.Datastore,
+		"namespace":          j.Namespace,
+		"schedule":           j.Schedule,
+		"comment":            j.Comment,
+		"notification-mode":  j.NotificationMode,
+		"notification-batch": "", // populated by handler via GetJobBatchName
+		"changer":            j.Changer,
+		"drive":              j.Drive,
+		"spanning":           j.Spanning,
+		"overwrite_mappings": j.OverwriteMappings,
+		"retry":              j.Retry,
+		"retry-interval":     j.RetryInterval,
+	}
+}
 
 func atoiDefault(s string, def int) int {
 	s = strings.TrimSpace(s)

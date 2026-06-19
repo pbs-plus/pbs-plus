@@ -774,7 +774,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	var task proxmox.Task
 	select {
 	case task = <-taskChan:
-		// Task detected — release the startup mutex so the next job
+		// Task detected  -  release the startup mutex so the next job
 		// can begin its monitoring/detection phase.
 		startupMu.Unlock()
 	case err := <-errChan:

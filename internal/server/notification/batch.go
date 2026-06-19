@@ -185,7 +185,7 @@ func (bt *BatchTracker) flushBatch(batchName string, isTimeout bool) {
 	}
 
 	if isTimeout && !state.batch.SendOnTimeout {
-		// Don't send on timeout — wait for all jobs.
+		// Don't send on timeout  -  wait for all jobs.
 		slog.Info("notification batch timeout reached but send-on-timeout is disabled, skipping",
 			"batch", batchName, "collected", len(state.results))
 		delete(bt.pending, batchName)

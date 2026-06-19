@@ -101,7 +101,7 @@ func TestOpenJournalRecreatesRootIfMissing(t *testing.T) {
 	}
 	_ = j.Close()
 
-	// Reopen — should recreate root.
+	// Reopen  -  should recreate root.
 	j2, err := OpenJournal(journalDir)
 	if err != nil {
 		t.Fatalf("OpenJournal after root delete: %v", err)
@@ -187,7 +187,7 @@ func TestOpenJournalIdempotent(t *testing.T) {
 
 	journalDir := filepath.Join(dir, "journal")
 
-	// Open and close multiple times — should not fail or duplicate data.
+	// Open and close multiple times  -  should not fail or duplicate data.
 	for i := range 5 {
 		j, err := OpenJournal(journalDir)
 		if err != nil {
@@ -417,7 +417,7 @@ func TestWhiteoutIdempotent(t *testing.T) {
 	j, cleanup := testJournal(t)
 	defer cleanup()
 
-	// Add same whiteout twice — should not error or duplicate.
+	// Add same whiteout twice  -  should not error or duplicate.
 	if err := j.AddWhiteout(1, "foo"); err != nil {
 		t.Fatalf("AddWhiteout 1: %v", err)
 	}
@@ -609,7 +609,7 @@ func TestResolvePathPartialMatch(t *testing.T) {
 		t.Fatalf("EnsureNodePath: %v", err)
 	}
 
-	// Resolve /a/b/c.txt — should fall off at the /a/b node.
+	// Resolve /a/b/c.txt  -  should fall off at the /a/b node.
 	nodeID, _, fellOffAt, remaining, err := j.ResolvePath("/a/b/c.txt")
 	if err != nil {
 		t.Fatalf("ResolvePath: %v", err)
@@ -728,7 +728,7 @@ func TestEnsureNodePathIdempotent(t *testing.T) {
 		t.Fatalf("EnsureNodePath 1: %v", err)
 	}
 
-	// Calling twice should still succeed — it creates a new node and
+	// Calling twice should still succeed  -  it creates a new node and
 	// replaces the edge.
 	id2, err := j.EnsureNodePath("/test.txt", node, false)
 	if err != nil {
@@ -820,7 +820,7 @@ func TestDeleteEdgeAndNodeCascadesXAttrs(t *testing.T) {
 	_ = j.SetXAttr(id, "user.a", []byte("1"))
 	_ = j.SetXAttr(id, "user.b", []byte("2"))
 
-	// Delete node — xattrs should cascade.
+	// Delete node  -  xattrs should cascade.
 	_ = j.DeleteEdgeAndNode(1, "xattr_test.txt", id, false)
 
 	// XAttrs should be gone.
@@ -873,7 +873,7 @@ func TestMoveEdgeAndWhiteoutReplacesDest(t *testing.T) {
 	id1, _ := j.EnsureNodePath("/src.txt", node1, false)
 	id2, _ := j.EnsureNodePath("/dst.txt", node2, false)
 
-	// Rename src.txt over dst.txt — should replace dest.
+	// Rename src.txt over dst.txt  -  should replace dest.
 	err := j.MoveEdgeAndWhiteout(1, "src.txt", 1, "dst.txt", id2, false, false)
 	if err != nil {
 		t.Fatalf("MoveEdgeAndWhiteout replace: %v", err)
@@ -915,7 +915,7 @@ func TestClearResetsToRoot(t *testing.T) {
 		t.Fatalf("Clear: %v", err)
 	}
 
-	// Only root node should remain — check by resolving paths.
+	// Only root node should remain  -  check by resolving paths.
 	node, _ := j.GetNode(1)
 	if node == nil {
 		t.Fatal("root node missing after clear")
@@ -1065,7 +1065,7 @@ func TestConcurrentWhiteouts(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
-	// All workers add whiteout for the same name — should be idempotent.
+	// All workers add whiteout for the same name  -  should be idempotent.
 	for range workers {
 		go func() {
 			defer wg.Done()
@@ -1203,14 +1203,14 @@ func TestCrashRecoveryAfterPartialWrites(t *testing.T) {
 	// Simulate crash: close without Sync (data is in WAL/memtable only).
 	_ = j1.Close()
 
-	// Phase 2: Reopen — Pebble's WAL replay should recover data.
+	// Phase 2: Reopen  -  Pebble's WAL replay should recover data.
 	j2, err := OpenJournal(journalDir)
 	if err != nil {
 		t.Fatalf("OpenJournal after crash: %v", err)
 	}
 	defer func() { _ = j2.Close() }()
 
-	// All data should be intact — WAL replay guarantees this.
+	// All data should be intact  -  WAL replay guarantees this.
 	for i := range 100 {
 		path := fmt.Sprintf("/recover_%03d.txt", i)
 		nodeID, _, _, _, err := j2.ResolvePath(path)
@@ -1532,7 +1532,7 @@ func TestDrainWriteHole(t *testing.T) {
 	j, cleanup := testJournal(t)
 	defer cleanup()
 
-	// Create a node and edge — these go into overlay + pending ring.
+	// Create a node and edge  -  these go into overlay + pending ring.
 	node := &GraphNode{Kind: NodeFile, Mode: 0o644}
 	id, err := j.EnsureNodePath("/ref/drain-test.txt", node, false)
 	if err != nil {

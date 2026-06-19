@@ -284,7 +284,7 @@ func TestReadDirRawRequiresNodeCache(t *testing.T) {
 		t.Logf("The fix is in processDeferredDir/emitPxarDir which now register nodes " +
 			"via registerPxarDir before the recursive commitWalk call.")
 	} else {
-		t.Errorf("ReadDirRaw succeeded for uncached inode — test precondition broken")
+		t.Errorf("ReadDirRaw succeeded for uncached inode  -  test precondition broken")
 	}
 }
 
@@ -537,7 +537,7 @@ func TestJournalDirMergesPxarChildren(t *testing.T) {
 	}
 
 	if !hasPxrFile {
-		t.Errorf("BUG: pxar file file_dir1.txt missing from dir1 — " +
+		t.Errorf("BUG: pxar file file_dir1.txt missing from dir1  -  " +
 			"journal dir overlays pxar dir but pxar children were dropped")
 	}
 	if !hasNewFile {
@@ -590,7 +590,7 @@ func TestReadDirRawErrorSwallowed(t *testing.T) {
 
 	hasAllFiles := len(w.refs) >= 5
 	if hasAllFiles {
-		t.Log("all 5 refs present — corrupted dir's children came from somewhere")
+		t.Log("all 5 refs present  -  corrupted dir's children came from somewhere")
 	}
 
 	t.Logf("confirmed: commitWalk returns nil error even when ReadDirRaw fails on corrupted inode")
@@ -634,9 +634,9 @@ func TestLastRefPayloadOffsetNotStaleInSimpleArchive(t *testing.T) {
 	}
 
 	if len(w.backedFiles) > 0 {
-		t.Logf("PERFORMANCE: %d files re-encoded — prevRefOffset staleness detected", len(w.backedFiles))
+		t.Logf("PERFORMANCE: %d files re-encoded  -  prevRefOffset staleness detected", len(w.backedFiles))
 	} else {
-		t.Log("no re-encodes — archive structure maintains monotonic offsets")
+		t.Log("no re-encodes  -  archive structure maintains monotonic offsets")
 	}
 }
 
@@ -732,7 +732,7 @@ func TestRegisterPxarDirNodesRefCountZero(t *testing.T) {
 		t.Fatalf("expected refs=0, got refs=%d", n.refs)
 	}
 
-	t.Logf("confirmed: registered node inode=%d has refs=0 — eligible for eviction if cache > 1M", childEntry.inode)
+	t.Logf("confirmed: registered node inode=%d has refs=0  -  eligible for eviction if cache > 1M", childEntry.inode)
 }
 
 var _ CommitProgress = (*noopProgress)(nil)

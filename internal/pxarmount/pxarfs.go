@@ -271,7 +271,7 @@ func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 	if err != nil || v < 0 {
 		return 0, false
 	}
-	// Year 3000 in Unix seconds — anything larger is garbage (e.g. the old
+	// Year 3000 in Unix seconds  -  anything larger is garbage (e.g. the old
 	// binary decode bug) or nanoseconds mis-stored as seconds.
 	const unixSecsMax = 32503680000
 	if v > unixSecsMax {
@@ -282,7 +282,7 @@ func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 
 // ensureNodeTimes lazily resolves and caches a node's effective atime/mtime
 // from its pxar entry. It is a no-op once resolved, so the per-file archive
-// read happens at most once per cached node — mirroring restore while keeping
+// read happens at most once per cached node  -  mirroring restore while keeping
 // getattr cheap on repeated stats.
 func (fs *PxarFS) ensureNodeTimes(n *node) {
 	if n.timesResolved {

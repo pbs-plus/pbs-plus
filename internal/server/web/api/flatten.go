@@ -95,7 +95,7 @@ func FlattenBackups(backups []database.Backup, staleDays int, skipUnscheduled bo
 			continue
 		}
 		if b.History.LastSuccessfulEndtime == 0 {
-			// Never ran — only stale if has a schedule (or not skipping unscheduled)
+			// Never ran  -  only stale if has a schedule (or not skipping unscheduled)
 			if !skipUnscheduled || b.Schedule != "" {
 				result[i].Stale = true
 			}

@@ -1,0 +1,1 @@
+-- Can't drop columns in SQLite easily; this is a no-op

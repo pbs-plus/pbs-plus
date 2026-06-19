@@ -71,7 +71,7 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		hostname := proxmox.NormalizeHostname(b.Target.GetHostname())
 		last := lastVerified[hostname]
 		if last == 0 {
-			// Never verified — maximum weight
+			// Never verified  -  maximum weight
 			weights[i] = float64(now)
 		} else {
 			elapsed := float64(now - last)

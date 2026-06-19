@@ -88,7 +88,7 @@ func readAddressAssignment(d *device) (*addressAssignment, error) {
 }
 
 // readElementStatusCDB builds the 12-byte READ ELEMENT STATUS CDB. The 24-bit
-// allocation length occupies bytes 7-9 — the layout real changers accept.
+// allocation length occupies bytes 7-9  -  the layout real changers accept.
 func readElementStatusCDB(start, count uint16, t elementType, withVolTag bool, allocLen uint32) []byte {
 	al := allocLen
 	cdb := make([]byte, 12)
@@ -98,7 +98,7 @@ func readElementStatusCDB(start, count uint16, t elementType, withVolTag bool, a
 	cdb[3] = byte(start)
 	cdb[4] = byte(count >> 8)
 	cdb[5] = byte(count)
-	// byte 6: flags (CurData/DVCID) — 0 for plain inventory.
+	// byte 6: flags (CurData/DVCID)  -  0 for plain inventory.
 	cdb[6] = 0
 	cdb[7] = byte(al >> 16)
 	cdb[8] = byte(al >> 8)

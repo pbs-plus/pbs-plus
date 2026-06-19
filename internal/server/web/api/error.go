@@ -8,8 +8,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -25,7 +26,10 @@ func statusFromErr(err error) int {
 		errors.Is(err, database.ErrRestoreNotFound) ||
 		errors.Is(err, database.ErrTokenNotFound) ||
 		errors.Is(err, database.ErrSecretNotFound) ||
-		errors.Is(err, database.ErrAgentHostNotFound) {
+		errors.Is(err, database.ErrAgentHostNotFound) ||
+		errors.Is(err, mtfstore.ErrNotFound) ||
+		errors.Is(err, mtfstore.ErrInvalidID) ||
+		errors.Is(err, mtfstore.ErrInvalidMapping) {
 		return http.StatusNotFound
 	}
 

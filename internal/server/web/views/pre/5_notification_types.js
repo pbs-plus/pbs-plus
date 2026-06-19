@@ -13,18 +13,18 @@
 //      so they appear as selectable rows in the dropdown grid.
 //
 // Severity levels used by D2D notifications (matching PBS upstream):
-//   info    — Job completed successfully with no issues
-//   notice  — Job succeeded with warnings (e.g. partial file verification)
-//   warning — System alert (stale backup, unconfigured target, target offline)
-//   error   — Job failed entirely
+//   info     -  Job completed successfully with no issues
+//   notice   -  Job succeeded with warnings (e.g. partial file verification)
+//   warning  -  System alert (stale backup, unconfigured target, target offline)
+//   error    -  Job failed entirely
 (function () {
   // Register human-readable descriptions for the Comment column.
   // These appear in Datacenter → Notifications → Matchers → type dropdown.
   Proxmox.Utils.overrideNotificationFieldValue({
-    "d2d-backup": "D2D Backup — disk-to-disk backup job completed",
-    "d2d-restore": "D2D Restore — file/folder restore job completed",
-    "d2d-verification": "D2D Verification — spot-check verification run completed",
-    "d2d-batch": "D2D Batch — consolidated notification for a job batch",
+    "d2d-backup": "D2D Backup  -  disk-to-disk backup job completed",
+    "d2d-restore": "D2D Restore  -  file/folder restore job completed",
+    "d2d-verification": "D2D Verification  -  spot-check verification run completed",
+    "d2d-batch": "D2D Batch  -  consolidated notification for a job batch",
     "d2d-alert-stale-backup": "D2D Alert: backup job has not run within threshold",
     "d2d-alert-unconfigured-target": "D2D Alert: target has no backup job configured",
     "d2d-alert-target-offline": "D2D Alert: configured target is unreachable",

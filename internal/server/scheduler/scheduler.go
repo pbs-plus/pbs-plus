@@ -407,7 +407,7 @@ func (s *Scheduler) checkVerifications() {
 		syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: scheduled verification is due").Write()
 
 		if vJob.RunOnBackupComplete {
-			// Don't run yet — mark as pending, wait for backup completion
+			// Don't run yet  -  mark as pending, wait for backup completion
 			if vJob.PendingSince == 0 {
 				vJob.PendingSince = now.Unix()
 				if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {

@@ -12,15 +12,15 @@ var verificationModes = Ext.create("Ext.data.Store", {
 var strategyDescriptions = {
   random:
     '<i class="fa fa-shuffle" style="margin-right:4px;opacity:0.6;"></i>' +
-    '<b>Random</b> — Shuffle all eligible files and pick the first N. ' +
+    '<b>Random</b>  -  Shuffle all eligible files and pick the first N. ' +
     "Provides statistically uniform coverage. Best for general-purpose verification.",
   systematic:
     '<i class="fa fa-arrows-left-right" style="margin-right:4px;opacity:0.6;"></i>' +
-    '<b>Systematic</b> — Sort files by path, then pick evenly-spaced entries. ' +
+    '<b>Systematic</b>  -  Sort files by path, then pick evenly-spaced entries. ' +
     "Ensures broad spatial coverage across the entire archive.",
   stratified:
     '<i class="fa fa-layer-group" style="margin-right:4px;opacity:0.6;"></i>' +
-    '<b>Stratified</b> — Group files by top-level directory, then sample proportionally from each group. ' +
+    '<b>Stratified</b>  -  Group files by top-level directory, then sample proportionally from each group. ' +
     "Ensures every directory tree is represented.",
 };
 
@@ -621,7 +621,7 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
           minHeight: 120,
           maxHeight: 250,
           margin: "0 0 5 0",
-          emptyText: gettext("No filters defined — all files are eligible"),
+          emptyText: gettext("No filters defined  -  all files are eligible"),
           viewConfig: {
             deferEmptyText: false,
           },
@@ -825,13 +825,13 @@ Ext.define("PBS.D2DVerification.SpotCheckInputPanel", {
         var filters = Ext.decode(values.filters);
         if (Ext.isArray(filters) && filters.length > 0) {
           if (me.filterGrid) {
-            // Grid is already rendered — load directly
+            // Grid is already rendered  -  load directly
             me.filterGrid.getStore().loadData(filters);
             if (me.filterGrid.syncHiddenField) {
               me.filterGrid.syncHiddenField();
             }
           } else {
-            // Tab not rendered yet — store for boxready to pick up
+            // Tab not rendered yet  -  store for boxready to pick up
             me._pendingFilters = filters;
           }
         }

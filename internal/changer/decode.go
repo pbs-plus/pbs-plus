@@ -2,7 +2,7 @@
 //
 //	Element Status Header (4 bytes):
 //	  first_element_address[2], number_of_elements[2]
-//	  — note: unlike the subheader, there is no byte-count here in all firmwares,
+//	   -  note: unlike the subheader, there is no byte-count here in all firmwares,
 //	    so we treat the whole received buffer as the data and walk subpages.
 //
 //	Repeated Element Status Pages:
@@ -104,7 +104,7 @@ func decodeDescriptor(d []byte, typeCode byte, pVolTag, aVolTag bool) (rawElemen
 		off += 3
 	case 4:
 		// drive (TransferDescriptor): the SValid bit lives in flags2 and the
-		// source storage address follows it — at the SAME offsets as storage
+		// source storage address follows it  -  at the SAME offsets as storage
 		// elements (the id_valid/scsi_bus/reserved fields occupy bytes 6-8,
 		// which precede flags2 at byte 9). SValid = flags2 & 0x80.
 		if off+3 <= len(d) {

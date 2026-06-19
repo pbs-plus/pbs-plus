@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"runtime/pprof"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -24,6 +27,7 @@ func main() {
 	changerDevice := flag.String("changer", "", "SCSI changer device (e.g. /dev/sg1) for robotic auto-load; requires -tape")
 	driveIndex := flag.Int("drive", 0, "Target drive index within the changer (0-based; almost always 0)")
 	verbose := flag.Bool("v", false, "Verbose output")
+	compress := flag.Bool("compress", false, "Enable zstd compression for chunks (off by default; useful for remote PBS, wasteful for localhost)")
 	spanning := flag.Bool("spanning", false, "Enable media spanning for multi-tape sets")
 	listMode := flag.Bool("list", false, "List snapshots (backup sets) in the input and exit")
 	snapshotSel := flag.Int("snapshot", -1, "Migrate only snapshot N (0-based; use -list to see available)")
@@ -55,6 +59,7 @@ func main() {
 		DriveIndex:    *driveIndex,
 		Sources:       flag.Args(),
 		Verbose:       *verbose,
+		Compress:      *compress,
 		Spanning:      *spanning,
 		SnapshotSel:   *snapshotSel,
 	}
@@ -66,6 +71,24 @@ func main() {
 			log.Fatalf("list failed: %v", err)
 		}
 		return
+	}
+
+	if profPath := os.Getenv("BKF2PXAR_CPUPROFILE"); profPath != "" {
+		f, err := os.Create(profPath)
+		if err != nil {
+			log.Fatalf("cpu profile: %v", err)
+		}
+		_ = pprof.StartCPUProfile(f)
+		// Flush the profile on SIGINT/SIGTERM so `timeout` (which sends SIGTERM)
+		// produces a usable file; Go's default handlers exit without defers.
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sig
+			pprof.StopCPUProfile()
+			_ = f.Close()
+			os.Exit(0)
+		}()
 	}
 
 	stats, err := bkf2pxar.Run(context.Background(), cfg)
@@ -110,7 +133,7 @@ func printSnapshots(snapshots []bkf2pxar.Snapshot) {
 
 	for _, s := range snapshots {
 		if s.Truncated {
-			fmt.Fprintf(os.Stderr, "WARNING: %s (snapshot %d) spans multiple media — data is incomplete. Re-run with -spanning and all tapes/files.\n", s.SourceFile, s.Index)
+			fmt.Fprintf(os.Stderr, "WARNING: %s (snapshot %d) spans multiple media  -  data is incomplete. Re-run with -spanning and all tapes/files.\n", s.SourceFile, s.Index)
 		}
 	}
 	fmt.Fprintf(os.Stderr, "\n%d snapshot(s). Use -snapshot N to migrate a specific one.\n", len(snapshots))

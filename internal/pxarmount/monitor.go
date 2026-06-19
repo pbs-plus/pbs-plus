@@ -92,7 +92,7 @@ func (h *commitHub) acceptLoop() {
 
 		if h.jobID.Load() > 0 {
 			if h.ended.Load() {
-				// Commit already finished — replay all lines and close.
+				// Commit already finished  -  replay all lines and close.
 				for _, line := range h.lastLines {
 					_, _ = fmt.Fprintln(conn, line)
 				}
@@ -109,14 +109,14 @@ func (h *commitHub) acceptLoop() {
 
 			// Now replay catch-up lines. Any new broadcast() call
 			// during this loop will see conn in watchers and write
-			// to it directly (duplicate lines are harmless — the
+			// to it directly (duplicate lines are harmless  -  the
 			// display deduplicates by phase transitions).
 			for _, line := range h.lastLines {
 				_, _ = fmt.Fprintln(conn, line)
 			}
 			h.mu.Unlock()
 		} else {
-			// No active commit — nothing to attach to.
+			// No active commit  -  nothing to attach to.
 			_, _ = fmt.Fprintln(conn, "IDLE")
 			h.mu.Unlock()
 			_ = conn.Close()
