@@ -952,7 +952,6 @@ func TestApplyMetaReadOnlyFileNoPanic(t *testing.T) {
 // on shared state (all state is local, but this test guards against
 // accidental introduction of package-level mutable state).
 func TestRestoreWindowsACLsConcurrent(t *testing.T) {
-	dir := t.TempDir()
 	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	xattrs := map[string][]byte{
 		"user.owner": []byte("S-1-1-0"),
