@@ -261,16 +261,23 @@ func TestRestoreWindowsACLsFromHandleOnlyInvalidOwner(t *testing.T) {
 }
 
 // TestRestoreWindowsACLsFromHandleInvalidGroup verifies invalid group SID
-// is skipped; owner still applied (may fail with ACCESS_DENIED if process
-// lacks SeRestorePrivilege — error is reported, no panic).
+// is skipped; owner still applied via SetNamedSecurityInfo (path-based API).
+// May fail with ACCESS_DENIED if process lacks SeRestorePrivilege — error is
+// reported, no panic.
 func TestRestoreWindowsACLsFromHandleInvalidGroup(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "test-grp-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := f.Name()
+	f.Close()
 	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
-	h, path := newTestHandle(t)
 	xattrs := map[string][]byte{
 		"user.owner": []byte("S-1-1-0"), // Everyone – valid SID
 		"user.group": []byte("nope"),
 	}
-	restoreWindowsACLsFromHandle(context.Background(), st, h, path, xattrs)
+	restoreWindowsACLsFromPath(context.Background(), st, path, xattrs)
 }
 
 // TestRestoreWindowsACLsFromHandleNilAclValue verifies a nil user.acls value
@@ -299,8 +306,14 @@ func TestRestoreWindowsACLsFromHandleCborGarbageAcls(t *testing.T) {
 // supportsPersistentACLs is false, the ACL branch is skipped entirely even
 // when xattrs carry valid payload.
 func TestRestoreWindowsACLsFromHandleAclsDisabled(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "test-acldis-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := f.Name()
+	f.Close()
 	st := newTestState(filesystemCapabilities{}) // everything false
-	h, path := newTestHandle(t)
 	winACLs, _ := cbor.Marshal([]types.WinACL{
 		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
 	})
@@ -309,11 +322,10 @@ func TestRestoreWindowsACLsFromHandleAclsDisabled(t *testing.T) {
 		"user.group": []byte("S-1-1-0"),
 		"user.acls":  winACLs,
 	}
-	// Owner/group SIDs parse but supportsPersistentACLs is false,
-	// so only owner+group flags are set (secInfo != 0). SetSecurityInfo
-	// is called on a real handle — may succeed or fail depending on
-	// privileges, but must not panic.
-	restoreWindowsACLsFromHandle(context.Background(), st, h, path, xattrs)
+	// Owner/group SIDs parse, but supportsPersistentACLs is false.
+	// SetNamedSecurityInfo is called with owner+group — may fail with
+	// ACCESS_DENIED if process lacks SeRestorePrivilege, but must not panic.
+	restoreWindowsACLsFromPath(context.Background(), st, path, xattrs)
 }
 
 // ---------------------------------------------------------------------------
@@ -952,6 +964,7 @@ func TestApplyMetaReadOnlyFileNoPanic(t *testing.T) {
 // on shared state (all state is local, but this test guards against
 // accidental introduction of package-level mutable state).
 func TestRestoreWindowsACLsConcurrent(t *testing.T) {
+	dir := t.TempDir()
 	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	xattrs := map[string][]byte{
 		"user.owner": []byte("S-1-1-0"),
@@ -959,11 +972,16 @@ func TestRestoreWindowsACLsConcurrent(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
-		h, name := newTestHandle(t)
+		f, err := os.CreateTemp(dir, "test-conc-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := f.Name()
+		f.Close()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			restoreWindowsACLsFromHandle(context.Background(), st, h, name, xattrs)
+			restoreWindowsACLsFromPath(context.Background(), st, name, xattrs)
 		}()
 	}
 	wg.Wait()

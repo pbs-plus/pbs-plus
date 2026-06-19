@@ -141,46 +141,15 @@ func setBasicInfo(h windows.Handle, info *FILE_BASIC_INFO) error {
 	return windows.SetFileInformationByHandle(h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(info)), uint32(unsafe.Sizeof(*info)))
 }
 
-// restoreWindowsACLsFromPath opens the file with WRITE_DAC|WRITE_OWNER and
-// FILE_FLAG_BACKUP_SEMANTICS, then delegates to restoreWindowsACLsFromHandle.
-// This ensures SetSecurityInfo receives a handle with proper access rights,
-// avoiding a native crash on Windows builds where SetSecurityInfo on a
-// handle lacking WRITE_DAC/WRITE_OWNER causes heap corruption instead of
-// returning ACCESS_DENIED.
+// restoreWindowsACLsFromPath applies owner, primary group, and DACL using
+// SetNamedSecurityInfo (path-based API). This avoids the handle access
+// requirements of SetSecurityInfo and works correctly on Windows builds
+// where SetSecurityInfo on a handle without WRITE_DAC/WRITE_OWNER causes
+// a native crash instead of returning ACCESS_DENIED.
 func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path string, xattrs map[string][]byte) {
-	pathPtr, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		st.reportErr(ctx, "open for acls", path, err)
-		return
-	}
-	h, err := windows.CreateFile(
-		pathPtr,
-		windows.WRITE_DAC|windows.WRITE_OWNER,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS,
-		0,
-	)
-	if err != nil {
-		st.reportErr(ctx, "open for acls", path, err)
-		return
-	}
-	defer windows.CloseHandle(h)
-	restoreWindowsACLsFromHandle(ctx, st, h, path, xattrs)
-}
-
-// restoreWindowsACLsFromHandle applies owner, primary group, and DACL from the
-// serialized xattrs. Owner/group come from user.owner/user.group (SID strings
-// captured by the Windows agent); the DACL comes from user.acls when it is a
-// Windows-flavor payload. Every buffer allocated by advapi32 (the ACL from
-// SetEntriesInAclW and every SID from ConvertStringSidToSidW) is LocalFree'd
-// after SetSecurityInfo copies them into the security descriptor — the
-// previous implementation leaked one allocation per file (and per ACE).
-func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windows.Handle, path string, xattrs map[string][]byte) {
 	var secInfo windows.SECURITY_INFORMATION
 	var ownerSID, groupSID *windows.SID
-	var ownedSIDs []*windows.SID // all ConvertStringSidToSid allocations, freed below
+	var ownedSIDs []*windows.SID
 
 	if d, ok := xattrs["user.owner"]; ok {
 		if sid, err := windows.StringToSid(string(d)); err == nil {
@@ -189,10 +158,6 @@ func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windo
 			secInfo |= windows.OWNER_SECURITY_INFORMATION
 		}
 	}
-	// Primary group was previously dropped (a `g` variable was declared but
-	// never assigned). The Windows agent captures the group SID into
-	// user.group, so restore it. A numeric Unix gid (Linux source restored to
-	// Windows) simply fails StringToSid and is skipped — no false group.
 	if d, ok := xattrs["user.group"]; ok {
 		if sid, err := windows.StringToSid(string(d)); err == nil {
 			groupSID = sid
@@ -203,9 +168,66 @@ func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windo
 
 	var dacl *windows.ACL
 	if d, ok := xattrs["user.acls"]; ok {
-		// Only Windows ACLs are applicable on a Windows destination. A
-		// POSIX-source payload ([]PosixACL) is skipped rather than decoded
-		// into zero-value WinACLs.
+		if detectACLFlavor(d) == aclWindows {
+			var winACLs []types.WinACL
+			if uerr := cbor.Unmarshal(d, &winACLs); uerr != nil {
+				st.reportErr(ctx, "decode acls", path, uerr)
+			} else {
+				acl, aceSIDs, berr := buildDACLFromACEs(winACLs)
+				ownedSIDs = append(ownedSIDs, aceSIDs...)
+				if berr != nil {
+					st.reportErr(ctx, "build dacl", path, berr)
+				} else if acl != nil {
+					dacl = acl
+					secInfo |= windows.DACL_SECURITY_INFORMATION
+				}
+			}
+		}
+	}
+
+	if secInfo == 0 {
+		freeSIDs(ownedSIDs)
+		return
+	}
+
+	err := windows.SetNamedSecurityInfo(
+		path, windows.SE_FILE_OBJECT, secInfo,
+		ownerSID, groupSID, dacl, nil,
+	)
+	if err != nil {
+		st.reportErr(ctx, "set security info", path, err)
+	}
+
+	localFreePtr(aclPtr(dacl))
+	freeSIDs(ownedSIDs)
+}
+
+// restoreWindowsACLsFromHandle applies owner, primary group, and DACL via
+// SetSecurityInfo on an already-open handle. The handle MUST be opened with
+// WRITE_DAC|WRITE_OWNER|FILE_FLAG_BACKUP_SEMANTICS. Callers that have only
+// a path should use restoreWindowsACLsFromPath instead.
+func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windows.Handle, path string, xattrs map[string][]byte) {
+	var secInfo windows.SECURITY_INFORMATION
+	var ownerSID, groupSID *windows.SID
+	var ownedSIDs []*windows.SID
+
+	if d, ok := xattrs["user.owner"]; ok {
+		if sid, err := windows.StringToSid(string(d)); err == nil {
+			ownerSID = sid
+			ownedSIDs = append(ownedSIDs, sid)
+			secInfo |= windows.OWNER_SECURITY_INFORMATION
+		}
+	}
+	if d, ok := xattrs["user.group"]; ok {
+		if sid, err := windows.StringToSid(string(d)); err == nil {
+			groupSID = sid
+			ownedSIDs = append(ownedSIDs, sid)
+			secInfo |= windows.GROUP_SECURITY_INFORMATION
+		}
+	}
+
+	var dacl *windows.ACL
+	if d, ok := xattrs["user.acls"]; ok {
 		if detectACLFlavor(d) == aclWindows {
 			var winACLs []types.WinACL
 			if uerr := cbor.Unmarshal(d, &winACLs); uerr != nil {
@@ -236,8 +258,6 @@ func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windo
 		st.reportErr(ctx, "set security info", path, syscall.Errno(ret))
 	}
 
-	// SetSecurityInfo copies into a self-owned security descriptor, so the
-	// caller-allocated ACL and SIDs can now be released.
 	localFreePtr(aclPtr(dacl))
 	freeSIDs(ownedSIDs)
 }
@@ -291,7 +311,7 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 	st.reportErr(ctx, "set file time", linkPath, windows.SetFileTime(h, cp, &a, &w))
 
 	if st.fsCap.supportsPersistentACLs {
-		restoreWindowsACLsFromHandle(ctx, st, h, linkPath, xattrs)
+		restoreWindowsACLsFromPath(ctx, st, linkPath, xattrs)
 	}
 	return nil
 }
