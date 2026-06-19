@@ -675,12 +675,10 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 		}
 	}
 
-	// Decouple tape reads from PBS upload backpressure: a goroutine pumps
-	// the tape into a bufio.Writer (32 MiB buffer), which flushes into an
-	// io.Pipe consumed by WriteEntryReader. The tape drive streams 32 MiB
-	// into the buffer regardless of how fast PBS consumes from the pipe —
-	// preventing the stop/rewind/reposition backhitch that otherwise costs
-	// multiple seconds per file whenever the upload pipeline blocks.
+	// Decouple tape reads from the encoder: a goroutine pumps the tape into
+	// an io.Pipe behind a bufio.Writer (32 MiB). The tape drive streams in
+	// large bursts regardless of encoder backpressure — preventing the
+	// stop/start cycles that limit throughput to ~90 MB/s.
 	pr, pw := io.Pipe()
 	go func() {
 		defer func() { _ = pw.Close() }()
