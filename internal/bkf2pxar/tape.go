@@ -52,3 +52,28 @@ func openTapeReader(dev string) (*tapeReader, error) {
 func OpenTapeReader(dev string) (*tapeReader, error) {
 	return openTapeReader(dev)
 }
+
+// validateFirstBlock peeks at the first logical block at the current tape
+// position and checks that it is a valid MTF TAPE descriptor (block type
+// dbTAPE). After validation the reader is rewound so the caller can start a
+// fresh mtf.Reader from BOT.
+//
+// This catches the case where a previous process was killed mid-stream and the
+// tape was left at an arbitrary position — without this check the mtf.Reader
+// would silently skip unrecognised blocks and potentially ingest garbage as
+// file data.
+func validateFirstBlock(rc *tapeReader) error {
+	r := mtf.NewReader(rc)
+	blk, err := r.Next()
+	if err != nil {
+		return fmt.Errorf("tape: cannot read first block (is the tape at BOT?): %w", err)
+	}
+	if blk.Kind != mtf.KindMedia || blk.Tape == nil {
+		return fmt.Errorf("tape: first block is %v, expected TAPE descriptor — tape may not be at BOT or may be blank/damaged", blk.Kind)
+	}
+	// Rewind so the caller's mtf.Reader starts fresh from BOT.
+	if err := rc.Rewind(); err != nil {
+		return fmt.Errorf("tape: rewind after validation: %w", err)
+	}
+	return nil
+}

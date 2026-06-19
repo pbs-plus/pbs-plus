@@ -432,17 +432,22 @@ func (c *converter) runTape() error {
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
 	}
-	// Read through the tape-block adapter: a raw /dev/nst0 read() returns one
-	// whole fixed-size block, which go-mtf's chunked reads cannot consume
-	// correctly (overflow is discarded). The adapter buffers whole blocks into a
-	// continuous byte stream and rewinds the device to BOT on open.
 	rc, err := openTapeReader(c.cfg.TapeDevice)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
-	r := mtf.NewReader(rc)
 
+	// Probe the first block before creating any PBS session: it must be a
+	// valid MTF TAPE descriptor. If the tape is mid-stream (e.g. previous
+	// process killed without rewind), the first block will be garbage or a
+	// mid-file data block — skip/error early instead of proceeding into the
+	// PBS upload pipeline with bad data.
+	if err := validateFirstBlock(rc); err != nil {
+		return err
+	}
+
+	r := mtf.NewReader(rc)
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
 	}
@@ -467,6 +472,11 @@ func (c *converter) runChanger() error {
 		if err != nil {
 			// No more data tapes — migration complete.
 			return nil
+		}
+		if err := validateFirstBlock(rc); err != nil {
+			_ = rc.Close()
+			_ = f.unloadCurrent()
+			return err
 		}
 		r := mtf.NewReader(rc)
 		r.SetContinuation(f.asContinuation())
