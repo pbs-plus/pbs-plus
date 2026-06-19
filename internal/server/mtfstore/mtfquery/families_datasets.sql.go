@@ -13,8 +13,9 @@ import (
 const createDataSet = `-- name: CreateDataSet :execlastid
 INSERT INTO data_sets (
     media_family_id, set_number, name, description, owner, machine_name,
-    write_time, num_directories, num_files, num_corrupt, size, first_media_seq
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    write_time, num_directories, num_files, num_corrupt, size, first_media_seq,
+    source_media_seq
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateDataSetParams struct {
@@ -30,6 +31,7 @@ type CreateDataSetParams struct {
 	NumCorrupt     sql.NullInt64  `json:"num_corrupt"`
 	Size           sql.NullInt64  `json:"size"`
 	FirstMediaSeq  sql.NullInt64  `json:"first_media_seq"`
+	SourceMediaSeq sql.NullInt64  `json:"source_media_seq"`
 }
 
 func (q *Queries) CreateDataSet(ctx context.Context, arg CreateDataSetParams) (int64, error) {
@@ -46,6 +48,7 @@ func (q *Queries) CreateDataSet(ctx context.Context, arg CreateDataSetParams) (i
 		arg.NumCorrupt,
 		arg.Size,
 		arg.FirstMediaSeq,
+		arg.SourceMediaSeq,
 	)
 	if err != nil {
 		return 0, err
@@ -113,8 +116,39 @@ func (q *Queries) DeleteVolumesByDataSet(ctx context.Context, dataSetID int64) (
 	return result.RowsAffected()
 }
 
+const findDataSet = `-- name: FindDataSet :one
+SELECT id, media_family_id, set_number, name, description, owner, machine_name, write_time, num_directories, num_files, num_corrupt, size, first_media_seq, source_media_seq FROM data_sets WHERE media_family_id = ? AND set_number = ? LIMIT 1
+`
+
+type FindDataSetParams struct {
+	MediaFamilyID int64         `json:"media_family_id"`
+	SetNumber     sql.NullInt64 `json:"set_number"`
+}
+
+func (q *Queries) FindDataSet(ctx context.Context, arg FindDataSetParams) (DataSet, error) {
+	row := q.db.QueryRowContext(ctx, findDataSet, arg.MediaFamilyID, arg.SetNumber)
+	var i DataSet
+	err := row.Scan(
+		&i.ID,
+		&i.MediaFamilyID,
+		&i.SetNumber,
+		&i.Name,
+		&i.Description,
+		&i.Owner,
+		&i.MachineName,
+		&i.WriteTime,
+		&i.NumDirectories,
+		&i.NumFiles,
+		&i.NumCorrupt,
+		&i.Size,
+		&i.FirstMediaSeq,
+		&i.SourceMediaSeq,
+	)
+	return i, err
+}
+
 const getDataSet = `-- name: GetDataSet :one
-SELECT id, media_family_id, set_number, name, description, owner, machine_name, write_time, num_directories, num_files, num_corrupt, size, first_media_seq FROM data_sets WHERE id = ? LIMIT 1
+SELECT id, media_family_id, set_number, name, description, owner, machine_name, write_time, num_directories, num_files, num_corrupt, size, first_media_seq, source_media_seq FROM data_sets WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
@@ -134,6 +168,7 @@ func (q *Queries) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 		&i.NumCorrupt,
 		&i.Size,
 		&i.FirstMediaSeq,
+		&i.SourceMediaSeq,
 	)
 	return i, err
 }
@@ -157,7 +192,7 @@ func (q *Queries) GetMediaFamily(ctx context.Context, id int64) (MediaFamily, er
 }
 
 const listAllDataSets = `-- name: ListAllDataSets :many
-SELECT id, media_family_id, set_number, name, description, owner, machine_name, write_time, num_directories, num_files, num_corrupt, size, first_media_seq FROM data_sets ORDER BY write_time DESC
+SELECT id, media_family_id, set_number, name, description, owner, machine_name, write_time, num_directories, num_files, num_corrupt, size, first_media_seq, source_media_seq FROM data_sets ORDER BY write_time DESC
 `
 
 func (q *Queries) ListAllDataSets(ctx context.Context) ([]DataSet, error) {
@@ -183,6 +218,7 @@ func (q *Queries) ListAllDataSets(ctx context.Context) ([]DataSet, error) {
 			&i.NumCorrupt,
 			&i.Size,
 			&i.FirstMediaSeq,
+			&i.SourceMediaSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -198,7 +234,7 @@ func (q *Queries) ListAllDataSets(ctx context.Context) ([]DataSet, error) {
 }
 
 const listDataSetsByFamily = `-- name: ListDataSetsByFamily :many
-SELECT id, media_family_id, set_number, name, description, owner, machine_name, write_time, num_directories, num_files, num_corrupt, size, first_media_seq FROM data_sets WHERE media_family_id = ? ORDER BY set_number
+SELECT id, media_family_id, set_number, name, description, owner, machine_name, write_time, num_directories, num_files, num_corrupt, size, first_media_seq, source_media_seq FROM data_sets WHERE media_family_id = ? ORDER BY set_number
 `
 
 func (q *Queries) ListDataSetsByFamily(ctx context.Context, mediaFamilyID int64) ([]DataSet, error) {
@@ -224,6 +260,7 @@ func (q *Queries) ListDataSetsByFamily(ctx context.Context, mediaFamilyID int64)
 			&i.NumCorrupt,
 			&i.Size,
 			&i.FirstMediaSeq,
+			&i.SourceMediaSeq,
 		); err != nil {
 			return nil, err
 		}
@@ -318,6 +355,64 @@ type UpdateMediaFamilyScanParams struct {
 func (q *Queries) UpdateMediaFamilyScan(ctx context.Context, arg UpdateMediaFamilyScanParams) error {
 	_, err := q.db.ExecContext(ctx, updateMediaFamilyScan, arg.LastScanned, arg.ID)
 	return err
+}
+
+const upsertDataSet = `-- name: UpsertDataSet :execlastid
+INSERT INTO data_sets (
+    media_family_id, set_number, name, description, owner, machine_name,
+    write_time, num_directories, num_files, num_corrupt, size, first_media_seq,
+    source_media_seq
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(media_family_id, set_number) DO UPDATE SET
+    name = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.name ELSE data_sets.name END,
+    description = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.description ELSE data_sets.description END,
+    owner = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.owner ELSE data_sets.owner END,
+    machine_name = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.machine_name ELSE data_sets.machine_name END,
+    write_time = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.write_time ELSE data_sets.write_time END,
+    num_directories = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.num_directories ELSE data_sets.num_directories END,
+    num_files = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.num_files ELSE data_sets.num_files END,
+    num_corrupt = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.num_corrupt ELSE data_sets.num_corrupt END,
+    size = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.size ELSE data_sets.size END,
+    first_media_seq = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.first_media_seq ELSE data_sets.first_media_seq END,
+    source_media_seq = CASE WHEN excluded.source_media_seq > data_sets.source_media_seq THEN excluded.source_media_seq ELSE data_sets.source_media_seq END
+`
+
+type UpsertDataSetParams struct {
+	MediaFamilyID  int64          `json:"media_family_id"`
+	SetNumber      sql.NullInt64  `json:"set_number"`
+	Name           sql.NullString `json:"name"`
+	Description    sql.NullString `json:"description"`
+	Owner          sql.NullString `json:"owner"`
+	MachineName    sql.NullString `json:"machine_name"`
+	WriteTime      sql.NullInt64  `json:"write_time"`
+	NumDirectories sql.NullInt64  `json:"num_directories"`
+	NumFiles       sql.NullInt64  `json:"num_files"`
+	NumCorrupt     sql.NullInt64  `json:"num_corrupt"`
+	Size           sql.NullInt64  `json:"size"`
+	FirstMediaSeq  sql.NullInt64  `json:"first_media_seq"`
+	SourceMediaSeq sql.NullInt64  `json:"source_media_seq"`
+}
+
+func (q *Queries) UpsertDataSet(ctx context.Context, arg UpsertDataSetParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, upsertDataSet,
+		arg.MediaFamilyID,
+		arg.SetNumber,
+		arg.Name,
+		arg.Description,
+		arg.Owner,
+		arg.MachineName,
+		arg.WriteTime,
+		arg.NumDirectories,
+		arg.NumFiles,
+		arg.NumCorrupt,
+		arg.Size,
+		arg.FirstMediaSeq,
+		arg.SourceMediaSeq,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
 }
 
 const upsertMediaFamily = `-- name: UpsertMediaFamily :execlastid

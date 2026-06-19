@@ -243,7 +243,7 @@ func (s *Scanner) indexReader(ctx context.Context, r *mtf.Reader, barcode string
 
 	if fam.SetMap != nil {
 		res.Families++
-		if err := s.indexSetMap(ctx, famID, fam.SetMap); err != nil {
+		if err := s.indexSetMap(ctx, famID, fam.SetMap, int(cen.MediaSequence)); err != nil {
 			return fmt.Errorf("index set map: %w", err)
 		}
 	}
@@ -251,13 +251,11 @@ func (s *Scanner) indexReader(ctx context.Context, r *mtf.Reader, barcode string
 }
 
 // indexSetMap persists the Set Map's data-set entries (one per SSET). Because
-// the Set Map is cumulative and rewritten on each cartridge, later scans
-// supersede earlier ones for the same (family, set_number). We replace that
-// family's data sets on each scan to reflect the most complete catalog seen.
-func (s *Scanner) indexSetMap(ctx context.Context, famID int64, sm *mtf.SetMap) error {
-	if _, err := s.db.Queries().DeleteDataSetsByFamily(ctx, famID); err != nil {
-		return err
-	}
+// the Set Map is cumulative and rewritten on each cartridge, later tapes
+// contain more complete information. We upsert each entry individually:
+// a new entry from a tape with higher media sequence supersedes an older one;
+// an entry from an equal-or-lower sequence does not overwrite existing data.
+func (s *Scanner) indexSetMap(ctx context.Context, famID int64, sm *mtf.SetMap, tapeSeq int) error {
 	for _, e := range sm.Entries {
 		var machine string
 		for _, v := range e.Volumes {
@@ -266,7 +264,7 @@ func (s *Scanner) indexSetMap(ctx context.Context, famID int64, sm *mtf.SetMap) 
 				break
 			}
 		}
-		dsID, err := s.db.Queries().CreateDataSet(ctx, mtfquery.CreateDataSetParams{
+		dsID, err := s.db.Queries().UpsertDataSet(ctx, mtfquery.UpsertDataSetParams{
 			MediaFamilyID:  famID,
 			SetNumber:      nullInt(int64(e.SetNumber)),
 			Name:           nullStr(e.Name),
@@ -279,18 +277,25 @@ func (s *Scanner) indexSetMap(ctx context.Context, famID int64, sm *mtf.SetMap) 
 			NumCorrupt:     nullInt(int64(e.NumCorrupt)),
 			Size:           nullInt(int64(e.Size)),
 			FirstMediaSeq:  nullInt(int64(e.MediaSeq)),
+			SourceMediaSeq: nullInt(int64(tapeSeq)),
 		})
 		if err != nil {
-			return err
+			return fmt.Errorf("upsert data set %d: %w", e.SetNumber, err)
 		}
-		for _, v := range e.Volumes {
-			if err := s.db.Queries().CreateDataSetVolume(ctx, mtfquery.CreateDataSetVolumeParams{
-				DataSetID:   dsID,
-				Device:      nullStr(v.Name),
-				VolumeLabel: nullStr(v.VolumeLabel),
-				MachineName: nullStr(v.MachineName),
-			}); err != nil {
-				return err
+		// Replace volumes only when this tape's sequence is >= the existing
+		// source. The query already handled the data row; for volumes we
+		// delete-and-reinsert since the cumulative Set Map has the full list.
+		if tapeSeq >= int(e.MediaSeq) {
+			_, _ = s.db.Queries().DeleteVolumesByDataSet(ctx, dsID)
+			for _, v := range e.Volumes {
+				if err := s.db.Queries().CreateDataSetVolume(ctx, mtfquery.CreateDataSetVolumeParams{
+					DataSetID:   dsID,
+					Device:      nullStr(v.Name),
+					VolumeLabel: nullStr(v.VolumeLabel),
+					MachineName: nullStr(v.MachineName),
+				}); err != nil {
+					return fmt.Errorf("create volume: %w", err)
+				}
 			}
 		}
 	}

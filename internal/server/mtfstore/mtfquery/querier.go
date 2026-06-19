@@ -28,6 +28,7 @@ type Querier interface {
 	DeleteMediaFamily(ctx context.Context, id int64) (int64, error)
 	DeleteMtfJob(ctx context.Context, id string) (int64, error)
 	DeleteVolumesByDataSet(ctx context.Context, dataSetID int64) (int64, error)
+	FindDataSet(ctx context.Context, arg FindDataSetParams) (DataSet, error)
 	GetCartridge(ctx context.Context, barcode string) (MtfCartridge, error)
 	GetChanger(ctx context.Context, name string) (MtfChanger, error)
 	GetDataSet(ctx context.Context, id int64) (DataSet, error)
@@ -58,6 +59,7 @@ type Querier interface {
 	UpdateMtfJob(ctx context.Context, arg UpdateMtfJobParams) error
 	UpdateMtfJobHistory(ctx context.Context, arg UpdateMtfJobHistoryParams) error
 	UpsertCartridge(ctx context.Context, arg UpsertCartridgeParams) error
+	UpsertDataSet(ctx context.Context, arg UpsertDataSetParams) (int64, error)
 	UpsertMediaFamily(ctx context.Context, arg UpsertMediaFamilyParams) (int64, error)
 }
 

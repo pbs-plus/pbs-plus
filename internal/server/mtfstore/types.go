@@ -69,6 +69,7 @@ type DataSet struct {
 	NumCorrupt     int             `json:"num_corrupt"`
 	Size           int64           `json:"size"`
 	FirstMediaSeq  int             `json:"first_media_seq"`
+	SourceMediaSeq int             `json:"source_media_seq"`
 	Volumes        []DataSetVolume `json:"volumes"`
 }
 
