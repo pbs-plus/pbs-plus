@@ -438,16 +438,14 @@ func (c *converter) runTape() error {
 	}
 	defer func() { _ = rc.Close() }()
 
-	// Probe the first block before creating any PBS session: it must be a
-	// valid MTF TAPE descriptor. If the tape is mid-stream (e.g. previous
-	// process killed without rewind), the first block will be garbage or a
-	// mid-file data block — skip/error early instead of proceeding into the
-	// PBS upload pipeline with bad data.
-	if err := validateFirstBlock(rc); err != nil {
+	r := mtf.NewReader(rc)
+	// Validate the tape starts with a TAPE descriptor before creating any
+	// PBS session. If the tape is mid-stream (e.g. previous process killed
+	// without rewind), this errors immediately instead of silently ingesting
+	// garbage as file data. go-mtf handles rewind internally for tape drives.
+	if err := r.ValidateStart(); err != nil {
 		return err
 	}
-
-	r := mtf.NewReader(rc)
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
 	}
@@ -473,13 +471,13 @@ func (c *converter) runChanger() error {
 			// No more data tapes — migration complete.
 			return nil
 		}
-		if err := validateFirstBlock(rc); err != nil {
+		r := mtf.NewReader(rc)
+		r.SetContinuation(f.asContinuation())
+		if err := r.ValidateStart(); err != nil {
 			_ = rc.Close()
 			_ = f.unloadCurrent()
 			return err
 		}
-		r := mtf.NewReader(rc)
-		r.SetContinuation(f.asContinuation())
 		if err := c.processReader(r); err != nil {
 			_ = rc.Close()
 			_ = f.unloadCurrent()
