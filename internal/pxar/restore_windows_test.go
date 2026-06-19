@@ -16,6 +16,18 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// newTestState returns a restoreState with a non-nil client so that reportErr
+// (which calls client.SendError) does not panic. All fields except client.errCh
+// are zero / nil — any RPC call on this client will panic, which is fine for
+// tests that only exercise metadata error paths (SetSecurityInfo / SetFileTime
+// failures that flow through reportErr).
+func newTestState(fsCap filesystemCapabilities) *restoreState {
+	return &restoreState{
+		client: &Client{errCh: make(chan error, 16), name: "test"},
+		fsCap:  fsCap,
+	}
+}
+
 // ---------------------------------------------------------------------------
 // unixToFiletime — overflow & boundary
 // ---------------------------------------------------------------------------
@@ -125,9 +137,9 @@ func TestBuildDACLFromACEsEmptySlice(t *testing.T) {
 // a non-parsable SID, the function returns nil ACL with no error.
 func TestBuildDACLFromACEsAllInvalidSIDs(t *testing.T) {
 	entries := []types.WinACL{
-		{SID: "", AccessMask: 0x1F01FF, Type: 0},
-		{SID: "not-a-sid", AccessMask: 0x1200A9, Type: 0},
-		{SID: "S-1-5-", AccessMask: 0x100000, Type: 1},
+		{SID: "", AccessMask: 0x1F01FF, Type: windows.GRANT_ACCESS},
+		{SID: "not-a-sid", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
+		{SID: "S-1-5-", AccessMask: 0x100000, Type: windows.DENY_ACCESS},
 	}
 	acl, sids, err := buildDACLFromACEs(entries)
 	if acl != nil || err != nil {
@@ -140,8 +152,8 @@ func TestBuildDACLFromACEsAllInvalidSIDs(t *testing.T) {
 // with invalid ones. Only valid SIDs contribute to the ACL.
 func TestBuildDACLFromACEsMixedSIDs(t *testing.T) {
 	entries := []types.WinACL{
-		{SID: "bogus-sid", AccessMask: 0x100000, Type: 0}, // invalid, skipped
-		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: 0},   // Everyone, valid
+		{SID: "bogus-sid", AccessMask: 0x100000, Type: windows.GRANT_ACCESS}, // invalid, skipped
+		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},   // Everyone, valid
 	}
 	acl, sids, err := buildDACLFromACEs(entries)
 	if err != nil {
@@ -161,8 +173,8 @@ func TestBuildDACLFromACEsMixedSIDs(t *testing.T) {
 // is accepted without panic.
 func TestBuildDACLFromACEsAccessDeniedACE(t *testing.T) {
 	entries := []types.WinACL{
-		{SID: "S-1-5-32-544", AccessMask: 0x1F01FF, Type: 0}, // Administrators, ALLOW
-		{SID: "S-1-1-0", AccessMask: 0x100000, Type: 1},      // Everyone, DENY
+		{SID: "S-1-5-32-544", AccessMask: 0x1F01FF, Type: windows.GRANT_ACCESS}, // Administrators, ALLOW
+		{SID: "S-1-1-0", AccessMask: 0x100000, Type: windows.DENY_ACCESS},       // Everyone, DENY
 	}
 	acl, sids, err := buildDACLFromACEs(entries)
 	if err != nil {
@@ -179,8 +191,8 @@ func TestBuildDACLFromACEsAccessDeniedACE(t *testing.T) {
 // 0xFFFFFFFF (maximum uint32) don't cause issues.
 func TestBuildDACLFromACEsLargeAccessMask(t *testing.T) {
 	entries := []types.WinACL{
-		{SID: "S-1-1-0", AccessMask: 0xFFFFFFFF, Type: 0},
-		{SID: "S-1-1-0", AccessMask: 0, Type: 0},
+		{SID: "S-1-1-0", AccessMask: 0xFFFFFFFF, Type: windows.GRANT_ACCESS},
+		{SID: "S-1-1-0", AccessMask: 0, Type: windows.GRANT_ACCESS},
 	}
 	acl, sids, err := buildDACLFromACEs(entries)
 	if err != nil {
@@ -200,9 +212,7 @@ func TestBuildDACLFromACEsLargeAccessMask(t *testing.T) {
 // TestRestoreWindowsACLsFromHandleNilXattrs verifies the function does not
 // panic or call into Windows when xattrs is nil.
 func TestRestoreWindowsACLsFromHandleNilXattrs(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	// Pass an invalid handle (0). The function must not try to use it when
 	// there are no SIDs/ACL to set (secInfo==0).
 	restoreWindowsACLsFromHandle(context.Background(), st, 0, "test", nil)
@@ -210,9 +220,7 @@ func TestRestoreWindowsACLsFromHandleNilXattrs(t *testing.T) {
 
 // TestRestoreWindowsACLsFromHandleEmptyXattrs verifies empty xattrs map.
 func TestRestoreWindowsACLsFromHandleEmptyXattrs(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	restoreWindowsACLsFromHandle(context.Background(), st, 0, "test", map[string][]byte{})
 }
 
@@ -220,9 +228,7 @@ func TestRestoreWindowsACLsFromHandleEmptyXattrs(t *testing.T) {
 // owner SID string results in no security info update (secInfo==0) and no
 // syscall.
 func TestRestoreWindowsACLsFromHandleOnlyInvalidOwner(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	xattrs := map[string][]byte{
 		"user.owner": []byte("garbage"),
 	}
@@ -232,9 +238,7 @@ func TestRestoreWindowsACLsFromHandleOnlyInvalidOwner(t *testing.T) {
 // TestRestoreWindowsACLsFromHandleInvalidGroup verifies invalid group SID
 // is skipped; owner still applied.
 func TestRestoreWindowsACLsFromHandleInvalidGroup(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	xattrs := map[string][]byte{
 		"user.owner": []byte("S-1-1-0"), // Everyone – valid SID
 		"user.group": []byte("nope"),
@@ -247,9 +251,7 @@ func TestRestoreWindowsACLsFromHandleInvalidGroup(t *testing.T) {
 // TestRestoreWindowsACLsFromHandleNilAclValue verifies a nil user.acls value
 // (len==0) is handled without trying to CBOR-decode.
 func TestRestoreWindowsACLsFromHandleNilAclValue(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	xattrs := map[string][]byte{
 		"user.acls": nil,
 	}
@@ -259,9 +261,7 @@ func TestRestoreWindowsACLsFromHandleNilAclValue(t *testing.T) {
 // TestRestoreWindowsACLsFromHandleCborGarbageAcls verifies non-CBOR garbage
 // in user.acls does not panic.
 func TestRestoreWindowsACLsFromHandleCborGarbageAcls(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	xattrs := map[string][]byte{
 		"user.acls": []byte("not-cbor"),
 	}
@@ -272,11 +272,9 @@ func TestRestoreWindowsACLsFromHandleCborGarbageAcls(t *testing.T) {
 // supportsPersistentACLs is false, the ACL branch is skipped entirely even
 // when xattrs carry valid payload.
 func TestRestoreWindowsACLsFromHandleAclsDisabled(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{}, // everything false
-	}
+	st := newTestState(filesystemCapabilities{}) // everything false
 	winACLs, _ := cbor.Marshal([]types.WinACL{
-		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: 0},
+		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
 	})
 	xattrs := map[string][]byte{
 		"user.owner": []byte("S-1-1-0"),
@@ -294,9 +292,7 @@ func TestRestoreWindowsACLsFromHandleAclsDisabled(t *testing.T) {
 
 // TestWriteAlternateDataStreamsNilXattrs verifies nil xattrs is a no-op.
 func TestWriteAlternateDataStreamsNilXattrs(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-test")
 	if err := os.WriteFile(f, []byte("body"), 0o644); err != nil {
@@ -307,9 +303,7 @@ func TestWriteAlternateDataStreamsNilXattrs(t *testing.T) {
 
 // TestWriteAlternateDataStreamsEmptyXattrs verifies empty xattrs is a no-op.
 func TestWriteAlternateDataStreamsEmptyXattrs(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-empty")
 	if err := os.WriteFile(f, nil, 0o644); err != nil {
@@ -322,9 +316,7 @@ func TestWriteAlternateDataStreamsEmptyXattrs(t *testing.T) {
 // user.* keys (owner, group, acls, fileattributes, creationtime, etc.)
 // are NOT written as ADS.
 func TestWriteAlternateDataStreamsCanonicalKeysSkipped(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-canon")
 	if err := os.WriteFile(f, nil, 0o644); err != nil {
@@ -355,9 +347,7 @@ func TestWriteAlternateDataStreamsCanonicalKeysSkipped(t *testing.T) {
 // TestWriteAlternateDataStreamsRealWrite verifies non-canonical user.*
 // xattrs are written as alternate data streams and can be read back.
 func TestWriteAlternateDataStreamsRealWrite(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-write")
 	if err := os.WriteFile(f, nil, 0o644); err != nil {
@@ -381,9 +371,7 @@ func TestWriteAlternateDataStreamsRealWrite(t *testing.T) {
 // TestWriteAlternateDataStreamsForbiddenChars verifies stream names
 // containing NTFS-forbidden characters are silently skipped.
 func TestWriteAlternateDataStreamsForbiddenChars(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-forbid")
 	if err := os.WriteFile(f, nil, 0o644); err != nil {
@@ -403,9 +391,7 @@ func TestWriteAlternateDataStreamsForbiddenChars(t *testing.T) {
 // TestWriteAlternateDataStreamsEmptyStreamName verifies a bare "user."
 // key (no stream name) is skipped.
 func TestWriteAlternateDataStreamsEmptyStreamName(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-empty-name")
 	if err := os.WriteFile(f, nil, 0o644); err != nil {
@@ -425,9 +411,7 @@ func TestWriteAlternateDataStreamsEmptyStreamName(t *testing.T) {
 // TestWriteAlternateDataStreamsNonUserPrefix verifies non-"user." xattrs
 // are silently ignored.
 func TestWriteAlternateDataStreamsNonUserPrefix(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-nonuser")
 	writeAlternateDataStreams(context.Background(), st, f, map[string][]byte{
@@ -449,9 +433,7 @@ func TestWriteAlternateDataStreamsNonUserPrefix(t *testing.T) {
 // TestWriteAlternateDataStreamsLargeValue verifies large xattr values
 // (approaching the NTFS ADS limit) are handled without panic.
 func TestWriteAlternateDataStreamsLargeValue(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-large")
 	if err := os.WriteFile(f, nil, 0o644); err != nil {
@@ -478,9 +460,7 @@ func TestWriteAlternateDataStreamsLargeValue(t *testing.T) {
 // TestWriteAlternateDataStreamsXattrsDisabled verifies no ADS writes when
 // supportsXAttrs is false.
 func TestWriteAlternateDataStreamsXattrsDisabled(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{}, // supportsXAttrs = false
-	}
+	st := newTestState(filesystemCapabilities{}) // supportsXAttrs = false
 	dir := t.TempDir()
 	f := filepath.Join(dir, "ads-disabled")
 	if err := os.WriteFile(f, nil, 0o644); err != nil {
@@ -782,9 +762,7 @@ func TestWriteADSReadOnlyFile(t *testing.T) {
 	}
 	defer windows.SetFileAttributes(namePtr, attrs) // restore
 
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	// Writing ADS to a read-only file should fail. reportErr is called
 	// but never panics — the error is just forwarded.
 	writeAlternateDataStreams(context.Background(), st, f, map[string][]byte{
@@ -816,9 +794,7 @@ func TestRestoreWindowsACLsHandleWithoutPrivilege(t *testing.T) {
 	// process likely cannot set (e.g., LOCAL_SYSTEM). On a non-privileged
 	// CI runner, SetSecurityInfo with OWNER_SECURITY_INFORMATION will fail
 	// with ERROR_INVALID_OWNER. The test verifies no panic.
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	xattrs := map[string][]byte{
 		"user.owner": []byte("S-1-5-18"), // LOCAL_SYSTEM — unsettable by non-admin
 		"user.group": []byte("S-1-5-18"),
@@ -910,7 +886,7 @@ func TestApplyMetaReadOnlyFileNoPanic(t *testing.T) {
 
 	// Build xattrs for the ACL+ADS paths.
 	winACLs, _ := cbor.Marshal([]types.WinACL{
-		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: 0},
+		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
 	})
 	fa, _ := cbor.Marshal(map[string]bool{"FILE_ATTRIBUTE_READONLY": true})
 
@@ -946,9 +922,7 @@ func TestApplyMetaReadOnlyFileNoPanic(t *testing.T) {
 // on shared state (all state is local, but this test guards against
 // accidental introduction of package-level mutable state).
 func TestRestoreWindowsACLsConcurrent(t *testing.T) {
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsPersistentACLs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
 	// Use handle 0 so the SetSecurityInfo call fails (error swallowed
 	// by reportErr). This exercises the full allocation/free path
 	// concurrently without needing a real handle.
@@ -971,9 +945,7 @@ func TestRestoreWindowsACLsConcurrent(t *testing.T) {
 // different files do not interfere.
 func TestWriteAlternateDataStreamsConcurrent(t *testing.T) {
 	dir := t.TempDir()
-	st := &restoreState{
-		fsCap: filesystemCapabilities{supportsXAttrs: true},
-	}
+	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		f := filepath.Join(dir, "ads-conc-"+strconv.Itoa(i))
@@ -1023,7 +995,7 @@ func TestApplyMetaFullMetadata(t *testing.T) {
 
 	// Build a valid Windows ACL payload.
 	winACLs, err := cbor.Marshal([]types.WinACL{
-		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: 0}, // Everyone
+		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS}, // Everyone
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1050,12 +1022,10 @@ func TestApplyMetaFullMetadata(t *testing.T) {
 	// We cannot easily mock ListXAttrs without a real client. Skip the
 	// metadata application part if no client is available.
 	// Instead, verify the individual sub-functions we CAN test complete.
-	st := &restoreState{
-		fsCap: filesystemCapabilities{
-			supportsXAttrs:         true,
-			supportsPersistentACLs: true,
-		},
-	}
+	st := newTestState(filesystemCapabilities{
+		supportsXAttrs:         true,
+		supportsPersistentACLs: true,
+	})
 
 	// Verify writeAlternateDataStreams and restoreWindowsACLsFromHandle
 	// work with the fully-populated xattrs map (using handle 0 for the
