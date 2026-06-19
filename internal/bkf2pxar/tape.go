@@ -21,8 +21,8 @@ import (
 type tapeReader = mtf.DriveTape
 
 // openTapeReader opens a non-rewinding tape device read-only, enables logical
-// block addressing, rewinds to BOT, and verifies block 0. The returned reader
-// begins at the start of the cartridge.
+// block addressing, rewinds to BOT (go-tapedrive's Rewind verifies hardware
+// BOT with retries), and checks the block counter for good measure.
 func openTapeReader(dev string) (*tapeReader, error) {
 	d, err := tapedrive.Open(dev)
 	if err != nil {

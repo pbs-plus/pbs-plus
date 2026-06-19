@@ -368,6 +368,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 			CryptMode:   datastore.CryptModeNone,
 			ChunkConfig: c.chunkCfg,
 			Compress:    true,
+			Debug:       true,
 		})
 	}
 
@@ -391,6 +392,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 		CryptMode:   datastore.CryptModeNone,
 		ChunkConfig: c.chunkCfg,
 		Compress:    true,
+		Debug:       true,
 	})
 }
 
