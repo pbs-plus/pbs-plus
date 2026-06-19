@@ -1018,14 +1018,8 @@ func TestApplyMetaFullMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// applyMeta closes the file via defer; give it a fresh OpenFile below.
 	name := f.Name()
 	f.Close()
-
-	f2, err := os.OpenFile(name, os.O_RDWR, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	// Build a valid Windows ACL payload.
 	winACLs, err := cbor.Marshal([]types.WinACL{
