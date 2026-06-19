@@ -229,19 +229,34 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 		ctx:         ctx,
 		chunkCfg:    chunkCfg,
 		stats:       Stats{StartTime: time.Now()},
+		prog:        newProgress(),
 		snapshotIdx: -1,
+	}
+	c.stats.StartTime = c.prog.startTime
+
+	stopReport := c.prog.report(ctx, os.Stderr, 2*time.Second)
+	defer stopReport()
+
+	syncStats := func() {
+		files, dirs, bytes := c.prog.snapshot()
+		c.stats.Files = files
+		c.stats.Dirs = dirs
+		c.stats.Bytes = bytes
 	}
 
 	if cfg.TapeDevice != "" {
 		if err := c.runTape(); err != nil {
+			syncStats()
 			return &c.stats, err
 		}
 	} else {
 		if err := c.runFiles(); err != nil {
+			syncStats()
 			return &c.stats, err
 		}
 	}
 
+	syncStats()
 	return &c.stats, nil
 }
 
@@ -251,6 +266,7 @@ type converter struct {
 	ctx      context.Context
 	chunkCfg buzhash.Config
 	stats    Stats
+	prog     *progress
 
 	session    backupproxy.BackupSession
 	writer     *transfer.RemoteDedupWriter
@@ -580,7 +596,7 @@ func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 
 	switch h.Type {
 	case mtf.EntryDirectory:
-		c.stats.Dirs++
+		c.prog.dirs.Add(1)
 		meta := mtfToPxarMeta(h, format.ModeIFDIR)
 		if c.cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "  d %s\n", relPath)
@@ -591,7 +607,7 @@ func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 		c.dirStack = append(c.dirStack, name)
 
 	case mtf.EntryFile:
-		c.stats.Files++
+		c.prog.files.Add(1)
 		if h.IsSymlink {
 			if err := c.writeSymlink(h, name, relPath); err != nil {
 				return err
@@ -600,7 +616,7 @@ func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 			if err := c.writeFile(r, h, name, relPath); err != nil {
 				return err
 			}
-			c.stats.Bytes += h.Size
+			c.prog.bytes.Add(h.Size)
 		}
 	}
 

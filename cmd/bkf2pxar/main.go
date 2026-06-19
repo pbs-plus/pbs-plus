@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"runtime/pprof"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -66,6 +69,24 @@ func main() {
 			log.Fatalf("list failed: %v", err)
 		}
 		return
+	}
+
+	if profPath := os.Getenv("BKF2PXAR_CPUPROFILE"); profPath != "" {
+		f, err := os.Create(profPath)
+		if err != nil {
+			log.Fatalf("cpu profile: %v", err)
+		}
+		_ = pprof.StartCPUProfile(f)
+		// Flush the profile on SIGINT/SIGTERM so `timeout` (which sends SIGTERM)
+		// produces a usable file; Go's default handlers exit without defers.
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sig
+			pprof.StopCPUProfile()
+			_ = f.Close()
+			os.Exit(0)
+		}()
 	}
 
 	stats, err := bkf2pxar.Run(context.Background(), cfg)
