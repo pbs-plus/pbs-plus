@@ -108,11 +108,25 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 		// present (e.g. a data-only continuation cartridge).
 		if sm, _ := mtf.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
 			for _, e := range sm.Entries {
-				snapshots = append(snapshots, Snapshot{
+				snap := Snapshot{
 					Index:      len(snapshots),
 					Name:       e.Name,
 					BackupTime: e.WriteTime,
-				})
+					Owner:      e.Owner,
+				}
+				// Machine name and volume come from the FDD volume records that
+				// follow each Set Map entry, mirroring the forward-walk path
+				// (VOLB descriptor's MachineName/Name).
+				for _, v := range e.Volumes {
+					if snap.MachineName == "" {
+						snap.MachineName = v.MachineName
+					}
+					if snap.VolumeName != "" {
+						snap.VolumeName += "; "
+					}
+					snap.VolumeName += v.Name
+				}
+				snapshots = append(snapshots, snap)
 			}
 			_ = rc.Close()
 			return snapshots, nil
