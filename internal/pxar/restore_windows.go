@@ -22,7 +22,6 @@ var (
 	modAdvapi32          = syscall.NewLazyDLL("advapi32.dll")
 	modKernel32          = syscall.NewLazyDLL("kernel32.dll")
 	procSetEntriesInAclW = modAdvapi32.NewProc("SetEntriesInAclW")
-	procSetSecurityInfo  = modAdvapi32.NewProc("SetSecurityInfo")
 	procLocalFree        = modKernel32.NewProc("LocalFree")
 )
 
@@ -196,64 +195,6 @@ func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path stri
 	}
 
 	// ACL from SetEntriesInAclW is freed; SIDs leak intentionally (see above).
-	localFreePtr(aclPtr(dacl))
-}
-
-// restoreWindowsACLsFromHandle applies owner, primary group, and DACL via
-// SetSecurityInfo on an already-open handle. The handle MUST be opened with
-// WRITE_DAC|WRITE_OWNER|FILE_FLAG_BACKUP_SEMANTICS. Callers that have only
-// a path should use restoreWindowsACLsFromPath instead.
-//
-// SIDs are intentionally leaked (not freed via LocalFree) — see
-// restoreWindowsACLsFromPath for rationale.
-func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windows.Handle, path string, xattrs map[string][]byte) {
-	var secInfo windows.SECURITY_INFORMATION
-	var ownerSID, groupSID *windows.SID
-
-	if d, ok := xattrs["user.owner"]; ok {
-		if sid, err := windows.StringToSid(string(d)); err == nil {
-			ownerSID = sid
-			secInfo |= windows.OWNER_SECURITY_INFORMATION
-		}
-	}
-	if d, ok := xattrs["user.group"]; ok {
-		if sid, err := windows.StringToSid(string(d)); err == nil {
-			groupSID = sid
-			secInfo |= windows.GROUP_SECURITY_INFORMATION
-		}
-	}
-
-	var dacl *windows.ACL
-	if d, ok := xattrs["user.acls"]; ok {
-		if detectACLFlavor(d) == aclWindows {
-			var winACLs []types.WinACL
-			if uerr := cbor.Unmarshal(d, &winACLs); uerr != nil {
-				st.reportErr(ctx, "decode acls", path, uerr)
-			} else {
-				acl, _, berr := buildDACLFromACEs(winACLs)
-				if berr != nil {
-					st.reportErr(ctx, "build dacl", path, berr)
-				} else if acl != nil {
-					dacl = acl
-					secInfo |= windows.DACL_SECURITY_INFORMATION
-				}
-			}
-		}
-	}
-
-	if secInfo == 0 || h == 0 || h == windows.InvalidHandle {
-		return
-	}
-
-	ret, _, _ := procSetSecurityInfo.Call(
-		uintptr(h), uintptr(windows.SE_FILE_OBJECT), uintptr(secInfo),
-		sidPtr(ownerSID), sidPtr(groupSID), aclPtr(dacl), 0,
-	)
-	if ret != 0 {
-		st.reportErr(ctx, "set security info", path, syscall.Errno(ret))
-	}
-
-	// ACL freed; SIDs leak intentionally.
 	localFreePtr(aclPtr(dacl))
 }
 
@@ -479,26 +420,12 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 	return applyMeta(ctx, st, df, dirEntry)
 }
 
-// sidPtr returns a uintptr for a *SID that may be nil (0 => absent).
-func sidPtr(s *windows.SID) uintptr {
-	if s == nil {
-		return 0
-	}
-	return uintptr(unsafe.Pointer(s))
-}
-
 // aclPtr returns a uintptr for a *ACL that may be nil (0 => absent).
 func aclPtr(a *windows.ACL) uintptr {
 	if a == nil {
 		return 0
 	}
 	return uintptr(unsafe.Pointer(a))
-}
-
-func freeSIDs(sids []*windows.SID) {
-	for _, s := range sids {
-		localFreePtr(uintptr(unsafe.Pointer(s)))
-	}
 }
 
 func localFreePtr(p uintptr) {

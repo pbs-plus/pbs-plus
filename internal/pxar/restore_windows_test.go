@@ -163,7 +163,7 @@ func TestBuildDACLFromACEsMixedSIDs(t *testing.T) {
 	if acl != nil || err != nil {
 		t.Fatalf("all invalid: expected nil ACL and nil err, got acl=%v err=%v", acl, err)
 	}
-	freeSIDs(sids)
+	_ = sids
 }
 
 // TestBuildDACLFromACEsAccessDeniedACE verifies DENY_ACCESS entries with
@@ -178,7 +178,7 @@ func TestBuildDACLFromACEsAccessDeniedACE(t *testing.T) {
 	if acl != nil || err != nil {
 		t.Fatalf("all invalid: expected nil ACL and nil err, got acl=%v err=%v", acl, err)
 	}
-	freeSIDs(sids)
+	_ = sids
 }
 
 // TestBuildDACLFromACEsLargeAccessMask verifies boundary AccessMask values
@@ -193,130 +193,68 @@ func TestBuildDACLFromACEsLargeAccessMask(t *testing.T) {
 	if acl != nil || err != nil {
 		t.Fatalf("all invalid: expected nil ACL and nil err, got acl=%v err=%v", acl, err)
 	}
-	freeSIDs(sids)
+	_ = sids
 }
 
 // ---------------------------------------------------------------------------
-// restoreWindowsACLsFromHandle — nil/empty xattr defence
+// ---------------------------------------------------------------------------
+// restoreWindowsACLsFromPath — nil/empty xattr defence
 // ---------------------------------------------------------------------------
 
-// TestRestoreWindowsACLsFromHandleNilXattrs verifies the function does not
-// panic or call into Windows when xattrs is nil.
-// newTestHandle creates a temp file and returns its handle + path.
-// The handle is opened with WRITE_DAC|WRITE_OWNER|FILE_FLAG_BACKUP_SEMANTICS
-// so SetSecurityInfo has proper access. The file is deleted on cleanup.
-func newTestHandle(t *testing.T) (windows.Handle, string) {
+// newTestPath creates a temp file and returns its path.
+func newTestPath(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	f, err := os.CreateTemp(dir, "test-h-*")
+	f, err := os.CreateTemp(t.TempDir(), "test-p-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	name := f.Name()
 	f.Close()
-	pathPtr, err := windows.UTF16PtrFromString(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h, err := windows.CreateFile(
-		pathPtr,
-		windows.WRITE_DAC|windows.WRITE_OWNER|windows.FILE_WRITE_ATTRIBUTES,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS,
-		0,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { windows.CloseHandle(h) })
-	return h, name
+	return name
 }
 
-func TestRestoreWindowsACLsFromHandleNilXattrs(t *testing.T) {
+// TestRestoreWindowsACLsFromPathNilXattrs verifies nil xattrs → secInfo==0 → no-op.
+func TestRestoreWindowsACLsFromPathNilXattrs(t *testing.T) {
 	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
-	h, path := newTestHandle(t)
-	// No SIDs/ACL to set → secInfo==0 → returns before SetSecurityInfo.
-	restoreWindowsACLsFromHandle(context.Background(), st, h, path, nil)
+	restoreWindowsACLsFromPath(context.Background(), st, newTestPath(t), nil)
 }
 
-// TestRestoreWindowsACLsFromHandleEmptyXattrs verifies empty xattrs map.
-func TestRestoreWindowsACLsFromHandleEmptyXattrs(t *testing.T) {
+// TestRestoreWindowsACLsFromPathEmptyXattrs verifies empty xattrs → secInfo==0.
+func TestRestoreWindowsACLsFromPathEmptyXattrs(t *testing.T) {
 	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
-	h, path := newTestHandle(t)
-	restoreWindowsACLsFromHandle(context.Background(), st, h, path, map[string][]byte{})
+	restoreWindowsACLsFromPath(context.Background(), st, newTestPath(t), map[string][]byte{})
 }
 
-// TestRestoreWindowsACLsFromHandleOnlyInvalidOwner verifies that an invalid
-// owner SID string results in no security info update (secInfo==0) and no
-// syscall.
-func TestRestoreWindowsACLsFromHandleOnlyInvalidOwner(t *testing.T) {
+// TestRestoreWindowsACLsFromPathOnlyInvalidOwner verifies invalid owner SID → secInfo==0.
+func TestRestoreWindowsACLsFromPathOnlyInvalidOwner(t *testing.T) {
 	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
-	h, path := newTestHandle(t)
-	xattrs := map[string][]byte{
+	restoreWindowsACLsFromPath(context.Background(), st, newTestPath(t), map[string][]byte{
 		"user.owner": []byte("garbage"),
-	}
-	restoreWindowsACLsFromHandle(context.Background(), st, h, path, xattrs)
-}
-
-// TestRestoreWindowsACLsFromHandleNilAclValue verifies a nil user.acls value
-// (len==0) is handled without trying to CBOR-decode.
-func TestRestoreWindowsACLsFromHandleNilAclValue(t *testing.T) {
-	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
-	h, path := newTestHandle(t)
-	xattrs := map[string][]byte{
-		"user.acls": nil,
-	}
-	restoreWindowsACLsFromHandle(context.Background(), st, h, path, xattrs)
-}
-
-// TestRestoreWindowsACLsFromHandleCborGarbageAcls verifies non-CBOR garbage
-// in user.acls does not panic.
-func TestRestoreWindowsACLsFromHandleCborGarbageAcls(t *testing.T) {
-	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
-	h, path := newTestHandle(t)
-	xattrs := map[string][]byte{
-		"user.acls": []byte("not-cbor"),
-	}
-	restoreWindowsACLsFromHandle(context.Background(), st, h, path, xattrs)
-}
-
-// TestRestoreWindowsACLsFromHandleAclsDisabled verifies that when
-// supportsPersistentACLs is false, the ACL branch is skipped entirely even
-// when xattrs carry valid payload.
-func TestRestoreWindowsACLsFromHandleAclsDisabled(t *testing.T) {
-	dir := t.TempDir()
-	f, err := os.CreateTemp(dir, "test-acldis-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := f.Name()
-	f.Close()
-	st := newTestState(filesystemCapabilities{}) // everything false
-	winACLs, _ := cbor.Marshal([]types.WinACL{
-		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
 	})
-	xattrs := map[string][]byte{
-		"user.owner": []byte("S-1-1-0"),
-		"user.group": []byte("S-1-1-0"),
-		"user.acls":  winACLs,
-	}
-	// All SIDs parse, but supportsPersistentACLs is false.
-	// applyMeta guards the ACL call with st.fsCap.supportsPersistentACLs,
-	// so this path is never reached in production with the real xattrs map.
-	// We test that the parsing/allocation/free path works without panic
-	// by calling restoreWindowsACLsFromPath with an empty xattrs map
-	// (secInfo will be 0 and SetNamedSecurityInfo is never called).
-	restoreWindowsACLsFromPath(context.Background(), st, path, map[string][]byte{})
-	_ = xattrs // verify compilation: the real path constructs these correctly
 }
 
-// ---------------------------------------------------------------------------
-// writeAlternateDataStreams — boundary xattr names
-// ---------------------------------------------------------------------------
+// TestRestoreWindowsACLsFromPathNilAclValue verifies nil user.acls value → no-op.
+func TestRestoreWindowsACLsFromPathNilAclValue(t *testing.T) {
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
+	restoreWindowsACLsFromPath(context.Background(), st, newTestPath(t), map[string][]byte{
+		"user.acls": nil,
+	})
+}
 
-// TestWriteAlternateDataStreamsNilXattrs verifies nil xattrs is a no-op.
+// TestRestoreWindowsACLsFromPathCborGarbageAcls verifies non-CBOR garbage in user.acls.
+func TestRestoreWindowsACLsFromPathCborGarbageAcls(t *testing.T) {
+	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
+	restoreWindowsACLsFromPath(context.Background(), st, newTestPath(t), map[string][]byte{
+		"user.acls": []byte("not-cbor"),
+	})
+}
+
+// TestRestoreWindowsACLsFromPathAclsDisabled verifies supportsPersistentACLs=false.
+func TestRestoreWindowsACLsFromPathAclsDisabled(t *testing.T) {
+	st := newTestState(filesystemCapabilities{})
+	restoreWindowsACLsFromPath(context.Background(), st, newTestPath(t), map[string][]byte{})
+}
+
 func TestWriteAlternateDataStreamsNilXattrs(t *testing.T) {
 	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	dir := t.TempDir()
@@ -713,32 +651,10 @@ func TestApplyMetaSymlinkNonExistent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// sidPtr / aclPtr / freeSIDs / localFreePtr — nil safety
+// aclPtr / localFreePtr — nil safety
 // ---------------------------------------------------------------------------
 
 // TestSidPtrNil verifies sidPtr on nil returns 0 (null pointer for WinAPI).
-func TestSidPtrNil(t *testing.T) {
-	if got := sidPtr(nil); got != 0 {
-		t.Errorf("sidPtr(nil) = %d, want 0", got)
-	}
-}
-
-// TestAclPtrNil verifies aclPtr on nil returns 0.
-func TestAclPtrNil(t *testing.T) {
-	if got := aclPtr(nil); got != 0 {
-		t.Errorf("aclPtr(nil) = %d, want 0", got)
-	}
-}
-
-// TestFreeSIDsNilSlice verifies freeSIDs does not panic on nil slice.
-func TestFreeSIDsNilSlice(t *testing.T) {
-	freeSIDs(nil)
-}
-
-// TestFreeSIDsEmptySlice verifies freeSIDs does not panic on empty slice.
-func TestFreeSIDsEmptySlice(t *testing.T) {
-	freeSIDs([]*windows.SID{})
-}
 
 // TestLocalFreePtrZero verifies localFreePtr(0) is a no-op (guarded).
 func TestLocalFreePtrZero(t *testing.T) {
