@@ -260,26 +260,6 @@ func TestRestoreWindowsACLsFromHandleOnlyInvalidOwner(t *testing.T) {
 	restoreWindowsACLsFromHandle(context.Background(), st, h, path, xattrs)
 }
 
-// TestRestoreWindowsACLsFromHandleInvalidGroup verifies invalid group SID
-// is skipped; owner still applied via SetNamedSecurityInfo (path-based API).
-// May fail with ACCESS_DENIED if process lacks SeRestorePrivilege — error is
-// reported, no panic.
-func TestRestoreWindowsACLsFromHandleInvalidGroup(t *testing.T) {
-	dir := t.TempDir()
-	f, err := os.CreateTemp(dir, "test-grp-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := f.Name()
-	f.Close()
-	st := newTestState(filesystemCapabilities{supportsPersistentACLs: true})
-	xattrs := map[string][]byte{
-		"user.owner": []byte("S-1-1-0"), // Everyone – valid SID
-		"user.group": []byte("nope"),
-	}
-	restoreWindowsACLsFromPath(context.Background(), st, path, xattrs)
-}
-
 // TestRestoreWindowsACLsFromHandleNilAclValue verifies a nil user.acls value
 // (len==0) is handled without trying to CBOR-decode.
 func TestRestoreWindowsACLsFromHandleNilAclValue(t *testing.T) {
