@@ -663,6 +663,13 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 		} else {
 			fmt.Fprintf(os.Stderr, "  f %s (%d bytes)\n", relPath, h.Size)
 		}
+		t0 := time.Now()
+		err := c.writer.WriteEntryReader(entry, r, uint64(h.Size))
+		dt := time.Since(t0).Round(time.Millisecond)
+		if dt > 500*time.Millisecond {
+			fmt.Fprintf(os.Stderr, "    ↳ wrote %d bytes in %v\n", h.Size, dt)
+		}
+		return err
 	}
 	return c.writer.WriteEntryReader(entry, r, uint64(h.Size))
 }
