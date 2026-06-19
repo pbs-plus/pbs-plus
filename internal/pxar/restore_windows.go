@@ -22,6 +22,7 @@ var (
 	modAdvapi32          = syscall.NewLazyDLL("advapi32.dll")
 	modKernel32          = syscall.NewLazyDLL("kernel32.dll")
 	procSetEntriesInAclW = modAdvapi32.NewProc("SetEntriesInAclW")
+	procSetSecurityInfo  = modAdvapi32.NewProc("SetSecurityInfo")
 	procLocalFree        = modKernel32.NewProc("LocalFree")
 )
 
@@ -140,14 +141,43 @@ func setBasicInfo(h windows.Handle, info *FILE_BASIC_INFO) error {
 	return windows.SetFileInformationByHandle(h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(info)), uint32(unsafe.Sizeof(*info)))
 }
 
-// restoreWindowsACLsFromPath applies owner, primary group, and DACL using
-// SetNamedSecurityInfo (path-based API). SIDs allocated by StringToSid are
-// intentionally NOT freed via LocalFree after the call: on some Windows
-// builds (observed on 10.0.26200) LocalFree on a SID returned by
-// ConvertStringSidToSidW causes native heap corruption (0xC0000374),
-// killing the process. The leak is bounded (one owner + one group SID +
-// one SID per ACE, each a few hundred bytes, freed at process exit).
+// restoreWindowsACLsFromPath opens the file with WRITE_DAC|WRITE_OWNER and
+// FILE_FLAG_BACKUP_SEMANTICS, then delegates to restoreWindowsACLsFromHandle.
+// Used by applyMeta where the file handle may lack security access.
+// SIDs are intentionally leaked — see comment on restoreWindowsACLsFromHandle.
 func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path string, xattrs map[string][]byte) {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		st.reportErr(ctx, "open for acls", path, err)
+		return
+	}
+	h, err := windows.CreateFile(
+		pathPtr,
+		windows.WRITE_DAC|windows.WRITE_OWNER,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		st.reportErr(ctx, "open for acls", path, err)
+		return
+	}
+	defer windows.CloseHandle(h)
+	restoreWindowsACLsFromHandle(ctx, st, h, path, xattrs)
+}
+
+// restoreWindowsACLsFromHandle applies owner, group, and DACL via SetSecurityInfo
+// on an already-open handle. The handle MUST be opened with
+// WRITE_DAC|WRITE_OWNER|FILE_FLAG_BACKUP_SEMANTICS. Used directly by
+// applyMetaSymlink (which already has such a handle).
+//
+// SIDs allocated by StringToSid are intentionally NOT freed via LocalFree:
+// on Windows build 10.0.26200 LocalFree on a SID returned by
+// ConvertStringSidToSidW causes native heap corruption (0xC0000374).
+// The leak is bounded (owner + group + one per ACE, freed at process exit).
+func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windows.Handle, path string, xattrs map[string][]byte) {
 	var secInfo windows.SECURITY_INFORMATION
 	var ownerSID, groupSID *windows.SID
 
@@ -182,19 +212,18 @@ func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path stri
 		}
 	}
 
-	if secInfo == 0 {
+	if secInfo == 0 || h == 0 || h == windows.InvalidHandle {
 		return
 	}
 
-	err := windows.SetNamedSecurityInfo(
-		path, windows.SE_FILE_OBJECT, secInfo,
-		ownerSID, groupSID, dacl, nil,
+	ret, _, _ := procSetSecurityInfo.Call(
+		uintptr(h), uintptr(windows.SE_FILE_OBJECT), uintptr(secInfo),
+		sidPtr(ownerSID), sidPtr(groupSID), aclPtr(dacl), 0,
 	)
-	if err != nil {
-		st.reportErr(ctx, "set security info", path, err)
+	if ret != 0 {
+		st.reportErr(ctx, "set security info", path, syscall.Errno(ret))
 	}
 
-	// ACL from SetEntriesInAclW is freed; SIDs leak intentionally (see above).
 	localFreePtr(aclPtr(dacl))
 }
 
@@ -247,7 +276,7 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 	st.reportErr(ctx, "set file time", linkPath, windows.SetFileTime(h, cp, &a, &w))
 
 	if st.fsCap.supportsPersistentACLs {
-		restoreWindowsACLsFromPath(ctx, st, linkPath, xattrs)
+		restoreWindowsACLsFromHandle(ctx, st, h, linkPath, xattrs)
 	}
 	return nil
 }
@@ -405,7 +434,7 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 
 	h, err := windows.CreateFile(
 		pathPtr,
-		windows.FILE_WRITE_ATTRIBUTES|windows.WRITE_DAC|windows.WRITE_OWNER,
+		windows.FILE_WRITE_ATTRIBUTES,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_EXISTING,
@@ -418,6 +447,14 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 
 	df := os.NewFile(uintptr(h), dst)
 	return applyMeta(ctx, st, df, dirEntry)
+}
+
+// sidPtr returns a uintptr for a *SID that may be nil (0 => absent).
+func sidPtr(s *windows.SID) uintptr {
+	if s == nil {
+		return 0
+	}
+	return uintptr(unsafe.Pointer(s))
 }
 
 // aclPtr returns a uintptr for a *ACL that may be nil (0 => absent).
