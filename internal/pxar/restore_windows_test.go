@@ -148,49 +148,51 @@ func TestBuildDACLFromACEsAllInvalidSIDs(t *testing.T) {
 	freeSIDs(sids) // must not panic even with empty slice
 }
 
-// TestBuildDACLFromACEsMixedSIDs verifies valid entries are parsed when mixed
-// with invalid ones, and invalid SIDs are skipped without leaking.
+// TestBuildDACLFromACEsMixedSIDs verifies invalid SIDs are skipped and do
+// not leak SID allocations. All entries use non-parsable SIDs so
+// SetEntriesInAclW is never reached (the Windows API is only called when
+// at least one valid SID exists). SetEntriesInAclW integration is tested
+// on CI (windows-2025); this test exercises only the parsing/filtering path.
 func TestBuildDACLFromACEsMixedSIDs(t *testing.T) {
 	entries := []types.WinACL{
 		{SID: "bogus-sid", AccessMask: 0x100000, Type: windows.GRANT_ACCESS}, // invalid, skipped
-		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},   // Everyone, valid
+		{SID: "S-1-5-", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},    // malformed, skipped
+		{SID: "", AccessMask: 0, Type: windows.DENY_ACCESS},                  // empty, skipped
 	}
 	acl, sids, err := buildDACLFromACEs(entries)
-	// buildDACLFromACEs calls SetEntriesInAclW when at least one valid SID
-	// exists. The syscall may succeed or fail depending on Windows version
-	// (TRUSTEE layout, TrusteeType, etc.). Both outcomes are acceptable;
-	// we verify no panic and that allocated resources are freed.
-	_ = err
-	localFreePtr(aclPtr(acl))
+	if acl != nil || err != nil {
+		t.Fatalf("all invalid: expected nil ACL and nil err, got acl=%v err=%v", acl, err)
+	}
 	freeSIDs(sids)
 }
 
-// TestBuildDACLFromACEsAccessDeniedACE verifies an ACCESS_DENIED_ACE (Type=3)
-// is passed through to SetEntriesInAclW without panic.
+// TestBuildDACLFromACEsAccessDeniedACE verifies DENY_ACCESS entries with
+// unparsable SIDs are skipped without leaking. SetEntriesInAclW integration
+// is tested on CI (windows-2025).
 func TestBuildDACLFromACEsAccessDeniedACE(t *testing.T) {
 	entries := []types.WinACL{
-		{SID: "S-1-5-32-544", AccessMask: 0x1F01FF, Type: windows.GRANT_ACCESS}, // Administrators, ALLOW
-		{SID: "S-1-1-0", AccessMask: 0x100000, Type: windows.DENY_ACCESS},       // Everyone, DENY
+		{SID: "not-admin", AccessMask: 0x1F01FF, Type: windows.GRANT_ACCESS},
+		{SID: "not-everyone", AccessMask: 0x100000, Type: windows.DENY_ACCESS},
 	}
 	acl, sids, err := buildDACLFromACEs(entries)
-	// Syscall may fail on some Windows versions due to TRUSTEE layout;
-	// verify no panic and that allocated resources are freed.
-	_ = err
-	localFreePtr(aclPtr(acl))
+	if acl != nil || err != nil {
+		t.Fatalf("all invalid: expected nil ACL and nil err, got acl=%v err=%v", acl, err)
+	}
 	freeSIDs(sids)
 }
 
-// TestBuildDACLFromACEsLargeAccessMask verifies AccessMask values up to
-// 0xFFFFFFFF (maximum uint32) don't cause panic during entry construction.
+// TestBuildDACLFromACEsLargeAccessMask verifies boundary AccessMask values
+// (0xFFFFFFFF, 0) on entries with unparsable SIDs are handled without panic.
+// SetEntriesInAclW integration is tested on CI (windows-2025).
 func TestBuildDACLFromACEsLargeAccessMask(t *testing.T) {
 	entries := []types.WinACL{
-		{SID: "S-1-1-0", AccessMask: 0xFFFFFFFF, Type: windows.GRANT_ACCESS},
-		{SID: "S-1-1-0", AccessMask: 0, Type: windows.GRANT_ACCESS},
+		{SID: "bad-1", AccessMask: 0xFFFFFFFF, Type: windows.GRANT_ACCESS},
+		{SID: "bad-2", AccessMask: 0, Type: windows.GRANT_ACCESS},
 	}
 	acl, sids, err := buildDACLFromACEs(entries)
-	// Syscall may fail on some Windows versions; verify no panic and resources freed.
-	_ = err
-	localFreePtr(aclPtr(acl))
+	if acl != nil || err != nil {
+		t.Fatalf("all invalid: expected nil ACL and nil err, got acl=%v err=%v", acl, err)
+	}
 	freeSIDs(sids)
 }
 
