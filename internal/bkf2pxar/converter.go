@@ -439,13 +439,6 @@ func (c *converter) runTape() error {
 	defer func() { _ = rc.Close() }()
 
 	r := mtf.NewReader(rc)
-	// Validate the tape starts with a TAPE descriptor before creating any
-	// PBS session. If the tape is mid-stream (e.g. previous process killed
-	// without rewind), this errors immediately instead of silently ingesting
-	// garbage as file data. go-mtf handles rewind internally for tape drives.
-	if err := r.ValidateStart(); err != nil {
-		return err
-	}
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
 	}
@@ -473,11 +466,6 @@ func (c *converter) runChanger() error {
 		}
 		r := mtf.NewReader(rc)
 		r.SetContinuation(f.asContinuation())
-		if err := r.ValidateStart(); err != nil {
-			_ = rc.Close()
-			_ = f.unloadCurrent()
-			return err
-		}
 		if err := c.processReader(r); err != nil {
 			_ = rc.Close()
 			_ = f.unloadCurrent()

@@ -167,8 +167,8 @@ github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOF
 github.com/ncruces/go-strftime v1.0.0/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 h1:onHthvaw9LFnH4t2DcNVpwGmV9E1BkGknEliJkfwQj0=
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58/go.mod h1:DXv8WO4yhMYhSNPKjeNKa5WY9YCIEBRbNzFFPJbWO6Y=
-github.com/pbs-plus/go-mtf v0.23.3 h1:LTKqJCs6+BMgc4Xsz4eonXODI8s2CsOye6RTtoRgzH0=
-github.com/pbs-plus/go-mtf v0.23.3/go.mod h1:iPtBWUu4pm8NhNOsOYYDyBzQ0SEfX2L1BYx7NyG0OOI=
+github.com/pbs-plus/go-mtf v0.22.0 h1:/JxWot1uZFVj2Tr1DthxaRJBEgEFtoUwrbao1nhT3Wo=
+github.com/pbs-plus/go-mtf v0.22.0/go.mod h1:iPtBWUu4pm8NhNOsOYYDyBzQ0SEfX2L1BYx7NyG0OOI=
 github.com/pbs-plus/go-tapedrive v0.5.1 h1:OLeFJQM+tzUQDNrKqViPhrCx0BJWcuQ/AalwoZ1LmsI=
 github.com/pbs-plus/go-tapedrive v0.5.1/go.mod h1:LO90B9vMnFbP/q5+Ci3/8RnuyBHZ2nw7qxQkCfjzKok=
 github.com/pbs-plus/pxar v0.31.2 h1:T0pGVA1z4sIM4ZEAmEY2zu1y1R6yi8KaDiHhXFfV2QE=
