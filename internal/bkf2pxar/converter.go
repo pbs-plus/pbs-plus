@@ -1,6 +1,7 @@
 package bkf2pxar
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -663,15 +664,22 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 		} else {
 			fmt.Fprintf(os.Stderr, "  f %s (%d bytes)\n", relPath, h.Size)
 		}
-		t0 := time.Now()
-		err := c.writer.WriteEntryReader(entry, r, uint64(h.Size))
-		dt := time.Since(t0).Round(time.Millisecond)
-		if dt > 500*time.Millisecond {
-			fmt.Fprintf(os.Stderr, "    ↳ wrote %d bytes in %v\n", h.Size, dt)
-		}
-		return err
 	}
-	return c.writer.WriteEntryReader(entry, r, uint64(h.Size))
+
+	// Decouple tape reads from PBS upload backpressure: a goroutine pumps
+	// the tape into a bufio.Writer (32 MiB buffer), which flushes into an
+	// io.Pipe consumed by WriteEntryReader. The tape drive streams 32 MiB
+	// into the buffer regardless of how fast PBS consumes from the pipe —
+	// preventing the stop/rewind/reposition backhitch that otherwise costs
+	// multiple seconds per file whenever the upload pipeline blocks.
+	pr, pw := io.Pipe()
+	go func() {
+		defer func() { _ = pw.Close() }()
+		bw := bufio.NewWriterSize(pw, 32<<20)
+		_, _ = io.Copy(bw, r)
+		_ = bw.Flush()
+	}()
+	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
 }
 
 // --- Source opening helpers ---
