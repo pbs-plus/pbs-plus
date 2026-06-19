@@ -116,8 +116,14 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	}
 
 	if xattrs != nil {
+		// Apply ACLs via a dedicated handle opened with WRITE_DAC|WRITE_OWNER
+		// and FILE_FLAG_BACKUP_SEMANTICS. The file handle from os.OpenFile
+		// (GENERIC_READ|GENERIC_WRITE) lacks WRITE_DAC/WRITE_OWNER, which
+		// normally causes SetSecurityInfo to return ACCESS_DENIED but on some
+		// Windows builds can cause a native crash. Re-opening ensures the
+		// handle has the correct access for security descriptor operations.
 		if st.fsCap.supportsPersistentACLs {
-			restoreWindowsACLsFromHandle(ctx, st, h, path, xattrs)
+			restoreWindowsACLsFromPath(ctx, st, path, xattrs)
 		}
 		// Restore any remaining (non-canonical) xattrs as NTFS alternate data
 		// streams — the closest native analog to a POSIX user.* xattr and the
@@ -133,6 +139,35 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 
 func setBasicInfo(h windows.Handle, info *FILE_BASIC_INFO) error {
 	return windows.SetFileInformationByHandle(h, windows.FileBasicInfo, (*byte)(unsafe.Pointer(info)), uint32(unsafe.Sizeof(*info)))
+}
+
+// restoreWindowsACLsFromPath opens the file with WRITE_DAC|WRITE_OWNER and
+// FILE_FLAG_BACKUP_SEMANTICS, then delegates to restoreWindowsACLsFromHandle.
+// This ensures SetSecurityInfo receives a handle with proper access rights,
+// avoiding a native crash on Windows builds where SetSecurityInfo on a
+// handle lacking WRITE_DAC/WRITE_OWNER causes heap corruption instead of
+// returning ACCESS_DENIED.
+func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path string, xattrs map[string][]byte) {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		st.reportErr(ctx, "open for acls", path, err)
+		return
+	}
+	h, err := windows.CreateFile(
+		pathPtr,
+		windows.WRITE_DAC|windows.WRITE_OWNER,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		st.reportErr(ctx, "open for acls", path, err)
+		return
+	}
+	defer windows.CloseHandle(h)
+	restoreWindowsACLsFromHandle(ctx, st, h, path, xattrs)
 }
 
 // restoreWindowsACLsFromHandle applies owner, primary group, and DACL from the
