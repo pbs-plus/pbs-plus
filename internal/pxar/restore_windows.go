@@ -188,7 +188,7 @@ func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windo
 		}
 	}
 
-	if secInfo == 0 {
+	if secInfo == 0 || h == 0 || h == windows.InvalidHandle {
 		freeSIDs(ownedSIDs)
 		return
 	}

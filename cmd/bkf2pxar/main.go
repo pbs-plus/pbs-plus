@@ -27,6 +27,7 @@ func main() {
 	changerDevice := flag.String("changer", "", "SCSI changer device (e.g. /dev/sg1) for robotic auto-load; requires -tape")
 	driveIndex := flag.Int("drive", 0, "Target drive index within the changer (0-based; almost always 0)")
 	verbose := flag.Bool("v", false, "Verbose output")
+	compress := flag.Bool("compress", false, "Enable zstd compression for chunks (off by default; useful for remote PBS, wasteful for localhost)")
 	spanning := flag.Bool("spanning", false, "Enable media spanning for multi-tape sets")
 	listMode := flag.Bool("list", false, "List snapshots (backup sets) in the input and exit")
 	snapshotSel := flag.Int("snapshot", -1, "Migrate only snapshot N (0-based; use -list to see available)")
@@ -58,6 +59,7 @@ func main() {
 		DriveIndex:    *driveIndex,
 		Sources:       flag.Args(),
 		Verbose:       *verbose,
+		Compress:      *compress,
 		Spanning:      *spanning,
 		SnapshotSel:   *snapshotSel,
 	}

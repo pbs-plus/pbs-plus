@@ -43,6 +43,7 @@ type Config struct {
 	// changer (almost always 0 for single-drive libraries).
 	DriveIndex int
 	Verbose    bool
+	Compress   bool // enable zstd compression for chunks (off by default)
 	Spanning   bool
 	// SnapshotSel selects a single snapshot (SSET) to migrate.
 	// Negative = migrate all snapshots (default). Each snapshot becomes
@@ -368,7 +369,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 			Namespace:   c.currentNS,
 			CryptMode:   datastore.CryptModeNone,
 			ChunkConfig: c.chunkCfg,
-			Compress:    true,
+			Compress:    c.cfg.Compress,
 			Debug:       true,
 		})
 	}
@@ -392,7 +393,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 		Namespace:   c.currentNS,
 		CryptMode:   datastore.CryptModeNone,
 		ChunkConfig: c.chunkCfg,
-		Compress:    true,
+		Compress:    c.cfg.Compress,
 		Debug:       true,
 	})
 }
@@ -565,6 +566,14 @@ func (c *converter) processReader(r *mtf.Reader) error {
 			if h.Type == mtf.EntryVolume {
 				c.meta.HostName = h.MachineName
 				c.rootPrefix = h.Name
+				// Start the PBS session now, before any file data is
+				// read from tape. The H2 connect + dynamic-index
+				// create + download-previous happen while the tape
+				// drive is still positioning to the first file,
+				// avoiding the visible stall on the first chunk.
+				if err := c.ensureSession(); err != nil {
+					return err
+				}
 				continue
 			}
 			if err := c.ensureSession(); err != nil {
