@@ -152,7 +152,7 @@ func (c *Changer) readElements(assign *addressAssignment, t elementType, first, 
 		start = last + 1
 		remaining -= got
 		if uint16(len(elems)) < n {
-			break // fewer than requested — no more of this type
+			break // fewer than requested  -  no more of this type
 		}
 	}
 	return out, nil

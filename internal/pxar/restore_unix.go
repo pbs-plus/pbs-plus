@@ -28,7 +28,7 @@ const (
 
 // applyMeta applies metadata to a restored file. Every individual metadata
 // operation error (chown, chmod, setxattr, utimes, ACL write, ...) is reported
-// to the server IMMEDIATELY via st.reportErr the instant it happens — errors
+// to the server IMMEDIATELY via st.reportErr the instant it happens  -  errors
 // are never batched or deferred. Metadata failures are non-fatal (the file
 // content is already in place), so applyMeta always returns nil; the operator
 // sees each failure as its own line in the task log.

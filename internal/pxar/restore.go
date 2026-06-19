@@ -34,7 +34,7 @@ type RestoreOptions struct {
 }
 
 // reportErr sends a single metadata error to the server IMMEDIATELY as it
-// happens — it is never batched or deferred. Metadata errors (chmod, chown,
+// happens  -  it is never batched or deferred. Metadata errors (chmod, chown,
 // setxattr, utimes, ACL/file-attribute application, ...) are non-fatal (the
 // file content is already in place), so they are surfaced to the operator
 // via the task log but never abort the restore. Each call performs one
@@ -61,7 +61,7 @@ func (st *restoreState) reportErr(ctx context.Context, op, path string, err erro
 // edge case) crashes the ENTIRE process: Go terminates on an unrecovered
 // panic in any goroutine, defers in other goroutines never run, queued errors
 // are lost, the pxar.Done signal is never sent, and in-flight .pxar-restore-*
-// temp files leak — exactly the "agent disconnected, no done signal, stale
+// temp files leak  -  exactly the "agent disconnected, no done signal, stale
 // temps" symptom. Recovering here converts a process-killing panic into a
 // reported error (with stack) and lets the restore continue, so Done always
 // fires and cleanup runs. The stack is sent to the server task log AND logged
@@ -144,8 +144,8 @@ func parseXattrUnixSecs(data []byte) (secs int64, ok bool) {
 }
 
 // aclFlavor discriminates the encoding of a serialized user.acls payload.
-// The backup writer emits one or the other depending on the source agent —
-// server_unix stores []PosixACL, server_windows stores []WinACL — so the
+// The backup writer emits one or the other depending on the source agent  - 
+// server_unix stores []PosixACL, server_windows stores []WinACL  -  so the
 // restore must not assume its destination-native type. Applying a foreign
 // type (e.g. writing a []WinACL payload as a POSIX ACL on Linux) yields a
 // corrupt ACL, which is what this guards against.
@@ -430,7 +430,7 @@ func processJob(ctx context.Context, st *restoreState, job restoreJob) error {
 		// final sweep rather than blocking a worker.
 		if target, ok := st.hl.tryResolveNow(job); ok {
 			if lerr := linkFile(target, job.dest); lerr != nil {
-				// Link unsupported here (FAT, cross-device) — copy the bytes.
+				// Link unsupported here (FAT, cross-device)  -  copy the bytes.
 				if cerr := restoreFileContent(ctx, st, job); cerr != nil {
 					return fmt.Errorf("hardlink %q: link failed (%v) and fallback failed: %w", job.dest, lerr, cerr)
 				}
@@ -451,7 +451,7 @@ func processJob(ctx context.Context, st *restoreState, job restoreJob) error {
 
 // restoreFile applies the rsync-style quick check (size + whole-second mtime)
 // before transferring any content. When the existing file already matches, it
-// skips the content rewrite but still reconciles metadata — rsync likewise
+// skips the content rewrite but still reconciles metadata  -  rsync likewise
 // repairs permissions/ACLs on skipped files when preserving them. When the
 // content differs or is absent, the new bytes are written to a hidden temp
 // file in the same directory and atomically renamed into place, so a crash or
@@ -522,7 +522,7 @@ func restoreFileContent(ctx context.Context, st *restoreState, job restoreJob) e
 }
 
 // streamToTemp streams the archived content into a hidden temp file in the
-// destination's directory, fsyncs, and closes it. No metadata is applied —
+// destination's directory, fsyncs, and closes it. No metadata is applied  - 
 // the temp keeps CreateTemp's default mode. On any error the temp is removed
 // (and a removal failure is folded into the returned error rather than
 // swallowed). The temp lives in the same directory as the destination so the
@@ -576,8 +576,8 @@ func streamToTemp(ctx context.Context, st *restoreState, job restoreJob) (tmpPat
 
 // atomicSwap moves tmpPath over dest. It prefers the atomic rename path
 // (rename(2) on Unix, MoveFileEx+MOVEFILE_REPLACE_EXISTING on Windows). If the
-// rename fails — typically because dest exists as an incompatible type
-// (directory/symlink) or is locked — it removes the conflicting dest and
+// rename fails  -  typically because dest exists as an incompatible type
+// (directory/symlink) or is locked  -  it removes the conflicting dest and
 // retries once. As a last resort it byte-copies the temp over dest so the
 // restore still completes when rename is unavailable on the target FS/OS.
 // The temp is GUARANTEED to be removed on every failure path, and any cleanup

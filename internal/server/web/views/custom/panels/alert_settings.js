@@ -200,7 +200,7 @@ Ext.define("PBS.D2DManagement.Alerts", {
 });
 
 /**
- * Alert Setting Edit Window — includes exclusions management.
+ * Alert Setting Edit Window  -  includes exclusions management.
  */
 Ext.define("PBS.D2DManagement.AlertEditWindow", {
   extend: "PBS.plusWindow.Edit",

@@ -132,3 +132,42 @@ func (t *QueuedTask) Close() {
 	_ = os.Remove(t.path)
 	t.closed.Store(true)
 }
+
+// GenerateMtfQueuedTask creates a queued task for MTF migration jobs.
+func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error) {
+	wid := proxmox.EncodeToHexEscapes(datastore) +
+		proxmox.EncodeToHexEscapes(":") +
+		"mtf-" + proxmox.EncodeToHexEscapes(jobID)
+	startTime := Now()
+	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
+
+	task := proxmox.Task{
+		Node:       "pbsplusgen-queue",
+		PID:        os.Getpid(),
+		PStart:     proxmox.GetPStart(),
+		StartTime:  startTime.Unix(),
+		WorkerType: "mtf2pxar",
+		WID:        wid,
+		User:       proxmox.AUTH_ID,
+	}
+	pid := fmt.Sprintf("%08X", task.PID)
+	pstart := fmt.Sprintf("%08X", task.PStart)
+	taskID := fmt.Sprintf("%08X", rand.Uint32())
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, "mtf2pxar", wid, proxmox.AUTH_ID)
+
+	file, path, err := CreateTaskLogFile(task.UPID)
+	if err != nil {
+		return QueuedTask{}, err
+	}
+
+	source := "web UI"
+	if !web {
+		source = "schedule"
+	}
+	timestamp := Now().Format(time.RFC3339)
+	fmt.Fprintf(file, "%s: TASK QUEUED: MTF job started from %s\n", timestamp, source)
+	file.Close()
+
+	task.Status = "running"
+	return QueuedTask{Task: task, path: path}, nil
+}

@@ -18,7 +18,7 @@ import (
 
 // newTestState returns a restoreState with a non-nil client so that reportErr
 // (which calls client.SendError) does not panic. All fields except client.errCh
-// are zero / nil — any RPC call on this client will panic, which is fine for
+// are zero / nil  -  any RPC call on this client will panic, which is fine for
 // tests that only exercise metadata error paths (SetSecurityInfo / SetFileTime
 // failures that flow through reportErr).
 func newTestState(fsCap filesystemCapabilities) *restoreState {
@@ -29,7 +29,7 @@ func newTestState(fsCap filesystemCapabilities) *restoreState {
 }
 
 // ---------------------------------------------------------------------------
-// unixToFiletime — overflow & boundary
+// unixToFiletime  -  overflow & boundary
 // ---------------------------------------------------------------------------
 
 // TestUnixToFiletimeNoPanicOnOverflow verifies that feeding extreme int64
@@ -198,7 +198,7 @@ func TestBuildDACLFromACEsLargeAccessMask(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// restoreWindowsACLsFromPath — nil/empty xattr defence
+// restoreWindowsACLsFromPath  -  nil/empty xattr defence
 // ---------------------------------------------------------------------------
 
 // newTestPath creates a temp file and returns its path.
@@ -452,7 +452,7 @@ func TestWriteAlternateDataStreamsXattrsDisabled(t *testing.T) {
 	}
 	// writeAlternateDataStreams itself does not check fsCap; the guard
 	// lives in applyMeta. Calling directly with supportsXAttrs=false will
-	// write the ADS — this is correct because the caller (applyMeta) is
+	// write the ADS  -  this is correct because the caller (applyMeta) is
 	// responsible for the guard. Verify the ADS IS written (direct-call
 	// path) to confirm the function itself works.
 	writeAlternateDataStreams(context.Background(), st, f, map[string][]byte{
@@ -468,7 +468,7 @@ func TestWriteAlternateDataStreamsXattrsDisabled(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// openReparsePoint — boundary paths
+// openReparsePoint  -  boundary paths
 // ---------------------------------------------------------------------------
 
 // TestOpenReparsePointLongPath verifies very long (but < MAX_PATH) paths
@@ -510,7 +510,7 @@ func TestOpenReparsePointEmptyPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// applyMeta — nil defence
+// applyMeta  -  nil defence
 // ---------------------------------------------------------------------------
 
 // TestApplyMetaNilXattrs verifies applyMeta handles a nil xattrs response
@@ -549,7 +549,7 @@ func TestApplyMetaNilXattrs(t *testing.T) {
 	func() {
 		defer func() {
 			if r := recover(); r == nil {
-				t.Error("expected panic from nil client, but none occurred — nil client might be handled now")
+				t.Error("expected panic from nil client, but none occurred  -  nil client might be handled now")
 			}
 		}()
 		_ = applyMeta(context.Background(), st, f2, info)
@@ -600,7 +600,7 @@ func TestApplyMetaZeroMtime(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// applyMetaSymlink — boundary paths and nil xattrs
+// applyMetaSymlink  -  boundary paths and nil xattrs
 // ---------------------------------------------------------------------------
 
 // TestApplyMetaSymlinkNilXattrs verifies that when ListXAttrs returns nil
@@ -651,7 +651,7 @@ func TestApplyMetaSymlinkNonExistent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// aclPtr / localFreePtr — nil safety
+// aclPtr / localFreePtr  -  nil safety
 // ---------------------------------------------------------------------------
 
 // TestSidPtrNil verifies sidPtr on nil returns 0 (null pointer for WinAPI).
@@ -681,7 +681,7 @@ func TestSetFileTimeInsufficientAccess(t *testing.T) {
 	// SetFileTime requires FILE_WRITE_ATTRIBUTES; a handle from os.CreateTemp
 	// has GENERIC_READ|GENERIC_WRITE on NTFS, which includes write-attributes.
 	// We test the error path by passing a nil creation-time pointer with
-	// valid last-access/last-write times — the call should succeed here.
+	// valid last-access/last-write times  -  the call should succeed here.
 	// The real privilege-denied case occurs when the file DACL denies
 	// FILE_WRITE_ATTRIBUTES to the caller; on a CI runner the test user
 	// owns the temp file, so this is a smoke test for the API shape.
@@ -732,7 +732,7 @@ func TestWriteADSReadOnlyFile(t *testing.T) {
 
 	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	// Writing ADS to a read-only file should fail. reportErr is called
-	// but never panics — the error is just forwarded.
+	// but never panics  -  the error is just forwarded.
 	writeAlternateDataStreams(context.Background(), st, f, map[string][]byte{
 		"user.test": []byte("should-fail"),
 	})
@@ -769,7 +769,7 @@ func TestApplyMetaPreservesContentOnMetadataFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Don't close — applyMeta does defer file.Close().
+	// Don't close  -  applyMeta does defer file.Close().
 
 	st := &restoreState{
 		client: nil, // will panic on ListXAttrs; caught below
@@ -831,17 +831,17 @@ func TestApplyMetaReadOnlyFileNoPanic(t *testing.T) {
 		nil, windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
-		// Can't open with write access — the readonly flag is enforced.
+		// Can't open with write access  -  the readonly flag is enforced.
 		// Skip the test on this configuration.
 		t.Skipf("cannot open read-only file with write access: %v", err)
 	}
 	defer windows.CloseHandle(h)
 	file := os.NewFile(uintptr(h), f)
 
-	// Build xattrs for the ACL+ADS paths (not used directly — applyMeta
+	// Build xattrs for the ACL+ADS paths (not used directly  -  applyMeta
 	// will call ListXAttrs on the nil client and panic, which we catch).
 	st := &restoreState{
-		client: nil, // ListXAttrs will panic — caught
+		client: nil, // ListXAttrs will panic  -  caught
 		fsCap: filesystemCapabilities{
 			supportsXAttrs:         true,
 			supportsPersistentACLs: true,
@@ -955,7 +955,7 @@ func TestApplyMetaFullMetadata(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// prepareRestoreProcess — once-semantics
+// prepareRestoreProcess  -  once-semantics
 // ---------------------------------------------------------------------------
 
 // TestPrepareRestoreProcessIdempotent verifies calling prepareRestoreProcess
@@ -970,7 +970,7 @@ func TestPrepareRestoreProcessIdempotent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// setBasicInfo — nil pointer defence
+// setBasicInfo  -  nil pointer defence
 // ---------------------------------------------------------------------------
 
 // TestSetBasicInfoNilPointerWouldPanic documents the requirement that
@@ -978,7 +978,7 @@ func TestPrepareRestoreProcessIdempotent(t *testing.T) {
 // dereferences *info via unsafe.Sizeof. We verify that with a valid
 // zero-value struct it does not panic. (We cannot test with a real handle
 // and nil pointer because the Go runtime would catch the nil dereference
-// as a panic — and we want to confirm the current code never does this.)
+// as a panic  -  and we want to confirm the current code never does this.)
 func TestSetBasicInfoZeroStruct(t *testing.T) {
 	// setBasicInfo is called with &info which is always non-nil in the
 	// current code. Verify a zero-value struct passes without obvious issues.

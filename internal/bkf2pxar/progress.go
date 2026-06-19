@@ -62,7 +62,7 @@ func (p *progress) report(ctx context.Context, w io.Writer, interval time.Durati
 				lastTime = now
 				// Suppress the line when nothing moved: the first interval(s)
 				// are spent rewinding, validating, and buffering the first
-				// file — printing 0.0 MB/s is misleading.
+				// file  -  printing 0.0 MB/s is misleading.
 				if cur == 0 || inst == 0 {
 					continue
 				}

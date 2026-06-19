@@ -28,7 +28,7 @@ func RunInitSubcommand() {
 	aclSpec := fs.String("acl-spec", "", "POSIX ACL spec string (setfacl-style) served as virtual xattrs")
 	defaultAclSpec := fs.String("default-acl-spec", "", "Default POSIX ACL spec string served as virtual xattrs")
 
-	// Accepted for CLI compat — ownership is enforced virtually.
+	// Accepted for CLI compat  -  ownership is enforced virtually.
 	_ = fs.Bool("force-acl-owner", false, "")
 	_ = fs.Bool("force-acl-group", false, "")
 

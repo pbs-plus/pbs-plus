@@ -224,7 +224,7 @@ func TestParseXattrUnixSecsOldBinaryDecodeWouldBeInvalid(t *testing.T) {
 // TestDetectACLFlavor pins the cross-platform ACL contract. The backup writer
 // emits []PosixACL for a Unix source and []WinACL for a Windows source into
 // the same user.acls xattr. The restore must detect which it received and only
-// apply its destination-native type — otherwise a foreign payload would be
+// apply its destination-native type  -  otherwise a foreign payload would be
 // decoded into zero-value entries and written as a corrupt ACL.
 func TestDetectACLFlavor(t *testing.T) {
 	posix, err := cbor.Marshal([]types.PosixACL{
@@ -245,7 +245,7 @@ func TestDetectACLFlavor(t *testing.T) {
 	}
 
 	// Empty WinACL slice with no SID discriminator must not be mistaken for
-	// a Windows ACL — it has neither discriminator and resolves to aclNone.
+	// a Windows ACL  -  it has neither discriminator and resolves to aclNone.
 	winZeroTag, _ := cbor.Marshal([]types.WinACL{{Type: 0}})
 
 	tests := []struct {
@@ -326,7 +326,7 @@ func TestProcessJobRoutesFileByFileType(t *testing.T) {
 	tmpDir := t.TempDir()
 	dest := filepath.Join(tmpDir, "file-test")
 
-	// Don't create the file — restoreFile will try to create it and fail
+	// Don't create the file  -  restoreFile will try to create it and fail
 	// because the nil client can't provide content, but the important thing
 	// is routing.
 

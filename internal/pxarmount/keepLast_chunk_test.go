@@ -160,7 +160,7 @@ func TestKeepLastChunkInvariant(t *testing.T) {
 		injectedEnd := posAfterBatch1
 
 		if refAEnd > injectedEnd && refAEnd <= injectedEnd+500 {
-			t.Logf("CONFIRMED: %d bytes of ref 'a' [%d,%d) land in the 500-byte payload gap — data corruption", refAEnd-injectedEnd, injectedEnd, refAEnd)
+			t.Logf("CONFIRMED: %d bytes of ref 'a' [%d,%d) land in the 500-byte payload gap  -  data corruption", refAEnd-injectedEnd, injectedEnd, refAEnd)
 		}
 	})
 }

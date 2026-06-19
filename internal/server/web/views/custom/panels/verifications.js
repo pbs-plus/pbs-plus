@@ -475,7 +475,7 @@ Ext.define("PBS.D2DVerification.JobPanel", {
                     '<span><b>99% Confidence:</b> ≥' + (conf.c99 || 0).toFixed(1) + '% intact</span>' +
                     '&nbsp;&nbsp;&nbsp;' +
                     '<span style="font-weight:bold;color:' + (failed > 0 ? 'red' : 'green') + ';">' +
-                    (failed > 0 ? '\u2717 FAIL — ' + failed + ' file(s) failed verification' : '\u2713 PASS — all sampled files verified successfully') +
+                    (failed > 0 ? '\u2717 FAIL  -  ' + failed + ' file(s) failed verification' : '\u2713 PASS  -  all sampled files verified successfully') +
                     '</span>' +
                     '</td>' +
                     '</tr>' +

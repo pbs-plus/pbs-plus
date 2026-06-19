@@ -2,7 +2,7 @@ Ext.define("PBS.MtfManagement", {
   extend: "Ext.tab.Panel",
   alias: "widget.pbsMtfManagement",
 
-  title: "MTF Tapes",
+  title: gettext("MTF Tape Backup"),
 
   border: true,
   defaults: {
@@ -12,16 +12,22 @@ Ext.define("PBS.MtfManagement", {
 
   items: [
     {
-      xtype: "pbsMtfCartridgePanel",
-      title: gettext("Cartridges / Media Sets"),
+      xtype: "pbsMtfInventoryPanel",
+      title: gettext("Inventory"),
       itemId: "mtf-inventory",
-      iconCls: "fa fa-archive",
+      iconCls: "fa fa-book",
     },
     {
-      xtype: "pbsMtfJobView",
-      title: gettext("Migration Jobs"),
-      itemId: "mtf-jobs",
-      iconCls: "fa fa-floppy-o",
+      xtype: "pbsMtfChangerGrid",
+      title: gettext("Changers"),
+      itemId: "mtf-changers",
+      iconCls: "fa fa-exchange",
+    },
+    {
+      xtype: "pbsMtfDriveGrid",
+      title: gettext("Drives"),
+      itemId: "mtf-drives",
+      iconCls: "pbs-icon-tape-drive",
     },
     {
       xtype: "pbsMtfMappingPanel",
@@ -30,10 +36,10 @@ Ext.define("PBS.MtfManagement", {
       iconCls: "fa fa-sitemap",
     },
     {
-      xtype: "pbsMtfChangerPanel",
-      title: gettext("Changers / Drives"),
-      itemId: "mtf-devices",
-      iconCls: "fa fa-cogs",
+      xtype: "pbsMtfJobView",
+      title: gettext("Migration Jobs"),
+      itemId: "mtf-jobs",
+      iconCls: "fa fa-floppy-o",
     },
   ],
 });

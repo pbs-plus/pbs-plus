@@ -1,4 +1,4 @@
-// Notification Batch edit window — create / edit a notification batch
+// Notification Batch edit window  -  create / edit a notification batch
 // and assign jobs (backups, restores, verifications) to it.
 
 Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
@@ -140,7 +140,7 @@ Ext.define("PBS.D2DManagement.NotificationBatchEdit", {
           ) {
             me.applyAssignments(assigned);
           } else {
-            // Store for later — populateJobStore will apply when all are ready
+            // Store for later  -  populateJobStore will apply when all are ready
             me.pendingAssignments = assigned;
           }
         },

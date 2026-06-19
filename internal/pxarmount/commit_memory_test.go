@@ -11,7 +11,7 @@ import (
 //
 // The test uses runtime finalizers on the backing array.  In the
 // nested style (current code), the backing array is reachable DURING
-// the inner loop because we access entries by index — the same pattern
+// the inner loop because we access entries by index  -  the same pattern
 // as the two-pointer merge in commitWalk.  In the deferred style
 // (planned fix), we extract dir metadata, nil the slice, force GC,
 // and verify the old backing array was collected before recursing.
@@ -40,7 +40,7 @@ func TestCommitWalkMemoryRetention(t *testing.T) {
 		// state at each iteration while entries[pi] is still live.
 		pi := 0
 		for pi < len(entries) {
-			// Access entries[pi] — keeps the backing array on the stack.
+			// Access entries[pi]  -  keeps the backing array on the stack.
 			// Using a non-dead-store pattern so the compiler can't elide it.
 			if entries[pi].name == "" {
 				panic("unreachable")
@@ -61,7 +61,7 @@ func TestCommitWalkMemoryRetention(t *testing.T) {
 			pi++
 		}
 
-		t.Log("PASS: entries survived all iterations — OOM bug confirmed")
+		t.Log("PASS: entries survived all iterations  -  OOM bug confirmed")
 	})
 
 	t.Run("deferred-entries-freed-before-recursion", func(t *testing.T) {
@@ -98,15 +98,15 @@ func TestCommitWalkMemoryRetention(t *testing.T) {
 			runtime.GC()
 			select {
 			case <-freed:
-				t.Log("entries freed BEFORE recursion — OOM fix works")
+				t.Log("entries freed BEFORE recursion  -  OOM fix works")
 				goto freedOk
 			default:
 			}
 		}
-		t.Fatal("entries not freed despite nil + GC — fix may not be effective")
+		t.Fatal("entries not freed despite nil + GC  -  fix may not be effective")
 	freedOk:
 
-		// Now recurse — old entries are gone, only small dirs struct alive.
+		// Now recurse  -  old entries are gone, only small dirs struct alive.
 		for range dirs {
 			_ = makeDirEntries(20)
 		}
@@ -173,7 +173,7 @@ func TestCommitWalkMemoryRetentionDeep(t *testing.T) {
 			runtime.GC()
 			select {
 			case <-l1Freed:
-				t.Fatal("l1 entries GC'd while still iterating l1 — compiler elided")
+				t.Fatal("l1 entries GC'd while still iterating l1  -  compiler elided")
 			default:
 			}
 
@@ -225,7 +225,7 @@ func TestCommitWalkMemoryRetentionDeep(t *testing.T) {
 	l1FreedOk:
 		t.Log("l1 freed before processing any subdirectories")
 
-		// Now process l2 directories — l1 is gone.
+		// Now process l2 directories  -  l1 is gone.
 		for range l1Dirs {
 			l2 := make([]dirEntrySlim, level2Dirs)
 			for j := range l2 {

@@ -1,6 +1,7 @@
 package mtfjob
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -9,9 +10,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -25,18 +28,25 @@ import (
 
 const mtfWorkerType = "mtf2pxar"
 
+// MtfTask manages an MTF migration job's task log and lifecycle,
+// following the same pattern as restore.RestoreTask.
+type MtfTask struct {
+	tasks.BaseTask
+	job mtfstore.MTFJob
+}
+
 type mtfJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
-	job           mtfstore.MTFJob
-	store         *store.Store
-	mapper        *mtfstore.Mapper
-	queueTaskPath string
-	logger        *syslog.JobLogger
-	task          proxmox.Task
-	started       atomic.Bool
-	cleanupOnce   sync.Once
+	job         mtfstore.MTFJob
+	store       *store.Store
+	mapper      *mtfstore.Mapper
+	queueTask   *tasks.QueuedTask
+	task        *MtfTask
+	logger      *syslog.JobLogger
+	started     atomic.Bool
+	cleanupOnce sync.Once
 }
 
 func NewJob(job mtfstore.MTFJob, st *store.Store, mapper *mtfstore.Mapper, web bool) *jobs.Job {
@@ -57,7 +67,6 @@ func NewJob(job mtfstore.MTFJob, st *store.Store, mapper *mtfstore.Mapper, web b
 }
 
 // NewMtfJob loads an MTF job definition by id and builds a runnable jobs.Job.
-// It is the factory wired into rpc.MtfJobFactory.
 func NewMtfJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
 	ctx := st.Ctx
 	if ctx == nil {
@@ -72,11 +81,18 @@ func NewMtfJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
 
 func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
-		ctx, cancel := context.WithCancel(ctx)
+		_, cancel := context.WithCancel(ctx)
 		j.cancel = cancel
 
-		if err := j.setQueued(ctx, web); err != nil {
-			syslog.L.Error(err).WithJob(j.job.ID).WithMessage("mtf: failed to set queued task").Write()
+		qt, err := tasks.GenerateMtfQueuedTask(j.job.ID, j.job.Datastore, web)
+		if err != nil {
+			syslog.L.Error(err).WithJob(j.job.ID).WithMessage("mtf: failed to create queue task").Write()
+			return nil // non-fatal
+		}
+		j.queueTask = &qt
+
+		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
+			syslog.L.Error(err).WithJob(j.job.ID).Write()
 		}
 		return nil
 	}
@@ -94,25 +110,61 @@ func (j *mtfJob) execute(ctx context.Context) error {
 		return err
 	}
 
-	task, err := startTask(j.job, "MTF migration in progress")
+	task, err := startMtfTask(j.job)
 	if err != nil {
 		return fmt.Errorf("start task: %w", err)
 	}
-	j.mu.Lock()
 	j.task = task
-	j.mu.Unlock()
 
 	j.started.Store(true)
-	if err := j.persistHistory(task, database.JobStatusUnknown, true); err != nil {
+	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
 		syslog.L.Error(err).WithJob(j.job.ID).Write()
+	}
+
+	task.WriteString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
+		j.job.SourceKind, j.job.SourceRef, j.job.Datastore, j.job.Namespace))
+	if j.job.Spanning {
+		task.WriteString("Spanning mode: merging all cartridges of the media set")
+	}
+	if j.job.Changer != "" {
+		task.WriteString(fmt.Sprintf("Changer: %s", j.job.Changer))
+	}
+	if j.job.Drive != "" {
+		task.WriteString(fmt.Sprintf("Drive: %s", j.job.Drive))
+	}
+	task.WriteString(fmt.Sprintf("Tape device: %s", cfg.TapeDevice))
+	if cfg.ChangerDevice != "" {
+		task.WriteString(fmt.Sprintf("Changer device: %s", cfg.ChangerDevice))
+	}
+
+	// Wire the converter's task log to the task
+	cfg.TaskLog = func(msg string) {
+		task.WriteString(msg)
 	}
 
 	stats, runErr := bkf2pxar.Run(ctx, cfg)
 	if runErr != nil {
-		failTask(task, j.job, runErr, stats)
+		task.WriteString("Migration job summary:")
+		if stats != nil {
+			task.WriteString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
+			task.WriteString(fmt.Sprintf(" - %d files", stats.Files))
+			task.WriteString(fmt.Sprintf(" - %d dirs", stats.Dirs))
+			task.WriteString(fmt.Sprintf(" - %d bytes", stats.Bytes))
+		}
+		task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+		task.CloseErr(runErr)
 		return runErr
 	}
-	finishTaskOK(task, j.job, stats)
+
+	task.WriteString("Migration job summary:")
+	if stats != nil {
+		task.WriteString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
+		task.WriteString(fmt.Sprintf(" - %d files", stats.Files))
+		task.WriteString(fmt.Sprintf(" - %d dirs", stats.Dirs))
+		task.WriteString(fmt.Sprintf(" - %d bytes", stats.Bytes))
+	}
+	task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+	task.CloseOK()
 	return nil
 }
 
@@ -138,19 +190,29 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	}
 
 	cfg := bkf2pxar.Config{
-		PBSURL:    "https://localhost:8007/api2/json",
-		Datastore: job.Datastore,
-		Namespace: baseNS,
-		SkipTLS:   true,
-		Verbose:   false,
-		Spanning:  job.Spanning,
-		OnSnapshot: func(id, ns string) {
-			syslog.L.Info().WithJob(job.ID).WithMessage(fmt.Sprintf("mtf: snapshot %s -> ns=%s", id, ns)).Write()
-		},
+		PBSURL:            "https://localhost:8007/api2/json",
+		Datastore:         job.Datastore,
+		Namespace:         baseNS,
+		SkipTLS:           true,
+		Verbose:           false,
+		Spanning:          job.Spanning,
 		NamespaceResolver: resolver,
 	}
 	if cfg.AuthToken == "" {
 		cfg.AuthToken = pbstoken.ReadLocal()
+	}
+
+	// Resolve changer and drive paths from PBS tape config
+	tapeCfg, _ := mtfstore.ReadPBSTapeConfig()
+
+	// Resolve changer name → path
+	if job.Changer != "" {
+		for _, c := range tapeCfg.Changers {
+			if c.Name == job.Changer {
+				cfg.ChangerDevice = c.Path
+				break
+			}
+		}
 	}
 
 	switch job.SourceKind {
@@ -162,13 +224,14 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		if cart.IsBkfFile && cart.SourcePath != "" {
 			cfg.Sources = []string{cart.SourcePath}
 		} else {
-			drive, dev, chg, idx, err := j.resolveDrive(ctx)
+			dev, chg, idx, err := j.resolveDrivePaths(tapeCfg)
 			if err != nil {
 				return cfg, err
 			}
-			_ = drive
 			cfg.TapeDevice = dev
-			cfg.ChangerDevice = chg
+			if cfg.ChangerDevice == "" {
+				cfg.ChangerDevice = chg
+			}
 			cfg.DriveIndex = idx
 		}
 	case "family":
@@ -193,13 +256,14 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 			}
 			cfg.Spanning = true
 		} else {
-			drive, dev, chg, idx, err := j.resolveDrive(ctx)
+			dev, chg, idx, err := j.resolveDrivePaths(tapeCfg)
 			if err != nil {
 				return cfg, err
 			}
-			_ = drive
 			cfg.TapeDevice = dev
-			cfg.ChangerDevice = chg
+			if cfg.ChangerDevice == "" {
+				cfg.ChangerDevice = chg
+			}
 			cfg.DriveIndex = idx
 		}
 	case "dataset":
@@ -207,14 +271,14 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		if err != nil {
 			return cfg, fmt.Errorf("get data set: %w", err)
 		}
-		return j.configForDataSet(ctx, ds, cfg)
+		return j.configForDataSet(ctx, ds, cfg, tapeCfg)
 	default:
 		return cfg, fmt.Errorf("unknown source_kind %q", job.SourceKind)
 	}
 	return cfg, nil
 }
 
-func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg bkf2pxar.Config) (bkf2pxar.Config, error) {
+func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg bkf2pxar.Config, tapeCfg *mtfstore.PBSTapeConfig) (bkf2pxar.Config, error) {
 	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
 	if err != nil {
 		return cfg, err
@@ -231,13 +295,14 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg 
 	if allBKF && len(sources) > 0 {
 		cfg.Sources = sources
 	} else {
-		drive, dev, chg, idx, err := j.resolveDrive(ctx)
+		dev, chg, idx, err := j.resolveDrivePaths(tapeCfg)
 		if err != nil {
 			return cfg, err
 		}
-		_ = drive
 		cfg.TapeDevice = dev
-		cfg.ChangerDevice = chg
+		if cfg.ChangerDevice == "" {
+			cfg.ChangerDevice = chg
+		}
 		cfg.DriveIndex = idx
 	}
 	snaps, err := bkf2pxar.ListSnapshots(ctx, cfg)
@@ -253,38 +318,45 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg 
 	return cfg, fmt.Errorf("data set machine %q not found in snapshots", ds.MachineName)
 }
 
-func (j *mtfJob) resolveDrive(ctx context.Context) (mtfstore.Drive, string, string, int, error) {
-	if j.job.Drive != "" {
-		dr, err := j.store.MtfStore.GetDrive(ctx, j.job.Drive)
-		if err != nil {
-			return mtfstore.Drive{}, "", "", 0, err
-		}
-		return dr, dr.Device, dr.Changer, dr.DriveIndex, nil
+// resolveDrivePaths resolves the tape device path, changer device path,
+// and drive index from the PBS tape config. It resolves changer names to
+// device paths to avoid "no such file or directory" errors.
+func (j *mtfJob) resolveDrivePaths(tapeCfg *mtfstore.PBSTapeConfig) (tapeDev, changerDev string, driveIdx int, err error) {
+	if tapeCfg == nil || len(tapeCfg.Drives) == 0 {
+		return "/dev/nst0", "", 0, nil
 	}
-	drives, err := j.store.MtfStore.ListDrives(ctx)
-	if err != nil || len(drives) == 0 {
-		return mtfstore.Drive{}, "/dev/nst0", "", 0, nil
-	}
-	dr := drives[0]
-	return dr, dr.Device, dr.Changer, dr.DriveIndex, nil
-}
 
-func (j *mtfJob) setQueued(ctx context.Context, web bool) error {
-	task := queuedTask(j.job, web)
-	file, path, err := tasks.CreateTaskLogFile(task.UPID)
-	if err != nil {
-		return err
+	var d mtfstore.PBSDrive
+	if j.job.Drive != "" {
+		found := false
+		for _, drive := range tapeCfg.Drives {
+			if drive.Name == j.job.Drive {
+				d = drive
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", "", 0, fmt.Errorf("drive %q not found in PBS config", j.job.Drive)
+		}
+	} else {
+		d = tapeCfg.Drives[0]
 	}
-	source := "web UI"
-	if !web {
-		source = "schedule"
+
+	tapeDev = mtfstore.ResolveTapeDevice(d.Path)
+	driveIdx = d.ChangerDrivenum
+
+	// Resolve changer name → device path
+	if d.Changer != "" {
+		for _, c := range tapeCfg.Changers {
+			if c.Name == d.Changer {
+				changerDev = c.Path
+				break
+			}
+		}
 	}
-	_, _ = fmt.Fprintf(file, "%s: TASK QUEUED: MTF job started from %s\n", tasks.Now().Format(time.RFC3339), source)
-	_ = file.Close()
-	j.mu.Lock()
-	j.queueTaskPath = path
-	j.mu.Unlock()
-	return j.persistHistory(task, database.JobStatusUnknown, true)
+
+	return tapeDev, changerDev, driveIdx, nil
 }
 
 func (j *mtfJob) onSuccess() {
@@ -292,7 +364,8 @@ func (j *mtfJob) onSuccess() {
 	task := j.task
 	job := j.job
 	j.mu.RUnlock()
-	if task.UPID == "" {
+
+	if task == nil || task.UPID == "" {
 		return
 	}
 	_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
@@ -306,19 +379,22 @@ func (j *mtfJob) onSuccess() {
 	j.notify(nil)
 }
 
-func (j *mtfJob) onError(err error) {
+func (j *mtfJob) onError(runErr error) {
 	j.mu.RLock()
 	task := j.task
 	job := j.job
 	j.mu.RUnlock()
 
-	if errors.Is(err, jobs.ErrCanceled) {
-		_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-			mtfstore.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, "")
+	if errors.Is(runErr, jobs.ErrCanceled) {
+		if task != nil {
+			_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
+				mtfstore.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, "")
+		}
 		return
 	}
-	if task.UPID == "" {
-		task = errorTask(job, err)
+
+	if task == nil || task.UPID == "" {
+		task = j.errorTask(runErr)
 	}
 	_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfstore.JobHistory{
@@ -327,7 +403,12 @@ func (j *mtfJob) onError(err error) {
 			LastRunEndtime: time.Now().Unix(),
 			RetryCount:     job.History.RetryCount + 1,
 		}, "")
-	j.notify(err)
+	j.notify(runErr)
+}
+
+func (j *mtfJob) errorTask(runErr error) *MtfTask {
+	errTask := errorMtfTask(j.job, runErr)
+	return errTask
 }
 
 func (j *mtfJob) notify(err error) {
@@ -340,7 +421,11 @@ func (j *mtfJob) notify(err error) {
 		j.job.ID,
 		j.job.Datastore,
 		err,
-		map[string]string{"source": j.job.SourceRef},
+		map[string]string{
+			"source":      j.job.SourceRef,
+			"succeeded":   fmt.Sprintf("%v", err == nil),
+			"source_kind": j.job.SourceKind,
+		},
 	)
 }
 
@@ -365,17 +450,112 @@ func (j *mtfJob) cleanup() {
 		j.mu.Lock()
 		cancel := j.cancel
 		logger := j.logger
+		qt := j.queueTask
 		j.mu.Unlock()
+
 		if cancel != nil {
 			cancel()
 		}
 		if logger != nil {
 			_ = logger.Close()
 		}
+		if qt != nil {
+			qt.Close()
+		}
 	})
 }
 
-// --- synthetic UPID/task helpers ---
+// --- MTF Task (matches RestoreTask pattern) ---
+
+// startMtfTask creates an MtfTask, opens its log file, and registers it as active.
+func startMtfTask(job mtfstore.MTFJob) (*MtfTask, error) {
+	task := proxmox.Task{
+		Node:       "pbsplus",
+		PID:        os.Getpid(),
+		PStart:     proxmox.GetPStart(),
+		StartTime:  tasks.Now().Unix(),
+		WorkerType: mtfWorkerType,
+		WID:        mtfWID(job),
+		User:       proxmox.AUTH_ID,
+	}
+	pidHex := fmt.Sprintf("%08X", task.PID)
+	pstartHex := fmt.Sprintf("%08X", task.PStart)
+	startHex := fmt.Sprintf("%08X", uint32(task.StartTime))
+	taskID := fmt.Sprintf("%08X", rand.Uint32())
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pidHex, pstartHex, taskID, startHex, mtfWorkerType, task.WID, proxmox.AUTH_ID)
+
+	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	if err != nil {
+		return nil, err
+	}
+
+	t := &MtfTask{
+		BaseTask: tasks.NewBaseTask(task, file),
+		job:      job,
+	}
+	if err := t.addActiveTask(); err != nil {
+		syslog.L.Error(err).WithJob(job.ID).WithMessage("mtf: add active task").Write()
+	}
+	return t, nil
+}
+
+// CloseOK closes the task with "OK" status and removes from active list.
+func (t *MtfTask) CloseOK() {
+	t.CloseWithStatus("OK", nil, func() {
+		_ = t.removeActiveTask()
+	})
+}
+
+// CloseErr closes the task with error status and removes from active list.
+func (t *MtfTask) CloseErr(taskErr error) {
+	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
+		_ = t.removeActiveTask()
+	})
+}
+
+func (t *MtfTask) addActiveTask() error {
+	return modifyActiveFile(t.UPID, true)
+}
+
+func (t *MtfTask) removeActiveTask() error {
+	return modifyActiveFile(t.UPID, false)
+}
+
+// --- Queued task ---
+
+// errorMtfTask creates a standalone error task file.
+func errorMtfTask(job mtfstore.MTFJob, runErr error) *MtfTask {
+	task := proxmox.Task{
+		Node:       "pbsplusgen-error",
+		PID:        os.Getpid(),
+		PStart:     proxmox.GetPStart(),
+		StartTime:  tasks.Now().Unix(),
+		WorkerType: mtfWorkerType,
+		WID:        mtfWID(job),
+		User:       proxmox.AUTH_ID,
+	}
+	pidHex := fmt.Sprintf("%08X", task.PID)
+	pstartHex := fmt.Sprintf("%08X", task.PStart)
+	startHex := fmt.Sprintf("%08X", uint32(task.StartTime))
+	taskID := fmt.Sprintf("%08X", rand.Uint32())
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pidHex, pstartHex, taskID, startHex, mtfWorkerType, task.WID, proxmox.AUTH_ID)
+
+	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	if err != nil {
+		return nil
+	}
+
+	t := &MtfTask{
+		BaseTask: tasks.NewBaseTask(task, file),
+		job:      job,
+	}
+	t.WriteLogLine("%s", runErr.Error())
+	t.WriteLogLine("TASK ERROR: %s", runErr.Error())
+	_ = file.Close()
+	tasks.WriteArchive(task.UPID, task.StartTime, runErr.Error())
+
+	return t
+}
 
 func mtfWID(job mtfstore.MTFJob) string {
 	return proxmox.EncodeToHexEscapes(job.Datastore) +
@@ -383,85 +563,57 @@ func mtfWID(job mtfstore.MTFJob) string {
 		"mtf-" + proxmox.EncodeToHexEscapes(job.ID)
 }
 
-func newTask(job mtfstore.MTFJob, node string) proxmox.Task {
-	startTime := tasks.Now()
-	task := proxmox.Task{
-		Node:       node,
-		PID:        os.Getpid(),
-		PStart:     proxmox.GetPStart(),
-		StartTime:  startTime.Unix(),
-		WorkerType: mtfWorkerType,
-		WID:        mtfWID(job),
-		User:       proxmox.AUTH_ID,
-	}
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	startHex := fmt.Sprintf("%08X", uint32(task.StartTime))
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startHex, mtfWorkerType, task.WID, proxmox.AUTH_ID)
-	return task
-}
+// --- Active task file management (matches RestoreTask/ScanTask) ---
 
-func queuedTask(job mtfstore.MTFJob, web bool) proxmox.Task {
-	return newTask(job, "pbsplusgen-queue")
-}
-
-func startTask(job mtfstore.MTFJob, desc string) (proxmox.Task, error) {
-	task := newTask(job, "pbsplusgen-mtf")
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+func modifyActiveFile(target string, add bool) error {
+	f, err := os.OpenFile(conf.ActiveLogsPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		return task, err
+		if !add && os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("open active tasks: %w", err)
 	}
-	base := tasks.NewBaseTask(task, file)
-	base.WriteString(desc)
-	task.Status = "running"
-	return task, nil
-}
+	defer func() { _ = f.Close() }()
 
-func finishTaskOK(task proxmox.Task, job mtfstore.MTFJob, stats *bkf2pxar.Stats) {
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
-	if err != nil {
-		return
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock active tasks: %w", err)
 	}
-	base := tasks.NewBaseTask(task, file)
-	if stats != nil {
-		base.WriteString(fmt.Sprintf("Done: %d snapshots, %d files, %d dirs", stats.Snapshots, stats.Files, stats.Dirs))
-	}
-	base.CloseWithStatus("OK", nil, nil)
-}
+	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
 
-func failTask(task proxmox.Task, job mtfstore.MTFJob, runErr error, stats *bkf2pxar.Stats) {
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
-	if err != nil {
-		return
+	var lines []string
+	found := false
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, target) {
+			found = true
+			if !add {
+				continue
+			}
+		}
+		lines = append(lines, line)
 	}
-	base := tasks.NewBaseTask(task, file)
-	if runErr != nil {
-		base.WriteString(runErr.Error())
+	if add && !found {
+		lines = append(lines, target)
 	}
-	base.CloseWithStatus("TASK ERROR: "+firstLine(runErr.Error()), nil, nil)
-}
+	if !add && !found {
+		return nil
+	}
 
-func errorTask(job mtfstore.MTFJob, err error) proxmox.Task {
-	task := newTask(job, "pbsplusgen-error")
-	file, _, ferr := tasks.CreateTaskLogFile(task.UPID)
-	if ferr != nil {
-		return task
+	if err := f.Truncate(0); err != nil {
+		return err
 	}
-	defer func() { _ = file.Close() }()
-	ts := tasks.Now().Format(time.RFC3339)
-	_, _ = fmt.Fprintf(file, "%s: %s\n", ts, err.Error())
-	_, _ = fmt.Fprintf(file, "%s: TASK ERROR: %s\n", ts, firstLine(err.Error()))
-	tasks.WriteArchive(task.UPID, task.StartTime, firstLine(err.Error()))
-	task.Status = "stopped"
-	task.ExitStatus = firstLine(err.Error())
-	task.EndTime = tasks.Now().Unix()
-	return task
-}
-
-func firstLine(s string) string {
-	if before, _, ok := strings.Cut(s, "\n"); ok {
-		return strings.TrimSpace(before)
+	if _, err := f.Seek(0, 0); err != nil {
+		return err
 	}
-	return strings.TrimSpace(s)
+	w := bufio.NewWriter(f)
+	for _, line := range lines {
+		if _, err := w.WriteString(line + "\n"); err != nil {
+			return err
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	return f.Sync()
 }

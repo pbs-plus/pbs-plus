@@ -42,7 +42,7 @@ func (fs *ARPCFS) logOnce(path string, err error, op string) {
 }
 
 // isIgnoredPath reports whether errors for this path should be silently
-// suppressed — these are files probed by proxmox-backup-client on every
+// suppressed  -  these are files probed by proxmox-backup-client on every
 // directory and are expected to be absent.
 func isIgnoredPath(p string) bool {
 	base := p

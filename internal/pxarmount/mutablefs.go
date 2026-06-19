@@ -52,7 +52,7 @@ type MutableFS struct {
 	nextIno uint64
 	inoMu   sync.Mutex
 
-	// File handle management — lock-free via xsync.Map since every
+	// File handle management  -  lock-free via xsync.Map since every
 	// Read/Write/Flush/Fsync calls getFh. nextFh uses atomic for
 	// allocation without a separate mutex.
 	handles *xsync.Map[uint64, *passFh]
@@ -81,13 +81,13 @@ type MutableFS struct {
 	frozen     bool
 
 	// Inode ↔ path bidirectional mapping.
-	// Per-instance to prevent cross-mount corruption — analogous to
+	// Per-instance to prevent cross-mount corruption  -  analogous to
 	// ext4's per-superblock inode cache. Uses xsync.Map for lock-free
-	// reads — critical since resolve() is called on every FUSE op.
+	// reads  -  critical since resolve() is called on every FUSE op.
 	inoLookup  *xsync.Map[string, uint64]
 	pathLookup *xsync.Map[uint64, string]
 
-	// Per-path ensureNode serialization — prevents duplicate journal
+	// Per-path ensureNode serialization  -  prevents duplicate journal
 	// nodes when concurrent FUSE ops (e.g. setfacl -R) materialize
 	// the same pxar entry simultaneously.
 	ensureLocks *xsync.Map[string, *sync.Mutex]
@@ -163,7 +163,7 @@ func (fs *MutableFS) InitMutableRoot() error {
 }
 
 // ReconcileMutableDir removes orphan disk entries not tracked by journal nodes.
-// Called on startup to clean up after unclean shutdowns — analogous to
+// Called on startup to clean up after unclean shutdowns  -  analogous to
 // ext4's orphan inode cleanup during journal recovery (ext4_orphan_cleanup).
 //
 // A file is an orphan if:
@@ -439,7 +439,7 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 
 	for _, name := range edgeNamesSorted {
 		nodeID := edgeNames[name]
-		// Edges take priority over whiteouts — if there's a journal node,
+		// Edges take priority over whiteouts  -  if there's a journal node,
 		// it's always visible.
 		node, _ := fs.journal.GetNode(nodeID)
 		if node == nil {
@@ -1046,7 +1046,7 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 	return fs.Unlink(cancel, header, name)
 }
 
-// Rename moves/renames a file or directory. O(1) — updates one edge row.
+// Rename moves/renames a file or directory. O(1)  -  updates one edge row.
 func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldName string, newName string) fuse.Status {
 	fs.waitIfFrozen()
 	oldParentPath := fs.inodeToPath(input.NodeId)
@@ -1120,7 +1120,7 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		oldRE.Node = node
 	}
 
-	// --- Phase 2: Update inode mapping (in-memory, fast — before slow disk I/O) ---
+	// --- Phase 2: Update inode mapping (in-memory, fast  -  before slow disk I/O) ---
 	fs.unmapInode(newPath) // clear dest mapping
 	ino := fs.pathToIno(oldPath, oldRE.IsDir)
 	fs.unmapInode(oldPath)
@@ -1131,7 +1131,7 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	}
 
 	// --- Phase 3: Disk mutations (journal + mappings already consistent) ---
-	// If we crash here, the journal is consistent — disk files are redundant
+	// If we crash here, the journal is consistent  -  disk files are redundant
 	// copies that the next commit will re-snapshot from the correct paths.
 
 	// Remove destination mutable data (journal already points away from it).
@@ -1461,7 +1461,7 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 			fs.logNonFatal("close-fd", "fd", err)
 		}
 	}
-	// Clean up per-inode lock — operations that need it will
+	// Clean up per-inode lock  -  operations that need it will
 	// re-create via LoadOrStore.
 	fs.inoLocks.Delete(input.NodeId)
 }
@@ -1629,7 +1629,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 }
 
 // applyPxarXattrsToFile sets extended attributes and file capabilities
-// from a pxar entry onto a real file. Errors are logged but not fatal —
+// from a pxar entry onto a real file. Errors are logged but not fatal  - 
 // the file content has already been successfully copied.
 func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 	for _, xa := range entry.Metadata.XAttrs {
@@ -1637,7 +1637,7 @@ func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 		if len(name) == 0 {
 			continue
 		}
-		// Skip ACL and fcaps — those are handled separately via the
+		// Skip ACL and fcaps  -  those are handled separately via the
 		// structured Metadata fields, not raw xattr values.
 		if isACLXattr(name) || isFcapsXattr(name) {
 			continue
@@ -1759,7 +1759,7 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		return fs.resolveFromNode(path, node)
 	}
 
-	// Fell off graph — check pxar.
+	// Fell off graph  -  check pxar.
 	pxarNode := fs.findPxarNode(pxarPath)
 	if pxarNode == nil {
 		return nil, fuse.ENOENT
@@ -1910,7 +1910,7 @@ func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 // under the parent. For journal entries, it's a no-op.
 //
 // Per-path locking prevents duplicate nodes when concurrent FUSE ops
-// (e.g. setfacl -R) materialize the same pxar entry simultaneously —
+// (e.g. setfacl -R) materialize the same pxar entry simultaneously  - 
 // analogous to ext4's inode_lock preventing concurrent inode initialization.
 func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	if re.Node != nil {
@@ -1925,7 +1925,7 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	pathMu.Lock()
 	defer pathMu.Unlock()
 
-	// Double-check after acquiring lock — another goroutine may have
+	// Double-check after acquiring lock  -  another goroutine may have
 	// created the node while we waited.
 	if re.Node != nil {
 		return

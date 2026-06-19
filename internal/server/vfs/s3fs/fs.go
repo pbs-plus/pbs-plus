@@ -372,7 +372,7 @@ func (fs *S3FS) logOnce(path string, err error, op string) {
 }
 
 // isIgnoredS3Path reports whether errors for this path should be silently
-// suppressed — these are files probed by proxmox-backup-client on every
+// suppressed  -  these are files probed by proxmox-backup-client on every
 // directory and are expected to be absent.
 func isIgnoredS3Path(p string) bool {
 	base := p

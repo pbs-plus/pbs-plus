@@ -182,7 +182,7 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 
 		lastSuccessful := b.History.LastSuccessfulEndtime
 		if lastSuccessful == 0 {
-			// Never ran — only report as stale if job has a schedule
+			// Never ran  -  only report as stale if job has a schedule
 			if !setting.SkipUnscheduled || b.Schedule != "" {
 				staleJobs = append(staleJobs, b)
 			}

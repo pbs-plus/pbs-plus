@@ -126,7 +126,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 			restoreWindowsACLsFromPath(ctx, st, path, xattrs)
 		}
 		// Restore any remaining (non-canonical) xattrs as NTFS alternate data
-		// streams — the closest native analog to a POSIX user.* xattr and the
+		// streams  -  the closest native analog to a POSIX user.* xattr and the
 		// only way a cross-platform Linux->Windows restore preserves them.
 		// Canonical keys consumed above are skipped.
 		if st.fsCap.supportsXAttrs {
@@ -144,7 +144,7 @@ func setBasicInfo(h windows.Handle, info *FILE_BASIC_INFO) error {
 // restoreWindowsACLsFromPath opens the file with WRITE_DAC|WRITE_OWNER and
 // FILE_FLAG_BACKUP_SEMANTICS, then delegates to restoreWindowsACLsFromHandle.
 // Used by applyMeta where the file handle may lack security access.
-// SIDs are intentionally leaked — see comment on restoreWindowsACLsFromHandle.
+// SIDs are intentionally leaked  -  see comment on restoreWindowsACLsFromHandle.
 func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path string, xattrs map[string][]byte) {
 	pathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -250,7 +250,7 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 		return nil
 	}
 
-	// Times only — file attributes are intentionally NOT set on a reparse
+	// Times only  -  file attributes are intentionally NOT set on a reparse
 	// point, since writing them could clear FILE_ATTRIBUTE_REPARSE_POINT and
 	// break the symlink.
 	baseFt := unixToFiletime(e.MtimeSecs)

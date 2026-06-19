@@ -15,7 +15,7 @@ var prepOnce sync.Once
 // current process's token. These privileges are present (but disabled) in
 // tokens of accounts that are SYSTEM, Administrators, or Backup Operators.
 // Enabling them is what lets the restore write owner/group/DACL on files the
-// restore user does not own — without it, SetSecurityInfo fails with
+// restore user does not own  -  without it, SetSecurityInfo fails with
 // ERROR_INVALID_OWNER ("This security ID may not be assigned as the owner of
 // this object") and ERROR_ACCESS_DENIED ("Access is denied") on every file
 // whose owner/DACL differs from the restore user. This is the standard pattern
@@ -28,7 +28,7 @@ var prepOnce sync.Once
 //
 // Best-effort: if the token genuinely lacks a privilege (e.g. the agent runs
 // as a plain user), enabling fails for that privilege and the affected
-// metadata operations fail per-file and are reported — but the restore of
+// metadata operations fail per-file and are reported  -  but the restore of
 // file CONTENT still proceeds for all files.
 func prepareRestoreProcess() {
 	prepOnce.Do(func() {

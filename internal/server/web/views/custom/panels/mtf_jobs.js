@@ -7,8 +7,7 @@ Ext.define("PBS.MtfManagement.JobView", {
   stateful: true,
   stateId: "grid-mtf-jobs-v1",
 
-  selType: "checkboxmodel",
-  multiSelect: true,
+
 
   controller: {
     xclass: "Ext.app.ViewController",
@@ -39,11 +38,14 @@ Ext.define("PBS.MtfManagement.JobView", {
 
     editJob: function () {
       let me = this;
-      let recs = me.getView().getSelection();
-      if (!recs.length) return;
+      let view = me.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
       Ext.create("PBS.MtfManagement.JobEdit", {
         autoShow: true,
-        jobId: recs[0].data.id,
+        jobId: selection[0].data.id,
         listeners: {
           destroy: function () {
             me.reload();
@@ -54,10 +56,13 @@ Ext.define("PBS.MtfManagement.JobView", {
 
     removeJobs: function () {
       let me = this;
-      let recs = me.getView().getSelection();
-      if (!recs.length) return;
+      let view = me.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
 
-      let ids = recs.map((r) => r.getId());
+      let ids = selection.map((r) => r.getId());
       let list = ids.map(Ext.String.htmlEncode).join("', '");
       let msg = Ext.String.format(
         gettext("Delete MTF job(s) '{0}'?"),
@@ -65,7 +70,9 @@ Ext.define("PBS.MtfManagement.JobView", {
       );
 
       Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
-        if (btn !== "yes") return;
+        if (btn !== "yes") {
+          return;
+        }
 
         ids.forEach((id) => {
           PBS.PlusUtils.API2Request({
@@ -74,7 +81,7 @@ Ext.define("PBS.MtfManagement.JobView", {
               encodeURIComponent(encodePathValue(id)),
             method: "DELETE",
             success: () => me.reload(),
-            failure: (resp) => {
+            failure: function (resp) {
               Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
             },
           });
@@ -82,28 +89,32 @@ Ext.define("PBS.MtfManagement.JobView", {
       });
     },
 
-    runJobs: function () {
+    runJob: function () {
       let me = this;
       let view = me.getView();
-      let recs = view.getSelection();
-      if (!recs.length) return;
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
 
-      let ids = recs.map((r) => r.getId());
-      let params = ids
-        .map((id) => "job=" + encodeURIComponent(encodePathValue(id)))
-        .join("&");
-
+      let id = selection[0].data.id;
       Ext.Msg.confirm(
         gettext("Confirm"),
-        gettext("Start selected MTF migration jobs?"),
-        (btn) => {
-          if (btn !== "yes") return;
+        Ext.String.format(gettext("Start migration job '{0}'?"), id),
+        function (btn) {
+          if (btn !== "yes") {
+            return;
+          }
           PBS.PlusUtils.API2Request({
-            url: "/api2/extjs/d2d/mtf-job?" + params,
+            url:
+              "/api2/extjs/d2d/mtf-job?job=" +
+              encodeURIComponent(encodePathValue(id)),
             method: "POST",
             waitMsgTarget: view,
-            success: () => me.reload(),
-            failure: (resp) => {
+            success: function () {
+              me.reload();
+            },
+            failure: function (resp) {
               Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
             },
           });
@@ -111,28 +122,32 @@ Ext.define("PBS.MtfManagement.JobView", {
       );
     },
 
-    stopJobs: function () {
+    stopJob: function () {
       let me = this;
       let view = me.getView();
-      let recs = view.getSelection();
-      if (!recs.length) return;
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
 
-      let ids = recs.map((r) => r.getId());
-      let params = ids
-        .map((id) => "job=" + encodeURIComponent(encodePathValue(id)))
-        .join("&");
-
+      let id = selection[0].data.id;
       Ext.Msg.confirm(
         gettext("Confirm"),
-        gettext("Stop selected MTF migration jobs?"),
-        (btn) => {
-          if (btn !== "yes") return;
+        Ext.String.format(gettext("Stop migration job '{0}'?"), id),
+        function (btn) {
+          if (btn !== "yes") {
+            return;
+          }
           PBS.PlusUtils.API2Request({
-            url: "/api2/extjs/d2d/mtf-job?" + params,
+            url:
+              "/api2/extjs/d2d/mtf-job?job=" +
+              encodeURIComponent(encodePathValue(id)),
             method: "DELETE",
             waitMsgTarget: view,
-            success: () => me.reload(),
-            failure: (resp) => {
+            success: function () {
+              me.reload();
+            },
+            failure: function (resp) {
               Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
             },
           });
@@ -141,18 +156,32 @@ Ext.define("PBS.MtfManagement.JobView", {
     },
 
     openTaskLog: function () {
-      let recs = this.getView().getSelection();
-      if (!recs.length) return;
-      let upid = recs[0].data["last-run-upid"];
-      if (!upid) return;
+      let view = this.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
+      let upid = selection[0].data["last-run-upid"];
+      if (!upid) {
+        return;
+      }
       Ext.create("PBS.plusWindow.TaskViewer", { upid }).show();
+    },
+
+    init: function (view) {
+      Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
     },
   },
 
   listeners: {
-    activate: "startStore",
+    beforedestroy: "stopStore",
     deactivate: "stopStore",
+    activate: "startStore",
     itemdblclick: "editJob",
+  },
+
+  viewConfig: {
+    trackOver: false,
   },
 
   store: {
@@ -169,69 +198,49 @@ Ext.define("PBS.MtfManagement.JobView", {
   tbar: [
     {
       xtype: "proxmoxButton",
-      text: gettext("Add Job"),
+      text: gettext("Add"),
       selModel: false,
       handler: "addJob",
     },
     {
       xtype: "proxmoxButton",
-      text: gettext("Edit Job"),
+      text: gettext("Edit"),
       handler: "editJob",
-      enableFn: function () {
-        return this.up("grid").getSelection().length === 1;
-      },
       disabled: true,
+      enableFn: (rec) => true,
     },
     {
       xtype: "proxmoxButton",
-      text: gettext("Remove Job(s)"),
+      text: gettext("Remove"),
       handler: "removeJobs",
-      enableFn: function () {
-        let recs = this.up("grid").getSelection();
-        return (
-          recs.length > 0 &&
-          recs.every((r) => !r.data["last-run-upid"] || !!r.data["last-run-state"])
-        );
-      },
       disabled: true,
+      enableFn: (rec) => true,
     },
     "-",
     {
       xtype: "proxmoxButton",
-      text: gettext("Run"),
-      handler: "runJobs",
-      enableFn: function () {
-        return this.up("grid").getSelection().length > 0;
-      },
+      text: gettext("Run now"),
+      handler: "runJob",
       disabled: true,
+      enableFn: (rec) => true,
     },
     {
       xtype: "proxmoxButton",
       text: gettext("Stop"),
-      handler: "stopJobs",
-      enableFn: function () {
-        let recs = this.up("grid").getSelection();
-        return (
-          recs.length > 0 &&
-          recs.some(
-            (r) =>
-              r.data["last-run-upid"] &&
-              !r.data["last-run-state"],
-          )
-        );
-      },
+      handler: "stopJob",
       disabled: true,
+      enableFn: function (rec) {
+        if (!rec) return false;
+        return rec.data["last-run-upid"] && !rec.data["last-run-state"];
+      },
     },
     "-",
     {
       xtype: "proxmoxButton",
       text: gettext("Show Log"),
       handler: "openTaskLog",
-      enableFn: function () {
-        let recs = this.up("grid").getSelection();
-        return recs.length === 1 && !!recs[0].data["last-run-upid"];
-      },
       disabled: true,
+      enableFn: (rec) => !!rec.data["last-run-upid"],
     },
   ],
 

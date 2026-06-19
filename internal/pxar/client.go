@@ -46,7 +46,7 @@ func NewLocalClient(pr *PxarReader, name string) (*Client, chan error) {
 
 // SendError forwards a restore error to the server. It is non-blocking so a
 // flood of non-fatal metadata errors (e.g. ACL/owner writes that the restore
-// account lacks privilege for) can NEVER stall the worker pool — every worker
+// account lacks privilege for) can NEVER stall the worker pool  -  every worker
 // stays busy restoring file CONTENT for all files regardless of error volume.
 //
 // Remote restores hand the error to a dedicated forwarder goroutine

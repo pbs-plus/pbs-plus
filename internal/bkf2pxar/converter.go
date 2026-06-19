@@ -61,6 +61,9 @@ type Config struct {
 	// OnSnapshot is invoked when a snapshot's session has started, with the
 	// resolved backup-id and namespace, so callers can report progress.
 	OnSnapshot func(backupID, namespace string)
+	// TaskLog, when set, receives verbose progress messages (one per line)
+	// intended for the task log viewer.
+	TaskLog func(string)
 }
 
 // Stats holds conversion statistics.
@@ -97,7 +100,7 @@ type backupMeta struct {
 // --- List mode ---
 
 // ListSnapshots scans the input sources and returns all backup sets (SSETs)
-// found, in stream order. It does not read file data — only structural blocks
+// found, in stream order. It does not read file data  -  only structural blocks
 // are visited, so it is fast on seekable sources.
 func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	_ = ctx
@@ -265,11 +268,13 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	}
 
 	if cfg.TapeDevice != "" {
+		c.logf("Starting tape migration: device=%s changer=%s", cfg.TapeDevice, cfg.ChangerDevice)
 		if err := c.runTape(); err != nil {
 			syncStats()
 			return &c.stats, err
 		}
 	} else {
+		c.logf("Starting file migration: sources=%v", cfg.Sources)
 		if err := c.runFiles(); err != nil {
 			syncStats()
 			return &c.stats, err
@@ -296,6 +301,16 @@ type converter struct {
 	currentNS  string
 
 	snapshotIdx int // current SSET index (-1 before first)
+}
+
+func (c *converter) logf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	if c.cfg.Verbose {
+		fmt.Fprintln(os.Stderr, msg)
+	}
+	if c.cfg.TaskLog != nil {
+		c.cfg.TaskLog(msg)
+	}
 }
 
 // ensureSession lazily creates the PBS/local session and pxar writer on the
@@ -337,6 +352,7 @@ func (c *converter) ensureSession() error {
 	if c.cfg.OnSnapshot != nil {
 		c.cfg.OnSnapshot(backupID, c.currentNS)
 	}
+	c.logf("Starting PBS session: backup=%s ns=%s time=%s", backupID, c.currentNS, backupTime.Format("2006-01-02 15:04"))
 
 	s, err := c.createSession(backupID, backupTime)
 	if err != nil {
@@ -426,6 +442,8 @@ func (c *converter) finishSnapshot() error {
 		c.session = nil
 		return fmt.Errorf("finish session: %w", err)
 	}
+	files, dirs, bytes := c.prog.snapshot()
+	c.logf("Snapshot complete: %d files, %d dirs, %d bytes", files, dirs, bytes)
 	c.writer = nil
 	c.session = nil
 	return nil
@@ -469,7 +487,7 @@ func (c *converter) runChanger() error {
 	for {
 		rc, err := f.loadFirst()
 		if err != nil {
-			// No more data tapes — migration complete.
+			// No more data tapes  -  migration complete.
 			return nil
 		}
 		r := mtf.NewReader(rc)
@@ -495,7 +513,7 @@ func (c *converter) runFiles() error {
 		return fmt.Errorf("no .bkf files found")
 	}
 
-	// When spanning, only open the first file — the continuation callback
+	// When spanning, only open the first file  -  the continuation callback
 	// chains the remaining files into one logical stream.
 	if c.cfg.Spanning && len(files) > 1 {
 		r, err := mtf.Open(files[0])
@@ -537,8 +555,11 @@ func (c *converter) processReader(r *mtf.Reader) error {
 
 		switch block.Kind {
 		case mtf.KindMedia:
-			if block.Tape != nil && c.meta.BackupTime.IsZero() {
-				c.meta.BackupTime = block.Tape.CreateTime
+			if block.Tape != nil {
+				if c.meta.BackupTime.IsZero() {
+					c.meta.BackupTime = block.Tape.CreateTime
+				}
+				c.logf("Tape: %s, created %s", block.Tape.Name, block.Tape.CreateTime.Format("2006-01-02 15:04"))
 			}
 
 		case mtf.KindSet:
@@ -554,10 +575,7 @@ func (c *converter) processReader(r *mtf.Reader) error {
 				c.meta.Owner = block.Set.Owner
 				c.meta.BackupTime = block.Set.CreateTime
 			}
-			if c.cfg.Verbose {
-				fmt.Fprintf(os.Stderr, "\n=== Snapshot %d: %q (%s) ===\n",
-					c.snapshotIdx, block.Set.Name, c.meta.BackupTime.Format("2006-01-02 15:04"))
-			}
+			c.logf("SSET #%d: %q (%s)", c.snapshotIdx, c.meta.SetName, c.meta.BackupTime.Format("2006-01-02 15:04"))
 
 		case mtf.KindSetEnd:
 			if err := c.finishSnapshot(); err != nil {
@@ -585,6 +603,7 @@ func (c *converter) processReader(r *mtf.Reader) error {
 			if err := c.ensureSession(); err != nil {
 				return err
 			}
+			c.logf("Volume: machine=%s device=%s", h.MachineName, h.Name)
 			if err := c.processEntry(r, h); err != nil {
 				return err
 			}
@@ -592,7 +611,7 @@ func (c *converter) processReader(r *mtf.Reader) error {
 	}
 
 	if r.TruncatedByEOTM() {
-		fmt.Fprintf(os.Stderr, "WARNING: data set spans further media — use -spanning and provide all tapes/files. Snapshot may be incomplete.\n")
+		c.logf("WARNING: data set spans further media - use spanning and provide all tapes/files")
 	}
 
 	return c.finishSnapshot()
@@ -605,7 +624,7 @@ func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
 	relPath = strings.TrimPrefix(relPath, "/")
 
-	// Root entry itself — skip (pxar root already created by Begin).
+	// Root entry itself  -  skip (pxar root already created by Begin).
 	if relPath == "" {
 		return nil
 	}
@@ -626,9 +645,7 @@ func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 	case mtf.EntryDirectory:
 		c.prog.dirs.Add(1)
 		meta := mtfToPxarMeta(h, format.ModeIFDIR)
-		if c.cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "  d %s\n", relPath)
-		}
+		c.logf("  d %s", relPath)
 		if err := c.writer.BeginDirectory(name, &meta); err != nil {
 			return fmt.Errorf("begin dir %q: %w", name, err)
 		}
@@ -637,6 +654,7 @@ func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 	case mtf.EntryFile:
 		c.prog.files.Add(1)
 		if h.IsSymlink {
+			c.logf("  l %s -> %s", relPath, h.LinkTarget)
 			if err := c.writeSymlink(h, name, relPath); err != nil {
 				return err
 			}
@@ -659,9 +677,6 @@ func (c *converter) writeSymlink(h *mtf.Header, name, relPath string) error {
 		LinkTarget: h.LinkTarget,
 	}
 	entry.SetFileName(name)
-	if c.cfg.Verbose {
-		fmt.Fprintf(os.Stderr, "  l %s -> %s\n", relPath, h.LinkTarget)
-	}
 	return c.writer.WriteEntry(entry, nil)
 }
 
@@ -673,17 +688,15 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 		FileSize: uint64(h.Size),
 	}
 	entry.SetFileName(name)
-	if c.cfg.Verbose {
-		if h.IsHardLink && h.LinkTarget != "" {
-			fmt.Fprintf(os.Stderr, "  f %s (hardlink → %s, %d bytes)\n", relPath, h.LinkTarget, h.Size)
-		} else {
-			fmt.Fprintf(os.Stderr, "  f %s (%d bytes)\n", relPath, h.Size)
-		}
+	if h.IsHardLink && h.LinkTarget != "" {
+		c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
+	} else {
+		c.logf("  f %s (%d bytes)", relPath, h.Size)
 	}
 
 	// Decouple tape reads from the encoder: a goroutine pumps the tape into
 	// an io.Pipe behind a bufio.Writer (32 MiB). The tape drive streams in
-	// large bursts regardless of encoder backpressure — preventing the
+	// large bursts regardless of encoder backpressure  -  preventing the
 	// stop/start cycles that limit throughput to ~90 MB/s.
 	pr, pw := io.Pipe()
 	go func() {

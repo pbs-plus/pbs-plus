@@ -87,7 +87,7 @@ func RunCommitSubcommand() {
 		<-sigCh
 		display.stop()
 		_, _ = fmt.Fprintln(conn, "DETACH")
-		fmt.Fprintf(os.Stderr, "\r  ↗ Commit detached — use 'pxar-mount attach --socket %s' to watch\n", *socketPath)
+		fmt.Fprintf(os.Stderr, "\r  ↗ Commit detached  -  use 'pxar-mount attach --socket %s' to watch\n", *socketPath)
 		os.Exit(0)
 	}()
 

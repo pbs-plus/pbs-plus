@@ -36,7 +36,7 @@ type VerifyStartReq struct {
 
 // HashFile computes the SHA-256 hash of a file.
 func HashFile(filePath string) ([32]byte, int64, error) {
-	// Fast existence check — avoids opening a file handle on a
+	// Fast existence check  -  avoids opening a file handle on a
 	// slow/network mount only to discover it's gone.
 	info, err := os.Stat(filePath)
 	if err != nil {

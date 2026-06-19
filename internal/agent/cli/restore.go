@@ -151,7 +151,7 @@ func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMod
 					// Top-level panic recovery: worker panics are already recovered
 					// inside restoreNormal, but this catches setup/teardown too. Log
 					// the full stack to the Windows Event Log and stderr (forwarded
-					// to the server) instead of the process dying silently — which
+					// to the server) instead of the process dying silently  -  which
 					// was producing "agent disconnected without done signal" plus
 					// leaked .pxar-restore-* temps.
 					defer func() {

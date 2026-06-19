@@ -89,7 +89,7 @@ func TestHandlerRejectsHostnameMismatch(t *testing.T) {
 		t.Errorf("expected 200 OK, got %d", rec2.Code)
 	}
 
-	// No auth header (passes through — only validate if set)
+	// No auth header (passes through  -  only validate if set)
 	req3 := httptest.NewRequest(http.MethodPost, "/test", nil)
 	rec3 := httptest.NewRecorder()
 	handler.ServeHTTP(rec3, req3)

@@ -93,7 +93,7 @@ func (m *mockClient) drainErrCh(ctx context.Context) {
 // ---------------------------------------------------------------------------
 
 // buildWindowsXattrs returns a realistic xattrs map containing owner SID,
-// group SID, file attributes, and a sample DACL — the data a Windows agent
+// group SID, file attributes, and a sample DACL  -  the data a Windows agent
 // backup would produce.
 func buildWindowsXattrs(t *testing.T) map[string][]byte {
 	t.Helper()
@@ -206,13 +206,13 @@ func TestIntegrationAtomicSwapRaceCondition(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Open dest to hold a handle — atomicSwap should remove and retry.
+	// Open dest to hold a handle  -  atomicSwap should remove and retry.
 	f, err := os.OpenFile(dest, os.O_RDONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Swap in a separate goroutine — it will block on the remove because
+	// Swap in a separate goroutine  -  it will block on the remove because
 	// we hold the file open, but on Windows this should fail and fall
 	// through to the copy-fallback path.
 	var swapErr error
@@ -313,7 +313,7 @@ func TestIntegrationHardlinkDeferredResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !os.SameFile(targetStat, linkStat) {
-		t.Fatal("hard link not created — different inodes")
+		t.Fatal("hard link not created  -  different inodes")
 	}
 
 	// Verify content is accessible from both paths.

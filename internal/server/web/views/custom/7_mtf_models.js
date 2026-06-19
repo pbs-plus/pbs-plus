@@ -112,21 +112,3 @@ Ext.define("pbs-mtf-mapping", {
   idProperty: "id",
 });
 
-Ext.define("pbs-mtf-changer", {
-  extend: "Ext.data.Model",
-  fields: ["name", "device", "comment", "created_at"],
-  idProperty: "name",
-});
-
-Ext.define("pbs-mtf-drive", {
-  extend: "Ext.data.Model",
-  fields: [
-    "name",
-    "device",
-    "changer",
-    { name: "drive_index", type: "int" },
-    "comment",
-    "created_at",
-  ],
-  idProperty: "name",
-});
