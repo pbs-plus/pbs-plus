@@ -15,15 +15,15 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	backend "github.com/pbs-plus/pbs-plus/internal/server"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
+	"github.com/pbs-plus/pbs-plus/internal/server/logfs"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/web"
-
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var Version = "v0.0.0"
@@ -240,7 +240,13 @@ func runCleanTaskLogs() {
 	}
 
 	fmt.Println("Proceeding with log cleanup...")
-	removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
+	var tasksDir string
+	if logfs.LogFS != nil {
+		tasksDir = logfs.LogFS.BackingTasksPath()
+	} else {
+		tasksDir = conf.TaskLogsBasePath
+	}
+	removed, err := backup.RemoveJunkLogsRecursively(tasksDir)
 	if err != nil {
 		log.Fatal(err)
 	}
