@@ -355,7 +355,6 @@ func (s *VerificationService) UpdateVerificationResult(r database.VerificationRe
 	return s.db.UpdateVerificationResult(r)
 }
 
-// GetAllVerificationResults returns results from all verification jobs.
 func (s *VerificationService) GetAllVerificationResults() ([]database.VerificationResult, error) {
 	jobs, err := s.db.GetAllVerificationJobs()
 	if err != nil {

@@ -22,7 +22,6 @@ import (
 	"net/http/pprof"
 )
 
-// Server holds all HTTP servers and their configuration.
 type Server struct {
 	APIServer   *http.Server
 	AgentServer *http.Server
@@ -34,7 +33,6 @@ type Server struct {
 	wg         sync.WaitGroup
 }
 
-// NewServer creates and configures all HTTP servers with middleware chains applied.
 func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -236,7 +234,6 @@ func (s *Server) StartARPC() error {
 	return arpc.ListenAndServe(s.Store.Ctx, conf.ARPCServerPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
 }
 
-// StartARPCQuic starts the QUIC ARPC server for agent control-plane connections.
 func (s *Server) StartARPCQuic() error {
 	arpcTlsConfig, err := s.Store.CertManager.ARPCServerTLSConfig()
 	if err != nil {
@@ -246,7 +243,6 @@ func (s *Server) StartARPCQuic() error {
 	return arpc.ListenAndServeQuic(s.Store.Ctx, conf.ARPCQuicPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
 }
 
-// StartAll starts all HTTP and ARPC servers in background goroutines.
 func (s *Server) StartAll() {
 	s.wg.Go(func() {
 		WatchAndServe(s.APIServer, conf.CertFile, conf.KeyFile, []string{conf.CertFile, conf.KeyFile}, s.shutdownCh)
@@ -274,7 +270,6 @@ func (s *Server) StartAll() {
 	})
 }
 
-// Shutdown gracefully stops all servers, allowing in-flight requests to complete.
 func (s *Server) Shutdown(ctx context.Context) error {
 	close(s.shutdownCh)
 	syslog.L.Info().WithMessage("shutting down HTTP servers").Write()

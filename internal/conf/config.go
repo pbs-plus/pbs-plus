@@ -2,7 +2,6 @@ package conf
 
 import "os"
 
-// EnvConfig holds values loaded from environment variables at startup.
 type EnvConfig struct {
 	Debug              bool
 	Hostname           string
@@ -18,7 +17,6 @@ type EnvConfig struct {
 	InitBootstrapToken string
 }
 
-// Env is the singleton environment config.
 var Env = loadEnvConfig()
 
 func loadEnvConfig() EnvConfig {

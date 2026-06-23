@@ -16,7 +16,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 )
 
-// GetBackupTask waits for and retrieves a backup task by scanning log files.
 func GetBackupTask(
 	ctx context.Context,
 	readyChan chan struct{},
@@ -61,7 +60,6 @@ func GetBackupTask(
 	}
 }
 
-// scanTaskFile searches for a task in a log file.
 func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Task, bool) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -97,7 +95,6 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 	return proxmox.Task{}, false
 }
 
-// GenerateBackupTaskErrorFile creates an error task file with detailed error information.
 func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
@@ -149,7 +146,6 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 	return task, nil
 }
 
-// GenerateBackupTaskOKFile creates an OK task file.
 func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))

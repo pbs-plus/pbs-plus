@@ -80,7 +80,6 @@ func shouldSkip(setting database.AlertSetting) bool {
 	return false
 }
 
-// isExcluded checks if a value is in the exclusion set.
 func isExcluded(exclusions map[string]bool, value string) bool {
 	return exclusions != nil && exclusions[value]
 }

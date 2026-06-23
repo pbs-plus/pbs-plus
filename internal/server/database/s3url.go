@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-// S3Url represents a parsed S3-compatible URL
 type S3Url struct {
 	Scheme      string // https, http, s3
 	UseSSL      bool   // true if https, false if http
@@ -20,7 +19,6 @@ type S3Url struct {
 	IsPathStyle bool
 }
 
-// ParseS3Url parses an S3-compatible URL into an S3Url struct
 func ParseS3Url(raw string) (*S3Url, error) {
 	u, err := url.Parse(raw)
 	if err != nil {

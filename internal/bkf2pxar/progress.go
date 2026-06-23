@@ -17,12 +17,10 @@ type progress struct {
 	bytes     atomic.Int64
 }
 
-// newProgress starts a fresh counter anchored at now.
 func newProgress() *progress {
 	return &progress{startTime: time.Now()}
 }
 
-// snapshot loads the current counters into a plain-int triple.
 func (p *progress) snapshot() (files, dirs int, bytes int64) {
 	return int(p.files.Load()), int(p.dirs.Load()), p.bytes.Load()
 }

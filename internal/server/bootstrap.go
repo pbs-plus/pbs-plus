@@ -26,7 +26,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// GenerateSecretKey generates a cryptographically secure secret key
 func GenerateSecretKey(length int) (string, error) {
 	keyBytes := make([]byte, length)
 	if _, err := rand.Read(keyBytes); err != nil {

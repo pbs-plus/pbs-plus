@@ -8,12 +8,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// ScanTask wraps a scan job with full active/archive task pipeline.
 type ScanTask struct {
 	tasks.BaseTask
 }
 
-// NewScanTask creates a scan task, opens its task log, and registers it as active.
 func NewScanTask(opts Options) (*ScanTask, error) {
 	task := tasks.NewTask("pbsplus", "mtfscan", scanWID(opts))
 
@@ -32,7 +30,6 @@ func NewScanTask(opts Options) (*ScanTask, error) {
 	return st, nil
 }
 
-// CloseOK closes the task with "OK" status.
 func (t *ScanTask) CloseOK(res *Result) {
 	msg := "OK"
 	if res != nil {
@@ -43,7 +40,6 @@ func (t *ScanTask) CloseOK(res *Result) {
 	})
 }
 
-// CloseErr closes the task with error status.
 func (t *ScanTask) CloseErr(taskErr error) {
 	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
 		_ = tasks.RemoveActive(t.UPID)

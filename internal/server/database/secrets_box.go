@@ -71,7 +71,6 @@ func loadOrCreateKey() error {
 	return nil
 }
 
-// Encrypt takes a plaintext string and returns a base64 ciphertext
 func Encrypt(plaintext string) (string, error) {
 	ensureInitialized()
 	if initErr != nil {

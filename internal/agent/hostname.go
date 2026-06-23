@@ -17,7 +17,6 @@ func hashHostname(host string) uint32 {
 	return h.Sum32()
 }
 
-// randomHostname generates a pseudo-random hostname for fallback purposes.
 func randomHostname() string {
 	return time.Now().Format("20060102150405") + strconv.Itoa(rand.Intn(1000))
 }

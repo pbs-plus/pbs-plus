@@ -330,7 +330,6 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 	return m
 }
 
-// PrometheusMetricsHandler returns an HTTP handler that exposes Prometheus metrics
 func PrometheusMetricsHandler(storeInstance *store.Store) http.HandlerFunc {
 	handler := promhttp.HandlerFor(globalRegistry, promhttp.HandlerOpts{
 		Registry: globalRegistry,

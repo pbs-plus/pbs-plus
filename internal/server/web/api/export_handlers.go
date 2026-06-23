@@ -11,7 +11,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
-// ExtJsBackupCSVExportHandler generates and returns a CSV file of all backup jobs.
 func ExtJsBackupCSVExportHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -94,7 +93,6 @@ func csvEscapeField(s string) string {
 	return csvEscape(s)
 }
 
-// D2DTargetTreeHandler returns targets pre-grouped into a tree structure.
 func D2DTargetTreeHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

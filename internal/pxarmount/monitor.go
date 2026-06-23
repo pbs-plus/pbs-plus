@@ -24,10 +24,8 @@ type commitHub struct {
 	verbose   bool         // enable verbose/debug logging
 }
 
-// globalCommitHub is the singleton hub, created by StartCommitListener.
 var globalCommitHub *commitHub
 
-// newCommitHub creates a hub and starts listening on the monitor socket.
 // The monitor socket path is <mainSocket>.monitor.
 // The log file path is <mainSocket>.log.
 func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
@@ -57,7 +55,6 @@ func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	return h, nil
 }
 
-// MonitorSocketPath returns the path to the monitor socket (or "" if no hub).
 func MonitorSocketPath() string {
 	if globalCommitHub == nil {
 		return ""
@@ -65,7 +62,6 @@ func MonitorSocketPath() string {
 	return globalCommitHub.sockPath
 }
 
-// LogFilePath returns the path to the commit log file (or "" if no hub).
 func LogFilePath() string {
 	if globalCommitHub == nil {
 		return ""
@@ -73,7 +69,6 @@ func LogFilePath() string {
 	return globalCommitHub.logPath
 }
 
-// IsCommitRunning returns true if a commit job is currently active.
 func IsCommitRunning() bool {
 	if globalCommitHub == nil {
 		return false
@@ -81,7 +76,6 @@ func IsCommitRunning() bool {
 	return globalCommitHub.jobID.Load() > 0
 }
 
-// acceptLoop accepts watcher connections on the monitor socket.
 func (h *commitHub) acceptLoop() {
 	for {
 		conn, err := h.listener.Accept()
@@ -124,7 +118,6 @@ func (h *commitHub) acceptLoop() {
 	}
 }
 
-// broadcast sends a line to all connected watchers and appends it to the log file.
 func (h *commitHub) broadcast(line string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -169,7 +162,6 @@ func (h *commitHub) broadcast(line string) {
 	}
 }
 
-// startJob marks a commit as running, truncates the log file, and returns a job ID.
 func (h *commitHub) startJob() int64 {
 	h.mu.Lock()
 	h.lastLines = nil
@@ -202,7 +194,6 @@ func (h *commitHub) startJob() int64 {
 	return id
 }
 
-// endJob clears the running commit state and closes the log file.
 func (h *commitHub) endJob() {
 	h.mu.Lock()
 	if h.logFile != nil {
@@ -222,7 +213,6 @@ func (h *commitHub) endJob() {
 	h.jobID.Store(0)
 }
 
-// close shuts down the hub and the monitor socket listener.
 func (h *commitHub) close() {
 	if h.listener != nil {
 		_ = h.listener.Close()
@@ -236,25 +226,21 @@ func (h *commitHub) close() {
 	_ = os.Remove(h.sockPath)
 }
 
-// formatElapsed formats a duration for the PROGRESS protocol.
 func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-// progressLine builds a PROGRESS protocol line with embedded elapsed time.
 // Format: PROGRESS [Phase] {elapsed} message
 func progressLine(phase, msg string, started time.Time) string {
 	return fmt.Sprintf("PROGRESS [%s] {%s} %s", phase, formatElapsed(time.Since(started)), msg)
 }
 
-// progressLineWithStats builds a PROGRESS protocol line with elapsed time and file stats.
 // Format: PROGRESS [Phase] {elapsed} message (N files, X.X MiB)
 func progressLineWithStats(phase, msg string, files int64, bytes int64, started time.Time) string {
 	extra := fmt.Sprintf(" (%d files, %s)", files, formatBytes(bytes))
 	return fmt.Sprintf("PROGRESS [%s] {%s} %s%s", phase, formatElapsed(time.Since(started)), msg, extra)
 }
 
-// hubProgressReporter sends progress only to the commit hub (no direct connection).
 type hubProgressReporter struct {
 	state    ProgressState
 	lastSend time.Time
@@ -326,7 +312,6 @@ func (r *hubProgressReporter) Error(msg string) {
 	}
 }
 
-// fanoutReporter sends progress to both a primary connection and the hub.
 type fanoutReporter struct {
 	primary  *ProgressReporter
 	hub      *commitHub

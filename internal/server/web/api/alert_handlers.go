@@ -10,7 +10,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
-// AlertSettingsHandler handles GET (list all) and POST (update) for alert settings.
 func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -100,7 +99,6 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// AlertSettingSingleHandler handles GET/PUT for a single alert setting.
 func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
@@ -190,7 +188,6 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// AlertExclusionsHandler handles GET (list) and POST (create) for alert exclusions.
 func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -247,7 +244,6 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// AlertExclusionSingleHandler handles DELETE for a single exclusion.
 func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("id")

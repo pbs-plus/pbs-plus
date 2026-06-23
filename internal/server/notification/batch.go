@@ -46,7 +46,6 @@ type batchState struct {
 	batch   database.NotificationBatch
 }
 
-// JobResult holds the outcome of a single job for batch notification.
 type JobResult struct {
 	JobType   string `json:"job-type"`
 	JobID     string `json:"job-id"`
@@ -56,7 +55,6 @@ type JobResult struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// NewBatchTracker creates a new batch tracker backed by the given database.
 func NewBatchTracker(db *database.Database) *BatchTracker {
 	return &BatchTracker{
 		db:      db,
@@ -347,7 +345,6 @@ func (bt *BatchTracker) StartCleanup(ctx context.Context, interval time.Duration
 	}
 }
 
-// PendingBatches returns info about currently pending batches for API/UI status.
 func (bt *BatchTracker) PendingBatches() map[string]int {
 	bt.mu.Lock()
 	defer bt.mu.Unlock()

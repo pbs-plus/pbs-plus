@@ -15,7 +15,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// contextKey is an unexported type for context keys defined in this package.
 type contextKey int
 
 const (
@@ -42,7 +41,6 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder wraps http.ResponseWriter to capture the status code.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -75,7 +73,6 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// Recovery catches panics, logs the stack trace, and returns a 500 response.
 func Recovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -96,7 +93,6 @@ func Recovery(next http.Handler) http.Handler {
 	})
 }
 
-// RequireAgentAuth returns middleware that enforces agent certificate authentication.
 func RequireAgentAuth(st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

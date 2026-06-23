@@ -23,7 +23,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 )
 
-// Config holds all parameters for a BKF → pxar conversion run.
 type Config struct {
 	PBSURL      string
 	Datastore   string
@@ -66,7 +65,6 @@ type Config struct {
 	TaskLog func(string)
 }
 
-// Stats holds conversion statistics.
 type Stats struct {
 	Host      string
 	BackupID  string
@@ -77,7 +75,6 @@ type Stats struct {
 	StartTime time.Time
 }
 
-// Snapshot describes one backup set (SSET) found in the input.
 type Snapshot struct {
 	Index       int
 	SourceFile  string
@@ -89,7 +86,6 @@ type Snapshot struct {
 	Truncated   bool
 }
 
-// backupMeta is identity extracted from the BKF structural blocks.
 type backupMeta struct {
 	HostName   string
 	BackupTime time.Time
@@ -274,7 +270,6 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	return &c.stats, nil
 }
 
-// converter holds all mutable state for a conversion run.
 type converter struct {
 	cfg      Config
 	ctx      context.Context
@@ -438,7 +433,6 @@ func (c *converter) finishSnapshot() error {
 	return nil
 }
 
-// snapshotSelected reports whether the current snapshot should be processed.
 func (c *converter) snapshotSelected() bool {
 	return c.cfg.SnapshotSel < 0 || c.snapshotIdx == c.cfg.SnapshotSel
 }
@@ -597,7 +591,6 @@ func (c *converter) processReader(r *mtf.Reader) error {
 	return c.finishSnapshot()
 }
 
-// processEntry converts one MTF entry to pxar, managing directory depth.
 func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
 	relPath = strings.TrimPrefix(relPath, "/")

@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// ProgressPhase identifies a commit phase for progress reporting.
 type ProgressPhase int
 
 const (
@@ -30,7 +29,6 @@ var phaseLabels = map[ProgressPhase]string{
 	PhaseDone:     "Done",
 }
 
-// ProgressState carries the current progress snapshot.
 type ProgressState struct {
 	Phase      ProgressPhase
 	Files      int64
@@ -40,7 +38,6 @@ type ProgressState struct {
 	Msg        string
 }
 
-// ProgressReporter sends framed progress updates to a writer.
 type ProgressReporter struct {
 	mu       sync.Mutex
 	w        io.Writer
@@ -49,7 +46,6 @@ type ProgressReporter struct {
 	started  time.Time
 }
 
-// NewProgressReporter creates a reporter that writes to w.
 func NewProgressReporter(w io.Writer) *ProgressReporter {
 	return &ProgressReporter{
 		w:       w,
@@ -58,7 +54,6 @@ func NewProgressReporter(w io.Writer) *ProgressReporter {
 	}
 }
 
-// SetPhase updates the current phase and sends an update.
 func (r *ProgressReporter) SetPhase(phase ProgressPhase) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -66,7 +61,6 @@ func (r *ProgressReporter) SetPhase(phase ProgressPhase) {
 	r.send()
 }
 
-// SetMsg sets a custom message and sends an update.
 func (r *ProgressReporter) SetMsg(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -74,7 +68,6 @@ func (r *ProgressReporter) SetMsg(msg string) {
 	r.send()
 }
 
-// AddFile increments the file counter and optionally sends an update.
 func (r *ProgressReporter) AddFile(bytes int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -85,7 +78,6 @@ func (r *ProgressReporter) AddFile(bytes int64) {
 	}
 }
 
-// SetTotals sets the expected totals.
 func (r *ProgressReporter) SetTotals(files, bytes int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -94,14 +86,12 @@ func (r *ProgressReporter) SetTotals(files, bytes int64) {
 	r.send()
 }
 
-// State returns a copy of the current progress state.
 func (r *ProgressReporter) State() ProgressState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.state
 }
 
-// send writes a framed progress update to the underlying writer.
 func (r *ProgressReporter) send() {
 	label, ok := phaseLabels[r.state.Phase]
 	if !ok {
@@ -123,7 +113,6 @@ func (r *ProgressReporter) send() {
 	r.lastSend = time.Now()
 }
 
-// Done sends the final OK message.
 func (r *ProgressReporter) Done(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -131,14 +120,12 @@ func (r *ProgressReporter) Done(msg string) {
 	_, _ = fmt.Fprintf(r.w, "OK %s\n", msg)
 }
 
-// Error sends an error message.
 func (r *ProgressReporter) Error(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	_, _ = fmt.Fprintf(r.w, "ERR %s\n", msg)
 }
 
-// ProgressDisplay renders a live progress bar with spinner animation on a terminal.
 type ProgressDisplay struct {
 	mu       sync.Mutex
 	w        io.Writer
@@ -158,7 +145,6 @@ type ProgressDisplay struct {
 	done   chan struct{}
 }
 
-// NewProgressDisplay creates a display that writes to w with spinner animation.
 func NewProgressDisplay(w io.Writer) *ProgressDisplay {
 	d := &ProgressDisplay{
 		w: w,
@@ -173,7 +159,6 @@ func NewProgressDisplay(w io.Writer) *ProgressDisplay {
 	return d
 }
 
-// stop halts the spinner goroutine.
 func (d *ProgressDisplay) stop() {
 	if d.ticker != nil {
 		d.ticker.Stop()
@@ -186,7 +171,6 @@ func (d *ProgressDisplay) stop() {
 	}
 }
 
-// spin is the background goroutine that animates the spinner.
 func (d *ProgressDisplay) spin() {
 	for range d.ticker.C {
 		d.mu.Lock()
@@ -199,7 +183,6 @@ func (d *ProgressDisplay) spin() {
 	}
 }
 
-// render builds the current display line (must hold mu).
 func (d *ProgressDisplay) render() string {
 	if d.phase == "" && d.msg == "" {
 		return ""
@@ -244,7 +227,6 @@ func (d *ProgressDisplay) render() string {
 	return fmt.Sprintf("\r  %s %s", spinner, body)
 }
 
-// writeLine writes a line to the terminal, clearing previous content.
 func (d *ProgressDisplay) writeLine(line string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -256,7 +238,6 @@ func (d *ProgressDisplay) writeLine(line string) {
 	d.lastLine = line
 }
 
-// Update parses a PROGRESS line and updates the display.
 func (d *ProgressDisplay) Update(line string) {
 	msg := strings.TrimPrefix(line, "PROGRESS ")
 	d.mu.Lock()
@@ -316,7 +297,6 @@ func (d *ProgressDisplay) Update(line string) {
 	d.mu.Unlock()
 }
 
-// parseStats extracts files/bytes from "(N files, X.X MiB)" or "(N files)".
 func (d *ProgressDisplay) parseStats(stats string) {
 	stats = strings.Trim(stats, "()")
 	fields := strings.SplitSeq(stats, ",")
@@ -347,7 +327,6 @@ func (d *ProgressDisplay) parseStats(stats string) {
 	}
 }
 
-// Done prints the final status line.
 func (d *ProgressDisplay) Done(line string) {
 	d.stop()
 	d.mu.Lock()
@@ -360,7 +339,6 @@ func (d *ProgressDisplay) Done(line string) {
 	d.lastLine = ""
 }
 
-// Error prints the error.
 func (d *ProgressDisplay) Error(line string) {
 	d.stop()
 	d.mu.Lock()
@@ -373,7 +351,6 @@ func (d *ProgressDisplay) Error(line string) {
 	d.lastLine = ""
 }
 
-// formatBytes formats a byte count as a human-readable string.
 func formatBytes(b int64) string {
 	const (
 		kiB = 1024
@@ -392,7 +369,6 @@ func formatBytes(b int64) string {
 	}
 }
 
-// formatDuration formats elapsed time for display.
 func formatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	if d < time.Minute {

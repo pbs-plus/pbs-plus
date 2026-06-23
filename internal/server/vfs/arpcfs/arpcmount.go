@@ -5,7 +5,6 @@ package arpcfs
 import (
 	"os"
 	"os/exec"
-
 )
 
 func MountARPC(f *ARPCFS, mountpoint string) error {

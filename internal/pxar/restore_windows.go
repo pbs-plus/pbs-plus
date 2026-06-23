@@ -250,10 +250,8 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 	return nil
 }
 
-// applyTempMode is a no-op on Windows.
 func applyTempMode(path string, rawMode uint64) error { return nil }
 
-// openReparsePoint opens a path without following it (for symlinks/junctions).
 func openReparsePoint(p string, access uint32) (windows.Handle, error) {
 	ptr, err := windows.UTF16PtrFromString(p)
 	if err != nil {
@@ -410,7 +408,6 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 	return applyMeta(ctx, st, df, dirEntry)
 }
 
-// sidPtr returns a uintptr for a *SID that may be nil.
 func sidPtr(s *windows.SID) uintptr {
 	if s == nil {
 		return 0
@@ -418,7 +415,6 @@ func sidPtr(s *windows.SID) uintptr {
 	return uintptr(unsafe.Pointer(s))
 }
 
-// aclPtr returns a uintptr for a *ACL that may be nil.
 func aclPtr(a *windows.ACL) uintptr {
 	if a == nil {
 		return 0

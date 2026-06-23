@@ -2,5 +2,4 @@
 
 package pxar
 
-// prepareRestoreProcess is a no-op on Unix.
 func prepareRestoreProcess() {}

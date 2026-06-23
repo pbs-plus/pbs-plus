@@ -24,7 +24,6 @@ func newHardlinkIndex() *hardlinkIndex {
 	return &hardlinkIndex{resolved: make(map[string]string)}
 }
 
-// register records a restored entry so later hardlinks can resolve it.
 func (h *hardlinkIndex) register(srcPath, dest string) {
 	if srcPath == "" {
 		return
@@ -85,7 +84,6 @@ func linkTargetCandidates(selfSrcPath, linkTarget string) []string {
 	return out
 }
 
-// finalIndex returns the last index of s, or -1 for empty slices.
 func finalIndex(s []string) int {
 	if len(s) == 0 {
 		return -1

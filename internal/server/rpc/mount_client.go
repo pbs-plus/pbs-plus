@@ -134,10 +134,8 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup databa
 	return agentMount, nil
 }
 
-// IsEmpty reports whether the mounted directory has no entries.
 func (a *AgentMount) IsEmpty() bool { return a.isEmpty }
 
-// IsConnected asks the mount RPC service whether the backup stream is live.
 func (a *AgentMount) IsConnected() bool {
 	args := &StatusArgs{
 		BackupID:       a.BackupID,
@@ -157,10 +155,8 @@ func (a *AgentMount) IsConnected() bool {
 	return reply.Connected
 }
 
-// Unmount force-unmounts the local mount path and removes it.
 func (a *AgentMount) Unmount() { unmountPath(a.Path) }
 
-// CloseMount asks the mount RPC service to clean up the agent backup stream.
 func (a *AgentMount) CloseMount() {
 	args := &CleanupArgs{
 		BackupID:       a.BackupID,
@@ -258,13 +254,10 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.
 	return s3Mount, nil
 }
 
-// Unmount force-unmounts the local mount path and removes it.
 func (a *S3Mount) Unmount() { unmountPath(a.Path) }
 
-// IsEmpty reports whether the mounted directory has no entries.
 func (a *S3Mount) IsEmpty() bool { return a.isEmpty }
 
-// CloseMount disconnects the S3 mount session.
 func (a *S3Mount) CloseMount() {
 	sessions.DisconnectSession(a.Endpoint + "|" + a.BackupID)
 }

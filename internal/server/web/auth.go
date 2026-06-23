@@ -52,7 +52,6 @@ var (
 	pbsAuthErr    error
 )
 
-// GetPBSAuth returns a cached PBSAuth instance, initializing it once at startup.
 func GetPBSAuth() (*PBSAuth, error) {
 	pbsAuthOnce.Do(func() {
 		cachedPBSAuth, pbsAuthErr = NewPBSAuth()

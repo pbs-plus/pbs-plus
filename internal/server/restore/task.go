@@ -10,13 +10,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 )
 
-// RestoreTask manages restore job logging and lifecycle.
 type RestoreTask struct {
 	tasks.BaseTask
 	restore database.Restore
 }
 
-// GetRestoreTask creates a new restore task with log file setup.
 func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
@@ -35,19 +33,16 @@ func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 	return rTask, nil
 }
 
-// WriteString delegates to BaseTask.WriteString.
 func (t *RestoreTask) WriteString(data string) {
 	t.BaseTask.WriteString(data)
 }
 
-// CloseOK closes the task with "OK" status.
 func (t *RestoreTask) CloseOK() {
 	t.CloseWithStatus("OK", nil, func() {
 		_ = tasks.RemoveActive(t.UPID)
 	})
 }
 
-// CloseErr closes the task with "ERROR: <msg>" status.
 func (t *RestoreTask) CloseErr(taskErr error) {
 	errMsg := taskErr.Error()
 	t.CloseWithStatus(errMsg, nil, func() {
@@ -55,14 +50,12 @@ func (t *RestoreTask) CloseErr(taskErr error) {
 	})
 }
 
-// CloseWarn closes the task with "WARNINGS: <n>" status.
 func (t *RestoreTask) CloseWarn(warning int) {
 	t.CloseWithStatus("OK", nil, func() {
 		_ = tasks.RemoveActive(t.UPID)
 	})
 }
 
-// GenerateRestoreTaskOKFile creates a standalone OK task file for restore operations.
 func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))

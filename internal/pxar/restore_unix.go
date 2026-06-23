@@ -123,7 +123,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	return nil
 }
 
-// applyUnixACLsFd writes the POSIX access/default ACLs.
 func applyUnixACLsFd(ctx context.Context, st *restoreState, fd int, path string, entries []types.PosixACL) {
 	knownTags := map[string]struct{}{
 		"user_obj": {}, "user": {}, "group_obj": {},

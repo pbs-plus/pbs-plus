@@ -130,7 +130,6 @@ func (database *Database) DeleteAlertSetting(name string) error {
 	return database.queries.DeleteAlertSetting(context.Background(), name)
 }
 
-// EnsureAlertSetting creates a setting with defaults if it doesn't exist.
 func (database *Database) EnsureAlertSetting(name string, defaultThreshold int, defaultSeverity string) (AlertSetting, error) {
 	setting, err := database.GetAlertSetting(name)
 	if err == nil {
@@ -153,7 +152,6 @@ func (database *Database) EnsureAlertSetting(name string, defaultThreshold int, 
 	return setting, nil
 }
 
-// IsCoolingDown returns true if the alert was sent within the configured cooldown duration.
 func (s AlertSetting) IsCoolingDown() bool {
 	if s.LastSent == 0 {
 		return false
@@ -165,7 +163,6 @@ func (s AlertSetting) IsCoolingDown() bool {
 	return time.Since(time.Unix(s.LastSent, 0)) < cooldown
 }
 
-// IsQuietDay returns true if today is in the quiet-days list.
 func (s AlertSetting) IsQuietDay() bool {
 	if len(s.QuietDays) == 0 {
 		return false

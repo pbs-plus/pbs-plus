@@ -15,7 +15,6 @@ var (
 	ErrOneInstance   = errors.New("a job is still running; only one instance allowed")
 )
 
-// Job represents a unit of work with lifecycle callbacks.
 type Job struct {
 	ID        string
 	PreExec   func(ctx context.Context) error

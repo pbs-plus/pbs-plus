@@ -86,7 +86,6 @@ const (
 	SenseVolumeOverflow = 0x0d
 )
 
-// device wraps an open SG device file descriptor.
 type device struct {
 	f *os.File
 }
@@ -150,7 +149,6 @@ func (d *device) scsi(cdb []byte, data []byte, fromDevice bool, timeoutMs uint32
 func be16(b []byte) uint16 { return binary.BigEndian.Uint16(b) }
 func be24(b []byte) uint32 { return uint32(b[0])<<16 | uint32(b[1])<<8 | uint32(b[2]) }
 
-// scsiASCII converts a space/zero-padded SCSI ASCII field to a trimmed string.
 func scsiASCII(b []byte) string {
 	for i, c := range b {
 		if c == 0 {

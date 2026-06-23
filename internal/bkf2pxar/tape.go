@@ -21,7 +21,6 @@ import (
 // Any tape block written by PBS starts with these 8 bytes.
 var pbsBlockMagic = []byte{220, 189, 175, 202, 235, 160, 165, 40}
 
-// tapeReader is an mtf.DriveTape alias for feeder/converter signatures.
 type tapeReader = mtf.DriveTape
 
 // IsPBSTape opens dev read-only, reads the first block, and returns true if
@@ -72,7 +71,6 @@ func openTapeReader(dev string) (*tapeReader, error) {
 	return mtf.NewDriveTape(d), nil
 }
 
-// OpenTapeReader is the exported form of openTapeReader.
 func OpenTapeReader(dev string) (*tapeReader, error) {
 	return openTapeReader(dev)
 }

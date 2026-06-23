@@ -23,7 +23,6 @@ type BaseTask struct {
 	file   *os.File
 }
 
-// NewBaseTask creates a BaseTask with the given task and file.
 func NewBaseTask(task proxmox.Task, file *os.File) BaseTask {
 	return BaseTask{Task: task, file: file}
 }
@@ -118,10 +117,8 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 	return file, path, nil
 }
 
-// Now returns the current time.
 func Now() time.Time { return time.Now() }
 
-// WriteString writes a timestamped log line with mutex protection and file sync.
 func (t *BaseTask) WriteString(data string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -21,7 +21,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
-// MemcachedConfig controls how the embedded memcached is launched.
 type MemcachedConfig struct {
 	// Path to the Unix domain socket to bind (e.g., /tmp/myapp/memcached.sock).
 	SocketPath string

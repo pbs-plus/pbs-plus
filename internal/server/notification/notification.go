@@ -36,7 +36,6 @@ const (
 	OverrideTemplateDir = "/etc/proxmox-backup/notification-templates/default"
 )
 
-// NotificationMode determines how job notifications are delivered.
 type NotificationMode string
 
 const (
@@ -44,7 +43,6 @@ const (
 	ModeLegacySendmail     NotificationMode = "legacy-sendmail"
 )
 
-// JobType identifies the kind of D2D job.
 type JobType string
 
 const (

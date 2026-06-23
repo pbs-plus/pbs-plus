@@ -15,7 +15,6 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// quicNextProtos is the ALPN protocol list for QUIC connections.
 var quicNextProtos = []string{"pbsarpc-quic"}
 
 func quicConfig() *quic.Config {
@@ -49,7 +48,6 @@ type QuicPipe struct {
 	cancelFunc context.CancelFunc
 }
 
-// NewQuicServerPipe creates a QuicPipe from an accepted QUIC connection.
 func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 	ctx, cancel := context.WithCancel(ctx)
 	enc, _ := cbor.EncOptions{}.EncMode()
@@ -66,7 +64,6 @@ func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 	}
 }
 
-// DialQuic connects to a QUIC server and creates a QuicPipe.
 func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, headers http.Header) (*QuicPipe, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -330,7 +327,6 @@ func (q *QuicPipe) GetState() ConnectionState {
 	return StateConnected
 }
 
-// ListenQuic starts a QUIC listener on the given address.
 func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 	if tlsConfig == nil {
 		return nil, fmt.Errorf("missing tls config")
@@ -360,7 +356,6 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 	return listener, nil
 }
 
-// ServeQuic accepts QUIC connections and manages agent sessions.
 func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic.Listener, router Router) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -420,7 +415,6 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 	}
 }
 
-// ListenAndServeQuic starts a QUIC listener and serves connections.
 func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
 	listener, err := ListenQuic(addr, tlsConfig)
 	if err != nil {
@@ -431,7 +425,6 @@ func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsM
 	return ServeQuic(ctx, agentsManager, listener, router)
 }
 
-// readHeadersFromFirstStream reads headers from the first stream on a QUIC connection.
 func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Header, error) {
 	headerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

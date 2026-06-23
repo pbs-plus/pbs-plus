@@ -58,7 +58,6 @@ func MountFuse(mountpoint string, fsName string, afs *ARPCFS) (*fuse.Server, err
 	return server, nil
 }
 
-// Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
 	fs     *ARPCFS
@@ -135,7 +134,6 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 	return 0
 }
 
-// Getattr implements NodeGetattrer
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
@@ -352,7 +350,6 @@ func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscal
 	return length, 0
 }
 
-// Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fullPath := path.Join(n.getPath(), name)
 
@@ -387,7 +384,6 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 	return child, 0
 }
 
-// Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
@@ -398,7 +394,6 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	return &entries, 0
 }
 
-// Open implements NodeOpener
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
@@ -430,7 +425,6 @@ func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 	return 0
 }
 
-// FileHandle handles file operations
 type FileHandle struct {
 	fs   *ARPCFS
 	file *ARPCFile
@@ -440,7 +434,6 @@ var _ = (fs.FileReader)((*FileHandle)(nil))
 var _ = (fs.FileReleaser)((*FileHandle)(nil))
 var _ = (fs.FileLseeker)((*FileHandle)(nil))
 
-// Read implements FileReader
 func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {

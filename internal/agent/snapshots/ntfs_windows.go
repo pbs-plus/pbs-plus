@@ -92,7 +92,6 @@ func getVSSFolder() (string, error) {
 	return configBasePath, nil
 }
 
-// reregisterVSSWriters attempts to restart VSS services when needed
 func reregisterVSSWriters() error {
 	services := []string{
 		"Winmgmt", // Windows Management Instrumentation

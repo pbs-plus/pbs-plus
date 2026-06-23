@@ -5,7 +5,6 @@ package s3fs
 import (
 	"os"
 	"os/exec"
-
 )
 
 func MountS3(f *S3FS, mountpoint string) error {

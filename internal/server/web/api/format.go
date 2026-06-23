@@ -8,7 +8,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// HumanReadableBytes converts bytes to a human-readable string (e.g. "1.50 GiB").
 func HumanReadableBytes(bytes int) string {
 	const (
 		KB = 1024
@@ -31,7 +30,6 @@ func HumanReadableBytes(bytes int) string {
 	}
 }
 
-// HumanReadableSpeed converts bytes/sec to a human-readable string (e.g. "1.50 GiB/s").
 func HumanReadableSpeed(bytesPerSec int) string {
 	const (
 		KB = 1024.0
@@ -51,14 +49,12 @@ func HumanReadableSpeed(bytesPerSec int) string {
 	}
 }
 
-// ParsedTaskStatus represents a parsed task status with display info.
 type ParsedTaskStatus struct {
 	Category string `json:"category"` // "ok", "error", "warning", "unknown", "queued"
 	Icon     string `json:"icon"`     // CSS class suffix, e.g. "check good"
 	Text     string `json:"text"`     // Display text
 }
 
-// ParseTaskStatus parses a task status string and returns display information.
 func ParseTaskStatus(status string) ParsedTaskStatus {
 	if status == "" {
 		return ParsedTaskStatus{}
@@ -103,7 +99,6 @@ func ParseTaskStatus(status string) ParsedTaskStatus {
 	}
 }
 
-// FormatDuration formats seconds into a human-readable duration string.
 func FormatDuration(seconds int64) string {
 	if seconds <= 0 {
 		return ""
@@ -121,7 +116,6 @@ func FormatDuration(seconds int64) string {
 	}
 }
 
-// ConfidenceInfo holds confidence percentages for JSON responses.
 type ConfidenceInfo struct {
 	Confidence95 float64 `json:"c95"` // percentage 0-100
 	Confidence99 float64 `json:"c99"` // percentage 0-100
@@ -188,7 +182,6 @@ func clamp01(v float64) float64 {
 }
 
 // FormatSpeed returns "X.XX files/s" string.
-// ComputeAggregate computes verification summary statistics across all results.
 func ComputeAggregate(results []database.VerificationResult) VerificationAggregate {
 	var agg VerificationAggregate
 	thirtyDaysAgo := time.Now().Unix() - 30*24*3600

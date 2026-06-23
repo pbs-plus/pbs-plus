@@ -55,7 +55,6 @@ func initPaths() {
 	}
 }
 
-// dirExists returns true if path exists and is a directory.
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {

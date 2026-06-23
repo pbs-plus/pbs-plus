@@ -9,7 +9,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/changer"
 )
 
-// feeder drives a robotic tape changer for unattended multi-tape migration.
 type feeder struct {
 	chg        *changer.Changer
 	tapeDev    string
@@ -47,7 +46,6 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 
 func (f *feeder) close() { _ = f.chg.Close() }
 
-// markProcessed records the migrated cartridge so loadFirst skips it.
 func (f *feeder) markProcessed() {
 	if f.loadedBarcode != "" {
 		f.processed[f.loadedBarcode] = true
@@ -93,7 +91,6 @@ func (f *feeder) loadSlot(slot int) (*tapeReader, error) {
 	return rc, nil
 }
 
-// unloadCurrent returns the loaded tape to its home slot.
 func (f *feeder) unloadCurrent() error {
 	if f.loadedSlot == 0 {
 		return nil
@@ -109,7 +106,6 @@ func (f *feeder) unloadCurrent() error {
 	return nil
 }
 
-// asContinuation adapts the feeder into go-mtf's continuation callback.
 func (f *feeder) asContinuation() func(mtf.Continuation) (mtf.Tape, error) {
 	return func(c mtf.Continuation) (mtf.Tape, error) {
 		return f.nextMedium(c)
@@ -199,7 +195,6 @@ func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool
 	return gotSeq == wantSeq, nil
 }
 
-// isCleaningTape recognises cleaning-cartridge barcodes (CLN/CCL/CLG/DCL).
 func isCleaningTape(barcode string) bool {
 	b := barcode
 	if len(b) >= 3 {
@@ -211,7 +206,6 @@ func isCleaningTape(barcode string) bool {
 	return false
 }
 
-// IsCleaningTape is the exported form of isCleaningTape.
 func IsCleaningTape(barcode string) bool {
 	return isCleaningTape(barcode)
 }

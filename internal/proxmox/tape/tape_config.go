@@ -12,20 +12,17 @@ import (
 	"strings"
 )
 
-// Config holds the parsed tape.cfg configuration.
 type Config struct {
 	Changers []Changer `json:"changers"`
 	Drives   []Drive   `json:"drives"`
 }
 
-// Changer represents a changer entry.
 type Changer struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	ExportSlots string `json:"export-slots,omitempty"`
 }
 
-// Drive represents a drive entry.
 type Drive struct {
 	Name            string `json:"name"`
 	Path            string `json:"path"`
@@ -35,7 +32,6 @@ type Drive struct {
 
 const pbsTapeCfgPath = "/etc/proxmox-backup/tape.cfg"
 
-// ReadConfig reads and parses the tape.cfg file.
 func ReadConfig() (*Config, error) {
 	file, err := os.Open(pbsTapeCfgPath)
 	if err != nil {

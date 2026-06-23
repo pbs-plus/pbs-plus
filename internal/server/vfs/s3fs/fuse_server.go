@@ -57,7 +57,6 @@ func MountFuse(
 	return server, nil
 }
 
-// Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
 	fs     *S3FS
@@ -150,7 +149,6 @@ func (n *Node) Statx(
 	return 0
 }
 
-// Getattr implements NodeGetattrer
 func (n *Node) Getattr(
 	ctx context.Context,
 	fh fs.FileHandle,
@@ -181,7 +179,6 @@ func (n *Node) Getattr(
 	return 0
 }
 
-// Lookup implements NodeLookuper
 func (n *Node) Lookup(
 	ctx context.Context,
 	name string,
@@ -227,7 +224,6 @@ func (n *Node) Lookup(
 	return child, 0
 }
 
-// Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
@@ -238,7 +234,6 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	return entries, 0
 }
 
-// Open implements NodeOpener
 func (n *Node) Open(
 	ctx context.Context,
 	flags uint32,
@@ -276,7 +271,6 @@ func (n *Node) Statfs(
 	return 0
 }
 
-// FileHandle handles file operations
 type FileHandle struct {
 	fs   *S3FS
 	file *S3File
@@ -285,7 +279,6 @@ type FileHandle struct {
 var _ = (fs.FileReader)((*FileHandle)(nil))
 var _ = (fs.FileReleaser)((*FileHandle)(nil))
 
-// Read implements FileReader
 func (fh *FileHandle) Read(
 	ctx context.Context,
 	dest []byte,

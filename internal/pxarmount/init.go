@@ -6,7 +6,6 @@ import (
 	"os"
 )
 
-// SnapshotRefForInit returns a snapshotRef suitable for init mode.
 func SnapshotRefForInit(namespace string) snapshotRef {
 	return snapshotRef{
 		Namespace:  namespace,
@@ -14,7 +13,6 @@ func SnapshotRefForInit(namespace string) snapshotRef {
 	}
 }
 
-// RunInitSubcommand is the CLI entry point for `pxar-mount init`.
 func RunInitSubcommand() {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	pbsStore := fs.String("pbs-store", "", "PBS datastore root path (required)")

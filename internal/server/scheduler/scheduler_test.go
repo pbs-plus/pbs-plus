@@ -127,10 +127,10 @@ func TestShouldRetryBackup_TypedStatus(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name         string
-		status       database.JobStatus
-		retryCount   int
-		shouldRetry  bool
+		name        string
+		status      database.JobStatus
+		retryCount  int
+		shouldRetry bool
 	}{
 		{"Failed with retries remaining", database.JobStatusFailed, 1, true},
 		{"Failed at retry limit", database.JobStatusFailed, 3, false},
@@ -147,7 +147,7 @@ func TestShouldRetryBackup_TypedStatus(t *testing.T) {
 				RetryInterval: 1,
 				History: database.JobHistory{
 					LastRunEndtime: now.Unix() - 120, // 2 minutes ago
-					LastRunState:   "exit status 1",   // used for Unknown fallback
+					LastRunState:   "exit status 1",  // used for Unknown fallback
 					LastRunStatus:  tt.status,
 					RetryCount:     tt.retryCount,
 				},

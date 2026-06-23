@@ -152,7 +152,6 @@ func (database *Database) ListBatchJobs() ([]NotificationBatchJob, error) {
 	return out, nil
 }
 
-// GetBackupLastRunEndtime returns the last run endtime for a backup job, or 0 if not found.
 func (database *Database) GetBackupLastRunEndtime(jobID string) int64 {
 	b, err := database.GetBackup(jobID)
 	if err != nil {

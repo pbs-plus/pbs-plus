@@ -28,7 +28,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// restoreJob holds the state for a restore operation.
 type restoreJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
@@ -51,7 +50,6 @@ type restoreJob struct {
 	web           bool
 }
 
-// NewRestoreJob creates a new restore job.
 func NewRestoreJob(
 	job database.Restore,
 	storeInstance *store.Store,
@@ -82,7 +80,6 @@ func NewRestoreJob(
 	}, nil
 }
 
-// execute performs the restore operation.
 func (b *restoreJob) execute(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel

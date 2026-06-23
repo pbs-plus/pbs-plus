@@ -81,7 +81,6 @@ func decodeElementStatusPage(data []byte, start uint16) (elems []rawElement, las
 	return elems, lastAddr, got, nil
 }
 
-// decodeDescriptor parses one element descriptor of the given type.
 func decodeDescriptor(d []byte, typeCode byte, pVolTag, aVolTag bool) (rawElement, error) {
 	if len(d) < 8 {
 		return rawElement{}, fmt.Errorf("descriptor too short (%d bytes)", len(d))

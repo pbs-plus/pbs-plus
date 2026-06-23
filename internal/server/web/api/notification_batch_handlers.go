@@ -321,7 +321,6 @@ func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": nil})
 }
 
-// NotificationBatchStatusHandler returns the current status of pending batches.
 func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

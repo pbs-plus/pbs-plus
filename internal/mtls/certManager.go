@@ -35,7 +35,6 @@ func NewCertManager() *CertManager {
 	return &CertManager{}
 }
 
-// Validate generates or loads the local CA and server certificate.
 func (c *CertManager) Validate() error {
 	serverCertPath, serverKeyPath, caCertPath, caKeyPath, err := EnsureLocalCAAndServerCert(
 		filepath.Dir(conf.AgentTLSCACertFile),
@@ -80,7 +79,6 @@ func (c *CertManager) Validate() error {
 	return nil
 }
 
-// SignCSR signs an agent CSR with the local CA.
 func (c *CertManager) SignCSR(csr []byte) (cert []byte, ca []byte, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -97,7 +95,6 @@ func (c *CertManager) SignCSR(csr []byte) (cert []byte, ca []byte, err error) {
 	return cert, c.CACertPEM, nil
 }
 
-// ServeTLS calls ListenAndServeTLS on the server using the managed cert/key paths.
 func (c *CertManager) ServeTLS(server *http.Server) error {
 	c.mu.Lock()
 	serverCert := c.ServerCertPath
@@ -106,7 +103,6 @@ func (c *CertManager) ServeTLS(server *http.Server) error {
 	return server.ListenAndServeTLS(serverCert, serverKey)
 }
 
-// APIServerTLSConfig builds the TLS config for the agent API server.
 func (c *CertManager) APIServerTLSConfig() (*tls.Config, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -114,7 +110,6 @@ func (c *CertManager) APIServerTLSConfig() (*tls.Config, error) {
 		conf.AgentTLSPrevCACertFile, nil, tls.VerifyClientCertIfGiven, false)
 }
 
-// ARPCServerTLSConfig builds the TLS config for the ARPC server.
 func (c *CertManager) ARPCServerTLSConfig() (*tls.Config, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

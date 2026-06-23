@@ -16,7 +16,6 @@ type Logger struct {
 	dedupEnabled bool
 }
 
-// LogEntry represents a structured log entry.
 type LogEntry struct {
 	Level     string         `json:"level"`
 	Message   string         `json:"message"`

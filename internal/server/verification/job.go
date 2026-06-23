@@ -164,21 +164,18 @@ var (
 	}{m: make(map[string]context.CancelFunc)}
 )
 
-// RegisterJob registers a running verification job for cancellation tracking.
 func RegisterJob(jobID string, cancel context.CancelFunc) {
 	activeJobs.Lock()
 	activeJobs.m[jobID] = cancel
 	activeJobs.Unlock()
 }
 
-// UnregisterJob removes a finished verification job from tracking.
 func UnregisterJob(jobID string) {
 	activeJobs.Lock()
 	delete(activeJobs.m, jobID)
 	activeJobs.Unlock()
 }
 
-// StopJob cancels a running verification job. Returns false if not running.
 func StopJob(jobID string) bool {
 	activeJobs.RLock()
 	cancel, ok := activeJobs.m[jobID]
@@ -190,7 +187,6 @@ func StopJob(jobID string) bool {
 	return true
 }
 
-// IsJobRunning checks if a verification job is currently running.
 func IsJobRunning(jobID string) bool {
 	activeJobs.RLock()
 	_, ok := activeJobs.m[jobID]
@@ -198,12 +194,10 @@ func IsJobRunning(jobID string) bool {
 	return ok
 }
 
-// readerFunc adapts a function to io.Reader for context-aware reads.
 type readerFunc func([]byte) (int, error)
 
 func (rf readerFunc) Read(p []byte) (int, error) { return rf(p) }
 
-// fileEntry represents a file found in the pxar archive.
 type fileEntry struct {
 	Path         string
 	ContentStart uint64
@@ -211,12 +205,10 @@ type fileEntry struct {
 	Size         int64
 }
 
-// verifyState holds the archive reader used to extract file content for hashing.
 type verifyState struct {
 	fs *vfs.LocalFS
 }
 
-// Close releases the verifyState resources.
 func (vs *verifyState) Close() error {
 	if vs.fs != nil {
 		return vs.fs.Close()
@@ -224,7 +216,6 @@ func (vs *verifyState) Close() error {
 	return nil
 }
 
-// verificationJob holds state for a verification run.
 type verificationJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
@@ -244,7 +235,6 @@ type verificationJob struct {
 	totalPopulation int
 }
 
-// NewVerificationJob creates a new verification job.
 func NewVerificationJob(
 	job database.VerificationJob,
 	storeInstance *store.Store,
@@ -474,7 +464,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	return fmt.Errorf("no eligible backup jobs found")
 }
 
-// executeVerification runs the actual file verification for a single snapshot.
 func (v *verificationJob) executeVerification(
 	ctx context.Context,
 	vTask *VerificationTask,
@@ -804,7 +793,6 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 
 // --- Snapshot selection ---
 
-// snapshotInfo represents a resolved snapshot.
 type snapshotInfo struct {
 	Snapshot   string // "type/id/time"
 	BackupType string
@@ -1073,7 +1061,6 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 	}
 }
 
-// systematicSample takes every k-th file after sorting by path for even coverage.
 func systematicSample(files []fileEntry, n int) []fileEntry {
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Path < files[j].Path
@@ -1149,7 +1136,6 @@ func topLevelDir(path string) string {
 	return before
 }
 
-// walkDir recursively walks the pxar directory tree collecting regular files.
 func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix string, files []fileEntry, cfg database.SpotCheckConfig) ([]fileEntry, error) {
 	if entry.IsDir() {
 		children, err := fs.ReadDir(entry.EntryRangeStart)
@@ -1222,7 +1208,6 @@ func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg 
 	return false
 }
 
-// filterMatchesFile checks if a single filter's criteria match a file.
 func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCheckFilter) bool {
 	if filter.PathPattern != "" {
 		if strings.Contains(filter.PathPattern, "*") {

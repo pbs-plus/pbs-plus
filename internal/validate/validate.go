@@ -264,7 +264,6 @@ func IsPathWithin(base, p string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// Slugify replaces spaces with hyphens.
 func Slugify(input string) string {
 	runes := []rune(input)
 	var hasHyphen, hasSpace bool

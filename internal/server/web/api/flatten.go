@@ -7,7 +7,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// FlattenBackup converts a database.Backup into a flat API response.
 func FlattenBackup(b database.Backup) FlatBackup {
 	fb := FlatBackup{
 		ID:               b.ID,
@@ -106,7 +105,6 @@ func FlattenBackups(backups []database.Backup, staleDays int, skipUnscheduled bo
 	return result
 }
 
-// FlattenRestore converts a database.Restore into a flat API response.
 func FlattenRestore(r database.Restore) FlatRestore {
 	fr := FlatRestore{
 		ID:               r.ID,
@@ -165,7 +163,6 @@ func FlattenRestore(r database.Restore) FlatRestore {
 	return fr
 }
 
-// FlattenRestores converts a slice of restores to flat responses.
 func FlattenRestores(restores []database.Restore) []FlatRestore {
 	result := make([]FlatRestore, len(restores))
 	for i := range restores {
@@ -174,7 +171,6 @@ func FlattenRestores(restores []database.Restore) []FlatRestore {
 	return result
 }
 
-// FlattenVerificationJob converts a database.VerificationJob into a flat API response.
 func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 	fvj := FlatVerificationJob{
 		ID:                  vj.ID,
@@ -229,7 +225,6 @@ func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 	return fvj
 }
 
-// FlattenVerificationJobs converts a slice of verification jobs to flat responses.
 func FlattenVerificationJobs(jobs []database.VerificationJob) []FlatVerificationJob {
 	result := make([]FlatVerificationJob, len(jobs))
 	for i := range jobs {
@@ -238,7 +233,6 @@ func FlattenVerificationJobs(jobs []database.VerificationJob) []FlatVerification
 	return result
 }
 
-// FlattenVerificationResult converts a VerificationResult with pre-computed display fields.
 func FlattenVerificationResult(r database.VerificationResult, namespace string) FlatVerificationResult {
 	fr := FlatVerificationResult{
 		ID:                r.ID,
@@ -294,7 +288,6 @@ func FlattenVerificationResult(r database.VerificationResult, namespace string) 
 	return fr
 }
 
-// FlattenVerificationResults converts a slice of verification results.
 func FlattenVerificationResults(results []database.VerificationResult, namespace string) []FlatVerificationResult {
 	fr := make([]FlatVerificationResult, len(results))
 	for i := range results {
@@ -303,7 +296,6 @@ func FlattenVerificationResults(results []database.VerificationResult, namespace
 	return fr
 }
 
-// formatSnapshotLabel produces a human-readable snapshot label that includes the namespace.
 func formatSnapshotLabel(snapshot, namespace string) string {
 	if namespace == "" || namespace == "root" {
 		return snapshot
@@ -311,7 +303,6 @@ func formatSnapshotLabel(snapshot, namespace string) string {
 	return namespace + ": " + snapshot
 }
 
-// BuildTargetTree groups targets into a tree structure by type (local/agent/s3).
 func BuildTargetTree(targets []database.Target) []TargetTreeNode {
 	var localTargets []TargetTreeNode
 	agentGroups := map[string]*TargetTreeNode{}
@@ -469,7 +460,6 @@ func FlattenBackupForEdit(b database.Backup) map[string]any {
 	}
 }
 
-// FlattenRestoreForEdit flattens a Restore for the edit form GET response.
 func FlattenRestoreForEdit(r database.Restore) map[string]any {
 	return map[string]any{
 		"id":                 r.ID,

@@ -30,7 +30,6 @@ const (
 	XattrReplace = 2
 )
 
-// ToInode computes a stable inode number from a pxar entry.
 func ToInode(e *pxar.Entry) uint64 {
 	if e.IsDir() {
 		return e.FileOffset + e.FileSize
@@ -99,7 +98,6 @@ type ResolvedEntry struct {
 	SymlinkTgt string
 }
 
-// copyBufPool provides 1MB buffers for file copy operations.
 var copyBufPool = sync.Pool{
 	New: func() any {
 		buf := make([]byte, 1024*1024)
@@ -107,12 +105,10 @@ var copyBufPool = sync.Pool{
 	},
 }
 
-// passFh is an open file handle.
 type passFh struct {
 	fd int
 }
 
-// snapshotRef identifies a PBS snapshot for commit dedup.
 type snapshotRef struct {
 	BackupType  string
 	BackupID    string
@@ -121,7 +117,6 @@ type snapshotRef struct {
 	BackupTime  int64
 }
 
-// ACLConfig configures default ownership and POSIX ACL behavior.
 type ACLConfig struct {
 	OwnerUID int
 	OwnerGID int
@@ -132,7 +127,6 @@ type ACLConfig struct {
 	DefaultACLEntries []ACLEntry
 }
 
-// ACLEntry represents a single POSIX ACL entry.
 type ACLEntry struct {
 	Tag  uint16 // ACL_USER_OBJ, ACL_USER, ACL_GROUP_OBJ, ACL_GROUP, ACL_MASK, ACL_OTHER
 	Perm uint16 // permission bits (r=4, w=2, x=1)
@@ -151,7 +145,6 @@ const (
 	ACLXAttrVersion uint32 = 0x0002
 )
 
-// MountConfig holds all parameters needed to start a pxar-mount FUSE server.
 type MountConfig struct {
 	PBSStore      string
 	Reader        any
@@ -181,7 +174,6 @@ func MarshalACL(entries []ACLEntry) []byte {
 	return buf
 }
 
-// ParseACLSpec parses a setfacl-style ACL string into entries.
 // Format: one entry per line, e.g.
 //
 //	user::rwx
@@ -311,12 +303,10 @@ func lookupGID(name string) (uint32, error) {
 	return uint32(gid), nil
 }
 
-// HasACLs returns true if virtual ACLs are configured.
 func (c ACLConfig) HasACLs() bool {
 	return len(c.ACLEntries) > 0
 }
 
-// newNodeFromEntry creates a node from a pxar entry with cached metadata.
 func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	st := e.Metadata.Stat
 	return node{
@@ -337,7 +327,6 @@ func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	}
 }
 
-// fillEntryOut fills a FUSE EntryOut from a cached node.
 func fillEntryOut(inode uint64, n *node, out *fuse.EntryOut) {
 	out.NodeId = inode
 	out.Generation = 1
@@ -347,14 +336,12 @@ func fillEntryOut(inode uint64, n *node, out *fuse.EntryOut) {
 	fillAttr(&out.Attr, n)
 }
 
-// fillAttrOut fills a FUSE AttrOut from a cached node.
 func fillAttrOut(n *node, out *fuse.AttrOut) {
 	out.AttrValid = 1
 	out.AttrValidNsec = uint32(time.Second)
 	fillAttr(&out.Attr, n)
 }
 
-// fillAttr fills FUSE attributes from a cached node.
 func fillAttr(attr *fuse.Attr, n *node) {
 	attr.Ino = n.inode
 	attr.Size = n.fileSize
@@ -390,7 +377,6 @@ func fillAttr(attr *fuse.Attr, n *node) {
 	attr.Blksize = 4096
 }
 
-// statMode converts a pxar mode to a syscall mode with file type bits.
 func statMode(mode uint64) uint32 {
 	var ft uint32
 	switch mode & format.ModeIFMT {
@@ -412,7 +398,6 @@ func statMode(mode uint64) uint32 {
 	return ft | uint32(mode&0o7777)
 }
 
-// joinPath joins a parent path and a name component.
 func joinPath(parent, name string) string {
 	if parent == "/" {
 		return "/" + name
@@ -420,7 +405,6 @@ func joinPath(parent, name string) string {
 	return parent + "/" + name
 }
 
-// splitPath splits a path into components.
 func splitPath(path string) []string {
 	if path == "/" || path == "" {
 		return nil
@@ -441,7 +425,6 @@ func splitPath(path string) []string {
 	return parts
 }
 
-// ensureModeType ensures mode has the correct file type bits for the given node kind.
 func ensureModeType(mode uint32, kind uint8) uint32 {
 	perm := mode & 0o7777
 	var ft uint32
@@ -456,7 +439,6 @@ func ensureModeType(mode uint32, kind uint8) uint32 {
 	return ft | perm
 }
 
-// nodeKindFromPxar returns the journal node kind for a pxar node.
 func nodeKindFromPxar(n *node) uint8 {
 	if n.isDir {
 		return NodeDir
@@ -467,7 +449,6 @@ func nodeKindFromPxar(n *node) uint8 {
 	return NodeFile
 }
 
-// buildACLConfig constructs an ACLConfig from CLI flags and optional spec strings.
 func BuildACLConfig(ownerUID, ownerGID int, aclSpec, defaultAclSpec string) ACLConfig {
 	cfg := ACLConfig{
 		OwnerUID: ownerUID,

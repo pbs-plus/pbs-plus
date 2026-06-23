@@ -35,7 +35,6 @@ func NewCircuitBreaker(name string, threshold int, halfOpenAfter time.Duration) 
 	}
 }
 
-// ErrCircuitOpen is returned when the circuit is open.
 var ErrCircuitOpen = errors.New("circuit breaker is open")
 
 // Call executes fn. If the circuit is open, it returns ErrCircuitOpen
@@ -77,7 +76,6 @@ func (cb *CircuitBreaker) Call(fn func() error) error {
 	return nil
 }
 
-// IsOpen returns true if the circuit breaker is currently open.
 func (cb *CircuitBreaker) IsOpen() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()

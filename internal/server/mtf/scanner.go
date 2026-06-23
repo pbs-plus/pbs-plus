@@ -334,7 +334,6 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 	return nil
 }
 
-// indexSetMap persists a Set Map read via the fast catalog path.
 func (s *Scanner) indexSetMap(ctx context.Context, rc *mtflib.DriveTape, barcode string, sm *mtflib.SetMap, res *Result) error {
 	if s.taskLog != nil {
 		s.taskLog.WriteString("  Reading TAPE header...")

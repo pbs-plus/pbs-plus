@@ -254,7 +254,6 @@ func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	return fs.reader.ReadEntryAt(int64(n.entryStart))
 }
 
-// resolvePxarTimes mirrors restore_unix.go applyMeta's timestamp precedence
 // so that a pxar-mount getattr reports the same atime/mtime restore would set.
 //
 //   - default atime and mtime are both pxar Stat.Mtime (Secs+Nanos)
@@ -301,7 +300,6 @@ func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 	return v, true
 }
 
-// ensureNodeTimes lazily resolves and caches a node's effective atime/mtime
 // from its pxar entry. It is a no-op once resolved, so the per-file archive
 // read happens at most once per cached node.
 func (fs *PxarFS) ensureNodeTimes(n *node) {
@@ -316,7 +314,6 @@ func (fs *PxarFS) ensureNodeTimes(n *node) {
 	n.timesResolved = true
 }
 
-// ResolvedTimes returns the effective atime/mtime (Unix nanos) for a pxar node,
 // applying restore's xattr precedence. Used by the mutable overlay so that
 // unmodified (pxar-backed) files report the same times as a restore.
 // The result is cached on the node after the first read.
@@ -538,7 +535,6 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) node {
 	return n
 }
 
-// preregisterSlimNode inserts a node with refs=0 so it is eligible for
 // eviction under cache pressure. Used by the commit walker to pre-populate
 // the cache for nodes that the kernel has not yet looked up.
 func (fs *PxarFS) preregisterSlimNode(e *dirEntrySlim, parent uint64) node {

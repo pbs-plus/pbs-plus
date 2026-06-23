@@ -25,7 +25,6 @@ const (
 	timeoutMove      = uint32(45 * 60 * 1000) // 45 min (mechanical move)
 )
 
-// elementType selects which changer elements a READ ELEMENT STATUS queries.
 type elementType uint8
 
 const (
@@ -35,7 +34,6 @@ const (
 	elemDrive     elementType = 4
 )
 
-// byte1 packs the volume-tag-request bit (0x10) with the element type.
 func (t elementType) byte1(withVolTag bool) byte {
 	b := byte(t)
 	if withVolTag {
@@ -108,7 +106,6 @@ func readElementStatusCDB(start, count uint16, t elementType, withVolTag bool, a
 	return cdb
 }
 
-// moveMediumCDB builds the 10-byte MOVE MEDIUM CDB.
 func moveMediumCDB(transport, source, dest uint16) []byte {
 	return []byte{
 		cmdMoveMedium, 0,
@@ -120,7 +117,6 @@ func moveMediumCDB(transport, source, dest uint16) []byte {
 	}
 }
 
-// initializeElementStatus forces the changer to re-scan its barcode reader.
 func initializeElementStatus(d *device) error {
 	cdb := []byte{cmdInitializeElementStatus, 0, 0, 0, 0, 0}
 	_, err := d.scsi(cdb, nil, false, timeoutInventory)

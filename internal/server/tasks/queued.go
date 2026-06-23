@@ -15,7 +15,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// QueuedTask represents a task in queued state before execution starts.
 type QueuedTask struct {
 	proxmox.Task
 	mu       sync.Mutex
@@ -25,28 +24,22 @@ type QueuedTask struct {
 	isBackup bool
 }
 
-// Lock locks the task mutex.
 func (t *QueuedTask) Lock() { t.mu.Lock() }
 
-// Unlock unlocks the task mutex.
 func (t *QueuedTask) Unlock() { t.mu.Unlock() }
 
-// GenerateBackupQueuedTask creates a queued task for backup jobs.
 func GenerateBackupQueuedTask(job database.Backup, web bool) (QueuedTask, error) {
 	return generateQueuedTask(job, job.Target.GetHostname(), "backup", web, true)
 }
 
-// GenerateRestoreQueuedTask creates a queued task for restore jobs.
 func GenerateRestoreQueuedTask(job database.Restore, web bool) (QueuedTask, error) {
 	return generateQueuedTask(job, job.DestTarget.GetHostname(), "reader", web, false)
 }
 
-// GenerateVerificationQueuedTask creates a queued task for verification jobs.
 func GenerateVerificationQueuedTask(job database.VerificationJob, web bool) (QueuedTask, error) {
 	return generateQueuedTask(job, job.ID, "verification", web, false)
 }
 
-// generateQueuedTask creates a queued task with common setup logic.
 func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (QueuedTask, error) {
 	var store string
 	switch j := job.(type) {
@@ -96,7 +89,6 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 	return QueuedTask{Task: task, path: path, job: job, isBackup: isBackup}, nil
 }
 
-// UpdateDescription updates the queued task status description.
 func (t *QueuedTask) UpdateDescription(desc string) error {
 	if t.closed.Load() {
 		return nil
@@ -125,7 +117,6 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 	return nil
 }
 
-// Close removes the queued task file.
 func (t *QueuedTask) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -133,7 +124,6 @@ func (t *QueuedTask) Close() {
 	t.closed.Store(true)
 }
 
-// GenerateMtfQueuedTask creates a queued task for MTF migration jobs.
 func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error) {
 	wid := proxmox.EncodeToHexEscapes(datastore) +
 		proxmox.EncodeToHexEscapes(":") +

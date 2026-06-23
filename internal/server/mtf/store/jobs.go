@@ -267,7 +267,6 @@ func toInt64(s string) int64 {
 	return ToInt64(s)
 }
 
-// ToInt64 parses a decimal integer from s, returning 0 on failure.
 func ToInt64(s string) int64 {
 	var n int64
 	_, _ = fmt.Sscanf(s, "%d", &n)

@@ -10,7 +10,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// AlertType identifies a system-level D2D alert.
 type AlertType string
 
 const (

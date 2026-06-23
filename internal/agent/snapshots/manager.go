@@ -4,7 +4,6 @@ import (
 	"fmt"
 )
 
-// SnapshotManager manages snapshot operations based on filesystem and OS detection
 type SnapshotManager struct {
 	handlerMap map[string]SnapshotHandler
 }
@@ -24,7 +23,6 @@ var Manager = &SnapshotManager{
 	},
 }
 
-// CreateSnapshot detects the filesystem and delegates to the appropriate handler
 func (m *SnapshotManager) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	fsType, err := detectFilesystem(sourcePath)
 	if err != nil {

@@ -135,7 +135,6 @@ func (d *Database) NewTransaction() (*Transaction, error) {
 	return &Transaction{Tx: tx, database: d}, nil
 }
 
-// Ping checks the database connection health.
 func (d *Database) Ping(ctx context.Context) error {
 	return d.readDb.PingContext(ctx)
 }

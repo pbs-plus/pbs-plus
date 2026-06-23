@@ -322,7 +322,6 @@ func (fs *MutableFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out
 	return fs.readDirImpl(input, out, true)
 }
 
-// readDirImpl implements both ReadDir and ReadDirPlus with optional entry lookup.
 func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plus bool) fuse.Status {
 	parentPath := fs.inodeToPath(input.NodeId)
 	if parentPath == "" && input.NodeId != RootInode {
@@ -1028,7 +1027,6 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 	return fs.Unlink(cancel, header, name)
 }
 
-// Rename moves/renames a file or directory. O(1)  -  updates one edge row.
 func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldName string, newName string) fuse.Status {
 	fs.waitIfFrozen()
 	oldParentPath := fs.inodeToPath(input.NodeId)
@@ -1697,7 +1695,6 @@ func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
 	return re, fuse.OK
 }
 
-// resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 	// Root is always a pxar-only directory.
 	if path == "/" || path == "" {
@@ -1808,7 +1805,6 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 	return re, fuse.OK
 }
 
-// findPxarNode walks the pxar tree to find a cached node for the given path.
 func (fs *MutableFS) findPxarNode(path string) *node {
 	if path == "/" {
 		return fs.pxar.GetNode(RootInode)
@@ -1965,7 +1961,6 @@ func (fs *MutableFS) unmapInode(path string) {
 	}
 }
 
-// remapPathPrefix updates all inode mappings under oldPrefix to use newPrefix.
 func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
 	fs.inoLookup.Range(func(p string, ino uint64) bool {
 		if p == oldPrefix || strings.HasPrefix(p, oldPrefix+"/") {

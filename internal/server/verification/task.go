@@ -11,13 +11,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// VerificationTask manages verification job logging and lifecycle.
 type VerificationTask struct {
 	tasks.BaseTask
 	job database.VerificationJob
 }
 
-// NewVerificationTask creates a new verification task with log file setup.
 func NewVerificationTask(job database.VerificationJob) (*VerificationTask, error) {
 	wid := proxmox.EncodeToHexEscapes(job.ID)
 	task := tasks.NewTask("pbsplus", "verification", wid)
@@ -37,19 +35,16 @@ func NewVerificationTask(job database.VerificationJob) (*VerificationTask, error
 	return vTask, nil
 }
 
-// WriteString delegates to BaseTask.WriteString.
 func (t *VerificationTask) WriteString(data string) {
 	t.BaseTask.WriteString(data)
 }
 
-// CloseOK closes the task with "OK" status.
 func (t *VerificationTask) CloseOK() {
 	t.CloseWithStatus("OK", nil, func() {
 		_ = tasks.RemoveActive(t.UPID)
 	})
 }
 
-// CloseErr closes the task with "TASK ERROR: <msg>" status.
 func (t *VerificationTask) CloseErr(taskErr error) {
 	status := "ERROR: " + taskErr.Error()
 	t.CloseWithStatus(status, nil, func() {

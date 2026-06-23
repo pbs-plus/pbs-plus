@@ -61,7 +61,6 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *
 	}
 }
 
-// NewJob loads an MTF job definition by id and builds a runnable jobs.Job.
 func NewJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
 	ctx := st.Ctx
 	if ctx == nil {
@@ -462,7 +461,6 @@ func (j *mtfJob) cleanup() {
 
 // --- MTF Task (matches RestoreTask pattern) ---
 
-// startTask creates an Task, opens its log file, and registers it as active.
 func startTask(job mtfdb.MTFJob) (*Task, error) {
 	task := tasks.NewTask("pbsplus", mtfWorkerType, mtfWID(job))
 
@@ -481,14 +479,12 @@ func startTask(job mtfdb.MTFJob) (*Task, error) {
 	return t, nil
 }
 
-// CloseOK closes the task with "OK" status and removes from active list.
 func (t *Task) CloseOK() {
 	t.CloseWithStatus("OK", nil, func() {
 		_ = tasks.RemoveActive(t.UPID)
 	})
 }
 
-// CloseErr closes the task with error status and removes from active list.
 func (t *Task) CloseErr(taskErr error) {
 	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
 		_ = tasks.RemoveActive(t.UPID)
@@ -497,7 +493,6 @@ func (t *Task) CloseErr(taskErr error) {
 
 // --- Queued task ---
 
-// errorTask creates a standalone error task file.
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
 	task := tasks.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 

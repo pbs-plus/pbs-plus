@@ -53,7 +53,6 @@ type backupJob struct {
 	srcPath    string
 }
 
-// NewBackupJob creates a new backup job with the given parameters.
 func NewBackupJob(
 	job database.Backup,
 	storeInstance *store.Store,
@@ -81,7 +80,6 @@ func NewBackupJob(
 	}
 }
 
-// execute performs the backup operation.
 func (b *backupJob) execute(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel

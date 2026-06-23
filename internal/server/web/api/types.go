@@ -59,7 +59,6 @@ type FlatBackup struct {
 	Stale bool `json:"stale"`
 }
 
-// FlatRestore is the flattened API response for a restore job.
 type FlatRestore struct {
 	ID               string `json:"id"`
 	Store            string `json:"store"`
@@ -102,7 +101,6 @@ type FlatRestore struct {
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
 }
 
-// FlatVerificationJob is the flattened API response for a verification job.
 type FlatVerificationJob struct {
 	ID                  string              `json:"id"`
 	BackupJobID         string              `json:"backup_job_id"`
@@ -134,7 +132,6 @@ type FlatVerificationJob struct {
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
 }
 
-// SpotCheckConfigJSON is a simplified spot config for API responses.
 type SpotCheckConfigJSON struct {
 	SampleCount        int                   `json:"sample_count"`
 	SampleCountPercent float64               `json:"sample_count_percent"`
@@ -146,14 +143,12 @@ type SpotCheckConfigJSON struct {
 	FailThreshold      int                   `json:"fail_threshold"`
 }
 
-// SpotCheckFilterJSON is a simplified filter for API responses.
 type SpotCheckFilterJSON struct {
 	PathPattern string `json:"path_pattern"`
 	MinSize     int64  `json:"min_size"`
 	MaxSize     int64  `json:"max_size"`
 }
 
-// VerificationAggregate holds summary statistics across all verification jobs.
 type VerificationAggregate struct {
 	TotalJobs    int     `json:"total_jobs"`
 	TotalRuns    int     `json:"total_runs"`
@@ -167,7 +162,6 @@ type VerificationAggregate struct {
 	Confidence   float64 `json:"confidence"`   // aggregate 95% CI lower bound
 }
 
-// FlatVerificationResult extends VerificationResult with pre-computed display fields.
 type FlatVerificationResult struct {
 	ID                int                          `json:"id"`
 	VerificationJobID string                       `json:"verification_job_id"`
@@ -190,7 +184,6 @@ type FlatVerificationResult struct {
 	Details           []FlatVerificationFileResult `json:"details"`
 }
 
-// FlatVerificationFileResult extends VerificationFileResult with display fields.
 type FlatVerificationFileResult struct {
 	Path        string `json:"path"`
 	Size        int64  `json:"size"`
@@ -200,7 +193,6 @@ type FlatVerificationFileResult struct {
 	Message     string `json:"message"`
 }
 
-// TargetTreeNode represents a node in the pre-built target tree.
 type TargetTreeNode struct {
 	Text      string           `json:"text"` // display label
 	IconCls   string           `json:"iconCls,omitempty"`
@@ -233,7 +225,6 @@ type TargetTreeNode struct {
 	IP               string `json:"ip,omitempty"`
 }
 
-// TargetsTreeResponse is the API response for the target tree.
 type TargetsTreeResponse struct {
 	Data   []TargetTreeNode `json:"data"`
 	Digest string           `json:"digest"`

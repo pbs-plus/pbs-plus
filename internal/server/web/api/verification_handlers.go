@@ -34,7 +34,6 @@ type VerificationRunResponse struct {
 	Success bool              `json:"success"`
 }
 
-// D2DVerificationHandler handles listing verification jobs.
 func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -67,7 +66,6 @@ func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// ExtJsVerificationRunHandler handles running/stopping verification jobs.
 func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
@@ -161,7 +159,6 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// ExtJsVerificationConfigHandler handles creating verification jobs.
 func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -504,7 +501,6 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 	}
 }
 
-// VerificationAggregateHandler returns aggregate stats across all verification jobs.
 func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -538,7 +534,6 @@ func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// ExtJsVerificationResultsHandler returns verification results for a job.
 func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

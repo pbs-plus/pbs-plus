@@ -14,14 +14,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
-// localTokenCandidates are the paths searched for the pbs-plus token JSON.
 var localTokenCandidates = []string{
 	filepath.Join(conf.DbBasePath, "pbs-plus-token.json"),
 	filepath.Join("/etc/proxmox-backup", "pbs-plus-token.json"),
 	filepath.Join(conf.StatePrefix, "pbs-plus-token.json"),
 }
 
-// DefaultAPIURL is the default PBS REST API base URL.
 const DefaultAPIURL = "https://localhost:8007/api2/json"
 
 // ReadLocal reads the pbs-plus token from the first candidate path that

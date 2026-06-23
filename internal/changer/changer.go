@@ -8,12 +8,10 @@ import (
 	"time"
 )
 
-// Changer is an open SCSI Medium Changer device.
 type Changer struct {
 	dev *device
 }
 
-// Open opens a SCSI Medium Changer device (e.g. /dev/sg1 or /dev/sch0).
 func Open(path string) (*Changer, error) {
 	d, err := openDevice(path)
 	if err != nil {
@@ -22,14 +20,12 @@ func Open(path string) (*Changer, error) {
 	return &Changer{dev: d}, nil
 }
 
-// Close releases the device.
 func (c *Changer) Close() error { return c.dev.close() }
 
 // Inventory forces a barcode re-scan before reading. It is optional; some
 // changers refuse element-status reads while an inventory is in progress.
 func (c *Changer) Inventory() error { return initializeElementStatus(c.dev) }
 
-// SlotStatus describes one storage (or import/export) slot.
 type SlotStatus struct {
 	ElementAddress uint16 // physical SCSI element address
 	Full           bool   // a cartridge is present
@@ -37,7 +33,6 @@ type SlotStatus struct {
 	ImportExport   bool   // mail slot rather than a magazine slot
 }
 
-// DriveStatus describes one data-transfer element (tape drive).
 type DriveStatus struct {
 	ElementAddress uint16
 	Full           bool   // a cartridge is loaded
@@ -45,14 +40,12 @@ type DriveStatus struct {
 	LoadedSlotAddr uint16 // SCSI element address the cartridge came from (0 if unknown)
 }
 
-// Status is the full changer inventory.
 type Status struct {
 	TransportAddress uint16       // the robotic picker (0 if the changer reports none)
 	Slots            []SlotStatus // storage slots, then import/export slots appended
 	Drives           []DriveStatus
 }
 
-// Status reads the full element inventory from the changer.
 func (c *Changer) Status() (*Status, error) {
 	assign, err := readAddressAssignment(c.dev)
 	if err != nil {
@@ -116,7 +109,6 @@ func (c *Changer) readStorage(assign *addressAssignment) (storage, ie []SlotStat
 	return storage, ie, nil
 }
 
-// rawElement is the decoded common subset of one element descriptor.
 type rawElement struct {
 	Addr    uint16
 	Full    bool
@@ -176,7 +168,6 @@ func (s *Status) SlotAddress(slot int) (uint16, error) {
 	return s.Slots[slot-1].ElementAddress, nil
 }
 
-// DriveAddress maps a 0-based drive index to its SCSI element address.
 func (s *Status) DriveAddress(drive int) (uint16, error) {
 	if drive < 0 || drive >= len(s.Drives) {
 		return 0, fmt.Errorf("drive %d out of range (0..%d)", drive, len(s.Drives)-1)
@@ -184,7 +175,6 @@ func (s *Status) DriveAddress(drive int) (uint16, error) {
 	return s.Drives[drive].ElementAddress, nil
 }
 
-// Load moves a cartridge from a storage slot (1-based) into a drive (0-based).
 func (c *Changer) Load(status *Status, slot, drive int) error {
 	transport := status.TransportAddress
 	src, err := status.SlotAddress(slot)
@@ -202,7 +192,6 @@ func (c *Changer) Load(status *Status, slot, drive int) error {
 	return c.waitForDriveReady(drive)
 }
 
-// Unload moves the cartridge from a drive (0-based) back to a storage slot.
 func (c *Changer) Unload(status *Status, drive, slot int) error {
 	transport := status.TransportAddress
 	src, err := status.DriveAddress(drive)
@@ -220,7 +209,6 @@ func (c *Changer) Unload(status *Status, drive, slot int) error {
 	return nil
 }
 
-// Transfer moves a cartridge between two storage slots.
 func (c *Changer) Transfer(status *Status, fromSlot, toSlot int) error {
 	transport := status.TransportAddress
 	src, err := status.SlotAddress(fromSlot)

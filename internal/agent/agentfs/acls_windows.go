@@ -21,7 +21,6 @@ var (
 	procLocalFree                 = modKernel32.NewProc("LocalFree")
 )
 
-// aclHeader matches the Windows ACL structure layout for validation
 type aclHeader struct {
 	AclRevision byte
 	Sbz1        byte
@@ -30,7 +29,6 @@ type aclHeader struct {
 	Sbz2        uint16
 }
 
-// GetWinACLsHandle retrieves Owner, Group, and DACL ACEs.
 func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []types.WinACL, err error) {
 	// Validate handle before use
 	if h == windows.InvalidHandle || h == 0 {
@@ -242,7 +240,6 @@ func safeEntriesToSlice(entriesPtr uintptr, count uint32) ([]windows.EXPLICIT_AC
 	return slice, nil
 }
 
-// isValidACL performs basic validation on an ACL structure
 func isValidACL(acl *windows.ACL) bool {
 	if acl == nil {
 		return false
@@ -279,7 +276,6 @@ func isValidACL(acl *windows.ACL) bool {
 	return true
 }
 
-// isValidSIDPointer validates a SID pointer before dereferencing
 func isValidSIDPointer(sid *windows.SID) bool {
 	if sid == nil {
 		return false
@@ -296,7 +292,6 @@ func isValidSIDPointer(sid *windows.SID) bool {
 	return true
 }
 
-// isSafePointer performs basic validation that a pointer is in user-space
 func isSafePointer(ptr unsafe.Pointer) bool {
 	if ptr == nil {
 		return false

@@ -19,7 +19,6 @@ const (
 	JobStatusCanceled                  // 4 - manually canceled (non-retryable)
 )
 
-// String returns the human-readable name of the status.
 func (js JobStatus) String() string {
 	switch js {
 	case JobStatusSuccess:
@@ -35,7 +34,6 @@ func (js JobStatus) String() string {
 	}
 }
 
-// ShouldRetry returns true if the job should be retried based on this status.
 func (js JobStatus) ShouldRetry() bool {
 	return js == JobStatusFailed
 }
@@ -46,17 +44,14 @@ func (js JobStatus) IsCompleted() bool {
 		js == JobStatusFailed || js == JobStatusCanceled
 }
 
-// IsSuccess returns true if the job completed successfully (with or without warnings).
 func (js JobStatus) IsSuccess() bool {
 	return js == JobStatusSuccess || js == JobStatusWarnings
 }
 
-// Value implements the driver.Valuer interface for database storage.
 func (js JobStatus) Value() (driver.Value, error) {
 	return int64(js), nil
 }
 
-// Scan implements the sql.Scanner interface for database retrieval.
 func (js *JobStatus) Scan(value any) error {
 	switch v := value.(type) {
 	case int64:
@@ -242,7 +237,6 @@ type AgentToken struct {
 	WinInstall string `json:"win_install"`
 }
 
-// VerificationJob represents a data verification job configuration.
 type VerificationJob struct {
 	ID                  string          `json:"id"`
 	BackupJobID         string          `json:"backup_job_id"`
@@ -264,7 +258,6 @@ type VerificationJob struct {
 	CreatedAt           int64           `json:"created_at"`
 }
 
-// SpotCheckConfig holds configuration for random spot check mode.
 type SpotCheckConfig struct {
 	SampleCount        int               `json:"sample_count"`
 	SampleCountPercent float64           `json:"sample_count_percent"` // 0–100, used when > 0
@@ -288,7 +281,6 @@ type SpotCheckFilter struct {
 	MaxSize     int64  `json:"max_size"`     // maximum file size in bytes (0 = no max)
 }
 
-// VerificationResult stores the outcome of a single verification run.
 type VerificationResult struct {
 	ID                int                      `json:"id"`
 	VerificationJobID string                   `json:"verification_job_id"`
@@ -306,7 +298,6 @@ type VerificationResult struct {
 	Details           []VerificationFileResult `json:"details"`
 }
 
-// VerificationFileResult stores per-file verification outcome.
 type VerificationFileResult struct {
 	Path    string `json:"path"`
 	Size    int64  `json:"size"`

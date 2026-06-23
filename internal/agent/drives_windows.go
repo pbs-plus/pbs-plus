@@ -89,7 +89,6 @@ type _STORAGE_DEVICE_DESCRIPTOR struct {
 	RawDeviceProperties   [1]byte // Placeholder for variable length data
 }
 
-// getDriveTypeString returns a human-readable string describing the type of drive
 func getDriveTypeString(dt uint32) string {
 	switch dt {
 	case windows.DRIVE_UNKNOWN:
@@ -111,7 +110,6 @@ func getDriveTypeString(dt uint32) string {
 	}
 }
 
-// getBusType queries the storage device bus type for a given drive letter.
 func getBusType(driveLetter string) (_STORAGE_BUS_TYPE, error) {
 	volumePath := fmt.Sprintf("\\\\.\\%s:", driveLetter)
 	volumePathUtf16, err := windows.UTF16PtrFromString(volumePath)

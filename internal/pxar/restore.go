@@ -78,7 +78,6 @@ type restoreJob struct {
 	info    pxar.FileInfo
 }
 
-// restoreState holds per-restore shared state threaded through workers.
 type restoreState struct {
 	client *Client
 	fsCap  filesystemCapabilities
@@ -512,7 +511,6 @@ func atomicSwap(tmpPath, dest string) (retErr error) {
 	return nil
 }
 
-// copyFile copies src to dst, truncating dst.
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {

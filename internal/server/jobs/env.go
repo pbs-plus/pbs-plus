@@ -6,7 +6,6 @@ import (
 	"strings"
 )
 
-// StructToEnvVars converts a struct's fields to PBS_PLUS__ prefixed env vars.
 func StructToEnvVars(s any) ([]string, error) {
 	v := reflect.ValueOf(s)
 	if v.Kind() == reflect.Pointer {
