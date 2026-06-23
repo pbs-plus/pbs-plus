@@ -110,7 +110,10 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
 		syslog.L.Warn().WithMessage("handleOpenFile: write operation blocked").WithField("path", payload.Path).Write()
-		errBytes, _ := cbor.Marshal("write operations not allowed")
+		errBytes, err := cbor.Marshal("write operations not allowed")
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return arpc.Response{Status: 403, Data: errBytes}, nil
 	}
 
@@ -122,7 +125,10 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 
 	handleId := s.handleIdGen.NextID()
 	s.handles.Set(handleId, fh)
-	dataBytes, _ := cbor.Marshal(types.FileHandleID(handleId))
+	dataBytes, err := cbor.Marshal(types.FileHandleID(handleId))
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	syslog.L.Debug().WithMessage("handleOpenFile: success").
 		WithField("handle_id", handleId).
@@ -214,7 +220,9 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 		Status: 213,
 		RawStream: func(stream arpc.ARPCStream) {
 			defer fh.releaseOp()
-			_ = arpc.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream)
+			if err := arpc.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		},
 	}, nil
 }
@@ -250,7 +258,9 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	if payload.Offset >= fileSize {
 		fh.releaseOp()
 		return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
-			_ = arpc.SendDataFromReader(bytes.NewReader(nil), 0, stream)
+			if err := arpc.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}}, nil
 	}
 
@@ -264,7 +274,9 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 				defer fh.releaseOp()
 				defer cleanup()
-				_ = arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream)
+				if err := arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}}, nil
 		}
 	}
@@ -292,7 +304,9 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		if !isTemp {
 			defer readBufPool.Put(bptr)
 		}
-		_ = arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream)
+		if err := arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}}, nil
 }
 
@@ -325,7 +339,10 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	fh.logicalOffset = newOffset
-	respBytes, _ := cbor.Marshal(types.LseekResp{NewOffset: newOffset})
+	respBytes, err := cbor.Marshal(types.LseekResp{NewOffset: newOffset})
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
@@ -353,15 +370,22 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	fh.mu.Lock()
 	s.platformCloseResources(fh)
 	if fh.dirReader != nil {
-		fh.dirReader.Close()
+		if err := fh.dirReader.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if fh.file != nil {
-		fh.file.Close()
+		if err := fh.file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	fh.mu.Unlock()
 
 	s.handles.Del(uint64(payload.HandleID))
-	data, _ := cbor.Marshal("closed")
+	data, err := cbor.Marshal("closed")
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 

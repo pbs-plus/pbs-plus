@@ -50,7 +50,9 @@ func ExecVerification(verifyID string) (int, error) {
 
 	defer func() {
 		time.Sleep(5 * time.Second)
-		os.Remove(tokenFile)
+		if err := os.Remove(tokenFile); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	execCmd, err := os.Executable()

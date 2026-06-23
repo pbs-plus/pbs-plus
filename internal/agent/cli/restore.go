@@ -53,7 +53,9 @@ func (s *restoreSession) Close() {
 	s.once.Do(func() {
 		if s.remoteClient != nil {
 			syslog.L.Info().WithMessage("session: closing remote client").WithField("restoreID", s.restoreID).Write()
-			s.remoteClient.Close()
+			if err := s.remoteClient.Close(); err != nil {
+				syslog.L.Error(err).WithMessage("session: close remote client failed").WithField("restoreID", s.restoreID).Write()
+			}
 		}
 		if s.store != nil {
 			if err := s.store.EndRestore(s.restoreID); err != nil {
@@ -250,7 +252,9 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 
 	defer func() {
 		time.Sleep(5 * time.Second)
-		os.Remove(tokenFile)
+		if err := os.Remove(tokenFile); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	args := []string{
@@ -350,7 +354,9 @@ func Restore(rpcSess *arpc.StreamPipe, restoreID, source, dest string, mode pxar
 	if existingSession, ok := activeRestoreSessions.Get(restoreID); ok {
 		syslog.L.Info().WithMessage("Restore: closing existing session").WithField("restoreID", restoreID).Write()
 		existingSession.Close()
-		_ = store.EndRestore(restoreID)
+		if err := store.EndRestore(restoreID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
@@ -370,7 +376,9 @@ func Restore(rpcSess *arpc.StreamPipe, restoreID, source, dest string, mode pxar
 			return err
 		}
 		syslog.L.Info().WithMessage("Restore: ending previous active restore").WithField("restoreID", restoreID).Write()
-		_ = store.EndRestore(restoreID)
+		if err := store.EndRestore(restoreID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if err := store.StartRestore(restoreID); err != nil {

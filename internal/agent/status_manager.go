@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type BackupSessionData struct {
@@ -22,7 +24,11 @@ func (bs *BackupStore) updateSessions(fn func(map[string]*BackupSessionData)) er
 	if err := bs.fileLock.Lock(); err != nil {
 		return err
 	}
-	defer bs.fileLock.Unlock()
+	defer func() {
+		if err := bs.fileLock.Unlock(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	sessions := make(map[string]*BackupSessionData)
 	data, err := os.ReadFile(bs.filePath)
@@ -70,7 +76,11 @@ func (bs *BackupStore) HasActiveBackups() (bool, error) {
 	if err := bs.fileLock.Lock(); err != nil {
 		return false, err
 	}
-	defer bs.fileLock.Unlock()
+	defer func() {
+		if err := bs.fileLock.Unlock(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	sessions := make(map[string]*BackupSessionData)
 	data, err := os.ReadFile(bs.filePath)
@@ -90,7 +100,11 @@ func (bs *BackupStore) HasActiveBackupForJob(job string) (bool, error) {
 	if err := bs.fileLock.Lock(); err != nil {
 		return false, err
 	}
-	defer bs.fileLock.Unlock()
+	defer func() {
+		if err := bs.fileLock.Unlock(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	sessions := make(map[string]*BackupSessionData)
 	data, err := os.ReadFile(bs.filePath)

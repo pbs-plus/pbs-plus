@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func detectFilesystem(mountPoint string) (string, error) {
@@ -16,7 +18,11 @@ func detectFilesystem(mountPoint string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to open /proc/mounts: %w", err)
 		}
-		defer mountsFile.Close()
+		defer func() {
+			if err := mountsFile.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+		}()
 
 		scanner := bufio.NewScanner(mountsFile)
 		for scanner.Scan() {

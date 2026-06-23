@@ -61,7 +61,9 @@ func (s *backupSession) Close() {
 		}
 		if s.snapshot != (snapshots.Snapshot{}) && !s.snapshot.Direct && s.snapshot.Handler != nil {
 			syslog.L.Info().WithMessage("session: deleting snapshot").WithField("backupID", s.backupID).WithField("path", s.snapshot.Path).Write()
-			s.snapshot.Handler.DeleteSnapshot(s.snapshot)
+			if err := s.snapshot.Handler.DeleteSnapshot(s.snapshot); err != nil {
+				syslog.L.Error(err).WithMessage("session: delete snapshot failed").WithField("backupID", s.backupID).Write()
+			}
 		}
 		if s.store != nil {
 			if err := s.store.EndBackup(s.backupID); err != nil {
@@ -270,7 +272,9 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 
 	defer func() {
 		time.Sleep(5 * time.Second)
-		os.Remove(tokenFile)
+		if err := os.Remove(tokenFile); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	execCmd, err := os.Executable()
@@ -384,7 +388,9 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 	if existingSession, ok := activeSessions.Get(backupID); ok {
 		syslog.L.Info().WithMessage("Backup: closing existing session").WithField("backupID", backupID).Write()
 		existingSession.Close()
-		_ = store.EndBackup(backupID)
+		if err := store.EndBackup(backupID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if hasActive, err := store.HasActiveBackupForJob(backupID); hasActive || err != nil {
@@ -393,7 +399,9 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 			return nil, "", err
 		}
 		syslog.L.Info().WithMessage("Backup: ending previous active backup").WithField("backupID", backupID).Write()
-		_ = store.EndBackup(backupID)
+		if err := store.EndBackup(backupID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if err := store.StartBackup(backupID); err != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type BootstrapRequest struct {
@@ -108,12 +109,19 @@ func Bootstrap() error {
 	}
 
 	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := resp.Body.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		rawBody, _ := io.ReadAll(resp.Body)
+		rawBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("Bootstrap: server returned status %d: %s", resp.StatusCode, string(rawBody))
 	}
 

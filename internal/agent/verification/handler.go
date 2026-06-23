@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var bufPool = sync.Pool{
@@ -46,7 +47,11 @@ func HashFile(filePath string) ([32]byte, int64, error) {
 	if err != nil {
 		return [32]byte{}, 0, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	h := sha256simd.New()
 	bufp := bufPool.Get().(*[]byte)

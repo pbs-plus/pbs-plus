@@ -49,9 +49,15 @@ func IsHostNotExpected(err error) bool {
 }
 
 func ClearCertificates() {
-	_ = registry.DeleteEntry(registry.AUTH, "ServerCA")
-	_ = registry.DeleteEntry(registry.AUTH, "Cert")
-	_ = registry.DeleteEntry(registry.AUTH, "Priv")
+	if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	agent.InvalidateTLSConfigCache()
 }
 
@@ -85,8 +91,12 @@ func UpdateDrives() error {
 	if err != nil {
 		return err
 	}
-	_, _ = io.Copy(io.Discard, resp)
-	_ = resp.Close()
+	if _, err := io.Copy(io.Discard, resp); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := resp.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return nil
 }
 
@@ -110,16 +120,18 @@ func WaitForBootstrap(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		serverCA, _ := registry.GetEntry(registry.AUTH, "ServerCA", true)
-		cert, _ := registry.GetEntry(registry.AUTH, "Cert", true)
-		priv, _ := registry.GetEntry(registry.AUTH, "Priv", true)
+		serverCA, errCA := registry.GetEntry(registry.AUTH, "ServerCA", true)
+		cert, errCert := registry.GetEntry(registry.AUTH, "Cert", true)
+		priv, errPriv := registry.GetEntry(registry.AUTH, "Priv", true)
 
-		if serverCA != nil && cert != nil && priv != nil {
+		if errCA == nil && errCert == nil && errPriv == nil && serverCA != nil && cert != nil && priv != nil {
 			if err := agent.RenewCertificateIfExpiring(); err == nil {
 				return nil
 			}
 		} else {
-			_ = agent.Bootstrap()
+			if err := agent.Bootstrap(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -267,10 +279,13 @@ func ConnectARPC(
 			router.Handle(
 				"ping",
 				func(req *arpc.Request) (arpc.Response, error) {
-					b, _ := cbor.Marshal(map[string]string{
+					b, err := cbor.Marshal(map[string]string{
 						"version":  version,
 						"hostname": clientId,
 					})
+					if err != nil {
+						return arpc.Response{}, err
+					}
 					return arpc.Response{Status: 200, Data: b}, nil
 				},
 			)
