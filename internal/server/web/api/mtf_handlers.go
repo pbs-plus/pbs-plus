@@ -16,7 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/tape"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"

@@ -14,10 +14,10 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	job "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/server/rpc"

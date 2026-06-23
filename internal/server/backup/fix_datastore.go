@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 

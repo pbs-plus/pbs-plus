@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 )
 
 func RunCommitSubcommand() {

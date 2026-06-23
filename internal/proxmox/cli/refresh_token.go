@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 

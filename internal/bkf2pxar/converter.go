@@ -20,7 +20,7 @@ import (
 	mtf "github.com/pbs-plus/go-mtf"
 	_ "github.com/pbs-plus/go-mtf/besetmap" // register Backup Exec SMP2 Set Map parser
 
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 )
 
 // Config holds all parameters for a BKF → pxar conversion run.

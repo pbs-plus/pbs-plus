@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 // BaseTask contains shared fields and operations for all task types.

@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 // NewTask constructs a proxmox.Task with a freshly generated UPID for the

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"

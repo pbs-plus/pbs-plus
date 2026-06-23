@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"

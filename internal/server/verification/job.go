@@ -20,11 +20,11 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"

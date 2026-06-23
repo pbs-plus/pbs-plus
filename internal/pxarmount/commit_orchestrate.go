@@ -17,7 +17,7 @@ import (
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/format"

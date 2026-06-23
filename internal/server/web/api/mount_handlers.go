@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"

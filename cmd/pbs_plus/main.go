@@ -16,10 +16,10 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/web"

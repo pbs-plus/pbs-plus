@@ -3,10 +3,10 @@
 package backup
 
 import (
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 )
 
 func updateBackupStatus(succeeded bool, warningsNum int, backup database.Backup, task proxmox.Task, storeInstance *store.Store) error {
