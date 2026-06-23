@@ -26,9 +26,8 @@ var (
 	procLocalFree        = modKernel32.NewProc("LocalFree")
 )
 
-// FILE_BASIC_INFO matches the Windows structure used with
-// SetFileInformationByHandle(FileBasicInfo). A zero-valued Filetime field
-// means "leave this time unchanged".
+// FILE_BASIC_INFO is used with SetFileInformationByHandle(FileBasicInfo).
+// A zero-valued Filetime field leaves that time unchanged.
 type FILE_BASIC_INFO struct {
 	CreationTime   windows.Filetime
 	LastAccessTime windows.Filetime
@@ -48,9 +47,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		st.reportErr(ctx, "list xattrs", path, lerr)
 	}
 
-	// Gather times. w (LastWriteTime/mtime) and a (LastAccessTime) default to
-	// the archive mtime so an existing file's times are normalized even when
-	// the xattrs are absent; c (CreationTime) is only set when captured.
 	baseFt := unixToFiletime(e.MtimeSecs)
 	var c windows.Filetime
 	a := baseFt
@@ -76,9 +72,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		}
 	}
 
-	// File attributes decode once so they can ride in the same
-	// SetFileInformationByHandle(FileBasicInfo) call as the times, avoiding a
-	// separate GetFileInformationByHandle round-trip just to preserve them.
 	var attrs uint32
 	var hasAttrs bool
 	if xattrs != nil && st.fsCap.supportsXAttrs {
@@ -94,10 +87,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	}
 
 	if hasAttrs {
-		// One call sets times + attributes together. Unspecified times stay
-		// unchanged (c is zero when not captured; a/w are always set from the
-		// archive mtime). Replaces the old SetFileTime + GetFileInformation
-		// ByHandle + SetFileInformationByHandle triple.
 		info := FILE_BASIC_INFO{
 			CreationTime:   c,
 			LastAccessTime: a,
@@ -106,8 +95,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		}
 		st.reportErr(ctx, "set basic info", path, setBasicInfo(h, &info))
 	} else {
-		// No attributes to set: SetFileTime handles the times alone (a nil
-		// pointer leaves that time unchanged).
 		var cp *windows.Filetime
 		if hasCreation {
 			cp = &c
@@ -117,18 +104,14 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 
 	if xattrs != nil {
 		// Apply ACLs via a dedicated handle opened with WRITE_DAC|WRITE_OWNER
-		// and FILE_FLAG_BACKUP_SEMANTICS. The file handle from os.OpenFile
-		// (GENERIC_READ|GENERIC_WRITE) lacks WRITE_DAC/WRITE_OWNER, which
-		// normally causes SetSecurityInfo to return ACCESS_DENIED but on some
-		// Windows builds can cause a native crash. Re-opening ensures the
-		// handle has the correct access for security descriptor operations.
+		// and FILE_FLAG_BACKUP_SEMANTICS. The os.OpenFile handle lacks
+		// WRITE_DAC/WRITE_OWNER, which normally causes SetSecurityInfo to
+		// return ACCESS_DENIED but on some builds can cause a native crash.
 		if st.fsCap.supportsPersistentACLs {
 			restoreWindowsACLsFromPath(ctx, st, path, xattrs)
 		}
-		// Restore any remaining (non-canonical) xattrs as NTFS alternate data
-		// streams  -  the closest native analog to a POSIX user.* xattr and the
-		// only way a cross-platform Linux->Windows restore preserves them.
-		// Canonical keys consumed above are skipped.
+		// Restore non-canonical xattrs as NTFS alternate data streams
+		// (canonical keys consumed above are skipped).
 		if st.fsCap.supportsXAttrs {
 			writeAlternateDataStreams(ctx, st, path, xattrs)
 		}
@@ -143,8 +126,7 @@ func setBasicInfo(h windows.Handle, info *FILE_BASIC_INFO) error {
 
 // restoreWindowsACLsFromPath opens the file with WRITE_DAC|WRITE_OWNER and
 // FILE_FLAG_BACKUP_SEMANTICS, then delegates to restoreWindowsACLsFromHandle.
-// Used by applyMeta where the file handle may lack security access.
-// SIDs are intentionally leaked  -  see comment on restoreWindowsACLsFromHandle.
+// SIDs are intentionally leaked — see restoreWindowsACLsFromHandle.
 func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path string, xattrs map[string][]byte) {
 	pathPtr, err := windows.UTF16PtrFromString(path)
 	if err != nil {
@@ -168,15 +150,10 @@ func restoreWindowsACLsFromPath(ctx context.Context, st *restoreState, path stri
 	restoreWindowsACLsFromHandle(ctx, st, h, path, xattrs)
 }
 
-// restoreWindowsACLsFromHandle applies owner, group, and DACL via SetSecurityInfo
-// on an already-open handle. The handle MUST be opened with
-// WRITE_DAC|WRITE_OWNER|FILE_FLAG_BACKUP_SEMANTICS. Used directly by
-// applyMetaSymlink (which already has such a handle).
-//
-// SIDs allocated by StringToSid are intentionally NOT freed via LocalFree:
-// on Windows build 10.0.26200 LocalFree on a SID returned by
-// ConvertStringSidToSidW causes native heap corruption (0xC0000374).
-// The leak is bounded (owner + group + one per ACE, freed at process exit).
+// restoreWindowsACLsFromHandle applies owner, group, and DACL via SetSecurityInfo.
+// SIDs allocated by StringToSid are intentionally NOT freed: on Windows build
+// 10.0.26200 LocalFree on a ConvertStringSidToSidW SID causes heap corruption
+// (0xC0000374). The leak is bounded (freed at process exit).
 func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windows.Handle, path string, xattrs map[string][]byte) {
 	var secInfo windows.SECURITY_INFORMATION
 	var ownerSID, groupSID *windows.SID
@@ -228,15 +205,8 @@ func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windo
 }
 
 func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e pxar.FileInfo) error {
-	// Open the link itself (not its target) via FILE_FLAG_OPEN_REPARSE_POINT
-	// so its times and security descriptor can be set. Previously this was a
-	// no-op on Windows, dropping symlink timestamps and ACLs that Unix
-	// restores via applyMetaSymlink.
 	h, err := openReparsePoint(linkPath, windows.FILE_WRITE_ATTRIBUTES|windows.WRITE_DAC|windows.WRITE_OWNER)
 	if err != nil {
-		// Surface the failure immediately via reportErr rather than silently
-		// returning nil; the link itself was already created, so this is a
-		// metadata-only warning.
 		st.reportErr(ctx, "open symlink for metadata", linkPath, err)
 		return nil
 	}
@@ -250,9 +220,8 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 		return nil
 	}
 
-	// Times only  -  file attributes are intentionally NOT set on a reparse
-	// point, since writing them could clear FILE_ATTRIBUTE_REPARSE_POINT and
-	// break the symlink.
+	// File attributes are NOT set on a reparse point — writing them could
+	// clear FILE_ATTRIBUTE_REPARSE_POINT and break the symlink.
 	baseFt := unixToFiletime(e.MtimeSecs)
 	a := baseFt
 	w := baseFt
@@ -281,9 +250,7 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 	return nil
 }
 
-// applyTempMode is a no-op on Windows: the temp-file mode from CreateTemp is
-// irrelevant (Windows does not honor POSIX modes), and the final attributes
-// are applied via applyMeta in attr mode.
+// applyTempMode is a no-op on Windows.
 func applyTempMode(path string, rawMode uint64) error { return nil }
 
 // openReparsePoint opens a path without following it (for symlinks/junctions).
@@ -300,12 +267,8 @@ func openReparsePoint(p string, access uint32) (windows.Handle, error) {
 	)
 }
 
-// writeAlternateDataStreams writes every non-canonical user.* xattr as an NTFS
-// alternate data stream named after the xattr (e.g. user.foo -> file:user.foo).
-// This is the Windows analog of Unix's generic xattr loop and makes a
-// cross-platform Linux->Windows restore lossless. Per-stream failures are
-// reported immediately via st.reportErr rather than silently dropped;
-// invalid stream names are skipped.
+// writeAlternateDataStreams writes non-canonical user.* xattrs as NTFS
+// alternate data streams. Per-stream failures are reported via reportErr;
 func writeAlternateDataStreams(ctx context.Context, st *restoreState, name string, xattrs map[string][]byte) {
 	for k, v := range xattrs {
 		if !strings.HasPrefix(k, "user.") {
@@ -351,10 +314,8 @@ func buildFileAttributes(fa map[string]bool) uint32 {
 	return r
 }
 
-// buildDACLFromACEs builds a DACL from WinACL entries. Every SID it allocates
-// via StringToSid is returned so the caller can LocalFree it after
-// SetSecurityInfo consumes the ACL. SetEntriesInAclW reads the SIDs through
-// the trustee pointers, so they must stay alive until that call returns.
+// buildDACLFromACEs builds a DACL from WinACL entries, returning allocated SIDs
+// so the caller can free them after SetSecurityInfo consumes the ACL.
 func buildDACLFromACEs(winACLs []types.WinACL) (acl *windows.ACL, sids []*windows.SID, err error) {
 	if len(winACLs) == 0 {
 		return nil, nil, nil
@@ -449,7 +410,7 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 	return applyMeta(ctx, st, df, dirEntry)
 }
 
-// sidPtr returns a uintptr for a *SID that may be nil (0 => absent).
+// sidPtr returns a uintptr for a *SID that may be nil.
 func sidPtr(s *windows.SID) uintptr {
 	if s == nil {
 		return 0
@@ -457,7 +418,7 @@ func sidPtr(s *windows.SID) uintptr {
 	return uintptr(unsafe.Pointer(s))
 }
 
-// aclPtr returns a uintptr for a *ACL that may be nil (0 => absent).
+// aclPtr returns a uintptr for a *ACL that may be nil.
 func aclPtr(a *windows.ACL) uintptr {
 	if a == nil {
 		return 0

@@ -88,11 +88,8 @@ func (s *RemoteServer) registerHandlers() {
 }
 
 // handleError forwards an agent-side error to the job's task log. It blocks
-// (rather than dropping) when the error channel is full: dropping errors here
-// silently hid restore failures (e.g. per-file metadata errors) from the
-// operator. The errCh consumer in the restore job runs for the whole job, so
-// a blocking send cannot deadlock during the restore; on shutdown the channel
-// is closed, after which no further requests arrive on this router.
+// (rather than dropping) when the channel is full so restore failures are
+// never silently hidden from the operator.
 func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 	var params errorReq
 	if err := cbor.Unmarshal(req.Payload, &params); err != nil {

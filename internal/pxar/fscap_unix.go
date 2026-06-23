@@ -47,8 +47,7 @@ func getFilesystemCapabilities(path string) filesystemCapabilities {
 		cap.supportsXAttrs = false
 		cap.supportsChown = false
 
-	case "ntfs", "fuseblk": // NTFS via ntfs-3g
-		// NTFS-3g can emulate permissions via mapping but not true ACLs
+	case "ntfs", "fuseblk":
 		cap.supportsACLs = false
 		cap.supportsPersistentACLs = false
 		cap.supportsXAttrs = true
@@ -57,7 +56,7 @@ func getFilesystemCapabilities(path string) filesystemCapabilities {
 	case "nfs", "nfs4":
 		cap.supportsACLs = true
 		cap.supportsPersistentACLs = true
-		cap.supportsXAttrs = false // NFS xattr support varies
+		cap.supportsXAttrs = false
 		cap.supportsChown = true
 
 	case "cifs", "smb", "smbfs":

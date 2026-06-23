@@ -24,10 +24,10 @@ func getFilesystemCapabilities(path string) filesystemCapabilities {
 
 	err = windows.GetVolumeInformation(
 		rootPathPtr,
-		nil, 0, // Volume name buffer
-		nil,      // Serial number
-		nil,      // Max component length
-		&fsFlags, // Filesystem flags
+		nil, 0,
+		nil,
+		nil,
+		&fsFlags,
 		&fsName[0], uint32(len(fsName)),
 	)
 

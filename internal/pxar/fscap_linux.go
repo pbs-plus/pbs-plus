@@ -5,7 +5,6 @@ package pxar
 import "syscall"
 
 func getFsTypeFromMagic(stat *syscall.Statfs_t) string {
-	// Linux filesystem magic numbers from statfs(2)
 	switch stat.Type {
 	case 0xEF53:
 		return "ext4"
