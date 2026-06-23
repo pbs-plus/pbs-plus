@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"strings"
 	"time"
@@ -102,23 +101,7 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := tasks.Now()
-	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
-
-	task := proxmox.Task{
-		Node:       "pbsplusgen-error",
-		PID:        os.Getpid(),
-		PStart:     proxmox.GetPStart(),
-		StartTime:  startTime.Unix(),
-		WorkerType: "backup",
-		WID:        wid,
-		User:       proxmox.AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
+	task := tasks.NewTask("pbsplusgen-error", "backup", wid)
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
@@ -170,23 +153,7 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := tasks.Now()
-	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
-
-	task := proxmox.Task{
-		Node:       "pbsplusgen-ok",
-		PID:        os.Getpid(),
-		PStart:     proxmox.GetPStart(),
-		StartTime:  startTime.Unix(),
-		WorkerType: "backup",
-		WID:        wid,
-		User:       proxmox.AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
+	task := tasks.NewTask("pbsplusgen-ok", "backup", wid)
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
