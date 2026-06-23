@@ -11,7 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/tape"
@@ -27,16 +27,16 @@ const mtfWorkerType = "mtf2pxar"
 // following the same pattern as restore.RestoreTask.
 type Task struct {
 	tasks.BaseTask
-	job mtfstore.MTFJob
+	job mtfdb.MTFJob
 }
 
 type mtfJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
-	job         mtfstore.MTFJob
+	job         mtfdb.MTFJob
 	store       *store.Store
-	mapper      *mtfstore.Mapper
+	mapper      *mtfdb.Mapper
 	queueTask   *tasks.QueuedTask
 	task        *Task
 	logger      *syslog.JobLogger
@@ -44,7 +44,7 @@ type mtfJob struct {
 	cleanupOnce sync.Once
 }
 
-func newJob(job mtfstore.MTFJob, st *store.Store, mapper *mtfstore.Mapper, web bool) *jobs.Job {
+func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *jobs.Job {
 	j := &mtfJob{
 		job:    job,
 		store:  st,
@@ -172,7 +172,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		if job.OverwriteMappings || mapper == nil {
 			return baseNS
 		}
-		vol := mtfstore.DataSetVolume{Device: device, MachineName: host}
+		vol := mtfdb.DataSetVolume{Device: device, MachineName: host}
 		mapped, err := mapper.Map(ctx, vol)
 		if err != nil {
 			syslog.L.Error(err).WithJob(job.ID).WithMessage("mtf: namespace mapping failed").Write()
@@ -230,7 +230,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 			cfg.DriveIndex = idx
 		}
 	case "family":
-		famID := mtfstore.ToInt64(job.SourceRef)
+		famID := mtfdb.ToInt64(job.SourceRef)
 		carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, famID)
 		if err != nil {
 			return cfg, fmt.Errorf("list cartridges: %w", err)
@@ -262,7 +262,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 			cfg.DriveIndex = idx
 		}
 	case "dataset":
-		ds, err := j.store.MtfStore.GetDataSet(ctx, mtfstore.ToInt64(job.SourceRef))
+		ds, err := j.store.MtfStore.GetDataSet(ctx, mtfdb.ToInt64(job.SourceRef))
 		if err != nil {
 			return cfg, fmt.Errorf("get data set: %w", err)
 		}
@@ -273,7 +273,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	return cfg, nil
 }
 
-func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg bkf2pxar.Config, tapeCfg *tape.Config) (bkf2pxar.Config, error) {
+func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg bkf2pxar.Config, tapeCfg *tape.Config) (bkf2pxar.Config, error) {
 	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
 	if err != nil {
 		return cfg, err
@@ -364,7 +364,7 @@ func (j *mtfJob) onSuccess() {
 		return
 	}
 	_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-		mtfstore.JobHistory{
+		mtfdb.JobHistory{
 			LastRunUpid:           task.UPID,
 			LastRunStatus:         database.JobStatusSuccess,
 			LastRunEndtime:        time.Now().Unix(),
@@ -383,7 +383,7 @@ func (j *mtfJob) onError(runErr error) {
 	if errors.Is(runErr, jobs.ErrCanceled) {
 		if task != nil {
 			_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfstore.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, "")
+				mtfdb.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, "")
 		}
 		return
 	}
@@ -392,7 +392,7 @@ func (j *mtfJob) onError(runErr error) {
 		task = j.errorTask(runErr)
 	}
 	_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-		mtfstore.JobHistory{
+		mtfdb.JobHistory{
 			LastRunUpid:    task.UPID,
 			LastRunStatus:  database.JobStatusFailed,
 			LastRunEndtime: time.Now().Unix(),
@@ -429,7 +429,7 @@ func (j *mtfJob) persistHistory(task proxmox.Task, status database.JobStatus, ru
 	if start == 0 {
 		start = time.Now().Unix()
 	}
-	h := mtfstore.JobHistory{
+	h := mtfdb.JobHistory{
 		LastRunUpid:      task.UPID,
 		LastRunStatus:    status,
 		LastRunStarttime: start,
@@ -463,7 +463,7 @@ func (j *mtfJob) cleanup() {
 // --- MTF Task (matches RestoreTask pattern) ---
 
 // startTask creates an Task, opens its log file, and registers it as active.
-func startTask(job mtfstore.MTFJob) (*Task, error) {
+func startTask(job mtfdb.MTFJob) (*Task, error) {
 	task := tasks.NewTask("pbsplus", mtfWorkerType, mtfWID(job))
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
@@ -498,7 +498,7 @@ func (t *Task) CloseErr(taskErr error) {
 // --- Queued task ---
 
 // errorTask creates a standalone error task file.
-func errorTask(job mtfstore.MTFJob, runErr error) *Task {
+func errorTask(job mtfdb.MTFJob, runErr error) *Task {
 	task := tasks.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
@@ -518,7 +518,7 @@ func errorTask(job mtfstore.MTFJob, runErr error) *Task {
 	return t
 }
 
-func mtfWID(job mtfstore.MTFJob) string {
+func mtfWID(job mtfdb.MTFJob) string {
 	return proxmox.EncodeToHexEscapes(job.Datastore) +
 		proxmox.EncodeToHexEscapes(":") +
 		"mtf-" + proxmox.EncodeToHexEscapes(job.ID)

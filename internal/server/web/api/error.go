@@ -10,7 +10,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -27,9 +27,9 @@ func statusFromErr(err error) int {
 		errors.Is(err, database.ErrTokenNotFound) ||
 		errors.Is(err, database.ErrSecretNotFound) ||
 		errors.Is(err, database.ErrAgentHostNotFound) ||
-		errors.Is(err, mtfstore.ErrNotFound) ||
-		errors.Is(err, mtfstore.ErrInvalidID) ||
-		errors.Is(err, mtfstore.ErrInvalidMapping) {
+		errors.Is(err, store.ErrNotFound) ||
+		errors.Is(err, store.ErrInvalidID) ||
+		errors.Is(err, store.ErrInvalidMapping) {
 		return http.StatusNotFound
 	}
 

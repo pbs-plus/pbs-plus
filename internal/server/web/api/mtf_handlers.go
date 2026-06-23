@@ -15,7 +15,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/tape"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
@@ -23,7 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func mtfStore(st *store.Store) *mtfstore.Database {
+func mtfStore(st *store.Store) *mtfdb.Database {
 	if st == nil {
 		return nil
 	}
@@ -286,8 +286,8 @@ func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 
 // --- Form parsing helpers ---
 
-func mtfJobFromForm(r *http.Request) (mtfstore.MTFJob, error) {
-	j := mtfstore.MTFJob{
+func mtfJobFromForm(r *http.Request) (mtfdb.MTFJob, error) {
+	j := mtfdb.MTFJob{
 		ID:                r.FormValue("id"),
 		SourceKind:        r.FormValue("source_kind"),
 		SourceRef:         r.FormValue("source_ref"),
@@ -322,7 +322,7 @@ func mtfJobFromForm(r *http.Request) (mtfstore.MTFJob, error) {
 	return j, nil
 }
 
-func mtfJobMergeForm(job mtfstore.MTFJob, r *http.Request) (mtfstore.MTFJob, error) {
+func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	if v := r.FormValue("datastore"); v != "" {
 		if err := validate.ValidateDatastore(v); err != nil {
 			return job, err
@@ -441,7 +441,7 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 			resp.Data = list
 		case "datasets":
 			famID, _ := strconv.ParseInt(r.URL.Query().Get("family"), 10, 64)
-			var list []mtfstore.DataSet
+			var list []mtfdb.DataSet
 			var err error
 			if famID > 0 {
 				list, err = ms.ListDataSetsByFamily(ctx, famID)
@@ -571,7 +571,7 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			m := mtfstore.NamespaceMapping{
+			m := mtfdb.NamespaceMapping{
 				Name:       r.FormValue("name"),
 				Priority:   atoiDefault(r.FormValue("priority"), 0),
 				MatchRegex: r.FormValue("match_regex"),
@@ -595,7 +595,7 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = mtfstore.NamespaceMapping{ID: id}
+			response.Data = mtfdb.NamespaceMapping{ID: id}
 			json.NewEncoder(w).Encode(response)
 
 		default:
@@ -719,7 +719,7 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 // is promoted to top-level fields (matching the ExtJS model + grid columns)
 // and a pre-parsed status is attached so the shared task-status renderer works.
 type flatMtfJob struct {
-	mtfstore.MTFJob
+	mtfdb.MTFJob
 	LastRunUpid           string           `json:"last-run-upid"`
 	LastRunStarttime      int64            `json:"last-run-starttime"`
 	LastRunState          string           `json:"last-run-state"`
@@ -732,7 +732,7 @@ type flatMtfJob struct {
 	StatusParsed          ParsedTaskStatus `json:"status_parsed"`
 }
 
-func flattenMtfJob(j mtfstore.MTFJob) flatMtfJob {
+func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 	return flatMtfJob{
 		MTFJob:                j,
 		LastRunUpid:           j.History.LastRunUpid,
@@ -751,7 +751,7 @@ func flattenMtfJob(j mtfstore.MTFJob) flatMtfJob {
 // flattenMtfJobForEdit returns a map with the field names the edit form expects
 // (matching the ExtJS fields.name values). It follows the same pattern as
 // FlattenBackupForEdit / FlattenRestoreForEdit.
-func flattenMtfJobForEdit(j mtfstore.MTFJob) map[string]any {
+func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 	return map[string]any{
 		"id":                 j.ID,
 		"source_kind":        j.SourceKind,

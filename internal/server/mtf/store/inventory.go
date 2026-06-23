@@ -1,10 +1,10 @@
-package mtfstore
+package store
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
 )
 
 func (d *Database) ListMediaFamilies(ctx context.Context) ([]MediaFamily, error) {

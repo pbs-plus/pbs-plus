@@ -14,8 +14,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/changer"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -67,11 +67,11 @@ type Result struct {
 }
 
 type Scanner struct {
-	db      *mtfstore.Database
+	db      *store.Database
 	taskLog *tasks.BaseTask
 }
 
-func NewScanner(db *mtfstore.Database) *Scanner {
+func NewScanner(db *store.Database) *Scanner {
 	return &Scanner{db: db}
 }
 

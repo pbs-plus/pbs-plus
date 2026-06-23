@@ -2,7 +2,7 @@
 
 // Package tape reads Proxmox Backup Server tape device configuration
 // (the /etc/proxmox-backup/tape.cfg SectionConfig file) and resolves SCSI
-// tape device paths. It is independent of the mtfstore persistence layer.
+// tape device paths. It is independent of the mtf/store persistence layer.
 package tape
 
 import (

@@ -15,12 +15,12 @@ sql:
         emit_empty_slices: true
         emit_pointers_for_null_types: false
   - engine: "sqlite"
-    queries: "internal/server/mtfstore/queries"
-    schema: "internal/server/mtfstore/migrations"
+    queries: "internal/server/mtf/store/queries"
+    schema: "internal/server/mtf/store/migrations"
     gen:
       go:
         package: "mtfquery"
-        out: "internal/server/mtfstore/mtfquery"
+        out: "internal/server/mtf/store/mtfquery"
         sql_package: "database/sql"
         emit_json_tags: true
         emit_prepared_queries: false

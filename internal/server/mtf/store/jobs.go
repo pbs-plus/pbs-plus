@@ -1,4 +1,4 @@
-package mtfstore
+package store
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
 )
 
 const mtfJobMaxAttempts = 100

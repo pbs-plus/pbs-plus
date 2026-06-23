@@ -1,4 +1,4 @@
-package mtfstore
+package store
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
 )
 
 type Database struct {

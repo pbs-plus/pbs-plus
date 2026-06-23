@@ -1,4 +1,4 @@
-package mtfstore
+package store
 
 import (
 	"embed"

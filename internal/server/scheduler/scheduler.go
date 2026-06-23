@@ -12,7 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
@@ -291,7 +291,7 @@ func (s *Scheduler) checkMtfJobs() {
 	}
 }
 
-func (s *Scheduler) shouldRunScheduledMtf(mj mtfstore.MTFJob, now time.Time) (time.Time, bool) {
+func (s *Scheduler) shouldRunScheduledMtf(mj mtfdb.MTFJob, now time.Time) (time.Time, bool) {
 	ev, err := calendar.Parse(mj.Schedule)
 	if err != nil {
 		return time.Time{}, false
@@ -321,7 +321,7 @@ func (s *Scheduler) shouldRunScheduledMtf(mj mtfstore.MTFJob, now time.Time) (ti
 	return time.Time{}, false
 }
 
-func (s *Scheduler) shouldRetryMtf(mj mtfstore.MTFJob, now time.Time) bool {
+func (s *Scheduler) shouldRetryMtf(mj mtfdb.MTFJob, now time.Time) bool {
 	if mj.History.LastRunEndtime == 0 {
 		return false
 	}
