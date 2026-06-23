@@ -37,7 +37,6 @@ func ToInode(e *pxar.Entry) uint64 {
 	return e.FileOffset | NonDirBit
 }
 
-// Fields ordered for minimal padding: 8-byte words first, then 4-byte,
 type node struct {
 	inode         uint64
 	parent        uint64

@@ -521,3 +521,53 @@ func TestEnsureNodeTimesIdempotent(t *testing.T) {
 		t.Errorf("Mtimensec = %d, want 123456789", out.Mtimensec)
 	}
 }
+
+func TestCommitResolvedTimesPreservesRefs(t *testing.T) {
+	fs := &PxarFS{nodes: make(map[uint64]node)}
+	fs.nodes[RootInode] = node{
+		inode:  RootInode,
+		parent: RootInode,
+		mode:   uint64(0o755 | 0o40000000),
+		isDir:  true,
+		refs:   1,
+	}
+
+	root := dirEntrySlim{name: ".", inode: RootInode, mode: uint32(0o755 | 0o40000000), isDir: true}
+	fs.registerSlimNode(&root, RootInode)
+	fs.registerSlimNode(&root, RootInode)
+	fs.registerSlimNode(&root, RootInode)
+
+	want := fs.nodes[RootInode].refs
+
+	fs.commitResolvedTimes(RootInode, 1700000000*1_000_000_000, 1700000099*1_000_000_000)
+
+	got := fs.nodes[RootInode]
+	if got.refs != want {
+		t.Fatalf("refs = %d, want %d (resolved-time write-back must not clobber refs)", got.refs, want)
+	}
+	if got.atimeNs != 1700000000*1_000_000_000 || got.mtimeNs != 1700000099*1_000_000_000 || !got.timesResolved {
+		t.Fatalf("times not committed: atime=%d mtime=%d resolved=%v", got.atimeNs, got.mtimeNs, got.timesResolved)
+	}
+}
+
+func TestCommitResolvedTimesDoesNotResurrectForgottenNode(t *testing.T) {
+	fs := &PxarFS{nodes: make(map[uint64]node)}
+	fs.nodes[RootInode] = node{
+		inode:  RootInode,
+		parent: RootInode,
+		mode:   uint64(0o755 | 0o40000000),
+		isDir:  true,
+		refs:   1,
+	}
+
+	fs.Forget(RootInode, 1)
+	if _, ok := fs.nodes[RootInode]; ok {
+		t.Fatal("precondition: node should be removed by Forget")
+	}
+
+	fs.commitResolvedTimes(RootInode, 1700000000*1_000_000_000, 1700000099*1_000_000_000)
+
+	if _, ok := fs.nodes[RootInode]; ok {
+		t.Fatal("commitResolvedTimes resurrected a forgotten node")
+	}
+}

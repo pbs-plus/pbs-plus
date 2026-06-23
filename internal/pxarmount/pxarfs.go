@@ -82,9 +82,7 @@ func (fs *PxarFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fu
 	if !n.timesResolved {
 		fs.ensureNodeTimes(&n)
 		if n.timesResolved {
-			fs.mu.Lock()
-			fs.nodes[input.NodeId] = n
-			fs.mu.Unlock()
+			fs.commitResolvedTimes(input.NodeId, n.atimeNs, n.mtimeNs)
 		}
 	}
 	fillAttrOut(&n, out)
@@ -303,6 +301,17 @@ func (fs *PxarFS) ensureNodeTimes(n *node) {
 	}
 	n.atimeNs, n.mtimeNs = resolvePxarTimes(entry)
 	n.timesResolved = true
+}
+
+func (fs *PxarFS) commitResolvedTimes(ino uint64, atimeNs, mtimeNs int64) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if cur, ok := fs.nodes[ino]; ok {
+		cur.atimeNs = atimeNs
+		cur.mtimeNs = mtimeNs
+		cur.timesResolved = true
+		fs.nodes[ino] = cur
+	}
 }
 
 // applying restore's xattr precedence. Used by the mutable overlay so that
