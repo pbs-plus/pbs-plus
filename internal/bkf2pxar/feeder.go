@@ -7,6 +7,7 @@ import (
 	mtf "github.com/pbs-plus/go-mtf"
 
 	"github.com/pbs-plus/pbs-plus/internal/changer"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type feeder struct {
@@ -31,7 +32,9 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 	}
 	st, err := chg.Status()
 	if err != nil {
-		_ = chg.Close()
+		if err := chg.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("changer inventory: %w", err)
 	}
 	return &feeder{
@@ -44,7 +47,11 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 	}, nil
 }
 
-func (f *feeder) close() { _ = f.chg.Close() }
+func (f *feeder) close() {
+	if err := f.chg.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
+}
 
 func (f *feeder) markProcessed() {
 	if f.loadedBarcode != "" {
@@ -118,7 +125,9 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	}
 	fmt.Fprintf(os.Stderr, "\n== EOTM: need next tape (family 0x%08X, sequence %d) ==\n", wantMFMID, wantSeq)
 
-	_ = f.unloadCurrent()
+	if err := f.unloadCurrent(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	for pass := range 2 {
 		for i, s := range f.status.Slots {
@@ -143,8 +152,12 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			ok, err := f.verifyTape(rc, wantMFMID, wantSeq)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "   slot %d verify: %v\n", slot, err)
-				_ = rc.Close()
-				_ = f.unloadCurrent()
+				if err := rc.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
+				if err := f.unloadCurrent(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				continue
 			}
 			if ok {
@@ -156,8 +169,12 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 				return rc, nil
 			}
 			fmt.Fprintf(os.Stderr, "   slot %d: not the wanted tape\n", slot)
-			_ = rc.Close()
-			_ = f.unloadCurrent()
+			if err := rc.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if err := f.unloadCurrent(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		if pass == 0 {
 			st, err := f.chg.Status()
@@ -174,7 +191,9 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool, error) {
 	r := mtf.NewReader(rc)
 	blk, err := r.Next()
-	_ = rc.Close()
+	if err := rc.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if err != nil {
 		return false, err
 	}

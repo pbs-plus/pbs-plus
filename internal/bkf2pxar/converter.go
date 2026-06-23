@@ -21,6 +21,7 @@ import (
 	_ "github.com/pbs-plus/go-mtf/besetmap"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type Config struct {
@@ -86,7 +87,11 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		if sm, _ := mtf.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
+		sm, smErr := mtf.ReadSetMap(rc)
+		if smErr != nil {
+			syslog.L.Error(smErr).Write()
+		}
+		if sm != nil && len(sm.Entries) > 0 {
 			for _, e := range sm.Entries {
 				snap := Snapshot{
 					Index:      len(snapshots),
@@ -105,10 +110,14 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 				}
 				snapshots = append(snapshots, snap)
 			}
-			_ = rc.Close()
+			if err := rc.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return snapshots, nil
 		}
-		_ = rc.Rewind()
+		if err := rc.Rewind(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		r := mtf.NewReader(rc)
 		if cfg.Spanning {
 			setupTapeContinuation(r, cfg.TapeDevice)
@@ -131,7 +140,9 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 			}
 			setupFileContinuation(r, files)
 			err = scanSnapshots(r, files[0], &snapshots)
-			_ = r.Close()
+			if err := r.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if err != nil {
 				return snapshots, err
 			}
@@ -142,7 +153,9 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 					return snapshots, err
 				}
 				err = scanSnapshots(r, f, &snapshots)
-				_ = r.Close()
+				if err := r.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				if err != nil {
 					return snapshots, err
 				}
@@ -285,7 +298,10 @@ func (c *converter) ensureSession() error {
 		backupID = c.meta.HostName
 	}
 	if backupID == "" {
-		h, _ := os.Hostname()
+		h, hostErr := os.Hostname()
+		if hostErr != nil {
+			syslog.L.Error(hostErr).Write()
+		}
 		backupID = h
 	}
 
@@ -420,7 +436,11 @@ func (c *converter) runTape() error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	r := mtf.NewReader(rc)
 	if c.cfg.Spanning {
@@ -445,12 +465,20 @@ func (c *converter) runChanger() error {
 		r := mtf.NewReader(rc)
 		r.SetContinuation(f.asContinuation())
 		if err := c.processReader(r); err != nil {
-			_ = rc.Close()
-			_ = f.unloadCurrent()
+			if err := rc.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if err := f.unloadCurrent(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return err
 		}
-		_ = rc.Close()
-		_ = f.unloadCurrent()
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := f.unloadCurrent(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		f.markProcessed()
 	}
 }
@@ -471,7 +499,9 @@ func (c *converter) runFiles() error {
 		}
 		setupFileContinuation(r, files)
 		perr := c.processReader(r)
-		_ = r.Close()
+		if err := r.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return perr
 	}
 
@@ -481,7 +511,9 @@ func (c *converter) runFiles() error {
 			return fmt.Errorf("open %s: %w", f, err)
 		}
 		perr := c.processReader(r)
-		_ = r.Close()
+		if err := r.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if perr != nil {
 			return fmt.Errorf("process %s: %w", f, perr)
 		}
@@ -636,10 +668,18 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 	// of stop/start cycles that limit throughput.
 	pr, pw := io.Pipe()
 	go func() {
-		defer func() { _ = pw.Close() }()
+		defer func() {
+			if err := pw.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+		}()
 		bw := bufio.NewWriterSize(pw, 32<<20)
-		_, _ = io.Copy(bw, r)
-		_ = bw.Flush()
+		if _, err := io.Copy(bw, r); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := bw.Flush(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
 }
@@ -649,7 +689,9 @@ func setupTapeContinuation(r *mtf.Reader, dev string) {
 		fmt.Fprintf(os.Stderr, "\n== Insert tape %d (media %s) and press Enter ==\n",
 			ct.Sequence+1, ct.Media.Name)
 		var buf string
-		fmt.Scanln(&buf) //nolint:errcheck
+		if _, err := fmt.Scanln(&buf); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		rc, err := openTapeReader(dev)
 		if err != nil {
 			return nil, err
@@ -702,7 +744,9 @@ func mapSID(sid string) (uid, gid uint32) {
 		parts := strings.Split(sid, "-")
 		if len(parts) >= 3 {
 			var n uint32
-			fmt.Sscanf(parts[len(parts)-1], "%d", &n) //nolint:errcheck
+			if _, err := fmt.Sscanf(parts[len(parts)-1], "%d", &n); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if n > 0 {
 				return n + 1000, n + 1000
 			}
