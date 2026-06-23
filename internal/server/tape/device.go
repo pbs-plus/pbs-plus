@@ -1,15 +1,15 @@
-package pbstape
+package tape
 
 import (
 	"os"
 	"strings"
 )
 
-// ResolveTapeDevice converts a SCSI generic device path (-sg) to the
+// ResolveDevice converts a SCSI generic device path (-sg) to the
 // corresponding non-rewind tape device (-nst). udev by-id paths ending
 // in -sg point to SCSI generic devices; the matching tape device has the
 // same name with -nst.
-func ResolveTapeDevice(path string) string {
+func ResolveDevice(path string) string {
 	if path == "" {
 		return path
 	}

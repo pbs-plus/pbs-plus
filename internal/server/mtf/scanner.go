@@ -1,4 +1,4 @@
-package mtfrun
+package mtf
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	mtf "github.com/pbs-plus/go-mtf"
+	mtflib "github.com/pbs-plus/go-mtf"
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/changer"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
@@ -29,7 +29,7 @@ type pbsMediaEntry struct {
 	} `json:"id"`
 }
 
-func ListPBSTapeLabels() (map[string]bool, error) {
+func ListTapeLabels() (map[string]bool, error) {
 	data, err := os.ReadFile(pbsInventoryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -160,7 +160,7 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 		return fmt.Errorf("changer status: %w", err)
 	}
 
-	pbsLabels, _ := ListPBSTapeLabels()
+	pbsLabels, _ := ListTapeLabels()
 	processed := make(map[string]bool)
 
 	for i, slot := range st.Slots {
@@ -221,7 +221,7 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 		if s.taskLog != nil {
 			s.taskLog.WriteString(fmt.Sprintf("Slot %d: reading catalog...", i+1))
 		}
-		if sm, _ := mtf.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
+		if sm, _ := mtflib.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
 			if s.taskLog != nil {
 				s.taskLog.WriteString(fmt.Sprintf("Slot %d: found %d data sets via catalog", i+1, len(sm.Entries)))
 			}
@@ -237,7 +237,7 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 				s.taskLog.WriteString(fmt.Sprintf("Slot %d: no catalog, doing full census...", i+1))
 			}
 			_ = rc.Rewind()
-			r := mtf.NewReader(rc)
+			r := mtflib.NewReader(rc)
 			if err := s.indexReader(ctx, r, barcode, false, "", res, func() error {
 				return nil
 			}); err != nil {
@@ -303,7 +303,7 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 		if s.taskLog != nil {
 			s.taskLog.WriteString(fmt.Sprintf("Drive %d: reading catalog...", dIdx))
 		}
-		if sm, _ := mtf.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
+		if sm, _ := mtflib.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
 			if s.taskLog != nil {
 				s.taskLog.WriteString(fmt.Sprintf("Drive %d: found %d data sets via catalog", dIdx, len(sm.Entries)))
 			}
@@ -318,7 +318,7 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 				s.taskLog.WriteString(fmt.Sprintf("Drive %d: no catalog, doing full census...", dIdx))
 			}
 			_ = rc.Rewind()
-			r := mtf.NewReader(rc)
+			r := mtflib.NewReader(rc)
 			if err := s.indexReader(ctx, r, barcode, false, "", res, func() error { return nil }); err != nil {
 				syslog.L.Error(err).WithMessage("mtf: census drive tape failed").WithField("barcode", barcode).Write()
 				if s.taskLog != nil {
@@ -334,18 +334,18 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 }
 
 // indexSetMap persists a Set Map read via the fast catalog path.
-func (s *Scanner) indexSetMap(ctx context.Context, rc *mtf.DriveTape, barcode string, sm *mtf.SetMap, res *Result) error {
+func (s *Scanner) indexSetMap(ctx context.Context, rc *mtflib.DriveTape, barcode string, sm *mtflib.SetMap, res *Result) error {
 	if s.taskLog != nil {
 		s.taskLog.WriteString("  Reading TAPE header...")
 	}
 	// Rewind to BOT, read just the first TAPE block (no full Census).
 	_ = rc.Rewind()
-	r := mtf.NewReader(rc)
+	r := mtflib.NewReader(rc)
 	blk, err := r.Next()
 	if err != nil {
 		return fmt.Errorf("read TAPE block: %w", err)
 	}
-	if blk.Kind != mtf.KindMedia || blk.Tape == nil {
+	if blk.Kind != mtflib.KindMedia || blk.Tape == nil {
 		return fmt.Errorf("first block is not a TAPE block")
 	}
 
@@ -428,12 +428,12 @@ func (s *Scanner) scanDrive(ctx context.Context, dev, barcode string, res *Resul
 	}
 
 	// Fast path: Set Map.
-	if sm, _ := mtf.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
+	if sm, _ := mtflib.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
 		return s.indexSetMap(ctx, rc, barcode, sm, res)
 	}
 	// Fallback.
 	_ = rc.Rewind()
-	r := mtf.NewReader(rc)
+	r := mtflib.NewReader(rc)
 	return s.indexReader(ctx, r, barcode, false, "", res, func() error { return nil })
 }
 
@@ -466,7 +466,7 @@ func (s *Scanner) scanBKFFile(ctx context.Context, path, label string, res *Resu
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		r, err := mtf.Open(f)
+		r, err := mtflib.Open(f)
 		if err != nil {
 			return fmt.Errorf("open %s: %w", f, err)
 		}
@@ -480,7 +480,7 @@ func (s *Scanner) scanBKFFile(ctx context.Context, path, label string, res *Resu
 	return nil
 }
 
-func (s *Scanner) indexReader(ctx context.Context, r *mtf.Reader, barcode string, isBKF bool, srcPath string, res *Result, onDone func() error) error {
+func (s *Scanner) indexReader(ctx context.Context, r *mtflib.Reader, barcode string, isBKF bool, srcPath string, res *Result, onDone func() error) error {
 	cen, err := r.Census()
 	if onDoneErr := onDone(); onDoneErr != nil && err == nil {
 		err = onDoneErr
@@ -525,7 +525,7 @@ func (s *Scanner) indexReader(ctx context.Context, r *mtf.Reader, barcode string
 	return nil
 }
 
-func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtf.SetMap, tapeSeq int) error {
+func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtflib.SetMap, tapeSeq int) error {
 	for _, e := range sm.Entries {
 		var machine string
 		for _, v := range e.Volumes {
@@ -569,12 +569,12 @@ func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtf.S
 	return nil
 }
 
-func cartridgeParams(barcode string, famID int64, cen mtf.Census, isBKF bool, srcPath string) mtfquery.UpsertCartridgeParams {
+func cartridgeParams(barcode string, famID int64, cen mtflib.Census, isBKF bool, srcPath string) mtfquery.UpsertCartridgeParams {
 	role := "unknown"
 	switch cen.Role {
-	case mtf.RoleData:
+	case mtflib.RoleData:
 		role = "data"
-	case mtf.RoleCatalog:
+	case mtflib.RoleCatalog:
 		role = "catalog"
 	}
 	label := ""
@@ -606,7 +606,7 @@ func cartridgeParams(barcode string, famID int64, cen mtf.Census, isBKF bool, sr
 	}
 }
 
-func mtfqueryHasCatalog(f mtf.MediaFamily) sql.NullInt64 {
+func mtfqueryHasCatalog(f mtflib.MediaFamily) sql.NullInt64 {
 	if f.SetMap != nil || f.TotalTapes > 0 {
 		return nullInt(1)
 	}

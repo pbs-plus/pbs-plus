@@ -1,4 +1,4 @@
-package mtfrun
+package mtf
 
 import (
 	"fmt"

@@ -1,9 +1,9 @@
 //go:build linux
 
-// Package pbstape reads Proxmox Backup Server tape device configuration
+// Package tape reads Proxmox Backup Server tape device configuration
 // (the /etc/proxmox-backup/tape.cfg SectionConfig file) and resolves SCSI
 // tape device paths. It is independent of the mtfstore persistence layer.
-package pbstape
+package tape
 
 import (
 	"bufio"
@@ -12,21 +12,21 @@ import (
 	"strings"
 )
 
-// PBSTapeConfig holds the parsed tape.cfg configuration.
-type PBSTapeConfig struct {
-	Changers []PBSChanger `json:"changers"`
-	Drives   []PBSDrive   `json:"drives"`
+// Config holds the parsed tape.cfg configuration.
+type Config struct {
+	Changers []Changer `json:"changers"`
+	Drives   []Drive   `json:"drives"`
 }
 
-// PBSChanger represents a changer entry from PBS tape.cfg.
-type PBSChanger struct {
+// Changer represents a changer entry from PBS tape.cfg.
+type Changer struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	ExportSlots string `json:"export-slots,omitempty"`
 }
 
-// PBSDrive represents a drive entry from PBS tape.cfg.
-type PBSDrive struct {
+// Drive represents a drive entry from PBS tape.cfg.
+type Drive struct {
 	Name            string `json:"name"`
 	Path            string `json:"path"`
 	Changer         string `json:"changer,omitempty"`
@@ -35,12 +35,12 @@ type PBSDrive struct {
 
 const pbsTapeCfgPath = "/etc/proxmox-backup/tape.cfg"
 
-// ReadPBSTapeConfig reads and parses the PBS tape.cfg SectionConfig file.
-func ReadPBSTapeConfig() (*PBSTapeConfig, error) {
+// ReadConfig reads and parses the PBS tape.cfg SectionConfig file.
+func ReadConfig() (*Config, error) {
 	file, err := os.Open(pbsTapeCfgPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &PBSTapeConfig{}, nil
+			return &Config{}, nil
 		}
 		return nil, fmt.Errorf("open tape.cfg: %w", err)
 	}
@@ -48,17 +48,17 @@ func ReadPBSTapeConfig() (*PBSTapeConfig, error) {
 
 	sections := parseSectionConfig(file)
 
-	cfg := &PBSTapeConfig{}
+	cfg := &Config{}
 	for _, sec := range sections {
 		switch sec.sectionType {
 		case "changer":
-			cfg.Changers = append(cfg.Changers, PBSChanger{
+			cfg.Changers = append(cfg.Changers, Changer{
 				Name:        sec.sectionName,
 				Path:        sec.get("path"),
 				ExportSlots: sec.get("export-slots"),
 			})
 		case "lto":
-			cfg.Drives = append(cfg.Drives, PBSDrive{
+			cfg.Drives = append(cfg.Drives, Drive{
 				Name:            sec.sectionName,
 				Path:            sec.get("path"),
 				Changer:         sec.get("changer"),

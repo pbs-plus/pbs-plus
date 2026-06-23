@@ -1,6 +1,6 @@
 //go:build linux
 
-package pbscli
+package backupmanager
 
 import (
 	"bytes"

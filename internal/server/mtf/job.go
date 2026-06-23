@@ -1,4 +1,4 @@
-package mtfrun
+package mtf
 
 import (
 	"context"
@@ -14,18 +14,18 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/pbstape"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/tape"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const mtfWorkerType = "mtf2pxar"
 
-// MtfTask manages an MTF migration job's task log and lifecycle,
+// Task manages an MTF migration job's task log and lifecycle,
 // following the same pattern as restore.RestoreTask.
-type MtfTask struct {
+type Task struct {
 	tasks.BaseTask
 	job mtfstore.MTFJob
 }
@@ -38,13 +38,13 @@ type mtfJob struct {
 	store       *store.Store
 	mapper      *mtfstore.Mapper
 	queueTask   *tasks.QueuedTask
-	task        *MtfTask
+	task        *Task
 	logger      *syslog.JobLogger
 	started     atomic.Bool
 	cleanupOnce sync.Once
 }
 
-func NewJob(job mtfstore.MTFJob, st *store.Store, mapper *mtfstore.Mapper, web bool) *jobs.Job {
+func newJob(job mtfstore.MTFJob, st *store.Store, mapper *mtfstore.Mapper, web bool) *jobs.Job {
 	j := &mtfJob{
 		job:    job,
 		store:  st,
@@ -61,8 +61,8 @@ func NewJob(job mtfstore.MTFJob, st *store.Store, mapper *mtfstore.Mapper, web b
 	}
 }
 
-// NewMtfJob loads an MTF job definition by id and builds a runnable jobs.Job.
-func NewMtfJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
+// NewJob loads an MTF job definition by id and builds a runnable jobs.Job.
+func NewJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
 	ctx := st.Ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -71,7 +71,7 @@ func NewMtfJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewJob(j, st, st.MtfMapper, web), nil
+	return newJob(j, st, st.MtfMapper, web), nil
 }
 
 func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
@@ -105,7 +105,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 		return err
 	}
 
-	task, err := startMtfTask(j.job)
+	task, err := startTask(j.job)
 	if err != nil {
 		return fmt.Errorf("start task: %w", err)
 	}
@@ -198,7 +198,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	}
 
 	// Resolve changer and drive paths from PBS tape config
-	tapeCfg, _ := pbstape.ReadPBSTapeConfig()
+	tapeCfg, _ := tape.ReadConfig()
 
 	// Resolve changer name → path
 	if job.Changer != "" {
@@ -273,7 +273,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	return cfg, nil
 }
 
-func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg bkf2pxar.Config, tapeCfg *pbstape.PBSTapeConfig) (bkf2pxar.Config, error) {
+func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg bkf2pxar.Config, tapeCfg *tape.Config) (bkf2pxar.Config, error) {
 	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
 	if err != nil {
 		return cfg, err
@@ -316,12 +316,12 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg 
 // resolveDrivePaths resolves the tape device path, changer device path,
 // and drive index from the PBS tape config. It resolves changer names to
 // device paths to avoid "no such file or directory" errors.
-func (j *mtfJob) resolveDrivePaths(tapeCfg *pbstape.PBSTapeConfig) (tapeDev, changerDev string, driveIdx int, err error) {
+func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev string, driveIdx int, err error) {
 	if tapeCfg == nil || len(tapeCfg.Drives) == 0 {
 		return "/dev/nst0", "", 0, nil
 	}
 
-	var d pbstape.PBSDrive
+	var d tape.Drive
 	if j.job.Drive != "" {
 		found := false
 		for _, drive := range tapeCfg.Drives {
@@ -338,7 +338,7 @@ func (j *mtfJob) resolveDrivePaths(tapeCfg *pbstape.PBSTapeConfig) (tapeDev, cha
 		d = tapeCfg.Drives[0]
 	}
 
-	tapeDev = pbstape.ResolveTapeDevice(d.Path)
+	tapeDev = tape.ResolveDevice(d.Path)
 	driveIdx = d.ChangerDrivenum
 
 	// Resolve changer name → device path
@@ -401,8 +401,8 @@ func (j *mtfJob) onError(runErr error) {
 	j.notify(runErr)
 }
 
-func (j *mtfJob) errorTask(runErr error) *MtfTask {
-	errTask := errorMtfTask(j.job, runErr)
+func (j *mtfJob) errorTask(runErr error) *Task {
+	errTask := errorTask(j.job, runErr)
 	return errTask
 }
 
@@ -462,8 +462,8 @@ func (j *mtfJob) cleanup() {
 
 // --- MTF Task (matches RestoreTask pattern) ---
 
-// startMtfTask creates an MtfTask, opens its log file, and registers it as active.
-func startMtfTask(job mtfstore.MTFJob) (*MtfTask, error) {
+// startTask creates an Task, opens its log file, and registers it as active.
+func startTask(job mtfstore.MTFJob) (*Task, error) {
 	task := tasks.NewTask("pbsplus", mtfWorkerType, mtfWID(job))
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
@@ -471,7 +471,7 @@ func startMtfTask(job mtfstore.MTFJob) (*MtfTask, error) {
 		return nil, err
 	}
 
-	t := &MtfTask{
+	t := &Task{
 		BaseTask: tasks.NewBaseTask(task, file),
 		job:      job,
 	}
@@ -482,14 +482,14 @@ func startMtfTask(job mtfstore.MTFJob) (*MtfTask, error) {
 }
 
 // CloseOK closes the task with "OK" status and removes from active list.
-func (t *MtfTask) CloseOK() {
+func (t *Task) CloseOK() {
 	t.CloseWithStatus("OK", nil, func() {
 		_ = tasks.RemoveActive(t.UPID)
 	})
 }
 
 // CloseErr closes the task with error status and removes from active list.
-func (t *MtfTask) CloseErr(taskErr error) {
+func (t *Task) CloseErr(taskErr error) {
 	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
 		_ = tasks.RemoveActive(t.UPID)
 	})
@@ -497,8 +497,8 @@ func (t *MtfTask) CloseErr(taskErr error) {
 
 // --- Queued task ---
 
-// errorMtfTask creates a standalone error task file.
-func errorMtfTask(job mtfstore.MTFJob, runErr error) *MtfTask {
+// errorTask creates a standalone error task file.
+func errorTask(job mtfstore.MTFJob, runErr error) *Task {
 	task := tasks.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
@@ -506,7 +506,7 @@ func errorMtfTask(job mtfstore.MTFJob, runErr error) *MtfTask {
 		return nil
 	}
 
-	t := &MtfTask{
+	t := &Task{
 		BaseTask: tasks.NewBaseTask(task, file),
 		job:      job,
 	}
