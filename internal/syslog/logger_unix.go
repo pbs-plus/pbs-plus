@@ -99,7 +99,7 @@ func (e *LogEntry) serverWrite() {
 				sb.WriteString(fmt.Sprintf(" (debug values: %v)", e.Fields))
 			}
 
-			backupLogger.Write([]byte(sb.String()))
+			_, _ = backupLogger.Write([]byte(sb.String()))
 			sb.Reset()
 		}
 		e.Fields["jobID"] = e.JobID

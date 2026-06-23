@@ -65,7 +65,7 @@ func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile 
 func getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile string) (*tls.Certificate, *x509.CertPool) {
 	lastTLSTime := time.Unix(atomic.LoadInt64(&lastTLSTimestamp), 0)
 	if time.Since(lastTLSTime) > 12*time.Hour {
-		updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
+		_ = updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
 	}
 
 	return currentTLSCert.Load(), currentTLSCAs.Load()
