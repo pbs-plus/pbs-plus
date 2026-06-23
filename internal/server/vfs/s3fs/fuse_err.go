@@ -15,7 +15,6 @@ func s3ErrorToErrno(err error) syscall.Errno {
 		return 0
 	}
 
-	// Handle rclone specific errors
 	if errors.Is(err, fs.ErrorObjectNotFound) {
 		return syscall.ENOENT
 	}

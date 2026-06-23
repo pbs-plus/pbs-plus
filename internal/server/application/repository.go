@@ -6,8 +6,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// BackupRepository defines the persistence operations for backup jobs.
-// Implemented by database.Database.
 type BackupRepository interface {
 	GetAllBackups() ([]database.Backup, error)
 	GetBackup(id string) (database.Backup, error)
@@ -17,8 +15,6 @@ type BackupRepository interface {
 	GetAllQueuedBackups() ([]database.Backup, error)
 }
 
-// TargetRepository defines the persistence operations for backup targets.
-// Implemented by database.Database.
 type TargetRepository interface {
 	GetAllTargets() ([]database.Target, error)
 }

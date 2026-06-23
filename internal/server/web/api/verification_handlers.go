@@ -108,7 +108,6 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 					continue
 				}
 
-				// Run the verification job
 				vj, err := verification.NewVerificationJob(vJob, storeInstance, true)
 				if err != nil {
 					syslog.L.Error(err).WithField("verificationJobID", jobID).Write()
@@ -236,7 +235,6 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 				WriteErrorResponse(w, fmt.Errorf("backup_job_id is required"))
 				return
 			}
-			// Derive store and namespace from the backup job
 			backup, err := storeInstance.Database.GetBackup(backupJobID)
 			if err != nil {
 				WriteErrorResponse(w, fmt.Errorf("failed to get backup job: %w", err))
@@ -271,7 +269,6 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			RunOnBackupComplete: r.FormValue("run_on_backup_complete") == "true",
 		}
 
-		// Parse filters from form
 		if filtersJSON := r.FormValue("filters"); filtersJSON != "" {
 			if err := json.Unmarshal([]byte(filtersJSON), &job.SpotConfig.Filters); err != nil {
 				syslog.L.Error(err).WithMessage("failed to parse filters JSON").Write()
@@ -346,7 +343,6 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				Success: true,
 			}
 
-			// Marshal job to map to inject notification-batch
 			jobBytes, _ := json.Marshal(job)
 			var jobMap map[string]any
 			json.Unmarshal(jobBytes, &jobMap)

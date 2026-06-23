@@ -355,7 +355,6 @@ func (fs *S3FS) Root() string {
 	return fs.BasePath
 }
 
-// logOnce logs a single error line per unique path. Retries for the same
 // path are suppressed to avoid noisy duplicate entries in task logs.
 func (fs *S3FS) logOnce(path string, err error, op string) {
 	if isIgnoredS3Path(path) {
@@ -371,9 +370,7 @@ func (fs *S3FS) logOnce(path string, err error, op string) {
 		Write()
 }
 
-// isIgnoredS3Path reports whether errors for this path should be silently
 // suppressed  -  these are files probed by proxmox-backup-client on every
-// directory and are expected to be absent.
 func isIgnoredS3Path(p string) bool {
 	base := p
 	if idx := strings.LastIndexAny(p, "/"); idx >= 0 {

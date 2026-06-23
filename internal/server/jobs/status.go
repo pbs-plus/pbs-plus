@@ -13,9 +13,6 @@ import (
 
 var statusMutexes sync.Map
 
-// UpdateJobHistory fetches the task info, applies the status update to the
-// current PID and history fields, and persists via the provided update function.
-// It also updates the typed LastRunStatus and manages the RetryCount.
 func UpdateJobHistory(
 	jobID string,
 	currentPID int,
@@ -51,14 +48,12 @@ func UpdateJobHistory(
 
 	// Determine the typed status and update retry count
 	if warningsNum > 0 && succeeded {
-		// Success with warnings
 		history.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
 		history.LastRunStatus = database.JobStatusWarnings
 		history.RetryCount = 0 // Reset retry count on success
 		history.LastSuccessfulUpid = taskFound.UPID
 		history.LastSuccessfulEndtime = task.EndTime
 	} else if succeeded {
-		// Clean success
 		history.LastRunStatus = database.JobStatusSuccess
 		history.RetryCount = 0 // Reset retry count on success
 		history.LastSuccessfulUpid = taskFound.UPID
@@ -67,7 +62,6 @@ func UpdateJobHistory(
 		// Manual cancellation - not a failure, don't increment retry count
 		history.LastRunStatus = database.JobStatusCanceled
 	} else {
-		// Actual failure - increment retry count
 		history.LastRunStatus = database.JobStatusFailed
 		history.RetryCount++
 	}

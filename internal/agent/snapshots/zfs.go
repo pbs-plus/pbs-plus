@@ -16,7 +16,6 @@ func (z *ZFSSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Sn
 		return Snapshot{}, fmt.Errorf("source path %q is not on a ZFS filesystem", sourcePath)
 	}
 
-	// ZFS snapshots are named as <dataset>@<snapshot_name>
 	snapshotName := fmt.Sprintf("%s@%s", sourcePath, jobID)
 	timeStarted := time.Now()
 

@@ -29,7 +29,6 @@ func quicConfig() *quic.Config {
 }
 
 // QuicPipe is the QUIC-based transport for the ARPC control plane.
-// Replaces smux-over-TCP for RPC control messages.
 // Binary data streams use TCP via the data Pipe.
 type QuicPipe struct {
 	mu     sync.RWMutex
@@ -335,7 +334,6 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 	quicTLS := tlsConfig.Clone()
 	quicTLS.NextProtos = quicNextProtos
 
-	// If the config uses GetConfigForClient, wrap it to inject our NextProtos.
 	if quicTLS.GetConfigForClient != nil {
 		origGetConfig := quicTLS.GetConfigForClient
 		quicTLS.GetConfigForClient = func(info *tls.ClientHelloInfo) (*tls.Config, error) {

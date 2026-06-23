@@ -39,7 +39,6 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		windows.GROUP_SECURITY_INFORMATION |
 		windows.DACL_SECURITY_INFORMATION
 
-	// Get SD from the handle
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, si)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("GetSecurityInfo: %w", err)
@@ -250,7 +249,6 @@ func isValidACL(acl *windows.ACL) bool {
 		return false
 	}
 
-	// Cast to our header structure to access the fields
 	header := (*aclHeader)(unsafe.Pointer(acl))
 
 	// Basic sanity checks on ACL structure
@@ -262,7 +260,6 @@ func isValidACL(acl *windows.ACL) bool {
 		return false
 	}
 
-	// AceCount should be reasonable
 	const maxReasonableACEs = 10000
 	if header.AceCount > maxReasonableACEs {
 		return false
@@ -300,7 +297,6 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 	addr := uintptr(ptr)
 
 	// Validate pointer is not NULL or near-NULL (catch null pointer arithmetic)
-	// Use a smaller threshold that won't reject valid low addresses
 	const minValidAddress = 0x1000 // 4KB - first page
 	if addr < minValidAddress {
 		return false
@@ -315,12 +311,10 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 
 	// Detect architecture and apply appropriate check
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		// 64-bit: user space is below kernel64Start
 		// Note: Maximum user-mode address is actually around 0x00007FFFFFFFFFFF
 		// but we check against kernel start which is simpler and safe
 		return addr < kernel64Start
 	} else {
-		// 32-bit: user space is below kernel32Start
 		return addr < kernel32Start
 	}
 }

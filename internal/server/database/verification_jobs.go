@@ -140,7 +140,6 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		return fmt.Errorf("CreateVerificationJob: error inserting verification job: %w", err)
 	}
 
-	// Update columns not managed by sqlc
 	targetMode := job.TargetMode
 	if targetMode == "" {
 		targetMode = "backup_job"
@@ -201,7 +200,6 @@ func (database *Database) GetVerificationJob(id string) (VerificationJob, error)
 }
 
 func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
-	// Read columns not managed by sqlc
 	if database.readDb != nil {
 		var targetMode string
 		var recursive int
@@ -223,7 +221,6 @@ func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
 		}
 	}
 
-	// Enrich history from task logs (same pattern as backup/restore)
 	if job.History.LastRunUpid != "" {
 		task, err := proxmox.GetTaskByUPID(job.History.LastRunUpid)
 		if err == nil {
@@ -371,7 +368,6 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 		return fmt.Errorf("UpdateVerificationJob: error updating: %w", err)
 	}
 
-	// Update columns not managed by sqlc
 	targetMode := job.TargetMode
 	if targetMode == "" {
 		targetMode = "backup_job"

@@ -200,7 +200,6 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 		oldForceSnapshot := oldPVC.Annotations[SnapshotAnnotation] == "true"
 		oldIsRWO := isReadWriteOnce(oldPVC)
 
-		// If snapshot mode changed, cleanup and recreate
 		if oldIsRWO != isRWO || oldForceSnapshot != forceSnapshot {
 			syslog.L.Info().
 				WithMessage("Snapshot mode changed, recreating backup pod").

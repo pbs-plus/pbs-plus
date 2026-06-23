@@ -25,7 +25,6 @@ const (
 	// where the SQLite journal database lives.
 	JournalDir = ".pxar-journal"
 
-	// xattr flags.
 	XattrCreate  = 1
 	XattrReplace = 2
 )
@@ -37,9 +36,7 @@ func ToInode(e *pxar.Entry) uint64 {
 	return e.FileOffset | NonDirBit
 }
 
-// node holds cached metadata for a single filesystem entry.
 // Fields ordered for minimal padding: 8-byte words first, then 4-byte,
-// then bools packed together. Total: 80 bytes (down from 96 with padding).
 type node struct {
 	inode         uint64
 	parent        uint64
@@ -80,7 +77,6 @@ type dirEntrySlim struct {
 }
 
 // ResolvedEntry is the result of path resolution.
-// It tells the caller where metadata and data come from.
 type ResolvedEntry struct {
 	Path       string
 	Inode      uint64
@@ -162,7 +158,6 @@ type MountConfig struct {
 // MarshalACL encodes POSIX ACL entries into the kernel binary format
 // used by system.posix_acl_access and system.posix_acl_default.
 func MarshalACL(entries []ACLEntry) []byte {
-	// version (4 bytes) + N entries × 8 bytes each
 	buf := make([]byte, 4+len(entries)*8)
 	binary.LittleEndian.PutUint32(buf[:4], ACLXAttrVersion)
 	for i, e := range entries {
@@ -174,14 +169,7 @@ func MarshalACL(entries []ACLEntry) []byte {
 	return buf
 }
 
-// Format: one entry per line, e.g.
-//
-//	user::rwx
-//	user:backupadmin:rwx
-//	group::rwx
-//	group:it:rwx
-//	mask::rwx
-//	other::---
+// user:backupadmin:rwx
 func ParseACLSpec(spec string) ([]ACLEntry, error) {
 	var entries []ACLEntry
 	// Accept both \n and ; as delimiters.
@@ -201,7 +189,6 @@ func ParseACLSpec(spec string) ([]ACLEntry, error) {
 }
 
 func parseACLEntry(line string) (ACLEntry, error) {
-	// Split into type:name:perm or type::perm
 	parts := strings.SplitN(line, ":", 3)
 	if len(parts) < 3 {
 		return ACLEntry{}, fmt.Errorf("invalid format")
@@ -266,12 +253,10 @@ func lookupUID(name string) (uint32, error) {
 		return uint32(uid), nil
 	}
 	// Fallback: try getent which respects NSS/winbind even from
-	// statically-linked binaries.
 	out, err := exec.Command("getent", "passwd", name).Output()
 	if err != nil {
 		return 0, fmt.Errorf("unknown user %q", name)
 	}
-	// getent passwd output: name:*:uid:gid:...
 	fields := strings.SplitN(strings.TrimSpace(string(out)), ":", 4)
 	if len(fields) < 3 {
 		return 0, fmt.Errorf("malformed getent output for user %q", name)

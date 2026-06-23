@@ -42,7 +42,6 @@ func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 
 	if f.body == nil {
 		opts := minio.GetObjectOptions{}
-		// Request from off to the end to keep the stream alive
 		_ = opts.SetRange(off, f.size-1)
 
 		obj, err := f.fs.client.GetObject(f.fs.Ctx, f.fs.bucket, f.key, opts)

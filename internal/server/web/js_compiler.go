@@ -345,7 +345,6 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 				}
 
 				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-					// Debounce rapid changes
 					time.Sleep(100 * time.Millisecond)
 
 					content, err := os.ReadFile(targetPath)

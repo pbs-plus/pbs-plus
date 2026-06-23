@@ -145,7 +145,6 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (*Result, error) {
 }
 
 // scanChanger uses the same feeder pattern as bkf2pxar: load each tape,
-// read the Set Map (fast -list path), fall back to forward walk.
 func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) error {
 	syslog.L.Info().WithMessage("mtf: opening changer").WithField("device", opts.ChangerDevice).Write()
 	chg, err := changer.Open(opts.ChangerDevice)
@@ -194,7 +193,6 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 			s.taskLog.WriteString(fmt.Sprintf("Slot %d: loading %s...", i+1, barcode))
 		}
 
-		// Load into drive.
 		if err := chg.Load(st, i+1, opts.DriveIndex); err != nil {
 			syslog.L.Error(err).WithMessage("mtf: load failed").WithField("barcode", barcode).Write()
 			if s.taskLog != nil {
@@ -207,7 +205,6 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 		if s.taskLog != nil {
 			s.taskLog.WriteString(fmt.Sprintf("Slot %d: rewinding %s...", i+1, barcode))
 		}
-		// Open tape reader (rewinds to BOT).
 		rc, err := bkf2pxar.OpenTapeReader(opts.TapeDevice)
 		if err != nil {
 			syslog.L.Error(err).WithMessage("mtf: open tape").WithField("barcode", barcode).Write()
@@ -266,7 +263,6 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 		syslog.L.Info().WithMessage("mtf: cartridge scanned").WithField("barcode", barcode).Write()
 	}
 
-	// Scan any tape already loaded in a drive (not in a slot).
 	for dIdx, drive := range st.Drives {
 		if !drive.Full {
 			continue
@@ -427,7 +423,6 @@ func (s *Scanner) scanDrive(ctx context.Context, dev, barcode string, res *Resul
 		barcode = "TAPE0001"
 	}
 
-	// Fast path: Set Map.
 	if sm, _ := mtflib.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
 		return s.indexSetMap(ctx, rc, barcode, sm, res)
 	}

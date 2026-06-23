@@ -1075,7 +1075,6 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 	return xattrs, nil
 }
 
-// SetXAttr stores an extended attribute. The caller's value slice is copied
 // because go-fuse reuses its data buffer across FUSE operations.
 func (j *Journal) SetXAttr(nodeID int64, name string, value []byte) error {
 	cp := make([]byte, len(value))

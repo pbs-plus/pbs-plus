@@ -15,7 +15,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
-// Global logger instance.
 var L *Logger
 
 type Deduplicator struct {
@@ -240,8 +239,6 @@ func (e *LogEntry) SkipDedup() *LogEntry {
 	return e
 }
 
-// slogAttrs converts the LogEntry fields to slog key-value pairs
-// for use with slog.Logger methods.
 func (e *LogEntry) slogAttrs() []any {
 	n := max(len(e.Fields), 0)
 	args := make([]any, 0, n*2+2)

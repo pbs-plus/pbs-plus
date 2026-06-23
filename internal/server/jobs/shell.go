@@ -101,7 +101,6 @@ func RunShellScript(
 	return outBuf.String(), resultEnvs, nil
 }
 
-// Helper function to extract interpreter from shebang
 func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 	file, err := os.Open(scriptFilePath)
 	if err != nil {

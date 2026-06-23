@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-// ResolveDevice converts a -sg device path to its -nst non-rewind tape
-// device equivalent, if it exists.
 func ResolveDevice(path string) string {
 	if path == "" {
 		return path

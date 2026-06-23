@@ -55,7 +55,6 @@ func GetProxmoxCertInfo() (*CertInfo, error) {
 		} else if matches := dnsRx.FindStringSubmatch(line); len(matches) > 1 {
 			certInfo.DNSNames = append(certInfo.DNSNames, strings.TrimSpace(matches[1]))
 		} else if matches := ipRx.FindStringSubmatch(line); len(matches) > 1 {
-			// Clean up IP string (e.g., "127, 0, 0, 1" to "127.0.0.1")
 			ipStr := strings.ReplaceAll(matches[1], ", ", ".")
 			certInfo.IPAddresses = append(certInfo.IPAddresses, strings.TrimSpace(ipStr))
 		} else if matches := issuerRx.FindStringSubmatch(line); len(matches) > 1 {

@@ -44,7 +44,6 @@ func ParseS3Url(raw string) (*S3Url, error) {
 		UseSSL: strings.ToLower(u.Scheme) == "https",
 	}
 
-	// Extract access key if present in userinfo
 	if u.User != nil {
 		s3.AccessKey = u.User.Username()
 	}
@@ -52,20 +51,15 @@ func ParseS3Url(raw string) (*S3Url, error) {
 	pathParts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 
 	// Check if this is virtual-host-style by looking for bucket in hostname
-	// Virtual-host-style: bucket.s3.amazonaws.com or bucket.endpoint
-	// Path-style: endpoint/bucket/key
 
 	isVirtualHost := false
 	var bucketFromHost string
 
 	// Check if host starts with a potential bucket name followed by a dot
-	// and the remaining part looks like an S3 endpoint
 	if dotIndex := strings.Index(u.Host, "."); dotIndex > 0 {
 		potentialBucket := u.Host[:dotIndex]
 		remainingHost := u.Host[dotIndex+1:]
 
-		// If the path is empty or starts with an object key (not a bucket name),
-		// and the host has the pattern bucket.endpoint, treat as virtual-host
 		if len(pathParts) == 0 || (len(pathParts) == 1 && pathParts[0] == "") {
 			// No path, so bucket must be in hostname
 			isVirtualHost = true
@@ -73,10 +67,7 @@ func ParseS3Url(raw string) (*S3Url, error) {
 			s3.Endpoint = remainingHost
 		} else {
 			// Check if this looks like virtual-host by seeing if the first path
-			// segment could be an object key rather than a bucket
-			// This is a heuristic - in ambiguous cases, prefer path-style
 
-			// Common S3 endpoint patterns that suggest virtual-host style
 			if strings.Contains(remainingHost, "amazonaws.com") ||
 				strings.Contains(remainingHost, "s3.") ||
 				strings.HasPrefix(remainingHost, "s3-") {
@@ -88,13 +79,11 @@ func ParseS3Url(raw string) (*S3Url, error) {
 	}
 
 	if isVirtualHost {
-		// Virtual-host-style: bucket.endpoint/key
 		s3.Bucket = bucketFromHost
 		if len(pathParts) > 0 && pathParts[0] != "" {
 			s3.Key = strings.Join(pathParts, "/")
 		}
 	} else {
-		// Path-style: endpoint/bucket/key
 		s3.Endpoint = u.Host
 		if len(pathParts) > 0 && pathParts[0] != "" {
 			s3.Bucket = pathParts[0]
@@ -109,7 +98,6 @@ func ParseS3Url(raw string) (*S3Url, error) {
 		return nil, fmt.Errorf("invalid S3 URL: missing bucket (got %q)", raw)
 	}
 
-	// Try to detect region from endpoint (optional)
 	if strings.Contains(s3.Endpoint, "s3.") {
 		parts := strings.Split(s3.Endpoint, ".")
 		for i := 0; i < len(parts)-1; i++ {

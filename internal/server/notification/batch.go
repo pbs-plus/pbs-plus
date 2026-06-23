@@ -17,13 +17,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// BatchTracker collects job completion results and sends a single
-// consolidated notification per batch instead of one per job.
-// When a job completes, the caller reports it via RecordJobResult.
 // The tracker checks if the job belongs to a notification batch:
-//   - No batch → send notification immediately (normal behavior).
-//   - Has batch → buffer the result; when all jobs in the batch are done
-//     (or the timeout fires), flush a single consolidated notification.
+//
+//	(or the timeout fires), flush a single consolidated notification.
 //
 // Thread-safe. Designed to be embedded in the store or started as a
 // long-running goroutine.
@@ -33,7 +29,6 @@ type BatchTracker struct {
 	// mu protects the pending map.
 	mu sync.Mutex
 
-	// pending tracks buffered results per batch name.
 	pending map[string]*batchState
 
 	// timers tracks active flush timers per batch.
@@ -62,9 +57,6 @@ func NewBatchTracker(db *database.Database) *BatchTracker {
 	}
 }
 
-// RecordJobResult reports a completed job to the batch tracker.
-// If the job belongs to a notification batch, the result is buffered.
-// If the job has no batch, a notification is sent immediately.
 func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, datastore string, jobErr error, details map[string]string) {
 	// Check if this job belongs to a batch.
 	batch, err := bt.db.GetBatchForJob(string(jobType), jobID)
@@ -77,7 +69,6 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 		return
 	}
 
-	// No batch assigned → send immediately.
 	if batch.Name == "" {
 		Send(mode, jobType, jobID, datastore, jobErr, details)
 		return
@@ -122,7 +113,6 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 		state = &batchState{batch: batch}
 		bt.pending[batch.Name] = state
 
-		// Start the timeout timer for this batch.
 		timeout := time.Duration(batch.WaitTimeoutSecs) * time.Second
 		if timeout <= 0 {
 			timeout = 5 * time.Minute
@@ -171,8 +161,6 @@ func (bt *BatchTracker) allJobsReported(batchName string, state *batchState) boo
 }
 
 // flushBatch sends a consolidated notification for the batch.
-// If isTimeout is true, only results collected so far are included
-// (and the batch's send_on_timeout flag is respected).
 func (bt *BatchTracker) flushBatch(batchName string, isTimeout bool) {
 	bt.mu.Lock()
 	state, exists := bt.pending[batchName]
@@ -198,15 +186,12 @@ func (bt *BatchTracker) flushBatch(batchName string, isTimeout bool) {
 	bt.sendBatchNotification(state.batch, state.results, isTimeout)
 }
 
-// sendBatchNotification builds and sends a single consolidated notification
-// containing all job results from the batch.
 func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, results []JobResult, isTimeout bool) {
 	if len(results) == 0 {
 		return
 	}
 
 	// Determine overall severity.
-	// If any job failed: error. If all succeeded but some had warnings: notice.
 	// Otherwise: info.
 	severity := "info"
 	hasErrors := 0
@@ -224,7 +209,6 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 		severity = "notice"
 	}
 
-	// Collect unique datastores for metadata.
 	datastores := make(map[string]bool)
 	for _, r := range results {
 		datastores[r.Datastore] = true
@@ -256,7 +240,6 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 		"datastores": dsList,
 	})
 
-	// Build the externally-tagged Content enum.
 	tc := templateContent{
 		TemplateName: templateName,
 		Data:         tmplData,
@@ -310,7 +293,6 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 }
 
 // StartCleanup starts a periodic goroutine that removes stale batch state.
-// This handles the case where the process restarts mid-batch.
 func (bt *BatchTracker) StartCleanup(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -322,7 +304,6 @@ func (bt *BatchTracker) StartCleanup(ctx context.Context, interval time.Duration
 		case <-ticker.C:
 			bt.mu.Lock()
 			for name, state := range bt.pending {
-				// If a batch has been pending for more than 2x its timeout, clean it up.
 				if len(state.results) > 0 {
 					oldest := state.results[0].Timestamp
 					timeout := int64(state.batch.WaitTimeoutSecs) * 2
@@ -356,7 +337,6 @@ func (bt *BatchTracker) PendingBatches() map[string]int {
 }
 
 // EnsureSpoolDir creates the notification spool directory if it doesn't exist.
-// Called during startup.
 func EnsureSpoolDir() error {
 	return os.MkdirAll(SpoolDir, 0770)
 }

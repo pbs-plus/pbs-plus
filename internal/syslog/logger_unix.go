@@ -30,7 +30,6 @@ func (l *Logger) SetServiceLogger() error {
 		return err
 	}
 
-	// Build a slog.Logger that writes JSON to the syslog writer.
 	handler := slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
 		Level:     slog.LevelInfo,
 		AddSource: false,

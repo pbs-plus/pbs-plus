@@ -121,8 +121,6 @@ type ConfidenceInfo struct {
 	Confidence99 float64 `json:"c99"` // percentage 0-100
 }
 
-// ComputeConfidence computes statistical confidence for verification results.
-// Returns the lower bound of the intact rate at 95% and 99% confidence.
 // Uses the Rule of Three for zero-failure samples and the Wilson score interval otherwise.
 func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
 	if sample <= 0 || failures >= sample {
@@ -140,7 +138,6 @@ func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
 	var c95, c99 float64
 
 	if failures == 0 {
-		// Rule of Three with finite population correction
 		fpc := math.Sqrt((N - n) / N)
 		if fpc < 0 {
 			fpc = 0
@@ -148,7 +145,6 @@ func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
 		c95 = clamp01(1 - 3.0/n*fpc)
 		c99 = clamp01(1 - 4.6/n*fpc)
 	} else {
-		// Wilson score interval for non-zero failures
 		pHat := 1 - fHat
 		c95 = wilsonLower(pHat, n, 1.96)
 		c99 = wilsonLower(pHat, n, 2.576)
@@ -181,7 +177,6 @@ func clamp01(v float64) float64 {
 	return v
 }
 
-// FormatSpeed returns "X.XX files/s" string.
 func ComputeAggregate(results []database.VerificationResult) VerificationAggregate {
 	var agg VerificationAggregate
 	thirtyDaysAgo := time.Now().Unix() - 30*24*3600
@@ -210,7 +205,6 @@ func ComputeAggregate(results []database.VerificationResult) VerificationAggrega
 		agg.PassRate = float64(agg.TotalFiles-agg.TotalFailed) / float64(agg.TotalFiles) * 100
 	}
 
-	// Aggregate confidence: treat all samples as one big test
 	agg.Confidence = ComputeConfidence(0, agg.TotalFiles, agg.TotalFailed).Confidence95
 
 	return agg

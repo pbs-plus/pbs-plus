@@ -88,7 +88,6 @@ func (s *RemoteServer) registerHandlers() {
 }
 
 // handleError forwards an agent-side error to the job's task log. It blocks
-// (rather than dropping) when the channel is full so restore failures are
 // never silently hidden from the operator.
 func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 	var params errorReq

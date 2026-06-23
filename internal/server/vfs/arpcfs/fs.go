@@ -25,7 +25,6 @@ import (
 const attrPrefix = "attr:"
 const xattrPrefix = "xattr:"
 
-// logOnce logs a single error line per unique path. Retries for the same
 // path are suppressed to avoid noisy duplicate entries in task logs.
 func (fs *ARPCFS) logOnce(path string, err error, op string) {
 	if isIgnoredPath(path) {
@@ -41,9 +40,7 @@ func (fs *ARPCFS) logOnce(path string, err error, op string) {
 		Write()
 }
 
-// isIgnoredPath reports whether errors for this path should be silently
 // suppressed  -  these are files probed by proxmox-backup-client on every
-// directory and are expected to be absent.
 func isIgnoredPath(p string) bool {
 	base := p
 	if idx := strings.LastIndexAny(p, "/\\"); idx >= 0 {

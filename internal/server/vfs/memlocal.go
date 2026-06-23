@@ -26,30 +26,22 @@ type MemcachedConfig struct {
 	SocketPath string
 
 	// Memory limit in MB. Special values:
-	//   >0: use this exact value for -m
 	//   0: "practically unlimited" -> use a very large value (1_000_000 MB)
 	//  -1: do NOT pass -m (use memcached default, usually 64 MB)
 	MemoryMB int
 
 	// Max simultaneous connections. Special values:
-	//   >0: use exact value for -c
 	//   0: do NOT pass -c (use memcached default)
-	//  -1: pass a very large value (1_000_000)
 	MaxConnections int
 
-	// Threads for worker threads.
-	//   >0: use exact value for -t
 	//    0: do NOT pass -t (use memcached default)
-	//   -1: set to runtime.NumCPU()
 	Threads int
 
-	// Optional: path to memcached binary. If empty, uses "memcached" in PATH.
 	MemcachedBinary string
 
 	// Additional args to append, if you need extra flags.
 	ExtraArgs []string
 
-	// Optional startup timeout for readiness probing.
 	StartupTimeout time.Duration
 }
 
@@ -88,7 +80,6 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 
 	sysMem, err := conf.GetSysMem()
 
-	// Memory handling
 	switch {
 	case cfg.MemoryMB > 0:
 		args = append(args, "-m", fmt.Sprintf("%d", cfg.MemoryMB))
@@ -97,11 +88,9 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	case cfg.MemoryMB == -1:
 		// do not pass -m; memcached default will apply
 	default:
-		// If not set, pick a reasonable default (64 MB) to keep behavior stable.
 		args = append(args, "-m", "64")
 	}
 
-	// Connections handling
 	switch {
 	case cfg.MaxConnections > 0:
 		args = append(args, "-c", fmt.Sprintf("%d", cfg.MaxConnections))
@@ -111,7 +100,6 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 		// do not pass -c; use memcached default
 	}
 
-	// Threads handling
 	switch {
 	case cfg.Threads > 0:
 		args = append(args, "-t", fmt.Sprintf("%d", cfg.Threads))

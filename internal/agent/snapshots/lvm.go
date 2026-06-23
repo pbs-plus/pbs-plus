@@ -16,7 +16,6 @@ func (l *LVMSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Sn
 		return Snapshot{}, fmt.Errorf("source path %q is not on an LVM volume", sourcePath)
 	}
 
-	// Extract volume group and logical volume from the source path
 	vgName, lvName, err := l.getVolumeGroupAndLogicalVolume(sourcePath)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("failed to get volume group and logical volume: %w", err)

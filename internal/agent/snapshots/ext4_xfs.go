@@ -13,7 +13,6 @@ func (e *EXT4XFSHandler) CreateSnapshot(jobID string, sourcePath string) (Snapsh
 		return Snapshot{}, fmt.Errorf("source path %q is not on an EXT4 or XFS filesystem", sourcePath)
 	}
 
-	// Delegate to LVM handler
 	lvmHandler := &LVMSnapshotHandler{}
 	if !lvmHandler.IsSupported(sourcePath) {
 		return Snapshot{}, fmt.Errorf("EXT4/XFS snapshot requires LVM, but LVM is not supported for %q", sourcePath)
@@ -23,7 +22,6 @@ func (e *EXT4XFSHandler) CreateSnapshot(jobID string, sourcePath string) (Snapsh
 }
 
 func (e *EXT4XFSHandler) DeleteSnapshot(snapshot Snapshot) error {
-	// Delegate to LVM handler
 	lvmHandler := &LVMSnapshotHandler{}
 	return lvmHandler.DeleteSnapshot(snapshot)
 }

@@ -111,7 +111,6 @@ func lcPath(p string) string {
 		return "root"
 	}
 	// Replace Windows backslashes with forward slashes for a unified Linux feel
-	// while avoiding the "dot" recursion that causes TOML duplication
 	p = strings.ReplaceAll(p, "\\", "/")
 	return strings.ToLower(strings.Trim(p, "/"))
 }

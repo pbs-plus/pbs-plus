@@ -11,8 +11,6 @@ import (
 	"github.com/xtaci/smux"
 )
 
-// ARPCStream abstracts a bidirectional byte stream. Backed by smux.Stream
-// (TCP data plane) or quic.Stream (QUIC control plane).
 type ARPCStream interface {
 	io.Reader
 	io.Writer

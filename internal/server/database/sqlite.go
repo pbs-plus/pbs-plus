@@ -139,7 +139,6 @@ func (d *Database) Ping(ctx context.Context) error {
 	return d.readDb.PingContext(ctx)
 }
 
-// JobCount returns the total number of backup and restore jobs in the database.
 // Returns at least 1 so the queue never has a zero-size buffer.
 func (d *Database) JobCount(ctx context.Context) (int, error) {
 	backupCount, err := d.readQueries.CountBackups(ctx)
@@ -154,8 +153,6 @@ func (d *Database) JobCount(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// RunInTransaction executes fn within a database transaction.
-// If fn returns an error, the transaction is rolled back.
 // If fn panics, the panic is re-thrown after rollback.
 func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *sqlc.Queries) error) error {
 	tx, err := d.NewTransaction()

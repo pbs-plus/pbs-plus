@@ -19,7 +19,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// pendingMeta holds deferred metadata from Write calls.
 // Applied to the journal in Flush (file close) or SetAttr
 // (whichever runs first), serialized by per-inode lock.
 type pendingMeta struct {
@@ -28,14 +27,10 @@ type pendingMeta struct {
 	ctimeNs int64
 }
 
-// MutableFS implements fuse.RawFileSystem as a layered filesystem:
 //   - PxarFS provides the immutable lower layer
 //   - Journal provides the SQLite-backed inode graph for the overlay
-//   - mutableDir stores file data for copied-up/modified files
 //
 // The journal uses a graph model (nodes + edges) making rename O(1):
-// only the edge row is updated; no descendants are touched.
-// Resolution:
 //
 //	Walk edges from root. If a component is whiteout → ENOENT.
 //	If an edge is found → use the journal node (authoritative).
@@ -53,14 +48,12 @@ type MutableFS struct {
 
 	// File handle management  -  lock-free via xsync.Map since every
 	// Read/Write/Flush/Fsync calls getFh. nextFh uses atomic for
-	// allocation without a separate mutex.
 	handles *xsync.Map[uint64, *passFh]
 	nextFh  atomic.Uint64
 
 	// Per-inode writer locks.
 	inoLocks *xsync.Map[uint64, *sync.Mutex]
 
-	// mmap'd DIDX data.
 	mmapData [][]byte
 
 	origSnapshot  snapshotRef
@@ -82,7 +75,6 @@ type MutableFS struct {
 	// Inode ↔ path bidirectional mapping.
 	// Per-instance to prevent cross-mount corruption  -  analogous to
 	// ext4's per-superblock inode cache. Uses xsync.Map for lock-free
-	// reads  -  critical since resolve() is called on every FUSE op.
 	inoLookup  *xsync.Map[string, uint64]
 	pathLookup *xsync.Map[uint64, string]
 
@@ -124,11 +116,9 @@ func (fs *MutableFS) applyACL(re *ResolvedEntry) {
 	}
 
 	// When ACL entries are present, the mode's group bits represent the ACL
-	// mask. Update them to match the mask entry so #effective stays consistent.
 	if fs.acl.HasACLs() {
 		for _, e := range fs.acl.ACLEntries {
 			if e.Tag == ACLMask {
-				// Clear existing group bits and set from mask.
 				re.Mode = (re.Mode &^ 0070) | (uint32(e.Perm) << 3)
 				break
 			}
@@ -287,8 +277,6 @@ func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out 
 		return status
 	}
 
-	// If the file has live data on disk (open for write), stat the
-	// real file so the kernel sees the current size instead of the
 	// stale journal value (journal is only updated on Flush/Close).
 	if re.DataIsMut && !re.IsDir {
 		if st, err := os.Stat(fs.mutablePath(path)); err == nil {
@@ -442,7 +430,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		})
 	}
 
-	// Emit entries.
 	if input.Offset == 0 {
 		dirMode := fs.dirModeForPath(parentPath)
 		if plus {
@@ -593,10 +580,8 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	}
 
 	fh := fs.getFh(input.Fh)
-	// If no registered handle (e.g. write without open, or handle
 	// already released), open an anonymous fd and close it after the
 	// write. Registering it would leak since the kernel won't send
-	// Release for an unknown handle.
 	closeAfterWrite := false
 	if fh == nil {
 		abs := fs.mutablePath(path)
@@ -675,7 +660,6 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		mtimeSet = true
 	}
 
-	// Apply to mutable data if present.
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		if m, ok := input.GetMode(); ok {
@@ -974,7 +958,6 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 		}
 	}
 
-	// Remove mutable data.
 	if re.DataIsMut {
 		if err := os.Remove(fs.mutablePath(childPath)); err != nil {
 			fs.logNonFatal("remove", childPath, err)
@@ -1040,7 +1023,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	oldParentID := fs.resolveParentNodeID(oldParentPath)
 	newParentID := fs.resolveParentNodeID(newParentPath)
 
-	// Resolve destination before touching anything.
 	destHasPXar := fs.hasPxarEntry(newPath)
 	destRE, _ := fs.resolve(newPath)
 	var destNodeID int64
@@ -1107,7 +1089,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	}
 
 	// If we crash here, the journal is consistent  -  disk files are redundant
-	// copies that the next commit will re-snapshot from the correct paths.
 
 	// Remove destination mutable data (journal already points away from it).
 	if destRE != nil && destRE.DataIsMut {
@@ -1116,7 +1097,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		}
 	}
 
-	// Move mutable disk data if present.
 	if oldRE.DataIsMut || oldRE.IsDir {
 		oldAbs := fs.mutablePath(oldPath)
 		if _, err := os.Stat(oldAbs); err == nil {
@@ -1177,7 +1157,6 @@ func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, att
 
 	// Priority: passthrough → journal → default ACL → pxar.
 
-	// 1. Passthrough (mutable data on real filesystem).
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		sz, xerr := unix.Getxattr(abs, attr, dest)
@@ -1233,7 +1212,6 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 
 	nameSet := make(map[string]bool)
 
-	// 1. Passthrough (mutable data on real filesystem).
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		sz, xerr := unix.Listxattr(abs, nil)
@@ -1273,7 +1251,6 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 	if re.PxarNode != nil {
 		pxarHeader := *header
 		pxarHeader.NodeId = re.PxarNode.inode
-		// First call with nil dest to get total size.
 		pxarSz, pxarStatus := fs.pxar.ListXAttr(cancel, &pxarHeader, nil)
 		if pxarStatus == fuse.OK && pxarSz > 0 {
 			buf := make([]byte, pxarSz)
@@ -1333,7 +1310,6 @@ func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, at
 		return fuse.EIO
 	}
 
-	// Also apply to mutable data.
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		flags := 0
@@ -1431,7 +1407,6 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 		}
 	}
 	// Clean up per-inode lock  -  operations that need it will
-	// re-create via LoadOrStore.
 	fs.inoLocks.Delete(input.NodeId)
 }
 
@@ -1441,7 +1416,6 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 // NOTE: We don't delete inoLookup/pathLookup here because there may
 // still be open file handles (Read/Write/Flush/Release) that need the
 // inode→path mapping. Those are cleaned up in unmapInode (Unlink,
-// Rename) and resetAfterCommit.
 func (fs *MutableFS) Forget(nodeID, nlookup uint64) {
 	fs.inoLocks.Delete(nodeID)
 	if path, ok := fs.pathLookup.Load(nodeID); ok {
@@ -1584,7 +1558,6 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	}
 
 	// Preserve extended attributes and file capabilities from the pxar
-	// archive on the mutable filesystem. Without this, opening a file
 	// for write silently drops all xattrs and fcaps.
 	applyPxarXattrsToFile(abs, entry)
 
@@ -1593,7 +1566,6 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 
 // applyPxarXattrsToFile sets extended attributes and file capabilities
 // from a pxar entry onto a real file. Errors are logged but not fatal  -
-// the file content has already been successfully copied.
 func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 	for _, xa := range entry.Metadata.XAttrs {
 		name := xa.Name()
@@ -1601,12 +1573,10 @@ func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 			continue
 		}
 		// Skip ACL and fcaps  -  those are handled separately via the
-		// structured Metadata fields, not raw xattr values.
 		if isACLXattr(name) || isFcapsXattr(name) {
 			continue
 		}
 		if err := unix.Lsetxattr(abs, string(name), xa.Value(), 0); err != nil {
-			// Silently skip unsupported xattrs (EOPNOTSUPP, etc.).
 			if !isIgnorableXattrErr(err) {
 				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp xattr %q on %q: %v\n", string(name), abs, err)
 			}
@@ -1630,12 +1600,10 @@ func isFcapsXattr(name []byte) bool {
 }
 
 // isIgnorableXattrErr reports whether an xattr error can be safely ignored
-// (feature not supported by the underlying filesystem, or no data).
 func isIgnorableXattrErr(err error) bool {
 	return errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODATA) || errors.Is(err, unix.EOPNOTSUPP)
 }
 
-// copyRegularFile copies a regular file from src to dst.
 // Used as a fallback when os.Rename fails during Rename operations
 // (e.g. cross-device rename).
 func copyRegularFile(src, dst string) error {
@@ -1705,7 +1673,6 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		return nil, fuse.ENOENT
 	}
 
-	// Full graph match.
 	if nodeID != 0 {
 		node, err := fs.journal.GetNode(nodeID)
 		if err != nil {
@@ -1752,7 +1719,6 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 }
 
 // resolveCheck is a helper for xattr ops that returns (status, ok) where
-// ok=false means the caller should return status immediately.
 func (fs *MutableFS) resolveCheck(_ string, re *ResolvedEntry) (fuse.Status, bool) {
 	if re == nil {
 		return fuse.ENOENT, false
@@ -1819,7 +1785,6 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 		for _, e := range entries {
 			if e.name == name {
 				// Register the node so subsequent ReadDirRaw calls
-				// can find it via fs.nodes. Without this, only the
 				// root inode is cached and subdirectories appear empty.
 				n := fs.pxar.RegisterSlimNode(&e, curIno)
 				if i == len(parts)-1 {
@@ -1880,7 +1845,6 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	defer pathMu.Unlock()
 
 	// Double-check after acquiring lock  -  another goroutine may have
-	// created the node while we waited.
 	if re.Node != nil {
 		return
 	}

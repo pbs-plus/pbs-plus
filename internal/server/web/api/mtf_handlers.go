@@ -94,7 +94,6 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// GET: list all MTF jobs (for grid store)
 		if r.Method == http.MethodGet {
 			jobs, err := ms.ListMtfJobs(r.Context())
 			if err != nil {
@@ -122,7 +121,6 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// POST: create new MTF job
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -698,8 +696,6 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 // flatMtfJob is the flattened API response for an MTF job. The history block
-// is promoted to top-level fields (matching the ExtJS model + grid columns)
-// and a pre-parsed status is attached so the shared task-status renderer works.
 type flatMtfJob struct {
 	mtfdb.MTFJob
 	LastRunUpid           string           `json:"last-run-upid"`
@@ -730,9 +726,6 @@ func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 	}
 }
 
-// flattenMtfJobForEdit returns a map with the field names the edit form expects
-// (matching the ExtJS fields.name values). It follows the same pattern as
-// FlattenBackupForEdit / FlattenRestoreForEdit.
 func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 	return map[string]any{
 		"id":                 j.ID,

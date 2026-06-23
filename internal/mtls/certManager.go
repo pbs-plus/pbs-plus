@@ -14,7 +14,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
-// CertManager manages TLS certificates for the PBS Plus server.
 // It handles CA and server certificate generation, loading, and TLS config building.
 type CertManager struct {
 	mu sync.Mutex
@@ -29,7 +28,6 @@ type CertManager struct {
 	CAKeyPEM       []byte
 }
 
-// NewCertManager creates an uninitialized CertManager.
 // Call Validate() to generate or load certificates.
 func NewCertManager() *CertManager {
 	return &CertManager{}

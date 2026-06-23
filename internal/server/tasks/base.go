@@ -14,7 +14,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
-// BaseTask contains shared fields and operations for all task types.
 // Embed this in task-specific structs to avoid duplicating common file-handling logic.
 type BaseTask struct {
 	proxmox.Task
@@ -37,7 +36,6 @@ func (t *BaseTask) Close() {
 	t.closed.Store(true)
 }
 
-// WriteLogLine writes a timestamped line to the task file.
 // Must be called while holding the mutex and with an open t.file.
 func (t *BaseTask) WriteLogLine(format string, args ...any) bool {
 	timestamp := time.Now().Format(time.RFC3339)
@@ -50,7 +48,6 @@ func (t *BaseTask) WriteLogLine(format string, args ...any) bool {
 
 // CloseWithStatus writes a final TASK status line, archives it, and closes the log file.
 // The onClose callback runs while the mutex is held but before the file is closed.
-// The afterUnlock callback runs after the mutex is released.
 func (t *BaseTask) CloseWithStatus(status string, onClose func(), afterUnlock func()) {
 	t.mu.Lock()
 
@@ -75,8 +72,6 @@ func (t *BaseTask) CloseWithStatus(status string, onClose func(), afterUnlock fu
 	}
 }
 
-// WriteArchive writes an entry to the global task archive.
-// The format is "UPID StartTime Status\n"
 func WriteArchive(upid string, startTime int64, status string) bool {
 	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {

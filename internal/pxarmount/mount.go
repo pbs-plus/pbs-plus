@@ -13,7 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Serve builds the filesystem stack and runs the FUSE server.
 // It blocks until the process receives SIGINT/SIGTERM.
 func Serve(cfg MountConfig) {
 	reader, _ := cfg.Reader.(*transfer.SplitReader)
@@ -23,7 +22,6 @@ func Serve(cfg MountConfig) {
 		os.Exit(1)
 	}
 
-	// Default backing dir for init mode.
 	backingDir := cfg.BackingDir
 	if backingDir == "" && cfg.InitMode {
 		backingDir = cfg.MountPoint + ".backing"
@@ -127,24 +125,20 @@ func Serve(cfg MountConfig) {
 	go func() {
 		<-sigCh
 
-		// Stop accepting new commit connections.
 		if sockListener != nil {
 			_ = sockListener.Close()
 		}
 
-		// Unmount FUSE.
 		if err := server.Unmount(); err != nil {
 			_ = unix.Unmount(cfg.MountPoint, unix.MNT_DETACH)
 		}
 
-		// Second signal: force exit.
 		<-sigCh
 		os.Exit(1)
 	}()
 
 	server.Serve()
 
-	// Cleanup after Serve() returns.
 	if mfs != nil {
 		mfs.Close()
 	}

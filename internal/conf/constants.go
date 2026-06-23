@@ -38,7 +38,6 @@ const (
 	PBSAuthKeyPath       = "/etc/proxmox-backup/authkey.key"
 )
 
-// Paths are variables so they can be overridden by build tags.
 var (
 	StatePrefix         = "/var/lib/pbs-plus"
 	ScriptsBasePath     = StatePrefix + "/scripts"

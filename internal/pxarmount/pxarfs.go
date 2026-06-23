@@ -171,11 +171,7 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 
 	start := max(int(input.Offset)-2, 0)
 
-	// Emit entries, register nodes, and fill attributes in a single pass.
-	// Only entries that fit in the FUSE buffer are registered, so
 	// un-emitted entries don't leak ref counts.
-	// A single write lock covers registration, eviction, and attribute
-	// reads — no per-entry lock churn.
 	fs.mu.Lock()
 	for i := start; i < len(entries); i++ {
 		eo := out.AddDirLookupEntry(fuse.DirEntry{
@@ -280,8 +276,6 @@ func resolvePxarTimes(entry *pxar.Entry) (atimeNs, mtimeNs int64) {
 }
 
 // parseXattrUnixSecsLocal decodes a decimal ASCII Unix-seconds xattr value
-// (how the backup writer stores user.lastaccesstime/user.lastwritetime)
-// and rejects empty, non-numeric, negative, or implausibly large values.
 // Kept local to avoid coupling the mount to the restore package.
 func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 	if len(d) == 0 {
@@ -299,7 +293,6 @@ func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 }
 
 // from its pxar entry. It is a no-op once resolved, so the per-file archive
-// read happens at most once per cached node.
 func (fs *PxarFS) ensureNodeTimes(n *node) {
 	if n.timesResolved {
 		return
@@ -314,7 +307,6 @@ func (fs *PxarFS) ensureNodeTimes(n *node) {
 
 // applying restore's xattr precedence. Used by the mutable overlay so that
 // unmodified (pxar-backed) files report the same times as a restore.
-// The result is cached on the node after the first read.
 func (fs *PxarFS) ResolvedTimes(n *node) (atimeNs, mtimeNs int64) {
 	fs.ensureNodeTimes(n)
 	return n.atimeNs, n.mtimeNs
@@ -533,8 +525,6 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) node {
 	return n
 }
 
-// eviction under cache pressure. Used by the commit walker to pre-populate
-// the cache for nodes that the kernel has not yet looked up.
 func (fs *PxarFS) preregisterSlimNode(e *dirEntrySlim, parent uint64) node {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()

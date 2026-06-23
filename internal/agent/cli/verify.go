@@ -194,7 +194,6 @@ func cmdVerify(verifyID *string) {
 }
 
 // VerifyStartHandler is the ARPC handler that forks a verification worker
-// process. The forked process connects back to the server via TCP.
 func VerifyStartHandler(req *arpc.Request) (arpc.Response, error) {
 	var reqData agentverification.VerifyStartReq
 	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {

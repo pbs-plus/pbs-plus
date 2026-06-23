@@ -365,8 +365,6 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-// wrapPathError wraps an OS-level error with operation and path context
-// so the actual errno and path survive RPC serialization.
 func wrapPathError(op, path string, err error) error {
 	if _, ok := err.(*os.PathError); ok {
 		return err // already wrapped

@@ -76,8 +76,6 @@ func ParseUPID(upid string) (Task, error) {
 }
 
 func (task *Task) GenerateUPID() string {
-	// UPID:<node>:<pid>:<pstart>:<task_id>:<starttime>:<wtype>:<wid>:<authid>:
-	// PID, PStart, and StartTime are zero-padded hex.
 	upid := fmt.Sprintf(
 		"UPID:%s:%08X:%08X:%s:%08X:%s:%s:%s:",
 		task.Node,

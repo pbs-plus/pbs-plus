@@ -1,8 +1,5 @@
 //go:build linux
 
-// Package tape reads Proxmox Backup Server tape device configuration
-// (the /etc/proxmox-backup/tape.cfg SectionConfig file) and resolves SCSI
-// tape device paths. It is independent of the mtf/store persistence layer.
 package tape
 
 import (
@@ -86,13 +83,6 @@ func (s *pbsSection) get(key string) string {
 	return s.properties[key]
 }
 
-// parseSectionConfig parses Proxmox SectionConfig format:
-//
-//	type: name
-//	    key value
-//	    key value
-//	type: name
-//	    key "quoted value"
 func parseSectionConfig(f *os.File) []pbsSection {
 	var sections []pbsSection
 	var cur *pbsSection

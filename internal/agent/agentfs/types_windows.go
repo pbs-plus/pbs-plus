@@ -62,11 +62,7 @@ type allocatedRange struct {
 }
 
 type systemInfo struct {
-	// This is the first member of the union
-	OemID uint32
-	// These are the second member of the union
-	//      ProcessorArchitecture uint16;
-	//      Reserved uint16;
+	OemID                     uint32
 	PageSize                  uint32
 	MinimumApplicationAddress uintptr
 	MaximumApplicationAddress uintptr

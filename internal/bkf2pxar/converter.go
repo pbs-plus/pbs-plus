@@ -24,45 +24,28 @@ import (
 )
 
 type Config struct {
-	PBSURL      string
-	Datastore   string
-	Namespace   string
-	AuthToken   string
-	SkipTLS     bool
-	BackupID    string
-	ArchiveName string
-	LocalDir    string
-	Sources     []string
-	TapeDevice  string
-	// ChangerDevice enables auto-changer mode: the SCSI Medium Changer device
-	// (e.g. /dev/sg1) used to load/unload tapes robotically. Requires TapeDevice
-	// to name the tape drive (e.g. /dev/nst0) and DriveIndex to select it.
+	PBSURL        string
+	Datastore     string
+	Namespace     string
+	AuthToken     string
+	SkipTLS       bool
+	BackupID      string
+	ArchiveName   string
+	LocalDir      string
+	Sources       []string
+	TapeDevice    string
 	ChangerDevice string
-	// DriveIndex is the 0-based index of the target tape drive within the
 	// changer (almost always 0 for single-drive libraries).
-	DriveIndex int
-	Verbose    bool
-	Compress   bool
-	Spanning   bool
-	// SnapshotSel selects a single snapshot (SSET) to migrate.
-	// Negative = migrate all snapshots (default). Each snapshot becomes
-	// its own PBS backup point.
-	SnapshotSel int
-	// IgnoreNewerPrevious skips previous-backup chunk registration when the
-	// backup time is older than existing PBS snapshots. Essential for tape
-	// migration where original backup times are in the past.
+	DriveIndex          int
+	Verbose             bool
+	Compress            bool
+	Spanning            bool
+	SnapshotSel         int
 	IgnoreNewerPrevious bool
 	// NamespaceResolver overrides Namespace per snapshot. It receives the
-	// snapshot's source machine name and volume device path (e.g.
-	// \\HOST.sgl.lan\D:) and returns the PBS namespace to use for that
-	// backup point. When nil or when it returns "", Namespace is used.
 	NamespaceResolver func(host, device string) string
-	// OnSnapshot is invoked when a snapshot's session has started, with the
-	// resolved backup-id and namespace, so callers can report progress.
-	OnSnapshot func(backupID, namespace string)
-	// TaskLog, when set, receives verbose progress messages (one per line)
-	// intended for the task log viewer.
-	TaskLog func(string)
+	OnSnapshot        func(backupID, namespace string)
+	TaskLog           func(string)
 }
 
 type Stats struct {
@@ -93,7 +76,6 @@ type backupMeta struct {
 	Owner      string
 }
 
-// ListSnapshots scans input sources and returns all backup sets (SSETs)
 // in stream order, visiting only structural blocks (no file data).
 func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	_ = ctx
@@ -221,7 +203,6 @@ func scanSnapshots(r *mtf.Reader, source string, out *[]Snapshot) error {
 }
 
 // Run performs the full conversion: reads BKF sources, builds pxar archive(s),
-// and uploads to PBS (or writes to a local store).
 func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	chunkCfg, err := buzhash.NewConfig(4 << 20)
 	if err != nil {
@@ -294,7 +275,6 @@ func (c *converter) logf(format string, args ...any) {
 }
 
 // ensureSession lazily creates the PBS/local session and pxar writer on the
-// first real entry, once metadata has been collected.
 func (c *converter) ensureSession() error {
 	if c.session != nil {
 		return nil
@@ -401,7 +381,6 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 }
 
 // finishSnapshot closes open directories and finalizes the current
-// snapshot's archive + session.
 func (c *converter) finishSnapshot() error {
 	if c.writer == nil {
 		return nil
@@ -451,10 +430,6 @@ func (c *converter) runTape() error {
 	return c.processReader(r)
 }
 
-// runChanger migrates all data tapes in the magazine using the robotic
-// changer. EOTM continuations are resolved by scanning slots for the matching
-// media-family sequence; when a media set is exhausted, the next independent
-// backup set starts automatically.
 func (c *converter) runChanger() error {
 	f, err := newFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
 	if err != nil {
@@ -514,7 +489,6 @@ func (c *converter) runFiles() error {
 	return nil
 }
 
-// processReader iterates one MTF reader, collecting metadata and converting
 // entries to pxar. Each SSET boundary starts a fresh session.
 func (c *converter) processReader(r *mtf.Reader) error {
 	for {
@@ -563,8 +537,6 @@ func (c *converter) processReader(r *mtf.Reader) error {
 			if h.Type == mtf.EntryVolume {
 				c.meta.HostName = h.MachineName
 				c.rootPrefix = h.Name
-				// Start the PBS session before file data is read, overlapping the
-				// H2 connect + index create + download-previous with tape positioning.
 				if err := c.ensureSession(); err != nil {
 					return err
 				}
@@ -776,7 +748,6 @@ func sanitizeName(name string) string {
 }
 
 // sanitizePath replaces path-unsafe characters so a backup ID can be used
-// as a directory name.
 func sanitizePath(s string) string {
 	s = strings.ReplaceAll(s, "\\", "_")
 	s = strings.ReplaceAll(s, "/", "_")

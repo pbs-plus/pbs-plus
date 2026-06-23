@@ -37,12 +37,10 @@ func GenerateSecretKey(length int) (string, error) {
 // Bootstrap handles initialization of certificates, secret keys, token manager,
 // and cleanup of stale mount points and queued backups
 func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.Scheduler, *jobs.Manager, error) {
-	// Queue cleanup - cleanup previously queued backups
 	if err := cleanupQueuedBackups(storeInstance); err != nil {
 		syslog.L.Error(err).WithMessage("failed to cleanup queued backups").Write()
 	}
 
-	// Secret key generation/reading
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
@@ -78,7 +76,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		syslog.L.Error(err).WithMessage("failed to cleanup stale mounts").Write()
 	}
 
-	// Start mount RPC server with exponential backoff on restart.
 	go func() {
 		backoff := 100 * time.Millisecond
 		const maxBackoff = 30 * time.Second
@@ -103,7 +100,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	}()
 
 	// Start scheduler with dynamic queue capacity that reflects the current
-	// number of backup + restore jobs in the database.
 	manager := jobs.NewManager(mainCtx, conf.MaxConcurrentClients, func() int {
 		n, err := storeInstance.Database.JobCount(mainCtx)
 		if err != nil || n < 1 {
@@ -116,7 +112,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	s.Start()
 	storeInstance.OnBackupComplete = s.TriggerPendingVerifications
 
-	// Start job RPC server with exponential backoff on restart.
 	go func() {
 		backoff := 100 * time.Millisecond
 		const maxBackoff = 30 * time.Second
@@ -180,13 +175,11 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 }
 
 func cleanupStaleMounts() error {
-	// Get all mount points under the base path
 	mountPoints, err := filepath.Glob(filepath.Join(conf.AgentMountBasePath, "*"))
 	if err != nil {
 		return fmt.Errorf("failed to find agent mount base path: %w", err)
 	}
 
-	// Unmount each one
 	for _, mountPoint := range mountPoints {
 		umount := exec.Command("umount", "-lf", mountPoint)
 		umount.Env = os.Environ()

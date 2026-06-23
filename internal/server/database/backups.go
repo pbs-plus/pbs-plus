@@ -83,7 +83,6 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		backup.ID = id
 	}
 
-	// Validation
 	if backup.Target.Name == "" {
 		return errors.New("target is empty")
 	}
@@ -307,7 +306,6 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if !validate.IsValidID(backup.ID) && backup.ID != "" {
 		return fmt.Errorf("UpdateBackup: invalid id string -> %s", backup.ID)
 	}

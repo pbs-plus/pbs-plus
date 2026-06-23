@@ -4,11 +4,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// FlatBackup is the flattened API response for a backup job.
-// Nested fields (history, current-stats, target) are promoted to top level
-// so the JS frontend doesn't need transform logic.
 type FlatBackup struct {
-	// Identity
 	ID               string `json:"id"`
 	Store            string `json:"store"`
 	Mode             string `json:"mode"`
@@ -29,11 +25,9 @@ type FlatBackup struct {
 	IncludeXattr     bool   `json:"include-xattr"`
 	LegacyXattr      bool   `json:"legacy-xattr"`
 
-	// Flattened from target
 	Target       string `json:"target"`
 	ExpectedSize int    `json:"expected_size,omitempty"`
 
-	// Flattened from history
 	LastRunUpid           string `json:"last-run-upid"`
 	LastRunState          string `json:"last-run-state"`
 	LastRunEndtime        int64  `json:"last-run-endtime"`
@@ -41,14 +35,12 @@ type FlatBackup struct {
 	LastSuccessfulUpid    string `json:"last-successful-upid"`
 	Duration              int64  `json:"duration"`
 
-	// Flattened from current-stats
 	CurrentFileCount   int `json:"current_file_count,omitempty"`
 	CurrentFolderCount int `json:"current_folder_count,omitempty"`
 	CurrentFilesSpeed  int `json:"current_files_speed,omitempty"`
 	CurrentBytesSpeed  int `json:"current_bytes_speed,omitempty"`
 	CurrentBytesTotal  int `json:"current_bytes_total,omitempty"`
 
-	// Pre-formatted display fields
 	TargetSizeHuman      string           `json:"target_size_human"`
 	ReadSpeedHuman       string           `json:"read_speed_human"`
 	ReadTotalHuman       string           `json:"read_total_human"`
@@ -75,10 +67,8 @@ type FlatRestore struct {
 	RetryInterval    int    `json:"retry-interval"`
 	ExpectedSize     int    `json:"expected_size,omitempty"`
 
-	// Flattened from dest-target
 	DestTarget string `json:"dest-target"`
 
-	// Flattened from history
 	LastRunUpid           string `json:"last-run-upid"`
 	LastRunState          string `json:"last-run-state"`
 	LastRunEndtime        int64  `json:"last-run-endtime"`
@@ -86,14 +76,12 @@ type FlatRestore struct {
 	LastSuccessfulUpid    string `json:"last-successful-upid"`
 	Duration              int64  `json:"duration"`
 
-	// Flattened from current-stats
 	CurrentFileCount   int `json:"current_file_count,omitempty"`
 	CurrentFolderCount int `json:"current_folder_count,omitempty"`
 	CurrentFilesSpeed  int `json:"current_files_speed,omitempty"`
 	CurrentBytesSpeed  int `json:"current_bytes_speed,omitempty"`
 	CurrentBytesTotal  int `json:"current_bytes_total,omitempty"`
 
-	// Pre-formatted display fields
 	TargetSizeHuman      string           `json:"target_size_human"`
 	ReadSpeedHuman       string           `json:"read_speed_human"`
 	ReadTotalHuman       string           `json:"read_total_human"`
@@ -119,7 +107,6 @@ type FlatVerificationJob struct {
 	RunOnBackupComplete bool                `json:"run_on_backup_complete"`
 	CreatedAt           int64               `json:"created_at"`
 
-	// Flattened from history
 	LastRunUpid           string `json:"last-run-upid"`
 	LastRunState          string `json:"last-run-state"`
 	LastRunStarttime      int64  `json:"last-run-starttime"`
@@ -128,7 +115,6 @@ type FlatVerificationJob struct {
 	LastSuccessfulUpid    string `json:"last-successful-upid"`
 	Duration              int64  `json:"duration"`
 
-	// Pre-formatted
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
 }
 
@@ -202,7 +188,6 @@ type TargetTreeNode struct {
 	Leaf      bool             `json:"leaf"`
 	Children  []TargetTreeNode `json:"children,omitempty"`
 
-	// Target fields (present when IsGroup == false)
 	Name             string `json:"name,omitempty"`
 	Path             string `json:"path,omitempty"`
 	TargetType       string `json:"target_type,omitempty"`

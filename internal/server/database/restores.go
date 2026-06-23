@@ -82,7 +82,6 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		restore.ID = id
 	}
 
-	// Validation
 	if restore.DestTarget.Name == "" {
 		return errors.New("dest target is empty")
 	}
@@ -255,7 +254,6 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if !validate.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("UpdateRestore: invalid id string -> %s", restore.ID)
 	}

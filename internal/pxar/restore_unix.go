@@ -26,7 +26,6 @@ const (
 	XATTR_NAME_ACL_DEFAULT = "system.posix_acl_default"
 )
 
-// applyMeta applies metadata to a restored file. Every metadata error is
 // reported immediately via reportErr; the function always returns nil since
 // metadata failures are non-fatal (content is already in place).
 func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.FileInfo) error {
@@ -45,7 +44,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		st.reportErr(ctx, "list xattrs", path, lerr)
 	}
 
-	// chown BEFORE chmod: chown(2) clears set-user-ID and set-group-ID bits.
 	if st.fsCap.supportsChown {
 		st.reportErr(ctx, "chown", path, unix.Fchown(fd, uid, gid))
 	}
@@ -204,7 +202,6 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, path string, e pxar
 }
 
 // applyTempMode sets a freshly-written temp file to 0666 (subject to umask)
-// or the archive mode if present, since os.CreateTemp creates files 0600.
 func applyTempMode(path string, rawMode uint64) error {
 	mode := os.FileMode(0o666)
 	if rawMode != 0 {

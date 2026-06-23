@@ -18,7 +18,6 @@ const (
 	AlertTargetOffline      AlertType = "target-offline"
 )
 
-// SendAlert dispatches a system-level alert notification via the PBS spool.
 // Unlike Send (which is for job completion), alerts are for monitoring conditions.
 func SendAlert(alertType AlertType, severity string, details map[string]string) {
 	sendAlertWithData(alertType, severity, details, nil)

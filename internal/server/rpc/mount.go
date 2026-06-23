@@ -95,7 +95,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 			"drive":    args.Drive,
 		}).Write()
 
-	// Retrieve the backup from the database.
 	backup, err := s.Store.Database.GetBackup(args.BackupID)
 	if err != nil {
 		reply.Status = 404
@@ -110,7 +109,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	// Retrieve the ARPC session for the target (QUIC preferred, TCP fallback).
 	var respMsg string
 	if qPipe, ok := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname); ok {
-		// Prepare the backup request.
 		backupReq := types.BackupReq{
 			Drive:      args.Drive,
 			BackupID:   args.BackupID,
@@ -158,11 +156,9 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return errors.New(reply.Message)
 	}
 
-	// Parse the backup response message (format: "backupMode|namespace").
 	backupRespSplit := strings.Split(respMsg, "|")
 	backupMode := backupRespSplit[0]
 
-	// If a namespace is provided in the backup response, update the backup.
 	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
 		backup.Namespace = backupRespSplit[1]
 		if err := s.Store.Database.UpdateBackup(nil, backup); err != nil {
@@ -180,7 +176,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return errors.New(reply.Message)
 	}
 
-	// Set up the local mount path.
 	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
 
 	if err := arpcfs.MountARPC(arpcFS, mntPath); err != nil {
@@ -192,7 +187,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	sessions.NewARPCFSMount(backup.GetStreamID(), arpcFS)
 
-	// Set the reply values.
 	reply.Status = 200
 	reply.Message = backupMode + "|" + backup.Namespace
 	reply.BackupMode = backupMode
@@ -218,7 +212,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 			"prefix":   args.Prefix,
 		}).Write()
 
-	// Retrieve the backup from the database.
 	backup, err := s.Store.Database.GetBackup(args.BackupID)
 	if err != nil {
 		reply.Status = 404
@@ -243,7 +236,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return errors.New(reply.Message)
 	}
 
-	// Set up the local mount path.
 	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
 
 	if err := s3fs.MountS3(s3FS, mntPath); err != nil {
@@ -255,7 +247,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 
 	sessions.NewS3FSMount(backup.GetStreamID(), s3FS)
 
-	// Set the reply values.
 	reply.Status = 200
 	reply.Message = backup.Namespace
 
@@ -383,12 +374,10 @@ func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath str
 		jobCtxCancels: safemap.New[string, context.CancelFunc](),
 	}
 
-	// Register the RPC service.
 	if err := rpc.Register(service); err != nil {
 		return fmt.Errorf("failed to register rpc service: %v", err)
 	}
 
-	// Start accepting connections.
 	ready := make(chan struct{})
 
 	go func() {

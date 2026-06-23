@@ -35,8 +35,6 @@ type RestoreOptions struct {
 
 // reportErr sends a metadata error to the server immediately (never batched
 // or deferred). Metadata errors are non-fatal — content is already in place —
-// so they are surfaced via the task log without aborting the restore. A failure
-// to forward the error is logged locally so nothing is ever swallowed.
 func (st *restoreState) reportErr(ctx context.Context, op, path string, err error) {
 	if err == nil {
 		return
@@ -69,9 +67,7 @@ func (st *restoreState) runJobRecovered(ctx context.Context, client *Client, job
 	return processJob(ctx, st, job)
 }
 
-// restoreJob is a single entry to restore. srcPath uses archive-relative
 // forward-slash notation as the hardlink registry key so LinkTarget matches
-// regardless of host OS path separators.
 type restoreJob struct {
 	dest    string
 	srcPath string
@@ -325,7 +321,6 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 	return ctx.Err()
 }
 
-// resolveDeferredHardlinks links hardlinks whose targets were not yet
 // restored during the concurrent pass. Runs after the worker pool drains.
 func resolveDeferredHardlinks(ctx context.Context, st *restoreState) error {
 	var errs []error
@@ -406,7 +401,6 @@ func restoreFile(ctx context.Context, st *restoreState, job restoreJob) error {
 }
 
 // restoreFileContent writes to a hidden temp, atomically swaps it into place,
-// then applies metadata to the final file. Metadata is applied to the
 // destination, never the temp: on Windows, a restrictive DACL or READONLY
 // attribute on the temp blocks rename/cleanup, leaking .pxar-restore-* files.
 func restoreFileContent(ctx context.Context, st *restoreState, job restoreJob) error {
@@ -434,9 +428,7 @@ func restoreFileContent(ctx context.Context, st *restoreState, job restoreJob) e
 	return applyMeta(ctx, st, f, e)
 }
 
-// streamToTemp streams content into a temp in the same directory as the dest
 // (so the final rename is same-filesystem atomic). On error the temp is
-// removed and the removal failure is folded into the returned error.
 func streamToTemp(ctx context.Context, st *restoreState, job restoreJob) (tmpPath string, err error) {
 	e := job.info
 	dir := filepath.Dir(job.dest)
@@ -484,7 +476,6 @@ func streamToTemp(ctx context.Context, st *restoreState, job restoreJob) (tmpPat
 
 // atomicSwap moves tmpPath over dest via atomic rename, removing an
 // incompatible existing dest and retrying once, then falling back to a
-// byte-copy. The temp is removed on every failure path.
 func atomicSwap(tmpPath, dest string) (retErr error) {
 	defer func() {
 		if retErr != nil {
@@ -557,7 +548,6 @@ func restoreSymlink(ctx context.Context, st *restoreState, job restoreJob) error
 	return applyMetaSymlink(ctx, st, job.dest, e)
 }
 
-// shouldUpdateFile returns true unless an existing file of the same type
 // matches on size and whole-second mtime (rsync-style quick check).
 func shouldUpdateFile(path string, archiveInfo pxar.FileInfo, noAttr bool) (bool, error) {
 	stat, err := os.Lstat(path)

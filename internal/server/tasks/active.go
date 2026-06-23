@@ -12,20 +12,16 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
-// AddActive registers upid in the active tasks file (conf.ActiveLogsPath).
 // It is idempotent: registering an already-present upid is a no-op.
 func AddActive(upid string) error {
 	return modifyActiveFile(upid, true)
 }
 
-// RemoveActive unregisters upid from the active tasks file.
 // It is idempotent: removing an absent upid is a no-op.
 func RemoveActive(upid string) error {
 	return modifyActiveFile(upid, false)
 }
 
-// modifyActiveFile adds or removes a upid line from the active tasks file
-// under an exclusive flock. The file stores one UPID per line.
 func modifyActiveFile(target string, add bool) error {
 	f, err := os.OpenFile(conf.ActiveLogsPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {

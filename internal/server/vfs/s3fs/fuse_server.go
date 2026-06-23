@@ -133,13 +133,11 @@ func (n *Node) Statx(
 		STATX_MTIME = 0x00000020 // Want stx_mtime
 	)
 
-	// Set basic attributes
 	out.Mask = STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_SIZE
 	out.Mode = uint16(attrOut.Mode)
 	out.Size = attrOut.Size
 	out.Nlink = attrOut.Nlink
 
-	// Add timestamps if requested
 	if mask&STATX_MTIME != 0 {
 		out.Mask |= STATX_MTIME
 		out.Mtime.Sec = attrOut.Mtime

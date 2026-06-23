@@ -17,7 +17,6 @@ func init() {
 	pathInitOnce.Do(initPaths)
 }
 
-// initPaths selects paths based on what exists, preferring new paths when
 // migration has occurred and falling back to legacy paths for continuity.
 func initPaths() {
 	// 1. Legacy exists, new doesn't: keep legacy (migration pending)

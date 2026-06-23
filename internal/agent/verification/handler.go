@@ -34,7 +34,6 @@ type VerifyStartReq struct {
 
 func HashFile(filePath string) ([32]byte, int64, error) {
 	// Fast existence check  -  avoids opening a file handle on a
-	// slow/network mount only to discover it's gone.
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return [32]byte{}, 0, fmt.Errorf("failed to stat file: %w", err)

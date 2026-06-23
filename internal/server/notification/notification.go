@@ -20,15 +20,11 @@ import (
 )
 
 const (
-	// SpoolDir is the PBS notification spool directory.
-	// PBS's notification_worker (running as root) reads JSON files from here
 	// every 5 seconds and routes them through matchers/endpoints.
 	SpoolDir = conf.DbBasePath + "/notifications"
 
-	// DefaultMode is used when no notification-mode is set on a job.
 	DefaultMode = "notification-system"
 
-	// VendorTemplateDir is where PBS ships its built-in templates.
 	// Our custom templates must be installed here (or in the override dir).
 	VendorTemplateDir = "/usr/share/proxmox-backup/templates/default"
 
@@ -51,13 +47,8 @@ const (
 	JobTypeVerification JobType = "verification"
 )
 
-// notification is the JSON-serializable representation of a PBS Notification.
-// When written to the spool directory, PBS's notification_worker picks it up
-// and routes it through configured matchers and endpoints.
 // This struct mirrors proxmox_notify::Notification from the proxmox-notify crate.
 // All JSON field names use kebab-case to match the Rust serde rename_all = "kebab-case".
-// The content field uses an externally-tagged enum representation matching
-// serde's default enum serialization for Content::Template { ... }.
 type notification struct {
 	// Content is the externally-tagged enum: {"template": {"template-name": "...", "data": {...}}}
 	Content  json.RawMessage `json:"content"`
@@ -65,8 +56,6 @@ type notification struct {
 	ID       string          `json:"id"`
 }
 
-// templateContent is the inner payload for Content::Template.
-// Serialized under the "template" key to match Rust's externally-tagged enum.
 type templateContent struct {
 	TemplateName string          `json:"template-name"`
 	Data         json.RawMessage `json:"data"`
@@ -78,15 +67,6 @@ type metadata struct {
 	AdditionalFields map[string]string `json:"additional-fields"`
 }
 
-// Send dispatches a notification for a completed D2D job.
-// For ModeNotificationSystem (default), it writes a JSON file to PBS's
-// notification spool directory (/var/lib/proxmox-backup/notifications/).
-// The PBS notification worker (running as root) reads this directory every 5s,
-// loads the notification config (matchers, endpoints), and routes the
-// notification through all matching endpoints  -  exactly the same mechanism
-// PBS uses internally for non-root processes.
-// The additional-fields map includes type, job-id, datastore, and hostname,
-// which PBS notification matchers can filter on. The "type" field uses values
 // like "d2d-backup", "d2d-restore", "d2d-verify"  -  these appear in the
 // PBS matcher UI dropdown alongside the built-in types (gc, sync, verify, etc.).
 // For ModeLegacySendmail, it invokes /usr/sbin/sendmail directly.
@@ -96,13 +76,10 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 		nm = ModeNotificationSystem
 	}
 
-	// Map job result to PBS severity levels.
-	// See proxmox-notify Severity enum: info, notice, warning, error, unknown.
 	severity := "info"
 	if jobErr != nil {
 		severity = "error"
 	}
-	// If details indicate warnings but the job didn't hard-fail, upgrade to notice.
 	if severity == "info" && details != nil {
 		if warningsStr, ok := details["warnings"]; ok {
 			if n, _ := strconv.Atoi(warningsStr); n > 0 {
@@ -136,7 +113,6 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 		"job-type":  string(jobType),
 		"error":     errStr(jobErr),
 	}
-	// Flatten details into top level so templates can use {{total}}, {{target}}, etc.
 	for k, v := range details {
 		if _, exists := tmplData[k]; !exists {
 			tmplData[k] = v
@@ -144,8 +120,6 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 	}
 	tmplJSON, _ := json.Marshal(tmplData)
 
-	// Build the externally-tagged Content enum:
-	// {"template": {"template-name": "d2d-backup-ok", "data": {...}}}
 	tc := templateContent{
 		TemplateName: templateName,
 		Data:         tmplJSON,
@@ -182,12 +156,7 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 	}
 }
 
-// sendViaSpool writes the notification as JSON to PBS's notification spool.
-// This is the exact same mechanism PBS uses for non-root processes:
-// the notification_worker task (running as root) picks up JSON files from
 // /var/lib/proxmox-backup/notifications/ every 5 seconds and calls
-// proxmox_notify::api::common::send(), which evaluates matchers and
-// dispatches to configured endpoints (smtp, gotify, webhook, etc.).
 func sendViaSpool(n notification) {
 	if err := os.MkdirAll(SpoolDir, 0770); err != nil {
 		syslog.L.Error(err).WithMessage("failed to create notification spool dir").Write()
@@ -217,8 +186,6 @@ func sendViaSpool(n notification) {
 
 // sendLegacy sends a notification directly via sendmail.
 // This matches PBS's send_sendmail_legacy_notification behavior:
-// it creates a SendmailEndpoint and calls .send() on it, which
-// ultimately invokes /usr/sbin/sendmail.
 func sendLegacy(n notification, subject string) {
 	body := formatBody(n)
 

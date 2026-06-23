@@ -19,7 +19,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// unmountPath force-unmounts path via fusermount (falling back to umount) and
 // removes the mount directory. It is a no-op when path is empty.
 func unmountPath(path string) {
 	if path == "" {
@@ -37,8 +36,6 @@ func unmountPath(path string) {
 	_ = os.RemoveAll(path)
 }
 
-// waitForAccessible polls path until it is readable or 30s elapse. It returns
-// whether the mount became accessible and, if so, whether it is empty.
 func waitForAccessible(ctx context.Context, path string) (isEmpty, ok bool) {
 	checkTimeout := time.After(30 * time.Second)
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -59,8 +56,6 @@ func waitForAccessible(ctx context.Context, path string) (isEmpty, ok bool) {
 }
 
 // callMountRPC dials the mount unix socket and invokes serviceMethod. Dial
-// failures are wrapped; call errors are returned unwrapped so callers can
-// branch on them.
 func callMountRPC(ctx context.Context, serviceMethod string, args, reply any) error {
 	d := net.Dialer{}
 	conn, err := d.DialContext(ctx, "unix", conf.MountSocketPath)
@@ -73,7 +68,6 @@ func callMountRPC(ctx context.Context, serviceMethod string, args, reply any) er
 }
 
 // AgentMount is the client-side handle for an agent FS mount created via the
-// mount RPC service. It owns the local mount path lifecycle.
 type AgentMount struct {
 	BackupID string
 	Hostname string
@@ -83,7 +77,6 @@ type AgentMount struct {
 }
 
 // AgentFSMount asks the mount RPC service to back up + mount the agent target,
-// then waits for the mount to become accessible.
 func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup database.Backup, target database.Target) (*AgentMount, error) {
 	agentMount := &AgentMount{
 		BackupID: backup.ID,
@@ -178,7 +171,6 @@ func (a *AgentMount) CloseMount() {
 }
 
 // S3Mount is the client-side handle for an S3 FS mount created via the mount
-// RPC service. It owns the local mount path lifecycle.
 type S3Mount struct {
 	BackupID  string
 	Endpoint  string
@@ -192,8 +184,6 @@ type S3Mount struct {
 	isEmpty   bool
 }
 
-// S3FSMount asks the mount RPC service to mount the S3 target, then waits for
-// the mount to become accessible.
 func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.Backup, target database.Target) (*S3Mount, error) {
 	parsedS3 := target.S3Info
 

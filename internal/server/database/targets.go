@@ -44,7 +44,6 @@ func (database *Database) CreateTarget(tx *Transaction, target Target) (err erro
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if target.Path == "" && target.AgentHost.Name == "" {
 		return fmt.Errorf("target path empty and no agent host specified")
 	}
@@ -110,7 +109,6 @@ func (database *Database) UpdateTarget(tx *Transaction, target Target) (err erro
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if target.Path == "" && target.AgentHost.Name == "" {
 		return fmt.Errorf("target path empty and no agent host specified")
 	}

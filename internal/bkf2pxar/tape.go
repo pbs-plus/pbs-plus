@@ -1,10 +1,6 @@
 // Raw LTO tape I/O for go-mtf via go-tapedrive (Linux st driver).
-// go-mtf ships its own adapter from go-tapedrive to the mtf.Tape interface
-// (mtf.NewDriveTape), so this file only opens the non-rewinding device
 // read-only, enables logical block addressing, rewinds to BOT, verifies block
-// 0, and returns the drive as an mtf.Tape ready for mtf.NewReader.
 // Read-only because the st driver rejects an O_RDWR open of a write-protected
-// cartridge with EROFS  -  the normal input for inventory/restore.
 package bkf2pxar
 
 import (

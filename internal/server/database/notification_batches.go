@@ -170,7 +170,6 @@ func (database *Database) GetRestoreLastRunEndtime(jobID string) int64 {
 }
 
 // AllBatchJobsCompleted checks if all jobs in a batch have completed
-// (have a non-zero LastRunEndtime). Used by the batch tracker.
 func (database *Database) AllBatchJobsCompleted(batchName string) bool {
 	jobs, err := database.GetBatchJobs(batchName)
 	if err != nil || len(jobs) == 0 {
@@ -197,8 +196,6 @@ func (database *Database) AllBatchJobsCompleted(batchName string) bool {
 	return true
 }
 
-// WaitForBatchCompletion polls until all jobs in the batch have completed
-// or the timeout fires. Returns true if all completed.
 func (database *Database) WaitForBatchCompletion(batchName string, timeout time.Duration, checkInterval time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

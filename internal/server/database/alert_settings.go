@@ -171,14 +171,12 @@ func (s AlertSetting) IsQuietDay() bool {
 	return slices.Contains(s.QuietDays, today)
 }
 
-// IsInScheduleWindow returns true if the current time is within the configured
 // schedule window. If no schedule_time is set, it always returns true (any time).
 func (s AlertSetting) IsInScheduleWindow() bool {
 	if s.ScheduleTime == "" {
 		return true
 	}
 
-	// Parse HH:MM
 	parts := strings.SplitN(s.ScheduleTime, ":", 2)
 	if len(parts) != 2 {
 		return true
@@ -208,7 +206,6 @@ func (s AlertSetting) IsInScheduleWindow() bool {
 		diff = -diff
 	}
 
-	// Handle wrap-around midnight
 	if diff > 720 {
 		diff = 1440 - diff
 	}

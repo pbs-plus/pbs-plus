@@ -52,8 +52,6 @@ func (f *feeder) markProcessed() {
 	}
 }
 
-// loadFirst loads the first available data tape (skipping cleaning tapes)
-// into the drive and returns a reader positioned at BOT.
 func (f *feeder) loadFirst() (*tapeReader, error) {
 	for i, s := range f.status.Slots {
 		if !s.Full || s.ImportExport {
@@ -71,8 +69,6 @@ func (f *feeder) loadFirst() (*tapeReader, error) {
 		len(f.status.Slots), countFull(f.status))
 }
 
-// loadSlot loads slot (1-based), opens the drive reader (rewinds to BOT),
-// and caches the barcode→slot mapping.
 func (f *feeder) loadSlot(slot int) (*tapeReader, error) {
 	bc := f.status.Slots[slot-1].VolumeTag
 	fmt.Fprintf(os.Stderr, "== loading slot %d (%s) into drive %d ==\n", slot, barcodeOrUnknown(bc), f.driveIndex)
@@ -112,9 +108,7 @@ func (f *feeder) asContinuation() func(mtf.Continuation) (mtf.Tape, error) {
 	}
 }
 
-// nextMedium finds and loads the tape carrying media-family sequence
 // c.Sequence+1, verifies its identity from the TAPE block, and returns
-// a fresh reader.
 func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	wantSeq := 0
 	wantMFMID := uint32(0)

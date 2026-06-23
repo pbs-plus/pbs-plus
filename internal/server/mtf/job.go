@@ -23,8 +23,6 @@ import (
 
 const mtfWorkerType = "mtf2pxar"
 
-// Task manages an MTF migration job's task log and lifecycle,
-// following the same pattern as restore.RestoreTask.
 type Task struct {
 	tasks.BaseTask
 	job mtfdb.MTFJob
@@ -131,7 +129,6 @@ func (j *mtfJob) execute(ctx context.Context) error {
 		task.WriteString(fmt.Sprintf("Changer device: %s", cfg.ChangerDevice))
 	}
 
-	// Wire the converter's task log to the task
 	cfg.TaskLog = func(msg string) {
 		task.WriteString(msg)
 	}
@@ -196,10 +193,8 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		cfg.AuthToken = token.ReadLocal()
 	}
 
-	// Resolve changer and drive paths from PBS tape config
 	tapeCfg, _ := tape.ReadConfig()
 
-	// Resolve changer name → path
 	if job.Changer != "" {
 		for _, c := range tapeCfg.Changers {
 			if c.Name == job.Changer {
@@ -312,8 +307,6 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg bkf
 	return cfg, fmt.Errorf("data set machine %q not found in snapshots", ds.MachineName)
 }
 
-// resolveDrivePaths resolves the tape device path, changer device path,
-// and drive index from the PBS tape config. It resolves changer names to
 // device paths to avoid "no such file or directory" errors.
 func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev string, driveIdx int, err error) {
 	if tapeCfg == nil || len(tapeCfg.Drives) == 0 {
@@ -340,7 +333,6 @@ func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev st
 	tapeDev = tape.ResolveDevice(d.Path)
 	driveIdx = d.ChangerDrivenum
 
-	// Resolve changer name → device path
 	if d.Changer != "" {
 		for _, c := range tapeCfg.Changers {
 			if c.Name == d.Changer {

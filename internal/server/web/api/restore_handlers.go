@@ -79,7 +79,6 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		var response RestoreRunResponse
 
-		// Get all restore IDs from query parameters: ?job=restore1&job=restore2
 		restoreIDs := r.URL.Query()["job"]
 		if len(restoreIDs) == 0 {
 			http.Error(w, "Missing restore parameter(s)", http.StatusBadRequest)

@@ -24,8 +24,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// ErrHostNotExpected is returned when the server indicates the agent host
-// has been removed from the targets database and will not be accepted
 // until manually re-bootstrapped or re-added by an admin.
 var ErrHostNotExpected = errors.New("host not expected by server - requires re-bootstrap")
 
@@ -37,19 +35,14 @@ func isCertError(err error) bool {
 }
 
 // IsHostNotExpected checks if an error indicates the agent host was
-// deleted from the server's targets database. This only fires for
-// the main agent control connection (no backup/restore child IDs)
 // because ConnectARPC uses plain hostname without X-PBS-Plus-BackupID
-// or X-PBS-Plus-RestoreID headers.
 func IsHostNotExpected(err error) bool {
 	if errors.Is(err, ErrHostNotExpected) {
 		return true
 	}
 	msg := err.Error()
 	// Server-side rejection from AgentsManager.isExpected:
-	//   "connection is not expected by server"
 	// HTTP middleware rejection from checkAgentAuth when
-	// LoadAgentHostCert returns ErrAgentHostNotFound:
 	//   "CheckAgentAuth: certificate not trusted"
 	return strings.Contains(msg, "is not expected by server") ||
 		strings.Contains(msg, "CheckAgentAuth: certificate not trusted")
@@ -319,8 +312,6 @@ func ConnectARPC(
 					return
 				}
 				// QUIC closes the connection without a rejection frame
-				// when the host is not expected (success marker already
-				// sent). Probe via TCP to get the explicit rejection.
 				tcpPipe, probeErr := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 				if probeErr != nil {
 					tcpPipe = nil

@@ -90,7 +90,6 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 		return
 	}
 
-	// Load excluded targets
 	excludedTargets, _ := s.db.GetExcludedValues(string(AlertUnconfiguredTarget), "target")
 
 	targets, err := s.db.GetAllTargets()
@@ -156,7 +155,6 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		threshold = DefaultStaleDays
 	}
 
-	// Load excluded jobs
 	excludedJobs, _ := s.db.GetExcludedValues(string(AlertStaleBackup), "job")
 
 	backups, err := s.db.GetAllBackups()
@@ -169,12 +167,10 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 
 	var staleJobs []database.Backup
 	for _, b := range backups {
-		// Skip excluded jobs
 		if isExcluded(excludedJobs, b.ID) {
 			continue
 		}
 
-		// Skip unscheduled jobs if configured
 		if setting.SkipUnscheduled && b.Schedule == "" {
 			continue
 		}

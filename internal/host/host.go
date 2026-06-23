@@ -1,6 +1,5 @@
 // Package host resolves and validates the agent hostname.
 // It is a pure leaf package (stdlib only) so that low-level consumers such as
-// syslog and mtls can depend on it without importing the agent package.
 package host
 
 import (
@@ -10,8 +9,6 @@ import (
 	"strings"
 )
 
-// AgentHostname returns the hostname from the PBS_PLUS_HOSTNAME environment
-// variable, falling back to os.Hostname() when it is unset. The returned host
 // is validated when sourced from the environment.
 func AgentHostname() (string, error) {
 	h := os.Getenv("PBS_PLUS_HOSTNAME")
@@ -25,8 +22,6 @@ func AgentHostname() (string, error) {
 }
 
 // ValidateHostname checks that host is a syntactically valid hostname or IP
-// address: non-empty, at most 253 characters, with dot-separated labels of at
-// most 63 characters drawn from letters, digits, and hyphens.
 func ValidateHostname(host string) error {
 	if host == "" {
 		return fmt.Errorf("hostname cannot be empty")

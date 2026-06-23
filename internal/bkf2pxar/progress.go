@@ -26,8 +26,6 @@ func (p *progress) snapshot() (files, dirs int, bytes int64) {
 }
 
 // report launches a goroutine that prints live throughput to w every interval
-// until the returned stop function is called. Bytes are SI (1 MB = 1e6 B) to
-// match tape native-rate specifications.
 func (p *progress) report(ctx context.Context, w io.Writer, interval time.Duration) (stop func()) {
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
@@ -52,7 +50,6 @@ func (p *progress) report(ctx context.Context, w io.Writer, interval time.Durati
 				lastBytes = cur
 				lastTime = now
 				// Suppress the line when nothing moved (first intervals spend time
-				// rewinding/buffering — printing 0.0 MB/s is misleading).
 				if cur == 0 || inst == 0 {
 					continue
 				}

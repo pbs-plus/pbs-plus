@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// commitHub broadcasts commit progress lines to all connected watchers
 // on the monitor socket and appends them to a log file for later retrieval.
 type commitHub struct {
 	mu        sync.Mutex
@@ -26,8 +25,6 @@ type commitHub struct {
 
 var globalCommitHub *commitHub
 
-// The monitor socket path is <mainSocket>.monitor.
-// The log file path is <mainSocket>.log.
 func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	monPath := mainSocketPath + ".monitor"
 	_ = os.Remove(monPath)
@@ -96,13 +93,9 @@ func (h *commitHub) acceptLoop() {
 			}
 
 			// Add to watchers FIRST so that concurrent broadcasts
-			// are delivered to this conn while we send catch-up lines.
 			// This eliminates the race where lines broadcast between
-			// reading lastLines and adding to watchers are lost.
 			h.watchers[conn] = struct{}{}
 
-			// Now replay catch-up lines. Any new broadcast() call
-			// during this loop will see conn in watchers and write
 			// to it directly (duplicate lines are harmless  -  the
 			// display deduplicates by phase transitions).
 			for _, line := range h.lastLines {
@@ -110,7 +103,6 @@ func (h *commitHub) acceptLoop() {
 			}
 			h.mu.Unlock()
 		} else {
-			// No active commit  -  nothing to attach to.
 			_, _ = fmt.Fprintln(conn, "IDLE")
 			h.mu.Unlock()
 			_ = conn.Close()
@@ -123,7 +115,6 @@ func (h *commitHub) broadcast(line string) {
 	defer h.mu.Unlock()
 
 	// Append to catch-up buffer (keep last 1024 lines for better
-	// catch-up coverage on long-running commits).
 	h.lastLines = append(h.lastLines, line)
 	if len(h.lastLines) > 1024 {
 		h.lastLines = h.lastLines[len(h.lastLines)-1024:]
@@ -230,12 +221,10 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-// Format: PROGRESS [Phase] {elapsed} message
 func progressLine(phase, msg string, started time.Time) string {
 	return fmt.Sprintf("PROGRESS [%s] {%s} %s", phase, formatElapsed(time.Since(started)), msg)
 }
 
-// Format: PROGRESS [Phase] {elapsed} message (N files, X.X MiB)
 func progressLineWithStats(phase, msg string, files int64, bytes int64, started time.Time) string {
 	extra := fmt.Sprintf(" (%d files, %s)", files, formatBytes(bytes))
 	return fmt.Sprintf("PROGRESS [%s] {%s} %s%s", phase, formatElapsed(time.Since(started)), msg, extra)

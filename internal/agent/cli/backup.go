@@ -222,7 +222,6 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				case <-ctx.Done():
 					return
 				default:
-					// Continue with reconnection attempt
 				}
 			} else {
 				return

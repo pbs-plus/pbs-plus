@@ -8,12 +8,9 @@ import (
 )
 
 // hardlinkIndex tracks restored entries so pxar hardlink entries
-// (FileTypeHardlink) can be reconstructed as real filesystem hard links
 // instead of duplicated byte copies. The concurrent worker pool does not
-// preserve archive ordering, so resolution is deferred to a sweep after all
 // jobs drain (resolveDeferredHardlinks). If the target is still absent then
 // (outside the restored set or on a non-linking FS), the caller falls back
-// to a byte copy.
 type hardlinkIndex struct {
 	mu       sync.Mutex
 	resolved map[string]string
@@ -33,8 +30,6 @@ func (h *hardlinkIndex) register(srcPath, dest string) {
 	h.mu.Unlock()
 }
 
-// tryResolveNow returns the dest path of an already-restored target for the
-// given hardlink job. It probes both absolute-from-root and relative-to-self
 // interpretations of LinkTarget because the pxar target path coordinate system
 // is not normalized across producers.
 func (h *hardlinkIndex) tryResolveNow(job restoreJob) (string, bool) {
@@ -64,7 +59,6 @@ func (h *hardlinkIndex) drainDeferred() []restoreJob {
 }
 
 // linkTargetCandidates returns the canonical archive srcPath keys a hardlink
-// LinkTarget could refer to, most-specific first.
 func linkTargetCandidates(selfSrcPath, linkTarget string) []string {
 	if linkTarget == "" {
 		return nil
@@ -91,8 +85,6 @@ func finalIndex(s []string) int {
 	return len(s) - 1
 }
 
-// linkFile creates a filesystem hard link. If new already exists it is removed
-// first. Callers fall back to a byte copy when os.Link is unsupported.
 func linkFile(old, new string) error {
 	if _, err := os.Lstat(new); err == nil {
 		_ = os.Remove(new)

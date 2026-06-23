@@ -31,7 +31,6 @@ func (r RejectionFrame) Error() string {
 }
 
 func writeRejectionFrame(s ARPCStream, rejection RejectionFrame) error {
-	// Send marker byte to indicate rejection (0x00 = rejection, 0x01 = success)
 	if _, err := s.Write(rejectionMarker); err != nil {
 		return err
 	}

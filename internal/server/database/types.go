@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// JobStatus is a typed enum for job completion status.
 // It provides type-safe status checking without string parsing.
 type JobStatus int
 
@@ -93,7 +92,6 @@ func JobStatusFromString(state string) JobStatus {
 		if strings.HasPrefix(state, "WARNINGS: ") {
 			return JobStatusWarnings
 		}
-		// Anything else is a failure
 		return JobStatusFailed
 	}
 }
@@ -270,10 +268,8 @@ type SpotCheckConfig struct {
 }
 
 // SpotCheckFilter defines a filter for selecting files in spot checks.
-// FilterType controls whether matching files are included or excluded.
 // Exclude filters take precedence: a file matching any exclude filter is
 // always rejected, regardless of include filters.
-// If no include filters are defined, all non-excluded files are eligible.
 type SpotCheckFilter struct {
 	FilterType  string `json:"filter_type"`  // "include" (default) or "exclude"
 	PathPattern string `json:"path_pattern"` // path prefix or glob

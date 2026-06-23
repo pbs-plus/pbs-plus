@@ -108,12 +108,10 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 
 	timestamp := tasks.Now().Format(time.RFC3339)
 
-	// Write additional data
 	for _, data := range additionalData {
 		fmt.Fprintf(file, "%s: %s\n", timestamp, data)
 	}
 
-	// Process error message and extract first non-empty line
 	fullError := pbsError.Error()
 	errorLines := strings.Split(fullError, "\n")
 	firstNonEmptyLine := ""
@@ -127,17 +125,14 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 		firstNonEmptyLine = fullError
 	}
 
-	// Write all error lines
 	for _, line := range errorLines {
 		if line != "" {
 			fmt.Fprintf(file, "%s: %s\n", timestamp, line)
 		}
 	}
 
-	// Write final error summary
 	fmt.Fprintf(file, "%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine)
 
-	// Archive with the error
 	tasks.WriteArchive(task.UPID, task.StartTime, firstNonEmptyLine)
 
 	task.Status = "stopped"

@@ -131,7 +131,6 @@ type ProgressDisplay struct {
 	w        io.Writer
 	lastLine string
 
-	// spinner state
 	frames           []string
 	frame            int
 	phase            string
@@ -191,8 +190,6 @@ func (d *ProgressDisplay) render() string {
 
 	var parts []string
 
-	// Build display label: prefer msg, fall back to phase.
-	// Avoid showing both when they're the same.
 	switch {
 	case d.msg != "" && d.phase != "" && d.msg != d.phase:
 		parts = append(parts, d.phase, d.msg)
@@ -216,7 +213,6 @@ func (d *ProgressDisplay) render() string {
 		parts = append(parts, detail)
 	}
 
-	// Show throughput for long-running operations
 	if elapsed := time.Since(d.started); elapsed > 2*time.Second && d.bytes > 0 {
 		rate := float64(d.bytes) / elapsed.Seconds()
 		elapsedStr := formatDuration(elapsed)
@@ -242,11 +238,9 @@ func (d *ProgressDisplay) Update(line string) {
 	msg := strings.TrimPrefix(line, "PROGRESS ")
 	d.mu.Lock()
 
-	// Reset phase/msg for this update.
 	d.phase = ""
 	d.msg = ""
 
-	// Parse phase tag: [PhaseLabel] at the start.
 	if len(msg) > 0 && msg[0] == '[' {
 		if end := strings.Index(msg, "]"); end > 0 {
 			d.phase = msg[1:end]
@@ -266,7 +260,6 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 
-	// Extract trailing parenthesized stats if present.
 	hasStats := false
 	if idx := strings.LastIndex(msg, "("); idx > 0 {
 		stats := msg[idx:]
@@ -277,8 +270,6 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 	if !hasStats {
-		// Preserve previously parsed stats when the line has none.
-		// Only reset if the message itself looks like a phase transition.
 		for _, label := range phaseLabels {
 			if msg == label {
 				d.files = 0
@@ -305,7 +296,6 @@ func (d *ProgressDisplay) parseStats(stats string) {
 		if strings.HasSuffix(f, " files") {
 			_, _ = fmt.Sscanf(f, "%d files", &d.files)
 		} else {
-			// Try to parse as byte count
 			var b int64
 			if strings.HasSuffix(f, "GiB") {
 				var v float64

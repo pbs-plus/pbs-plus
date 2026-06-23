@@ -94,7 +94,6 @@ func (b *restoreJob) execute(ctx context.Context) error {
 		}).
 		Write()
 
-	// Execute based on target type
 	switch b.job.DestTarget.Type {
 	case database.TargetTypeAgent:
 		return b.agentExecute(ctx)
@@ -144,7 +143,6 @@ func (b *restoreJob) onError(err error) {
 
 	_ = updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance)
 
-	// Send notification for restore failure
 	if b.storeInstance.BatchTracker != nil {
 		b.storeInstance.BatchTracker.RecordJobResult(
 			b.job.NotificationMode,
@@ -176,7 +174,6 @@ func (b *restoreJob) onSuccess() {
 		_ = updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance)
 	}
 
-	// Send notification for restore result
 	var notifyErr error
 	if errCount > 0 {
 		notifyErr = fmt.Errorf("restore completed with %d errors", errCount)
@@ -246,8 +243,6 @@ func (b *restoreJob) writeStatsSummary() {
 		b.task.WriteString(fmt.Sprintf("Entry processing rate: %.0f entries/s", s.FileAccessSpeed))
 	}
 }
-
-// Helper methods
 
 func (b *restoreJob) runPreScript(ctx context.Context) error {
 	if strings.TrimSpace(b.job.PreScript) == "" {
@@ -447,7 +442,6 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		return err
 	}
 
-	// Wait for completion
 	return b.waitForCompletion(ctx)
 }
 
@@ -515,12 +509,10 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 
 	sessions.NewPxarReader(childKey, reader)
 
-	// Wait for completion
 	return b.waitForCompletion(ctx)
 }
 
 func (b *restoreJob) waitForCompletion(ctx context.Context) error {
-	// Wait for agent's done signal first (remote restores only)
 	if b.remoteServer != nil {
 		var pipeCloseCh <-chan struct{}
 		if b.agentPipe != nil {
@@ -537,12 +529,8 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 			// The agent's client.Close() sends pxar.Done as a synchronous RPC
 			// (server closes DoneCh and ACKs) and only closes the pipe after
 			// the ACK. So DoneCh is closed strictly before the pipe closes.
-			// But both channels are then ready in the same select iteration,
 			// and Go's select picks one nondeterministically  -  which used to
-			// make a fully-successful restore report a spurious "lost
-			// connection" ~50% of the time. Re-probe DoneCh here so a Done
 			// that was already received always wins; only treat the close as
-			// a real disconnect when DoneCh is genuinely still open.
 			select {
 			case <-b.remoteServer.DoneCh:
 				b.receivedDone.Store(true)
@@ -557,7 +545,6 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 	}
 
 	// Close errCh to unblock the error-collecting goroutine.
-	// For remote restores this runs after the agent signals done;
 	// for local restores the restore goroutine may still be in
 	// progress, but waitGroup.Wait() ensures both goroutines finish.
 	if b.errCh != nil {

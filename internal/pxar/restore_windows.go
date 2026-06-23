@@ -26,8 +26,6 @@ var (
 	procLocalFree        = modKernel32.NewProc("LocalFree")
 )
 
-// FILE_BASIC_INFO is used with SetFileInformationByHandle(FileBasicInfo).
-// A zero-valued Filetime field leaves that time unchanged.
 type FILE_BASIC_INFO struct {
 	CreationTime   windows.Filetime
 	LastAccessTime windows.Filetime
@@ -104,7 +102,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 
 	if xattrs != nil {
 		// Apply ACLs via a dedicated handle opened with WRITE_DAC|WRITE_OWNER
-		// and FILE_FLAG_BACKUP_SEMANTICS. The os.OpenFile handle lacks
 		// WRITE_DAC/WRITE_OWNER, which normally causes SetSecurityInfo to
 		// return ACCESS_DENIED but on some builds can cause a native crash.
 		if st.fsCap.supportsPersistentACLs {
@@ -266,7 +263,6 @@ func openReparsePoint(p string, access uint32) (windows.Handle, error) {
 }
 
 // writeAlternateDataStreams writes non-canonical user.* xattrs as NTFS
-// alternate data streams. Per-stream failures are reported via reportErr;
 func writeAlternateDataStreams(ctx context.Context, st *restoreState, name string, xattrs map[string][]byte) {
 	for k, v := range xattrs {
 		if !strings.HasPrefix(k, "user.") {

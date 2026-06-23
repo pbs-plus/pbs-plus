@@ -32,13 +32,10 @@ var (
 		"TASK ERROR:",
 	}
 
-	// PBS proxy logs these when the h2 connection drops after backup
-	// completion. They are not real backup failures.
 	pbsSpuriousErrorPatterns = []string{
 		"connection error:",
 	}
 
-	// Client log markers that indicate successful backup completion.
 	pbsClientCompletionMarkers = []string{
 		"Duration: ",
 		"End Time: ",
@@ -241,10 +238,6 @@ func processPBSProxyLogs(
 	warningsNum := pbsWarningRawCount
 	timestamp := time.Now().In(systemLocation()).Format(time.RFC3339)
 
-	// If the only error from the PBS proxy is a spurious connection
-	// error (h2 connection dropped after backup completion) and the
-	// client log shows evidence of successful completion, treat the
-	// backup as successful rather than failed.
 	if hasError && hasOnlySpuriousError && clientCompleted {
 		hasError = false
 		incomplete = false

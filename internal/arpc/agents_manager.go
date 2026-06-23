@@ -233,7 +233,6 @@ func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, 
 		return "", err
 	}
 
-	// Evict any existing session (TCP or QUIC) with the same client ID.
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
 	}

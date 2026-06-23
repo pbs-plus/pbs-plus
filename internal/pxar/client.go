@@ -48,7 +48,6 @@ func NewLocalClient(pr *PxarReader, name string) (*Client, chan error) {
 // flood of non-fatal metadata errors can never stall the worker pool.
 // Remote restores hand the error to a dedicated forwarder goroutine that
 // delivers each error via a synchronous RPC off the worker's critical path.
-// Local restores push to the job's error channel. If the channel is full,
 // the error is logged locally so it is never lost.
 func (c *Client) SendError(ctx context.Context, err error) error {
 	if c.pipe != nil {
@@ -81,7 +80,6 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 // forwardErrors drains the remote error queue, delivering each error via
 // a synchronous RPC on its own goroutine. If the pipe is gone (restore
 // finished or connection lost), errors are logged and draining continues
-// so the queue doesn't back up into workers.
 func (c *Client) forwardErrors() {
 	defer close(c.errFwdDone)
 	for err := range c.errFwd {

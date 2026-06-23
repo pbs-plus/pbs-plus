@@ -25,7 +25,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// BackupJob holds the state for a backup operation.
 type backupJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
@@ -118,7 +117,6 @@ func (b *backupJob) execute(ctx context.Context) error {
 
 	b.started.Store(true)
 
-	// Wait for completion
 	return b.waitForCompletion(ctx, cmd)
 }
 
@@ -201,7 +199,6 @@ func (b *backupJob) onError(err error) {
 		syslog.L.Info().WithJob(job.ID).WithMessage("checking post-backup script").Write()
 		b.runPostScript(succeeded, warningsNum)
 
-		// Send notification for backup result (started but failed)
 		var notifyErr error
 		if !succeeded {
 			notifyErr = fmt.Errorf("backup failed: %v", err)
@@ -238,7 +235,6 @@ func (b *backupJob) onError(err error) {
 		b.updateBackupWithTask(task)
 	}
 
-	// Send notification for pre-start failure
 	if b.storeInstance.BatchTracker != nil {
 		b.storeInstance.BatchTracker.RecordJobResult(
 			job.NotificationMode,
@@ -281,7 +277,6 @@ func (b *backupJob) onSuccess() {
 	syslog.L.Info().WithJob(b.job.ID).WithMessage("checking post-backup script").Write()
 	b.runPostScript(succeeded, warningsNum)
 
-	// Send notification for backup result
 	var notifyErr error
 	if !succeeded {
 		notifyErr = fmt.Errorf("backup failed")
@@ -301,7 +296,6 @@ func (b *backupJob) onSuccess() {
 		)
 	}
 
-	// Trigger any pending verification jobs waiting for this backup to complete
 	if succeeded && b.storeInstance.OnBackupComplete != nil {
 		go b.storeInstance.OnBackupComplete(b.job.ID)
 	}
@@ -340,8 +334,6 @@ func (b *backupJob) cleanup() {
 		}
 	})
 }
-
-// Helper methods (copied and adapted from operation.go)
 
 func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd) error {
 	done := make(chan error, 1)
@@ -704,9 +696,6 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 		qt.UpdateDescription("waiting for proxmox-backup-client to start")
 	}
 
-	// Serialize task detection/monitoring startup. Once the PBS task
-	// appears and the proxmox-backup-client process is running, we
-	// release the mutex so other jobs can start in parallel.
 	startupMu := b.storeInstance.Manager.StartupMu()
 	startupMu.Lock()
 
@@ -772,8 +761,6 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	var task proxmox.Task
 	select {
 	case task = <-taskChan:
-		// Task detected  -  release the startup mutex so the next job
-		// can begin its monitoring/detection phase.
 		startupMu.Unlock()
 	case err := <-errChan:
 		startupMu.Unlock()

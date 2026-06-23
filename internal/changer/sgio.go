@@ -1,17 +1,5 @@
-// Package changer drives SCSI Medium Changer (SMC) devices  -  tape libraries
 // and autoloaders  -  directly via the Linux SG_IO ioctl, with no external
-// dependencies such as mtx or libsgutils2.
-// The command set implemented is the subset of SMC-3 needed to inventory a
-// magazine and move cartridges between storage slots and tape drives:
-//   - MODE SENSE(6) page 0x1D (Element Address Assignment)
-//   - READ ELEMENT STATUS (0xB8)
-//   - MOVE MEDIUM (0xA5)
-//   - INITIALIZE ELEMENT STATUS (0x07)
-//
 // The READ ELEMENT STATUS response framing follows the layout used by
-// Proxmox's pbs-tape sg_pt_changer driver, which many real changers
-// (HP MSL, Quantum SuperLoader, etc.) accept: the 24-bit allocation length
-// occupies CDB bytes 7-9.
 package changer
 
 import (
@@ -23,7 +11,6 @@ import (
 )
 
 // sgIO is the Linux SCSI Generic ioctl request header (sg_io_hdr_t).
-// Its layout is part of the stable kernel ABI (include/uapi/scsi/sg.h).
 type sgIO struct {
 	InterfaceID  int32 // must be 'S'
 	DxferDir     int32 // SG_DXFER_* direction
@@ -58,8 +45,6 @@ const (
 )
 
 // SenseError is returned when a SCSI command completes with CHECK CONDITION.
-// The Sense field is the raw sense data; Key/ASC/ASCQ are decoded from it
-// (fixed-format current-sense, response code 0x70/0x71).
 type SenseError struct {
 	Sense []byte
 	Key   uint8
@@ -71,7 +56,6 @@ func (e *SenseError) Error() string {
 	return fmt.Sprintf("scsi check condition: key=0x%x asc=0x%02x ascq=0x%02x (sense=% x)", e.Key, e.ASC, e.ASCQ, e.Sense)
 }
 
-// Sense keys (SPC, sense_key field).
 const (
 	SenseNoSense        = 0x00
 	SenseNotReady       = 0x02
@@ -99,9 +83,7 @@ func openDevice(path string) (*device, error) {
 func (d *device) close() error { return d.f.Close() }
 func (d *device) fd() int      { return int(d.f.Fd()) }
 
-// scsi sends a CDB and returns the transferred data (for data-in) or
 // nil (for commands with no data phase). A CHECK CONDITION is returned as a
-// *SenseError. The data buffer is sized to the expected allocation length by
 // the caller; resid is subtracted so only valid bytes are returned.
 func (d *device) scsi(cdb []byte, data []byte, fromDevice bool, timeoutMs uint32) ([]byte, error) {
 	var sense [64]byte
@@ -159,5 +141,3 @@ func scsiASCII(b []byte) string {
 	}
 	return string(b)
 }
-
-// (no package-level diagnostics errors currently exported)

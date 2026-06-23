@@ -13,11 +13,9 @@ var prepOnce sync.Once
 
 // prepareRestoreProcess enables backup/restore/owner privileges in the process
 // token so metadata (owner, group, DACL) can be written on files the restore user
-// does not own.
 // windows.GetCurrentProcessToken() returns a pseudo-token that grants
 // TOKEN_QUERY|DUPLICATE|ASSIGN_PRIMARY but NOT TOKEN_ADJUST_PRIVILEGES, so we
 // must OpenProcessToken ourselves. If the token lacks a privilege, that
-// metadata operation fails per-file but file CONTENT still proceeds.
 func prepareRestoreProcess() {
 	prepOnce.Do(func() {
 		var token windows.Token

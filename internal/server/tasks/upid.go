@@ -11,9 +11,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
-// NewTask constructs a proxmox.Task with a freshly generated UPID for the
-// given node, worker type, and work ID. StartTime, PID, and PStart are
-// populated from the current process and time.
 func NewTask(node, workerType, wid string) proxmox.Task {
 	task := proxmox.Task{
 		Node:       node,

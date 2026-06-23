@@ -14,11 +14,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-// NotificationBatchHandler handles CRUD for notification batches.
-// GET    - list all batches
-// POST   - create a batch
-// PUT    - update a batch (requires ?batch=<name>)
-// DELETE - delete a batch (requires ?batch=<name>)
 func NotificationBatchHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -47,7 +42,6 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Enrich with job counts
 	type batchWithCount struct {
 		database.NotificationBatch
 		JobCount int `json:"job-count"`
@@ -130,7 +124,6 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Assign jobs to the batch if provided
 	if jobs := r.FormValue("jobs"); jobs != "" {
 		var jobList []struct {
 			JobType string `json:"job-type"`
@@ -185,14 +178,12 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Handle job assignments
 	if jobs := r.FormValue("jobs"); jobs != "" {
 		var jobList []struct {
 			JobType string `json:"job-type"`
 			JobID   string `json:"job-id"`
 		}
 		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
-			// Clear existing assignments and re-add
 			_ = storeInstance.Database.RemoveJobsByBatch(name)
 			for _, j := range jobList {
 				_ = storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID)
@@ -228,10 +219,6 @@ func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	})
 }
 
-// NotificationBatchJobsHandler handles job assignments within a batch.
-// GET    - list jobs in a batch (requires ?batch=<name>)
-// POST   - add a job to a batch
-// DELETE - remove a job from a batch
 func NotificationBatchJobsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -250,7 +237,6 @@ func NotificationBatchJobsHandler(storeInstance *store.Store) http.HandlerFunc {
 func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
 	batchName := r.URL.Query().Get("batch")
 	if batchName == "" {
-		// List all batch jobs
 		allJobs, err := storeInstance.Database.ListBatchJobs()
 		if err != nil {
 			WriteErrorResponse(w, err)
@@ -362,14 +348,9 @@ func formValueBool(r *http.Request, key string, defaultVal bool) bool {
 }
 
 // ApplyJobBatchAssignment syncs a job's batch membership based on the
-// `notification-batch` form value.
 //   - If value is empty or matches delete: job is removed from all batches.
 //   - If value is a batch name: job is added to that batch (and removed from others).
-//
-// Used by backup/restore/verification create+update handlers so the
-// `notification-batch` field on the job edit form is persisted.
 func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchName string) {
-	// First remove from any existing batches
 	_ = storeInstance.Database.RemoveJobFromAllBatches(jobType, jobID)
 
 	if batchName != "" {
@@ -383,7 +364,6 @@ func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchNa
 }
 
 // GetJobBatchName returns the name of the batch a job is assigned to, or "" if none.
-// Used to populate the notification-batch field in edit form GET responses.
 func GetJobBatchName(storeInstance *store.Store, jobType, jobID string) string {
 	batch, err := storeInstance.Database.GetBatchForJob(jobType, jobID)
 	if err != nil {
@@ -393,5 +373,4 @@ func GetJobBatchName(storeInstance *store.Store, jobType, jobID string) string {
 }
 
 // init ensures the notification package constants are referenced so the
-// compiler doesn't drop the import.
 var _ = notification.SpoolDir

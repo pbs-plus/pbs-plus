@@ -1,5 +1,3 @@
-// High-level tape-changer control: inventory the magazine and move cartridges
-// between storage slots and tape drives.
 package changer
 
 import (
@@ -22,8 +20,6 @@ func Open(path string) (*Changer, error) {
 
 func (c *Changer) Close() error { return c.dev.close() }
 
-// Inventory forces a barcode re-scan before reading. It is optional; some
-// changers refuse element-status reads while an inventory is in progress.
 func (c *Changer) Inventory() error { return initializeElementStatus(c.dev) }
 
 type SlotStatus struct {
@@ -119,7 +115,6 @@ type rawElement struct {
 }
 
 // readElements queries one element type, paging if the changer caps the
-// element count per command (some report at most ~1000 at a time).
 func (c *Changer) readElements(assign *addressAssignment, t elementType, first, count uint16, withVolTag bool) ([]rawElement, error) {
 	var out []rawElement
 	if count == 0 {
@@ -139,8 +134,6 @@ func (c *Changer) readElements(assign *addressAssignment, t elementType, first, 
 		if got == 0 || last < start {
 			break
 		}
-		// Advance past the last element we actually received, which may be
-		// fewer than requested if the changer stopped early.
 		start = last + 1
 		remaining -= got
 		if uint16(len(elems)) < n {
@@ -159,8 +152,6 @@ func (c *Changer) queryElements(t elementType, start, count uint16, withVolTag b
 	return decodeElementStatusPage(data, start)
 }
 
-// SlotAddress maps a 1-based virtual slot number (as in mtx(1)) to its SCSI
-// element address. Slots are numbered storage-first, then import/export.
 func (s *Status) SlotAddress(slot int) (uint16, error) {
 	if slot < 1 || slot > len(s.Slots) {
 		return 0, fmt.Errorf("slot %d out of range (1..%d)", slot, len(s.Slots))
@@ -226,12 +217,10 @@ func (c *Changer) Transfer(status *Status, fromSlot, toSlot int) error {
 	return nil
 }
 
-// waitForDriveReady polls the drive element until the loaded cartridge reports
 // ready (Not-Ready/"becoming ready" 04/01 is retried for up to 5 minutes).
 func (c *Changer) waitForDriveReady(drive int) error {
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
-		// Re-read element address assignment + drive element.
 		assign, err := readAddressAssignment(c.dev)
 		if err != nil {
 			return err

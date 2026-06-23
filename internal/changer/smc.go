@@ -1,6 +1,4 @@
 // SMC-3 command set and response decoding. Mirrors the CDB construction and
-// element-status parsing of Proxmox pbs-tape's sg_pt_changer, which is field-
-// proven against HP MSL, Quantum SuperLoader and IBM TS changers.
 package changer
 
 import (
@@ -43,7 +41,6 @@ func (t elementType) byte1(withVolTag bool) byte {
 }
 
 // addressAssignment mirrors MODE SENSE page 0x1D: the first element address
-// and count for each element category.
 type addressAssignment struct {
 	FirstTransport uint16
 	NumTransport   uint16
@@ -56,7 +53,6 @@ type addressAssignment struct {
 }
 
 func readAddressAssignment(d *device) (*addressAssignment, error) {
-	// MODE SENSE(6), DBD=1, page 0x1D, allocation length 255.
 	cdb := []byte{cmdModeSense6, 0x08, pageElementAddressAssignment, 0x00, 0xFF, 0x00}
 	data, err := d.scsi(cdb, make([]byte, 255), true, timeoutDefault)
 	if err != nil {
@@ -65,7 +61,6 @@ func readAddressAssignment(d *device) (*addressAssignment, error) {
 	if len(data) < 6+2+16 {
 		return nil, fmt.Errorf("mode sense 0x1D: short response (%d bytes)", len(data))
 	}
-	// 4-byte mode header, then page header (code, len), then 4×(first,count) BE16.
 	for i := 0; i+18 < len(data); i++ {
 		if data[i]&0x3f == pageElementAddressAssignment {
 			b := data[i+2:] // skip page code + page length
@@ -85,8 +80,6 @@ func readAddressAssignment(d *device) (*addressAssignment, error) {
 	return nil, errors.New("mode sense 0x1D: element-address page not found")
 }
 
-// readElementStatusCDB builds the 12-byte READ ELEMENT STATUS CDB. The 24-bit
-// allocation length occupies bytes 7-9  -  the layout real changers accept.
 func readElementStatusCDB(start, count uint16, t elementType, withVolTag bool, allocLen uint32) []byte {
 	al := allocLen
 	cdb := make([]byte, 12)
@@ -96,7 +89,6 @@ func readElementStatusCDB(start, count uint16, t elementType, withVolTag bool, a
 	cdb[3] = byte(start)
 	cdb[4] = byte(count >> 8)
 	cdb[5] = byte(count)
-	// byte 6: flags (CurData/DVCID)  -  0 for plain inventory.
 	cdb[6] = 0
 	cdb[7] = byte(al >> 16)
 	cdb[8] = byte(al >> 8)

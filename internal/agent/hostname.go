@@ -21,7 +21,6 @@ func randomHostname() string {
 	return time.Now().Format("20060102150405") + strconv.Itoa(rand.Intn(1000))
 }
 
-// ComputeDelay returns the agent's polling interval. It reads
 // PBS_PLUS_UPDATE_INTERVAL_MINUTES for a fixed value, or derives a
 // deterministic 1-2 hour jitter based on the hostname.
 func ComputeDelay() time.Duration {

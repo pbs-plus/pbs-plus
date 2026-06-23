@@ -354,7 +354,6 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				VolumeUsed:       drive.Used,
 				VolumeTotal:      drive.Total,
 				VolumeName:       drive.VolumeName,
-				// Preserve existing operational data
 				JobCount:         existingTarget.JobCount,
 				AgentVersion:     existingTarget.AgentVersion,
 				ConnectionStatus: existingTarget.ConnectionStatus,
