@@ -206,7 +206,9 @@ func atomicReplaceFile(targetPath string, newContent []byte) error {
 	tempName := tmpFile.Name()
 
 	if _, err := tmpFile.Write(newContent); err != nil {
-		tmpFile.Close()
+		if err := tmpFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("failed to write temporary file: %w", err)
 	}
 
@@ -328,7 +330,9 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 	}
 
 	if err := watcher.Add(targetPath); err != nil {
-		watcher.Close()
+		if err := watcher.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("failed to add file to watcher: %w", err)
 	}
 

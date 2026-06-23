@@ -4,6 +4,7 @@ package api
 
 import (
 	"bufio"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"os"
 	"strings"
 )
@@ -13,7 +14,11 @@ func IsMounted(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer mountInfoFile.Close()
+	defer func() {
+		if err := mountInfoFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	scanner := bufio.NewScanner(mountInfoFile)
 	for scanner.Scan() {

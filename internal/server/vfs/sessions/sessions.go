@@ -10,6 +10,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type FSMount struct {
@@ -54,7 +55,9 @@ func DisconnectSession(connId string) {
 			fs.s3fs.Unmount(context.Background())
 		}
 		if fs.pxar != nil {
-			fs.pxar.Close()
+			if err := fs.pxar.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 }

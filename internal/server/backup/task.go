@@ -14,6 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func GetBackupTask(
@@ -65,7 +66,11 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 	if err != nil {
 		return proxmox.Task{}, false
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	stat, err := file.Stat()
 	if err != nil || stat.Size() == 0 {
@@ -104,12 +109,18 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 	if err != nil {
 		return proxmox.Task{}, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	timestamp := tasks.Now().Format(time.RFC3339)
 
 	for _, data := range additionalData {
-		fmt.Fprintf(file, "%s: %s\n", timestamp, data)
+		if _, err := fmt.Fprintf(file, "%s: %s\n", timestamp, data); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	fullError := pbsError.Error()
@@ -127,11 +138,15 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 
 	for _, line := range errorLines {
 		if line != "" {
-			fmt.Fprintf(file, "%s: %s\n", timestamp, line)
+			if _, err := fmt.Fprintf(file, "%s: %s\n", timestamp, line); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
-	fmt.Fprintf(file, "%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine)
+	if _, err := fmt.Fprintf(file, "%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	tasks.WriteArchive(task.UPID, task.StartTime, firstNonEmptyLine)
 
@@ -150,7 +165,11 @@ func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (pro
 	if err != nil {
 		return proxmox.Task{}, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	base := tasks.NewBaseTask(task, file)
 	for _, data := range additionalData {

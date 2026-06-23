@@ -79,17 +79,23 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 		severity = "error"
 	} else if details != nil {
 		if warningsStr, ok := details["warnings"]; ok {
-			if n, _ := strconv.Atoi(warningsStr); n > 0 {
+			if n, err := strconv.Atoi(warningsStr); err != nil {
+				syslog.L.Error(err).Write()
+			} else if n > 0 {
 				severity = "notice"
 			}
 		}
 		if errorsStr, ok := details["errors"]; ok {
-			if n, _ := strconv.Atoi(errorsStr); n > 0 {
+			if n, err := strconv.Atoi(errorsStr); err != nil {
+				syslog.L.Error(err).Write()
+			} else if n > 0 {
 				severity = "notice"
 			}
 		}
 		if failedStr, ok := details["failed"]; ok {
-			if n, _ := strconv.Atoi(failedStr); n > 0 {
+			if n, err := strconv.Atoi(failedStr); err != nil {
+				syslog.L.Error(err).Write()
+			} else if n > 0 {
 				severity = "notice"
 			}
 		}
@@ -227,7 +233,7 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 		templateName = "d2d-batch-err"
 	}
 
-	tmplData, _ := json.Marshal(map[string]any{
+	tmplData, err := json.Marshal(map[string]any{
 		"batch":      batch.Name,
 		"total":      len(results),
 		"errors":     hasErrors,
@@ -236,6 +242,9 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 		"jobs":       results,
 		"datastores": dsList,
 	})
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	tc := templateContent{
 		TemplateName: templateName,

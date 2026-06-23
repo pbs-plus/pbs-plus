@@ -82,7 +82,9 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 	}
 	if severity == "info" && details != nil {
 		if warningsStr, ok := details["warnings"]; ok {
-			if n, _ := strconv.Atoi(warningsStr); n > 0 {
+			if n, err := strconv.Atoi(warningsStr); err != nil {
+				syslog.L.Error(err).Write()
+			} else if n > 0 {
 				severity = "notice"
 			}
 		}
@@ -118,7 +120,10 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 			tmplData[k] = v
 		}
 	}
-	tmplJSON, _ := json.Marshal(tmplData)
+	tmplJSON, err := json.Marshal(tmplData)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	tc := templateContent{
 		TemplateName: templateName,

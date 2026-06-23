@@ -444,7 +444,11 @@ func (v *verificationJob) executeVerification(
 	vs *verifyState,
 	agentTCP *arpc.StreamPipe,
 ) error {
-	defer func() { _ = vs.Close() }()
+	defer func() {
+		if err := vs.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	defer agentTCP.Close()
 
 	// Create a derived context so we can cancel remaining workers on fail threshold
@@ -475,7 +479,9 @@ func (v *verificationJob) executeVerification(
 	sampledFiles, err := v.sampleFiles(ctx, job, vs, snapshot)
 	if err != nil {
 		// Mark the stale result as skipped so we don't leave orphaned "running" records
-		_ = v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix())
+		if err := v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix()); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("failed to sample files: %w", err)
 	}
 
@@ -827,7 +833,10 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 		}
 		unixTime := t.Unix()
 
-		snapFiles, _ := os.ReadDir(filepath.Join(groupDir, entry.Name()))
+		snapFiles, err := os.ReadDir(filepath.Join(groupDir, entry.Name()))
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		var files []string
 		for _, f := range snapFiles {
 			files = append(files, f.Name())
@@ -1155,7 +1164,11 @@ func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg 
 func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCheckFilter) bool {
 	if filter.PathPattern != "" {
 		if strings.Contains(filter.PathPattern, "*") {
-			if matched, _ := filepath.Match(filter.PathPattern, filepath.Base(path)); !matched {
+			matched, err := filepath.Match(filter.PathPattern, filepath.Base(path))
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if !matched {
 				return false
 			}
 		} else {
@@ -1265,7 +1278,11 @@ func extractFileHash(ctx context.Context, vs *verifyState, file fileEntry) ([32]
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("failed to open content reader for [%d, %d): %w", file.ContentStart, file.ContentEnd, err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	h := sha256simd.New()
 	bufp := bufPool.Get().(*[]byte)

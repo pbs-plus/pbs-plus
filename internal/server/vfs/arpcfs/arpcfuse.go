@@ -174,12 +174,24 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 	case "user.owner":
 		data = []byte(fi.Owner)
 	case "user.fileattributes":
-		data, _ = cbor.Marshal(fi.FileAttributes)
+		d, err := cbor.Marshal(fi.FileAttributes)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
+		data = d
 	case "user.acls":
 		if fi.PosixACLs != nil {
-			data, _ = cbor.Marshal(fi.PosixACLs)
+			d, err := cbor.Marshal(fi.PosixACLs)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
+			data = d
 		} else if fi.WinACLs != nil {
-			data, _ = cbor.Marshal(fi.WinACLs)
+			d, err := cbor.Marshal(fi.WinACLs)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
+			data = d
 		} else {
 			return 0, syscall.ENODATA
 		}

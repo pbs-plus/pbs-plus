@@ -55,7 +55,9 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -286,7 +288,9 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -428,7 +432,9 @@ func (database *Database) linkBackupLog(backupID, upid string) {
 		return
 	}
 
-	_ = os.Remove(backupLogPath)
+	if err := os.Remove(backupLogPath); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	err = os.Symlink(origLogPath, backupLogPath)
 	if err != nil {
@@ -613,7 +619,9 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {

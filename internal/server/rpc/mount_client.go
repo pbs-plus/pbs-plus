@@ -33,7 +33,9 @@ func unmountPath(path string) {
 			return
 		}
 	}
-	_ = os.RemoveAll(path)
+	if err := os.RemoveAll(path); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func waitForAccessible(ctx context.Context, path string) (isEmpty, ok bool) {
@@ -63,7 +65,11 @@ func callMountRPC(ctx context.Context, serviceMethod string, args, reply any) er
 		return fmt.Errorf("failed to reach backup RPC: %w", err)
 	}
 	rpcClient := rpc.NewClient(conn)
-	defer rpcClient.Close()
+	defer func() {
+		if err := rpcClient.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	return rpcClient.Call(serviceMethod, args, reply)
 }
 
@@ -139,7 +145,11 @@ func (a *AgentMount) IsConnected() bool {
 		return false
 	}
 	rpcClient := rpc.NewClient(conn)
-	defer rpcClient.Close()
+	defer func() {
+		if err := rpcClient.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	if err := rpcClient.Call("MountRPCService.Status", args, &reply); err != nil {
 		return false
 	}
@@ -161,7 +171,11 @@ func (a *AgentMount) CloseMount() {
 		return
 	}
 	rpcClient := rpc.NewClient(conn)
-	defer rpcClient.Close()
+	defer func() {
+		if err := rpcClient.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if err := rpcClient.Call("MountRPCService.ARPCCleanup", args, &reply); err != nil {
 		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).WithMessage(reply.Message).Write()

@@ -41,14 +41,18 @@ func (t *VerificationTask) WriteString(data string) {
 
 func (t *VerificationTask) CloseOK() {
 	t.CloseWithStatus("OK", nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
 func (t *VerificationTask) CloseErr(taskErr error) {
 	status := "ERROR: " + taskErr.Error()
 	t.CloseWithStatus(status, nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
@@ -57,6 +61,8 @@ func (t *VerificationTask) CloseErr(taskErr error) {
 func (t *VerificationTask) CloseWarn(warnings int) {
 	status := fmt.Sprintf("WARNINGS: %d", warnings)
 	t.CloseWithStatus(status, nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -18,11 +19,13 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"data":    settings,
 				"success": true,
 				"status":  http.StatusOK,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -88,10 +91,12 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
 				"status":  http.StatusOK,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -113,11 +118,13 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"data":    setting,
 				"success": true,
 				"status":  http.StatusOK,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -177,10 +184,12 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
 				"status":  http.StatusOK,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -206,10 +215,12 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"data":    exclusions,
 				"success": true,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -234,9 +245,11 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -264,9 +277,11 @@ func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -277,10 +292,12 @@ func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"data":    exclusion,
 				"success": true,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 

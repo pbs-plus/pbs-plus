@@ -36,13 +36,17 @@ func (t *ScanTask) CloseOK(res *Result) {
 		msg = fmt.Sprintf("OK: %d cartridges, %d families (%s)", res.Cartridges, res.Families, res.Duration.Truncate(time.Second))
 	}
 	t.CloseWithStatus(msg, nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
 func (t *ScanTask) CloseErr(taskErr error) {
 	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 

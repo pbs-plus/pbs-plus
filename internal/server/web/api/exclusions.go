@@ -12,6 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -41,7 +42,9 @@ func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(toReturn)
+			if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -90,7 +93,9 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -166,7 +171,9 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -181,7 +188,9 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = exclusion
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -195,7 +204,9 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const mtfJobMaxAttempts = 100
@@ -269,6 +270,8 @@ func toInt64(s string) int64 {
 
 func ToInt64(s string) int64 {
 	var n int64
-	_, _ = fmt.Sscanf(s, "%d", &n)
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return n
 }

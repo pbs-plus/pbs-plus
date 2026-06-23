@@ -2,6 +2,7 @@ package pxarmount
 
 import (
 	"fmt"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"net"
 	"os"
 	"sync"
@@ -27,14 +28,18 @@ var globalCommitHub *commitHub
 
 func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	monPath := mainSocketPath + ".monitor"
-	_ = os.Remove(monPath)
+	if err := os.Remove(monPath); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	l, err := net.Listen("unix", monPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen monitor socket %s: %w", monPath, err)
 	}
 	if err := os.Chmod(monPath, 0o660); err != nil {
-		_ = l.Close()
+		if err := l.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, err
 	}
 
@@ -85,10 +90,14 @@ func (h *commitHub) acceptLoop() {
 			if h.ended.Load() {
 				// Commit already finished  -  replay all lines and close.
 				for _, line := range h.lastLines {
-					_, _ = fmt.Fprintln(conn, line)
+					if _, err := fmt.Fprintln(conn, line); err != nil {
+						syslog.L.Error(err).Write()
+					}
 				}
 				h.mu.Unlock()
-				_ = conn.Close()
+				if err := conn.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				continue
 			}
 
@@ -99,13 +108,19 @@ func (h *commitHub) acceptLoop() {
 			// to it directly (duplicate lines are harmless  -  the
 			// display deduplicates by phase transitions).
 			for _, line := range h.lastLines {
-				_, _ = fmt.Fprintln(conn, line)
+				if _, err := fmt.Fprintln(conn, line); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}
 			h.mu.Unlock()
 		} else {
-			_, _ = fmt.Fprintln(conn, "IDLE")
+			if _, err := fmt.Fprintln(conn, "IDLE"); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			h.mu.Unlock()
-			_ = conn.Close()
+			if err := conn.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 }
@@ -144,10 +159,14 @@ func (h *commitHub) broadcast(line string) {
 
 	for conn := range h.watchers {
 		if _, err := fmt.Fprintln(conn, line); err != nil {
-			_ = conn.Close()
+			if err := conn.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			delete(h.watchers, conn)
 		} else if isDone {
-			_ = conn.Close()
+			if err := conn.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			delete(h.watchers, conn)
 		}
 	}
@@ -160,7 +179,9 @@ func (h *commitHub) startJob() int64 {
 
 	// Truncate/create the log file for the new commit.
 	if h.logFile != nil {
-		_ = h.logFile.Close()
+		if err := h.logFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	f, err := os.Create(h.logPath)
 	if err != nil {
@@ -168,7 +189,9 @@ func (h *commitHub) startJob() int64 {
 			fmt.Fprintf(os.Stderr, "commit-hub: failed to create log file %s: %v\n", h.logPath, err)
 		}
 	} else {
-		_ = f.Chmod(0o660)
+		if err := f.Chmod(0o660); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		h.logFile = f
 		if h.verbose {
 			fmt.Fprintf(os.Stderr, "commit-hub: log file created at %s\n", h.logPath)
@@ -206,15 +229,21 @@ func (h *commitHub) endJob() {
 
 func (h *commitHub) close() {
 	if h.listener != nil {
-		_ = h.listener.Close()
+		if err := h.listener.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	h.mu.Lock()
 	if h.logFile != nil {
-		_ = h.logFile.Close()
+		if err := h.logFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		h.logFile = nil
 	}
 	h.mu.Unlock()
-	_ = os.Remove(h.sockPath)
+	if err := os.Remove(h.sockPath); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func formatElapsed(d time.Duration) string {

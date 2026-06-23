@@ -38,7 +38,9 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
 
-	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	initialized := false
 	_, err := os.Stat(dbPath)
@@ -93,7 +95,9 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 			}
 		}
 
-		_ = tx.Commit()
+		if err := tx.Commit(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	return database, nil
 }
@@ -161,7 +165,9 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			panic(p)
 		}
 	}()

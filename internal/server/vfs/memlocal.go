@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type MemcachedConfig struct {
@@ -67,7 +68,9 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	}
 
 	if _, statErr := os.Stat(cfg.SocketPath); statErr == nil {
-		_ = os.Remove(cfg.SocketPath)
+		if err := os.Remove(cfg.SocketPath); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	args := []string{
@@ -123,9 +126,15 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	readyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := waitForUnixSocket(readyCtx, cfg.SocketPath); err != nil {
-		_ = terminateProcessGroup(cmd.Process)
-		_ = cmd.Wait()
-		_ = os.Remove(cfg.SocketPath)
+		if err := terminateProcessGroup(cmd.Process); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := cmd.Wait(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := os.Remove(cfg.SocketPath); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("memcached did not become ready: %w", err)
 	}
 
@@ -135,15 +144,23 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 			return nil
 		}
 		stopped = true
-		_ = terminateProcessGroup(cmd.Process)
-		_ = cmd.Wait()
-		_ = os.Remove(cfg.SocketPath)
+		if err := terminateProcessGroup(cmd.Process); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := cmd.Wait(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := os.Remove(cfg.SocketPath); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil
 	}
 
 	go func() {
 		<-ctx.Done()
-		_ = stopFn()
+		if err := stopFn(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	return stopFn, nil
@@ -154,7 +171,9 @@ func waitForUnixSocket(ctx context.Context, path string) error {
 	for {
 		conn, err := d.DialContext(ctx, "unix", path)
 		if err == nil {
-			_ = conn.Close()
+			if err := conn.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return nil
 		}
 		select {
@@ -171,14 +190,22 @@ func terminateProcessGroup(p *os.Process) error {
 	}
 	pgid, err := syscall.Getpgid(p.Pid)
 	if err == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		time.Sleep(250 * time.Millisecond)
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil
 	}
-	_ = p.Signal(syscall.SIGTERM)
+	if err := p.Signal(syscall.SIGTERM); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	time.Sleep(250 * time.Millisecond)
-	_ = p.Kill()
+	if err := p.Kill(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return nil
 }
 

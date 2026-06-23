@@ -55,7 +55,10 @@ func sendAlertWithData(alertType AlertType, severity string, details map[string]
 		maps.Copy(m, extraData)
 		return m
 	}()
-	tmplJSON, _ := json.Marshal(tmplData)
+	tmplJSON, err := json.Marshal(tmplData)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	tc := templateContent{
 		TemplateName: templateName,

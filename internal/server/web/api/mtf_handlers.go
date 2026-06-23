@@ -64,7 +64,11 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
-			defer func() { _ = rpcClient.Close() }()
+			defer func() {
+				if err := rpcClient.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
+			}()
 
 			for _, id := range decoded {
 				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop, Web: true}
@@ -82,7 +86,9 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -117,7 +123,9 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				"success": true,
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(toReturn)
+			if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -151,7 +159,9 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -188,7 +198,9 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			flat := flattenMtfJobForEdit(job)
 			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", job.ID)
 			response.Data = flat
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -220,7 +232,9 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfJobConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -233,7 +247,9 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfJobConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 	}
@@ -270,7 +286,9 @@ func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		response.Data = upids
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -426,7 +444,10 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			resp.Data = list
 		case "datasets":
-			famID, _ := strconv.ParseInt(r.URL.Query().Get("family"), 10, 64)
+			famID, parseErr := strconv.ParseInt(r.URL.Query().Get("family"), 10, 64)
+			if parseErr != nil {
+				syslog.L.Error(parseErr).Write()
+			}
 			var list []mtfdb.DataSet
 			var err error
 			if famID > 0 {
@@ -457,7 +478,9 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -519,7 +542,9 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		response.Data = st.UPID
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -543,7 +568,9 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = list
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		case http.MethodPost:
 			response := MtfMappingConfigResponse{}
@@ -578,7 +605,9 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = mtfdb.NamespaceMapping{ID: id}
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		default:
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -616,7 +645,9 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = m
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		case http.MethodPut:
 			m, err := ms.GetMapping(r.Context(), id)
@@ -676,7 +707,9 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfMappingConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		case http.MethodDelete:
 			if err := ms.DeleteMapping(r.Context(), id); err != nil {
@@ -690,7 +723,9 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfMappingConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 }

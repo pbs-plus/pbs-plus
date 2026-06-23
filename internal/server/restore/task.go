@@ -8,6 +8,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type RestoreTask struct {
@@ -29,7 +30,9 @@ func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 		BaseTask: tasks.NewBaseTask(task, file),
 		restore:  job,
 	}
-	_ = tasks.AddActive(task.UPID)
+	if err := tasks.AddActive(task.UPID); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return rTask, nil
 }
 
@@ -39,20 +42,26 @@ func (t *RestoreTask) WriteString(data string) {
 
 func (t *RestoreTask) CloseOK() {
 	t.CloseWithStatus("OK", nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
 func (t *RestoreTask) CloseErr(taskErr error) {
 	errMsg := taskErr.Error()
 	t.CloseWithStatus(errMsg, nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
 func (t *RestoreTask) CloseWarn(warning int) {
 	t.CloseWithStatus("OK", nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
@@ -65,7 +74,11 @@ func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (p
 	if err != nil {
 		return proxmox.Task{}, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	base := tasks.NewBaseTask(task, file)
 	for _, data := range additionalData {

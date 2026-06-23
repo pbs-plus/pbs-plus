@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sys/unix"
@@ -207,7 +208,9 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 			node.Size = uint64(info.Size())
 			node.MtimeNs = info.ModTime().UnixNano()
 			node.CtimeNs = info.ModTime().UnixNano()
-			_ = fs.journal.UpdateNode(node)
+			if err := fs.journal.UpdateNode(node); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			updated = true
 		}
 
@@ -414,7 +417,10 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		nodeID := edgeNames[name]
 		// Edges take priority over whiteouts  -  if there's a journal node,
 		// it's always visible.
-		node, _ := fs.journal.GetNode(nodeID)
+		node, err := fs.journal.GetNode(nodeID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if node == nil {
 			continue
 		}
@@ -591,7 +597,9 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
 	if closeAfterWrite {
-		_ = syscall.Close(fh.fd)
+		if err := syscall.Close(fh.fd); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if err != nil {
 		return 0, fuse.ToStatus(err)
@@ -812,7 +820,9 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		_ = os.Remove(abs)
+		if err := os.Remove(abs); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fuse.EIO
 	}
 	node.ID = nodeID
@@ -861,7 +871,9 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		_ = os.Remove(abs)
+		if err := os.Remove(abs); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fuse.EIO
 	}
 	node.ID = nodeID
@@ -911,7 +923,9 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, linkName, node, hasPxar)
 	if err != nil {
-		_ = os.Remove(abs)
+		if err := os.Remove(abs); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fuse.EIO
 	}
 	node.ID = nodeID
@@ -978,8 +992,14 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 
 	parentNodeID := fs.resolveParentNodeID(childPath)
 	if parentNodeID != 0 {
-		edges, _ := fs.journal.ListEdges(parentNodeID)
-		whiteouts, _ := fs.journal.ListWhiteouts(parentNodeID)
+		edges, err := fs.journal.ListEdges(parentNodeID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
+		whiteouts, err := fs.journal.ListWhiteouts(parentNodeID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if len(edges) > 0 || len(whiteouts) > 0 {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}
@@ -992,7 +1012,10 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 			pxarDirPath = re.Node.RedirectTo
 		}
 		if pxarNode := fs.findPxarNode(pxarDirPath); pxarNode != nil {
-			entries, _ := fs.pxar.ReadDirRaw(pxarNode.inode)
+			entries, err := fs.pxar.ReadDirRaw(pxarNode.inode)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if len(entries) > 0 {
 				return fuse.Status(syscall.ENOTEMPTY)
 			}
@@ -1225,7 +1248,10 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 
 	// 2. Journal xattrs.
 	if re.Node != nil {
-		names, _ := fs.journal.ListXAttrs(re.Node.ID)
+		names, err := fs.journal.ListXAttrs(re.Node.ID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		for _, n := range names {
 			nameSet[n] = true
 		}
@@ -1357,7 +1383,9 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 				}
 				re.Node.MtimeNs = meta.mtimeNs
 				re.Node.CtimeNs = meta.ctimeNs
-				_ = fs.journal.UpdateNode(re.Node)
+				if err := fs.journal.UpdateNode(re.Node); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}
 		}
 	}
@@ -1370,7 +1398,9 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 
 func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
 	// Sync journal so metadata durability matches data durability.
-	_ = fs.journal.Sync()
+	if err := fs.journal.Sync(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if input.Fh == 0 {
 		return fuse.OK
 	}
@@ -1524,7 +1554,11 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	entry, err := fs.pxar.GetPxarEntry(n.inode)
 	if err != nil {
@@ -1535,7 +1569,11 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	bufp := copyBufPool.Get().(*[]byte)
 	defer copyBufPool.Put(bufp)
@@ -1602,13 +1640,21 @@ func copyRegularFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
+	defer func() {
+		if err := in.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = out.Close() }()
+	defer func() {
+		if err := out.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	bufp := copyBufPool.Get().(*[]byte)
 	defer copyBufPool.Put(bufp)
@@ -2110,7 +2156,11 @@ func mmapFile(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	fi, err := f.Stat()
 	if err != nil {

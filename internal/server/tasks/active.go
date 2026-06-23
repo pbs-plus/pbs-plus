@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // It is idempotent: registering an already-present upid is a no-op.
@@ -30,12 +31,20 @@ func modifyActiveFile(target string, add bool) error {
 		}
 		return fmt.Errorf("open active tasks: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("lock active tasks: %w", err)
 	}
-	defer func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }()
+	defer func() {
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	var lines []string
 	found := false

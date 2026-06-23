@@ -54,7 +54,9 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -234,7 +236,9 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -349,7 +353,9 @@ func (database *Database) linkRestoreLog(restoreID, upid string) {
 		return
 	}
 
-	_ = os.Remove(restoreLogPath)
+	if err := os.Remove(restoreLogPath); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	err = os.Symlink(origLogPath, restoreLogPath)
 	if err != nil {
@@ -480,7 +486,9 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {

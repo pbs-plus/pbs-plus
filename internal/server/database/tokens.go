@@ -185,7 +185,9 @@ func (database *Database) pruneOldTokensKeepLastValid(keep int) error {
 	qtx := database.queries.WithTx(tx.Tx)
 	for _, t := range toDelete {
 		if err := qtx.DeleteToken(database.ctx, t); err != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return fmt.Errorf("pruneOldTokensKeepLastValid: delete %s: %w", t, err)
 		}
 	}

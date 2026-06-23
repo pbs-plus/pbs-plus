@@ -46,7 +46,9 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	if _, err := os.Lstat(secKeyPath); err != nil {
 		key, err := GenerateSecretKey(48)
 		if err == nil {
-			_ = os.WriteFile(secKeyPath, []byte(key), 0640)
+			if err := os.WriteFile(secKeyPath, []byte(key), 0640); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
@@ -158,7 +160,9 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 
 		queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
 		if err == nil {
-			os.Remove(queueTaskPath)
+			if err := os.Remove(queueTaskPath); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 
 		queuedBackup.History.LastRunUpid = task.UPID
@@ -168,7 +172,9 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 		}
 	}
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return nil
 }
 

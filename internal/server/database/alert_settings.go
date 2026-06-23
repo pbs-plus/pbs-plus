@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type AlertSetting struct {
@@ -37,7 +38,9 @@ type AlertExclusion struct {
 func sqlcToAlertSetting(row sqlc.AlertSetting) AlertSetting {
 	var quietDays []string
 	if row.QuietDays != "" {
-		_ = json.Unmarshal([]byte(row.QuietDays), &quietDays)
+		if err := json.Unmarshal([]byte(row.QuietDays), &quietDays); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if quietDays == nil {
 		quietDays = []string{}
@@ -71,7 +74,10 @@ func alertSettingQuietDaysJSON(days []string) string {
 	if days == nil {
 		days = []string{}
 	}
-	b, _ := json.Marshal(days)
+	b, err := json.Marshal(days)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return string(b)
 }
 

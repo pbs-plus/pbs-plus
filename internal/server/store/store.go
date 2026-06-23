@@ -83,7 +83,9 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 					WithMessage("Initialize: GetAllBackups panicked").Write()
 			}
 		}()
-		_, _ = db.GetAllBackups()
+		if _, err := db.GetAllBackups(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	store := &Store{

@@ -8,6 +8,7 @@ import (
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	godbus "github.com/godbus/dbus/v5"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime string) string {
@@ -78,7 +79,9 @@ func StopMountService(ctx context.Context, serviceName string) error {
 		<-done
 	}
 
-	_ = conn.ResetFailedUnitContext(ctx, serviceName)
+	if err := conn.ResetFailedUnitContext(ctx, serviceName); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	return nil
 }

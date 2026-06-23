@@ -18,7 +18,11 @@ func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFile
 		syslog.L.Error(err).WithMessage("api server watcher error").Write()
 		return
 	}
-	defer watcher.Close()
+	defer func() {
+		if err := watcher.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	for _, f := range watcherFiles {
 		if err := watcher.Add(f); err != nil {
 			syslog.L.Error(err).WithMessage("api server watcher error").Write()

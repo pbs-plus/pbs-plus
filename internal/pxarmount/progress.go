@@ -2,6 +2,7 @@ package pxarmount
 
 import (
 	"fmt"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"io"
 	"strconv"
 	"strings"
@@ -109,7 +110,9 @@ func (r *ProgressReporter) send() {
 		}
 		extra += ")"
 	}
-	_, _ = fmt.Fprintf(r.w, "PROGRESS [%s] {%s} %s%s\n", label, formatElapsed(time.Since(r.started)), msg, extra)
+	if _, err := fmt.Fprintf(r.w, "PROGRESS [%s] {%s} %s%s\n", label, formatElapsed(time.Since(r.started)), msg, extra); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	r.lastSend = time.Now()
 }
 
@@ -117,13 +120,17 @@ func (r *ProgressReporter) Done(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state.Phase = PhaseDone
-	_, _ = fmt.Fprintf(r.w, "OK %s\n", msg)
+	if _, err := fmt.Fprintf(r.w, "OK %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func (r *ProgressReporter) Error(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, _ = fmt.Fprintf(r.w, "ERR %s\n", msg)
+	if _, err := fmt.Fprintf(r.w, "ERR %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 type ProgressDisplay struct {
@@ -230,7 +237,9 @@ func (d *ProgressDisplay) writeLine(line string) {
 	if len(padded) < len(d.lastLine) {
 		padded += strings.Repeat(" ", len(d.lastLine)-len(padded))
 	}
-	_, _ = fmt.Fprint(d.w, padded)
+	if _, err := fmt.Fprint(d.w, padded); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	d.lastLine = line
 }
 
@@ -293,20 +302,28 @@ func (d *ProgressDisplay) parseStats(stats string) {
 	for f := range fields {
 		f = strings.TrimSpace(f)
 		if strings.HasSuffix(f, " files") {
-			_, _ = fmt.Sscanf(f, "%d files", &d.files)
+			if _, err := fmt.Sscanf(f, "%d files", &d.files); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		} else {
 			var b int64
 			if strings.HasSuffix(f, "GiB") {
 				var v float64
-				_, _ = fmt.Sscanf(f, "%f GiB", &v)
+				if _, err := fmt.Sscanf(f, "%f GiB", &v); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				b = int64(v * 1024 * 1024 * 1024)
 			} else if strings.HasSuffix(f, "MiB") {
 				var v float64
-				_, _ = fmt.Sscanf(f, "%f MiB", &v)
+				if _, err := fmt.Sscanf(f, "%f MiB", &v); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				b = int64(v * 1024 * 1024)
 			} else if strings.HasSuffix(f, "KiB") {
 				var v float64
-				_, _ = fmt.Sscanf(f, "%f KiB", &v)
+				if _, err := fmt.Sscanf(f, "%f KiB", &v); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				b = int64(v * 1024)
 			}
 			if b > 0 {
@@ -321,10 +338,14 @@ func (d *ProgressDisplay) Done(line string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.lastLine) > 0 {
-		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
+		if _, err := fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine))); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	msg := strings.TrimPrefix(line, "OK ")
-	_, _ = fmt.Fprintf(d.w, "  ✓ %s\n", msg)
+	if _, err := fmt.Fprintf(d.w, "  ✓ %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	d.lastLine = ""
 }
 
@@ -333,10 +354,14 @@ func (d *ProgressDisplay) Error(line string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.lastLine) > 0 {
-		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
+		if _, err := fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine))); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	msg := strings.TrimPrefix(line, "ERR ")
-	_, _ = fmt.Fprintf(d.w, "  ✗ error: %s\n", msg)
+	if _, err := fmt.Fprintf(d.w, "  ✗ error: %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	d.lastLine = ""
 }
 

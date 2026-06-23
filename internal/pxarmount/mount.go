@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pxar/transfer"
 	"golang.org/x/sys/unix"
 )
@@ -44,7 +45,11 @@ func Serve(cfg MountConfig) {
 			fmt.Fprintf(os.Stderr, "  ✗ error opening journal: %v\n", err)
 			os.Exit(1)
 		}
-		defer func() { _ = journal.Close() }()
+		defer func() {
+			if err := journal.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+		}()
 
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "  mutation mode, journal in %s\n", journalDir)
@@ -124,11 +129,15 @@ func Serve(cfg MountConfig) {
 		<-sigCh
 
 		if sockListener != nil {
-			_ = sockListener.Close()
+			if err := sockListener.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 
 		if err := server.Unmount(); err != nil {
-			_ = unix.Unmount(cfg.MountPoint, unix.MNT_DETACH)
+			if err := unix.Unmount(cfg.MountPoint, unix.MNT_DETACH); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 
 		<-sigCh

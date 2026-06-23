@@ -66,7 +66,9 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toReturn)
+		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -104,7 +106,11 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
-			defer rpcClient.Close()
+			defer func() {
+				if err := rpcClient.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
+			}()
 
 			for _, restoreID := range decodedRestoreIDs {
 				restoreTask, err := storeInstance.Database.GetRestore(restoreID)
@@ -133,7 +139,9 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -258,7 +266,9 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -413,7 +423,9 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -436,7 +448,9 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			flat := FlattenRestoreForEdit(restore)
 			flat["notification-batch"] = GetJobBatchName(storeInstance, "restore", restore.ID)
 			response.Data = flat
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -456,7 +470,9 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 	}

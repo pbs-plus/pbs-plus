@@ -141,7 +141,9 @@ func (b *restoreJob) onError(err error) {
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
 
-	_ = updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance)
+	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	if b.storeInstance.BatchTracker != nil {
 		b.storeInstance.BatchTracker.RecordJobResult(
@@ -168,10 +170,14 @@ func (b *restoreJob) onSuccess() {
 	errCount := b.errCount.Load()
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
-		_ = updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance)
+		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	} else {
 		b.task.CloseOK()
-		_ = updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance)
+		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	var notifyErr error
@@ -209,11 +215,15 @@ func (b *restoreJob) cleanup() {
 	}
 
 	if b.localClient != nil {
-		b.localClient.Close()
+		if err := b.localClient.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if b.remoteServer != nil {
-		b.remoteServer.Close()
+		if err := b.remoteServer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if b.errCh != nil {
@@ -255,7 +265,9 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	default:
 	}
 
-	b.queueTask.UpdateDescription("running pre-restore script")
+	if err := b.queueTask.UpdateDescription("running pre-restore script"); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
 	envVars, err := jobs.StructToEnvVars(b.job)
@@ -578,7 +590,9 @@ func (b *restoreJob) runPostScript() {
 	}
 
 	if b.queueTask != nil {
-		b.queueTask.UpdateDescription("running post-restore script")
+		if err := b.queueTask.UpdateDescription("running post-restore script"); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))

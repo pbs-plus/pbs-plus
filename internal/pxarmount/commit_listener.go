@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"net"
 	"os"
 	"os/exec"
@@ -74,19 +75,25 @@ func ResolveDatastoreName(pbsStore string) string {
 }
 
 func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) {
-	_ = os.Remove(sockPath)
+	if err := os.Remove(sockPath); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(sockPath, 0o660); err != nil {
-		_ = l.Close()
+		if err := l.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, err
 	}
 
 	hub, err := newCommitHub(sockPath, mfs.verbose)
 	if err != nil {
-		_ = l.Close()
+		if err := l.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("start monitor hub: %w", err)
 	}
 	globalCommitHub = hub
@@ -104,7 +111,11 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 }
 
 func handleCommitConn(mfs *MutableFS, conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
 		return
@@ -112,21 +123,31 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	line := scanner.Text()
 	req, err := ParseCommitLine(line)
 	if err != nil {
-		_, _ = fmt.Fprintf(conn, "ERR %v\n", err)
+		if _, err := fmt.Fprintf(conn, "ERR %v\n", err); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return
 	}
 
 	detached := false
-	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if scanner.Scan() {
 		detached = scanner.Text() == "DETACH"
 	}
-	_ = conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	if detached {
 		jobID := globalCommitHub.startJob()
-		_, _ = fmt.Fprintf(conn, "JOB %d\n", jobID)
-		_ = conn.Close()
+		if _, err := fmt.Fprintf(conn, "JOB %d\n", jobID); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := conn.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 
 		go func() {
 			defer globalCommitHub.endJob()

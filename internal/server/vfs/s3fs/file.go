@@ -36,13 +36,17 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 
 func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 	if f.body != nil && off != f.currPos {
-		f.body.Close()
+		if err := f.body.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		f.body = nil
 	}
 
 	if f.body == nil {
 		opts := minio.GetObjectOptions{}
-		_ = opts.SetRange(off, f.size-1)
+		if err := opts.SetRange(off, f.size-1); err != nil {
+			syslog.L.Error(err).Write()
+		}
 
 		obj, err := f.fs.client.GetObject(f.fs.Ctx, f.fs.bucket, f.key, opts)
 		if err != nil {

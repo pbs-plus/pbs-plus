@@ -60,7 +60,9 @@ func (s *AlertScanner) ensureDefaults() {
 		{string(AlertTargetOffline), 0, "warning"},
 	}
 	for _, d := range defaults {
-		s.db.EnsureAlertSetting(d.name, d.threshold, d.severity)
+		if _, err := s.db.EnsureAlertSetting(d.name, d.threshold, d.severity); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -90,7 +92,10 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 		return
 	}
 
-	excludedTargets, _ := s.db.GetExcludedValues(string(AlertUnconfiguredTarget), "target")
+	excludedTargets, err := s.db.GetExcludedValues(string(AlertUnconfiguredTarget), "target")
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	targets, err := s.db.GetAllTargets()
 	if err != nil {
@@ -141,7 +146,9 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 	SendAlertWithData(AlertUnconfiguredTarget, setting.Severity, details, map[string]any{
 		"targets": names,
 	})
-	s.db.UpdateAlertLastSent(string(AlertUnconfiguredTarget), time.Now().Unix())
+	if err := s.db.UpdateAlertLastSent(string(AlertUnconfiguredTarget), time.Now().Unix()); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
@@ -155,7 +162,10 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		threshold = DefaultStaleDays
 	}
 
-	excludedJobs, _ := s.db.GetExcludedValues(string(AlertStaleBackup), "job")
+	excludedJobs, err := s.db.GetExcludedValues(string(AlertStaleBackup), "job")
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	backups, err := s.db.GetAllBackups()
 	if err != nil {
@@ -226,7 +236,9 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		"jobs": entries,
 	})
 
-	s.db.UpdateAlertLastSent(string(AlertStaleBackup), time.Now().Unix())
+	if err := s.db.UpdateAlertLastSent(string(AlertStaleBackup), time.Now().Unix()); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func formatTimestamp(unix int64) string {

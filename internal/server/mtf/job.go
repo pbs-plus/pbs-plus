@@ -193,7 +193,10 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		cfg.AuthToken = token.ReadLocal()
 	}
 
-	tapeCfg, _ := tape.ReadConfig()
+	tapeCfg, err := tape.ReadConfig()
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	if job.Changer != "" {
 		for _, c := range tapeCfg.Changers {
@@ -354,14 +357,16 @@ func (j *mtfJob) onSuccess() {
 	if task == nil || task.UPID == "" {
 		return
 	}
-	_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
+	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:           task.UPID,
 			LastRunStatus:         database.JobStatusSuccess,
 			LastRunEndtime:        time.Now().Unix(),
 			LastSuccessfulUpid:    task.UPID,
 			LastSuccessfulEndtime: time.Now().Unix(),
-		}, "")
+		}, ""); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	j.notify(nil)
 }
 
@@ -373,8 +378,10 @@ func (j *mtfJob) onError(runErr error) {
 
 	if errors.Is(runErr, jobs.ErrCanceled) {
 		if task != nil {
-			_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfdb.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, "")
+			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
+				mtfdb.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		return
 	}
@@ -382,13 +389,15 @@ func (j *mtfJob) onError(runErr error) {
 	if task == nil || task.UPID == "" {
 		task = j.errorTask(runErr)
 	}
-	_ = j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
+	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:    task.UPID,
 			LastRunStatus:  database.JobStatusFailed,
 			LastRunEndtime: time.Now().Unix(),
 			RetryCount:     job.History.RetryCount + 1,
-		}, "")
+		}, ""); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	j.notify(runErr)
 }
 
@@ -443,7 +452,9 @@ func (j *mtfJob) cleanup() {
 			cancel()
 		}
 		if logger != nil {
-			_ = logger.Close()
+			if err := logger.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		if qt != nil {
 			qt.Close()
@@ -471,13 +482,17 @@ func startTask(job mtfdb.MTFJob) (*Task, error) {
 
 func (t *Task) CloseOK() {
 	t.CloseWithStatus("OK", nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
 func (t *Task) CloseErr(taskErr error) {
 	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
-		_ = tasks.RemoveActive(t.UPID)
+		if err := tasks.RemoveActive(t.UPID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	})
 }
 
@@ -495,7 +510,9 @@ func errorTask(job mtfdb.MTFJob, runErr error) *Task {
 	}
 	t.WriteLogLine("%s", runErr.Error())
 	t.WriteLogLine("TASK ERROR: %s", runErr.Error())
-	_ = file.Close()
+	if err := file.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	tasks.WriteArchive(task.UPID, task.StartTime, runErr.Error())
 
 	return t

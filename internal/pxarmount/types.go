@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/format"
 )
@@ -249,7 +250,10 @@ func parsePerm(s string) uint16 {
 func lookupUID(name string) (uint32, error) {
 	// Try Go's user.Lookup first (uses NSS when dynamically linked).
 	if u, err := user.Lookup(name); err == nil {
-		uid, _ := strconv.ParseUint(u.Uid, 10, 32)
+		uid, err := strconv.ParseUint(u.Uid, 10, 32)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return uint32(uid), nil
 	}
 	// Fallback: try getent which respects NSS/winbind even from
@@ -270,7 +274,10 @@ func lookupUID(name string) (uint32, error) {
 
 func lookupGID(name string) (uint32, error) {
 	if g, err := user.LookupGroup(name); err == nil {
-		gid, _ := strconv.ParseUint(g.Gid, 10, 32)
+		gid, err := strconv.ParseUint(g.Gid, 10, 32)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return uint32(gid), nil
 	}
 	out, err := exec.Command("getent", "group", name).Output()

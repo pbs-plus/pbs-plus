@@ -13,6 +13,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pxar/format"
 )
 
@@ -201,7 +202,11 @@ func (j *Journal) verifyChecksum(id int64, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closer.Close() }()
+	defer func() {
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	if len(csumData) < 4 {
 		return nil
 	}
@@ -302,12 +307,16 @@ func OpenJournal(dir string) (*Journal, error) {
 	j := &Journal{db: db, overlay: make(map[string][]byte), commitCh: make(chan struct{}, 4), stopCh: make(chan struct{}), stopped: make(chan struct{})}
 
 	if err := j.initSchema(); err != nil {
-		_ = db.Close()
+		if err := db.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
 	if err := j.loadNextNodeID(); err != nil {
-		_ = db.Close()
+		if err := db.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("load next node id: %w", err)
 	}
 
@@ -320,19 +329,27 @@ func OpenJournal(dir string) (*Journal, error) {
 			RedirectTo: "/",
 		}
 		if err := db.Set(nodeKey(1), encodeNode(root), pebble.Sync); err != nil {
-			_ = db.Close()
+			if err := db.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return nil, fmt.Errorf("create root node: %w", err)
 		}
 	} else if err != nil {
-		_ = db.Close()
+		if err := db.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("verify root node: %w", err)
 	} else {
-		_ = closer.Close()
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		_ = rootData
 	}
 
 	if err := j.cleanOrphanEdges(); err != nil {
-		_ = db.Close()
+		if err := db.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("clean orphan edges: %w", err)
 	}
 
@@ -352,7 +369,9 @@ func (j *Journal) initSchema() error {
 	if err != nil {
 		return err
 	}
-	_ = closer.Close()
+	if err := closer.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return nil
 }
 
@@ -365,7 +384,9 @@ func (j *Journal) loadNextNodeID() error {
 	if err != nil {
 		return err
 	}
-	_ = closer.Close()
+	if err := closer.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if len(val) >= 8 {
 		j.nextNodeID.Store(decodeInt64(val))
 	} else {
@@ -387,10 +408,18 @@ func (j *Journal) cleanOrphanEdges() error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = iter.Close() }()
+	defer func() {
+		if err := iter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	batch := j.db.NewBatch()
-	defer func() { _ = batch.Close() }()
+	defer func() {
+		if err := batch.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		childIDVal := iter.Value()
@@ -400,11 +429,15 @@ func (j *Journal) cleanOrphanEdges() error {
 		childID := decodeInt64(childIDVal)
 		_, closer, err := j.db.Get(nodeKey(childID))
 		if err == pebble.ErrNotFound {
-			_ = batch.Delete(iter.Key(), nil)
+			if err := batch.Delete(iter.Key(), nil); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		} else if err != nil {
 			return err
 		} else {
-			_ = closer.Close()
+			if err := closer.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 	if err := iter.Error(); err != nil {
@@ -424,7 +457,9 @@ func (j *Journal) VerifyIntegrity() error {
 	if err != nil {
 		return fmt.Errorf("root node check: %w", err)
 	}
-	_ = closer.Close()
+	if err := closer.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	_ = rootData
 
 	edgePrefixBytes := []byte(prefixEdge)
@@ -435,7 +470,11 @@ func (j *Journal) VerifyIntegrity() error {
 	if err != nil {
 		return fmt.Errorf("edge scan: %w", err)
 	}
-	defer func() { _ = iter.Close() }()
+	defer func() {
+		if err := iter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		childIDVal := iter.Value()
@@ -450,7 +489,9 @@ func (j *Journal) VerifyIntegrity() error {
 		if err != nil {
 			return fmt.Errorf("orphan check: %w", err)
 		}
-		_ = closer.Close()
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if err := iter.Error(); err != nil {
 		return fmt.Errorf("edge iter error: %w", err)
@@ -464,7 +505,11 @@ func (j *Journal) VerifyIntegrity() error {
 	if err != nil {
 		return fmt.Errorf("xattr scan: %w", err)
 	}
-	defer func() { _ = xiter.Close() }()
+	defer func() {
+		if err := xiter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	for xiter.First(); xiter.Valid(); xiter.Next() {
 		key := xiter.Key()
@@ -479,7 +524,9 @@ func (j *Journal) VerifyIntegrity() error {
 		if err != nil {
 			return fmt.Errorf("xattr orphan check: %w", err)
 		}
-		_ = closer.Close()
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if err := xiter.Error(); err != nil {
 		return fmt.Errorf("xattr iter error: %w", err)
@@ -497,7 +544,9 @@ func (j *Journal) Close() error {
 	<-j.stopped
 
 	j.mu.Lock()
-	_ = j.persistNextNodeID()
+	if err := j.persistNextNodeID(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	commitErr := j.commitErr
 	j.mu.Unlock()
 
@@ -647,31 +696,47 @@ func (j *Journal) drainAllLocked() {
 		if len(op.keys) > 0 {
 			for _, s := range op.keys {
 				if s.deleteEnd != nil {
-					_ = pb.DeleteRange(s.key, s.deleteEnd, nil)
+					if err := pb.DeleteRange(s.key, s.deleteEnd, nil); err != nil {
+						syslog.L.Error(err).Write()
+					}
 				} else if s.delete {
-					_ = pb.Delete(s.key, nil)
+					if err := pb.Delete(s.key, nil); err != nil {
+						syslog.L.Error(err).Write()
+					}
 				} else {
-					_ = pb.Set(s.key, s.value, nil)
+					if err := pb.Set(s.key, s.value, nil); err != nil {
+						syslog.L.Error(err).Write()
+					}
 				}
 			}
 		} else {
 			s := op.s
 			if s.deleteEnd != nil {
-				_ = pb.DeleteRange(s.key, s.deleteEnd, nil)
+				if err := pb.DeleteRange(s.key, s.deleteEnd, nil); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			} else if s.delete {
-				_ = pb.Delete(s.key, nil)
+				if err := pb.Delete(s.key, nil); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			} else {
-				_ = pb.Set(s.key, s.value, nil)
+				if err := pb.Set(s.key, s.value, nil); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				if len(s.key) >= 2 && s.key[0] == 'n' && s.key[1] == ':' {
 					nid := int64(binary.BigEndian.Uint64(s.key[2:]))
-					_ = pb.Set(checksumKey(nid), encodeUint32(fnv32(s.value)), nil)
+					if err := pb.Set(checksumKey(nid), encodeUint32(fnv32(s.value)), nil); err != nil {
+						syslog.L.Error(err).Write()
+					}
 				}
 			}
 		}
 	}
 
 	err := pb.Commit(pebble.Sync)
-	_ = pb.Close()
+	if err := pb.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if err != nil {
 		j.commitErr = err
 	}
@@ -707,7 +772,11 @@ func (j *Journal) GetNode(id int64) (*GraphNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = closer.Close() }()
+	defer func() {
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if err := j.verifyChecksum(id, data); err != nil {
 		return nil, err
@@ -756,7 +825,11 @@ func (j *Journal) getNodeLocked(id int64) (*GraphNode, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = closer.Close() }()
+	defer func() {
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if err := j.verifyChecksum(id, data); err != nil {
 		return nil, err
@@ -780,7 +853,11 @@ func (j *Journal) getEdgeLocked(parentID int64, name string) (int64, bool, error
 	if err != nil {
 		return 0, false, err
 	}
-	defer func() { _ = closer.Close() }()
+	defer func() {
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	return decodeInt64(val), true, nil
 }
 
@@ -796,7 +873,9 @@ func (j *Journal) getWhiteoutLocked(parentID int64, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	_ = closer.Close()
+	if err := closer.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return true, nil
 }
 
@@ -809,7 +888,11 @@ func (j *Journal) ListEdges(parentID int64) ([]GraphEdge, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = iter.Close() }()
+	defer func() {
+		if err := iter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
@@ -888,7 +971,11 @@ func (j *Journal) ListWhiteouts(parentID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = iter.Close() }()
+	defer func() {
+		if err := iter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
@@ -952,7 +1039,11 @@ func (j *Journal) GetXAttr(nodeID int64, name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = closer.Close() }()
+	defer func() {
+		if err := closer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	cp := make([]byte, len(val))
 	copy(cp, val)
 	return cp, nil
@@ -967,7 +1058,11 @@ func (j *Journal) ListXAttrs(nodeID int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = iter.Close() }()
+	defer func() {
+		if err := iter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
@@ -1020,7 +1115,11 @@ func (j *Journal) XAttrsForNode(nodeID int64) ([]format.XAttr, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = iter.Close() }()
+	defer func() {
+		if err := iter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)
@@ -1153,7 +1252,11 @@ func (j *Journal) AllXAttrs() (map[int64]map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = iter.Close() }()
+	defer func() {
+		if err := iter.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	j.mu.RLock()
 	overlayDeletes := make(map[string]bool)

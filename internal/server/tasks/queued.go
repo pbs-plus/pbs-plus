@@ -82,8 +82,12 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 		source = "schedule"
 	}
 	timestamp := Now().Format(time.RFC3339)
-	fmt.Fprintf(file, "%s: TASK QUEUED: job started from %s\n", timestamp, source)
-	file.Close()
+	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: job started from %s\n", timestamp, source); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := file.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	task.Status = "running"
 	return QueuedTask{Task: task, path: path, job: job, isBackup: isBackup}, nil
@@ -102,7 +106,11 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	timestamp := Now().Format(time.RFC3339)
 	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: %s\n", timestamp, desc); err != nil {
@@ -120,7 +128,9 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 func (t *QueuedTask) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_ = os.Remove(t.path)
+	if err := os.Remove(t.path); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	t.closed.Store(true)
 }
 
@@ -155,8 +165,12 @@ func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error
 		source = "schedule"
 	}
 	timestamp := Now().Format(time.RFC3339)
-	fmt.Fprintf(file, "%s: TASK QUEUED: MTF job started from %s\n", timestamp, source)
-	file.Close()
+	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: MTF job started from %s\n", timestamp, source); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := file.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	task.Status = "running"
 	return QueuedTask{Task: task, path: path}, nil

@@ -27,7 +27,10 @@ func getBackupId(target database.Target) (string, error) {
 
 	hostname, err := os.Hostname()
 	if err != nil {
-		hostnameBytes, _ := os.ReadFile("/etc/hostname")
+		hostnameBytes, err := os.ReadFile("/etc/hostname")
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		hostname = strings.TrimSpace(string(hostnameBytes))
 		if hostname == "" {
 			hostname = "localhost"
@@ -100,7 +103,9 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	}
 
 	if backup.Namespace != "" {
-		_ = CreateNamespace(backup.Namespace, backup, storeInstance)
+		if err := CreateNamespace(backup.Namespace, backup, storeInstance); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
 
