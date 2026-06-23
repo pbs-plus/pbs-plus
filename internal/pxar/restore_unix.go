@@ -15,6 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/format"
 	"golang.org/x/sys/unix"
@@ -29,7 +30,11 @@ const (
 // reported immediately via reportErr; the function always returns nil since
 // metadata failures are non-fatal (content is already in place).
 func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.FileInfo) error {
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	fd := int(file.Fd())
 	path := file.Name()
@@ -249,9 +254,13 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 			if opErr == nil || os.IsExist(opErr) {
 				if f, openErr := os.OpenFile(target, os.O_RDONLY, 0); openErr == nil {
 					if !st.noAttr {
-						_ = applyMeta(ctx, st, f, e)
+						if err := applyMeta(ctx, st, f, e); err != nil {
+							syslog.L.Error(err).Write()
+						}
 					} else {
-						f.Close()
+						if err := f.Close(); err != nil {
+							syslog.L.Error(err).Write()
+						}
 					}
 				} else {
 					opErr = fmt.Errorf("open special file %q: %w", target, openErr)

@@ -273,7 +273,9 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			offset := int64(n)
 
 			if offset >= int64(fileSize) {
-				pw.Close()
+				if err := pw.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				return
 			}
 
@@ -285,7 +287,9 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 
 			defer func() {
 				closeReq := closeContentReq{HandleID: handleResp.HandleID}
-				_ = c.pipe.Call(context.Background(), "pxar.CloseContent", &closeReq, nil)
+				if err := c.pipe.Call(context.Background(), "pxar.CloseContent", &closeReq, nil); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}()
 
 			readReq := readContentAtReq{HandleID: handleResp.HandleID}
@@ -313,7 +317,9 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 				}
 				offset += int64(n)
 			}
-			pw.Close()
+			if err := pw.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}()
 		return pr, nil
 	}

@@ -174,7 +174,7 @@ func RestoreWithOptions(ctx context.Context, client *Client, sources []string, o
 // cleanupStaleTemps removes leftover .pxar-restore-* temp files from a prior
 // crash, walking the destination root and deleting matches without aborting.
 func cleanupStaleTemps(root string) {
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -192,7 +192,9 @@ func cleanupStaleTemps(root string) {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func restoreNormal(ctx context.Context, client *Client, sources []string, destDir string, noAttr bool) error {
@@ -300,7 +302,9 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 			if r := recover(); r != nil {
 				err := fmt.Errorf("panic resolving deferred hardlinks: %v\n%s", r, debug.Stack())
 				syslog.L.Error(err).WithJob(client.name).WithField("restore", "panic").Write()
-				_ = client.SendError(workerCtx, err)
+				if err := client.SendError(workerCtx, err); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}
 		}()
 		if err := resolveDeferredHardlinks(workerCtx, st); err != nil {
@@ -441,7 +445,9 @@ func streamToTemp(ctx context.Context, st *restoreState, job restoreJob) (tmpPat
 
 	defer func() {
 		if err != nil {
-			_ = f.Close()
+			if cerr := f.Close(); cerr != nil {
+				syslog.L.Error(cerr).Write()
+			}
 			if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
 				err = fmt.Errorf("%w (temp cleanup of %q failed: %v)", err, tmpPath, rmErr)
 			}
@@ -507,14 +513,20 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
+	defer func() {
+		if err := in.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o666)
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
+		if err := out.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return err
 	}
 	return out.Close()
@@ -534,7 +546,9 @@ func restoreSymlink(ctx context.Context, st *restoreState, job restoreJob) error
 			}
 			return nil
 		}
-		_ = os.Remove(job.dest)
+		if err := os.Remove(job.dest); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if err := os.Symlink(string(target), job.dest); err != nil {
