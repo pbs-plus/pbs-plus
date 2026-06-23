@@ -16,6 +16,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -169,17 +170,17 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 
 	var data []byte
 	switch attr {
-	case "user.creationtime":
+	case pxar.XAttrCreationTime:
 		data = []byte(strconv.FormatInt(fi.CreationTime, 10))
-	case "user.owner":
+	case pxar.XAttrOwner:
 		data = []byte(fi.Owner)
-	case "user.fileattributes":
+	case pxar.XAttrFileAttributes:
 		d, err := cbor.Marshal(fi.FileAttributes)
 		if err != nil {
 			syslog.L.Error(err).Write()
 		}
 		data = d
-	case "user.acls":
+	case pxar.XAttrACLs:
 		if fi.PosixACLs != nil {
 			d, err := cbor.Marshal(fi.PosixACLs)
 			if err != nil {
@@ -226,16 +227,16 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 	}
 
 	attrs := []string{
-		"user.creationtime",
-		"user.lastaccesstime",
-		"user.lastwritetime",
-		"user.owner",
-		"user.group",
-		"user.fileattributes",
+		pxar.XAttrCreationTime,
+		pxar.XAttrLastAccessTime,
+		pxar.XAttrLastWriteTime,
+		pxar.XAttrOwner,
+		pxar.XAttrGroup,
+		pxar.XAttrFileAttributes,
 	}
 
 	if fi.PosixACLs != nil || fi.WinACLs != nil {
-		attrs = append(attrs, "user.acls")
+		attrs = append(attrs, pxar.XAttrACLs)
 	}
 
 	var totalLen int
@@ -272,22 +273,22 @@ func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (ui
 
 	var data []byte
 	switch attr {
-	case "user.creationtime":
+	case pxar.XAttrCreationTime:
 		data = strconv.AppendInt(data, fi.CreationTime, 10)
-	case "user.lastaccesstime":
+	case pxar.XAttrLastAccessTime:
 		data = strconv.AppendInt(data, fi.LastAccessTime, 10)
-	case "user.lastwritetime":
+	case pxar.XAttrLastWriteTime:
 		data = strconv.AppendInt(data, fi.LastWriteTime, 10)
-	case "user.owner":
+	case pxar.XAttrOwner:
 		data = append(data, fi.Owner...)
-	case "user.group":
+	case pxar.XAttrGroup:
 		data = append(data, fi.Group...)
-	case "user.fileattributes":
+	case pxar.XAttrFileAttributes:
 		data, err = json.Marshal(fi.FileAttributes)
 		if err != nil {
 			return 0, syscall.ENODATA
 		}
-	case "user.acls":
+	case pxar.XAttrACLs:
 		if fi.PosixACLs == nil {
 			fi.PosixACLs = make([]types.PosixACL, 0)
 		}
@@ -321,21 +322,20 @@ func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscal
 	}
 
 	attrs := []string{
-		"user.creationtime",
-		"user.lastaccesstime",
-		"user.lastwritetime",
-		"user.owner",
-		"user.group",
-		"user.fileattributes",
+		pxar.XAttrCreationTime,
+		pxar.XAttrLastAccessTime,
+		pxar.XAttrLastWriteTime,
+		pxar.XAttrOwner,
+		pxar.XAttrGroup,
+		pxar.XAttrFileAttributes,
 	}
 
-	// compatibility
 	if fi.PosixACLs == nil {
 		fi.PosixACLs = make([]types.PosixACL, 0)
 	}
 
 	if fi.PosixACLs != nil || fi.WinACLs != nil {
-		attrs = append(attrs, "user.acls")
+		attrs = append(attrs, pxar.XAttrACLs)
 	}
 
 	var list []byte
