@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -22,7 +23,7 @@ const (
 	// SpoolDir is the PBS notification spool directory.
 	// PBS's notification_worker (running as root) reads JSON files from here
 	// every 5 seconds and routes them through matchers/endpoints.
-	SpoolDir = "/var/lib/proxmox-backup/notifications"
+	SpoolDir = conf.DbBasePath + "/notifications"
 
 	// DefaultMode is used when no notification-mode is set on a job.
 	DefaultMode = "notification-system"

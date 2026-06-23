@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -25,7 +26,7 @@ var customJsFS embed.FS
 //go:embed all:views/pre
 var preJsFS embed.FS
 
-const backupDir = "/var/lib/pbs-plus/backups"
+var backupDir = conf.StatePrefix + "/backups"
 
 var legacyJSPaths = []string{
 	"/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js",

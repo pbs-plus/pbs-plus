@@ -13,13 +13,14 @@ import (
 	mtflib "github.com/pbs-plus/go-mtf"
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/changer"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-const pbsInventoryPath = "/var/lib/proxmox-backup/tape/inventory.json"
+const pbsInventoryPath = conf.DbBasePath + "/tape/inventory.json"
 
 type pbsMediaEntry struct {
 	ID struct {

@@ -10,14 +10,16 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
 // localTokenCandidates are the paths searched, in priority order, for the
 // pbs-plus token JSON written by the pbs-plus server.
 var localTokenCandidates = []string{
-	filepath.Join("/var/lib/proxmox-backup", "pbs-plus-token.json"),
+	filepath.Join(conf.DbBasePath, "pbs-plus-token.json"),
 	filepath.Join("/etc/proxmox-backup", "pbs-plus-token.json"),
-	filepath.Join("/var/lib/pbs-plus", "pbs-plus-token.json"),
+	filepath.Join(conf.StatePrefix, "pbs-plus-token.json"),
 }
 
 // DefaultAPIURL is the default PBS REST API base URL used by the pbs-plus
