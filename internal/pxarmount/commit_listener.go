@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 )
 
 type CommitRequest struct {
@@ -52,10 +50,6 @@ func ParseCommitLine(line string) (*CommitRequest, error) {
 		req.BackupType = "host"
 	}
 	return req, nil
-}
-
-func ReadLocalToken() string {
-	return pbstoken.ReadLocal()
 }
 
 func ResolveDatastoreName(pbsStore string) string {

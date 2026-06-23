@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfrun"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	"github.com/pbs-plus/pbs-plus/internal/server/pbstape"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -494,7 +495,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		opts := mtfrun.Options{
 			ChangerDevice: r.FormValue("changer"),
-			TapeDevice:    mtfstore.ResolveTapeDevice(r.FormValue("drive")),
+			TapeDevice:    pbstape.ResolveTapeDevice(r.FormValue("drive")),
 			DriveIndex:    atoiDefault(r.FormValue("drive_index"), 0),
 			BKFPath:       r.FormValue("bkf_path"),
 			Label:         r.FormValue("label"),

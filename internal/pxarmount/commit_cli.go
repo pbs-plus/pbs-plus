@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"strings"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 )
 
 func RunCommitSubcommand() {
@@ -33,7 +35,7 @@ func RunCommitSubcommand() {
 
 	token := *authToken
 	if token == "" {
-		token = ReadLocalToken()
+		token = pbstoken.ReadLocal()
 	}
 
 	conn, err := net.Dial("unix", *socketPath)

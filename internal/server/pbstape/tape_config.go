@@ -1,6 +1,9 @@
 //go:build linux
 
-package mtfstore
+// Package pbstape reads Proxmox Backup Server tape device configuration
+// (the /etc/proxmox-backup/tape.cfg SectionConfig file) and resolves SCSI
+// tape device paths. It is independent of the mtfstore persistence layer.
+package pbstape
 
 import (
 	"bufio"

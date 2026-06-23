@@ -14,6 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
+	"github.com/pbs-plus/pbs-plus/internal/server/pbstape"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
@@ -184,7 +185,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	}
 
 	cfg := bkf2pxar.Config{
-		PBSURL:            "https://localhost:8007/api2/json",
+		PBSURL:            pbstoken.DefaultAPIURL,
 		Datastore:         job.Datastore,
 		Namespace:         baseNS,
 		SkipTLS:           true,
@@ -197,7 +198,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	}
 
 	// Resolve changer and drive paths from PBS tape config
-	tapeCfg, _ := mtfstore.ReadPBSTapeConfig()
+	tapeCfg, _ := pbstape.ReadPBSTapeConfig()
 
 	// Resolve changer name → path
 	if job.Changer != "" {
@@ -272,7 +273,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	return cfg, nil
 }
 
-func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg bkf2pxar.Config, tapeCfg *mtfstore.PBSTapeConfig) (bkf2pxar.Config, error) {
+func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg bkf2pxar.Config, tapeCfg *pbstape.PBSTapeConfig) (bkf2pxar.Config, error) {
 	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
 	if err != nil {
 		return cfg, err
@@ -315,12 +316,12 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfstore.DataSet, cfg 
 // resolveDrivePaths resolves the tape device path, changer device path,
 // and drive index from the PBS tape config. It resolves changer names to
 // device paths to avoid "no such file or directory" errors.
-func (j *mtfJob) resolveDrivePaths(tapeCfg *mtfstore.PBSTapeConfig) (tapeDev, changerDev string, driveIdx int, err error) {
+func (j *mtfJob) resolveDrivePaths(tapeCfg *pbstape.PBSTapeConfig) (tapeDev, changerDev string, driveIdx int, err error) {
 	if tapeCfg == nil || len(tapeCfg.Drives) == 0 {
 		return "/dev/nst0", "", 0, nil
 	}
 
-	var d mtfstore.PBSDrive
+	var d pbstape.PBSDrive
 	if j.job.Drive != "" {
 		found := false
 		for _, drive := range tapeCfg.Drives {
@@ -337,7 +338,7 @@ func (j *mtfJob) resolveDrivePaths(tapeCfg *mtfstore.PBSTapeConfig) (tapeDev, ch
 		d = tapeCfg.Drives[0]
 	}
 
-	tapeDev = mtfstore.ResolveTapeDevice(d.Path)
+	tapeDev = pbstape.ResolveTapeDevice(d.Path)
 	driveIdx = d.ChangerDrivenum
 
 	// Resolve changer name → device path

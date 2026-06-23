@@ -20,6 +20,10 @@ var localTokenCandidates = []string{
 	filepath.Join("/var/lib/pbs-plus", "pbs-plus-token.json"),
 }
 
+// DefaultAPIURL is the default PBS REST API base URL used by the pbs-plus
+// backup upload paths (bkf2pxar, mtf migration, pxar-mount commit).
+const DefaultAPIURL = "https://localhost:8007/api2/json"
+
 // ReadLocal reads the pbs-plus token from the first candidate path that exists
 // and parses successfully. It returns the token in PBS API-token form
 // ("tokenid:value"), or "" if no token file is available.

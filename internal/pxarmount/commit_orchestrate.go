@@ -16,6 +16,8 @@ import (
 
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
+
+	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/format"
@@ -66,7 +68,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 
 	pbsURL := req.PBSURL
 	if pbsURL == "" {
-		pbsURL = "https://localhost:8007/api2/json"
+		pbsURL = pbstoken.DefaultAPIURL
 		req.SkipTLS = true
 	}
 	datastoreName := req.Datastore
@@ -75,7 +77,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	}
 	authToken := req.AuthToken
 	if authToken == "" {
-		authToken = ReadLocalToken()
+		authToken = pbstoken.ReadLocal()
 	}
 
 	backupID := req.BackupID
