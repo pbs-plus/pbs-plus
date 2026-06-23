@@ -2,10 +2,13 @@ package pxarmount
 
 import (
 	"errors"
+	"fmt"
 	"io"
-	"strconv"
+	"os"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -14,6 +17,7 @@ import (
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 
+	pbspxar "github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
@@ -25,6 +29,18 @@ type PxarFS struct {
 	mu         sync.RWMutex
 	readerMu   sync.RWMutex
 	readerAt   io.ReaderAt
+	verbose    atomic.Bool
+}
+
+func (fs *PxarFS) SetVerbose(v bool) {
+	fs.verbose.Store(v)
+}
+
+func (fs *PxarFS) dbgf(format string, args ...any) {
+	if !fs.verbose.Load() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, time.Now().Format("15:04:05.000 ")+format+"\n", args...)
 }
 
 const maxCachedNodes = 1 << 20
@@ -60,8 +76,10 @@ func (fs *PxarFS) Init(server *fuse.Server) {
 }
 
 func (fs *PxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
+	fs.dbgf("Lookup parent=%d name=%q ENTER", header.NodeId, name)
 	entries, err := fs.readDirRaw(header.NodeId)
 	if err != nil {
+		fs.dbgf("Lookup parent=%d name=%q err=%v", header.NodeId, name, err)
 		return fuse.ToStatus(err)
 	}
 
@@ -70,9 +88,11 @@ func (fs *PxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name str
 			e := &entries[i]
 			nd := fs.registerSlimNode(e, header.NodeId)
 			fillEntryOut(e.inode, &nd, out)
+			fs.dbgf("Lookup parent=%d name=%q -> ino=%d OK", header.NodeId, name, e.inode)
 			return fuse.OK
 		}
 	}
+	fs.dbgf("Lookup parent=%d name=%q -> ENOENT", header.NodeId, name)
 	return fuse.ENOENT
 }
 
@@ -81,12 +101,15 @@ func (fs *PxarFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fu
 	n, ok := fs.nodes[input.NodeId]
 	fs.mu.RUnlock()
 	if !ok {
+		fs.dbgf("GetAttr ino=%d ENOENT", input.NodeId)
 		return fuse.ENOENT
 	}
 	if !n.timesResolved {
+		t0 := time.Now()
 		fs.ensureNodeTimes(&n)
 		if n.timesResolved {
 			fs.commitResolvedTimes(input.NodeId, n.atimeNs, n.mtimeNs)
+			fs.dbgf("GetAttr ino=%d timesResolved dur=%s", input.NodeId, time.Since(t0))
 		}
 	}
 	fillAttrOut(&n, out)
@@ -136,8 +159,10 @@ func (fs *PxarFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.
 }
 
 func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
+	fs.dbgf("ReadDirPlus ino=%d off=%d ENTER", input.NodeId, input.Offset)
 	entries, err := fs.readDirRaw(input.NodeId)
 	if err != nil {
+		fs.dbgf("ReadDirPlus ino=%d off=%d err=%v", input.NodeId, input.Offset, err)
 		return fuse.ToStatus(err)
 	}
 
@@ -213,6 +238,7 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 		fs.evictStaleLocked()
 	}
 	fs.mu.Unlock()
+	fs.dbgf("ReadDirPlus ino=%d off=%d -> entries=%d done", input.NodeId, input.Offset, len(entries))
 	return fuse.OK
 }
 
@@ -221,10 +247,12 @@ func (fs *PxarFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.Ope
 }
 
 func (fs *PxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
+	fs.dbgf("Read ino=%d off=%d size=%d ENTER", input.NodeId, input.Offset, len(buf))
 	fs.mu.RLock()
 	n, ok := fs.nodes[input.NodeId]
 	fs.mu.RUnlock()
 	if !ok {
+		fs.dbgf("Read ino=%d off=%d ENOENT", input.NodeId, input.Offset)
 		return nil, fuse.ENOENT
 	}
 	if n.isDir {
@@ -264,12 +292,12 @@ func resolvePxarTimes(entry *pxar.Entry) (atimeNs, mtimeNs int64) {
 	for _, xa := range entry.Metadata.XAttrs {
 		name := xa.Name()
 		switch string(name) {
-		case "user.lastaccesstime":
-			if secs, ok := parseXattrUnixSecsLocal(xa.Value()); ok {
+		case pbspxar.XAttrLastAccessTime:
+			if secs, ok := pbspxar.ParseXattrUnixSecs(xa.Value()); ok {
 				atimeNs = secs * 1_000_000_000
 			}
-		case "user.lastwritetime":
-			if secs, ok := parseXattrUnixSecsLocal(xa.Value()); ok {
+		case pbspxar.XAttrLastWriteTime:
+			if secs, ok := pbspxar.ParseXattrUnixSecs(xa.Value()); ok {
 				mtimeNs = secs * 1_000_000_000
 			}
 		}
@@ -277,24 +305,6 @@ func resolvePxarTimes(entry *pxar.Entry) (atimeNs, mtimeNs int64) {
 	return atimeNs, mtimeNs
 }
 
-// parseXattrUnixSecsLocal decodes a decimal ASCII Unix-seconds xattr value
-// Kept local to avoid coupling the mount to the restore package.
-func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
-	if len(d) == 0 {
-		return 0, false
-	}
-	v, err := strconv.ParseInt(string(d), 10, 64)
-	if err != nil || v < 0 {
-		return 0, false
-	}
-	const unixSecsMax = 32503680000
-	if v > unixSecsMax {
-		return 0, false
-	}
-	return v, true
-}
-
-// from its pxar entry. It is a no-op once resolved, so the per-file archive
 func (fs *PxarFS) ensureNodeTimes(n *node) {
 	if n.timesResolved {
 		return
@@ -433,17 +443,21 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	n, ok := fs.nodes[inode]
 	fs.mu.RUnlock()
 	if !ok {
+		fs.dbgf("readDirRaw ino=%d ENOENT (not cached)", inode)
 		return nil, syscall.ENOENT
 	}
 	if !n.isDir {
+		fs.dbgf("readDirRaw ino=%d ENOTDIR", inode)
 		return nil, syscall.ENOTDIR
 	}
 
 	if entries, ok := fs.dirEntries.Get(inode); ok {
+		fs.dbgf("readDirRaw ino=%d CACHE_HIT n=%d", inode, len(entries))
 		return entries, nil
 	}
 
 	if fs.reader == nil {
+		fs.dbgf("readDirRaw ino=%d nil-reader", inode)
 		return nil, nil
 	}
 
@@ -454,10 +468,12 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		return nil, nil
 	}
 	if entries, ok := fs.dirEntries.Get(inode); ok {
+		fs.dbgf("readDirRaw ino=%d CACHE_HIT(afterLock) n=%d", inode, len(entries))
 		return entries, nil
 	}
 
 	entries := make([]dirEntrySlim, 0, 64)
+	t0 := time.Now()
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		entries = append(entries, dirEntrySlim{
 			name:          e.FileName(),
@@ -482,6 +498,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 	}
 
 	fs.dirEntries.Set(inode, entries)
+	fs.dbgf("readDirRaw ino=%d LISTED n=%d dur=%s", inode, len(entries), time.Since(t0))
 	return entries, nil
 }
 

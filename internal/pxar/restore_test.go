@@ -182,78 +182,43 @@ func TestParseXattrUnixSecs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := parseXattrUnixSecs([]byte(tt.input))
+			got, ok := ParseXattrUnixSecs([]byte(tt.input))
 			if ok != tt.wantOk {
-				t.Fatalf("parseXattrUnixSecs(%q) ok = %v, want %v", tt.input, ok, tt.wantOk)
+				t.Fatalf("ParseXattrUnixSecs(%q) ok = %v, want %v", tt.input, ok, tt.wantOk)
 			}
 			if got != tt.want {
-				t.Errorf("parseXattrUnixSecs(%q) = %d, want %d", tt.input, got, tt.want)
+				t.Errorf("ParseXattrUnixSecs(%q) = %d, want %d", tt.input, got, tt.want)
 			}
 		})
 	}
 }
 
-func pxarmountParseXattrUnixSecs(d []byte) (int64, bool) {
-	if len(d) == 0 {
-		return 0, false
-	}
-	v, err := strconv.ParseInt(string(d), 10, 64)
-	if err != nil || v < 0 {
-		return 0, false
-	}
-	const unixSecsMax = 32503680000
-	if v > unixSecsMax {
-		return 0, false
-	}
-	return v, true
-}
-
-func TestParseXattrUnixSecsMatchesPxarMount(t *testing.T) {
+func TestParseXattrUnixSecsRejectsOutOfScaleValues(t *testing.T) {
 	wantTime := time.Date(2024, 4, 5, 18, 34, 40, 0, time.UTC)
 
 	cases := []struct {
-		name  string
-		value int64
+		name     string
+		value    int64
+		wantOk   bool
+		wantSecs int64
 	}{
-		{"windows FILETIME for 2024", wantTime.Unix()*10000000 + 116444736000000000},
-		{"unix nanos for 2024", wantTime.UnixNano()},
-		{"micros for 2024", wantTime.UnixMicro()},
-		{"100-ns ticks for 2024", wantTime.UnixNano() / 10},
-		{"valid unix seconds for 2024", wantTime.Unix()},
+		{"windows FILETIME for 2024", wantTime.Unix()*10000000 + 116444736000000000, false, 0},
+		{"unix nanos for 2024", wantTime.UnixNano(), false, 0},
+		{"micros for 2024", wantTime.UnixMicro(), false, 0},
+		{"100-ns ticks for 2024", wantTime.UnixNano() / 10, false, 0},
+		{"valid unix seconds for 2024", wantTime.Unix(), true, wantTime.Unix()},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			in := []byte(strconv.FormatInt(c.value, 10))
-			mountSecs, mountOK := pxarmountParseXattrUnixSecs(in)
-			restoreSecs, restoreOK := parseXattrUnixSecs(in)
-
-			if restoreOK != mountOK {
-				t.Errorf("accept/reject mismatch: restore=(%d,%v) mount=(%d,%v) for value %d\n"+
-					"restore either stamps a wrong date or fails to fall back to the correct timestamp",
-					restoreSecs, restoreOK, mountSecs, mountOK, c.value)
-				return
+			secs, ok := ParseXattrUnixSecs([]byte(strconv.FormatInt(c.value, 10)))
+			if ok != c.wantOk {
+				t.Fatalf("ParseXattrUnixSecs(%d) ok = %v, want %v", c.value, ok, c.wantOk)
 			}
-			if restoreOK && restoreSecs != mountSecs {
-				t.Errorf("value mismatch: restore=%d mount=%d for value %d -> %s",
-					restoreSecs, mountSecs, c.value, time.Unix(restoreSecs, 0).UTC().Format("2006-01-02"))
+			if ok && secs != c.wantSecs {
+				t.Errorf("ParseXattrUnixSecs(%d) = %d, want %d (%s)",
+					c.value, secs, c.wantSecs, time.Unix(secs, 0).UTC().Format("2006-01-02"))
 			}
 		})
-	}
-}
-
-func TestParseXattrUnixSecsWindowsFiletimeRestoresWrongDate(t *testing.T) {
-	wantTime := time.Date(2024, 4, 5, 18, 34, 40, 0, time.UTC)
-	filetime := wantTime.Unix()*10000000 + 116444736000000000
-	input := strconv.FormatInt(filetime, 10)
-
-	secs, ok := parseXattrUnixSecs([]byte(input))
-	if ok {
-		got := time.Unix(secs, 0).UTC()
-		if got.Year() != wantTime.Year() {
-			t.Errorf("FILETIME for %s restored as %s (year %d) via parseXattrUnixSecs=%d; pxar-mount rejects this value and shows %s",
-				wantTime.Format("2006-01-02"), got.Format("2006-01-02"), got.Year(), secs,
-				wantTime.Format("2006-01-02"))
-		}
 	}
 }
 
@@ -261,9 +226,9 @@ func TestParseXattrUnixSecsOldBinaryDecodeWouldBeInvalid(t *testing.T) {
 	const wantSec int64 = 1609459200
 	ascii := []byte(strconv.FormatInt(wantSec, 10))
 
-	got, ok := parseXattrUnixSecs(ascii)
+	got, ok := ParseXattrUnixSecs(ascii)
 	if !ok || got != wantSec {
-		t.Fatalf("parseXattrUnixSecs = (%d, %v), want (%d, true)", got, ok, wantSec)
+		t.Fatalf("ParseXattrUnixSecs = (%d, %v), want (%d, true)", got, ok, wantSec)
 	}
 
 	bad := int64(binary.LittleEndian.Uint64(ascii))
@@ -274,7 +239,7 @@ func TestParseXattrUnixSecsOldBinaryDecodeWouldBeInvalid(t *testing.T) {
 	if bad < unixSecsMax {
 		t.Fatalf("old decoder produced plausible value %d; test no longer demonstrates the bug", bad)
 	}
-	if _, badOk := parseXattrUnixSecs([]byte(strconv.FormatInt(bad, 10))); badOk {
+	if _, badOk := ParseXattrUnixSecs([]byte(strconv.FormatInt(bad, 10))); badOk {
 		t.Fatalf("parseXattrUnixSecs accepted the garbage value %d that the old decoder produced", bad)
 	}
 }

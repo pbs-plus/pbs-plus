@@ -52,19 +52,19 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	var hasCreation bool
 
 	if xattrs != nil {
-		if d, ok := xattrs["user.creationtime"]; ok {
-			if ts, ok := parseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[XAttrCreationTime]; ok {
+			if ts, ok := ParseXattrUnixSecs(d); ok {
 				c = unixToFiletime(ts)
 				hasCreation = true
 			}
 		}
-		if d, ok := xattrs["user.lastwritetime"]; ok {
-			if ts, ok := parseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[XAttrLastWriteTime]; ok {
+			if ts, ok := ParseXattrUnixSecs(d); ok {
 				w = unixToFiletime(ts)
 			}
 		}
-		if d, ok := xattrs["user.lastaccesstime"]; ok {
-			if ts, ok := parseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[XAttrLastAccessTime]; ok {
+			if ts, ok := ParseXattrUnixSecs(d); ok {
 				a = unixToFiletime(ts)
 			}
 		}
@@ -73,7 +73,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	var attrs uint32
 	var hasAttrs bool
 	if xattrs != nil && st.fsCap.supportsXAttrs {
-		if d, ok := xattrs["user.fileattributes"]; ok {
+		if d, ok := xattrs[XAttrFileAttributes]; ok {
 			var fa map[string]bool
 			if cbor.Unmarshal(d, &fa) == nil {
 				if attr := buildFileAttributes(fa); attr != 0 {
@@ -221,19 +221,19 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 	a := baseFt
 	w := baseFt
 	var cp *windows.Filetime
-	if d, ok := xattrs["user.creationtime"]; ok {
-		if ts, ok := parseXattrUnixSecs(d); ok {
+	if d, ok := xattrs[XAttrCreationTime]; ok {
+		if ts, ok := ParseXattrUnixSecs(d); ok {
 			ft := unixToFiletime(ts)
 			cp = &ft
 		}
 	}
-	if d, ok := xattrs["user.lastwritetime"]; ok {
-		if ts, ok := parseXattrUnixSecs(d); ok {
+	if d, ok := xattrs[XAttrLastWriteTime]; ok {
+		if ts, ok := ParseXattrUnixSecs(d); ok {
 			w = unixToFiletime(ts)
 		}
 	}
-	if d, ok := xattrs["user.lastaccesstime"]; ok {
-		if ts, ok := parseXattrUnixSecs(d); ok {
+	if d, ok := xattrs[XAttrLastAccessTime]; ok {
+		if ts, ok := ParseXattrUnixSecs(d); ok {
 			a = unixToFiletime(ts)
 		}
 	}
@@ -266,9 +266,7 @@ func writeAlternateDataStreams(ctx context.Context, st *restoreState, name strin
 		if !strings.HasPrefix(k, "user.") {
 			continue
 		}
-		switch k {
-		case "user.owner", "user.group", "user.acls", "user.fileattributes",
-			"user.creationtime", "user.lastaccesstime", "user.lastwritetime":
+		if IsCanonicalXAttr(k) {
 			continue
 		}
 		stream := strings.TrimPrefix(k, "user.")

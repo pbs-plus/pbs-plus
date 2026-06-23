@@ -95,30 +95,3 @@ func TestResolvePxarTimesMatchesRestore(t *testing.T) {
 		})
 	}
 }
-
-// TestParseXattrUnixSecsLocal pins the decimal-Unix-seconds decoding shared
-// with restore. Mirrors internal/pxar TestParseXattrUnixSecs so a drift in
-// either copy is caught.
-func TestParseXattrUnixSecsLocal(t *testing.T) {
-	tests := []struct {
-		in     string
-		want   int64
-		wantOk bool
-	}{
-		{"1700000200", 1700000200, true},
-		{"0", 0, true},
-		{"", 0, false},
-		{"not-a-number", 0, false},
-		{"-1", 0, false},
-		{"36028797018963968", 0, false}, // garbage from old binary decode
-	}
-	for _, tt := range tests {
-		got, ok := parseXattrUnixSecsLocal([]byte(tt.in))
-		if ok != tt.wantOk {
-			t.Errorf("parseXattrUnixSecsLocal(%q) ok=%v want %v", tt.in, ok, tt.wantOk)
-		}
-		if ok && got != tt.want {
-			t.Errorf("parseXattrUnixSecsLocal(%q) = %d, want %d", tt.in, got, tt.want)
-		}
-	}
-}

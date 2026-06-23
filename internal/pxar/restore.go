@@ -84,7 +84,26 @@ type restoreState struct {
 
 const unixSecsMax = 32503680000
 
-func parseXattrUnixSecs(data []byte) (secs int64, ok bool) {
+const (
+	XAttrOwner          = "user.owner"
+	XAttrGroup          = "user.group"
+	XAttrACLs           = "user.acls"
+	XAttrFileAttributes = "user.fileattributes"
+	XAttrCreationTime   = "user.creationtime"
+	XAttrLastAccessTime = "user.lastaccesstime"
+	XAttrLastWriteTime  = "user.lastwritetime"
+)
+
+func IsCanonicalXAttr(name string) bool {
+	switch name {
+	case XAttrOwner, XAttrGroup, XAttrACLs, XAttrFileAttributes,
+		XAttrCreationTime, XAttrLastAccessTime, XAttrLastWriteTime:
+		return true
+	}
+	return false
+}
+
+func ParseXattrUnixSecs(data []byte) (secs int64, ok bool) {
 	if len(data) == 0 {
 		return 0, false
 	}
