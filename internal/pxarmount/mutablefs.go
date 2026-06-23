@@ -1629,7 +1629,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 }
 
 // applyPxarXattrsToFile sets extended attributes and file capabilities
-// from a pxar entry onto a real file. Errors are logged but not fatal  - 
+// from a pxar entry onto a real file. Errors are logged but not fatal  -
 // the file content has already been successfully copied.
 func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 	for _, xa := range entry.Metadata.XAttrs {
@@ -1777,10 +1777,11 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		MtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 		CtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 	}
-	// Apply restore's timestamp precedence (xattr-derived atime/mtime) so an
-	// unmodified, pxar-backed file reports the same times as a restore.
-	aNs, mNs := fs.pxar.ResolvedTimes(pxarNode)
+	// Use cached xattr-derived times if already resolved; otherwise fall
+	// back to Stat.Mtime. Full resolution is deferred to individual
+	// GetAttr calls so that bulk readdir never triggers O(N) archive reads.
 	if pxarNode.timesResolved {
+		aNs, mNs := fs.pxar.ResolvedTimes(pxarNode)
 		re.AtimeNs = aNs
 		re.MtimeNs = mNs
 		re.CtimeNs = mNs
@@ -1910,7 +1911,7 @@ func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 // under the parent. For journal entries, it's a no-op.
 //
 // Per-path locking prevents duplicate nodes when concurrent FUSE ops
-// (e.g. setfacl -R) materialize the same pxar entry simultaneously  - 
+// (e.g. setfacl -R) materialize the same pxar entry simultaneously  -
 // analogous to ext4's inode_lock preventing concurrent inode initialization.
 func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	if re.Node != nil {

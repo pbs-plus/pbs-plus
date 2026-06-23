@@ -82,13 +82,14 @@ func (fs *PxarFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fu
 	if !ok {
 		return fuse.ENOENT
 	}
-	// Resolve effective atime/mtime from the entry xattrs so getattr matches
-	// what restore would set. Done out-of-lock; the cache write below is the
-	// only mutation and node values only transition false→true.
-	fs.ensureNodeTimes(&n)
-	fs.mu.Lock()
-	fs.nodes[input.NodeId] = n
-	fs.mu.Unlock()
+	if !n.timesResolved {
+		fs.ensureNodeTimes(&n)
+		if n.timesResolved {
+			fs.mu.Lock()
+			fs.nodes[input.NodeId] = n
+			fs.mu.Unlock()
+		}
+	}
 	fillAttrOut(&n, out)
 	return fuse.OK
 }
@@ -172,6 +173,43 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 	}
 
 	start := max(int(input.Offset)-2, 0)
+
+	// Batch node registration and ref bumps into a single write-locked pass
+	// to avoid N separate lock/unlock cycles per directory entry.
+	fs.mu.Lock()
+	for i := start; i < len(entries); i++ {
+		if _, exists := fs.nodes[entries[i].inode]; !exists {
+			fs.nodes[entries[i].inode] = node{
+				entryStart:    entries[i].entryStart,
+				contentOffset: entries[i].contentOffset,
+				fileSize:      entries[i].fileSize,
+				mode:          uint64(entries[i].mode),
+				inode:         entries[i].inode,
+				parent:        input.NodeId,
+				refs:          1,
+				mtimeSecs:     entries[i].mtimeSecs,
+				uid:           entries[i].uid,
+				mtimeNanos:    entries[i].mtimeNanos,
+				gid:           entries[i].gid,
+				isDir:         entries[i].isDir,
+				isSymlink:     entries[i].isSymlink,
+				isReg:         entries[i].isReg,
+			}
+		} else {
+			n := fs.nodes[entries[i].inode]
+			n.refs++
+			fs.nodes[entries[i].inode] = n
+		}
+	}
+	if len(fs.nodes) > maxCachedNodes {
+		fs.evictStaleLocked()
+	}
+	fs.mu.Unlock()
+
+	// Emit entries and fill attributes in a single read-locked pass.
+	// No archive reads here — fillEntryOut uses only cached node data
+	// (Stat.Mtime from dirEntrySlim, with xattr-derived times resolved
+	// lazily on individual GetAttr calls).
 	for i := start; i < len(entries); i++ {
 		eo := out.AddDirLookupEntry(fuse.DirEntry{
 			Name: entries[i].name,
@@ -181,17 +219,10 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 		if eo == nil {
 			break
 		}
-		fs.registerSlimNode(&entries[i], input.NodeId)
-		fs.refNode(entries[i].inode)
 		fs.mu.RLock()
 		child, cok := fs.nodes[entries[i].inode]
 		fs.mu.RUnlock()
 		if cok {
-			// Resolve from xattrs so readdir+ attrs match restore exactly.
-			fs.ensureNodeTimes(&child)
-			fs.mu.Lock()
-			fs.nodes[entries[i].inode] = child
-			fs.mu.Unlock()
 			fillEntryOut(entries[i].inode, &child, eo)
 		}
 	}
@@ -229,15 +260,15 @@ func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	return fs.reader.ReadEntryAt(int64(n.entryStart))
 }
 
-// resolvePxarTimes mirrors restore_unix.go applyMeta's timestamp precedence so
-// that a pxar-mount getattr reports the same atime/mtime restore would set:
+// resolvePxarTimes mirrors restore_unix.go applyMeta's timestamp precedence
+// so that a pxar-mount getattr reports the same atime/mtime restore would set.
 //
 //   - default atime and mtime are both pxar Stat.Mtime (Secs+Nanos)
 //   - user.lastaccesstime (decimal Unix seconds) overrides atime, dropping nanos
 //   - user.lastwritetime  (decimal Unix seconds) overrides mtime, dropping nanos
 //
-// Returns atimeNs and mtimeNs in Unix nanoseconds. Malformed/absent xattrs fall
-// back to Stat.Mtime, exactly like parseXattrUnixSecs on the restore side.
+// Returns atimeNs and mtimeNs in Unix nanoseconds. Malformed/absent xattrs
+// fall back to Stat.Mtime, exactly like parseXattrUnixSecs on the restore side.
 func resolvePxarTimes(entry *pxar.Entry) (atimeNs, mtimeNs int64) {
 	mtimeNs = int64(entry.Metadata.Stat.Mtime.Secs)*1_000_000_000 + int64(entry.Metadata.Stat.Mtime.Nanos)
 	atimeNs = mtimeNs
@@ -257,12 +288,10 @@ func resolvePxarTimes(entry *pxar.Entry) (atimeNs, mtimeNs int64) {
 	return atimeNs, mtimeNs
 }
 
-// parseXattrUnixSecsLocal is the pxarmount-side twin of restore's
-// parseXattrUnixSecs (internal/pxar/restore.go). It decodes a decimal ASCII
-// Unix-seconds xattr value (how the backup writer stores user.lastaccesstime /
-// user.lastwritetime / user.creationtime) and rejects empty, non-numeric,
-// negative, or implausibly large values so a malformed/stale xattr cannot skew
-// getattr. Kept local to avoid coupling the mount to the restore package.
+// parseXattrUnixSecsLocal decodes a decimal ASCII Unix-seconds xattr value
+// (how the backup writer stores user.lastaccesstime/user.lastwritetime)
+// and rejects empty, non-numeric, negative, or implausibly large values.
+// Kept local to avoid coupling the mount to the restore package.
 func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 	if len(d) == 0 {
 		return 0, false
@@ -271,8 +300,6 @@ func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 	if err != nil || v < 0 {
 		return 0, false
 	}
-	// Year 3000 in Unix seconds  -  anything larger is garbage (e.g. the old
-	// binary decode bug) or nanoseconds mis-stored as seconds.
 	const unixSecsMax = 32503680000
 	if v > unixSecsMax {
 		return 0, false
@@ -282,8 +309,7 @@ func parseXattrUnixSecsLocal(d []byte) (int64, bool) {
 
 // ensureNodeTimes lazily resolves and caches a node's effective atime/mtime
 // from its pxar entry. It is a no-op once resolved, so the per-file archive
-// read happens at most once per cached node  -  mirroring restore while keeping
-// getattr cheap on repeated stats.
+// read happens at most once per cached node.
 func (fs *PxarFS) ensureNodeTimes(n *node) {
 	if n.timesResolved {
 		return
@@ -298,8 +324,8 @@ func (fs *PxarFS) ensureNodeTimes(n *node) {
 
 // ResolvedTimes returns the effective atime/mtime (Unix nanos) for a pxar node,
 // applying restore's xattr precedence. Used by the mutable overlay so that
-// unmodified (pxar-backed) files report the same times as a restore. The
-// result is cached on the node after the first read.
+// unmodified (pxar-backed) files report the same times as a restore.
+// The result is cached on the node after the first read.
 func (fs *PxarFS) ResolvedTimes(n *node) (atimeNs, mtimeNs int64) {
 	fs.ensureNodeTimes(n)
 	return n.atimeNs, n.mtimeNs
