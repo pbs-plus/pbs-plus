@@ -93,7 +93,9 @@ func GetToken() string {
 	if err != nil {
 		token, err = createAPIToken()
 		if err == nil {
-			_ = token.saveToFile()
+			if err := token.saveToFile(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
@@ -252,14 +254,23 @@ func (token *APIToken) saveToFile() error {
 		return nil
 	}
 
-	_ = os.MkdirAll(conf.DbBasePath, os.FileMode(0755))
+	if err := os.MkdirAll(conf.DbBasePath, os.FileMode(0755)); err != nil {
+		return err
+	}
 
-	tokenFileContent, _ := json.Marshal(token)
+	tokenFileContent, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
 	file, err := os.OpenFile(filepath.Join(conf.DbBasePath, "pbs-plus-token.json"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	_, err = file.WriteString(string(tokenFileContent))
 	if err != nil {
@@ -274,7 +285,11 @@ func getAPITokenFromFile() (*APIToken, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer jsonFile.Close()
+	defer func() {
+		if err := jsonFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	byteValue, err := io.ReadAll(jsonFile)
 	if err != nil {

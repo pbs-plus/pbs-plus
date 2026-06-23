@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type CertInfo struct {
@@ -76,7 +78,9 @@ func GetProxmoxCertInfo() (*CertInfo, error) {
 		} else if matches := publicKeyTypeRx.FindStringSubmatch(line); len(matches) > 1 {
 			certInfo.PublicKeyType = strings.TrimSpace(matches[1])
 		} else if matches := publicKeyBitsRx.FindStringSubmatch(line); len(matches) > 1 {
-			fmt.Sscanf(matches[1], "%d", &certInfo.PublicKeyBits)
+			if _, err := fmt.Sscanf(matches[1], "%d", &certInfo.PublicKeyBits); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 

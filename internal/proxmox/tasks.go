@@ -104,12 +104,20 @@ func CleanupPBSPlusActiveTasks() error {
 	if err != nil {
 		return fmt.Errorf("could not open file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("could not acquire lock: %w", err)
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer func() {
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	var filteredLines []string
 	scanner := bufio.NewScanner(f)

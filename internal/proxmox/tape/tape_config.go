@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type Config struct {
@@ -37,7 +39,11 @@ func ReadConfig() (*Config, error) {
 		}
 		return nil, fmt.Errorf("open tape.cfg: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	sections := parseSectionConfig(file)
 

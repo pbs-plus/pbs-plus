@@ -140,7 +140,9 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	}
 	syslog.L.Info().WithFields(map[string]any{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
 
-	_ = os.Symlink(newPath, path)
+	if err := os.Symlink(newPath, path); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	return newUpid, nil
 }
