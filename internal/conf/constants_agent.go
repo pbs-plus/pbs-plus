@@ -28,8 +28,6 @@ func initPaths() {
 	legacyStateExists := dirExists(legacyStatePrefix)
 	newStateExists := dirExists(StatePrefix)
 
-	useLegacyPaths := false
-
 	if legacyStateExists {
 		if newStateExists {
 			fmt.Printf("[pbs-plus] using new agent paths: state=%s\n", StatePrefix)
