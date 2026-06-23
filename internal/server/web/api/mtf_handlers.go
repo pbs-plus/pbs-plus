@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfinv"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtfrun"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
@@ -492,7 +492,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		opts := mtfinv.Options{
+		opts := mtfrun.Options{
 			ChangerDevice: r.FormValue("changer"),
 			TapeDevice:    mtfstore.ResolveTapeDevice(r.FormValue("drive")),
 			DriveIndex:    atoiDefault(r.FormValue("drive_index"), 0),
@@ -501,7 +501,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		// Create a task with full active/archive pipeline (matches restore pattern).
-		st, err := mtfinv.NewScanTask(opts)
+		st, err := mtfrun.NewScanTask(opts)
 		if err != nil {
 			WriteErrorResponse(w, fmt.Errorf("create scan task: %w", err))
 			return
@@ -515,7 +515,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		st.WriteString("MTF inventory scan started (" + src + ")")
 
 		go func() {
-			sc := mtfinv.NewScanner(ms)
+			sc := mtfrun.NewScanner(ms)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 			defer cancel()
 			res, scanErr := sc.ScanWithLog(ctx, opts, &st.BaseTask)

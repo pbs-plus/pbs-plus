@@ -1,4 +1,4 @@
-package mtfinv
+package mtfrun
 
 import (
 	"context"

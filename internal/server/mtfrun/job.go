@@ -1,4 +1,4 @@
-package mtfjob
+package mtfrun
 
 import (
 	"context"

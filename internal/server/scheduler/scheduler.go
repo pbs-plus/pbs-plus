@@ -11,7 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfjob"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtfrun"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
@@ -271,7 +271,7 @@ func (s *Scheduler) checkMtfJobs() {
 			if nextRun, ok := s.shouldRunScheduledMtf(mj, now); ok {
 				syslog.L.Info().WithField("mtfJobID", mj.ID).WithMessage("Scheduler: scheduled MTF job is due, enqueuing").Write()
 				s.markEnqueued(mj.ID, nextRun)
-				if job, err := mtfjob.NewMtfJob(mj.ID, s.storeInstance, false); err == nil {
+				if job, err := mtfrun.NewMtfJob(mj.ID, s.storeInstance, false); err == nil {
 					go s.enqueueMtf(mj.ID, job)
 				} else {
 					syslog.L.Error(err).WithField("mtfJobID", mj.ID).Write()
@@ -282,7 +282,7 @@ func (s *Scheduler) checkMtfJobs() {
 
 		if mj.Retry > 0 && s.shouldRetryMtf(mj, now) {
 			syslog.L.Info().WithField("mtfJobID", mj.ID).WithMessage("Scheduler: MTF job retry is due, enqueuing").Write()
-			if job, err := mtfjob.NewMtfJob(mj.ID, s.storeInstance, false); err == nil {
+			if job, err := mtfrun.NewMtfJob(mj.ID, s.storeInstance, false); err == nil {
 				go s.enqueueMtf(mj.ID, job)
 			} else {
 				syslog.L.Error(err).WithField("mtfJobID", mj.ID).Write()
