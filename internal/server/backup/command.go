@@ -47,7 +47,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	}
 	backupID = proxmox.NormalizeHostname(backupID)
 
-	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AUTH_ID, backup.Store)
+	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AuthID, backup.Store)
 	if backupStore == "@localhost:" {
 		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
 	}

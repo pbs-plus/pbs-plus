@@ -22,7 +22,7 @@ func NewTask(node, workerType, wid string) proxmox.Task {
 		StartTime:  time.Now().Unix(),
 		WorkerType: workerType,
 		WID:        wid,
-		User:       proxmox.AUTH_ID,
+		User:       proxmox.AuthID,
 	}
 	pidHex := fmt.Sprintf("%08X", task.PID)
 	pstartHex := fmt.Sprintf("%08X", task.PStart)

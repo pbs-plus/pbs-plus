@@ -141,7 +141,7 @@ func SetDatastoreOwner(backup database.Backup, storeInstance *store.Store, owner
 }
 
 func FixDatastore(backup database.Backup, storeInstance *store.Store) error {
-	return SetDatastoreOwner(backup, storeInstance, proxmox.AUTH_ID)
+	return SetDatastoreOwner(backup, storeInstance, proxmox.AuthID)
 }
 
 func parseSnapshotTimestamp(input string) (time.Time, error) {

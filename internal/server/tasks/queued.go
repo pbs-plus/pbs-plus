@@ -71,13 +71,13 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 		StartTime:  startTime.Unix(),
 		WorkerType: wtype,
 		WID:        wid,
-		User:       proxmox.AUTH_ID,
+		User:       proxmox.AuthID,
 	}
 
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, wtype, wid, proxmox.AUTH_ID)
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, wtype, wid, proxmox.AuthID)
 
 	file, path, err := CreateTaskLogFile(task.UPID)
 	if err != nil {
@@ -148,12 +148,12 @@ func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error
 		StartTime:  startTime.Unix(),
 		WorkerType: "mtf2pxar",
 		WID:        wid,
-		User:       proxmox.AUTH_ID,
+		User:       proxmox.AuthID,
 	}
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, "mtf2pxar", wid, proxmox.AUTH_ID)
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, "mtf2pxar", wid, proxmox.AuthID)
 
 	file, path, err := CreateTaskLogFile(task.UPID)
 	if err != nil {
