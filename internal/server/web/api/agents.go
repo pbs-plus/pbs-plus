@@ -144,7 +144,9 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			syslog.L.Info().WithMessage("updating host target details").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
 			err = storeInstance.AgentHostSvc.UpdateAgentHost(tx, host)
 			if err != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -154,7 +156,9 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			syslog.L.Info().WithMessage("creating new host target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives, "error": err.Error()}).Write()
 			err = storeInstance.AgentHostSvc.CreateAgentHost(tx, host)
 			if err != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -189,7 +193,9 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 				err := storeInstance.TargetSvc.DeleteTarget(tx, newTarget.Name)
 				if err != nil {
-					_ = tx.Rollback()
+					if err := tx.Rollback(); err != nil {
+						syslog.L.Error(err).Write()
+					}
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
 					syslog.L.Error(err).Write()
@@ -198,7 +204,9 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 				err = storeInstance.TargetSvc.CreateTarget(tx, newTarget)
 				if err != nil {
-					_ = tx.Rollback()
+					if err := tx.Rollback(); err != nil {
+						syslog.L.Error(err).Write()
+					}
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
 					syslog.L.Error(err).Write()
@@ -208,7 +216,9 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			} else {
 				err := storeInstance.TargetSvc.CreateTarget(tx, newTarget)
 				if err != nil {
-					_ = tx.Rollback()
+					if err := tx.Rollback(); err != nil {
+						syslog.L.Error(err).Write()
+					}
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
 					syslog.L.Error(err).Write()
@@ -220,7 +230,9 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = tx.Commit()
 		if err != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -308,7 +320,9 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		currentHost, err := storeInstance.AgentHostSvc.GetAgentHost(reqParsed.Hostname)
 		if err != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -325,7 +339,9 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = storeInstance.AgentHostSvc.UpdateAgentHost(tx, host)
 		if err != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()
@@ -354,7 +370,6 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				VolumeUsed:       drive.Used,
 				VolumeTotal:      drive.Total,
 				VolumeName:       drive.VolumeName,
-				// Preserve existing operational data
 				JobCount:         existingTarget.JobCount,
 				AgentVersion:     existingTarget.AgentVersion,
 				ConnectionStatus: existingTarget.ConnectionStatus,
@@ -363,7 +378,9 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			err = storeInstance.TargetSvc.DeleteTarget(tx, targetName)
 			if err != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -372,7 +389,9 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			err = storeInstance.TargetSvc.CreateTarget(tx, updatedTarget)
 			if err != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
 				syslog.L.Error(err).Write()
@@ -384,7 +403,9 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		err = tx.Commit()
 		if err != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
 			syslog.L.Error(err).Write()

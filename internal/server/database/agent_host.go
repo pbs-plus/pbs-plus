@@ -26,7 +26,9 @@ func (database *Database) CreateAgentHost(tx *Transaction, host AgentHost) (err 
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -73,7 +75,9 @@ func (database *Database) UpdateAgentHost(tx *Transaction, host AgentHost) (err 
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -120,7 +124,9 @@ func (database *Database) DeleteAgentHost(tx *Transaction, name string) (err err
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {

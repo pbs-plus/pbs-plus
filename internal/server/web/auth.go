@@ -52,7 +52,6 @@ var (
 	pbsAuthErr    error
 )
 
-// GetPBSAuth returns a cached PBSAuth instance, initializing it once at startup.
 func GetPBSAuth() (*PBSAuth, error) {
 	pbsAuthOnce.Do(func() {
 		cachedPBSAuth, pbsAuthErr = NewPBSAuth()
@@ -306,7 +305,6 @@ func checkAgentAuth(store *store.Store, r *http.Request) (string, error) {
 }
 
 // validateAgentHostnameMatch returns an error if the body hostname doesn't match
-// the TLS-authenticated hostname.
 func validateAgentHostnameMatch(authHostname, bodyHostname string) error {
 	if authHostname == "" {
 		return fmt.Errorf("no authenticated agent hostname")

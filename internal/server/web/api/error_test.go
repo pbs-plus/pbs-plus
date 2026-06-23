@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
 func TestStatusFromErr(t *testing.T) {

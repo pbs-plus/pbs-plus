@@ -18,78 +18,58 @@ import (
 	"github.com/pbs-plus/pxar/transfer"
 
 	mtf "github.com/pbs-plus/go-mtf"
-	_ "github.com/pbs-plus/go-mtf/besetmap" // register Backup Exec SMP2 Set Map parser
+	_ "github.com/pbs-plus/go-mtf/besetmap"
 
-	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// Config holds all parameters for a BKF → pxar conversion run.
 type Config struct {
-	PBSURL      string
-	Datastore   string
-	Namespace   string
-	AuthToken   string
-	SkipTLS     bool
-	BackupID    string // override; derived from BKF MachineName if empty
-	ArchiveName string // override; derived from BackupID if empty
-	LocalDir    string // local store directory (offline mode)
-	Sources     []string
-	TapeDevice  string
-	// ChangerDevice enables auto-changer mode: the SCSI Medium Changer device
-	// (e.g. /dev/sg1) used to load/unload tapes robotically. Requires TapeDevice
-	// to name the tape drive (e.g. /dev/nst0) and DriveIndex to select it.
+	PBSURL        string
+	Datastore     string
+	Namespace     string
+	AuthToken     string
+	SkipTLS       bool
+	BackupID      string
+	ArchiveName   string
+	LocalDir      string
+	Sources       []string
+	TapeDevice    string
 	ChangerDevice string
-	// DriveIndex is the 0-based index of the target tape drive within the
 	// changer (almost always 0 for single-drive libraries).
-	DriveIndex int
-	Verbose    bool
-	Compress   bool // enable zstd compression for chunks (off by default)
-	Spanning   bool
-	// SnapshotSel selects a single snapshot (SSET) to migrate.
-	// Negative = migrate all snapshots (default). Each snapshot becomes
-	// its own PBS backup point.
-	SnapshotSel int
-	// IgnoreNewerPrevious skips previous-backup chunk registration when the
-	// backup time is older than existing PBS snapshots. Essential for tape
-	// migration where original backup times are in the past.
+	DriveIndex          int
+	Verbose             bool
+	Compress            bool
+	Spanning            bool
+	SnapshotSel         int
 	IgnoreNewerPrevious bool
 	// NamespaceResolver overrides Namespace per snapshot. It receives the
-	// snapshot's source machine name and volume device path (e.g.
-	// \\HOST.sgl.lan\D:) and returns the PBS namespace to use for that
-	// backup point. When nil or when it returns "", Namespace is used.
 	NamespaceResolver func(host, device string) string
-	// OnSnapshot is invoked when a snapshot's session has started, with the
-	// resolved backup-id and namespace, so callers can report progress.
-	OnSnapshot func(backupID, namespace string)
-	// TaskLog, when set, receives verbose progress messages (one per line)
-	// intended for the task log viewer.
-	TaskLog func(string)
+	OnSnapshot        func(backupID, namespace string)
+	TaskLog           func(string)
 }
 
-// Stats holds conversion statistics.
 type Stats struct {
-	Host      string // last snapshot's machine name
-	BackupID  string // last snapshot's backup ID
-	Snapshots int    // number of snapshots migrated
+	Host      string
+	BackupID  string
+	Snapshots int
 	Files     int
 	Dirs      int
 	Bytes     int64
 	StartTime time.Time
 }
 
-// Snapshot describes one backup set (SSET) found in the input.
 type Snapshot struct {
-	Index       int       // 0-based global index across all sources
-	SourceFile  string    // BKF file or tape device
-	Name        string    // SSET name (often empty for Backup Exec)
-	BackupTime  time.Time // SSET create time
-	Owner       string    // SSET owner
-	MachineName string    // from VOLB
-	VolumeName  string    // from VOLB (semicolon-separated if multiple)
-	Truncated   bool      // EOTM hit without continuation: data spans more media
+	Index       int
+	SourceFile  string
+	Name        string
+	BackupTime  time.Time
+	Owner       string
+	MachineName string
+	VolumeName  string
+	Truncated   bool
 }
 
-// backupMeta is identity extracted from the BKF structural blocks.
 type backupMeta struct {
 	HostName   string
 	BackupTime time.Time
@@ -97,11 +77,7 @@ type backupMeta struct {
 	Owner      string
 }
 
-// --- List mode ---
-
-// ListSnapshots scans the input sources and returns all backup sets (SSETs)
-// found, in stream order. It does not read file data  -  only structural blocks
-// are visited, so it is fast on seekable sources.
+// in stream order, visiting only structural blocks (no file data).
 func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	_ = ctx
 	var snapshots []Snapshot
@@ -111,11 +87,11 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Fast path: the MTF Media Based Catalog (spec §3.3.2.2) lists every
-		// data set in a handful of block reads near end-of-media via the EOTM's
-		// Last-ESET PBA. Falls back to a full forward walk if no catalog is
-		// present (e.g. a data-only continuation cartridge).
-		if sm, _ := mtf.ReadSetMap(rc); sm != nil && len(sm.Entries) > 0 {
+		sm, smErr := mtf.ReadSetMap(rc)
+		if smErr != nil {
+			syslog.L.Error(smErr).Write()
+		}
+		if sm != nil && len(sm.Entries) > 0 {
 			for _, e := range sm.Entries {
 				snap := Snapshot{
 					Index:      len(snapshots),
@@ -123,9 +99,6 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 					BackupTime: e.WriteTime,
 					Owner:      e.Owner,
 				}
-				// Machine name and volume come from the FDD volume records that
-				// follow each Set Map entry, mirroring the forward-walk path
-				// (VOLB descriptor's MachineName/Name).
 				for _, v := range e.Volumes {
 					if snap.MachineName == "" {
 						snap.MachineName = v.MachineName
@@ -137,12 +110,14 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 				}
 				snapshots = append(snapshots, snap)
 			}
-			_ = rc.Close()
+			if err := rc.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return snapshots, nil
 		}
-		// Fallback: rewind to BOT and walk forward. openTapeReader verified BOT;
-		// ReadSetMap left the drive near EOM, so re-position to BOT.
-		_ = rc.Rewind()
+		if err := rc.Rewind(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		r := mtf.NewReader(rc)
 		if cfg.Spanning {
 			setupTapeContinuation(r, cfg.TapeDevice)
@@ -165,7 +140,9 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 			}
 			setupFileContinuation(r, files)
 			err = scanSnapshots(r, files[0], &snapshots)
-			_ = r.Close()
+			if err := r.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if err != nil {
 				return snapshots, err
 			}
@@ -176,7 +153,9 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 					return snapshots, err
 				}
 				err = scanSnapshots(r, f, &snapshots)
-				_ = r.Close()
+				if err := r.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				if err != nil {
 					return snapshots, err
 				}
@@ -236,11 +215,7 @@ func scanSnapshots(r *mtf.Reader, source string, out *[]Snapshot) error {
 	return nil
 }
 
-// --- Conversion mode ---
-
 // Run performs the full conversion: reads BKF sources, builds pxar archive(s),
-// and uploads to PBS (or writes to a local store). Each SSET becomes its own
-// backup point. If Config.SnapshotSel >= 0, only that snapshot is migrated.
 func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	chunkCfg, err := buzhash.NewConfig(4 << 20)
 	if err != nil {
@@ -285,7 +260,6 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	return &c.stats, nil
 }
 
-// converter holds all mutable state for a conversion run.
 type converter struct {
 	cfg      Config
 	ctx      context.Context
@@ -314,7 +288,6 @@ func (c *converter) logf(format string, args ...any) {
 }
 
 // ensureSession lazily creates the PBS/local session and pxar writer on the
-// first real entry, once all metadata (TAPE, SSET, VOLB) has been collected.
 func (c *converter) ensureSession() error {
 	if c.session != nil {
 		return nil
@@ -325,7 +298,10 @@ func (c *converter) ensureSession() error {
 		backupID = c.meta.HostName
 	}
 	if backupID == "" {
-		h, _ := os.Hostname()
+		h, hostErr := os.Hostname()
+		if hostErr != nil {
+			syslog.L.Error(hostErr).Write()
+		}
 		backupID = h
 	}
 
@@ -397,7 +373,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 
 	authToken := c.cfg.AuthToken
 	if authToken == "" {
-		authToken = pbstoken.ReadLocal()
+		authToken = token.ReadLocal()
 	}
 	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
 		BaseURL:       c.cfg.PBSURL,
@@ -420,8 +396,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 	})
 }
 
-// finishSnapshot closes all open directories and finalizes the current
-// snapshot's archive + session. No-op if no session is active.
+// finishSnapshot closes open directories and finalizes the current
 func (c *converter) finishSnapshot() error {
 	if c.writer == nil {
 		return nil
@@ -449,7 +424,6 @@ func (c *converter) finishSnapshot() error {
 	return nil
 }
 
-// snapshotSelected reports whether the current snapshot should be processed.
 func (c *converter) snapshotSelected() bool {
 	return c.cfg.SnapshotSel < 0 || c.snapshotIdx == c.cfg.SnapshotSel
 }
@@ -462,7 +436,11 @@ func (c *converter) runTape() error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	r := mtf.NewReader(rc)
 	if c.cfg.Spanning {
@@ -472,11 +450,6 @@ func (c *converter) runTape() error {
 	return c.processReader(r)
 }
 
-// runChanger migrates all data tapes in the magazine using the robotic
-// changer. The first tape is loaded and read; EOTM continuations are resolved
-// by scanning slots for the matching media-family sequence. When a complete
-// media set is exhausted (no further sequence found), the next independent
-// backup set is started automatically until every tape is migrated.
 func (c *converter) runChanger() error {
 	f, err := newFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
 	if err != nil {
@@ -487,19 +460,25 @@ func (c *converter) runChanger() error {
 	for {
 		rc, err := f.loadFirst()
 		if err != nil {
-			// No more data tapes  -  migration complete.
 			return nil
 		}
 		r := mtf.NewReader(rc)
 		r.SetContinuation(f.asContinuation())
 		if err := c.processReader(r); err != nil {
-			_ = rc.Close()
-			_ = f.unloadCurrent()
+			if err := rc.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if err := f.unloadCurrent(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return err
 		}
-		_ = rc.Close()
-		_ = f.unloadCurrent()
-		// Drop processed tapes from the inventory so loadFirst picks the next.
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := f.unloadCurrent(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		f.markProcessed()
 	}
 }
@@ -513,8 +492,6 @@ func (c *converter) runFiles() error {
 		return fmt.Errorf("no .bkf files found")
 	}
 
-	// When spanning, only open the first file  -  the continuation callback
-	// chains the remaining files into one logical stream.
 	if c.cfg.Spanning && len(files) > 1 {
 		r, err := mtf.Open(files[0])
 		if err != nil {
@@ -522,7 +499,9 @@ func (c *converter) runFiles() error {
 		}
 		setupFileContinuation(r, files)
 		perr := c.processReader(r)
-		_ = r.Close()
+		if err := r.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return perr
 	}
 
@@ -532,7 +511,9 @@ func (c *converter) runFiles() error {
 			return fmt.Errorf("open %s: %w", f, err)
 		}
 		perr := c.processReader(r)
-		_ = r.Close()
+		if err := r.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if perr != nil {
 			return fmt.Errorf("process %s: %w", f, perr)
 		}
@@ -540,9 +521,7 @@ func (c *converter) runFiles() error {
 	return nil
 }
 
-// processReader iterates one MTF reader, collecting metadata and converting
-// entries to pxar. Each SSET boundary starts a fresh session; non-selected
-// snapshots are skipped (reader auto-skips their data streams).
+// entries to pxar. Each SSET boundary starts a fresh session.
 func (c *converter) processReader(r *mtf.Reader) error {
 	for {
 		block, err := r.Next()
@@ -590,11 +569,6 @@ func (c *converter) processReader(r *mtf.Reader) error {
 			if h.Type == mtf.EntryVolume {
 				c.meta.HostName = h.MachineName
 				c.rootPrefix = h.Name
-				// Start the PBS session now, before any file data is
-				// read from tape. The H2 connect + dynamic-index
-				// create + download-previous happen while the tape
-				// drive is still positioning to the first file,
-				// avoiding the visible stall on the first chunk.
 				if err := c.ensureSession(); err != nil {
 					return err
 				}
@@ -617,14 +591,10 @@ func (c *converter) processReader(r *mtf.Reader) error {
 	return c.finishSnapshot()
 }
 
-// processEntry converts one MTF entry to pxar, managing directory depth by
-// comparing the entry's relative path (volume prefix stripped) against the
-// current directory stack.
 func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
 	relPath = strings.TrimPrefix(relPath, "/")
 
-	// Root entry itself  -  skip (pxar root already created by Begin).
 	if relPath == "" {
 		return nil
 	}
@@ -633,7 +603,6 @@ func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
 	parent := components[:len(components)-1]
 	name := sanitizeName(components[len(components)-1])
 
-	// Pop directories until stack depth matches the parent path.
 	for len(c.dirStack) > len(parent) {
 		if err := c.writer.EndDirectory(); err != nil {
 			return err
@@ -695,28 +664,34 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 	}
 
 	// Decouple tape reads from the encoder: a goroutine pumps the tape into
-	// an io.Pipe behind a bufio.Writer (32 MiB). The tape drive streams in
-	// large bursts regardless of encoder backpressure  -  preventing the
-	// stop/start cycles that limit throughput to ~90 MB/s.
+	// an io.Pipe (32 MiB buffer) so the drive streams in large bursts instead
+	// of stop/start cycles that limit throughput.
 	pr, pw := io.Pipe()
 	go func() {
-		defer func() { _ = pw.Close() }()
+		defer func() {
+			if err := pw.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+		}()
 		bw := bufio.NewWriterSize(pw, 32<<20)
-		_, _ = io.Copy(bw, r)
-		_ = bw.Flush()
+		if _, err := io.Copy(bw, r); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := bw.Flush(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
 }
-
-// --- Source opening helpers ---
 
 func setupTapeContinuation(r *mtf.Reader, dev string) {
 	r.SetContinuation(func(ct mtf.Continuation) (mtf.Tape, error) {
 		fmt.Fprintf(os.Stderr, "\n== Insert tape %d (media %s) and press Enter ==\n",
 			ct.Sequence+1, ct.Media.Name)
 		var buf string
-		fmt.Scanln(&buf) //nolint:errcheck
-		// openTapeReader rewinds the freshly-inserted tape to BOT.
+		if _, err := fmt.Scanln(&buf); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		rc, err := openTapeReader(dev)
 		if err != nil {
 			return nil, err
@@ -738,8 +713,6 @@ func setupFileContinuation(r *mtf.Reader, files []string) {
 		return mtf.NewFileTape(next), nil
 	})
 }
-
-// --- Metadata conversion helpers ---
 
 func mtfToPxarMeta(h *mtf.Header, fileType uint64) pxar.Metadata {
 	var m pxar.Metadata
@@ -771,7 +744,9 @@ func mapSID(sid string) (uid, gid uint32) {
 		parts := strings.Split(sid, "-")
 		if len(parts) >= 3 {
 			var n uint32
-			fmt.Sscanf(parts[len(parts)-1], "%d", &n) //nolint:errcheck
+			if _, err := fmt.Sscanf(parts[len(parts)-1], "%d", &n); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if n > 0 {
 				return n + 1000, n + 1000
 			}
@@ -817,7 +792,6 @@ func sanitizeName(name string) string {
 }
 
 // sanitizePath replaces path-unsafe characters so a backup ID can be used
-// as a directory name.
 func sanitizePath(s string) string {
 	s = strings.ReplaceAll(s, "\\", "_")
 	s = strings.ReplaceAll(s, "/", "_")

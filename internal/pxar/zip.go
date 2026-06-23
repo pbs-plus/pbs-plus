@@ -13,6 +13,8 @@ import (
 
 	"github.com/klauspost/compress/zip"
 	pxar "github.com/pbs-plus/pxar"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func restoreAsZips(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
@@ -20,7 +22,9 @@ func restoreAsZips(ctx context.Context, client *Client, sources []string, opts R
 	var errWg sync.WaitGroup
 	errWg.Go(func() {
 		for err := range errCh {
-			_ = client.SendError(ctx, err)
+			if err := client.SendError(ctx, err); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	})
 
@@ -66,7 +70,11 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 	if err != nil {
 		return fmt.Errorf("create zip %q: %w", zipPath, err)
 	}
-	defer zipFile.Close()
+	defer func() {
+		if err := zipFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	bufferedWriter := bufio.NewWriterSize(zipFile, 16*1024*1024)
 	zipWriter := zip.NewWriter(bufferedWriter)
@@ -164,7 +172,11 @@ func (zc *zipContext) addFile(relPath string, fileEntry pxar.FileInfo) {
 			zc.sendError(fmt.Errorf("open content reader %q: %w", filePath, err))
 			return
 		}
-		defer rc.Close()
+		defer func() {
+			if err := rc.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+		}()
 
 		if _, err := io.Copy(writer, rc); err != nil {
 			zc.sendError(fmt.Errorf("copy file data %q: %w", filePath, err))

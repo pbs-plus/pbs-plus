@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// BaseTask contains shared fields and operations for all task types.
 // Embed this in task-specific structs to avoid duplicating common file-handling logic.
 type BaseTask struct {
 	proxmox.Task
@@ -23,22 +23,21 @@ type BaseTask struct {
 	file   *os.File
 }
 
-// NewBaseTask creates a BaseTask with the given task and file.
 func NewBaseTask(task proxmox.Task, file *os.File) BaseTask {
 	return BaseTask{Task: task, file: file}
 }
 
-// Close closes the task log file and marks the task as closed.
 // Must be called while holding the mutex.
 func (t *BaseTask) Close() {
 	if t.file != nil {
-		t.file.Close()
+		if err := t.file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		t.file = nil
 	}
 	t.closed.Store(true)
 }
 
-// WriteLogLine writes a timestamped line to the task file.
 // Must be called while holding the mutex and with an open t.file.
 func (t *BaseTask) WriteLogLine(format string, args ...any) bool {
 	timestamp := time.Now().Format(time.RFC3339)
@@ -51,7 +50,6 @@ func (t *BaseTask) WriteLogLine(format string, args ...any) bool {
 
 // CloseWithStatus writes a final TASK status line, archives it, and closes the log file.
 // The onClose callback runs while the mutex is held but before the file is closed.
-// The afterUnlock callback runs after the mutex is released.
 func (t *BaseTask) CloseWithStatus(status string, onClose func(), afterUnlock func()) {
 	t.mu.Lock()
 
@@ -76,14 +74,16 @@ func (t *BaseTask) CloseWithStatus(status string, onClose func(), afterUnlock fu
 	}
 }
 
-// WriteArchive writes an entry to the global task archive.
-// The format is "UPID StartTime Status\n"
 func WriteArchive(upid string, startTime int64, status string) bool {
 	archive, err := os.OpenFile(filepath.Join(conf.TaskLogsBasePath, "archive"), os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return false
 	}
-	defer archive.Close()
+	defer func() {
+		if err := archive.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	startTimeHex := fmt.Sprintf("%08X", uint32(startTime))
 	archiveLine := fmt.Sprintf("%s %s %s\n", upid, startTimeHex, status)
@@ -102,8 +102,12 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 	}
 
 	dir := filepath.Dir(path)
-	_ = os.MkdirAll(dir, 0755)
-	_ = os.Chown(dir, 34, 34)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := os.Chown(dir, 34, 34); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
@@ -111,17 +115,17 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 	}
 
 	if err := file.Chown(34, 34); err != nil {
-		file.Close()
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, "", err
 	}
 
 	return file, path, nil
 }
 
-// Now returns the current time.
 func Now() time.Time { return time.Now() }
 
-// WriteString writes a timestamped log line with mutex protection and file sync.
 func (t *BaseTask) WriteString(data string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -130,5 +134,7 @@ func (t *BaseTask) WriteString(data string) {
 		return
 	}
 	t.WriteLogLine("%s", data)
-	t.file.Sync()
+	if err := t.file.Sync(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }

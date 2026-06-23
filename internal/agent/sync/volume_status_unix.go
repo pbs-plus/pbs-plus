@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func isVolumeLocked(drive string) (bool, error) {
@@ -15,7 +17,11 @@ func isVolumeLocked(drive string) (bool, error) {
 	if err != nil {
 		return false, nil
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

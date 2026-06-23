@@ -23,7 +23,6 @@ var (
 )
 
 // ensureInitialized performs one-time initialization of the secret keys.
-// Call this at the start of any exported function that needs the keys.
 func ensureInitialized() {
 	keyMu.Lock()
 	defer keyMu.Unlock()
@@ -71,7 +70,6 @@ func loadOrCreateKey() error {
 	return nil
 }
 
-// Encrypt takes a plaintext string and returns a base64 ciphertext
 func Encrypt(plaintext string) (string, error) {
 	ensureInitialized()
 	if initErr != nil {
@@ -86,7 +84,6 @@ func Encrypt(plaintext string) (string, error) {
 		return "", err
 	}
 
-	// Using our own public key as both sender and receiver
 	encrypted := box.Seal(nonce[:], []byte(plaintext), &nonce, publicKey, privateKey)
 
 	return base64.StdEncoding.EncodeToString(encrypted), nil

@@ -14,16 +14,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	backend "github.com/pbs-plus/pbs-plus/internal/server"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
+	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/server/web"
-
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var Version = "v0.0.0"
@@ -70,7 +70,7 @@ func main() {
 	if err := syslog.L.SetServiceLogger(); err != nil {
 		syslog.L.Error(err).Write()
 	}
-	_ = proxmox.GetToken()
+	_ = cli.GetToken()
 
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
@@ -133,14 +133,16 @@ func main() {
 func validateEnvironment() error {
 	// Best-effort cleanup; the tasks/active directory may not exist in test
 	// environments or Docker containers. Ignore errors from this step.
-	_ = proxmox.CleanupPBSPlusActiveTasks()
+	if err := proxmox.CleanupPBSPlusActiveTasks(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	hn, ok := conf.Env.Hostname, conf.Env.Hostname != ""
 	if !ok {
 		return fmt.Errorf("PBS_PLUS_HOSTNAME is not set; you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables")
 	}
 
-	if err := types.ValidateHostname(hn); err != nil {
+	if err := host.ValidateHostname(hn); err != nil {
 		return fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn: %s", hn)
 	}
 
@@ -157,7 +159,11 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 		return
 	}
 	rpcClient := rpc.NewClient(conn)
-	defer rpcClient.Close()
+	defer func() {
+		if err := rpcClient.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	for _, backupRun := range backupsRun {
 		backupTask, err := storeInstance.Database.GetBackup(backupRun)

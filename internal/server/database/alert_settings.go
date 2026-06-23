@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type AlertSetting struct {
@@ -37,7 +38,9 @@ type AlertExclusion struct {
 func sqlcToAlertSetting(row sqlc.AlertSetting) AlertSetting {
 	var quietDays []string
 	if row.QuietDays != "" {
-		_ = json.Unmarshal([]byte(row.QuietDays), &quietDays)
+		if err := json.Unmarshal([]byte(row.QuietDays), &quietDays); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if quietDays == nil {
 		quietDays = []string{}
@@ -71,7 +74,10 @@ func alertSettingQuietDaysJSON(days []string) string {
 	if days == nil {
 		days = []string{}
 	}
-	b, _ := json.Marshal(days)
+	b, err := json.Marshal(days)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return string(b)
 }
 
@@ -130,7 +136,6 @@ func (database *Database) DeleteAlertSetting(name string) error {
 	return database.queries.DeleteAlertSetting(context.Background(), name)
 }
 
-// EnsureAlertSetting creates a setting with defaults if it doesn't exist.
 func (database *Database) EnsureAlertSetting(name string, defaultThreshold int, defaultSeverity string) (AlertSetting, error) {
 	setting, err := database.GetAlertSetting(name)
 	if err == nil {
@@ -153,7 +158,6 @@ func (database *Database) EnsureAlertSetting(name string, defaultThreshold int, 
 	return setting, nil
 }
 
-// IsCoolingDown returns true if the alert was sent within the configured cooldown duration.
 func (s AlertSetting) IsCoolingDown() bool {
 	if s.LastSent == 0 {
 		return false
@@ -165,7 +169,6 @@ func (s AlertSetting) IsCoolingDown() bool {
 	return time.Since(time.Unix(s.LastSent, 0)) < cooldown
 }
 
-// IsQuietDay returns true if today is in the quiet-days list.
 func (s AlertSetting) IsQuietDay() bool {
 	if len(s.QuietDays) == 0 {
 		return false
@@ -174,14 +177,12 @@ func (s AlertSetting) IsQuietDay() bool {
 	return slices.Contains(s.QuietDays, today)
 }
 
-// IsInScheduleWindow returns true if the current time is within the configured
 // schedule window. If no schedule_time is set, it always returns true (any time).
 func (s AlertSetting) IsInScheduleWindow() bool {
 	if s.ScheduleTime == "" {
 		return true
 	}
 
-	// Parse HH:MM
 	parts := strings.SplitN(s.ScheduleTime, ":", 2)
 	if len(parts) != 2 {
 		return true
@@ -204,22 +205,18 @@ func (s AlertSetting) IsInScheduleWindow() bool {
 	scheduledMinutes := hour*60 + minute
 	nowMinutes := now.Hour()*60 + now.Minute()
 
-	// Check if now is within [scheduled - window/2, scheduled + window/2]
 	halfWindow := window / 2
 	diff := nowMinutes - scheduledMinutes
 	if diff < 0 {
 		diff = -diff
 	}
 
-	// Handle wrap-around midnight
 	if diff > 720 {
 		diff = 1440 - diff
 	}
 
 	return diff <= halfWindow
 }
-
-// --- Alert Exclusions ---
 
 func (database *Database) CreateAlertExclusion(alertType, excludeType, excludeValue, comment string) error {
 	return database.queries.CreateAlertExclusion(context.Background(), sqlc.CreateAlertExclusionParams{

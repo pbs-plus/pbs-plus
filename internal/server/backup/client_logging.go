@@ -20,14 +20,22 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
 		syslog.L.Error(err).WithMessage("failed to create watcher").Write()
 		return
 	}
-	defer watcher.Close()
+	defer func() {
+		if err := watcher.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	file, err := os.Open(filePath)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to open file").Write()
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -120,7 +128,9 @@ func processFileBuffer(
 
 	if bytes.Contains(buf[:n], connectionFailedPattern) {
 		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+			if err := cmd.Process.Kill(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		return currentPos + int64(n), true
 	}

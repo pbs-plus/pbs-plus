@@ -1,7 +1,3 @@
-// Tape auto-feeder: bridges the SCSI Medium Changer to go-mtf's continuation
-// callback. When an EOTM is reached, the feeder finds the next tape of the
-// current media family (by MFMID + sequence), commands the changer to swap it
-// into the drive, rewinds, and returns the new reader.
 package bkf2pxar
 
 import (
@@ -11,27 +7,21 @@ import (
 	mtf "github.com/pbs-plus/go-mtf"
 
 	"github.com/pbs-plus/pbs-plus/internal/changer"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// feeder drives a robotic tape changer for unattended multi-tape migration.
 type feeder struct {
 	chg        *changer.Changer
-	tapeDev    string // tape drive device, e.g. /dev/nst0
+	tapeDev    string
 	driveIndex int
 
-	status *changer.Status // cached inventory
+	status *changer.Status
 
-	// loaded tracks the currently-loaded tape's identity (from its TAPE block)
-	// so we can verify the next tape and know which slot to return it to.
 	loadedBarcode string
-	loadedSlot    int // 1-based virtual slot, 0 if drive was loaded externally
+	loadedSlot    int
 
-	// probed maps a barcode to the slot that holds it, so repeat lookups are
-	// O(1). Built lazily as tapes are examined.
 	probed map[string]int
 
-	// processed tracks barcodes already migrated, so loadFirst advances
-	// through the magazine one backup set at a time.
 	processed map[string]bool
 }
 
@@ -42,7 +32,9 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 	}
 	st, err := chg.Status()
 	if err != nil {
-		_ = chg.Close()
+		if err := chg.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, fmt.Errorf("changer inventory: %w", err)
 	}
 	return &feeder{
@@ -55,19 +47,18 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 	}, nil
 }
 
-func (f *feeder) close() { _ = f.chg.Close() }
+func (f *feeder) close() {
+	if err := f.chg.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
+}
 
-// markProcessed records the cartridge just migrated so subsequent loadFirst
-// calls skip it.
 func (f *feeder) markProcessed() {
 	if f.loadedBarcode != "" {
 		f.processed[f.loadedBarcode] = true
 	}
 }
 
-// loadFirst loads the first available data tape (skipping cleaning tapes) into
-// the drive and returns an open reader positioned at BOT. It picks the first
-// non-cleaning, full slot. The caller is responsible for closing the reader.
 func (f *feeder) loadFirst() (*tapeReader, error) {
 	for i, s := range f.status.Slots {
 		if !s.Full || s.ImportExport {
@@ -85,8 +76,6 @@ func (f *feeder) loadFirst() (*tapeReader, error) {
 		len(f.status.Slots), countFull(f.status))
 }
 
-// loadSlot loads slot (1-based), opens the drive reader (which rewinds to
-// BOT), and caches the cartridge's barcode→slot mapping.
 func (f *feeder) loadSlot(slot int) (*tapeReader, error) {
 	bc := f.status.Slots[slot-1].VolumeTag
 	fmt.Fprintf(os.Stderr, "== loading slot %d (%s) into drive %d ==\n", slot, barcodeOrUnknown(bc), f.driveIndex)
@@ -105,15 +94,13 @@ func (f *feeder) loadSlot(slot int) (*tapeReader, error) {
 	return rc, nil
 }
 
-// unloadCurrent returns the loaded tape to its home slot.
 func (f *feeder) unloadCurrent() error {
 	if f.loadedSlot == 0 {
-		return nil // nothing loaded by us (e.g. operator-inserted first tape)
+		return nil
 	}
 	slot := f.loadedSlot
 	bc := f.loadedBarcode
 	fmt.Fprintf(os.Stderr, "== unloading drive %d -> slot %d (%s) ==\n", f.driveIndex, slot, barcodeOrUnknown(bc))
-	// Close the drive fd first so the OS releases the tape.
 	if err := f.chg.Unload(f.status, f.driveIndex, slot); err != nil {
 		return fmt.Errorf("unload to slot %d: %w", slot, err)
 	}
@@ -122,18 +109,13 @@ func (f *feeder) unloadCurrent() error {
 	return nil
 }
 
-// asContinuation adapts the feeder into go-mtf's continuation callback.
-// It is invoked with the context of the medium that just ended; it must
-// return a reader over the next medium of the same family, or an error.
 func (f *feeder) asContinuation() func(mtf.Continuation) (mtf.Tape, error) {
 	return func(c mtf.Continuation) (mtf.Tape, error) {
 		return f.nextMedium(c)
 	}
 }
 
-// nextMedium finds and loads the tape carrying media-family sequence
-// c.Sequence+1 (matching the MFMID of the tape that just ended), verifies its
-// identity from the TAPE block, and returns a fresh reader.
+// c.Sequence+1, verifies its identity from the TAPE block, and returns
 func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	wantSeq := 0
 	wantMFMID := uint32(0)
@@ -143,11 +125,10 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	}
 	fmt.Fprintf(os.Stderr, "\n== EOTM: need next tape (family 0x%08X, sequence %d) ==\n", wantMFMID, wantSeq)
 
-	// Return the current tape first.
-	_ = f.unloadCurrent()
+	if err := f.unloadCurrent(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
-	// Strategy: scan slots for a tape whose TAPE block matches family+sequence.
-	// We identify by reading the cartridge header; barcode is a hint only.
 	for pass := range 2 {
 		for i, s := range f.status.Slots {
 			if !s.Full || s.ImportExport {
@@ -171,14 +152,16 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			ok, err := f.verifyTape(rc, wantMFMID, wantSeq)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "   slot %d verify: %v\n", slot, err)
-				_ = rc.Close()
-				_ = f.unloadCurrent()
+				if err := rc.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
+				if err := f.unloadCurrent(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				continue
 			}
 			if ok {
 				fmt.Fprintf(os.Stderr, "   slot %d: matched sequence %d\n", slot, wantSeq)
-				// verifyTape closed the probe reader and rewound to BOT; reopen a
-				// fresh tape-block reader for the consumer.
 				rc, err := openTapeReader(f.tapeDev)
 				if err != nil {
 					return nil, err
@@ -186,11 +169,14 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 				return rc, nil
 			}
 			fmt.Fprintf(os.Stderr, "   slot %d: not the wanted tape\n", slot)
-			_ = rc.Close()
-			_ = f.unloadCurrent()
+			if err := rc.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if err := f.unloadCurrent(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		if pass == 0 {
-			// Refresh inventory in case the operator added tapes.
 			st, err := f.chg.Status()
 			if err == nil {
 				f.status = st
@@ -200,13 +186,14 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in changer", wantMFMID, wantSeq)
 }
 
-// verifyTape peeks at the cartridge's TAPE block and reports whether its
-// MFMID/Sequence match the wanted values. It closes the probe reader; the
-// caller reopens a fresh reader (which rewinds to BOT) on a match.
+// verifyTape peeks at the TAPE block and reports whether its MFMID/Sequence
+// match. It closes the probe reader; the caller reopens on a match.
 func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool, error) {
 	r := mtf.NewReader(rc)
 	blk, err := r.Next()
-	_ = rc.Close()
+	if err := rc.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if err != nil {
 		return false, err
 	}
@@ -221,7 +208,6 @@ func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool
 	return gotSeq == wantSeq, nil
 }
 
-// isCleaningTape recognises cleaning-cartridge barcodes (CLN/CCL prefixes).
 func isCleaningTape(barcode string) bool {
 	b := barcode
 	if len(b) >= 3 {
@@ -233,8 +219,6 @@ func isCleaningTape(barcode string) bool {
 	return false
 }
 
-// IsCleaningTape recognises cleaning-cartridge barcodes (CLN/CCL/CLG/DCL
-// prefixes). Exported for reuse by the inventory engine.
 func IsCleaningTape(barcode string) bool {
 	return isCleaningTape(barcode)
 }

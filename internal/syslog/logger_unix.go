@@ -10,15 +10,15 @@ import (
 
 	"log/slog"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 )
 
 func (l *Logger) SetServiceLogger() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.hostname, _ = types.GetAgentHostname()
+	l.hostname, _ = host.AgentHostname()
 
 	tag := "pbs-plus-agent"
 	if conf.IsServer {
@@ -30,7 +30,6 @@ func (l *Logger) SetServiceLogger() error {
 		return err
 	}
 
-	// Build a slog.Logger that writes JSON to the syslog writer.
 	handler := slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
 		Level:     slog.LevelInfo,
 		AddSource: false,
@@ -100,7 +99,7 @@ func (e *LogEntry) serverWrite() {
 				sb.WriteString(fmt.Sprintf(" (debug values: %v)", e.Fields))
 			}
 
-			backupLogger.Write([]byte(sb.String()))
+			_, _ = backupLogger.Write([]byte(sb.String()))
 			sb.Reset()
 		}
 		e.Fields["jobID"] = e.JobID

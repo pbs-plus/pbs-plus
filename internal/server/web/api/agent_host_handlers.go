@@ -8,6 +8,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -31,7 +32,9 @@ func ExtJsAgentSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = agent
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -45,7 +48,9 @@ func ExtJsAgentSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 	}

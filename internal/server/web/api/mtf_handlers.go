@@ -14,22 +14,21 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfinv"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
+	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func mtfStore(st *store.Store) *mtfstore.Database {
+func mtfStore(st *store.Store) *mtfdb.Database {
 	if st == nil {
 		return nil
 	}
 	return st.MtfStore
 }
-
-// --- MTF jobs: run / stop ---
 
 func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +64,11 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
-			defer func() { _ = rpcClient.Close() }()
+			defer func() {
+				if err := rpcClient.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
+			}()
 
 			for _, id := range decoded {
 				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop, Web: true}
@@ -83,11 +86,11 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
-
-// --- MTF jobs: create / list ---
 
 func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +100,6 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		// GET: list all MTF jobs (for grid store)
 		if r.Method == http.MethodGet {
 			jobs, err := ms.ListMtfJobs(r.Context())
 			if err != nil {
@@ -121,11 +123,12 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 				"success": true,
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(toReturn)
+			if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
-		// POST: create new MTF job
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -156,11 +159,11 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
-
-// --- MTF jobs: single (get / update / delete) ---
 
 func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +198,9 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			flat := flattenMtfJobForEdit(job)
 			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", job.ID)
 			response.Data = flat
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -227,7 +232,9 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfJobConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -240,13 +247,13 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfJobConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 	}
 }
-
-// --- MTF jobs: UPIDs ---
 
 func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -279,14 +286,14 @@ func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		response.Data = upids
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
-// --- Form parsing helpers ---
-
-func mtfJobFromForm(r *http.Request) (mtfstore.MTFJob, error) {
-	j := mtfstore.MTFJob{
+func mtfJobFromForm(r *http.Request) (mtfdb.MTFJob, error) {
+	j := mtfdb.MTFJob{
 		ID:                r.FormValue("id"),
 		SourceKind:        r.FormValue("source_kind"),
 		SourceRef:         r.FormValue("source_ref"),
@@ -321,7 +328,7 @@ func mtfJobFromForm(r *http.Request) (mtfstore.MTFJob, error) {
 	return j, nil
 }
 
-func mtfJobMergeForm(job mtfstore.MTFJob, r *http.Request) (mtfstore.MTFJob, error) {
+func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	if v := r.FormValue("datastore"); v != "" {
 		if err := validate.ValidateDatastore(v); err != nil {
 			return job, err
@@ -407,8 +414,6 @@ func mtfJobMergeForm(job mtfstore.MTFJob, r *http.Request) (mtfstore.MTFJob, err
 	return job, nil
 }
 
-// --- Inventory listing ---
-
 func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -439,8 +444,11 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			resp.Data = list
 		case "datasets":
-			famID, _ := strconv.ParseInt(r.URL.Query().Get("family"), 10, 64)
-			var list []mtfstore.DataSet
+			famID, parseErr := strconv.ParseInt(r.URL.Query().Get("family"), 10, 64)
+			if parseErr != nil {
+				syslog.L.Error(parseErr).Write()
+			}
+			var list []mtfdb.DataSet
 			var err error
 			if famID > 0 {
 				list, err = ms.ListDataSetsByFamily(ctx, famID)
@@ -470,11 +478,11 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
-
-// --- Scan ---
 
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -492,16 +500,16 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		opts := mtfinv.Options{
+		opts := mtf.Options{
 			ChangerDevice: r.FormValue("changer"),
-			TapeDevice:    mtfstore.ResolveTapeDevice(r.FormValue("drive")),
+			TapeDevice:    tape.ResolveDevice(r.FormValue("drive")),
 			DriveIndex:    atoiDefault(r.FormValue("drive_index"), 0),
 			BKFPath:       r.FormValue("bkf_path"),
 			Label:         r.FormValue("label"),
 		}
 
 		// Create a task with full active/archive pipeline (matches restore pattern).
-		st, err := mtfinv.NewScanTask(opts)
+		st, err := mtf.NewScanTask(opts)
 		if err != nil {
 			WriteErrorResponse(w, fmt.Errorf("create scan task: %w", err))
 			return
@@ -515,7 +523,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		st.WriteString("MTF inventory scan started (" + src + ")")
 
 		go func() {
-			sc := mtfinv.NewScanner(ms)
+			sc := mtf.NewScanner(ms)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 			defer cancel()
 			res, scanErr := sc.ScanWithLog(ctx, opts, &st.BaseTask)
@@ -534,11 +542,11 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		response.Data = st.UPID
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
-
-// --- Namespace mappings ---
 
 func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -560,7 +568,9 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = list
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		case http.MethodPost:
 			response := MtfMappingConfigResponse{}
@@ -570,7 +580,7 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			m := mtfstore.NamespaceMapping{
+			m := mtfdb.NamespaceMapping{
 				Name:       r.FormValue("name"),
 				Priority:   atoiDefault(r.FormValue("priority"), 0),
 				MatchRegex: r.FormValue("match_regex"),
@@ -594,8 +604,10 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = mtfstore.NamespaceMapping{ID: id}
-			json.NewEncoder(w).Encode(response)
+			response.Data = mtfdb.NamespaceMapping{ID: id}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		default:
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -633,7 +645,9 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = m
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		case http.MethodPut:
 			m, err := ms.GetMapping(r.Context(), id)
@@ -693,7 +707,9 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfMappingConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 		case http.MethodDelete:
 			if err := ms.DeleteMapping(r.Context(), id); err != nil {
@@ -707,18 +723,16 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response := MtfMappingConfigResponse{}
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 }
 
-// --- helpers ---
-
 // flatMtfJob is the flattened API response for an MTF job. The history block
-// is promoted to top-level fields (matching the ExtJS model + grid columns)
-// and a pre-parsed status is attached so the shared task-status renderer works.
 type flatMtfJob struct {
-	mtfstore.MTFJob
+	mtfdb.MTFJob
 	LastRunUpid           string           `json:"last-run-upid"`
 	LastRunStarttime      int64            `json:"last-run-starttime"`
 	LastRunState          string           `json:"last-run-state"`
@@ -731,7 +745,7 @@ type flatMtfJob struct {
 	StatusParsed          ParsedTaskStatus `json:"status_parsed"`
 }
 
-func flattenMtfJob(j mtfstore.MTFJob) flatMtfJob {
+func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 	return flatMtfJob{
 		MTFJob:                j,
 		LastRunUpid:           j.History.LastRunUpid,
@@ -747,10 +761,7 @@ func flattenMtfJob(j mtfstore.MTFJob) flatMtfJob {
 	}
 }
 
-// flattenMtfJobForEdit returns a map with the field names the edit form expects
-// (matching the ExtJS fields.name values). It follows the same pattern as
-// FlattenBackupForEdit / FlattenRestoreForEdit.
-func flattenMtfJobForEdit(j mtfstore.MTFJob) map[string]any {
+func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 	return map[string]any{
 		"id":                 j.ID,
 		"source_kind":        j.SourceKind,
@@ -760,7 +771,7 @@ func flattenMtfJobForEdit(j mtfstore.MTFJob) map[string]any {
 		"schedule":           j.Schedule,
 		"comment":            j.Comment,
 		"notification-mode":  j.NotificationMode,
-		"notification-batch": "", // populated by handler via GetJobBatchName
+		"notification-batch": "",
 		"changer":            j.Changer,
 		"drive":              j.Drive,
 		"spanning":           j.Spanning,

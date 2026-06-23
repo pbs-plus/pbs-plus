@@ -15,10 +15,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
-// Global logger instance.
 var L *Logger
 
-// Deduplicator tracks recently seen log entries to prevent spam.
 type Deduplicator struct {
 	mu      sync.RWMutex
 	entries map[[32]byte]time.Time
@@ -241,8 +239,6 @@ func (e *LogEntry) SkipDedup() *LogEntry {
 	return e
 }
 
-// slogAttrs converts the LogEntry fields to slog key-value pairs
-// for use with slog.Logger methods.
 func (e *LogEntry) slogAttrs() []any {
 	n := max(len(e.Fields), 0)
 	args := make([]any, 0, n*2+2)
@@ -271,7 +267,6 @@ func (e *LogEntry) dedupCheck() bool {
 	return e.logger.dedup.shouldLog(key)
 }
 
-// writeSlog emits the log entry through the underlying slog.Logger.
 func (e *LogEntry) writeSlog() {
 	if !e.dedupCheck() {
 		return
@@ -305,7 +300,6 @@ func parseLogEntry(body io.ReadCloser) (*LogEntry, error) {
 	return entry, nil
 }
 
-// ParseAndLogWindowsEntry parses a JSON payload and writes it using the configured logger.
 func ParseAndLogWindowsEntry(body io.ReadCloser) error {
 	entry, err := parseLogEntry(body)
 	if err != nil {

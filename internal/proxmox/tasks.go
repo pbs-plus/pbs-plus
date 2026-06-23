@@ -86,7 +86,6 @@ func IsUPIDRunning(upid string) bool {
 	cmd := exec.Command("grep", "-F", upid, activePath)
 	output, err := cmd.Output()
 	if err != nil {
-		// If grep exits with a non-zero status, it means the UPID was not found.
 		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
 			return false
 		}
@@ -94,7 +93,6 @@ func IsUPIDRunning(upid string) bool {
 		return false
 	}
 
-	// If output is not empty, the UPID was found.
 	return strings.TrimSpace(string(output)) != ""
 }
 
@@ -104,14 +102,25 @@ func CleanupPBSPlusActiveTasks() error {
 
 	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("could not open file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		return fmt.Errorf("could not acquire lock: %w", err)
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer func() {
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	var filteredLines []string
 	scanner := bufio.NewScanner(f)
@@ -119,7 +128,6 @@ func CleanupPBSPlusActiveTasks() error {
 		line := scanner.Text()
 		parts := strings.Split(line, ":")
 		if len(parts) > 1 && parts[1] == targetNode {
-			continue // Skip this line
 		}
 		filteredLines = append(filteredLines, line)
 	}

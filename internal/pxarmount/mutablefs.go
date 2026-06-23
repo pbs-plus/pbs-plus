@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sys/unix"
 )
 
-// pendingMeta holds deferred metadata from Write calls.
 // Applied to the journal in Flush (file close) or SetAttr
 // (whichever runs first), serialized by per-inode lock.
 type pendingMeta struct {
@@ -28,15 +28,10 @@ type pendingMeta struct {
 	ctimeNs int64
 }
 
-// MutableFS implements fuse.RawFileSystem as a layered filesystem:
 //   - PxarFS provides the immutable lower layer
 //   - Journal provides the SQLite-backed inode graph for the overlay
-//   - mutableDir stores file data for copied-up/modified files
 //
 // The journal uses a graph model (nodes + edges) making rename O(1):
-// only the edge row is updated; no descendants are touched.
-//
-// Resolution:
 //
 //	Walk edges from root. If a component is whiteout → ENOENT.
 //	If an edge is found → use the journal node (authoritative).
@@ -54,14 +49,12 @@ type MutableFS struct {
 
 	// File handle management  -  lock-free via xsync.Map since every
 	// Read/Write/Flush/Fsync calls getFh. nextFh uses atomic for
-	// allocation without a separate mutex.
 	handles *xsync.Map[uint64, *passFh]
 	nextFh  atomic.Uint64
 
 	// Per-inode writer locks.
 	inoLocks *xsync.Map[uint64, *sync.Mutex]
 
-	// mmap'd DIDX data.
 	mmapData [][]byte
 
 	origSnapshot  snapshotRef
@@ -83,7 +76,6 @@ type MutableFS struct {
 	// Inode ↔ path bidirectional mapping.
 	// Per-instance to prevent cross-mount corruption  -  analogous to
 	// ext4's per-superblock inode cache. Uses xsync.Map for lock-free
-	// reads  -  critical since resolve() is called on every FUSE op.
 	inoLookup  *xsync.Map[string, uint64]
 	pathLookup *xsync.Map[uint64, string]
 
@@ -125,11 +117,9 @@ func (fs *MutableFS) applyACL(re *ResolvedEntry) {
 	}
 
 	// When ACL entries are present, the mode's group bits represent the ACL
-	// mask. Update them to match the mask entry so #effective stays consistent.
 	if fs.acl.HasACLs() {
 		for _, e := range fs.acl.ACLEntries {
 			if e.Tag == ACLMask {
-				// Clear existing group bits and set from mask.
 				re.Mode = (re.Mode &^ 0070) | (uint32(e.Perm) << 3)
 				break
 			}
@@ -138,14 +128,12 @@ func (fs *MutableFS) applyACL(re *ResolvedEntry) {
 }
 func (fs *MutableFS) SetVerbose(v bool) { fs.verbose = v }
 
-// debugf prints a debug message when verbose mode is enabled.
 func (fs *MutableFS) debugf(format string, args ...any) {
 	if fs.verbose {
 		fmt.Fprintf(os.Stderr, "  "+format+"\n", args...)
 	}
 }
 
-// logNonFatal logs a non-fatal error to stderr when verbose.
 func (fs *MutableFS) logNonFatal(op, path string, err error) {
 	if fs.verbose {
 		fmt.Fprintf(os.Stderr, "  [nonfatal] %s %s: %v\n", op, path, err)
@@ -157,7 +145,6 @@ func (fs *MutableFS) SetStorePaths(pbsStore, ppxarDidx string) {
 	fs.origPpxarDidx = ppxarDidx
 }
 
-// InitMutableRoot ensures the mutable root directory exists.
 func (fs *MutableFS) InitMutableRoot() error {
 	return os.MkdirAll(fs.mutableDir, 0o755)
 }
@@ -165,7 +152,6 @@ func (fs *MutableFS) InitMutableRoot() error {
 // ReconcileMutableDir removes orphan disk entries not tracked by journal nodes.
 // Called on startup to clean up after unclean shutdowns  -  analogous to
 // ext4's orphan inode cleanup during journal recovery (ext4_orphan_cleanup).
-//
 // A file is an orphan if:
 //   - No journal node exists for its path, OR
 //   - The journal node exists but HasData is false
@@ -222,7 +208,9 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 			node.Size = uint64(info.Size())
 			node.MtimeNs = info.ModTime().UnixNano()
 			node.CtimeNs = info.ModTime().UnixNano()
-			_ = fs.journal.UpdateNode(node)
+			if err := fs.journal.UpdateNode(node); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			updated = true
 		}
 
@@ -236,8 +224,6 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 	}
 	return nil
 }
-
-// --- FUSE Interface ---
 
 func (fs *MutableFS) Init(server *fuse.Server) {
 	fs.RawFileSystem = fuse.NewDefaultRawFileSystem()
@@ -257,7 +243,6 @@ func (fs *MutableFS) waitIfFrozen() {
 	fs.freezeMu.Unlock()
 }
 
-// Lookup resolves a name in a directory.
 func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
 	fs.debugf("Lookup: parent=%d name=%q", header.NodeId, name)
 	if name == JournalDir {
@@ -278,7 +263,6 @@ func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name 
 	return fuse.OK
 }
 
-// GetAttr returns attributes.
 func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("GetAttr: ino=%d path=%q", input.NodeId, path)
@@ -296,8 +280,6 @@ func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out 
 		return status
 	}
 
-	// If the file has live data on disk (open for write), stat the
-	// real file so the kernel sees the current size instead of the
 	// stale journal value (journal is only updated on Flush/Close).
 	if re.DataIsMut && !re.IsDir {
 		if st, err := os.Stat(fs.mutablePath(path)); err == nil {
@@ -320,7 +302,6 @@ func (fs *MutableFS) FsyncDir(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.
 	return fuse.OK
 }
 
-// ReadDir merges immutable (pxar) and mutable (journal edges) entries.
 func (fs *MutableFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
 	fs.debugf("ReadDir: ino=%d offset=%d", input.NodeId, input.Offset)
 	return fs.readDirImpl(input, out, false)
@@ -330,7 +311,6 @@ func (fs *MutableFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out
 	return fs.readDirImpl(input, out, true)
 }
 
-// readDirImpl implements both ReadDir and ReadDirPlus with optional entry lookup.
 func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plus bool) fuse.Status {
 	parentPath := fs.inodeToPath(input.NodeId)
 	if parentPath == "" && input.NodeId != RootInode {
@@ -367,7 +347,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		pxarDirPath = "/"
 	}
 
-	// Get pxar entries (unless opaque).
 	var pxarEntries []dirEntrySlim
 	if !isOpaque && pxarDirPath != "" {
 		pxarNode := fs.findPxarNode(pxarDirPath)
@@ -380,8 +359,7 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		}
 	}
 
-	// Get journal edges for this parent.
-	edgeNames := make(map[string]int64) // name → child node ID
+	edgeNames := make(map[string]int64)
 	whiteoutNames := make(map[string]bool)
 	if parentNodeID != 0 {
 		var edges []GraphEdge
@@ -404,7 +382,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		}
 	}
 
-	// Merge: pxar entries minus whiteouts/edges, plus journal edges.
 	type mergedEntry struct {
 		name  string
 		ino   uint64
@@ -427,7 +404,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		})
 	}
 
-	// Sort edge names for stable readdir offsets across calls.
 	// Go map iteration is randomized; without sorting, a multi-call
 	// readdir (small buffer) would see different entry order on each
 	// call, causing duplicates and missing entries via offset resume.
@@ -441,7 +417,10 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		nodeID := edgeNames[name]
 		// Edges take priority over whiteouts  -  if there's a journal node,
 		// it's always visible.
-		node, _ := fs.journal.GetNode(nodeID)
+		node, err := fs.journal.GetNode(nodeID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if node == nil {
 			continue
 		}
@@ -453,7 +432,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		})
 	}
 
-	// Emit entries.
 	if input.Offset == 0 {
 		dirMode := fs.dirModeForPath(parentPath)
 		if plus {
@@ -500,7 +478,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	return fuse.OK
 }
 
-// Open opens a file. For writes, triggers copy-up.
 func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("Open: ino=%d path=%q flags=0x%x", input.NodeId, path, input.Flags)
@@ -545,7 +522,6 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 	return fuse.OK
 }
 
-// Read reads data from the appropriate source.
 func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("Read: ino=%d fh=%d path=%q off=%d sz=%d", input.NodeId, input.Fh, path, input.Offset, len(buf))
@@ -588,7 +564,6 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 	return result, status
 }
 
-// Write writes data. Triggers copy-up if needed.
 func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []byte) (uint32, fuse.Status) {
 	fs.waitIfFrozen()
 	path := fs.inodeToPath(input.NodeId)
@@ -607,10 +582,8 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	}
 
 	fh := fs.getFh(input.Fh)
-	// If no registered handle (e.g. write without open, or handle
 	// already released), open an anonymous fd and close it after the
 	// write. Registering it would leak since the kernel won't send
-	// Release for an unknown handle.
 	closeAfterWrite := false
 	if fh == nil {
 		abs := fs.mutablePath(path)
@@ -624,7 +597,9 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
 	if closeAfterWrite {
-		_ = syscall.Close(fh.fd)
+		if err := syscall.Close(fh.fd); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if err != nil {
 		return 0, fuse.ToStatus(err)
@@ -645,7 +620,6 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	return uint32(n), fuse.OK
 }
 
-// SetAttr applies metadata changes.
 func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) fuse.Status {
 	fs.waitIfFrozen()
 	path := fs.inodeToPath(input.NodeId)
@@ -690,7 +664,6 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		mtimeSet = true
 	}
 
-	// Apply to mutable data if present.
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		if m, ok := input.GetMode(); ok {
@@ -734,7 +707,6 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		}
 	}
 
-	// Update journal node.
 	fs.ensureNode(re)
 	if re.Node != nil {
 		re.Node.Mode = re.Mode
@@ -752,7 +724,6 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	return fs.GetAttr(cancel, &fuse.GetAttrIn{InHeader: input.InHeader}, out)
 }
 
-// Create creates a new file.
 func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name string, out *fuse.CreateOut) fuse.Status {
 	fs.waitIfFrozen()
 	fs.debugf("Create: parent=%d name=%q", input.NodeId, name)
@@ -815,7 +786,6 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 	return fuse.OK
 }
 
-// Mkdir creates a directory.
 func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(input.NodeId)
@@ -850,7 +820,9 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		_ = os.Remove(abs)
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 		return fuse.EIO
 	}
 	node.ID = nodeID
@@ -866,7 +838,6 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	return fuse.OK
 }
 
-// Mknod creates a device/special node.
 func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(input.NodeId)
@@ -900,7 +871,9 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		_ = os.Remove(abs)
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 		return fuse.EIO
 	}
 	node.ID = nodeID
@@ -916,7 +889,6 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	return fuse.OK
 }
 
-// Symlink creates a symlink.
 func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, linkName string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
@@ -951,7 +923,9 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, linkName, node, hasPxar)
 	if err != nil {
-		_ = os.Remove(abs)
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 		return fuse.EIO
 	}
 	node.ID = nodeID
@@ -967,7 +941,6 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	return fuse.OK
 }
 
-// Unlink removes a file.
 func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
@@ -994,7 +967,6 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 		}
 	}
 
-	// Remove mutable data.
 	if re.DataIsMut {
 		if err := os.Remove(fs.mutablePath(childPath)); err != nil {
 			fs.logNonFatal("remove", childPath, err)
@@ -1005,7 +977,6 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 	return fuse.OK
 }
 
-// Rmdir removes a directory. Checks emptiness first.
 func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
@@ -1019,11 +990,16 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 		return fuse.ENOTDIR
 	}
 
-	// Check if directory has any children.
 	parentNodeID := fs.resolveParentNodeID(childPath)
 	if parentNodeID != 0 {
-		edges, _ := fs.journal.ListEdges(parentNodeID)
-		whiteouts, _ := fs.journal.ListWhiteouts(parentNodeID)
+		edges, err := fs.journal.ListEdges(parentNodeID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
+		whiteouts, err := fs.journal.ListWhiteouts(parentNodeID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if len(edges) > 0 || len(whiteouts) > 0 {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}
@@ -1036,7 +1012,10 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 			pxarDirPath = re.Node.RedirectTo
 		}
 		if pxarNode := fs.findPxarNode(pxarDirPath); pxarNode != nil {
-			entries, _ := fs.pxar.ReadDirRaw(pxarNode.inode)
+			entries, err := fs.pxar.ReadDirRaw(pxarNode.inode)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if len(entries) > 0 {
 				return fuse.Status(syscall.ENOTEMPTY)
 			}
@@ -1046,7 +1025,6 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 	return fs.Unlink(cancel, header, name)
 }
 
-// Rename moves/renames a file or directory. O(1)  -  updates one edge row.
 func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldName string, newName string) fuse.Status {
 	fs.waitIfFrozen()
 	oldParentPath := fs.inodeToPath(input.NodeId)
@@ -1062,7 +1040,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	oldParentID := fs.resolveParentNodeID(oldParentPath)
 	newParentID := fs.resolveParentNodeID(newParentPath)
 
-	// Resolve destination before touching anything.
 	destHasPXar := fs.hasPxarEntry(newPath)
 	destRE, _ := fs.resolve(newPath)
 	var destNodeID int64
@@ -1070,7 +1047,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		destNodeID = destRE.Node.ID
 	}
 
-	// --- Phase 1: Journal-first atomic rename ---
 	// All journal mutations happen in a single SQLite transaction so a
 	// crash at any point leaves the journal in a consistent state.
 	if oldRE.Node != nil {
@@ -1120,8 +1096,7 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		oldRE.Node = node
 	}
 
-	// --- Phase 2: Update inode mapping (in-memory, fast  -  before slow disk I/O) ---
-	fs.unmapInode(newPath) // clear dest mapping
+	fs.unmapInode(newPath)
 	ino := fs.pathToIno(oldPath, oldRE.IsDir)
 	fs.unmapInode(oldPath)
 	fs.mapInode(ino, newPath)
@@ -1130,9 +1105,7 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		fs.remapPathPrefix(oldPath, newPath)
 	}
 
-	// --- Phase 3: Disk mutations (journal + mappings already consistent) ---
 	// If we crash here, the journal is consistent  -  disk files are redundant
-	// copies that the next commit will re-snapshot from the correct paths.
 
 	// Remove destination mutable data (journal already points away from it).
 	if destRE != nil && destRE.DataIsMut {
@@ -1141,7 +1114,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		}
 	}
 
-	// Move mutable disk data if present.
 	if oldRE.DataIsMut || oldRE.IsDir {
 		oldAbs := fs.mutablePath(oldPath)
 		if _, err := os.Stat(oldAbs); err == nil {
@@ -1150,8 +1122,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 				return fuse.ToStatus(err)
 			}
 			if err := os.Rename(oldAbs, newAbs); err != nil {
-				// Rename failed (cross-device? perms?). Fall back to
-				// copy so the data is at the location the journal expects.
 				// If copy also fails, the journal edge is still correct
 				// and ReconcileMutableDir will clean up on next startup.
 				fs.logNonFatal("rename-disk", oldPath, err)
@@ -1167,7 +1137,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	return fuse.OK
 }
 
-// Readlink resolves and returns the symlink target.
 func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byte, fuse.Status) {
 	path := fs.inodeToPath(header.NodeId)
 	if path == "" {
@@ -1190,8 +1159,6 @@ func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]
 	return nil, fuse.EINVAL
 }
 
-// --- XAttr Operations ---
-
 func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
 	path := fs.inodeToPath(header.NodeId)
 	if path == "" {
@@ -1205,7 +1172,6 @@ func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, att
 
 	// Priority: passthrough → journal → default ACL → pxar.
 
-	// 1. Passthrough (mutable data on real filesystem).
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		sz, xerr := unix.Getxattr(abs, attr, dest)
@@ -1261,7 +1227,6 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 
 	nameSet := make(map[string]bool)
 
-	// 1. Passthrough (mutable data on real filesystem).
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		sz, xerr := unix.Listxattr(abs, nil)
@@ -1283,7 +1248,10 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 
 	// 2. Journal xattrs.
 	if re.Node != nil {
-		names, _ := fs.journal.ListXAttrs(re.Node.ID)
+		names, err := fs.journal.ListXAttrs(re.Node.ID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		for _, n := range names {
 			nameSet[n] = true
 		}
@@ -1301,13 +1269,11 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 	if re.PxarNode != nil {
 		pxarHeader := *header
 		pxarHeader.NodeId = re.PxarNode.inode
-		// First call with nil dest to get total size.
 		pxarSz, pxarStatus := fs.pxar.ListXAttr(cancel, &pxarHeader, nil)
 		if pxarStatus == fuse.OK && pxarSz > 0 {
 			buf := make([]byte, pxarSz)
 			sz, status := fs.pxar.ListXAttr(cancel, &pxarHeader, buf)
 			if status == fuse.OK {
-				// Parse null-delimited names from the buffer.
 				start := 0
 				for i := 0; i <= int(sz); i++ {
 					if i == int(sz) || buf[i] == 0 {
@@ -1361,7 +1327,6 @@ func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, at
 		return fuse.EIO
 	}
 
-	// Also apply to mutable data.
 	if re.DataIsMut {
 		abs := fs.mutablePath(path)
 		flags := 0
@@ -1403,8 +1368,6 @@ func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, 
 	return fuse.OK
 }
 
-// --- File Handle Lifecycle ---
-
 func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
 	// Sync dirty node metadata to journal on close.
 	// inoLock serializes with concurrent SetAttr on the same inode so
@@ -1420,7 +1383,9 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 				}
 				re.Node.MtimeNs = meta.mtimeNs
 				re.Node.CtimeNs = meta.ctimeNs
-				_ = fs.journal.UpdateNode(re.Node)
+				if err := fs.journal.UpdateNode(re.Node); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}
 		}
 	}
@@ -1433,14 +1398,15 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 
 func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
 	// Sync journal so metadata durability matches data durability.
-	_ = fs.journal.Sync()
+	if err := fs.journal.Sync(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if input.Fh == 0 {
 		return fuse.OK
 	}
 	return fs.fsyncInternal(input.NodeId, input.Fh)
 }
 
-// fsyncInternal syncs a file handle to disk.
 func (fs *MutableFS) fsyncInternal(_, fhID uint64) fuse.Status {
 	fh := fs.getFh(fhID)
 	if fh == nil {
@@ -1462,18 +1428,15 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 		}
 	}
 	// Clean up per-inode lock  -  operations that need it will
-	// re-create via LoadOrStore.
 	fs.inoLocks.Delete(input.NodeId)
 }
 
 // Forget is called by the FUSE kernel when it evicts an inode from its
 // dentry cache. We clean up per-inode and per-path synchronization
 // state that would otherwise leak indefinitely.
-//
 // NOTE: We don't delete inoLookup/pathLookup here because there may
 // still be open file handles (Read/Write/Flush/Release) that need the
 // inode→path mapping. Those are cleaned up in unmapInode (Unlink,
-// Rename) and resetAfterCommit.
 func (fs *MutableFS) Forget(nodeID, nlookup uint64) {
 	fs.inoLocks.Delete(nodeID)
 	if path, ok := fs.pathLookup.Load(nodeID); ok {
@@ -1481,8 +1444,6 @@ func (fs *MutableFS) Forget(nodeID, nlookup uint64) {
 	}
 	fs.dirtyMeta.Delete(nodeID)
 }
-
-// --- Unsupported Operations ---
 
 func (fs *MutableFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
@@ -1540,8 +1501,6 @@ func (fs *MutableFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.S
 	return fuse.OK
 }
 
-// --- Copy-Up ---
-
 func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	inoMu := fs.getInoLock(re.Inode)
 	inoMu.Lock()
@@ -1589,14 +1548,17 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	return nil
 }
 
-// copyUpRegularFile copies file content from pxar to the mutable directory.
 func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	abs := fs.mutablePath(path)
 	f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	entry, err := fs.pxar.GetPxarEntry(n.inode)
 	if err != nil {
@@ -1607,7 +1569,11 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	bufp := copyBufPool.Get().(*[]byte)
 	defer copyBufPool.Put(bufp)
@@ -1621,7 +1587,6 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	}
 
 	// Preserve extended attributes and file capabilities from the pxar
-	// archive on the mutable filesystem. Without this, opening a file
 	// for write silently drops all xattrs and fcaps.
 	applyPxarXattrsToFile(abs, entry)
 
@@ -1629,8 +1594,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 }
 
 // applyPxarXattrsToFile sets extended attributes and file capabilities
-// from a pxar entry onto a real file. Errors are logged but not fatal  - 
-// the file content has already been successfully copied.
+// from a pxar entry onto a real file. Errors are logged but not fatal  -
 func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 	for _, xa := range entry.Metadata.XAttrs {
 		name := xa.Name()
@@ -1638,12 +1602,10 @@ func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 			continue
 		}
 		// Skip ACL and fcaps  -  those are handled separately via the
-		// structured Metadata fields, not raw xattr values.
 		if isACLXattr(name) || isFcapsXattr(name) {
 			continue
 		}
 		if err := unix.Lsetxattr(abs, string(name), xa.Value(), 0); err != nil {
-			// Silently skip unsupported xattrs (EOPNOTSUPP, etc.).
 			if !isIgnorableXattrErr(err) {
 				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp xattr %q on %q: %v\n", string(name), abs, err)
 			}
@@ -1658,23 +1620,19 @@ func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 	}
 }
 
-// isACLXattr reports whether the xattr name is a POSIX ACL attribute.
 func isACLXattr(name []byte) bool {
 	return bytesEq(name, "system.posix_acl_access") || bytesEq(name, "system.posix_acl_default")
 }
 
-// isFcapsXattr reports whether the xattr name is the file capabilities attribute.
 func isFcapsXattr(name []byte) bool {
 	return bytesEq(name, "security.capability")
 }
 
 // isIgnorableXattrErr reports whether an xattr error can be safely ignored
-// (feature not supported by the underlying filesystem, or no data).
 func isIgnorableXattrErr(err error) bool {
 	return errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENODATA) || errors.Is(err, unix.EOPNOTSUPP)
 }
 
-// copyRegularFile copies a regular file from src to dst.
 // Used as a fallback when os.Rename fails during Rename operations
 // (e.g. cross-device rename).
 func copyRegularFile(src, dst string) error {
@@ -1682,21 +1640,27 @@ func copyRegularFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
+	defer func() {
+		if err := in.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = out.Close() }()
+	defer func() {
+		if err := out.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	bufp := copyBufPool.Get().(*[]byte)
 	defer copyBufPool.Put(bufp)
 	_, err = io.CopyBuffer(out, in, *bufp)
 	return err
 }
-
-// --- Resolution ---
 
 // resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
@@ -1730,7 +1694,6 @@ func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
 	return re, fuse.OK
 }
 
-// resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 	// Root is always a pxar-only directory.
 	if path == "/" || path == "" {
@@ -1747,7 +1710,6 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		return nil, fuse.ENOENT
 	}
 
-	// Full graph match.
 	if nodeID != 0 {
 		node, err := fs.journal.GetNode(nodeID)
 		if err != nil {
@@ -1777,10 +1739,11 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 		MtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 		CtimeNs:   pxarNode.mtimeSecs*1e9 + int64(pxarNode.mtimeNanos),
 	}
-	// Apply restore's timestamp precedence (xattr-derived atime/mtime) so an
-	// unmodified, pxar-backed file reports the same times as a restore.
-	aNs, mNs := fs.pxar.ResolvedTimes(pxarNode)
+	// Use cached xattr-derived times if already resolved; otherwise fall
+	// back to Stat.Mtime. Full resolution is deferred to individual
+	// GetAttr calls so that bulk readdir never triggers O(N) archive reads.
 	if pxarNode.timesResolved {
+		aNs, mNs := fs.pxar.ResolvedTimes(pxarNode)
 		re.AtimeNs = aNs
 		re.MtimeNs = mNs
 		re.CtimeNs = mNs
@@ -1793,7 +1756,6 @@ func (fs *MutableFS) resolve(path string) (*ResolvedEntry, fuse.Status) {
 }
 
 // resolveCheck is a helper for xattr ops that returns (status, ok) where
-// ok=false means the caller should return status immediately.
 func (fs *MutableFS) resolveCheck(_ string, re *ResolvedEntry) (fuse.Status, bool) {
 	if re == nil {
 		return fuse.ENOENT, false
@@ -1801,7 +1763,6 @@ func (fs *MutableFS) resolveCheck(_ string, re *ResolvedEntry) (fuse.Status, boo
 	return fuse.OK, true
 }
 
-// resolveFromNode builds a ResolvedEntry from a journal GraphNode.
 func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry, fuse.Status) {
 	re := &ResolvedEntry{
 		Path:       path,
@@ -1841,7 +1802,6 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 	return re, fuse.OK
 }
 
-// findPxarNode walks the pxar tree to find a cached node for the given path.
 func (fs *MutableFS) findPxarNode(path string) *node {
 	if path == "/" {
 		return fs.pxar.GetNode(RootInode)
@@ -1861,13 +1821,10 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 		found := false
 		for _, e := range entries {
 			if e.name == name {
-				// Register the node so subsequent ReadDirRaw calls
-				// can find it via fs.nodes. Without this, only the
 				// root inode is cached and subdirectories appear empty.
-				fs.pxar.RegisterSlimNode(&e, curIno)
+				n := fs.pxar.RegisterSlimNode(&e, curIno)
 				if i == len(parts)-1 {
-					n := slimToNode(&e, curIno)
-					return &n
+					return n
 				}
 				curIno = e.inode
 				found = true
@@ -1881,7 +1838,6 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 	return nil
 }
 
-// hasPxarEntry reports whether a pxar entry exists at the given path.
 func (fs *MutableFS) hasPxarEntry(path string) bool {
 	return fs.findPxarNode(path) != nil
 }
@@ -1890,7 +1846,7 @@ func (fs *MutableFS) hasPxarEntry(path string) bool {
 // and returns its node ID. Creates pxar-derived nodes as needed.
 func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 	if parentPath == "" || parentPath == "/" {
-		return 1 // root
+		return 1
 	}
 
 	re, status := fs.resolve(parentPath)
@@ -1908,9 +1864,8 @@ func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 // ensureNode ensures a journal node+edge exists for a resolved entry.
 // For pxar-only entries, it creates a node with redirect_to and an edge
 // under the parent. For journal entries, it's a no-op.
-//
 // Per-path locking prevents duplicate nodes when concurrent FUSE ops
-// (e.g. setfacl -R) materialize the same pxar entry simultaneously  - 
+// (e.g. setfacl -R) materialize the same pxar entry simultaneously  -
 // analogous to ext4's inode_lock preventing concurrent inode initialization.
 func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	if re.Node != nil {
@@ -1926,7 +1881,6 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	defer pathMu.Unlock()
 
 	// Double-check after acquiring lock  -  another goroutine may have
-	// created the node while we waited.
 	if re.Node != nil {
 		return
 	}
@@ -1968,8 +1922,6 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	re.Node = node
 }
 
-// --- Inode Management ---
-
 func (fs *MutableFS) allocInode(isDir bool) uint64 {
 	fs.inoMu.Lock()
 	ino := fs.nextIno
@@ -1981,7 +1933,6 @@ func (fs *MutableFS) allocInode(isDir bool) uint64 {
 	return ino
 }
 
-// pathToIno returns the inode for a path, allocating one if needed.
 func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 	if ino, ok := fs.inoLookup.Load(path); ok {
 		return ino
@@ -1992,20 +1943,17 @@ func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 	return ino
 }
 
-// mapInode stores a bidirectional inode↔path mapping.
 func (fs *MutableFS) mapInode(ino uint64, path string) {
 	fs.inoLookup.Store(path, ino)
 	fs.pathLookup.Store(ino, path)
 }
 
-// unmapInode removes the bidirectional mapping for a path.
 func (fs *MutableFS) unmapInode(path string) {
 	if ino, ok := fs.inoLookup.LoadAndDelete(path); ok {
 		fs.pathLookup.Delete(ino)
 	}
 }
 
-// remapPathPrefix updates all inode mappings under oldPrefix to use newPrefix.
 func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
 	fs.inoLookup.Range(func(p string, ino uint64) bool {
 		if p == oldPrefix || strings.HasPrefix(p, oldPrefix+"/") {
@@ -2018,13 +1966,10 @@ func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
 	})
 }
 
-// inodeToPath returns the path for an inode, or empty string if unknown.
 func (fs *MutableFS) inodeToPath(ino uint64) string {
 	path, _ := fs.pathLookup.Load(ino)
 	return path
 }
-
-// --- File Handle Management ---
 
 func (fs *MutableFS) registerFh(_ string, fd int) uint64 {
 	id := fs.nextFh.Add(1)
@@ -2032,26 +1977,20 @@ func (fs *MutableFS) registerFh(_ string, fd int) uint64 {
 	return id
 }
 
-// getFh returns the file handle for an ID, or nil if not found.
 func (fs *MutableFS) getFh(id uint64) *passFh {
 	val, _ := fs.handles.Load(id)
 	return val
 }
-
-// --- Per-Inode Writer Lock ---
 
 func (fs *MutableFS) getInoLock(ino uint64) *sync.Mutex {
 	val, _ := fs.inoLocks.LoadOrStore(ino, &sync.Mutex{})
 	return val
 }
 
-// --- Helpers ---
-
 func (fs *MutableFS) mutablePath(relPath string) string {
 	return filepath.Join(fs.mutableDir, relPath)
 }
 
-// dirModeForPath returns the directory mode bits for a resolved path.
 func (fs *MutableFS) dirModeForPath(path string) uint32 {
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
@@ -2060,7 +1999,6 @@ func (fs *MutableFS) dirModeForPath(path string) uint32 {
 	return re.Mode | syscall.S_IFDIR
 }
 
-// fillEntryOutForPath resolves a path and fills a FUSE EntryOut.
 func (fs *MutableFS) fillEntryOutForPath(path string, out *fuse.EntryOut) {
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
@@ -2069,7 +2007,6 @@ func (fs *MutableFS) fillEntryOutForPath(path string, out *fuse.EntryOut) {
 	fillResolvedEntryOut(re.Inode, re, out)
 }
 
-// getParentInfo returns the inode and mode of a path parent directory.
 func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode uint32) {
 	parentDir := filepath.Dir(path)
 	if parentDir == "." {
@@ -2086,7 +2023,6 @@ func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode ui
 	return
 }
 
-// applyACLOwnership sets default ownership on a path if ACL config specifies it.
 func (fs *MutableFS) applyACLOwnership(absPath string) {
 	uid := fs.acl.OwnerUID
 	gid := fs.acl.OwnerGID
@@ -2120,9 +2056,6 @@ func (fs *MutableFS) Close() {
 	fs.handles = nil
 }
 
-// --- Fill Helpers ---
-
-// fillResolvedEntryOut fills a FUSE EntryOut from a ResolvedEntry.
 func fillResolvedEntryOut(ino uint64, re *ResolvedEntry, out *fuse.EntryOut) {
 	out.NodeId = ino
 	out.Generation = 1
@@ -2153,7 +2086,6 @@ func fillResolvedEntryOut(ino uint64, re *ResolvedEntry, out *fuse.EntryOut) {
 	a.Blksize = 4096
 }
 
-// fillResolvedAttrOut fills a FUSE AttrOut from a ResolvedEntry.
 func fillResolvedAttrOut(re *ResolvedEntry, out *fuse.AttrOut) {
 	out.AttrValid = 1
 	out.AttrValidNsec = uint32(time.Second)
@@ -2190,7 +2122,6 @@ func fillResolvedAttrOut(re *ResolvedEntry, out *fuse.AttrOut) {
 	a.Blksize = 4096
 }
 
-// fillAttrFromNode fills FUSE attributes from a GraphNode.
 func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Size = n.Size
 	attr.Blocks = (n.Size + 511) / 512
@@ -2213,7 +2144,6 @@ func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Blksize = 4096
 }
 
-// munmap unmaps a memory-mapped region.
 func munmap(data []byte) error {
 	if len(data) == 0 {
 		return nil
@@ -2221,13 +2151,16 @@ func munmap(data []byte) error {
 	return syscall.Munmap(data)
 }
 
-// mmapFile memory-maps a file, falling back to ReadAll on error.
 func mmapFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	fi, err := f.Stat()
 	if err != nil {

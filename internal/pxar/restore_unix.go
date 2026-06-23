@@ -15,6 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/format"
 	"golang.org/x/sys/unix"
@@ -26,14 +27,14 @@ const (
 	XATTR_NAME_ACL_DEFAULT = "system.posix_acl_default"
 )
 
-// applyMeta applies metadata to a restored file. Every individual metadata
-// operation error (chown, chmod, setxattr, utimes, ACL write, ...) is reported
-// to the server IMMEDIATELY via st.reportErr the instant it happens  -  errors
-// are never batched or deferred. Metadata failures are non-fatal (the file
-// content is already in place), so applyMeta always returns nil; the operator
-// sees each failure as its own line in the task log.
+// reported immediately via reportErr; the function always returns nil since
+// metadata failures are non-fatal (content is already in place).
 func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.FileInfo) error {
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	fd := int(file.Fd())
 	path := file.Name()
@@ -45,15 +46,9 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 
 	xattrs, lerr := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 	if lerr != nil {
-		// Listing xattrs failed (RPC error). Report it immediately but
-		// continue applying the metadata we do have (mode/owner/times).
 		st.reportErr(ctx, "list xattrs", path, lerr)
 	}
 
-	// chown BEFORE chmod: on Linux chown(2) clears the set-user-ID and
-	// set-group-ID bits, so applying the mode first and then changing the
-	// owner would silently strip suid/sgid from restored binaries. Doing
-	// chown first lets the subsequent Fchmod reinstate them.
 	if st.fsCap.supportsChown {
 		st.reportErr(ctx, "chown", path, unix.Fchown(fd, uid, gid))
 	}
@@ -89,10 +84,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 
 		if st.fsCap.supportsACLs {
 			if d, ok := xattrs["user.acls"]; ok {
-				// Only POSIX ACLs can be represented on a Unix destination. A
-				// Windows-source payload ([]WinACL) would otherwise be decoded
-				// into zero-value PosixACL entries and written as a corrupt
-				// system.posix_acl_access/default xattr.
 				if detectACLFlavor(d) == aclPosix {
 					var entries []types.PosixACL
 					if uerr := cbor.Unmarshal(d, &entries); uerr != nil {
@@ -107,12 +98,10 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 			delete(xattrs, "user.acls")
 		}
 
-		// Re-apply ownership if the xattrs overrode uid/gid (user.owner/group).
-		// Done after the parse above so the restored numeric ids win; chmod
-		// has already run, so suid/sgid are preserved.
+		// Re-apply ownership if the xattrs overrode uid/gid; chmod may have
+		// cleared suid/sgid again.
 		if st.fsCap.supportsChown && (uid != int(e.RawUID) || gid != int(e.RawGID)) {
 			st.reportErr(ctx, "chown (xattr override)", path, unix.Fchown(fd, uid, gid))
-			// chown may have cleared suid/sgid again; reinstate the mode.
 			st.reportErr(ctx, "chmod (xattr override)", path, unix.Fchmod(fd, uint32(e.RawMode&0777)))
 		}
 
@@ -137,8 +126,6 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	return nil
 }
 
-// applyUnixACLsFd writes the POSIX access/default ACLs. Each ACL write error
-// is reported immediately via st.reportErr.
 func applyUnixACLsFd(ctx context.Context, st *restoreState, fd int, path string, entries []types.PosixACL) {
 	knownTags := map[string]struct{}{
 		"user_obj": {}, "user": {}, "group_obj": {},
@@ -146,9 +133,6 @@ func applyUnixACLsFd(ctx context.Context, st *restoreState, fd int, path string,
 	}
 	var acc, def []types.PosixACL
 	for _, ent := range entries {
-		// Skip entries that don't carry a recognized POSIX ACL tag; an
-		// empty/unknown tag would otherwise be packed as tag 0 and corrupt
-		// the on-disk ACL.
 		if _, ok := knownTags[ent.Tag]; !ok {
 			continue
 		}
@@ -182,9 +166,8 @@ func packACL(entries []types.PosixACL) []byte {
 	return buf
 }
 
-// applyMetaSymlink applies owner and xattrs to a symlink. Each operation error
-// is reported immediately via st.reportErr; the function always returns nil
-// (metadata failures are non-fatal, the link itself is already created).
+// applyMetaSymlink applies owner and xattrs to a symlink. Each error is
+// reported immediately via reportErr; the function always returns nil.
 func applyMetaSymlink(ctx context.Context, st *restoreState, path string, e pxar.FileInfo) error {
 	uid, gid := int(e.RawUID), int(e.RawGID)
 	xattrs, lerr := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
@@ -223,10 +206,7 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, path string, e pxar
 	return nil
 }
 
-// applyTempMode gives a freshly-written temp file sensible permissions before
-// its atomic rename in no-attr mode (os.CreateTemp creates files 0600). When
-// the archive recorded a mode it is honored; otherwise 0666 matches the
-// previous direct OpenFile(..., 0666) behavior (subject to the process umask).
+// applyTempMode sets a freshly-written temp file to 0666 (subject to umask)
 func applyTempMode(path string, rawMode uint64) error {
 	mode := os.FileMode(0o666)
 	if rawMode != 0 {
@@ -274,9 +254,13 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 			if opErr == nil || os.IsExist(opErr) {
 				if f, openErr := os.OpenFile(target, os.O_RDONLY, 0); openErr == nil {
 					if !st.noAttr {
-						_ = applyMeta(ctx, st, f, e)
+						if err := applyMeta(ctx, st, f, e); err != nil {
+							syslog.L.Error(err).Write()
+						}
 					} else {
-						f.Close()
+						if err := f.Close(); err != nil {
+							syslog.L.Error(err).Write()
+						}
 					}
 				} else {
 					opErr = fmt.Errorf("open special file %q: %w", target, openErr)

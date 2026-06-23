@@ -9,9 +9,6 @@ import (
 	pxar "github.com/pbs-plus/pxar"
 )
 
-// Stub for non-Linux builds. PxarReader is only available on Linux (PBS server).
-
-// PxarReaderStats is a stub for non-Linux builds.
 type PxarReaderStats struct{}
 
 type PxarReader struct{}

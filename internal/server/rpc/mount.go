@@ -95,7 +95,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 			"drive":    args.Drive,
 		}).Write()
 
-	// Retrieve the backup from the database.
 	backup, err := s.Store.Database.GetBackup(args.BackupID)
 	if err != nil {
 		reply.Status = 404
@@ -103,14 +102,12 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	// Create a context with a 2-minute timeout.
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
 
 	// Retrieve the ARPC session for the target (QUIC preferred, TCP fallback).
 	var respMsg string
 	if qPipe, ok := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname); ok {
-		// Prepare the backup request.
 		backupReq := types.BackupReq{
 			Drive:      args.Drive,
 			BackupID:   args.BackupID,
@@ -158,11 +155,9 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return errors.New(reply.Message)
 	}
 
-	// Parse the backup response message (format: "backupMode|namespace").
 	backupRespSplit := strings.Split(respMsg, "|")
 	backupMode := backupRespSplit[0]
 
-	// If a namespace is provided in the backup response, update the backup.
 	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
 		backup.Namespace = backupRespSplit[1]
 		if err := s.Store.Database.UpdateBackup(nil, backup); err != nil {
@@ -180,7 +175,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return errors.New(reply.Message)
 	}
 
-	// Set up the local mount path.
 	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
 
 	if err := arpcfs.MountARPC(arpcFS, mntPath); err != nil {
@@ -192,7 +186,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	sessions.NewARPCFSMount(backup.GetStreamID(), arpcFS)
 
-	// Set the reply values.
 	reply.Status = 200
 	reply.Message = backupMode + "|" + backup.Namespace
 	reply.BackupMode = backupMode
@@ -218,7 +211,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 			"prefix":   args.Prefix,
 		}).Write()
 
-	// Retrieve the backup from the database.
 	backup, err := s.Store.Database.GetBackup(args.BackupID)
 	if err != nil {
 		reply.Status = 404
@@ -243,7 +235,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 		return errors.New(reply.Message)
 	}
 
-	// Set up the local mount path.
 	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
 
 	if err := s3fs.MountS3(s3FS, mntPath); err != nil {
@@ -255,7 +246,6 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 
 	sessions.NewS3FSMount(backup.GetStreamID(), s3FS)
 
-	// Set the reply values.
 	reply.Status = 200
 	reply.Message = backup.Namespace
 
@@ -349,7 +339,6 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 			"target":   args.TargetHostname,
 		}).Write()
 
-	// Check QUIC pipe first, then TCP for the control connection.
 	_, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
 	_, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	controlOk := qExists || tExists
@@ -370,8 +359,9 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 }
 
 func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
-	// Remove any stale socket file.
-	_ = os.RemoveAll(socketPath)
+	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
+		syslog.L.Error(err).Write()
+	}
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", socketPath, err)
@@ -383,12 +373,10 @@ func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath str
 		jobCtxCancels: safemap.New[string, context.CancelFunc](),
 	}
 
-	// Register the RPC service.
 	if err := rpc.Register(service); err != nil {
 		return fmt.Errorf("failed to register rpc service: %v", err)
 	}
 
-	// Start accepting connections.
 	ready := make(chan struct{})
 
 	go func() {
@@ -422,7 +410,9 @@ func RunRPCServer(ctx context.Context, socketPath string, storeInstance *store.S
 			WithMessage("rpc mount server shutting down due to context cancellation").
 			WithField("socket", socketPath).
 			Write()
-		_ = os.Remove(socketPath)
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 	case <-watcher:
 		syslog.L.Info().
 			WithMessage("rpc mount server shut down unexpectedly").

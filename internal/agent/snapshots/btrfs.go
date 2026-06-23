@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type BtrfsSnapshotHandler struct{}
@@ -22,8 +24,9 @@ func (b *BtrfsSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (
 	snapshotPath := filepath.Join(tmpDir, "pbs-plus-btrfs", jobID)
 	timeStarted := time.Now()
 
-	// Cleanup existing snapshot
-	_ = b.DeleteSnapshot(Snapshot{Path: snapshotPath})
+	if err := b.DeleteSnapshot(Snapshot{Path: snapshotPath}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

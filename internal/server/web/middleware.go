@@ -15,15 +15,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// contextKey is an unexported type for context keys defined in this package.
 type contextKey int
 
 const (
 	requestIDKey contextKey = iota
 )
 
-// GetRequestID extracts the request ID from the given context.
-// Returns an empty string if no request ID is present.
 func GetRequestID(ctx context.Context) string {
 	if v, ok := ctx.Value(requestIDKey).(string); ok {
 		return v
@@ -31,8 +28,6 @@ func GetRequestID(ctx context.Context) string {
 	return ""
 }
 
-// RequestID generates a UUID, sets the X-Request-ID response header,
-// and stores the ID in the request context for downstream handlers.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := uuid.New().String()
@@ -42,7 +37,6 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder wraps http.ResponseWriter to capture the status code.
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
@@ -53,8 +47,6 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// RequestLogger returns middleware that logs each request with method, path,
-// status code, duration, and request ID using the provided slog.Logger.
 func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +67,6 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// Recovery catches panics, logs the stack trace, and returns a 500 response.
 func Recovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -96,7 +87,6 @@ func Recovery(next http.Handler) http.Handler {
 	})
 }
 
-// RequireAgentAuth returns middleware that enforces agent certificate authentication.
 func RequireAgentAuth(st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -116,8 +106,6 @@ func RequireAgentAuth(st *store.Store) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireServerAuth returns middleware that enforces PBS proxy cookie auth
-// or localhost access.
 func RequireServerAuth(st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -135,8 +123,6 @@ func RequireServerAuth(st *store.Store) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireAgentOrServerAuth returns middleware that tries agent auth first,
-// then falls back to server auth.
 func RequireAgentOrServerAuth(st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,4 +163,3 @@ func RequireAgentOrServerAuth(st *store.Store) func(http.Handler) http.Handler {
 // between Recovery and Auth middleware. The order is:
 //   RequestID → RequestLogger → Recovery → RateLimiter → Auth
 // A simple token-bucket or golang.org/x/time/rate based limiter
-// keyed by remote address would be the recommended approach.

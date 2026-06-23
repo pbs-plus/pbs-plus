@@ -3,11 +3,11 @@
 package agentfs
 
 type fileStandardInfo struct {
-	AllocationSize int64  // LARGE_INTEGER
-	EndOfFile      int64  // LARGE_INTEGER
-	NumberOfLinks  uint32 // DWORD
-	DeletePending  byte   // BOOLEAN
-	Directory      byte   // BOOLEAN
+	AllocationSize int64
+	EndOfFile      int64
+	NumberOfLinks  uint32
+	DeletePending  byte
+	Directory      byte
 	_              [2]byte
 }
 
@@ -53,7 +53,7 @@ type fileNetworkOpenInformation struct {
 	AllocationSize int64
 	EndOfFile      int64
 	FileAttributes uint32
-	_              uint32 // alignment
+	_              uint32
 }
 
 type allocatedRange struct {
@@ -62,11 +62,7 @@ type allocatedRange struct {
 }
 
 type systemInfo struct {
-	// This is the first member of the union
-	OemID uint32
-	// These are the second member of the union
-	//      ProcessorArchitecture uint16;
-	//      Reserved uint16;
+	OemID                     uint32
 	PageSize                  uint32
 	MinimumApplicationAddress uintptr
 	MaximumApplicationAddress uintptr

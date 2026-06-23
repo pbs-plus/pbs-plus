@@ -8,17 +8,17 @@ import (
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 )
 
 func TestFlattenMtfJobShape(t *testing.T) {
-	job := mtfstore.MTFJob{
+	job := store.MTFJob{
 		ID:         "mtf-1",
 		SourceKind: "family",
 		SourceRef:  "42",
 		Datastore:  "local",
 		Namespace:  "base",
-		History: mtfstore.JobHistory{
+		History: store.JobHistory{
 			LastRunUpid:    "UPID:abc",
 			LastRunState:   "OK",
 			LastRunStatus:  database.JobStatusSuccess,

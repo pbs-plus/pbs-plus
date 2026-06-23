@@ -3,10 +3,10 @@ package pxarmount
 import (
 	"flag"
 	"fmt"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"os"
 )
 
-// SnapshotRefForInit returns a snapshotRef suitable for init mode.
 func SnapshotRefForInit(namespace string) snapshotRef {
 	return snapshotRef{
 		Namespace:  namespace,
@@ -14,7 +14,6 @@ func SnapshotRefForInit(namespace string) snapshotRef {
 	}
 }
 
-// RunInitSubcommand is the CLI entry point for `pxar-mount init`.
 func RunInitSubcommand() {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	pbsStore := fs.String("pbs-store", "", "PBS datastore root path (required)")
@@ -32,7 +31,9 @@ func RunInitSubcommand() {
 	_ = fs.Bool("force-acl-owner", false, "")
 	_ = fs.Bool("force-acl-group", false, "")
 
-	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		syslog.L.Error(err).Write()
+	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *pbsStore == "" {
 		fmt.Fprintf(os.Stderr, "Usage: pxar-mount init --pbs-store <path> --socket <path> [--passthrough <dir>] [--namespace <ns>] [--verbose] <mountpoint>\n\n")

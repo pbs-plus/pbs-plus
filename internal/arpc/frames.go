@@ -31,7 +31,6 @@ func (r RejectionFrame) Error() string {
 }
 
 func writeRejectionFrame(s ARPCStream, rejection RejectionFrame) error {
-	// Send marker byte to indicate rejection (0x00 = rejection, 0x01 = success)
 	if _, err := s.Write(rejectionMarker); err != nil {
 		return err
 	}
@@ -87,13 +86,13 @@ func readHandshakeResponse(s ARPCStream) error {
 	}
 
 	switch marker[0] {
-	case 0x00: // Rejection
+	case 0x00:
 		rejection, err := readRejectionFrame(s)
 		if err != nil {
 			return fmt.Errorf("connection rejected (failed to parse rejection: %w)", err)
 		}
 		return rejection
-	case 0x01: // Success
+	case 0x01:
 		return nil
 	default:
 		return fmt.Errorf("invalid handshake response marker: 0x%02X", marker[0])

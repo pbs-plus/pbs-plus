@@ -9,7 +9,6 @@ import (
 	"fmt"
 )
 
-// calculateDigest returns the SHA-256 hex digest of the JSON encoding of data.
 func calculateDigest(data any) (string, error) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {

@@ -139,7 +139,7 @@ func ValidateFileName(fileName string) error {
 
 func ValidateSnapshot(snapshot string) error {
 	if snapshot == "" {
-		return nil // Optional field
+		return nil
 	}
 	return validatePathComponent("snapshot", snapshot, snapshotRegex, 512)
 }
@@ -166,7 +166,7 @@ func ValidateSubpath(name, subpath string) error {
 
 func ValidateScriptPath(name, scriptPath string) error {
 	if scriptPath == "" {
-		return nil // Optional field
+		return nil
 	}
 
 	if len(scriptPath) > 4096 {
@@ -264,7 +264,6 @@ func IsPathWithin(base, p string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// Slugify replaces spaces with hyphens.
 func Slugify(input string) string {
 	runes := []rune(input)
 	var hasHyphen, hasSpace bool
@@ -402,9 +401,9 @@ func SaveScriptToFile(scriptContent string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create file in directory %s: %w", conf.ScriptsBasePath, err)
 	}
-	defer tmpfile.Close()
+	defer func() { _ = tmpfile.Close() }()
 	if _, err := tmpfile.WriteString(scriptContent); err != nil {
-		os.Remove(tmpfile.Name())
+		_ = os.Remove(tmpfile.Name())
 		return "", fmt.Errorf("failed to write script to file %s: %w", tmpfile.Name(), err)
 	}
 	return tmpfile.Name(), nil

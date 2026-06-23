@@ -1,10 +1,11 @@
-package mtfstore
+package store
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func (d *Database) ListMediaFamilies(ctx context.Context) ([]MediaFamily, error) {
@@ -28,9 +29,15 @@ func (d *Database) GetMediaFamily(ctx context.Context, id int64) (MediaFamily, e
 }
 
 func (d *Database) enrichFamily(ctx context.Context, f MediaFamily) MediaFamily {
-	carts, _ := d.readQueries.ListCartridgesByFamily(ctx, f.ID)
+	carts, err := d.readQueries.ListCartridgesByFamily(ctx, f.ID)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	f.CartridgeCount = len(carts)
-	dsets, _ := d.readQueries.ListDataSetsByFamily(ctx, f.ID)
+	dsets, err := d.readQueries.ListDataSetsByFamily(ctx, f.ID)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	f.DataSetCount = len(dsets)
 	if f.Name == "" {
 		f.Name = fmt.Sprintf("Media-Family-%d", f.ID)
@@ -136,7 +143,10 @@ func (d *Database) ListDataSetsByFamily(ctx context.Context, familyID int64) ([]
 	out := make([]DataSet, 0, len(rows))
 	for _, r := range rows {
 		ds := dataSetFromRow(r)
-		vols, _ := d.readQueries.ListVolumesByDataSet(ctx, r.ID)
+		vols, err := d.readQueries.ListVolumesByDataSet(ctx, r.ID)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		ds.Volumes = volumesFromRows(vols)
 		out = append(out, ds)
 	}
@@ -149,7 +159,10 @@ func (d *Database) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 		return DataSet{}, mapErr(err, "data set")
 	}
 	ds := dataSetFromRow(r)
-	vols, _ := d.readQueries.ListVolumesByDataSet(ctx, r.ID)
+	vols, err := d.readQueries.ListVolumesByDataSet(ctx, r.ID)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	ds.Volumes = volumesFromRows(vols)
 	return ds, nil
 }

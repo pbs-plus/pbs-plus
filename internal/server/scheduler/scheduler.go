@@ -11,8 +11,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfjob"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
+	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
@@ -26,7 +26,7 @@ type Scheduler struct {
 	cancel         context.CancelFunc
 	storeInstance  *store.Store
 	manager        *jobs.Manager
-	lastEnqueued   map[string]time.Time // tracks last scheduled run time per backup ID
+	lastEnqueued   map[string]time.Time
 	lastEnqueuedMu sync.Mutex
 }
 
@@ -85,7 +85,6 @@ func (s *Scheduler) checkBackups() {
 			continue
 		}
 
-		// Handle calendar schedule
 		if b.Schedule != "" {
 			if nextRun, ok := s.shouldRunScheduled(b, now); ok {
 				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: scheduled backup is due, enqueuing").Write()
@@ -96,7 +95,6 @@ func (s *Scheduler) checkBackups() {
 			}
 		}
 
-		// Handle retries using typed status and persistent retry count
 		if b.Retry > 0 && s.shouldRetryBackup(b, now) {
 			syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
 			job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
@@ -105,12 +103,8 @@ func (s *Scheduler) checkBackups() {
 	}
 }
 
-// shouldRunScheduled returns the next run time and true if the backup should be
-// enqueued now. It uses the later of (last enqueued time, last run start time)
 // as the reference point to prevent duplicate launches.
-//
 // On restart, the in-memory lastEnqueued map is lost, so we guard against
-// spuriously catching up on missed schedules by only enqueueing if the
 // scheduled time fell within the current check interval.
 func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.Time, bool) {
 	ev, err := calendar.Parse(b.Schedule)
@@ -132,28 +126,22 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 		return time.Time{}, false
 	}
 
-	// If nextRun is in the future, the schedule hasn't been reached yet.
 	if nextRun.After(now) {
 		return time.Time{}, false
 	}
 
-	// nextRun is in the past. Only enqueue if the scheduled time fell within
 	// the current check interval (30s). This prevents catch-up runs on restart
-	// for schedules that were missed while the service was down, while still
-	// allowing legitimate runs within the current tick.
 	if now.Sub(nextRun) < schedulerTickInterval {
 		return nextRun, true
 	}
 
 	// The scheduled time was missed by more than one check interval.
-	// Recompute from now so we know the real next future occurrence.
 	futureRun, err := calendar.ComputeNextEvent(ev, now, time.Local)
 	if err != nil {
 		return time.Time{}, false
 	}
 
 	// Mark this future run as already counted so we don't re-trigger
-	// on the next tick when nextRun is <= now.
 	s.markEnqueued(b.ID, futureRun)
 
 	return time.Time{}, false
@@ -182,11 +170,9 @@ func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
 		return false
 	}
 
-	// Use typed status for retry decision - much more reliable than string parsing
 	// Fall back to legacy string parsing for records before migration
 	shouldRetry := b.History.LastRunStatus.ShouldRetry()
 	if b.History.LastRunStatus == database.JobStatusUnknown {
-		// For pre-migration records or uninitialized status, fall back to string parsing
 		shouldRetry = isFailedState(b.History.LastRunState)
 	}
 
@@ -194,7 +180,6 @@ func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
 		return false
 	}
 
-	// Use persistent retry count - this survives restarts and log rotation
 	return b.History.RetryCount < b.Retry
 }
 
@@ -212,7 +197,6 @@ func (s *Scheduler) checkRestores() {
 			continue
 		}
 
-		// Handle retries using typed status and persistent retry count
 		if r.Retry > 0 && s.shouldRetryRestore(r, now) {
 			syslog.L.Info().WithField("restoreID", r.ID).WithMessage("Scheduler: restore retry is due, enqueuing").Write()
 			job, err := restore.NewRestoreJob(r, s.storeInstance, false, false)
@@ -235,10 +219,8 @@ func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
 		return false
 	}
 
-	// Use typed status for retry decision
 	shouldRetry := r.History.LastRunStatus.ShouldRetry()
 	if r.History.LastRunStatus == database.JobStatusUnknown {
-		// For pre-migration records, fall back to string parsing
 		shouldRetry = isFailedState(r.History.LastRunState)
 	}
 
@@ -246,7 +228,6 @@ func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
 		return false
 	}
 
-	// Use persistent retry count
 	return r.History.RetryCount < r.Retry
 }
 
@@ -271,7 +252,7 @@ func (s *Scheduler) checkMtfJobs() {
 			if nextRun, ok := s.shouldRunScheduledMtf(mj, now); ok {
 				syslog.L.Info().WithField("mtfJobID", mj.ID).WithMessage("Scheduler: scheduled MTF job is due, enqueuing").Write()
 				s.markEnqueued(mj.ID, nextRun)
-				if job, err := mtfjob.NewMtfJob(mj.ID, s.storeInstance, false); err == nil {
+				if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
 					go s.enqueueMtf(mj.ID, job)
 				} else {
 					syslog.L.Error(err).WithField("mtfJobID", mj.ID).Write()
@@ -282,7 +263,7 @@ func (s *Scheduler) checkMtfJobs() {
 
 		if mj.Retry > 0 && s.shouldRetryMtf(mj, now) {
 			syslog.L.Info().WithField("mtfJobID", mj.ID).WithMessage("Scheduler: MTF job retry is due, enqueuing").Write()
-			if job, err := mtfjob.NewMtfJob(mj.ID, s.storeInstance, false); err == nil {
+			if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
 				go s.enqueueMtf(mj.ID, job)
 			} else {
 				syslog.L.Error(err).WithField("mtfJobID", mj.ID).Write()
@@ -291,7 +272,7 @@ func (s *Scheduler) checkMtfJobs() {
 	}
 }
 
-func (s *Scheduler) shouldRunScheduledMtf(mj mtfstore.MTFJob, now time.Time) (time.Time, bool) {
+func (s *Scheduler) shouldRunScheduledMtf(mj mtfdb.MTFJob, now time.Time) (time.Time, bool) {
 	ev, err := calendar.Parse(mj.Schedule)
 	if err != nil {
 		return time.Time{}, false
@@ -321,7 +302,7 @@ func (s *Scheduler) shouldRunScheduledMtf(mj mtfstore.MTFJob, now time.Time) (ti
 	return time.Time{}, false
 }
 
-func (s *Scheduler) shouldRetryMtf(mj mtfstore.MTFJob, now time.Time) bool {
+func (s *Scheduler) shouldRetryMtf(mj mtfdb.MTFJob, now time.Time) bool {
 	if mj.History.LastRunEndtime == 0 {
 		return false
 	}
@@ -358,7 +339,6 @@ func (s *Scheduler) enqueueRestore(id string, job *jobs.Job) {
 
 // isFailedState provides backward compatibility for legacy records that don't have
 // the typed LastRunStatus field. It parses the string status to determine if
-// a retry should be attempted.
 func isFailedState(state string) bool {
 	return database.JobStatusFromString(state).ShouldRetry()
 }
@@ -441,7 +421,6 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 		return
 	}
 
-	// Get the completed backup job to find its store/namespace
 	completedBackup, err := s.storeInstance.Database.GetBackup(backupJobID)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("TriggerPendingVerifications: failed to get backup job").Write()
@@ -453,7 +432,6 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 			continue
 		}
 
-		// Check if this verification job is relevant to the completed backup
 		matched := false
 		if vJob.TargetMode == "backup_job" && vJob.BackupJobID == backupJobID {
 			matched = true
@@ -479,7 +457,6 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 			WithField("backupJobID", backupJobID).
 			WithMessage("backup completed, triggering pending verification").Write()
 
-		// Clear pending state
 		vJob.PendingSince = 0
 		if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
 			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("failed to clear pending_since").Write()

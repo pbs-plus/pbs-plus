@@ -1,4 +1,4 @@
-package mtfstore
+package store
 
 import (
 	"context"
@@ -6,7 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const mtfJobMaxAttempts = 100
@@ -267,9 +268,10 @@ func toInt64(s string) int64 {
 	return ToInt64(s)
 }
 
-// ToInt64 parses a decimal integer from s, returning 0 on failure.
 func ToInt64(s string) int64 {
 	var n int64
-	_, _ = fmt.Sscanf(s, "%d", &n)
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return n
 }

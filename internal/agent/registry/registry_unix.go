@@ -19,6 +19,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/gofrs/flock"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const (
@@ -52,8 +54,12 @@ type legacyData struct {
 }
 
 func init() {
-	_ = os.MkdirAll(registryDir, 0o755)
-	_ = migrateLegacy()
+	if err := os.MkdirAll(registryDir, 0o755); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := migrateLegacy(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func withLock(readOnly bool, fn func() error) error {
@@ -67,7 +73,11 @@ func withLock(readOnly bool, fn func() error) error {
 			return err
 		}
 	}
-	defer func() { _ = f.Unlock() }()
+	defer func() {
+		if err := f.Unlock(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	return fn()
 }
 
@@ -111,7 +121,6 @@ func lcPath(p string) string {
 		return "root"
 	}
 	// Replace Windows backslashes with forward slashes for a unified Linux feel
-	// while avoiding the "dot" recursion that causes TOML duplication
 	p = strings.ReplaceAll(p, "\\", "/")
 	return strings.ToLower(strings.Trim(p, "/"))
 }
@@ -125,7 +134,9 @@ func getEncryptionKey() ([]byte, error) {
 		return keyData, nil
 	}
 	if keyData, err := os.ReadFile(legacyKeyFile); err == nil && len(keyData) == 32 {
-		_ = writeFileAtomic(keyFile, keyData, 0o600)
+		if err := writeFileAtomic(keyFile, keyData, 0o600); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return keyData, nil
 	}
 	key := make([]byte, 32)
@@ -211,23 +222,39 @@ func saveRegistry(reg fullRegistry) error {
 
 func writeFileAtomic(dst string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(dst)
-	_ = os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	tmp, err := os.CreateTemp(dir, ".tmp-reg-*")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
+	success := false
 	defer func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
+		if err := tmp.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if !success {
+			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+				syslog.L.Error(err).Write()
+			}
+		}
 	}()
 	if _, err := tmp.Write(data); err != nil {
 		return err
 	}
-	_ = tmp.Chmod(perm)
-	_ = tmp.Sync()
-	_ = tmp.Close()
-	return os.Rename(tmpName, dst)
+	if err := tmp.Chmod(perm); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := tmp.Sync(); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := os.Rename(tmpName, dst); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 func migrateLegacy() error {
@@ -243,13 +270,16 @@ func migrateLegacy() error {
 			return nil
 		}
 		reg := make(fullRegistry)
-		_ = filepath.Walk(legacyRegistryBasePath, func(path string, info os.FileInfo, err error) error {
+		if err := filepath.Walk(legacyRegistryBasePath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
 			if strings.HasSuffix(info.Name(), ".json") && info.Name() != metaFileName {
 				p := strings.TrimSuffix(info.Name(), ".json")
-				b, _ := os.ReadFile(path)
+				b, err := os.ReadFile(path)
+				if err != nil {
+					syslog.L.Error(err).Write()
+				}
 				var ld legacyData
 				if err := json.Unmarshal(b, &ld); err == nil {
 					pathKey := lcPath(p)
@@ -262,17 +292,25 @@ func migrateLegacy() error {
 				}
 			}
 			if strings.HasSuffix(info.Name(), valueFileSuffix) {
-				rel, _ := filepath.Rel(legacyRegistryBasePath, filepath.Dir(path))
+				rel, err := filepath.Rel(legacyRegistryBasePath, filepath.Dir(path))
+				if err != nil {
+					syslog.L.Error(err).Write()
+				}
 				pathKey := lcPath(rel)
 				keyName := strings.TrimSuffix(info.Name(), valueFileSuffix)
 				if reg[pathKey] == nil {
 					reg[pathKey] = make(map[string]string)
 				}
-				b, _ := os.ReadFile(path)
+				b, err := os.ReadFile(path)
+				if err != nil {
+					syslog.L.Error(err).Write()
+				}
 				reg[pathKey][toTomlKey(keyName)] = string(b)
 			}
 			return nil
-		})
+		}); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if len(reg) > 0 {
 			return saveRegistry(reg)
 		}

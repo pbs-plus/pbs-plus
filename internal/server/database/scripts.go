@@ -22,7 +22,9 @@ func (database *Database) CreateScript(tx *Transaction, script Script) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -69,7 +71,9 @@ func (database *Database) UpdateScript(tx *Transaction, script Script) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -116,7 +120,9 @@ func (database *Database) DeleteScript(tx *Transaction, name string) (err error)
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {

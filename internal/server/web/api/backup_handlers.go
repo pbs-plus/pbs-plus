@@ -43,7 +43,11 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			if staleDays <= 0 {
 				staleDays = 7
 			}
-			excludedJobs, _ = storeInstance.Database.GetExcludedValues("stale-backup", "job")
+			excluded, err := storeInstance.Database.GetExcludedValues("stale-backup", "job")
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
+			excludedJobs = excluded
 		}
 
 		flatBackups := FlattenBackups(allBackups, staleDays, skipUnscheduled, excludedJobs)
@@ -61,7 +65,9 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toReturn)
+		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -99,7 +105,11 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
-			defer rpcClient.Close()
+			defer func() {
+				if err := rpcClient.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
+			}()
 
 			for _, backupID := range decodedBackupIDs {
 				backupTask, err := storeInstance.Database.GetBackup(backupID)
@@ -129,7 +139,9 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -283,7 +295,9 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		response.Status = http.StatusOK
 		response.Success = true
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -481,7 +495,9 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -504,7 +520,9 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			flat := FlattenBackupForEdit(backup)
 			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", backup.ID)
 			response.Data = flat
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}
@@ -524,7 +542,9 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 	}
@@ -556,7 +576,9 @@ func ExtJsBackupUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			response.Data = backup.GetAllUPIDs()
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 
 			return
 		}

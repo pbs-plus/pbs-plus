@@ -14,8 +14,6 @@ import (
 )
 
 // CircuitBreaker prevents cascading failures when a downstream dependency
-// is degraded. After threshold consecutive failures, the circuit opens
-// and immediately rejects calls for the duration of halfOpenAfter.
 type CircuitBreaker struct {
 	mu            sync.Mutex
 	failures      int
@@ -25,8 +23,6 @@ type CircuitBreaker struct {
 	name          string
 }
 
-// NewCircuitBreaker creates a circuit breaker that opens after threshold
-// consecutive failures and stays open for halfOpenAfter.
 func NewCircuitBreaker(name string, threshold int, halfOpenAfter time.Duration) *CircuitBreaker {
 	return &CircuitBreaker{
 		name:          name,
@@ -35,12 +31,8 @@ func NewCircuitBreaker(name string, threshold int, halfOpenAfter time.Duration) 
 	}
 }
 
-// ErrCircuitOpen is returned when the circuit is open.
 var ErrCircuitOpen = errors.New("circuit breaker is open")
 
-// Call executes fn. If the circuit is open, it returns ErrCircuitOpen
-// immediately. Consecutive failures count toward opening the circuit.
-// A single success resets the failure count.
 func (cb *CircuitBreaker) Call(fn func() error) error {
 	cb.mu.Lock()
 	if cb.failures >= cb.threshold && time.Now().Before(cb.openUntil) {
@@ -77,7 +69,6 @@ func (cb *CircuitBreaker) Call(fn func() error) error {
 	return nil
 }
 
-// IsOpen returns true if the circuit breaker is currently open.
 func (cb *CircuitBreaker) IsOpen() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -86,7 +77,6 @@ func (cb *CircuitBreaker) IsOpen() bool {
 
 // IsRetryable returns true for errors that are safe to retry.
 // Network errors, timeouts, and deadlocks are retryable.
-// Validation errors, not-found, and forbidden are not.
 func IsRetryable(err error) bool {
 	if err == nil {
 		return false
@@ -98,8 +88,6 @@ func IsRetryable(err error) bool {
 }
 
 // WithRetry executes fn up to maxAttempts times with exponential backoff.
-// Only retries if the error is retryable (via IsRetryable).
-// Non-retryable errors are returned immediately.
 func WithRetry(ctx context.Context, maxAttempts int, fn func() error) error {
 	var err error
 	for attempt := range maxAttempts {

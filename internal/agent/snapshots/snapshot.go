@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Snapshot represents a generic snapshot
 type Snapshot struct {
 	Path        string          `json:"path"`
 	TimeStarted time.Time       `json:"time_started"`
@@ -14,7 +13,6 @@ type Snapshot struct {
 	Handler     SnapshotHandler `json:"-"`
 }
 
-// SnapshotHandler defines the interface for snapshot operations
 type SnapshotHandler interface {
 	CreateSnapshot(jobID string, sourcePath string) (Snapshot, error)
 	DeleteSnapshot(snapshot Snapshot) error

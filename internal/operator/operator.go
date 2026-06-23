@@ -70,16 +70,20 @@ func (o *Operator) Run(ctx context.Context) error {
 	)
 
 	pvcInformer := o.informerFactory.Core().V1().PersistentVolumeClaims().Informer()
-	pvcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := pvcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    o.handlePVCAdd,
 		UpdateFunc: o.handlePVCUpdate,
 		DeleteFunc: o.handlePVCDelete,
-	})
+	}); err != nil {
+		return err
+	}
 
 	podInformer := o.informerFactory.Core().V1().Pods().Informer()
-	podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		DeleteFunc: o.handlePodDelete,
-	})
+	}); err != nil {
+		return err
+	}
 
 	o.informerFactory.Start(ctx.Done())
 
@@ -135,7 +139,9 @@ func (o *Operator) handlePVCDelete(obj any) {
 			Write()
 
 		o.pvcTracker.Untrack(key)
-		o.podManager.CleanupForPVC(context.Background(), pvc)
+		if err := o.podManager.CleanupForPVC(context.Background(), pvc); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -178,7 +184,9 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 				WithField("pvc", key).
 				Write()
 			o.pvcTracker.Untrack(key)
-			o.podManager.CleanupForPVC(ctx, pvc)
+			if err := o.podManager.CleanupForPVC(ctx, pvc); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		return
 	}
@@ -200,14 +208,15 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 		oldForceSnapshot := oldPVC.Annotations[SnapshotAnnotation] == "true"
 		oldIsRWO := isReadWriteOnce(oldPVC)
 
-		// If snapshot mode changed, cleanup and recreate
 		if oldIsRWO != isRWO || oldForceSnapshot != forceSnapshot {
 			syslog.L.Info().
 				WithMessage("Snapshot mode changed, recreating backup pod").
 				WithField("pvc", key).
 				WithField("useSnapshot", useSnapshot).
 				Write()
-			o.podManager.CleanupForPVC(ctx, pvc)
+			if err := o.podManager.CleanupForPVC(ctx, pvc); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
@@ -226,7 +235,6 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 }
 
 func (o *Operator) ensureBackupPod(ctx context.Context, pvc *corev1.PersistentVolumeClaim, useSnapshot bool) error {
-	// Check if pod already exists
 	existing, err := o.podManager.GetBackupPod(ctx, pvc)
 	if err == nil && existing != nil {
 		// Pod exists, check if it needs update

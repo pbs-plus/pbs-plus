@@ -20,11 +20,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/sync"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// ErrHostNotExpected is returned when the server indicates the agent host
-// has been removed from the targets database and will not be accepted
 // until manually re-bootstrapped or re-added by an admin.
 var ErrHostNotExpected = errors.New("host not expected by server - requires re-bootstrap")
 
@@ -36,33 +35,34 @@ func isCertError(err error) bool {
 }
 
 // IsHostNotExpected checks if an error indicates the agent host was
-// deleted from the server's targets database. This only fires for
-// the main agent control connection (no backup/restore child IDs)
 // because ConnectARPC uses plain hostname without X-PBS-Plus-BackupID
-// or X-PBS-Plus-RestoreID headers.
 func IsHostNotExpected(err error) bool {
 	if errors.Is(err, ErrHostNotExpected) {
 		return true
 	}
 	msg := err.Error()
 	// Server-side rejection from AgentsManager.isExpected:
-	//   "connection is not expected by server"
 	// HTTP middleware rejection from checkAgentAuth when
-	// LoadAgentHostCert returns ErrAgentHostNotFound:
 	//   "CheckAgentAuth: certificate not trusted"
 	return strings.Contains(msg, "is not expected by server") ||
 		strings.Contains(msg, "CheckAgentAuth: certificate not trusted")
 }
 
 func ClearCertificates() {
-	_ = registry.DeleteEntry(registry.AUTH, "ServerCA")
-	_ = registry.DeleteEntry(registry.AUTH, "Cert")
-	_ = registry.DeleteEntry(registry.AUTH, "Priv")
+	if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	agent.InvalidateTLSConfigCache()
 }
 
 func UpdateDrives() error {
-	hostname, err := agent.GetAgentHostname()
+	hostname, err := host.AgentHostname()
 	if err != nil {
 		return err
 	}
@@ -91,8 +91,12 @@ func UpdateDrives() error {
 	if err != nil {
 		return err
 	}
-	_, _ = io.Copy(io.Discard, resp)
-	_ = resp.Close()
+	if _, err := io.Copy(io.Discard, resp); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := resp.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return nil
 }
 
@@ -116,16 +120,18 @@ func WaitForBootstrap(ctx context.Context) error {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		serverCA, _ := registry.GetEntry(registry.AUTH, "ServerCA", true)
-		cert, _ := registry.GetEntry(registry.AUTH, "Cert", true)
-		priv, _ := registry.GetEntry(registry.AUTH, "Priv", true)
+		serverCA, errCA := registry.GetEntry(registry.AUTH, "ServerCA", true)
+		cert, errCert := registry.GetEntry(registry.AUTH, "Cert", true)
+		priv, errPriv := registry.GetEntry(registry.AUTH, "Priv", true)
 
-		if serverCA != nil && cert != nil && priv != nil {
+		if errCA == nil && errCert == nil && errPriv == nil && serverCA != nil && cert != nil && priv != nil {
 			if err := agent.RenewCertificateIfExpiring(); err == nil {
 				return nil
 			}
 		} else {
-			_ = agent.Bootstrap()
+			if err := agent.Bootstrap(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -151,7 +157,7 @@ func ConnectARPC(
 	if err != nil {
 		return nil, err
 	}
-	clientId, err := agent.GetAgentHostname()
+	clientId, err := host.AgentHostname()
 	if err != nil {
 		return nil, err
 	}
@@ -273,10 +279,13 @@ func ConnectARPC(
 			router.Handle(
 				"ping",
 				func(req *arpc.Request) (arpc.Response, error) {
-					b, _ := cbor.Marshal(map[string]string{
+					b, err := cbor.Marshal(map[string]string{
 						"version":  version,
 						"hostname": clientId,
 					})
+					if err != nil {
+						return arpc.Response{}, err
+					}
 					return arpc.Response{Status: 200, Data: b}, nil
 				},
 			)
@@ -318,8 +327,6 @@ func ConnectARPC(
 					return
 				}
 				// QUIC closes the connection without a rejection frame
-				// when the host is not expected (success marker already
-				// sent). Probe via TCP to get the explicit rejection.
 				tcpPipe, probeErr := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 				if probeErr != nil {
 					tcpPipe = nil

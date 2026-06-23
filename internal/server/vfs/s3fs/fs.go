@@ -110,13 +110,19 @@ func NewS3FS(
 			WithMessage("Context done, cleaning up memcache and memlocal").
 			WithField("backupID", fs.Backup.ID).
 			Write()
-		fs.Memcache.DeleteAll()
-		fs.Memcache.Close()
+		if err := fs.Memcache.DeleteAll(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := fs.Memcache.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		fs.TotalBytes.Reset()
 		fs.FolderCount.Reset()
 		fs.FileCount.Reset()
 		fs.StatCacheHits.Reset()
-		stopMemLocal()
+		if err := stopMemLocal(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	return fs
@@ -215,13 +221,17 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 
 	if raw, err := cbor.Marshal(fi); err == nil {
 		if isLookup {
-			fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0})
+			if err := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
 	if !isLookup {
 		if !fi.IsDir {
-			fs.Memcache.Delete(cacheKey)
+			if err := fs.Memcache.Delete(cacheKey); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			fs.FileCount.Add(1)
 			syslog.L.Debug().
 				WithMessage("Attr counted file and cleared cache").
@@ -288,7 +298,9 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 		}
 	}
 
-	fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix))
+	if err := fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix)); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
@@ -338,7 +350,9 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 
 		itemKey := fs.GetCacheKey(attrPrefix, fs.fullKey(path.Join(fpath, name)))
 		if raw, err := cbor.Marshal(entry); err == nil {
-			fs.Memcache.Set(&memcache.Item{Key: itemKey, Value: raw, Expiration: 0})
+			if err := fs.Memcache.Set(&memcache.Item{Key: itemKey, Value: raw, Expiration: 0}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
@@ -355,7 +369,6 @@ func (fs *S3FS) Root() string {
 	return fs.BasePath
 }
 
-// logOnce logs a single error line per unique path. Retries for the same
 // path are suppressed to avoid noisy duplicate entries in task logs.
 func (fs *S3FS) logOnce(path string, err error, op string) {
 	if isIgnoredS3Path(path) {
@@ -371,9 +384,7 @@ func (fs *S3FS) logOnce(path string, err error, op string) {
 		Write()
 }
 
-// isIgnoredS3Path reports whether errors for this path should be silently
 // suppressed  -  these are files probed by proxmox-backup-client on every
-// directory and are expected to be absent.
 func isIgnoredS3Path(p string) bool {
 	base := p
 	if idx := strings.LastIndexAny(p, "/"); idx >= 0 {
@@ -388,7 +399,9 @@ func isIgnoredS3Path(p string) bool {
 
 func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
-		_ = fs.Fuse.Unmount()
+		if err := fs.Fuse.Unmount(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	fs.Cancel()
 }

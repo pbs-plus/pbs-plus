@@ -32,13 +32,10 @@ var (
 		"TASK ERROR:",
 	}
 
-	// PBS proxy logs these when the h2 connection drops after backup
-	// completion. They are not real backup failures.
 	pbsSpuriousErrorPatterns = []string{
 		"connection error:",
 	}
 
-	// Client log markers that indicate successful backup completion.
 	pbsClientCompletionMarkers = []string{
 		"Duration: ",
 		"End Time: ",
@@ -103,7 +100,11 @@ func processPBSProxyLogs(
 	if err != nil {
 		return false, false, 0, fmt.Errorf("opening input log file: %w", err)
 	}
-	defer inFile.Close()
+	defer func() {
+		if err := inFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	info, err := inFile.Stat()
 	if err != nil {
@@ -134,8 +135,12 @@ func processPBSProxyLogs(
 	tmpName := tmpFile.Name()
 	defer func() {
 		if tmpFile != nil {
-			tmpFile.Close()
-			os.Remove(tmpName)
+			if err := tmpFile.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}()
 
@@ -178,8 +183,12 @@ func processPBSProxyLogs(
 			continue
 		}
 
-		tmpWriter.WriteString(line)
-		tmpWriter.WriteByte('\n')
+		if _, err := tmpWriter.WriteString(line); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := tmpWriter.WriteByte('\n'); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return false, false, 0, fmt.Errorf("scanning input file: %w", err)
@@ -192,10 +201,16 @@ func processPBSProxyLogs(
 	if err != nil {
 		return false, false, 0, fmt.Errorf("failed to open client log file: %w", err)
 	}
-	defer clientFile.Close()
+	defer func() {
+		if err := clientFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if !alreadyHasClientLogs {
-		tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n")
+		if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
+			syslog.L.Error(err).Write()
+		}
 
 		clientScanner := bufio.NewScanner(clientFile)
 		clientScanner.Buffer(buf, maxCapacity)
@@ -227,8 +242,12 @@ func processPBSProxyLogs(
 				continue
 			}
 
-			tmpWriter.WriteString(strings.TrimSpace(line))
-			tmpWriter.WriteByte('\n')
+			if _, err := tmpWriter.WriteString(strings.TrimSpace(line)); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if err := tmpWriter.WriteByte('\n'); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 
 		if err := clientScanner.Err(); err != nil {
@@ -241,10 +260,6 @@ func processPBSProxyLogs(
 	warningsNum := pbsWarningRawCount
 	timestamp := time.Now().In(systemLocation()).Format(time.RFC3339)
 
-	// If the only error from the PBS proxy is a spurious connection
-	// error (h2 connection dropped after backup completion) and the
-	// client log shows evidence of successful completion, treat the
-	// backup as successful rather than failed.
 	if hasError && hasOnlySpuriousError && clientCompleted {
 		hasError = false
 		incomplete = false
@@ -253,30 +268,50 @@ func processPBSProxyLogs(
 
 	switch {
 	case hasError, incomplete:
-		tmpWriter.WriteString(timestamp)
-		tmpWriter.WriteString(": TASK ERROR: ")
+		if _, err := tmpWriter.WriteString(timestamp); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if _, err := tmpWriter.WriteString(": TASK ERROR: "); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		if customErr != nil {
-			tmpWriter.WriteString(customErrStr)
+			if _, err := tmpWriter.WriteString(customErrStr); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		} else {
-			tmpWriter.WriteString(ErrUnexpected.Error())
+			if _, err := tmpWriter.WriteString(ErrUnexpected.Error()); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		cancelled = true
 
 	default:
-		tmpWriter.WriteString(timestamp)
+		if _, err := tmpWriter.WriteString(timestamp); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		succeeded = true
 		if warningsNum > 0 {
-			tmpWriter.WriteString(": TASK WARNINGS: ")
-			tmpWriter.WriteString(strconv.Itoa(warningsNum))
+			if _, err := tmpWriter.WriteString(": TASK WARNINGS: "); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if _, err := tmpWriter.WriteString(strconv.Itoa(warningsNum)); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		} else if isGraceful {
-			tmpWriter.WriteString(": TASK OK")
+			if _, err := tmpWriter.WriteString(": TASK OK"); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		} else {
 			succeeded = false
-			tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly")
+			if _, err := tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly"); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
-	tmpWriter.WriteByte('\n')
+	if err := tmpWriter.WriteByte('\n'); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	if err := tmpWriter.Flush(); err != nil {
 		return false, false, warningsNum, fmt.Errorf("flushing temporary writer: %w", err)

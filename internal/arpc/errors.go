@@ -87,8 +87,6 @@ func UnwrapError(serErr SerializableError) error {
 	case "os.ErrProcessDone":
 		return os.ErrProcessDone
 	default:
-		// Preserve the original agent error message for all other types
-		// (raw errnos, PathErrors with specific errnos, etc.)
 		if serErr.Op != "" || serErr.Path != "" {
 			op := serErr.Op
 			if op == "" {

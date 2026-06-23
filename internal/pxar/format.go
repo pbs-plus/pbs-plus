@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"
@@ -19,14 +20,10 @@ import (
 	"github.com/pbs-plus/pxar/vfs"
 )
 
-// TaskWriter is the interface for logging task progress.
 type TaskWriter interface {
 	WriteString(string)
 }
 
-// PxarReader wraps a vfs.LocalFS with PBS-specific bookkeeping
-// (task logging). All archive access and stats tracking is delegated to
-// the embedded LocalFS.
 type PxarReader struct {
 	ofs *vfs.LocalFS
 
@@ -35,7 +32,6 @@ type PxarReader struct {
 	startTime time.Time
 }
 
-// PxarReaderStats holds read performance statistics.
 type PxarReaderStats struct {
 	ByteReadSpeed   float64
 	FileAccessSpeed float64
@@ -46,7 +42,6 @@ type PxarReaderStats struct {
 	StatCacheHits   int64
 }
 
-// GetStats returns the current reader statistics with computed speeds.
 func (r *PxarReader) GetStats() PxarReaderStats {
 	elapsed := r.Elapsed().Seconds()
 	if elapsed < 1 {
@@ -64,14 +59,12 @@ func (r *PxarReader) GetStats() PxarReaderStats {
 	}
 }
 
-// Elapsed returns the time since the reader was created.
 func (r *PxarReader) Elapsed() time.Duration {
 	return time.Since(r.startTime)
 }
 
-// NewPxarReader creates a PxarReader for the given snapshot using the Go pxar library.
 func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, task TaskWriter) (*PxarReader, error) {
-	dsInfo, err := proxmox.GetDatastoreInfo(pbsStore)
+	dsInfo, err := cli.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
 	}
@@ -105,7 +98,6 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
 	}
 
-	// Open the chunk store
 	store, err := datastore.NewChunkStore(dsInfo.Path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open chunk store: %w", err)
@@ -145,11 +137,9 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		return pr, nil
 	}
 
-	// Non-split (.pxar.didx)  -  not yet supported.
 	return nil, fmt.Errorf(".pxar.didx found, only split archives are supported for now")
 }
 
-// Close releases all resources held by the reader.
 func (r *PxarReader) Close() error {
 	if r.closed {
 		return nil
@@ -158,7 +148,6 @@ func (r *PxarReader) Close() error {
 	return r.ofs.Close()
 }
 
-// GetRoot returns the root entry of the archive.
 func (r *PxarReader) GetRoot(ctx context.Context) (*pxar.FileInfo, error) {
 	if r.task != nil {
 		r.task.WriteString("get root of source")
@@ -166,7 +155,6 @@ func (r *PxarReader) GetRoot(ctx context.Context) (*pxar.FileInfo, error) {
 	return r.ofs.Root()
 }
 
-// LookupByPath finds an entry by archive-internal path.
 func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*pxar.FileInfo, error) {
 	if r.task != nil {
 		r.task.WriteString(fmt.Sprintf("looking up path: %s", path))
@@ -174,32 +162,26 @@ func (r *PxarReader) LookupByPath(ctx context.Context, path string) (*pxar.FileI
 	return r.ofs.Lookup(path)
 }
 
-// ReadDir lists the entries in a directory.
 func (r *PxarReader) ReadDir(ctx context.Context, dirOffset uint64) ([]pxar.FileInfo, error) {
 	return r.ofs.ReadDir(dirOffset)
 }
 
-// GetAttr returns attributes for an entry identified by its byte range.
 func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (*pxar.FileInfo, error) {
 	return r.ofs.GetAttr(entryStart)
 }
 
-// Read reads raw file content from the archive.
 func (r *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
 	return r.ofs.Read(contentStart, contentEnd, offset, size)
 }
 
-// ReadFileContentReader returns a streaming reader for an entire file.
 func (r *PxarReader) ReadFileContentReader(ctx context.Context, contentStart, contentEnd uint64) (io.ReadCloser, error) {
 	return r.ofs.ReadContentReader(contentStart, contentEnd)
 }
 
-// ReadLink returns the target of a symlink.
 func (r *PxarReader) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
 	return r.ofs.ReadLink(entryStart)
 }
 
-// ListXAttrs returns extended attributes for an entry.
 func (r *PxarReader) ListXAttrs(ctx context.Context, entryStart, entryEnd uint64) (map[string][]byte, error) {
 	return r.ofs.ListXAttrs(entryStart)
 }

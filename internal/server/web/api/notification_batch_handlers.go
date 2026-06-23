@@ -11,14 +11,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-// NotificationBatchHandler handles CRUD for notification batches.
-// GET    - list all batches
-// POST   - create a batch
-// PUT    - update a batch (requires ?batch=<name>)
-// DELETE - delete a batch (requires ?batch=<name>)
 func NotificationBatchHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -47,7 +43,6 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Enrich with job counts
 	type batchWithCount struct {
 		database.NotificationBatch
 		JobCount int `json:"job-count"`
@@ -55,7 +50,10 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 
 	result := make([]batchWithCount, len(batches))
 	for i, b := range batches {
-		jobs, _ := storeInstance.Database.GetBatchJobs(b.Name)
+		jobs, err := storeInstance.Database.GetBatchJobs(b.Name)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		count := 0
 		if jobs != nil {
 			count = len(jobs)
@@ -73,11 +71,13 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data":    result,
 		"digest":  digest,
-	})
+	}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func getNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request, name string) {
@@ -88,10 +88,12 @@ func getNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data":    batch,
-	})
+	}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
@@ -105,8 +107,10 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Check if batch already exists
-	existing, _ := storeInstance.Database.GetNotificationBatch(name)
+	existing, err := storeInstance.Database.GetNotificationBatch(name)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if existing.Name != "" {
 		http.Error(w, "Batch already exists", http.StatusConflict)
 		return
@@ -130,7 +134,6 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Assign jobs to the batch if provided
 	if jobs := r.FormValue("jobs"); jobs != "" {
 		var jobList []struct {
 			JobType string `json:"job-type"`
@@ -138,18 +141,25 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		}
 		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
 			for _, j := range jobList {
-				_ = storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID)
+				if err := storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}
 		}
 	}
 
-	created, _ := storeInstance.Database.GetNotificationBatch(name)
+	created, err := storeInstance.Database.GetNotificationBatch(name)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data":    created,
-	})
+	}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
@@ -185,28 +195,35 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Handle job assignments
 	if jobs := r.FormValue("jobs"); jobs != "" {
 		var jobList []struct {
 			JobType string `json:"job-type"`
 			JobID   string `json:"job-id"`
 		}
 		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
-			// Clear existing assignments and re-add
-			_ = storeInstance.Database.RemoveJobsByBatch(name)
+			if err := storeInstance.Database.RemoveJobsByBatch(name); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			for _, j := range jobList {
-				_ = storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID)
+				if err := storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}
 		}
 	}
 
-	updated, _ := storeInstance.Database.GetNotificationBatch(name)
+	updated, err := storeInstance.Database.GetNotificationBatch(name)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data":    updated,
-	})
+	}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
@@ -222,16 +239,14 @@ func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data":    nil,
-	})
+	}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
-// NotificationBatchJobsHandler handles job assignments within a batch.
-// GET    - list jobs in a batch (requires ?batch=<name>)
-// POST   - add a job to a batch
-// DELETE - remove a job from a batch
 func NotificationBatchJobsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -250,14 +265,15 @@ func NotificationBatchJobsHandler(storeInstance *store.Store) http.HandlerFunc {
 func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
 	batchName := r.URL.Query().Get("batch")
 	if batchName == "" {
-		// List all batch jobs
 		allJobs, err := storeInstance.Database.ListBatchJobs()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"success": true, "data": allJobs})
+		if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": allJobs}); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return
 	}
 
@@ -268,7 +284,9 @@ func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Re
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": jobs})
+	if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": jobs}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
@@ -292,14 +310,16 @@ func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
 		"data": database.NotificationBatchJob{
 			BatchName: batchName,
 			JobType:   jobType,
 			JobID:     jobID,
 		},
-	})
+	}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
@@ -318,10 +338,11 @@ func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": nil})
+	if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": nil}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
-// NotificationBatchStatusHandler returns the current status of pending batches.
 func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -331,14 +352,18 @@ func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc
 
 		if storeInstance.BatchTracker == nil {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]int{}})
+			if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]int{}}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
 		pending := storeInstance.BatchTracker.PendingBatches()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"success": true, "data": pending})
+		if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": pending}); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -363,15 +388,12 @@ func formValueBool(r *http.Request, key string, defaultVal bool) bool {
 }
 
 // ApplyJobBatchAssignment syncs a job's batch membership based on the
-// `notification-batch` form value.
 //   - If value is empty or matches delete: job is removed from all batches.
 //   - If value is a batch name: job is added to that batch (and removed from others).
-//
-// Used by backup/restore/verification create+update handlers so the
-// `notification-batch` field on the job edit form is persisted.
 func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchName string) {
-	// First remove from any existing batches
-	_ = storeInstance.Database.RemoveJobFromAllBatches(jobType, jobID)
+	if err := storeInstance.Database.RemoveJobFromAllBatches(jobType, jobID); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	if batchName != "" {
 		// Verify the batch exists before assigning
@@ -379,12 +401,13 @@ func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchNa
 		if err != nil || batch.Name == "" {
 			return
 		}
-		_ = storeInstance.Database.AddJobToBatch(batchName, jobType, jobID)
+		if err := storeInstance.Database.AddJobToBatch(batchName, jobType, jobID); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
 // GetJobBatchName returns the name of the batch a job is assigned to, or "" if none.
-// Used to populate the notification-batch field in edit form GET responses.
 func GetJobBatchName(storeInstance *store.Store, jobType, jobID string) string {
 	batch, err := storeInstance.Database.GetBatchForJob(jobType, jobID)
 	if err != nil {
@@ -393,6 +416,4 @@ func GetJobBatchName(storeInstance *store.Store, jobType, jobID string) string {
 	return batch.Name
 }
 
-// init ensures the notification package constants are referenced so the
-// compiler doesn't drop the import.
 var _ = notification.SpoolDir

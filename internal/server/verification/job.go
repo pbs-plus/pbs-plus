@@ -20,10 +20,11 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -34,7 +35,6 @@ import (
 )
 
 // weightedShuffleBackups reorders backup jobs using weighted random selection
-// where the weight for each job is inversely proportional to how recently it
 // was last successfully verified. Jobs that have never been verified receive
 // the maximum weight. This ensures uniform coverage over successive runs and
 // prevents the same backup job from being selected repeatedly.
@@ -43,7 +43,6 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		return backups
 	}
 
-	// Build a map of target hostname → last successful verification time.
 	lastVerified := make(map[string]int64)
 	results, err := db.GetVerificationResults(verificationJobID)
 	if err == nil {
@@ -51,7 +50,6 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 			if r.Status != "completed" {
 				continue
 			}
-			// Snapshot format: host/<hostname>/<timestamp>
 			parts := strings.SplitN(r.Snapshot, "/", 3)
 			if len(parts) >= 2 {
 				hostname := proxmox.NormalizeHostname(parts[1])
@@ -82,15 +80,12 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		}
 	}
 
-	// Repeated weighted selection without replacement.
 	// Pick a random index proportional to weight, move it to the output,
-	// then repeat with remaining candidates.
 	remaining := make([]int, len(backups))
 	for i := range remaining {
 		remaining[i] = i
 	}
 
-	// Read enough crypto-random bytes for all selections.
 	buf := make([]byte, len(backups)*4)
 	if _, err := rand.Read(buf); err != nil {
 		// Fallback: just shuffle with math/rand
@@ -105,7 +100,6 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 	copy(remWeights, weights)
 
 	for sel := range backups {
-		// Compute total of remaining weights
 		remTotal := 0.0
 		for _, idx := range remaining[sel:] {
 			remTotal += remWeights[idx]
@@ -118,9 +112,8 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		raw := uint32(buf[sel*4]) | uint32(buf[sel*4+1])<<8 | uint32(buf[sel*4+2])<<16 | uint32(buf[sel*4+3])<<24
 		threshold := float64(raw%1_000_000) / 1_000_000.0 * remTotal
 
-		// Walk remaining items until threshold is exhausted
 		cumulative := 0.0
-		chosen := remaining[sel] // default to first remaining
+		chosen := remaining[sel]
 		for _, idx := range remaining[sel:] {
 			cumulative += remWeights[idx]
 			if cumulative >= threshold {
@@ -129,7 +122,6 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 			}
 		}
 
-		// Swap chosen into position sel
 		for j := sel; j < len(remaining); j++ {
 			if remaining[j] == chosen {
 				remaining[sel], remaining[j] = remaining[j], remaining[sel]
@@ -163,21 +155,18 @@ var (
 	}{m: make(map[string]context.CancelFunc)}
 )
 
-// RegisterJob registers a running verification job for cancellation tracking.
 func RegisterJob(jobID string, cancel context.CancelFunc) {
 	activeJobs.Lock()
 	activeJobs.m[jobID] = cancel
 	activeJobs.Unlock()
 }
 
-// UnregisterJob removes a finished verification job from tracking.
 func UnregisterJob(jobID string) {
 	activeJobs.Lock()
 	delete(activeJobs.m, jobID)
 	activeJobs.Unlock()
 }
 
-// StopJob cancels a running verification job. Returns false if not running.
 func StopJob(jobID string) bool {
 	activeJobs.RLock()
 	cancel, ok := activeJobs.m[jobID]
@@ -189,7 +178,6 @@ func StopJob(jobID string) bool {
 	return true
 }
 
-// IsJobRunning checks if a verification job is currently running.
 func IsJobRunning(jobID string) bool {
 	activeJobs.RLock()
 	_, ok := activeJobs.m[jobID]
@@ -197,12 +185,10 @@ func IsJobRunning(jobID string) bool {
 	return ok
 }
 
-// readerFunc adapts a function to io.Reader for context-aware reads.
 type readerFunc func([]byte) (int, error)
 
 func (rf readerFunc) Read(p []byte) (int, error) { return rf(p) }
 
-// fileEntry represents a file found in the pxar archive.
 type fileEntry struct {
 	Path         string
 	ContentStart uint64
@@ -210,12 +196,10 @@ type fileEntry struct {
 	Size         int64
 }
 
-// verifyState holds the archive reader used to extract file content for hashing.
 type verifyState struct {
 	fs *vfs.LocalFS
 }
 
-// Close releases the verifyState resources.
 func (vs *verifyState) Close() error {
 	if vs.fs != nil {
 		return vs.fs.Close()
@@ -223,7 +207,6 @@ func (vs *verifyState) Close() error {
 	return nil
 }
 
-// verificationJob holds state for a verification run.
 type verificationJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
@@ -231,7 +214,7 @@ type verificationJob struct {
 	task          *VerificationTask
 	queueTask     *tasks.QueuedTask
 	job           database.VerificationJob
-	backupJobs    []database.Backup // candidates (1 for backup_job mode, N for namespace mode)
+	backupJobs    []database.Backup
 	storeInstance *store.Store
 	web           bool
 
@@ -243,7 +226,6 @@ type verificationJob struct {
 	totalPopulation int
 }
 
-// NewVerificationJob creates a new verification job.
 func NewVerificationJob(
 	job database.VerificationJob,
 	storeInstance *store.Store,
@@ -273,7 +255,6 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 	var backups []database.Backup
 
 	if job.TargetMode == "namespace" {
-		// Find all backup jobs targeting this datastore + namespace
 		allBackups, err := v.storeInstance.Database.GetAllBackups()
 		if err != nil {
 			return fmt.Errorf("failed to list backup jobs: %w", err)
@@ -283,14 +264,12 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 				continue
 			}
 			if job.Recursive {
-				// Match if backup namespace is equal to or a child of job.Namespace
 				if job.Namespace == "" || b.Namespace == job.Namespace || strings.HasPrefix(b.Namespace, job.Namespace+"/") {
 					if b.Target.IsAgent() {
 						backups = append(backups, b)
 					}
 				}
 			} else {
-				// Exact namespace match
 				if b.Namespace == job.Namespace {
 					if b.Target.IsAgent() {
 						backups = append(backups, b)
@@ -302,7 +281,6 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 			return fmt.Errorf("no agent backup jobs found in namespace '%s'", job.Namespace)
 		}
 	} else {
-		// Single backup job mode
 		backup, err := v.storeInstance.Database.GetBackup(job.BackupJobID)
 		if err != nil {
 			return fmt.Errorf("failed to get backup job %s: %w", job.BackupJobID, err)
@@ -317,7 +295,6 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 	v.backupJobs = backups
 	v.mu.Unlock()
 
-	// Create queued task for PBS task viewer
 	source := "schedule"
 	if v.web {
 		source = "web UI"
@@ -330,13 +307,11 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 		v.queueTask = &queueTask
 		v.mu.Unlock()
 
-		// Update job status to show queued
 		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
 			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
 		}
 	}
 
-	// Log start
 	syslog.L.Info().
 		WithField("jobID", job.ID).
 		WithField("source", source).
@@ -355,7 +330,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	backups := v.backupJobs
 	v.mu.RUnlock()
 
-	// Create the PBS verification task
 	vTask, err := NewVerificationTask(job)
 	if err != nil {
 		return fmt.Errorf("failed to create verification task: %w", err)
@@ -367,22 +341,18 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		v.queueTask.Close()
 	}
 
-	// Update job status with real task UPID
 	if err := v.updateJobStatus(false, vTask.Task); err != nil {
 		syslog.L.Error(err).WithMessage("failed to update job with task UPID").Write()
 	}
 
 	if job.TargetMode == "namespace" {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' targeting namespace '%s' (%d backup jobs)", job.ID, job.Namespace, len(backups)))
-		// Weight backup jobs inversely to how recently they were verified.
 		// Jobs never verified get the highest weight; recently verified ones
-		// get the lowest. This maximises coverage over successive runs.
 		backups = weightedShuffleBackups(backups, v.storeInstance.Database, job.ID)
 	} else {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
 	}
 
-	// Try each backup job until one succeeds at the startup phase
 	var lastStartupErr error
 	for _, backup := range backups {
 		snapshot, snapErr := v.selectSnapshot(ctx, job, backup)
@@ -392,7 +362,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			continue
 		}
 
-		// Get the agent's main control session (QUIC or TCP) to send the fork command.
 		hostname := backup.Target.GetHostname()
 		streamID := hostname + "|" + job.ID + "|verify"
 
@@ -410,7 +379,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			continue
 		}
 
-		// Send verify_start control message to fork the worker process
 		v.storeInstance.ARPCAgentsManager.Expect(streamID)
 
 		verifyReq := verification.VerifyStartReq{VerifyID: job.ID}
@@ -424,7 +392,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			continue
 		}
 
-		// Wait for the forked process to connect back via TCP
 		pipeCtx, pipeCancel := context.WithTimeout(ctx, 30*time.Second)
 		agentTCP, waitErr := v.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, streamID)
 		pipeCancel()
@@ -434,12 +401,10 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			lastStartupErr = waitErr
 			continue
 		}
-		// TCP session registered; NotExpect is no longer needed
 		v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
 
 		vTask.WriteString(fmt.Sprintf("verification worker connected via TCP for job '%s'", backup.ID))
 
-		// Try to open the archive
 		vs, archiveErr := v.openArchive(backup, snapshot)
 		if archiveErr != nil {
 			agentTCP.Close()
@@ -450,13 +415,11 @@ func (v *verificationJob) execute(ctx context.Context) error {
 
 		vTask.WriteString(fmt.Sprintf("selected backup job '%s', snapshot: %s", backup.ID, snapshot.Snapshot))
 
-		// Run verification for this snapshot
 		err := v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentTCP)
 		if err == nil {
 			return nil
 		}
 
-		// In namespace mode, if no files could be sampled, try the next backup job
 		if errors.Is(err, ErrNoFilesToVerify) && job.TargetMode == "namespace" {
 			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': no eligible files found, trying next candidate", backup.ID))
 			lastStartupErr = err
@@ -465,7 +428,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 		return err
 	}
 
-	// All candidates exhausted
 	if lastStartupErr != nil {
 		vTask.WriteString(fmt.Sprintf("all candidates exhausted, last error: %v", lastStartupErr))
 		return lastStartupErr
@@ -473,7 +435,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	return fmt.Errorf("no eligible backup jobs found")
 }
 
-// executeVerification runs the actual file verification for a single snapshot.
 func (v *verificationJob) executeVerification(
 	ctx context.Context,
 	vTask *VerificationTask,
@@ -483,7 +444,11 @@ func (v *verificationJob) executeVerification(
 	vs *verifyState,
 	agentTCP *arpc.StreamPipe,
 ) error {
-	defer func() { _ = vs.Close() }()
+	defer func() {
+		if err := vs.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	defer agentTCP.Close()
 
 	// Create a derived context so we can cancel remaining workers on fail threshold
@@ -492,7 +457,6 @@ func (v *verificationJob) executeVerification(
 
 	vTask.WriteString(fmt.Sprintf("selected snapshot: %s", snapshot.Snapshot))
 
-	// Create result record
 	result := &database.VerificationResult{
 		VerificationJobID: job.ID,
 		UPID:              vTask.UPID,
@@ -507,7 +471,6 @@ func (v *verificationJob) executeVerification(
 		return fmt.Errorf("failed to create verification result: %w", err)
 	}
 
-	// Store result ID for onError to update
 	v.mu.Lock()
 	v.resultID = result.ID
 	v.mu.Unlock()
@@ -516,7 +479,9 @@ func (v *verificationJob) executeVerification(
 	sampledFiles, err := v.sampleFiles(ctx, job, vs, snapshot)
 	if err != nil {
 		// Mark the stale result as skipped so we don't leave orphaned "running" records
-		_ = v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix())
+		if err := v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix()); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("failed to sample files: %w", err)
 	}
 
@@ -543,13 +508,11 @@ func (v *verificationJob) executeVerification(
 	filesCh := make(chan int, len(sampledFiles))
 	resultsCh := make(chan indexedResult, len(sampledFiles))
 
-	// Feed file indices
 	for i := range sampledFiles {
 		filesCh <- i
 	}
 	close(filesCh)
 
-	// Launch workers
 	var wg sync.WaitGroup
 	for w := 0; w < concurrency; w++ {
 		wg.Go(func() {
@@ -575,7 +538,6 @@ func (v *verificationJob) executeVerification(
 		close(resultsCh)
 	}()
 
-	// Collect results. Since resultsCh is buffered to len(sampledFiles),
 	// workers never block on send. We drain all results to avoid goroutine leaks.
 	ordered := make([]database.VerificationFileResult, len(sampledFiles))
 	collected := 0
@@ -617,7 +579,6 @@ func (v *verificationJob) executeVerification(
 		}
 	}
 
-	// Store counts for onSuccess/onError to use when closing the task
 	v.mu.Lock()
 	v.totalFiles = result.TotalFiles
 	v.failedFiles = result.FailedFiles
@@ -647,7 +608,6 @@ func (v *verificationJob) onError(err error) {
 	rID := v.resultID
 	v.mu.RUnlock()
 
-	// Mark the result record as failed
 	if rID > 0 {
 		if markErr := v.storeInstance.Database.MarkVerificationResultStatus(rID, "failed", time.Now().Unix()); markErr != nil {
 			syslog.L.Error(markErr).WithField("jobID", v.job.ID).WithMessage("failed to mark result as failed").Write()
@@ -664,7 +624,6 @@ func (v *verificationJob) onError(err error) {
 		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on error").Write()
 	}
 
-	// Send notification for verification failure
 	if v.storeInstance.BatchTracker != nil {
 		v.storeInstance.BatchTracker.RecordJobResult(
 			v.job.NotificationMode,
@@ -718,7 +677,6 @@ func (v *verificationJob) onSuccess() {
 		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on success").Write()
 	}
 
-	// Send notification for verification result
 	var notifyErr error
 	if failed > 0 {
 		notifyErr = fmt.Errorf("verification found %d failed files", failed)
@@ -752,8 +710,6 @@ func (v *verificationJob) cleanup() {
 	}
 }
 
-// updateJobStatus updates the verification job's last-run UPID in the database
-// (for showing "running" / "queued" status in the UI).
 func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) error {
 	job, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
 	if err != nil {
@@ -769,7 +725,6 @@ func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) err
 	return v.storeInstance.Database.UpdateVerificationJob(nil, job)
 }
 
-// updateJobHistory updates the verification job's history fields after completion
 // using the standard PBS task system (mirrors backup/restore pattern).
 func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) error {
 	v.mu.RLock()
@@ -782,7 +737,7 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 
 	return jobs.UpdateJobHistory(
 		v.job.ID,
-		0, // currentPID (not used for verification)
+		0,
 		succeeded,
 		warningsNum,
 		vTask.Task,
@@ -801,11 +756,8 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 	)
 }
 
-// --- Snapshot selection ---
-
-// snapshotInfo represents a resolved snapshot.
 type snapshotInfo struct {
-	Snapshot   string // "type/id/time"
+	Snapshot   string
 	BackupType string
 	BackupID   string
 	BackupTime int64 // unix timestamp
@@ -854,7 +806,7 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 	backupID := proxmox.NormalizeHostname(backup.Target.GetHostname())
 	backupType := "host"
 
-	dsInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	dsInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore info: %w", err)
 	}
@@ -881,7 +833,10 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 		}
 		unixTime := t.Unix()
 
-		snapFiles, _ := os.ReadDir(filepath.Join(groupDir, entry.Name()))
+		snapFiles, err := os.ReadDir(filepath.Join(groupDir, entry.Name()))
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		var files []string
 		for _, f := range snapFiles {
 			files = append(files, f.Name())
@@ -942,12 +897,10 @@ func filterByDateRange(snapshots []snapshotInfo, dateFrom, dateTo string) []snap
 	return filtered
 }
 
-// --- Archive access ---
-
 // openArchive opens the pxar archive for the given snapshot, returning a
 // verifyState that can be used for both file enumeration and content extraction.
 func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo) (*verifyState, error) {
-	dsInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	dsInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore info: %w", err)
 	}
@@ -1018,8 +971,6 @@ func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo
 	return &verifyState{fs: fs}, nil
 }
 
-// --- File sampling ---
-
 // sampleFiles walks the pxar archive to enumerate files, then returns a sample
 // based on the configured strategy (random, systematic, or stratified).
 func (v *verificationJob) sampleFiles(ctx context.Context, job database.VerificationJob, vs *verifyState, snap *snapshotInfo) ([]fileEntry, error) {
@@ -1038,7 +989,6 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 		return nil, ErrNoFilesToVerify
 	}
 
-	// Store total population for confidence calculation
 	v.mu.Lock()
 	v.totalPopulation = len(allFiles)
 	v.mu.Unlock()
@@ -1072,7 +1022,6 @@ func (v *verificationJob) sampleFiles(ctx context.Context, job database.Verifica
 	}
 }
 
-// systematicSample takes every k-th file after sorting by path for even coverage.
 func systematicSample(files []fileEntry, n int) []fileEntry {
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Path < files[j].Path
@@ -1091,14 +1040,11 @@ func systematicSample(files []fileEntry, n int) []fileEntry {
 	return result
 }
 
-// stratifiedSample groups files by top-level directory and samples
-// proportionally from each group.
 func stratifiedSample(files []fileEntry, n int) []fileEntry {
 	if n >= len(files) {
 		return files
 	}
 
-	// Group by top-level directory
 	groups := make(map[string][]fileEntry)
 	for _, f := range files {
 		dir := topLevelDir(f.Path)
@@ -1115,10 +1061,9 @@ func stratifiedSample(files []fileEntry, n int) []fileEntry {
 
 	for i, name := range groupNames {
 		g := groups[name]
-		// Proportional allocation
 		var allocated int
 		if i == len(groupNames)-1 {
-			allocated = remaining // last group gets remainder
+			allocated = remaining
 		} else {
 			allocated = min(int(math.Round(float64(len(g))/float64(len(files))*float64(n))), remaining)
 		}
@@ -1148,7 +1093,6 @@ func topLevelDir(path string) string {
 	return before
 }
 
-// walkDir recursively walks the pxar directory tree collecting regular files.
 func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix string, files []fileEntry, cfg database.SpotCheckConfig) ([]fileEntry, error) {
 	if entry.IsDir() {
 		children, err := fs.ReadDir(entry.EntryRangeStart)
@@ -1182,15 +1126,12 @@ func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix 
 
 // matchesFilters checks if a file matches the spot check filter criteria.
 // Exclude filters take absolute precedence: if a file matches any exclude
-// filter it is rejected immediately. If no include filters exist, all
 // non-excluded files are eligible. Otherwise the file must match at least
-// one include filter.
 func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg database.SpotCheckConfig) bool {
 	if len(cfg.Filters) == 0 {
 		return true
 	}
 
-	// Separate exclude and include filters
 	var includes, excludes []database.SpotCheckFilter
 	for _, f := range cfg.Filters {
 		if f.FilterType == "exclude" {
@@ -1207,7 +1148,6 @@ func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg 
 		}
 	}
 
-	// No include filters → all non-excluded files pass
 	if len(includes) == 0 {
 		return true
 	}
@@ -1221,11 +1161,14 @@ func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg 
 	return false
 }
 
-// filterMatchesFile checks if a single filter's criteria match a file.
 func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCheckFilter) bool {
 	if filter.PathPattern != "" {
 		if strings.Contains(filter.PathPattern, "*") {
-			if matched, _ := filepath.Match(filter.PathPattern, filepath.Base(path)); !matched {
+			matched, err := filepath.Match(filter.PathPattern, filepath.Base(path))
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if !matched {
 				return false
 			}
 		} else {
@@ -1245,8 +1188,6 @@ func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCh
 	return true
 }
 
-// --- File verification ---
-
 // verifyFile verifies a single file by comparing the agent's SHA-256 hash
 // of the live file against the hash of the same file extracted from the
 // stored pxar archive.
@@ -1263,7 +1204,6 @@ func (v *verificationJob) verifyFile(
 		Status: "error",
 	}
 
-	// Compute agent path
 	rootPath := backup.Target.GetAgentHostPath()
 	relPath := strings.TrimPrefix(file.Path, "/")
 	if backup.Subpath != "" {
@@ -1338,7 +1278,11 @@ func extractFileHash(ctx context.Context, vs *verifyState, file fileEntry) ([32]
 	if err != nil {
 		return [32]byte{}, fmt.Errorf("failed to open content reader for [%d, %d): %w", file.ContentStart, file.ContentEnd, err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	h := sha256simd.New()
 	bufp := bufPool.Get().(*[]byte)

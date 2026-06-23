@@ -19,15 +19,21 @@ func cleanUp() error {
 	for _, p := range legacyPaths {
 		if _, err := os.Stat(p); err == nil {
 			foundLegacy = true
-			_ = os.Remove(p)
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				syslog.L.Error(err).Write()
+			}
 			syslog.L.Info().WithField("path", p).WithMessage("removed legacy unit file").Write()
 		}
 	}
 
 	if foundLegacy {
 		if _, err := exec.LookPath("systemctl"); err == nil {
-			_ = exec.Command("systemctl", "daemon-reload").Run()
-			_ = exec.Command("systemctl", "reset-failed").Run()
+			if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+			if err := exec.Command("systemctl", "reset-failed").Run(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 

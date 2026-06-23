@@ -9,6 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var bufPool = sync.Pool{
@@ -22,22 +23,18 @@ type VerifyFileReq struct {
 	FilePath string `cbor:"file_path"`
 }
 
-// VerifyFileResp contains the file hash from the agent.
 type VerifyFileResp struct {
 	SHA256 [32]byte `cbor:"sha256"`
 	Size   int64    `cbor:"size"`
 	Error  string   `cbor:"error"`
 }
 
-// VerifyStartReq is the request payload for the verify_start control message.
 type VerifyStartReq struct {
 	VerifyID string `cbor:"verify_id"`
 }
 
-// HashFile computes the SHA-256 hash of a file.
 func HashFile(filePath string) ([32]byte, int64, error) {
 	// Fast existence check  -  avoids opening a file handle on a
-	// slow/network mount only to discover it's gone.
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return [32]byte{}, 0, fmt.Errorf("failed to stat file: %w", err)
@@ -50,7 +47,11 @@ func HashFile(filePath string) ([32]byte, int64, error) {
 	if err != nil {
 		return [32]byte{}, 0, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	h := sha256simd.New()
 	bufp := bufPool.Get().(*[]byte)

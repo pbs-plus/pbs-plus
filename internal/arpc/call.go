@@ -113,7 +113,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if resp.Status == StatusRawStream {
 		handler, ok := out.(RawStreamHandler)
@@ -157,7 +157,7 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	if err != nil {
 		return "", err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if resp.Status == StatusRawStream {
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", StatusRawStream)
@@ -180,7 +180,7 @@ func (s *StreamPipe) CallBinaryWithMeta(ctx context.Context, method string, payl
 	if err != nil {
 		return 0, nil, err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if resp.Status != StatusRawStream {
 		var serErr SerializableError

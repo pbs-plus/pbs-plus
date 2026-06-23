@@ -25,7 +25,6 @@ import (
 const attrPrefix = "attr:"
 const xattrPrefix = "xattr:"
 
-// logOnce logs a single error line per unique path. Retries for the same
 // path are suppressed to avoid noisy duplicate entries in task logs.
 func (fs *ARPCFS) logOnce(path string, err error, op string) {
 	if isIgnoredPath(path) {
@@ -41,9 +40,7 @@ func (fs *ARPCFS) logOnce(path string, err error, op string) {
 		Write()
 }
 
-// isIgnoredPath reports whether errors for this path should be silently
 // suppressed  -  these are files probed by proxmox-backup-client on every
-// directory and are expected to be absent.
 func isIgnoredPath(p string) bool {
 	base := p
 	if idx := strings.LastIndexAny(p, "/\\"); idx >= 0 {
@@ -112,14 +109,20 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			WithMessage("Context done, cleaning up memcache and memlocal").
 			WithField("backupID", fs.Backup.ID).
 			Write()
-		fs.Memcache.DeleteAll()
-		fs.Memcache.Close()
+		if err := fs.Memcache.DeleteAll(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := fs.Memcache.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 
 		fs.TotalBytes.Reset()
 		fs.FolderCount.Reset()
 		fs.FileCount.Reset()
 		fs.StatCacheHits.Reset()
-		stopMemLocal()
+		if err := stopMemLocal(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}()
 
 	return fs
@@ -293,7 +296,9 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 
 	if !isLookup {
 		if !fi.IsDir {
-			fs.Memcache.Delete(cacheKey)
+			if err := fs.Memcache.Delete(cacheKey); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			syslog.L.Debug().
 				WithMessage("Attr counted file and cleared cache").
 				WithField("path", filename).
@@ -343,7 +348,9 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	rawCached, err := fs.Memcache.Get(cacheKey)
 	if err == nil {
 		req.AclOnly = true
-		_ = cbor.Unmarshal(rawCached.Value, &fiCached)
+		if err := cbor.Unmarshal(rawCached.Value, &fiCached); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		syslog.L.Debug().
 			WithMessage("Xattr cache hit for metadata").
 			WithField("path", filename).
@@ -380,7 +387,9 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
-	fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: xattrBytes, Expiration: 5})
+	if err := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: xattrBytes, Expiration: 5}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	return fi, nil
 }
@@ -495,7 +504,9 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 		return DirStream{}, fmt.Errorf("readdir decode: %w", err)
 	}
 
-	fs.Memcache.Delete(cacheKey)
+	if err := fs.Memcache.Delete(cacheKey); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	syslog.L.Debug().
 		WithMessage("ReadDir opened directory").
@@ -542,14 +553,19 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 		Write()
 
 	if fs.Fuse != nil {
-		_ = fs.Fuse.Unmount()
+		if err := fs.Fuse.Unmount(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		syslog.L.Debug().
 			WithMessage("Fuse unmounted").
 			WithField("backupID", fs.Backup.ID).
 			Write()
 	}
 
-	pipe, _ := fs.getPipe(ctx)
+	pipe, err := fs.getPipe(ctx)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	if pipe != nil {
 		pipe.Close()
 		syslog.L.Debug().

@@ -15,21 +15,19 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// restoreJob holds the state for a restore operation.
 type restoreJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
@@ -52,7 +50,6 @@ type restoreJob struct {
 	web           bool
 }
 
-// NewRestoreJob creates a new restore job.
 func NewRestoreJob(
 	job database.Restore,
 	storeInstance *store.Store,
@@ -83,7 +80,6 @@ func NewRestoreJob(
 	}, nil
 }
 
-// execute performs the restore operation.
 func (b *restoreJob) execute(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel
@@ -98,7 +94,6 @@ func (b *restoreJob) execute(ctx context.Context) error {
 		}).
 		Write()
 
-	// Execute based on target type
 	switch b.job.DestTarget.Type {
 	case database.TargetTypeAgent:
 		return b.agentExecute(ctx)
@@ -146,9 +141,10 @@ func (b *restoreJob) onError(err error) {
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
 
-	_ = updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance)
+	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
-	// Send notification for restore failure
 	if b.storeInstance.BatchTracker != nil {
 		b.storeInstance.BatchTracker.RecordJobResult(
 			b.job.NotificationMode,
@@ -174,13 +170,16 @@ func (b *restoreJob) onSuccess() {
 	errCount := b.errCount.Load()
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
-		_ = updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance)
+		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	} else {
 		b.task.CloseOK()
-		_ = updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance)
+		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
-	// Send notification for restore result
 	var notifyErr error
 	if errCount > 0 {
 		notifyErr = fmt.Errorf("restore completed with %d errors", errCount)
@@ -216,11 +215,15 @@ func (b *restoreJob) cleanup() {
 	}
 
 	if b.localClient != nil {
-		b.localClient.Close()
+		if err := b.localClient.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if b.remoteServer != nil {
-		b.remoteServer.Close()
+		if err := b.remoteServer.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	if b.errCh != nil {
@@ -251,8 +254,6 @@ func (b *restoreJob) writeStatsSummary() {
 	}
 }
 
-// Helper methods
-
 func (b *restoreJob) runPreScript(ctx context.Context) error {
 	if strings.TrimSpace(b.job.PreScript) == "" {
 		return nil
@@ -264,7 +265,9 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	default:
 	}
 
-	b.queueTask.UpdateDescription("running pre-restore script")
+	if err := b.queueTask.UpdateDescription("running pre-restore script"); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
 	envVars, err := jobs.StructToEnvVars(b.job)
@@ -353,7 +356,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		srcPath = "/"
 	}
 
-	restoreReq := agenttypes.RestoreReq{
+	restoreReq := types.RestoreReq{
 		RestoreID: b.job.ID,
 		SrcPath:   srcPath,
 		DestPath:  destPath,
@@ -451,7 +454,6 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		return err
 	}
 
-	// Wait for completion
 	return b.waitForCompletion(ctx)
 }
 
@@ -519,12 +521,10 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 
 	sessions.NewPxarReader(childKey, reader)
 
-	// Wait for completion
 	return b.waitForCompletion(ctx)
 }
 
 func (b *restoreJob) waitForCompletion(ctx context.Context) error {
-	// Wait for agent's done signal first (remote restores only)
 	if b.remoteServer != nil {
 		var pipeCloseCh <-chan struct{}
 		if b.agentPipe != nil {
@@ -541,12 +541,8 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 			// The agent's client.Close() sends pxar.Done as a synchronous RPC
 			// (server closes DoneCh and ACKs) and only closes the pipe after
 			// the ACK. So DoneCh is closed strictly before the pipe closes.
-			// But both channels are then ready in the same select iteration,
 			// and Go's select picks one nondeterministically  -  which used to
-			// make a fully-successful restore report a spurious "lost
-			// connection" ~50% of the time. Re-probe DoneCh here so a Done
 			// that was already received always wins; only treat the close as
-			// a real disconnect when DoneCh is genuinely still open.
 			select {
 			case <-b.remoteServer.DoneCh:
 				b.receivedDone.Store(true)
@@ -561,7 +557,6 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 	}
 
 	// Close errCh to unblock the error-collecting goroutine.
-	// For remote restores this runs after the agent signals done;
 	// for local restores the restore goroutine may still be in
 	// progress, but waitGroup.Wait() ensures both goroutines finish.
 	if b.errCh != nil {
@@ -595,7 +590,9 @@ func (b *restoreJob) runPostScript() {
 	}
 
 	if b.queueTask != nil {
-		b.queueTask.UpdateDescription("running post-restore script")
+		if err := b.queueTask.UpdateDescription("running post-restore script"); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))

@@ -12,37 +12,29 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// IOCTL_STORAGE_QUERY_PROPERTY control code
-// CTL_CODE(IOCTL_STORAGE_BASE, 0x0500, METHOD_BUFFERED, FILE_ANY_ACCESS)
-// IOCTL_STORAGE_BASE = 0x2d
 const _IOCTL_STORAGE_QUERY_PROPERTY = uint32(0x2D1400)
 
-// STORAGE_PROPERTY_ID enum
 type _STORAGE_PROPERTY_ID int32
 
 const (
-	_StorageDeviceProperty           _STORAGE_PROPERTY_ID = 0 // From winioctl.h
+	_StorageDeviceProperty           _STORAGE_PROPERTY_ID = 0
 	_StorageAdapterProperty          _STORAGE_PROPERTY_ID = 1
 	_StorageDeviceIdProperty         _STORAGE_PROPERTY_ID = 2
-	_StorageDeviceUniqueIdProperty   _STORAGE_PROPERTY_ID = 3 // See storduid.h for details
+	_StorageDeviceUniqueIdProperty   _STORAGE_PROPERTY_ID = 3
 	_StorageDeviceWriteCacheProperty _STORAGE_PROPERTY_ID = 4
 	_StorageMiniportProperty         _STORAGE_PROPERTY_ID = 5
 	_StorageAccessAlignmentProperty  _STORAGE_PROPERTY_ID = 6
-	// ... other values exist but are not needed here
 )
 
-// STORAGE_QUERY_TYPE enum
 type _STORAGE_QUERY_TYPE int32
 
 const (
-	_PropertyStandardQuery   _STORAGE_QUERY_TYPE = 0 // From winioctl.h
+	_PropertyStandardQuery   _STORAGE_QUERY_TYPE = 0
 	_PropertyExistsQuery     _STORAGE_QUERY_TYPE = 1
 	_PropertyMaskQuery       _STORAGE_QUERY_TYPE = 2
 	_PropertyQueryMaxDefined _STORAGE_QUERY_TYPE = 3
 )
 
-// STORAGE_BUS_TYPE enum (subset relevant here)
-// Defined in ntddstor.h
 type _STORAGE_BUS_TYPE uint32
 
 const (
@@ -64,7 +56,6 @@ const (
 )
 
 // STORAGE_PROPERTY_QUERY structure (matches C struct layout)
-// Defined in winioctl.h
 type _STORAGE_PROPERTY_QUERY struct {
 	PropertyId           _STORAGE_PROPERTY_ID
 	QueryType            _STORAGE_QUERY_TYPE
@@ -72,24 +63,22 @@ type _STORAGE_PROPERTY_QUERY struct {
 }
 
 // STORAGE_DEVICE_DESCRIPTOR structure (matches C struct layout)
-// Defined in winioctl.h
 type _STORAGE_DEVICE_DESCRIPTOR struct {
 	Version               uint32
 	Size                  uint32
 	DeviceType            byte
 	DeviceTypeModifier    byte
-	RemovableMedia        byte // Use boolean conversion: (RemovableMedia != 0)
-	CommandQueueing       byte // Use boolean conversion: (CommandQueueing != 0)
+	RemovableMedia        byte
+	CommandQueueing       byte
 	VendorIdOffset        uint32
 	ProductIdOffset       uint32
 	ProductRevisionOffset uint32
 	SerialNumberOffset    uint32
 	BusType               _STORAGE_BUS_TYPE
 	RawPropertiesLength   uint32
-	RawDeviceProperties   [1]byte // Placeholder for variable length data
+	RawDeviceProperties   [1]byte
 }
 
-// getDriveTypeString returns a human-readable string describing the type of drive
 func getDriveTypeString(dt uint32) string {
 	switch dt {
 	case windows.DRIVE_UNKNOWN:
@@ -111,7 +100,6 @@ func getDriveTypeString(dt uint32) string {
 	}
 }
 
-// getBusType queries the storage device bus type for a given drive letter.
 func getBusType(driveLetter string) (_STORAGE_BUS_TYPE, error) {
 	volumePath := fmt.Sprintf("\\\\.\\%s:", driveLetter)
 	volumePathUtf16, err := windows.UTF16PtrFromString(volumePath)
@@ -197,7 +185,6 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 			freeBytes     uint64
 		)
 
-		// Get Volume Info
 		var volumeName [windows.MAX_PATH + 1]uint16
 		var fileSystemName [windows.MAX_PATH + 1]uint16
 		err = windows.GetVolumeInformation(
@@ -208,17 +195,14 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 			volumeNameStr = windows.UTF16ToString(volumeName[:])
 			fileSystemStr = windows.UTF16ToString(fileSystemName[:])
 		} else if errno, ok := err.(windows.Errno); ok && (errno == windows.ERROR_NOT_READY || errno == windows.ERROR_GEN_FAILURE || errno == windows.ERROR_ACCESS_DENIED) {
-			// Ignore common errors
-		} // else { log unexpected errors }
+		}
 
-		// Get Disk Space
 		var totalFreeBytes uint64
 		err = windows.GetDiskFreeSpaceEx(pathUtf16, nil, &totalBytes, &totalFreeBytes)
 		if err == nil {
 			freeBytes = totalFreeBytes
 		} else if errno, ok := err.(windows.Errno); ok && (errno == windows.ERROR_NOT_READY || errno == windows.ERROR_GEN_FAILURE || errno == windows.ERROR_ACCESS_DENIED) {
-			// Ignore common errors
-		} // else { log unexpected errors }
+		}
 
 		usedBytes := uint64(0)
 		if totalBytes > freeBytes {
@@ -229,45 +213,35 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 		usedHuman := types.HumanizeBytes(usedBytes)
 		freeHuman := types.HumanizeBytes(freeBytes)
 
-		// --- Drive Type Classification Logic ---
-		driveTypeStr := getDriveTypeString(driveType) // Get base type string
+		driveTypeStr := getDriveTypeString(driveType)
 
 		if driveType == windows.DRIVE_FIXED {
 			busType, busErr := getBusType(driveLetter)
 
 			if busErr != nil {
-				// Assume "Virtual" for most errors on DRIVE_FIXED,
-				// except for specific physical media errors.
 				var errno windows.Errno
-				isErrno := errors.As(busErr, &errno) // Use errors.As for robust check
+				isErrno := errors.As(busErr, &errno)
 
 				if isErrno && (errno == windows.ERROR_NOT_READY || errno == windows.ERROR_SHARING_VIOLATION) {
-					// These errors are less likely for virtual drives, keep as Error
 					driveTypeStr = "Fixed (Error)"
-					// Optional: Log the specific error for debugging
-					// fmt.Printf("Debug: Keeping 'Fixed (Error)' for %s: %v\n", driveLetter, busErr)
 				} else {
 					// Treat ERROR_INVALID_FUNCTION, ACCESS_DENIED, GEN_FAILURE,
-					// and other unexpected errors as likely "Virtual".
 					driveTypeStr = "Virtual"
-					// Optional: Log the specific error for debugging
 					// fmt.Printf("Debug: Classifying as 'Virtual' for %s due to error: %v\n", driveLetter, busErr)
 				}
 			} else {
-				// Bus type query succeeded, refine classification (same as before)
 				switch busType {
 				case _BusTypeUsb:
 					driveTypeStr = "External (USB)"
 				case _BusTypeSata, _BusTypeNvme, _BusTypeSas, _BusTypeAta, _BusTypeScsi, _BusTypeRAID:
 					driveTypeStr = "Internal (Fixed)"
 				case _BusTypeUnknown:
-					driveTypeStr = "Virtual" // Heuristic
+					driveTypeStr = "Virtual"
 				default:
-					driveTypeStr = "Virtual" // Heuristic
+					driveTypeStr = "Virtual"
 				}
 			}
 		} else if driveType == windows.DRIVE_REMOVABLE {
-			// Refine removable types (same as before)
 			busType, busErr := getBusType(driveLetter)
 			if busErr == nil {
 				switch busType {
@@ -278,9 +252,8 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 				case _BusTypeMmc:
 					driveTypeStr = "Removable (MMC)"
 				}
-			} // Ignore errors for removable
+			}
 		}
-		// --- End Classification Logic ---
 
 		volumeNameStr = strings.TrimRight(volumeNameStr, "\x00")
 		fileSystemStr = strings.TrimRight(fileSystemStr, "\x00")

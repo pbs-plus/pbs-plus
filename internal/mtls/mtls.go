@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 )
 
 var currentTLSCert = atomic.Pointer[tls.Certificate]{}
@@ -65,7 +65,7 @@ func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile 
 func getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile string) (*tls.Certificate, *x509.CertPool) {
 	lastTLSTime := time.Unix(atomic.LoadInt64(&lastTLSTimestamp), 0)
 	if time.Since(lastTLSTime) > 12*time.Hour {
-		updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
+		_ = updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
 	}
 
 	return currentTLSCert.Load(), currentTLSCAs.Load()
@@ -387,7 +387,7 @@ func EnsureServerCertUsingExistingCA(outDir, org string, keySize, validDays int,
 
 	userHostname, ok := os.LookupEnv("PBS_PLUS_HOSTNAME")
 	if ok {
-		if err := types.ValidateHostname(userHostname); err == nil {
+		if err := host.ValidateHostname(userHostname); err == nil {
 			hostnames = append(hostnames, userHostname)
 		}
 	}

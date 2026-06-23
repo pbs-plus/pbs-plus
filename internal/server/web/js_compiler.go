@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -25,7 +26,7 @@ var customJsFS embed.FS
 //go:embed all:views/pre
 var preJsFS embed.FS
 
-const backupDir = "/var/lib/pbs-plus/backups"
+var backupDir = conf.StatePrefix + "/backups"
 
 var legacyJSPaths = []string{
 	"/usr/share/javascript/proxmox-backup/js/proxmox-backup-gui.js",
@@ -205,7 +206,9 @@ func atomicReplaceFile(targetPath string, newContent []byte) error {
 	tempName := tmpFile.Name()
 
 	if _, err := tmpFile.Write(newContent); err != nil {
-		tmpFile.Close()
+		if err := tmpFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("failed to write temporary file: %w", err)
 	}
 
@@ -327,7 +330,9 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 	}
 
 	if err := watcher.Add(targetPath); err != nil {
-		watcher.Close()
+		if err := watcher.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("failed to add file to watcher: %w", err)
 	}
 
@@ -344,7 +349,6 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 				}
 
 				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-					// Debounce rapid changes
 					time.Sleep(100 * time.Millisecond)
 
 					content, err := os.ReadFile(targetPath)

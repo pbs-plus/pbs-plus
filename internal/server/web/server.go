@@ -22,7 +22,6 @@ import (
 	"net/http/pprof"
 )
 
-// Server holds all HTTP servers and their configuration.
 type Server struct {
 	APIServer   *http.Server
 	AgentServer *http.Server
@@ -34,7 +33,6 @@ type Server struct {
 	wg         sync.WaitGroup
 }
 
-// NewServer creates and configures all HTTP servers with middleware chains applied.
 func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -43,7 +41,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux := http.NewServeMux()
 	agentMux := http.NewServeMux()
 
-	// API routes
 	apiMux.HandleFunc("/api2/json/d2d/backup", ServerOnly(storeInstance, api.D2DBackupHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/restore", ServerOnly(storeInstance, api.D2DRestoreHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/target", ServerOnly(storeInstance, api.D2DTargetHandler(storeInstance)))
@@ -53,7 +50,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", ServerOnly(storeInstance, api.D2DFileTree(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/exclusion", AgentOrServer(storeInstance, api.D2DExclusionHandler(storeInstance)))
 
-	// ExtJS routes
 	apiMux.HandleFunc("/api2/extjs/d2d/backup", ServerOnly(storeInstance, api.ExtJsBackupRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/d2d/backup/export", ServerOnly(storeInstance, api.ExtJsBackupCSVExportHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/d2d/restore", ServerOnly(storeInstance, api.ExtJsRestoreRunHandler(storeInstance)))
@@ -85,7 +81,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results/export", ServerOnly(storeInstance, api.VerificationResultsExportHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/verification/aggregate", ServerOnly(storeInstance, api.VerificationAggregateHandler(storeInstance)))
 
-	// MTF tape routes
 	apiMux.HandleFunc("/api2/extjs/d2d/mtf-job", ServerOnly(storeInstance, api.ExtJsMtfJobRunHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/mtf-job", ServerOnly(storeInstance, api.ExtJsMtfJobHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}", ServerOnly(storeInstance, api.ExtJsMtfJobSingleHandler(storeInstance)))
@@ -95,12 +90,10 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping", ServerOnly(storeInstance, api.ExtJsMtfMappingHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping/{id}", ServerOnly(storeInstance, api.ExtJsMtfMappingSingleHandler(storeInstance)))
 
-	// Notification batch routes
 	apiMux.HandleFunc("/api2/json/d2d/notification-batch", ServerOnly(storeInstance, api.NotificationBatchHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/notification-batch/jobs", ServerOnly(storeInstance, api.NotificationBatchJobsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/notification-batch/status", ServerOnly(storeInstance, api.NotificationBatchStatusHandler(storeInstance)))
 
-	// Alert settings routes
 	apiMux.HandleFunc("/api2/json/d2d/alert-settings", ServerOnly(storeInstance, api.AlertSettingsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/alert-settings/{name}", ServerOnly(storeInstance, api.AlertSettingSingleHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions", ServerOnly(storeInstance, api.AlertExclusionsHandler(storeInstance)))
@@ -108,7 +101,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 
 	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
 
-	// Agent routes
 	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinaryHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsiHandler(storeInstance, version))
@@ -117,11 +109,9 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", AgentOnly(storeInstance, api.D2DTargetAgentHandler(storeInstance)))
 	agentMux.HandleFunc("/api2/json/d2d/agent-log", AgentOnly(storeInstance, api.AgentLogHandler(storeInstance)))
 
-	// Agent auth routes
 	agentMux.HandleFunc("/plus/agent/bootstrap", api.AgentBootstrapHandler(storeInstance))
 	agentMux.HandleFunc("/plus/agent/renew", AgentOnly(storeInstance, api.AgentRenewHandler(storeInstance)))
 
-	// Health probes
 	apiMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -136,18 +126,15 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// pprof routes
 	apiMux.HandleFunc("/debug/pprof/", pprof.Index)
 	apiMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	apiMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	// Apply middleware chain: RequestID → RequestLogger → Recovery
 	apiHandler := Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))
 	agentHandler := Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))
 
-	// Build TLS config for agent server
 	serverConfig, err := storeInstance.CertManager.APIServerTLSConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build server TLS config: %w", err)
@@ -172,7 +159,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 		MaxHeaderBytes: conf.HTTPMaxHeaderBytes,
 	}
 
-	// ARPC router setup
 	router := arpc.NewRouter()
 	router.Handle("echo", func(req *arpc.Request) (arpc.Response, error) {
 		var msg string
@@ -196,8 +182,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	}, nil
 }
 
-// StartARPC starts the ARPC server (TCP) with proper TLS configuration.
-// TCP is used for backup/restore data sessions.
 func (s *Server) StartARPC() error {
 	arpcTlsConfig, err := s.Store.CertManager.ARPCServerTLSConfig()
 	if err != nil {
@@ -236,7 +220,6 @@ func (s *Server) StartARPC() error {
 	return arpc.ListenAndServe(s.Store.Ctx, conf.ARPCServerPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
 }
 
-// StartARPCQuic starts the QUIC ARPC server for agent control-plane connections.
 func (s *Server) StartARPCQuic() error {
 	arpcTlsConfig, err := s.Store.CertManager.ARPCServerTLSConfig()
 	if err != nil {
@@ -246,7 +229,6 @@ func (s *Server) StartARPCQuic() error {
 	return arpc.ListenAndServeQuic(s.Store.Ctx, conf.ARPCQuicPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
 }
 
-// StartAll starts all HTTP and ARPC servers in background goroutines.
 func (s *Server) StartAll() {
 	s.wg.Go(func() {
 		WatchAndServe(s.APIServer, conf.CertFile, conf.KeyFile, []string{conf.CertFile, conf.KeyFile}, s.shutdownCh)
@@ -274,7 +256,6 @@ func (s *Server) StartAll() {
 	})
 }
 
-// Shutdown gracefully stops all servers, allowing in-flight requests to complete.
 func (s *Server) Shutdown(ctx context.Context) error {
 	close(s.shutdownCh)
 	syslog.L.Info().WithMessage("shutting down HTTP servers").Write()

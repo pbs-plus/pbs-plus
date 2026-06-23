@@ -10,6 +10,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -63,7 +64,7 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 		return nil, fmt.Errorf("AgentHTTPRequestAttempt: error creating http request -> %w", err)
 	}
 
-	hostname, err := GetAgentHostname()
+	hostname, err := host.AgentHostname()
 	if err != nil {
 		return nil, fmt.Errorf("AgentHTTPRequestAttempt: failed to get hostname -> %w", err)
 	}

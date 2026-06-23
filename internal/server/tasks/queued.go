@@ -10,43 +10,36 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// QueuedTask represents a task in queued state before execution starts.
 type QueuedTask struct {
 	proxmox.Task
 	mu       sync.Mutex
 	closed   atomic.Bool
 	path     string
-	job      any // either database.Backup or database.Restore
+	job      any
 	isBackup bool
 }
 
-// Lock locks the task mutex.
 func (t *QueuedTask) Lock() { t.mu.Lock() }
 
-// Unlock unlocks the task mutex.
 func (t *QueuedTask) Unlock() { t.mu.Unlock() }
 
-// GenerateBackupQueuedTask creates a queued task for backup jobs.
 func GenerateBackupQueuedTask(job database.Backup, web bool) (QueuedTask, error) {
 	return generateQueuedTask(job, job.Target.GetHostname(), "backup", web, true)
 }
 
-// GenerateRestoreQueuedTask creates a queued task for restore jobs.
 func GenerateRestoreQueuedTask(job database.Restore, web bool) (QueuedTask, error) {
 	return generateQueuedTask(job, job.DestTarget.GetHostname(), "reader", web, false)
 }
 
-// GenerateVerificationQueuedTask creates a queued task for verification jobs.
 func GenerateVerificationQueuedTask(job database.VerificationJob, web bool) (QueuedTask, error) {
 	return generateQueuedTask(job, job.ID, "verification", web, false)
 }
 
-// generateQueuedTask creates a queued task with common setup logic.
 func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (QueuedTask, error) {
 	var store string
 	switch j := job.(type) {
@@ -71,13 +64,13 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 		StartTime:  startTime.Unix(),
 		WorkerType: wtype,
 		WID:        wid,
-		User:       proxmox.AUTH_ID,
+		User:       proxmox.AuthID,
 	}
 
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, wtype, wid, proxmox.AUTH_ID)
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, wtype, wid, proxmox.AuthID)
 
 	file, path, err := CreateTaskLogFile(task.UPID)
 	if err != nil {
@@ -89,14 +82,17 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 		source = "schedule"
 	}
 	timestamp := Now().Format(time.RFC3339)
-	fmt.Fprintf(file, "%s: TASK QUEUED: job started from %s\n", timestamp, source)
-	file.Close()
+	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: job started from %s\n", timestamp, source); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := file.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	task.Status = "running"
 	return QueuedTask{Task: task, path: path, job: job, isBackup: isBackup}, nil
 }
 
-// UpdateDescription updates the queued task status description.
 func (t *QueuedTask) UpdateDescription(desc string) error {
 	if t.closed.Load() {
 		return nil
@@ -110,7 +106,11 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	timestamp := Now().Format(time.RFC3339)
 	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: %s\n", timestamp, desc); err != nil {
@@ -125,15 +125,15 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 	return nil
 }
 
-// Close removes the queued task file.
 func (t *QueuedTask) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_ = os.Remove(t.path)
+	if err := os.Remove(t.path); err != nil && !os.IsNotExist(err) {
+		syslog.L.Error(err).Write()
+	}
 	t.closed.Store(true)
 }
 
-// GenerateMtfQueuedTask creates a queued task for MTF migration jobs.
 func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error) {
 	wid := proxmox.EncodeToHexEscapes(datastore) +
 		proxmox.EncodeToHexEscapes(":") +
@@ -148,12 +148,12 @@ func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error
 		StartTime:  startTime.Unix(),
 		WorkerType: "mtf2pxar",
 		WID:        wid,
-		User:       proxmox.AUTH_ID,
+		User:       proxmox.AuthID,
 	}
 	pid := fmt.Sprintf("%08X", task.PID)
 	pstart := fmt.Sprintf("%08X", task.PStart)
 	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, "mtf2pxar", wid, proxmox.AUTH_ID)
+	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, "mtf2pxar", wid, proxmox.AuthID)
 
 	file, path, err := CreateTaskLogFile(task.UPID)
 	if err != nil {
@@ -165,8 +165,12 @@ func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error
 		source = "schedule"
 	}
 	timestamp := Now().Format(time.RFC3339)
-	fmt.Fprintf(file, "%s: TASK QUEUED: MTF job started from %s\n", timestamp, source)
-	file.Close()
+	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: MTF job started from %s\n", timestamp, source); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	if err := file.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	task.Status = "running"
 	return QueuedTask{Task: task, path: path}, nil

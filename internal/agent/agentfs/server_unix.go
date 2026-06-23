@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/unix"
 )
 
@@ -26,7 +27,9 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 	}
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
-		_ = unix.Close(fd)
+		if err := unix.Close(fd); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return nil, err
 	}
 	isDir := (st.Mode & unix.S_IFMT) == unix.S_IFDIR
@@ -37,7 +40,9 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 	if isDir {
 		reader, err := NewDirReader(f, path)
 		if err != nil {
-			f.Close()
+			if err := f.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return nil, err
 		}
 		fh.dirReader = reader
@@ -106,7 +111,11 @@ func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]b
 	if err != nil {
 		return nil, nil, false
 	}
-	return data[diff : diff+length], func() { unix.Munmap(data) }, true
+	return data[diff : diff+length], func() {
+		if err := unix.Munmap(data); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}, true
 }
 
 func (s *AgentFSServer) platformLseek(fh *FileHandle, off int64, whence int) (int64, error) {

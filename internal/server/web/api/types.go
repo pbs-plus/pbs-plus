@@ -4,11 +4,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// FlatBackup is the flattened API response for a backup job.
-// Nested fields (history, current-stats, target) are promoted to top level
-// so the JS frontend doesn't need transform logic.
 type FlatBackup struct {
-	// Identity
 	ID               string `json:"id"`
 	Store            string `json:"store"`
 	Mode             string `json:"mode"`
@@ -29,11 +25,9 @@ type FlatBackup struct {
 	IncludeXattr     bool   `json:"include-xattr"`
 	LegacyXattr      bool   `json:"legacy-xattr"`
 
-	// Flattened from target
 	Target       string `json:"target"`
 	ExpectedSize int    `json:"expected_size,omitempty"`
 
-	// Flattened from history
 	LastRunUpid           string `json:"last-run-upid"`
 	LastRunState          string `json:"last-run-state"`
 	LastRunEndtime        int64  `json:"last-run-endtime"`
@@ -41,14 +35,12 @@ type FlatBackup struct {
 	LastSuccessfulUpid    string `json:"last-successful-upid"`
 	Duration              int64  `json:"duration"`
 
-	// Flattened from current-stats
 	CurrentFileCount   int `json:"current_file_count,omitempty"`
 	CurrentFolderCount int `json:"current_folder_count,omitempty"`
 	CurrentFilesSpeed  int `json:"current_files_speed,omitempty"`
 	CurrentBytesSpeed  int `json:"current_bytes_speed,omitempty"`
 	CurrentBytesTotal  int `json:"current_bytes_total,omitempty"`
 
-	// Pre-formatted display fields
 	TargetSizeHuman      string           `json:"target_size_human"`
 	ReadSpeedHuman       string           `json:"read_speed_human"`
 	ReadTotalHuman       string           `json:"read_total_human"`
@@ -59,7 +51,6 @@ type FlatBackup struct {
 	Stale bool `json:"stale"`
 }
 
-// FlatRestore is the flattened API response for a restore job.
 type FlatRestore struct {
 	ID               string `json:"id"`
 	Store            string `json:"store"`
@@ -76,10 +67,8 @@ type FlatRestore struct {
 	RetryInterval    int    `json:"retry-interval"`
 	ExpectedSize     int    `json:"expected_size,omitempty"`
 
-	// Flattened from dest-target
 	DestTarget string `json:"dest-target"`
 
-	// Flattened from history
 	LastRunUpid           string `json:"last-run-upid"`
 	LastRunState          string `json:"last-run-state"`
 	LastRunEndtime        int64  `json:"last-run-endtime"`
@@ -87,14 +76,12 @@ type FlatRestore struct {
 	LastSuccessfulUpid    string `json:"last-successful-upid"`
 	Duration              int64  `json:"duration"`
 
-	// Flattened from current-stats
 	CurrentFileCount   int `json:"current_file_count,omitempty"`
 	CurrentFolderCount int `json:"current_folder_count,omitempty"`
 	CurrentFilesSpeed  int `json:"current_files_speed,omitempty"`
 	CurrentBytesSpeed  int `json:"current_bytes_speed,omitempty"`
 	CurrentBytesTotal  int `json:"current_bytes_total,omitempty"`
 
-	// Pre-formatted display fields
 	TargetSizeHuman      string           `json:"target_size_human"`
 	ReadSpeedHuman       string           `json:"read_speed_human"`
 	ReadTotalHuman       string           `json:"read_total_human"`
@@ -102,7 +89,6 @@ type FlatRestore struct {
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
 }
 
-// FlatVerificationJob is the flattened API response for a verification job.
 type FlatVerificationJob struct {
 	ID                  string              `json:"id"`
 	BackupJobID         string              `json:"backup_job_id"`
@@ -121,7 +107,6 @@ type FlatVerificationJob struct {
 	RunOnBackupComplete bool                `json:"run_on_backup_complete"`
 	CreatedAt           int64               `json:"created_at"`
 
-	// Flattened from history
 	LastRunUpid           string `json:"last-run-upid"`
 	LastRunState          string `json:"last-run-state"`
 	LastRunStarttime      int64  `json:"last-run-starttime"`
@@ -130,11 +115,9 @@ type FlatVerificationJob struct {
 	LastSuccessfulUpid    string `json:"last-successful-upid"`
 	Duration              int64  `json:"duration"`
 
-	// Pre-formatted
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
 }
 
-// SpotCheckConfigJSON is a simplified spot config for API responses.
 type SpotCheckConfigJSON struct {
 	SampleCount        int                   `json:"sample_count"`
 	SampleCountPercent float64               `json:"sample_count_percent"`
@@ -146,28 +129,25 @@ type SpotCheckConfigJSON struct {
 	FailThreshold      int                   `json:"fail_threshold"`
 }
 
-// SpotCheckFilterJSON is a simplified filter for API responses.
 type SpotCheckFilterJSON struct {
 	PathPattern string `json:"path_pattern"`
 	MinSize     int64  `json:"min_size"`
 	MaxSize     int64  `json:"max_size"`
 }
 
-// VerificationAggregate holds summary statistics across all verification jobs.
 type VerificationAggregate struct {
 	TotalJobs    int     `json:"total_jobs"`
 	TotalRuns    int     `json:"total_runs"`
 	TotalFiles   int     `json:"total_files"`
 	TotalFailed  int     `json:"total_failed"`
 	TotalSkipped int     `json:"total_skipped"`
-	PassRate     float64 `json:"pass_rate"`  // percentage 0-100
-	CleanRuns    int     `json:"clean_runs"` // runs with zero failures
+	PassRate     float64 `json:"pass_rate"`
+	CleanRuns    int     `json:"clean_runs"`
 	FailedRuns   int     `json:"failed_runs"`
-	Last30Days   int     `json:"last_30_days"` // runs in last 30 days
-	Confidence   float64 `json:"confidence"`   // aggregate 95% CI lower bound
+	Last30Days   int     `json:"last_30_days"`
+	Confidence   float64 `json:"confidence"`
 }
 
-// FlatVerificationResult extends VerificationResult with pre-computed display fields.
 type FlatVerificationResult struct {
 	ID                int                          `json:"id"`
 	VerificationJobID string                       `json:"verification_job_id"`
@@ -184,25 +164,23 @@ type FlatVerificationResult struct {
 	StartedAt         int64                        `json:"started_at"`
 	CompletedAt       int64                        `json:"completed_at"`
 	DurationHuman     string                       `json:"duration_human"`
-	PassRate          float64                      `json:"pass_rate"` // percentage 0-100
+	PassRate          float64                      `json:"pass_rate"`
 	Confidence        ConfidenceInfo               `json:"confidence"`
-	StatusBadge       string                       `json:"status_badge"` // "passed" | "failed" | "warning"
+	StatusBadge       string                       `json:"status_badge"`
 	Details           []FlatVerificationFileResult `json:"details"`
 }
 
-// FlatVerificationFileResult extends VerificationFileResult with display fields.
 type FlatVerificationFileResult struct {
 	Path        string `json:"path"`
 	Size        int64  `json:"size"`
 	SizeHuman   string `json:"size_human"`
 	Status      string `json:"status"`
-	StatusHuman string `json:"status_human"` // e.g. "✓ OK", "✗ Failed"
+	StatusHuman string `json:"status_human"`
 	Message     string `json:"message"`
 }
 
-// TargetTreeNode represents a node in the pre-built target tree.
 type TargetTreeNode struct {
-	Text      string           `json:"text"` // display label
+	Text      string           `json:"text"`
 	IconCls   string           `json:"iconCls,omitempty"`
 	Expanded  bool             `json:"expanded"`
 	IsGroup   bool             `json:"isGroup"`
@@ -210,7 +188,6 @@ type TargetTreeNode struct {
 	Leaf      bool             `json:"leaf"`
 	Children  []TargetTreeNode `json:"children,omitempty"`
 
-	// Target fields (present when IsGroup == false)
 	Name             string `json:"name,omitempty"`
 	Path             string `json:"path,omitempty"`
 	TargetType       string `json:"target_type,omitempty"`
@@ -233,7 +210,6 @@ type TargetTreeNode struct {
 	IP               string `json:"ip,omitempty"`
 }
 
-// TargetsTreeResponse is the API response for the target tree.
 type TargetsTreeResponse struct {
 	Data   []TargetTreeNode `json:"data"`
 	Digest string           `json:"digest"`

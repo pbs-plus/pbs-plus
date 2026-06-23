@@ -3,16 +3,16 @@ package conf
 import "time"
 
 const (
-	ProxyTargetURL = "https://127.0.0.1:8007" // The target server URL
+	ProxyTargetURL = "https://127.0.0.1:8007"
 
 	ARPCServerPort   = ":8008"
 	ARPCQuicPort     = ":8008"
 	AgentAPIPort     = ":8018"
 	ServerAPIExtPort = ":8017"
 
-	ModifiedFilePath       = "/js/proxmox-backup-gui.js"     // The specific JS file to modify
-	CertFile               = "/etc/proxmox-backup/proxy.pem" // Path to generated SSL certificate
-	KeyFile                = "/etc/proxmox-backup/proxy.key" // Path to generated private key
+	ModifiedFilePath       = "/js/proxmox-backup-gui.js"
+	CertFile               = "/etc/proxmox-backup/proxy.pem"
+	KeyFile                = "/etc/proxmox-backup/proxy.key"
 	AgentTLSCACertFile     = "/etc/proxmox-backup/pbs-plus/certs/ca.crt"
 	AgentTLSCAKeyFile      = "/etc/proxmox-backup/pbs-plus/certs/ca.key"
 	AgentTLSPrevCACertFile = "/etc/proxmox-backup/pbs-plus/certs/ca-prev.crt"
@@ -38,7 +38,6 @@ const (
 	PBSAuthKeyPath       = "/etc/proxmox-backup/authkey.key"
 )
 
-// These paths are variables so they can be overridden by build tags for agent vs server
 var (
 	StatePrefix         = "/var/lib/pbs-plus"
 	ScriptsBasePath     = StatePrefix + "/scripts"

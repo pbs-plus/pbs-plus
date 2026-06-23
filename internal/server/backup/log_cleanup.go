@@ -5,6 +5,7 @@ package backup
 import (
 	"bufio"
 	"fmt"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"log"
 	"os"
 	"path/filepath"
@@ -44,7 +45,11 @@ func processFile(path string, removedCount *int64) error {
 	if err != nil {
 		return fmt.Errorf("opening file %s: %w", path, err)
 	}
-	defer inputFile.Close()
+	defer func() {
+		if err := inputFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	info, err := inputFile.Stat()
 	if err != nil {
@@ -63,7 +68,11 @@ func processFile(path string, removedCount *int64) error {
 	}
 
 	tmpName := tmpFile.Name()
-	defer tmpFile.Close()
+	defer func() {
+		if err := tmpFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	scanner := bufio.NewScanner(inputFile)
 	buf := make([]byte, 0, 1024*1024)
@@ -77,27 +86,39 @@ func processFile(path string, removedCount *int64) error {
 			removedInFile++
 		} else {
 			if _, err := writer.Write(line); err != nil {
-				os.Remove(tmpName)
+				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+					syslog.L.Error(err).Write()
+				}
 				return fmt.Errorf("writing to temp file for %s: %w", path, err)
 			}
 			if err := writer.WriteByte('\n'); err != nil {
-				os.Remove(tmpName)
+				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+					syslog.L.Error(err).Write()
+				}
 				return fmt.Errorf("writing newline for %s: %w", path, err)
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		os.Remove(tmpName)
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("scanning file %s: %w", path, err)
 	}
 	if err := writer.Flush(); err != nil {
-		os.Remove(tmpName)
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("flushing writer for %s: %w", path, err)
 	}
 
 	if removedInFile == 0 {
-		tmpFile.Close()
-		os.Remove(tmpName)
+		if err := tmpFile.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 		return nil
 	}
 

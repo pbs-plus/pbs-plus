@@ -41,16 +41,11 @@ type QueueReply struct {
 	Message string
 }
 
-// BackupJobFactory creates a backup job operation. Set during initialization
-// to break the import cycle between rpc and jobs/backup.
 var BackupJobFactory func(database.Backup, *store.Store, bool, bool, []string) *jobs.Job
 
-// RestoreJobFactory creates a restore job operation. Set during initialization
-// to break the import cycle between rpc and jobs/restore.
 var RestoreJobFactory func(database.Restore, *store.Store, bool, bool) (*jobs.Job, error)
 
 // MtfJobFactory creates an MTF tape → pxar migration job operation. Set
-// during initialization to break the import cycle between rpc and mtfjob.
 var MtfJobFactory func(string, *store.Store, bool) (*jobs.Job, error)
 
 type JobRPCService struct {
@@ -139,8 +134,9 @@ func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error
 }
 
 func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
-	// Remove any stale socket file.
-	_ = os.RemoveAll(socketPath)
+	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
+		syslog.L.Error(err).Write()
+	}
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", socketPath, err)
@@ -152,12 +148,10 @@ func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath 
 		Manager: manager,
 	}
 
-	// Register the RPC service.
 	if err := rpc.Register(service); err != nil {
 		return fmt.Errorf("failed to register rpc service: %v", err)
 	}
 
-	// Start accepting connections.
 	ready := make(chan struct{})
 
 	go func() {
@@ -191,7 +185,9 @@ func RunJobRPCServer(ctx context.Context, socketPath string, manager *jobs.Manag
 			WithMessage("rpc mount server shutting down due to context cancellation").
 			WithField("socket", socketPath).
 			Write()
-		_ = os.Remove(socketPath)
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 	case <-watcher:
 		syslog.L.Info().
 			WithMessage("rpc mount server shut down unexpectedly").

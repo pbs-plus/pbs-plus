@@ -13,7 +13,9 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var (
@@ -109,9 +111,15 @@ func RenewCertificateIfExpiring() error {
 
 	switch {
 	case cert.NotAfter.Before(now) || serverCA.NotAfter.Before(now):
-		registry.DeleteEntry(registry.AUTH, "Cert")
-		registry.DeleteEntry(registry.AUTH, "Priv")
-		registry.DeleteEntry(registry.AUTH, "ServerCA")
+		if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
+			syslog.L.Error(err).Write()
+		}
 
 		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")
 	case timeUntilExpiry < renewalWindow || caTimeUntilExpiry < renewalWindow:
@@ -124,7 +132,7 @@ func RenewCertificateIfExpiring() error {
 }
 
 func renewCertificate() error {
-	hostname, err := GetAgentHostname()
+	hostname, err := host.AgentHostname()
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to get hostname - %w", err)
 	}

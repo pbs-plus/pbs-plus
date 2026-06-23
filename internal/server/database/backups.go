@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -55,7 +55,9 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -83,7 +85,6 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		backup.ID = id
 	}
 
-	// Validation
 	if backup.Target.Name == "" {
 		return errors.New("target is empty")
 	}
@@ -287,7 +288,9 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -307,7 +310,6 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if !validate.IsValidID(backup.ID) && backup.ID != "" {
 		return fmt.Errorf("UpdateBackup: invalid id string -> %s", backup.ID)
 	}
@@ -430,7 +432,9 @@ func (database *Database) linkBackupLog(backupID, upid string) {
 		return
 	}
 
-	_ = os.Remove(backupLogPath)
+	if err := os.Remove(backupLogPath); err != nil && !os.IsNotExist(err) {
+		syslog.L.Error(err).Write()
+	}
 
 	err = os.Symlink(origLogPath, backupLogPath)
 	if err != nil {
@@ -615,7 +619,9 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -653,7 +659,7 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 	}
 
 	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, id)
-	if err := os.RemoveAll(backupLogsPath); err != nil {
+	if err := os.RemoveAll(backupLogsPath); err != nil && !os.IsNotExist(err) {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteBackup: failed removing backup logs: %w", err)).
 				WithField("id", id).

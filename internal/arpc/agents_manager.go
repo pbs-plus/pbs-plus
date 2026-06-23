@@ -127,8 +127,10 @@ func (sm *AgentsManager) checkRateLimit(clientID string) error {
 }
 
 func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.Session, conn net.Conn, headers http.Header) (*StreamPipe, string, error) {
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-	defer conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, "", err
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
@@ -233,7 +235,6 @@ func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, 
 		return "", err
 	}
 
-	// Evict any existing session (TCP or QUIC) with the same client ID.
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
 	}

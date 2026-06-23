@@ -10,7 +10,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// AlertType identifies a system-level D2D alert.
 type AlertType string
 
 const (
@@ -19,7 +18,6 @@ const (
 	AlertTargetOffline      AlertType = "target-offline"
 )
 
-// SendAlert dispatches a system-level alert notification via the PBS spool.
 // Unlike Send (which is for job completion), alerts are for monitoring conditions.
 func SendAlert(alertType AlertType, severity string, details map[string]string) {
 	sendAlertWithData(alertType, severity, details, nil)
@@ -57,7 +55,10 @@ func sendAlertWithData(alertType AlertType, severity string, details map[string]
 		maps.Copy(m, extraData)
 		return m
 	}()
-	tmplJSON, _ := json.Marshal(tmplData)
+	tmplJSON, err := json.Marshal(tmplData)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	tc := templateContent{
 		TemplateName: templateName,

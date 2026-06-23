@@ -16,8 +16,6 @@ import (
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
-// --- BackupService ---
-
 type BackupService struct{ db *database.Database }
 
 func NewBackupService(db *database.Database) *BackupService { return &BackupService{db: db} }
@@ -61,8 +59,6 @@ func jobStatsFromVFS(stats vfs.VFSStats) database.JobStats {
 	}
 }
 
-// --- RestoreService ---
-
 type RestoreService struct{ db *database.Database }
 
 func NewRestoreService(db *database.Database) *RestoreService { return &RestoreService{db: db} }
@@ -72,8 +68,6 @@ func (s *RestoreService) GetRestore(id string) (database.Restore, error) { retur
 func (s *RestoreService) CreateRestore(r database.Restore) error         { return s.db.CreateRestore(nil, r) }
 func (s *RestoreService) UpdateRestore(r database.Restore) error         { return s.db.UpdateRestore(nil, r) }
 func (s *RestoreService) DeleteRestore(id string) error                  { return s.db.DeleteRestore(nil, id) }
-
-// --- ExclusionService ---
 
 type ExclusionService struct{ db *database.Database }
 
@@ -93,8 +87,6 @@ func (s *ExclusionService) UpdateExclusion(e database.Exclusion) error {
 }
 func (s *ExclusionService) DeleteExclusion(path string) error { return s.db.DeleteExclusion(nil, path) }
 
-// --- AgentHostService ---
-
 type AgentHostService struct{ db *database.Database }
 
 func NewAgentHostService(db *database.Database) *AgentHostService { return &AgentHostService{db: db} }
@@ -112,8 +104,6 @@ func (s *AgentHostService) DeleteAgentHost(hostname string) error {
 	return s.db.DeleteAgentHost(nil, hostname)
 }
 
-// --- TokenService ---
-
 type TokenService struct{ db *database.Database }
 
 func NewTokenService(db *database.Database) *TokenService { return &TokenService{db: db} }
@@ -122,8 +112,6 @@ func (s *TokenService) GetAllTokens() ([]database.AgentToken, error)    { return
 func (s *TokenService) GetToken(id string) (database.AgentToken, error) { return s.db.GetToken(id) }
 func (s *TokenService) CreateToken(d time.Duration, c string) error     { return s.db.CreateToken(d, c) }
 func (s *TokenService) RevokeToken(t database.AgentToken) error         { return s.db.RevokeToken(t) }
-
-// --- ScriptService ---
 
 type ScriptService struct{ db *database.Database }
 
@@ -134,8 +122,6 @@ func (s *ScriptService) GetScript(path string) (database.Script, error) { return
 func (s *ScriptService) CreateScript(sc database.Script) error          { return s.db.CreateScript(nil, sc) }
 func (s *ScriptService) UpdateScript(sc database.Script) error          { return s.db.UpdateScript(nil, sc) }
 func (s *ScriptService) DeleteScript(path string) error                 { return s.db.DeleteScript(nil, path) }
-
-// --- TargetService ---
 
 type TargetService struct {
 	db          *database.Database
@@ -319,8 +305,6 @@ func (s *TargetService) RefreshStatuses() {
 
 // Ensure fmt is used (needed by sprintf patterns elsewhere)
 
-// --- VerificationService ---
-
 type VerificationService struct{ db *database.Database }
 
 func NewVerificationService(db *database.Database) *VerificationService {
@@ -355,7 +339,6 @@ func (s *VerificationService) UpdateVerificationResult(r database.VerificationRe
 	return s.db.UpdateVerificationResult(r)
 }
 
-// GetAllVerificationResults returns results from all verification jobs.
 func (s *VerificationService) GetAllVerificationResults() ([]database.VerificationResult, error) {
 	jobs, err := s.db.GetAllVerificationJobs()
 	if err != nil {

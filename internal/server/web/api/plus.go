@@ -38,7 +38,9 @@ var (
 )
 
 func init() {
-	_ = os.RemoveAll(getCacheDir())
+	if err := os.RemoveAll(getCacheDir()); err != nil && !os.IsNotExist(err) {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func getCacheDir() string {
@@ -68,7 +70,11 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 		http.Error(w, "Failed to reach upstream", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		http.Error(w, "Upstream returned error", resp.StatusCode)
@@ -78,20 +84,28 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	tmpFile, err := os.CreateTemp(getCacheDir(), "download-*")
 	if err != nil {
 		syslog.L.Error(err).Write()
-		io.Copy(w, resp.Body)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return
 	}
 
 	multiWriter := io.MultiWriter(w, tmpFile)
 	_, err = io.Copy(multiWriter, resp.Body)
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	if err != nil {
-		os.Remove(tmpFile.Name())
+		if err := os.Remove(tmpFile.Name()); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
 		return
 	}
 
-	os.Rename(tmpFile.Name(), cachePath)
+	if err := os.Rename(tmpFile.Name(), cachePath); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
 func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.HandlerFunc {
@@ -142,7 +156,9 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 		}
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		tmpl.Execute(w, config)
+		if err := tmpl.Execute(w, config); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -150,7 +166,9 @@ func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		toReturn := VersionResponse{Version: version}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toReturn)
+		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 

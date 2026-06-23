@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pxar/transfer"
 	"golang.org/x/sys/unix"
 )
 
-// Serve builds the filesystem stack and runs the FUSE server.
 // It blocks until the process receives SIGINT/SIGTERM.
 func Serve(cfg MountConfig) {
 	reader, _ := cfg.Reader.(*transfer.SplitReader)
@@ -23,7 +23,6 @@ func Serve(cfg MountConfig) {
 		os.Exit(1)
 	}
 
-	// Default backing dir for init mode.
 	backingDir := cfg.BackingDir
 	if backingDir == "" && cfg.InitMode {
 		backingDir = cfg.MountPoint + ".backing"
@@ -40,14 +39,17 @@ func Serve(cfg MountConfig) {
 			os.Exit(1)
 		}
 
-		// Open the SQLite journal.
 		journalDir := filepath.Join(backingDir, JournalDir)
 		journal, err := OpenJournal(journalDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  ✗ error opening journal: %v\n", err)
 			os.Exit(1)
 		}
-		defer func() { _ = journal.Close() }()
+		defer func() {
+			if err := journal.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
+		}()
 
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "  mutation mode, journal in %s\n", journalDir)
@@ -75,7 +77,6 @@ func Serve(cfg MountConfig) {
 			fmt.Fprintf(os.Stderr, "  warning: reconcile error: %v\n", err)
 		}
 
-		// Apply default ownership on the backing root (fast).
 		mfs.applyACLOwnership(backingDir)
 
 		// Map root inode.
@@ -127,24 +128,24 @@ func Serve(cfg MountConfig) {
 	go func() {
 		<-sigCh
 
-		// Stop accepting new commit connections.
 		if sockListener != nil {
-			_ = sockListener.Close()
+			if err := sockListener.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 
-		// Unmount FUSE.
 		if err := server.Unmount(); err != nil {
-			_ = unix.Unmount(cfg.MountPoint, unix.MNT_DETACH)
+			if err := unix.Unmount(cfg.MountPoint, unix.MNT_DETACH); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 
-		// Second signal: force exit.
 		<-sigCh
 		os.Exit(1)
 	}()
 
 	server.Serve()
 
-	// Cleanup after Serve() returns.
 	if mfs != nil {
 		mfs.Close()
 	}

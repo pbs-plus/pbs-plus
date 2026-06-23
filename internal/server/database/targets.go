@@ -24,7 +24,9 @@ func (database *Database) CreateTarget(tx *Transaction, target Target) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -44,7 +46,6 @@ func (database *Database) CreateTarget(tx *Transaction, target Target) (err erro
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if target.Path == "" && target.AgentHost.Name == "" {
 		return fmt.Errorf("target path empty and no agent host specified")
 	}
@@ -90,7 +91,9 @@ func (database *Database) UpdateTarget(tx *Transaction, target Target) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -110,7 +113,6 @@ func (database *Database) UpdateTarget(tx *Transaction, target Target) (err erro
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if target.Path == "" && target.AgentHost.Name == "" {
 		return fmt.Errorf("target path empty and no agent host specified")
 	}
@@ -156,7 +158,9 @@ func (database *Database) UpsertTarget(tx *Transaction, target Target) (err erro
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -221,7 +225,9 @@ func (database *Database) AddS3Secret(tx *Transaction, targetName string, secret
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -269,7 +275,9 @@ func (database *Database) DeleteTarget(tx *Transaction, name string) (err error)
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {

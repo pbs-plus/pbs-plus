@@ -10,7 +10,6 @@ import (
 )
 
 // OldStatePath is the legacy path used before v0.79.0.
-// This is a variable instead of constant to allow for unit testing.
 var OldStatePath = "/var/lib/pbs-plus"
 
 // TryMigrate attempts to migrate data from legacy paths to new paths.
@@ -18,10 +17,8 @@ var OldStatePath = "/var/lib/pbs-plus"
 // the agent continues to use the legacy paths automatically.
 // Returns true if migration was successful, false otherwise.
 func TryMigrate() bool {
-	// Check if this is even needed
 	oldInfo, err := os.Stat(OldStatePath)
 	if err != nil {
-		// Old path doesn't exist - nothing to migrate
 		if os.IsNotExist(err) {
 			return true // Consider this success - nothing to migrate
 		}
@@ -30,23 +27,19 @@ func TryMigrate() bool {
 	}
 
 	if !oldInfo.IsDir() {
-		// Old path exists but is not a directory - skip
 		return true
 	}
 
-	// Check if new directory already exists and is populated
 	newPath := "/var/lib/pbs-plus-agent"
 	newInfo, err := os.Stat(newPath)
 	if err == nil && newInfo.IsDir() {
 		entries, err := os.ReadDir(newPath)
 		if err == nil && len(entries) > 0 {
-			// New directory already has content, migration complete or manual setup
 			fmt.Printf("[pbs-plus] migration: new path already exists with content, skipping\n")
 			return true
 		}
 	}
 
-	// Try to create the new state directory
 	if err := os.MkdirAll(newPath, 0700); err != nil {
 		fmt.Printf("[pbs-plus] migration: cannot create new directory %s (will use legacy): %v\n",
 			newPath, err)
@@ -64,7 +57,6 @@ func TryMigrate() bool {
 		_ = os.Remove(testFile)
 	}
 
-	// Check if we can create backup of old path
 	backupPath := OldStatePath + ".backup.legacy"
 	if _, err := os.Stat(backupPath); err == nil {
 		fmt.Printf("[pbs-plus] migration: backup already exists, migration may have been partially completed\n")
@@ -73,13 +65,11 @@ func TryMigrate() bool {
 
 	fmt.Printf("[pbs-plus] migration: migrating data from %s to %s\n", OldStatePath, newPath)
 
-	// Perform the migration
 	if err := migrateDirectory(OldStatePath, newPath); err != nil {
 		fmt.Printf("[pbs-plus] migration: failed during migration (will use legacy): %v\n", err)
 		return false
 	}
 
-	// Migration successful - try to rename old to backup
 	if err := os.Rename(OldStatePath, backupPath); err != nil {
 		fmt.Printf("[pbs-plus] migration: data migrated but failed to backup old directory: %v\n", err)
 		// Don't return false - data is migrated, just backup failed

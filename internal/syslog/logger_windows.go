@@ -9,8 +9,8 @@ import (
 
 	"log/slog"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"golang.org/x/sys/windows/svc/eventlog"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -38,7 +38,7 @@ func (l *Logger) SetServiceLogger() error {
 		})
 		zlogger := slog.New(handler)
 		l.zlog = zlogger
-		l.hostname, _ = types.GetAgentHostname()
+		l.hostname, _ = host.AgentHostname()
 		l.zlog.Info("service logger successfully added for Windows Event Log")
 		return nil
 	}
@@ -60,7 +60,7 @@ func (l *Logger) SetServiceLogger() error {
 	})
 	zlogger := slog.New(handler)
 	l.zlog = zlogger
-	l.hostname, _ = types.GetAgentHostname()
+	l.hostname, _ = host.AgentHostname()
 	l.zlog.Warn(fmt.Sprintf("windows event log unavailable; falling back to file logging: %v", err))
 	return nil
 }

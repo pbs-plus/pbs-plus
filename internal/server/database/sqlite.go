@@ -38,7 +38,9 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
 
-	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	initialized := false
 	_, err := os.Stat(dbPath)
@@ -46,12 +48,12 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		initialized = true
 	}
 
-	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro")
+	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro&_pragma=busy_timeout%3d5000")
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
 
-	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw&_txlock=immediate")
+	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw&_txlock=immediate&_pragma=busy_timeout%3d5000")
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
@@ -93,7 +95,9 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 			}
 		}
 
-		_ = tx.Commit()
+		if err := tx.Commit(); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	return database, nil
 }
@@ -135,12 +139,10 @@ func (d *Database) NewTransaction() (*Transaction, error) {
 	return &Transaction{Tx: tx, database: d}, nil
 }
 
-// Ping checks the database connection health.
 func (d *Database) Ping(ctx context.Context) error {
 	return d.readDb.PingContext(ctx)
 }
 
-// JobCount returns the total number of backup and restore jobs in the database.
 // Returns at least 1 so the queue never has a zero-size buffer.
 func (d *Database) JobCount(ctx context.Context) (int, error) {
 	backupCount, err := d.readQueries.CountBackups(ctx)
@@ -155,8 +157,6 @@ func (d *Database) JobCount(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// RunInTransaction executes fn within a database transaction.
-// If fn returns an error, the transaction is rolled back.
 // If fn panics, the panic is re-thrown after rollback.
 func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *sqlc.Queries) error) error {
 	tx, err := d.NewTransaction()
@@ -165,7 +165,9 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			panic(p)
 		}
 	}()

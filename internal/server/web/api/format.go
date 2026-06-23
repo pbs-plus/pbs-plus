@@ -8,7 +8,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// HumanReadableBytes converts bytes to a human-readable string (e.g. "1.50 GiB").
 func HumanReadableBytes(bytes int) string {
 	const (
 		KB = 1024
@@ -31,7 +30,6 @@ func HumanReadableBytes(bytes int) string {
 	}
 }
 
-// HumanReadableSpeed converts bytes/sec to a human-readable string (e.g. "1.50 GiB/s").
 func HumanReadableSpeed(bytesPerSec int) string {
 	const (
 		KB = 1024.0
@@ -51,14 +49,12 @@ func HumanReadableSpeed(bytesPerSec int) string {
 	}
 }
 
-// ParsedTaskStatus represents a parsed task status with display info.
 type ParsedTaskStatus struct {
-	Category string `json:"category"` // "ok", "error", "warning", "unknown", "queued"
-	Icon     string `json:"icon"`     // CSS class suffix, e.g. "check good"
-	Text     string `json:"text"`     // Display text
+	Category string `json:"category"`
+	Icon     string `json:"icon"`
+	Text     string `json:"text"`
 }
 
-// ParseTaskStatus parses a task status string and returns display information.
 func ParseTaskStatus(status string) ParsedTaskStatus {
 	if status == "" {
 		return ParsedTaskStatus{}
@@ -103,7 +99,6 @@ func ParseTaskStatus(status string) ParsedTaskStatus {
 	}
 }
 
-// FormatDuration formats seconds into a human-readable duration string.
 func FormatDuration(seconds int64) string {
 	if seconds <= 0 {
 		return ""
@@ -121,14 +116,11 @@ func FormatDuration(seconds int64) string {
 	}
 }
 
-// ConfidenceInfo holds confidence percentages for JSON responses.
 type ConfidenceInfo struct {
-	Confidence95 float64 `json:"c95"` // percentage 0-100
-	Confidence99 float64 `json:"c99"` // percentage 0-100
+	Confidence95 float64 `json:"c95"`
+	Confidence99 float64 `json:"c99"`
 }
 
-// ComputeConfidence computes statistical confidence for verification results.
-// Returns the lower bound of the intact rate at 95% and 99% confidence.
 // Uses the Rule of Three for zero-failure samples and the Wilson score interval otherwise.
 func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
 	if sample <= 0 || failures >= sample {
@@ -146,7 +138,6 @@ func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
 	var c95, c99 float64
 
 	if failures == 0 {
-		// Rule of Three with finite population correction
 		fpc := math.Sqrt((N - n) / N)
 		if fpc < 0 {
 			fpc = 0
@@ -154,14 +145,13 @@ func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
 		c95 = clamp01(1 - 3.0/n*fpc)
 		c99 = clamp01(1 - 4.6/n*fpc)
 	} else {
-		// Wilson score interval for non-zero failures
 		pHat := 1 - fHat
 		c95 = wilsonLower(pHat, n, 1.96)
 		c99 = wilsonLower(pHat, n, 2.576)
 	}
 
 	return ConfidenceInfo{
-		Confidence95: math.Round(c95*1000) / 10, // round to 1 decimal (percentage)
+		Confidence95: math.Round(c95*1000) / 10,
 		Confidence99: math.Round(c99*1000) / 10,
 	}
 }
@@ -187,15 +177,13 @@ func clamp01(v float64) float64 {
 	return v
 }
 
-// FormatSpeed returns "X.XX files/s" string.
-// ComputeAggregate computes verification summary statistics across all results.
 func ComputeAggregate(results []database.VerificationResult) VerificationAggregate {
 	var agg VerificationAggregate
 	thirtyDaysAgo := time.Now().Unix() - 30*24*3600
 
 	for _, r := range results {
 		if r.Status == "" || r.Status == "pending" {
-			continue // skip incomplete runs
+			continue
 		}
 		agg.TotalRuns++
 		agg.TotalFiles += r.TotalFiles
@@ -217,7 +205,6 @@ func ComputeAggregate(results []database.VerificationResult) VerificationAggrega
 		agg.PassRate = float64(agg.TotalFiles-agg.TotalFailed) / float64(agg.TotalFiles) * 100
 	}
 
-	// Aggregate confidence: treat all samples as one big test
 	agg.Confidence = ComputeConfidence(0, agg.TotalFiles, agg.TotalFailed).Confidence95
 
 	return agg

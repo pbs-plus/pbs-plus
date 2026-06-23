@@ -22,29 +22,20 @@ func NormalizeHostname(hostname string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(hostname, ".", "-"), " ", "-")
 }
 
-// ParseUPID parses a Proxmox Backup Server UPID string and returns a Task struct.
 func ParseUPID(upid string) (Task, error) {
-	// Define the regex pattern for the UPID.
 	pattern := `^UPID:(?P<node>[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?):(?P<pid>[0-9A-Fa-f]{8}):(?P<pstart>[0-9A-Fa-f]{8,9}):(?P<task_id>[0-9A-Fa-f]{8,16}):(?P<starttime>[0-9A-Fa-f]{8}):(?P<wtype>[^:\s]+):(?P<wid>[^:\s]*):(?P<authid>[^:\s]+):$`
 
-	// Compile the regex.
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return Task{}, fmt.Errorf("failed to compile regex: %w", err)
 	}
 
-	// Match the UPID string against the regex.
 	matches := re.FindStringSubmatch(upid)
 	if matches == nil {
 		return Task{}, fmt.Errorf("invalid UPID format")
 	}
 
-	// Create a new Task instance.
-	task := Task{
-		UPID: upid, // Store the original UPID string.
-	}
-
-	// Extract the named groups using the regex's SubexpNames.
+	task := Task{UPID: upid}
 	for i, name := range re.SubexpNames() {
 		if name == "" || i >= len(matches) {
 			continue
@@ -53,21 +44,18 @@ func ParseUPID(upid string) (Task, error) {
 		case "node":
 			task.Node = matches[i]
 		case "pid":
-			// Convert PID from hex to int.
 			pid, err := strconv.ParseInt(matches[i], 16, 32)
 			if err != nil {
 				return Task{}, fmt.Errorf("failed to parse PID: %w", err)
 			}
 			task.PID = int(pid)
 		case "pstart":
-			// Convert PStart from hex to int.
 			pstart, err := strconv.ParseInt(matches[i], 16, 32)
 			if err != nil {
 				return Task{}, fmt.Errorf("failed to parse PStart: %w", err)
 			}
 			task.PStart = uint64(pstart)
 		case "starttime":
-			// Convert StartTime from hex to int64.
 			startTime, err := strconv.ParseInt(matches[i], 16, 64)
 			if err != nil {
 				return Task{}, fmt.Errorf("failed to parse StartTime: %w", err)
@@ -88,11 +76,6 @@ func ParseUPID(upid string) (Task, error) {
 }
 
 func (task *Task) GenerateUPID() string {
-	// Format the parts into the UPID string structure:
-	// UPID:<node>:<pid>:<pstart>:<task_id>:<starttime>:<wtype>:<wid>:<authid>:
-	// PID, PStart, and StartTime are formatted as 8-character zero-padded hex.
-	// task_id (Task.ID) is included as is (assuming it's the correct hex format).
-	// The format strings align with the structure parsed by ParseUPID.
 	upid := fmt.Sprintf(
 		"UPID:%s:%08X:%08X:%s:%08X:%s:%s:%s:",
 		task.Node,
@@ -157,7 +140,9 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	}
 	syslog.L.Info().WithFields(map[string]any{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
 
-	_ = os.Symlink(newPath, path)
+	if err := os.Symlink(newPath, path); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	return newUpid, nil
 }
@@ -229,23 +214,19 @@ func buildGroupPath(ns, backupType, backupID, backupTime string) string {
 	return filepath.Join(parts...)
 }
 
-// BuildPxarPaths constructs the full filesystem paths for pxar/mpxar/ppxar files.
-// Returns (mpxarPath, ppxarPath, isMetadataSplit, error).
-// For non-split pxar: ppxarPath is empty, mpxarPath contains the .pxar.didx path.
-// For split pxar: both mpxarPath and ppxarPath are populated.
-// If fileName is empty, scans the backup directory for .pxar.didx or .mpxar.didx files.
+// BuildPxarPaths returns filesystem paths for pxar/mpxar/ppxar files.
+// For split pxar both paths are populated; for non-split, ppxarPath is empty.
 func BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName string) (mpxarPath, ppxarPath string, isMetadataSplit bool, err error) {
 	groupPath := buildGroupPath(ns, backupType, backupID, backupTime)
 	groupDir := filepath.Join(pbsStoreRoot, groupPath)
 
-	// If fileName is empty, scan directory for pxar files
 	if fileName == "" {
 		entries, err := os.ReadDir(groupDir)
 		if err != nil {
 			return "", "", false, fmt.Errorf("failed to read backup directory: %w", err)
 		}
 
-		// Look for .mpxar.didx first (prefer split archives), then .pxar.didx
+		// Prefer split archives (.mpxar.didx), then .pxar.didx.
 		var foundMpxar, foundPxar string
 		for _, entry := range entries {
 			if entry.IsDir() {
@@ -276,12 +257,10 @@ func BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName
 
 	switch {
 	case strings.HasSuffix(fileName, ".pxar.didx"):
-		// Non-split archive
 		mpxarPath = filepath.Join(groupDir, fileName)
 		return mpxarPath, "", false, nil
 
 	case strings.HasSuffix(fileName, ".mpxar.didx"):
-		// Metadata file provided, need to find payload
 		mpxarPath = filepath.Join(groupDir, fileName)
 		ppxarName := strings.TrimSuffix(fileName, ".mpxar.didx") + ".ppxar.didx"
 		ppxarPath = filepath.Join(groupDir, ppxarName)
@@ -291,7 +270,6 @@ func BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName
 		return mpxarPath, ppxarPath, true, nil
 
 	case strings.HasSuffix(fileName, ".ppxar.didx"):
-		// Payload file provided, need to find metadata
 		ppxarPath = filepath.Join(groupDir, fileName)
 		mpxarName := strings.TrimSuffix(fileName, ".ppxar.didx") + ".mpxar.didx"
 		mpxarPath = filepath.Join(groupDir, mpxarName)

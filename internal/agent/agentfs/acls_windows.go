@@ -21,7 +21,6 @@ var (
 	procLocalFree                 = modKernel32.NewProc("LocalFree")
 )
 
-// aclHeader matches the Windows ACL structure layout for validation
 type aclHeader struct {
 	AclRevision byte
 	Sbz1        byte
@@ -30,9 +29,7 @@ type aclHeader struct {
 	Sbz2        uint16
 }
 
-// GetWinACLsHandle retrieves Owner, Group, and DACL ACEs.
 func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []types.WinACL, err error) {
-	// Validate handle before use
 	if h == windows.InvalidHandle || h == 0 {
 		return "", "", nil, fmt.Errorf("invalid handle")
 	}
@@ -41,7 +38,6 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		windows.GROUP_SECURITY_INFORMATION |
 		windows.DACL_SECURITY_INFORMATION
 
-	// Get SD from the handle
 	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, si)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("GetSecurityInfo: %w", err)
@@ -50,13 +46,11 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	pOwnerSid, _, _ := sd.Owner()
 	pGroupSid, _, _ := sd.Group()
 
-	// Validate owner SID
 	if pOwnerSid == nil || !pOwnerSid.IsValid() {
 		return "", "", nil, fmt.Errorf("owner SID from security descriptor is nil or invalid")
 	}
 	owner = pOwnerSid.String()
 
-	// Validate group SID
 	if pGroupSid == nil || !pGroupSid.IsValid() {
 		return owner, "", nil, fmt.Errorf("group SID from security descriptor is nil or invalid")
 	}
@@ -75,12 +69,10 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		return owner, group, []types.WinACL{}, nil
 	}
 
-	// Validate ACL structure before passing to syscall
 	if !isValidACL(pDacl) {
 		return owner, group, []types.WinACL{}, fmt.Errorf("ACL structure validation failed")
 	}
 
-	// Get explicit entries from ACL
 	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
 	if err != nil {
 		return owner, group, []types.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL: %w", err)
@@ -99,7 +91,6 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	for i := range entries {
 		e := &entries[i]
 
-		// Validate trustee structure
 		if e.Trustee.TrusteeForm != windows.TRUSTEE_IS_SID {
 			continue
 		}
@@ -115,7 +106,6 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 			continue
 		}
 
-		// Validate SID structure before calling IsValid
 		if !isValidSIDPointer(pSid) {
 			continue
 		}
@@ -199,7 +189,6 @@ func safeEntriesToSlice(entriesPtr uintptr, count uint32) ([]windows.EXPLICIT_AC
 		return nil, nil
 	}
 
-	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(entriesPtr)) {
 		return nil, fmt.Errorf("entries pointer is not in user space")
 	}
@@ -242,18 +231,15 @@ func safeEntriesToSlice(entriesPtr uintptr, count uint32) ([]windows.EXPLICIT_AC
 	return slice, nil
 }
 
-// isValidACL performs basic validation on an ACL structure
 func isValidACL(acl *windows.ACL) bool {
 	if acl == nil {
 		return false
 	}
 
-	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(acl)) {
 		return false
 	}
 
-	// Cast to our header structure to access the fields
 	header := (*aclHeader)(unsafe.Pointer(acl))
 
 	// Basic sanity checks on ACL structure
@@ -265,7 +251,6 @@ func isValidACL(acl *windows.ACL) bool {
 		return false
 	}
 
-	// AceCount should be reasonable
 	const maxReasonableACEs = 10000
 	if header.AceCount > maxReasonableACEs {
 		return false
@@ -279,13 +264,11 @@ func isValidACL(acl *windows.ACL) bool {
 	return true
 }
 
-// isValidSIDPointer validates a SID pointer before dereferencing
 func isValidSIDPointer(sid *windows.SID) bool {
 	if sid == nil {
 		return false
 	}
 
-	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(sid)) {
 		return false
 	}
@@ -296,7 +279,6 @@ func isValidSIDPointer(sid *windows.SID) bool {
 	return true
 }
 
-// isSafePointer performs basic validation that a pointer is in user-space
 func isSafePointer(ptr unsafe.Pointer) bool {
 	if ptr == nil {
 		return false
@@ -305,8 +287,7 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 	addr := uintptr(ptr)
 
 	// Validate pointer is not NULL or near-NULL (catch null pointer arithmetic)
-	// Use a smaller threshold that won't reject valid low addresses
-	const minValidAddress = 0x1000 // 4KB - first page
+	const minValidAddress = 0x1000
 	if addr < minValidAddress {
 		return false
 	}
@@ -320,12 +301,10 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 
 	// Detect architecture and apply appropriate check
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		// 64-bit: user space is below kernel64Start
 		// Note: Maximum user-mode address is actually around 0x00007FFFFFFFFFFF
 		// but we check against kernel start which is simpler and safe
 		return addr < kernel64Start
 	} else {
-		// 32-bit: user space is below kernel32Start
 		return addr < kernel32Start
 	}
 }

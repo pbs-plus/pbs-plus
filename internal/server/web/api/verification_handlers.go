@@ -34,7 +34,6 @@ type VerificationRunResponse struct {
 	Success bool              `json:"success"`
 }
 
-// D2DVerificationHandler handles listing verification jobs.
 func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -63,11 +62,12 @@ func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toReturn)
+		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
-// ExtJsVerificationRunHandler handles running/stopping verification jobs.
 func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
@@ -110,7 +110,6 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 					continue
 				}
 
-				// Run the verification job
 				vj, err := verification.NewVerificationJob(vJob, storeInstance, true)
 				if err != nil {
 					syslog.L.Error(err).WithField("verificationJobID", jobID).Write()
@@ -157,11 +156,12 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			Status:  http.StatusOK,
 			Success: true,
 		}
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
-// ExtJsVerificationConfigHandler handles creating verification jobs.
 func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -239,7 +239,6 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 				WriteErrorResponse(w, fmt.Errorf("backup_job_id is required"))
 				return
 			}
-			// Derive store and namespace from the backup job
 			backup, err := storeInstance.Database.GetBackup(backupJobID)
 			if err != nil {
 				WriteErrorResponse(w, fmt.Errorf("failed to get backup job: %w", err))
@@ -274,14 +273,12 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			RunOnBackupComplete: r.FormValue("run_on_backup_complete") == "true",
 		}
 
-		// Parse filters from form
 		if filtersJSON := r.FormValue("filters"); filtersJSON != "" {
 			if err := json.Unmarshal([]byte(filtersJSON), &job.SpotConfig.Filters); err != nil {
 				syslog.L.Error(err).WithMessage("failed to parse filters JSON").Write()
 			}
 		}
 
-		// Parse full spot_config JSON if provided (overrides individual fields)
 		if spotConfigJSON := r.FormValue("spot_config"); spotConfigJSON != "" {
 			var sc database.SpotCheckConfig
 			if err := json.Unmarshal([]byte(spotConfigJSON), &sc); err == nil {
@@ -322,7 +319,9 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			Status:  http.StatusOK,
 			Success: true,
 		}
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -349,19 +348,25 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				Success: true,
 			}
 
-			// Marshal job to map to inject notification-batch
-			jobBytes, _ := json.Marshal(job)
+			jobBytes, err := json.Marshal(job)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
 			var jobMap map[string]any
-			json.Unmarshal(jobBytes, &jobMap)
+			if err := json.Unmarshal(jobBytes, &jobMap); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			jobMap["notification-batch"] = GetJobBatchName(storeInstance, "verification", jobID)
 			response.Data = job // keep struct for type compatibility
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"status":  http.StatusOK,
 				"success": true,
 				"data":    jobMap,
-			})
+			}); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -452,7 +457,9 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				job.SpotConfig.DateTo = v
 			}
 			if filtersJSON := r.FormValue("filters"); filtersJSON != "" {
-				_ = json.Unmarshal([]byte(filtersJSON), &job.SpotConfig.Filters)
+				if err := json.Unmarshal([]byte(filtersJSON), &job.SpotConfig.Filters); err != nil {
+					syslog.L.Error(err).Write()
+				}
 			}
 
 			if v := r.FormValue("fail_threshold"); v != "" {
@@ -476,7 +483,9 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				Status:  http.StatusOK,
 				Success: true,
 			}
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -496,7 +505,9 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				Status:  http.StatusOK,
 				Success: true,
 			}
-			json.NewEncoder(w).Encode(response)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			return
 		}
 
@@ -504,7 +515,6 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 	}
 }
 
-// VerificationAggregateHandler returns aggregate stats across all verification jobs.
 func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -534,11 +544,12 @@ func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
 			"success": true,
 			"data":    agg,
 		}
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
-// ExtJsVerificationResultsHandler returns verification results for a job.
 func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -573,7 +584,9 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 			"success": true,
 			"data":    flatResults,
 		}
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
@@ -615,12 +628,14 @@ func VerificationResultsExportHandler(storeInstance *store.Store) http.HandlerFu
 }
 
 func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResult) {
-	fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Status,Total Population,Sampled,Verified,Failed,Skipped,Confidence 95%,Confidence 99%,Started At,Completed At")
+	if _, err := fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Status,Total Population,Sampled,Verified,Failed,Skipped,Confidence 95%,Confidence 99%,Started At,Completed At"); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	for _, r := range results {
 		startedAt := formatTimestamp(r.StartedAt)
 		completedAt := formatTimestamp(r.CompletedAt)
 		conf := ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
-		fmt.Fprintf(w, "%s,%d,%s,%s,%d,%d,%d,%d,%d,%.1f%%,%.1f%%,%s,%s\n",
+		if _, err := fmt.Fprintf(w, "%s,%d,%s,%s,%d,%d,%d,%d,%d,%.1f%%,%.1f%%,%s,%s\n",
 			csvEscape(r.VerificationJobID),
 			r.ID,
 			csvEscape(r.Snapshot),
@@ -634,16 +649,20 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 			conf.Confidence99,
 			startedAt,
 			completedAt,
-		)
+		); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }
 
 func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult) {
-	fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Total Population,Sample Size,File Path,File Size,Status,Message,Confidence 95%,Confidence 99%")
+	if _, err := fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Total Population,Sample Size,File Path,File Size,Status,Message,Confidence 95%,Confidence 99%"); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	for _, r := range results {
 		conf := ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
 		for _, f := range r.Details {
-			fmt.Fprintf(w, "%s,%d,%s,%d,%d,%s,%d,%s,%s,%.1f%%,%.1f%%\n",
+			if _, err := fmt.Fprintf(w, "%s,%d,%s,%d,%d,%s,%d,%s,%s,%.1f%%,%.1f%%\n",
 				csvEscape(r.VerificationJobID),
 				r.ID,
 				csvEscape(r.Snapshot),
@@ -655,7 +674,9 @@ func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult
 				csvEscape(f.Message),
 				conf.Confidence95,
 				conf.Confidence99,
-			)
+			); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 }

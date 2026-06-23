@@ -15,7 +15,6 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// quicNextProtos is the ALPN protocol list for QUIC connections.
 var quicNextProtos = []string{"pbsarpc-quic"}
 
 func quicConfig() *quic.Config {
@@ -30,7 +29,6 @@ func quicConfig() *quic.Config {
 }
 
 // QuicPipe is the QUIC-based transport for the ARPC control plane.
-// Replaces smux-over-TCP for RPC control messages.
 // Binary data streams use TCP via the data Pipe.
 type QuicPipe struct {
 	mu     sync.RWMutex
@@ -49,7 +47,6 @@ type QuicPipe struct {
 	cancelFunc context.CancelFunc
 }
 
-// NewQuicServerPipe creates a QuicPipe from an accepted QUIC connection.
 func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 	ctx, cancel := context.WithCancel(ctx)
 	enc, _ := cbor.EncOptions{}.EncMode()
@@ -66,7 +63,6 @@ func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 	}
 }
 
-// DialQuic connects to a QUIC server and creates a QuicPipe.
 func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, headers http.Header) (*QuicPipe, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -119,7 +115,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 		pipe.Close()
 		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if werr := writeHeadersFrame(stream, hdrCopy); werr != nil {
 		pipe.Close()
@@ -258,7 +254,7 @@ func (q *QuicPipe) Call(ctx context.Context, method string, payload any, out any
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if resp.Status == StatusRawStream {
 		handler, ok := out.(RawStreamHandler)
@@ -302,7 +298,7 @@ func (q *QuicPipe) CallMessage(ctx context.Context, method string, payload any) 
 	if err != nil {
 		return "", err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if resp.Status == StatusRawStream {
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", StatusRawStream)
@@ -330,7 +326,6 @@ func (q *QuicPipe) GetState() ConnectionState {
 	return StateConnected
 }
 
-// ListenQuic starts a QUIC listener on the given address.
 func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 	if tlsConfig == nil {
 		return nil, fmt.Errorf("missing tls config")
@@ -339,7 +334,6 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 	quicTLS := tlsConfig.Clone()
 	quicTLS.NextProtos = quicNextProtos
 
-	// If the config uses GetConfigForClient, wrap it to inject our NextProtos.
 	if quicTLS.GetConfigForClient != nil {
 		origGetConfig := quicTLS.GetConfigForClient
 		quicTLS.GetConfigForClient = func(info *tls.ClientHelloInfo) (*tls.Config, error) {
@@ -360,7 +354,6 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 	return listener, nil
 }
 
-// ServeQuic accepts QUIC connections and manages agent sessions.
 func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic.Listener, router Router) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -385,7 +378,7 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 		wg.Add(1)
 		go func(c *quic.Conn) {
 			defer wg.Done()
-			defer c.CloseWithError(0, "done")
+			defer func() { _ = c.CloseWithError(0, "done") }()
 
 			tlsState := c.ConnectionState().TLS
 
@@ -420,18 +413,16 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 	}
 }
 
-// ListenAndServeQuic starts a QUIC listener and serves connections.
 func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
 	listener, err := ListenQuic(addr, tlsConfig)
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	return ServeQuic(ctx, agentsManager, listener, router)
 }
 
-// readHeadersFromFirstStream reads headers from the first stream on a QUIC connection.
 func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Header, error) {
 	headerCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -440,7 +431,7 @@ func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Head
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	hdrs, rerr := readHeadersFrame(stream)
 	if rerr != nil {

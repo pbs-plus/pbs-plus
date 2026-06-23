@@ -124,7 +124,6 @@ func CreateEntry(entry *RegistryEntry) error {
 		return err
 	}
 
-	// Check existence first
 	if _, err := GetEntry(entry.Path, entry.Key, entry.IsSecret); err == nil {
 		return fmt.Errorf("CreateEntry error: key already exists")
 	}
@@ -156,7 +155,7 @@ func DeleteEntry(path string, key string) error {
 
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE)
 	if err != nil {
-		return nil // Path doesn't exist, effectively deleted
+		return nil
 	}
 	defer baseKey.Close()
 

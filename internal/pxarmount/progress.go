@@ -2,6 +2,7 @@ package pxarmount
 
 import (
 	"fmt"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"io"
 	"strconv"
 	"strings"
@@ -9,7 +10,6 @@ import (
 	"time"
 )
 
-// ProgressPhase identifies a commit phase for progress reporting.
 type ProgressPhase int
 
 const (
@@ -30,7 +30,6 @@ var phaseLabels = map[ProgressPhase]string{
 	PhaseDone:     "Done",
 }
 
-// ProgressState carries the current progress snapshot.
 type ProgressState struct {
 	Phase      ProgressPhase
 	Files      int64
@@ -40,7 +39,6 @@ type ProgressState struct {
 	Msg        string
 }
 
-// ProgressReporter sends framed progress updates to a writer.
 type ProgressReporter struct {
 	mu       sync.Mutex
 	w        io.Writer
@@ -49,7 +47,6 @@ type ProgressReporter struct {
 	started  time.Time
 }
 
-// NewProgressReporter creates a reporter that writes to w.
 func NewProgressReporter(w io.Writer) *ProgressReporter {
 	return &ProgressReporter{
 		w:       w,
@@ -58,7 +55,6 @@ func NewProgressReporter(w io.Writer) *ProgressReporter {
 	}
 }
 
-// SetPhase updates the current phase and sends an update.
 func (r *ProgressReporter) SetPhase(phase ProgressPhase) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -66,7 +62,6 @@ func (r *ProgressReporter) SetPhase(phase ProgressPhase) {
 	r.send()
 }
 
-// SetMsg sets a custom message and sends an update.
 func (r *ProgressReporter) SetMsg(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -74,7 +69,6 @@ func (r *ProgressReporter) SetMsg(msg string) {
 	r.send()
 }
 
-// AddFile increments the file counter and optionally sends an update.
 func (r *ProgressReporter) AddFile(bytes int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -85,7 +79,6 @@ func (r *ProgressReporter) AddFile(bytes int64) {
 	}
 }
 
-// SetTotals sets the expected totals.
 func (r *ProgressReporter) SetTotals(files, bytes int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -94,14 +87,12 @@ func (r *ProgressReporter) SetTotals(files, bytes int64) {
 	r.send()
 }
 
-// State returns a copy of the current progress state.
 func (r *ProgressReporter) State() ProgressState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.state
 }
 
-// send writes a framed progress update to the underlying writer.
 func (r *ProgressReporter) send() {
 	label, ok := phaseLabels[r.state.Phase]
 	if !ok {
@@ -119,32 +110,34 @@ func (r *ProgressReporter) send() {
 		}
 		extra += ")"
 	}
-	_, _ = fmt.Fprintf(r.w, "PROGRESS [%s] {%s} %s%s\n", label, formatElapsed(time.Since(r.started)), msg, extra)
+	if _, err := fmt.Fprintf(r.w, "PROGRESS [%s] {%s} %s%s\n", label, formatElapsed(time.Since(r.started)), msg, extra); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	r.lastSend = time.Now()
 }
 
-// Done sends the final OK message.
 func (r *ProgressReporter) Done(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state.Phase = PhaseDone
-	_, _ = fmt.Fprintf(r.w, "OK %s\n", msg)
+	if _, err := fmt.Fprintf(r.w, "OK %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
-// Error sends an error message.
 func (r *ProgressReporter) Error(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, _ = fmt.Fprintf(r.w, "ERR %s\n", msg)
+	if _, err := fmt.Fprintf(r.w, "ERR %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 }
 
-// ProgressDisplay renders a live progress bar with spinner animation on a terminal.
 type ProgressDisplay struct {
 	mu       sync.Mutex
 	w        io.Writer
 	lastLine string
 
-	// spinner state
 	frames           []string
 	frame            int
 	phase            string
@@ -158,7 +151,6 @@ type ProgressDisplay struct {
 	done   chan struct{}
 }
 
-// NewProgressDisplay creates a display that writes to w with spinner animation.
 func NewProgressDisplay(w io.Writer) *ProgressDisplay {
 	d := &ProgressDisplay{
 		w: w,
@@ -173,7 +165,6 @@ func NewProgressDisplay(w io.Writer) *ProgressDisplay {
 	return d
 }
 
-// stop halts the spinner goroutine.
 func (d *ProgressDisplay) stop() {
 	if d.ticker != nil {
 		d.ticker.Stop()
@@ -186,7 +177,6 @@ func (d *ProgressDisplay) stop() {
 	}
 }
 
-// spin is the background goroutine that animates the spinner.
 func (d *ProgressDisplay) spin() {
 	for range d.ticker.C {
 		d.mu.Lock()
@@ -199,7 +189,6 @@ func (d *ProgressDisplay) spin() {
 	}
 }
 
-// render builds the current display line (must hold mu).
 func (d *ProgressDisplay) render() string {
 	if d.phase == "" && d.msg == "" {
 		return ""
@@ -208,8 +197,6 @@ func (d *ProgressDisplay) render() string {
 
 	var parts []string
 
-	// Build display label: prefer msg, fall back to phase.
-	// Avoid showing both when they're the same.
 	switch {
 	case d.msg != "" && d.phase != "" && d.msg != d.phase:
 		parts = append(parts, d.phase, d.msg)
@@ -233,7 +220,6 @@ func (d *ProgressDisplay) render() string {
 		parts = append(parts, detail)
 	}
 
-	// Show throughput for long-running operations
 	if elapsed := time.Since(d.started); elapsed > 2*time.Second && d.bytes > 0 {
 		rate := float64(d.bytes) / elapsed.Seconds()
 		elapsedStr := formatDuration(elapsed)
@@ -244,7 +230,6 @@ func (d *ProgressDisplay) render() string {
 	return fmt.Sprintf("\r  %s %s", spinner, body)
 }
 
-// writeLine writes a line to the terminal, clearing previous content.
 func (d *ProgressDisplay) writeLine(line string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -252,20 +237,19 @@ func (d *ProgressDisplay) writeLine(line string) {
 	if len(padded) < len(d.lastLine) {
 		padded += strings.Repeat(" ", len(d.lastLine)-len(padded))
 	}
-	_, _ = fmt.Fprint(d.w, padded)
+	if _, err := fmt.Fprint(d.w, padded); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	d.lastLine = line
 }
 
-// Update parses a PROGRESS line and updates the display.
 func (d *ProgressDisplay) Update(line string) {
 	msg := strings.TrimPrefix(line, "PROGRESS ")
 	d.mu.Lock()
 
-	// Reset phase/msg for this update.
 	d.phase = ""
 	d.msg = ""
 
-	// Parse phase tag: [PhaseLabel] at the start.
 	if len(msg) > 0 && msg[0] == '[' {
 		if end := strings.Index(msg, "]"); end > 0 {
 			d.phase = msg[1:end]
@@ -273,7 +257,6 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 
-	// Parse server-side elapsed marker: {12.3s}
 	if len(msg) > 0 && msg[0] == '{' {
 		if end := strings.Index(msg, "}"); end > 0 {
 			elapsedStr := msg[1:end]
@@ -285,7 +268,6 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 
-	// Extract trailing parenthesized stats if present.
 	hasStats := false
 	if idx := strings.LastIndex(msg, "("); idx > 0 {
 		stats := msg[idx:]
@@ -296,8 +278,6 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 	if !hasStats {
-		// Preserve previously parsed stats when the line has none.
-		// Only reset if the message itself looks like a phase transition.
 		for _, label := range phaseLabels {
 			if msg == label {
 				d.files = 0
@@ -316,28 +296,34 @@ func (d *ProgressDisplay) Update(line string) {
 	d.mu.Unlock()
 }
 
-// parseStats extracts files/bytes from "(N files, X.X MiB)" or "(N files)".
 func (d *ProgressDisplay) parseStats(stats string) {
 	stats = strings.Trim(stats, "()")
 	fields := strings.SplitSeq(stats, ",")
 	for f := range fields {
 		f = strings.TrimSpace(f)
 		if strings.HasSuffix(f, " files") {
-			_, _ = fmt.Sscanf(f, "%d files", &d.files)
+			if _, err := fmt.Sscanf(f, "%d files", &d.files); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		} else {
-			// Try to parse as byte count
 			var b int64
 			if strings.HasSuffix(f, "GiB") {
 				var v float64
-				_, _ = fmt.Sscanf(f, "%f GiB", &v)
+				if _, err := fmt.Sscanf(f, "%f GiB", &v); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				b = int64(v * 1024 * 1024 * 1024)
 			} else if strings.HasSuffix(f, "MiB") {
 				var v float64
-				_, _ = fmt.Sscanf(f, "%f MiB", &v)
+				if _, err := fmt.Sscanf(f, "%f MiB", &v); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				b = int64(v * 1024 * 1024)
 			} else if strings.HasSuffix(f, "KiB") {
 				var v float64
-				_, _ = fmt.Sscanf(f, "%f KiB", &v)
+				if _, err := fmt.Sscanf(f, "%f KiB", &v); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				b = int64(v * 1024)
 			}
 			if b > 0 {
@@ -347,33 +333,38 @@ func (d *ProgressDisplay) parseStats(stats string) {
 	}
 }
 
-// Done prints the final status line.
 func (d *ProgressDisplay) Done(line string) {
 	d.stop()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.lastLine) > 0 {
-		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
+		if _, err := fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine))); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	msg := strings.TrimPrefix(line, "OK ")
-	_, _ = fmt.Fprintf(d.w, "  ✓ %s\n", msg)
+	if _, err := fmt.Fprintf(d.w, "  ✓ %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	d.lastLine = ""
 }
 
-// Error prints the error.
 func (d *ProgressDisplay) Error(line string) {
 	d.stop()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.lastLine) > 0 {
-		_, _ = fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine)))
+		if _, err := fmt.Fprintf(d.w, "\r%s\r", strings.Repeat(" ", len(d.lastLine))); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	msg := strings.TrimPrefix(line, "ERR ")
-	_, _ = fmt.Fprintf(d.w, "  ✗ error: %s\n", msg)
+	if _, err := fmt.Fprintf(d.w, "  ✗ error: %s\n", msg); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	d.lastLine = ""
 }
 
-// formatBytes formats a byte count as a human-readable string.
 func formatBytes(b int64) string {
 	const (
 		kiB = 1024
@@ -392,7 +383,6 @@ func formatBytes(b int64) string {
 	}
 }
 
-// formatDuration formats elapsed time for display.
 func formatDuration(d time.Duration) string {
 	d = d.Round(time.Second)
 	if d < time.Minute {

@@ -330,13 +330,11 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 	return m
 }
 
-// PrometheusMetricsHandler returns an HTTP handler that exposes Prometheus metrics
 func PrometheusMetricsHandler(storeInstance *store.Store) http.HandlerFunc {
 	handler := promhttp.HandlerFor(globalRegistry, promhttp.HandlerOpts{
 		Registry: globalRegistry,
 	})
 
-	// Wrap with collector that updates metrics on each scrape
 	return func(w http.ResponseWriter, r *http.Request) {
 		updateMetrics(globalMetrics, storeInstance, time.Now().Unix())
 		handler.ServeHTTP(w, r)
@@ -348,7 +346,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	currentTargetLabels := make(map[string]prometheus.Labels)
 	currentTargetInfoLabels := make(map[string]prometheus.Labels)
 
-	// Collect backup metrics
 	backups, err := storeInstance.BackupSvc.ListBackups()
 	if err != nil {
 		syslog.L.Error(err).
@@ -361,7 +358,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 	var runningCount, queuedCount, failedCount, successCount int
 
-	// Track per-target statistics
 	targetStats := make(map[string]struct {
 		lastSuccessfulTimestamp int64
 		failedCount             int
@@ -378,7 +374,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		}
 		currentBackupLabels[backup.ID] = labels
 
-		// Last run success status
 		// Consider successful if LastRunEndtime == LastSuccessfulEndtime OR if LastRunState == "OK"
 		successValue := float64(-1)
 		isSuccess := false
@@ -391,17 +386,14 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			successCount++
 			isSuccess = true
 		} else if backup.History.LastRunEndtime > 0 || backup.History.LastRunState != "" {
-			// If we have a last run but it's not successful, mark as failed
 			successValue = 0
 			failedCount++
 		}
 		m.backupLastRunSuccess.With(labels).Set(successValue)
 
-		// Update target statistics
 		stats := targetStats[backup.Target.Name]
 		if isSuccess {
 			stats.successfulCount++
-			// Track the most recent successful timestamp for this target
 			if backup.History.LastSuccessfulEndtime > stats.lastSuccessfulTimestamp {
 				stats.lastSuccessfulTimestamp = backup.History.LastSuccessfulEndtime
 			}
@@ -410,7 +402,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		}
 		targetStats[backup.Target.Name] = stats
 
-		// Timestamps
 		if backup.History.LastRunEndtime > 0 {
 			m.backupLastRunTimestamp.With(labels).Set(float64(backup.History.LastRunEndtime))
 		}
@@ -422,12 +413,10 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.backupNextRunTimestamp.With(labels).Set(float64(backup.NextRun))
 		}
 
-		// Duration
 		if backup.History.Duration > 0 {
 			m.backupDuration.With(labels).Set(float64(backup.History.Duration))
 		}
 
-		// Running status
 		isRunning := float64(0)
 		if backup.CurrentPID > 0 {
 			isRunning = 1
@@ -435,7 +424,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		}
 		m.backupRunning.With(labels).Set(isRunning)
 
-		// Queued status
 		isQueued := float64(0)
 		if strings.Contains(backup.History.LastRunUpid, "pbsplusgen-queue") {
 			isQueued = 1
@@ -443,7 +431,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		}
 		m.backupQueued.With(labels).Set(isQueued)
 
-		// Size metrics
 		if backup.Target.VolumeUsedBytes > 0 {
 			m.backupExpectedSize.With(labels).Set(float64(backup.Target.VolumeUsedBytes))
 		}
@@ -467,7 +454,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		}
 	}
 
-	// Delete metrics for backups that no longer exist
 	for backupID, labels := range m.previousBackupLabels {
 		if _, exists := currentBackupLabels[backupID]; !exists {
 			m.backupLastRunSuccess.Delete(labels)
@@ -487,15 +473,13 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.backupLatestSnapshotSize.Delete(labels)
 		}
 	}
-	m.previousBackupLabels = currentBackupLabels // Update for next run
+	m.previousBackupLabels = currentBackupLabels
 
-	// Aggregate backup metrics
 	m.backupsRunningTotal.Set(float64(runningCount))
 	m.backupsQueuedTotal.Set(float64(queuedCount))
 	m.backupsLastRunFailedTotal.Set(float64(failedCount))
 	m.backupsLastRunSuccessTotal.Set(float64(successCount))
 
-	// Collect target metrics
 	targets, err := storeInstance.TargetSvc.GetAllTargets()
 	if err != nil {
 		syslog.L.Error(err).
@@ -530,19 +514,16 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.targetVolumeFreeBytes.With(driveLabels).Set(float64(target.VolumeFreeBytes))
 		}
 
-		// Calculate usage percentage
 		if target.VolumeTotalBytes > 0 {
 			usagePercent := float64(target.VolumeUsedBytes) / float64(target.VolumeTotalBytes) * 100
 			m.targetVolumeUsagePercent.With(driveLabels).Set(usagePercent)
 		}
 
-		// Backup count
 		backupCountLabels := prometheus.Labels{
 			"target_name": target.Name,
 		}
 		m.targetBackupCount.With(backupCountLabels).Set(float64(target.JobCount))
 
-		// Target-specific backup statistics
 		if stats, exists := targetStats[target.Name]; exists {
 			if stats.lastSuccessfulTimestamp > 0 {
 				m.targetLastSuccessfulBackupTimestamp.With(backupCountLabels).Set(float64(stats.lastSuccessfulTimestamp))
@@ -558,13 +539,11 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			}
 			m.targetHasFailedBackups.With(backupCountLabels).Set(hasFailedBackups)
 		} else {
-			// Target has no backups, set defaults
 			m.targetFailedBackupCount.With(backupCountLabels).Set(0)
 			m.targetSuccessfulBackupCount.With(backupCountLabels).Set(0)
 			m.targetHasFailedBackups.With(backupCountLabels).Set(0)
 		}
 
-		// Target info (metadata)
 		isAgent := "false"
 		if target.IsAgent() {
 			isAgent = "true"
@@ -594,7 +573,6 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		m.targetInfo.With(infoLabels).Set(1)
 	}
 
-	// Delete metrics for targets that no longer exist
 	for targetKey, labels := range m.previousTargetLabels {
 		if _, exists := currentTargetLabels[targetKey]; !exists {
 			m.targetVolumeTotalBytes.Delete(labels)
@@ -617,10 +595,9 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		}
 	}
 
-	m.previousTargetLabels = currentTargetLabels // Update for next run
+	m.previousTargetLabels = currentTargetLabels
 	m.previousTargetInfoLabels = currentTargetInfoLabels
 
-	// Aggregate target type metrics
 	m.targetsAgentTotal.Set(float64(agentCount))
 	m.targetsS3Total.Set(float64(s3Count))
 	m.targetsLocalTotal.Set(float64(localCount))

@@ -11,8 +11,6 @@ import (
 	"github.com/xtaci/smux"
 )
 
-// ARPCStream abstracts a bidirectional byte stream. Backed by smux.Stream
-// (TCP data plane) or quic.Stream (QUIC control plane).
 type ARPCStream interface {
 	io.Reader
 	io.Writer
@@ -25,7 +23,7 @@ func writeErrorResponse(stream io.Writer, status int, err error) {
 
 	errBytes, encodeErr := cbor.Marshal(serErr)
 	if encodeErr != nil {
-		stream.Write(fmt.Appendf(nil, "failed to encode error: %v", encodeErr))
+		_, _ = stream.Write(fmt.Appendf(nil, "failed to encode error: %v", encodeErr))
 		return
 	}
 
@@ -37,11 +35,11 @@ func writeErrorResponse(stream io.Writer, status int, err error) {
 
 	respBytes, encodeErr := cbor.Marshal(resp)
 	if encodeErr != nil {
-		stream.Write(fmt.Appendf(nil, "failed to encode response: %v", encodeErr))
+		_, _ = stream.Write(fmt.Appendf(nil, "failed to encode response: %v", encodeErr))
 		return
 	}
 
-	stream.Write(respBytes)
+	_, _ = stream.Write(respBytes)
 }
 
 func defaultConfig() *smux.Config {

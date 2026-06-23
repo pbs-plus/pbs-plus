@@ -1,4 +1,4 @@
-package mtfstore
+package store
 
 import (
 	"context"
@@ -13,7 +13,8 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type Database struct {
@@ -31,7 +32,9 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		dbPath = "/etc/proxmox-backup/pbs-plus/tapes.db"
 	}
 
-	_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro")
 	if err != nil {
@@ -62,14 +65,16 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	}
 
 	if n, err := d.readQueries.CountMappings(ctx); err == nil && n == 0 {
-		_, _ = d.queries.CreateMapping(ctx, mtfquery.CreateMappingParams{
+		if _, err := d.queries.CreateMapping(ctx, mtfquery.CreateMappingParams{
 			Name:      sql.NullString{String: "Default", Valid: true},
 			Priority:  sql.NullInt64{Int64: 9999, Valid: true},
 			Template:  "tape/{machine}/{drive}",
 			IsDefault: sql.NullInt64{Int64: 1, Valid: true},
 			Enabled:   sql.NullInt64{Int64: 1, Valid: true},
 			Comment:   sql.NullString{String: "Fallback mapping for unmatched volumes", Valid: true},
-		})
+		}); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	return d, nil
@@ -137,7 +142,9 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			_ = tx.Rollback()
+			if err := tx.Rollback(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			panic(p)
 		}
 	}()

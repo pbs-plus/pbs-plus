@@ -23,7 +23,7 @@ func cleanUp() error {
 
 	s, err := m.OpenService(svcName)
 	if err == nil {
-		_, _ = s.Control(1) // svc.Stop = 1
+		_, _ = s.Control(1)
 		_ = s.Delete()
 
 		cfg, cfgErr := s.Config()

@@ -5,6 +5,7 @@ import (
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -78,7 +79,10 @@ func (ow *commitWalkState) ensureXAttrs(nodeID int64) []format.XAttr {
 	if ow.mfs.journal == nil {
 		return nil
 	}
-	xattrs, _ := ow.mfs.journal.XAttrsForNode(nodeID)
+	xattrs, err := ow.mfs.journal.XAttrsForNode(nodeID)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	ow.xattrCache[nodeID] = xattrs
 	return xattrs
 }

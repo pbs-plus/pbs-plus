@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -54,7 +54,9 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -82,7 +84,6 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		restore.ID = id
 	}
 
-	// Validation
 	if restore.DestTarget.Name == "" {
 		return errors.New("dest target is empty")
 	}
@@ -235,7 +236,9 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -255,7 +258,6 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 	}
 	q = database.queries.WithTx(tx.Tx)
 
-	// Validation
 	if !validate.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("UpdateRestore: invalid id string -> %s", restore.ID)
 	}
@@ -351,7 +353,9 @@ func (database *Database) linkRestoreLog(restoreID, upid string) {
 		return
 	}
 
-	_ = os.Remove(restoreLogPath)
+	if err := os.Remove(restoreLogPath); err != nil && !os.IsNotExist(err) {
+		syslog.L.Error(err).Write()
+	}
 
 	err = os.Symlink(origLogPath, restoreLogPath)
 	if err != nil {
@@ -482,7 +486,9 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -512,7 +518,7 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 	}
 
 	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, id)
-	if err := os.RemoveAll(restoreLogsPath); err != nil {
+	if err := os.RemoveAll(restoreLogsPath); err != nil && !os.IsNotExist(err) {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err)).
 				WithField("id", id).

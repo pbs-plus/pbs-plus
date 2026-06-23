@@ -57,7 +57,6 @@ func MountFuse(
 	return server, nil
 }
 
-// Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
 	fs     *S3FS
@@ -85,7 +84,7 @@ var _ = (fs.NodeStatxer)((*Node)(nil))
 
 func (n *Node) Access(ctx context.Context, mask uint32) syscall.Errno {
 	// For read-only filesystem, deny write access (bit 1)
-	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
+	if mask&2 != 0 {
 		return syscall.EROFS
 	}
 
@@ -127,20 +126,18 @@ func (n *Node) Statx(
 	// Use actual STATX mask values
 	// These values come from Linux's statx flags in <linux/stat.h>
 	const (
-		STATX_TYPE  = 0x00000001 // Want stx_mode & S_IFMT
-		STATX_MODE  = 0x00000002 // Want stx_mode & ~S_IFMT
-		STATX_NLINK = 0x00000004 // Want stx_nlink
-		STATX_SIZE  = 0x00000200 // Want stx_size
+		STATX_TYPE  = 0x00000001
+		STATX_MODE  = 0x00000002
+		STATX_NLINK = 0x00000004
+		STATX_SIZE  = 0x00000200
 		STATX_MTIME = 0x00000020 // Want stx_mtime
 	)
 
-	// Set basic attributes
 	out.Mask = STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_SIZE
 	out.Mode = uint16(attrOut.Mode)
 	out.Size = attrOut.Size
 	out.Nlink = attrOut.Nlink
 
-	// Add timestamps if requested
 	if mask&STATX_MTIME != 0 {
 		out.Mask |= STATX_MTIME
 		out.Mtime.Sec = attrOut.Mtime
@@ -150,7 +147,6 @@ func (n *Node) Statx(
 	return 0
 }
 
-// Getattr implements NodeGetattrer
 func (n *Node) Getattr(
 	ctx context.Context,
 	fh fs.FileHandle,
@@ -181,7 +177,6 @@ func (n *Node) Getattr(
 	return 0
 }
 
-// Lookup implements NodeLookuper
 func (n *Node) Lookup(
 	ctx context.Context,
 	name string,
@@ -227,7 +222,6 @@ func (n *Node) Lookup(
 	return child, 0
 }
 
-// Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
@@ -238,7 +232,6 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	return entries, 0
 }
 
-// Open implements NodeOpener
 func (n *Node) Open(
 	ctx context.Context,
 	flags uint32,
@@ -276,7 +269,6 @@ func (n *Node) Statfs(
 	return 0
 }
 
-// FileHandle handles file operations
 type FileHandle struct {
 	fs   *S3FS
 	file *S3File
@@ -285,7 +277,6 @@ type FileHandle struct {
 var _ = (fs.FileReader)((*FileHandle)(nil))
 var _ = (fs.FileReleaser)((*FileHandle)(nil))
 
-// Read implements FileReader
 func (fh *FileHandle) Read(
 	ctx context.Context,
 	dest []byte,

@@ -1,28 +1,27 @@
-// Package pbstoken resolves the local PBS-plus API token used to authenticate
+// Package token resolves the local PBS-plus API token used to authenticate
 // backup uploads (bkf2pxar, mtfjob, pxar-mount commit listener).
-//
 // pbs-plus writes the token as JSON {"tokenid","value"} to a well-known path;
-// several historical locations are probed. The returned string is in the PBS
 // API-token form "tokenid:value".
-package pbstoken
+package token
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
 
-// localTokenCandidates are the paths searched, in priority order, for the
-// pbs-plus token JSON written by the pbs-plus server.
 var localTokenCandidates = []string{
-	filepath.Join("/var/lib/proxmox-backup", "pbs-plus-token.json"),
+	filepath.Join(conf.DbBasePath, "pbs-plus-token.json"),
 	filepath.Join("/etc/proxmox-backup", "pbs-plus-token.json"),
-	filepath.Join("/var/lib/pbs-plus", "pbs-plus-token.json"),
+	filepath.Join(conf.StatePrefix, "pbs-plus-token.json"),
 }
 
-// ReadLocal reads the pbs-plus token from the first candidate path that exists
-// and parses successfully. It returns the token in PBS API-token form
-// ("tokenid:value"), or "" if no token file is available.
+const DefaultAPIURL = "https://localhost:8007/api2/json"
+
+// ReadLocal reads the pbs-plus token from the first candidate path that
+// parses, returning it in PBS API-token form ("tokenid:value"), or "".
 func ReadLocal() string {
 	for _, p := range localTokenCandidates {
 		data, err := os.ReadFile(p)

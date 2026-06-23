@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// ExtJsBackupCSVExportHandler generates and returns a CSV file of all backup jobs.
 func ExtJsBackupCSVExportHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -47,7 +47,9 @@ func ExtJsBackupCSVExportHandler(storeInstance *store.Store) http.HandlerFunc {
 			"include-xattr", "legacy-xattr",
 		}
 
-		fmt.Fprintln(w, strings.Join(headers, ","))
+		if _, err := fmt.Fprintln(w, strings.Join(headers, ",")); err != nil {
+			syslog.L.Error(err).Write()
+		}
 
 		for _, rec := range flatBackups {
 			row := map[string]string{
@@ -85,7 +87,9 @@ func ExtJsBackupCSVExportHandler(storeInstance *store.Store) http.HandlerFunc {
 				v := row[h]
 				vals = append(vals, csvEscapeField(v))
 			}
-			fmt.Fprintln(w, strings.Join(vals, ","))
+			if _, err := fmt.Fprintln(w, strings.Join(vals, ",")); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 }
@@ -94,7 +98,6 @@ func csvEscapeField(s string) string {
 	return csvEscape(s)
 }
 
-// D2DTargetTreeHandler returns targets pre-grouped into a tree structure.
 func D2DTargetTreeHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -122,6 +125,8 @@ func D2DTargetTreeHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toReturn)
+		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }

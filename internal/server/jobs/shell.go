@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"os"
 	"os/exec"
 	"strings"
@@ -38,8 +39,14 @@ func RunShellScript(
 		)
 	}
 	envFilePath := envFile.Name()
-	envFile.Close()
-	defer os.Remove(envFilePath)
+	if err := envFile.Close(); err != nil {
+		syslog.L.Error(err).Write()
+	}
+	defer func() {
+		if err := os.Remove(envFilePath); err != nil && !os.IsNotExist(err) {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	cmd := exec.CommandContext(ctx, interpreter, scriptFilePath, envFilePath)
 	cmd.Env = append(os.Environ(), envVars...)
@@ -61,7 +68,9 @@ func RunShellScript(
 	select {
 	case <-ctx.Done():
 		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
+			if err := cmd.Process.Kill(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 		<-done
 		runErr = ctx.Err()
@@ -101,15 +110,18 @@ func RunShellScript(
 	return outBuf.String(), resultEnvs, nil
 }
 
-// Helper function to extract interpreter from shebang
 func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 	file, err := os.Open(scriptFilePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open script file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
-	header := make([]byte, 100) // Read a small header
+	header := make([]byte, 100)
 	n, err := file.Read(header)
 	if err != nil {
 		return "", fmt.Errorf("failed to read script file header: %w", err)
@@ -124,7 +136,7 @@ func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 		// Consider handling arguments in the shebang like #!/usr/bin/env python
 		parts := strings.Fields(interpreter)
 		if len(parts) > 0 {
-			return parts[0], nil // Return the first part as the interpreter command
+			return parts[0], nil
 		}
 	}
 

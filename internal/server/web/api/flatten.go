@@ -7,7 +7,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// FlattenBackup converts a database.Backup into a flat API response.
 func FlattenBackup(b database.Backup) FlatBackup {
 	fb := FlatBackup{
 		ID:               b.ID,
@@ -30,10 +29,8 @@ func FlattenBackup(b database.Backup) FlatBackup {
 		IncludeXattr:     b.IncludeXattr,
 		LegacyXattr:      b.LegacyXattr,
 
-		// Flatten target
 		Target: b.Target.Name,
 
-		// Flatten history
 		LastRunUpid:           b.History.LastRunUpid,
 		LastRunState:          b.History.LastRunState,
 		LastRunEndtime:        b.History.LastRunEndtime,
@@ -41,7 +38,6 @@ func FlattenBackup(b database.Backup) FlatBackup {
 		LastSuccessfulUpid:    b.History.LastSuccessfulUpid,
 		Duration:              b.History.Duration,
 
-		// Flatten current-stats
 		CurrentFileCount:   b.CurrentStats.CurrentFileCount,
 		CurrentFolderCount: b.CurrentStats.CurrentFolderCount,
 		CurrentFilesSpeed:  b.CurrentStats.CurrentFilesSpeed,
@@ -49,13 +45,11 @@ func FlattenBackup(b database.Backup) FlatBackup {
 		CurrentBytesTotal:  b.CurrentStats.CurrentBytesTotal,
 	}
 
-	// Flatten target object info
 	if b.Target.Name != "" {
 		fb.ExpectedSize = b.Target.VolumeUsedBytes
 		fb.TargetSizeHuman = HumanReadableBytes(b.Target.VolumeUsedBytes)
 	}
 
-	// Pre-format display fields
 	if b.CurrentStats.CurrentBytesSpeed > 0 {
 		fb.ReadSpeedHuman = HumanReadableSpeed(b.CurrentStats.CurrentBytesSpeed)
 	}
@@ -66,13 +60,11 @@ func FlattenBackup(b database.Backup) FlatBackup {
 		fb.ProcessingSpeedHuman = FormatSpeed(b.CurrentStats.CurrentFilesSpeed)
 	}
 
-	// Parse task status
 	fb.StatusParsed = ParseTaskStatus(b.History.LastRunState)
 
 	return fb
 }
 
-// FlattenBackups converts a slice of backups to flat responses.
 // If staleDays > 0, sets Stale=true for jobs whose last-successful-endtime
 // is older than staleDays. If skipUnscheduled is true, jobs with no schedule
 // are never marked stale. excludedJobs is a set of job IDs to skip.
@@ -106,7 +98,6 @@ func FlattenBackups(backups []database.Backup, staleDays int, skipUnscheduled bo
 	return result
 }
 
-// FlattenRestore converts a database.Restore into a flat API response.
 func FlattenRestore(r database.Restore) FlatRestore {
 	fr := FlatRestore{
 		ID:               r.ID,
@@ -123,10 +114,8 @@ func FlattenRestore(r database.Restore) FlatRestore {
 		Retry:            r.Retry,
 		RetryInterval:    r.RetryInterval,
 
-		// Flatten dest-target
 		DestTarget: r.DestTarget.Name,
 
-		// Flatten history
 		LastRunUpid:           r.History.LastRunUpid,
 		LastRunState:          r.History.LastRunState,
 		LastRunEndtime:        r.History.LastRunEndtime,
@@ -134,7 +123,6 @@ func FlattenRestore(r database.Restore) FlatRestore {
 		LastSuccessfulUpid:    r.History.LastSuccessfulUpid,
 		Duration:              r.History.Duration,
 
-		// Flatten current-stats
 		CurrentFileCount:   r.CurrentStats.CurrentFileCount,
 		CurrentFolderCount: r.CurrentStats.CurrentFolderCount,
 		CurrentFilesSpeed:  r.CurrentStats.CurrentFilesSpeed,
@@ -142,13 +130,11 @@ func FlattenRestore(r database.Restore) FlatRestore {
 		CurrentBytesTotal:  r.CurrentStats.CurrentBytesTotal,
 	}
 
-	// Flatten dest-target object info
 	if r.DestTarget.Name != "" {
 		fr.ExpectedSize = r.DestTarget.VolumeUsedBytes
 		fr.TargetSizeHuman = HumanReadableBytes(r.DestTarget.VolumeUsedBytes)
 	}
 
-	// Pre-format display fields
 	if r.CurrentStats.CurrentBytesSpeed > 0 {
 		fr.ReadSpeedHuman = HumanReadableSpeed(r.CurrentStats.CurrentBytesSpeed)
 	}
@@ -159,13 +145,11 @@ func FlattenRestore(r database.Restore) FlatRestore {
 		fr.ProcessingSpeedHuman = FormatSpeed(r.CurrentStats.CurrentFilesSpeed)
 	}
 
-	// Parse task status
 	fr.StatusParsed = ParseTaskStatus(r.History.LastRunState)
 
 	return fr
 }
 
-// FlattenRestores converts a slice of restores to flat responses.
 func FlattenRestores(restores []database.Restore) []FlatRestore {
 	result := make([]FlatRestore, len(restores))
 	for i := range restores {
@@ -174,7 +158,6 @@ func FlattenRestores(restores []database.Restore) []FlatRestore {
 	return result
 }
 
-// FlattenVerificationJob converts a database.VerificationJob into a flat API response.
 func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 	fvj := FlatVerificationJob{
 		ID:                  vj.ID,
@@ -193,7 +176,6 @@ func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 		RunOnBackupComplete: vj.RunOnBackupComplete,
 		CreatedAt:           vj.CreatedAt,
 
-		// Flatten history
 		LastRunUpid:           vj.History.LastRunUpid,
 		LastRunState:          vj.History.LastRunState,
 		LastRunStarttime:      vj.History.LastRunStarttime,
@@ -202,7 +184,6 @@ func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 		LastSuccessfulUpid:    vj.History.LastSuccessfulUpid,
 		Duration:              vj.History.Duration,
 
-		// Flatten spot_config
 		SpotConfig: SpotCheckConfigJSON{
 			SampleCount:        vj.SpotConfig.SampleCount,
 			SampleCountPercent: vj.SpotConfig.SampleCountPercent,
@@ -214,7 +195,6 @@ func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 		},
 	}
 
-	// Convert filters
 	for _, f := range vj.SpotConfig.Filters {
 		fvj.SpotConfig.Filters = append(fvj.SpotConfig.Filters, SpotCheckFilterJSON{
 			PathPattern: f.PathPattern,
@@ -223,13 +203,11 @@ func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 		})
 	}
 
-	// Parse task status
 	fvj.StatusParsed = ParseTaskStatus(vj.History.LastRunState)
 
 	return fvj
 }
 
-// FlattenVerificationJobs converts a slice of verification jobs to flat responses.
 func FlattenVerificationJobs(jobs []database.VerificationJob) []FlatVerificationJob {
 	result := make([]FlatVerificationJob, len(jobs))
 	for i := range jobs {
@@ -238,7 +216,6 @@ func FlattenVerificationJobs(jobs []database.VerificationJob) []FlatVerification
 	return result
 }
 
-// FlattenVerificationResult converts a VerificationResult with pre-computed display fields.
 func FlattenVerificationResult(r database.VerificationResult, namespace string) FlatVerificationResult {
 	fr := FlatVerificationResult{
 		ID:                r.ID,
@@ -258,7 +235,6 @@ func FlattenVerificationResult(r database.VerificationResult, namespace string) 
 		Confidence:        ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles),
 	}
 
-	// Status badge: pass/fail semantics
 	switch {
 	case r.Status == "completed" && r.FailedFiles == 0:
 		fr.StatusBadge = "passed"
@@ -268,18 +244,15 @@ func FlattenVerificationResult(r database.VerificationResult, namespace string) 
 		fr.StatusBadge = "warning"
 	}
 
-	// Duration
 	if r.StartedAt > 0 && r.CompletedAt > r.StartedAt {
 		secs := r.CompletedAt - r.StartedAt
 		fr.DurationHuman = FormatDuration(secs)
 	}
 
-	// Pass rate
 	if r.TotalFiles > 0 {
 		fr.PassRate = float64(r.VerifiedFiles) / float64(r.TotalFiles) * 100
 	}
 
-	// Flatten file details
 	for _, f := range r.Details {
 		fr.Details = append(fr.Details, FlatVerificationFileResult{
 			Path:        f.Path,
@@ -294,7 +267,6 @@ func FlattenVerificationResult(r database.VerificationResult, namespace string) 
 	return fr
 }
 
-// FlattenVerificationResults converts a slice of verification results.
 func FlattenVerificationResults(results []database.VerificationResult, namespace string) []FlatVerificationResult {
 	fr := make([]FlatVerificationResult, len(results))
 	for i := range results {
@@ -303,7 +275,6 @@ func FlattenVerificationResults(results []database.VerificationResult, namespace
 	return fr
 }
 
-// formatSnapshotLabel produces a human-readable snapshot label that includes the namespace.
 func formatSnapshotLabel(snapshot, namespace string) string {
 	if namespace == "" || namespace == "root" {
 		return snapshot
@@ -311,7 +282,6 @@ func formatSnapshotLabel(snapshot, namespace string) string {
 	return namespace + ": " + snapshot
 }
 
-// BuildTargetTree groups targets into a tree structure by type (local/agent/s3).
 func BuildTargetTree(targets []database.Target) []TargetTreeNode {
 	var localTargets []TargetTreeNode
 	agentGroups := map[string]*TargetTreeNode{}
@@ -442,8 +412,6 @@ func renderFileStatusHuman(status string) string {
 	}
 }
 
-// FlattenBackupForEdit flattens a Backup for the edit form GET response.
-// The edit form expects target as a string, not an object.
 func FlattenBackupForEdit(b database.Backup) map[string]any {
 	return map[string]any{
 		"id":                 b.ID,
@@ -457,7 +425,7 @@ func FlattenBackupForEdit(b database.Backup) map[string]any {
 		"schedule":           b.Schedule,
 		"comment":            b.Comment,
 		"notification-mode":  b.NotificationMode,
-		"notification-batch": "", // populated by handler via GetJobBatchName
+		"notification-batch": "",
 		"pre_script":         b.PreScript,
 		"post_script":        b.PostScript,
 		"retry":              b.Retry,
@@ -469,7 +437,6 @@ func FlattenBackupForEdit(b database.Backup) map[string]any {
 	}
 }
 
-// FlattenRestoreForEdit flattens a Restore for the edit form GET response.
 func FlattenRestoreForEdit(r database.Restore) map[string]any {
 	return map[string]any{
 		"id":                 r.ID,
@@ -482,7 +449,7 @@ func FlattenRestoreForEdit(r database.Restore) map[string]any {
 		"mode":               r.Mode,
 		"comment":            r.Comment,
 		"notification-mode":  r.NotificationMode,
-		"notification-batch": "", // populated by handler via GetJobBatchName
+		"notification-batch": "",
 		"pre_script":         r.PreScript,
 		"post_script":        r.PostScript,
 		"retry":              r.Retry,

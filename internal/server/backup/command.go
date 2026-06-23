@@ -10,9 +10,10 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -26,7 +27,10 @@ func getBackupId(target database.Target) (string, error) {
 
 	hostname, err := os.Hostname()
 	if err != nil {
-		hostnameBytes, _ := os.ReadFile("/etc/hostname")
+		hostnameBytes, err := os.ReadFile("/etc/hostname")
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		hostname = strings.TrimSpace(string(hostnameBytes))
 		if hostname == "" {
 			hostname = "localhost"
@@ -46,7 +50,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	}
 	backupID = proxmox.NormalizeHostname(backupID)
 
-	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AUTH_ID, backup.Store)
+	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AuthID, backup.Store)
 	if backupStore == "@localhost:" {
 		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
 	}
@@ -99,12 +103,14 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	}
 
 	if backup.Namespace != "" {
-		_ = CreateNamespace(backup.Namespace, backup, storeInstance)
+		if err := CreateNamespace(backup.Namespace, backup, storeInstance); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
 
-	env := append(os.Environ(), fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
-	if pbsStatus, err := proxmox.GetProxmoxCertInfo(); err == nil {
+	env := append(os.Environ(), fmt.Sprintf("PBS_PASSWORD=%s", cli.GetToken()))
+	if pbsStatus, err := cli.GetProxmoxCertInfo(); err == nil {
 		env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))
 	}
 

@@ -62,7 +62,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	// Check if listener supports deadlines (TCPListener)
 	tcpListener, hasDeadline := listener.(*net.TCPListener)
 
 	for {
@@ -74,13 +73,12 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 		// Set deadline to prevent unbounded blocking on Accept
 		if hasDeadline {
-			tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
+			_ = tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
 		}
 
 		conn, err := listener.Accept()
 		if err != nil {
 			if hasDeadline {
-				// Check if it's a timeout error
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					// Timeout - check context and continue
 					select {
@@ -91,7 +89,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 					}
 				}
 			}
-			// Check if context was cancelled during Accept
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -103,7 +100,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 		wg.Add(1)
 		go func(c net.Conn) {
 			defer wg.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			tlsConn, ok := c.(*tls.Conn)
 			if !ok {
@@ -118,7 +115,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			if err != nil {
 				return
 			}
-			defer smuxS.Close()
+			defer func() { _ = smuxS.Close() }()
 
 			var reqHeaders http.Header
 			stream, err := smuxS.AcceptStream()
@@ -182,7 +179,7 @@ func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManag
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	return Serve(ctx, agentsManager, listener, router)
 }

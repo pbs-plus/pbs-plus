@@ -1,29 +1,28 @@
 //go:build linux
 
-package mtfstore
+package tape
 
 import (
 	"bufio"
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// PBSTapeConfig holds the parsed tape.cfg configuration.
-type PBSTapeConfig struct {
-	Changers []PBSChanger `json:"changers"`
-	Drives   []PBSDrive   `json:"drives"`
+type Config struct {
+	Changers []Changer `json:"changers"`
+	Drives   []Drive   `json:"drives"`
 }
 
-// PBSChanger represents a changer entry from PBS tape.cfg.
-type PBSChanger struct {
+type Changer struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	ExportSlots string `json:"export-slots,omitempty"`
 }
 
-// PBSDrive represents a drive entry from PBS tape.cfg.
-type PBSDrive struct {
+type Drive struct {
 	Name            string `json:"name"`
 	Path            string `json:"path"`
 	Changer         string `json:"changer,omitempty"`
@@ -32,30 +31,33 @@ type PBSDrive struct {
 
 const pbsTapeCfgPath = "/etc/proxmox-backup/tape.cfg"
 
-// ReadPBSTapeConfig reads and parses the PBS tape.cfg SectionConfig file.
-func ReadPBSTapeConfig() (*PBSTapeConfig, error) {
+func ReadConfig() (*Config, error) {
 	file, err := os.Open(pbsTapeCfgPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &PBSTapeConfig{}, nil
+			return &Config{}, nil
 		}
 		return nil, fmt.Errorf("open tape.cfg: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	sections := parseSectionConfig(file)
 
-	cfg := &PBSTapeConfig{}
+	cfg := &Config{}
 	for _, sec := range sections {
 		switch sec.sectionType {
 		case "changer":
-			cfg.Changers = append(cfg.Changers, PBSChanger{
+			cfg.Changers = append(cfg.Changers, Changer{
 				Name:        sec.sectionName,
 				Path:        sec.get("path"),
 				ExportSlots: sec.get("export-slots"),
 			})
 		case "lto":
-			cfg.Drives = append(cfg.Drives, PBSDrive{
+			cfg.Drives = append(cfg.Drives, Drive{
 				Name:            sec.sectionName,
 				Path:            sec.get("path"),
 				Changer:         sec.get("changer"),
@@ -87,14 +89,6 @@ func (s *pbsSection) get(key string) string {
 	return s.properties[key]
 }
 
-// parseSectionConfig parses Proxmox SectionConfig format:
-//
-//	type: name
-//	    key value
-//	    key value
-//
-//	type: name
-//	    key "quoted value"
 func parseSectionConfig(f *os.File) []pbsSection {
 	var sections []pbsSection
 	var cur *pbsSection
@@ -108,7 +102,6 @@ func parseSectionConfig(f *os.File) []pbsSection {
 			continue
 		}
 
-		// Section header: "type: name" (not indented)
 		if !strings.HasPrefix(line, "\t") && !strings.HasPrefix(line, " ") {
 			parts := strings.SplitN(trimmed, ":", 2)
 			if len(parts) == 2 {
@@ -124,7 +117,6 @@ func parseSectionConfig(f *os.File) []pbsSection {
 			continue
 		}
 
-		// Property line (indented): "key value"
 		if cur == nil {
 			continue
 		}

@@ -15,7 +15,6 @@ var (
 	ErrOneInstance   = errors.New("a job is still running; only one instance allowed")
 )
 
-// Job represents a unit of work with lifecycle callbacks.
 type Job struct {
 	ID        string
 	PreExec   func(ctx context.Context) error
@@ -40,10 +39,8 @@ type Manager struct {
 	startupMu   sync.Mutex
 	runningJobs *safemap.Map[string, contextPair]
 
-	// Dynamic queue: slice-based queue with condition variable.
 	// capacityFn returns the maximum number of queued jobs allowed at any moment.
 	// It is re-evaluated on every enqueue, so the limit stays in sync with the
-	// database as jobs are created or deleted.
 	queueMu    sync.Mutex
 	queueCond  *sync.Cond
 	queue      []*Job
@@ -133,7 +130,7 @@ func (m *Manager) processQueue() {
 		}
 		job := m.queue[0]
 		m.queue = m.queue[1:]
-		m.queueCond.Broadcast() // wake up any enqueuers waiting for capacity
+		m.queueCond.Broadcast()
 		m.queueMu.Unlock()
 
 		go m.runJob(job)

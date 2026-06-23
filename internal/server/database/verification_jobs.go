@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -28,7 +28,9 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -140,7 +142,6 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		return fmt.Errorf("CreateVerificationJob: error inserting verification job: %w", err)
 	}
 
-	// Update columns not managed by sqlc
 	targetMode := job.TargetMode
 	if targetMode == "" {
 		targetMode = "backup_job"
@@ -201,7 +202,6 @@ func (database *Database) GetVerificationJob(id string) (VerificationJob, error)
 }
 
 func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
-	// Read columns not managed by sqlc
 	if database.readDb != nil {
 		var targetMode string
 		var recursive int
@@ -223,7 +223,6 @@ func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
 		}
 	}
 
-	// Enrich history from task logs (same pattern as backup/restore)
 	if job.History.LastRunUpid != "" {
 		task, err := proxmox.GetTaskByUPID(job.History.LastRunUpid)
 		if err == nil {
@@ -301,7 +300,9 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
@@ -371,7 +372,6 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 		return fmt.Errorf("UpdateVerificationJob: error updating: %w", err)
 	}
 
-	// Update columns not managed by sqlc
 	targetMode := job.TargetMode
 	if targetMode == "" {
 		targetMode = "backup_job"
@@ -398,7 +398,9 @@ func (database *Database) DeleteVerificationJob(tx *Transaction, id string) (err
 		}
 		defer func() {
 			if p := recover(); p != nil {
-				_ = tx.Rollback()
+				if err := tx.Rollback(); err != nil {
+					syslog.L.Error(err).Write()
+				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {

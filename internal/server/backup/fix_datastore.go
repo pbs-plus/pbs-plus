@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type NamespaceReq struct {
@@ -32,7 +34,7 @@ func CreateNamespace(namespace string, backup database.Backup, storeInstance *st
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: failed to get datastore; %w", err)
 	}
@@ -79,7 +81,7 @@ func GetOwnerFilePath(backup database.Backup, storeInstance *store.Store) (strin
 	}
 	backupID = proxmox.NormalizeHostname(backupID)
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get datastore; %w", err)
 	}
@@ -119,7 +121,9 @@ func SetDatastoreOwner(backup database.Backup, storeInstance *store.Store, owner
 
 	dirPath := filepath.Dir(filePath)
 
-	_ = os.MkdirAll(dirPath, os.FileMode(0755))
+	if err := os.MkdirAll(dirPath, os.FileMode(0755)); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	err = os.WriteFile(filePath, []byte(owner), os.FileMode(0644))
 	if err != nil {
@@ -140,7 +144,7 @@ func SetDatastoreOwner(backup database.Backup, storeInstance *store.Store, owner
 }
 
 func FixDatastore(backup database.Backup, storeInstance *store.Store) error {
-	return SetDatastoreOwner(backup, storeInstance, proxmox.AUTH_ID)
+	return SetDatastoreOwner(backup, storeInstance, proxmox.AuthID)
 }
 
 func parseSnapshotTimestamp(input string) (time.Time, error) {
@@ -156,7 +160,7 @@ func CleanUnfinishedSnapshot(backup database.Backup, backupID string) error {
 		return fmt.Errorf("CleanUnfinishedSnapshot: backupID is required")
 	}
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return fmt.Errorf("CleanUnfinishedSnapshot: failed to get datastore; %w", err)
 	}
@@ -211,7 +215,9 @@ func CleanUnfinishedSnapshot(backup database.Backup, backupID string) error {
 
 	for _, e := range entries {
 		if _, ok := tmpSuffixes[e.Name()]; ok {
-			_ = os.RemoveAll(snapshotPath)
+			if err := os.RemoveAll(snapshotPath); err != nil && !os.IsNotExist(err) {
+				syslog.L.Error(err).Write()
+			}
 			break
 		}
 	}

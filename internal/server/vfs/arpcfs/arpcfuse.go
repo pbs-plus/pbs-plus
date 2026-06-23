@@ -27,7 +27,6 @@ func newRoot(fs *ARPCFS) fs.InodeEmbedder {
 	return rootNode
 }
 
-// Mount mounts the billy filesystem at the specified mountpoint
 func MountFuse(mountpoint string, fsName string, afs *ARPCFS) (*fuse.Server, error) {
 	root := newRoot(afs)
 
@@ -58,7 +57,6 @@ func MountFuse(mountpoint string, fsName string, afs *ARPCFS) (*fuse.Server, err
 	return server, nil
 }
 
-// Node represents a file or directory in the filesystem
 type Node struct {
 	fs.Inode
 	fs     *ARPCFS
@@ -86,7 +84,7 @@ var _ = (fs.NodeReleaser)((*Node)(nil))
 var _ = (fs.NodeStatxer)((*Node)(nil))
 
 func (n *Node) Access(ctx context.Context, mask uint32) syscall.Errno {
-	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
+	if mask&2 != 0 {
 		return syscall.EROFS
 	}
 
@@ -102,7 +100,6 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 }
 
 func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
-	// Get file stats the regular way, then populate StatxOut
 	var attrOut fuse.AttrOut
 	errno := n.Getattr(ctx, f, &attrOut)
 	if errno != 0 {
@@ -112,20 +109,18 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 	// Use actual STATX mask values
 	// These values come from Linux's statx flags in <linux/stat.h>
 	const (
-		STATX_TYPE  = 0x00000001 // Want stx_mode & S_IFMT
-		STATX_MODE  = 0x00000002 // Want stx_mode & ~S_IFMT
-		STATX_NLINK = 0x00000004 // Want stx_nlink
-		STATX_SIZE  = 0x00000200 // Want stx_size
+		STATX_TYPE  = 0x00000001
+		STATX_MODE  = 0x00000002
+		STATX_NLINK = 0x00000004
+		STATX_SIZE  = 0x00000200
 		STATX_MTIME = 0x00000020 // Want stx_mtime
 	)
 
-	// Set basic attributes
 	out.Mask = STATX_TYPE | STATX_MODE | STATX_NLINK | STATX_SIZE
 	out.Mode = uint16(attrOut.Mode)
 	out.Size = attrOut.Size
 	out.Nlink = attrOut.Nlink
 
-	// Add timestamps if requested
 	if mask&STATX_MTIME != 0 {
 		out.Mask |= STATX_MTIME
 		out.Mtime.Sec = attrOut.Mtime
@@ -135,7 +130,6 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 	return 0
 }
 
-// Getattr implements NodeGetattrer
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
@@ -180,12 +174,24 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 	case "user.owner":
 		data = []byte(fi.Owner)
 	case "user.fileattributes":
-		data, _ = cbor.Marshal(fi.FileAttributes)
+		d, err := cbor.Marshal(fi.FileAttributes)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
+		data = d
 	case "user.acls":
 		if fi.PosixACLs != nil {
-			data, _ = cbor.Marshal(fi.PosixACLs)
+			d, err := cbor.Marshal(fi.PosixACLs)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
+			data = d
 		} else if fi.WinACLs != nil {
-			data, _ = cbor.Marshal(fi.WinACLs)
+			d, err := cbor.Marshal(fi.WinACLs)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
+			data = d
 		} else {
 			return 0, syscall.ENODATA
 		}
@@ -234,7 +240,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 	var totalLen int
 	for _, a := range attrs {
-		totalLen += len(a) + 1 // +1 for null terminator
+		totalLen += len(a) + 1
 	}
 
 	if dest == nil {
@@ -335,7 +341,7 @@ func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscal
 	var list []byte
 	for _, attr := range attrs {
 		list = append(list, attr...)
-		list = append(list, 0) // Add null terminator.
+		list = append(list, 0)
 	}
 
 	length := uint32(len(list))
@@ -352,7 +358,6 @@ func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscal
 	return length, 0
 }
 
-// Lookup implements NodeLookuper
 func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fullPath := path.Join(n.getPath(), name)
 
@@ -387,7 +392,6 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 	return child, 0
 }
 
-// Readdir implements NodeReaddirer
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
@@ -398,7 +402,6 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	return &entries, 0
 }
 
-// Open implements NodeOpener
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
@@ -430,7 +433,6 @@ func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 	return 0
 }
 
-// FileHandle handles file operations
 type FileHandle struct {
 	fs   *ARPCFS
 	file *ARPCFile
@@ -440,7 +442,6 @@ var _ = (fs.FileReader)((*FileHandle)(nil))
 var _ = (fs.FileReleaser)((*FileHandle)(nil))
 var _ = (fs.FileLseeker)((*FileHandle)(nil))
 
-// Read implements FileReader
 func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
 	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {

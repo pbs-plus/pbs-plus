@@ -16,6 +16,9 @@ import (
 
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
+
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/format"
@@ -66,7 +69,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 
 	pbsURL := req.PBSURL
 	if pbsURL == "" {
-		pbsURL = "https://localhost:8007/api2/json"
+		pbsURL = token.DefaultAPIURL
 		req.SkipTLS = true
 	}
 	datastoreName := req.Datastore
@@ -75,7 +78,7 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 	}
 	authToken := req.AuthToken
 	if authToken == "" {
-		authToken = ReadLocalToken()
+		authToken = token.ReadLocal()
 	}
 
 	backupID := req.BackupID
@@ -83,7 +86,11 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		backupID = mfs.origSnapshot.BackupID
 	}
 	if backupID == "" {
-		backupID, _ = os.Hostname()
+		hn, err := os.Hostname()
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
+		backupID = hn
 	}
 	backupType := req.BackupType
 	if backupType == "" {
@@ -130,7 +137,10 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		Namespace:     namespace,
 		SkipTLSVerify: req.SkipTLS,
 	}, func() buzhash.Config {
-		cfg, _ := buzhash.NewConfig(4 << 20)
+		cfg, err := buzhash.NewConfig(4 << 20)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return cfg
 	}(), false)
 
@@ -152,7 +162,11 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 
 	var origPayloadIdx []byte
 	if mfs.origPpxarDidx != "" {
-		origPayloadIdx, _ = os.ReadFile(mfs.origPpxarDidx)
+		idx, err := os.ReadFile(mfs.origPpxarDidx)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		}
+		origPayloadIdx = idx
 	}
 
 	writer, err := transfer.NewRemoteDedupWriter(ctx, session, metaName, payloadName)
@@ -160,7 +174,10 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		return fmt.Errorf("create dedup writer: %w", err)
 	}
 
-	rootNode, _ := mfs.journal.GetNode(1)
+	rootNode, err := mfs.journal.GetNode(1)
+	if err != nil {
+		syslog.L.Error(err).Write()
+	}
 	var rootMeta pxar.Metadata
 	if rootNode != nil {
 		rootMeta = nodeToMetadata(rootNode, nil)
@@ -288,7 +305,9 @@ func ensureNamespaceDir(pbsStore, namespace string) error {
 		if err := os.MkdirAll(cur, 0o755); err != nil {
 			return err
 		}
-		_ = os.Chown(cur, 34, 34)
+		if err := os.Chown(cur, 34, 34); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 	return nil
 }
@@ -314,22 +333,32 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	}
 	payloadData, err := mmapFile(ppxarPath)
 	if err != nil {
-		_ = munmap(metaData)
+		if err := munmap(metaData); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("mmap new ppxar: %w", err)
 	}
 
 	store, err := datastore.NewChunkStore(mfs.pbsStore)
 	if err != nil {
-		_ = munmap(metaData)
-		_ = munmap(payloadData)
+		if err := munmap(metaData); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := munmap(payloadData); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("open chunk store: %w", err)
 	}
 	source := datastore.NewChunkStoreSource(store)
 
 	newReader, err := transfer.NewSplitReader(metaData, payloadData, source)
 	if err != nil {
-		_ = munmap(metaData)
-		_ = munmap(payloadData)
+		if err := munmap(metaData); err != nil {
+			syslog.L.Error(err).Write()
+		}
+		if err := munmap(payloadData); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		return fmt.Errorf("create new reader: %w", err)
 	}
 
@@ -341,7 +370,9 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	}
 
 	for _, d := range mfs.mmapData {
-		_ = munmap(d)
+		if err := munmap(d); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
 	mfs.pxar.HotSwap(newReader)
@@ -406,7 +437,9 @@ func ParseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
 		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".ppxar")
 		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".pxar")
 
-		_, _ = fmt.Sscanf(parts[len(parts)-2], "%d", &ref.BackupTime)
+		if _, err := fmt.Sscanf(parts[len(parts)-2], "%d", &ref.BackupTime); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		ref.BackupID = parts[len(parts)-3]
 		ref.BackupType = parts[len(parts)-4]
 		if len(parts) > 4 {
@@ -479,7 +512,9 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 			}
 			h.Reset()
 			_, err = io.CopyBuffer(h, f, buf)
-			_ = f.Close()
+			if err := f.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if err != nil {
 				errOnce.Do(func() { firstErr = fmt.Errorf("hash backed file %q: %w", it.relPath, err) })
 				return

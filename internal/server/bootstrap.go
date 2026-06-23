@@ -14,10 +14,10 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtfjob"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	job "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/server/rpc"
@@ -26,7 +26,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// GenerateSecretKey generates a cryptographically secure secret key
 func GenerateSecretKey(length int) (string, error) {
 	keyBytes := make([]byte, length)
 	if _, err := rand.Read(keyBytes); err != nil {
@@ -38,18 +37,18 @@ func GenerateSecretKey(length int) (string, error) {
 // Bootstrap handles initialization of certificates, secret keys, token manager,
 // and cleanup of stale mount points and queued backups
 func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.Scheduler, *jobs.Manager, error) {
-	// Queue cleanup - cleanup previously queued backups
 	if err := cleanupQueuedBackups(storeInstance); err != nil {
 		syslog.L.Error(err).WithMessage("failed to cleanup queued backups").Write()
 	}
 
-	// Secret key generation/reading
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
 		key, err := GenerateSecretKey(48)
 		if err == nil {
-			_ = os.WriteFile(secKeyPath, []byte(key), 0640)
+			if err := os.WriteFile(secKeyPath, []byte(key), 0640); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
@@ -58,7 +57,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		return nil, nil, fmt.Errorf("failed to read .key: %w", err)
 	}
 
-	// Validate server certificates
 	err = storeInstance.CertManager.Validate()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate local CA and server cert: %w", err)
@@ -79,7 +77,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		syslog.L.Error(err).WithMessage("failed to cleanup stale mounts").Write()
 	}
 
-	// Start mount RPC server with exponential backoff on restart.
 	go func() {
 		backoff := 100 * time.Millisecond
 		const maxBackoff = 30 * time.Second
@@ -103,8 +100,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		}
 	}()
 
-	// Start scheduler with dynamic queue capacity that reflects the current
-	// number of backup + restore jobs in the database.
 	manager := jobs.NewManager(mainCtx, conf.MaxConcurrentClients, func() int {
 		n, err := storeInstance.Database.JobCount(mainCtx)
 		if err != nil || n < 1 {
@@ -117,7 +112,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	s.Start()
 	storeInstance.OnBackupComplete = s.TriggerPendingVerifications
 
-	// Start job RPC server with exponential backoff on restart.
 	go func() {
 		backoff := 100 * time.Millisecond
 		const maxBackoff = 30 * time.Second
@@ -129,7 +123,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 			default:
 				job.BackupJobFactory = backup.NewBackupJob
 				job.RestoreJobFactory = restore.NewRestoreJob
-				job.MtfJobFactory = mtfjob.NewMtfJob
+				job.MtfJobFactory = mtf.NewJob
 				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
 					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting").Write()
 					time.Sleep(backoff)
@@ -166,7 +160,9 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 
 		queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
 		if err == nil {
-			os.Remove(queueTaskPath)
+			if err := os.Remove(queueTaskPath); err != nil && !os.IsNotExist(err) {
+				syslog.L.Error(err).Write()
+			}
 		}
 
 		queuedBackup.History.LastRunUpid = task.UPID
@@ -176,18 +172,18 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 		}
 	}
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 	return nil
 }
 
 func cleanupStaleMounts() error {
-	// Get all mount points under the base path
 	mountPoints, err := filepath.Glob(filepath.Join(conf.AgentMountBasePath, "*"))
 	if err != nil {
 		return fmt.Errorf("failed to find agent mount base path: %w", err)
 	}
 
-	// Unmount each one
 	for _, mountPoint := range mountPoints {
 		umount := exec.Command("umount", "-lf", mountPoint)
 		umount.Env = os.Environ()

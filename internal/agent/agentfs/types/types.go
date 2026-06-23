@@ -2,9 +2,6 @@ package types
 
 import (
 	"fmt"
-	"net"
-	"os"
-	"strings"
 )
 
 type (
@@ -183,44 +180,4 @@ func HumanizeBytes(bytes uint64) string {
 		unitSymbol = "??"
 	}
 	return fmt.Sprintf("%.2f %s", float64(bytes)/float64(div), unitSymbol)
-}
-
-// GetAgentHostname returns the hostname from PBS_PLUS_HOSTNAME env or falls
-// back to the OS hostname.
-func GetAgentHostname() (string, error) {
-	host := os.Getenv("PBS_PLUS_HOSTNAME")
-	if host == "" {
-		return os.Hostname()
-	}
-	if err := ValidateHostname(host); err != nil {
-		return "", err
-	}
-	return host, nil
-}
-
-// ValidateHostname checks that a hostname is valid.
-func ValidateHostname(host string) error {
-	if host == "" {
-		return fmt.Errorf("hostname cannot be empty")
-	}
-	if len(host) > 253 {
-		return fmt.Errorf("hostname too long (%d chars)", len(host))
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return nil
-	}
-	for part := range strings.SplitSeq(host, ".") {
-		if part == "" {
-			return fmt.Errorf("hostname segment cannot be empty")
-		}
-		if len(part) > 63 {
-			return fmt.Errorf("hostname segment too long: %s", part)
-		}
-		for _, c := range part {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
-				return fmt.Errorf("hostname segment %q contains invalid character %q", part, string(c))
-			}
-		}
-	}
-	return nil
 }

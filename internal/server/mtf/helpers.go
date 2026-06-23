@@ -1,4 +1,4 @@
-package mtfinv
+package mtf
 
 import "database/sql"
 

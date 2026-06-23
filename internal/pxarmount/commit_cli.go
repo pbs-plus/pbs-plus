@@ -9,6 +9,9 @@ import (
 	"os/signal"
 	"strings"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func RunCommitSubcommand() {
@@ -22,7 +25,9 @@ func RunCommitSubcommand() {
 	backupID := fs.String("backup-id", "", "Backup ID")
 	detach := fs.Bool("detach", false, "Run commit in background; use 'attach' to watch progress")
 
-	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		syslog.L.Error(err).Write()
+	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *socketPath == "" {
 		fmt.Fprintf(os.Stderr, "Usage: pxar-mount commit --socket <path> [options]\n\n")
@@ -31,9 +36,9 @@ func RunCommitSubcommand() {
 		os.Exit(1)
 	}
 
-	token := *authToken
-	if token == "" {
-		token = ReadLocalToken()
+	tok := *authToken
+	if tok == "" {
+		tok = token.ReadLocal()
 	}
 
 	conn, err := net.Dial("unix", *socketPath)
@@ -41,10 +46,14 @@ func RunCommitSubcommand() {
 		fmt.Fprintf(os.Stderr, "  \u2717 error connecting to socket %s: %v\n", *socketPath, err)
 		os.Exit(1)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
-		*pbsURL, *datastoreName, token, *namespace, *backupType, *backupID)
+		*pbsURL, *datastoreName, tok, *namespace, *backupType, *backupID)
 	if _, err := fmt.Fprint(conn, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "  \u2717 error sending command: %v\n", err)
 		os.Exit(1)
@@ -86,7 +95,9 @@ func RunCommitSubcommand() {
 	go func() {
 		<-sigCh
 		display.stop()
-		_, _ = fmt.Fprintln(conn, "DETACH")
+		if _, err := fmt.Fprintln(conn, "DETACH"); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		fmt.Fprintf(os.Stderr, "\r  ↗ Commit detached  -  use 'pxar-mount attach --socket %s' to watch\n", *socketPath)
 		os.Exit(0)
 	}()
@@ -107,7 +118,9 @@ func RunAttachSubcommand() {
 	fs := flag.NewFlagSet("attach", flag.ExitOnError)
 	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
 
-	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		syslog.L.Error(err).Write()
+	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *socketPath == "" {
 		fmt.Fprintf(os.Stderr, "Usage: pxar-mount attach --socket <path>\n\n")
@@ -122,7 +135,11 @@ func RunAttachSubcommand() {
 		fmt.Fprintf(os.Stderr, "  Nothing to attach to. No commit in progress.\n")
 		os.Exit(1)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
@@ -150,7 +167,9 @@ func RunLogsSubcommand() {
 	fs := flag.NewFlagSet("logs", flag.ExitOnError)
 	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
 
-	fs.Parse(os.Args[2:]) //nolint:errcheck // ExitOnError set, calls os.Exit on failure
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		syslog.L.Error(err).Write()
+	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *socketPath == "" {
 		fmt.Fprintf(os.Stderr, "Usage: pxar-mount logs --socket <path>\n\n")

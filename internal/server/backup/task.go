@@ -6,18 +6,17 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-// GetBackupTask waits for and retrieves a backup task by scanning log files.
 func GetBackupTask(
 	ctx context.Context,
 	readyChan chan struct{},
@@ -62,13 +61,16 @@ func GetBackupTask(
 	}
 }
 
-// scanTaskFile searches for a task in a log file.
 func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Task, bool) {
 	file, err := os.Open(path)
 	if err != nil {
 		return proxmox.Task{}, false
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	stat, err := file.Stat()
 	if err != nil || stat.Size() == 0 {
@@ -98,42 +100,29 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 	return proxmox.Task{}, false
 }
 
-// GenerateBackupTaskErrorFile creates an error task file with detailed error information.
 func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := tasks.Now()
-	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
-
-	task := proxmox.Task{
-		Node:       "pbsplusgen-error",
-		PID:        os.Getpid(),
-		PStart:     proxmox.GetPStart(),
-		StartTime:  startTime.Unix(),
-		WorkerType: "backup",
-		WID:        wid,
-		User:       proxmox.AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
+	task := tasks.NewTask("pbsplusgen-error", "backup", wid)
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	timestamp := tasks.Now().Format(time.RFC3339)
 
-	// Write additional data
 	for _, data := range additionalData {
-		fmt.Fprintf(file, "%s: %s\n", timestamp, data)
+		if _, err := fmt.Fprintf(file, "%s: %s\n", timestamp, data); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 
-	// Process error message and extract first non-empty line
 	fullError := pbsError.Error()
 	errorLines := strings.Split(fullError, "\n")
 	firstNonEmptyLine := ""
@@ -147,17 +136,18 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 		firstNonEmptyLine = fullError
 	}
 
-	// Write all error lines
 	for _, line := range errorLines {
 		if line != "" {
-			fmt.Fprintf(file, "%s: %s\n", timestamp, line)
+			if _, err := fmt.Fprintf(file, "%s: %s\n", timestamp, line); err != nil {
+				syslog.L.Error(err).Write()
+			}
 		}
 	}
 
-	// Write final error summary
-	fmt.Fprintf(file, "%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine)
+	if _, err := fmt.Fprintf(file, "%s: TASK ERROR: %s\n", timestamp, firstNonEmptyLine); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
-	// Archive with the error
 	tasks.WriteArchive(task.UPID, task.StartTime, firstNonEmptyLine)
 
 	task.Status = "stopped"
@@ -166,33 +156,20 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 	return task, nil
 }
 
-// GenerateBackupTaskOKFile creates an OK task file.
 func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	startTime := tasks.Now()
-	startTimeHex := fmt.Sprintf("%08X", uint32(startTime.Unix()))
-
-	task := proxmox.Task{
-		Node:       "pbsplusgen-ok",
-		PID:        os.Getpid(),
-		PStart:     proxmox.GetPStart(),
-		StartTime:  startTime.Unix(),
-		WorkerType: "backup",
-		WID:        wid,
-		User:       proxmox.AUTH_ID,
-	}
-
-	pid := fmt.Sprintf("%08X", task.PID)
-	pstart := fmt.Sprintf("%08X", task.PStart)
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
-	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:", task.Node, pid, pstart, taskID, startTimeHex, task.WorkerType, wid, proxmox.AUTH_ID)
+	task := tasks.NewTask("pbsplusgen-ok", "backup", wid)
 
 	file, _, err := tasks.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	base := tasks.NewBaseTask(task, file)
 	for _, data := range additionalData {

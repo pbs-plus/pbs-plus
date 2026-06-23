@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -81,7 +82,10 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		var entry commitEntry
 		if pxarIdx >= len(pxarEntries) {
 			edge := &journalEdges[journalIdx]
-			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
+			node, err := ow.mfs.journal.GetNode(edge.ChildID)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if node == nil {
 				journalIdx++
 				continue
@@ -96,7 +100,10 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			pxarIdx++
 		} else if pxarEntries[pxarIdx].name > journalEdges[journalIdx].Name {
 			edge := &journalEdges[journalIdx]
-			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
+			node, err := ow.mfs.journal.GetNode(edge.ChildID)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if node == nil {
 				journalIdx++
 				continue
@@ -105,7 +112,10 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			journalIdx++
 		} else {
 			edge := &journalEdges[journalIdx]
-			node, _ := ow.mfs.journal.GetNode(edge.ChildID)
+			node, err := ow.mfs.journal.GetNode(edge.ChildID)
+			if err != nil {
+				syslog.L.Error(err).Write()
+			}
 			if node != nil {
 				entry = commitEntry{name: edge.Name, node: node}
 				if node.Kind == NodeDir && pxarIdx < len(pxarEntries) && pxarEntries[pxarIdx].name == edge.Name {
@@ -457,7 +467,11 @@ func (ow *commitWalkState) writeReencoded(pxarEntry *pxar.Entry, entry *pxar.Ent
 	if err != nil {
 		return fmt.Errorf("read pxar content for re-encode %q: %w", name, err)
 	}
-	defer func() { _ = rc.Close() }()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	if err := ow.writer.WriteEntryReader(entry, rc, pxarEntry.FileSize); err != nil {
 		return fmt.Errorf("write re-encoded %q: %w", name, err)
 	}

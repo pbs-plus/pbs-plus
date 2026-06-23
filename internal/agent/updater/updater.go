@@ -155,7 +155,6 @@ func New(cfg Config) (*Updater, error) {
 		return nil, err
 	}
 
-	// remove old updater if it exists
 	err = cleanUp()
 	if err != nil {
 		syslog.L.Error(err).WithMessage("update cleanup error, non-fatal").Write()
@@ -183,7 +182,11 @@ func (a *agentSource) LatestVersion() (*selfupdate.Version, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Close()
+	defer func() {
+		if err := resp.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	var vr VersionResp
 	data, err := io.ReadAll(resp)
@@ -242,7 +245,11 @@ func (a *agentSource) GetSignature() ([64]byte, error) {
 	if err != nil {
 		return sig64, err
 	}
-	defer rc.Close()
+	defer func() {
+		if err := rc.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 	sigBytes, err := io.ReadAll(rc)
 	if err != nil {
 		return sig64, err
