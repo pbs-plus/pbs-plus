@@ -10,9 +10,10 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/pbscli"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -103,8 +104,8 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
 
-	env := append(os.Environ(), fmt.Sprintf("PBS_PASSWORD=%s", proxmox.GetToken()))
-	if pbsStatus, err := proxmox.GetProxmoxCertInfo(); err == nil {
+	env := append(os.Environ(), fmt.Sprintf("PBS_PASSWORD=%s", pbscli.GetToken()))
+	if pbsStatus, err := pbscli.GetProxmoxCertInfo(); err == nil {
 		env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))
 	}
 

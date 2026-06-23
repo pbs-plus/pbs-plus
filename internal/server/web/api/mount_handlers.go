@@ -16,9 +16,10 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/pbscli"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -106,7 +107,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		dsInfo, err := proxmox.GetDatastoreInfo(datastore)
+		dsInfo, err := pbscli.GetDatastoreInfo(datastore)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

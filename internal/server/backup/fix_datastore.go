@@ -9,9 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/pbscli"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 type NamespaceReq struct {
@@ -32,7 +33,7 @@ func CreateNamespace(namespace string, backup database.Backup, storeInstance *st
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	datastoreInfo, err := pbscli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: failed to get datastore; %w", err)
 	}
@@ -79,7 +80,7 @@ func GetOwnerFilePath(backup database.Backup, storeInstance *store.Store) (strin
 	}
 	backupID = proxmox.NormalizeHostname(backupID)
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	datastoreInfo, err := pbscli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get datastore; %w", err)
 	}
@@ -156,7 +157,7 @@ func CleanUnfinishedSnapshot(backup database.Backup, backupID string) error {
 		return fmt.Errorf("CleanUnfinishedSnapshot: backupID is required")
 	}
 
-	datastoreInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	datastoreInfo, err := pbscli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return fmt.Errorf("CleanUnfinishedSnapshot: failed to get datastore; %w", err)
 	}

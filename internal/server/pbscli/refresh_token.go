@@ -1,6 +1,6 @@
 //go:build linux
 
-package proxmox
+package pbscli
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -49,9 +50,9 @@ type APIToken struct {
 	Value   string `json:"value"`
 }
 
-const AUTH_USER = "plus-user@pbs"
-const AUTH_TOKEN = "server"
-const AUTH_ID = AUTH_USER + "!" + AUTH_TOKEN
+const AUTH_USER = proxmox.AUTH_USER
+const AUTH_TOKEN = proxmox.AUTH_TOKEN
+const AUTH_ID = proxmox.AUTH_ID
 
 func runCommandAndIgnoreExists(cmd *exec.Cmd, alreadyExistsKeywords []string) error {
 	cmd.Env = os.Environ()

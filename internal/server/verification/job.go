@@ -23,6 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
+	"github.com/pbs-plus/pbs-plus/internal/server/pbscli"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
@@ -854,7 +855,7 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 	backupID := proxmox.NormalizeHostname(backup.Target.GetHostname())
 	backupType := "host"
 
-	dsInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	dsInfo, err := pbscli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore info: %w", err)
 	}
@@ -947,7 +948,7 @@ func filterByDateRange(snapshots []snapshotInfo, dateFrom, dateTo string) []snap
 // openArchive opens the pxar archive for the given snapshot, returning a
 // verifyState that can be used for both file enumeration and content extraction.
 func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo) (*verifyState, error) {
-	dsInfo, err := proxmox.GetDatastoreInfo(backup.Store)
+	dsInfo, err := pbscli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore info: %w", err)
 	}
