@@ -39,8 +39,8 @@ func ComputeDelay() time.Duration {
 		return time.Duration(fixedDelay) * time.Minute
 	}
 
-	const baseSeconds = 3600       // 1 hour
-	const extraRangeSeconds = 3600 // up to an extra 1 hour
+	const baseSeconds = 3600
+	const extraRangeSeconds = 3600
 
 	hostname, err := host.AgentHostname()
 	if err != nil {

@@ -23,21 +23,21 @@ func (c *Changer) Close() error { return c.dev.close() }
 func (c *Changer) Inventory() error { return initializeElementStatus(c.dev) }
 
 type SlotStatus struct {
-	ElementAddress uint16 // physical SCSI element address
-	Full           bool   // a cartridge is present
+	ElementAddress uint16
+	Full           bool
 	VolumeTag      string // barcode, if Full and readable (else "")
 	ImportExport   bool   // mail slot rather than a magazine slot
 }
 
 type DriveStatus struct {
 	ElementAddress uint16
-	Full           bool   // a cartridge is loaded
+	Full           bool
 	VolumeTag      string // barcode of the loaded cartridge, if known
-	LoadedSlotAddr uint16 // SCSI element address the cartridge came from (0 if unknown)
+	LoadedSlotAddr uint16
 }
 
 type Status struct {
-	TransportAddress uint16       // the robotic picker (0 if the changer reports none)
+	TransportAddress uint16
 	Slots            []SlotStatus // storage slots, then import/export slots appended
 	Drives           []DriveStatus
 }
@@ -110,8 +110,8 @@ type rawElement struct {
 	Full    bool
 	ASC     byte
 	ASCQ    byte
-	SrcAddr uint16 // source storage element (drives/transport), if SValid
-	VolTag  string // primary volume tag, if requested and present
+	SrcAddr uint16
+	VolTag  string
 }
 
 // readElements queries one element type, paging if the changer caps the
@@ -137,7 +137,7 @@ func (c *Changer) readElements(assign *addressAssignment, t elementType, first, 
 		start = last + 1
 		remaining -= got
 		if uint16(len(elems)) < n {
-			break // fewer than requested  -  no more of this type
+			break
 		}
 	}
 	return out, nil

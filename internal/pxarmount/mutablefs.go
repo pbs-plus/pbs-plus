@@ -358,7 +358,7 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	}
 
 	// Get journal edges for this parent.
-	edgeNames := make(map[string]int64) // name → child node ID
+	edgeNames := make(map[string]int64)
 	whiteoutNames := make(map[string]bool)
 	if parentNodeID != 0 {
 		var edges []GraphEdge
@@ -1079,7 +1079,7 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		oldRE.Node = node
 	}
 
-	fs.unmapInode(newPath) // clear dest mapping
+	fs.unmapInode(newPath)
 	ino := fs.pathToIno(oldPath, oldRE.IsDir)
 	fs.unmapInode(oldPath)
 	fs.mapInode(ino, newPath)
@@ -1810,7 +1810,7 @@ func (fs *MutableFS) hasPxarEntry(path string) bool {
 // and returns its node ID. Creates pxar-derived nodes as needed.
 func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 	if parentPath == "" || parentPath == "/" {
-		return 1 // root
+		return 1
 	}
 
 	re, status := fs.resolve(parentPath)

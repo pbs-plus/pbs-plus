@@ -50,9 +50,9 @@ func HumanReadableSpeed(bytesPerSec int) string {
 }
 
 type ParsedTaskStatus struct {
-	Category string `json:"category"` // "ok", "error", "warning", "unknown", "queued"
-	Icon     string `json:"icon"`     // CSS class suffix, e.g. "check good"
-	Text     string `json:"text"`     // Display text
+	Category string `json:"category"`
+	Icon     string `json:"icon"`
+	Text     string `json:"text"`
 }
 
 func ParseTaskStatus(status string) ParsedTaskStatus {
@@ -117,8 +117,8 @@ func FormatDuration(seconds int64) string {
 }
 
 type ConfidenceInfo struct {
-	Confidence95 float64 `json:"c95"` // percentage 0-100
-	Confidence99 float64 `json:"c99"` // percentage 0-100
+	Confidence95 float64 `json:"c95"`
+	Confidence99 float64 `json:"c99"`
 }
 
 // Uses the Rule of Three for zero-failure samples and the Wilson score interval otherwise.
@@ -151,7 +151,7 @@ func ComputeConfidence(population, sample, failures int) ConfidenceInfo {
 	}
 
 	return ConfidenceInfo{
-		Confidence95: math.Round(c95*1000) / 10, // round to 1 decimal (percentage)
+		Confidence95: math.Round(c95*1000) / 10,
 		Confidence99: math.Round(c99*1000) / 10,
 	}
 }
@@ -183,7 +183,7 @@ func ComputeAggregate(results []database.VerificationResult) VerificationAggrega
 
 	for _, r := range results {
 		if r.Status == "" || r.Status == "pending" {
-			continue // skip incomplete runs
+			continue
 		}
 		agg.TotalRuns++
 		agg.TotalFiles += r.TotalFiles

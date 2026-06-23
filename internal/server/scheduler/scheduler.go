@@ -26,7 +26,7 @@ type Scheduler struct {
 	cancel         context.CancelFunc
 	storeInstance  *store.Store
 	manager        *jobs.Manager
-	lastEnqueued   map[string]time.Time // tracks last scheduled run time per backup ID
+	lastEnqueued   map[string]time.Time
 	lastEnqueuedMu sync.Mutex
 }
 

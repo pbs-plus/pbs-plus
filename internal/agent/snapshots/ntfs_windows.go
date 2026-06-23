@@ -23,7 +23,7 @@ func (w *NtfsSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (S
 		return Snapshot{}, errors.New("empty source path")
 	}
 
-	driveLetter := sourcePath[:1] // Assuming sourcePath is like "C:\\path\\to\\source"
+	driveLetter := sourcePath[:1]
 	volName := fmt.Sprintf("%s:", driveLetter)
 
 	vssFolder, err := getVSSFolder()
@@ -90,8 +90,8 @@ func getVSSFolder() (string, error) {
 func reregisterVSSWriters() error {
 	services := []string{
 		"Winmgmt", // Windows Management Instrumentation
-		"VSS",     // Volume Shadow Copy
-		"swprv",   // Microsoft Software Shadow Copy Provider
+		"VSS",
+		"swprv",
 	}
 
 	for _, svc := range services {

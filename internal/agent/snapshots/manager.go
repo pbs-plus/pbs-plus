@@ -13,13 +13,13 @@ var Manager = &SnapshotManager{
 		"btrfs": &BtrfsSnapshotHandler{},
 		"zfs":   &ZFSSnapshotHandler{},
 		"lvm":   &LVMSnapshotHandler{},
-		"ext4":  &EXT4XFSHandler{}, // EXT4 delegates to LVM
-		"xfs":   &EXT4XFSHandler{}, // XFS delegates to LVM
+		"ext4":  &EXT4XFSHandler{},
+		"xfs":   &EXT4XFSHandler{},
 		"ntfs":  &NtfsSnapshotHandler{},
 		"refs":  &NtfsSnapshotHandler{},
 		"fat32": nil, // FAT32 does not support snapshots
 		"exfat": nil, // exFAT does not support snapshots
-		"hfs+":  nil, // HFS+ does not support snapshots
+		"hfs+":  nil,
 	},
 }
 

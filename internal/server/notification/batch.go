@@ -308,7 +308,7 @@ func (bt *BatchTracker) StartCleanup(ctx context.Context, interval time.Duration
 					oldest := state.results[0].Timestamp
 					timeout := int64(state.batch.WaitTimeoutSecs) * 2
 					if timeout <= 0 {
-						timeout = 600 // 10 minutes default
+						timeout = 600
 					}
 					if time.Now().Unix()-oldest > timeout {
 						delete(bt.pending, name)

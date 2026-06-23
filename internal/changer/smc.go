@@ -16,11 +16,11 @@ const (
 
 	scsiVolumeTagLen = 36
 
-	allocLenStandard = 0xFFFF // most changers only honour the low 2 bytes
+	allocLenStandard = 0xFFFF
 
-	timeoutDefault   = uint32(5 * 60 * 1000)  // 5 min
-	timeoutInventory = uint32(30 * 60 * 1000) // 30 min (initialize)
-	timeoutMove      = uint32(45 * 60 * 1000) // 45 min (mechanical move)
+	timeoutDefault   = uint32(5 * 60 * 1000)
+	timeoutInventory = uint32(30 * 60 * 1000)
+	timeoutMove      = uint32(45 * 60 * 1000)
 )
 
 type elementType uint8
@@ -48,7 +48,7 @@ type addressAssignment struct {
 	NumStorage     uint16
 	FirstImportExp uint16
 	NumImportExp   uint16
-	FirstTransfer  uint16 // data-transfer (drive) elements
+	FirstTransfer  uint16
 	NumTransfer    uint16
 }
 
@@ -63,7 +63,7 @@ func readAddressAssignment(d *device) (*addressAssignment, error) {
 	}
 	for i := 0; i+18 < len(data); i++ {
 		if data[i]&0x3f == pageElementAddressAssignment {
-			b := data[i+2:] // skip page code + page length
+			b := data[i+2:]
 			a := &addressAssignment{
 				FirstTransport: be16(b[0:2]),
 				NumTransport:   be16(b[2:4]),
@@ -104,7 +104,7 @@ func moveMediumCDB(transport, source, dest uint16) []byte {
 		byte(transport >> 8), byte(transport),
 		byte(source >> 8), byte(source),
 		byte(dest >> 8), byte(dest),
-		0, // invert
+		0,
 		0,
 	}
 }

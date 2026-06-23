@@ -39,7 +39,7 @@ func NewAgentFSServer(jobID string, readMode string, snapshot snapshots.Snapshot
 
 	allocGranularity := getAllocGranularity()
 	if allocGranularity == 0 {
-		allocGranularity = 65536 // 64 KB usually
+		allocGranularity = 65536
 	}
 
 	s := &AgentFSServer{

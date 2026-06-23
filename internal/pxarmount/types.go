@@ -81,8 +81,8 @@ type ResolvedEntry struct {
 	Path       string
 	Inode      uint64
 	Node       *GraphNode // non-nil if the inode graph has a node for this path
-	PxarNode   *node      // non-nil if there's an immutable backing entry
-	DataIsMut  bool       // data comes from mutable dir
+	PxarNode   *node
+	DataIsMut  bool
 	IsDir      bool
 	Mode       uint32
 	UID        uint32

@@ -16,7 +16,7 @@ type S3FS struct {
 	client      *minio.Client
 	bucket      string
 	prefix      string
-	loggedPaths sync.Map // dedup: path→struct{} for one-time error logging
+	loggedPaths sync.Map
 }
 
 type S3File struct {

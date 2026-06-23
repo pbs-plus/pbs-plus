@@ -425,7 +425,7 @@ func FlattenBackupForEdit(b database.Backup) map[string]any {
 		"schedule":           b.Schedule,
 		"comment":            b.Comment,
 		"notification-mode":  b.NotificationMode,
-		"notification-batch": "", // populated by handler via GetJobBatchName
+		"notification-batch": "",
 		"pre_script":         b.PreScript,
 		"post_script":        b.PostScript,
 		"retry":              b.Retry,
@@ -449,7 +449,7 @@ func FlattenRestoreForEdit(r database.Restore) map[string]any {
 		"mode":               r.Mode,
 		"comment":            r.Comment,
 		"notification-mode":  r.NotificationMode,
-		"notification-batch": "", // populated by handler via GetJobBatchName
+		"notification-batch": "",
 		"pre_script":         r.PreScript,
 		"post_script":        r.PostScript,
 		"retry":              r.Retry,

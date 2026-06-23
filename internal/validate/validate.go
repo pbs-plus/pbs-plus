@@ -139,7 +139,7 @@ func ValidateFileName(fileName string) error {
 
 func ValidateSnapshot(snapshot string) error {
 	if snapshot == "" {
-		return nil // Optional field
+		return nil
 	}
 	return validatePathComponent("snapshot", snapshot, snapshotRegex, 512)
 }
@@ -166,7 +166,7 @@ func ValidateSubpath(name, subpath string) error {
 
 func ValidateScriptPath(name, scriptPath string) error {
 	if scriptPath == "" {
-		return nil // Optional field
+		return nil
 	}
 
 	if len(scriptPath) > 4096 {

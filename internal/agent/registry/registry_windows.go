@@ -156,7 +156,7 @@ func DeleteEntry(path string, key string) error {
 
 	baseKey, err := registry.OpenKey(registry.LOCAL_MACHINE, path, registry.SET_VALUE)
 	if err != nil {
-		return nil // Path doesn't exist, effectively deleted
+		return nil
 	}
 	defer baseKey.Close()
 

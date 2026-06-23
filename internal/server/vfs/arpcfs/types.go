@@ -19,7 +19,7 @@ type ARPCFS struct {
 	sessionId    string
 	Hostname     string
 	backupMode   string
-	loggedPaths  sync.Map // dedup: path→struct{} for one-time error logging
+	loggedPaths  sync.Map
 }
 
 type DirStream struct {

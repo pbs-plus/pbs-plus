@@ -73,7 +73,7 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 		Bsize:   blockSize,
 		Blocks:  totalBlocks,
 		Bfree:   0,
-		Bavail:  0,               // Assuming Bavail is the same as Bfree
+		Bavail:  0,
 		Files:   uint64(1 << 20), // Windows does not provide total inodes
 		Ffree:   0,               // Windows does not provide free inodes
 		NameLen: 255,

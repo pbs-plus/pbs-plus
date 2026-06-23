@@ -20,7 +20,7 @@ type QueuedTask struct {
 	mu       sync.Mutex
 	closed   atomic.Bool
 	path     string
-	job      any // either database.Backup or database.Restore
+	job      any
 	isBackup bool
 }
 

@@ -367,7 +367,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 
 func wrapPathError(op, path string, err error) error {
 	if _, ok := err.(*os.PathError); ok {
-		return err // already wrapped
+		return err
 	}
 	if errno, ok := err.(syscall.Errno); ok {
 		return &os.PathError{Op: op, Path: path, Err: errno}

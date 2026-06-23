@@ -108,7 +108,7 @@ func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 	}
 	defer file.Close()
 
-	header := make([]byte, 100) // Read a small header
+	header := make([]byte, 100)
 	n, err := file.Read(header)
 	if err != nil {
 		return "", fmt.Errorf("failed to read script file header: %w", err)
@@ -123,7 +123,7 @@ func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 		// Consider handling arguments in the shebang like #!/usr/bin/env python
 		parts := strings.Fields(interpreter)
 		if len(parts) > 0 {
-			return parts[0], nil // Return the first part as the interpreter command
+			return parts[0], nil
 		}
 	}
 

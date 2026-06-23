@@ -141,11 +141,11 @@ type VerificationAggregate struct {
 	TotalFiles   int     `json:"total_files"`
 	TotalFailed  int     `json:"total_failed"`
 	TotalSkipped int     `json:"total_skipped"`
-	PassRate     float64 `json:"pass_rate"`  // percentage 0-100
-	CleanRuns    int     `json:"clean_runs"` // runs with zero failures
+	PassRate     float64 `json:"pass_rate"`
+	CleanRuns    int     `json:"clean_runs"`
 	FailedRuns   int     `json:"failed_runs"`
-	Last30Days   int     `json:"last_30_days"` // runs in last 30 days
-	Confidence   float64 `json:"confidence"`   // aggregate 95% CI lower bound
+	Last30Days   int     `json:"last_30_days"`
+	Confidence   float64 `json:"confidence"`
 }
 
 type FlatVerificationResult struct {
@@ -164,9 +164,9 @@ type FlatVerificationResult struct {
 	StartedAt         int64                        `json:"started_at"`
 	CompletedAt       int64                        `json:"completed_at"`
 	DurationHuman     string                       `json:"duration_human"`
-	PassRate          float64                      `json:"pass_rate"` // percentage 0-100
+	PassRate          float64                      `json:"pass_rate"`
 	Confidence        ConfidenceInfo               `json:"confidence"`
-	StatusBadge       string                       `json:"status_badge"` // "passed" | "failed" | "warning"
+	StatusBadge       string                       `json:"status_badge"`
 	Details           []FlatVerificationFileResult `json:"details"`
 }
 
@@ -175,12 +175,12 @@ type FlatVerificationFileResult struct {
 	Size        int64  `json:"size"`
 	SizeHuman   string `json:"size_human"`
 	Status      string `json:"status"`
-	StatusHuman string `json:"status_human"` // e.g. "✓ OK", "✗ Failed"
+	StatusHuman string `json:"status_human"`
 	Message     string `json:"message"`
 }
 
 type TargetTreeNode struct {
-	Text      string           `json:"text"` // display label
+	Text      string           `json:"text"`
 	IconCls   string           `json:"iconCls,omitempty"`
 	Expanded  bool             `json:"expanded"`
 	IsGroup   bool             `json:"isGroup"`

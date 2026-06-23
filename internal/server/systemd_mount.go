@@ -55,7 +55,7 @@ func CreateMountService(ctx context.Context, serviceName, mountPoint string, arg
 		},
 		{
 			Name:  "CollectMode",
-			Value: godbus.MakeVariant("inactive"), // Equivalent to --collect
+			Value: godbus.MakeVariant("inactive"),
 		},
 	}
 

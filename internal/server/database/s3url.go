@@ -9,13 +9,13 @@ import (
 )
 
 type S3Url struct {
-	Scheme      string // https, http, s3
-	UseSSL      bool   // true if https, false if http
-	Endpoint    string // s3.amazonaws.com, minio.example.com, etc.
-	Region      string // optional
-	AccessKey   string // optional (from user:pass@host)
+	Scheme      string
+	UseSSL      bool
+	Endpoint    string
+	Region      string
+	AccessKey   string
 	Bucket      string
-	Key         string // object key / prefix
+	Key         string
 	IsPathStyle bool
 }
 

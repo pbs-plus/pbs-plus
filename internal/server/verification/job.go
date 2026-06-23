@@ -114,7 +114,7 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		threshold := float64(raw%1_000_000) / 1_000_000.0 * remTotal
 
 		cumulative := 0.0
-		chosen := remaining[sel] // default to first remaining
+		chosen := remaining[sel]
 		for _, idx := range remaining[sel:] {
 			cumulative += remWeights[idx]
 			if cumulative >= threshold {
@@ -215,7 +215,7 @@ type verificationJob struct {
 	task          *VerificationTask
 	queueTask     *tasks.QueuedTask
 	job           database.VerificationJob
-	backupJobs    []database.Backup // candidates (1 for backup_job mode, N for namespace mode)
+	backupJobs    []database.Backup
 	storeInstance *store.Store
 	web           bool
 
@@ -734,7 +734,7 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 
 	return jobs.UpdateJobHistory(
 		v.job.ID,
-		0, // currentPID (not used for verification)
+		0,
 		succeeded,
 		warningsNum,
 		vTask.Task,
@@ -754,7 +754,7 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 }
 
 type snapshotInfo struct {
-	Snapshot   string // "type/id/time"
+	Snapshot   string
 	BackupType string
 	BackupID   string
 	BackupTime int64 // unix timestamp
@@ -1057,7 +1057,7 @@ func stratifiedSample(files []fileEntry, n int) []fileEntry {
 		g := groups[name]
 		var allocated int
 		if i == len(groupNames)-1 {
-			allocated = remaining // last group gets remainder
+			allocated = remaining
 		} else {
 			allocated = min(int(math.Round(float64(len(g))/float64(len(files))*float64(n))), remaining)
 		}

@@ -85,7 +85,7 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup databa
 	}
 
 	agentMount.Path = filepath.Join(conf.AgentMountBasePath, backup.ID)
-	agentMount.Unmount() // Ensure clean mount point
+	agentMount.Unmount()
 
 	if err := os.MkdirAll(agentMount.Path, 0700); err != nil {
 		agentMount.CloseMount()
@@ -198,7 +198,7 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.
 	}
 
 	s3Mount.Path = filepath.Join(conf.AgentMountBasePath, backup.ID)
-	s3Mount.Unmount() // Ensure clean mount point
+	s3Mount.Unmount()
 
 	if err := os.MkdirAll(s3Mount.Path, 0700); err != nil {
 		s3Mount.CloseMount()

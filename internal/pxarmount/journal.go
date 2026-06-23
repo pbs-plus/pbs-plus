@@ -639,7 +639,7 @@ func (j *Journal) drainAllLocked() {
 		return
 	}
 	pending := j.pending
-	j.pending = j.pending[:0] // reuse backing array
+	j.pending = j.pending[:0]
 	j.overlay = make(map[string][]byte)
 
 	pb := j.db.NewBatch()

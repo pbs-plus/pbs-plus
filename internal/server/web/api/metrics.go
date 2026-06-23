@@ -473,7 +473,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 			m.backupLatestSnapshotSize.Delete(labels)
 		}
 	}
-	m.previousBackupLabels = currentBackupLabels // Update for next run
+	m.previousBackupLabels = currentBackupLabels
 
 	m.backupsRunningTotal.Set(float64(runningCount))
 	m.backupsQueuedTotal.Set(float64(queuedCount))
@@ -595,7 +595,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 		}
 	}
 
-	m.previousTargetLabels = currentTargetLabels // Update for next run
+	m.previousTargetLabels = currentTargetLabels
 	m.previousTargetInfoLabels = currentTargetInfoLabels
 
 	m.targetsAgentTotal.Set(float64(agentCount))

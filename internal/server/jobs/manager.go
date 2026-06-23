@@ -130,7 +130,7 @@ func (m *Manager) processQueue() {
 		}
 		job := m.queue[0]
 		m.queue = m.queue[1:]
-		m.queueCond.Broadcast() // wake up any enqueuers waiting for capacity
+		m.queueCond.Broadcast()
 		m.queueMu.Unlock()
 
 		go m.runJob(job)

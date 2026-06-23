@@ -84,7 +84,7 @@ var _ = (fs.NodeReleaser)((*Node)(nil))
 var _ = (fs.NodeStatxer)((*Node)(nil))
 
 func (n *Node) Access(ctx context.Context, mask uint32) syscall.Errno {
-	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
+	if mask&2 != 0 {
 		return syscall.EROFS
 	}
 
@@ -110,10 +110,10 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 	// Use actual STATX mask values
 	// These values come from Linux's statx flags in <linux/stat.h>
 	const (
-		STATX_TYPE  = 0x00000001 // Want stx_mode & S_IFMT
-		STATX_MODE  = 0x00000002 // Want stx_mode & ~S_IFMT
-		STATX_NLINK = 0x00000004 // Want stx_nlink
-		STATX_SIZE  = 0x00000200 // Want stx_size
+		STATX_TYPE  = 0x00000001
+		STATX_MODE  = 0x00000002
+		STATX_NLINK = 0x00000004
+		STATX_SIZE  = 0x00000200
 		STATX_MTIME = 0x00000020 // Want stx_mtime
 	)
 
@@ -229,7 +229,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 	var totalLen int
 	for _, a := range attrs {
-		totalLen += len(a) + 1 // +1 for null terminator
+		totalLen += len(a) + 1
 	}
 
 	if dest == nil {
@@ -330,7 +330,7 @@ func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscal
 	var list []byte
 	for _, attr := range attrs {
 		list = append(list, attr...)
-		list = append(list, 0) // Add null terminator.
+		list = append(list, 0)
 	}
 
 	length := uint32(len(list))

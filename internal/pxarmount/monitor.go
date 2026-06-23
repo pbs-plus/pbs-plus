@@ -12,15 +12,15 @@ import (
 // on the monitor socket and appends them to a log file for later retrieval.
 type commitHub struct {
 	mu        sync.Mutex
-	sockPath  string // monitor socket path (<mainSocket>.monitor)
-	logPath   string // log file path (<mainSocket>.log)
+	sockPath  string
+	logPath   string
 	listener  net.Listener
-	logFile   *os.File // append-only log file for commit output
+	logFile   *os.File
 	watchers  map[net.Conn]struct{}
-	jobID     atomic.Int64 // 0 = idle, >0 = running
-	ended     atomic.Bool  // true after OK/ERR sent
-	lastLines []string     // ring buffer of recent output for catch-up
-	verbose   bool         // enable verbose/debug logging
+	jobID     atomic.Int64
+	ended     atomic.Bool
+	lastLines []string
+	verbose   bool
 }
 
 var globalCommitHub *commitHub

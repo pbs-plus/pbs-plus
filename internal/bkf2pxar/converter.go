@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pxar/transfer"
 
 	mtf "github.com/pbs-plus/go-mtf"
-	_ "github.com/pbs-plus/go-mtf/besetmap" // register Backup Exec SMP2 Set Map parser
+	_ "github.com/pbs-plus/go-mtf/besetmap"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 )

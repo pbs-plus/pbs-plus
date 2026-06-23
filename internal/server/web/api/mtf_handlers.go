@@ -736,7 +736,7 @@ func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 		"schedule":           j.Schedule,
 		"comment":            j.Comment,
 		"notification-mode":  j.NotificationMode,
-		"notification-batch": "", // populated by handler via GetJobBatchName
+		"notification-batch": "",
 		"changer":            j.Changer,
 		"drive":              j.Drive,
 		"spanning":           j.Spanning,

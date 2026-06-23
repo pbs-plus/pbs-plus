@@ -84,7 +84,7 @@ var _ = (fs.NodeStatxer)((*Node)(nil))
 
 func (n *Node) Access(ctx context.Context, mask uint32) syscall.Errno {
 	// For read-only filesystem, deny write access (bit 1)
-	if mask&2 != 0 { // 2 = write bit (traditional W_OK)
+	if mask&2 != 0 {
 		return syscall.EROFS
 	}
 
@@ -126,10 +126,10 @@ func (n *Node) Statx(
 	// Use actual STATX mask values
 	// These values come from Linux's statx flags in <linux/stat.h>
 	const (
-		STATX_TYPE  = 0x00000001 // Want stx_mode & S_IFMT
-		STATX_MODE  = 0x00000002 // Want stx_mode & ~S_IFMT
-		STATX_NLINK = 0x00000004 // Want stx_nlink
-		STATX_SIZE  = 0x00000200 // Want stx_size
+		STATX_TYPE  = 0x00000001
+		STATX_MODE  = 0x00000002
+		STATX_NLINK = 0x00000004
+		STATX_SIZE  = 0x00000200
 		STATX_MTIME = 0x00000020 // Want stx_mtime
 	)
 

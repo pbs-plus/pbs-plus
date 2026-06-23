@@ -13,22 +13,22 @@ import (
 // sgIO is the Linux SCSI Generic ioctl request header (sg_io_hdr_t).
 type sgIO struct {
 	InterfaceID  int32 // must be 'S'
-	DxferDir     int32 // SG_DXFER_* direction
-	CmdLen       uint8 // CDB length
-	MxSBLen      uint8 // sense buffer capacity
+	DxferDir     int32
+	CmdLen       uint8
+	MxSBLen      uint8
 	IovecCount   uint16
-	DxferLen     uint32 // data buffer length
-	Dxferp       *byte  // data buffer
-	Cmdp         *byte  // CDB
-	Sbp          *byte  // sense buffer
-	Timeout      uint32 // milliseconds
+	DxferLen     uint32
+	Dxferp       *byte
+	Cmdp         *byte
+	Sbp          *byte
+	Timeout      uint32
 	Flags        uint32
 	PackID       int32
 	UsrPtr       *byte
-	Status       uint8 // SCSI status
+	Status       uint8
 	MaskedStatus uint8
 	MsgStatus    uint8
-	SbLenWr      uint8 // sense bytes written
+	SbLenWr      uint8
 	HostStatus   uint16
 	DriverStatus uint16
 	Resid        int32 // residual data length

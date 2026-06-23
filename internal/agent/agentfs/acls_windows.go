@@ -297,7 +297,7 @@ func isSafePointer(ptr unsafe.Pointer) bool {
 	addr := uintptr(ptr)
 
 	// Validate pointer is not NULL or near-NULL (catch null pointer arithmetic)
-	const minValidAddress = 0x1000 // 4KB - first page
+	const minValidAddress = 0x1000
 	if addr < minValidAddress {
 		return false
 	}

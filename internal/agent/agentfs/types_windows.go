@@ -3,11 +3,11 @@
 package agentfs
 
 type fileStandardInfo struct {
-	AllocationSize int64  // LARGE_INTEGER
-	EndOfFile      int64  // LARGE_INTEGER
-	NumberOfLinks  uint32 // DWORD
-	DeletePending  byte   // BOOLEAN
-	Directory      byte   // BOOLEAN
+	AllocationSize int64
+	EndOfFile      int64
+	NumberOfLinks  uint32
+	DeletePending  byte
+	Directory      byte
 	_              [2]byte
 }
 
@@ -53,7 +53,7 @@ type fileNetworkOpenInformation struct {
 	AllocationSize int64
 	EndOfFile      int64
 	FileAttributes uint32
-	_              uint32 // alignment
+	_              uint32
 }
 
 type allocatedRange struct {
