@@ -1,6 +1,6 @@
 //go:build linux
 
-package backupmanager
+package cli
 
 import (
 	"encoding/json"

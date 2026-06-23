@@ -1,10 +1,10 @@
-// Package pbstoken resolves the local PBS-plus API token used to authenticate
+// Package token resolves the local PBS-plus API token used to authenticate
 // backup uploads (bkf2pxar, mtfjob, pxar-mount commit listener).
 //
 // pbs-plus writes the token as JSON {"tokenid","value"} to a well-known path;
 // several historical locations are probed. The returned string is in the PBS
 // API-token form "tokenid:value".
-package pbstoken
+package token
 
 import (
 	"encoding/json"

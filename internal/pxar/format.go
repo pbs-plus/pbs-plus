@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/backupmanager"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"
@@ -72,7 +72,7 @@ func (r *PxarReader) Elapsed() time.Duration {
 
 // NewPxarReader creates a PxarReader for the given snapshot using the Go pxar library.
 func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, task TaskWriter) (*PxarReader, error) {
-	dsInfo, err := backupmanager.GetDatastoreInfo(pbsStore)
+	dsInfo, err := cli.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
 	}

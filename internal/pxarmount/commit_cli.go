@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/token"
 )
 
 func RunCommitSubcommand() {
@@ -33,9 +33,9 @@ func RunCommitSubcommand() {
 		os.Exit(1)
 	}
 
-	token := *authToken
-	if token == "" {
-		token = pbstoken.ReadLocal()
+	tok := *authToken
+	if tok == "" {
+		tok = token.ReadLocal()
 	}
 
 	conn, err := net.Dial("unix", *socketPath)
@@ -46,7 +46,7 @@ func RunCommitSubcommand() {
 	defer func() { _ = conn.Close() }()
 
 	cmd := fmt.Sprintf("COMMIT %s %s %s %s %s %s\n",
-		*pbsURL, *datastoreName, token, *namespace, *backupType, *backupID)
+		*pbsURL, *datastoreName, tok, *namespace, *backupType, *backupID)
 	if _, err := fmt.Fprint(conn, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "  \u2717 error sending command: %v\n", err)
 		os.Exit(1)

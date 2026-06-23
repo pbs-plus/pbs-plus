@@ -17,8 +17,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
-	"github.com/pbs-plus/pbs-plus/internal/server/backupmanager"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -107,7 +107,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		dsInfo, err := backupmanager.GetDatastoreInfo(datastore)
+		dsInfo, err := cli.GetDatastoreInfo(datastore)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

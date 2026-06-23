@@ -3,7 +3,7 @@
 package proxmox
 
 // AuthUser is the PBS Plus service account. The corresponding API token is
-// materialized by the backupmanager package (proxmox-backup-manager generate-token).
+// materialized by the cli package (proxmox-backup-manager generate-token).
 const (
 	// AuthUser is the PBS Plus service account (plus-user@pbs).
 	AuthUser = "plus-user@pbs"

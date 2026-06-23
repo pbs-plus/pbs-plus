@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
-	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/token"
 )
 
 func main() {
-	pbsURL := flag.String("pbs-url", pbstoken.DefaultAPIURL, "PBS API URL")
+	pbsURL := flag.String("pbs-url", token.DefaultAPIURL, "PBS API URL")
 	datastore := flag.String("datastore", "", "PBS datastore name (required for remote mode)")
 	namespace := flag.String("namespace", "", "PBS namespace")
 	authToken := flag.String("auth-token", "", "PBS API token in tokenid:value form (defaults to /var/lib/proxmox-backup/pbs-plus-token.json)")

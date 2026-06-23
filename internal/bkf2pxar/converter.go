@@ -20,7 +20,7 @@ import (
 	mtf "github.com/pbs-plus/go-mtf"
 	_ "github.com/pbs-plus/go-mtf/besetmap" // register Backup Exec SMP2 Set Map parser
 
-	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/token"
 )
 
 // Config holds all parameters for a BKF → pxar conversion run.
@@ -397,7 +397,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 
 	authToken := c.cfg.AuthToken
 	if authToken == "" {
-		authToken = pbstoken.ReadLocal()
+		authToken = token.ReadLocal()
 	}
 	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
 		BaseURL:       c.cfg.PBSURL,

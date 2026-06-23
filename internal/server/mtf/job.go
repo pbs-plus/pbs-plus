@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
-	"github.com/pbs-plus/pbs-plus/internal/pbstoken"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtfstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/tape"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/token"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tape"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -185,7 +185,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	}
 
 	cfg := bkf2pxar.Config{
-		PBSURL:            pbstoken.DefaultAPIURL,
+		PBSURL:            token.DefaultAPIURL,
 		Datastore:         job.Datastore,
 		Namespace:         baseNS,
 		SkipTLS:           true,
@@ -194,7 +194,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		NamespaceResolver: resolver,
 	}
 	if cfg.AuthToken == "" {
-		cfg.AuthToken = pbstoken.ReadLocal()
+		cfg.AuthToken = token.ReadLocal()
 	}
 
 	// Resolve changer and drive paths from PBS tape config

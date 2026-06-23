@@ -18,8 +18,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/host"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
-	"github.com/pbs-plus/pbs-plus/internal/server/backupmanager"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/proxmox/cli"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/web"
@@ -70,7 +70,7 @@ func main() {
 	if err := syslog.L.SetServiceLogger(); err != nil {
 		syslog.L.Error(err).Write()
 	}
-	_ = backupmanager.GetToken()
+	_ = cli.GetToken()
 
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
