@@ -38,7 +38,6 @@ func GetProxmoxCertInfo() (*CertInfo, error) {
 	output := out.String()
 	certInfo := &CertInfo{}
 
-	// Regex for parsing
 	subjectRx := regexp.MustCompile(`Subject:\s*(.*)`)
 	dnsRx := regexp.MustCompile(`DNS:(.*)`)
 	ipRx := regexp.MustCompile(`IP:\[(.*?)\]`)

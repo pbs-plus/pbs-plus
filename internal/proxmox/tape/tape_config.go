@@ -18,14 +18,14 @@ type Config struct {
 	Drives   []Drive   `json:"drives"`
 }
 
-// Changer represents a changer entry from PBS tape.cfg.
+// Changer represents a changer entry.
 type Changer struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
 	ExportSlots string `json:"export-slots,omitempty"`
 }
 
-// Drive represents a drive entry from PBS tape.cfg.
+// Drive represents a drive entry.
 type Drive struct {
 	Name            string `json:"name"`
 	Path            string `json:"path"`
@@ -35,7 +35,7 @@ type Drive struct {
 
 const pbsTapeCfgPath = "/etc/proxmox-backup/tape.cfg"
 
-// ReadConfig reads and parses the PBS tape.cfg SectionConfig file.
+// ReadConfig reads and parses the tape.cfg file.
 func ReadConfig() (*Config, error) {
 	file, err := os.Open(pbsTapeCfgPath)
 	if err != nil {
@@ -111,7 +111,6 @@ func parseSectionConfig(f *os.File) []pbsSection {
 			continue
 		}
 
-		// Section header: "type: name" (not indented)
 		if !strings.HasPrefix(line, "\t") && !strings.HasPrefix(line, " ") {
 			parts := strings.SplitN(trimmed, ":", 2)
 			if len(parts) == 2 {
@@ -127,7 +126,6 @@ func parseSectionConfig(f *os.File) []pbsSection {
 			continue
 		}
 
-		// Property line (indented): "key value"
 		if cur == nil {
 			continue
 		}

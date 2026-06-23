@@ -86,7 +86,6 @@ func IsUPIDRunning(upid string) bool {
 	cmd := exec.Command("grep", "-F", upid, activePath)
 	output, err := cmd.Output()
 	if err != nil {
-		// If grep exits with a non-zero status, it means the UPID was not found.
 		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 1 {
 			return false
 		}
@@ -94,7 +93,6 @@ func IsUPIDRunning(upid string) bool {
 		return false
 	}
 
-	// If output is not empty, the UPID was found.
 	return strings.TrimSpace(string(output)) != ""
 }
 
@@ -119,7 +117,6 @@ func CleanupPBSPlusActiveTasks() error {
 		line := scanner.Text()
 		parts := strings.Split(line, ":")
 		if len(parts) > 1 && parts[1] == targetNode {
-			continue // Skip this line
 		}
 		filteredLines = append(filteredLines, line)
 	}
