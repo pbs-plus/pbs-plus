@@ -102,7 +102,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		pipe.Close()
 		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if werr := writeHeadersFrame(stream, headers); werr != nil {
 		pipe.Close()
@@ -220,7 +220,7 @@ func (s *StreamPipe) Serve() error {
 						WithMessage("recovered from panic in handler").
 						Write()
 				}
-				stream.Close()
+				_ = stream.Close()
 			}()
 			router.serveStream(st)
 		}(stream)

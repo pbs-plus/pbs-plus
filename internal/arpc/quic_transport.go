@@ -115,7 +115,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 		pipe.Close()
 		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if werr := writeHeadersFrame(stream, hdrCopy); werr != nil {
 		pipe.Close()
@@ -254,7 +254,7 @@ func (q *QuicPipe) Call(ctx context.Context, method string, payload any, out any
 	if err != nil {
 		return err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if resp.Status == StatusRawStream {
 		handler, ok := out.(RawStreamHandler)
@@ -298,7 +298,7 @@ func (q *QuicPipe) CallMessage(ctx context.Context, method string, payload any) 
 	if err != nil {
 		return "", err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if resp.Status == StatusRawStream {
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", StatusRawStream)
@@ -378,7 +378,7 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 		wg.Add(1)
 		go func(c *quic.Conn) {
 			defer wg.Done()
-			defer c.CloseWithError(0, "done")
+			defer func() { _ = c.CloseWithError(0, "done") }()
 
 			tlsState := c.ConnectionState().TLS
 
@@ -418,7 +418,7 @@ func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsM
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	return ServeQuic(ctx, agentsManager, listener, router)
 }
@@ -431,7 +431,7 @@ func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Head
 	if err != nil {
 		return nil, err
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	hdrs, rerr := readHeadersFrame(stream)
 	if rerr != nil {

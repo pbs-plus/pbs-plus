@@ -73,7 +73,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 		// Set deadline to prevent unbounded blocking on Accept
 		if hasDeadline {
-			tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
+			_ = tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
 		}
 
 		conn, err := listener.Accept()
@@ -100,7 +100,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 		wg.Add(1)
 		go func(c net.Conn) {
 			defer wg.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			tlsConn, ok := c.(*tls.Conn)
 			if !ok {
@@ -115,7 +115,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			if err != nil {
 				return
 			}
-			defer smuxS.Close()
+			defer func() { _ = smuxS.Close() }()
 
 			var reqHeaders http.Header
 			stream, err := smuxS.AcceptStream()
@@ -179,7 +179,7 @@ func ListenAndServe(ctx context.Context, addr string, agentsManager *AgentsManag
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	return Serve(ctx, agentsManager, listener, router)
 }
