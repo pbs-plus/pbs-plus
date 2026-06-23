@@ -44,7 +44,6 @@ func (w *NtfsSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (S
 		return Snapshot{}, fmt.Errorf("snapshot creation failed: %w", err)
 	}
 
-	// Validate the snapshot
 	_, err = vss.Get(snapshotPath)
 	if err != nil {
 		cleanupExistingSnapshot(snapshotPath)

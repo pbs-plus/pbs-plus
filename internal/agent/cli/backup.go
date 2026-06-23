@@ -217,7 +217,6 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				session.Close()
 				session = nil
 
-				// Check if we should attempt reconnection
 				select {
 				case <-ctx.Done():
 					return

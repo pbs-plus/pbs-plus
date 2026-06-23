@@ -86,7 +86,6 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		remaining[i] = i
 	}
 
-	// Read enough crypto-random bytes for all selections.
 	buf := make([]byte, len(backups)*4)
 	if _, err := rand.Read(buf); err != nil {
 		// Fallback: just shuffle with math/rand
@@ -349,7 +348,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	if job.TargetMode == "namespace" {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' targeting namespace '%s' (%d backup jobs)", job.ID, job.Namespace, len(backups)))
 		// Jobs never verified get the highest weight; recently verified ones
-		// get the lowest. This maximises coverage over successive runs.
 		backups = weightedShuffleBackups(backups, v.storeInstance.Database, job.ID)
 	} else {
 		vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
@@ -381,7 +379,6 @@ func (v *verificationJob) execute(ctx context.Context) error {
 			continue
 		}
 
-		// Send verify_start control message to fork the worker process
 		v.storeInstance.ARPCAgentsManager.Expect(streamID)
 
 		verifyReq := verification.VerifyStartReq{VerifyID: job.ID}

@@ -17,7 +17,6 @@ var OldStatePath = "/var/lib/pbs-plus"
 // the agent continues to use the legacy paths automatically.
 // Returns true if migration was successful, false otherwise.
 func TryMigrate() bool {
-	// Check if this is even needed
 	oldInfo, err := os.Stat(OldStatePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -31,7 +30,6 @@ func TryMigrate() bool {
 		return true
 	}
 
-	// Check if new directory already exists and is populated
 	newPath := "/var/lib/pbs-plus-agent"
 	newInfo, err := os.Stat(newPath)
 	if err == nil && newInfo.IsDir() {
@@ -59,7 +57,6 @@ func TryMigrate() bool {
 		_ = os.Remove(testFile)
 	}
 
-	// Check if we can create backup of old path
 	backupPath := OldStatePath + ".backup.legacy"
 	if _, err := os.Stat(backupPath); err == nil {
 		fmt.Printf("[pbs-plus] migration: backup already exists, migration may have been partially completed\n")

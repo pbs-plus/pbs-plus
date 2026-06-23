@@ -199,7 +199,6 @@ func (s AlertSetting) IsInScheduleWindow() bool {
 	scheduledMinutes := hour*60 + minute
 	nowMinutes := now.Hour()*60 + now.Minute()
 
-	// Check if now is within [scheduled - window/2, scheduled + window/2]
 	halfWindow := window / 2
 	diff := nowMinutes - scheduledMinutes
 	if diff < 0 {

@@ -225,7 +225,6 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 }
 
 func (o *Operator) ensureBackupPod(ctx context.Context, pvc *corev1.PersistentVolumeClaim, useSnapshot bool) error {
-	// Check if pod already exists
 	existing, err := o.podManager.GetBackupPod(ctx, pvc)
 	if err == nil && existing != nil {
 		// Pod exists, check if it needs update

@@ -344,7 +344,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		pxarDirPath = "/"
 	}
 
-	// Get pxar entries (unless opaque).
 	var pxarEntries []dirEntrySlim
 	if !isOpaque && pxarDirPath != "" {
 		pxarNode := fs.findPxarNode(pxarDirPath)
@@ -357,7 +356,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		}
 	}
 
-	// Get journal edges for this parent.
 	edgeNames := make(map[string]int64)
 	whiteoutNames := make(map[string]bool)
 	if parentNodeID != 0 {
@@ -381,7 +379,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		}
 	}
 
-	// Merge: pxar entries minus whiteouts/edges, plus journal edges.
 	type mergedEntry struct {
 		name  string
 		ino   uint64
@@ -404,7 +401,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		})
 	}
 
-	// Sort edge names for stable readdir offsets across calls.
 	// Go map iteration is randomized; without sorting, a multi-call
 	// readdir (small buffer) would see different entry order on each
 	// call, causing duplicates and missing entries via offset resume.
@@ -703,7 +699,6 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		}
 	}
 
-	// Update journal node.
 	fs.ensureNode(re)
 	if re.Node != nil {
 		re.Node.Mode = re.Mode
@@ -981,7 +976,6 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 		return fuse.ENOTDIR
 	}
 
-	// Check if directory has any children.
 	parentNodeID := fs.resolveParentNodeID(childPath)
 	if parentNodeID != 0 {
 		edges, _ := fs.journal.ListEdges(parentNodeID)
@@ -1105,8 +1099,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 				return fuse.ToStatus(err)
 			}
 			if err := os.Rename(oldAbs, newAbs); err != nil {
-				// Rename failed (cross-device? perms?). Fall back to
-				// copy so the data is at the location the journal expects.
 				// If copy also fails, the journal edge is still correct
 				// and ReconcileMutableDir will clean up on next startup.
 				fs.logNonFatal("rename-disk", oldPath, err)
@@ -1256,7 +1248,6 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 			buf := make([]byte, pxarSz)
 			sz, status := fs.pxar.ListXAttr(cancel, &pxarHeader, buf)
 			if status == fuse.OK {
-				// Parse null-delimited names from the buffer.
 				start := 0
 				for i := 0; i <= int(sz); i++ {
 					if i == int(sz) || buf[i] == 0 {
@@ -1784,7 +1775,6 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 		found := false
 		for _, e := range entries {
 			if e.name == name {
-				// Register the node so subsequent ReadDirRaw calls
 				// root inode is cached and subdirectories appear empty.
 				n := fs.pxar.RegisterSlimNode(&e, curIno)
 				if i == len(parts)-1 {

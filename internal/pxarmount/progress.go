@@ -248,7 +248,6 @@ func (d *ProgressDisplay) Update(line string) {
 		}
 	}
 
-	// Parse server-side elapsed marker: {12.3s}
 	if len(msg) > 0 && msg[0] == '{' {
 		if end := strings.Index(msg, "}"); end > 0 {
 			elapsedStr := msg[1:end]

@@ -275,7 +275,6 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			}
 		}
 
-		// Parse full spot_config JSON if provided (overrides individual fields)
 		if spotConfigJSON := r.FormValue("spot_config"); spotConfigJSON != "" {
 			var sc database.SpotCheckConfig
 			if err := json.Unmarshal([]byte(spotConfigJSON), &sc); err == nil {

@@ -124,7 +124,6 @@ func CreateEntry(entry *RegistryEntry) error {
 		return err
 	}
 
-	// Check existence first
 	if _, err := GetEntry(entry.Path, entry.Key, entry.IsSecret); err == nil {
 		return fmt.Errorf("CreateEntry error: key already exists")
 	}

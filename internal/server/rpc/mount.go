@@ -102,7 +102,6 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	// Create a context with a 2-minute timeout.
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
 
@@ -340,7 +339,6 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 			"target":   args.TargetHostname,
 		}).Write()
 
-	// Check QUIC pipe first, then TCP for the control connection.
 	_, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
 	_, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	controlOk := qExists || tExists
@@ -361,7 +359,6 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 }
 
 func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
-	// Remove any stale socket file.
 	_ = os.RemoveAll(socketPath)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {

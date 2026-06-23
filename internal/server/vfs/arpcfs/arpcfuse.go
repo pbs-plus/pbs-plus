@@ -100,7 +100,6 @@ func (n *Node) Release(ctx context.Context, f fs.FileHandle) syscall.Errno {
 }
 
 func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask uint32, out *fuse.StatxOut) syscall.Errno {
-	// Get file stats the regular way, then populate StatxOut
 	var attrOut fuse.AttrOut
 	errno := n.Getattr(ctx, f, &attrOut)
 	if errno != 0 {

@@ -26,7 +26,6 @@ func NewBaseTask(task proxmox.Task, file *os.File) BaseTask {
 	return BaseTask{Task: task, file: file}
 }
 
-// Close closes the task log file and marks the task as closed.
 // Must be called while holding the mutex.
 func (t *BaseTask) Close() {
 	if t.file != nil {

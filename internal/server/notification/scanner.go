@@ -193,7 +193,6 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 		return
 	}
 
-	// Build a list of stale job summaries for the template.
 	type staleEntry struct {
 		JobID     string `json:"job-id"`
 		Datastore string `json:"datastore"`

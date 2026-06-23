@@ -58,7 +58,6 @@ func NewBatchTracker(db *database.Database) *BatchTracker {
 }
 
 func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, datastore string, jobErr error, details map[string]string) {
-	// Check if this job belongs to a batch.
 	batch, err := bt.db.GetBatchForJob(string(jobType), jobID)
 	if err != nil {
 		syslog.L.Error(err).
@@ -128,9 +127,7 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 
 	state.results = append(state.results, result)
 
-	// Check if all jobs in the batch have now completed.
 	if bt.allJobsReported(batch.Name, state) {
-		// Stop the timeout timer and flush immediately.
 		if timer, ok := bt.timers[batch.Name]; ok {
 			timer.Stop()
 			delete(bt.timers, batch.Name)

@@ -432,7 +432,6 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 			continue
 		}
 
-		// Check if this verification job is relevant to the completed backup
 		matched := false
 		if vJob.TargetMode == "backup_job" && vJob.BackupJobID == backupJobID {
 			matched = true

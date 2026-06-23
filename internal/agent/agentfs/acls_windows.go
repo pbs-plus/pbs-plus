@@ -30,7 +30,6 @@ type aclHeader struct {
 }
 
 func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []types.WinACL, err error) {
-	// Validate handle before use
 	if h == windows.InvalidHandle || h == 0 {
 		return "", "", nil, fmt.Errorf("invalid handle")
 	}
@@ -47,13 +46,11 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	pOwnerSid, _, _ := sd.Owner()
 	pGroupSid, _, _ := sd.Group()
 
-	// Validate owner SID
 	if pOwnerSid == nil || !pOwnerSid.IsValid() {
 		return "", "", nil, fmt.Errorf("owner SID from security descriptor is nil or invalid")
 	}
 	owner = pOwnerSid.String()
 
-	// Validate group SID
 	if pGroupSid == nil || !pGroupSid.IsValid() {
 		return owner, "", nil, fmt.Errorf("group SID from security descriptor is nil or invalid")
 	}
@@ -72,12 +69,10 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 		return owner, group, []types.WinACL{}, nil
 	}
 
-	// Validate ACL structure before passing to syscall
 	if !isValidACL(pDacl) {
 		return owner, group, []types.WinACL{}, fmt.Errorf("ACL structure validation failed")
 	}
 
-	// Get explicit entries from ACL
 	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
 	if err != nil {
 		return owner, group, []types.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL: %w", err)
@@ -96,7 +91,6 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	for i := range entries {
 		e := &entries[i]
 
-		// Validate trustee structure
 		if e.Trustee.TrusteeForm != windows.TRUSTEE_IS_SID {
 			continue
 		}
@@ -112,7 +106,6 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 			continue
 		}
 
-		// Validate SID structure before calling IsValid
 		if !isValidSIDPointer(pSid) {
 			continue
 		}
@@ -196,7 +189,6 @@ func safeEntriesToSlice(entriesPtr uintptr, count uint32) ([]windows.EXPLICIT_AC
 		return nil, nil
 	}
 
-	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(entriesPtr)) {
 		return nil, fmt.Errorf("entries pointer is not in user space")
 	}
@@ -244,7 +236,6 @@ func isValidACL(acl *windows.ACL) bool {
 		return false
 	}
 
-	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(acl)) {
 		return false
 	}
@@ -278,7 +269,6 @@ func isValidSIDPointer(sid *windows.SID) bool {
 		return false
 	}
 
-	// Validate pointer is in user space
 	if !isSafePointer(unsafe.Pointer(sid)) {
 		return false
 	}

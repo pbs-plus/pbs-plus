@@ -50,12 +50,9 @@ func ParseS3Url(raw string) (*S3Url, error) {
 
 	pathParts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 
-	// Check if this is virtual-host-style by looking for bucket in hostname
-
 	isVirtualHost := false
 	var bucketFromHost string
 
-	// Check if host starts with a potential bucket name followed by a dot
 	if dotIndex := strings.Index(u.Host, "."); dotIndex > 0 {
 		potentialBucket := u.Host[:dotIndex]
 		remainingHost := u.Host[dotIndex+1:]
@@ -66,7 +63,6 @@ func ParseS3Url(raw string) (*S3Url, error) {
 			bucketFromHost = potentialBucket
 			s3.Endpoint = remainingHost
 		} else {
-			// Check if this looks like virtual-host by seeing if the first path
 
 			if strings.Contains(remainingHost, "amazonaws.com") ||
 				strings.Contains(remainingHost, "s3.") ||

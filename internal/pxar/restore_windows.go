@@ -101,9 +101,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	}
 
 	if xattrs != nil {
-		// Apply ACLs via a dedicated handle opened with WRITE_DAC|WRITE_OWNER
 		// WRITE_DAC/WRITE_OWNER, which normally causes SetSecurityInfo to
-		// return ACCESS_DENIED but on some builds can cause a native crash.
 		if st.fsCap.supportsPersistentACLs {
 			restoreWindowsACLsFromPath(ctx, st, path, xattrs)
 		}

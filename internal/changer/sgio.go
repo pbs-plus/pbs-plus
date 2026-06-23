@@ -113,7 +113,6 @@ func (d *device) scsi(cdb []byte, data []byte, fromDevice bool, timeoutMs uint32
 			errno, req.Status, req.HostStatus, req.DriverStatus)
 	}
 	if req.Status == 0x02 || req.SbLenWr > 0 {
-		// CHECK CONDITION. Decode fixed current-sense key/asc/ascq.
 		se := &SenseError{Sense: append([]byte(nil), sense[:req.SbLenWr]...)}
 		if len(se.Sense) >= 14 {
 			se.Key = se.Sense[2] & 0x0f

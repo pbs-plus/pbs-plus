@@ -55,7 +55,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		return nil, nil, fmt.Errorf("failed to read .key: %w", err)
 	}
 
-	// Validate server certificates
 	err = storeInstance.CertManager.Validate()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate local CA and server cert: %w", err)
@@ -99,7 +98,6 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		}
 	}()
 
-	// Start scheduler with dynamic queue capacity that reflects the current
 	manager := jobs.NewManager(mainCtx, conf.MaxConcurrentClients, func() int {
 		n, err := storeInstance.Database.JobCount(mainCtx)
 		if err != nil || n < 1 {

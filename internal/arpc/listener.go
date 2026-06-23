@@ -62,7 +62,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 	var wg sync.WaitGroup
 	defer wg.Wait()
 
-	// Check if listener supports deadlines (TCPListener)
 	tcpListener, hasDeadline := listener.(*net.TCPListener)
 
 	for {
@@ -80,7 +79,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 		conn, err := listener.Accept()
 		if err != nil {
 			if hasDeadline {
-				// Check if it's a timeout error
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					// Timeout - check context and continue
 					select {
@@ -91,7 +89,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 					}
 				}
 			}
-			// Check if context was cancelled during Accept
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

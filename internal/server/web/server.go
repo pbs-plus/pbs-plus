@@ -132,7 +132,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	// Apply middleware chain: RequestID → RequestLogger → Recovery
 	apiHandler := Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))
 	agentHandler := Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))
 

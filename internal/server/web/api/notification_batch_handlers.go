@@ -99,7 +99,6 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	// Check if batch already exists
 	existing, _ := storeInstance.Database.GetNotificationBatch(name)
 	if existing.Name != "" {
 		http.Error(w, "Batch already exists", http.StatusConflict)
@@ -372,5 +371,4 @@ func GetJobBatchName(storeInstance *store.Store, jobType, jobID string) string {
 	return batch.Name
 }
 
-// init ensures the notification package constants are referenced so the
 var _ = notification.SpoolDir

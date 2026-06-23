@@ -38,7 +38,6 @@ func Serve(cfg MountConfig) {
 			os.Exit(1)
 		}
 
-		// Open the SQLite journal.
 		journalDir := filepath.Join(backingDir, JournalDir)
 		journal, err := OpenJournal(journalDir)
 		if err != nil {
@@ -73,7 +72,6 @@ func Serve(cfg MountConfig) {
 			fmt.Fprintf(os.Stderr, "  warning: reconcile error: %v\n", err)
 		}
 
-		// Apply default ownership on the backing root (fast).
 		mfs.applyACLOwnership(backingDir)
 
 		// Map root inode.
