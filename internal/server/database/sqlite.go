@@ -48,12 +48,12 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		initialized = true
 	}
 
-	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro")
+	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro&_pragma=busy_timeout%3d5000")
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
 
-	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw&_txlock=immediate")
+	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw&_txlock=immediate&_pragma=busy_timeout%3d5000")
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
 	}
