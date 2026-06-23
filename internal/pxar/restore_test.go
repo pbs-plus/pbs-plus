@@ -143,11 +143,10 @@ func TestParseXattrUnixSecs(t *testing.T) {
 			wantOk: true,
 		},
 		{
-			name: "defensive: nanoseconds normalized to seconds",
-			// An agent variant that stored .UnixNano() would emit ~1.6e18.
+			name:   "out-of-scale nanos rejected (falls back to Stat.Mtime)",
 			input:  strconv.FormatInt(sec2020*int64(time.Second), 10),
-			want:   sec2020,
-			wantOk: true,
+			want:   0,
+			wantOk: false,
 		},
 		{
 			name:   "legacy xattr decimal string",
@@ -194,11 +193,70 @@ func TestParseXattrUnixSecs(t *testing.T) {
 	}
 }
 
-// TestParseXattrUnixSecsOldBinaryDecodeWouldBeInvalid proves the original bug
-// stays fixed: interpreting the ASCII bytes of a decimal timestamp as a raw
-// little-endian uint64 yields a value far outside any plausible Unix-second
-// range (the "invalid time" symptom), whereas parseXattrUnixSecs decodes it
-// correctly.
+func pxarmountParseXattrUnixSecs(d []byte) (int64, bool) {
+	if len(d) == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(string(d), 10, 64)
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	const unixSecsMax = 32503680000
+	if v > unixSecsMax {
+		return 0, false
+	}
+	return v, true
+}
+
+func TestParseXattrUnixSecsMatchesPxarMount(t *testing.T) {
+	wantTime := time.Date(2024, 4, 5, 18, 34, 40, 0, time.UTC)
+
+	cases := []struct {
+		name  string
+		value int64
+	}{
+		{"windows FILETIME for 2024", wantTime.Unix()*10000000 + 116444736000000000},
+		{"unix nanos for 2024", wantTime.UnixNano()},
+		{"micros for 2024", wantTime.UnixMicro()},
+		{"100-ns ticks for 2024", wantTime.UnixNano() / 10},
+		{"valid unix seconds for 2024", wantTime.Unix()},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := []byte(strconv.FormatInt(c.value, 10))
+			mountSecs, mountOK := pxarmountParseXattrUnixSecs(in)
+			restoreSecs, restoreOK := parseXattrUnixSecs(in)
+
+			if restoreOK != mountOK {
+				t.Errorf("accept/reject mismatch: restore=(%d,%v) mount=(%d,%v) for value %d\n"+
+					"restore either stamps a wrong date or fails to fall back to the correct timestamp",
+					restoreSecs, restoreOK, mountSecs, mountOK, c.value)
+				return
+			}
+			if restoreOK && restoreSecs != mountSecs {
+				t.Errorf("value mismatch: restore=%d mount=%d for value %d -> %s",
+					restoreSecs, mountSecs, c.value, time.Unix(restoreSecs, 0).UTC().Format("2006-01-02"))
+			}
+		})
+	}
+}
+
+func TestParseXattrUnixSecsWindowsFiletimeRestoresWrongDate(t *testing.T) {
+	wantTime := time.Date(2024, 4, 5, 18, 34, 40, 0, time.UTC)
+	filetime := wantTime.Unix()*10000000 + 116444736000000000
+	input := strconv.FormatInt(filetime, 10)
+
+	secs, ok := parseXattrUnixSecs([]byte(input))
+	if ok {
+		got := time.Unix(secs, 0).UTC()
+		if got.Year() != wantTime.Year() {
+			t.Errorf("FILETIME for %s restored as %s (year %d) via parseXattrUnixSecs=%d; pxar-mount rejects this value and shows %s",
+				wantTime.Format("2006-01-02"), got.Format("2006-01-02"), got.Year(), secs,
+				wantTime.Format("2006-01-02"))
+		}
+	}
+}
+
 func TestParseXattrUnixSecsOldBinaryDecodeWouldBeInvalid(t *testing.T) {
 	const wantSec int64 = 1609459200
 	ascii := []byte(strconv.FormatInt(wantSec, 10))

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/fxamacker/cbor/v2"
 
@@ -83,36 +82,17 @@ type restoreState struct {
 	wg     *sync.WaitGroup
 }
 
-// Bounds for distinguishing Unix-second timestamps from nanosecond values
-// in xattr-stored times, so a malformed value can never produce an invalid time.
-const (
-	unixSecsMin = 0
-	unixSecsMax = 1 << 33
-	unixNanosLo = 1 << 47
-	unixNanosHi = 1 << 61
-)
+const unixSecsMax = 32503680000
 
-// parseXattrUnixSecs decodes a serialized xattr timestamp into a validated
-// Unix-second value. Tolerates nanosecond encoding so a cross-platform or
-// legacy-agent restore can never yield an out-of-range time.
 func parseXattrUnixSecs(data []byte) (secs int64, ok bool) {
-	s := string(data)
-	if s == "" {
+	if len(data) == 0 {
 		return 0, false
 	}
-	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
+	v, err := strconv.ParseInt(string(data), 10, 64)
+	if err != nil || v < 0 || v > unixSecsMax {
 		return 0, false
 	}
-	switch {
-	case v >= unixSecsMin && v <= unixSecsMax:
-		return v, true
-	case v >= unixNanosLo && v <= unixNanosHi:
-		// Defensively interpret as nanoseconds (older agents may have stored nanos).
-		return v / int64(time.Second), true
-	default:
-		return 0, false
-	}
+	return v, true
 }
 
 // aclFlavor discriminates POSIX vs Windows encoding of a user.acls payload
