@@ -22,6 +22,7 @@ func Serve(cfg MountConfig) {
 		fmt.Fprintf(os.Stderr, "  ✗ error creating pxar FS: %v\n", err)
 		os.Exit(1)
 	}
+	pxarFS.SetVerbose(cfg.Verbose)
 
 	backingDir := cfg.BackingDir
 	if backingDir == "" && cfg.InitMode {
