@@ -19,7 +19,6 @@ import (
 
 // BatchTracker collects job completion results and sends a single
 // consolidated notification per batch instead of one per job.
-//
 // When a job completes, the caller reports it via RecordJobResult.
 // The tracker checks if the job belongs to a notification batch:
 //   - No batch → send notification immediately (normal behavior).

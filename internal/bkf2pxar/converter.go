@@ -93,8 +93,6 @@ type backupMeta struct {
 	Owner      string
 }
 
-// --- List mode ---
-
 // ListSnapshots scans input sources and returns all backup sets (SSETs)
 // in stream order, visiting only structural blocks (no file data).
 func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
@@ -221,8 +219,6 @@ func scanSnapshots(r *mtf.Reader, source string, out *[]Snapshot) error {
 	}
 	return nil
 }
-
-// --- Conversion mode ---
 
 // Run performs the full conversion: reads BKF sources, builds pxar archive(s),
 // and uploads to PBS (or writes to a local store).
@@ -676,8 +672,6 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
 }
 
-// --- Source opening helpers ---
-
 func setupTapeContinuation(r *mtf.Reader, dev string) {
 	r.SetContinuation(func(ct mtf.Continuation) (mtf.Tape, error) {
 		fmt.Fprintf(os.Stderr, "\n== Insert tape %d (media %s) and press Enter ==\n",
@@ -705,8 +699,6 @@ func setupFileContinuation(r *mtf.Reader, files []string) {
 		return mtf.NewFileTape(next), nil
 	})
 }
-
-// --- Metadata conversion helpers ---
 
 func mtfToPxarMeta(h *mtf.Header, fileType uint64) pxar.Metadata {
 	var m pxar.Metadata

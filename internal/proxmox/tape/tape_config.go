@@ -91,7 +91,6 @@ func (s *pbsSection) get(key string) string {
 //	type: name
 //	    key value
 //	    key value
-//
 //	type: name
 //	    key "quoted value"
 func parseSectionConfig(f *os.File) []pbsSection {

@@ -108,7 +108,6 @@ func (s *Scheduler) checkBackups() {
 // shouldRunScheduled returns the next run time and true if the backup should be
 // enqueued now. It uses the later of (last enqueued time, last run start time)
 // as the reference point to prevent duplicate launches.
-//
 // On restart, the in-memory lastEnqueued map is lost, so we guard against
 // spuriously catching up on missed schedules by only enqueueing if the
 // scheduled time fell within the current check interval.

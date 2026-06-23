@@ -459,8 +459,6 @@ func (j *mtfJob) cleanup() {
 	})
 }
 
-// --- MTF Task (matches RestoreTask pattern) ---
-
 func startTask(job mtfdb.MTFJob) (*Task, error) {
 	task := tasks.NewTask("pbsplus", mtfWorkerType, mtfWID(job))
 
@@ -490,8 +488,6 @@ func (t *Task) CloseErr(taskErr error) {
 		_ = tasks.RemoveActive(t.UPID)
 	})
 }
-
-// --- Queued task ---
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
 	task := tasks.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))

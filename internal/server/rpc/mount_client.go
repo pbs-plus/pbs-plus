@@ -72,8 +72,6 @@ func callMountRPC(ctx context.Context, serviceMethod string, args, reply any) er
 	return rpcClient.Call(serviceMethod, args, reply)
 }
 
-// --- Agent (ARPC) mount client ---
-
 // AgentMount is the client-side handle for an agent FS mount created via the
 // mount RPC service. It owns the local mount path lifecycle.
 type AgentMount struct {
@@ -178,8 +176,6 @@ func (a *AgentMount) CloseMount() {
 
 	syslog.L.Info().WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).WithMessage(reply.Message).Write()
 }
-
-// --- S3 mount client ---
 
 // S3Mount is the client-side handle for an S3 FS mount created via the mount
 // RPC service. It owns the local mount path lifecycle.

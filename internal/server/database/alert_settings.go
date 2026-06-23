@@ -216,8 +216,6 @@ func (s AlertSetting) IsInScheduleWindow() bool {
 	return diff <= halfWindow
 }
 
-// --- Alert Exclusions ---
-
 func (database *Database) CreateAlertExclusion(alertType, excludeType, excludeValue, comment string) error {
 	return database.queries.CreateAlertExclusion(context.Background(), sqlc.CreateAlertExclusionParams{
 		AlertType:    alertType,

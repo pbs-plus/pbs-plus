@@ -791,8 +791,6 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 	)
 }
 
-// --- Snapshot selection ---
-
 type snapshotInfo struct {
 	Snapshot   string // "type/id/time"
 	BackupType string
@@ -931,8 +929,6 @@ func filterByDateRange(snapshots []snapshotInfo, dateFrom, dateTo string) []snap
 	return filtered
 }
 
-// --- Archive access ---
-
 // openArchive opens the pxar archive for the given snapshot, returning a
 // verifyState that can be used for both file enumeration and content extraction.
 func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo) (*verifyState, error) {
@@ -1006,8 +1002,6 @@ func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo
 
 	return &verifyState{fs: fs}, nil
 }
-
-// --- File sampling ---
 
 // sampleFiles walks the pxar archive to enumerate files, then returns a sample
 // based on the configured strategy (random, systematic, or stratified).
@@ -1230,8 +1224,6 @@ func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCh
 
 	return true
 }
-
-// --- File verification ---
 
 // verifyFile verifies a single file by comparing the agent's SHA-256 hash
 // of the live file against the hash of the same file extracted from the

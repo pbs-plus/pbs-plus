@@ -54,7 +54,6 @@ const (
 // notification is the JSON-serializable representation of a PBS Notification.
 // When written to the spool directory, PBS's notification_worker picks it up
 // and routes it through configured matchers and endpoints.
-//
 // This struct mirrors proxmox_notify::Notification from the proxmox-notify crate.
 // All JSON field names use kebab-case to match the Rust serde rename_all = "kebab-case".
 // The content field uses an externally-tagged enum representation matching
@@ -80,19 +79,16 @@ type metadata struct {
 }
 
 // Send dispatches a notification for a completed D2D job.
-//
 // For ModeNotificationSystem (default), it writes a JSON file to PBS's
 // notification spool directory (/var/lib/proxmox-backup/notifications/).
 // The PBS notification worker (running as root) reads this directory every 5s,
 // loads the notification config (matchers, endpoints), and routes the
 // notification through all matching endpoints  -  exactly the same mechanism
 // PBS uses internally for non-root processes.
-//
 // The additional-fields map includes type, job-id, datastore, and hostname,
 // which PBS notification matchers can filter on. The "type" field uses values
 // like "d2d-backup", "d2d-restore", "d2d-verify"  -  these appear in the
 // PBS matcher UI dropdown alongside the built-in types (gc, sync, verify, etc.).
-//
 // For ModeLegacySendmail, it invokes /usr/sbin/sendmail directly.
 func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, details map[string]string) {
 	nm := NotificationMode(mode)

@@ -1,10 +1,8 @@
 // Package changer drives SCSI Medium Changer (SMC) devices  -  tape libraries
 // and autoloaders  -  directly via the Linux SG_IO ioctl, with no external
 // dependencies such as mtx or libsgutils2.
-//
 // The command set implemented is the subset of SMC-3 needed to inventory a
 // magazine and move cartridges between storage slots and tape drives:
-//
 //   - MODE SENSE(6) page 0x1D (Element Address Assignment)
 //   - READ ELEMENT STATUS (0xB8)
 //   - MOVE MEDIUM (0xA5)

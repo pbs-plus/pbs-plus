@@ -174,7 +174,6 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 	// Emit entries, register nodes, and fill attributes in a single pass.
 	// Only entries that fit in the FUSE buffer are registered, so
 	// un-emitted entries don't leak ref counts.
-	//
 	// A single write lock covers registration, eviction, and attribute
 	// reads — no per-entry lock churn.
 	fs.mu.Lock()
@@ -255,7 +254,6 @@ func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 }
 
 // so that a pxar-mount getattr reports the same atime/mtime restore would set.
-//
 //   - default atime and mtime are both pxar Stat.Mtime (Secs+Nanos)
 //   - user.lastaccesstime (decimal Unix seconds) overrides atime, dropping nanos
 //   - user.lastwritetime  (decimal Unix seconds) overrides mtime, dropping nanos

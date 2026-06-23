@@ -35,7 +35,6 @@ type pendingMeta struct {
 //
 // The journal uses a graph model (nodes + edges) making rename O(1):
 // only the edge row is updated; no descendants are touched.
-//
 // Resolution:
 //
 //	Walk edges from root. If a component is whiteout → ENOENT.
@@ -162,7 +161,6 @@ func (fs *MutableFS) InitMutableRoot() error {
 // ReconcileMutableDir removes orphan disk entries not tracked by journal nodes.
 // Called on startup to clean up after unclean shutdowns  -  analogous to
 // ext4's orphan inode cleanup during journal recovery (ext4_orphan_cleanup).
-//
 // A file is an orphan if:
 //   - No journal node exists for its path, OR
 //   - The journal node exists but HasData is false
@@ -1050,7 +1048,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		destNodeID = destRE.Node.ID
 	}
 
-	// --- Phase 1: Journal-first atomic rename ---
 	// All journal mutations happen in a single SQLite transaction so a
 	// crash at any point leaves the journal in a consistent state.
 	if oldRE.Node != nil {
@@ -1100,7 +1097,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		oldRE.Node = node
 	}
 
-	// --- Phase 2: Update inode mapping (in-memory, fast  -  before slow disk I/O) ---
 	fs.unmapInode(newPath) // clear dest mapping
 	ino := fs.pathToIno(oldPath, oldRE.IsDir)
 	fs.unmapInode(oldPath)
@@ -1110,7 +1106,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		fs.remapPathPrefix(oldPath, newPath)
 	}
 
-	// --- Phase 3: Disk mutations (journal + mappings already consistent) ---
 	// If we crash here, the journal is consistent  -  disk files are redundant
 	// copies that the next commit will re-snapshot from the correct paths.
 
@@ -1443,7 +1438,6 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 // Forget is called by the FUSE kernel when it evicts an inode from its
 // dentry cache. We clean up per-inode and per-path synchronization
 // state that would otherwise leak indefinitely.
-//
 // NOTE: We don't delete inoLookup/pathLookup here because there may
 // still be open file handles (Read/Write/Flush/Release) that need the
 // inode→path mapping. Those are cleaned up in unmapInode (Unlink,
@@ -1869,7 +1863,6 @@ func (fs *MutableFS) resolveParentNodeID(parentPath string) int64 {
 // ensureNode ensures a journal node+edge exists for a resolved entry.
 // For pxar-only entries, it creates a node with redirect_to and an edge
 // under the parent. For journal entries, it's a no-op.
-//
 // Per-path locking prevents duplicate nodes when concurrent FUSE ops
 // (e.g. setfacl -R) materialize the same pxar entry simultaneously  -
 // analogous to ext4's inode_lock preventing concurrent inode initialization.

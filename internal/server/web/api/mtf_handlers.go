@@ -30,8 +30,6 @@ func mtfStore(st *store.Store) *mtfdb.Database {
 	return st.MtfStore
 }
 
-// --- MTF jobs: run / stop ---
-
 func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
@@ -87,8 +85,6 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		json.NewEncoder(w).Encode(response)
 	}
 }
-
-// --- MTF jobs: create / list ---
 
 func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -160,8 +156,6 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		json.NewEncoder(w).Encode(response)
 	}
 }
-
-// --- MTF jobs: single (get / update / delete) ---
 
 func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -247,8 +241,6 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// --- MTF jobs: UPIDs ---
-
 func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -283,8 +275,6 @@ func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 		json.NewEncoder(w).Encode(response)
 	}
 }
-
-// --- Form parsing helpers ---
 
 func mtfJobFromForm(r *http.Request) (mtfdb.MTFJob, error) {
 	j := mtfdb.MTFJob{
@@ -408,8 +398,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	return job, nil
 }
 
-// --- Inventory listing ---
-
 func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -475,8 +463,6 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-// --- Scan ---
-
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -538,8 +524,6 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		json.NewEncoder(w).Encode(response)
 	}
 }
-
-// --- Namespace mappings ---
 
 func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -712,8 +696,6 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 	}
 }
-
-// --- helpers ---
 
 // flatMtfJob is the flattened API response for an MTF job. The history block
 // is promoted to top-level fields (matching the ExtJS model + grid columns)

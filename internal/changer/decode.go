@@ -4,7 +4,6 @@
 //	  first_element_address[2], number_of_elements[2]
 //	   -  note: unlike the subheader, there is no byte-count here in all firmwares,
 //	    so we treat the whole received buffer as the data and walk subpages.
-//
 //	Repeated Element Status Pages:
 //	  SubHeader (8 bytes):
 //	    element_type[1], flags[1] (bit7=PVolTag, bit6=AVolTag),

@@ -1,5 +1,4 @@
 // Package host resolves and validates the agent hostname.
-//
 // It is a pure leaf package (stdlib only) so that low-level consumers such as
 // syslog and mtls can depend on it without importing the agent package.
 package host
