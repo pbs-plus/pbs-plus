@@ -17,9 +17,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mount"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
@@ -48,8 +48,8 @@ type backupJob struct {
 	cleanupOnce sync.Once
 	started     atomic.Bool
 
-	agentMount *mount.AgentMount
-	s3Mount    *mount.S3Mount
+	agentMount *rpc.AgentMount
+	s3Mount    *rpc.S3Mount
 	srcPath    string
 }
 
@@ -582,7 +582,7 @@ func (b *backupJob) runTargetMountScript(ctx context.Context, target database.Ta
 	return nil
 }
 
-func (b *backupJob) mountSource(ctx context.Context, target database.Target) (string, *mount.AgentMount, *mount.S3Mount, error) {
+func (b *backupJob) mountSource(ctx context.Context, target database.Target) (string, *rpc.AgentMount, *rpc.S3Mount, error) {
 	select {
 	case <-ctx.Done():
 		return "", nil, nil, jobs.ErrCanceled
@@ -598,8 +598,8 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 
 	var (
 		srcPath    = target.Path
-		agentMount *mount.AgentMount
-		s3Mount    *mount.S3Mount
+		agentMount *rpc.AgentMount
+		s3Mount    *rpc.S3Mount
 		err        error
 	)
 
@@ -620,7 +620,7 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
-		agentMount, err = mount.AgentFSMount(timedCtx, b.storeInstance, job, target)
+		agentMount, err = rpc.AgentFSMount(timedCtx, b.storeInstance, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
@@ -648,7 +648,7 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
-		s3Mount, err = mount.S3FSMount(timedCtx, b.storeInstance, job, target)
+		s3Mount, err = rpc.S3FSMount(timedCtx, b.storeInstance, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
