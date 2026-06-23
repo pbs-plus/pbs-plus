@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	agenttypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
@@ -353,7 +352,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		srcPath = "/"
 	}
 
-	restoreReq := agenttypes.RestoreReq{
+	restoreReq := types.RestoreReq{
 		RestoreID: b.job.ID,
 		SrcPath:   srcPath,
 		DestPath:  destPath,
