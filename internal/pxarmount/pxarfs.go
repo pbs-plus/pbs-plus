@@ -1,6 +1,7 @@
 package pxarmount
 
 import (
+	"errors"
 	"io"
 	"strconv"
 	"sync"
@@ -64,7 +65,6 @@ func (fs *PxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name str
 		if entries[i].name == name {
 			e := &entries[i]
 			fs.registerSlimNode(e, header.NodeId)
-			fs.refNode(e.inode)
 			fs.mu.RLock()
 			nd := fs.nodes[e.inode]
 			fs.mu.RUnlock()
@@ -174,42 +174,13 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 
 	start := max(int(input.Offset)-2, 0)
 
-	// Batch node registration and ref bumps into a single write-locked pass
-	// to avoid N separate lock/unlock cycles per directory entry.
+	// Emit entries, register nodes, and fill attributes in a single pass.
+	// Only entries that fit in the FUSE buffer are registered, so
+	// un-emitted entries don't leak ref counts.
+	//
+	// A single write lock covers registration, eviction, and attribute
+	// reads — no per-entry lock churn.
 	fs.mu.Lock()
-	for i := start; i < len(entries); i++ {
-		if _, exists := fs.nodes[entries[i].inode]; !exists {
-			fs.nodes[entries[i].inode] = node{
-				entryStart:    entries[i].entryStart,
-				contentOffset: entries[i].contentOffset,
-				fileSize:      entries[i].fileSize,
-				mode:          uint64(entries[i].mode),
-				inode:         entries[i].inode,
-				parent:        input.NodeId,
-				refs:          1,
-				mtimeSecs:     entries[i].mtimeSecs,
-				uid:           entries[i].uid,
-				mtimeNanos:    entries[i].mtimeNanos,
-				gid:           entries[i].gid,
-				isDir:         entries[i].isDir,
-				isSymlink:     entries[i].isSymlink,
-				isReg:         entries[i].isReg,
-			}
-		} else {
-			n := fs.nodes[entries[i].inode]
-			n.refs++
-			fs.nodes[entries[i].inode] = n
-		}
-	}
-	if len(fs.nodes) > maxCachedNodes {
-		fs.evictStaleLocked()
-	}
-	fs.mu.Unlock()
-
-	// Emit entries and fill attributes in a single read-locked pass.
-	// No archive reads here — fillEntryOut uses only cached node data
-	// (Stat.Mtime from dirEntrySlim, with xattr-derived times resolved
-	// lazily on individual GetAttr calls).
 	for i := start; i < len(entries); i++ {
 		eo := out.AddDirLookupEntry(fuse.DirEntry{
 			Name: entries[i].name,
@@ -219,13 +190,35 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 		if eo == nil {
 			break
 		}
-		fs.mu.RLock()
-		child, cok := fs.nodes[entries[i].inode]
-		fs.mu.RUnlock()
-		if cok {
-			fillEntryOut(entries[i].inode, &child, eo)
+		e := &entries[i]
+		if n, exists := fs.nodes[e.inode]; exists {
+			n.refs++
+			fs.nodes[e.inode] = n
+		} else {
+			fs.nodes[e.inode] = node{
+				entryStart:    e.entryStart,
+				contentOffset: e.contentOffset,
+				fileSize:      e.fileSize,
+				mode:          uint64(e.mode),
+				inode:         e.inode,
+				parent:        input.NodeId,
+				refs:          1,
+				mtimeSecs:     e.mtimeSecs,
+				uid:           e.uid,
+				mtimeNanos:    e.mtimeNanos,
+				gid:           e.gid,
+				isDir:         e.isDir,
+				isSymlink:     e.isSymlink,
+				isReg:         e.isReg,
+			}
 		}
+		child := fs.nodes[e.inode]
+		fillEntryOut(e.inode, &child, eo)
 	}
+	if len(fs.nodes) > maxCachedNodes {
+		fs.evictStaleLocked()
+	}
+	fs.mu.Unlock()
 	return fuse.OK
 }
 
@@ -256,6 +249,9 @@ func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	if n.inode == RootInode {
 		rootEntry.Metadata = pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
 		return &rootEntry, nil
+	}
+	if fs.reader == nil {
+		return nil, errors.New("no reader available")
 	}
 	return fs.reader.ReadEntryAt(int64(n.entryStart))
 }
@@ -513,6 +509,38 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	if n, ok := fs.nodes[e.inode]; ok {
+		n.refs++
+		fs.nodes[e.inode] = n
+	} else {
+		fs.nodes[e.inode] = node{
+			entryStart:    e.entryStart,
+			contentOffset: e.contentOffset,
+			fileSize:      e.fileSize,
+			mode:          uint64(e.mode),
+			inode:         e.inode,
+			parent:        parent,
+			refs:          1,
+			mtimeSecs:     e.mtimeSecs,
+			uid:           e.uid,
+			mtimeNanos:    e.mtimeNanos,
+			gid:           e.gid,
+			isDir:         e.isDir,
+			isSymlink:     e.isSymlink,
+			isReg:         e.isReg,
+		}
+	}
+	if len(fs.nodes) > maxCachedNodes {
+		fs.evictStaleLocked()
+	}
+}
+
+// preregisterSlimNode inserts a node with refs=0 so it is eligible for
+// eviction under cache pressure. Used by the commit walker to pre-populate
+// the cache for nodes that the kernel has not yet looked up.
+func (fs *PxarFS) preregisterSlimNode(e *dirEntrySlim, parent uint64) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	if _, ok := fs.nodes[e.inode]; !ok {
 		fs.nodes[e.inode] = node{
 			entryStart:    e.entryStart,
@@ -530,9 +558,6 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
 			isSymlink:     e.isSymlink,
 			isReg:         e.isReg,
 		}
-	}
-	if len(fs.nodes) > maxCachedNodes {
-		fs.evictStaleLocked()
 	}
 }
 
@@ -556,7 +581,7 @@ func slimToNode(e *dirEntrySlim, parent uint64) node {
 		mode:          uint64(e.mode),
 		inode:         e.inode,
 		parent:        parent,
-		refs:          0,
+		refs:          1,
 		mtimeSecs:     e.mtimeSecs,
 		uid:           e.uid,
 		mtimeNanos:    e.mtimeNanos,
@@ -568,16 +593,7 @@ func slimToNode(e *dirEntrySlim, parent uint64) node {
 }
 
 func (fs *PxarFS) RegisterSlimNode(e *dirEntrySlim, parent uint64) {
-	fs.registerSlimNode(e, parent)
-}
-
-func (fs *PxarFS) refNode(ino uint64) {
-	fs.mu.Lock()
-	if n, ok := fs.nodes[ino]; ok {
-		n.refs++
-		fs.nodes[ino] = n
-	}
-	fs.mu.Unlock()
+	fs.preregisterSlimNode(e, parent)
 }
 
 func (fs *PxarFS) getParentInfo(ino uint64) (parentIno uint64, parentMode uint32) {
