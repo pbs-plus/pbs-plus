@@ -14,16 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	backend "github.com/pbs-plus/pbs-plus/internal/server"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/host"
+	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/web"
-
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var Version = "v0.0.0"
@@ -140,7 +139,7 @@ func validateEnvironment() error {
 		return fmt.Errorf("PBS_PLUS_HOSTNAME is not set; you may use /etc/proxmox-backup/pbs-plus/pbs-plus.env to modify environment variables")
 	}
 
-	if err := types.ValidateHostname(hn); err != nil {
+	if err := host.ValidateHostname(hn); err != nil {
 		return fmt.Errorf("PBS_PLUS_HOSTNAME is an invalid hostname/fqdn: %s", hn)
 	}
 

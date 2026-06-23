@@ -13,6 +13,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 )
 
@@ -124,7 +125,7 @@ func RenewCertificateIfExpiring() error {
 }
 
 func renewCertificate() error {
-	hostname, err := GetAgentHostname()
+	hostname, err := host.AgentHostname()
 	if err != nil {
 		return fmt.Errorf("renewCertificate: failed to get hostname - %w", err)
 	}

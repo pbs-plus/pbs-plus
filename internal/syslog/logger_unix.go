@@ -10,15 +10,15 @@ import (
 
 	"log/slog"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 )
 
 func (l *Logger) SetServiceLogger() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.hostname, _ = types.GetAgentHostname()
+	l.hostname, _ = host.AgentHostname()
 
 	tag := "pbs-plus-agent"
 	if conf.IsServer {

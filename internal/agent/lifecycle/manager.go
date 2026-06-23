@@ -20,6 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/sync"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -62,7 +63,7 @@ func ClearCertificates() {
 }
 
 func UpdateDrives() error {
-	hostname, err := agent.GetAgentHostname()
+	hostname, err := host.AgentHostname()
 	if err != nil {
 		return err
 	}
@@ -151,7 +152,7 @@ func ConnectARPC(
 	if err != nil {
 		return nil, err
 	}
-	clientId, err := agent.GetAgentHostname()
+	clientId, err := host.AgentHostname()
 	if err != nil {
 		return nil, err
 	}

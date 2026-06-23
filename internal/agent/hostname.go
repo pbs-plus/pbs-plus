@@ -6,24 +6,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"golang.org/x/exp/rand"
 )
-
-// GetAgentHostname returns the agent hostname from the PBS_PLUS_HOSTNAME
-// environment variable, falling back to os.Hostname().
-func GetAgentHostname() (string, error) {
-	host := os.Getenv("PBS_PLUS_HOSTNAME")
-	if host == "" {
-		return os.Hostname()
-	}
-
-	if err := types.ValidateHostname(host); err != nil {
-		return "", err
-	}
-
-	return host, nil
-}
 
 // HashHostname returns an FNV-1a 32-bit hash of the given host string.
 func hashHostname(host string) uint32 {
@@ -59,7 +44,7 @@ func ComputeDelay() time.Duration {
 	const baseSeconds = 3600       // 1 hour
 	const extraRangeSeconds = 3600 // up to an extra 1 hour
 
-	hostname, err := GetAgentHostname()
+	hostname, err := host.AgentHostname()
 	if err != nil {
 		hostname = randomHostname()
 	}

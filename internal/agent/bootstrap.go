@@ -15,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 )
 
@@ -41,7 +42,7 @@ func Bootstrap() error {
 		return fmt.Errorf("Bootstrap: server url not found -> %w", err)
 	}
 
-	hostname, err := types.GetAgentHostname()
+	hostname, err := host.AgentHostname()
 	if err != nil {
 		return fmt.Errorf("Bootstrap: failed to get hostname -> %w", err)
 	}
