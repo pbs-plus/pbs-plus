@@ -247,8 +247,9 @@ var rootEntry = pxar.Entry{
 
 func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 	if n.inode == RootInode {
-		rootEntry.Metadata = pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
-		return &rootEntry, nil
+		e := rootEntry
+		e.Metadata = pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
+		return &e, nil
 	}
 	if fs.reader == nil {
 		return nil, errors.New("no reader available")
