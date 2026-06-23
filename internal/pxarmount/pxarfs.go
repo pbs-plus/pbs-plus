@@ -64,10 +64,7 @@ func (fs *PxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name str
 	for i := range entries {
 		if entries[i].name == name {
 			e := &entries[i]
-			fs.registerSlimNode(e, header.NodeId)
-			fs.mu.RLock()
-			nd := fs.nodes[e.inode]
-			fs.mu.RUnlock()
+			nd := fs.registerSlimNode(e, header.NodeId)
 			fillEntryOut(e.inode, &nd, out)
 			return fuse.OK
 		}
@@ -507,75 +504,18 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 	return fuse.ReadResultData(dest[:nr]), fuse.OK
 }
 
-func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) {
+func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) node {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	if n, ok := fs.nodes[e.inode]; ok {
 		n.refs++
 		fs.nodes[e.inode] = n
-	} else {
-		fs.nodes[e.inode] = node{
-			entryStart:    e.entryStart,
-			contentOffset: e.contentOffset,
-			fileSize:      e.fileSize,
-			mode:          uint64(e.mode),
-			inode:         e.inode,
-			parent:        parent,
-			refs:          1,
-			mtimeSecs:     e.mtimeSecs,
-			uid:           e.uid,
-			mtimeNanos:    e.mtimeNanos,
-			gid:           e.gid,
-			isDir:         e.isDir,
-			isSymlink:     e.isSymlink,
-			isReg:         e.isReg,
+		if len(fs.nodes) > maxCachedNodes {
+			fs.evictStaleLocked()
 		}
+		return n
 	}
-	if len(fs.nodes) > maxCachedNodes {
-		fs.evictStaleLocked()
-	}
-}
-
-// preregisterSlimNode inserts a node with refs=0 so it is eligible for
-// eviction under cache pressure. Used by the commit walker to pre-populate
-// the cache for nodes that the kernel has not yet looked up.
-func (fs *PxarFS) preregisterSlimNode(e *dirEntrySlim, parent uint64) {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-	if _, ok := fs.nodes[e.inode]; !ok {
-		fs.nodes[e.inode] = node{
-			entryStart:    e.entryStart,
-			contentOffset: e.contentOffset,
-			fileSize:      e.fileSize,
-			mode:          uint64(e.mode),
-			inode:         e.inode,
-			parent:        parent,
-			refs:          0,
-			mtimeSecs:     e.mtimeSecs,
-			uid:           e.uid,
-			mtimeNanos:    e.mtimeNanos,
-			gid:           e.gid,
-			isDir:         e.isDir,
-			isSymlink:     e.isSymlink,
-			isReg:         e.isReg,
-		}
-	}
-}
-
-func (fs *PxarFS) evictStaleLocked() {
-	target := maxCachedNodes * 9 / 10
-	for ino, n := range fs.nodes {
-		if ino != RootInode && n.refs <= 0 {
-			delete(fs.nodes, ino)
-			if len(fs.nodes) <= target {
-				return
-			}
-		}
-	}
-}
-
-func slimToNode(e *dirEntrySlim, parent uint64) node {
-	return node{
+	n := node{
 		entryStart:    e.entryStart,
 		contentOffset: e.contentOffset,
 		fileSize:      e.fileSize,
@@ -591,10 +531,63 @@ func slimToNode(e *dirEntrySlim, parent uint64) node {
 		isSymlink:     e.isSymlink,
 		isReg:         e.isReg,
 	}
+	fs.nodes[e.inode] = n
+	if len(fs.nodes) > maxCachedNodes {
+		fs.evictStaleLocked()
+	}
+	return n
 }
 
-func (fs *PxarFS) RegisterSlimNode(e *dirEntrySlim, parent uint64) {
-	fs.preregisterSlimNode(e, parent)
+// preregisterSlimNode inserts a node with refs=0 so it is eligible for
+// eviction under cache pressure. Used by the commit walker to pre-populate
+// the cache for nodes that the kernel has not yet looked up.
+func (fs *PxarFS) preregisterSlimNode(e *dirEntrySlim, parent uint64) node {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if n, ok := fs.nodes[e.inode]; ok {
+		if len(fs.nodes) > maxCachedNodes {
+			fs.evictStaleLocked()
+		}
+		return n
+	}
+	n := node{
+		entryStart:    e.entryStart,
+		contentOffset: e.contentOffset,
+		fileSize:      e.fileSize,
+		mode:          uint64(e.mode),
+		inode:         e.inode,
+		parent:        parent,
+		refs:          0,
+		mtimeSecs:     e.mtimeSecs,
+		uid:           e.uid,
+		mtimeNanos:    e.mtimeNanos,
+		gid:           e.gid,
+		isDir:         e.isDir,
+		isSymlink:     e.isSymlink,
+		isReg:         e.isReg,
+	}
+	fs.nodes[e.inode] = n
+	if len(fs.nodes) > maxCachedNodes {
+		fs.evictStaleLocked()
+	}
+	return n
+}
+
+func (fs *PxarFS) evictStaleLocked() {
+	target := maxCachedNodes * 9 / 10
+	for ino, n := range fs.nodes {
+		if ino != RootInode && n.refs <= 0 {
+			delete(fs.nodes, ino)
+			if len(fs.nodes) <= target {
+				return
+			}
+		}
+	}
+}
+
+func (fs *PxarFS) RegisterSlimNode(e *dirEntrySlim, parent uint64) *node {
+	n := fs.preregisterSlimNode(e, parent)
+	return &n
 }
 
 func (fs *PxarFS) getParentInfo(ino uint64) (parentIno uint64, parentMode uint32) {

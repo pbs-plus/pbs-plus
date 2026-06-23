@@ -1865,10 +1865,9 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 				// Register the node so subsequent ReadDirRaw calls
 				// can find it via fs.nodes. Without this, only the
 				// root inode is cached and subdirectories appear empty.
-				fs.pxar.RegisterSlimNode(&e, curIno)
+				n := fs.pxar.RegisterSlimNode(&e, curIno)
 				if i == len(parts)-1 {
-					n := slimToNode(&e, curIno)
-					return &n
+					return n
 				}
 				curIno = e.inode
 				found = true

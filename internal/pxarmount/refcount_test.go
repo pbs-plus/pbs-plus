@@ -101,14 +101,14 @@ func TestPreregisterThenRegisterBumpsRefs(t *testing.T) {
 	}
 
 	fs.preregisterSlimNode(&e, RootInode)
-	n, _ := fs.nodes[99]
+	n := fs.nodes[99]
 	if n.refs != 0 {
 		t.Fatalf("preregister refs = %d, want 0", n.refs)
 	}
 
 	// Kernel LOOKUP bumps refs to 1
 	fs.registerSlimNode(&e, RootInode)
-	n, _ = fs.nodes[99]
+	n = fs.nodes[99]
 	if n.refs != 1 {
 		t.Errorf("after registerSlimNode, refs = %d, want 1", n.refs)
 	}
@@ -139,7 +139,7 @@ func TestRegisterSlimNodeExistingBumpRefs(t *testing.T) {
 
 	fs.registerSlimNode(&e, RootInode)
 
-	n, _ := fs.nodes[42]
+	n := fs.nodes[42]
 	if n.refs != 1 {
 		t.Fatalf("initial refs = %d, want 1", n.refs)
 	}
@@ -147,7 +147,7 @@ func TestRegisterSlimNodeExistingBumpRefs(t *testing.T) {
 	// Re-register the same node (simulates a second LOOKUP or READDIRPLUS)
 	fs.registerSlimNode(&e, RootInode)
 
-	n, _ = fs.nodes[42]
+	n = fs.nodes[42]
 	if n.refs != 2 {
 		t.Errorf("refs after second register = %d, want 2 (each registration should bump refs)", n.refs)
 	}
@@ -223,7 +223,7 @@ func TestForgetDecrementsRefs(t *testing.T) {
 
 	fs.registerSlimNode(&e, RootInode)
 
-	n, _ := fs.nodes[42]
+	n := fs.nodes[42]
 	if n.refs != 1 {
 		t.Fatalf("initial refs = %d, want 1", n.refs)
 	}
@@ -260,7 +260,7 @@ func TestForgetPartialDecrement(t *testing.T) {
 	fs.registerSlimNode(&e, RootInode)
 	fs.registerSlimNode(&e, RootInode) // bump to refs=2
 
-	n, _ := fs.nodes[42]
+	n := fs.nodes[42]
 	if n.refs != 2 {
 		t.Fatalf("refs after double register = %d, want 2", n.refs)
 	}
@@ -417,7 +417,7 @@ func TestReadDirPlusRefCountConsistency(t *testing.T) {
 	}
 
 	for _, ino := range []uint64{100, 101, 102} {
-		n, _ := fs.nodes[ino]
+		n := fs.nodes[ino]
 		if n.refs != 2 {
 			t.Errorf("inode %d refs=%d after second readdir, want 2", ino, n.refs)
 		}
@@ -508,7 +508,7 @@ func TestEnsureNodeTimesIdempotent(t *testing.T) {
 	}
 
 	// Node should still have timesResolved=false
-	n2, _ := fs.nodes[42]
+	n2 := fs.nodes[42]
 	if n2.timesResolved {
 		t.Error("timesResolved should still be false after GetAttr on node without pxar entry")
 	}
