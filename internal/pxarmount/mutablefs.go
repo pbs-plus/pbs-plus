@@ -138,14 +138,12 @@ func (fs *MutableFS) applyACL(re *ResolvedEntry) {
 }
 func (fs *MutableFS) SetVerbose(v bool) { fs.verbose = v }
 
-// debugf prints a debug message when verbose mode is enabled.
 func (fs *MutableFS) debugf(format string, args ...any) {
 	if fs.verbose {
 		fmt.Fprintf(os.Stderr, "  "+format+"\n", args...)
 	}
 }
 
-// logNonFatal logs a non-fatal error to stderr when verbose.
 func (fs *MutableFS) logNonFatal(op, path string, err error) {
 	if fs.verbose {
 		fmt.Fprintf(os.Stderr, "  [nonfatal] %s %s: %v\n", op, path, err)
@@ -157,7 +155,6 @@ func (fs *MutableFS) SetStorePaths(pbsStore, ppxarDidx string) {
 	fs.origPpxarDidx = ppxarDidx
 }
 
-// InitMutableRoot ensures the mutable root directory exists.
 func (fs *MutableFS) InitMutableRoot() error {
 	return os.MkdirAll(fs.mutableDir, 0o755)
 }
@@ -237,8 +234,6 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 	return nil
 }
 
-// --- FUSE Interface ---
-
 func (fs *MutableFS) Init(server *fuse.Server) {
 	fs.RawFileSystem = fuse.NewDefaultRawFileSystem()
 	fs.RawFileSystem.Init(server)
@@ -257,7 +252,6 @@ func (fs *MutableFS) waitIfFrozen() {
 	fs.freezeMu.Unlock()
 }
 
-// Lookup resolves a name in a directory.
 func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
 	fs.debugf("Lookup: parent=%d name=%q", header.NodeId, name)
 	if name == JournalDir {
@@ -278,7 +272,6 @@ func (fs *MutableFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name 
 	return fuse.OK
 }
 
-// GetAttr returns attributes.
 func (fs *MutableFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("GetAttr: ino=%d path=%q", input.NodeId, path)
@@ -320,7 +313,6 @@ func (fs *MutableFS) FsyncDir(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.
 	return fuse.OK
 }
 
-// ReadDir merges immutable (pxar) and mutable (journal edges) entries.
 func (fs *MutableFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
 	fs.debugf("ReadDir: ino=%d offset=%d", input.NodeId, input.Offset)
 	return fs.readDirImpl(input, out, false)
@@ -500,7 +492,6 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 	return fuse.OK
 }
 
-// Open opens a file. For writes, triggers copy-up.
 func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("Open: ino=%d path=%q flags=0x%x", input.NodeId, path, input.Flags)
@@ -545,7 +536,6 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 	return fuse.OK
 }
 
-// Read reads data from the appropriate source.
 func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("Read: ino=%d fh=%d path=%q off=%d sz=%d", input.NodeId, input.Fh, path, input.Offset, len(buf))
@@ -588,7 +578,6 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 	return result, status
 }
 
-// Write writes data. Triggers copy-up if needed.
 func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []byte) (uint32, fuse.Status) {
 	fs.waitIfFrozen()
 	path := fs.inodeToPath(input.NodeId)
@@ -645,7 +634,6 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	return uint32(n), fuse.OK
 }
 
-// SetAttr applies metadata changes.
 func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) fuse.Status {
 	fs.waitIfFrozen()
 	path := fs.inodeToPath(input.NodeId)
@@ -752,7 +740,6 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 	return fs.GetAttr(cancel, &fuse.GetAttrIn{InHeader: input.InHeader}, out)
 }
 
-// Create creates a new file.
 func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name string, out *fuse.CreateOut) fuse.Status {
 	fs.waitIfFrozen()
 	fs.debugf("Create: parent=%d name=%q", input.NodeId, name)
@@ -815,7 +802,6 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 	return fuse.OK
 }
 
-// Mkdir creates a directory.
 func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(input.NodeId)
@@ -866,7 +852,6 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	return fuse.OK
 }
 
-// Mknod creates a device/special node.
 func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(input.NodeId)
@@ -916,7 +901,6 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	return fuse.OK
 }
 
-// Symlink creates a symlink.
 func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, linkName string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
@@ -967,7 +951,6 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	return fuse.OK
 }
 
-// Unlink removes a file.
 func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
@@ -1005,7 +988,6 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 	return fuse.OK
 }
 
-// Rmdir removes a directory. Checks emptiness first.
 func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
 	fs.waitIfFrozen()
 	parentPath := fs.inodeToPath(header.NodeId)
@@ -1167,7 +1149,6 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 	return fuse.OK
 }
 
-// Readlink resolves and returns the symlink target.
 func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byte, fuse.Status) {
 	path := fs.inodeToPath(header.NodeId)
 	if path == "" {
@@ -1189,8 +1170,6 @@ func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]
 	}
 	return nil, fuse.EINVAL
 }
-
-// --- XAttr Operations ---
 
 func (fs *MutableFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
 	path := fs.inodeToPath(header.NodeId)
@@ -1403,8 +1382,6 @@ func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, 
 	return fuse.OK
 }
 
-// --- File Handle Lifecycle ---
-
 func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
 	// Sync dirty node metadata to journal on close.
 	// inoLock serializes with concurrent SetAttr on the same inode so
@@ -1440,7 +1417,6 @@ func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Sta
 	return fs.fsyncInternal(input.NodeId, input.Fh)
 }
 
-// fsyncInternal syncs a file handle to disk.
 func (fs *MutableFS) fsyncInternal(_, fhID uint64) fuse.Status {
 	fh := fs.getFh(fhID)
 	if fh == nil {
@@ -1481,8 +1457,6 @@ func (fs *MutableFS) Forget(nodeID, nlookup uint64) {
 	}
 	fs.dirtyMeta.Delete(nodeID)
 }
-
-// --- Unsupported Operations ---
 
 func (fs *MutableFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name string, out *fuse.EntryOut) fuse.Status {
 	fs.waitIfFrozen()
@@ -1540,8 +1514,6 @@ func (fs *MutableFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.S
 	return fuse.OK
 }
 
-// --- Copy-Up ---
-
 func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	inoMu := fs.getInoLock(re.Inode)
 	inoMu.Lock()
@@ -1589,7 +1561,6 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	return nil
 }
 
-// copyUpRegularFile copies file content from pxar to the mutable directory.
 func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	abs := fs.mutablePath(path)
 	f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
@@ -1658,12 +1629,10 @@ func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 	}
 }
 
-// isACLXattr reports whether the xattr name is a POSIX ACL attribute.
 func isACLXattr(name []byte) bool {
 	return bytesEq(name, "system.posix_acl_access") || bytesEq(name, "system.posix_acl_default")
 }
 
-// isFcapsXattr reports whether the xattr name is the file capabilities attribute.
 func isFcapsXattr(name []byte) bool {
 	return bytesEq(name, "security.capability")
 }
@@ -1695,8 +1664,6 @@ func copyRegularFile(src, dst string) error {
 	_, err = io.CopyBuffer(out, in, *bufp)
 	return err
 }
-
-// --- Resolution ---
 
 // resolve looks up a path using the inode graph, falling back to pxar.
 func (fs *MutableFS) resolveRoot() (*ResolvedEntry, fuse.Status) {
@@ -1802,7 +1769,6 @@ func (fs *MutableFS) resolveCheck(_ string, re *ResolvedEntry) (fuse.Status, boo
 	return fuse.OK, true
 }
 
-// resolveFromNode builds a ResolvedEntry from a journal GraphNode.
 func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry, fuse.Status) {
 	re := &ResolvedEntry{
 		Path:       path,
@@ -1881,7 +1847,6 @@ func (fs *MutableFS) findPxarNode(path string) *node {
 	return nil
 }
 
-// hasPxarEntry reports whether a pxar entry exists at the given path.
 func (fs *MutableFS) hasPxarEntry(path string) bool {
 	return fs.findPxarNode(path) != nil
 }
@@ -1968,8 +1933,6 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 	re.Node = node
 }
 
-// --- Inode Management ---
-
 func (fs *MutableFS) allocInode(isDir bool) uint64 {
 	fs.inoMu.Lock()
 	ino := fs.nextIno
@@ -1981,7 +1944,6 @@ func (fs *MutableFS) allocInode(isDir bool) uint64 {
 	return ino
 }
 
-// pathToIno returns the inode for a path, allocating one if needed.
 func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 	if ino, ok := fs.inoLookup.Load(path); ok {
 		return ino
@@ -1992,13 +1954,11 @@ func (fs *MutableFS) pathToIno(path string, isDir bool) uint64 {
 	return ino
 }
 
-// mapInode stores a bidirectional inode↔path mapping.
 func (fs *MutableFS) mapInode(ino uint64, path string) {
 	fs.inoLookup.Store(path, ino)
 	fs.pathLookup.Store(ino, path)
 }
 
-// unmapInode removes the bidirectional mapping for a path.
 func (fs *MutableFS) unmapInode(path string) {
 	if ino, ok := fs.inoLookup.LoadAndDelete(path); ok {
 		fs.pathLookup.Delete(ino)
@@ -2018,13 +1978,10 @@ func (fs *MutableFS) remapPathPrefix(oldPrefix, newPrefix string) {
 	})
 }
 
-// inodeToPath returns the path for an inode, or empty string if unknown.
 func (fs *MutableFS) inodeToPath(ino uint64) string {
 	path, _ := fs.pathLookup.Load(ino)
 	return path
 }
-
-// --- File Handle Management ---
 
 func (fs *MutableFS) registerFh(_ string, fd int) uint64 {
 	id := fs.nextFh.Add(1)
@@ -2032,26 +1989,20 @@ func (fs *MutableFS) registerFh(_ string, fd int) uint64 {
 	return id
 }
 
-// getFh returns the file handle for an ID, or nil if not found.
 func (fs *MutableFS) getFh(id uint64) *passFh {
 	val, _ := fs.handles.Load(id)
 	return val
 }
-
-// --- Per-Inode Writer Lock ---
 
 func (fs *MutableFS) getInoLock(ino uint64) *sync.Mutex {
 	val, _ := fs.inoLocks.LoadOrStore(ino, &sync.Mutex{})
 	return val
 }
 
-// --- Helpers ---
-
 func (fs *MutableFS) mutablePath(relPath string) string {
 	return filepath.Join(fs.mutableDir, relPath)
 }
 
-// dirModeForPath returns the directory mode bits for a resolved path.
 func (fs *MutableFS) dirModeForPath(path string) uint32 {
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
@@ -2060,7 +2011,6 @@ func (fs *MutableFS) dirModeForPath(path string) uint32 {
 	return re.Mode | syscall.S_IFDIR
 }
 
-// fillEntryOutForPath resolves a path and fills a FUSE EntryOut.
 func (fs *MutableFS) fillEntryOutForPath(path string, out *fuse.EntryOut) {
 	re, status := fs.resolve(path)
 	if status != fuse.OK {
@@ -2069,7 +2019,6 @@ func (fs *MutableFS) fillEntryOutForPath(path string, out *fuse.EntryOut) {
 	fillResolvedEntryOut(re.Inode, re, out)
 }
 
-// getParentInfo returns the inode and mode of a path parent directory.
 func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode uint32) {
 	parentDir := filepath.Dir(path)
 	if parentDir == "." {
@@ -2086,7 +2035,6 @@ func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode ui
 	return
 }
 
-// applyACLOwnership sets default ownership on a path if ACL config specifies it.
 func (fs *MutableFS) applyACLOwnership(absPath string) {
 	uid := fs.acl.OwnerUID
 	gid := fs.acl.OwnerGID
@@ -2120,9 +2068,6 @@ func (fs *MutableFS) Close() {
 	fs.handles = nil
 }
 
-// --- Fill Helpers ---
-
-// fillResolvedEntryOut fills a FUSE EntryOut from a ResolvedEntry.
 func fillResolvedEntryOut(ino uint64, re *ResolvedEntry, out *fuse.EntryOut) {
 	out.NodeId = ino
 	out.Generation = 1
@@ -2153,7 +2098,6 @@ func fillResolvedEntryOut(ino uint64, re *ResolvedEntry, out *fuse.EntryOut) {
 	a.Blksize = 4096
 }
 
-// fillResolvedAttrOut fills a FUSE AttrOut from a ResolvedEntry.
 func fillResolvedAttrOut(re *ResolvedEntry, out *fuse.AttrOut) {
 	out.AttrValid = 1
 	out.AttrValidNsec = uint32(time.Second)
@@ -2190,7 +2134,6 @@ func fillResolvedAttrOut(re *ResolvedEntry, out *fuse.AttrOut) {
 	a.Blksize = 4096
 }
 
-// fillAttrFromNode fills FUSE attributes from a GraphNode.
 func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Size = n.Size
 	attr.Blocks = (n.Size + 511) / 512
@@ -2213,7 +2156,6 @@ func fillAttrFromNode(attr *fuse.Attr, n *GraphNode) {
 	attr.Blksize = 4096
 }
 
-// munmap unmaps a memory-mapped region.
 func munmap(data []byte) error {
 	if len(data) == 0 {
 		return nil
@@ -2221,7 +2163,6 @@ func munmap(data []byte) error {
 	return syscall.Munmap(data)
 }
 
-// mmapFile memory-maps a file, falling back to ReadAll on error.
 func mmapFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {

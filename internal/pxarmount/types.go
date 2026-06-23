@@ -166,8 +166,6 @@ type MountConfig struct {
 	ACL           ACLConfig
 }
 
-// --- Helpers ---
-
 // MarshalACL encodes POSIX ACL entries into the kernel binary format
 // used by system.posix_acl_access and system.posix_acl_default.
 func MarshalACL(entries []ACLEntry) []byte {
