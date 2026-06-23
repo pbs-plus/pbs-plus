@@ -133,7 +133,9 @@ func main() {
 func validateEnvironment() error {
 	// Best-effort cleanup; the tasks/active directory may not exist in test
 	// environments or Docker containers. Ignore errors from this step.
-	_ = proxmox.CleanupPBSPlusActiveTasks()
+	if err := proxmox.CleanupPBSPlusActiveTasks(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	hn, ok := conf.Env.Hostname, conf.Env.Hostname != ""
 	if !ok {
@@ -157,7 +159,11 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 		return
 	}
 	rpcClient := rpc.NewClient(conn)
-	defer rpcClient.Close()
+	defer func() {
+		if err := rpcClient.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	for _, backupRun := range backupsRun {
 		backupTask, err := storeInstance.Database.GetBackup(backupRun)

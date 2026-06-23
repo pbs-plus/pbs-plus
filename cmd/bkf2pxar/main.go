@@ -14,6 +14,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func main() {
@@ -79,7 +80,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("cpu profile: %v", err)
 		}
-		_ = pprof.StartCPUProfile(f)
+		if err := pprof.StartCPUProfile(f); err != nil {
+			syslog.L.Error(err).Write()
+		}
 		// Flush the profile on SIGINT/SIGTERM so `timeout` (which sends SIGTERM)
 		// produces a usable file; Go's default handlers exit without defers.
 		sig := make(chan os.Signal, 1)
@@ -87,7 +90,9 @@ func main() {
 		go func() {
 			<-sig
 			pprof.StopCPUProfile()
-			_ = f.Close()
+			if err := f.Close(); err != nil {
+				syslog.L.Error(err).Write()
+			}
 			os.Exit(0)
 		}()
 	}
@@ -116,7 +121,9 @@ func printSnapshots(snapshots []bkf2pxar.Snapshot) {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  #\tSOURCE\tMACHINE\tVOLUME\tBACKUP TIME\tOWNER") //nolint:errcheck
+	if _, err := fmt.Fprintln(w, "  #\tSOURCE\tMACHINE\tVOLUME\tBACKUP TIME\tOWNER"); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	for _, s := range snapshots {
 		vol := s.VolumeName
@@ -127,10 +134,14 @@ func printSnapshots(snapshots []bkf2pxar.Snapshot) {
 		if !s.BackupTime.IsZero() {
 			timeStr = s.BackupTime.Format("2006-01-02 15:04 MST")
 		}
-		fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n", //nolint:errcheck
-			s.Index, s.SourceFile, s.MachineName, vol, timeStr, s.Owner)
+		if _, err := fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n",
+			s.Index, s.SourceFile, s.MachineName, vol, timeStr, s.Owner); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
-	_ = w.Flush()
+	if err := w.Flush(); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	for _, s := range snapshots {
 		if s.Truncated {

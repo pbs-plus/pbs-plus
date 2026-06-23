@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const (
@@ -47,7 +49,11 @@ func cmdSign(artifact, sigOut string) {
 	if err != nil {
 		fatalf("open artifact: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			syslog.L.Error(err).Write()
+		}
+	}()
 
 	data, err := io.ReadAll(f)
 	if err != nil {
