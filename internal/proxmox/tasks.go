@@ -102,6 +102,9 @@ func CleanupPBSPlusActiveTasks() error {
 
 	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("could not open file: %w", err)
 	}
 	defer func() {
