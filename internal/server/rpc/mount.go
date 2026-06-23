@@ -359,7 +359,7 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 }
 
 func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
-	if err := os.RemoveAll(socketPath); err != nil {
+	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 	listener, err := net.Listen("unix", socketPath)
@@ -410,7 +410,7 @@ func RunRPCServer(ctx context.Context, socketPath string, storeInstance *store.S
 			WithMessage("rpc mount server shutting down due to context cancellation").
 			WithField("socket", socketPath).
 			Write()
-		if err := os.Remove(socketPath); err != nil {
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 	case <-watcher:

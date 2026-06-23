@@ -138,7 +138,7 @@ func processPBSProxyLogs(
 			if err := tmpFile.Close(); err != nil {
 				syslog.L.Error(err).Write()
 			}
-			if err := os.Remove(tmpName); err != nil {
+			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 		}

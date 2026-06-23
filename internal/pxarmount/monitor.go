@@ -28,7 +28,7 @@ var globalCommitHub *commitHub
 
 func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	monPath := mainSocketPath + ".monitor"
-	if err := os.Remove(monPath); err != nil {
+	if err := os.Remove(monPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 
@@ -241,7 +241,7 @@ func (h *commitHub) close() {
 		h.logFile = nil
 	}
 	h.mu.Unlock()
-	if err := os.Remove(h.sockPath); err != nil {
+	if err := os.Remove(h.sockPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 }

@@ -236,7 +236,7 @@ func writeFileAtomic(dst string, data []byte, perm os.FileMode) error {
 			syslog.L.Error(err).Write()
 		}
 		if !success {
-			if err := os.Remove(tmpName); err != nil {
+			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 		}

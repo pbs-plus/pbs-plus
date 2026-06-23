@@ -128,7 +128,7 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 func (t *QueuedTask) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := os.Remove(t.path); err != nil {
+	if err := os.Remove(t.path); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 	t.closed.Store(true)

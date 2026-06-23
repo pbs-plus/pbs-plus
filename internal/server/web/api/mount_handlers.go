@@ -176,7 +176,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 				syslog.L.Error(err).Write()
 			}
 		}
-		if err := os.RemoveAll(mountPoint); err != nil {
+		if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 
@@ -201,7 +201,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		if err := backend.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
 			WriteErrorResponse(w, fmt.Errorf("start mount service: %w", err))
-			if err := os.RemoveAll(mountPoint); err != nil {
+			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 			return
@@ -220,7 +220,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err := backend.StopMountService(r.Context(), serviceName); err != nil {
 				syslog.L.Error(err).Write()
 			}
-			if err := os.RemoveAll(mountPoint); err != nil {
+			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 			WriteErrorResponse(w, errors.New("mount failed"))
@@ -311,7 +311,7 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		if err := os.RemoveAll(mountPoint); err != nil {
+		if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 
@@ -409,7 +409,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		if err := os.RemoveAll(base); err != nil {
+		if err := os.RemoveAll(base); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 

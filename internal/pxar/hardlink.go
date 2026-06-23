@@ -89,7 +89,7 @@ func finalIndex(s []string) int {
 
 func linkFile(old, new string) error {
 	if _, err := os.Lstat(new); err == nil {
-		if err := os.Remove(new); err != nil {
+		if err := os.Remove(new); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 	}

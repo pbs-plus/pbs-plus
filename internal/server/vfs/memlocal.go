@@ -68,7 +68,7 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	}
 
 	if _, statErr := os.Stat(cfg.SocketPath); statErr == nil {
-		if err := os.Remove(cfg.SocketPath); err != nil {
+		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 	}
@@ -132,7 +132,7 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 		if err := cmd.Wait(); err != nil {
 			syslog.L.Error(err).Write()
 		}
-		if err := os.Remove(cfg.SocketPath); err != nil {
+		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return nil, fmt.Errorf("memcached did not become ready: %w", err)
@@ -150,7 +150,7 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 		if err := cmd.Wait(); err != nil {
 			syslog.L.Error(err).Write()
 		}
-		if err := os.Remove(cfg.SocketPath); err != nil {
+		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return nil

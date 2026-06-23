@@ -33,7 +33,7 @@ func unmountPath(path string) {
 			return
 		}
 	}
-	if err := os.RemoveAll(path); err != nil {
+	if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 }

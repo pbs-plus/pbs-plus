@@ -195,7 +195,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			if err := os.Remove(currentPath); err != nil {
+			if err := os.Remove(currentPath); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 

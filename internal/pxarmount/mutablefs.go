@@ -820,7 +820,7 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		if err := os.Remove(abs); err != nil {
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return fuse.EIO
@@ -871,7 +871,7 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
-		if err := os.Remove(abs); err != nil {
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return fuse.EIO
@@ -923,7 +923,7 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	// Atomically create node + edge + whiteout.
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, linkName, node, hasPxar)
 	if err != nil {
-		if err := os.Remove(abs); err != nil {
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return fuse.EIO

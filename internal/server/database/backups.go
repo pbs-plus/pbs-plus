@@ -432,7 +432,7 @@ func (database *Database) linkBackupLog(backupID, upid string) {
 		return
 	}
 
-	if err := os.Remove(backupLogPath); err != nil {
+	if err := os.Remove(backupLogPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 
@@ -659,7 +659,7 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 	}
 
 	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, id)
-	if err := os.RemoveAll(backupLogsPath); err != nil {
+	if err := os.RemoveAll(backupLogsPath); err != nil && !os.IsNotExist(err) {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteBackup: failed removing backup logs: %w", err)).
 				WithField("id", id).

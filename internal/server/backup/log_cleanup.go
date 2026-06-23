@@ -86,13 +86,13 @@ func processFile(path string, removedCount *int64) error {
 			removedInFile++
 		} else {
 			if _, err := writer.Write(line); err != nil {
-				if err := os.Remove(tmpName); err != nil {
+				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 					syslog.L.Error(err).Write()
 				}
 				return fmt.Errorf("writing to temp file for %s: %w", path, err)
 			}
 			if err := writer.WriteByte('\n'); err != nil {
-				if err := os.Remove(tmpName); err != nil {
+				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 					syslog.L.Error(err).Write()
 				}
 				return fmt.Errorf("writing newline for %s: %w", path, err)
@@ -100,13 +100,13 @@ func processFile(path string, removedCount *int64) error {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		if err := os.Remove(tmpName); err != nil {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return fmt.Errorf("scanning file %s: %w", path, err)
 	}
 	if err := writer.Flush(); err != nil {
-		if err := os.Remove(tmpName); err != nil {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return fmt.Errorf("flushing writer for %s: %w", path, err)
@@ -116,7 +116,7 @@ func processFile(path string, removedCount *int64) error {
 		if err := tmpFile.Close(); err != nil {
 			syslog.L.Error(err).Write()
 		}
-		if err := os.Remove(tmpName); err != nil {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return nil

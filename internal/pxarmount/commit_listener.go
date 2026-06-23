@@ -75,7 +75,7 @@ func ResolveDatastoreName(pbsStore string) string {
 }
 
 func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) {
-	if err := os.Remove(sockPath); err != nil {
+	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 	l, err := net.Listen("unix", sockPath)

@@ -38,7 +38,7 @@ var (
 )
 
 func init() {
-	if err := os.RemoveAll(getCacheDir()); err != nil {
+	if err := os.RemoveAll(getCacheDir()); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 }
@@ -97,7 +97,7 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	}
 
 	if err != nil {
-		if err := os.Remove(tmpFile.Name()); err != nil {
+		if err := os.Remove(tmpFile.Name()); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 		return

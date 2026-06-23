@@ -47,7 +47,7 @@ func Entry() {
 
 	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-%s-%s", *cmdMode, *id))
 	expectedToken, err := os.ReadFile(tokenFile)
-	if err := os.Remove(tokenFile); err != nil {
+	if err := os.Remove(tokenFile); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 	if err != nil {

@@ -134,7 +134,7 @@ func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error
 }
 
 func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
-	if err := os.RemoveAll(socketPath); err != nil {
+	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 	listener, err := net.Listen("unix", socketPath)
@@ -185,7 +185,7 @@ func RunJobRPCServer(ctx context.Context, socketPath string, manager *jobs.Manag
 			WithMessage("rpc mount server shutting down due to context cancellation").
 			WithField("socket", socketPath).
 			Write()
-		if err := os.Remove(socketPath); err != nil {
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 	case <-watcher:

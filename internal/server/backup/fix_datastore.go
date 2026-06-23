@@ -215,7 +215,7 @@ func CleanUnfinishedSnapshot(backup database.Backup, backupID string) error {
 
 	for _, e := range entries {
 		if _, ok := tmpSuffixes[e.Name()]; ok {
-			if err := os.RemoveAll(snapshotPath); err != nil {
+			if err := os.RemoveAll(snapshotPath); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 			break

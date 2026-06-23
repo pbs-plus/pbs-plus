@@ -353,7 +353,7 @@ func (database *Database) linkRestoreLog(restoreID, upid string) {
 		return
 	}
 
-	if err := os.Remove(restoreLogPath); err != nil {
+	if err := os.Remove(restoreLogPath); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
 	}
 
@@ -518,7 +518,7 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 	}
 
 	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, id)
-	if err := os.RemoveAll(restoreLogsPath); err != nil {
+	if err := os.RemoveAll(restoreLogsPath); err != nil && !os.IsNotExist(err) {
 		if !os.IsNotExist(err) {
 			syslog.L.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err)).
 				WithField("id", id).

@@ -43,7 +43,7 @@ func RunShellScript(
 		syslog.L.Error(err).Write()
 	}
 	defer func() {
-		if err := os.Remove(envFilePath); err != nil {
+		if err := os.Remove(envFilePath); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 	}()

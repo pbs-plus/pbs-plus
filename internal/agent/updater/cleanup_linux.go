@@ -19,7 +19,7 @@ func cleanUp() error {
 	for _, p := range legacyPaths {
 		if _, err := os.Stat(p); err == nil {
 			foundLegacy = true
-			if err := os.Remove(p); err != nil {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 			syslog.L.Info().WithField("path", p).WithMessage("removed legacy unit file").Write()

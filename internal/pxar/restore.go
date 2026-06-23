@@ -546,7 +546,7 @@ func restoreSymlink(ctx context.Context, st *restoreState, job restoreJob) error
 			}
 			return nil
 		}
-		if err := os.Remove(job.dest); err != nil {
+		if err := os.Remove(job.dest); err != nil && !os.IsNotExist(err) {
 			syslog.L.Error(err).Write()
 		}
 	}

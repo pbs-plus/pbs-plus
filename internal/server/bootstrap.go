@@ -160,7 +160,7 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 
 		queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
 		if err == nil {
-			if err := os.Remove(queueTaskPath); err != nil {
+			if err := os.Remove(queueTaskPath); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()
 			}
 		}
