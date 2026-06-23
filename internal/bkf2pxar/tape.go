@@ -21,8 +21,7 @@ import (
 // Any tape block written by PBS starts with these 8 bytes.
 var pbsBlockMagic = []byte{220, 189, 175, 202, 235, 160, 165, 40}
 
-// tapeReader is an mtf.DriveTape. The alias preserves the feeder/converter
-// signatures that hand a *tapeReader to mtf.NewReader and SetContinuation.
+// tapeReader is an mtf.DriveTape alias for feeder/converter signatures.
 type tapeReader = mtf.DriveTape
 
 // IsPBSTape opens dev read-only, reads the first block, and returns true if
@@ -41,7 +40,6 @@ func IsPBSTape(dev string) (bool, error) {
 
 	block, err := d.ReadBlock()
 	if err != nil {
-		// Empty/blank tape or read error  -  not PBS.
 		return false, nil
 	}
 
@@ -56,8 +54,7 @@ func openTapeReader(dev string) (*tapeReader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", dev, err)
 	}
-	// Required for stored MTF catalog PBAs (EOTM Last-ESET-PBA, SSET PBA) to
-	// resolve; st(4) calls logical addressing "highly advisable". Best-effort.
+	// Required for stored MTF catalog PBAs to resolve. Best-effort.
 	_ = d.SetLogicalAddressing()
 	if err := d.Rewind(); err != nil {
 		_ = d.Close()
@@ -75,8 +72,7 @@ func openTapeReader(dev string) (*tapeReader, error) {
 	return mtf.NewDriveTape(d), nil
 }
 
-// OpenTapeReader is the exported form of openTapeReader for callers outside
-// this package (e.g. the inventory engine).
+// OpenTapeReader is the exported form of openTapeReader.
 func OpenTapeReader(dev string) (*tapeReader, error) {
 	return openTapeReader(dev)
 }

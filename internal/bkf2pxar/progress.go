@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// progress is the live migration counter. Its fields are atomic so a reporter
-// goroutine can read them concurrently with the single-threaded conversion
-// loop writing them in processEntry. It is the single source of truth for
-// files/dirs/bytes during a run; [Stats] is populated from it at the end.
+// progress is the live migration counter. Fields are atomic so the reporter
+// goroutine can read them concurrently with the conversion loop.
 type progress struct {
 	startTime time.Time
 	files     atomic.Int64
@@ -24,19 +22,14 @@ func newProgress() *progress {
 	return &progress{startTime: time.Now()}
 }
 
-// snapshot loads the current counters into a plain-int triple for Stats.
+// snapshot loads the current counters into a plain-int triple.
 func (p *progress) snapshot() (files, dirs int, bytes int64) {
 	return int(p.files.Load()), int(p.dirs.Load()), p.bytes.Load()
 }
 
 // report launches a goroutine that prints live throughput to w every interval
-// until the returned stop function is called. It is the native-rate counter:
-// it shows the actual sustained MB/s of the read pipeline (tape -> pxar -> PBS)
-// so a streaming run surfaces the drive's native speed.
-//
-// The instantaneous rate is measured over each interval; the average rate is
-// measured since start. Bytes are SI (1 MB = 1e6 B) to match tape native-rate
-// specifications (LTO-6 = 160 MB/s, LTO-8 = 360 MB/s compressed / native).
+// until the returned stop function is called. Bytes are SI (1 MB = 1e6 B) to
+// match tape native-rate specifications.
 func (p *progress) report(ctx context.Context, w io.Writer, interval time.Duration) (stop func()) {
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
@@ -60,9 +53,8 @@ func (p *progress) report(ctx context.Context, w io.Writer, interval time.Durati
 				}
 				lastBytes = cur
 				lastTime = now
-				// Suppress the line when nothing moved: the first interval(s)
-				// are spent rewinding, validating, and buffering the first
-				// file  -  printing 0.0 MB/s is misleading.
+				// Suppress the line when nothing moved (first intervals spend time
+				// rewinding/buffering — printing 0.0 MB/s is misleading).
 				if cur == 0 || inst == 0 {
 					continue
 				}
