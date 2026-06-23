@@ -44,8 +44,7 @@ type MutableFS struct {
 	mutableDir string
 
 	// Inode allocation for pxar-only entries.
-	nextIno uint64
-	inoMu   sync.Mutex
+	nextIno atomic.Uint64
 
 	// File handle management  -  lock-free via xsync.Map since every
 	// Read/Write/Flush/Fsync calls getFh. nextFh uses atomic for
@@ -97,8 +96,9 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		pathLookup:  xsync.NewMap[uint64, string](),
 		ensureLocks: xsync.NewMap[string, *sync.Mutex](),
 		dirtyMeta:   xsync.NewMap[uint64, pendingMeta](),
-		nextIno:     2, // 1 is RootInode
+		nextIno:     atomic.Uint64{},
 	}
+	fs.nextIno.Store(1)
 	fs.freezeCond = sync.NewCond(&fs.freezeMu)
 	return fs
 }
@@ -1923,10 +1923,7 @@ func (fs *MutableFS) ensureNode(re *ResolvedEntry) {
 }
 
 func (fs *MutableFS) allocInode(isDir bool) uint64 {
-	fs.inoMu.Lock()
-	ino := fs.nextIno
-	fs.nextIno++
-	fs.inoMu.Unlock()
+	ino := fs.nextIno.Add(1)
 	if !isDir {
 		ino |= NonDirBit
 	}

@@ -2,12 +2,14 @@ package pxarmount
 
 import (
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"net"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // on the monitor socket and appends them to a log file for later retrieval.
@@ -17,7 +19,7 @@ type commitHub struct {
 	logPath   string
 	listener  net.Listener
 	logFile   *os.File
-	watchers  map[net.Conn]struct{}
+	watchers  *safemap.Map[net.Conn, struct{}]
 	jobID     atomic.Int64
 	ended     atomic.Bool
 	lastLines []string
@@ -49,7 +51,7 @@ func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 		sockPath: monPath,
 		logPath:  logPath,
 		listener: l,
-		watchers: make(map[net.Conn]struct{}),
+		watchers: safemap.New[net.Conn, struct{}](),
 		verbose:  verbose,
 	}
 
@@ -84,40 +86,31 @@ func (h *commitHub) acceptLoop() {
 		if err != nil {
 			return
 		}
+
 		h.mu.Lock()
+		jobRunning := h.jobID.Load() > 0
+		jobEnded := h.ended.Load()
+		if jobRunning && !jobEnded {
+			h.watchers.Set(conn, struct{}{})
+		}
+		catchUp := h.lastLines
+		h.mu.Unlock()
 
-		if h.jobID.Load() > 0 {
-			if h.ended.Load() {
-				// Commit already finished  -  replay all lines and close.
-				for _, line := range h.lastLines {
-					if _, err := fmt.Fprintln(conn, line); err != nil {
-						syslog.L.Error(err).Write()
-					}
-				}
-				h.mu.Unlock()
-				if err := conn.Close(); err != nil {
-					syslog.L.Error(err).Write()
-				}
-				continue
-			}
-
-			// Add to watchers FIRST so that concurrent broadcasts
-			// This eliminates the race where lines broadcast between
-			h.watchers[conn] = struct{}{}
-
-			// to it directly (duplicate lines are harmless  -  the
-			// display deduplicates by phase transitions).
-			for _, line := range h.lastLines {
+		if jobRunning {
+			for _, line := range catchUp {
 				if _, err := fmt.Fprintln(conn, line); err != nil {
 					syslog.L.Error(err).Write()
 				}
 			}
-			h.mu.Unlock()
+			if jobEnded {
+				if err := conn.Close(); err != nil {
+					syslog.L.Error(err).Write()
+				}
+			}
 		} else {
 			if _, err := fmt.Fprintln(conn, "IDLE"); err != nil {
 				syslog.L.Error(err).Write()
 			}
-			h.mu.Unlock()
 			if err := conn.Close(); err != nil {
 				syslog.L.Error(err).Write()
 			}
@@ -151,25 +144,26 @@ func (h *commitHub) broadcast(line string) {
 		}
 	}
 
-	// Detect terminal lines.
 	isDone := len(line) >= 3 && (line[:3] == "OK " || line[:3] == "ERR ")
 	if isDone {
 		h.ended.Store(true)
 	}
 
-	for conn := range h.watchers {
+	h.watchers.ForEach(func(conn net.Conn, _ struct{}) bool {
 		if _, err := fmt.Fprintln(conn, line); err != nil {
+			syslog.L.Error(err).Write()
 			if err := conn.Close(); err != nil {
 				syslog.L.Error(err).Write()
 			}
-			delete(h.watchers, conn)
+			h.watchers.Del(conn)
 		} else if isDone {
 			if err := conn.Close(); err != nil {
 				syslog.L.Error(err).Write()
 			}
-			delete(h.watchers, conn)
+			h.watchers.Del(conn)
 		}
-	}
+		return true
+	})
 }
 
 func (h *commitHub) startJob() int64 {

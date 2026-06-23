@@ -1,10 +1,21 @@
 package pxarmount
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pxar/backupproxy"
+	"github.com/pbs-plus/pxar/buzhash"
+	"github.com/pbs-plus/pxar/datastore"
+	"github.com/pbs-plus/pxar/format"
+	"github.com/pbs-plus/pxar/transfer"
 )
 
 // TestRegisterSlimNodeRefCount verifies that a freshly registered node
@@ -569,5 +580,89 @@ func TestCommitResolvedTimesDoesNotResurrectForgottenNode(t *testing.T) {
 
 	if _, ok := fs.nodes[RootInode]; ok {
 		t.Fatal("commitResolvedTimes resurrected a forgotten node")
+	}
+}
+
+func buildBigRootArchive(t *testing.T, n int) *PxarFS {
+	t.Helper()
+	dir := t.TempDir()
+	config, _ := buzhash.NewConfig(4096)
+	ls, err := backupproxy.NewLocalStore(dir, config, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := ls.StartSession(context.Background(), backupproxy.BackupConfig{BackupType: datastore.BackupVM, BackupID: "big"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := transfer.NewSessionWriter(context.Background(), sess, "r.mpxar.didx", "r.ppxar.didx")
+	rootMeta := pxar.DirMetadata(0o755).Build()
+	if err := w.Begin(&rootMeta, transfer.Options{Format: format.FormatVersion2}); err != nil {
+		t.Fatal(err)
+	}
+	fm := pxar.FileMetadata(0o644).Build()
+	for i := range n {
+		if err := w.WriteEntry(&pxar.Entry{
+			Path:     fmt.Sprintf("f_%05d.png", i),
+			Kind:     pxar.KindFile,
+			Metadata: fm,
+			FileSize: 4,
+		}, []byte("data")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Finish(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sess.Finish(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	metaData, err := os.ReadFile(filepath.Join(dir, "r.mpxar.didx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadData, err := os.ReadFile(filepath.Join(dir, "r.ppxar.didx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := datastore.NewChunkStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := datastore.NewChunkStoreSource(store)
+	reader, err := transfer.NewSplitReader(metaData, payloadData, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs, err := NewPxarFS(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fs
+}
+
+func TestReadDirPlusLargeDirNotQuadratic(t *testing.T) {
+	const n = 2000
+	fs := buildBigRootArchive(t, n)
+
+	singleStart := time.Now()
+	single := fuse.NewDirEntryList(make([]byte, 1<<16), 0)
+	if status := fs.ReadDirPlus(nil, &fuse.ReadIn{InHeader: fuse.InHeader{NodeId: RootInode}}, single); status != fuse.OK {
+		t.Fatalf("ReadDirPlus single: %v", status)
+	}
+	singleDur := time.Since(singleStart)
+
+	const pageBuf = 1024
+	pageStart := time.Now()
+	for off := range uint64(n + 4) {
+		dl := fuse.NewDirEntryList(make([]byte, pageBuf), off)
+		fs.ReadDirPlus(nil, &fuse.ReadIn{InHeader: fuse.InHeader{NodeId: RootInode}, Offset: off}, dl)
+	}
+	pageDur := time.Since(pageStart)
+
+	ratio := float64(pageDur) / float64(singleDur)
+	t.Logf("n=%d single=%s paged=%s ratio=%.1f", n, singleDur, pageDur, ratio)
+	if ratio > 50 {
+		t.Fatalf("paged readdir %.0fx slower than a single readdir; directory enumeration is not cached across pages (ratio=%.1f)", ratio, ratio)
 	}
 }

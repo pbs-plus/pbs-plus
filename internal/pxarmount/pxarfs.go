@@ -13,23 +13,27 @@ import (
 	"github.com/pbs-plus/pxar/accessor"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
+
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
 type PxarFS struct {
 	fuse.RawFileSystem
-	reader   *transfer.SplitReader
-	nodes    map[uint64]node
-	mu       sync.RWMutex
-	readerMu sync.RWMutex
-	readerAt io.ReaderAt
+	reader     *transfer.SplitReader
+	nodes      map[uint64]node
+	dirEntries *safemap.Map[uint64, []dirEntrySlim]
+	mu         sync.RWMutex
+	readerMu   sync.RWMutex
+	readerAt   io.ReaderAt
 }
 
 const maxCachedNodes = 1 << 20
 
 func NewPxarFS(reader *transfer.SplitReader) (*PxarFS, error) {
 	fs := &PxarFS{
-		reader: reader,
-		nodes:  make(map[uint64]node),
+		reader:     reader,
+		nodes:      make(map[uint64]node),
+		dirEntries: safemap.New[uint64, []dirEntrySlim](),
 	}
 	if reader != nil {
 		root, err := reader.ReadRoot()
@@ -435,13 +439,25 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		return nil, syscall.ENOTDIR
 	}
 
+	if entries, ok := fs.dirEntries.Get(inode); ok {
+		return entries, nil
+	}
+
 	if fs.reader == nil {
 		return nil, nil
 	}
 
-	entries := make([]dirEntrySlim, 0, 64)
-
 	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
+	if fs.reader == nil {
+		return nil, nil
+	}
+	if entries, ok := fs.dirEntries.Get(inode); ok {
+		return entries, nil
+	}
+
+	entries := make([]dirEntrySlim, 0, 64)
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
 		entries = append(entries, dirEntrySlim{
 			name:          e.FileName(),
@@ -461,11 +477,11 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		})
 		return nil
 	})
-	fs.readerMu.RUnlock()
 	if listErr != nil {
 		return nil, listErr
 	}
 
+	fs.dirEntries.Set(inode, entries)
 	return entries, nil
 }
 
@@ -675,7 +691,10 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*pxar.Entry) ([]
 func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	fs.readerMu.Lock()
+	defer fs.readerMu.Unlock()
 
+	fs.dirEntries.Clear()
 	fs.reader = reader
 	fs.nodes = make(map[uint64]node)
 
