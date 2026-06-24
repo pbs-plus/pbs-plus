@@ -102,6 +102,69 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       }).show();
     },
 
+    onShowFingerprint: function () {
+      let win = Ext.create("Ext.window.Window", {
+        modal: true,
+        width: 600,
+        title: gettext("Server CA Fingerprint"),
+        layout: "form",
+        bodyPadding: "10 0",
+        items: [
+          {
+            xtype: "displayfield",
+            value: gettext(
+              "SHA-256 fingerprint of the server CA certificate. " +
+              "Provide this to agents during bootstrap to pin the server identity " +
+              "and prevent MITM attacks.",
+            ),
+          },
+          {
+            xtype: "textfield",
+            itemId: "fingerprint-field",
+            value: gettext("Loading..."),
+            editable: false,
+            readOnly: true,
+          },
+        ],
+        buttons: [
+          {
+            xtype: "button",
+            iconCls: "fa fa-clipboard",
+            handler: async function () {
+              let field = win.down("#fingerprint-field");
+              let val = field.getValue();
+              if (val && val !== gettext("Loading...") && val !== gettext("Failed to load CA fingerprint")) {
+                await navigator.clipboard.writeText(val);
+              }
+            },
+            text: gettext("Copy"),
+          },
+          {
+            text: gettext("Ok"),
+            handler: function () {
+              win.close();
+            },
+          },
+        ],
+      });
+
+      win.show();
+
+      fetch(pbsPlusBaseUrl + "/api2/json/plus/ca-fingerprint", {
+        credentials: "include",
+      })
+        .then(function (resp) {
+          if (!resp.ok) throw new Error(resp.statusText);
+          return resp.text();
+        })
+        .then(function (fingerprint) {
+          win.down("#fingerprint-field").setValue(fingerprint.trim());
+        })
+        .catch(function () {
+          win.down("#fingerprint-field").setValue(gettext("Failed to load CA fingerprint"));
+        });
+    },
+
     revokeTokens: function () {
       const me = this;
       const view = me.getView();
@@ -201,6 +264,13 @@ Ext.define("PBS.D2DManagement.TokenPanel", {
       handler: "onDeploy",
       disabled: true,
     },
+    {
+      text: gettext("Show Fingerprint"),
+      xtype: "proxmoxButton",
+      handler: "onShowFingerprint",
+      selModel: false,
+    },
+    "-",
     {
       xtype: "proxmoxButton",
       text: gettext("Revoke Token"),
