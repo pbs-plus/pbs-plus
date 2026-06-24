@@ -75,6 +75,8 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     ldflags:
       - -s -w -X 'main.Version=v{{.Version}}'
     flags:
@@ -121,6 +123,8 @@ builds:
     binary: pbs-plus-operator
     env:
       - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     goos:
       - linux
     goarch:
@@ -196,7 +200,7 @@ archives:
 
 checksum:
   name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
-  algorithm: md5
+  algorithm: sha256
   split: true
 
 nfpms:
