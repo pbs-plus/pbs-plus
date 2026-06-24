@@ -41,12 +41,18 @@ func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile 
 	if err != nil {
 		return err
 	}
-	currentTLSCert.Store(&cert)
 
 	activeCA, err := os.ReadFile(caFile)
 	if err != nil {
 		return err
 	}
+
+	caBlock, _ := pem.Decode(activeCA)
+	if caBlock != nil {
+		cert.Certificate = append(cert.Certificate, caBlock.Bytes)
+	}
+
+	currentTLSCert.Store(&cert)
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(activeCA) {

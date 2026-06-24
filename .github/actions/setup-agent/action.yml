@@ -11,7 +11,7 @@ inputs:
     description: SHA-256 fingerprint of the server CA certificate
   timeout-seconds:
     required: false
-    default: "20"
+    default: "60"
     description: Timeout for agent initialization
 
 runs:

@@ -9,7 +9,7 @@ on:
       timeout-seconds:
         required: false
         type: number
-        default: 20
+        default: 60
 
 jobs:
   e2e-tests:

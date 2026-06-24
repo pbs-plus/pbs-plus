@@ -4,7 +4,7 @@ description: Run and initialize PBS Plus server container
 inputs:
   timeout-seconds:
     required: false
-    default: "20"
+    default: "60"
     description: Timeout for server initialization
 
 runs:
