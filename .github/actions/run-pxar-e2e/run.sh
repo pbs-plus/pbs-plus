@@ -55,11 +55,21 @@ mount_init() {
 		--passthrough "$pass" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
-	for i in $(seq 1 10); do
-		mountpoint -q "$mount" && break
+	local pid=$!
+	for i in $(seq 1 15); do
+		if ! kill -0 "$pid" 2>/dev/null; then
+			echo "FAILED: pxar-mount init exited early (pid $pid)"
+			cat /tmp/pxar-mount-test.log
+			exit 1
+		fi
+		timeout 2 mountpoint -q "$mount" && break
 		sleep 1
 	done
-	mountpoint -q "$mount" || { echo "FAILED to mount $mount"; cat /tmp/pxar-mount-test.log; exit 1; }
+	if ! timeout 2 mountpoint -q "$mount"; then
+		echo "FAILED to mount $mount"
+		cat /tmp/pxar-mount-test.log
+		exit 1
+	fi
 }
 
 mount_archive() {
@@ -75,7 +85,21 @@ mount_archive() {
 		--socket "$socket" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
-	sleep 2
+	local pid=$!
+	for i in $(seq 1 15); do
+		if ! kill -0 "$pid" 2>/dev/null; then
+			echo "FAILED: pxar-mount exited early (pid $pid)"
+			cat /tmp/pxar-mount-test.log
+			exit 1
+		fi
+		timeout 2 mountpoint -q "$mount" && break
+		sleep 1
+	done
+	if ! timeout 2 mountpoint -q "$mount"; then
+		echo "FAILED to mount $mount"
+		cat /tmp/pxar-mount-test.log
+		exit 1
+	fi
 }
 
 do_commit() {

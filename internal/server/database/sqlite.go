@@ -131,6 +131,17 @@ func (t *Transaction) release() {
 	}
 }
 
+func (d *Database) Close() error {
+	var firstErr error
+	if err := d.writeDb.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := d.readDb.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
 func (d *Database) NewTransaction() (*Transaction, error) {
 	d.writeMu.Lock()
 
