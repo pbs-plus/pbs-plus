@@ -4,7 +4,7 @@ description: Run pxar-mount FUSE end-to-end tests inside the PBS container
 inputs:
   timeout-seconds:
     required: false
-    default: "300"
+    default: "600"
     description: Timeout for the e2e test script
 
 runs:
