@@ -103,7 +103,7 @@ mount_archive() {
 }
 
 do_commit() {
-	timeout 30 "$PXAR_MOUNT_BIN" commit --socket "$1" --backup-id "$2" 2>&1
+	timeout 120 "$PXAR_MOUNT_BIN" commit --socket "$1" --backup-id "$2" 2>&1
 }
 
 latest_snapshot() {

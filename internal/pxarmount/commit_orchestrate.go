@@ -42,6 +42,10 @@ type CommitProgress interface {
 var _ CommitProgress = (*ProgressReporter)(nil)
 
 func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) error {
+	return CommitSnapshotWithContext(context.Background(), mfs, req, prog)
+}
+
+func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitRequest, prog CommitProgress) error {
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
@@ -144,7 +148,6 @@ func CommitSnapshot(mfs *MutableFS, req *CommitRequest, prog CommitProgress) err
 		return cfg
 	}(), false)
 
-	ctx := context.Background()
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
 		BackupType:     bt,
 		BackupID:       backupID,
