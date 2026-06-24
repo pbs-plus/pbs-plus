@@ -86,8 +86,12 @@ func (e *LogEntry) generateKey() [32]byte {
 	}
 	buf = append(buf, '|')
 	if len(e.Fields) > 0 {
-		fieldsJSON, _ := json.Marshal(e.Fields)
-		buf = append(buf, fieldsJSON...)
+		fieldsJSON, err := json.Marshal(e.Fields)
+		if err != nil {
+			buf = append(buf, `{"error":"marshal failed"}`...)
+		} else {
+			buf = append(buf, fieldsJSON...)
+		}
 	}
 	return sha256.Sum256(buf)
 }

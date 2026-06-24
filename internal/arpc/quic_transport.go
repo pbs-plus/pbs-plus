@@ -49,10 +49,16 @@ type QuicPipe struct {
 
 func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 	ctx, cancel := context.WithCancel(ctx)
-	enc, _ := cbor.EncOptions{}.EncMode()
+	enc, err := cbor.EncOptions{}.EncMode()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("arpc: init cbor encoder").Write()
+	}
 	dec, err := cbor.DecOptions{MaxArrayElements: math.MaxInt32}.DecMode()
 	if err != nil {
-		dec, _ = cbor.DecOptions{}.DecMode()
+		dec, err = cbor.DecOptions{}.DecMode()
+		if err != nil {
+			syslog.L.Error(err).WithMessage("arpc: init cbor decoder").Write()
+		}
 	}
 	return &QuicPipe{
 		ctx:        ctx,
@@ -92,10 +98,16 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 	hdrCopy.Set("ARPCVersion", "2")
 
 	pipeCtx, pipeCancel := context.WithCancel(ctx)
-	enc, _ := cbor.EncOptions{}.EncMode()
+	enc, err := cbor.EncOptions{}.EncMode()
+	if err != nil {
+		syslog.L.Error(err).WithMessage("arpc: init cbor encoder").Write()
+	}
 	dec, err := cbor.DecOptions{MaxArrayElements: math.MaxInt32}.DecMode()
 	if err != nil {
-		dec, _ = cbor.DecOptions{}.DecMode()
+		dec, err = cbor.DecOptions{}.DecMode()
+		if err != nil {
+			syslog.L.Error(err).WithMessage("arpc: init cbor decoder").Write()
+		}
 	}
 
 	pipe := &QuicPipe{
@@ -408,7 +420,9 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 			}()
 
 			qPipe.SetRouter(router)
-			_ = qPipe.Serve()
+			if err := qPipe.Serve(); err != nil {
+				syslog.L.Error(err).WithMessage("arpc: quic pipe serve failed").Write()
+			}
 		}(conn)
 	}
 }

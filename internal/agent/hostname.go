@@ -12,12 +12,15 @@ import (
 
 func hashHostname(host string) uint32 {
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(host))
+	h.Write([]byte(host))
 	return h.Sum32()
 }
 
 func randomHostname() string {
-	n, _ := crypto.SecureRandomInt(1000)
+	n, err := crypto.SecureRandomInt(1000)
+	if err != nil {
+		n = 0
+	}
 	return time.Now().Format("20060102150405") + strconv.Itoa(int(n))
 }
 

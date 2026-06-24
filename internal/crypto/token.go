@@ -65,7 +65,7 @@ func (m *TokenManager) GenerateToken(expiration time.Duration) (string, error) {
 	}
 
 	mac := hmac.New(sha256.New, m.secret)
-	fmt.Fprintf(mac, "%d:%d:%x", issuedAt, expiresAt, nonce)
+	mac.Write(fmt.Appendf(nil, "%d:%d:%x", issuedAt, expiresAt, nonce))
 	sig := mac.Sum(nil)
 
 	token := tokenV2Prefix + fmt.Sprintf("%d:%s:%s", expiresAt, base64.RawURLEncoding.EncodeToString(nonce), base64.RawURLEncoding.EncodeToString(sig))
@@ -102,7 +102,7 @@ func (m *TokenManager) ValidateToken(tokenString string) error {
 	}
 
 	mac := hmac.New(sha256.New, m.secret)
-	fmt.Fprintf(mac, "%d:%d:%x", time.Now().Unix(), expiresAt, nonce)
+	mac.Write(fmt.Appendf(nil, "%d:%d:%x", time.Now().Unix(), expiresAt, nonce))
 	expectedSig := mac.Sum(nil)
 
 	if !hmac.Equal(sig, expectedSig) {

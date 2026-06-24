@@ -169,7 +169,9 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 			pipe.SetRouter(router)
 
-			_ = pipe.Serve()
+			if err := pipe.Serve(); err != nil {
+				syslog.L.Error(err).WithMessage("arpc: pipe serve failed").Write()
+			}
 		}(conn)
 	}
 }
