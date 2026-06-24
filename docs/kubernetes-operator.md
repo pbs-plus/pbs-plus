@@ -18,6 +18,12 @@ kubectl apply -f deploy/kubernetes/operator.yaml
 
 ### Create a bootstrap secret
 
+To obtain the CA fingerprint, click **Show Fingerprint** in the Agent Bootstrap panel, or run:
+
+```bash
+openssl x509 -in /etc/proxmox-backup/pbs-plus/ca.pem -noout -fingerprint -sha256 | cut -d= -f2
+```
+
 ```bash
 kubectl create secret generic pbs-plus-bootstrap \
   --from-literal=server-url='https://<pbs-server>:8008' \
