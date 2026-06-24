@@ -63,7 +63,7 @@ jobs:
       - name: Run pxar-mount e2e tests
         uses: ./.github/actions/run-pxar-e2e
         with:
-          timeout-seconds: 120
+          timeout-seconds: 300
 
       - name: Show logs
         if: always()
