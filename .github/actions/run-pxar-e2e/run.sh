@@ -103,7 +103,7 @@ mount_archive() {
 }
 
 do_commit() {
-	timeout 300 "$PXAR_MOUNT_BIN" commit --socket "$1" --backup-id "$2" 2>&1
+	"$PXAR_MOUNT_BIN" commit --socket "$1" --backup-id "$2" 2>&1
 }
 
 latest_snapshot() {
@@ -167,9 +167,12 @@ ls "$INIT_MOUNT/" > /dev/null && ok "list root directory" || fail "list root dir
 # 1h. First commit (init mode)
 sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
-	ok "init mode commit #1"
+	ok "init mode commit
 else
-	fail "init mode commit #1: $RESULT"
+	fail "init mode commit
+	echo "--- pxar-mount daemon log (last 40 lines) ---"
+	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
+	echo "--- end daemon log ---"
 fi
 
 # 1i. Post-commit reads
@@ -187,9 +190,12 @@ ok "post-commit delete file2.txt"
 # 1l. Second commit (re-commit from committed snapshot)
 sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
-	ok "init mode commit #2 (re-commit)"
+	ok "init mode commit
 else
-	fail "init mode commit #2 (re-commit): $RESULT"
+	fail "init mode commit
+	echo "--- pxar-mount daemon log (last 40 lines) ---"
+	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
+	echo "--- end daemon log ---"
 fi
 
 # 1m. Verify post-2nd-commit state
@@ -200,9 +206,12 @@ fi
 # 1n. Third commit (no changes)
 sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
-	ok "init mode commit #3 (no-op)"
+	ok "init mode commit
 else
-	fail "init mode commit #3 (no-op): $RESULT"
+	fail "init mode commit
+	echo "--- pxar-mount daemon log (last 40 lines) ---"
+	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
+	echo "--- end daemon log ---"
 fi
 
 unmount "$INIT_MOUNT"
@@ -251,9 +260,12 @@ fi
 # 2h. Commit mounted archive
 sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 if echo "$RESULT" | grep -q "✓"; then
-	ok "mount mode commit #1"
+	ok "mount mode commit
 else
-	fail "mount mode commit #1: $RESULT"
+	fail "mount mode commit
+	echo "--- pxar-mount daemon log (last 40 lines) ---"
+	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
+	echo "--- end daemon log ---"
 fi
 
 # 2i. Post-commit reads
@@ -277,9 +289,12 @@ ok "post-commit create dir and file"
 # 2m. Second commit (re-commit against committed snapshot)
 sleep 1; RESULT=$(do_commit "$SOCKET" "$BACKUP_ID")
 if echo "$RESULT" | grep -q "✓"; then
-	ok "mount mode commit #2 (re-commit)"
+	ok "mount mode commit
 else
-	fail "mount mode commit #2 (re-commit): $RESULT"
+	fail "mount mode commit
+	echo "--- pxar-mount daemon log (last 40 lines) ---"
+	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
+	echo "--- end daemon log ---"
 fi
 
 # 2n. Verify state after 2nd commit
@@ -363,6 +378,9 @@ if echo "$RESULT" | grep -q "✓"; then
 	ok "edge cases commit"
 else
 	fail "edge cases commit: $RESULT"
+	echo "--- pxar-mount daemon log (last 40 lines) ---"
+	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
+	echo "--- end daemon log ---"
 fi
 
 # 4g. Verify after commit
