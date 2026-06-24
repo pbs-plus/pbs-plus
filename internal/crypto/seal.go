@@ -91,9 +91,13 @@ func Unseal(ciphertext string) (string, error) {
 		return pt, nil
 	}
 
+	if !NaclKeyExists() {
+		return "", fmt.Errorf("crypto: decrypt failed: %w", err)
+	}
+
 	naclPub, naclPriv, naclErr := loadNaclKeys()
 	if naclErr != nil {
-		return "", fmt.Errorf("crypto: aes decrypt failed: %w; nacl fallback unavailable: %v", err, naclErr)
+		return "", fmt.Errorf("crypto: aes decrypt failed: %w; nacl key load: %v", err, naclErr)
 	}
 
 	pt, naclDecryptErr := naclBoxDecrypt(ciphertext, naclPub, naclPriv)
@@ -101,14 +105,7 @@ func Unseal(ciphertext string) (string, error) {
 		return "", fmt.Errorf("crypto: aes decrypt: %w; nacl decrypt: %v", err, naclDecryptErr)
 	}
 
-	reencrypted, reencErr := EncryptWithKey(pt, aesKey)
-	if reencErr != nil {
-		syslog.L.Error(reencErr).WithMessage("crypto: failed to re-encrypt migrated secret").Write()
-		return pt, nil
-	}
-
-	_ = reencrypted
-	syslog.L.Info().WithMessage("crypto: migrated secret from nacl-box to aes-256-gcm").Write()
+	syslog.L.Warn().WithMessage("crypto: secret decrypted via legacy nacl-box fallback; run migration to re-encrypt with AES-256-GCM").Write()
 	return pt, nil
 }
 

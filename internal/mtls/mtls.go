@@ -193,6 +193,14 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, ne
 			cfg.ClientCAs = currentCAs
 			cfg.ClientAuth = clientAuth
 			cfg.NextProtos = nextProtos
+			cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+				for _, cert := range cs.PeerCertificates {
+					if err := crypto.VerifyCertSignatureFIPS(cert); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
 			return cfg, nil
 		},
 	}, nil

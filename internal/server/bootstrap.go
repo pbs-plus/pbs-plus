@@ -38,7 +38,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		if err != nil {
 			syslog.L.Error(err).Write()
 		} else {
-			if err := os.WriteFile(secKeyPath, []byte(key), 0640); err != nil {
+			if err := os.WriteFile(secKeyPath, []byte(key), 0o600); err != nil {
 				syslog.L.Error(err).Write()
 			}
 		}

@@ -68,7 +68,7 @@ func (m *TokenManager) GenerateToken(expiration time.Duration) (string, error) {
 	mac.Write(fmt.Appendf(nil, "%d:%d:%x", issuedAt, expiresAt, nonce))
 	sig := mac.Sum(nil)
 
-	token := tokenV2Prefix + fmt.Sprintf("%d:%s:%s", expiresAt, base64.RawURLEncoding.EncodeToString(nonce), base64.RawURLEncoding.EncodeToString(sig))
+	token := tokenV2Prefix + fmt.Sprintf("%d:%d:%s:%s", issuedAt, expiresAt, base64.RawURLEncoding.EncodeToString(nonce), base64.RawURLEncoding.EncodeToString(sig))
 	return token, nil
 }
 
@@ -77,6 +77,15 @@ func (m *TokenManager) ValidateToken(tokenString string) error {
 		return errors.New("crypto: unsupported token version")
 	}
 	rest := tokenString[len(tokenV2Prefix):]
+
+	issuedAtStr, rest, ok := splitFirstColon(rest)
+	if !ok {
+		return errors.New("crypto: invalid token format")
+	}
+	issuedAt, err := parseInt64(issuedAtStr)
+	if err != nil {
+		return fmt.Errorf("crypto: parse token issued-at: %w", err)
+	}
 
 	expiresAtStr, rest, ok := splitFirstColon(rest)
 	if !ok {
@@ -102,7 +111,7 @@ func (m *TokenManager) ValidateToken(tokenString string) error {
 	}
 
 	mac := hmac.New(sha256.New, m.secret)
-	mac.Write(fmt.Appendf(nil, "%d:%d:%x", time.Now().Unix(), expiresAt, nonce))
+	mac.Write(fmt.Appendf(nil, "%d:%d:%x", issuedAt, expiresAt, nonce))
 	expectedSig := mac.Sum(nil)
 
 	if !hmac.Equal(sig, expectedSig) {
@@ -121,6 +130,11 @@ func (m *TokenManager) GetTokenRemainingDuration(tokenString string) time.Durati
 		return 0
 	}
 	rest := tokenString[len(tokenV2Prefix):]
+
+	_, rest, ok := splitFirstColon(rest)
+	if !ok {
+		return 0
+	}
 
 	expiresAtStr, _, ok := splitFirstColon(rest)
 	if !ok {

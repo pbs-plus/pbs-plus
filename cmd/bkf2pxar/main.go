@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -36,6 +37,10 @@ func main() {
 	skipTLS := flag.Bool("skip-tls-verify", true, "Skip TLS certificate verification")
 	flag.Usage = usage
 	flag.Parse()
+
+	if err := crypto.AssertFIPS(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 
 	if *datastore == "" && *localDir == "" && !*listMode {
 		die("-datastore, -local-store, or -list is required")

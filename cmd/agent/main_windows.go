@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"golang.org/x/sys/windows"
 
@@ -210,6 +211,11 @@ func main() {
 	}()
 	conf.Version = Version
 	cli.Entry()
+
+	if err := crypto.AssertFIPS(); err != nil {
+		syslog.L.Error(err).WithMessage("FIPS assertion failed").Write()
+		os.Exit(1)
+	}
 
 	svcConfig := &service.Config{
 		Name: "PBSPlusAgent", DisplayName: "PBS Plus Agent",

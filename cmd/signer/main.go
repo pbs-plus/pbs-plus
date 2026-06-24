@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -71,6 +72,10 @@ func cmdSign(artifact, sigOut string) {
 }
 
 func main() {
+	if err := crypto.AssertFIPS(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+
 	if len(os.Args) < 2 {
 		fatalf(usage)
 	}

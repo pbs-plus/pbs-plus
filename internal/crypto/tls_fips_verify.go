@@ -8,7 +8,7 @@ import (
 
 var errNoPeerCerts = errors.New("crypto: no peer certificates")
 
-func verifyCertSignatureFIPS(cert *x509.Certificate) error {
+func VerifyCertSignatureFIPS(cert *x509.Certificate) error {
 	switch cert.SignatureAlgorithm {
 	case x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA,
 		x509.SHA256WithRSAPSS, x509.SHA384WithRSAPSS, x509.SHA512WithRSAPSS,

@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/pxarmount"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/transfer"
 )
 
 func main() {
+	if err := crypto.AssertFIPS(); err != nil {
+		fmt.Fprintf(os.Stderr, "FIPS assertion failed: %v\n", err)
+		os.Exit(1)
+	}
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "commit":

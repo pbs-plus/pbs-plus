@@ -449,10 +449,12 @@ func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Head
 
 	hdrs, rerr := readHeadersFrame(stream)
 	if rerr != nil {
-		_ = writeRejectionFrame(stream, RejectionFrame{
+		if rerr := writeRejectionFrame(stream, RejectionFrame{
 			Message: "failed to parse headers",
 			Code:    400,
-		})
+		}); rerr != nil {
+			syslog.L.Debug().WithMessage("failed to write rejection frame").Write()
+		}
 		return nil, rerr
 	}
 
