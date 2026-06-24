@@ -5,6 +5,9 @@ outputs:
   plus-token:
     description: PBS Plus authentication token
     value: ${{ steps.get-token.outputs.token }}
+  ca-fingerprint:
+    description: SHA-256 fingerprint of the server CA certificate
+    value: ${{ steps.get-fingerprint.outputs.fingerprint }}
 
 runs:
   using: composite
@@ -53,3 +56,16 @@ runs:
         fi
 
         echo "token=${PLUS_TOKEN}" >> "$GITHUB_OUTPUT"
+
+    - name: Get CA fingerprint
+      id: get-fingerprint
+      shell: bash
+      run: |
+        CA_FP=$(docker exec pbs-plus-test curl -k -s "https://localhost:8017/api2/json/plus/ca-fingerprint")
+
+        if [ -z "$CA_FP" ] || [ "$CA_FP" = "null" ]; then
+          echo "CA fingerprint is empty; continuing without fingerprint pinning."
+          echo "fingerprint=" >> "$GITHUB_OUTPUT"
+        else
+          echo "fingerprint=${CA_FP}" >> "$GITHUB_OUTPUT"
+        fi

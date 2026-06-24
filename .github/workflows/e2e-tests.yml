@@ -42,6 +42,7 @@ jobs:
         uses: ./.github/actions/setup-agent
         with:
           plus-token: ${{ steps.init-pbs.outputs.plus-token }}
+          ca-fingerprint: ${{ steps.init-pbs.outputs.ca-fingerprint }}
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
       - name: Run backup test
