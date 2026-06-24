@@ -706,10 +706,13 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*pxar.Entry) ([]
 }
 
 func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
+	fmt.Fprintf(os.Stderr, "HotSwap: acquiring mu\n")
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	fmt.Fprintf(os.Stderr, "HotSwap: acquiring readerMu\n")
 	fs.readerMu.Lock()
 	defer fs.readerMu.Unlock()
+	fmt.Fprintf(os.Stderr, "HotSwap: locks acquired, swapping\n")
 
 	fs.dirEntries.Clear()
 	fs.reader = reader
