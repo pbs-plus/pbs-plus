@@ -177,7 +177,7 @@ ok "chmod files and directories"
 # 1g. List root
 ls "$INIT_MOUNT/" > /dev/null && ok "list root directory" || fail "list root directory"
 
-echo "--- Starting init mode commit
+echo "--- Starting init mode commit #1 ---"
 sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 RC=$?
 echo "--- Commit result (exit=$RC): ${RESULT:0:200} ---"
