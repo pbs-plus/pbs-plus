@@ -220,11 +220,12 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	}
 
 	ow.mfs.pxar.readerMu.RLock()
-	defer ow.mfs.pxar.readerMu.RUnlock()
 
 	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
+		ow.mfs.pxar.readerMu.RUnlock()
 		return fmt.Errorf("walk overlay: %w", err)
 	}
+	ow.mfs.pxar.readerMu.RUnlock()
 
 	prog.SetPhase(PhaseUpload)
 	prog.SetMsg(fmt.Sprintf("Flushing upload (%d new/modified files)", ow.mutableFiles))
