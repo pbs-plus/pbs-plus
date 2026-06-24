@@ -22,6 +22,7 @@ kubectl apply -f deploy/kubernetes/operator.yaml
 kubectl create secret generic pbs-plus-bootstrap \
   --from-literal=server-url='https://<pbs-server>:8008' \
   --from-literal=bootstrap-token='<your-bootstrap-token>' \
+  --from-literal=ca-fingerprint='<sha256-hex-fingerprint>' \
   -n pbs-plus-operator
 ```
 
@@ -71,6 +72,7 @@ When a PVC's backup annotation is removed, the operator automatically:
 |---|---|
 | `server-url` | PBS Plus server URL (e.g. `https://pbs.example.com:8008`) |
 | `bootstrap-token` | Bootstrap token from PBS Plus server |
+| `ca-fingerprint` | SHA-256 fingerprint of server CA (hex). Pins the server certificate during bootstrap. If unset, bootstrap uses insecure TLS. |
 
 ### Operator Flags
 

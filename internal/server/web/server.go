@@ -105,6 +105,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinaryHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsiHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSigHandler(storeInstance, version))
+	agentMux.HandleFunc("/api2/json/plus/ca-fingerprint", api.CAFingerprintHandler(storeInstance))
 	agentMux.HandleFunc("/api2/json/plus/binary/ecdsa-sig", api.DownloadECDSASigHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksumHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", AgentOnly(storeInstance, api.D2DTargetAgentHandler(storeInstance)))

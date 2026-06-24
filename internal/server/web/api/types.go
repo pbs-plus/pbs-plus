@@ -308,9 +308,10 @@ type VersionResponse struct {
 }
 
 type ScriptConfig struct {
-	AgentUrl       string
-	ServerUrl      string
-	BootstrapToken string
+	AgentUrl            string
+	ServerUrl           string
+	BootstrapToken      string
+	ServerCAFingerprint string
 }
 
 type ScriptsResponse struct {

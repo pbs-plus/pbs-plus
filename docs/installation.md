@@ -71,6 +71,7 @@ After install, the agent should appear as **Reachable** in the Targets tab.
 # /etc/default/pbs-plus-agent or your service override
 PBS_PLUS_INIT_SERVER_URL="https://pbs.example.com:8008"
 PBS_PLUS_INIT_BOOTSTRAP_TOKEN="<token>"
+PBS_PLUS_INIT_SERVER_CA_FINGERPRINT="<sha256-hex-fingerprint>"
 PBS_PLUS_HOSTNAME="$(hostname -f)"
 ```
 
@@ -89,7 +90,7 @@ On first start, the agent:
 
 Linux agents store all config in `/etc/pbs-plus-agent/registry.toml`. Secrets are encrypted at rest with AES-GCM using a key stored at `/etc/pbs-plus-agent/.registry.key`.
 
-Initial env vars (`PBS_PLUS_INIT_SERVER_URL`, `PBS_PLUS_INIT_BOOTSTRAP_TOKEN`) are consumed on first start only — after that, config is read from the TOML file.
+Initial env vars (`PBS_PLUS_INIT_SERVER_URL`, `PBS_PLUS_INIT_BOOTSTRAP_TOKEN`, `PBS_PLUS_INIT_SERVER_CA_FINGERPRINT`) are consumed on first start only — after that, config is read from the TOML file.
 
 ---
 
@@ -100,6 +101,7 @@ docker run -d --name pbs-plus-agent \
   --cap-add=DAC_READ_SEARCH \
   -e PBS_PLUS_INIT_SERVER_URL="https://pbs.example.com:8008" \
   -e PBS_PLUS_INIT_BOOTSTRAP_TOKEN="<token>" \
+  -e PBS_PLUS_INIT_SERVER_CA_FINGERPRINT="<sha256-hex-fingerprint>" \
   -e PBS_PLUS_HOSTNAME="my-host" \
   -v /srv/pbs-plus-agent/lib:/var/lib/pbs-plus-agent \
   -v /srv/pbs-plus-agent/log:/var/log/pbs-plus-agent \
@@ -126,6 +128,7 @@ docker run -d --name pbs-plus-agent \
 |---|---|---|
 | `PBS_PLUS_INIT_SERVER_URL` | Yes | Server URL, e.g. `https://pbs:8008` |
 | `PBS_PLUS_INIT_BOOTSTRAP_TOKEN` | Yes | Bootstrap token from the UI |
+| `PBS_PLUS_INIT_SERVER_CA_FINGERPRINT` | No | SHA-256 fingerprint of the server CA (hex). Pins the server certificate during bootstrap, preventing MITM attacks. If unset, bootstrap falls back to insecure TLS (not recommended). |
 | `PBS_PLUS_HOSTNAME` | Yes | Unique hostname for this agent |
 | `PBS_PLUS_DISABLE_AUTO_UPDATE` | No | Set to `true` in containers |
 | `PBS_PLUS__I_AM_INSIDE_CONTAINER` | No | Set to `true` in containers (auto-set in official image) |

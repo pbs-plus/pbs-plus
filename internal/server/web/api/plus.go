@@ -141,6 +141,10 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 			config.BootstrapToken = token
 		}
 
+		if fingerprint, err := storeInstance.CertManager.CAFingerprint(); err == nil {
+			config.ServerCAFingerprint = fingerprint
+		}
+
 		scriptContent, err := scriptFS.ReadFile("install-agent.ps1")
 		if err != nil {
 			syslog.L.Error(err).Write()
@@ -342,5 +346,26 @@ func DownloadChecksumHandler(storeInstance *store.Store, version string) http.Ha
 		filename := buildFilename("pbs-plus-agent", version, platform) + ".sha256"
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
+	}
+}
+
+func CAFingerprintHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		fingerprint, err := storeInstance.CertManager.CAFingerprint()
+		if err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, "failed to compute CA fingerprint", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		if _, err := w.Write([]byte(fingerprint)); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
 }

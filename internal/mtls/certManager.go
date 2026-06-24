@@ -3,8 +3,11 @@
 package mtls
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"net/http"
 	"os"
@@ -113,4 +116,27 @@ func (c *CertManager) ARPCServerTLSConfig() (*tls.Config, error) {
 	defer c.mu.Unlock()
 	return BuildServerTLS(c.ServerCertPath, c.ServerKeyPath, c.CACertPath,
 		conf.AgentTLSPrevCACertFile, []string{"pbsarpc"}, tls.VerifyClientCertIfGiven, true)
+}
+
+func (c *CertManager) CAFingerprint() (string, error) {
+	c.mu.Lock()
+	caPEM := c.CACertPEM
+	c.mu.Unlock()
+
+	if len(caPEM) == 0 {
+		return "", fmt.Errorf("CA certificate not loaded")
+	}
+
+	block, _ := pem.Decode(caPEM)
+	if block == nil {
+		return "", fmt.Errorf("failed to decode CA certificate PEM")
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("parse CA certificate: %w", err)
+	}
+
+	digest := sha256.Sum256(cert.Raw)
+	return hex.EncodeToString(digest[:]), nil
 }
