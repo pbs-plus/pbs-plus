@@ -55,8 +55,8 @@ mount_init() {
 		--passthrough "$pass" \
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
-techo $pid > /tmp/pxar-mount-init.pid
 	local pid=$!
+	echo $pid > /tmp/pxar-mount-init.pid
 	for i in $(seq 1 15); do
 		if ! kill -0 "$pid" 2>/dev/null; then
 			echo "FAILED: pxar-mount init exited early (pid $pid)"
@@ -87,7 +87,7 @@ mount_archive() {
 		--options rw,allow_other \
 		"$mount" > /tmp/pxar-mount-test.log 2>&1 &
 	local pid=$!
-techo $pid > /tmp/pxar-mount-archive.pid
+	echo $pid > /tmp/pxar-mount-archive.pid
 	for i in $(seq 1 15); do
 		if ! kill -0 "$pid" 2>/dev/null; then
 			echo "FAILED: pxar-mount exited early (pid $pid)"
