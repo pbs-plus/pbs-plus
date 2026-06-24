@@ -132,8 +132,8 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	apiHandler := Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))
-	agentHandler := Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))
+	apiHandler := SecurityHeaders(RateLimit(Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))))
+	agentHandler := SecurityHeaders(RateLimit(Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))))
 
 	serverConfig, err := storeInstance.CertManager.APIServerTLSConfig()
 	if err != nil {

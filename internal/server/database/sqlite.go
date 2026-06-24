@@ -77,6 +77,10 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 	}
 
+	if err := database.MigrateSecrets(); err != nil {
+		syslog.L.Error(err).WithMessage("Initialize: error migrating secrets").Write()
+	}
+
 	if !initialized {
 		tx, err := writeDb.Begin()
 		if err != nil {

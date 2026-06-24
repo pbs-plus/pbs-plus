@@ -1,119 +1,78 @@
 package database
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"errors"
-	"io"
-	"os"
-	"path/filepath"
-	"sync"
-
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"golang.org/x/crypto/nacl/box"
 )
 
-var (
-	keyMu      sync.Mutex
-	publicKey  *[32]byte
-	privateKey *[32]byte
-	initDone   bool
-	initErr    error
-)
-
-// ensureInitialized performs one-time initialization of the secret keys.
-func ensureInitialized() {
-	keyMu.Lock()
-	defer keyMu.Unlock()
-
-	if initDone {
-		return
-	}
-	initDone = true
-
-	initErr = loadOrCreateKey()
-	if initErr != nil {
-		syslog.L.Error(initErr).WithMessage("failed to initialize database secret store").Write()
-	}
+func init() {
+	crypto.SetSealKeyPath(conf.SecretsKeyPath)
 }
 
-func loadOrCreateKey() error {
-	if err := os.MkdirAll(filepath.Dir(conf.SecretsKeyPath), 0700); err != nil {
+func Encrypt(plaintext string) (string, error) {
+	return crypto.Seal(plaintext)
+}
+
+func Decrypt(ciphertext string) (string, error) {
+	return crypto.Unseal(ciphertext)
+}
+
+func (d *Database) MigrateSecrets() error {
+	if err := crypto.MigrateNaclKeyIfExists(); err != nil {
+		syslog.L.Error(err).WithMessage("database: failed to migrate nacl key").Write()
 		return err
 	}
 
-	if data, err := os.ReadFile(conf.SecretsKeyPath); err == nil {
-		if len(data) != 64 {
-			return errors.New("invalid key file")
-		}
-		publicKey = new([32]byte)
-		privateKey = new([32]byte)
-		copy(publicKey[:], data[:32])
-		copy(privateKey[:], data[32:])
+	if crypto.IsMigrated() {
 		return nil
 	}
 
-	pub, priv, err := box.GenerateKey(rand.Reader)
+	if !crypto.NaclKeyExists() {
+		if err := crypto.MarkMigrated(); err != nil {
+			syslog.L.Error(err).WithMessage("database: failed to mark fresh install as migrated").Write()
+		}
+		return nil
+	}
+
+	syslog.L.Info().WithMessage("database: migrating secrets from nacl-box to aes-256-gcm").Write()
+
+	rows, err := d.readDb.QueryContext(d.ctx, "SELECT name, secret_s3 FROM targets WHERE secret_s3 != '' AND secret_s3 IS NOT NULL")
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 
-	publicKey = pub
-	privateKey = priv
+	var migrated int
+	for rows.Next() {
+		var name, encrypted string
+		if err := rows.Scan(&name, &encrypted); err != nil {
+			continue
+		}
 
-	keyData := append(pub[:], priv[:]...)
-	if err := os.WriteFile(conf.SecretsKeyPath, keyData, 0600); err != nil {
+		plaintext, err := crypto.TryDecryptNacl(encrypted)
+		if err != nil {
+			continue
+		}
+
+		reencrypted, err := crypto.Seal(plaintext)
+		if err != nil {
+			continue
+		}
+
+		_, err = d.writeDb.ExecContext(d.ctx, "UPDATE targets SET secret_s3 = ? WHERE name = ?", reencrypted, name)
+		if err != nil {
+			continue
+		}
+		migrated++
+	}
+
+	syslog.L.Info().WithMessage("database: migrated secrets").WithField("count", migrated).Write()
+
+	if err := crypto.MarkMigrated(); err != nil {
+		syslog.L.Error(err).WithMessage("database: failed to mark migration complete").Write()
 		return err
 	}
 
 	return nil
-}
-
-func Encrypt(plaintext string) (string, error) {
-	ensureInitialized()
-	if initErr != nil {
-		return "", initErr
-	}
-	if privateKey == nil || publicKey == nil {
-		return "", errors.New("failed to acquire database private and public keys")
-	}
-
-	var nonce [24]byte
-	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
-		return "", err
-	}
-
-	encrypted := box.Seal(nonce[:], []byte(plaintext), &nonce, publicKey, privateKey)
-
-	return base64.StdEncoding.EncodeToString(encrypted), nil
-}
-
-func Decrypt(ciphertext string) (string, error) {
-	ensureInitialized()
-	if initErr != nil {
-		return "", initErr
-	}
-	if privateKey == nil || publicKey == nil {
-		return "", errors.New("failed to acquire database private and public keys")
-	}
-
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return "", err
-	}
-
-	if len(data) < 24 {
-		return "", errors.New("ciphertext too short")
-	}
-
-	var nonce [24]byte
-	copy(nonce[:], data[:24])
-
-	decrypted, ok := box.Open(nil, data[24:], &nonce, publicKey, privateKey)
-	if !ok {
-		return "", errors.New("decryption failed")
-	}
-
-	return string(decrypted), nil
 }

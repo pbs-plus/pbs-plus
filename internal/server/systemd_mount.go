@@ -2,20 +2,19 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"strings"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	godbus "github.com/godbus/dbus/v5"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime string) string {
 	rawID := fmt.Sprintf("%s|%s|%s|%s|%s", datastore, ns, backupType, backupID, safeTime)
 
-	hash := sha256.Sum256([]byte(rawID))
-	shortHash := fmt.Sprintf("%x", hash)[:16]
+	shortHash := crypto.SHA256Hex([]byte(rawID))[:16]
 
 	safeDs := strings.ReplaceAll(datastore, "/", "-")
 	if len(safeDs) > 20 {

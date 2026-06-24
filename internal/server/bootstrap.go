@@ -4,8 +4,6 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
@@ -26,15 +25,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
-func GenerateSecretKey(length int) (string, error) {
-	keyBytes := make([]byte, length)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return "", fmt.Errorf("failed to read random bytes: %w", err)
-	}
-	return base64.URLEncoding.EncodeToString(keyBytes), nil
-}
-
-// Bootstrap handles initialization of certificates, secret keys, token manager,
 // and cleanup of stale mount points and queued backups
 func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.Scheduler, *jobs.Manager, error) {
 	if err := cleanupQueuedBackups(storeInstance); err != nil {
@@ -44,8 +34,10 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
-		key, err := GenerateSecretKey(48)
-		if err == nil {
+		key, err := crypto.SecureRandomString(48)
+		if err != nil {
+			syslog.L.Error(err).Write()
+		} else {
 			if err := os.WriteFile(secKeyPath, []byte(key), 0640); err != nil {
 				syslog.L.Error(err).Write()
 			}

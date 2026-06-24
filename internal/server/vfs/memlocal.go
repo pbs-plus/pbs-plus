@@ -4,8 +4,6 @@ package vfs
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"strconv"
 	"strings"
 	"syscall"
@@ -224,8 +224,7 @@ func Key(originalKey string) string {
 }
 
 func hashString(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
+	return crypto.SHA256Hex([]byte(s))
 }
 
 func isSafe(s string) bool {
