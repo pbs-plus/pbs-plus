@@ -295,6 +295,31 @@ func DownloadSigHandler(storeInstance *store.Store, version string) http.Handler
 	}
 }
 
+func DownloadECDSASigHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if version == "v0.0.0" {
+			version = "dev"
+		}
+
+		if err := validateVersion(version); err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, "Invalid version", http.StatusBadRequest)
+			return
+		}
+
+		platform, err := parsePlatformParams(r)
+		if err != nil {
+			syslog.L.Error(err).Write()
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.ecdsa-sig", version, platform.OS, platform.Arch)
+		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
+		getCachedOrFetch(targetURL, filename, w, r)
+	}
+}
+
 func DownloadChecksumHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
@@ -314,7 +339,7 @@ func DownloadChecksumHandler(storeInstance *store.Store, version string) http.Ha
 			return
 		}
 
-		filename := buildFilename("pbs-plus-agent", version, platform) + ".md5"
+		filename := buildFilename("pbs-plus-agent", version, platform) + ".sha256"
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
 	}

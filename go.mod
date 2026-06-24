@@ -13,7 +13,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fxamacker/cbor/v2 v2.9.2
-	github.com/fynelabs/selfupdate v0.2.1
 	github.com/gobwas/glob v0.2.3
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofrs/flock v0.13.0

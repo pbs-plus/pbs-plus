@@ -60,6 +60,7 @@ func (p *pbsService) run() {
 	_ = syslog.L.SetServiceLogger()
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerURL", Value: os.Getenv("PBS_PLUS_INIT_SERVER_URL")})
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "BootstrapToken", Value: os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN")})
+	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerCAFingerprint", Value: os.Getenv("PBS_PLUS_INIT_SERVER_CA_FINGERPRINT")})
 
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
