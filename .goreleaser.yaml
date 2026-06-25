@@ -151,11 +151,10 @@ binary_signs:
       - freebsd-agent
       - windows-agent
     artifacts: binary
-    output: true
   - id: ed25519
     cmd: /tmp/bin/signer
     args:
-      - sign
+      - ed25519-sign
       - "${artifact}"
       - "${signature}"
     signature: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}.sig"
@@ -164,7 +163,6 @@ binary_signs:
       - freebsd-agent
       - windows-agent
     artifacts: binary
-    output: true
 
 archives:
   - id: server
