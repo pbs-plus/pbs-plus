@@ -36,7 +36,7 @@ PLATFORMS=(
 
 for PLATFORM in "${PLATFORMS[@]}"; do
     GOOS="${PLATFORM%%/*}"
-    GOARCH="${PLATFORM
+    GOARCH="${PLATFORM#*/}"
     EXT=""
     if [ "$GOOS" = "windows" ]; then
         EXT=".exe"
