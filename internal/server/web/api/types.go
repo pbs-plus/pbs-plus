@@ -304,7 +304,8 @@ type ExclusionConfigResponse struct {
 }
 
 type VersionResponse struct {
-	Version string `json:"version"`
+	Version  string `json:"version"`
+	Embedded bool   `json:"embedded,omitempty"`
 }
 
 type ScriptConfig struct {

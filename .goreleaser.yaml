@@ -9,6 +9,7 @@ git:
 before:
   hooks:
     - go mod tidy
+    - ./build/scripts/build-agent-binaries.sh v{{.Version}}
 
 builds:
   # Server build (Linux)

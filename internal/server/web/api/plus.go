@@ -223,7 +223,12 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 
 func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		toReturn := VersionResponse{Version: version}
+		ev := embeddedVersion()
+		v := version
+		if ev != "" {
+			v = ev
+		}
+		toReturn := VersionResponse{Version: v, Embedded: ev != ""}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
 			syslog.L.Error(err).Write()
@@ -323,6 +328,10 @@ func DownloadBinaryHandler(storeInstance *store.Store, version string) http.Hand
 			return
 		}
 
+		if serveEmbeddedBinary(w, r, version, platform.OS, platform.Arch) {
+			return
+		}
+
 		filename := buildFilename("pbs-plus-agent", version, platform)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
@@ -345,6 +354,10 @@ func DownloadSigHandler(storeInstance *store.Store, version string) http.Handler
 		if err != nil {
 			syslog.L.Error(err).Write()
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".sig") {
 			return
 		}
 
@@ -373,6 +386,10 @@ func DownloadECDSASigHandler(storeInstance *store.Store, version string) http.Ha
 			return
 		}
 
+		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".ecdsa-sig") {
+			return
+		}
+
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.ecdsa-sig", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
 		getCachedOrFetch(targetURL, filename, w, r)
@@ -395,6 +412,10 @@ func DownloadChecksumHandler(storeInstance *store.Store, version string) http.Ha
 		if err != nil {
 			syslog.L.Error(err).Write()
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".sha256") {
 			return
 		}
 

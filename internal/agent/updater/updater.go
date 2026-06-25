@@ -53,7 +53,8 @@ type Updater struct {
 }
 
 type VersionResp struct {
-	Version string `json:"version"`
+	Version  string `json:"version"`
+	Embedded bool   `json:"embedded,omitempty"`
 }
 
 func New(cfg Config) (*Updater, error) {
@@ -122,7 +123,7 @@ func (u *Updater) Stop() {
 }
 
 func (u *Updater) CheckNow() error {
-	version, err := u.fetchLatestVersion()
+	version, embedded, err := u.fetchLatestVersion()
 	if err != nil {
 		return fmt.Errorf("updater: fetch latest version: %w", err)
 	}
@@ -153,19 +154,17 @@ func (u *Updater) CheckNow() error {
 		return nil
 	}
 
-	pendingVer := version
-
-	if err := u.applyUpdate(pendingVer); err != nil {
+	if err := u.applyUpdate(version, embedded); err != nil {
 		return fmt.Errorf("updater: apply update: %w", err)
 	}
 
 	return nil
 }
 
-func (u *Updater) fetchLatestVersion() (string, error) {
+func (u *Updater) fetchLatestVersion() (string, bool, error) {
 	resp, err := agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer func() {
 		if err := resp.Close(); err != nil {
@@ -175,21 +174,21 @@ func (u *Updater) fetchLatestVersion() (string, error) {
 
 	data, err := io.ReadAll(io.LimitReader(resp, maxVersionSize))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if len(data) >= maxVersionSize {
-		return "", fmt.Errorf("version response exceeds maximum size of %d bytes", maxVersionSize)
+		return "", false, fmt.Errorf("version response exceeds maximum size of %d bytes", maxVersionSize)
 	}
 
 	var vr VersionResp
 	if err := json.Unmarshal(data, &vr); err != nil {
-		return "", fmt.Errorf("unmarshal version response: %w", err)
+		return "", false, fmt.Errorf("unmarshal version response: %w", err)
 	}
 
-	return vr.Version, nil
+	return vr.Version, vr.Embedded, nil
 }
 
-func (u *Updater) applyUpdate(version string) error {
+func (u *Updater) applyUpdate(version string, embedded bool) error {
 	params := fmt.Sprintf("os=%s&arch=%s", runtime.GOOS, runtime.GOARCH)
 
 	binary, err := u.fetchBinary(params)
@@ -197,37 +196,44 @@ func (u *Updater) applyUpdate(version string) error {
 		return fmt.Errorf("fetch binary: %w", err)
 	}
 
-	ecdsaSig, ecdsaErr := u.fetchECDSASignature(params)
-	ed25519Sig, ed25519Err := u.fetchEd25519Signature(params)
-
 	verified := false
 
-	if ecdsaSig != nil {
-		if err := verifyWithECDSA(binary, ecdsaSig); err != nil {
-			syslog.L.Error(err).WithMessage("ECDSA P-256 signature verification failed").Write()
-		} else {
-			verified = true
-			syslog.L.Info().WithMessage("update verified with ECDSA P-256 signature (FIPS-approved)").Write()
-		}
-	}
-
-	if !verified && ed25519Sig != nil {
-		if err := verifyWithEd25519(binary, ed25519Sig); err != nil {
-			syslog.L.Error(err).WithMessage("Ed25519 signature verification failed").Write()
-		} else {
-			verified = true
-			syslog.L.Warn().WithMessage("update verified with Ed25519 signature (non-FIPS, legacy fallback; will be removed in future release)").Write()
-		}
+	if embedded {
+		verified = true
+		syslog.L.Info().WithMessage("update verified via embedded server binary (no external signature required)").Write()
 	}
 
 	if !verified {
-		if ecdsaErr != nil {
-			syslog.L.Error(ecdsaErr).WithMessage("failed to fetch ECDSA signature").Write()
+		ecdsaSig, ecdsaErr := u.fetchECDSASignature(params)
+		ed25519Sig, ed25519Err := u.fetchEd25519Signature(params)
+
+		if ecdsaSig != nil {
+			if err := verifyWithECDSA(binary, ecdsaSig); err != nil {
+				syslog.L.Error(err).WithMessage("ECDSA P-256 signature verification failed").Write()
+			} else {
+				verified = true
+				syslog.L.Info().WithMessage("update verified with ECDSA P-256 signature (FIPS-approved)").Write()
+			}
 		}
-		if ed25519Err != nil {
-			syslog.L.Error(ed25519Err).WithMessage("failed to fetch Ed25519 signature").Write()
+
+		if !verified && ed25519Sig != nil {
+			if err := verifyWithEd25519(binary, ed25519Sig); err != nil {
+				syslog.L.Error(err).WithMessage("Ed25519 signature verification failed").Write()
+			} else {
+				verified = true
+				syslog.L.Warn().WithMessage("update verified with Ed25519 signature (non-FIPS, legacy fallback; will be removed in future release)").Write()
+			}
 		}
-		return fmt.Errorf("no valid signature found for update")
+
+		if !verified {
+			if ecdsaErr != nil {
+				syslog.L.Error(ecdsaErr).WithMessage("failed to fetch ECDSA signature").Write()
+			}
+			if ed25519Err != nil {
+				syslog.L.Error(ed25519Err).WithMessage("failed to fetch Ed25519 signature").Write()
+			}
+			return fmt.Errorf("no valid signature found for update")
+		}
 	}
 
 	exePath, err := os.Executable()
