@@ -1,119 +1,50 @@
 package agentfs
 
 import (
-	"runtime"
+	"bytes"
+	"io"
 	"sync"
 	"testing"
 )
 
-const poolBufSize = 1024 * 1024
+const readBufSize = 1024 * 1024
 
-func TestPoolLeakCumulative(t *testing.T) {
+func BenchmarkOldPreadBuffer(b *testing.B) {
 	pool := &sync.Pool{
-		New: func() any { b := make([]byte, poolBufSize); return &b },
+		New: func() any { b := make([]byte, readBufSize); return &b },
 	}
-
-	for range 100 {
-		bp := pool.Get().(*[]byte)
-		pool.Put(bp)
-	}
-
-	runtime.GC()
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
-
-	for range 1000 {
-		bp := pool.Get().(*[]byte)
-		buf := *bp
-		if len(buf) < 2*poolBufSize {
-			buf = make([]byte, 2*poolBufSize)
-		} else {
-			pool.Put(bp)
-		}
-		_ = buf
-	}
-
-	runtime.GC()
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
-
-	if after.HeapInuse > before.HeapInuse {
-		diffMB := (after.HeapInuse - before.HeapInuse) / 1024 / 1024
-		t.Logf("OLD pattern: heap grew by %d MB after 1000 iterations", diffMB)
-	}
-	t.Logf("before: %.1f MB, after: %.1f MB", float64(before.HeapInuse)/1024/1024, float64(after.HeapInuse)/1024/1024)
-}
-
-func TestPoolFixedCumulative(t *testing.T) {
-	pool := &sync.Pool{
-		New: func() any { b := make([]byte, poolBufSize); return &b },
-	}
-
-	for range 100 {
-		bp := pool.Get().(*[]byte)
-		pool.Put(bp)
-	}
-
-	runtime.GC()
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
-
-	for range 1000 {
-		bp := pool.Get().(*[]byte)
-		buf := *bp
-		if len(buf) < 2*poolBufSize {
-			pool.Put(bp)
-			buf = make([]byte, 2*poolBufSize)
-		} else {
-			pool.Put(bp)
-		}
-		_ = buf
-	}
-
-	runtime.GC()
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
-
-	diffMB := max(int64(after.HeapInuse)-int64(before.HeapInuse), 0)
-	t.Logf("FIXED pattern: heap delta %d MB after 1000 iterations", diffMB/1024/1024)
-	t.Logf("before: %.1f MB, after: %.1f MB", float64(before.HeapInuse)/1024/1024, float64(after.HeapInuse)/1024/1024)
-}
-
-func BenchmarkPoolFixedAllocs(b *testing.B) {
-	pool := &sync.Pool{
-		New: func() any { b := make([]byte, poolBufSize); return &b },
-	}
+	sinkBuf := make([]byte, 2*readBufSize)
 	b.ReportAllocs()
+	b.ResetTimer()
 	for b.Loop() {
 		bp := pool.Get().(*[]byte)
-		buf := *bp
-		if len(buf) < 2*poolBufSize {
-			pool.Put(bp)
-			buf = make([]byte, 2*poolBufSize)
+		workBuf := *bp
+		reqLen := 2 * readBufSize
+		if len(workBuf) < reqLen {
+			workBuf = make([]byte, reqLen)
 		} else {
 			pool.Put(bp)
 		}
-		sink = buf
+		n := copy(workBuf, sinkBuf)
+		_ = bytes.NewReader(workBuf[:n])
+		if len(*bp) < reqLen {
+		}
 	}
 }
 
-var sink []byte
-
-// BenchmarkPoolLeakAllocs shows the leak: pool buffer lost per op
-func BenchmarkPoolLeakAllocs(b *testing.B) {
-	pool := &sync.Pool{
-		New: func() any { b := make([]byte, poolBufSize); return &b },
-	}
+func BenchmarkStreamApproach(b *testing.B) {
 	b.ReportAllocs()
+	b.ResetTimer()
 	for b.Loop() {
-		bp := pool.Get().(*[]byte)
-		buf := *bp
-		if len(buf) < 2*poolBufSize {
-			buf = make([]byte, 2*poolBufSize)
-			// LEAK: bp never returned
-		} else {
-			pool.Put(bp)
-		}
-		sink = buf
+		sr := io.NewSectionReader(sinkReader{}, 0, 2*readBufSize)
+		_ = sr
 	}
 }
+
+type sinkReader struct{}
+
+func (sinkReader) ReadAt(p []byte, off int64) (int, error) {
+	return len(p), nil
+}
+
+var _ io.ReaderAt = sinkReader{}

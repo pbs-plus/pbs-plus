@@ -17,12 +17,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
-var readBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 4<<20)
-		return &b
-	},
-}
 
 type contentHandle struct {
 	rc       io.ReadCloser
@@ -202,43 +196,20 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 		reqLen = int(params.FileSize)
 	}
 
-	bptr := readBufPool.Get().(*[]byte)
-	buf := *bptr
-	tempBuf := len(buf) < reqLen
-	if tempBuf {
-		readBufPool.Put(bptr)
-		buf = make([]byte, reqLen)
-	}
-
-	n, readErr := io.ReadFull(rc, buf[:reqLen])
-	if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
-		if !tempBuf {
-			readBufPool.Put(bptr)
-		}
-		if err := rc.Close(); err != nil {
-			log.Error(err, "")
-		}
-		return arpc.Response{}, fmt.Errorf("read content: %w", readErr)
-	}
-
-	if uint64(n) >= params.FileSize {
-		if err := rc.Close(); err != nil {
-			log.Error(err, "")
-		}
-	} else {
-		s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize})
-	}
-
 	respData, err := cbor.Marshal(handleIDResp{HandleID: handleID})
 	if err != nil {
 		return arpc.Response{}, err
 	}
+
+	lr := io.LimitReader(rc, int64(reqLen))
 	return arpc.Response{Status: 213, Data: respData, RawStream: func(stream arpc.ARPCStream) {
-		if !tempBuf {
-			defer readBufPool.Put(bptr)
-		}
-		if err := arpc.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
+		if err := arpc.SendDataFromReader(lr, reqLen, stream); err != nil {
 			log.Error(err, "")
+		}
+		if uint64(reqLen) >= params.FileSize {
+			if err := rc.Close(); err != nil {
+				log.Error(err, "")
+			}
 		}
 	}}, nil
 }
@@ -278,27 +249,9 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 		return arpc.Response{}, fmt.Errorf("seek to %d: %w", params.Offset, err)
 	}
 
-	bptr := readBufPool.Get().(*[]byte)
-	buf := *bptr
-	tempBuf := len(buf) < reqLen
-	if tempBuf {
-		readBufPool.Put(bptr)
-		buf = make([]byte, reqLen)
-	}
-
-	n, err := io.ReadFull(h.rc, buf[:reqLen])
-	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-		if !tempBuf {
-			readBufPool.Put(bptr)
-		}
-		return arpc.Response{}, fmt.Errorf("read content at %d: %w", params.Offset, err)
-	}
-
+	lr := io.LimitReader(h.rc, int64(reqLen))
 	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
-		if !tempBuf {
-			defer readBufPool.Put(bptr)
-		}
-		if err := arpc.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
+		if err := arpc.SendDataFromReader(lr, reqLen, stream); err != nil {
 			log.Error(err, "")
 		}
 	}}, nil

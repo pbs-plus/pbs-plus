@@ -277,31 +277,10 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		}
 	}
 
-	bptr := readBufPool.Get().(*[]byte)
-	workBuf := *bptr
-	pooled := true
-	if len(workBuf) < reqLen {
-		readBufPool.Put(bptr)
-		workBuf = make([]byte, reqLen)
-		pooled = false
-	}
-
-	n, err := s.platformPread(f, workBuf[:reqLen], payload.Offset)
-	if err != nil && err != io.EOF {
-		if pooled {
-			readBufPool.Put(bptr)
-		}
-		fh.releaseOp()
-		log.Error(err, "handleReadAt: read failed")
-		return arpc.Response{}, err
-	}
-
 	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 		defer fh.releaseOp()
-		if pooled {
-			defer readBufPool.Put(bptr)
-		}
-		if err := arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream); err != nil {
+		sr := io.NewSectionReader(f, payload.Offset, int64(reqLen))
+		if err := arpc.SendDataFromReader(sr, reqLen, stream); err != nil {
 			log.Error(err, "")
 		}
 	}}, nil
