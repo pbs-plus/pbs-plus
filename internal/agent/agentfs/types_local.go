@@ -279,15 +279,16 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	bptr := readBufPool.Get().(*[]byte)
 	workBuf := *bptr
-	isTemp := false
+	pooled := true
 	if len(workBuf) < reqLen {
+		readBufPool.Put(bptr)
 		workBuf = make([]byte, reqLen)
-		isTemp = true
+		pooled = false
 	}
 
 	n, err := s.platformPread(f, workBuf[:reqLen], payload.Offset)
 	if err != nil && err != io.EOF {
-		if !isTemp {
+		if pooled {
 			readBufPool.Put(bptr)
 		}
 		fh.releaseOp()
@@ -297,7 +298,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 		defer fh.releaseOp()
-		if !isTemp {
+		if pooled {
 			defer readBufPool.Put(bptr)
 		}
 		if err := arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream); err != nil {
