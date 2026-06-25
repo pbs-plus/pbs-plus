@@ -62,34 +62,21 @@ func (t *RestoreTask) CloseWarn(warning int) {
 func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	task := tasklog.NewTask("pbsplusgen-ok", "reader", wid)
 
-	file, _, err := tasklog.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplusgen-ok", "reader", wid)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
-		}
-	}()
 
-	timestamp := time.Now().Format(time.RFC3339)
 	for _, data := range additionalData {
-		if _, err := fmt.Fprintf(file, "%s: %s\n", timestamp, data); err != nil {
+		wt.LogString(data)
+	}
+
+	wt.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
+		if err := tasklog.RemoveActive(wt.UPID()); err != nil {
 			syslog.L.Error(err).Write()
 		}
-	}
-	if _, err := fmt.Fprintf(file, "%s: TASK OK\n", timestamp); err != nil {
-		syslog.L.Error(err).Write()
-	}
+	})
 
-	if err := tasklog.WriteArchive(task.UPID, tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}); err != nil {
-		syslog.L.Error(err).Write()
-	}
-
-	task.Status = "stopped"
-	task.ExitStatus = "OK"
-	task.EndTime = time.Now().Unix()
-	return task, nil
+	return wt.Task, nil
 }

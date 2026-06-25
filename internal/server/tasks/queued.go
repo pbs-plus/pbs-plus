@@ -54,26 +54,18 @@ func generateQueuedTask(job any, target, wtype string, web, isBackup bool) (Queu
 	}
 
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(target))
-	task := tasklog.NewTask("pbsplusgen-queue", wtype, wid)
-
-	file, path, err := tasklog.CreateTaskLogFile(task.UPID)
-	if err != nil {
-		return QueuedTask{}, err
-	}
 
 	source := "web UI"
 	if !web {
 		source = "schedule"
 	}
-	timestamp := time.Now().Format(time.RFC3339)
-	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: job started from %s\n", timestamp, source); err != nil {
-		syslog.L.Error(err).Write()
-	}
-	if err := file.Close(); err != nil {
-		syslog.L.Error(err).Write()
+	desc := fmt.Sprintf("job started from %s", source)
+
+	task, path, err := tasklog.WriteQueuedLog("pbsplusgen-queue", wtype, wid, desc)
+	if err != nil {
+		return QueuedTask{}, err
 	}
 
-	task.Status = "running"
 	return QueuedTask{Task: task, path: path, job: job, isBackup: isBackup}, nil
 }
 
@@ -90,8 +82,8 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 		return err
 	}
 	defer func() {
-		if err := file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+		if cerr := file.Close(); cerr != nil {
+			syslog.L.Error(cerr).Write()
 		}
 	}()
 
@@ -121,25 +113,17 @@ func GenerateMtfQueuedTask(jobID, datastore string, web bool) (QueuedTask, error
 	wid := proxmox.EncodeToHexEscapes(datastore) +
 		proxmox.EncodeToHexEscapes(":") +
 		"mtf-" + proxmox.EncodeToHexEscapes(jobID)
-	task := tasklog.NewTask("pbsplusgen-queue", "mtf2pxar", wid)
-
-	file, path, err := tasklog.CreateTaskLogFile(task.UPID)
-	if err != nil {
-		return QueuedTask{}, err
-	}
 
 	source := "web UI"
 	if !web {
 		source = "schedule"
 	}
-	timestamp := time.Now().Format(time.RFC3339)
-	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: MTF job started from %s\n", timestamp, source); err != nil {
-		syslog.L.Error(err).Write()
-	}
-	if err := file.Close(); err != nil {
-		syslog.L.Error(err).Write()
+	desc := fmt.Sprintf("MTF job started from %s", source)
+
+	task, path, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, desc)
+	if err != nil {
+		return QueuedTask{}, err
 	}
 
-	task.Status = "running"
 	return QueuedTask{Task: task, path: path}, nil
 }

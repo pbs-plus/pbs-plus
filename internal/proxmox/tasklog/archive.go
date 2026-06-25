@@ -185,6 +185,56 @@ func ReadStatusFromLog(upid string) (TaskState, error) {
 	return TaskState{Status: StatusUnknown, EndTime: parsed.StartTime}, nil
 }
 
+func FindRunningTask(workerType string, searchString string, startTimeThreshold int64) (proxmox.Task, bool) {
+	if task, found := findTaskInFile(conf.ActiveLogsPath, workerType, searchString, startTimeThreshold); found {
+		return task, true
+	}
+	task, found := findTaskInFile(filepath.Join(conf.TaskLogsBasePath, "archive"), workerType, searchString, startTimeThreshold)
+	return task, found
+}
+
+func findTaskInFile(path string, workerType string, searchString string, threshold int64) (proxmox.Task, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return proxmox.Task{}, false
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			syslog.L.Error(cerr).Write()
+		}
+	}()
+
+	info, statErr := f.Stat()
+	if statErr != nil || info.Size() == 0 {
+		return proxmox.Task{}, false
+	}
+
+	const tailSize = 65536
+	offset := max(info.Size()-tailSize, 0)
+	if _, seekErr := f.Seek(offset, io.SeekStart); seekErr != nil {
+		return proxmox.Task{}, false
+	}
+	data, readErr := io.ReadAll(f)
+	if readErr != nil {
+		return proxmox.Task{}, false
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || !strings.Contains(line, searchString) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if task, parseErr := proxmox.ParseUPID(fields[0]); parseErr == nil {
+			if task.StartTime >= (threshold-1) && task.WorkerType == workerType {
+				return task, true
+			}
+		}
+	}
+	return proxmox.Task{}, false
+}
+
 func GetTaskByUPID(upid string) (proxmox.Task, error) {
 	parsed, err := proxmox.ParseUPID(upid)
 	if err != nil {
