@@ -13,7 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
@@ -150,7 +150,7 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 			continue
 		}
 
-		queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
+		queueTaskPath, err := tasklog.UPIDLogPath(queuedBackup.History.LastRunUpid)
 		if err == nil {
 			if err := os.Remove(queueTaskPath); err != nil && !os.IsNotExist(err) {
 				syslog.L.Error(err).Write()

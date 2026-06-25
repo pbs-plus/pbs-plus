@@ -3,10 +3,8 @@
 package proxmox
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -120,19 +118,15 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 		return "", err
 	}
 
-	path, err := GetLogPath(upid)
-	if err != nil {
-		return "", err
-	}
+	logFolder := fmt.Sprintf("%02X", parsedTask.PStart&0xFF)
+	path := filepath.Join(conf.TaskLogsBasePath, logFolder, upid)
 
 	parsedTask.StartTime = startTime.Unix()
 
 	newUpid := parsedTask.GenerateUPID()
 
-	newPath, err := GetLogPath(newUpid)
-	if err != nil {
-		return "", err
-	}
+	newLogFolder := fmt.Sprintf("%02X", parsedTask.PStart&0xFF)
+	newPath := filepath.Join(conf.TaskLogsBasePath, newLogFolder, newUpid)
 
 	err = os.Rename(path, newPath)
 	if err != nil {
@@ -158,43 +152,6 @@ func EncodeToHexEscapes(input string) string {
 	}
 
 	return encoded.String()
-}
-
-func GetLogPath(upid string) (string, error) {
-	upidSplit := strings.Split(upid, ":")
-	if len(upidSplit) < 4 {
-		return "", fmt.Errorf("invalid upid")
-	}
-
-	parsed := upidSplit[3]
-	logFolder := parsed[len(parsed)-2:]
-
-	logPath := filepath.Join(conf.TaskLogsBasePath, logFolder, upid)
-
-	return logPath, nil
-}
-
-func parseLastLogMessage(upid string) (string, error) {
-	logPath, err := GetLogPath(upid)
-	if err != nil {
-		return "", err
-	}
-	cmd := exec.Command("tail", "-n", "1", logPath)
-
-	var out bytes.Buffer
-	cmd.Stdout = &out
-
-	err = cmd.Run()
-	if err != nil {
-		return "", fmt.Errorf("failed to execute tail command: %w", err)
-	}
-
-	lastLine := strings.TrimSpace(out.String())
-
-	re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[-+]\d{2}:\d{2}|Z): `)
-	message := re.ReplaceAllString(lastLine, "")
-
-	return strings.TrimSpace(message), nil
 }
 
 func buildGroupPath(ns, backupType, backupID, backupTime string) string {

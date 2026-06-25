@@ -17,7 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/host"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
@@ -139,7 +139,7 @@ func main() {
 func validateEnvironment() error {
 	// Best-effort cleanup; the tasks/active directory may not exist in test
 	// environments or Docker containers. Ignore errors from this step.
-	if err := proxmox.CleanupPBSPlusActiveTasks(); err != nil {
+	if err := tasklog.CleanupActiveTasks(); err != nil {
 		syslog.L.Error(err).Write()
 	}
 

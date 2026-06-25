@@ -11,20 +11,21 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
+	tasks "github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const mtfWorkerType = "mtf2pxar"
 
 type Task struct {
-	tasks.BaseTask
+	*tasklog.WorkerTask
 	job mtfdb.MTFJob
 }
 
@@ -113,48 +114,48 @@ func (j *mtfJob) execute(ctx context.Context) error {
 		syslog.L.Error(err).WithJob(j.job.ID).Write()
 	}
 
-	task.WriteString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
+	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
 		j.job.SourceKind, j.job.SourceRef, j.job.Datastore, j.job.Namespace))
 	if j.job.Spanning {
-		task.WriteString("Spanning mode: merging all cartridges of the media set")
+		task.LogString("Spanning mode: merging all cartridges of the media set")
 	}
 	if j.job.Changer != "" {
-		task.WriteString(fmt.Sprintf("Changer: %s", j.job.Changer))
+		task.LogString(fmt.Sprintf("Changer: %s", j.job.Changer))
 	}
 	if j.job.Drive != "" {
-		task.WriteString(fmt.Sprintf("Drive: %s", j.job.Drive))
+		task.LogString(fmt.Sprintf("Drive: %s", j.job.Drive))
 	}
-	task.WriteString(fmt.Sprintf("Tape device: %s", cfg.TapeDevice))
+	task.LogString(fmt.Sprintf("Tape device: %s", cfg.TapeDevice))
 	if cfg.ChangerDevice != "" {
-		task.WriteString(fmt.Sprintf("Changer device: %s", cfg.ChangerDevice))
+		task.LogString(fmt.Sprintf("Changer device: %s", cfg.ChangerDevice))
 	}
 
 	cfg.TaskLog = func(msg string) {
-		task.WriteString(msg)
+		task.LogString(msg)
 	}
 
 	stats, runErr := bkf2pxar.Run(ctx, cfg)
 	if runErr != nil {
-		task.WriteString("Migration job summary:")
+		task.LogString("Migration job summary:")
 		if stats != nil {
-			task.WriteString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
-			task.WriteString(fmt.Sprintf(" - %d files", stats.Files))
-			task.WriteString(fmt.Sprintf(" - %d dirs", stats.Dirs))
-			task.WriteString(fmt.Sprintf(" - %d bytes", stats.Bytes))
+			task.LogString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
+			task.LogString(fmt.Sprintf(" - %d files", stats.Files))
+			task.LogString(fmt.Sprintf(" - %d dirs", stats.Dirs))
+			task.LogString(fmt.Sprintf(" - %d bytes", stats.Bytes))
 		}
-		task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+		task.LogString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 		task.CloseErr(runErr)
 		return runErr
 	}
 
-	task.WriteString("Migration job summary:")
+	task.LogString("Migration job summary:")
 	if stats != nil {
-		task.WriteString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
-		task.WriteString(fmt.Sprintf(" - %d files", stats.Files))
-		task.WriteString(fmt.Sprintf(" - %d dirs", stats.Dirs))
-		task.WriteString(fmt.Sprintf(" - %d bytes", stats.Bytes))
+		task.LogString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
+		task.LogString(fmt.Sprintf(" - %d files", stats.Files))
+		task.LogString(fmt.Sprintf(" - %d dirs", stats.Dirs))
+		task.LogString(fmt.Sprintf(" - %d bytes", stats.Bytes))
 	}
-	task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+	task.LogString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	task.CloseOK()
 	return nil
 }
@@ -354,15 +355,15 @@ func (j *mtfJob) onSuccess() {
 	job := j.job
 	j.mu.RUnlock()
 
-	if task == nil || task.UPID == "" {
+	if task == nil || task.UPID() == "" {
 		return
 	}
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
-			LastRunUpid:           task.UPID,
+			LastRunUpid:           task.UPID(),
 			LastRunStatus:         database.JobStatusSuccess,
 			LastRunEndtime:        time.Now().Unix(),
-			LastSuccessfulUpid:    task.UPID,
+			LastSuccessfulUpid:    task.UPID(),
 			LastSuccessfulEndtime: time.Now().Unix(),
 		}, ""); err != nil {
 		syslog.L.Error(err).Write()
@@ -379,19 +380,19 @@ func (j *mtfJob) onError(runErr error) {
 	if errors.Is(runErr, jobs.ErrCanceled) {
 		if task != nil {
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfdb.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
+				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
 				syslog.L.Error(err).Write()
 			}
 		}
 		return
 	}
 
-	if task == nil || task.UPID == "" {
+	if task == nil || task.UPID() == "" {
 		task = j.errorTask(runErr)
 	}
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
-			LastRunUpid:    task.UPID,
+			LastRunUpid:    task.UPID(),
 			LastRunStatus:  database.JobStatusFailed,
 			LastRunEndtime: time.Now().Unix(),
 			RetryCount:     job.History.RetryCount + 1,
@@ -463,59 +464,49 @@ func (j *mtfJob) cleanup() {
 }
 
 func startTask(job mtfdb.MTFJob) (*Task, error) {
-	task := tasks.NewTask("pbsplus", mtfWorkerType, mtfWID(job))
-
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil, err
 	}
 
-	t := &Task{
-		BaseTask: tasks.NewBaseTask(task, file),
-		job:      job,
-	}
-	if err := tasks.AddActive(task.UPID); err != nil {
-		syslog.L.Error(err).WithJob(job.ID).WithMessage("mtf: add active task").Write()
-	}
-	return t, nil
+	return &Task{
+		WorkerTask: wt,
+		job:        job,
+	}, nil
 }
 
 func (t *Task) CloseOK() {
-	t.CloseWithStatus("OK", nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
+	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
+		if err := tasklog.RemoveActive(t.UPID()); err != nil {
 			syslog.L.Error(err).Write()
 		}
 	})
 }
 
 func (t *Task) CloseErr(taskErr error) {
-	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
+	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: taskErr.Error()}, func() {
+		if err := tasklog.RemoveActive(t.UPID()); err != nil {
 			syslog.L.Error(err).Write()
 		}
 	})
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
-	task := tasks.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
+	task := tasklog.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil
 	}
+	_ = task
 
-	t := &Task{
-		BaseTask: tasks.NewBaseTask(task, file),
-		job:      job,
-	}
-	t.WriteLogLine("%s", runErr.Error())
-	t.WriteLogLine("TASK ERROR: %s", runErr.Error())
-	if err := file.Close(); err != nil {
-		syslog.L.Error(err).Write()
-	}
-	tasks.WriteArchive(task.UPID, task.StartTime, runErr.Error())
+	wt.Log("%s", runErr.Error())
+	wt.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: runErr.Error()}, nil)
 
-	return t
+	return &Task{
+		WorkerTask: wt,
+		job:        job,
+	}
 }
 
 func mtfWID(job mtfdb.MTFJob) string {

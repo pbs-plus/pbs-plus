@@ -12,8 +12,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -103,9 +103,9 @@ func scanTaskFile(path string, searchString string, threshold int64) (proxmox.Ta
 func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	task := tasks.NewTask("pbsplusgen-error", "backup", wid)
+	task := tasklog.NewTask("pbsplusgen-error", "backup", wid)
 
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	file, _, err := tasklog.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
@@ -115,7 +115,8 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 		}
 	}()
 
-	timestamp := tasks.Now().Format(time.RFC3339)
+	now := time.Now()
+	timestamp := now.Format(time.RFC3339)
 
 	for _, data := range additionalData {
 		if _, err := fmt.Fprintf(file, "%s: %s\n", timestamp, data); err != nil {
@@ -148,20 +149,22 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 		syslog.L.Error(err).Write()
 	}
 
-	tasks.WriteArchive(task.UPID, task.StartTime, firstNonEmptyLine)
+	if err := tasklog.WriteArchive(task.UPID, tasklog.TaskState{Status: tasklog.StatusError, EndTime: now.Unix(), Message: firstNonEmptyLine}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	task.Status = "stopped"
 	task.ExitStatus = firstNonEmptyLine
-	task.EndTime = tasks.Now().Unix()
+	task.EndTime = now.Unix()
 	return task, nil
 }
 
 func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	task := tasks.NewTask("pbsplusgen-ok", "backup", wid)
+	task := tasklog.NewTask("pbsplusgen-ok", "backup", wid)
 
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	file, _, err := tasklog.CreateTaskLogFile(task.UPID)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
@@ -171,16 +174,23 @@ func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (pro
 		}
 	}()
 
-	base := tasks.NewBaseTask(task, file)
+	now := time.Now()
+	timestamp := now.Format(time.RFC3339)
 	for _, data := range additionalData {
-		base.WriteLogLine("%s", data)
+		if _, err := fmt.Fprintf(file, "%s: %s\n", timestamp, data); err != nil {
+			syslog.L.Error(err).Write()
+		}
 	}
-	base.WriteLogLine("TASK OK")
+	if _, err := fmt.Fprintf(file, "%s: TASK OK\n", timestamp); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
-	tasks.WriteArchive(task.UPID, task.StartTime, "OK")
+	if err := tasklog.WriteArchive(task.UPID, tasklog.TaskState{Status: tasklog.StatusOK, EndTime: now.Unix()}); err != nil {
+		syslog.L.Error(err).Write()
+	}
 
 	task.Status = "stopped"
 	task.ExitStatus = "OK"
-	task.EndTime = tasks.Now().Unix()
+	task.EndTime = now.Unix()
 	return task, nil
 }

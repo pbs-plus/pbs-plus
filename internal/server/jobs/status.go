@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -28,7 +29,7 @@ func UpdateJobHistory(
 	mu.Lock()
 	defer mu.Unlock()
 
-	taskFound, err := proxmox.GetTaskByUPID(task.UPID)
+	taskFound, err := tasklog.GetTaskByUPID(task.UPID)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("unable to get task by upid").Write()
 		return err

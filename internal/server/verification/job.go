@@ -459,7 +459,7 @@ func (v *verificationJob) executeVerification(
 
 	result := &database.VerificationResult{
 		VerificationJobID: job.ID,
-		UPID:              vTask.UPID,
+		UPID:              vTask.UPID(),
 		Snapshot:          snapshot.Snapshot,
 		SnapshotTime:      snapshot.BackupTime,
 		Status:            "running",

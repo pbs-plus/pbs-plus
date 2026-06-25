@@ -1,6 +1,6 @@
 //go:build linux
 
-package tasks
+package tasklog
 
 import (
 	"fmt"

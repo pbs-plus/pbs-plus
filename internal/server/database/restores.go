@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
@@ -207,7 +207,7 @@ func (database *Database) GetRestore(id string) (Restore, error) {
 
 func (database *Database) populateRestoreExtras(restore *Restore) {
 	if restore.History.LastRunUpid != "" {
-		task, err := proxmox.GetTaskByUPID(restore.History.LastRunUpid)
+		task, err := tasklog.GetTaskByUPID(restore.History.LastRunUpid)
 		if err == nil {
 			restore.History.LastRunEndtime = task.EndTime
 			if task.Status == "stopped" {
@@ -219,7 +219,7 @@ func (database *Database) populateRestoreExtras(restore *Restore) {
 		}
 	}
 	if restore.History.LastSuccessfulUpid != "" {
-		if successTask, err := proxmox.GetTaskByUPID(restore.History.LastSuccessfulUpid); err == nil {
+		if successTask, err := tasklog.GetTaskByUPID(restore.History.LastSuccessfulUpid); err == nil {
 			restore.History.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}
@@ -336,7 +336,7 @@ func (database *Database) linkRestoreLog(restoreID, upid string) {
 		return
 	}
 
-	origLogPath, err := proxmox.GetLogPath(upid)
+	origLogPath, err := tasklog.UPIDLogPath(upid)
 	if err != nil {
 		syslog.L.Error(fmt.Errorf("linkRestoreLog: failed to get original log path: %w", err)).
 			WithField("id", restoreID).
@@ -550,7 +550,7 @@ func (r *Restore) GetAllUPIDs() []Tasks {
 	upids := make([]Tasks, 0, len(logs))
 
 	for _, log := range logs {
-		task, err := proxmox.GetTaskByUPID(log.Name())
+		task, err := tasklog.GetTaskByUPID(log.Name())
 		if err != nil {
 			continue
 		}

@@ -520,19 +520,19 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		} else if opts.TapeDevice != "" {
 			src = "drive: " + opts.TapeDevice
 		}
-		st.WriteString("MTF inventory scan started (" + src + ")")
+		st.LogString("MTF inventory scan started (" + src + ")")
 
 		go func() {
 			sc := mtf.NewScanner(ms)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 			defer cancel()
-			res, scanErr := sc.ScanWithLog(ctx, opts, &st.BaseTask)
+			res, scanErr := sc.ScanWithLog(ctx, opts, st)
 			if scanErr != nil {
-				st.WriteString(scanErr.Error())
+				st.LogString(scanErr.Error())
 				st.CloseErr(scanErr)
 				return
 			}
-			st.WriteString(fmt.Sprintf("Scan completed: %d cartridges, %d families (%s)",
+			st.LogString(fmt.Sprintf("Scan completed: %d cartridges, %d families (%s)",
 				res.Cartridges, res.Families, res.Duration.Truncate(time.Second)))
 			st.CloseOK(res)
 		}()
@@ -541,7 +541,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
 		response.Success = true
-		response.Data = st.UPID
+		response.Data = st.UPID()
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			syslog.L.Error(err).Write()
 		}

@@ -3,65 +3,53 @@
 package verification
 
 import (
-	"fmt"
-
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type VerificationTask struct {
-	tasks.BaseTask
+	*tasklog.WorkerTask
 	job database.VerificationJob
 }
 
 func NewVerificationTask(job database.VerificationJob) (*VerificationTask, error) {
 	wid := proxmox.EncodeToHexEscapes(job.ID)
-	task := tasks.NewTask("pbsplus", "verification", wid)
-
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplus", "verification", wid)
 	if err != nil {
 		return nil, err
 	}
 
-	vTask := &VerificationTask{
-		BaseTask: tasks.NewBaseTask(task, file),
-		job:      job,
-	}
-	if err := tasks.AddActive(task.UPID); err != nil {
-		syslog.L.Error(err).WithField("upid", task.UPID).WithMessage("failed to register active verification task").Write()
-	}
-	return vTask, nil
+	return &VerificationTask{
+		WorkerTask: wt,
+		job:        job,
+	}, nil
 }
 
 func (t *VerificationTask) WriteString(data string) {
-	t.BaseTask.WriteString(data)
+	t.LogString(data)
 }
 
 func (t *VerificationTask) CloseOK() {
-	t.CloseWithStatus("OK", nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
+	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: t.Task.StartTime}, func() {
+		if err := tasklog.RemoveActive(t.UPID()); err != nil {
 			syslog.L.Error(err).Write()
 		}
 	})
 }
 
 func (t *VerificationTask) CloseErr(taskErr error) {
-	status := "ERROR: " + taskErr.Error()
-	t.CloseWithStatus(status, nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
+	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: t.Task.StartTime, Message: taskErr.Error()}, func() {
+		if err := tasklog.RemoveActive(t.UPID()); err != nil {
 			syslog.L.Error(err).Write()
 		}
 	})
 }
 
-// CloseWarn closes the task with warnings count.
-// Matches the PBS pattern: final line is "TASK WARNINGS: N".
 func (t *VerificationTask) CloseWarn(warnings int) {
-	status := fmt.Sprintf("WARNINGS: %d", warnings)
-	t.CloseWithStatus(status, nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
+	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusWarning, EndTime: t.Task.StartTime, WarnCount: uint64(warnings)}, func() {
+		if err := tasklog.RemoveActive(t.UPID()); err != nil {
 			syslog.L.Error(err).Write()
 		}
 	})

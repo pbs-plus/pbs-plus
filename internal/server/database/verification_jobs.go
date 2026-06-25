@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -224,7 +224,7 @@ func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
 	}
 
 	if job.History.LastRunUpid != "" {
-		task, err := proxmox.GetTaskByUPID(job.History.LastRunUpid)
+		task, err := tasklog.GetTaskByUPID(job.History.LastRunUpid)
 		if err == nil {
 			job.History.LastRunStarttime = task.StartTime
 			job.History.LastRunEndtime = task.EndTime
@@ -237,7 +237,7 @@ func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
 		}
 	}
 	if job.History.LastSuccessfulUpid != "" {
-		if successTask, err := proxmox.GetTaskByUPID(job.History.LastSuccessfulUpid); err == nil {
+		if successTask, err := tasklog.GetTaskByUPID(job.History.LastSuccessfulUpid); err == nil {
 			job.History.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}
