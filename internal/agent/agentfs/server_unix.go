@@ -28,7 +28,7 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		if err := unix.Close(fd); err != nil {
-			log.Error(err, "")
+			log.Debug("agentfs: OpenFile cleanup close error", "error", err, "path", path)
 		}
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 		reader, err := NewDirReader(f, path)
 		if err != nil {
 			if err := f.Close(); err != nil {
-				log.Error(err, "")
+				log.Debug("agentfs: OpenFile cleanup close error", "error", err)
 			}
 			return nil, err
 		}

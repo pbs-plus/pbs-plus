@@ -464,7 +464,7 @@ func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uin
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
 	if err := fh.file.Close(ctx); err != nil {
-		log.Error(err, "FUSE Release failed", "path", fh.file.name)
+		log.Debug("FUSE Release failed", "error", err, "path", fh.file.name, "backup", fh.file.backupID)
 	}
 	return 0
 }

@@ -372,7 +372,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	}
 	if fh.file != nil {
 		if err := fh.file.Close(); err != nil {
-			log.Error(err, "")
+			log.Debug("handleClose: file close error", "error", err)
 		}
 	}
 	fh.mu.Unlock()
