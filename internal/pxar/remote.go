@@ -99,7 +99,10 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 
 	err := fmt.Errorf("client error: %s", params.Error)
 	log.Error(err, "")
-	s.errCh <- err
+	select {
+	case s.errCh <- err:
+	default:
+	}
 
 	return arpc.Response{Status: 200}, nil
 }
