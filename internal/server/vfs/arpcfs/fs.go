@@ -53,16 +53,12 @@ func isIgnoredPath(p string) bool {
 }
 
 func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup database.Backup, backupMode string) *ARPCFS {
-	log.Debug("newARPCFS called",
 
-		"backupMode", backupMode, "backupID", backup.ID, "hostname", hostname)
 
 	ctxFs, cancel := context.WithCancel(ctx)
 
 	memcachePath := filepath.Join(conf.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
-	log.Debug("starting local memcached",
 
-		"backupID", backup.ID, "socketPath", memcachePath)
 
 	stopMemLocal, err := vfs.StartMemcachedOnUnixSocket(ctxFs, vfs.MemcachedConfig{
 		SocketPath:     memcachePath,
@@ -88,14 +84,11 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 		agentManager: agentManager,
 		sessionId:    sessionId,
 	}
-	log.Debug("aRPCFS initialized",
 
-		"basePath", fs.BasePath, "hostname", fs.Hostname, "backupID", fs.Backup.ID)
 
 	go func() {
 		<-ctxFs.Done()
-		log.Debug("context done, cleaning up memcache and memlocal",
-			"backupID", fs.Backup.ID)
+
 
 		if err := fs.Memcache.DeleteAll(); err != nil {
 			log.Error(err, "")
@@ -150,17 +143,13 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 func (fs *ARPCFS) Context() context.Context { return fs.Ctx }
 
 func (fs *ARPCFS) GetBackupMode() string {
-	log.Debug("getBackupMode called",
 
-		"backupMode", fs.backupMode, "backupID", fs.Backup.ID)
 
 	return fs.backupMode
 }
 
 func (fs *ARPCFS) Open(ctx context.Context, filename string) (ARPCFile, error) {
-	log.Debug("open called",
 
-		"backupID", fs.Backup.ID, "path", filename)
 
 	return fs.OpenFile(ctx, filename, os.O_RDONLY, 0)
 }
@@ -173,9 +162,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 
 		return ARPCFile{}, syscall.ENOENT
 	}
-	log.Debug("openFile called",
 
-		"backupID", fs.Backup.ID, "perm", perm, "flag", flag, "path", filename)
 
 	var resp types.FileHandleID
 	req := types.OpenFileReq{
@@ -196,9 +183,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 	if err != nil {
 		return ARPCFile{}, fmt.Errorf("open decode: %w", err)
 	}
-	log.Debug("openFile succeeded",
 
-		"backupID", fs.Backup.ID, "handleID", resp, "path", filename)
 
 	return ARPCFile{
 		fs:       fs,
@@ -209,9 +194,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 }
 
 func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (types.AgentFileInfo, error) {
-	log.Debug("attr called",
 
-		"backupID", fs.Backup.ID, "isLookup", isLookup, "path", filename)
 
 	var fi types.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
@@ -234,14 +217,10 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 	if err == nil {
 		fs.StatCacheHits.Add(1)
 		raw = cached.Value
-		log.Debug("attr cache hit",
 
-			"backupID", fs.Backup.ID, "path", filename)
 
 	} else {
-		log.Debug("attr cache miss, issuing RPC",
 
-			"backupID", fs.Backup.ID, "path", filename)
 
 		raw, err = pipe.CallData(ctxN, "Attr", &req)
 		if err != nil {
@@ -249,9 +228,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 		}
 		if isLookup {
 			if mcErr := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); mcErr != nil {
-				log.Debug("attr cache set failed",
 
-					"error", mcErr.Error(), "path", filename)
 
 			}
 		}
@@ -267,9 +244,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 			if err := fs.Memcache.Delete(cacheKey); err != nil {
 				log.Error(err, "")
 			}
-			log.Debug("attr counted file and cleared cache",
 
-				"fileCount", fs.FileCount.Value(), "path", filename)
 
 		}
 	}
@@ -278,14 +253,10 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 }
 
 func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFileInfo, error) {
-	log.Debug("listXattr called",
 
-		"backupID", fs.Backup.ID, "path", filename)
 
 	if !fs.Backup.IncludeXattr {
-		log.Debug("xattr disabled by backup",
 
-			"backupID", fs.Backup.ID, "path", filename)
 
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
@@ -313,9 +284,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 		if err := cbor.Unmarshal(rawCached.Value, &fiCached); err != nil {
 			log.Error(err, "")
 		}
-		log.Debug("xattr cache hit for metadata",
 
-			"backupID", fs.Backup.ID, "path", filename)
 
 	}
 
@@ -336,9 +305,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 		fi.LastWriteTime = fiCached.LastWriteTime
 		fi.LastAccessTime = fiCached.LastAccessTime
 		fi.FileAttributes = fiCached.FileAttributes
-		log.Debug("xattr merged cached timestamps/attributes",
 
-			"backupID", fs.Backup.ID, "path", filename)
 
 	}
 
@@ -355,14 +322,10 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 }
 
 func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (types.AgentFileInfo, error) {
-	log.Debug("xattr called",
 
-		"backupID", fs.Backup.ID, "attr", attr, "path", filename)
 
 	if !fs.Backup.IncludeXattr {
-		log.Debug("xattr disabled by backup",
 
-			"backupID", fs.Backup.ID, "path", filename)
 
 		return types.AgentFileInfo{}, syscall.ENOTSUP
 	}
@@ -385,8 +348,7 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (type
 }
 
 func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
-	log.Debug("statFS called",
-		"backupID", fs.Backup.ID)
+
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
@@ -414,16 +376,13 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 
 		return types.StatFS{}, syscall.ENOENT
 	}
-	log.Debug("statFS completed",
-		"backupID", fs.Backup.ID)
+
 
 	return fsStat, nil
 }
 
 func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
-	log.Debug("readDir called",
 
-		"backupID", fs.Backup.ID, "path", path)
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
@@ -452,9 +411,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	if err := fs.Memcache.Delete(cacheKey); err != nil {
 		log.Error(err, "")
 	}
-	log.Debug("readDir opened directory",
 
-		"handleId", handleId, "path", path)
 
 	decOpts := cbor.DecOptions{
 		MaxArrayElements: math.MaxInt32,
@@ -478,23 +435,19 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 }
 
 func (fs *ARPCFS) Root() string {
-	log.Debug("root called",
 
-		"backupID", fs.Backup.ID, "basePath", fs.BasePath)
 
 	return fs.BasePath
 }
 
 func (fs *ARPCFS) Unmount(ctx context.Context) {
-	log.Debug("unmount called",
-		"backupID", fs.Backup.ID)
+
 
 	if fs.Fuse != nil {
 		if err := fs.Fuse.Unmount(); err != nil {
 			log.Error(err, "")
 		}
-		log.Debug("fuse unmounted",
-			"backupID", fs.Backup.ID)
+
 
 	}
 
@@ -504,12 +457,10 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 	}
 	if pipe != nil {
 		pipe.Close()
-		log.Debug("aRPC session closed",
-			"backupID", fs.Backup.ID)
+
 
 	}
 	fs.Cancel()
-	log.Debug("context canceled",
-		"backupID", fs.Backup.ID)
+
 
 }

@@ -27,13 +27,8 @@ var bufPool = sync.Pool{
 }
 
 func (s *DirStream) HasNext() bool {
-	log.Debug("hasNext called",
-
-		"maxDirEntries", s.fs.Backup.MaxDirEntries, "entriesReturned", atomic.LoadUint64(&s.totalReturned), "curIdx", atomic.LoadUint64(&s.curIdx), "closed", atomic.LoadInt32(&s.closed), "path", s.path)
 
 	if atomic.LoadInt32(&s.closed) != 0 {
-		log.Debug("hasNext early return: stream closed",
-			"path", s.path)
 
 		return false
 	}
@@ -53,15 +48,9 @@ func (s *DirStream) HasNext() bool {
 
 	curIdx := atomic.LoadUint64(&s.curIdx)
 	if int(curIdx) < len(s.lastResp) {
-		log.Debug("hasNext hit in-memory entries",
-
-			"lastRespLen", len(s.lastResp), "curIdx", curIdx, "path", s.path)
 
 		return true
 	}
-	log.Debug("hasNext needs new batch - issuing ReadDir RPC",
-
-		"handleId", s.handleId, "path", s.path)
 
 	req := types.ReadDirReq{HandleID: s.handleId}
 	readBuf := bufPool.Get().([]byte)
@@ -76,15 +65,9 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	bytesRead, err := pipe.CallBinary(s.fs.Ctx, "ReadDir", &req, readBuf)
-	log.Debug("hasNext RPC completed",
-
-		"path", s.path, "error", err, "bytesRead", bytesRead)
 
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
-			log.Debug("hasNext: process done received, closing dirstream",
-
-				"entriesReturned", atomic.LoadUint64(&s.totalReturned), "path", s.path)
 
 		} else {
 			log.Error(err,
@@ -97,18 +80,11 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	if bytesRead == 0 {
-		log.Debug("hasNext: no bytes read, end of directory reached",
-
-			"totalEntriesReturned", atomic.LoadUint64(&s.totalReturned), "path", s.path)
 
 		return false
 	}
 
-	oldLen := len(s.lastResp)
 	s.lastResp = nil
-	log.Debug("hasNext: decoding new batch",
-
-		"oldBatchLen", oldLen, "bytesRead", bytesRead, "path", s.path)
 
 	err = s.cborDec.Unmarshal(readBuf[:bytesRead], &s.lastResp)
 	if err != nil {
@@ -121,14 +97,8 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	newBatchLen := len(s.lastResp)
-	log.Debug("hasNext decoded batch",
-
-		"path", s.path, "entries", newBatchLen)
 
 	if newBatchLen == 0 {
-		log.Debug("hasNext: empty batch received, end of directory",
-
-			"totalEntriesReturned", atomic.LoadUint64(&s.totalReturned), "path", s.path)
 
 		return false
 	}
@@ -147,9 +117,6 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	atomic.StoreUint64(&s.curIdx, 0)
-	log.Debug("hasNext: returning true with new batch",
-
-		"curIdx", atomic.LoadUint64(&s.curIdx), "batchSize", newBatchLen, "path", s.path)
 
 	return newBatchLen > 0
 }
@@ -159,16 +126,11 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	defer s.mu.Unlock()
 
 	if atomic.LoadInt32(&s.closed) != 0 {
-		log.Debug("next called on closed stream",
-			"path", s.path)
 
 		return fuse.DirEntry{}, syscall.EBADF
 	}
 
 	if atomic.LoadInt32(&s.maxedOut) != 0 {
-		log.Debug("next called on maxed out stream",
-
-			"entriesReturned", atomic.LoadUint64(&s.totalReturned), "path", s.path)
 
 		return fuse.DirEntry{}, syscall.EBADF
 	}
@@ -182,9 +144,6 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	}
 
 	curr := s.lastResp[curIdxVal]
-	log.Debug("next returning entry",
-
-		"entriesReturned", atomic.LoadUint64(&s.totalReturned), "lastRespLen", len(s.lastResp), "curIdx", curIdxVal, "isDir", curr.IsDir, "mode", curr.Mode, "size", curr.Size, "name", curr.Name, "path", s.path)
 
 	mode := os.FileMode(curr.Mode)
 	modeBits := uint32(0)
@@ -218,19 +177,11 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 			s.fs.FolderCount.Add(1)
 		}
 		if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: attrKey, Value: attrBytes, Expiration: 0}); mcErr != nil {
-			log.Debug("memcache set attr failed",
-
-				"error", mcErr.Error(), "path", fullPath)
 
 		} else {
-			log.Debug("memcache set attr",
-				"path", fullPath)
 
 		}
 	} else {
-		log.Debug("encode attr failed",
-
-			"error", err.Error(), "path", fullPath)
 
 	}
 
@@ -243,27 +194,16 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 	if xattrBytes, err := cbor.Marshal(currXAttr); err == nil {
 		if mcErr := s.fs.Memcache.Set(&memcache.Item{Key: xattrKey, Value: xattrBytes, Expiration: 0}); mcErr != nil {
-			log.Debug("memcache set xattr failed",
-
-				"error", mcErr.Error(), "path", fullPath)
 
 		} else {
-			log.Debug("memcache set xattr",
-				"path", fullPath)
 
 		}
 	} else {
-		log.Debug("encode xattr failed",
-
-			"error", err.Error(), "path", fullPath)
 
 	}
 
 	atomic.AddUint64(&s.curIdx, 1)
 	atomic.AddUint64(&s.totalReturned, 1)
-	log.Debug("next advanced indices",
-
-		"newEntriesReturned", atomic.LoadUint64(&s.totalReturned), "newCurIdx", atomic.LoadUint64(&s.curIdx), "path", s.path)
 
 	return fuse.DirEntry{
 		Name: curr.Name,
@@ -273,15 +213,9 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 func (s *DirStream) Close() {
 	if atomic.SwapInt32(&s.closed, 1) != 0 {
-		log.Debug("close called on already closed stream",
-
-			"handleId", s.handleId, "path", s.path)
 
 		return
 	}
-	log.Debug("closing DirStream",
-
-		"totalEntriesReturned", atomic.LoadUint64(&s.totalReturned), "handleId", s.handleId, "path", s.path)
 
 	ctxN, cancelN := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancelN()
@@ -303,9 +237,6 @@ func (s *DirStream) Close() {
 			"handleId", s.handleId, "path", s.path)
 
 	} else {
-		log.Debug("dirStream closed successfully",
-
-			"totalEntriesReturned", atomic.LoadUint64(&s.totalReturned), "handleId", s.handleId, "path", s.path)
 
 	}
 }
