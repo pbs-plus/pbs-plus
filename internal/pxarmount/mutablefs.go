@@ -136,7 +136,7 @@ func (fs *MutableFS) debugf(format string, args ...any) {
 
 func (fs *MutableFS) logNonFatal(op, path string, err error) {
 	if fs.verbose {
-		fmt.Fprintf(os.Stderr, "  [nonfatal] %s %s: %v\n", op, path, err)
+		log.Error(err, "non-fatal error", "op", op, "path", path)
 	}
 }
 
@@ -1607,14 +1607,14 @@ func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 		}
 		if err := unix.Lsetxattr(abs, string(name), xa.Value(), 0); err != nil {
 			if !isIgnorableXattrErr(err) {
-				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp xattr %q on %q: %v\n", string(name), abs, err)
+				log.Error(err, "non-fatal: copyUp xattr", "name", string(name), "path", abs)
 			}
 		}
 	}
 	if len(entry.Metadata.FCaps) > 0 {
 		if err := unix.Lsetxattr(abs, "security.capability", entry.Metadata.FCaps, 0); err != nil {
 			if !isIgnorableXattrErr(err) {
-				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp fcaps on %q: %v\n", abs, err)
+				log.Error(err, "non-fatal: copyUp fcaps", "path", abs)
 			}
 		}
 	}

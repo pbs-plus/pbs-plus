@@ -209,7 +209,7 @@ func (q *QuicPipe) call(ctx context.Context, method string, payload any) (ARPCSt
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := stream.SetDeadline(deadline); err != nil {
-			fmt.Printf("arpc: failed to set stream deadline: %v\n", err)
+			log.Error(err, "arpc: failed to set stream deadline")
 		}
 	}
 

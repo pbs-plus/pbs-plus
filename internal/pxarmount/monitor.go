@@ -132,14 +132,14 @@ func (h *commitHub) broadcast(line string) {
 	if h.logFile != nil {
 		if _, err := fmt.Fprintln(h.logFile, line); err != nil {
 			if h.verbose {
-				fmt.Fprintf(os.Stderr, "commit-hub: log write error: %v\n", err)
+				log.Error(err, "commit-hub: log write error")
 			}
 		} else {
 			// Sync every write so the log is always readable.
 			// This is cheap: one fsync per progress line (~10/s)
 			// and guarantees the log is complete even on crash.
 			if err := h.logFile.Sync(); err != nil && h.verbose {
-				fmt.Fprintf(os.Stderr, "commit-hub: log sync error: %v\n", err)
+				log.Error(err, "commit-hub: log sync error")
 			}
 		}
 	}
@@ -180,7 +180,7 @@ func (h *commitHub) startJob() int64 {
 	f, err := os.Create(h.logPath)
 	if err != nil {
 		if h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: failed to create log file %s: %v\n", h.logPath, err)
+			log.Error(err, "commit-hub: failed to create log file", "path", h.logPath)
 		}
 	} else {
 		if err := f.Chmod(0o660); err != nil {
@@ -188,7 +188,7 @@ func (h *commitHub) startJob() int64 {
 		}
 		h.logFile = f
 		if h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: log file created at %s\n", h.logPath)
+			log.Info("commit-hub: log file created", "path", h.logPath)
 		}
 	}
 	h.mu.Unlock()
@@ -207,15 +207,15 @@ func (h *commitHub) endJob() {
 	if h.logFile != nil {
 		// Final sync before close to ensure all data is on disk.
 		if err := h.logFile.Sync(); err != nil && h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: final log sync error: %v\n", err)
+			log.Error(err, "commit-hub: final log sync error")
 		}
 		if err := h.logFile.Close(); err != nil && h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: log close error: %v\n", err)
+			log.Error(err, "commit-hub: log close error")
 		}
 		h.logFile = nil
 	}
 	if h.verbose {
-		fmt.Fprintf(os.Stderr, "commit-hub: job ended, %d lines in catch-up buffer\n", len(h.lastLines))
+		log.Info("commit-hub: job ended", "buffered_lines", len(h.lastLines))
 	}
 	h.mu.Unlock()
 	h.jobID.Store(0)

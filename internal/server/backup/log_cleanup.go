@@ -5,7 +5,6 @@ package backup
 import (
 	"bufio"
 	"fmt"
-	stdlog "log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -156,12 +155,12 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 	worker := func() {
 		defer wg.Done()
 		for path := range fileCh {
-			stdlog.Printf("Processing file: %s", path)
+			log.Debug("processing file", "path", path)
 			if err := processFile(path, &totalRemoved); err != nil {
 				errOnce.Do(func() {
 					finalErr = err
 				})
-				stdlog.Printf("Error processing file %s: %v", path, err)
+				log.Error(err, "error processing file", "path", path)
 			}
 		}
 	}
@@ -192,7 +191,7 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 				errOnce.Do(func() {
 					finalErr = err
 				})
-				stdlog.Printf("Error walking directory %s: %v", subDir, err)
+				log.Error(err, "error walking directory", "dir", subDir)
 			}
 		}
 	}

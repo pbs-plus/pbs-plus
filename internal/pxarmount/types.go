@@ -448,7 +448,7 @@ func BuildACLConfig(ownerUID, ownerGID int, aclSpec, defaultAclSpec string) ACLC
 	if aclSpec != "" {
 		entries, err := ParseACLSpec(aclSpec)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing acl-spec: %v\n", err)
+			log.Error(err, "error parsing acl-spec")
 			os.Exit(1)
 		}
 		cfg.ACLEntries = entries
@@ -456,7 +456,7 @@ func BuildACLConfig(ownerUID, ownerGID int, aclSpec, defaultAclSpec string) ACLC
 	if defaultAclSpec != "" {
 		entries, err := ParseACLSpec(defaultAclSpec)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error parsing default-acl-spec: %v\n", err)
+			log.Error(err, "error parsing default-acl-spec")
 			os.Exit(1)
 		}
 		cfg.DefaultACLEntries = entries

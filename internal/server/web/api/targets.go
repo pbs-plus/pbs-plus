@@ -199,7 +199,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		})
 
 		if err != nil {
-			fmt.Printf("Error encoding success response: %v\n", err)
+			log.Error(err, "failed to encode success response")
 		}
 	}
 }

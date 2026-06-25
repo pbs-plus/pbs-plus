@@ -123,10 +123,10 @@ func RenewCertificateIfExpiring() error {
 
 		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")
 	case timeUntilExpiry < renewalWindow || caTimeUntilExpiry < renewalWindow:
-		fmt.Printf("Certificate expires in %v hours. Renewing...\n", timeUntilExpiry.Hours())
+		log.Info("certificate expires soon, renewing", "hours_left", timeUntilExpiry.Hours())
 		return renewCertificate()
 	default:
-		fmt.Printf("Certificate valid for %v days. No renewal needed.\n", timeUntilExpiry.Hours()/24)
+		log.Info("certificate valid, no renewal needed", "days_left", timeUntilExpiry.Hours()/24)
 		return nil
 	}
 }
