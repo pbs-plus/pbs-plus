@@ -4,12 +4,10 @@ package restore
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type RestoreTask struct {
@@ -36,27 +34,15 @@ func (t *RestoreTask) WriteString(data string) {
 }
 
 func (t *RestoreTask) CloseOK() {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseOK()
 }
 
 func (t *RestoreTask) CloseErr(taskErr error) {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: taskErr.Error()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseErr(taskErr)
 }
 
 func (t *RestoreTask) CloseWarn(warning int) {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusWarning, EndTime: time.Now().Unix(), WarnCount: uint64(warning)}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseWarn(uint64(warning))
 }
 
 func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
@@ -72,11 +58,7 @@ func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (p
 		wt.LogString(data)
 	}
 
-	wt.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
-		if err := tasklog.RemoveActive(wt.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	wt.CloseOK()
 
 	return wt.Task, nil
 }

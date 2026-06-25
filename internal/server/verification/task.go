@@ -3,12 +3,9 @@
 package verification
 
 import (
-	"time"
-
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type VerificationTask struct {
@@ -34,25 +31,13 @@ func (t *VerificationTask) WriteString(data string) {
 }
 
 func (t *VerificationTask) CloseOK() {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseOK()
 }
 
 func (t *VerificationTask) CloseErr(taskErr error) {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: taskErr.Error()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseErr(taskErr)
 }
 
 func (t *VerificationTask) CloseWarn(warnings int) {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusWarning, EndTime: time.Now().Unix(), WarnCount: uint64(warnings)}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseWarn(uint64(warnings))
 }

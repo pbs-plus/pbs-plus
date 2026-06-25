@@ -14,12 +14,11 @@ import (
 )
 
 type WorkerTask struct {
-	Task       proxmox.Task
-	mu         sync.Mutex
-	closed     atomic.Bool
-	file       *os.File
-	abort      atomic.Bool
-	afterClose func()
+	Task   proxmox.Task
+	mu     sync.Mutex
+	closed atomic.Bool
+	file   *os.File
+	abort  atomic.Bool
 }
 
 func NewWorkerTask(node, workerType, wid string) (*WorkerTask, error) {
@@ -67,7 +66,7 @@ func (w *WorkerTask) LogString(data string) {
 	}
 }
 
-func (w *WorkerTask) CloseWithStatus(state TaskState, afterClose func()) {
+func (w *WorkerTask) CloseWithStatus(state TaskState) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -80,23 +79,23 @@ func (w *WorkerTask) CloseWithStatus(state TaskState, afterClose func()) {
 		syslog.L.Error(err).WithField("upid", w.Task.UPID).Write()
 	}
 
-	if afterClose != nil {
-		afterClose()
+	if err := RemoveActive(w.Task.UPID); err != nil {
+		syslog.L.Error(err).Write()
 	}
 
 	w.close()
 }
 
-func (w *WorkerTask) CloseOK(afterClose func()) {
-	w.CloseWithStatus(TaskState{Status: StatusOK, EndTime: time.Now().Unix()}, afterClose)
+func (w *WorkerTask) CloseOK() {
+	w.CloseWithStatus(TaskState{Status: StatusOK, EndTime: time.Now().Unix()})
 }
 
-func (w *WorkerTask) CloseErr(err error, afterClose func()) {
-	w.CloseWithStatus(TaskState{Status: StatusError, EndTime: time.Now().Unix(), Message: err.Error()}, afterClose)
+func (w *WorkerTask) CloseErr(err error) {
+	w.CloseWithStatus(TaskState{Status: StatusError, EndTime: time.Now().Unix(), Message: err.Error()})
 }
 
-func (w *WorkerTask) CloseWarn(count uint64, afterClose func()) {
-	w.CloseWithStatus(TaskState{Status: StatusWarning, EndTime: time.Now().Unix(), WarnCount: count}, afterClose)
+func (w *WorkerTask) CloseWarn(count uint64) {
+	w.CloseWithStatus(TaskState{Status: StatusWarning, EndTime: time.Now().Unix(), WarnCount: count})
 }
 
 func (w *WorkerTask) RequestAbort() {

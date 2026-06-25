@@ -26,19 +26,11 @@ func (t *ScanTask) CloseOK(res *Result) {
 	if res != nil {
 		t.Log("scan completed: %d cartridges, %d families (%s)", res.Cartridges, res.Families, res.Duration.Truncate(time.Second))
 	}
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseOK()
 }
 
 func (t *ScanTask) CloseErr(taskErr error) {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: taskErr.Error()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseErr(taskErr)
 }
 
 func scanWID(opts Options) string {

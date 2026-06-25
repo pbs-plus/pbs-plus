@@ -477,19 +477,11 @@ func startTask(job mtfdb.MTFJob) (*Task, error) {
 }
 
 func (t *Task) CloseOK() {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseOK()
 }
 
 func (t *Task) CloseErr(taskErr error) {
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: taskErr.Error()}, func() {
-		if err := tasklog.RemoveActive(t.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseErr(taskErr)
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
@@ -499,7 +491,7 @@ func errorTask(job mtfdb.MTFJob, runErr error) *Task {
 	}
 
 	wt.Log("%s", runErr.Error())
-	wt.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: runErr.Error()}, nil)
+	wt.CloseErr(runErr)
 
 	return &Task{
 		WorkerTask: wt,

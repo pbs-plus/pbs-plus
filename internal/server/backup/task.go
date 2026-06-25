@@ -5,14 +5,13 @@ package backup
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"os"
 )
 
 func GetBackupTask(
@@ -71,11 +70,7 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 
 	wt.LogString(pbsError.Error())
 
-	wt.CloseWithStatus(tasklog.CreateState(pbsError, 0), func() {
-		if err := tasklog.RemoveActive(wt.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	wt.CloseWithStatus(tasklog.CreateState(pbsError, 0))
 
 	return wt.Task, nil
 }
@@ -93,11 +88,7 @@ func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (pro
 		wt.LogString(data)
 	}
 
-	wt.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
-		if err := tasklog.RemoveActive(wt.UPID()); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	wt.CloseOK()
 
 	return wt.Task, nil
 }
