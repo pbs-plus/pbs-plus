@@ -86,6 +86,16 @@ func serveEmbeddedBinary(w http.ResponseWriter, r *http.Request, version, osName
 		name += ".exe"
 	}
 
+	if embeddedFile(name) == nil {
+		return false
+	}
+
+	sigName := name + ".sig"
+	ecdsaSigName := name + ".ecdsa-sig"
+	if embeddedFile(sigName) == nil || embeddedFile(ecdsaSigName) == nil {
+		return false
+	}
+
 	return serveEmbeddedContent(w, r, name)
 }
 
