@@ -7,6 +7,8 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
+	stdlog "log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -146,6 +148,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiServer := &http.Server{
 		Addr:           conf.ServerAPIExtPort,
 		Handler:        apiHandler,
+		ErrorLog:       stdlog.New(io.Discard, "", 0),
 		ReadTimeout:    conf.HTTPReadTimeout,
 		WriteTimeout:   conf.HTTPWriteTimeout,
 		IdleTimeout:    conf.HTTPIdleTimeout,
@@ -156,6 +159,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 		Addr:           conf.AgentAPIPort,
 		Handler:        agentHandler,
 		TLSConfig:      serverConfig,
+		ErrorLog:       stdlog.New(io.Discard, "", 0),
 		ReadTimeout:    conf.HTTPReadTimeout,
 		WriteTimeout:   conf.HTTPWriteTimeout,
 		IdleTimeout:    conf.HTTPIdleTimeout,
