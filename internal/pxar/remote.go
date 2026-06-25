@@ -39,7 +39,6 @@ type RemoteServer struct {
 	closed         atomic.Bool
 	handleCounter  uint64
 	contentHandles *safemap.Map[uint64, *contentHandle]
-	errWg          sync.WaitGroup
 }
 
 func NewRemoteServer(reader *PxarReader) (*RemoteServer, chan error) {
@@ -100,8 +99,6 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 
 	err := fmt.Errorf("client error: %s", params.Error)
 	log.Error(err, "")
-	s.errWg.Add(1)
-	defer s.errWg.Done()
 	select {
 	case s.errCh <- err:
 	default:
@@ -112,7 +109,6 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 
 func (s *RemoteServer) handleDone(req *arpc.Request) (arpc.Response, error) {
 	if !s.isDone.Swap(true) {
-		s.errWg.Wait()
 		close(s.DoneCh)
 	}
 	return arpc.Response{Status: 200}, nil
