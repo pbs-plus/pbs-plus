@@ -29,6 +29,10 @@ func Entry() {
 		return
 	}
 
+	if err := log.L.SetServiceLogger(); err != nil {
+		log.Error(err, "failed to initialize service logger")
+	}
+
 	if *token == "" {
 		fmt.Fprintln(os.Stderr, "Error: token required")
 		os.Exit(1)
