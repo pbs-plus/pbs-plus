@@ -135,19 +135,3 @@ func (w *WorkerTask) close() {
 	}
 	w.closed.Store(true)
 }
-
-func WriteQueuedLog(node, workerType, wid string, description string) (proxmox.Task, string, error) {
-	task := NewTask(node, workerType, wid)
-	file, path, err := CreateTaskLogFile(task.UPID)
-	if err != nil {
-		return proxmox.Task{}, "", err
-	}
-	wt := &WorkerTask{Task: task, file: file}
-	wt.LogString("TASK QUEUED: " + description)
-	if err := file.Close(); err != nil {
-		syslog.L.Error(err).Write()
-	}
-	wt.closed.Store(true)
-	task.Status = "running"
-	return task, path, nil
-}

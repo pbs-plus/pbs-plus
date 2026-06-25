@@ -16,12 +16,12 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -31,7 +31,7 @@ type backupJob struct {
 
 	Task      proxmox.Task
 	currOwner string
-	queueTask *tasks.QueuedTask
+	queueTask *tasklog.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
 
@@ -127,7 +127,7 @@ func (b *backupJob) preExecute(ctx context.Context) error {
 	job := b.job
 	b.mu.RUnlock()
 
-	queueTask, err := tasks.GenerateBackupQueuedTask(job, b.web)
+	queueTask, err := generateBackupQueuedTask(job, b.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
@@ -137,7 +137,7 @@ func (b *backupJob) preExecute(ctx context.Context) error {
 	}
 
 	b.mu.Lock()
-	b.queueTask = &queueTask
+	b.queueTask = queueTask
 	b.mu.Unlock()
 
 	if err := b.runPreScript(ctx); err != nil {
@@ -947,4 +947,16 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 			WithField("upid", task.UPID).
 			Write()
 	}
+}
+
+func generateBackupQueuedTask(job database.Backup, web bool) (*tasklog.QueuedTask, error) {
+	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(job.Target.GetHostname()))
+
+	source := "web UI"
+	if !web {
+		source = "schedule"
+	}
+	desc := fmt.Sprintf("job started from %s", source)
+
+	return tasklog.WriteQueuedLog("pbsplusgen-queue", "backup", wid, desc)
 }

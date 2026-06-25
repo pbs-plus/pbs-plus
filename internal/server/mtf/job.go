@@ -18,7 +18,7 @@ import (
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	tasks "github.com/pbs-plus/pbs-plus/internal/server/tasks"
+
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -36,7 +36,7 @@ type mtfJob struct {
 	job         mtfdb.MTFJob
 	store       *store.Store
 	mapper      *mtfdb.Mapper
-	queueTask   *tasks.QueuedTask
+	queueTask   *tasklog.QueuedTask
 	task        *Task
 	logger      *syslog.JobLogger
 	started     atomic.Bool
@@ -77,12 +77,12 @@ func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 		_, cancel := context.WithCancel(ctx)
 		j.cancel = cancel
 
-		qt, err := tasks.GenerateMtfQueuedTask(j.job.ID, j.job.Datastore, web)
+		qt, err := generateMtfQueuedTask(j.job.ID, j.job.Datastore, web)
 		if err != nil {
 			syslog.L.Error(err).WithJob(j.job.ID).WithMessage("mtf: failed to create queue task").Write()
 			return nil // non-fatal
 		}
-		j.queueTask = &qt
+		j.queueTask = qt
 
 		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
 			syslog.L.Error(err).WithJob(j.job.ID).Write()
@@ -510,4 +510,18 @@ func mtfWID(job mtfdb.MTFJob) string {
 	return proxmox.EncodeToHexEscapes(job.Datastore) +
 		proxmox.EncodeToHexEscapes(":") +
 		"mtf-" + proxmox.EncodeToHexEscapes(job.ID)
+}
+
+func generateMtfQueuedTask(jobID, datastore string, web bool) (*tasklog.QueuedTask, error) {
+	wid := proxmox.EncodeToHexEscapes(datastore) +
+		proxmox.EncodeToHexEscapes(":") +
+		"mtf-" + proxmox.EncodeToHexEscapes(jobID)
+
+	source := "web UI"
+	if !web {
+		source = "schedule"
+	}
+	desc := fmt.Sprintf("MTF job started from %s", source)
+
+	return tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, desc)
 }

@@ -26,7 +26,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"
@@ -212,7 +212,7 @@ type verificationJob struct {
 	cancel context.CancelFunc
 
 	task          *VerificationTask
-	queueTask     *tasks.QueuedTask
+	queueTask     *tasklog.QueuedTask
 	job           database.VerificationJob
 	backupJobs    []database.Backup
 	storeInstance *store.Store
@@ -299,12 +299,12 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 	if v.web {
 		source = "web UI"
 	}
-	queueTask, err := tasks.GenerateVerificationQueuedTask(job, v.web)
+	queueTask, err := generateVerificationQueuedTask(job, v.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
 		v.mu.Lock()
-		v.queueTask = &queueTask
+		v.queueTask = queueTask
 		v.mu.Unlock()
 
 		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
@@ -1302,4 +1302,16 @@ func extractFileHash(ctx context.Context, vs *verifyState, file fileEntry) ([32]
 	var digest [32]byte
 	copy(digest[:], h.Sum(nil))
 	return digest, nil
+}
+
+func generateVerificationQueuedTask(job database.VerificationJob, web bool) (*tasklog.QueuedTask, error) {
+	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(job.ID))
+
+	source := "web UI"
+	if !web {
+		source = "schedule"
+	}
+	desc := fmt.Sprintf("job started from %s", source)
+
+	return tasklog.WriteQueuedLog("pbsplusgen-queue", "verification", wid, desc)
 }

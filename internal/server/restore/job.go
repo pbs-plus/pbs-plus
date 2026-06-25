@@ -18,12 +18,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
@@ -33,7 +33,7 @@ type restoreJob struct {
 	cancel context.CancelFunc
 
 	task         *RestoreTask
-	queueTask    *tasks.QueuedTask
+	queueTask    *tasklog.QueuedTask
 	waitGroup    *sync.WaitGroup
 	err          error
 	errChClosed  atomic.Bool
@@ -107,7 +107,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 }
 
 func (b *restoreJob) preExecute(ctx context.Context) error {
-	queueTask, err := tasks.GenerateRestoreQueuedTask(b.job, b.web)
+	queueTask, err := generateRestoreQueuedTask(b.job, b.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
@@ -115,7 +115,7 @@ func (b *restoreJob) preExecute(ctx context.Context) error {
 			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
 		}
 	}
-	b.queueTask = &queueTask
+	b.queueTask = queueTask
 
 	if err := b.runPreScript(ctx); err != nil {
 		return err
@@ -681,4 +681,16 @@ func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
 			WithField("upid", task.UPID).
 			Write()
 	}
+}
+
+func generateRestoreQueuedTask(job database.Restore, web bool) (*tasklog.QueuedTask, error) {
+	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(job.DestTarget.GetHostname()))
+
+	source := "web UI"
+	if !web {
+		source = "schedule"
+	}
+	desc := fmt.Sprintf("job started from %s", source)
+
+	return tasklog.WriteQueuedLog("pbsplusgen-queue", "reader", wid, desc)
 }
