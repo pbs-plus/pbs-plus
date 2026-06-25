@@ -104,7 +104,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 
 	if backup.Namespace != "" {
 		if err := CreateNamespace(backup.Namespace, backup, storeInstance); err != nil {
-			log.Error(err, "")
+			logger.Error(err, "")
 		}
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
