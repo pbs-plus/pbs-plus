@@ -30,6 +30,12 @@ var (
 	Ed25519PublicKeyB64 = ""
 )
 
+const (
+	maxBinarySize  = 200 << 20
+	maxSigSize     = 4 << 10
+	maxVersionSize = 1 << 10
+)
+
 type Config struct {
 	MinConstraint  string
 	PollInterval   time.Duration
@@ -137,6 +143,11 @@ func (u *Updater) CheckNow() error {
 		return fmt.Errorf("updater: version %s does not meet constraint %s", version, u.cfg.MinConstraint)
 	}
 
+	currentVer, cverErr := semver.NewVersion(conf.Version)
+	if cverErr == nil && !vs.GreaterThan(currentVer) {
+		return fmt.Errorf("updater: version %s is not newer than current version %s", version, conf.Version)
+	}
+
 	if !u.cfg.UpgradeConfirm(version) {
 		syslog.L.Info().WithMessage("upgrade not confirmed by user").Write()
 		return nil
@@ -162,9 +173,12 @@ func (u *Updater) fetchLatestVersion() (string, error) {
 		}
 	}()
 
-	data, err := io.ReadAll(resp)
+	data, err := io.ReadAll(io.LimitReader(resp, maxVersionSize))
 	if err != nil {
 		return "", err
+	}
+	if len(data) >= maxVersionSize {
+		return "", fmt.Errorf("version response exceeds maximum size of %d bytes", maxVersionSize)
 	}
 
 	var vr VersionResp
@@ -258,9 +272,12 @@ func (u *Updater) fetchBinary(params string) ([]byte, error) {
 		}
 	}()
 
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxBinarySize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read binary: %w", err)
+	}
+	if len(data) > maxBinarySize {
+		return nil, fmt.Errorf("binary exceeds maximum allowed size of %d bytes", maxBinarySize)
 	}
 	return data, nil
 }
@@ -277,9 +294,12 @@ func (u *Updater) fetchECDSASignature(params string) ([]byte, error) {
 		}
 	}()
 
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxSigSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read ECDSA signature: %w", err)
+	}
+	if len(data) > maxSigSize {
+		return nil, fmt.Errorf("ECDSA signature exceeds maximum allowed size of %d bytes", maxSigSize)
 	}
 	return data, nil
 }
@@ -296,9 +316,12 @@ func (u *Updater) fetchEd25519Signature(params string) ([]byte, error) {
 		}
 	}()
 
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxSigSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read Ed25519 signature: %w", err)
+	}
+	if len(data) > maxSigSize {
+		return nil, fmt.Errorf("Ed25519 signature exceeds maximum allowed size of %d bytes", maxSigSize)
 	}
 	return data, nil
 }

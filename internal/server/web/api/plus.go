@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"text/template"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
@@ -33,13 +35,32 @@ var (
 		"arm64": true,
 		"386":   true,
 	}
-	// Prevent path traversal in version strings
 	versionRegex = regexp.MustCompile(`^[a-zA-Z0-9\._-]+$`)
 )
 
+const maxDownloadSize = 200 << 20
+
+var githubDownloadClient = &http.Client{
+	Timeout: 10 * time.Minute,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return fmt.Errorf("too many redirects")
+		}
+		host := req.URL.Hostname()
+		if host != "github.com" && host != "objects.githubusercontent.com" && !strings.HasSuffix(host, ".githubusercontent.com") {
+			return fmt.Errorf("redirect to disallowed host: %s", host)
+		}
+		return nil
+	},
+}
+
 func init() {
-	if err := os.RemoveAll(getCacheDir()); err != nil && !os.IsNotExist(err) {
+	dir := getCacheDir()
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
 		syslog.L.Error(err).Write()
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		syslog.L.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err)).Write()
 	}
 }
 
@@ -47,13 +68,18 @@ func getCacheDir() string {
 	base := os.TempDir()
 	dir := filepath.Join(base, "pbs-plus-binaries")
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		syslog.L.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err)).Write()
 	}
 	return dir
 }
 
 func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http.Request) {
+	if filepath.Base(filename) != filename {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+
 	cachePath := filepath.Join(getCacheDir(), filename)
 
 	if info, err := os.Stat(cachePath); err == nil && !info.IsDir() {
@@ -64,7 +90,7 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 
 	w.Header().Set("X-Cache", "MISS")
 
-	resp, err := http.Get(targetURL)
+	resp, err := githubDownloadClient.Get(targetURL)
 	if err != nil {
 		syslog.L.Error(err).Write()
 		http.Error(w, "Failed to reach upstream", http.StatusBadGateway)
@@ -77,30 +103,59 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	}()
 
 	if resp.StatusCode != http.StatusOK {
+		var body []byte
+		if readBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096)); readErr == nil {
+			body = readBody
+		}
+		syslog.L.Error(fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))).Write()
 		http.Error(w, "Upstream returned error", resp.StatusCode)
 		return
 	}
 
+	if resp.ContentLength > maxDownloadSize {
+		http.Error(w, "Response too large", http.StatusBadGateway)
+		return
+	}
+
+	limitedReader := io.LimitReader(resp.Body, maxDownloadSize+1)
+
 	tmpFile, err := os.CreateTemp(getCacheDir(), "download-*")
 	if err != nil {
 		syslog.L.Error(err).Write()
-		if _, err := io.Copy(w, resp.Body); err != nil {
+		if _, err := io.Copy(w, limitedReader); err != nil {
 			syslog.L.Error(err).Write()
 		}
 		return
 	}
 
-	multiWriter := io.MultiWriter(w, tmpFile)
-	_, err = io.Copy(multiWriter, resp.Body)
+	if err := tmpFile.Chmod(0600); err != nil {
+		syslog.L.Error(fmt.Errorf("failed to set permissions on temp file: %v", err)).Write()
+	}
+
+	written, err := io.Copy(tmpFile, limitedReader)
+	if err != nil {
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			syslog.L.Error(closeErr).Write()
+		}
+		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
+			syslog.L.Error(removeErr).Write()
+		}
+		syslog.L.Error(err).Write()
+		http.Error(w, "Failed to write download", http.StatusInternalServerError)
+		return
+	}
+	if written > maxDownloadSize {
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			syslog.L.Error(closeErr).Write()
+		}
+		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
+			syslog.L.Error(removeErr).Write()
+		}
+		http.Error(w, "Response too large", http.StatusBadGateway)
+		return
+	}
 	if err := tmpFile.Close(); err != nil {
 		syslog.L.Error(err).Write()
-	}
-
-	if err != nil {
-		if err := os.Remove(tmpFile.Name()); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
-		}
-		return
 	}
 
 	if err := os.Rename(tmpFile.Name(), cachePath); err != nil {
