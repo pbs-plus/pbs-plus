@@ -142,7 +142,7 @@ func parseFields(args ...any) map[string]any {
 }
 
 func (l *Logger) newEntry(level string, err error, msg string, args ...any) *entry {
-	return &entry{
+	e := &entry{
 		level:   level,
 		message: msg,
 		err:     err,
@@ -150,6 +150,11 @@ func (l *Logger) newEntry(level string, err error, msg string, args ...any) *ent
 		logger:  l,
 		dedup:   true,
 	}
+	if jobID, ok := e.fields["job"].(string); ok {
+		delete(e.fields, "job")
+		e.jobID = jobID
+	}
+	return e
 }
 
 func (e *entry) write() {
