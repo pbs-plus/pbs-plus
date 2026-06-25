@@ -164,7 +164,6 @@ func (b *restoreJob) onSuccess() {
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 
 	errCount := b.errCount.Load()
-	b.logger.Info("restore finishing", "error_count", errCount)
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
 		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance); err != nil {
