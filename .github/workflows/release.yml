@@ -53,6 +53,8 @@ jobs:
           chmod 600 cosign.key
 
       - name: Derive ECDSA public key
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
           PUB_B64=$(cosign public-key --key cosign.key | base64 -w0)
           if [ -z "$PUB_B64" ]; then
