@@ -23,11 +23,10 @@ func NewScanTask(opts Options) (*ScanTask, error) {
 }
 
 func (t *ScanTask) CloseOK(res *Result) {
-	msg := "OK"
 	if res != nil {
-		msg = fmt.Sprintf("OK: %d cartridges, %d families (%s)", res.Cartridges, res.Families, res.Duration.Truncate(time.Second))
+		t.Log("scan completed: %d cartridges, %d families (%s)", res.Cartridges, res.Families, res.Duration.Truncate(time.Second))
 	}
-	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix(), Message: msg}, func() {
+	t.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusOK, EndTime: time.Now().Unix()}, func() {
 		if err := tasklog.RemoveActive(t.UPID()); err != nil {
 			syslog.L.Error(err).Write()
 		}

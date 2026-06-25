@@ -492,13 +492,10 @@ func (t *Task) CloseErr(taskErr error) {
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
-	task := tasklog.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
-
 	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil
 	}
-	_ = task
 
 	wt.Log("%s", runErr.Error())
 	wt.CloseWithStatus(tasklog.TaskState{Status: tasklog.StatusError, EndTime: time.Now().Unix(), Message: runErr.Error()}, nil)
