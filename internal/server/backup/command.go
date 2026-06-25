@@ -39,7 +39,7 @@ func getBackupId(target database.Target) (string, error) {
 	return hostname, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -118,7 +118,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	cmd.Env = env
 
 	if err := CleanUnfinishedSnapshot(backup, backupID); err != nil {
-		log.Error(err, "", "backupID", backupID)
+		logger.Error(err, "")
 	}
 
 	return cmd, nil

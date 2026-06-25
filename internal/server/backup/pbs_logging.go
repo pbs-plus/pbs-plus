@@ -102,7 +102,7 @@ func processPBSProxyLogs(
 	}
 	defer func() {
 		if err := inFile.Close(); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 	}()
 
@@ -136,10 +136,10 @@ func processPBSProxyLogs(
 	defer func() {
 		if tmpFile != nil {
 			if err := tmpFile.Close(); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 		}
 	}()
@@ -184,10 +184,10 @@ func processPBSProxyLogs(
 		}
 
 		if _, err := tmpWriter.WriteString(line); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 		if err := tmpWriter.WriteByte('\n'); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -203,13 +203,13 @@ func processPBSProxyLogs(
 	}
 	defer func() {
 		if err := clientFile.Close(); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 	}()
 
 	if !alreadyHasClientLogs {
 		if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 
 		clientScanner := bufio.NewScanner(clientFile)
@@ -243,10 +243,10 @@ func processPBSProxyLogs(
 			}
 
 			if _, err := tmpWriter.WriteString(strings.TrimSpace(line)); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 			if err := tmpWriter.WriteByte('\n'); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 		}
 
@@ -269,48 +269,48 @@ func processPBSProxyLogs(
 	switch {
 	case hasError, incomplete:
 		if _, err := tmpWriter.WriteString(timestamp); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 		if _, err := tmpWriter.WriteString(": TASK ERROR: "); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 		if customErr != nil {
 			if _, err := tmpWriter.WriteString(customErrStr); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 		} else {
 			if _, err := tmpWriter.WriteString(ErrUnexpected.Error()); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 		}
 		cancelled = true
 
 	default:
 		if _, err := tmpWriter.WriteString(timestamp); err != nil {
-			log.Error(err, "")
+			clientLogFile.Error(err, "")
 		}
 		succeeded = true
 		if warningsNum > 0 {
 			if _, err := tmpWriter.WriteString(": TASK WARNINGS: "); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 			if _, err := tmpWriter.WriteString(strconv.Itoa(warningsNum)); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 		} else if isGraceful {
 			if _, err := tmpWriter.WriteString(": TASK OK"); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 		} else {
 			succeeded = false
 			if _, err := tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly"); err != nil {
-				log.Error(err, "")
+				clientLogFile.Error(err, "")
 			}
 		}
 	}
 
 	if err := tmpWriter.WriteByte('\n'); err != nil {
-		log.Error(err, "")
+		clientLogFile.Error(err, "")
 	}
 
 	if err := tmpWriter.Flush(); err != nil {

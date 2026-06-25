@@ -14,37 +14,37 @@ import (
 
 var connectionFailedPattern = []byte("connection failed")
 
-func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
+func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd, logger *log.Logger) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Error(err, "failed to create watcher")
+		logger.Error(err, "failed to create watcher")
 		return
 	}
 	defer func() {
 		if err := watcher.Close(); err != nil {
-			log.Error(err, "")
+			logger.Error(err, "")
 		}
 	}()
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		log.Error(err, "failed to open file")
+		logger.Error(err, "failed to open file")
 		return
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Error(err, "")
+			logger.Error(err, "")
 		}
 	}()
 
 	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
-		log.Error(err, "failed to seek file")
+		logger.Error(err, "failed to seek file")
 		return
 	}
 
 	if err := watcher.Add(filePath); err != nil {
-		log.Error(err, "failed to add file to watcher")
+		logger.Error(err, "failed to add file to watcher")
 		return
 	}
 
@@ -75,7 +75,7 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
 		select {
 		case event, ok := <-watcher.Events:
 			if !ok {
-				_, _ = processFileBuffer(file, offset, buf, cmd)
+				_, _ = processFileBuffer(file, offset, buf, cmd, logger)
 				return
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write {
@@ -84,21 +84,21 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				_, _ = processFileBuffer(file, offset, buf, cmd)
+				_, _ = processFileBuffer(file, offset, buf, cmd, logger)
 				return
 			}
-			log.Error(err, "watcher error")
+			logger.Error(err, "watcher error")
 
 		case <-debounceC:
 			debounceC = nil
-			newOffset, errored := processFileBuffer(file, offset, buf, cmd)
+			newOffset, errored := processFileBuffer(file, offset, buf, cmd, logger)
 			offset = newOffset
 			if errored {
 				return
 			}
 
 		case <-ctx.Done():
-			_, _ = processFileBuffer(file, offset, buf, cmd)
+			_, _ = processFileBuffer(file, offset, buf, cmd, logger)
 			return
 		}
 	}
@@ -109,16 +109,17 @@ func processFileBuffer(
 	offset int64,
 	buf []byte,
 	cmd *exec.Cmd,
+	logger *log.Logger,
 ) (int64, bool) {
 	currentPos, err := file.Seek(offset, io.SeekStart)
 	if err != nil {
-		log.Error(err, "seek error")
+		logger.Error(err, "seek error")
 		return offset, false
 	}
 
 	n, err := file.Read(buf)
 	if err != nil && err != io.EOF {
-		log.Error(err, "read error")
+		logger.Error(err, "read error")
 		return currentPos, false
 	}
 
@@ -129,7 +130,7 @@ func processFileBuffer(
 	if bytes.Contains(buf[:n], connectionFailedPattern) {
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
-				log.Error(err, "")
+				logger.Error(err, "")
 			}
 		}
 		return currentPos + int64(n), true

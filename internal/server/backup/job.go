@@ -719,7 +719,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	cmd, err := prepareBackupCommand(ctx, job, b.storeInstance, srcPath, target.IsAgent(), extraExclusions)
+	cmd, err := prepareBackupCommand(ctx, job, b.storeInstance, srcPath, target.IsAgent(), extraExclusions, b.logger)
 	if err != nil {
 		startupMu.Unlock()
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
@@ -777,7 +777,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	loggerPath := logger.JobLogPath()
 	b.mu.RUnlock()
 
-	go monitorPBSClientLogs(ctx, loggerPath, cmd)
+	go monitorPBSClientLogs(ctx, loggerPath, cmd, b.logger)
 
 	var task proxmox.Task
 	select {

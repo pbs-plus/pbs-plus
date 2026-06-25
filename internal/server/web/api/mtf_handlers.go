@@ -526,13 +526,14 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			sc := mtf.NewScanner(ms)
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 			defer cancel()
-			res, scanErr := sc.ScanWithLog(ctx, opts, st)
+			tl := log.WithScope(log.Scope{Task: st.WorkerTask})
+			res, scanErr := sc.ScanWithLog(ctx, opts, tl)
 			if scanErr != nil {
-				st.LogString(scanErr.Error())
+				tl.LogString(scanErr.Error())
 				st.CloseErr(scanErr)
 				return
 			}
-			st.LogString(fmt.Sprintf("Scan completed: %d cartridges, %d families (%s)",
+			tl.LogString(fmt.Sprintf("Scan completed: %d cartridges, %d families (%s)",
 				res.Cartridges, res.Families, res.Duration.Truncate(time.Second)))
 			st.CloseOK(res)
 		}()
