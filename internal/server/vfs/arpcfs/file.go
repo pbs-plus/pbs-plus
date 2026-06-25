@@ -113,11 +113,6 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 
 func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error) {
 	if f.isClosed.Load() {
-		log.Error(syscall.ENOENT,
-
-			"file is closed",
-			"path", f.name)
-
 		return 0, syscall.ENOENT
 	}
 
