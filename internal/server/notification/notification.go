@@ -16,7 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const (
@@ -83,7 +83,7 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 	if severity == "info" && details != nil {
 		if warningsStr, ok := details["warnings"]; ok {
 			if n, err := strconv.Atoi(warningsStr); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			} else if n > 0 {
 				severity = "notice"
 			}
@@ -122,7 +122,7 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 	}
 	tmplJSON, err := json.Marshal(tmplData)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	tc := templateContent{
@@ -131,7 +131,7 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 	}
 	tcJSON, err := json.Marshal(tc)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to marshal template content").Write()
+		log.Error(err, "failed to marshal template content")
 		return
 	}
 
@@ -139,7 +139,7 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 		"template": tcJSON,
 	})
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to wrap template content").Write()
+		log.Error(err, "failed to wrap template content")
 		return
 	}
 
@@ -164,24 +164,24 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 // /var/lib/proxmox-backup/notifications/ every 5 seconds and calls
 func sendViaSpool(n notification) {
 	if err := os.MkdirAll(SpoolDir, 0770); err != nil {
-		syslog.L.Error(err).WithMessage("failed to create notification spool dir").Write()
+		log.Error(err, "failed to create notification spool dir")
 		logFallback(n)
 		return
 	}
 
 	data, err := json.Marshal(n)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to marshal notification").Write()
+		log.Error(err, "failed to marshal notification")
 		logFallback(n)
 		return
 	}
 
 	path := filepath.Join(SpoolDir, n.ID+".json")
 	if err := os.WriteFile(path, data, 0660); err != nil {
-		syslog.L.Error(err).
-			WithField("path", path).
-			WithMessage("failed to write notification spool file").
-			Write()
+		log.Error(err,
+
+			"failed to write notification spool file", "path", path)
+
 		logFallback(n)
 		return
 	}
@@ -201,10 +201,10 @@ func sendLegacy(n notification, subject string) {
 	))
 
 	if output, err := cmd.CombinedOutput(); err != nil {
-		syslog.L.Error(err).
-			WithField("output", string(output)).
-			WithMessage("failed to send legacy sendmail notification").
-			Write()
+		log.Error(err,
+
+			"failed to send legacy sendmail notification", "output", string(output))
+
 		return
 	}
 
@@ -249,6 +249,6 @@ func logFallback(n notification) {
 	if title == "" {
 		title = fmt.Sprintf("notification %s", n.ID)
 	}
-	slog.Info("PBS Plus notification (spool unavailable)",
+	slog.Info("pBS Plus notification (spool unavailable)",
 		"title", title, "severity", n.Metadata.Severity)
 }

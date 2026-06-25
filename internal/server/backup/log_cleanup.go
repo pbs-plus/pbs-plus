@@ -5,8 +5,6 @@ package backup
 import (
 	"bufio"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +13,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 var (
@@ -47,7 +47,7 @@ func processFile(path string, removedCount *int64) error {
 	}
 	defer func() {
 		if err := inputFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -70,7 +70,7 @@ func processFile(path string, removedCount *int64) error {
 	tmpName := tmpFile.Name()
 	defer func() {
 		if err := tmpFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -87,13 +87,13 @@ func processFile(path string, removedCount *int64) error {
 		} else {
 			if _, err := writer.Write(line); err != nil {
 				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				return fmt.Errorf("writing to temp file for %s: %w", path, err)
 			}
 			if err := writer.WriteByte('\n'); err != nil {
 				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				return fmt.Errorf("writing newline for %s: %w", path, err)
 			}
@@ -101,23 +101,23 @@ func processFile(path string, removedCount *int64) error {
 	}
 	if err := scanner.Err(); err != nil {
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("scanning file %s: %w", path, err)
 	}
 	if err := writer.Flush(); err != nil {
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("flushing writer for %s: %w", path, err)
 	}
 
 	if removedInFile == 0 {
 		if err := tmpFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil
 	}
@@ -155,12 +155,12 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 	worker := func() {
 		defer wg.Done()
 		for path := range fileCh {
-			log.Printf("Processing file: %s", path)
+			log.Debug("processing file", "path", path)
 			if err := processFile(path, &totalRemoved); err != nil {
 				errOnce.Do(func() {
 					finalErr = err
 				})
-				log.Printf("Error processing file %s: %v", path, err)
+				log.Error(err, "error processing file", "path", path)
 			}
 		}
 	}
@@ -191,7 +191,7 @@ func RemoveJunkLogsRecursively(rootDir string) (int64, error) {
 				errOnce.Do(func() {
 					finalErr = err
 				})
-				log.Printf("Error walking directory %s: %v", subDir, err)
+				log.Error(err, "error walking directory", "dir", subDir)
 			}
 		}
 	}

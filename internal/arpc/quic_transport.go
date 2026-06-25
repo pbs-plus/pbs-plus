@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/quic-go/quic-go"
 )
 
@@ -51,13 +51,13 @@ func NewQuicServerPipe(ctx context.Context, conn *quic.Conn) *QuicPipe {
 	ctx, cancel := context.WithCancel(ctx)
 	enc, err := cbor.EncOptions{}.EncMode()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("arpc: init cbor encoder").Write()
+		log.Error(err, "arpc: init cbor encoder")
 	}
 	dec, err := cbor.DecOptions{MaxArrayElements: math.MaxInt32}.DecMode()
 	if err != nil {
 		dec, err = cbor.DecOptions{}.DecMode()
 		if err != nil {
-			syslog.L.Error(err).WithMessage("arpc: init cbor decoder").Write()
+			log.Error(err, "arpc: init cbor decoder")
 		}
 	}
 	return &QuicPipe{
@@ -82,14 +82,10 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 
 	conn, err := quic.DialAddr(ctx, serverAddr, quicTLS, quicConfig())
 	if err != nil {
-		syslog.L.Error(err).WithField("serverAddr", serverAddr).Write()
+		log.Error(err, "", "serverAddr", serverAddr)
 		return nil, fmt.Errorf("QUIC dial failed (%s): %w", serverAddr, err)
 	}
-
-	syslog.L.Info().
-		WithField("quic_version", conn.ConnectionState().Version).
-		WithMessage("quic: connection established").
-		Write()
+	log.Info("quic: connection established", "quic_version", conn.ConnectionState().Version)
 
 	// Copy headers to avoid mutating the caller's map (agent reuses it across
 	// reconnects, so Add would accumulate duplicate values).
@@ -100,13 +96,13 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 	pipeCtx, pipeCancel := context.WithCancel(ctx)
 	enc, err := cbor.EncOptions{}.EncMode()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("arpc: init cbor encoder").Write()
+		log.Error(err, "arpc: init cbor encoder")
 	}
 	dec, err := cbor.DecOptions{MaxArrayElements: math.MaxInt32}.DecMode()
 	if err != nil {
 		dec, err = cbor.DecOptions{}.DecMode()
 		if err != nil {
-			syslog.L.Error(err).WithMessage("arpc: init cbor decoder").Write()
+			log.Error(err, "arpc: init cbor decoder")
 		}
 	}
 
@@ -192,10 +188,8 @@ func (q *QuicPipe) Serve() error {
 		go func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					syslog.L.Debug().
-						WithField("panic", fmt.Sprintf("%v", rec)).
-						WithMessage("recovered from panic in quic handler").
-						Write()
+					log.Debug("recovered from panic in quic handler", "panic", fmt.Sprintf("%v", rec))
+
 				}
 				_ = stream.Close()
 			}()
@@ -215,7 +209,7 @@ func (q *QuicPipe) call(ctx context.Context, method string, payload any) (ARPCSt
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := stream.SetDeadline(deadline); err != nil {
-			fmt.Printf("arpc: failed to set stream deadline: %v\n", err)
+			log.Error(err, "arpc: failed to set stream deadline")
 		}
 	}
 
@@ -396,9 +390,9 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 
 			reqHeaders, err := readHeadersFromFirstStream(ctx, c)
 			if err != nil {
-				syslog.L.Error(err).
-					WithMessage("QUIC: failed to read headers").
-					Write()
+				log.Error(err,
+					"QUIC: failed to read headers")
+
 				return
 			}
 
@@ -407,9 +401,9 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 
 			sessionID, err := agentsManager.registerQuicPipe(pCtx, c, &tlsState, reqHeaders)
 			if err != nil {
-				syslog.L.Error(err).
-					WithMessage("QUIC: registration failed").
-					Write()
+				log.Error(err,
+					"QUIC: registration failed")
+
 				return
 			}
 
@@ -421,7 +415,7 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 
 			qPipe.SetRouter(router)
 			if err := qPipe.Serve(); err != nil {
-				syslog.L.Error(err).WithMessage("arpc: quic pipe serve failed").Write()
+				log.Error(err, "arpc: quic pipe serve failed")
 			}
 		}(conn)
 	}
@@ -453,7 +447,7 @@ func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Head
 			Message: "failed to parse headers",
 			Code:    400,
 		}); rerr != nil {
-			syslog.L.Debug().WithMessage("failed to write rejection frame").Write()
+			log.Debug("failed to write rejection frame")
 		}
 		return nil, rerr
 	}

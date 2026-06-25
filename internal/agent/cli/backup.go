@@ -26,8 +26,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -53,53 +53,51 @@ type backupSession struct {
 const BACKUP_MODE_PREFIX = "pbs-plus--child-backup-mode:"
 
 func (s *backupSession) Close() {
-	syslog.L.Info().WithMessage("session: closing").WithField("backupID", s.backupID).Write()
+	log.Info("session: closing")
 	s.once.Do(func() {
 		if s.fs != nil {
-			syslog.L.Info().WithMessage("session: closing agentfs server").WithField("backupID", s.backupID).Write()
+			log.Info("session: closing agentfs server")
 			s.fs.Close()
 		}
 		if s.snapshot != (snapshots.Snapshot{}) && !s.snapshot.Direct && s.snapshot.Handler != nil {
-			syslog.L.Info().WithMessage("session: deleting snapshot").WithField("backupID", s.backupID).WithField("path", s.snapshot.Path).Write()
+			log.Info("session: deleting snapshot", "path", s.snapshot.Path)
 			if err := s.snapshot.Handler.DeleteSnapshot(s.snapshot); err != nil {
-				syslog.L.Error(err).WithMessage("session: delete snapshot failed").WithField("backupID", s.backupID).Write()
+				log.Error(err, "session: delete snapshot failed")
 			}
 		}
 		if s.store != nil {
 			if err := s.store.EndBackup(s.backupID); err != nil {
-				syslog.L.Warn().WithMessage("session: end backup returned error").WithField("backupID", s.backupID).WithField("error", err.Error()).Write()
+				log.Warn("session: end backup returned error", "error", err.Error())
 			}
 		}
 		activeSessions.Del(s.backupID)
 		s.cancel()
 	})
-	syslog.L.Info().WithMessage("session: closed").WithField("backupID", s.backupID).Write()
+	log.Info("session: closed")
 }
 
 func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 	if *sourceMode == "" || *drive == "" || *backupID == "" || *readMode == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and backupID are required")
-		syslog.L.Error(errors.New("missing required flags")).WithMessage("backup: validation failed").Write()
+		log.Error(errors.New("missing required flags"), "backup: validation failed")
 		os.Exit(1)
 	}
 
 	if err := validate.ValidateJobId(*backupID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid backupID: %v\n", err)
-		syslog.L.Error(err).WithMessage("backup: backup id validation failed").Write()
+		log.Error(err, "backup: backup id validation failed")
 		os.Exit(1)
 	}
 
+	log.L = log.WithScope(log.Scope{BackupID: *backupID})
+
 	validSourceModes := map[string]bool{"snapshot": true, "direct": true}
 	if !validSourceModes[*sourceMode] {
-		fmt.Fprintf(os.Stderr, "Error: invalid sourceMode: %s\n", *sourceMode)
-		syslog.L.Error(errors.New("invalid sourceMode")).WithMessage("CmdBackup: sourceMode validation failed").Write()
+		log.Error(errors.New("invalid sourceMode"), "CmdBackup: sourceMode validation failed")
 		os.Exit(1)
 	}
 
 	validReadModes := map[string]bool{"standard": true, "mmap": true}
 	if !validReadModes[*readMode] {
-		fmt.Fprintf(os.Stderr, "Error: invalid readMode: %s\n", *readMode)
-		syslog.L.Error(errors.New("invalid readMode")).WithMessage("CmdBackup: readMode validation failed").Write()
+		log.Error(errors.New("invalid readMode"), "CmdBackup: readMode validation failed")
 		os.Exit(1)
 	}
 
@@ -130,7 +128,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		defer syslog.L.Info().WithMessage("backup: arpc session handler shutting down").Write()
+		defer log.Info("backup: arpc session handler shutting down")
 
 		base := 500 * time.Millisecond
 		maxWait := 30 * time.Second
@@ -151,20 +149,19 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				}
 				return
 			default:
-				syslog.L.Info().WithMessage("backup: attempting connection").WithField("backupID", *backupID).Write()
+				log.Info("backup: attempting connection")
 
 				var err error
 				session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 				if err != nil {
 					if strings.Contains(err.Error(), "(code 403)") {
-						syslog.L.Error(err).WithMessage("backup: authorization failed, shutting down").Write()
+						log.Error(err, "backup: authorization failed, shutting down")
 						return
 					}
 
 					mult := 1 + jitter*(2*rand.Float64()-1)
 					sleep := min(time.Duration(float64(backoff)*mult), maxWait)
-
-					syslog.L.Warn().WithMessage(fmt.Sprintf("Connection failed, retrying in %v", sleep)).WithField("error", err.Error()).Write()
+					log.Warn(fmt.Sprintf("Connection failed, retrying in %v", sleep), "error", err.Error())
 
 					select {
 					case <-ctx.Done():
@@ -183,15 +180,14 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				}
 
 				session.SetRouter(arpc.NewRouter())
-				syslog.L.Info().WithMessage("arpc: connection established").Write()
+				log.Info("arpc: connection established")
 				backoff = base
 			}
 
 			if currentSnap == nil {
 				snap, backupMode, err := Backup(session, *sourceMode, currentReadMode, *drive, *backupID)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
-					syslog.L.Error(err).WithMessage("backup: initiation failed").Write()
+					log.Error(err, "backup: initiation failed")
 					cancel()
 					return
 				}
@@ -208,14 +204,12 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 			}
 
 			fs.RegisterHandlers(router)
-			syslog.L.Info().WithMessage("backup: agentfs server registered, session ready").
-				WithField("backupID", backupID).
-				WithField("mode", currentReadMode).
-				WithField("snapshot_path", currentSnap.Path).
-				Write()
+			log.Info("backup: agentfs server registered, session ready",
+
+				"snapshot_path", currentSnap.Path, "mode", currentReadMode)
 
 			if err := session.Serve(); err != nil {
-				syslog.L.Warn().WithMessage("ARPC connection lost, attempting recovery").WithField("error", err.Error()).Write()
+				log.Warn("aRPC connection lost, attempting recovery", "error", err.Error())
 				session.Close()
 				session = nil
 
@@ -232,7 +226,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 
 	go func() {
 		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("backup: received signal %v", sig)).Write()
+		log.Info(fmt.Sprintf("backup: received signal %v", sig))
 		cancel()
 	}()
 
@@ -241,21 +235,14 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 	if session, ok := activeSessions.Get(*backupID); ok {
 		session.Close()
 	}
-
-	syslog.L.Info().WithMessage("backup: finished").Write()
+	log.Info("backup: finished")
 	os.Exit(0)
 }
 
 func ExecBackup(sourceMode string, readMode string, drive string, backupID string) (string, int, error) {
-	syslog.L.Info().WithMessage("backup: exec begin").
-		WithField("sourceMode", sourceMode).
-		WithField("readMode", readMode).
-		WithField("drive", drive).
-		WithField("backupID", backupID).
-		Write()
-
+	log.Info("backup: exec begin")
 	if err := validate.ValidateJobId(backupID); err != nil {
-		syslog.L.Error(err).WithMessage("ExecBackup: backupID validation failed").Write()
+		log.Error(err, "ExecBackup: backupID validation failed")
 		return "", -1, fmt.Errorf("invalid backupID: %w", err)
 	}
 
@@ -273,13 +260,13 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 	defer func() {
 		time.Sleep(5 * time.Second)
 		if err := os.Remove(tokenFile); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	execCmd, err := os.Executable()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("ExecBackup: os.Executable failed").Write()
+		log.Error(err, "ExecBackup: os.Executable failed")
 		return "", -1, err
 	}
 
@@ -303,24 +290,23 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("ExecBackup: StdoutPipe failed").Write()
+		log.Error(err, "ExecBackup: StdoutPipe failed")
 		return "", -1, err
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("ExecBackup: StderrPipe failed").Write()
+		log.Error(err, "ExecBackup: StderrPipe failed")
 		return "", -1, err
 	}
 
 	if err := cmd.Start(); err != nil {
-		syslog.L.Error(err).WithMessage("ExecBackup: cmd.Start failed").Write()
+		log.Error(err, "ExecBackup: cmd.Start failed")
 		return "", -1, err
 	}
-	syslog.L.Info().WithMessage("backup: child process started").
-		WithField("pid", cmd.Process.Pid).
-		WithField("args", strings.Join(args, " ")).
-		Write()
+	log.Info("backup: child process started",
+
+		"args", strings.Join(args, " "), "pid", cmd.Process.Pid)
 
 	errScanner := bufio.NewScanner(stderrPipe)
 	scanner := bufio.NewScanner(stdoutPipe)
@@ -331,81 +317,69 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 		for scanner.Scan() {
 			line := scanner.Text()
 			if mode, found := strings.CutPrefix(line, BACKUP_MODE_PREFIX); found {
-				syslog.L.Info().WithMessage("backup: detected mode").WithField("mode", mode).Write()
+				log.Info("backup: detected mode", "mode", mode)
 				backupMode <- mode
 			} else {
-				syslog.L.Info().
-					WithField("drive", drive).
-					WithField("backupID", backupID).
-					WithField("forked", true).
-					WithMessage(line).Write()
+				log.Info(line, "forked", true)
+
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			syslog.L.Warn().WithMessage("ExecBackup: stdout scanner error").WithField("error", err.Error()).Write()
+			log.Warn("execBackup: stdout scanner error", "error", err.Error())
 		}
 	}()
 
 	go func() {
 		for errScanner.Scan() {
-			syslog.L.Error(errors.New(errScanner.Text())).
-				WithField("drive", drive).
-				WithField("backupID", backupID).
-				WithField("forked", true).
-				Write()
+			log.Error(errors.New(errScanner.Text()), "", "forked", true)
+
 		}
 		if err := errScanner.Err(); err != nil {
-			syslog.L.Warn().WithMessage("ExecBackup: stderr scanner error").WithField("error", err.Error()).Write()
+			log.Warn("execBackup: stderr scanner error", "error", err.Error())
 		}
 	}()
 
 	mode := strings.TrimSpace(<-backupMode)
-	syslog.L.Info().WithMessage("backup: returning to parent").
-		WithField("mode", mode).
-		WithField("pid", cmd.Process.Pid).
-		Write()
+	log.Info("backup: returning to parent",
+
+		"pid", cmd.Process.Pid, "mode", mode)
+
 	return mode, cmd.Process.Pid, nil
 }
 
 func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupID string) (*snapshots.Snapshot, string, error) {
-	syslog.L.Info().WithMessage("backup: begin").
-		WithField("sourceMode", sourceMode).
-		WithField("readMode", readMode).
-		WithField("drive", drive).
-		WithField("backupID", backupID).
-		Write()
-
+	log.Info("backup: begin")
 	if err := validate.ValidateJobId(backupID); err != nil {
-		syslog.L.Error(err).WithMessage("Backup: backupID validation failed").Write()
+		log.Error(err, "Backup: backupID validation failed")
 		return nil, "", fmt.Errorf("invalid backupID: %w", err)
 	}
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Backup: NewBackupStore failed").WithField("backupID", backupID).Write()
+		log.Error(err, "Backup: NewBackupStore failed")
 		return nil, "", err
 	}
 	if existingSession, ok := activeSessions.Get(backupID); ok {
-		syslog.L.Info().WithMessage("Backup: closing existing session").WithField("backupID", backupID).Write()
+		log.Info("backup: closing existing session")
 		existingSession.Close()
 		if err := store.EndBackup(backupID); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 
 	if hasActive, err := store.HasActiveBackupForJob(backupID); hasActive || err != nil {
 		if err != nil {
-			syslog.L.Error(err).WithMessage("Backup: HasActiveBackupForJob failed").WithField("backupID", backupID).Write()
+			log.Error(err, "Backup: HasActiveBackupForJob failed")
 			return nil, "", err
 		}
-		syslog.L.Info().WithMessage("Backup: ending previous active backup").WithField("backupID", backupID).Write()
+		log.Info("backup: ending previous active backup")
 		if err := store.EndBackup(backupID); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 
 	if err := store.StartBackup(backupID); err != nil {
-		syslog.L.Error(err).WithMessage("Backup: StartBackup failed").WithField("backupID", backupID).Write()
+		log.Error(err, "Backup: StartBackup failed")
 		return nil, "", err
 	}
 
@@ -424,15 +398,15 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 				SourcePath:  drive,
 				Direct:      true,
 			}
-			syslog.L.Info().WithMessage("backup: configured direct mode").
-				WithField("path", path).
-				WithField("drive", drive).
-				Write()
+			log.Info("backup: configured direct mode",
+
+				"drive", drive, "path", path)
+
 		default:
 			var err error
 			snapshot, err = snapshots.Manager.CreateSnapshot(backupID, drive)
 			if err != nil && snapshot == (snapshots.Snapshot{}) {
-				syslog.L.Error(err).WithMessage("Backup: VSS snapshot failed; switching to direct mode").WithField("drive", drive).Write()
+				log.Error(err, "Backup: VSS snapshot failed; switching to direct mode", "drive", drive)
 				backupMode = "direct"
 
 				path := drive
@@ -446,10 +420,10 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 					Direct:      true,
 				}
 			} else {
-				syslog.L.Info().WithMessage("backup: snapshot created").
-					WithField("path", snapshot.Path).
-					WithField("drive", drive).
-					Write()
+				log.Info("backup: snapshot created",
+
+					"drive", drive, "path", snapshot.Path)
+
 			}
 		}
 	} else {
@@ -459,7 +433,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 			SourcePath:  "/",
 			Direct:      true,
 		}
-		syslog.L.Info().WithMessage("backup: using root snapshot").Write()
+		log.Info("backup: using root snapshot")
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())

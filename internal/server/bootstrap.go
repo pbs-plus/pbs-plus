@@ -12,8 +12,9 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
@@ -22,13 +23,12 @@ import (
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/scheduler"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // and cleanup of stale mount points and queued backups
 func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.Scheduler, *jobs.Manager, error) {
 	if err := cleanupQueuedBackups(storeInstance); err != nil {
-		syslog.L.Error(err).WithMessage("failed to cleanup queued backups").Write()
+		log.Error(err, "failed to cleanup queued backups")
 	}
 
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
@@ -36,10 +36,10 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	if _, err := os.Lstat(secKeyPath); err != nil {
 		key, err := crypto.SecureRandomString(48)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		} else {
 			if err := os.WriteFile(secKeyPath, []byte(key), 0o600); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
@@ -66,7 +66,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 
 	// Stale mount cleanup - unmount and remove all stale mount points
 	if err := cleanupStaleMounts(); err != nil {
-		syslog.L.Error(err).WithMessage("failed to cleanup stale mounts").Write()
+		log.Error(err, "failed to cleanup stale mounts")
 	}
 
 	go func() {
@@ -75,11 +75,11 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("mount rpc server cancelled").Write()
+				log.Error(mainCtx.Err(), "mount rpc server cancelled")
 				return
 			default:
 				if err := rpcmount.RunRPCServer(mainCtx, conf.MountSocketPath, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("mount rpc server failed, restarting").Write()
+					log.Error(err, "mount rpc server failed, restarting")
 					time.Sleep(backoff)
 					backoff *= 2
 					if backoff > maxBackoff {
@@ -110,14 +110,14 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		for {
 			select {
 			case <-mainCtx.Done():
-				syslog.L.Error(mainCtx.Err()).WithMessage("backup rpc server cancelled").Write()
+				log.Error(mainCtx.Err(), "backup rpc server cancelled")
 				return
 			default:
 				job.BackupJobFactory = backup.NewBackupJob
 				job.RestoreJobFactory = restore.NewRestoreJob
 				job.MtfJobFactory = mtf.NewJob
 				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
-					syslog.L.Error(err).WithMessage("backup rpc server failed, restarting").Write()
+					log.Error(err, "backup rpc server failed, restarting")
 					time.Sleep(backoff)
 					backoff *= 2
 					if backoff > maxBackoff {
@@ -150,10 +150,10 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 			continue
 		}
 
-		queueTaskPath, err := proxmox.GetLogPath(queuedBackup.History.LastRunUpid)
+		queueTaskPath, err := tasklog.UPIDLogPath(queuedBackup.History.LastRunUpid)
 		if err == nil {
 			if err := os.Remove(queueTaskPath); err != nil && !os.IsNotExist(err) {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 
@@ -165,7 +165,7 @@ func cleanupQueuedBackups(storeInstance *store.Store) error {
 	}
 
 	if err := tx.Commit(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	return nil
 }
@@ -180,7 +180,7 @@ func cleanupStaleMounts() error {
 		umount := exec.Command("umount", "-lf", mountPoint)
 		umount.Env = os.Environ()
 		if err := umount.Run(); err != nil {
-			syslog.L.Error(err).WithMessage("failed to unmount some mounted agents").Write()
+			log.Error(err, "failed to unmount some mounted agents")
 		}
 	}
 

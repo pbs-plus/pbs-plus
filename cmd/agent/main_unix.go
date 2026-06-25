@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	stdlog "log"
 	"os"
 	"runtime/debug"
 	"sync"
@@ -21,7 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 
 	_ "net/http/pprof"
 )
@@ -43,9 +43,9 @@ func (p *pbsService) Start(s service.Service) error {
 			UpgradeConfirm: func(v string) bool { return true },
 			Exit: func(err error) {
 				if err != nil {
-					syslog.L.Error(err).WithMessage("updater exiting with error").Write()
+					log.Error(err, "updater exiting with error")
 				}
-				syslog.L.Info().WithMessage("exiting for service manager to restart with updated binary").Write()
+				log.Info("exiting for service manager to restart with updated binary")
 				os.Exit(1)
 			},
 			Service: s,
@@ -57,7 +57,7 @@ func (p *pbsService) Start(s service.Service) error {
 }
 
 func (p *pbsService) run() {
-	_ = syslog.L.SetServiceLogger()
+	_ = log.L.SetServiceLogger()
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerURL", Value: os.Getenv("PBS_PLUS_INIT_SERVER_URL")})
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "BootstrapToken", Value: os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN")})
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerCAFingerprint", Value: os.Getenv("PBS_PLUS_INIT_SERVER_CA_FINGERPRINT")})
@@ -67,17 +67,12 @@ func (p *pbsService) run() {
 	}
 
 	for {
-		syslog.L.Info().
-			WithMessage("waiting for bootstrap").
-			Write()
+		log.Info("waiting for bootstrap")
 
 		if err := lifecycle.WaitForBootstrap(p.ctx); err != nil {
 			return
 		}
-
-		syslog.L.Info().
-			WithMessage("bootstrap complete, starting session").
-			Write()
+		log.Info("bootstrap complete, starting session")
 
 		if store, err := agent.NewBackupStore(); err == nil {
 			_ = store.ClearAll()
@@ -135,9 +130,9 @@ func (p *pbsService) run() {
 
 		certErrCh, err := lifecycle.ConnectARPC(innerCtx, Version)
 		if err != nil {
-			syslog.L.Error(err).
-				WithMessage("failed to start arpc connection").
-				Write()
+			log.Error(err,
+				"failed to start arpc connection")
+
 			innerCancel()
 			innerWg.Wait()
 
@@ -158,9 +153,9 @@ func (p *pbsService) run() {
 		case err := <-driveErrCh:
 			innerCancel()
 			innerWg.Wait()
-			syslog.L.Error(err).
-				WithMessage("host not expected by server (detected via HTTP), waiting for re-bootstrap").
-				Write()
+			log.Error(err,
+				"host not expected by server (detected via HTTP), waiting for re-bootstrap")
+
 			select {
 			case <-p.ctx.Done():
 				return
@@ -176,18 +171,18 @@ func (p *pbsService) run() {
 			}
 
 			if errors.Is(certErr, lifecycle.ErrHostNotExpected) {
-				syslog.L.Error(certErr).
-					WithMessage("host not expected by server, waiting for re-bootstrap").
-					Write()
+				log.Error(certErr,
+					"host not expected by server, waiting for re-bootstrap")
+
 				select {
 				case <-p.ctx.Done():
 					return
 				case <-time.After(5 * time.Minute):
 				}
 			} else {
-				syslog.L.Error(certErr).
-					WithMessage("clearing certificates and re-bootstrapping").
-					Write()
+				log.Error(certErr,
+					"clearing certificates and re-bootstrapping")
+
 				lifecycle.ClearCertificates()
 
 				select {
@@ -223,7 +218,7 @@ func main() {
 	conf.Version = Version
 
 	if err := crypto.AssertFIPS(); err != nil {
-		syslog.L.Error(err).WithMessage("FIPS assertion failed").Write()
+		log.Error(err, "FIPS assertion failed")
 		os.Exit(1)
 	}
 
@@ -248,7 +243,7 @@ func main() {
 
 	s, err := service.New(prg, svcConfig)
 	if err != nil {
-		log.Fatal(err)
+		stdlog.Fatal(err)
 	}
 
 	if len(os.Args) > 1 {
@@ -257,11 +252,11 @@ func main() {
 			return
 		}
 		if err := service.Control(s, os.Args[1]); err != nil {
-			syslog.L.Error(err).
-				WithField("action", os.Args[1]).
-				WithMessage("service control failed").
-				Write()
-			log.Fatal(err)
+			log.Error(err,
+
+				"service control failed", "action", os.Args[1])
+
+			stdlog.Fatal(err)
 		}
 		return
 	}
@@ -275,6 +270,6 @@ func main() {
 
 	err = s.Run()
 	if err != nil {
-		log.Fatal(err)
+		stdlog.Fatal(err)
 	}
 }

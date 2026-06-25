@@ -9,8 +9,8 @@ import (
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/operator"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -34,24 +34,23 @@ func main() {
 	}
 
 	if err := crypto.AssertFIPS(); err != nil {
-		syslog.L.Error(err).WithMessage("FIPS assertion failed").Write()
+		log.Error(err, "FIPS assertion failed")
 		os.Exit(1)
 	}
-
-	syslog.L.Info().WithMessage("Starting PBS Plus Kubernetes Operator").WithField("version", Version).Write()
+	log.Info("Starting PBS Plus Kubernetes Operator", "version", Version)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Failed to get in-cluster config").Write()
+		log.Error(err, "Failed to get in-cluster config")
 		os.Exit(1)
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Failed to create kubernetes clientset").Write()
+		log.Error(err, "Failed to create kubernetes clientset")
 		os.Exit(1)
 	}
 
@@ -68,7 +67,7 @@ func main() {
 	})
 
 	if err := op.Run(ctx); err != nil {
-		syslog.L.Error(err).WithMessage("Operator exited with error").Write()
+		log.Error(err, "Operator exited with error")
 		os.Exit(1)
 	}
 }

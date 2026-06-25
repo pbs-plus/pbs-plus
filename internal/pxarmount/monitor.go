@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // on the monitor socket and appends them to a log file for later retrieval.
@@ -31,7 +31,7 @@ var globalCommitHub *commitHub
 func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	monPath := mainSocketPath + ".monitor"
 	if err := os.Remove(monPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	l, err := net.Listen("unix", monPath)
@@ -40,7 +40,7 @@ func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	}
 	if err := os.Chmod(monPath, 0o660); err != nil {
 		if err := l.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, err
 	}
@@ -99,20 +99,20 @@ func (h *commitHub) acceptLoop() {
 		if jobRunning {
 			for _, line := range catchUp {
 				if _, err := fmt.Fprintln(conn, line); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 			if jobEnded {
 				if err := conn.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		} else {
 			if _, err := fmt.Fprintln(conn, "IDLE"); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := conn.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
@@ -132,14 +132,14 @@ func (h *commitHub) broadcast(line string) {
 	if h.logFile != nil {
 		if _, err := fmt.Fprintln(h.logFile, line); err != nil {
 			if h.verbose {
-				fmt.Fprintf(os.Stderr, "commit-hub: log write error: %v\n", err)
+				log.Error(err, "commit-hub: log write error")
 			}
 		} else {
 			// Sync every write so the log is always readable.
 			// This is cheap: one fsync per progress line (~10/s)
 			// and guarantees the log is complete even on crash.
 			if err := h.logFile.Sync(); err != nil && h.verbose {
-				fmt.Fprintf(os.Stderr, "commit-hub: log sync error: %v\n", err)
+				log.Error(err, "commit-hub: log sync error")
 			}
 		}
 	}
@@ -151,14 +151,14 @@ func (h *commitHub) broadcast(line string) {
 
 	h.watchers.ForEach(func(conn net.Conn, _ struct{}) bool {
 		if _, err := fmt.Fprintln(conn, line); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			if err := conn.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			h.watchers.Del(conn)
 		} else if isDone {
 			if err := conn.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			h.watchers.Del(conn)
 		}
@@ -174,21 +174,21 @@ func (h *commitHub) startJob() int64 {
 	// Truncate/create the log file for the new commit.
 	if h.logFile != nil {
 		if err := h.logFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	f, err := os.Create(h.logPath)
 	if err != nil {
 		if h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: failed to create log file %s: %v\n", h.logPath, err)
+			log.Error(err, "commit-hub: failed to create log file", "path", h.logPath)
 		}
 	} else {
 		if err := f.Chmod(0o660); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		h.logFile = f
 		if h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: log file created at %s\n", h.logPath)
+			log.Info("commit-hub: log file created", "path", h.logPath)
 		}
 	}
 	h.mu.Unlock()
@@ -207,15 +207,15 @@ func (h *commitHub) endJob() {
 	if h.logFile != nil {
 		// Final sync before close to ensure all data is on disk.
 		if err := h.logFile.Sync(); err != nil && h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: final log sync error: %v\n", err)
+			log.Error(err, "commit-hub: final log sync error")
 		}
 		if err := h.logFile.Close(); err != nil && h.verbose {
-			fmt.Fprintf(os.Stderr, "commit-hub: log close error: %v\n", err)
+			log.Error(err, "commit-hub: log close error")
 		}
 		h.logFile = nil
 	}
 	if h.verbose {
-		fmt.Fprintf(os.Stderr, "commit-hub: job ended, %d lines in catch-up buffer\n", len(h.lastLines))
+		log.Info("commit-hub: job ended", "buffered_lines", len(h.lastLines))
 	}
 	h.mu.Unlock()
 	h.jobID.Store(0)
@@ -224,19 +224,19 @@ func (h *commitHub) endJob() {
 func (h *commitHub) close() {
 	if h.listener != nil {
 		if err := h.listener.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	h.mu.Lock()
 	if h.logFile != nil {
 		if err := h.logFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		h.logFile = nil
 	}
 	h.mu.Unlock()
 	if err := os.Remove(h.sockPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 

@@ -1,7 +1,7 @@
 package conf
 
 import (
-	"log"
+	"log/slog"
 
 	"github.com/pbnjay/memory"
 )
@@ -38,7 +38,7 @@ func InitBuffers() {
 	}
 
 	if IsServer {
-		log.Printf("initialized aRPC buffer configurations with MaxReceiveBuffer: %d, MaxStreamBuffer: %d, MaxConcurrentClients: %d", MaxReceiveBuffer, MaxStreamBuffer, MaxConcurrentClients)
+		slog.Info("initialized aRPC buffer configurations", "max_receive_buffer", MaxReceiveBuffer, "max_stream_buffer", MaxStreamBuffer, "max_concurrent_clients", MaxConcurrentClients)
 	}
 }
 

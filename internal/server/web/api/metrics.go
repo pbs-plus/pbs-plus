@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -348,9 +348,10 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 	backups, err := storeInstance.BackupSvc.ListBackups()
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("handler", "prometheus_metrics").
-			WithMessage("failed to get backups").Write()
+		log.Error(err,
+
+			"failed to get backups", "handler", "prometheus_metrics")
+
 		return
 	}
 
@@ -482,9 +483,10 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 
 	targets, err := storeInstance.TargetSvc.GetAllTargets()
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("handler", "prometheus_metrics").
-			WithMessage("failed to get targets").Write()
+		log.Error(err,
+
+			"failed to get targets", "handler", "prometheus_metrics")
+
 		return
 	}
 

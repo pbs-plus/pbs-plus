@@ -11,7 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
@@ -20,30 +20,28 @@ func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Resp
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	syslog.L.Info().WithMessage("received restore request for job").WithField("id", reqData.RestoreID).Write()
-
-	syslog.L.Info().WithMessage("forking process for restore job").WithField("id", reqData.RestoreID).Write()
+	log.Info("received restore request for job", "id", reqData.RestoreID)
+	log.Info("forking process for restore job", "id", reqData.RestoreID)
 	pid, err := cli.ExecRestore(reqData.RestoreID, reqData.SrcPath, reqData.DestPath, reqData.Mode)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("forking process for restore job").WithField("id", reqData.RestoreID).Write()
+		log.Error(err, "forking process for restore job", "id", reqData.RestoreID)
 		if pid != -1 {
 			if runtime.GOOS == "windows" {
 				timeout := time.Second * 5
 				if err := winquit.QuitProcess(pid, timeout); err != nil {
-					syslog.L.Error(err).
-						WithMessage("failed to send signal for graceful shutdown").
-						WithField("jobID", reqData.RestoreID).
-						Write()
+					log.Error(err,
+						"failed to send signal for graceful shutdown",
+						"jobID", reqData.RestoreID)
+
 				}
 			} else {
 				process, err := os.FindProcess(pid)
 				if err == nil {
 					if sigErr := process.Signal(syscall.SIGTERM); sigErr != nil {
-						syslog.L.Error(sigErr).
-							WithMessage("failed to send SIGTERM").
-							WithField("id", reqData.RestoreID).
-							Write()
+						log.Error(sigErr,
+							"failed to send SIGTERM",
+							"id", reqData.RestoreID)
+
 					}
 				}
 			}
@@ -62,39 +60,38 @@ func RestoreCloseHandler(req *arpc.Request) (arpc.Response, error) {
 	if err != nil {
 		return arpc.Response{}, err
 	}
-
-	syslog.L.Info().WithMessage("received closure request for job").WithField("id", reqData.RestoreID).Write()
+	log.Info("received closure request for job", "id", reqData.RestoreID)
 
 	pid, ok := activePids.Get(reqData.RestoreID)
 	if ok {
-		syslog.L.Info().WithMessage("killing child process").
-			WithField("id", reqData.RestoreID).
-			WithField("pid", pid).Write()
+		log.Info("killing child process",
+
+			"pid", pid, "id", reqData.RestoreID)
 
 		activePids.Del(reqData.RestoreID)
 		if runtime.GOOS == "windows" {
 			timeout := time.Second * 5
 			if err := winquit.QuitProcess(pid, timeout); err != nil {
-				syslog.L.Error(err).
-					WithMessage("failed to send signal for graceful shutdown").
-					WithField("jobID", reqData.RestoreID).
-					Write()
+				log.Error(err,
+					"failed to send signal for graceful shutdown",
+					"jobID", reqData.RestoreID)
+
 			}
 		} else {
 			process, err := os.FindProcess(pid)
 			if err == nil {
 				if sigErr := process.Signal(syscall.SIGTERM); sigErr != nil {
-					syslog.L.Error(sigErr).
-						WithMessage("failed to send SIGTERM").
-						WithField("id", reqData.RestoreID).
-						Write()
+					log.Error(sigErr,
+						"failed to send SIGTERM",
+						"id", reqData.RestoreID)
+
 				}
 			}
 		}
 	} else {
-		syslog.L.Info().WithMessage("no pid found to kill for cleanup").
-			WithField("id", reqData.RestoreID).
-			Write()
+		log.Info("no pid found to kill for cleanup",
+			"id", reqData.RestoreID)
+
 	}
 
 	return arpc.Response{Status: 200, Message: "success"}, nil

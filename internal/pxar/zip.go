@@ -14,7 +14,7 @@ import (
 	"github.com/klauspost/compress/zip"
 	pxar "github.com/pbs-plus/pxar"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func restoreAsZips(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {
@@ -23,7 +23,7 @@ func restoreAsZips(ctx context.Context, client *Client, sources []string, opts R
 	errWg.Go(func() {
 		for err := range errCh {
 			if err := client.SendError(ctx, err); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	})
@@ -72,7 +72,7 @@ func createZipForSource(ctx context.Context, client *Client, source string, opts
 	}
 	defer func() {
 		if err := zipFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -174,7 +174,7 @@ func (zc *zipContext) addFile(relPath string, fileEntry pxar.FileInfo) {
 		}
 		defer func() {
 			if err := rc.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}()
 

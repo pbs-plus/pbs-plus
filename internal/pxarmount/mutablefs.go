@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/puzpuzpuz/xsync/v4"
 	"golang.org/x/sys/unix"
@@ -136,7 +136,7 @@ func (fs *MutableFS) debugf(format string, args ...any) {
 
 func (fs *MutableFS) logNonFatal(op, path string, err error) {
 	if fs.verbose {
-		fmt.Fprintf(os.Stderr, "  [nonfatal] %s %s: %v\n", op, path, err)
+		log.Error(err, "non-fatal error", "op", op, "path", path)
 	}
 }
 
@@ -209,7 +209,7 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 			node.MtimeNs = info.ModTime().UnixNano()
 			node.CtimeNs = info.ModTime().UnixNano()
 			if err := fs.journal.UpdateNode(node); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			updated = true
 		}
@@ -419,7 +419,7 @@ func (fs *MutableFS) readDirImpl(input *fuse.ReadIn, out *fuse.DirEntryList, plu
 		// it's always visible.
 		node, err := fs.journal.GetNode(nodeID)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if node == nil {
 			continue
@@ -598,7 +598,7 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
 	if closeAfterWrite {
 		if err := syscall.Close(fh.fd); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	if err != nil {
@@ -821,7 +821,7 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
 		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fuse.EIO
 	}
@@ -872,7 +872,7 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, name, node, hasPxar)
 	if err != nil {
 		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fuse.EIO
 	}
@@ -924,7 +924,7 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	nodeID, err := fs.journal.CreateNodeEdgeAndWhiteout(parentID, linkName, node, hasPxar)
 	if err != nil {
 		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fuse.EIO
 	}
@@ -994,11 +994,11 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 	if parentNodeID != 0 {
 		edges, err := fs.journal.ListEdges(parentNodeID)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		whiteouts, err := fs.journal.ListWhiteouts(parentNodeID)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if len(edges) > 0 || len(whiteouts) > 0 {
 			return fuse.Status(syscall.ENOTEMPTY)
@@ -1014,7 +1014,7 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 		if pxarNode := fs.findPxarNode(pxarDirPath); pxarNode != nil {
 			entries, err := fs.pxar.ReadDirRaw(pxarNode.inode)
 			if err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if len(entries) > 0 {
 				return fuse.Status(syscall.ENOTEMPTY)
@@ -1250,7 +1250,7 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 	if re.Node != nil {
 		names, err := fs.journal.ListXAttrs(re.Node.ID)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		for _, n := range names {
 			nameSet[n] = true
@@ -1384,7 +1384,7 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 				re.Node.MtimeNs = meta.mtimeNs
 				re.Node.CtimeNs = meta.ctimeNs
 				if err := fs.journal.UpdateNode(re.Node); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}
@@ -1399,7 +1399,7 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
 	// Sync journal so metadata durability matches data durability.
 	if err := fs.journal.Sync(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if input.Fh == 0 {
 		return fuse.OK
@@ -1556,7 +1556,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -1571,7 +1571,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -1607,14 +1607,14 @@ func applyPxarXattrsToFile(abs string, entry *pxar.Entry) {
 		}
 		if err := unix.Lsetxattr(abs, string(name), xa.Value(), 0); err != nil {
 			if !isIgnorableXattrErr(err) {
-				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp xattr %q on %q: %v\n", string(name), abs, err)
+				log.Error(err, "non-fatal: copyUp xattr", "name", string(name), "path", abs)
 			}
 		}
 	}
 	if len(entry.Metadata.FCaps) > 0 {
 		if err := unix.Lsetxattr(abs, "security.capability", entry.Metadata.FCaps, 0); err != nil {
 			if !isIgnorableXattrErr(err) {
-				fmt.Fprintf(os.Stderr, "  [nonfatal] copyUp fcaps on %q: %v\n", abs, err)
+				log.Error(err, "non-fatal: copyUp fcaps", "path", abs)
 			}
 		}
 	}
@@ -1642,7 +1642,7 @@ func copyRegularFile(src, dst string) error {
 	}
 	defer func() {
 		if err := in.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -1652,7 +1652,7 @@ func copyRegularFile(src, dst string) error {
 	}
 	defer func() {
 		if err := out.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -2155,7 +2155,7 @@ func mmapFile(path string) ([]byte, error) {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

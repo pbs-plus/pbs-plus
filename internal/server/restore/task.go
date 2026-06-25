@@ -6,89 +6,59 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type RestoreTask struct {
-	tasks.BaseTask
+	*tasklog.WorkerTask
 	restore database.Restore
 }
 
 func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	task := tasks.NewTask("pbsplus", "reader", wid)
-
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplus", "reader", wid)
 	if err != nil {
 		return nil, err
 	}
 
-	rTask := &RestoreTask{
-		BaseTask: tasks.NewBaseTask(task, file),
-		restore:  job,
-	}
-	if err := tasks.AddActive(task.UPID); err != nil {
-		syslog.L.Error(err).Write()
-	}
-	return rTask, nil
+	return &RestoreTask{
+		WorkerTask: wt,
+		restore:    job,
+	}, nil
 }
 
 func (t *RestoreTask) WriteString(data string) {
-	t.BaseTask.WriteString(data)
+	t.LogString(data)
 }
 
 func (t *RestoreTask) CloseOK() {
-	t.CloseWithStatus("OK", nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseOK()
 }
 
 func (t *RestoreTask) CloseErr(taskErr error) {
-	errMsg := taskErr.Error()
-	t.CloseWithStatus(errMsg, nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseErr(taskErr)
 }
 
 func (t *RestoreTask) CloseWarn(warning int) {
-	t.CloseWithStatus("OK", nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseWarn(uint64(warning))
 }
 
 func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
-	task := tasks.NewTask("pbsplusgen-ok", "reader", wid)
 
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplusgen-ok", "reader", wid)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	}()
 
-	base := tasks.NewBaseTask(task, file)
 	for _, data := range additionalData {
-		base.WriteLogLine("%s", data)
+		wt.LogString(data)
 	}
-	base.WriteLogLine("TASK OK")
 
-	tasks.WriteArchive(task.UPID, task.StartTime, "OK")
-	task.Status = "stopped"
-	task.ExitStatus = "OK"
-	task.EndTime = tasks.Now().Unix()
-	return task, nil
+	wt.CloseOK()
+
+	return wt.Task, nil
 }

@@ -20,8 +20,8 @@ import (
 	mtf "github.com/pbs-plus/go-mtf"
 	_ "github.com/pbs-plus/go-mtf/besetmap"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type Config struct {
@@ -89,7 +89,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 		}
 		sm, smErr := mtf.ReadSetMap(rc)
 		if smErr != nil {
-			syslog.L.Error(smErr).Write()
+			log.Error(smErr, "")
 		}
 		if sm != nil && len(sm.Entries) > 0 {
 			for _, e := range sm.Entries {
@@ -111,12 +111,12 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 				snapshots = append(snapshots, snap)
 			}
 			if err := rc.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return snapshots, nil
 		}
 		if err := rc.Rewind(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		r := mtf.NewReader(rc)
 		if cfg.Spanning {
@@ -141,7 +141,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 			setupFileContinuation(r, files)
 			err = scanSnapshots(r, files[0], &snapshots)
 			if err := r.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err != nil {
 				return snapshots, err
@@ -154,7 +154,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 				}
 				err = scanSnapshots(r, f, &snapshots)
 				if err := r.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				if err != nil {
 					return snapshots, err
@@ -300,7 +300,7 @@ func (c *converter) ensureSession() error {
 	if backupID == "" {
 		h, hostErr := os.Hostname()
 		if hostErr != nil {
-			syslog.L.Error(hostErr).Write()
+			log.Error(hostErr, "")
 		}
 		backupID = h
 	}
@@ -438,7 +438,7 @@ func (c *converter) runTape() error {
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -466,18 +466,18 @@ func (c *converter) runChanger() error {
 		r.SetContinuation(f.asContinuation())
 		if err := c.processReader(r); err != nil {
 			if err := rc.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := f.unloadCurrent(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return err
 		}
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := f.unloadCurrent(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		f.markProcessed()
 	}
@@ -500,7 +500,7 @@ func (c *converter) runFiles() error {
 		setupFileContinuation(r, files)
 		perr := c.processReader(r)
 		if err := r.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return perr
 	}
@@ -512,7 +512,7 @@ func (c *converter) runFiles() error {
 		}
 		perr := c.processReader(r)
 		if err := r.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if perr != nil {
 			return fmt.Errorf("process %s: %w", f, perr)
@@ -670,15 +670,15 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 	go func() {
 		defer func() {
 			if err := pw.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}()
 		bw := bufio.NewWriterSize(pw, 32<<20)
 		if _, err := io.Copy(bw, r); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := bw.Flush(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
@@ -690,7 +690,7 @@ func setupTapeContinuation(r *mtf.Reader, dev string) {
 			ct.Sequence+1, ct.Media.Name)
 		var buf string
 		if _, err := fmt.Scanln(&buf); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		rc, err := openTapeReader(dev)
 		if err != nil {
@@ -745,7 +745,7 @@ func mapSID(sid string) (uid, gid uint32) {
 		if len(parts) >= 3 {
 			var n uint32
 			if _, err := fmt.Sscanf(parts[len(parts)-1], "%d", &n); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if n > 0 {
 				return n + 1000, n + 1000

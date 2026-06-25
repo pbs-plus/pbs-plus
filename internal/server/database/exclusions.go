@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 	_ "modernc.org/sqlite"
 )
@@ -26,21 +26,21 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateExclusion: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("CreateExclusion: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateExclusion: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -48,7 +48,7 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
-		return errors.New("path is empty")
+		return fmt.Errorf("%w: path is empty", ErrValidationFailed)
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
@@ -155,21 +155,21 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateExclusion: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("UpdateExclusion: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateExclusion: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateExclusion: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -177,7 +177,7 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
-		return errors.New("path is empty")
+		return fmt.Errorf("%w: path is empty", ErrValidationFailed)
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
@@ -214,21 +214,21 @@ func (database *Database) DeleteExclusion(tx *Transaction, path string) (err err
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteExclusion: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteExclusion: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("DeleteExclusion: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteExclusion: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteExclusion: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()

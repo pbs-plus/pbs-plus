@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/mxk/go-vss"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type NtfsSnapshotHandler struct{}
@@ -120,13 +120,13 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 				lastError = err
 				if attempts == 0 && (strings.Contains(err.Error(), "VSS") ||
 					strings.Contains(err.Error(), "shadow copy")) {
-					syslog.L.Error(err).WithMessage("vss error detected, attempting to re-register").Write()
+					log.Error(err, "vss error detected, attempting to re-register")
 					if reregErr := reregisterVSSWriters(); reregErr != nil {
-						syslog.L.Error(reregErr).WithMessage("failed to re-register VSS writers").Write()
+						log.Error(reregErr, "failed to re-register VSS writers")
 					}
 					break
 				}
-				return fmt.Errorf("%w: %v", ErrSnapshotCreation, err)
+				return fmt.Errorf("%w: %w", ErrSnapshotCreation, err)
 			}
 
 			select {
@@ -138,7 +138,7 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 		}
 	}
 
-	return fmt.Errorf("%w: %v", ErrSnapshotCreation, lastError)
+	return fmt.Errorf("%w: %w", ErrSnapshotCreation, lastError)
 }
 
 func cleanupExistingSnapshot(path string) {

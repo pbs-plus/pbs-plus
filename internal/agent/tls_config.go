@@ -14,8 +14,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var (
@@ -112,21 +112,21 @@ func RenewCertificateIfExpiring() error {
 	switch {
 	case cert.NotAfter.Before(now) || serverCA.NotAfter.Before(now):
 		if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")
 	case timeUntilExpiry < renewalWindow || caTimeUntilExpiry < renewalWindow:
-		fmt.Printf("Certificate expires in %v hours. Renewing...\n", timeUntilExpiry.Hours())
+		log.Info("certificate expires soon, renewing", "hours_left", timeUntilExpiry.Hours())
 		return renewCertificate()
 	default:
-		fmt.Printf("Certificate valid for %v days. No renewal needed.\n", timeUntilExpiry.Hours()/24)
+		log.Info("certificate valid, no renewal needed", "days_left", timeUntilExpiry.Hours()/24)
 		return nil
 	}
 }

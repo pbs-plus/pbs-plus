@@ -12,9 +12,9 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "modernc.org/sqlite"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type Database struct {
@@ -33,7 +33,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro")
@@ -73,7 +73,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 			Enabled:   sql.NullInt64{Int64: 1, Valid: true},
 			Comment:   sql.NullString{String: "Fallback mapping for unmatched volumes", Valid: true},
 		}); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 
@@ -93,7 +93,7 @@ func (d *Database) Close() error {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("tapestore: close: %v", errs)
+		return fmt.Errorf("tapestore: close: %w", errors.Join(errs...))
 	}
 	return nil
 }
@@ -143,7 +143,7 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	defer func() {
 		if p := recover(); p != nil {
 			if err := tx.Rollback(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			panic(p)
 		}
@@ -152,7 +152,7 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	q := d.queries.WithTx(tx.Tx)
 	if err := fn(tx, q); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			return fmt.Errorf("tapestore.RunInTransaction: %w (rollback: %v)", err, rbErr)
+			return fmt.Errorf("tapestore.RunInTransaction: %w (rollback: %w)", err, rbErr)
 		}
 		return err
 	}

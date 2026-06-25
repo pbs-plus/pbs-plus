@@ -18,8 +18,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type BootstrapRequest struct {
@@ -110,17 +110,17 @@ func Bootstrap() error {
 
 	defer func() {
 		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := resp.Body.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
 		rawBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("Bootstrap: server returned status %d: %s", resp.StatusCode, string(rawBody))
 	}
@@ -190,7 +190,7 @@ func Bootstrap() error {
 func bootstrapTLSConfig() *tls.Config {
 	pin, err := registry.GetEntry(registry.CONFIG, "ServerCAFingerprint", false)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("bootstrap: failed to read ServerCAFingerprint").Write()
+		log.Error(err, "bootstrap: failed to read ServerCAFingerprint")
 	}
 
 	if pin != nil && pin.Value != "" {
@@ -210,8 +210,7 @@ func bootstrapTLSConfig() *tls.Config {
 			},
 		}
 	}
-
-	syslog.L.Warn().WithMessage("bootstrap: no CA fingerprint pinned, TLS verification disabled (set ServerCAFingerprint to secure bootstrap)").Write()
+	log.Warn("bootstrap: no CA fingerprint pinned, TLS verification disabled (set ServerCAFingerprint to secure bootstrap)")
 
 	return &tls.Config{
 		InsecureSkipVerify: true,

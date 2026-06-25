@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/quic-go/quic-go"
 	"github.com/xtaci/smux"
 	"golang.org/x/time/rate"
@@ -167,7 +167,7 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
-		syslog.L.Error(err).WithMessage("agent reconnecting, creating a new pipe").WithField("hostname", clientID).Write()
+		log.Error(err, "agent reconnecting, creating a new pipe", "hostname", clientID)
 	}
 
 	router := NewRouter()
@@ -185,8 +185,7 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 	pipe.SetRouter(router)
 
 	sm.sessions.Set(clientID, pipe)
-
-	syslog.L.Info().WithMessage("agent successfully connected").WithField("hostname", clientID).Write()
+	log.Info("agent successfully connected", "hostname", clientID)
 
 	return pipe, clientID, nil
 }
@@ -218,7 +217,7 @@ func (sm *AgentsManager) WaitStreamPipe(ctx context.Context, clientID string) (*
 func (sm *AgentsManager) unregisterStreamPipe(clientID string) {
 	_, exists := sm.sessions.GetAndDel(clientID)
 	if exists {
-		syslog.L.Info().WithMessage("agent disconnected").WithField("hostname", clientID).Write()
+		log.Info("agent disconnected", "hostname", clientID)
 	}
 	sm.rateLimiters.Del(clientID)
 }
@@ -263,8 +262,7 @@ func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, 
 	qPipe.SetRouter(router)
 
 	sm.quicSessions.Set(clientID, qPipe)
-
-	syslog.L.Info().WithMessage("agent connected via QUIC").WithField("hostname", clientID).Write()
+	log.Info("agent connected via QUIC", "hostname", clientID)
 
 	return clientID, nil
 }
@@ -276,7 +274,7 @@ func (sm *AgentsManager) GetQuicPipe(clientID string) (*QuicPipe, bool) {
 func (sm *AgentsManager) unregisterQuicPipe(clientID string) {
 	_, exists := sm.quicSessions.GetAndDel(clientID)
 	if exists {
-		syslog.L.Info().WithMessage("agent QUIC disconnected").WithField("hostname", clientID).Write()
+		log.Info("agent QUIC disconnected", "hostname", clientID)
 	}
 	sm.rateLimiters.Del(clientID)
 }

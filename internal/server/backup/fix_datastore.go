@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type NamespaceReq struct {
@@ -122,7 +122,7 @@ func SetDatastoreOwner(backup database.Backup, storeInstance *store.Store, owner
 	dirPath := filepath.Dir(filePath)
 
 	if err := os.MkdirAll(dirPath, os.FileMode(0755)); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	err = os.WriteFile(filePath, []byte(owner), os.FileMode(0644))
@@ -216,7 +216,7 @@ func CleanUnfinishedSnapshot(backup database.Backup, backupID string) error {
 	for _, e := range entries {
 		if _, ok := tmpSuffixes[e.Name()]; ok {
 			if err := os.RemoveAll(snapshotPath); err != nil && !os.IsNotExist(err) {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			break
 		}

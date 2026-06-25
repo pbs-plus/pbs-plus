@@ -3,7 +3,7 @@
 package s3fs
 
 import (
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 	"os/exec"
 )
@@ -14,7 +14,7 @@ func MountS3(f *S3FS, mountpoint string) error {
 	umount := exec.Command("umount", "-lf", mountpoint)
 	umount.Env = os.Environ()
 	if err := umount.Run(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	server, err := MountFuse(mountpoint, fsName, f)
@@ -25,7 +25,7 @@ func MountS3(f *S3FS, mountpoint string) error {
 	f.Fuse = server
 
 	if err := f.Fuse.WaitMount(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	return nil
 }

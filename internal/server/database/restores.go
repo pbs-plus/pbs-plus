@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -55,21 +55,21 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateRestore: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateRestore: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("CreateRestore: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateRestore: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateRestore: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -85,13 +85,13 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 	}
 
 	if restore.DestTarget.Name == "" {
-		return errors.New("dest target is empty")
+		return fmt.Errorf("%w: dest target is empty", ErrValidationFailed)
 	}
 	if restore.Snapshot == "" {
-		return errors.New("snapshot is empty")
+		return fmt.Errorf("%w: snapshot is empty", ErrValidationFailed)
 	}
 	if restore.Store == "" {
-		return errors.New("datastore is empty")
+		return fmt.Errorf("%w: datastore is empty", ErrValidationFailed)
 	}
 	if !validate.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("CreateRestore: invalid id string -> %s", restore.ID)
@@ -207,7 +207,7 @@ func (database *Database) GetRestore(id string) (Restore, error) {
 
 func (database *Database) populateRestoreExtras(restore *Restore) {
 	if restore.History.LastRunUpid != "" {
-		task, err := proxmox.GetTaskByUPID(restore.History.LastRunUpid)
+		task, err := tasklog.GetTaskByUPID(restore.History.LastRunUpid)
 		if err == nil {
 			restore.History.LastRunEndtime = task.EndTime
 			if task.Status == "stopped" {
@@ -219,7 +219,7 @@ func (database *Database) populateRestoreExtras(restore *Restore) {
 		}
 	}
 	if restore.History.LastSuccessfulUpid != "" {
-		if successTask, err := proxmox.GetTaskByUPID(restore.History.LastSuccessfulUpid); err == nil {
+		if successTask, err := tasklog.GetTaskByUPID(restore.History.LastSuccessfulUpid); err == nil {
 			restore.History.LastSuccessfulEndtime = successTask.EndTime
 		}
 	}
@@ -237,21 +237,21 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateRestore: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateRestore: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("UpdateRestore: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateRestore: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateRestore: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -262,13 +262,13 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 		return fmt.Errorf("UpdateRestore: invalid id string -> %s", restore.ID)
 	}
 	if restore.DestTarget.Name == "" {
-		return errors.New("dest target is empty")
+		return fmt.Errorf("%w: dest target is empty", ErrValidationFailed)
 	}
 	if restore.Snapshot == "" {
-		return errors.New("snapshot is empty")
+		return fmt.Errorf("%w: snapshot is empty", ErrValidationFailed)
 	}
 	if restore.Store == "" {
-		return errors.New("datastore is empty")
+		return fmt.Errorf("%w: datastore is empty", ErrValidationFailed)
 	}
 	if !validate.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)
@@ -322,48 +322,39 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 func (database *Database) linkRestoreLog(restoreID, upid string) {
 	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, restoreID)
 	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
-		syslog.L.Error(fmt.Errorf("linkRestoreLog: failed to create log dir: %w", err)).
-			WithField("id", restoreID).
-			Write()
+		log.Error(fmt.Errorf("linkRestoreLog: failed to create log dir: %w", err), "", "id", restoreID)
+
 		return
 	}
 
 	restoreLogPath := filepath.Join(restoreLogsPath, upid)
 	if _, err := os.Lstat(restoreLogPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(fmt.Errorf("linkRestoreLog: failed to stat potential symlink: %w", err)).
-			WithField("path", restoreLogPath).
-			Write()
+		log.Error(fmt.Errorf("linkRestoreLog: failed to stat potential symlink: %w", err), "", "path", restoreLogPath)
+
 		return
 	}
 
-	origLogPath, err := proxmox.GetLogPath(upid)
+	origLogPath, err := tasklog.UPIDLogPath(upid)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("linkRestoreLog: failed to get original log path: %w", err)).
-			WithField("id", restoreID).
-			WithField("upid", upid).
-			Write()
+		log.Error(fmt.Errorf("linkRestoreLog: failed to get original log path: %w", err), "", "upid", upid, "id", restoreID)
+
 		return
 	}
 
 	if _, err := os.Stat(origLogPath); err != nil {
-		syslog.L.Error(fmt.Errorf("linkRestoreLog: original log path does not exist: %w", err)).
-			WithField("orig_path", origLogPath).
-			WithField("id", restoreID).
-			Write()
+		log.Error(fmt.Errorf("linkRestoreLog: original log path does not exist: %w", err), "", "id", restoreID, "orig_path", origLogPath)
+
 		return
 	}
 
 	if err := os.Remove(restoreLogPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	err = os.Symlink(origLogPath, restoreLogPath)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("linkRestoreLog: failed to create symlink: %w", err)).
-			WithField("id", restoreID).
-			WithField("source", origLogPath).
-			WithField("link", restoreLogPath).
-			Write()
+		log.Error(fmt.Errorf("linkRestoreLog: failed to create symlink: %w", err), "", "link", restoreLogPath, "source", origLogPath, "id", restoreID)
+
 	}
 }
 
@@ -487,21 +478,21 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("DeleteRestore: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -520,9 +511,8 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, id)
 	if err := os.RemoveAll(restoreLogsPath); err != nil && !os.IsNotExist(err) {
 		if !os.IsNotExist(err) {
-			syslog.L.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err)).
-				WithField("id", id).
-				Write()
+			log.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err), "", "id", id)
+
 		}
 	}
 
@@ -533,24 +523,22 @@ func (database *Database) DeleteRestore(tx *Transaction, id string) (err error) 
 func (r *Restore) GetAllUPIDs() []Tasks {
 	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, r.ID)
 	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
-		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err)).
-			WithField("id", r.ID).
-			Write()
+		log.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err), "", "id", r.ID)
+
 		return nil
 	}
 
 	logs, err := os.ReadDir(restoreLogsPath)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err)).
-			WithField("id", r.ID).
-			Write()
+		log.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err), "", "id", r.ID)
+
 		return nil
 	}
 
 	upids := make([]Tasks, 0, len(logs))
 
 	for _, log := range logs {
-		task, err := proxmox.GetTaskByUPID(log.Name())
+		task, err := tasklog.GetTaskByUPID(log.Name())
 		if err != nil {
 			continue
 		}

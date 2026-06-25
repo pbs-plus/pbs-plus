@@ -22,7 +22,7 @@ import (
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 var (
@@ -73,14 +73,14 @@ func New(cfg Config) (*Updater, error) {
 	if cfg.Exit == nil {
 		cfg.Exit = func(err error) {
 			if err != nil {
-				syslog.L.Error(err).WithMessage("updater exit with error").Write()
+				log.Error(err, "updater exit with error")
 			}
 			os.Exit(0)
 		}
 	}
 
 	if err := cleanUp(); err != nil {
-		syslog.L.Error(err).WithMessage("update cleanup error, non-fatal").Write()
+		log.Error(err, "update cleanup error, non-fatal")
 	}
 
 	ctx, cancel := context.WithCancel(cfg.Context)
@@ -89,7 +89,7 @@ func New(cfg Config) (*Updater, error) {
 	if cfg.FetchOnStart {
 		go func() {
 			if err := up.CheckNow(); err != nil {
-				syslog.L.Error(err).WithMessage("initial update check failed").Write()
+				log.Error(err, "initial update check failed")
 			}
 		}()
 	}
@@ -110,7 +110,7 @@ func (u *Updater) poll(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := u.CheckNow(); err != nil {
-				syslog.L.Error(err).WithMessage("scheduled update check failed").Write()
+				log.Error(err, "scheduled update check failed")
 			}
 		}
 	}
@@ -150,7 +150,7 @@ func (u *Updater) CheckNow() error {
 	}
 
 	if !u.cfg.UpgradeConfirm(version) {
-		syslog.L.Info().WithMessage("upgrade not confirmed by user").Write()
+		log.Info("upgrade not confirmed by user")
 		return nil
 	}
 
@@ -168,7 +168,7 @@ func (u *Updater) fetchLatestVersion() (string, bool, error) {
 	}
 	defer func() {
 		if err := resp.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -200,7 +200,7 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 
 	if embedded {
 		verified = true
-		syslog.L.Info().WithMessage("update verified via embedded server binary (no external signature required)").Write()
+		log.Info("update verified via embedded server binary (no external signature required)")
 	}
 
 	if !verified {
@@ -209,28 +209,28 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 
 		if ecdsaSig != nil {
 			if err := verifyWithECDSA(binary, ecdsaSig); err != nil {
-				syslog.L.Error(err).WithMessage("ECDSA P-256 signature verification failed").Write()
+				log.Error(err, "ECDSA P-256 signature verification failed")
 			} else {
 				verified = true
-				syslog.L.Info().WithMessage("update verified with ECDSA P-256 signature (FIPS-approved)").Write()
+				log.Info("update verified with ECDSA P-256 signature (FIPS-approved)")
 			}
 		}
 
 		if !verified && ed25519Sig != nil {
 			if err := verifyWithEd25519(binary, ed25519Sig); err != nil {
-				syslog.L.Error(err).WithMessage("Ed25519 signature verification failed").Write()
+				log.Error(err, "Ed25519 signature verification failed")
 			} else {
 				verified = true
-				syslog.L.Warn().WithMessage("update verified with Ed25519 signature (non-FIPS, legacy fallback; will be removed in future release)").Write()
+				log.Warn("update verified with Ed25519 signature (non-FIPS, legacy fallback; will be removed in future release)")
 			}
 		}
 
 		if !verified {
 			if ecdsaErr != nil {
-				syslog.L.Error(ecdsaErr).WithMessage("failed to fetch ECDSA signature").Write()
+				log.Error(ecdsaErr, "failed to fetch ECDSA signature")
 			}
 			if ed25519Err != nil {
-				syslog.L.Error(ed25519Err).WithMessage("failed to fetch Ed25519 signature").Write()
+				log.Error(ed25519Err, "failed to fetch Ed25519 signature")
 			}
 			return fmt.Errorf("no valid signature found for update")
 		}
@@ -255,7 +255,7 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 	if err := os.Rename(newPath, exePath); err != nil {
 		rerr := os.Rename(oldPath, exePath)
 		if rerr != nil {
-			syslog.L.Error(rerr).WithMessage("rollback failed: could not restore original binary").Write()
+			log.Error(rerr, "rollback failed: could not restore original binary")
 		}
 		return fmt.Errorf("rename new binary: %w", err)
 	}
@@ -274,7 +274,7 @@ func (u *Updater) fetchBinary(params string) ([]byte, error) {
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -296,7 +296,7 @@ func (u *Updater) fetchECDSASignature(params string) ([]byte, error) {
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -318,7 +318,7 @@ func (u *Updater) fetchEd25519Signature(params string) ([]byte, error) {
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

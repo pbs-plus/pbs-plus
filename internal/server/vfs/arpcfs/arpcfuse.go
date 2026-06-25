@@ -16,8 +16,8 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func newRoot(fs *ARPCFS) fs.InodeEmbedder {
@@ -177,20 +177,20 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 	case pxar.XAttrFileAttributes:
 		d, err := cbor.Marshal(fi.FileAttributes)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		data = d
 	case pxar.XAttrACLs:
 		if fi.PosixACLs != nil {
 			d, err := cbor.Marshal(fi.PosixACLs)
 			if err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			data = d
 		} else if fi.WinACLs != nil {
 			d, err := cbor.Marshal(fi.WinACLs)
 			if err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			data = d
 		} else {
@@ -464,7 +464,7 @@ func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uin
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
 	if err := fh.file.Close(ctx); err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Release failed").WithField("path", fh.file.name).WithJob(fh.fs.Backup.ID).Write()
+		log.Error(err, "FUSE Release failed", "path", fh.file.name)
 	}
 	return 0
 }

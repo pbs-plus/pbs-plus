@@ -6,11 +6,11 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type FSMount struct {
@@ -56,7 +56,7 @@ func DisconnectSession(connId string) {
 		}
 		if fs.pxar != nil {
 			if err := fs.pxar.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}

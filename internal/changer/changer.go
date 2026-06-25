@@ -79,10 +79,10 @@ func (c *Changer) Status() (*Status, error) {
 
 	// Sanity-check counts against the address assignment page.
 	if len(s.Drives) == 0 {
-		return nil, errors.New("changer reported no data-transfer (drive) elements")
+		return nil, ErrNoDriveElements
 	}
 	if len(s.Slots) == 0 {
-		return nil, errors.New("changer reported no storage elements")
+		return nil, ErrNoStorageElements
 	}
 	return s, nil
 }
@@ -239,5 +239,5 @@ func (c *Changer) waitForDriveReady(drive int) error {
 		}
 		time.Sleep(time.Second)
 	}
-	return errors.New("timed out waiting for drive to become ready")
+	return ErrDriveNotReady
 }

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/xtaci/smux"
 )
 
@@ -29,17 +29,14 @@ func dialServerContext(ctx context.Context, serverAddr string, tlsConfig *tls.Co
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
 		if cerr := conn.Close(); cerr != nil {
-			syslog.L.Debug().WithMessage("failed to close unexpected connection type").Write()
+			log.Debug("failed to close unexpected connection type")
 		}
 		return nil, fmt.Errorf("unexpected connection type: %T", conn)
 	}
 
 	state := tlsConn.ConnectionState()
-	syslog.L.Info().
-		WithField("tls_version", state.Version).
-		WithField("alpn", state.NegotiatedProtocol).
-		WithMessage("tls: connection established").
-		Write()
+	log.Info("tls: connection established", "alpn", state.NegotiatedProtocol, "tls_version", state.Version)
+
 	return conn, nil
 }
 
@@ -121,12 +118,12 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			if err == nil {
 				hdrs, rerr := readHeadersFrame(stream)
 				if rerr != nil {
-					syslog.L.Debug().WithMessage("failed to read headers, sending rejection").Write()
+					log.Debug("failed to read headers, sending rejection")
 					if rerr := writeRejectionFrame(stream, RejectionFrame{
 						Message: "failed to parse headers",
 						Code:    400,
 					}); rerr != nil {
-						syslog.L.Debug().WithMessage("failed to write rejection frame").Write()
+						log.Debug("failed to write rejection frame")
 					}
 					_ = stream.Close()
 					return
@@ -141,23 +138,20 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 			pipe, id, err := agentsManager.registerStreamPipe(pCtx, smuxS, c, reqHeaders)
 			if err != nil {
-				syslog.L.Debug().
-					WithField("error", err.Error()).
-					WithMessage("registration failed, sending rejection").
-					Write()
+				log.Debug("registration failed, sending rejection", "error", err.Error())
 
 				if rerr := writeRejectionFrame(stream, RejectionFrame{
 					Message: err.Error(),
 					Code:    403,
 				}); rerr != nil {
-					syslog.L.Debug().WithMessage("failed to write rejection frame").Write()
+					log.Debug("failed to write rejection frame")
 				}
 				_ = stream.Close()
 				return
 			}
 
 			if err := writeHeadersSuccess(stream); err != nil {
-				syslog.L.Debug().WithMessage("failed to send success marker").Write()
+				log.Debug("failed to send success marker")
 				_ = stream.Close()
 				pipe.Close()
 				agentsManager.unregisterStreamPipe(id)
@@ -173,7 +167,7 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 			pipe.SetRouter(router)
 
 			if err := pipe.Serve(); err != nil {
-				syslog.L.Error(err).WithMessage("arpc: pipe serve failed").Write()
+				log.Error(err, "arpc: pipe serve failed")
 			}
 		}(conn)
 	}

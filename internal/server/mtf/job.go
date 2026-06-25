@@ -11,20 +11,21 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const mtfWorkerType = "mtf2pxar"
 
 type Task struct {
-	tasks.BaseTask
+	*tasklog.WorkerTask
 	job mtfdb.MTFJob
 }
 
@@ -35,9 +36,9 @@ type mtfJob struct {
 	job         mtfdb.MTFJob
 	store       *store.Store
 	mapper      *mtfdb.Mapper
-	queueTask   *tasks.QueuedTask
+	queueTask   *tasklog.QueuedTask
 	task        *Task
-	logger      *syslog.JobLogger
+	logger      *log.Logger
 	started     atomic.Bool
 	cleanupOnce sync.Once
 }
@@ -47,7 +48,7 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *
 		job:    job,
 		store:  st,
 		mapper: mapper,
-		logger: syslog.NewJobLogger(job.ID),
+		logger: log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	return &jobs.Job{
 		ID:        job.ID,
@@ -76,15 +77,16 @@ func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 		_, cancel := context.WithCancel(ctx)
 		j.cancel = cancel
 
-		qt, err := tasks.GenerateMtfQueuedTask(j.job.ID, j.job.Datastore, web)
+		wid := tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID)
+		qt, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, web)
 		if err != nil {
-			syslog.L.Error(err).WithJob(j.job.ID).WithMessage("mtf: failed to create queue task").Write()
+			j.logger.Error(err, "mtf: failed to create queue task")
 			return nil // non-fatal
 		}
-		j.queueTask = &qt
+		j.queueTask = qt
 
 		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
-			syslog.L.Error(err).WithJob(j.job.ID).Write()
+			j.logger.Error(err, "failed to persist MTF job history (queued)")
 		}
 		return nil
 	}
@@ -109,52 +111,53 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	j.task = task
 
 	j.started.Store(true)
+	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore)
 	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
-		syslog.L.Error(err).WithJob(j.job.ID).Write()
+		j.logger.Error(err, "failed to persist MTF job history (started)")
 	}
 
-	task.WriteString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
+	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
 		j.job.SourceKind, j.job.SourceRef, j.job.Datastore, j.job.Namespace))
 	if j.job.Spanning {
-		task.WriteString("Spanning mode: merging all cartridges of the media set")
+		task.LogString("Spanning mode: merging all cartridges of the media set")
 	}
 	if j.job.Changer != "" {
-		task.WriteString(fmt.Sprintf("Changer: %s", j.job.Changer))
+		task.LogString(fmt.Sprintf("Changer: %s", j.job.Changer))
 	}
 	if j.job.Drive != "" {
-		task.WriteString(fmt.Sprintf("Drive: %s", j.job.Drive))
+		task.LogString(fmt.Sprintf("Drive: %s", j.job.Drive))
 	}
-	task.WriteString(fmt.Sprintf("Tape device: %s", cfg.TapeDevice))
+	task.LogString(fmt.Sprintf("Tape device: %s", cfg.TapeDevice))
 	if cfg.ChangerDevice != "" {
-		task.WriteString(fmt.Sprintf("Changer device: %s", cfg.ChangerDevice))
+		task.LogString(fmt.Sprintf("Changer device: %s", cfg.ChangerDevice))
 	}
 
 	cfg.TaskLog = func(msg string) {
-		task.WriteString(msg)
+		task.LogString(msg)
 	}
 
 	stats, runErr := bkf2pxar.Run(ctx, cfg)
 	if runErr != nil {
-		task.WriteString("Migration job summary:")
+		task.LogString("Migration job summary:")
 		if stats != nil {
-			task.WriteString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
-			task.WriteString(fmt.Sprintf(" - %d files", stats.Files))
-			task.WriteString(fmt.Sprintf(" - %d dirs", stats.Dirs))
-			task.WriteString(fmt.Sprintf(" - %d bytes", stats.Bytes))
+			task.LogString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
+			task.LogString(fmt.Sprintf(" - %d files", stats.Files))
+			task.LogString(fmt.Sprintf(" - %d dirs", stats.Dirs))
+			task.LogString(fmt.Sprintf(" - %d bytes", stats.Bytes))
 		}
-		task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+		task.LogString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 		task.CloseErr(runErr)
 		return runErr
 	}
 
-	task.WriteString("Migration job summary:")
+	task.LogString("Migration job summary:")
 	if stats != nil {
-		task.WriteString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
-		task.WriteString(fmt.Sprintf(" - %d files", stats.Files))
-		task.WriteString(fmt.Sprintf(" - %d dirs", stats.Dirs))
-		task.WriteString(fmt.Sprintf(" - %d bytes", stats.Bytes))
+		task.LogString(fmt.Sprintf(" - %d snapshots", stats.Snapshots))
+		task.LogString(fmt.Sprintf(" - %d files", stats.Files))
+		task.LogString(fmt.Sprintf(" - %d dirs", stats.Dirs))
+		task.LogString(fmt.Sprintf(" - %d bytes", stats.Bytes))
 	}
-	task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
+	task.LogString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	task.CloseOK()
 	return nil
 }
@@ -171,7 +174,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		vol := mtfdb.DataSetVolume{Device: device, MachineName: host}
 		mapped, err := mapper.Map(ctx, vol)
 		if err != nil {
-			syslog.L.Error(err).WithJob(job.ID).WithMessage("mtf: namespace mapping failed").Write()
+			j.logger.Error(err, "mtf: namespace mapping failed")
 			return baseNS
 		}
 		if mapped == "" {
@@ -195,7 +198,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 
 	tapeCfg, err := tape.ReadConfig()
 	if err != nil {
-		syslog.L.Error(err).Write()
+		j.logger.Error(err, "failed to read tape configuration")
 	}
 
 	if job.Changer != "" {
@@ -233,7 +236,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 			return cfg, fmt.Errorf("list cartridges: %w", err)
 		}
 		if len(carts) == 0 {
-			return cfg, errors.New("no cartridges in media family")
+			return cfg, ErrNoCartridges
 		}
 		allBKF := true
 		for _, c := range carts {
@@ -350,28 +353,30 @@ func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev st
 
 func (j *mtfJob) onSuccess() {
 	j.mu.RLock()
+	j.logger.Info("mtf job completed successfully")
 	task := j.task
 	job := j.job
 	j.mu.RUnlock()
 
-	if task == nil || task.UPID == "" {
+	if task == nil || task.UPID() == "" {
 		return
 	}
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
-			LastRunUpid:           task.UPID,
+			LastRunUpid:           task.UPID(),
 			LastRunStatus:         database.JobStatusSuccess,
 			LastRunEndtime:        time.Now().Unix(),
-			LastSuccessfulUpid:    task.UPID,
+			LastSuccessfulUpid:    task.UPID(),
 			LastSuccessfulEndtime: time.Now().Unix(),
 		}, ""); err != nil {
-		syslog.L.Error(err).Write()
+		j.logger.Error(err, "failed to persist MTF job history on success")
 	}
 	j.notify(nil)
 }
 
 func (j *mtfJob) onError(runErr error) {
 	j.mu.RLock()
+	j.logger.Error(runErr, "mtf job failed")
 	task := j.task
 	job := j.job
 	j.mu.RUnlock()
@@ -379,24 +384,24 @@ func (j *mtfJob) onError(runErr error) {
 	if errors.Is(runErr, jobs.ErrCanceled) {
 		if task != nil {
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfdb.JobHistory{LastRunUpid: task.UPID, LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
-				syslog.L.Error(err).Write()
+				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
+				j.logger.Error(err, "failed to update MTF job history on cancellation")
 			}
 		}
 		return
 	}
 
-	if task == nil || task.UPID == "" {
+	if task == nil || task.UPID() == "" {
 		task = j.errorTask(runErr)
 	}
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
-			LastRunUpid:    task.UPID,
+			LastRunUpid:    task.UPID(),
 			LastRunStatus:  database.JobStatusFailed,
 			LastRunEndtime: time.Now().Unix(),
 			RetryCount:     job.History.RetryCount + 1,
 		}, ""); err != nil {
-		syslog.L.Error(err).Write()
+		j.logger.Error(err, "failed to persist MTF job history on error")
 	}
 	j.notify(runErr)
 }
@@ -452,9 +457,7 @@ func (j *mtfJob) cleanup() {
 			cancel()
 		}
 		if logger != nil {
-			if err := logger.Close(); err != nil {
-				syslog.L.Error(err).Write()
-			}
+			logger.Close()
 		}
 		if qt != nil {
 			qt.Close()
@@ -463,59 +466,38 @@ func (j *mtfJob) cleanup() {
 }
 
 func startTask(job mtfdb.MTFJob) (*Task, error) {
-	task := tasks.NewTask("pbsplus", mtfWorkerType, mtfWID(job))
-
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil, err
 	}
 
-	t := &Task{
-		BaseTask: tasks.NewBaseTask(task, file),
-		job:      job,
-	}
-	if err := tasks.AddActive(task.UPID); err != nil {
-		syslog.L.Error(err).WithJob(job.ID).WithMessage("mtf: add active task").Write()
-	}
-	return t, nil
+	return &Task{
+		WorkerTask: wt,
+		job:        job,
+	}, nil
 }
 
 func (t *Task) CloseOK() {
-	t.CloseWithStatus("OK", nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseOK()
 }
 
 func (t *Task) CloseErr(taskErr error) {
-	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseErr(taskErr)
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
-	task := tasks.NewTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
-
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil
 	}
 
-	t := &Task{
-		BaseTask: tasks.NewBaseTask(task, file),
-		job:      job,
-	}
-	t.WriteLogLine("%s", runErr.Error())
-	t.WriteLogLine("TASK ERROR: %s", runErr.Error())
-	if err := file.Close(); err != nil {
-		syslog.L.Error(err).Write()
-	}
-	tasks.WriteArchive(task.UPID, task.StartTime, runErr.Error())
+	wt.Log("%s", runErr.Error())
+	wt.CloseErr(runErr)
 
-	return t
+	return &Task{
+		WorkerTask: wt,
+		job:        job,
+	}
 }
 
 func mtfWID(job mtfdb.MTFJob) string {

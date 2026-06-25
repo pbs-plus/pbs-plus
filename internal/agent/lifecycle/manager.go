@@ -21,7 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // until manually re-bootstrapped or re-added by an admin.
@@ -50,13 +50,13 @@ func IsHostNotExpected(err error) bool {
 
 func ClearCertificates() {
 	if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	agent.InvalidateTLSConfigCache()
 }
@@ -78,10 +78,8 @@ func UpdateDrives() error {
 	if err != nil {
 		return err
 	}
-	syslog.L.Debug().
-		WithField("body", reqBody).
-		WithMessage("updating target").
-		Write()
+	log.Debug("updating target", "body", reqBody)
+
 	resp, err := agent.AgentHTTPRequest(
 		http.MethodPost,
 		"/api2/json/d2d/target/agent",
@@ -92,10 +90,10 @@ func UpdateDrives() error {
 		return err
 	}
 	if _, err := io.Copy(io.Discard, resp); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := resp.Close(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	return nil
 }
@@ -130,7 +128,7 @@ func WaitForBootstrap(ctx context.Context) error {
 			}
 		} else {
 			if err := agent.Bootstrap(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		select {
@@ -206,51 +204,44 @@ func ConnectARPC(
 			)
 			if connErr != nil {
 				if isCertError(connErr) {
-					syslog.L.Error(connErr).
-						WithMessage("certificate error on connect, requesting re-bootstrap").
-						Write()
+					log.Error(connErr,
+						"certificate error on connect, requesting re-bootstrap")
+
 					signalCertError(connErr)
 					return
 				}
 
 				if IsHostNotExpected(connErr) {
-					syslog.L.Warn().
-						WithMessage("host not expected by server, stopping retries until re-bootstrap").
-						WithField("error", connErr.Error()).
-						Write()
+					log.Warn("host not expected by server, stopping retries until re-bootstrap",
+						"error", connErr.Error())
+
 					signalCertError(ErrHostNotExpected)
 					return
 				}
-
-				syslog.L.Warn().
-					WithField("error", connErr.Error()).
-					WithMessage("QUIC connection failed, falling back to TCP/mTLS").
-					Write()
+				log.Warn("qUIC connection failed, falling back to TCP/mTLS", "error", connErr.Error())
 
 				var tcpPipe *arpc.StreamPipe
 				tcpPipe, connErr = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 				if connErr == nil {
 					session = tcpPipe
-					syslog.L.Info().
-						WithMessage("TCP/mTLS fallback connection established").
-						Write()
+					log.Info("tCP/mTLS fallback connection established")
+
 				}
 			}
 
 			if connErr != nil {
 				if isCertError(connErr) {
-					syslog.L.Error(connErr).
-						WithMessage("certificate error on connect, requesting re-bootstrap").
-						Write()
+					log.Error(connErr,
+						"certificate error on connect, requesting re-bootstrap")
+
 					signalCertError(connErr)
 					return
 				}
 
 				if IsHostNotExpected(connErr) {
-					syslog.L.Warn().
-						WithMessage("host not expected by server, stopping retries until re-bootstrap").
-						WithField("error", connErr.Error()).
-						Write()
+					log.Warn("host not expected by server, stopping retries until re-bootstrap",
+						"error", connErr.Error())
+
 					signalCertError(ErrHostNotExpected)
 					return
 				}
@@ -320,9 +311,9 @@ func ConnectARPC(
 
 			if serveErr != nil {
 				if isCertError(serveErr) {
-					syslog.L.Error(serveErr).
-						WithMessage("certificate error during session, requesting re-bootstrap").
-						Write()
+					log.Error(serveErr,
+						"certificate error during session, requesting re-bootstrap")
+
 					signalCertError(serveErr)
 					return
 				}
@@ -331,10 +322,9 @@ func ConnectARPC(
 				if probeErr != nil {
 					tcpPipe = nil
 					if IsHostNotExpected(probeErr) {
-						syslog.L.Warn().
-							WithMessage("host not expected by server (detected via probe), stopping retries until re-bootstrap").
-							WithField("error", probeErr.Error()).
-							Write()
+						log.Warn("host not expected by server (detected via probe), stopping retries until re-bootstrap",
+							"error", probeErr.Error())
+
 						signalCertError(ErrHostNotExpected)
 						return
 					}

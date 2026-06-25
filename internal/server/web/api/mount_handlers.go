@@ -21,7 +21,7 @@ import (
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -32,7 +32,7 @@ func parseMountPoints() ([]string, error) {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -169,15 +169,15 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		serviceName := backend.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
 		if err := backend.StopMountService(r.Context(), serviceName); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if IsMounted(mountPoint) {
 			if err := unmountPath(mountPoint); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		if err := os.MkdirAll(mountPoint, 0o755); err != nil {
@@ -202,7 +202,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err := backend.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
 			WriteErrorResponse(w, fmt.Errorf("start mount service: %w", err))
 			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -218,10 +218,10 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		if !mountOK {
 			if err := backend.StopMountService(r.Context(), serviceName); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			WriteErrorResponse(w, errors.New("mount failed"))
 			return
@@ -302,17 +302,17 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 		serviceName := backend.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
 		if err := backend.StopMountService(r.Context(), serviceName); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		if IsMounted(mountPoint) {
 			if err := unmountPath(mountPoint); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 
 		if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		removeEmptyDirsToBase(filepath.Dir(mountPoint), basePath)
@@ -373,7 +373,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, svc := range services {
 			if strings.HasPrefix(svc, prefix) {
 				if err := backend.StopMountService(r.Context(), svc); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}
@@ -404,13 +404,13 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, mp := range targets {
 			if IsMounted(mp) {
 				if err := unmountPath(mp); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}
 
 		if err := os.RemoveAll(base); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		writeJSON(w, BackupRunResponse{
@@ -424,6 +424,6 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }

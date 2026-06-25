@@ -20,9 +20,9 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const (
@@ -35,12 +35,9 @@ func NewS3FS(
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {
-	syslog.L.Debug().
-		WithMessage("NewS3FS called").
-		WithField("endpoint", endpoint).
-		WithField("bucket", bucket).
-		WithField("backupID", backup.ID).
-		Write()
+	log.Debug("newS3FS called",
+
+		"backupID", backup.ID, "bucket", bucket, "endpoint", endpoint)
 
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
@@ -62,7 +59,7 @@ func NewS3FS(
 		Transport: transport,
 	})
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create minio client").Write()
+		log.Error(err, "failed to create minio client")
 		return nil
 	}
 
@@ -73,12 +70,9 @@ func NewS3FS(
 
 	s3ctx, cancel := context.WithCancel(ctx)
 	memcachePath := filepath.Join(conf.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
+	log.Debug("starting local memcached",
 
-	syslog.L.Debug().
-		WithMessage("Starting local memcached").
-		WithField("socketPath", memcachePath).
-		WithField("backupID", backup.ID).
-		Write()
+		"backupID", backup.ID, "socketPath", memcachePath)
 
 	stopMemLocal, err := vfs.StartMemcachedOnUnixSocket(s3ctx, vfs.MemcachedConfig{
 		SocketPath:     memcachePath,
@@ -86,7 +80,7 @@ func NewS3FS(
 		MaxConnections: 0,
 	})
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to run memcached server").Write()
+		log.Error(err, "failed to run memcached server")
 		cancel()
 		return nil
 	}
@@ -106,22 +100,21 @@ func NewS3FS(
 
 	go func() {
 		<-s3ctx.Done()
-		syslog.L.Debug().
-			WithMessage("Context done, cleaning up memcache and memlocal").
-			WithField("backupID", fs.Backup.ID).
-			Write()
+		log.Debug("context done, cleaning up memcache and memlocal",
+			"backupID", fs.Backup.ID)
+
 		if err := fs.Memcache.DeleteAll(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := fs.Memcache.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		fs.TotalBytes.Reset()
 		fs.FolderCount.Reset()
 		fs.FileCount.Reset()
 		fs.StatCacheHits.Reset()
 		if err := stopMemLocal(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -140,12 +133,9 @@ func (fs *S3FS) fullKey(fpath string) string {
 }
 
 func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTypes.AgentFileInfo, error) {
-	syslog.L.Debug().
-		WithMessage("Attr called").
-		WithField("path", fpath).
-		WithField("isLookup", isLookup).
-		WithField("backupID", fs.Backup.ID).
-		Write()
+	log.Debug("attr called",
+
+		"backupID", fs.Backup.ID, "isLookup", isLookup, "path", fpath)
 
 	now := time.Now().Unix()
 	if fpath == "/" || fpath == "" {
@@ -166,19 +156,15 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	if err == nil {
 		fs.StatCacheHits.Add(1)
 		if err := cbor.Unmarshal(cached.Value, &fi); err == nil {
-			syslog.L.Debug().
-				WithMessage("Attr cache hit").
-				WithField("path", fpath).
-				WithField("backupID", fs.Backup.ID).
-				Write()
+			log.Debug("attr cache hit",
+
+				"backupID", fs.Backup.ID, "path", fpath)
+
 			return fi, nil
 		}
 	}
-
-	syslog.L.Debug().
-		WithMessage("Attr cache miss, issuing S3 Stat").
-		WithField("path", fpath).
-		Write()
+	log.Debug("attr cache miss, issuing S3 Stat",
+		"path", fpath)
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
@@ -222,7 +208,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	if raw, err := cbor.Marshal(fi); err == nil {
 		if isLookup {
 			if err := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
@@ -230,14 +216,13 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	if !isLookup {
 		if !fi.IsDir {
 			if err := fs.Memcache.Delete(cacheKey); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			fs.FileCount.Add(1)
-			syslog.L.Debug().
-				WithMessage("Attr counted file and cleared cache").
-				WithField("path", fpath).
-				WithField("fileCount", fs.FileCount.Value()).
-				Write()
+			log.Debug("attr counted file and cleared cache",
+
+				"fileCount", fs.FileCount.Value(), "path", fpath)
+
 		} else {
 			fs.FolderCount.Add(1)
 		}
@@ -247,7 +232,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 }
 
 func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
-	syslog.L.Debug().WithMessage("StatFS called").WithField("backupID", fs.Backup.ID).Write()
+	log.Debug("statFS called", "backupID", fs.Backup.ID)
 	return agentTypes.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
@@ -281,11 +266,9 @@ func (fs *S3FS) OpenFile(ctx context.Context, fpath string, flag int, perm os.Fi
 }
 
 func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error) {
-	syslog.L.Debug().
-		WithMessage("ReadDir called").
-		WithField("path", fpath).
-		WithField("backupID", fs.Backup.ID).
-		Write()
+	log.Debug("readDir called",
+
+		"backupID", fs.Backup.ID, "path", fpath)
 
 	var prefix string
 	if fpath == "/" || fpath == "" {
@@ -299,7 +282,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 	}
 
 	if err := fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix)); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
@@ -351,16 +334,13 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 		itemKey := fs.GetCacheKey(attrPrefix, fs.fullKey(path.Join(fpath, name)))
 		if raw, err := cbor.Marshal(entry); err == nil {
 			if err := fs.Memcache.Set(&memcache.Item{Key: itemKey, Value: raw, Expiration: 0}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
+	log.Debug("readDir completed",
 
-	syslog.L.Debug().
-		WithMessage("ReadDir completed").
-		WithField("path", fpath).
-		WithField("count", len(entries)).
-		Write()
+		"count", len(entries), "path", fpath)
 
 	return &S3DirStream{entries: entries}, nil
 }
@@ -377,11 +357,10 @@ func (fs *S3FS) logOnce(path string, err error, op string) {
 	if _, loaded := fs.loggedPaths.LoadOrStore(path, struct{}{}); loaded {
 		return
 	}
-	syslog.L.Error(err).
-		WithMessage("FUSE "+op+" failed").
-		WithField("path", path).
-		WithJob(fs.Backup.ID).
-		Write()
+	log.Error(err,
+		"FUSE "+op+" failed",
+		"path", path)
+
 }
 
 // suppressed  -  these are files probed by proxmox-backup-client on every
@@ -400,7 +379,7 @@ func isIgnoredS3Path(p string) bool {
 func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		if err := fs.Fuse.Unmount(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	fs.Cancel()

@@ -3,16 +3,13 @@
 package backup
 
 import (
-	"fmt"
-	"strings"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 )
 
 func getTaskLogPath(upid string) string {
-	upidSplit := strings.Split(upid, ":")
-	if len(upidSplit) < 4 {
+	path, err := tasklog.UPIDLogPath(upid)
+	if err != nil {
 		return ""
 	}
-	parsed := upidSplit[3]
-	logFolder := parsed[len(parsed)-2:]
-	return fmt.Sprintf("/var/log/proxmox-backup/tasks/%s/%s", logFolder, upid)
+	return path
 }

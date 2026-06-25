@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func detectFilesystem(mountPoint string) (string, error) {
@@ -20,7 +20,7 @@ func detectFilesystem(mountPoint string) (string, error) {
 		}
 		defer func() {
 			if err := mountsFile.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}()
 

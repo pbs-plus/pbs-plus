@@ -9,7 +9,7 @@ import (
 
 	mtf "github.com/pbs-plus/go-mtf"
 	"github.com/pbs-plus/go-tapedrive"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // PBS block header magic (from proxmox-backup/pbs-tape/src/lib.rs).
@@ -27,12 +27,12 @@ func IsPBSTape(dev string) (bool, error) {
 	}
 	defer func() {
 		if err := d.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	if err := d.SetLogicalAddressing(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := d.Rewind(); err != nil {
 		return false, fmt.Errorf("rewind %s: %w", dev, err)
@@ -56,24 +56,24 @@ func openTapeReader(dev string) (*tapeReader, error) {
 	}
 	// Required for stored MTF catalog PBAs to resolve. Best-effort.
 	if err := d.SetLogicalAddressing(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := d.Rewind(); err != nil {
 		if err := d.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, fmt.Errorf("rewind %s: %w", dev, err)
 	}
 	pos, err := d.TellBlock()
 	if err != nil {
 		if err := d.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, fmt.Errorf("read-position after rewind %s: %w", dev, err)
 	}
 	if pos != 0 {
 		if err := d.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, fmt.Errorf("rewind %s: drive reports block %d, want 0 (BOT)", dev, pos)
 	}

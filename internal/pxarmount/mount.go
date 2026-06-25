@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pxar/transfer"
 	"golang.org/x/sys/unix"
 )
@@ -48,7 +48,7 @@ func Serve(cfg MountConfig) {
 		}
 		defer func() {
 			if err := journal.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}()
 
@@ -131,13 +131,13 @@ func Serve(cfg MountConfig) {
 
 		if sockListener != nil {
 			if err := sockListener.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 
 		if err := server.Unmount(); err != nil {
 			if err := unix.Unmount(cfg.MountPoint, unix.MNT_DETACH); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 

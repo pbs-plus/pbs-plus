@@ -4,7 +4,7 @@ package api
 
 import (
 	"bufio"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 	"strings"
 )
@@ -16,7 +16,7 @@ func IsMounted(path string) bool {
 	}
 	defer func() {
 		if err := mountInfoFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

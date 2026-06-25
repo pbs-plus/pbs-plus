@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -74,13 +73,13 @@ func (m *TokenManager) GenerateToken(expiration time.Duration) (string, error) {
 
 func (m *TokenManager) ValidateToken(tokenString string) error {
 	if !hasPrefix(tokenString, tokenV2Prefix) {
-		return errors.New("crypto: unsupported token version")
+		return ErrTokenInvalidVersion
 	}
 	rest := tokenString[len(tokenV2Prefix):]
 
 	issuedAtStr, rest, ok := splitFirstColon(rest)
 	if !ok {
-		return errors.New("crypto: invalid token format")
+		return ErrTokenInvalidFormat
 	}
 	issuedAt, err := parseInt64(issuedAtStr)
 	if err != nil {
@@ -89,7 +88,7 @@ func (m *TokenManager) ValidateToken(tokenString string) error {
 
 	expiresAtStr, rest, ok := splitFirstColon(rest)
 	if !ok {
-		return errors.New("crypto: invalid token format")
+		return ErrTokenInvalidFormat
 	}
 	expiresAt, err := parseInt64(expiresAtStr)
 	if err != nil {
@@ -98,7 +97,7 @@ func (m *TokenManager) ValidateToken(tokenString string) error {
 
 	nonceB64, sigB64, ok := splitFirstColon(rest)
 	if !ok {
-		return errors.New("crypto: invalid token format")
+		return ErrTokenInvalidFormat
 	}
 
 	nonce, err := base64.RawURLEncoding.DecodeString(nonceB64)
@@ -115,11 +114,11 @@ func (m *TokenManager) ValidateToken(tokenString string) error {
 	expectedSig := mac.Sum(nil)
 
 	if !hmac.Equal(sig, expectedSig) {
-		return errors.New("crypto: token signature invalid")
+		return ErrTokenBadSignature
 	}
 
 	if expiresAt > 0 && time.Now().Unix() > expiresAt {
-		return errors.New("crypto: token expired")
+		return ErrTokenExpired
 	}
 
 	return nil

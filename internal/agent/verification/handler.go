@@ -9,7 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 var bufPool = sync.Pool{
@@ -49,7 +49,7 @@ func HashFile(filePath string) ([32]byte, int64, error) {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

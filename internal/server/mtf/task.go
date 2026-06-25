@@ -4,50 +4,33 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 )
 
 type ScanTask struct {
-	tasks.BaseTask
+	*tasklog.WorkerTask
 }
 
 func NewScanTask(opts Options) (*ScanTask, error) {
-	task := tasks.NewTask("pbsplus", "mtfscan", scanWID(opts))
-
-	file, _, err := tasks.CreateTaskLogFile(task.UPID)
+	wt, err := tasklog.NewWorkerTask("pbsplus", "mtfscan", scanWID(opts))
 	if err != nil {
-		syslog.L.Error(err).WithMessage("mtf: create scan task log").Write()
+		log.Error(err, "mtf: create scan task log")
 		return nil, err
 	}
 
-	st := &ScanTask{
-		BaseTask: tasks.NewBaseTask(task, file),
-	}
-	if err := tasks.AddActive(task.UPID); err != nil {
-		syslog.L.Error(err).WithMessage("mtf: add active scan task").Write()
-	}
-	return st, nil
+	return &ScanTask{WorkerTask: wt}, nil
 }
 
 func (t *ScanTask) CloseOK(res *Result) {
-	msg := "OK"
 	if res != nil {
-		msg = fmt.Sprintf("OK: %d cartridges, %d families (%s)", res.Cartridges, res.Families, res.Duration.Truncate(time.Second))
+		t.Log("scan completed: %d cartridges, %d families (%s)", res.Cartridges, res.Families, res.Duration.Truncate(time.Second))
 	}
-	t.CloseWithStatus(msg, nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseOK()
 }
 
 func (t *ScanTask) CloseErr(taskErr error) {
-	t.CloseWithStatus("TASK ERROR: "+taskErr.Error(), nil, func() {
-		if err := tasks.RemoveActive(t.UPID); err != nil {
-			syslog.L.Error(err).Write()
-		}
-	})
+	t.WorkerTask.CloseErr(taskErr)
 }
 
 func scanWID(opts Options) string {

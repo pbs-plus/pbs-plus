@@ -7,7 +7,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type RestoreSessionData struct {
@@ -26,7 +26,7 @@ func (bs *RestoreStore) updateSessions(fn func(map[string]*RestoreSessionData)) 
 	}
 	defer func() {
 		if err := bs.fileLock.Unlock(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -78,7 +78,7 @@ func (bs *RestoreStore) HasActiveRestores() (bool, error) {
 	}
 	defer func() {
 		if err := bs.fileLock.Unlock(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -102,7 +102,7 @@ func (bs *RestoreStore) HasActiveRestoreForJob(job string) (bool, error) {
 	}
 	defer func() {
 		if err := bs.fileLock.Unlock(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

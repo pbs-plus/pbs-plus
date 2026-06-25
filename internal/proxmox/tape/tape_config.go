@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type Config struct {
@@ -41,7 +41,7 @@ func ReadConfig() (*Config, error) {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

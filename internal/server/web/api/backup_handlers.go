@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -45,7 +45,7 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			excluded, err := storeInstance.Database.GetExcludedValues("stale-backup", "job")
 			if err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			excludedJobs = excluded
 		}
@@ -66,7 +66,7 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -101,20 +101,20 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		go func() {
 			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 			if err != nil {
-				syslog.L.Error(err).WithField("backups", decodedBackupIDs).Write()
+				log.Error(err, "", "backups", decodedBackupIDs)
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
 			defer func() {
 				if err := rpcClient.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}()
 
 			for _, backupID := range decodedBackupIDs {
 				backupTask, err := storeInstance.Database.GetBackup(backupID)
 				if err != nil {
-					syslog.L.Error(err).WithField("backupID", backupID).Write()
+					log.Error(err, "", "backupID", backupID)
 					continue
 				}
 
@@ -127,11 +127,11 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 				var reply jobrpc.QueueReply
 				if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
-					syslog.L.Error(err).WithField("backupID", backupID).Write()
+					log.Error(err, "", "backupID", backupID)
 					continue
 				}
 				if reply.Status != 200 {
-					syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupID", backupID).Write()
+					log.Error(fmt.Errorf("%s", reply.Message), "", "backupID", backupID)
 				}
 			}
 		}()
@@ -140,7 +140,7 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -296,7 +296,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -496,7 +496,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 			return
@@ -521,7 +521,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", backup.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 			return
@@ -543,7 +543,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -577,7 +577,7 @@ func ExtJsBackupUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Success = true
 			response.Data = backup.GetAllUPIDs()
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 			return

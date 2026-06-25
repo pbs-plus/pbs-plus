@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func (database *Database) CreateAgentHost(tx *Transaction, host AgentHost) (err error) {
@@ -27,21 +27,21 @@ func (database *Database) CreateAgentHost(tx *Transaction, host AgentHost) (err 
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateAgentHost: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("CreateAgentHost: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateAgentHost: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -76,21 +76,21 @@ func (database *Database) UpdateAgentHost(tx *Transaction, host AgentHost) (err 
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateAgentHost: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("UpdateAgentHost: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateAgentHost: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -125,21 +125,21 @@ func (database *Database) DeleteAgentHost(tx *Transaction, name string) (err err
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteAgentHost: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("DeleteAgentHost: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteAgentHost: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteAgentHost: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()

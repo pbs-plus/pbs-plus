@@ -7,7 +7,7 @@ import (
 	mtf "github.com/pbs-plus/go-mtf"
 
 	"github.com/pbs-plus/pbs-plus/internal/changer"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type feeder struct {
@@ -33,7 +33,7 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 	st, err := chg.Status()
 	if err != nil {
 		if err := chg.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, fmt.Errorf("changer inventory: %w", err)
 	}
@@ -49,7 +49,7 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 
 func (f *feeder) close() {
 	if err := f.chg.Close(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -126,7 +126,7 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	fmt.Fprintf(os.Stderr, "\n== EOTM: need next tape (family 0x%08X, sequence %d) ==\n", wantMFMID, wantSeq)
 
 	if err := f.unloadCurrent(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	for pass := range 2 {
@@ -153,10 +153,10 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "   slot %d verify: %v\n", slot, err)
 				if err := rc.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				if err := f.unloadCurrent(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				continue
 			}
@@ -170,10 +170,10 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			}
 			fmt.Fprintf(os.Stderr, "   slot %d: not the wanted tape\n", slot)
 			if err := rc.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := f.unloadCurrent(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		if pass == 0 {
@@ -192,7 +192,7 @@ func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool
 	r := mtf.NewReader(rc)
 	blk, err := r.Next()
 	if err := rc.Close(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err != nil {
 		return false, err

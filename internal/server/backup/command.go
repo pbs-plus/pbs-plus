@@ -10,11 +10,11 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func getBackupId(target database.Target) (string, error) {
@@ -29,7 +29,7 @@ func getBackupId(target database.Target) (string, error) {
 	if err != nil {
 		hostnameBytes, err := os.ReadFile("/etc/hostname")
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		hostname = strings.TrimSpace(string(hostnameBytes))
 		if hostname == "" {
@@ -39,7 +39,7 @@ func getBackupId(target database.Target) (string, error) {
 	return hostname, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -104,7 +104,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 
 	if backup.Namespace != "" {
 		if err := CreateNamespace(backup.Namespace, backup, storeInstance); err != nil {
-			syslog.L.Error(err).Write()
+			logger.Error(err, "")
 		}
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
@@ -118,7 +118,7 @@ func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInst
 	cmd.Env = env
 
 	if err := CleanUnfinishedSnapshot(backup, backupID); err != nil {
-		syslog.L.Error(err).WithJob(backup.ID).WithField("backupID", backupID).Write()
+		logger.Error(err, "")
 	}
 
 	return cmd, nil

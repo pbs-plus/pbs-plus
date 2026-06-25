@@ -4,13 +4,12 @@
 package changer
 
 import (
-	"errors"
 	"fmt"
 )
 
 func decodeElementStatusPage(data []byte, start uint16) (elems []rawElement, lastAddr uint16, got uint16, err error) {
 	if len(data) < 8 {
-		return nil, 0, 0, errors.New("element-status response too short")
+		return nil, 0, 0, ErrElementStatusTooShort
 	}
 	firstReported := be16(data[0:2])
 	numAvailable := be16(data[2:4])
@@ -33,7 +32,7 @@ func decodeElementStatusPage(data []byte, start uint16) (elems []rawElement, las
 		aVolTag := flags&0x40 != 0
 
 		if descLen == 0 {
-			return nil, 0, 0, errors.New("element descriptor length is zero")
+			return nil, 0, 0, ErrElementDescZero
 		}
 		if int(descLen) > len(descr) && len(descr) > 0 {
 			descLen = uint16(len(descr))

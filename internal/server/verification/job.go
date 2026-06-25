@@ -20,14 +20,14 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/tasks"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/transfer"
@@ -139,8 +139,9 @@ var (
 	ErrNoFilesToVerify   = errors.New("no files matched filters for verification")
 	ErrAgentNotConnected = errors.New("agent not connected for verification")
 	ErrNotAgentTarget    = errors.New("verification requires an agent target")
+)
 
-	// bufPool provides reusable 256KB buffers for streaming file hashes.
+var (
 	bufPool = sync.Pool{
 		New: func() any {
 			buf := make([]byte, 256*1024)
@@ -148,7 +149,6 @@ var (
 		},
 	}
 
-	// activeJobs tracks currently running verification jobs for cancellation.
 	activeJobs = struct {
 		sync.RWMutex
 		m map[string]context.CancelFunc
@@ -211,8 +211,9 @@ type verificationJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
+	logger        *log.Logger
 	task          *VerificationTask
-	queueTask     *tasks.QueuedTask
+	queueTask     *tasklog.QueuedTask
 	job           database.VerificationJob
 	backupJobs    []database.Backup
 	storeInstance *store.Store
@@ -235,6 +236,7 @@ func NewVerificationJob(
 		job:           job,
 		storeInstance: storeInstance,
 		web:           web,
+		logger:        log.WithScope(log.Scope{JobID: job.ID}),
 	}
 
 	return &jobs.Job{
@@ -299,24 +301,20 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 	if v.web {
 		source = "web UI"
 	}
-	queueTask, err := tasks.GenerateVerificationQueuedTask(job, v.web)
+	wid := tasklog.FormatWorkerID(job.Store, "host-", job.ID)
+	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "verification", wid, v.web)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
+		v.logger.Error(err, "failed to create queue task, not fatal")
 	} else {
 		v.mu.Lock()
-		v.queueTask = &queueTask
+		v.queueTask = queueTask
 		v.mu.Unlock()
 
 		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
-			syslog.L.Error(err).WithMessage("failed to set queue task, not fatal").Write()
+			v.logger.Error(err, "failed to set queue task, not fatal")
 		}
 	}
-
-	syslog.L.Info().
-		WithField("jobID", job.ID).
-		WithField("source", source).
-		WithMessage("verification job starting").
-		Write()
+	v.logger.Info("verification starting", "target", v.job.TargetMode, "mode", v.job.Mode, "source", source)
 
 	return nil
 }
@@ -342,7 +340,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	}
 
 	if err := v.updateJobStatus(false, vTask.Task); err != nil {
-		syslog.L.Error(err).WithMessage("failed to update job with task UPID").Write()
+		v.logger.Error(err, "failed to update job with task UPID")
 	}
 
 	if job.TargetMode == "namespace" {
@@ -446,7 +444,7 @@ func (v *verificationJob) executeVerification(
 ) error {
 	defer func() {
 		if err := vs.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			v.logger.Error(err, "failed to close verify state")
 		}
 	}()
 	defer agentTCP.Close()
@@ -459,7 +457,7 @@ func (v *verificationJob) executeVerification(
 
 	result := &database.VerificationResult{
 		VerificationJobID: job.ID,
-		UPID:              vTask.UPID,
+		UPID:              vTask.UPID(),
 		Snapshot:          snapshot.Snapshot,
 		SnapshotTime:      snapshot.BackupTime,
 		Status:            "running",
@@ -480,7 +478,7 @@ func (v *verificationJob) executeVerification(
 	if err != nil {
 		// Mark the stale result as skipped so we don't leave orphaned "running" records
 		if err := v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix()); err != nil {
-			syslog.L.Error(err).Write()
+			v.logger.Error(err, "failed to mark stale verification result as skipped")
 		}
 		return fmt.Errorf("failed to sample files: %w", err)
 	}
@@ -594,14 +592,14 @@ func (v *verificationJob) executeVerification(
 	}
 
 	if err := v.storeInstance.Database.UpdateVerificationResult(*result); err != nil {
-		syslog.L.Error(err).WithField("jobID", job.ID).WithMessage("failed to update verification result").Write()
+		v.logger.Error(err, "failed to update verification result")
 	}
 
 	return nil
 }
 
 func (v *verificationJob) onError(err error) {
-	syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("verification job failed").Write()
+	v.logger.Error(err, "verification failed")
 
 	v.mu.RLock()
 	t := v.task
@@ -610,7 +608,7 @@ func (v *verificationJob) onError(err error) {
 
 	if rID > 0 {
 		if markErr := v.storeInstance.Database.MarkVerificationResultStatus(rID, "failed", time.Now().Unix()); markErr != nil {
-			syslog.L.Error(markErr).WithField("jobID", v.job.ID).WithMessage("failed to mark result as failed").Write()
+			v.logger.Error(markErr, "failed to mark result as failed")
 		}
 	}
 
@@ -621,7 +619,7 @@ func (v *verificationJob) onError(err error) {
 	}
 
 	if err := v.updateJobHistory(false, 0); err != nil {
-		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on error").Write()
+		v.logger.Error(err, "failed to update job history on error")
 	}
 
 	if v.storeInstance.BatchTracker != nil {
@@ -630,7 +628,7 @@ func (v *verificationJob) onError(err error) {
 			notification.JobTypeVerification,
 			v.job.ID,
 			v.job.Store,
-			fmt.Errorf("verification failed: %v", err),
+			fmt.Errorf("verification failed: %w", err),
 			map[string]string{
 				"namespace": v.job.Namespace,
 				"succeeded": "false",
@@ -640,7 +638,7 @@ func (v *verificationJob) onError(err error) {
 }
 
 func (v *verificationJob) onSuccess() {
-	syslog.L.Info().WithField("jobID", v.job.ID).WithMessage("verification job completed successfully").Write()
+	v.logger.Info("verification completed", "total_files", v.totalFiles, "failed_files", v.failedFiles, "skipped_files", v.skippedFiles)
 
 	v.mu.RLock()
 	t := v.task
@@ -661,12 +659,12 @@ func (v *verificationJob) onSuccess() {
 		if failed > 0 {
 			t.CloseWarn(failed)
 			if err := v.updateJobHistory(true, failed); err != nil {
-				syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history").Write()
+				v.logger.Error(err, "failed to update job history")
 			}
 		} else if skipped > 0 {
 			t.CloseWarn(skipped)
 			if err := v.updateJobHistory(true, skipped); err != nil {
-				syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history").Write()
+				v.logger.Error(err, "failed to update job history")
 			}
 		} else {
 			t.CloseOK()
@@ -674,7 +672,7 @@ func (v *verificationJob) onSuccess() {
 	}
 
 	if err := v.updateJobHistory(true, 0); err != nil {
-		syslog.L.Error(err).WithField("jobID", v.job.ID).WithMessage("failed to update job history on success").Write()
+		v.logger.Error(err, "failed to update job history on success")
 	}
 
 	var notifyErr error
@@ -834,7 +832,7 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 
 		snapFiles, err := os.ReadDir(filepath.Join(groupDir, entry.Name()))
 		if err != nil {
-			syslog.L.Error(err).Write()
+			v.logger.Error(err, "failed to read snapshot group directory")
 		}
 		var files []string
 		for _, f := range snapFiles {
@@ -1165,7 +1163,7 @@ func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCh
 		if strings.Contains(filter.PathPattern, "*") {
 			matched, err := filepath.Match(filter.PathPattern, filepath.Base(path))
 			if err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if !matched {
 				return false
@@ -1279,7 +1277,7 @@ func extractFileHash(ctx context.Context, vs *verifyState, file fileEntry) ([32]
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

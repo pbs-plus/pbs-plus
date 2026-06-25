@@ -1,21 +1,41 @@
 //go:build windows
 
-package syslog
+package log
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"log/slog"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
+
 	"golang.org/x/sys/windows/svc/eventlog"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-func (l *Logger) SetServiceLogger() error {
+type LogWriter struct {
+	logger *eventlog.Log
+}
+
+func (ew *LogWriter) Write(p []byte) (n int, err error) {
+	message := string(p)
+	if ew.logger != nil {
+		if strings.Contains(message, "ERR") {
+			err = ew.logger.Error(2, message)
+		} else {
+			err = ew.logger.Info(1, message)
+		}
+	} else {
+		return os.Stdout.Write(p)
+	}
+	return len(p), err
+}
+
+func setServiceLogger(l *Logger) error {
 	sourceName := "PBSPlusAgent"
 
 	l.mu.Lock()
@@ -65,21 +85,14 @@ func (l *Logger) SetServiceLogger() error {
 	return nil
 }
 
-func (e *LogEntry) Write() {
-	e.logger.mu.RLock()
-	defer e.logger.mu.RUnlock()
-
-	if e.logger.disabled {
-		return
+func (l *Logger) writePlatform(e *entry, attrs []any) {
+	if e.jobID != "" {
+		e.fields["jobID"] = e.jobID
 	}
 
-	if e.JobID != "" {
-		e.Fields["jobID"] = e.JobID
+	if _, ok := e.fields["hostname"]; !ok {
+		e.fields["hostname"] = l.hostname
 	}
 
-	if _, ok := e.Fields["hostname"]; !ok {
-		e.Fields["hostname"] = e.logger.hostname
-	}
-
-	e.writeSlog()
+	l.zlog.Log(ctxNone, levelFromEntry(e), e.message, attrs...)
 }

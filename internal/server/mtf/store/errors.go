@@ -10,6 +10,10 @@ var (
 	ErrNotFound       = errors.New("not found")
 	ErrInvalidID      = errors.New("invalid id")
 	ErrInvalidMapping = errors.New("invalid namespace mapping")
+
+	ErrDatastoreRequired  = errors.New("datastore is required")
+	ErrSourceKindRequired = errors.New("source_kind is required")
+	ErrSourceRefRequired  = errors.New("source_ref is required")
 )
 
 func mapErr(err error, what string) error {

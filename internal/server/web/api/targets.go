@@ -14,7 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -72,7 +72,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -93,7 +93,7 @@ func D2DTargetStatusHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(cached); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -154,7 +154,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		defer func() {
 			if tx != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}()
@@ -199,7 +199,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		})
 
 		if err != nil {
-			fmt.Printf("Error encoding success response: %v\n", err)
+			log.Error(err, "failed to encode success response")
 		}
 	}
 }
@@ -235,7 +235,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -303,7 +303,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 			return
@@ -355,7 +355,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Success = true
 			response.Data = target
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 			return
@@ -371,7 +371,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -414,7 +414,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }

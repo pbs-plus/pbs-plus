@@ -6,7 +6,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	stdlog "log"
 	"net"
 	"net/rpc"
 	"os"
@@ -17,14 +17,14 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/host"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/web"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var Version = "v0.0.0"
@@ -68,19 +68,19 @@ func main() {
 	}
 
 	if err := crypto.AssertFIPS(); err != nil {
-		syslog.L.Error(err).WithMessage("FIPS assertion failed").Write()
+		log.Error(err, "FIPS assertion failed")
 		os.Exit(1)
 	}
 
-	syslog.L.Server = true
-	if err := syslog.L.SetServiceLogger(); err != nil {
-		syslog.L.Error(err).Write()
+	log.L.Server = true
+	if err := log.L.SetServiceLogger(); err != nil {
+		log.Error(err, "")
 	}
 	_ = cli.GetToken()
 
 	storeInstance, err := store.Initialize(mainCtx, nil)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize store").Write()
+		log.Error(err, "failed to initialize store")
 		return
 	}
 
@@ -90,7 +90,7 @@ func main() {
 	}
 
 	if err := validateEnvironment(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 		return
 	}
 
@@ -98,7 +98,7 @@ func main() {
 		"/usr/share/javascript/proxmox-backup/index.hbs",
 		"/usr/share/javascript/proxmox-backup/js",
 	); err != nil {
-		syslog.L.Error(err).WithMessage("failed to mount modified proxmox-backup-gui.js").Write()
+		log.Error(err, "failed to mount modified proxmox-backup-gui.js")
 		return
 	}
 
@@ -106,14 +106,14 @@ func main() {
 	// queue cleanup, scheduler, and RPC servers.
 	_, _, err = backend.Bootstrap(mainCtx, storeInstance)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("bootstrap failed").Write()
+		log.Error(err, "bootstrap failed")
 		return
 	}
 
 	// Create and start all HTTP/ARPC servers.
 	server, err := web.NewServer(storeInstance, Version)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create server").Write()
+		log.Error(err, "failed to create server")
 		return
 	}
 
@@ -123,24 +123,24 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	sig := <-sigCh
-	syslog.L.Info().WithMessage(fmt.Sprintf("received %s, shutting down gracefully", sig)).Write()
+	log.Info(fmt.Sprintf("received %s, shutting down gracefully", sig))
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		syslog.L.Error(err).WithMessage("shutdown error").Write()
+		log.Error(err, "shutdown error")
 	}
 
 	mainCancel()
-	syslog.L.Info().WithMessage("shutdown complete").Write()
+	log.Info("shutdown complete")
 }
 
 func validateEnvironment() error {
 	// Best-effort cleanup; the tasks/active directory may not exist in test
 	// environments or Docker containers. Ignore errors from this step.
-	if err := proxmox.CleanupPBSPlusActiveTasks(); err != nil {
-		syslog.L.Error(err).Write()
+	if err := tasklog.CleanupActiveTasks(); err != nil {
+		log.Error(err, "")
 	}
 
 	hn, ok := conf.Env.Hostname, conf.Env.Hostname != ""
@@ -158,23 +158,21 @@ func validateEnvironment() error {
 func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExclusions []string, stop, webRun bool) {
 	conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("backups", backupsRun).
-			WithField("restores", restoresRun).
-			Write()
+		log.Error(err, "", "restores", restoresRun, "backups", backupsRun)
+
 		return
 	}
 	rpcClient := rpc.NewClient(conn)
 	defer func() {
 		if err := rpcClient.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	for _, backupRun := range backupsRun {
 		backupTask, err := storeInstance.Database.GetBackup(backupRun)
 		if err != nil {
-			syslog.L.Error(err).WithField("backupID", backupRun).Write()
+			log.Error(err, "", "backupID", backupRun)
 			continue
 		}
 
@@ -187,18 +185,18 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 		}
 		var reply jobrpc.QueueReply
 		if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
-			syslog.L.Error(err).WithField("backupID", backupRun).Write()
+			log.Error(err, "", "backupID", backupRun)
 			continue
 		}
 		if reply.Status != 200 {
-			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("backupID", backupRun).Write()
+			log.Error(fmt.Errorf("%s", reply.Message), "", "backupID", backupRun)
 		}
 	}
 
 	for _, restoreRun := range restoresRun {
 		restoreTask, err := storeInstance.Database.GetRestore(restoreRun)
 		if err != nil {
-			syslog.L.Error(err).WithField("restoreID", restoreRun).Write()
+			log.Error(err, "", "restoreID", restoreRun)
 			continue
 		}
 
@@ -210,11 +208,11 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 		}
 		var reply jobrpc.QueueReply
 		if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
-			syslog.L.Error(err).WithField("restoreID", restoreRun).Write()
+			log.Error(err, "", "restoreID", restoreRun)
 			continue
 		}
 		if reply.Status != 200 {
-			syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreID", restoreRun).Write()
+			log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", restoreRun)
 		}
 	}
 }
@@ -254,7 +252,7 @@ func runCleanTaskLogs() {
 	fmt.Println("Proceeding with log cleanup...")
 	removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
 	if err != nil {
-		log.Fatal(err)
+		stdlog.Fatal(err)
 	}
 	fmt.Printf("Successfully removed %d of junk lines from all task logs files.\n", removed)
 }

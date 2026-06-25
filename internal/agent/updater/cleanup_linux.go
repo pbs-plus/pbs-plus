@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func cleanUp() error {
@@ -20,19 +20,19 @@ func cleanUp() error {
 		if _, err := os.Stat(p); err == nil {
 			foundLegacy = true
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
-			syslog.L.Info().WithField("path", p).WithMessage("removed legacy unit file").Write()
+			log.Info("removed legacy unit file", "path", p)
 		}
 	}
 
 	if foundLegacy {
 		if _, err := exec.LookPath("systemctl"); err == nil {
 			if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := exec.Command("systemctl", "reset-failed").Run(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}

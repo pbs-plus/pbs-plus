@@ -12,4 +12,6 @@ var (
 	ErrSecretNotFound    = errors.New("secret not found")
 	ErrAgentHostNotFound = errors.New("agent host not found; check targets list to verify")
 	ErrNotFound          = errors.New("record not found")
+
+	ErrValidationFailed = errors.New("validation failed")
 )

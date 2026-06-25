@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type Token struct {
@@ -61,14 +61,14 @@ func runCommandAndIgnoreExists(cmd *exec.Cmd, alreadyExistsKeywords []string) er
 			for _, keyword := range alreadyExistsKeywords {
 				if strings.Contains(outputStr, keyword) {
 					isAlreadyExistsError = true
-					syslog.L.Info().WithMessage("Resource already exists (ignored error): " + cmd.String() + " - Output: " + outputStr).Write()
+					log.Info("resource already exists (ignored error): " + cmd.String() + " - Output: " + outputStr)
 					break
 				}
 			}
 		}
 
 		if !isAlreadyExistsError {
-			syslog.L.Error(err).WithMessage("Command failed: " + cmd.String() + " - Output: " + outputStr).Write()
+			log.Error(err, "Command failed: "+cmd.String()+" - Output: "+outputStr)
 			return err
 		}
 	}
@@ -94,7 +94,7 @@ func GetToken() string {
 		token, err = createAPIToken()
 		if err == nil {
 			if err := token.saveToFile(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
@@ -157,18 +157,18 @@ func createAPIToken() (*APIToken, error) {
 		jsonStr := extractJsonFromResult(rawOutput)
 		if jsonStr == "" {
 			err := fmt.Errorf("could not extract JSON from token generation output")
-			syslog.L.Error(err).WithMessage("Output was: " + rawOutput).Write()
+			log.Error(err, "Output was: "+rawOutput)
 			return nil, err
 		}
 
 		var details APIToken
 		if err := json.Unmarshal([]byte(jsonStr), &details); err != nil {
-			syslog.L.Error(err).WithMessage("Failed to parse token JSON: " + jsonStr).Write()
+			log.Error(err, "Failed to parse token JSON: "+jsonStr)
 			return nil, fmt.Errorf("failed to parse token JSON: %w", err)
 		}
 		if details.Value == "" {
 			err := fmt.Errorf("token value is empty after parsing JSON")
-			syslog.L.Error(err).WithMessage("Parsed JSON: " + jsonStr).Write()
+			log.Error(err, "Parsed JSON: "+jsonStr)
 			return nil, err
 		}
 		return &details, nil
@@ -182,7 +182,7 @@ func createAPIToken() (*APIToken, error) {
 	if cmdErr != nil {
 		alreadyExistsTokenMsg := "token '" + proxmox.AuthToken + "' for user '" + proxmox.AuthUser + "' already exists"
 		if strings.Contains(rawOutputStr, alreadyExistsTokenMsg) {
-			syslog.L.Info().WithMessage("Token " + proxmox.AuthID + " already exists. Attempting to delete and regenerate.").Write()
+			log.Info("token " + proxmox.AuthID + " already exists. Attempting to delete and regenerate.")
 
 			cmdTokenDelete := exec.Command(
 				"proxmox-backup-manager",
@@ -196,33 +196,32 @@ func createAPIToken() (*APIToken, error) {
 			deleteOutputStr := string(deleteOutputBytes)
 
 			if deleteErr != nil {
-				syslog.L.Error(deleteErr).WithMessage("Failed to delete existing token '" + proxmox.AuthID + "'. Output: " + deleteOutputStr).Write()
+				log.Error(deleteErr, "Failed to delete existing token '"+proxmox.AuthID+"'. Output: "+deleteOutputStr)
 			} else {
-				syslog.L.Info().WithMessage("Successfully deleted existing token: " + proxmox.AuthID + ". Output: " + deleteOutputStr).Write()
+				log.Info("successfully deleted existing token: " + proxmox.AuthID + ". Output: " + deleteOutputStr)
 			}
-
-			syslog.L.Info().WithMessage("Retrying token generation for: " + proxmox.AuthID).Write()
+			log.Info("retrying token generation for: " + proxmox.AuthID)
 			cmdRetry := generateTokenCmd()
 			cmdRetry.Env = os.Environ()
 			outputBytesRetry, cmdErrRetry := cmdRetry.CombinedOutput()
 			rawOutputStrRetry := string(outputBytesRetry)
 
 			if cmdErrRetry != nil {
-				syslog.L.Error(cmdErrRetry).WithMessage("Failed to generate token on retry for '" + proxmox.AuthID + "'. Output: " + rawOutputStrRetry).Write()
+				log.Error(cmdErrRetry, "Failed to generate token on retry for '"+proxmox.AuthID+"'. Output: "+rawOutputStrRetry)
 				return nil, cmdErrRetry
 			}
-			syslog.L.Info().WithMessage("Successfully generated token on retry for " + proxmox.AuthID + ".").Write()
+			log.Info("successfully generated token on retry for " + proxmox.AuthID + ".")
 			var parseErr error
 			finalToken, parseErr = processTokenGeneration(rawOutputStrRetry)
 			if parseErr != nil {
 				return nil, parseErr
 			}
 		} else {
-			syslog.L.Error(cmdErr).WithMessage("Failed to generate token '" + proxmox.AuthID + "'. Output: " + rawOutputStr).Write()
+			log.Error(cmdErr, "Failed to generate token '"+proxmox.AuthID+"'. Output: "+rawOutputStr)
 			return nil, cmdErr
 		}
 	} else {
-		syslog.L.Info().WithMessage("Successfully generated token on first try for " + proxmox.AuthID + ".").Write()
+		log.Info("successfully generated token on first try for " + proxmox.AuthID + ".")
 		var parseErr error
 		finalToken, parseErr = processTokenGeneration(rawOutputStr)
 		if parseErr != nil {
@@ -244,8 +243,7 @@ func createAPIToken() (*APIToken, error) {
 	if err := runCommandAndIgnoreExists(cmdAclToken, []string{"entry '" + proxmox.AuthID + "' already exists"}); err != nil {
 		return nil, err
 	}
-
-	syslog.L.Info().WithMessage("User token creation process completed successfully.").Write()
+	log.Info("user token creation process completed successfully.")
 	return finalToken, nil
 }
 
@@ -268,7 +266,7 @@ func (token *APIToken) saveToFile() error {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -287,7 +285,7 @@ func getAPITokenFromFile() (*APIToken, error) {
 	}
 	defer func() {
 		if err := jsonFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

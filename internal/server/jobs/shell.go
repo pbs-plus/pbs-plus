@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 	"os/exec"
 	"strings"
@@ -40,11 +40,11 @@ func RunShellScript(
 	}
 	envFilePath := envFile.Name()
 	if err := envFile.Close(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	defer func() {
 		if err := os.Remove(envFilePath); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -69,7 +69,7 @@ func RunShellScript(
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		<-done
@@ -117,7 +117,7 @@ func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

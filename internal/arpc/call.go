@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type Request struct {
@@ -73,7 +75,7 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := stream.SetDeadline(deadline); err != nil {
-			fmt.Printf("arpc: failed to set stream deadline: %v\n", err)
+			log.Error(err, "arpc: failed to set stream deadline")
 		}
 	}
 

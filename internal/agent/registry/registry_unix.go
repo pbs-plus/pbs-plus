@@ -16,7 +16,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const (
@@ -51,10 +51,10 @@ type legacyData struct {
 
 func init() {
 	if err := os.MkdirAll(registryDir, 0o755); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := migrateLegacy(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -71,7 +71,7 @@ func withLock(readOnly bool, fn func() error) error {
 	}
 	defer func() {
 		if err := f.Unlock(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 	return fn()
@@ -137,7 +137,7 @@ func getEncryptionKey() ([]byte, error) {
 	}
 	if keyData, err := os.ReadFile(legacyKeyFile); err == nil && len(keyData) == 32 {
 		if err := writeFileAtomic(keyFile, keyData, 0o600); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return keyData, nil
 	}
@@ -184,7 +184,7 @@ func saveRegistry(reg fullRegistry) error {
 func writeFileAtomic(dst string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(dst)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	tmp, err := os.CreateTemp(dir, ".tmp-reg-*")
 	if err != nil {
@@ -194,11 +194,11 @@ func writeFileAtomic(dst string, data []byte, perm os.FileMode) error {
 	success := false
 	defer func() {
 		if err := tmp.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if !success {
 			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}()
@@ -206,10 +206,10 @@ func writeFileAtomic(dst string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	if err := tmp.Chmod(perm); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := tmp.Sync(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := os.Rename(tmpName, dst); err != nil {
 		return err
@@ -239,7 +239,7 @@ func migrateLegacy() error {
 				p := strings.TrimSuffix(info.Name(), ".json")
 				b, err := os.ReadFile(path)
 				if err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				var ld legacyData
 				if err := json.Unmarshal(b, &ld); err == nil {
@@ -255,7 +255,7 @@ func migrateLegacy() error {
 			if strings.HasSuffix(info.Name(), valueFileSuffix) {
 				rel, err := filepath.Rel(legacyRegistryBasePath, filepath.Dir(path))
 				if err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				pathKey := lcPath(rel)
 				keyName := strings.TrimSuffix(info.Name(), valueFileSuffix)
@@ -264,13 +264,13 @@ func migrateLegacy() error {
 				}
 				b, err := os.ReadFile(path)
 				if err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				reg[pathKey][toTomlKey(keyName)] = string(b)
 			}
 			return nil
 		}); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if len(reg) > 0 {
 			return saveRegistry(reg)

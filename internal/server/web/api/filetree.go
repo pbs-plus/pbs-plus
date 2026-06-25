@@ -8,9 +8,10 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	arpcTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -51,7 +52,7 @@ func D2DFileTree(storeInstance *store.Store) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			if err := json.NewEncoder(w).Encode(respData); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -66,7 +67,7 @@ func D2DFileTree(storeInstance *store.Store) http.HandlerFunc {
 			reqData := arpcTypes.FileTreeReq{HostPath: target.GetAgentHostPath(), SubPath: subPath}
 			resp, ftErr = tSess.CallData(r.Context(), "filetree", &reqData)
 		} else {
-			WriteErrorResponse(w, errors.New("target unreachable"))
+			WriteErrorResponse(w, jobs.ErrTargetUnreachable)
 			return
 		}
 
@@ -84,7 +85,7 @@ func D2DFileTree(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(respData); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"syscall"
 
 	"github.com/minio/minio-go/v7"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
@@ -20,13 +20,9 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if off >= f.size {
 		return 0, io.EOF
 	}
+	log.Debug("readAt called",
 
-	syslog.L.Debug().
-		WithMessage("ReadAt called").
-		WithField("key", f.key).
-		WithField("offset", off).
-		WithField("length", len(buf)).
-		Write()
+		"length", len(buf), "offset", off, "key", f.key)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -37,7 +33,7 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 	if f.body != nil && off != f.currPos {
 		if err := f.body.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		f.body = nil
 	}
@@ -45,7 +41,7 @@ func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 	if f.body == nil {
 		opts := minio.GetObjectOptions{}
 		if err := opts.SetRange(off, f.size-1); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		obj, err := f.fs.client.GetObject(f.fs.Ctx, f.fs.bucket, f.key, opts)
@@ -70,7 +66,7 @@ func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 }
 
 func (f *S3File) Close() error {
-	syslog.L.Debug().WithMessage("Close file").WithField("key", f.key).Write()
+	log.Debug("close file", "key", f.key)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

@@ -17,7 +17,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 //go:embed all:views/custom
@@ -36,7 +36,7 @@ var legacyJSPaths = []string{
 func compileJS(embedded *embed.FS) []byte {
 	parts, err := sortedWalk(*embedded, ".")
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 		return nil
 	}
 	return bytes.Join(parts, []byte("\n"))
@@ -84,33 +84,31 @@ func restoreLegacyFiles() error {
 
 		currentContent, err := os.ReadFile(jsPath)
 		if err != nil {
-			syslog.L.Error(err).WithMessage(fmt.Sprintf("Failed to read current file %s", jsPath)).Write()
+			log.Error(err, fmt.Sprintf("Failed to read current file %s", jsPath))
 			continue
 		}
 
 		backupContent, err := os.ReadFile(backupPath)
 		if err != nil {
-			syslog.L.Error(err).WithMessage(fmt.Sprintf("Failed to read backup file %s", backupPath)).Write()
+			log.Error(err, fmt.Sprintf("Failed to read backup file %s", backupPath))
 			continue
 		}
 
 		if !bytes.Equal(currentContent, backupContent) {
 			if err := restoreBackup(jsPath, backupPath); err != nil {
-				syslog.L.Error(err).WithMessage(fmt.Sprintf("Failed to restore legacy file %s", jsPath)).Write()
+				log.Error(err, fmt.Sprintf("Failed to restore legacy file %s", jsPath))
 				continue
 			}
+			log.Info(fmt.Sprintf("Restored legacy modified file %s to original state", jsPath))
 
-			syslog.L.Info().WithMessage(
-				fmt.Sprintf("Restored legacy modified file %s to original state", jsPath),
-			).Write()
 			restoredAny = true
 		}
 	}
 
 	if restoredAny {
-		syslog.L.Info().WithMessage("Legacy JavaScript modifications have been cleaned up").Write()
+		log.Info("legacy JavaScript modifications have been cleaned up")
 	} else {
-		syslog.L.Info().WithMessage("No legacy JavaScript modifications found to clean up").Write()
+		log.Info("no legacy JavaScript modifications found to clean up")
 	}
 
 	return nil
@@ -127,9 +125,8 @@ func writeJSFiles(jsDir string) error {
 		if err := os.WriteFile(preJSPath, preJS, 0644); err != nil {
 			return fmt.Errorf("failed to write pre JS file: %w", err)
 		}
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("Pre JS file written to %s", preJSPath),
-		).Write()
+		log.Info(fmt.Sprintf("Pre JS file written to %s", preJSPath))
+
 	}
 
 	customJS := compileJS(&customJsFS)
@@ -138,9 +135,8 @@ func writeJSFiles(jsDir string) error {
 		if err := os.WriteFile(customJSPath, customJS, 0644); err != nil {
 			return fmt.Errorf("failed to write custom JS file: %w", err)
 		}
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("Custom JS file written to %s", customJSPath),
-		).Write()
+		log.Info(fmt.Sprintf("Custom JS file written to %s", customJSPath))
+
 	}
 
 	return nil
@@ -152,12 +148,12 @@ func modifyHBS(original []byte) []byte {
 	mainScriptLine := `<script type="text/javascript" src="/js/proxmox-backup-gui.js"></script>`
 
 	if !strings.Contains(content, mainScriptLine) {
-		syslog.L.Error(fmt.Errorf("main script line not found in HBS template")).Write()
+		log.Error(fmt.Errorf("main script line not found in HBS template"), "")
 		return original
 	}
 
 	if strings.Contains(content, "pbs-plus-pre.js") && strings.Contains(content, "pbs-plus-custom.js") {
-		syslog.L.Info().WithMessage("HBS template already contains PBS-Plus modifications").Write()
+		log.Info("hBS template already contains PBS-Plus modifications")
 		return original
 	}
 
@@ -207,7 +203,7 @@ func atomicReplaceFile(targetPath string, newContent []byte) error {
 
 	if _, err := tmpFile.Write(newContent); err != nil {
 		if err := tmpFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("failed to write temporary file: %w", err)
 	}
@@ -236,10 +232,8 @@ func restoreBackup(targetPath, backupPath string) error {
 	if err := os.WriteFile(targetPath, backupContent, 0644); err != nil {
 		return fmt.Errorf("failed to restore file: %w", err)
 	}
+	log.Info(fmt.Sprintf("Restored original file %s from backup.", targetPath))
 
-	syslog.L.Info().WithMessage(
-		fmt.Sprintf("Restored original file %s from backup.", targetPath),
-	).Write()
 	return nil
 }
 
@@ -248,15 +242,15 @@ func cleanupJSFiles(jsDir string) {
 	customJSPath := filepath.Join(jsDir, "pbs-plus-custom.js")
 
 	if err := os.Remove(preJSPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).WithMessage("Failed to remove pre JS file").Write()
+		log.Error(err, "Failed to remove pre JS file")
 	} else if err == nil {
-		syslog.L.Info().WithMessage("Pre JS file removed").Write()
+		log.Info("pre JS file removed")
 	}
 
 	if err := os.Remove(customJSPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).WithMessage("Failed to remove custom JS file").Write()
+		log.Error(err, "Failed to remove custom JS file")
 	} else if err == nil {
-		syslog.L.Info().WithMessage("Custom JS file removed").Write()
+		log.Info("custom JS file removed")
 	}
 }
 
@@ -264,8 +258,7 @@ func ModifyPBSHandlebars(hbsPath, jsDir string) error {
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
-
-	syslog.L.Info().WithMessage("Checking for legacy JavaScript modifications to clean up...").Write()
+	log.Info("checking for legacy JavaScript modifications to clean up...")
 	if err := restoreLegacyFiles(); err != nil {
 		return fmt.Errorf("failed to restore legacy files: %w", err)
 	}
@@ -287,12 +280,10 @@ func ModifyPBSHandlebars(hbsPath, jsDir string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("Termination signal (%v) received. Cleaning up...", sig),
-		).Write()
+		log.Info(fmt.Sprintf("Termination signal (%v) received. Cleaning up...", sig))
 
 		if err := restoreBackup(hbsPath, originalBackup); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		cleanupJSFiles(jsDir)
@@ -314,14 +305,11 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 		if err := atomicReplaceFile(targetPath, modifiedContent); err != nil {
 			return fmt.Errorf("failed to apply initial modification: %w", err)
 		}
+		log.Info(fmt.Sprintf("HBS template %s modified with JS file references.", targetPath))
 
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("HBS template %s modified with JS file references.", targetPath),
-		).Write()
 	} else {
-		syslog.L.Info().WithMessage(
-			fmt.Sprintf("HBS template %s already up to date.", targetPath),
-		).Write()
+		log.Info(fmt.Sprintf("HBS template %s already up to date.", targetPath))
+
 	}
 
 	watcher, err := fsnotify.NewWatcher()
@@ -331,14 +319,11 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 
 	if err := watcher.Add(targetPath); err != nil {
 		if err := watcher.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("failed to add file to watcher: %w", err)
 	}
-
-	syslog.L.Info().WithMessage(
-		fmt.Sprintf("Watching HBS template: %s", targetPath),
-	).Write()
+	log.Info(fmt.Sprintf("Watching HBS template: %s", targetPath))
 
 	go func() {
 		for {
@@ -353,20 +338,18 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 
 					content, err := os.ReadFile(targetPath)
 					if err != nil {
-						syslog.L.Error(err).Write()
+						log.Error(err, "")
 						continue
 					}
 
 					modifiedContent := modifyFunc(content)
 					if !bytes.Equal(content, modifiedContent) {
 						if err := atomicReplaceFile(targetPath, modifiedContent); err != nil {
-							syslog.L.Error(err).Write()
+							log.Error(err, "")
 							continue
 						}
+						log.Info(fmt.Sprintf("HBS template %s updated with modifications.", targetPath))
 
-						syslog.L.Info().WithMessage(
-							fmt.Sprintf("HBS template %s updated with modifications.", targetPath),
-						).Write()
 					}
 				}
 
@@ -374,7 +357,7 @@ func watchAndReplaceHBS(targetPath string, modifyFunc func([]byte) []byte) error
 				if !ok {
 					return
 				}
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}()
