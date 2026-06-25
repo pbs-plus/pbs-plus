@@ -70,25 +70,21 @@ func (s *restoreSession) Close() {
 
 func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMode *int) {
 	if *restoreID == "" || *srcPath == "" || *destPath == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: restoreID, srcPath, and destPath are required")
 		log.Error(errors.New("missing required flags"), "restore: validation failed")
 		os.Exit(1)
 	}
 
 	if err := validate.ValidateJobId(*restoreID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid restoreID: %v\n", err)
 		log.Error(err, "restore: restore id validation failed")
 		os.Exit(1)
 	}
 
 	if err := validate.ValidateRestorePath("srcPath", *srcPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid srcPath: %v\n", err)
 		log.Error(err, "restore: src path validation failed")
 		os.Exit(1)
 	}
 
 	if err := validate.ValidateRestorePath("destPath", *destPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid destPath: %v\n", err)
 		log.Error(err, "restore: dest path validation failed")
 		os.Exit(1)
 	}
@@ -160,12 +156,10 @@ func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMod
 								"restore: panicked",
 								"restoreID", *restoreID)
 
-							fmt.Fprintln(os.Stderr, "Restore panicked:", perr)
 						}
 					}()
 					err := Restore(session, *restoreID, *srcPath, *destPath, mode)
 					if err != nil {
-						fmt.Fprintln(os.Stderr, "Restore failed:", err)
 						log.Error(err, "restore: execution failed")
 						cancel()
 						return

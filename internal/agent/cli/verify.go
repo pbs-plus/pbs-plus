@@ -112,7 +112,6 @@ func cmdVerify(verifyID *string) {
 	}
 
 	if err := validate.ValidateJobId(*verifyID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid verifyID: %v\n", err)
 		os.Exit(1)
 	}
 

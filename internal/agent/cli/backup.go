@@ -78,27 +78,23 @@ func (s *backupSession) Close() {
 
 func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 	if *sourceMode == "" || *drive == "" || *backupID == "" || *readMode == "" {
-		fmt.Fprintln(os.Stderr, "Error: missing required flags: sourceMode, readMode, drive, and backupID are required")
 		log.Error(errors.New("missing required flags"), "backup: validation failed")
 		os.Exit(1)
 	}
 
 	if err := validate.ValidateJobId(*backupID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: invalid backupID: %v\n", err)
 		log.Error(err, "backup: backup id validation failed")
 		os.Exit(1)
 	}
 
 	validSourceModes := map[string]bool{"snapshot": true, "direct": true}
 	if !validSourceModes[*sourceMode] {
-		fmt.Fprintf(os.Stderr, "Error: invalid sourceMode: %s\n", *sourceMode)
 		log.Error(errors.New("invalid sourceMode"), "CmdBackup: sourceMode validation failed")
 		os.Exit(1)
 	}
 
 	validReadModes := map[string]bool{"standard": true, "mmap": true}
 	if !validReadModes[*readMode] {
-		fmt.Fprintf(os.Stderr, "Error: invalid readMode: %s\n", *readMode)
 		log.Error(errors.New("invalid readMode"), "CmdBackup: readMode validation failed")
 		os.Exit(1)
 	}
@@ -189,7 +185,6 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 			if currentSnap == nil {
 				snap, backupMode, err := Backup(session, *sourceMode, currentReadMode, *drive, *backupID)
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "Backup initiation failed:", err)
 					log.Error(err, "backup: initiation failed")
 					cancel()
 					return

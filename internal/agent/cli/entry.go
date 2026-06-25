@@ -53,7 +53,6 @@ func Entry() {
 	}
 
 	if string(expectedToken) != *token {
-		fmt.Fprintln(os.Stderr, "Error: invalid token")
 		os.Exit(1)
 	}
 
