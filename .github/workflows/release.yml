@@ -49,14 +49,14 @@ jobs:
           if [ -z "${ECDSA_PRIVATE_KEY_B64+x}" ] || [ -z "$ECDSA_PRIVATE_KEY_B64" ]; then
             echo "ECDSA_PRIVATE_KEY_B64 secret is not set"; exit 1;
           fi
-          echo "$ECDSA_PRIVATE_KEY_B64" | base64 -d > cosign.key
-          chmod 600 cosign.key
+          echo "$ECDSA_PRIVATE_KEY_B64" | base64 -d > /tmp/cosign.key
+          chmod 600 /tmp/cosign.key
 
       - name: Derive ECDSA public key
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
-          PUB_B64=$(cosign public-key --key cosign.key | base64 -w0)
+          PUB_B64=$(cosign public-key --key /tmp/cosign.key | base64 -w0)
           if [ -z "$PUB_B64" ]; then
             echo "Failed to derive ECDSA public key"; exit 1;
           fi

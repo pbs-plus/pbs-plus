@@ -141,7 +141,7 @@ binary_signs:
     cmd: cosign
     args:
       - sign-blob
-      - "--key=cosign.key"
+      - "--key=/tmp/cosign.key"
       - "--output-signature=${signature}"
       - "${artifact}"
       - "--yes"
