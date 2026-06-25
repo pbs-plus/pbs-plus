@@ -177,6 +177,92 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	return result, nil
 }
 
+func (r *DirReader) NextBatchInto(ctx context.Context, blockSize uint64, buf *bytes.Buffer) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.noMoreFiles && len(r.pending) == 0 {
+		return os.ErrProcessDone
+	}
+
+	if blockSize == 0 {
+		blockSize = 4096
+	}
+
+	enc := cbor.NewEncoder(buf)
+	if err := enc.StartIndefiniteArray(); err != nil {
+		return err
+	}
+
+	hasEntries := false
+
+	i := 0
+	for i < len(r.pending) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		ok, err := r.tryEncode(enc, r.pending[i])
+		if err != nil {
+			return err
+		}
+		if !ok {
+			break
+		}
+		hasEntries = true
+		i++
+	}
+
+	if i > 0 {
+		copy(r.pending, r.pending[i:])
+		r.pending = r.pending[:len(r.pending)-i]
+	}
+
+	for len(r.pending) == 0 && !r.noMoreFiles {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		entries, err := r.readdir(defaultBatchSize, blockSize)
+		if err == io.EOF {
+			r.noMoreFiles = true
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			r.noMoreFiles = true
+			break
+		}
+		r.pending = entries
+		i = 0
+		for i < len(r.pending) {
+			ok, err := r.tryEncode(enc, r.pending[i])
+			if err != nil {
+				return err
+			}
+			if !ok {
+				break
+			}
+			hasEntries = true
+			i++
+		}
+		if i > 0 {
+			copy(r.pending, r.pending[i:])
+			r.pending = r.pending[:len(r.pending)-i]
+		}
+	}
+
+	if err := enc.EndIndefinite(); err != nil {
+		return err
+	}
+
+	if !hasEntries && r.noMoreFiles && len(r.pending) == 0 {
+		return os.ErrProcessDone
+	}
+
+	return nil
+}
+
 func (r *DirReader) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -15,6 +15,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
+var encodeBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
 type FileHandle struct {
 	file          *os.File
 	fileSize      int64
@@ -205,18 +209,21 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 	reader := fh.dirReader
 	fh.mu.Unlock()
 
-	encodedBatch, err := reader.NextBatch(req.Context, s.statFs.Bsize)
-	if err != nil {
+	buf := encodeBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+
+	if err := reader.NextBatchInto(req.Context, s.statFs.Bsize, buf); err != nil {
+		encodeBufPool.Put(buf)
 		fh.releaseOp()
 		return arpc.Response{}, err
 	}
-	log.Debug("handleReadDir: sending batch", "bytes", len(encodedBatch), "handle_id", payload.HandleID)
 
 	return arpc.Response{
 		Status: 213,
 		RawStream: func(stream arpc.ARPCStream) {
 			defer fh.releaseOp()
-			if err := arpc.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream); err != nil {
+			defer encodeBufPool.Put(buf)
+			if err := arpc.SendDataFromReader(bytes.NewReader(buf.Bytes()), buf.Len(), stream); err != nil {
 				log.Error(err, "")
 			}
 		},
