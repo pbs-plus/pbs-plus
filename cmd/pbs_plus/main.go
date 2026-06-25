@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
@@ -64,6 +65,11 @@ func main() {
 	if len(argsWithoutProg) > 0 && argsWithoutProg[0] == "clean-task-logs" {
 		runCleanTaskLogs()
 		return
+	}
+
+	if err := crypto.AssertFIPS(); err != nil {
+		syslog.L.Error(err).WithMessage("FIPS assertion failed").Write()
+		os.Exit(1)
 	}
 
 	syslog.L.Server = true

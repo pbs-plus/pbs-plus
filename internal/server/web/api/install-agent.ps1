@@ -4,6 +4,7 @@
 # Configuration
 $serverUrl = "{{.ServerUrl}}"
 $bootstrapToken = "{{.BootstrapToken}}"
+$caFingerprint = "{{.ServerCAFingerprint}}"
 $msiUrl = "{{.ServerUrl}}/api2/json/plus/msi"
 $oldInstallDir = "${env:ProgramFiles(x86)}\PBS Plus Agent"
 
@@ -94,6 +95,11 @@ try {
         "/norestart",
         "/L*V", "`"$logPath`""
     )
+
+    # Pass CA fingerprint as MSI property if available
+    if ($caFingerprint -ne "" -and $caFingerprint -ne "{{.ServerCAFingerprint}}") {
+        $msiArgs += "SERVERCAFINGERPRINT=`"$caFingerprint`""
+    }
 
     Write-Host "Executing MSI..." -ForegroundColor Cyan
     $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $msiArgs -Wait -PassThru

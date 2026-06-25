@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/operator"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"k8s.io/client-go/kubernetes"
@@ -29,6 +30,11 @@ func main() {
 
 	if *serverURL == "" {
 		fmt.Fprintln(os.Stderr, "--server-url is required")
+		os.Exit(1)
+	}
+
+	if err := crypto.AssertFIPS(); err != nil {
+		syslog.L.Error(err).WithMessage("FIPS assertion failed").Write()
 		os.Exit(1)
 	}
 

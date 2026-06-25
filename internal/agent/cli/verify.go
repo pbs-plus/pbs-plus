@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	cryptoRand "crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	agentverification "github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -37,8 +37,8 @@ func ExecVerification(verifyID string) (int, error) {
 		return -1, fmt.Errorf("invalid verifyID: %w", err)
 	}
 
-	tokenBytes := make([]byte, 32)
-	if _, err := cryptoRand.Read(tokenBytes); err != nil {
+	tokenBytes, err := crypto.SecureRandomBytes(32)
+	if err != nil {
 		return -1, err
 	}
 	token := base64.StdEncoding.EncodeToString(tokenBytes)

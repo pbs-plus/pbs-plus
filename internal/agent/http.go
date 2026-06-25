@@ -96,6 +96,17 @@ func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (
 		return nil, fmt.Errorf("AgentHTTPRequestAttempt: error executing http request -> %w", err)
 	}
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var body []byte
+		if readBody, err := io.ReadAll(io.LimitReader(resp.Body, 4096)); err == nil {
+			body = readBody
+		}
+		if err := resp.Body.Close(); err != nil {
+			syslog.L.Error(err).WithMessage("agent: failed to close response body").Write()
+		}
+		return nil, fmt.Errorf("AgentHTTPRequestAttempt: server returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
 	if respBody == nil {
 		return resp.Body, nil
 	}

@@ -18,7 +18,11 @@ func (l *Logger) SetServiceLogger() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.hostname, _ = host.AgentHostname()
+	hostname, err := host.AgentHostname()
+	if err != nil {
+		hostname = "localhost"
+	}
+	l.hostname = hostname
 
 	tag := "pbs-plus-agent"
 	if conf.IsServer {
@@ -99,7 +103,9 @@ func (e *LogEntry) serverWrite() {
 				sb.WriteString(fmt.Sprintf(" (debug values: %v)", e.Fields))
 			}
 
-			_, _ = backupLogger.Write([]byte(sb.String()))
+			if _, err := backupLogger.Write([]byte(sb.String())); err != nil {
+				slog.Error("failed to write to backup logger", "error", err)
+			}
 			sb.Reset()
 		}
 		e.Fields["jobID"] = e.JobID

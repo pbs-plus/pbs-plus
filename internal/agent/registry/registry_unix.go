@@ -4,14 +4,9 @@ package registry
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +15,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gofrs/flock"
 
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
@@ -129,6 +125,12 @@ func toTomlKey(k string) string {
 	return toSnakeCase(k)
 }
 
+var registryKeyMgr = crypto.NewKeyManager(keyFile)
+
+func initKeyManager() {
+	registryKeyMgr = crypto.NewKeyManager(keyFile)
+}
+
 func getEncryptionKey() ([]byte, error) {
 	if keyData, err := os.ReadFile(keyFile); err == nil && len(keyData) == 32 {
 		return keyData, nil
@@ -139,14 +141,7 @@ func getEncryptionKey() ([]byte, error) {
 		}
 		return keyData, nil
 	}
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("failed to generate encryption key: %w", err)
-	}
-	if err := writeFileAtomic(keyFile, key, 0o600); err != nil {
-		return nil, fmt.Errorf("failed to save encryption key: %w", err)
-	}
-	return key, nil
+	return registryKeyMgr.GetOrCreate()
 }
 
 func encrypt(plaintext string) (string, error) {
@@ -154,20 +149,7 @@ func encrypt(plaintext string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	return crypto.EncryptWithKey(plaintext, key)
 }
 
 func decrypt(ciphertext string) (string, error) {
@@ -175,28 +157,7 @@ func decrypt(ciphertext string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	ns := gcm.NonceSize()
-	if len(data) < ns {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-	nonce, ct := data[:ns], data[ns:]
-	pt, err := gcm.Open(nil, nonce, ct, nil)
-	if err != nil {
-		return "", err
-	}
-	return string(pt), nil
+	return crypto.DecryptWithKey(ciphertext, key)
 }
 
 func loadRegistry() (fullRegistry, error) {

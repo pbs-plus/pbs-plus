@@ -6,23 +6,24 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/host"
-	"golang.org/x/exp/rand"
 )
 
-// HashHostname returns an FNV-1a 32-bit hash of the given host string.
 func hashHostname(host string) uint32 {
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(host))
+	h.Write([]byte(host))
 	return h.Sum32()
 }
 
 func randomHostname() string {
-	return time.Now().Format("20060102150405") + strconv.Itoa(rand.Intn(1000))
+	n, err := crypto.SecureRandomInt(1000)
+	if err != nil {
+		n = 0
+	}
+	return time.Now().Format("20060102150405") + strconv.Itoa(int(n))
 }
 
-// PBS_PLUS_UPDATE_INTERVAL_MINUTES for a fixed value, or derives a
-// deterministic 1-2 hour jitter based on the hostname.
 func ComputeDelay() time.Duration {
 	fixedDelayEnv := os.Getenv("PBS_PLUS_UPDATE_INTERVAL_MINUTES")
 	fixedDelay := -1

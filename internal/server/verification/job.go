@@ -4,7 +4,6 @@ package verification
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	sha256simd "github.com/minio/sha256-simd"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
@@ -86,8 +86,8 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		remaining[i] = i
 	}
 
-	buf := make([]byte, len(backups)*4)
-	if _, err := rand.Read(buf); err != nil {
+	buf, cryptoErr := crypto.SecureRandomBytes(len(backups) * 4)
+	if cryptoErr != nil {
 		// Fallback: just shuffle with math/rand
 		mrand.Shuffle(len(backups), func(i, j int) {
 			backups[i], backups[j] = backups[j], backups[i]
@@ -792,9 +792,8 @@ func (v *verificationJob) selectSnapshot(ctx context.Context, job database.Verif
 
 	var idx int
 	if len(filtered) > 1 {
-		var b [4]byte
-		if _, err := rand.Read(b[:]); err == nil {
-			idx = int(b[0]) % len(filtered)
+		if rb, err := crypto.SecureRandomBytes(1); err == nil {
+			idx = int(rb[0]) % len(filtered)
 		} else {
 			idx = mrand.Intn(len(filtered))
 		}

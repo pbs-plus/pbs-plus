@@ -77,6 +77,10 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 	}
 
+	if err := database.MigrateSecrets(); err != nil {
+		syslog.L.Error(err).WithMessage("Initialize: error migrating secrets").Write()
+	}
+
 	if !initialized {
 		tx, err := writeDb.Begin()
 		if err != nil {
@@ -125,6 +129,17 @@ func (t *Transaction) release() {
 		t.database.writeMu.Unlock()
 		t.released = true
 	}
+}
+
+func (d *Database) Close() error {
+	var firstErr error
+	if err := d.writeDb.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	if err := d.readDb.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 func (d *Database) NewTransaction() (*Transaction, error) {

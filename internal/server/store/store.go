@@ -83,7 +83,9 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 					WithMessage("Initialize: GetAllBackups panicked").Write()
 			}
 		}()
-		_, _ = db.GetAllBackups()
+		if _, err := db.GetAllBackups(); err != nil {
+			syslog.L.Error(err).WithMessage("Initialize: GetAllBackups failed").Write()
+		}
 	}()
 
 	store := &Store{
@@ -113,4 +115,11 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	go store.AlertScanner.Start(ctx, 1*time.Hour)
 
 	return store, nil
+}
+
+func (s *Store) Close() error {
+	if s.Database != nil {
+		return s.Database.Close()
+	}
+	return nil
 }

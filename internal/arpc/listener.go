@@ -28,8 +28,9 @@ func dialServerContext(ctx context.Context, serverAddr string, tlsConfig *tls.Co
 
 	tlsConn, ok := conn.(*tls.Conn)
 	if !ok {
-		// Should always be *tls.Conn from tls.Dialer, but handle gracefully
-		_ = conn.Close()
+		if cerr := conn.Close(); cerr != nil {
+			syslog.L.Debug().WithMessage("failed to close unexpected connection type").Write()
+		}
 		return nil, fmt.Errorf("unexpected connection type: %T", conn)
 	}
 
@@ -71,7 +72,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 		default:
 		}
 
-		// Set deadline to prevent unbounded blocking on Accept
 		if hasDeadline {
 			_ = tcpListener.SetDeadline(time.Now().Add(2 * time.Second))
 		}
@@ -80,7 +80,6 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 		if err != nil {
 			if hasDeadline {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// Timeout - check context and continue
 					select {
 					case <-ctx.Done():
 						return ctx.Err()
@@ -123,10 +122,12 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 				hdrs, rerr := readHeadersFrame(stream)
 				if rerr != nil {
 					syslog.L.Debug().WithMessage("failed to read headers, sending rejection").Write()
-					_ = writeRejectionFrame(stream, RejectionFrame{
+					if rerr := writeRejectionFrame(stream, RejectionFrame{
 						Message: "failed to parse headers",
 						Code:    400,
-					})
+					}); rerr != nil {
+						syslog.L.Debug().WithMessage("failed to write rejection frame").Write()
+					}
 					_ = stream.Close()
 					return
 				}
@@ -145,10 +146,12 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 					WithMessage("registration failed, sending rejection").
 					Write()
 
-				_ = writeRejectionFrame(stream, RejectionFrame{
+				if rerr := writeRejectionFrame(stream, RejectionFrame{
 					Message: err.Error(),
 					Code:    403,
-				})
+				}); rerr != nil {
+					syslog.L.Debug().WithMessage("failed to write rejection frame").Write()
+				}
 				_ = stream.Close()
 				return
 			}
@@ -169,7 +172,9 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 
 			pipe.SetRouter(router)
 
-			_ = pipe.Serve()
+			if err := pipe.Serve(); err != nil {
+				syslog.L.Error(err).WithMessage("arpc: pipe serve failed").Write()
+			}
 		}(conn)
 	}
 }

@@ -70,9 +70,9 @@ mkdir -p "$REG_DIR_AGENT"
 chown -R "$USER_NAME:$TARGET_GROUP" "$REG_BASE"
 chmod 0755 "$REG_BASE" 2>/dev/null || true
 
-# Check existing registry values; if missing, require env vars and set them
 need_server_url=0
 need_bootstrap_token=0
+need_ca_fingerprint=0
 
 if [ ! -s "$REG_SERVER_URL_FILE" ]; then
   need_server_url=1
@@ -82,14 +82,12 @@ if [ ! -s "$REG_BOOTSTRAP_TOKEN_FILE" ]; then
 fi
 
 if [ "$need_server_url" -eq 1 ] || [ "$need_bootstrap_token" -eq 1 ]; then
-  # Require both env vars to initialize
   if [ "${PBS_PLUS_INIT_SERVER_URL:-}" = "" ] || [ "${PBS_PLUS_INIT_BOOTSTRAP_TOKEN:-}" = "" ]; then
     echo "ERROR: Initial registry missing. Please set PBS_PLUS_INIT_SERVER_URL and PBS_PLUS_INIT_BOOTSTRAP_TOKEN." >&2
     echo "Missing: $( [ "$need_server_url" -eq 1 ] && printf "ServerURL " || true)$( [ "$need_bootstrap_token" -eq 1 ] && printf "BootstrapToken" || true )" >&2
     exit 1
   fi
 
-  # Write ServerURL (plaintext)
   if [ "$need_server_url" -eq 1 ]; then
     umask 022
     tmp="$(mktemp "${REG_DIR_AGENT}/.tmp-serverurl.XXXXXX")"
@@ -99,7 +97,6 @@ if [ "$need_server_url" -eq 1 ] || [ "$need_bootstrap_token" -eq 1 ]; then
     mv -f "$tmp" "$REG_SERVER_URL_FILE"
   fi
 
-  # Write BootstrapToken (plaintext here; agent library may encrypt on first read/write)
   if [ "$need_bootstrap_token" -eq 1 ]; then
     umask 077
     tmp="$(mktemp "${REG_DIR_AGENT}/.tmp-bootstraptoken.XXXXXX")"
@@ -108,6 +105,16 @@ if [ "$need_server_url" -eq 1 ] || [ "$need_bootstrap_token" -eq 1 ]; then
     chown "$USER_NAME:$TARGET_GROUP" "$tmp"
     mv -f "$tmp" "$REG_BOOTSTRAP_TOKEN_FILE"
   fi
+fi
+
+REG_CA_FP_FILE="$REG_DIR_AGENT/servercafingerprint.value"
+if [ -n "${PBS_PLUS_INIT_SERVER_CA_FINGERPRINT:-}" ] && [ ! -s "$REG_CA_FP_FILE" ]; then
+  umask 022
+  tmp="$(mktemp "${REG_DIR_AGENT}/.tmp-cafp.XXXXXX")"
+  printf "%s" "$PBS_PLUS_INIT_SERVER_CA_FINGERPRINT" >"$tmp"
+  chmod 0640 "$tmp"
+  chown "$USER_NAME:$TARGET_GROUP" "$tmp"
+  mv -f "$tmp" "$REG_CA_FP_FILE"
 fi
 
 # Exec

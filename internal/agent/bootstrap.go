@@ -2,8 +2,10 @@ package agent
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,9 +98,7 @@ func Bootstrap() error {
 		httpClient = &http.Client{
 			Timeout: time.Second * 30,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
+				TLSClientConfig: bootstrapTLSConfig(),
 			},
 		}
 	}
@@ -185,4 +185,35 @@ func Bootstrap() error {
 	InvalidateTLSConfigCache()
 
 	return nil
+}
+
+func bootstrapTLSConfig() *tls.Config {
+	pin, err := registry.GetEntry(registry.CONFIG, "ServerCAFingerprint", false)
+	if err != nil {
+		syslog.L.Error(err).WithMessage("bootstrap: failed to read ServerCAFingerprint").Write()
+	}
+
+	if pin != nil && pin.Value != "" {
+		expectedFingerprint := strings.ToLower(strings.TrimSpace(pin.Value))
+
+		return &tls.Config{
+			InsecureSkipVerify: true, // required: allows VerifyConnection to run without a known CA
+			VerifyConnection: func(cs tls.ConnectionState) error {
+				for _, cert := range cs.PeerCertificates {
+					fingerprint := sha256.Sum256(cert.Raw)
+					hexFP := hex.EncodeToString(fingerprint[:])
+					if strings.EqualFold(hexFP, expectedFingerprint) {
+						return nil
+					}
+				}
+				return fmt.Errorf("bootstrap: server certificate fingerprint does not match pinned fingerprint")
+			},
+		}
+	}
+
+	syslog.L.Warn().WithMessage("bootstrap: no CA fingerprint pinned, TLS verification disabled (set ServerCAFingerprint to secure bootstrap)").Write()
+
+	return &tls.Config{
+		InsecureSkipVerify: true,
+	}
 }

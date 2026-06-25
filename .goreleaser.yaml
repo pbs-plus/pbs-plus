@@ -9,6 +9,7 @@ git:
 before:
   hooks:
     - go mod tidy
+    - ./build/scripts/build-agent-binaries.sh v{{.Version}}
 
 builds:
   # Server build (Linux)
@@ -41,6 +42,7 @@ builds:
     ldflags:
       - -X 'main.Version=v{{.Version}}'
       - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.ECDSAPublicKeyB64={{ .Env.ECDSA_PUBLIC_KEY_B64 }}'
       - -extld gcc
       - -extldflags "-static"
     flags:
@@ -75,6 +77,8 @@ builds:
       - arm64
     env:
       - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     ldflags:
       - -s -w -X 'main.Version=v{{.Version}}'
     flags:
@@ -97,8 +101,8 @@ builds:
     ldflags:
       - -X 'main.Version=v{{.Version}}'
       - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.ECDSAPublicKeyB64={{ .Env.ECDSA_PUBLIC_KEY_B64 }}'
 
-  # Windows Agent
   - id: windows-agent
     main: ./cmd/agent
     binary: pbs-plus-agent
@@ -115,12 +119,15 @@ builds:
       - -H=windowsgui
       - -X 'main.Version=v{{.Version}}'
       - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.Ed25519PublicKeyB64={{ .Env.ED25519_PUBLIC_KEY_B64 }}'
+      - -X 'github.com/pbs-plus/pbs-plus/internal/agent/updater.ECDSAPublicKeyB64={{ .Env.ECDSA_PUBLIC_KEY_B64 }}'
 
   - id: operator
     main: ./cmd/operator
     binary: pbs-plus-operator
     env:
       - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
+      - GOFIPS140=latest
     goos:
       - linux
     goarch:
@@ -130,6 +137,21 @@ builds:
       - -s -w -X 'main.Version=v{{.Version}}'
 
 binary_signs:
+  - id: ecdsa
+    cmd: cosign
+    args:
+      - sign-blob
+      - "--key=cosign.key"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    signature: "{{ .ProjectName }}-agent-v{{ .Version }}-{{ .Os }}-{{ .Arch }}.ecdsa-sig"
+    ids:
+      - linux-agent
+      - freebsd-agent
+      - windows-agent
+    artifacts: binary
+    output: true
   - id: ed25519
     cmd: /tmp/bin/signer
     args:
@@ -196,7 +218,7 @@ archives:
 
 checksum:
   name_template: "{{ .ArtifactName }}.{{ .Algorithm }}"
-  algorithm: md5
+  algorithm: sha256
   split: true
 
 nfpms:

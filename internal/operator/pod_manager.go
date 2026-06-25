@@ -168,6 +168,17 @@ func (pm *PodManager) buildPodSpec(podName, namespace string, pvcToMount, origin
 							},
 						},
 						{
+							Name: "PBS_PLUS_INIT_SERVER_CA_FINGERPRINT",
+							ValueFrom: &corev1.EnvVarSource{
+								SecretKeyRef: &corev1.SecretKeySelector{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: pm.bootstrapTokenSecret,
+									},
+									Key: "ca-fingerprint",
+								},
+							},
+						},
+						{
 							Name: "PBS_PLUS_HOSTNAME",
 							ValueFrom: &corev1.EnvVarSource{
 								FieldRef: &corev1.ObjectFieldSelector{

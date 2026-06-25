@@ -5,9 +5,13 @@ inputs:
   plus-token:
     required: true
     description: PBS Plus authentication token
+  ca-fingerprint:
+    required: false
+    default: ""
+    description: SHA-256 fingerprint of the server CA certificate
   timeout-seconds:
     required: false
-    default: "20"
+    default: "60"
     description: Timeout for agent initialization
 
 runs:
@@ -25,11 +29,17 @@ runs:
     - name: Run agent container
       shell: bash
       run: |
+        CA_FP_ARG=""
+        if [ -n "${{ inputs.ca-fingerprint }}" ]; then
+          CA_FP_ARG="-e PBS_PLUS_INIT_SERVER_CA_FINGERPRINT=${{ inputs.ca-fingerprint }}"
+        fi
+
         docker run -d --name pbs-plus-agent \
           --network pbs-plus-test \
           -v ./test-agent:/test-backup \
           -e PBS_PLUS_INIT_SERVER_URL="https://pbs-plus-test:8008" \
           -e PBS_PLUS_INIT_BOOTSTRAP_TOKEN="${{ inputs.plus-token }}" \
+          $CA_FP_ARG \
           -e PBS_PLUS_HOSTNAME="test-host" \
           pbs-plus-agent:test
 

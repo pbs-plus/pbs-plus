@@ -38,6 +38,28 @@ jobs:
       - name: Fetch tags (prune stale refs from force pushes)
         run: git fetch --tags --prune --force
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Write ECDSA signing key
+        env:
+          ECDSA_PRIVATE_KEY_B64: ${{ secrets.ECDSA_PRIVATE_KEY_B64 }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          if [ -z "${ECDSA_PRIVATE_KEY_B64+x}" ] || [ -z "$ECDSA_PRIVATE_KEY_B64" ]; then
+            echo "ECDSA_PRIVATE_KEY_B64 secret is not set"; exit 1;
+          fi
+          echo "$ECDSA_PRIVATE_KEY_B64" | base64 -d > cosign.key
+          chmod 600 cosign.key
+
+      - name: Derive ECDSA public key
+        run: |
+          PUB_B64=$(cosign public-key --key cosign.key | base64 -w0)
+          if [ -z "$PUB_B64" ]; then
+            echo "Failed to derive ECDSA public key"; exit 1;
+          fi
+          echo "ECDSA_PUBLIC_KEY_B64=$PUB_B64" >> "$GITHUB_ENV"
+
       - name: Build Ed25519 signer
         run: |
           mkdir -p /tmp/bin
@@ -56,11 +78,11 @@ jobs:
         env:
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
         run: |
-          PUB=$("/tmp/bin/signer" pubkey)
+          PUB=$("/tmp/bin/signer" ed25519-pubkey)
           if [ -z "$PUB" ]; then
-            echo "Failed to derive pubkey"; exit 1;
+            echo "Failed to derive Ed25519 pubkey"; exit 1;
           fi
-          echo "Derived Ed25519 public key length: ${#PUB}"
+          echo "Derived Ed25519 public key length: ${
           echo "ED25519_PUBLIC_KEY_B64=$PUB" >> "$GITHUB_ENV"
 
       - name: Run GoReleaser
@@ -72,6 +94,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
 
   build-msi:
     needs: goreleaser

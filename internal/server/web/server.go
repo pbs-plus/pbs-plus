@@ -100,11 +100,13 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions/{id}", ServerOnly(storeInstance, api.AlertExclusionSingleHandler(storeInstance)))
 
 	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
+	apiMux.HandleFunc("/api2/json/plus/ca-fingerprint", api.CAFingerprintHandler(storeInstance))
 
 	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinaryHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsiHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSigHandler(storeInstance, version))
+	agentMux.HandleFunc("/api2/json/plus/binary/ecdsa-sig", api.DownloadECDSASigHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksumHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/d2d/target/agent", AgentOnly(storeInstance, api.D2DTargetAgentHandler(storeInstance)))
 	agentMux.HandleFunc("/api2/json/d2d/agent-log", AgentOnly(storeInstance, api.AgentLogHandler(storeInstance)))
@@ -132,8 +134,8 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	apiMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
-	apiHandler := Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))
-	agentHandler := Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))
+	apiHandler := SecurityHeaders(RateLimit(Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))))
+	agentHandler := SecurityHeaders(RateLimit(Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))))
 
 	serverConfig, err := storeInstance.CertManager.APIServerTLSConfig()
 	if err != nil {

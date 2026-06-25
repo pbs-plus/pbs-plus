@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/host"
+	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var currentTLSCert = atomic.Pointer[tls.Certificate]{}
@@ -39,12 +41,18 @@ func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile 
 	if err != nil {
 		return err
 	}
-	currentTLSCert.Store(&cert)
 
 	activeCA, err := os.ReadFile(caFile)
 	if err != nil {
 		return err
 	}
+
+	caBlock, _ := pem.Decode(activeCA)
+	if caBlock != nil {
+		cert.Certificate = append(cert.Certificate, caBlock.Bytes)
+	}
+
+	currentTLSCert.Store(&cert)
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(activeCA) {
@@ -65,7 +73,9 @@ func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile 
 func getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile string) (*tls.Certificate, *x509.CertPool) {
 	lastTLSTime := time.Unix(atomic.LoadInt64(&lastTLSTimestamp), 0)
 	if time.Since(lastTLSTime) > 12*time.Hour {
-		_ = updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile)
+		if err := updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile); err != nil {
+			syslog.L.Error(err).WithMessage("mtls: failed to update server TLS certs").Write()
+		}
 	}
 
 	return currentTLSCert.Load(), currentTLSCAs.Load()
@@ -183,20 +193,21 @@ func BuildServerTLS(serverCertFile, serverKeyFile, caFile, prevCaFile string, ne
 				tlsVers = tls.VersionTLS12
 			}
 
-			return &tls.Config{
-				MinVersion:               uint16(tlsVers),
-				Certificates:             []tls.Certificate{*currentCerts},
-				ClientCAs:                currentCAs,
-				ClientAuth:               clientAuth,
-				PreferServerCipherSuites: true,
-				CipherSuites: []uint16{
-					tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-					tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-					tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-					tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				},
-				NextProtos: nextProtos,
-			}, nil
+			cfg := crypto.FIPSServerTLSConfig()
+			cfg.MinVersion = uint16(tlsVers)
+			cfg.Certificates = []tls.Certificate{*currentCerts}
+			cfg.ClientCAs = currentCAs
+			cfg.ClientAuth = clientAuth
+			cfg.NextProtos = nextProtos
+			cfg.VerifyConnection = func(cs tls.ConnectionState) error {
+				for _, cert := range cs.PeerCertificates {
+					if err := crypto.VerifyCertSignatureFIPS(cert); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			return cfg, nil
 		},
 	}, nil
 }
@@ -215,17 +226,10 @@ func BuildClientTLS(clientCertPEM, clientKeyPEM, caPEM []byte, legacyCaPEM []byt
 		_ = rootCAs.AppendCertsFromPEM(legacyCaPEM)
 	}
 
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      rootCAs,
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		},
-	}, nil
+	cfg := crypto.FIPSClientTLSConfig(tls.VersionTLS13)
+	cfg.Certificates = []tls.Certificate{cert}
+	cfg.RootCAs = rootCAs
+	return cfg, nil
 }
 
 func ValidateExistingCert(certPEM, keyPEM, caPEM []byte, serverName string) error {

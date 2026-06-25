@@ -20,6 +20,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	_ "net/http/pprof"
@@ -59,6 +60,7 @@ func (p *pbsService) run() {
 	_ = syslog.L.SetServiceLogger()
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerURL", Value: os.Getenv("PBS_PLUS_INIT_SERVER_URL")})
 	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "BootstrapToken", Value: os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN")})
+	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerCAFingerprint", Value: os.Getenv("PBS_PLUS_INIT_SERVER_CA_FINGERPRINT")})
 
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
@@ -220,7 +222,11 @@ func main() {
 	}()
 	conf.Version = Version
 
-	// Run migration early before any other code that might access state directories
+	if err := crypto.AssertFIPS(); err != nil {
+		syslog.L.Error(err).WithMessage("FIPS assertion failed").Write()
+		os.Exit(1)
+	}
+
 	// This is best-effort; if it fails due to permissions, the agent will fall back
 	// to using the legacy paths automatically via initPaths() in conf package.
 	_ = migration.TryMigrate()

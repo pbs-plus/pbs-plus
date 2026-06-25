@@ -16,44 +16,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	testDbPath string
-)
-
-// TestMain handles setup and teardown for all tests
-func TestMain(m *testing.M) {
-	// Create temporary test directory
-	var err error
-	testBasePath, err := os.MkdirTemp("", "pbs-plus-test-*")
-	if err != nil {
-		fmt.Printf("Failed to create temp directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	testDbPath = filepath.Join(testBasePath, "test.db")
-
-	// Run tests
-	code := m.Run()
-
-	// Cleanup
-	os.RemoveAll(testBasePath)
-
-	os.Exit(code)
-}
-
-// setupTestStore creates a new store instance with temporary paths
 func setupTestStore(t *testing.T) *Store {
-	err := os.RemoveAll(testDbPath)
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "pbs-plus-test-*")
 	require.NoError(t, err)
 
-	// Create test directories
+	dbPath := filepath.Join(dir, "test.db")
 	paths := map[string]string{
-		"sqlite": testDbPath,
+		"sqlite": dbPath,
 	}
 
-	// Create store with temporary paths
 	store, err := Initialize(t.Context(), paths)
 	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = store.Close()
+		os.RemoveAll(dir)
+	})
 
 	return store
 }

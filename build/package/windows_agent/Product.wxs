@@ -38,6 +38,9 @@
     <Property Id="BOOTSTRAPTOKEN" Secure="yes">
       <RegistrySearch Id="SearchBootstrapToken" Root="HKLM" Key="SOFTWARE\PBSPlus\Config" Name="BootstrapToken" Type="raw" />
     </Property>
+    <Property Id="SERVERCAFINGERPRINT" Secure="yes">
+      <RegistrySearch Id="SearchServerCAFingerprint" Root="HKLM" Key="SOFTWARE\PBSPlus\Config" Name="ServerCAFingerprint" Type="raw" />
+    </Property>
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
@@ -50,6 +53,7 @@
             <RegistryKey Root="HKLM" Key="SOFTWARE\PBSPlus\Config" ForceCreateOnInstall="yes">
               <RegistryValue Type="string" Name="ServerURL" Value="[SERVERURL]" KeyPath="yes" />
               <RegistryValue Type="string" Name="BootstrapToken" Value="[BOOTSTRAPTOKEN]" />
+              <RegistryValue Type="string" Name="ServerCAFingerprint" Value="[SERVERCAFINGERPRINT]" />
             </RegistryKey>
 
             <!-- Clear auth/cert keys to force re-bootstrap on every install -->
@@ -106,6 +110,9 @@
         
         <Control Id="BootstrapTokenLabel" Type="Text" X="25" Y="100" Width="100" Height="15" Text="Bootstrap Token:" />
         <Control Id="BootstrapTokenEdit" Type="Edit" X="25" Y="115" Width="320" Height="18" Property="BOOTSTRAPTOKEN" Password="yes" />
+        
+        <Control Id="CAFingerprintLabel" Type="Text" X="25" Y="140" Width="320" Height="30" Text="CA Fingerprint (optional, auto-filled by deployment script):" />
+        <Control Id="CAFingerprintEdit" Type="Edit" X="25" Y="170" Width="320" Height="18" Property="SERVERCAFINGERPRINT" />
         
         <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&amp;Back"><Publish Event="NewDialog" Value="InstallDirDlg">1</Publish></Control>
         <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next">

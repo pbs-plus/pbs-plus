@@ -140,10 +140,18 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, server
 		MaxArrayElements: math.MaxInt32,
 	}.DecMode()
 	if err != nil {
-		cborDec, _ = cbor.DecOptions{}.DecMode()
+		cborDec, err = cbor.DecOptions{}.DecMode()
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("arpc: init cbor decoder: %w", err)
+		}
 	}
 
-	cborEnc, _ := cbor.EncOptions{}.EncMode()
+	cborEnc, err := cbor.EncOptions{}.EncMode()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("arpc: init cbor encoder: %w", err)
+	}
 
 	pipe := &StreamPipe{
 		ctx:        ctx,

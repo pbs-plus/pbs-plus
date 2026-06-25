@@ -1,12 +1,10 @@
-//go:build linux
-
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 )
 
 func calculateDigest(data any) (string, error) {
@@ -19,6 +17,5 @@ func calculateDigest(data any) (string, error) {
 		jsonData = []byte{}
 	}
 
-	hash := sha256.Sum256(jsonData)
-	return hex.EncodeToString(hash[:]), nil
+	return crypto.SHA256Hex(jsonData), nil
 }
