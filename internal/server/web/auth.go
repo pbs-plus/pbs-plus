@@ -77,7 +77,7 @@ func NewPBSAuth() (*PBSAuth, error) {
 	if err != nil {
 		rsaKey, rsaErr := x509.ParsePKCS1PrivateKey(block.Bytes)
 		if rsaErr != nil {
-			return nil, fmt.Errorf("failed to parse private key as PKCS#8 or PKCS#1: %v, %v", err, rsaErr)
+			return nil, fmt.Errorf("failed to parse private key as PKCS#8: %w; as PKCS#1: %w", err, rsaErr)
 		}
 		return &PBSAuth{privateKey: rsaKey, keyType: "rsa"}, nil
 	}

@@ -97,12 +97,12 @@ func Unseal(ciphertext string) (string, error) {
 
 	naclPub, naclPriv, naclErr := loadNaclKeys()
 	if naclErr != nil {
-		return "", fmt.Errorf("crypto: aes decrypt failed: %w; nacl key load: %v", err, naclErr)
+		return "", fmt.Errorf("crypto: aes decrypt failed: %w; nacl key load: %w", err, naclErr)
 	}
 
 	pt, naclDecryptErr := naclBoxDecrypt(ciphertext, naclPub, naclPriv)
 	if naclDecryptErr != nil {
-		return "", fmt.Errorf("crypto: aes decrypt: %w; nacl decrypt: %v", err, naclDecryptErr)
+		return "", fmt.Errorf("crypto: aes decrypt: %w; nacl decrypt: %w", err, naclDecryptErr)
 	}
 	log.Warn("crypto: secret decrypted via legacy nacl-box fallback; run migration to re-encrypt with AES-256-GCM")
 	return pt, nil

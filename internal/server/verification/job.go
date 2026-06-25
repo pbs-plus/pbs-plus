@@ -139,8 +139,14 @@ var (
 	ErrNoFilesToVerify   = errors.New("no files matched filters for verification")
 	ErrAgentNotConnected = errors.New("agent not connected for verification")
 	ErrNotAgentTarget    = errors.New("verification requires an agent target")
+)
 
-	// bufPool provides reusable 256KB buffers for streaming file hashes.
+var (
+	ErrTargetUnreachable = jobs.ErrTargetUnreachable
+	ErrMountEmpty        = jobs.ErrMountEmpty
+	ErrSubpathNotFound   = jobs.ErrSubpathNotFound
+	ErrCanceled          = jobs.ErrCanceled
+
 	bufPool = sync.Pool{
 		New: func() any {
 			buf := make([]byte, 256*1024)
@@ -628,7 +634,7 @@ func (v *verificationJob) onError(err error) {
 			notification.JobTypeVerification,
 			v.job.ID,
 			v.job.Store,
-			fmt.Errorf("verification failed: %v", err),
+			fmt.Errorf("verification failed: %w", err),
 			map[string]string{
 				"namespace": v.job.Namespace,
 				"succeeded": "false",

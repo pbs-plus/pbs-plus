@@ -1,9 +1,9 @@
 package restore
 
-import "errors"
+import "github.com/pbs-plus/pbs-plus/internal/server/jobs"
 
 var (
-	ErrTargetUnreachable = errors.New("target unreachable")
-	ErrTargetNotFound    = errors.New("target does not exist")
-	ErrMountEmpty        = errors.New("target directory is empty, skipping restore")
+	ErrTargetUnreachable = jobs.ErrTargetUnreachable
+	ErrTargetNotFound    = jobs.ErrTargetNotFound
+	ErrMountEmpty        = jobs.ErrMountEmpty
 )

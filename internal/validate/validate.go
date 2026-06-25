@@ -331,7 +331,7 @@ func ValidateOnCalendar(value string) error {
 	}
 	_, err := calendar.Parse(value)
 	if err != nil {
-		return fmt.Errorf("invalid calendar specification: %v", err)
+		return fmt.Errorf("invalid calendar specification: %w", err)
 	}
 	return nil
 }

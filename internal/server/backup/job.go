@@ -208,7 +208,7 @@ func (b *backupJob) onError(err error) {
 
 		var notifyErr error
 		if !succeeded {
-			notifyErr = fmt.Errorf("backup failed: %v", err)
+			notifyErr = fmt.Errorf("backup failed: %w", err)
 		}
 		if b.storeInstance.BatchTracker != nil {
 			b.storeInstance.BatchTracker.RecordJobResult(
@@ -248,7 +248,7 @@ func (b *backupJob) onError(err error) {
 			notification.JobTypeBackup,
 			job.ID,
 			job.Store,
-			fmt.Errorf("backup failed to start: %v", err),
+			fmt.Errorf("backup failed to start: %w", err),
 			map[string]string{
 				"target":    job.Target.Name,
 				"succeeded": "false",
@@ -687,7 +687,7 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 			if os.IsNotExist(err) {
 				return "", agentMount, s3Mount, fmt.Errorf("%w: %q does not exist under the mount point", ErrSubpathNotFound, job.Subpath)
 			}
-			return "", agentMount, s3Mount, fmt.Errorf("%w: cannot access subpath %q: %v", ErrSubpathNotFound, job.Subpath, err)
+			return "", agentMount, s3Mount, fmt.Errorf("%w: cannot access subpath %q: %w", ErrSubpathNotFound, job.Subpath, err)
 		}
 		if !info.IsDir() {
 			return "", agentMount, s3Mount, fmt.Errorf("%w: %q is not a directory", ErrSubpathNotFound, job.Subpath)
@@ -724,7 +724,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	cmd, err := prepareBackupCommand(ctx, job, b.storeInstance, srcPath, target.IsAgent(), extraExclusions, b.logger)
 	if err != nil {
 		startupMu.Unlock()
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrPrepareBackupCommand, err)
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrPrepareBackupCommand, err)
 	}
 
 	taskChan, readyChan, errChan := b.startTaskMonitoring(ctx, target)
@@ -733,13 +733,13 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	case <-readyChan:
 	case err := <-errChan:
 		startupMu.Unlock()
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringInitializationFailed, err)
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrTaskMonitoringInitializationFailed, err)
 	case <-ctx.Done():
 		startupMu.Unlock()
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, proxmox.Task{}, "", jobs.ErrCanceled
 		}
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskMonitoringTimedOut, ctx.Err())
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrTaskMonitoringTimedOut, ctx.Err())
 	}
 
 	currOwner, err := GetCurrentOwner(job, b.storeInstance)
@@ -766,7 +766,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 				b.logger.Error(err, "failed to restore datastore owner after start failure")
 			}
 		}
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w (%s): %v", ErrProxmoxBackupClientStart, cmd.String(), err)
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w (cmd: %s): %w", ErrProxmoxBackupClientStart, cmd.String(), err)
 	}
 
 	if cmd.Process != nil {
@@ -787,7 +787,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 		startupMu.Unlock()
 	case err := <-errChan:
 		startupMu.Unlock()
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %v", ErrTaskDetectionFailed, err)
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrTaskDetectionFailed, err)
 	case <-ctx.Done():
 		startupMu.Unlock()
 		if err := cmd.Process.Kill(); err != nil {

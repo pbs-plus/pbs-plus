@@ -377,7 +377,7 @@ func Restore(rpcSess *arpc.StreamPipe, restoreID, source, dest string, mode pxar
 		Mode:    mode,
 	})
 	if err != nil {
-		return fmt.Errorf("%v", err)
+		return err
 	}
 
 	return nil

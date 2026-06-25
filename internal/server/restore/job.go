@@ -147,7 +147,7 @@ func (b *restoreJob) onError(err error) {
 			notification.JobTypeRestore,
 			b.job.ID,
 			b.job.Store,
-			fmt.Errorf("restore failed: %v", err),
+			fmt.Errorf("restore failed: %w", err),
 			map[string]string{
 				"snapshot":  b.job.Snapshot,
 				"namespace": b.job.Namespace,

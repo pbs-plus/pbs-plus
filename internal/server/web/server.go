@@ -5,6 +5,7 @@ package web
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -274,7 +275,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.wg.Wait()
 
 	if len(errs) > 0 {
-		return fmt.Errorf("shutdown errors: %v", errs)
+		return fmt.Errorf("shutdown errors: %w", errors.Join(errs...))
 	}
 	return nil
 }

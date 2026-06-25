@@ -60,7 +60,7 @@ func init() {
 		log.Error(err, "")
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		log.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err), "")
+		log.Error(err, "failed to create cache dir", "dir", dir)
 	}
 }
 
@@ -69,7 +69,7 @@ func getCacheDir() string {
 	dir := filepath.Join(base, "pbs-plus-binaries")
 
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		log.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err), "")
+		log.Error(err, "failed to create cache dir", "dir", dir)
 	}
 	return dir
 }
@@ -129,7 +129,7 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	}
 
 	if err := tmpFile.Chmod(0600); err != nil {
-		log.Error(fmt.Errorf("failed to set permissions on temp file: %v", err), "")
+		log.Error(err, "failed to set permissions on temp file")
 	}
 
 	written, err := io.Copy(tmpFile, limitedReader)

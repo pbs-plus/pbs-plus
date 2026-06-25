@@ -9,12 +9,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
-var (
-	ErrManagerClosed = errors.New("manager is closed")
-	ErrCanceled      = errors.New("operation canceled")
-	ErrOneInstance   = errors.New("a job is still running; only one instance allowed")
-)
-
 type Job struct {
 	ID        string
 	PreExec   func(ctx context.Context) error

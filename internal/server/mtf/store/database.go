@@ -93,7 +93,7 @@ func (d *Database) Close() error {
 		errs = append(errs, err)
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("tapestore: close: %v", errs)
+		return fmt.Errorf("tapestore: close: %w", errors.Join(errs...))
 	}
 	return nil
 }
@@ -152,7 +152,7 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	q := d.queries.WithTx(tx.Tx)
 	if err := fn(tx, q); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			return fmt.Errorf("tapestore.RunInTransaction: %w (rollback: %v)", err, rbErr)
+			return fmt.Errorf("tapestore.RunInTransaction: %w (rollback: %w)", err, rbErr)
 		}
 		return err
 	}

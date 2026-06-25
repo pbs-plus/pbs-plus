@@ -126,7 +126,7 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 					}
 					break
 				}
-				return fmt.Errorf("%w: %v", ErrSnapshotCreation, err)
+				return fmt.Errorf("%w: %w", ErrSnapshotCreation, err)
 			}
 
 			select {
@@ -138,7 +138,7 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 		}
 	}
 
-	return fmt.Errorf("%w: %v", ErrSnapshotCreation, lastError)
+	return fmt.Errorf("%w: %w", ErrSnapshotCreation, lastError)
 }
 
 func cleanupExistingSnapshot(path string) {

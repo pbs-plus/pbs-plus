@@ -320,7 +320,7 @@ func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath str
 	}
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %v", socketPath, err)
+		return fmt.Errorf("failed to listen on %s: %w", socketPath, err)
 	}
 
 	service := &MountRPCService{
@@ -330,7 +330,7 @@ func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath str
 	}
 
 	if err := rpc.Register(service); err != nil {
-		return fmt.Errorf("failed to register rpc service: %v", err)
+		return fmt.Errorf("failed to register rpc service: %w", err)
 	}
 
 	ready := make(chan struct{})
