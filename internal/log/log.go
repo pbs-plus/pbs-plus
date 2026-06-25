@@ -187,6 +187,9 @@ func (l *Logger) WithScope(s Scope) *Logger {
 }
 
 func parseFields(args ...any) map[string]any {
+	if len(args) == 0 {
+		return nil
+	}
 	m := make(map[string]any, len(args)/2)
 	for i := 0; i+1 < len(args); i += 2 {
 		key, ok := args[i].(string)
@@ -248,6 +251,9 @@ func (e *entry) write() {
 		}
 	}
 
+	if e.fields == nil {
+		e.fields = make(map[string]any, 4)
+	}
 	if _, ok := e.fields["hostname"]; !ok {
 		e.fields["hostname"] = c.hostname
 	}
@@ -380,7 +386,18 @@ func levelFromEntry(e *entry) slog.Level {
 
 var ctxNone = context.Background()
 
+func (l *Logger) enabled(level slog.Level) bool {
+	c := l.core()
+	c.mu.RLock()
+	zlog := c.zlog
+	c.mu.RUnlock()
+	return zlog.Enabled(ctxNone, level)
+}
+
 func (l *Logger) Info(msg string, args ...any) {
+	if l.task == nil && !l.enabled(slog.LevelInfo) {
+		return
+	}
 	l.newEntry("info", nil, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
@@ -388,6 +405,9 @@ func (l *Logger) Info(msg string, args ...any) {
 }
 
 func (l *Logger) Error(err error, msg string, args ...any) {
+	if l.task == nil && !l.enabled(slog.LevelError) {
+		return
+	}
 	l.newEntry("error", err, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
@@ -398,6 +418,9 @@ func (l *Logger) Error(err error, msg string, args ...any) {
 }
 
 func (l *Logger) Warn(msg string, args ...any) {
+	if l.task == nil && !l.enabled(slog.LevelWarn) {
+		return
+	}
 	l.newEntry("warn", nil, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
@@ -405,6 +428,9 @@ func (l *Logger) Warn(msg string, args ...any) {
 }
 
 func (l *Logger) Debug(msg string, args ...any) {
+	if l.task == nil && !l.enabled(slog.LevelDebug) {
+		return
+	}
 	l.newEntry("debug", nil, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
