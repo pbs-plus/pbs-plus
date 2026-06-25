@@ -53,27 +53,27 @@ type backupSession struct {
 const BACKUP_MODE_PREFIX = "pbs-plus--child-backup-mode:"
 
 func (s *backupSession) Close() {
-	log.Info("session: closing", "backupID", s.backupID)
+	log.Info("session: closing")
 	s.once.Do(func() {
 		if s.fs != nil {
-			log.Info("session: closing agentfs server", "backupID", s.backupID)
+			log.Info("session: closing agentfs server")
 			s.fs.Close()
 		}
 		if s.snapshot != (snapshots.Snapshot{}) && !s.snapshot.Direct && s.snapshot.Handler != nil {
-			log.Info("session: deleting snapshot", "path", s.snapshot.Path, "backupID", s.backupID)
+			log.Info("session: deleting snapshot", "path", s.snapshot.Path)
 			if err := s.snapshot.Handler.DeleteSnapshot(s.snapshot); err != nil {
-				log.Error(err, "session: delete snapshot failed", "backupID", s.backupID)
+				log.Error(err, "session: delete snapshot failed")
 			}
 		}
 		if s.store != nil {
 			if err := s.store.EndBackup(s.backupID); err != nil {
-				log.Warn("session: end backup returned error", "error", err.Error(), "backupID", s.backupID)
+				log.Warn("session: end backup returned error", "error", err.Error())
 			}
 		}
 		activeSessions.Del(s.backupID)
 		s.cancel()
 	})
-	log.Info("session: closed", "backupID", s.backupID)
+	log.Info("session: closed")
 }
 
 func cmdBackup(sourceMode, readMode, drive, backupID *string) {
@@ -86,6 +86,8 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 		log.Error(err, "backup: backup id validation failed")
 		os.Exit(1)
 	}
+
+	log.L = log.WithScope(log.Scope{BackupID: *backupID})
 
 	validSourceModes := map[string]bool{"snapshot": true, "direct": true}
 	if !validSourceModes[*sourceMode] {
@@ -147,7 +149,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				}
 				return
 			default:
-				log.Info("backup: attempting connection", "backupID", *backupID)
+				log.Info("backup: attempting connection")
 
 				var err error
 				session, err = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
@@ -204,7 +206,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 			fs.RegisterHandlers(router)
 			log.Info("backup: agentfs server registered, session ready",
 
-				"snapshot_path", currentSnap.Path, "mode", currentReadMode, "backupID", backupID)
+				"snapshot_path", currentSnap.Path, "mode", currentReadMode)
 
 			if err := session.Serve(); err != nil {
 				log.Warn("ARPC connection lost, attempting recovery", "error", err.Error())
@@ -238,10 +240,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 }
 
 func ExecBackup(sourceMode string, readMode string, drive string, backupID string) (string, int, error) {
-	log.Info("backup: exec begin",
-
-		"backupID", backupID, "drive", drive, "readMode", readMode, "sourceMode", sourceMode)
-
+	log.Info("backup: exec begin")
 	if err := validate.ValidateJobId(backupID); err != nil {
 		log.Error(err, "ExecBackup: backupID validation failed")
 		return "", -1, fmt.Errorf("invalid backupID: %w", err)
@@ -321,7 +320,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 				log.Info("backup: detected mode", "mode", mode)
 				backupMode <- mode
 			} else {
-				log.Info(line, "forked", true, "backupID", backupID, "drive", drive)
+				log.Info(line, "forked", true)
 
 			}
 		}
@@ -332,7 +331,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 
 	go func() {
 		for errScanner.Scan() {
-			log.Error(errors.New(errScanner.Text()), "", "forked", true, "backupID", backupID, "drive", drive)
+			log.Error(errors.New(errScanner.Text()), "", "forked", true)
 
 		}
 		if err := errScanner.Err(); err != nil {
@@ -349,10 +348,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 }
 
 func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupID string) (*snapshots.Snapshot, string, error) {
-	log.Info("backup: begin",
-
-		"backupID", backupID, "drive", drive, "readMode", readMode, "sourceMode", sourceMode)
-
+	log.Info("backup: begin")
 	if err := validate.ValidateJobId(backupID); err != nil {
 		log.Error(err, "Backup: backupID validation failed")
 		return nil, "", fmt.Errorf("invalid backupID: %w", err)
@@ -360,11 +356,11 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 
 	store, err := agent.NewBackupStore()
 	if err != nil {
-		log.Error(err, "Backup: NewBackupStore failed", "backupID", backupID)
+		log.Error(err, "Backup: NewBackupStore failed")
 		return nil, "", err
 	}
 	if existingSession, ok := activeSessions.Get(backupID); ok {
-		log.Info("Backup: closing existing session", "backupID", backupID)
+		log.Info("Backup: closing existing session")
 		existingSession.Close()
 		if err := store.EndBackup(backupID); err != nil {
 			log.Error(err, "")
@@ -373,17 +369,17 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 
 	if hasActive, err := store.HasActiveBackupForJob(backupID); hasActive || err != nil {
 		if err != nil {
-			log.Error(err, "Backup: HasActiveBackupForJob failed", "backupID", backupID)
+			log.Error(err, "Backup: HasActiveBackupForJob failed")
 			return nil, "", err
 		}
-		log.Info("Backup: ending previous active backup", "backupID", backupID)
+		log.Info("Backup: ending previous active backup")
 		if err := store.EndBackup(backupID); err != nil {
 			log.Error(err, "")
 		}
 	}
 
 	if err := store.StartBackup(backupID); err != nil {
-		log.Error(err, "Backup: StartBackup failed", "backupID", backupID)
+		log.Error(err, "Backup: StartBackup failed")
 		return nil, "", err
 	}
 

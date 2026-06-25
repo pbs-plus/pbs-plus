@@ -29,9 +29,7 @@ import (
 )
 
 func ExecVerification(verifyID string) (int, error) {
-	log.Info("verify: exec begin",
-		"verifyID", verifyID)
-
+	log.Info("verify: exec begin")
 	if err := validate.ValidateJobId(verifyID); err != nil {
 		return -1, fmt.Errorf("invalid verifyID: %w", err)
 	}
@@ -82,25 +80,22 @@ func ExecVerification(verifyID string) (int, error) {
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
-	log.Info("verify: child process started",
-
-		"args", strings.Join(args, " "), "pid", cmd.Process.Pid)
+	log.Info("verify: child process started", "args", strings.Join(args, " "), "pid", cmd.Process.Pid)
 
 	go func() {
 		for scanner := bufio.NewScanner(stdoutPipe); scanner.Scan(); {
-			log.Info(scanner.Text(), "forked", true, "verifyID", verifyID)
+			log.Info(scanner.Text(), "forked", true)
 
 		}
 	}()
 
 	go func() {
 		for errScanner := bufio.NewScanner(stderrPipe); errScanner.Scan(); {
-			log.Error(errors.New(errScanner.Text()), "", "forked", true, "verifyID", verifyID)
+			log.Error(errors.New(errScanner.Text()), "", "forked", true)
 
 		}
 	}()
-	log.Info("verify: returning to parent",
-		"pid", cmd.Process.Pid)
+	log.Info("verify: returning to parent", "pid", cmd.Process.Pid)
 
 	return cmd.Process.Pid, nil
 }
@@ -114,6 +109,8 @@ func cmdVerify(verifyID *string) {
 	if err := validate.ValidateJobId(*verifyID); err != nil {
 		os.Exit(1)
 	}
+
+	log.L = log.WithScope(log.Scope{VerifyID: *verifyID})
 
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
@@ -146,7 +143,7 @@ func cmdVerify(verifyID *string) {
 
 	wg.Go(func() {
 		defer log.Info("verify: arpc session handler shutting down")
-		log.Info("verify: attempting connection", "verifyID", *verifyID)
+		log.Info("verify: attempting connection")
 
 		session, err := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 		if err != nil {
@@ -163,9 +160,7 @@ func cmdVerify(verifyID *string) {
 		router := arpc.NewRouter()
 		router.Handle("verify_chunk_file", agentverification.VerifyChunkFileHandler)
 		session.SetRouter(router)
-		log.Info("verify: session ready, serving",
-			"verifyID", *verifyID)
-
+		log.Info("verify: session ready, serving")
 		if err := session.Serve(); err != nil {
 			log.Warn("verify: ARPC session ended", "error", err.Error())
 		}

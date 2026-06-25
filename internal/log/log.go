@@ -18,13 +18,16 @@ import (
 var L *Logger
 
 type entry struct {
-	level   string
-	message string
-	err     error
-	jobID   string
-	fields  map[string]any
-	dedup   bool
-	logger  *Logger
+	level     string
+	message   string
+	err       error
+	jobID     string
+	backupID  string
+	restoreID string
+	verifyID  string
+	fields    map[string]any
+	dedup     bool
+	logger    *Logger
 }
 
 type taskWriter interface {
@@ -39,8 +42,11 @@ type taskWriter interface {
 }
 
 type Scope struct {
-	JobID string
-	Task  taskWriter
+	JobID     string
+	Task      taskWriter
+	BackupID  string
+	RestoreID string
+	VerifyID  string
 }
 
 type Logger struct {
@@ -54,8 +60,11 @@ type Logger struct {
 	dedup        *deduplicator
 	dedupEnabled bool
 
-	jobID string
-	task  taskWriter
+	jobID     string
+	backupID  string
+	restoreID string
+	verifyID  string
+	task      taskWriter
 }
 
 type deduplicator struct {
@@ -165,10 +174,13 @@ func (l *Logger) EnableDeduplication() {
 func (l *Logger) WithScope(s Scope) *Logger {
 	c := l.core()
 	sl := &Logger{
-		mu:    c.mu,
-		root:  c,
-		jobID: s.JobID,
-		task:  s.Task,
+		mu:        c.mu,
+		root:      c,
+		jobID:     s.JobID,
+		backupID:  s.BackupID,
+		restoreID: s.RestoreID,
+		verifyID:  s.VerifyID,
+		task:      s.Task,
 	}
 	sl.ensureJobLogger()
 	return sl
@@ -188,17 +200,32 @@ func parseFields(args ...any) map[string]any {
 
 func (l *Logger) newEntry(level string, err error, msg string, args ...any) *entry {
 	e := &entry{
-		level:   level,
-		message: msg,
-		err:     err,
-		fields:  parseFields(args...),
-		logger:  l,
-		dedup:   true,
-		jobID:   l.jobID,
+		level:     level,
+		message:   msg,
+		err:       err,
+		fields:    parseFields(args...),
+		logger:    l,
+		dedup:     true,
+		jobID:     l.jobID,
+		backupID:  l.backupID,
+		restoreID: l.restoreID,
+		verifyID:  l.verifyID,
 	}
 	if jobID, ok := e.fields["job"].(string); ok {
 		delete(e.fields, "job")
 		e.jobID = jobID
+	}
+	if backupID, ok := e.fields["backupID"].(string); ok {
+		delete(e.fields, "backupID")
+		e.backupID = backupID
+	}
+	if restoreID, ok := e.fields["restoreID"].(string); ok {
+		delete(e.fields, "restoreID")
+		e.restoreID = restoreID
+	}
+	if verifyID, ok := e.fields["verifyID"].(string); ok {
+		delete(e.fields, "verifyID")
+		e.verifyID = verifyID
 	}
 	return e
 }
@@ -227,6 +254,15 @@ func (e *entry) write() {
 	if e.jobID != "" {
 		e.fields["jobID"] = e.jobID
 	}
+	if e.backupID != "" {
+		e.fields["backupID"] = e.backupID
+	}
+	if e.restoreID != "" {
+		e.fields["restoreID"] = e.restoreID
+	}
+	if e.verifyID != "" {
+		e.fields["verifyID"] = e.verifyID
+	}
 
 	attrs := make([]any, 0, len(e.fields)*2+2)
 	for k, v := range e.fields {
@@ -246,6 +282,12 @@ func (e *entry) dedupKey() [32]byte {
 	h.Write([]byte(e.message))
 	h.Write([]byte("|"))
 	h.Write([]byte(e.jobID))
+	h.Write([]byte("|"))
+	h.Write([]byte(e.backupID))
+	h.Write([]byte("|"))
+	h.Write([]byte(e.restoreID))
+	h.Write([]byte("|"))
+	h.Write([]byte(e.verifyID))
 	h.Write([]byte("|"))
 	if e.err != nil {
 		h.Write([]byte(e.err.Error()))
