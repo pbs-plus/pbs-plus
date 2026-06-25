@@ -8,7 +8,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -56,10 +56,8 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 			return ctx.Err()
 		case c.errFwd <- err:
 		default:
-			syslog.L.Error(err).WithJob(c.name).
-				WithField("restore", "error").
-				WithField("dropped", "forwarder-full").
-				Write()
+			log.Error(err, "", "dropped", "forwarder-full", "restore", "error")
+
 		}
 		return nil
 	}
@@ -69,10 +67,8 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 		return ctx.Err()
 	case c.errCh <- err:
 	default:
-		syslog.L.Error(err).WithJob(c.name).
-			WithField("restore", "error").
-			WithField("dropped", "errch-full").
-			Write()
+		log.Error(err, "", "dropped", "errch-full", "restore", "error")
+
 	}
 	return nil
 }
@@ -83,14 +79,12 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 func (c *Client) forwardErrors() {
 	defer close(c.errFwdDone)
 	for err := range c.errFwd {
-		syslog.L.Error(err).WithJob(c.name).WithField("restore", "error").Write()
+		log.Error(err, "", "restore", "error")
 		if err := c.pipe.Call(context.Background(), "pxar.Error", errorReq{Error: err.Error()}, nil); err != nil {
-			syslog.L.Warn().
-				WithMessage("restore: error forward failed").
-				WithJob(c.name).
-				WithField("restore", "error-forward-failed").
-				WithField("error", err.Error()).
-				Write()
+			log.Warn("restore: error forward failed",
+
+				"error", err.Error(), "restore", "error-forward-failed")
+
 		}
 	}
 }
@@ -274,7 +268,7 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 
 			if offset >= int64(fileSize) {
 				if err := pw.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				return
 			}
@@ -288,7 +282,7 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 			defer func() {
 				closeReq := closeContentReq{HandleID: handleResp.HandleID}
 				if err := c.pipe.Call(context.Background(), "pxar.CloseContent", &closeReq, nil); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}()
 
@@ -318,7 +312,7 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 				offset += int64(n)
 			}
 			if err := pw.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}()
 		return pr, nil

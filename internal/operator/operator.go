@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
@@ -86,22 +86,16 @@ func (o *Operator) Run(ctx context.Context) error {
 	}
 
 	o.informerFactory.Start(ctx.Done())
-
-	syslog.L.Info().
-		WithMessage("Waiting for cache sync").
-		Write()
+	log.Info("Waiting for cache sync")
 
 	if !cache.WaitForCacheSync(ctx.Done(), pvcInformer.HasSynced, podInformer.HasSynced) {
 		return nil
 	}
-	syslog.L.Info().
-		WithMessage("Operator started successfully").
-		WithField("namespace", namespace).
-		Write()
+	log.Info("Operator started successfully",
+		"namespace", namespace)
 
 	<-ctx.Done()
-
-	syslog.L.Info().WithMessage("Operator shutting down").Write()
+	log.Info("Operator shutting down")
 	return nil
 }
 
@@ -133,14 +127,12 @@ func (o *Operator) handlePVCDelete(obj any) {
 
 	key := keyFunc(pvc)
 	if o.pvcTracker.IsTracked(key) {
-		syslog.L.Info().
-			WithMessage("PVC deleted, cleaning up backup resources").
-			WithField("pvc", key).
-			Write()
+		log.Info("PVC deleted, cleaning up backup resources",
+			"pvc", key)
 
 		o.pvcTracker.Untrack(key)
 		if err := o.podManager.CleanupForPVC(context.Background(), pvc); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -159,12 +151,10 @@ func (o *Operator) handlePodDelete(obj any) {
 	if pvcKey == "" {
 		return
 	}
+	log.Info("Backup pod deleted",
 
-	syslog.L.Info().
-		WithMessage("Backup pod deleted").
-		WithField("pod", pod.Namespace+"/"+pod.Name).
-		WithField("pvc", pvcKey).
-		Write()
+		"pvc", pvcKey, "pod", pod.Namespace+"/"+pod.Name)
+
 }
 
 func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
@@ -179,13 +169,12 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 
 	if !backupEnabled {
 		if wasEnabled {
-			syslog.L.Info().
-				WithMessage("Backup annotation removed, cleaning up").
-				WithField("pvc", key).
-				Write()
+			log.Info("Backup annotation removed, cleaning up",
+				"pvc", key)
+
 			o.pvcTracker.Untrack(key)
 			if err := o.podManager.CleanupForPVC(ctx, pvc); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		return
@@ -209,28 +198,24 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 		oldIsRWO := isReadWriteOnce(oldPVC)
 
 		if oldIsRWO != isRWO || oldForceSnapshot != forceSnapshot {
-			syslog.L.Info().
-				WithMessage("Snapshot mode changed, recreating backup pod").
-				WithField("pvc", key).
-				WithField("useSnapshot", useSnapshot).
-				Write()
+			log.Info("Snapshot mode changed, recreating backup pod",
+
+				"useSnapshot", useSnapshot, "pvc", key)
+
 			if err := o.podManager.CleanupForPVC(ctx, pvc); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
+	log.Info("Processing PVC for backup",
 
-	syslog.L.Info().
-		WithMessage("Processing PVC for backup").
-		WithField("pvc", key).
-		WithField("useSnapshot", useSnapshot).
-		Write()
+		"useSnapshot", useSnapshot, "pvc", key)
 
 	if err := o.ensureBackupPod(ctx, pvc, useSnapshot); err != nil {
-		syslog.L.Error(err).
-			WithMessage("Failed to ensure backup pod").
-			WithField("pvc", key).
-			Write()
+		log.Error(err,
+			"Failed to ensure backup pod",
+			"pvc", key)
+
 	}
 }
 

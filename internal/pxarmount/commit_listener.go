@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"net"
 	"os"
 	"os/exec"
@@ -76,7 +76,7 @@ func ResolveDatastoreName(pbsStore string) string {
 
 func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) {
 	if err := os.Remove(sockPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -84,7 +84,7 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 	}
 	if err := os.Chmod(sockPath, 0o660); err != nil {
 		if err := l.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 	hub, err := newCommitHub(sockPath, mfs.verbose)
 	if err != nil {
 		if err := l.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, fmt.Errorf("start monitor hub: %w", err)
 	}
@@ -113,7 +113,7 @@ func StartCommitListener(sockPath string, mfs *MutableFS) (net.Listener, error) 
 func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	defer func() {
 		if err := conn.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 	scanner := bufio.NewScanner(conn)
@@ -124,29 +124,29 @@ func handleCommitConn(mfs *MutableFS, conn net.Conn) {
 	req, err := ParseCommitLine(line)
 	if err != nil {
 		if _, err := fmt.Fprintf(conn, "ERR %v\n", err); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return
 	}
 
 	detached := false
 	if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if scanner.Scan() {
 		detached = scanner.Text() == "DETACH"
 	}
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	if detached {
 		jobID := globalCommitHub.startJob()
 		if _, err := fmt.Fprintf(conn, "JOB %d\n", jobID); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := conn.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		go func() {

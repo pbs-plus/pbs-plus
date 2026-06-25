@@ -15,9 +15,9 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const maxAttempts = 100
@@ -39,7 +39,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	initialized := false
@@ -78,7 +78,7 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	}
 
 	if err := database.MigrateSecrets(); err != nil {
-		syslog.L.Error(err).WithMessage("Initialize: error migrating secrets").Write()
+		log.Error(err, "Initialize: error migrating secrets")
 	}
 
 	if !initialized {
@@ -95,12 +95,12 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 				Comment: sql.NullString{String: "Generated exclusion from default list", Valid: true},
 			})
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				syslog.L.Error(err).WithField("path", exclusion).Write()
+				log.Error(err, "", "path", exclusion)
 			}
 		}
 
 		if err := tx.Commit(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	return database, nil
@@ -181,7 +181,7 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	defer func() {
 		if p := recover(); p != nil {
 			if err := tx.Rollback(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			panic(p)
 		}
@@ -190,7 +190,7 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	q := d.queries.WithTx(tx.Tx)
 	if err := fn(tx, q); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			syslog.L.Error(fmt.Errorf("RunInTransaction: rollback error: %w", rbErr)).Write()
+			log.Error(fmt.Errorf("RunInTransaction: rollback error: %w", rbErr), "")
 		}
 		return err
 	}

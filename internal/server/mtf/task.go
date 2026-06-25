@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type ScanTask struct {
@@ -15,7 +15,7 @@ type ScanTask struct {
 func NewScanTask(opts Options) (*ScanTask, error) {
 	wt, err := tasklog.NewWorkerTask("pbsplus", "mtfscan", scanWID(opts))
 	if err != nil {
-		syslog.L.Error(err).WithMessage("mtf: create scan task log").Write()
+		log.Error(err, "mtf: create scan task log")
 		return nil, err
 	}
 

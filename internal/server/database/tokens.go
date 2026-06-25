@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func generateWinInstall(token string) string {
@@ -90,7 +90,7 @@ func (database *Database) GetAllTokens(includeRevoked bool) ([]AgentToken, error
 	for _, row := range rows {
 		tokenProp, err := database.GetToken(row.Token)
 		if err != nil {
-			syslog.L.Error(err).WithField("id", row.Token).Write()
+			log.Error(err, "", "id", row.Token)
 			continue
 		}
 		if !includeRevoked && tokenProp.Revoked {
@@ -186,7 +186,7 @@ func (database *Database) pruneOldTokensKeepLastValid(keep int) error {
 	for _, t := range toDelete {
 		if err := qtx.DeleteToken(database.ctx, t); err != nil {
 			if err := tx.Rollback(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return fmt.Errorf("pruneOldTokensKeepLastValid: delete %s: %w", t, err)
 		}

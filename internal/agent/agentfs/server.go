@@ -9,8 +9,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var readBufPool = sync.Pool{
@@ -54,8 +54,8 @@ func NewAgentFSServer(jobID string, readMode string, snapshot snapshots.Snapshot
 		idBuf:            make([]byte, 0, 16),
 	}
 
-	if err := s.initializeStatFS(); err != nil && syslog.L != nil {
-		syslog.L.Error(err).WithMessage("failed to initialize statfs").Write()
+	if err := s.initializeStatFS(); err != nil && log.L != nil {
+		log.Error(err, "failed to initialize statfs")
 	}
 
 	return s
@@ -65,10 +65,10 @@ func safeHandler(fn func(req *arpc.Request) (arpc.Response, error)) func(req *ar
 	return func(req *arpc.Request) (res arpc.Response, err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				syslog.L.Error(fmt.Errorf("panic in handler: %v", r)).
-					WithMessage(fmt.Sprintf("panic in handler: %v", r)).
-					WithField("payload", req.Payload).
-					Write()
+				log.Error(fmt.Errorf("panic in handler: %v", r),
+					fmt.Sprintf("panic in handler: %v", r),
+					"payload", req.Payload)
+
 				err = os.ErrInvalid
 			}
 		}()

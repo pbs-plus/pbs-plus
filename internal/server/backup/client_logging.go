@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 var connectionFailedPattern = []byte("connection failed")
@@ -17,34 +17,34 @@ var connectionFailedPattern = []byte("connection failed")
 func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to create watcher").Write()
+		log.Error(err, "failed to create watcher")
 		return
 	}
 	defer func() {
 		if err := watcher.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to open file").Write()
+		log.Error(err, "failed to open file")
 		return
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	offset, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to seek file").Write()
+		log.Error(err, "failed to seek file")
 		return
 	}
 
 	if err := watcher.Add(filePath); err != nil {
-		syslog.L.Error(err).WithMessage("failed to add file to watcher").Write()
+		log.Error(err, "failed to add file to watcher")
 		return
 	}
 
@@ -87,7 +87,7 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd) {
 				_, _ = processFileBuffer(file, offset, buf, cmd)
 				return
 			}
-			syslog.L.Error(err).WithMessage("watcher error").Write()
+			log.Error(err, "watcher error")
 
 		case <-debounceC:
 			debounceC = nil
@@ -112,13 +112,13 @@ func processFileBuffer(
 ) (int64, bool) {
 	currentPos, err := file.Seek(offset, io.SeekStart)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("seek error").Write()
+		log.Error(err, "seek error")
 		return offset, false
 	}
 
 	n, err := file.Read(buf)
 	if err != nil && err != io.EOF {
-		syslog.L.Error(err).WithMessage("read error").Write()
+		log.Error(err, "read error")
 		return currentPos, false
 	}
 
@@ -129,7 +129,7 @@ func processFileBuffer(
 	if bytes.Contains(buf[:n], connectionFailedPattern) {
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		return currentPos + int64(n), true

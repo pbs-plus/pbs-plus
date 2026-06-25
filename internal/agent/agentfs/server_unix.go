@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"golang.org/x/sys/unix"
 )
 
@@ -28,7 +28,7 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
 		if err := unix.Close(fd); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 		reader, err := NewDirReader(f, path)
 		if err != nil {
 			if err := f.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]b
 	}
 	return data[diff : diff+length], func() {
 		if err := unix.Munmap(data); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}, true
 }

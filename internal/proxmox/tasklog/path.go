@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"log/slog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func UPIDLogPath(upid string) (string, error) {
@@ -29,10 +29,10 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 	if err := os.Chown(dir, 34, 34); err != nil {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
@@ -42,7 +42,7 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 
 	if err := file.Chown(34, 34); err != nil {
 		if cerr := file.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 		return nil, "", err
 	}

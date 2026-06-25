@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // progress is the live migration counter. Fields are atomic so the reporter
@@ -62,7 +62,7 @@ func (p *progress) report(ctx context.Context, w io.Writer, interval time.Durati
 				}
 				if _, err := fmt.Fprintf(w, "progress: %d files, %.1f MB | inst %.1f MB/s | avg %.1f MB/s | %s\n",
 					p.files.Load(), float64(cur)/1e6, inst, avg, now.Sub(p.startTime).Round(time.Second)); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}

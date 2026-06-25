@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"log/slog"
 )
 
 func AddActive(upid string) error {
@@ -28,7 +28,7 @@ func IsActive(upid string) bool {
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 	}()
 
@@ -58,7 +58,7 @@ func CleanupActiveTasks() error {
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 	}()
 
@@ -67,7 +67,7 @@ func CleanupActiveTasks() error {
 	}
 	defer func() {
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
-			syslog.L.Error(err).Write()
+			slog.Error(err.Error())
 		}
 	}()
 
@@ -111,7 +111,7 @@ func modifyActiveFile(target string, add bool) error {
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 	}()
 
@@ -120,7 +120,7 @@ func modifyActiveFile(target string, add bool) error {
 	}
 	defer func() {
 		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
-			syslog.L.Error(err).Write()
+			slog.Error(err.Error())
 		}
 	}()
 

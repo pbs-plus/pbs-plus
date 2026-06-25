@@ -8,10 +8,10 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type ErrorResponse struct {
@@ -50,7 +50,7 @@ func statusFromErr(err error) int {
 
 func WriteErrorResponse(w http.ResponseWriter, err error) {
 	statusCode := statusFromErr(err)
-	syslog.L.Error(err).Write()
+	log.Error(err, "")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -59,6 +59,6 @@ func WriteErrorResponse(w http.ResponseWriter, err error) {
 		Status:  statusCode,
 		Success: false,
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }

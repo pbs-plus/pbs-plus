@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -52,7 +52,7 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 	for i, b := range batches {
 		jobs, err := storeInstance.Database.GetBatchJobs(b.Name)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		count := 0
 		if jobs != nil {
@@ -76,7 +76,7 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 		"data":    result,
 		"digest":  digest,
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -92,7 +92,7 @@ func getNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *
 		"success": true,
 		"data":    batch,
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -109,7 +109,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 
 	existing, err := storeInstance.Database.GetNotificationBatch(name)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if existing.Name != "" {
 		http.Error(w, "Batch already exists", http.StatusConflict)
@@ -142,7 +142,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
 			for _, j := range jobList {
 				if err := storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}
@@ -150,7 +150,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 
 	created, err := storeInstance.Database.GetNotificationBatch(name)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -158,7 +158,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		"success": true,
 		"data":    created,
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -202,11 +202,11 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		}
 		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
 			if err := storeInstance.Database.RemoveJobsByBatch(name); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			for _, j := range jobList {
 				if err := storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}
@@ -214,7 +214,7 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 
 	updated, err := storeInstance.Database.GetNotificationBatch(name)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -222,7 +222,7 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		"success": true,
 		"data":    updated,
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -243,7 +243,7 @@ func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		"success": true,
 		"data":    nil,
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -272,7 +272,7 @@ func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Re
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": allJobs}); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return
 	}
@@ -285,7 +285,7 @@ func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Re
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": jobs}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -318,7 +318,7 @@ func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Requ
 			JobID:     jobID,
 		},
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -339,7 +339,7 @@ func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.R
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": nil}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -353,7 +353,7 @@ func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc
 		if storeInstance.BatchTracker == nil {
 			w.Header().Set("Content-Type", "application/json")
 			if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]int{}}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -362,7 +362,7 @@ func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": pending}); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -392,7 +392,7 @@ func formValueBool(r *http.Request, key string, defaultVal bool) bool {
 //   - If value is a batch name: job is added to that batch (and removed from others).
 func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchName string) {
 	if err := storeInstance.Database.RemoveJobFromAllBatches(jobType, jobID); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	if batchName != "" {
@@ -402,7 +402,7 @@ func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchNa
 			return
 		}
 		if err := storeInstance.Database.AddJobToBatch(batchName, jobType, jobID); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }

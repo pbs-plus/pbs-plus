@@ -15,7 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/format"
 	"golang.org/x/sys/unix"
@@ -32,7 +32,7 @@ const (
 func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.FileInfo) error {
 	defer func() {
 		if err := file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -250,11 +250,11 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 				if f, openErr := os.OpenFile(target, os.O_RDONLY, 0); openErr == nil {
 					if !st.noAttr {
 						if err := applyMeta(ctx, st, f, e); err != nil {
-							syslog.L.Error(err).Write()
+							log.Error(err, "")
 						}
 					} else {
 						if err := f.Close(); err != nil {
-							syslog.L.Error(err).Write()
+							log.Error(err, "")
 						}
 					}
 				} else {

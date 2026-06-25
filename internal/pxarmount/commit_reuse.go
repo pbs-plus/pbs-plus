@@ -8,7 +8,7 @@ import (
 
 	"github.com/zeebo/xxh3"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
 	"github.com/pbs-plus/pxar/datastore"
@@ -432,7 +432,7 @@ func (ow *commitWalkState) writeBackedFile(name, childPath string, meta pxar.Met
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

@@ -5,7 +5,7 @@ package pxar
 import (
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"golang.org/x/sys/windows"
 )
 
@@ -21,10 +21,9 @@ func prepareRestoreProcess() {
 		var token windows.Token
 		// TOKEN_ADJUST_PRIVILEGES is required to enable privileges.
 		if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token); err != nil {
-			syslog.L.Warn().
-				WithMessage("restore: could not open process token; metadata errors may follow").
-				WithField("error", err.Error()).
-				Write()
+			log.Warn("restore: could not open process token; metadata errors may follow",
+				"error", err.Error())
+
 			return
 		}
 		defer token.Close()
@@ -41,10 +40,9 @@ func prepareRestoreProcess() {
 			}
 		}
 		if len(missing) > 0 {
-			syslog.L.Warn().
-				WithMessage("restore: some privileges could not be enabled; metadata errors may follow").
-				WithField("missing", missing).
-				Write()
+			log.Warn("restore: some privileges could not be enabled; metadata errors may follow",
+				"missing", missing)
+
 		}
 	})
 }

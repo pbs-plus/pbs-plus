@@ -17,8 +17,8 @@ import (
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/backupproxy"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/format"
@@ -92,7 +92,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	if backupID == "" {
 		hn, err := os.Hostname()
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		backupID = hn
 	}
@@ -143,7 +143,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	}, func() buzhash.Config {
 		cfg, err := buzhash.NewConfig(4 << 20)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return cfg
 	}(), false)
@@ -157,10 +157,10 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 		CryptMode:      datastore.CryptModeNone,
 	})
 	if err != nil {
-		syslog.L.Error(err).WithMessage("start PBS session failed").Write()
+		log.Error(err, "start PBS session failed")
 		return fmt.Errorf("start PBS session: %w", err)
 	}
-	syslog.L.Info().WithMessage("PBS session started").Write()
+	log.Info("PBS session started")
 
 	metaName := archiveName + ".mpxar.didx"
 	payloadName := archiveName + ".ppxar.didx"
@@ -169,7 +169,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	if mfs.origPpxarDidx != "" {
 		idx, err := os.ReadFile(mfs.origPpxarDidx)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		origPayloadIdx = idx
 	}
@@ -181,7 +181,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 
 	rootNode, err := mfs.journal.GetNode(1)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	var rootMeta pxar.Metadata
 	if rootNode != nil {
@@ -200,7 +200,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 
 	prog.SetPhase(PhaseWalk)
 	prog.SetMsg("Archiving files")
-	syslog.L.Info().WithMessage("commit: walking filesystem").Write()
+	log.Info("commit: walking filesystem")
 
 	ow := &commitWalkState{
 		mfs:           mfs,
@@ -229,17 +229,16 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 
 	prog.SetPhase(PhaseUpload)
 	prog.SetMsg(fmt.Sprintf("Flushing upload (%d new/modified files)", ow.mutableFiles))
-	syslog.L.Info().WithMessage("commit: flushing upload").Write()
+	log.Info("commit: flushing upload")
 
 	if err := writer.Finish(); err != nil {
 		return fmt.Errorf("finish writer: %w", err)
 	}
-
-	syslog.L.Info().WithMessage("commit: finishing PBS session").Write()
+	log.Info("commit: finishing PBS session")
 	if _, err := session.Finish(ctx); err != nil {
 		return fmt.Errorf("finish session: %w", err)
 	}
-	syslog.L.Info().WithMessage("commit: PBS session finished").Write()
+	log.Info("commit: PBS session finished")
 
 	prog.SetPhase(PhaseVerify)
 	prog.SetMsg(fmt.Sprintf("Verifying %d backed files", len(ow.backedHashes)))
@@ -252,13 +251,12 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 
 	prog.SetPhase(PhaseFinalize)
 	prog.SetMsg("Swapping snapshot")
-
-	syslog.L.Info().WithMessage(fmt.Sprintf("postCommit start: backupID=%s namespace=%s archiveName=%s backupTime=%d", backupID, namespace, archiveName, backupTime)).Write()
+	log.Info(fmt.Sprintf("postCommit start: backupID=%s namespace=%s archiveName=%s backupTime=%d", backupID, namespace, archiveName, backupTime))
 	if err := postCommit(mfs, backupID, backupType, namespace, archiveName, backupTime); err != nil {
-		syslog.L.Error(err).WithMessage("postCommit failed").Write()
+		log.Error(err, "postCommit failed")
 		return fmt.Errorf("post-commit: %w", err)
 	}
-	syslog.L.Info().WithMessage("postCommit done").Write()
+	log.Info("postCommit done")
 
 	prog.Done(fmt.Sprintf("committed %s/%s (%d new files)", namespace, backupID, ow.mutableFiles))
 	return nil
@@ -319,14 +317,14 @@ func ensureNamespaceDir(pbsStore, namespace string) error {
 			return err
 		}
 		if err := os.Chown(cur, 34, 34); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	return nil
 }
 
 func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName string, backupTime int64) error {
-	syslog.L.Info().WithMessage("postCommit: resolve groupDir").Write()
+	log.Info("postCommit: resolve groupDir")
 	var groupDir string
 	if mfs.origPpxarDidx != "" {
 		origDir := filepath.Dir(mfs.origPpxarDidx)
@@ -340,8 +338,7 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 
 	mpxarPath := filepath.Join(snapDir, archiveName+".mpxar.didx")
 	ppxarPath := filepath.Join(snapDir, archiveName+".ppxar.didx")
-
-	syslog.L.Info().WithMessage("postCommit: mmap files").Write()
+	log.Info("postCommit: mmap files")
 	metaData, err := mmapFile(mpxarPath)
 	if err != nil {
 		return fmt.Errorf("mmap new mpxar: %w", err)
@@ -349,54 +346,49 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	payloadData, err := mmapFile(ppxarPath)
 	if err != nil {
 		if err := munmap(metaData); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("mmap new ppxar: %w", err)
 	}
-
-	syslog.L.Info().WithMessage("postCommit: open chunk store").Write()
+	log.Info("postCommit: open chunk store")
 	store, err := datastore.NewChunkStore(mfs.pbsStore)
 	if err != nil {
 		if err := munmap(metaData); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := munmap(payloadData); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("open chunk store: %w", err)
 	}
 	source := datastore.NewChunkStoreSource(store)
-
-	syslog.L.Info().WithMessage("postCommit: new split reader").Write()
+	log.Info("postCommit: new split reader")
 	newReader, err := transfer.NewSplitReader(metaData, payloadData, source)
 	if err != nil {
 		if err := munmap(metaData); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := munmap(payloadData); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return fmt.Errorf("create new reader: %w", err)
 	}
-
-	syslog.L.Info().WithMessage("postCommit: clear+sync journal").Write()
+	log.Info("postCommit: clear+sync journal")
 	if err := mfs.journal.Clear(); err != nil {
 		return fmt.Errorf("clear journal: %w", err)
 	}
 	if err := mfs.journal.Sync(); err != nil {
 		return fmt.Errorf("sync journal after clear: %w", err)
 	}
-
-	syslog.L.Info().WithMessage("postCommit: munmap old data").Write()
+	log.Info("postCommit: munmap old data")
 	for _, d := range mfs.mmapData {
 		if err := munmap(d); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
-
-	syslog.L.Info().WithMessage("postCommit: hotSwap reader").Write()
+	log.Info("postCommit: hotSwap reader")
 	mfs.pxar.HotSwap(newReader)
-	syslog.L.Info().WithMessage("postCommit: hotSwap done").Write()
+	log.Info("postCommit: hotSwap done")
 	mfs.mmapData = nil
 	if len(metaData) > 0 {
 		mfs.mmapData = append(mfs.mmapData, metaData)
@@ -459,7 +451,7 @@ func ParseOrigSnapshot(pbsStore, ppxarDidx string) snapshotRef {
 		ref.ArchiveName = strings.TrimSuffix(ref.ArchiveName, ".pxar")
 
 		if _, err := fmt.Sscanf(parts[len(parts)-2], "%d", &ref.BackupTime); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		ref.BackupID = parts[len(parts)-3]
 		ref.BackupType = parts[len(parts)-4]
@@ -534,7 +526,7 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 			h.Reset()
 			_, err = io.CopyBuffer(h, f, buf)
 			if err := f.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err != nil {
 				errOnce.Do(func() { firstErr = fmt.Errorf("hash backed file %q: %w", it.relPath, err) })

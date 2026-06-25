@@ -12,7 +12,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func newRoot(fs *S3FS) fs.InodeEmbedder {
@@ -293,7 +293,7 @@ func (fh *FileHandle) Read(
 
 func (fh *FileHandle) Release(ctx context.Context) syscall.Errno {
 	if err := fh.file.Close(); err != nil {
-		syslog.L.Error(err).WithMessage("FUSE Release failed").WithField("key", fh.file.key).WithJob(fh.fs.Backup.ID).Write()
+		log.Error(err, "FUSE Release failed", "key", fh.file.key)
 	}
 	return 0
 }

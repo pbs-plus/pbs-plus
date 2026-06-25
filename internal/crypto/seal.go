@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/nacl/box"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const (
@@ -104,8 +104,7 @@ func Unseal(ciphertext string) (string, error) {
 	if naclDecryptErr != nil {
 		return "", fmt.Errorf("crypto: aes decrypt: %w; nacl decrypt: %v", err, naclDecryptErr)
 	}
-
-	syslog.L.Warn().WithMessage("crypto: secret decrypted via legacy nacl-box fallback; run migration to re-encrypt with AES-256-GCM").Write()
+	log.Warn("crypto: secret decrypted via legacy nacl-box fallback; run migration to re-encrypt with AES-256-GCM")
 	return pt, nil
 }
 
@@ -172,7 +171,7 @@ func MigrateNaclKeyIfExists() error {
 	if err := os.WriteFile(nkPath, data, 0o600); err != nil {
 		return fmt.Errorf("crypto: backup nacl key: %w", err)
 	}
-	syslog.L.Info().WithMessage("crypto: backed up nacl-box key for migration").Write()
+	log.Info("crypto: backed up nacl-box key for migration")
 
 	key := make([]byte, aesKeySize)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
@@ -181,7 +180,7 @@ func MigrateNaclKeyIfExists() error {
 	if err := os.WriteFile(sealPath, key, 0o600); err != nil {
 		return fmt.Errorf("crypto: write new aes key: %w", err)
 	}
-	syslog.L.Info().WithMessage("crypto: replaced nacl-box key with aes-256-gcm key").Write()
+	log.Info("crypto: replaced nacl-box key with aes-256-gcm key")
 	return nil
 }
 

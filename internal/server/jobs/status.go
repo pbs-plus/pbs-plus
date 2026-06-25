@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var statusMutexes sync.Map
@@ -31,13 +31,13 @@ func UpdateJobHistory(
 
 	taskFound, err := tasklog.GetTaskByUPID(task.UPID)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("unable to get task by upid").Write()
+		log.Error(err, "unable to get task by upid")
 		return err
 	}
 
 	history, pid, err := getHistory()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("unable to get job for status update").Write()
+		log.Error(err, "unable to get job for status update")
 		return err
 	}
 

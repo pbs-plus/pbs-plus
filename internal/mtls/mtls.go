@@ -19,7 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/host"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 var currentTLSCert = atomic.Pointer[tls.Certificate]{}
@@ -74,7 +74,7 @@ func getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile 
 	lastTLSTime := time.Unix(atomic.LoadInt64(&lastTLSTimestamp), 0)
 	if time.Since(lastTLSTime) > 12*time.Hour {
 		if err := updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile); err != nil {
-			syslog.L.Error(err).WithMessage("mtls: failed to update server TLS certs").Write()
+			log.Error(err, "mtls: failed to update server TLS certs")
 		}
 	}
 

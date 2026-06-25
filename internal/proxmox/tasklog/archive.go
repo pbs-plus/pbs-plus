@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"log/slog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func WriteArchive(upid string, state TaskState) error {
@@ -23,7 +23,7 @@ func WriteArchive(upid string, state TaskState) error {
 	}
 	defer func() {
 		if cerr := archive.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 	}()
 
@@ -47,7 +47,7 @@ func ListTasks(activeOnly bool) ([]TaskListInfo, error) {
 	if err == nil {
 		defer func() {
 			if cerr := activeFile.Close(); cerr != nil {
-				syslog.L.Error(cerr).Write()
+				slog.Error(cerr.Error())
 			}
 		}()
 		scanner := bufio.NewScanner(activeFile)
@@ -86,7 +86,7 @@ func ListTasks(activeOnly bool) ([]TaskListInfo, error) {
 	if err == nil {
 		defer func() {
 			if cerr := archiveFile.Close(); cerr != nil {
-				syslog.L.Error(cerr).Write()
+				slog.Error(cerr.Error())
 			}
 		}()
 		scanner := bufio.NewScanner(archiveFile)
@@ -126,7 +126,7 @@ func ReadStatusFromLog(upid string) (TaskState, error) {
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 	}()
 
@@ -200,7 +200,7 @@ func findTaskInFile(path string, workerType string, searchString string, thresho
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 	}()
 

@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // The tracker checks if the job belongs to a notification batch:
@@ -60,10 +60,10 @@ func NewBatchTracker(db *database.Database) *BatchTracker {
 func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, datastore string, jobErr error, details map[string]string) {
 	batch, err := bt.db.GetBatchForJob(string(jobType), jobID)
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("jobID", jobID).
-			WithMessage("failed to lookup batch for job, sending immediate notification").
-			Write()
+		log.Error(err,
+
+			"failed to lookup batch for job, sending immediate notification", "jobID", jobID)
+
 		Send(mode, jobType, jobID, datastore, jobErr, details)
 		return
 	}
@@ -80,21 +80,21 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 	} else if details != nil {
 		if warningsStr, ok := details["warnings"]; ok {
 			if n, err := strconv.Atoi(warningsStr); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			} else if n > 0 {
 				severity = "notice"
 			}
 		}
 		if errorsStr, ok := details["errors"]; ok {
 			if n, err := strconv.Atoi(errorsStr); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			} else if n > 0 {
 				severity = "notice"
 			}
 		}
 		if failedStr, ok := details["failed"]; ok {
 			if n, err := strconv.Atoi(failedStr); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			} else if n > 0 {
 				severity = "notice"
 			}
@@ -243,7 +243,7 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 		"datastores": dsList,
 	})
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	tc := templateContent{
@@ -252,7 +252,7 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 	}
 	tcJSON, err := json.Marshal(tc)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to marshal batch template content").Write()
+		log.Error(err, "failed to marshal batch template content")
 		return
 	}
 
@@ -260,7 +260,7 @@ func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, 
 		"template": tcJSON,
 	})
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to wrap batch template content").Write()
+		log.Error(err, "failed to wrap batch template content")
 		return
 	}
 

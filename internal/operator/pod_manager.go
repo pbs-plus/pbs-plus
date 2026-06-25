@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -43,32 +43,24 @@ func NewPodManager(clientset kubernetes.Interface, agentImage, serverURL, bootst
 func (pm *PodManager) CreateBackupPod(ctx context.Context, pvcToMount, originalPVC *corev1.PersistentVolumeClaim, useSnapshot bool) error {
 	namespace := pvcToMount.Namespace
 	podName := pm.getPodName(originalPVC)
+	log.Info("Creating backup pod",
 
-	syslog.L.Info().
-		WithMessage("Creating backup pod").
-		WithField("pod", namespace+"/"+podName).
-		WithField("pvc", pvcToMount.Name).
-		WithField("useSnapshot", useSnapshot).
-		Write()
+		"useSnapshot", useSnapshot, "pvc", pvcToMount.Name, "pod", namespace+"/"+podName)
 
 	pod := pm.buildPodSpec(podName, namespace, pvcToMount, originalPVC, useSnapshot)
 
 	_, err := pm.clientset.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			syslog.L.Info().
-				WithMessage("Backup pod already exists").
-				WithField("pod", namespace+"/"+podName).
-				Write()
+			log.Info("Backup pod already exists",
+				"pod", namespace+"/"+podName)
+
 			return nil
 		}
 		return fmt.Errorf("failed to create backup pod: %w", err)
 	}
-
-	syslog.L.Info().
-		WithMessage("Backup pod created successfully").
-		WithField("pod", namespace+"/"+podName).
-		Write()
+	log.Info("Backup pod created successfully",
+		"pod", namespace+"/"+podName)
 
 	return nil
 }
@@ -91,11 +83,8 @@ func (pm *PodManager) GetBackupPod(ctx context.Context, pvc *corev1.PersistentVo
 func (pm *PodManager) CleanupForPVC(ctx context.Context, pvc *corev1.PersistentVolumeClaim) error {
 	namespace := pvc.Namespace
 	podName := pm.getPodName(pvc)
-
-	syslog.L.Info().
-		WithMessage("Cleaning up backup pod").
-		WithField("pod", namespace+"/"+podName).
-		Write()
+	log.Info("Cleaning up backup pod",
+		"pod", namespace+"/"+podName)
 
 	err := pm.clientset.CoreV1().Pods(namespace).Delete(ctx, podName, metav1.DeleteOptions{
 		GracePeriodSeconds: new(int64(30)),

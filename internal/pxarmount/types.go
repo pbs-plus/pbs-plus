@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/format"
 )
@@ -251,7 +251,7 @@ func lookupUID(name string) (uint32, error) {
 	if u, err := user.Lookup(name); err == nil {
 		uid, err := strconv.ParseUint(u.Uid, 10, 32)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return uint32(uid), nil
 	}
@@ -275,7 +275,7 @@ func lookupGID(name string) (uint32, error) {
 	if g, err := user.LookupGroup(name); err == nil {
 		gid, err := strconv.ParseUint(g.Gid, 10, 32)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return uint32(gid), nil
 	}

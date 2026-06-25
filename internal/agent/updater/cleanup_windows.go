@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
@@ -16,7 +16,7 @@ func cleanUp() error {
 
 	m, err := mgr.Connect()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to connect to Windows SCM").Write()
+		log.Error(err, "failed to connect to Windows SCM")
 		return nil
 	}
 	defer m.Disconnect()
@@ -37,15 +37,13 @@ func cleanUp() error {
 			binPath = strings.Trim(binPath, `"`)
 			if fi, statErr := os.Stat(binPath); statErr == nil && !fi.IsDir() {
 				if rmErr := os.Remove(binPath); rmErr != nil {
-					syslog.L.Error(err).
-						WithField("path", binPath).
-						WithMessage("failed to remove updater binary").
-						Write()
+					log.Error(err,
+
+						"failed to remove updater binary", "path", binPath)
+
 				} else {
-					syslog.L.Info().
-						WithField("path", binPath).
-						WithMessage("removed updater binary").
-						Write()
+					log.Info("removed updater binary", "path", binPath)
+
 				}
 			}
 		} else {

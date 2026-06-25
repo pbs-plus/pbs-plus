@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -29,21 +29,21 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateVerificationJob: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateVerificationJob: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("CreateVerificationJob: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateVerificationJob: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateVerificationJob: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -193,7 +193,7 @@ func (database *Database) GetVerificationJob(id string) (VerificationJob, error)
 
 	if spotConfigStr := fromNullString(row.SpotConfig); spotConfigStr != "" {
 		if err := json.Unmarshal([]byte(spotConfigStr), &job.SpotConfig); err != nil {
-			syslog.L.Error(err).WithField("id", id).WithMessage("failed to unmarshal spot_config").Write()
+			log.Error(err, "failed to unmarshal spot_config", "id", id)
 		}
 	}
 
@@ -278,7 +278,7 @@ func (database *Database) GetAllVerificationJobs() ([]VerificationJob, error) {
 
 		if spotConfigStr := fromNullString(row.SpotConfig); spotConfigStr != "" {
 			if err := json.Unmarshal([]byte(spotConfigStr), &job.SpotConfig); err != nil {
-				syslog.L.Error(err).WithField("id", row.ID).WithMessage("failed to unmarshal spot_config").Write()
+				log.Error(err, "failed to unmarshal spot_config", "id", row.ID)
 			}
 		}
 
@@ -301,21 +301,21 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateVerificationJob: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateVerificationJob: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("UpdateVerificationJob: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateVerificationJob: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateVerificationJob: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -399,21 +399,21 @@ func (database *Database) DeleteVerificationJob(tx *Transaction, id string) (err
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteVerificationJob: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteVerificationJob: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("DeleteVerificationJob: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteVerificationJob: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteVerificationJob: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -422,8 +422,7 @@ func (database *Database) DeleteVerificationJob(tx *Transaction, id string) (err
 
 	_, err = q.DeleteVerificationResults(database.ctx, id)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("DeleteVerificationJob: error deleting results: %w", err)).
-			WithField("id", id).Write()
+		log.Error(fmt.Errorf("DeleteVerificationJob: error deleting results: %w", err), "", "id", id)
 	}
 
 	rowsAffected, err := q.DeleteVerificationJob(database.ctx, id)
@@ -526,7 +525,7 @@ func (database *Database) GetVerificationResults(jobID string) ([]VerificationRe
 
 		if detailsStr := fromNullString(row.Details); detailsStr != "" {
 			if err := json.Unmarshal([]byte(detailsStr), &r.Details); err != nil {
-				syslog.L.Error(err).WithField("id", row.ID).WithMessage("failed to unmarshal details").Write()
+				log.Error(err, "failed to unmarshal details", "id", row.ID)
 			}
 		}
 
@@ -563,7 +562,7 @@ func (database *Database) GetLatestVerificationResult(jobID string) (Verificatio
 
 	if detailsStr := fromNullString(row.Details); detailsStr != "" {
 		if err := json.Unmarshal([]byte(detailsStr), &r.Details); err != nil {
-			syslog.L.Error(err).WithField("id", row.ID).WithMessage("failed to unmarshal details").Write()
+			log.Error(err, "failed to unmarshal details", "id", row.ID)
 		}
 	}
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,12 +45,9 @@ func (sm *SnapshotManager) CreateSnapshotAndRestore(ctx context.Context, origina
 	timestamp := time.Now().Unix()
 	snapshotName := fmt.Sprintf("pbs-snapshot-%s-%d", originalPVC.Name, timestamp)
 	restoredPVCName := fmt.Sprintf("pbs-restored-%s-%d", originalPVC.Name, timestamp)
+	log.Info("Creating snapshot for PVC",
 
-	syslog.L.Info().
-		WithMessage("Creating snapshot for PVC").
-		WithField("originalPVC", namespace+"/"+originalPVC.Name).
-		WithField("snapshotName", snapshotName).
-		Write()
+		"snapshotName", snapshotName, "originalPVC", namespace+"/"+originalPVC.Name)
 
 	if err := sm.createVolumeSnapshot(ctx, namespace, snapshotName, originalPVC); err != nil {
 		return nil, nil, fmt.Errorf("failed to create snapshot: %w", err)
@@ -60,11 +57,8 @@ func (sm *SnapshotManager) CreateSnapshotAndRestore(ctx context.Context, origina
 		sm.deleteVolumeSnapshot(ctx, namespace, snapshotName)
 		return nil, nil, fmt.Errorf("failed waiting for snapshot: %w", err)
 	}
-
-	syslog.L.Info().
-		WithMessage("Creating restored PVC from snapshot").
-		WithField("restoredPVC", namespace+"/"+restoredPVCName).
-		Write()
+	log.Info("Creating restored PVC from snapshot",
+		"restoredPVC", namespace+"/"+restoredPVCName)
 
 	restoredPVC, err := sm.createRestoredPVC(ctx, namespace, restoredPVCName, snapshotName, originalPVC)
 	if err != nil {
@@ -80,11 +74,9 @@ func (sm *SnapshotManager) CreateSnapshotAndRestore(ctx context.Context, origina
 
 	cleanup := func() {
 		cleanupCtx := context.Background()
-		syslog.L.Info().
-			WithMessage("Cleaning up snapshot resources").
-			WithField("restoredPVC", restoredPVCName).
-			WithField("snapshot", snapshotName).
-			Write()
+		log.Info("Cleaning up snapshot resources",
+
+			"snapshot", snapshotName, "restoredPVC", restoredPVCName)
 
 		sm.deletePVC(cleanupCtx, namespace, restoredPVCName)
 		sm.deleteVolumeSnapshot(cleanupCtx, namespace, snapshotName)
@@ -235,20 +227,20 @@ func (sm *SnapshotManager) deleteVolumeSnapshot(ctx context.Context, namespace, 
 		Do(ctx).
 		Error()
 	if err != nil {
-		syslog.L.Error(err).
-			WithMessage("Failed to delete volume snapshot").
-			WithField("snapshot", namespace+"/"+name).
-			Write()
+		log.Error(err,
+			"Failed to delete volume snapshot",
+			"snapshot", namespace+"/"+name)
+
 	}
 }
 
 func (sm *SnapshotManager) deletePVC(ctx context.Context, namespace, name string) {
 	err := sm.clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil && !errors.IsNotFound(err) {
-		syslog.L.Error(err).
-			WithMessage("Failed to delete PVC").
-			WithField("pvc", namespace+"/"+name).
-			Write()
+		log.Error(err,
+			"Failed to delete PVC",
+			"pvc", namespace+"/"+name)
+
 	}
 }
 

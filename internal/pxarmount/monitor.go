@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // on the monitor socket and appends them to a log file for later retrieval.
@@ -31,7 +31,7 @@ var globalCommitHub *commitHub
 func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	monPath := mainSocketPath + ".monitor"
 	if err := os.Remove(monPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	l, err := net.Listen("unix", monPath)
@@ -40,7 +40,7 @@ func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	}
 	if err := os.Chmod(monPath, 0o660); err != nil {
 		if err := l.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return nil, err
 	}
@@ -99,20 +99,20 @@ func (h *commitHub) acceptLoop() {
 		if jobRunning {
 			for _, line := range catchUp {
 				if _, err := fmt.Fprintln(conn, line); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 			if jobEnded {
 				if err := conn.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		} else {
 			if _, err := fmt.Fprintln(conn, "IDLE"); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := conn.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
@@ -151,14 +151,14 @@ func (h *commitHub) broadcast(line string) {
 
 	h.watchers.ForEach(func(conn net.Conn, _ struct{}) bool {
 		if _, err := fmt.Fprintln(conn, line); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			if err := conn.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			h.watchers.Del(conn)
 		} else if isDone {
 			if err := conn.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			h.watchers.Del(conn)
 		}
@@ -174,7 +174,7 @@ func (h *commitHub) startJob() int64 {
 	// Truncate/create the log file for the new commit.
 	if h.logFile != nil {
 		if err := h.logFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	f, err := os.Create(h.logPath)
@@ -184,7 +184,7 @@ func (h *commitHub) startJob() int64 {
 		}
 	} else {
 		if err := f.Chmod(0o660); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		h.logFile = f
 		if h.verbose {
@@ -224,19 +224,19 @@ func (h *commitHub) endJob() {
 func (h *commitHub) close() {
 	if h.listener != nil {
 		if err := h.listener.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	h.mu.Lock()
 	if h.logFile != nil {
 		if err := h.logFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		h.logFile = nil
 	}
 	h.mu.Unlock()
 	if err := os.Remove(h.sockPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 

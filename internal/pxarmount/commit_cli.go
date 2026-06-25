@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func RunCommitSubcommand() {
@@ -26,7 +26,7 @@ func RunCommitSubcommand() {
 	detach := fs.Bool("detach", false, "Run commit in background; use 'attach' to watch progress")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *socketPath == "" {
@@ -48,7 +48,7 @@ func RunCommitSubcommand() {
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -96,7 +96,7 @@ func RunCommitSubcommand() {
 		<-sigCh
 		display.stop()
 		if _, err := fmt.Fprintln(conn, "DETACH"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		fmt.Fprintf(os.Stderr, "\r  ↗ Commit detached  -  use 'pxar-mount attach --socket %s' to watch\n", *socketPath)
 		os.Exit(0)
@@ -119,7 +119,7 @@ func RunAttachSubcommand() {
 	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *socketPath == "" {
@@ -137,7 +137,7 @@ func RunAttachSubcommand() {
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -168,7 +168,7 @@ func RunLogsSubcommand() {
 	socketPath := fs.String("socket", "", "Path to pxar-mount Unix socket (required)")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *socketPath == "" {

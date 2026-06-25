@@ -24,14 +24,13 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 func ExecVerification(verifyID string) (int, error) {
-	syslog.L.Info().WithMessage("verify: exec begin").
-		WithField("verifyID", verifyID).
-		Write()
+	log.Info("verify: exec begin",
+		"verifyID", verifyID)
 
 	if err := validate.ValidateJobId(verifyID); err != nil {
 		return -1, fmt.Errorf("invalid verifyID: %w", err)
@@ -51,7 +50,7 @@ func ExecVerification(verifyID string) (int, error) {
 	defer func() {
 		time.Sleep(5 * time.Second)
 		if err := os.Remove(tokenFile); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -83,32 +82,25 @@ func ExecVerification(verifyID string) (int, error) {
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
-	syslog.L.Info().WithMessage("verify: child process started").
-		WithField("pid", cmd.Process.Pid).
-		WithField("args", strings.Join(args, " ")).
-		Write()
+	log.Info("verify: child process started",
+
+		"args", strings.Join(args, " "), "pid", cmd.Process.Pid)
 
 	go func() {
 		for scanner := bufio.NewScanner(stdoutPipe); scanner.Scan(); {
-			syslog.L.Info().
-				WithField("verifyID", verifyID).
-				WithField("forked", true).
-				WithMessage(scanner.Text()).Write()
+			log.Info(scanner.Text(), "forked", true, "verifyID", verifyID)
+
 		}
 	}()
 
 	go func() {
 		for errScanner := bufio.NewScanner(stderrPipe); errScanner.Scan(); {
-			syslog.L.Error(errors.New(errScanner.Text())).
-				WithField("verifyID", verifyID).
-				WithField("forked", true).
-				Write()
+			log.Error(errors.New(errScanner.Text()), "", "forked", true, "verifyID", verifyID)
+
 		}
 	}()
-
-	syslog.L.Info().WithMessage("verify: returning to parent").
-		WithField("pid", cmd.Process.Pid).
-		Write()
+	log.Info("verify: returning to parent",
+		"pid", cmd.Process.Pid)
 
 	return cmd.Process.Pid, nil
 }
@@ -126,17 +118,17 @@ func cmdVerify(verifyID *string) {
 
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("verify: failed to get server URL").Write()
+		log.Error(err, "verify: failed to get server URL")
 		os.Exit(1)
 	}
 	uri, err := agent.ParseURI(serverUrl.Value)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("verify: failed to parse URI").Write()
+		log.Error(err, "verify: failed to parse URI")
 		os.Exit(1)
 	}
 	tlsConfig, err := agent.GetTLSConfig()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("verify: failed to get TLS config").Write()
+		log.Error(err, "verify: failed to get TLS config")
 		os.Exit(1)
 	}
 
@@ -154,16 +146,15 @@ func cmdVerify(verifyID *string) {
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		defer syslog.L.Info().WithMessage("verify: arpc session handler shutting down").Write()
-
-		syslog.L.Info().WithMessage("verify: attempting connection").WithField("verifyID", *verifyID).Write()
+		defer log.Info("verify: arpc session handler shutting down")
+		log.Info("verify: attempting connection", "verifyID", *verifyID)
 
 		session, err := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 		if err != nil {
 			if strings.Contains(err.Error(), "(code 403)") {
-				syslog.L.Error(err).WithMessage("verify: authorization failed, shutting down").Write()
+				log.Error(err, "verify: authorization failed, shutting down")
 			} else {
-				syslog.L.Error(err).WithMessage("verify: connection failed").Write()
+				log.Error(err, "verify: connection failed")
 			}
 			cancel()
 			return
@@ -173,25 +164,22 @@ func cmdVerify(verifyID *string) {
 		router := arpc.NewRouter()
 		router.Handle("verify_chunk_file", agentverification.VerifyChunkFileHandler)
 		session.SetRouter(router)
-
-		syslog.L.Info().WithMessage("verify: session ready, serving").
-			WithField("verifyID", *verifyID).
-			Write()
+		log.Info("verify: session ready, serving",
+			"verifyID", *verifyID)
 
 		if err := session.Serve(); err != nil {
-			syslog.L.Warn().WithMessage("verify: ARPC session ended").WithField("error", err.Error()).Write()
+			log.Warn("verify: ARPC session ended", "error", err.Error())
 		}
 	})
 
 	go func() {
 		sig := <-done
-		syslog.L.Info().WithMessage(fmt.Sprintf("verify: received signal %v", sig)).Write()
+		log.Info(fmt.Sprintf("verify: received signal %v", sig))
 		cancel()
 	}()
 
 	wg.Wait()
-
-	syslog.L.Info().WithMessage("verify: finished").Write()
+	log.Info("verify: finished")
 	os.Exit(0)
 }
 

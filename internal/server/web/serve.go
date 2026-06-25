@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // WatchAndServe starts the HTTPS server and restarts it if the certificate files change.
@@ -15,17 +15,17 @@ import (
 func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFiles []string, done <-chan struct{}) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("api server watcher error").Write()
+		log.Error(err, "api server watcher error")
 		return
 	}
 	defer func() {
 		if err := watcher.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 	for _, f := range watcherFiles {
 		if err := watcher.Add(f); err != nil {
-			syslog.L.Error(err).WithMessage("api server watcher error").Write()
+			log.Error(err, "api server watcher error")
 			return
 		}
 	}
@@ -34,31 +34,30 @@ func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFile
 			select {
 			case event := <-watcher.Events:
 				if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0 {
-					syslog.L.Info().WithMessage("certificate file has changed").WithFields(map[string]any{"name": event.Name, "operation": event.Op}).Write()
+					log.Info("certificate file has changed")
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					err := apiServer.Shutdown(ctx)
 					cancel()
 					if err != nil {
-						syslog.L.Error(err).WithMessage("api server shutdown error").Write()
+						log.Error(err, "api server shutdown error")
 					}
 				}
 			case err := <-watcher.Errors:
-				syslog.L.Error(err).WithMessage("api server watcher error").Write()
+				log.Error(err, "api server watcher error")
 			}
 		}
 	}()
 	for {
 		select {
 		case <-done:
-			syslog.L.Info().WithMessage("WatchAndServe: shutting down").Write()
+			log.Info("WatchAndServe: shutting down")
 			return
 		default:
 		}
-
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting HTTPS server on %s...", apiServer.Addr)).Write()
+		log.Info(fmt.Sprintf("Starting HTTPS server on %s...", apiServer.Addr))
 		err := apiServer.ListenAndServeTLS(certFile, keyFile)
 		if err != nil && err != http.ErrServerClosed {
-			syslog.L.Error(err).WithMessage("server failed").Write()
+			log.Error(err, "server failed")
 		}
 
 		select {

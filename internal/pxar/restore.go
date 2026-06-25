@@ -15,7 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -40,11 +40,8 @@ func (st *restoreState) reportErr(ctx context.Context, op, path string, err erro
 	}
 	e := fmt.Errorf("%s %q: %w", op, path, err)
 	if serr := st.client.SendError(ctx, e); serr != nil {
-		syslog.L.Error(e).
-			WithField("restore", "error-report-failed").
-			WithField("op", op).
-			WithField("sendErr", serr.Error()).
-			Write()
+		log.Error(e, "", "sendErr", serr.Error(), "op", op, "restore", "error-report-failed")
+
 	}
 }
 
@@ -56,11 +53,8 @@ func (st *restoreState) runJobRecovered(ctx context.Context, client *Client, job
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic restoring %q: %v\n%s", job.dest, r, debug.Stack())
-			syslog.L.Error(err).
-				WithJob(client.name).
-				WithField("restore", "panic").
-				WithField("dest", job.dest).
-				Write()
+			log.Error(err, "", "dest", job.dest, "restore", "panic")
+
 		}
 	}()
 	return processJob(ctx, st, job)
@@ -183,16 +177,15 @@ func cleanupStaleTemps(root string) {
 		name := d.Name()
 		if strings.HasPrefix(name, ".pxar-restore-") {
 			if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
-				syslog.L.Warn().
-					WithMessage("restore: could not remove stale temp file").
-					WithField("path", path).
-					WithField("error", rmErr.Error()).
-					Write()
+				log.Warn("restore: could not remove stale temp file",
+
+					"error", rmErr.Error(), "path", path)
+
 			}
 		}
 		return nil
 	}); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -223,14 +216,9 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	log.Info("restore: starting content restore",
 
-	syslog.L.Info().
-		WithJob(client.name).
-		WithMessage("restore: starting content restore").
-		WithField("sources", len(sources)).
-		WithField("dest", destDir).
-		WithField("workers", numWorkers).
-		Write()
+		"workers", numWorkers, "dest", destDir, "sources", len(sources))
 
 	var workersWg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
@@ -240,10 +228,8 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 					defer wg.Done()
 					if err := st.runJobRecovered(workerCtx, client, job); err != nil {
 						if serr := client.SendError(workerCtx, err); serr != nil {
-							syslog.L.Error(err).
-								WithField("restore", "error-report-failed").
-								WithField("sendErr", serr.Error()).
-								Write()
+							log.Error(err, "", "sendErr", serr.Error(), "restore", "error-report-failed")
+
 						}
 					}
 				}()
@@ -267,10 +253,8 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 			sourceAttr, err := client.LookupByPath(workerCtx, src)
 			if err != nil {
 				if serr := client.SendError(workerCtx, err); serr != nil {
-					syslog.L.Error(err).
-						WithField("restore", "error-report-failed").
-						WithField("sendErr", serr.Error()).
-						Write()
+					log.Error(err, "", "sendErr", serr.Error(), "restore", "error-report-failed")
+
 				}
 				return
 			}
@@ -290,36 +274,26 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 	wg.Wait()
 	close(jobs)
 	workersWg.Wait()
-
-	syslog.L.Info().
-		WithJob(client.name).
-		WithMessage("restore: all workers drained, resolving deferred hardlinks").
-		Write()
+	log.Info("restore: all workers drained, resolving deferred hardlinks")
 
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
 				err := fmt.Errorf("panic resolving deferred hardlinks: %v\n%s", r, debug.Stack())
-				syslog.L.Error(err).WithJob(client.name).WithField("restore", "panic").Write()
+				log.Error(err, "", "restore", "panic")
 				if err := client.SendError(workerCtx, err); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 		}()
 		if err := resolveDeferredHardlinks(workerCtx, st); err != nil {
 			if serr := client.SendError(workerCtx, err); serr != nil {
-				syslog.L.Error(err).
-					WithField("restore", "error-report-failed").
-					WithField("sendErr", serr.Error()).
-					Write()
+				log.Error(err, "", "sendErr", serr.Error(), "restore", "error-report-failed")
+
 			}
 		}
 	}()
-
-	syslog.L.Info().
-		WithJob(client.name).
-		WithMessage("restore: content restore complete, returning to caller").
-		Write()
+	log.Info("restore: content restore complete, returning to caller")
 
 	return ctx.Err()
 }
@@ -445,7 +419,7 @@ func streamToTemp(ctx context.Context, st *restoreState, job restoreJob) (tmpPat
 	defer func() {
 		if err != nil {
 			if cerr := f.Close(); cerr != nil {
-				syslog.L.Error(cerr).Write()
+				log.Error(cerr, "")
 			}
 			if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
 				err = fmt.Errorf("%w (temp cleanup of %q failed: %v)", err, tmpPath, rmErr)
@@ -514,7 +488,7 @@ func copyFile(src, dst string) error {
 	}
 	defer func() {
 		if err := in.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -524,7 +498,7 @@ func copyFile(src, dst string) error {
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		if err := out.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return err
 	}
@@ -546,7 +520,7 @@ func restoreSymlink(ctx context.Context, st *restoreState, job restoreJob) error
 			return nil
 		}
 		if err := os.Remove(job.dest); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 

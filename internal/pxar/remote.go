@@ -13,8 +13,8 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var readBufPool = sync.Pool{
@@ -62,7 +62,7 @@ func (s *RemoteServer) Close() error {
 
 	s.contentHandles.ForEach(func(id uint64, h *contentHandle) bool {
 		if err := h.rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return true
 	})
@@ -98,7 +98,7 @@ func (s *RemoteServer) handleError(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	err := fmt.Errorf("client error: %s", params.Error)
-	syslog.L.Error(err).Write()
+	log.Error(err, "")
 	s.errCh <- err
 
 	return arpc.Response{Status: 200}, nil
@@ -212,14 +212,14 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 			readBufPool.Put(bptr)
 		}
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return arpc.Response{}, fmt.Errorf("read content: %w", readErr)
 	}
 
 	if uint64(n) >= params.FileSize {
 		if err := rc.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	} else {
 		s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize})
@@ -234,7 +234,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 			defer readBufPool.Put(bptr)
 		}
 		if err := arpc.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}}, nil
 }
@@ -260,7 +260,7 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 	if params.Offset >= int64(h.fileSize) {
 		return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 			if err := arpc.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}}, nil
 	}
@@ -294,7 +294,7 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 			defer readBufPool.Put(bptr)
 		}
 		if err := arpc.SendDataFromReader(bytes.NewReader(buf[:n]), n, stream); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}}, nil
 }
@@ -311,7 +311,7 @@ func (s *RemoteServer) handleCloseContent(req *arpc.Request) (arpc.Response, err
 	}
 
 	if err := h.rc.Close(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	s.contentHandles.Del(params.HandleID)
 	return arpc.Response{Status: 200}, nil

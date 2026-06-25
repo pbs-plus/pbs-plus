@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"log/slog"
 )
 
 func NormalizeHostname(hostname string) string {
@@ -132,10 +132,10 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	syslog.L.Info().WithFields(map[string]any{"original": upid, "new": newUpid}).WithMessage("updated UPID start time").Write()
+	slog.Info("updated UPID start time")
 
 	if err := os.Symlink(newPath, path); err != nil {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 
 	return newUpid, nil

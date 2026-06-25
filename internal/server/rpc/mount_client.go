@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 // removes the mount directory. It is a no-op when path is empty.
@@ -34,7 +34,7 @@ func unmountPath(path string) {
 		}
 	}
 	if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -67,7 +67,7 @@ func callMountRPC(ctx context.Context, serviceMethod string, args, reply any) er
 	rpcClient := rpc.NewClient(conn)
 	defer func() {
 		if err := rpcClient.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 	return rpcClient.Call(serviceMethod, args, reply)
@@ -147,7 +147,7 @@ func (a *AgentMount) IsConnected() bool {
 	rpcClient := rpc.NewClient(conn)
 	defer func() {
 		if err := rpcClient.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 	if err := rpcClient.Call("MountRPCService.Status", args, &reply); err != nil {
@@ -173,15 +173,14 @@ func (a *AgentMount) CloseMount() {
 	rpcClient := rpc.NewClient(conn)
 	defer func() {
 		if err := rpcClient.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	if err := rpcClient.Call("MountRPCService.ARPCCleanup", args, &reply); err != nil {
-		syslog.L.Error(err).WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).WithMessage(reply.Message).Write()
+		log.Error(err, reply.Message)
 	}
-
-	syslog.L.Info().WithFields(map[string]any{"hostname": a.Hostname, "drive": a.Drive}).WithMessage(reply.Message).Write()
+	log.Info(reply.Message)
 }
 
 // S3Mount is the client-side handle for an S3 FS mount created via the mount

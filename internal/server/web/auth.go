@@ -19,8 +19,8 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func getClientInfo(r *http.Request) string {
@@ -56,7 +56,7 @@ func GetPBSAuth() (*PBSAuth, error) {
 	pbsAuthOnce.Do(func() {
 		cachedPBSAuth, pbsAuthErr = NewPBSAuth()
 		if pbsAuthErr != nil {
-			syslog.L.Error(fmt.Errorf("GetPBSAuth: failed to initialize PBS auth at startup: %w", pbsAuthErr)).Write()
+			log.Error(fmt.Errorf("GetPBSAuth: failed to initialize PBS auth at startup: %w", pbsAuthErr), "")
 		}
 	})
 	return cachedPBSAuth, pbsAuthErr
@@ -95,16 +95,13 @@ func NewPBSAuth() (*PBSAuth, error) {
 func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
 	left, sigStr, usedDecoded, err := splitPBS(cookieVal)
 	if err != nil {
-		syslog.L.Error(err).
-			WithField("stage", "split").
-			WithField("cookie_len", len(cookieVal)).
-			WithField("has_percent", strings.Contains(cookieVal, "%")).
-			Write()
+		log.Error(err, "", "has_percent", strings.Contains(cookieVal, "%"), "cookie_len", len(cookieVal), "stage", "split")
+
 		return false, fmt.Errorf("invalid ticket format: %w", err)
 	}
 
 	if strings.HasPrefix(sigStr, ":") {
-		syslog.L.Warn().WithMessage("VerifyTicket: signature had unexpected leading colon").Write()
+		log.Warn("VerifyTicket: signature had unexpected leading colon")
 		sigStr = sigStr[1:]
 	}
 
@@ -120,14 +117,9 @@ func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
 			sig, err = base64.RawURLEncoding.DecodeString(sigStr)
 		}
 		if err != nil {
-			syslog.L.Error(fmt.Errorf("base64 decode failed: %w", err)).
-				WithField("stage", "b64decode").
-				WithField("used_decoded_cookie", usedDecoded).
-				WithField("sig_len", len(sigStr)).
-				WithField("sig_preview", preview(sigStr, 80)).
-				WithField("alphabet_hint",
-					alphabetHint(sigStr)).
-				Write()
+			log.Error(fmt.Errorf("base64 decode failed: %w", err), "", "alphabet_hint",
+				alphabetHint(sigStr), "sig_preview", preview(sigStr, 80), "sig_len", len(sigStr), "used_decoded_cookie", usedDecoded, "stage", "b64decode")
+
 			return false, fmt.Errorf("signature base64 decode failed: %w", err)
 		}
 	}
@@ -136,12 +128,8 @@ func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
 	case "ed25519":
 		pub := p.privateKey.(ed25519.PrivateKey).Public().(ed25519.PublicKey)
 		if !ed25519.Verify(pub, []byte(left), sig) {
-			syslog.L.Error(fmt.Errorf("ed25519 signature invalid")).
-				WithField("stage", "verify").
-				WithField("msg_len", len(left)).
-				WithField("msg_prefix", preview(left, 32)).
-				WithField("used_decoded_cookie", usedDecoded).
-				Write()
+			log.Error(fmt.Errorf("ed25519 signature invalid"), "", "used_decoded_cookie", usedDecoded, "msg_prefix", preview(left, 32), "msg_len", len(left), "stage", "verify")
+
 			return false, fmt.Errorf("ed25519 signature invalid")
 		}
 		return true, nil
@@ -150,21 +138,15 @@ func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
 		pub := &p.privateKey.(*rsa.PrivateKey).PublicKey
 		sum := sha256.Sum256([]byte(left))
 		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], sig); err != nil {
-			syslog.L.Error(fmt.Errorf("rsa verify failed: %w", err)).
-				WithField("stage", "verify").
-				WithField("hash", "sha256").
-				WithField("msg_len", len(left)).
-				WithField("msg_prefix", preview(left, 32)).
-				WithField("used_decoded_cookie", usedDecoded).
-				Write()
+			log.Error(fmt.Errorf("rsa verify failed: %w", err), "", "used_decoded_cookie", usedDecoded, "msg_prefix", preview(left, 32), "msg_len", len(left), "hash", "sha256", "stage", "verify")
+
 			return false, fmt.Errorf("rsa signature invalid: %w", err)
 		}
 		return true, nil
 
 	default:
-		syslog.L.Error(fmt.Errorf("unsupported key type: %s", p.keyType)).
-			WithField("stage", "verify").
-			Write()
+		log.Error(fmt.Errorf("unsupported key type: %s", p.keyType), "", "stage", "verify")
+
 		return false, fmt.Errorf("unsupported key type: %s", p.keyType)
 	}
 }
@@ -218,10 +200,8 @@ func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hostname, err := checkAgentAuth(store, r)
 		if err != nil {
-			syslog.L.Error(err).
-				WithField("mode", "agent_only").
-				WithField("hostname", getClientInfo(r)).
-				Write()
+			log.Error(err, "", "hostname", getClientInfo(r), "mode", "agent_only")
+
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
@@ -234,10 +214,8 @@ func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkProxyAuth(r); err != nil && !IsLocalhost(r) {
-			syslog.L.Error(err).
-				WithField("mode", "server_only").
-				WithField("hostname", getClientInfo(r)).
-				Write()
+			log.Error(err, "", "hostname", getClientInfo(r), "mode", "server_only")
+
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}
@@ -265,10 +243,8 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 		}
 
 		if !authenticated {
-			syslog.L.Error(lastErr).
-				WithField("mode", "agent_or_server").
-				WithField("hostname", getClientInfo(r)).
-				Write()
+			log.Error(lastErr, "", "hostname", getClientInfo(r), "mode", "agent_or_server")
+
 			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 			return
 		}

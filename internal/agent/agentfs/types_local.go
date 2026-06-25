@@ -12,7 +12,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type FileHandle struct {
@@ -90,29 +90,29 @@ func (fh *FileHandle) waitForOps(timeout time.Duration) bool {
 }
 
 func (s *AgentFSServer) handleStatFS(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleStatFS: encoding statFs").Write()
+	log.Debug("handleStatFS: encoding statFs")
 	enc, err := cbor.Marshal(s.statFs)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleStatFS: encode failed").Write()
+		log.Error(err, "handleStatFS: encode failed")
 		return arpc.Response{}, err
 	}
-	syslog.L.Debug().WithMessage("handleStatFS: success").Write()
+	log.Debug("handleStatFS: success")
 	return arpc.Response{Status: 200, Data: enc}, nil
 }
 
 func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleOpenFile: decoding request").Write()
+	log.Debug("handleOpenFile: decoding request")
 	var payload types.OpenFileReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleOpenFile: decode failed").Write()
+		log.Error(err, "handleOpenFile: decode failed")
 		return arpc.Response{}, err
 	}
 
 	if payload.Flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC) != 0 {
-		syslog.L.Warn().WithMessage("handleOpenFile: write operation blocked").WithField("path", payload.Path).Write()
+		log.Warn("handleOpenFile: write operation blocked", "path", payload.Path)
 		errBytes, err := cbor.Marshal("write operations not allowed")
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return arpc.Response{Status: 403, Data: errBytes}, nil
 	}
@@ -127,21 +127,20 @@ func (s *AgentFSServer) handleOpenFile(req *arpc.Request) (arpc.Response, error)
 	s.handles.Set(handleId, fh)
 	dataBytes, err := cbor.Marshal(types.FileHandleID(handleId))
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
+	log.Debug("handleOpenFile: success",
 
-	syslog.L.Debug().WithMessage("handleOpenFile: success").
-		WithField("handle_id", handleId).
-		WithField("is_dir", fh.isDir).Write()
+		"is_dir", fh.isDir, "handle_id", handleId)
 
 	return arpc.Response{Status: 200, Data: dataBytes}, nil
 }
 
 func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleAttr: decoding request").Write()
+	log.Debug("handleAttr: decoding request")
 	var payload types.StatReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleAttr: decode failed").Write()
+		log.Error(err, "handleAttr: decode failed")
 		return arpc.Response{}, err
 	}
 
@@ -153,19 +152,18 @@ func (s *AgentFSServer) handleAttr(req *arpc.Request) (arpc.Response, error) {
 
 	data, err := cbor.Marshal(info)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleAttr: encode failed").Write()
+		log.Error(err, "handleAttr: encode failed")
 		return arpc.Response{}, err
 	}
-
-	syslog.L.Debug().WithMessage("handleAttr: success").WithField("path", fullPath).Write()
+	log.Debug("handleAttr: success", "path", fullPath)
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleXattr: decoding request").Write()
+	log.Debug("handleXattr: decoding request")
 	var payload types.StatReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleXattr: decode failed").Write()
+		log.Error(err, "handleXattr: decode failed")
 		return arpc.Response{}, err
 	}
 
@@ -177,30 +175,29 @@ func (s *AgentFSServer) handleXattr(req *arpc.Request) (arpc.Response, error) {
 
 	data, err := cbor.Marshal(info)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleXattr: encode failed").Write()
+		log.Error(err, "handleXattr: encode failed")
 		return arpc.Response{}, err
 	}
-
-	syslog.L.Debug().WithMessage("handleXattr: success").WithField("path", fullPath).Write()
+	log.Debug("handleXattr: success", "path", fullPath)
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
 func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleReadDir: decoding request").Write()
+	log.Debug("handleReadDir: decoding request")
 	var payload types.ReadDirReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleReadDir: decode failed").Write()
+		log.Error(err, "handleReadDir: decode failed")
 		return arpc.Response{}, err
 	}
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleReadDir: handle not found").WithField("handle_id", payload.HandleID).Write()
+		log.Warn("handleReadDir: handle not found", "handle_id", payload.HandleID)
 		return arpc.Response{}, os.ErrNotExist
 	}
 
 	if !fh.acquireOp() {
-		syslog.L.Debug().WithMessage("handleReadDir: handle is closing").WithField("handle_id", payload.HandleID).Write()
+		log.Debug("handleReadDir: handle is closing", "handle_id", payload.HandleID)
 		return arpc.Response{}, os.ErrClosed
 	}
 
@@ -213,25 +210,24 @@ func (s *AgentFSServer) handleReadDir(req *arpc.Request) (arpc.Response, error) 
 		fh.releaseOp()
 		return arpc.Response{}, err
 	}
-
-	syslog.L.Debug().WithMessage("handleReadDir: sending batch").WithField("handle_id", payload.HandleID).WithField("bytes", len(encodedBatch)).Write()
+	log.Debug("handleReadDir: sending batch", "bytes", len(encodedBatch), "handle_id", payload.HandleID)
 
 	return arpc.Response{
 		Status: 213,
 		RawStream: func(stream arpc.ARPCStream) {
 			defer fh.releaseOp()
 			if err := arpc.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		},
 	}, nil
 }
 
 func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleReadAt: decoding request").Write()
+	log.Debug("handleReadAt: decoding request")
 	var payload types.ReadAtReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleReadAt: decode failed").Write()
+		log.Error(err, "handleReadAt: decode failed")
 		return arpc.Response{}, err
 	}
 
@@ -241,12 +237,12 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleReadAt: handle not found").WithField("handle_id", payload.HandleID).Write()
+		log.Warn("handleReadAt: handle not found", "handle_id", payload.HandleID)
 		return arpc.Response{}, os.ErrNotExist
 	}
 
 	if !fh.acquireOp() {
-		syslog.L.Debug().WithMessage("handleReadAt: handle is closing").WithField("handle_id", payload.HandleID).Write()
+		log.Debug("handleReadAt: handle is closing", "handle_id", payload.HandleID)
 		return arpc.Response{}, os.ErrClosed
 	}
 
@@ -259,7 +255,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		fh.releaseOp()
 		return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
 			if err := arpc.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}}, nil
 	}
@@ -275,7 +271,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 				defer fh.releaseOp()
 				defer cleanup()
 				if err := arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}}, nil
 		}
@@ -295,7 +291,7 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			readBufPool.Put(bptr)
 		}
 		fh.releaseOp()
-		syslog.L.Error(err).WithMessage("handleReadAt: read failed").Write()
+		log.Error(err, "handleReadAt: read failed")
 		return arpc.Response{}, err
 	}
 
@@ -305,22 +301,22 @@ func (s *AgentFSServer) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 			defer readBufPool.Put(bptr)
 		}
 		if err := arpc.SendDataFromReader(bytes.NewReader(workBuf[:n]), n, stream); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}}, nil
 }
 
 func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleLseek: decoding request").Write()
+	log.Debug("handleLseek: decoding request")
 	var payload types.LseekReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleLseek: decode failed").Write()
+		log.Error(err, "handleLseek: decode failed")
 		return arpc.Response{}, err
 	}
 
 	fh, exists := s.handles.Get(uint64(payload.HandleID))
 	if !exists {
-		syslog.L.Warn().WithMessage("handleLseek: handle not found").WithField("handle_id", payload.HandleID).Write()
+		log.Warn("handleLseek: handle not found", "handle_id", payload.HandleID)
 		return arpc.Response{}, os.ErrNotExist
 	}
 
@@ -334,23 +330,23 @@ func (s *AgentFSServer) handleLseek(req *arpc.Request) (arpc.Response, error) {
 
 	newOffset, err := s.platformLseek(fh, payload.Offset, payload.Whence)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("handleLseek: seek failed").Write()
+		log.Error(err, "handleLseek: seek failed")
 		return arpc.Response{}, err
 	}
 
 	fh.logicalOffset = newOffset
 	respBytes, err := cbor.Marshal(types.LseekResp{NewOffset: newOffset})
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	return arpc.Response{Status: 200, Data: respBytes}, nil
 }
 
 func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
-	syslog.L.Debug().WithMessage("handleClose: decoding request").Write()
+	log.Debug("handleClose: decoding request")
 	var payload types.CloseReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
-		syslog.L.Error(err).WithMessage("handleClose: decode failed").Write()
+		log.Error(err, "handleClose: decode failed")
 		return arpc.Response{}, err
 	}
 
@@ -364,19 +360,19 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	if !fh.waitForOps(30 * time.Second) {
-		syslog.L.Warn().WithMessage("handleClose: timeout, forcing").WithField("handle_id", payload.HandleID).Write()
+		log.Warn("handleClose: timeout, forcing", "handle_id", payload.HandleID)
 	}
 
 	fh.mu.Lock()
 	s.platformCloseResources(fh)
 	if fh.dirReader != nil {
 		if err := fh.dirReader.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	if fh.file != nil {
 		if err := fh.file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	fh.mu.Unlock()
@@ -384,7 +380,7 @@ func (s *AgentFSServer) handleClose(req *arpc.Request) (arpc.Response, error) {
 	s.handles.Del(uint64(payload.HandleID))
 	data, err := cbor.Marshal("closed")
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	return arpc.Response{Status: 200, Data: data}, nil
 }

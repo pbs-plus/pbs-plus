@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -67,7 +67,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -102,20 +102,20 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		go func() {
 			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 			if err != nil {
-				syslog.L.Error(err).WithField("restores", decodedRestoreIDs).Write()
+				log.Error(err, "", "restores", decodedRestoreIDs)
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
 			defer func() {
 				if err := rpcClient.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}()
 
 			for _, restoreID := range decodedRestoreIDs {
 				restoreTask, err := storeInstance.Database.GetRestore(restoreID)
 				if err != nil {
-					syslog.L.Error(err).WithField("restoreID", restoreID).Write()
+					log.Error(err, "", "restoreID", restoreID)
 					continue
 				}
 
@@ -127,11 +127,11 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 				var reply jobrpc.QueueReply
 				if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
-					syslog.L.Error(err).WithField("restoreID", restoreID).Write()
+					log.Error(err, "", "restoreID", restoreID)
 					continue
 				}
 				if reply.Status != 200 {
-					syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("restoreID", restoreID).Write()
+					log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", restoreID)
 				}
 			}
 		}()
@@ -140,7 +140,7 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -267,7 +267,7 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -424,7 +424,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 			return
@@ -449,7 +449,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			flat["notification-batch"] = GetJobBatchName(storeInstance, "restore", restore.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 			return
@@ -471,7 +471,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -16,7 +17,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const schedulerTickInterval = 30 * time.Second
@@ -45,7 +45,7 @@ func (s *Scheduler) Start() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				syslog.L.Error(fmt.Errorf("scheduler panic: %v", r)).WithMessage("Scheduler: panic recovered").Write()
+				log.Error(fmt.Errorf("scheduler panic: %v", r), "Scheduler: panic recovered")
 			}
 		}()
 		s.run()
@@ -55,8 +55,7 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) run() {
 	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
-
-	syslog.L.Info().WithMessage("Internal scheduler started").Write()
+	log.Info("Internal scheduler started")
 
 	for {
 		select {
@@ -74,7 +73,7 @@ func (s *Scheduler) run() {
 func (s *Scheduler) checkBackups() {
 	backups, err := s.storeInstance.Database.GetAllBackups()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Scheduler: failed to get all backups").Write()
+		log.Error(err, "Scheduler: failed to get all backups")
 		return
 	}
 
@@ -87,7 +86,7 @@ func (s *Scheduler) checkBackups() {
 
 		if b.Schedule != "" {
 			if nextRun, ok := s.shouldRunScheduled(b, now); ok {
-				syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: scheduled backup is due, enqueuing").Write()
+				log.Info("Scheduler: scheduled backup is due, enqueuing", "backupID", b.ID)
 				s.markEnqueued(b.ID, nextRun)
 				job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
 				go s.enqueueBackup(b.ID, job)
@@ -96,7 +95,7 @@ func (s *Scheduler) checkBackups() {
 		}
 
 		if b.Retry > 0 && s.shouldRetryBackup(b, now) {
-			syslog.L.Info().WithField("backupID", b.ID).WithMessage("Scheduler: backup retry is due, enqueuing").Write()
+			log.Info("Scheduler: backup retry is due, enqueuing", "backupID", b.ID)
 			job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
 			go s.enqueueBackup(b.ID, job)
 		}
@@ -186,7 +185,7 @@ func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
 func (s *Scheduler) checkRestores() {
 	restores, err := s.storeInstance.Database.GetAllRestores()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Scheduler: failed to get all restores").Write()
+		log.Error(err, "Scheduler: failed to get all restores")
 		return
 	}
 
@@ -198,10 +197,10 @@ func (s *Scheduler) checkRestores() {
 		}
 
 		if r.Retry > 0 && s.shouldRetryRestore(r, now) {
-			syslog.L.Info().WithField("restoreID", r.ID).WithMessage("Scheduler: restore retry is due, enqueuing").Write()
+			log.Info("Scheduler: restore retry is due, enqueuing", "restoreID", r.ID)
 			job, err := restore.NewRestoreJob(r, s.storeInstance, false, false)
 			if err != nil {
-				syslog.L.Error(err).WithField("restoreID", r.ID).WithMessage("Scheduler: failed to create restore job").Write()
+				log.Error(err, "Scheduler: failed to create restore job", "restoreID", r.ID)
 				continue
 			}
 			go s.enqueueRestore(r.ID, job)
@@ -238,7 +237,7 @@ func (s *Scheduler) checkMtfJobs() {
 	}
 	mjobs, err := ms.ListMtfJobs(s.ctx)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Scheduler: failed to get MTF jobs").Write()
+		log.Error(err, "Scheduler: failed to get MTF jobs")
 		return
 	}
 
@@ -250,23 +249,23 @@ func (s *Scheduler) checkMtfJobs() {
 
 		if mj.Schedule != "" {
 			if nextRun, ok := s.shouldRunScheduledMtf(mj, now); ok {
-				syslog.L.Info().WithField("mtfJobID", mj.ID).WithMessage("Scheduler: scheduled MTF job is due, enqueuing").Write()
+				log.Info("Scheduler: scheduled MTF job is due, enqueuing", "mtfJobID", mj.ID)
 				s.markEnqueued(mj.ID, nextRun)
 				if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
 					go s.enqueueMtf(mj.ID, job)
 				} else {
-					syslog.L.Error(err).WithField("mtfJobID", mj.ID).Write()
+					log.Error(err, "", "mtfJobID", mj.ID)
 				}
 				continue
 			}
 		}
 
 		if mj.Retry > 0 && s.shouldRetryMtf(mj, now) {
-			syslog.L.Info().WithField("mtfJobID", mj.ID).WithMessage("Scheduler: MTF job retry is due, enqueuing").Write()
+			log.Info("Scheduler: MTF job retry is due, enqueuing", "mtfJobID", mj.ID)
 			if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
 				go s.enqueueMtf(mj.ID, job)
 			} else {
-				syslog.L.Error(err).WithField("mtfJobID", mj.ID).Write()
+				log.Error(err, "", "mtfJobID", mj.ID)
 			}
 		}
 	}
@@ -322,18 +321,18 @@ func (s *Scheduler) shouldRetryMtf(mj mtfdb.MTFJob, now time.Time) bool {
 
 func (s *Scheduler) enqueueMtf(id string, job *jobs.Job) {
 	if err := s.manager.Enqueue(job); err != nil {
-		syslog.L.Error(err).WithField("mtfJobID", id).WithMessage("Scheduler: failed to enqueue MTF job").Write()
+		log.Error(err, "Scheduler: failed to enqueue MTF job", "mtfJobID", id)
 	}
 }
 
 func (s *Scheduler) enqueueBackup(id string, job *jobs.Job) {
 	if err := s.manager.Enqueue(job); err != nil {
-		syslog.L.Error(err).WithField("backupID", id).WithMessage("Scheduler: failed to enqueue backup").Write()
+		log.Error(err, "Scheduler: failed to enqueue backup", "backupID", id)
 	}
 }
 func (s *Scheduler) enqueueRestore(id string, job *jobs.Job) {
 	if err := s.manager.Enqueue(job); err != nil {
-		syslog.L.Error(err).WithField("restoreID", id).WithMessage("Scheduler: failed to enqueue restore").Write()
+		log.Error(err, "Scheduler: failed to enqueue restore", "restoreID", id)
 	}
 }
 
@@ -346,7 +345,7 @@ func isFailedState(state string) bool {
 func (s *Scheduler) checkVerifications() {
 	vJobs, err := s.storeInstance.Database.GetAllVerificationJobs()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Scheduler: failed to get verification jobs").Write()
+		log.Error(err, "Scheduler: failed to get verification jobs")
 		return
 	}
 
@@ -383,30 +382,29 @@ func (s *Scheduler) checkVerifications() {
 		if now.Sub(nextRun) >= schedulerTickInterval {
 			continue
 		}
-
-		syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: scheduled verification is due").Write()
+		log.Info("Scheduler: scheduled verification is due", "verificationJobID", vJob.ID)
 
 		if vJob.RunOnBackupComplete {
 			// Don't run yet  -  mark as pending, wait for backup completion
 			if vJob.PendingSince == 0 {
 				vJob.PendingSince = now.Unix()
 				if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
-					syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: failed to set pending_since").Write()
+					log.Error(err, "Scheduler: failed to set pending_since", "verificationJobID", vJob.ID)
 				}
-				syslog.L.Info().WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: verification pending until backup completes").Write()
+				log.Info("Scheduler: verification pending until backup completes", "verificationJobID", vJob.ID)
 			}
 			continue
 		}
 
 		job, err := verification.NewVerificationJob(vJob, s.storeInstance, false)
 		if err != nil {
-			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("Scheduler: failed to create verification job").Write()
+			log.Error(err, "Scheduler: failed to create verification job", "verificationJobID", vJob.ID)
 			continue
 		}
 
 		go func(id string) {
 			if err := s.manager.Enqueue(job); err != nil {
-				syslog.L.Error(err).WithField("verificationJobID", id).WithMessage("Scheduler: failed to enqueue verification").Write()
+				log.Error(err, "Scheduler: failed to enqueue verification", "verificationJobID", id)
 			}
 		}(vJob.ID)
 	}
@@ -417,13 +415,13 @@ func (s *Scheduler) checkVerifications() {
 func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 	vJobs, err := s.storeInstance.Database.GetAllVerificationJobs()
 	if err != nil {
-		syslog.L.Error(err).WithMessage("TriggerPendingVerifications: failed to list verification jobs").Write()
+		log.Error(err, "TriggerPendingVerifications: failed to list verification jobs")
 		return
 	}
 
 	completedBackup, err := s.storeInstance.Database.GetBackup(backupJobID)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("TriggerPendingVerifications: failed to get backup job").Write()
+		log.Error(err, "TriggerPendingVerifications: failed to get backup job")
 		return
 	}
 
@@ -451,27 +449,23 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 		if s.manager.IsRunning(vJob.ID) {
 			continue
 		}
-
-		syslog.L.Info().
-			WithField("verificationJobID", vJob.ID).
-			WithField("backupJobID", backupJobID).
-			WithMessage("backup completed, triggering pending verification").Write()
+		log.Info("backup completed, triggering pending verification", "backupJobID", backupJobID, "verificationJobID", vJob.ID)
 
 		vJob.PendingSince = 0
 		if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
-			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("failed to clear pending_since").Write()
+			log.Error(err, "failed to clear pending_since", "verificationJobID", vJob.ID)
 			continue
 		}
 
 		job, err := verification.NewVerificationJob(vJob, s.storeInstance, false)
 		if err != nil {
-			syslog.L.Error(err).WithField("verificationJobID", vJob.ID).WithMessage("failed to create verification job").Write()
+			log.Error(err, "failed to create verification job", "verificationJobID", vJob.ID)
 			continue
 		}
 
 		go func(id string) {
 			if err := s.manager.Enqueue(job); err != nil {
-				syslog.L.Error(err).WithField("verificationJobID", id).WithMessage("failed to enqueue verification").Write()
+				log.Error(err, "failed to enqueue verification", "verificationJobID", id)
 			}
 		}(vJob.ID)
 	}

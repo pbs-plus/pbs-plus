@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type AlertType string
@@ -57,7 +57,7 @@ func sendAlertWithData(alertType AlertType, severity string, details map[string]
 	}()
 	tmplJSON, err := json.Marshal(tmplData)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	tc := templateContent{
@@ -66,7 +66,7 @@ func sendAlertWithData(alertType AlertType, severity string, details map[string]
 	}
 	tcJSON, err := json.Marshal(tc)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to marshal alert template content").Write()
+		log.Error(err, "failed to marshal alert template content")
 		return
 	}
 
@@ -74,7 +74,7 @@ func sendAlertWithData(alertType AlertType, severity string, details map[string]
 		"template": tcJSON,
 	})
 	if err != nil {
-		syslog.L.Error(err).WithMessage("failed to wrap alert template content").Write()
+		log.Error(err, "failed to wrap alert template content")
 		return
 	}
 

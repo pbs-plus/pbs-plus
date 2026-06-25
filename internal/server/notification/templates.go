@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 //go:embed templates/default/*.hbs
@@ -24,13 +24,13 @@ func InstallTemplates() {
 	templateOnce.Do(func() {
 		entries, err := templateFS.ReadDir("templates/default")
 		if err != nil {
-			syslog.L.Error(err).WithMessage("failed to read embedded notification templates").Write()
+			log.Error(err, "failed to read embedded notification templates")
 			return
 		}
 
 		// Ensure vendor template directory exists
 		if err := os.MkdirAll(VendorTemplateDir, 0755); err != nil {
-			syslog.L.Error(err).WithMessage("failed to create template directory").Write()
+			log.Error(err, "failed to create template directory")
 			return
 		}
 
@@ -48,12 +48,12 @@ func InstallTemplates() {
 
 			data, err := templateFS.ReadFile(filepath.Join("templates", "default", entry.Name()))
 			if err != nil {
-				syslog.L.Error(err).WithField("template", entry.Name()).WithMessage("failed to read embedded template").Write()
+				log.Error(err, "failed to read embedded template", "template", entry.Name())
 				continue
 			}
 
 			if err := os.WriteFile(destPath, data, 0644); err != nil {
-				syslog.L.Error(err).WithField("path", destPath).WithMessage("failed to install notification template").Write()
+				log.Error(err, "failed to install notification template", "path", destPath)
 				continue
 			}
 		}

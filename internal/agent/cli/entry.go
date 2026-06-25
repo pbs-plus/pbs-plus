@@ -3,13 +3,13 @@ package cli
 import (
 	"flag"
 	"fmt"
-	"log"
+	stdlog "log"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func Entry() {
@@ -25,7 +25,7 @@ func Entry() {
 	flag.Parse()
 
 	if *cmdMode != "restore" && *cmdMode != "backup" && *cmdMode != "verify" {
-		syslog.L.Debug().WithMessage("cli: invalid command mode").WithField("cmdMode", *cmdMode).Write()
+		log.Debug("cli: invalid command mode", "cmdMode", *cmdMode)
 		return
 	}
 
@@ -33,26 +33,18 @@ func Entry() {
 		fmt.Fprintln(os.Stderr, "Error: token required")
 		os.Exit(1)
 	}
+	log.Debug("cli: fork invoked",
 
-	syslog.L.Debug().WithMessage("cli: fork invoked").
-		WithField("cmdMode", *cmdMode).
-		WithField("sourceMode", *sourceMode).
-		WithField("readMode", *readMode).
-		WithField("restoreMode", *restoreMode).
-		WithField("drive", *drive).
-		WithField("id", *id).
-		WithField("srcPath", *srcPath).
-		WithField("destPath", *destPath).
-		Write()
+		"destPath", *destPath, "srcPath", *srcPath, "id", *id, "drive", *drive, "restoreMode", *restoreMode, "readMode", *readMode, "sourceMode", *sourceMode, "cmdMode", *cmdMode)
 
 	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-%s-%s", *cmdMode, *id))
 	expectedToken, err := os.ReadFile(tokenFile)
 	if err := os.Remove(tokenFile); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Error: token file not found")
-		syslog.L.Error(err).WithMessage("backup: token file read failed").Write()
+		log.Error(err, "backup: token file read failed")
 		os.Exit(1)
 	}
 
@@ -74,12 +66,12 @@ func Entry() {
 					continue
 				}
 
-				log.Printf("pprof server listening on http://localhost%s", addr)
-				log.Println(http.Serve(listener, nil))
+				stdlog.Printf("pprof server listening on http://localhost%s", addr)
+				stdlog.Println(http.Serve(listener, nil))
 				return
 			}
 
-			log.Printf("failed to start pprof server after %d attempts", maxAttempts)
+			stdlog.Printf("failed to start pprof server after %d attempts", maxAttempts)
 		}()
 	}
 

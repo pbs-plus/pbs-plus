@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // hardlinkIndex tracks restored entries so pxar hardlink entries
@@ -90,7 +90,7 @@ func finalIndex(s []string) int {
 func linkFile(old, new string) error {
 	if _, err := os.Lstat(new); err == nil {
 		if err := os.Remove(new); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	return os.Link(old, new)

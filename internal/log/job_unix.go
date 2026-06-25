@@ -210,7 +210,44 @@ func (l *Logger) JobStdoutWriter() io.Writer {
 	if l.jobID == "" {
 		return nil
 	}
-	return getExistingJobLogger(l.jobID)
+	jl := getExistingJobLogger(l.jobID)
+	if jl == nil {
+		return nil
+	}
+	return jl.writer
+}
+
+func (l *Logger) JobLogPath() string {
+	if l.jobID == "" {
+		return ""
+	}
+	jl := getExistingJobLogger(l.jobID)
+	if jl == nil {
+		return ""
+	}
+	return jl.path
+}
+
+func (l *Logger) JobStartTime() time.Time {
+	if l.jobID == "" {
+		return time.Now()
+	}
+	jl := getExistingJobLogger(l.jobID)
+	if jl == nil {
+		return time.Now()
+	}
+	return jl.startTime
+}
+
+func (l *Logger) FlushJobLog() error {
+	if l.jobID == "" {
+		return nil
+	}
+	jl := getExistingJobLogger(l.jobID)
+	if jl == nil {
+		return nil
+	}
+	return jl.Flush()
 }
 
 func (l *Logger) closeJobLogger() {

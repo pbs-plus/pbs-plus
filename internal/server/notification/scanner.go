@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 const (
@@ -23,7 +23,7 @@ func NewAlertScanner(db *database.Database) *AlertScanner {
 }
 
 func (s *AlertScanner) Start(ctx context.Context, interval time.Duration) {
-	syslog.L.Info().WithMessage("alert scanner started").Write()
+	log.Info("alert scanner started")
 	s.ensureDefaults()
 
 	ticker := time.NewTicker(interval)
@@ -36,7 +36,7 @@ func (s *AlertScanner) Start(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
-			syslog.L.Info().WithMessage("alert scanner stopped").Write()
+			log.Info("alert scanner stopped")
 			return
 		case <-ticker.C:
 			s.RunChecks(ctx)
@@ -61,7 +61,7 @@ func (s *AlertScanner) ensureDefaults() {
 	}
 	for _, d := range defaults {
 		if _, err := s.db.EnsureAlertSetting(d.name, d.threshold, d.severity); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -94,7 +94,7 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 
 	excludedTargets, err := s.db.GetExcludedValues(string(AlertUnconfiguredTarget), "target")
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	targets, err := s.db.GetAllTargets()
@@ -147,7 +147,7 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 		"targets": names,
 	})
 	if err := s.db.UpdateAlertLastSent(string(AlertUnconfiguredTarget), time.Now().Unix()); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -164,7 +164,7 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 
 	excludedJobs, err := s.db.GetExcludedValues(string(AlertStaleBackup), "job")
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	backups, err := s.db.GetAllBackups()
@@ -237,7 +237,7 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 	})
 
 	if err := s.db.UpdateAlertLastSent(string(AlertStaleBackup), time.Now().Unix()); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 

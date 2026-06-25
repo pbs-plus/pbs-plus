@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 //go:embed install-agent.ps1
@@ -57,10 +57,10 @@ var githubDownloadClient = &http.Client{
 func init() {
 	dir := getCacheDir()
 	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		syslog.L.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err)).Write()
+		log.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err), "")
 	}
 }
 
@@ -69,7 +69,7 @@ func getCacheDir() string {
 	dir := filepath.Join(base, "pbs-plus-binaries")
 
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		syslog.L.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err)).Write()
+		log.Error(fmt.Errorf("failed to create cache dir %s: %v", dir, err), "")
 	}
 	return dir
 }
@@ -92,13 +92,13 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 
 	resp, err := githubDownloadClient.Get(targetURL)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 		http.Error(w, "Failed to reach upstream", http.StatusBadGateway)
 		return
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -107,7 +107,7 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 		if readBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096)); readErr == nil {
 			body = readBody
 		}
-		syslog.L.Error(fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))).Write()
+		log.Error(fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))), "")
 		http.Error(w, "Upstream returned error", resp.StatusCode)
 		return
 	}
@@ -121,45 +121,45 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 
 	tmpFile, err := os.CreateTemp(getCacheDir(), "download-*")
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 		if _, err := io.Copy(w, limitedReader); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return
 	}
 
 	if err := tmpFile.Chmod(0600); err != nil {
-		syslog.L.Error(fmt.Errorf("failed to set permissions on temp file: %v", err)).Write()
+		log.Error(fmt.Errorf("failed to set permissions on temp file: %v", err), "")
 	}
 
 	written, err := io.Copy(tmpFile, limitedReader)
 	if err != nil {
 		if closeErr := tmpFile.Close(); closeErr != nil {
-			syslog.L.Error(closeErr).Write()
+			log.Error(closeErr, "")
 		}
 		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
-			syslog.L.Error(removeErr).Write()
+			log.Error(removeErr, "")
 		}
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 		http.Error(w, "Failed to write download", http.StatusInternalServerError)
 		return
 	}
 	if written > maxDownloadSize {
 		if closeErr := tmpFile.Close(); closeErr != nil {
-			syslog.L.Error(closeErr).Write()
+			log.Error(closeErr, "")
 		}
 		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
-			syslog.L.Error(removeErr).Write()
+			log.Error(removeErr, "")
 		}
 		http.Error(w, "Response too large", http.StatusBadGateway)
 		return
 	}
 	if err := tmpFile.Close(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	if err := os.Rename(tmpFile.Name(), cachePath); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }
 
@@ -202,21 +202,21 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 
 		scriptContent, err := scriptFS.ReadFile("install-agent.ps1")
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "failed to read script", http.StatusInternalServerError)
 			return
 		}
 
 		tmpl, err := template.New("script").Parse(string(scriptContent))
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "failed to parse template", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		if err := tmpl.Execute(w, config); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -231,7 +231,7 @@ func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc
 		toReturn := VersionResponse{Version: v, Embedded: ev != ""}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -291,14 +291,14 @@ func DownloadMsiHandler(storeInstance *store.Store, version string) http.Handler
 		}
 
 		if err := validateVersion(version); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "Invalid version", http.StatusBadRequest)
 			return
 		}
 
 		platform, err := parsePlatformParams(r)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -316,14 +316,14 @@ func DownloadBinaryHandler(storeInstance *store.Store, version string) http.Hand
 		}
 
 		if err := validateVersion(version); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "Invalid version", http.StatusBadRequest)
 			return
 		}
 
 		platform, err := parsePlatformParams(r)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -345,14 +345,14 @@ func DownloadSigHandler(storeInstance *store.Store, version string) http.Handler
 		}
 
 		if err := validateVersion(version); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "Invalid version", http.StatusBadRequest)
 			return
 		}
 
 		platform, err := parsePlatformParams(r)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -374,14 +374,14 @@ func DownloadECDSASigHandler(storeInstance *store.Store, version string) http.Ha
 		}
 
 		if err := validateVersion(version); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "Invalid version", http.StatusBadRequest)
 			return
 		}
 
 		platform, err := parsePlatformParams(r)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -403,14 +403,14 @@ func DownloadChecksumHandler(storeInstance *store.Store, version string) http.Ha
 		}
 
 		if err := validateVersion(version); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "Invalid version", http.StatusBadRequest)
 			return
 		}
 
 		platform, err := parsePlatformParams(r)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -434,14 +434,14 @@ func CAFingerprintHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		fingerprint, err := storeInstance.CertManager.CAFingerprint()
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			http.Error(w, "failed to compute CA fingerprint", http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		if _, err := w.Write([]byte(fingerprint)); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }

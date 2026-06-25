@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -24,7 +24,7 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 				"success": true,
 				"status":  http.StatusOK,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -95,7 +95,7 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 				"success": true,
 				"status":  http.StatusOK,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -123,7 +123,7 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				"success": true,
 				"status":  http.StatusOK,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -188,7 +188,7 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				"success": true,
 				"status":  http.StatusOK,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -219,7 +219,7 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 				"data":    exclusions,
 				"success": true,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -248,7 +248,7 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err := json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -280,7 +280,7 @@ func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			if err := json.NewEncoder(w).Encode(map[string]any{
 				"success": true,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -296,7 +296,7 @@ func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				"data":    exclusion,
 				"success": true,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}

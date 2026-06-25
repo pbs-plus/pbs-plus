@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/transfer"
@@ -127,12 +127,9 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 			task:      task,
 			startTime: time.Now(),
 		}
+		log.Info("pxar: native Go reader created",
 
-		syslog.L.Info().
-			WithMessage("pxar: native Go reader created").
-			WithField("datastore", pbsStore).
-			WithField("split", true).
-			Write()
+			"split", true, "datastore", pbsStore)
 
 		return pr, nil
 	}

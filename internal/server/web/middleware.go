@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type contextKey int
@@ -189,11 +189,8 @@ func RequireAgentAuth(st *store.Store) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			hostname, err := checkAgentAuth(st, r)
 			if err != nil {
-				syslog.L.Error(err).
-					WithField("mode", "agent_only").
-					WithField("hostname", getClientInfo(r)).
-					WithField("request_id", GetRequestID(r.Context())).
-					Write()
+				log.Error(err, "", "request_id", GetRequestID(r.Context()), "hostname", getClientInfo(r), "mode", "agent_only")
+
 				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 				return
 			}
@@ -207,11 +204,8 @@ func RequireServerAuth(st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if err := checkProxyAuth(r); err != nil && !IsLocalhost(r) {
-				syslog.L.Error(err).
-					WithField("mode", "server_only").
-					WithField("hostname", getClientInfo(r)).
-					WithField("request_id", GetRequestID(r.Context())).
-					Write()
+				log.Error(err, "", "request_id", GetRequestID(r.Context()), "hostname", getClientInfo(r), "mode", "server_only")
+
 				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 				return
 			}
@@ -240,11 +234,8 @@ func RequireAgentOrServerAuth(st *store.Store) func(http.Handler) http.Handler {
 			}
 
 			if !authenticated {
-				syslog.L.Error(lastErr).
-					WithField("mode", "agent_or_server").
-					WithField("hostname", getClientInfo(r)).
-					WithField("request_id", GetRequestID(r.Context())).
-					Write()
+				log.Error(lastErr, "", "request_id", GetRequestID(r.Context()), "hostname", getClientInfo(r), "mode", "agent_or_server")
+
 				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
 				return
 			}

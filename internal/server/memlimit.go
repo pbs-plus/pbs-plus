@@ -4,7 +4,7 @@ import (
 	"time"
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func init() {
@@ -15,6 +15,6 @@ func init() {
 		),
 		memlimit.WithRefreshInterval(1*time.Minute),
 	); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 }

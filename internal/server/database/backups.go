@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -56,21 +56,21 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateBackup: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateBackup: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("CreateBackup: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateBackup: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateBackup: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -159,10 +159,8 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 			Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 		})
 		if err != nil {
-			syslog.L.Error(fmt.Errorf("CreateBackup: failed to create exclusion: %w", err)).
-				WithField("backup_id", backup.ID).
-				WithField("path", exclusion.Path).
-				Write()
+			log.Error(fmt.Errorf("CreateBackup: failed to create exclusion: %w", err), "", "path", exclusion.Path, "backup_id", backup.ID)
+
 			return fmt.Errorf("CreateBackup: failed to create exclusion '%s': %w", exclusion.Path, err)
 		}
 	}
@@ -289,21 +287,21 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateBackup: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateBackup: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("UpdateBackup: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateBackup: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateBackup: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -382,10 +380,8 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 			Comment: sql.NullString{String: exclusion.Comment, Valid: exclusion.Comment != ""},
 		})
 		if err != nil {
-			syslog.L.Error(fmt.Errorf("UpdateBackup: failed to create exclusion: %w", err)).
-				WithField("backup_id", backup.ID).
-				WithField("path", exclusion.Path).
-				Write()
+			log.Error(fmt.Errorf("UpdateBackup: failed to create exclusion: %w", err), "", "path", exclusion.Path, "backup_id", backup.ID)
+
 			return fmt.Errorf("UpdateBackup: failed to create exclusion '%s': %w", exclusion.Path, err)
 		}
 	}
@@ -401,48 +397,39 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 func (database *Database) linkBackupLog(backupID, upid string) {
 	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, backupID)
 	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
-		syslog.L.Error(fmt.Errorf("linkBackupLog: failed to create log dir: %w", err)).
-			WithField("id", backupID).
-			Write()
+		log.Error(fmt.Errorf("linkBackupLog: failed to create log dir: %w", err), "", "id", backupID)
+
 		return
 	}
 
 	backupLogPath := filepath.Join(backupLogsPath, upid)
 	if _, err := os.Lstat(backupLogPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(fmt.Errorf("linkBackupLog: failed to stat potential symlink: %w", err)).
-			WithField("path", backupLogPath).
-			Write()
+		log.Error(fmt.Errorf("linkBackupLog: failed to stat potential symlink: %w", err), "", "path", backupLogPath)
+
 		return
 	}
 
 	origLogPath, err := tasklog.UPIDLogPath(upid)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("linkBackupLog: failed to get original log path: %w", err)).
-			WithField("id", backupID).
-			WithField("upid", upid).
-			Write()
+		log.Error(fmt.Errorf("linkBackupLog: failed to get original log path: %w", err), "", "upid", upid, "id", backupID)
+
 		return
 	}
 
 	if _, err := os.Stat(origLogPath); err != nil {
-		syslog.L.Error(fmt.Errorf("linkBackupLog: original log path does not exist: %w", err)).
-			WithField("orig_path", origLogPath).
-			WithField("id", backupID).
-			Write()
+		log.Error(fmt.Errorf("linkBackupLog: original log path does not exist: %w", err), "", "id", backupID, "orig_path", origLogPath)
+
 		return
 	}
 
 	if err := os.Remove(backupLogPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	err = os.Symlink(origLogPath, backupLogPath)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("linkBackupLog: failed to create symlink: %w", err)).
-			WithField("id", backupID).
-			WithField("source", origLogPath).
-			WithField("link", backupLogPath).
-			Write()
+		log.Error(fmt.Errorf("linkBackupLog: failed to create symlink: %w", err), "", "link", backupLogPath, "source", origLogPath, "id", backupID)
+
 	}
 }
 
@@ -620,21 +607,21 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteBackup: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteBackup: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("DeleteBackup: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteBackup: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteBackup: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -643,9 +630,8 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 
 	err = q.DeleteBackupExclusions(database.ctx, id)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("DeleteBackup: error deleting exclusions: %w", err)).
-			WithField("id", id).
-			Write()
+		log.Error(fmt.Errorf("DeleteBackup: error deleting exclusions: %w", err), "", "id", id)
+
 		return fmt.Errorf("DeleteBackup: error deleting exclusions: %w", err)
 	}
 
@@ -661,9 +647,8 @@ func (database *Database) DeleteBackup(tx *Transaction, id string) (err error) {
 	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, id)
 	if err := os.RemoveAll(backupLogsPath); err != nil && !os.IsNotExist(err) {
 		if !os.IsNotExist(err) {
-			syslog.L.Error(fmt.Errorf("DeleteBackup: failed removing backup logs: %w", err)).
-				WithField("id", id).
-				Write()
+			log.Error(fmt.Errorf("DeleteBackup: failed removing backup logs: %w", err), "", "id", id)
+
 		}
 	}
 
@@ -686,17 +671,15 @@ func (b *Backup) GetStreamID() string {
 func (b *Backup) GetAllUPIDs() []Tasks {
 	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, b.ID)
 	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
-		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err)).
-			WithField("id", b.ID).
-			Write()
+		log.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err), "", "id", b.ID)
+
 		return nil
 	}
 
 	logs, err := os.ReadDir(backupLogsPath)
 	if err != nil {
-		syslog.L.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err)).
-			WithField("id", b.ID).
-			Write()
+		log.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err), "", "id", b.ID)
+
 		return nil
 	}
 

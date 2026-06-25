@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"log/slog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func FormatWorkerID(store, prefix, identifier string) string {
@@ -52,7 +52,7 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 	}
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			syslog.L.Error(cerr).Write()
+			slog.Error(cerr.Error())
 		}
 	}()
 
@@ -67,7 +67,7 @@ func (t *QueuedTask) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := os.Remove(t.path); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 	t.closed.Store(true)
 }
@@ -85,7 +85,7 @@ func WriteQueuedLog(node, workerType, wid string, web bool) (*QueuedTask, error)
 	wt := &WorkerTask{Task: task, file: file}
 	wt.LogString("TASK QUEUED: " + desc)
 	if err := file.Close(); err != nil {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 	wt.closed.Store(true)
 

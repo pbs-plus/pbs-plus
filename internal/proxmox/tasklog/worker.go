@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"log/slog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type WorkerTask struct {
@@ -35,7 +35,7 @@ func NewWorkerTask(node, workerType, wid string) (*WorkerTask, error) {
 	}
 
 	if err := AddActive(task.UPID); err != nil {
-		syslog.L.Error(err).WithField("upid", task.UPID).WithMessage("tasklog: add active").Write()
+		slog.Error("tasklog: add active", "error", err, "upid", task.UPID)
 	}
 
 	return wt, nil
@@ -62,7 +62,7 @@ func (w *WorkerTask) LogString(data string) {
 	}
 	w.writeLogLine("%s", data)
 	if err := w.file.Sync(); err != nil {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 }
 
@@ -76,11 +76,11 @@ func (w *WorkerTask) CloseWithStatus(state TaskState) {
 
 	w.writeLogLine(state.ResultText())
 	if err := WriteArchive(w.Task.UPID, state); err != nil {
-		syslog.L.Error(err).WithField("upid", w.Task.UPID).Write()
+		slog.Error("tasklog: archive error", "error", err, "upid", w.Task.UPID)
 	}
 
 	if err := RemoveActive(w.Task.UPID); err != nil {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 
 	w.close()
@@ -121,14 +121,14 @@ func (w *WorkerTask) writeLogLine(format string, args ...any) {
 	timestamp := time.Now().Format(time.RFC3339)
 	line := fmt.Sprintf("%s: "+format+"\n", append([]any{timestamp}, args...)...)
 	if _, err := w.file.WriteString(line); err != nil {
-		syslog.L.Error(err).Write()
+		slog.Error(err.Error())
 	}
 }
 
 func (w *WorkerTask) close() {
 	if w.file != nil {
 		if err := w.file.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			slog.Error(err.Error())
 		}
 		w.file = nil
 	}

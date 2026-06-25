@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type CertInfo struct {
@@ -79,7 +79,7 @@ func GetProxmoxCertInfo() (*CertInfo, error) {
 			certInfo.PublicKeyType = strings.TrimSpace(matches[1])
 		} else if matches := publicKeyBitsRx.FindStringSubmatch(line); len(matches) > 1 {
 			if _, err := fmt.Sscanf(matches[1], "%d", &certInfo.PublicKeyBits); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}

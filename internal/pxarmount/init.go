@@ -3,7 +3,7 @@ package pxarmount
 import (
 	"flag"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 )
 
@@ -32,7 +32,7 @@ func RunInitSubcommand() {
 	_ = fs.Bool("force-acl-group", false, "")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *pbsStore == "" {

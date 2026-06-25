@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 var (
@@ -83,7 +83,7 @@ func containsAny(s string, markers []string) (string, bool) {
 func processPBSProxyLogs(
 	isGraceful bool,
 	upid string,
-	clientLogFile *syslog.JobLogger,
+	clientLogFile *log.Logger,
 	customErr error,
 ) (bool, bool, int, error) {
 	customErrStr := ""
@@ -94,7 +94,7 @@ func processPBSProxyLogs(
 		}
 	}
 
-	logFilePath := getTaskLogPath(upid)
+	logFilePath := clientLogFile.JobLogPath()
 
 	inFile, err := os.Open(logFilePath)
 	if err != nil {
@@ -102,7 +102,7 @@ func processPBSProxyLogs(
 	}
 	defer func() {
 		if err := inFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -136,10 +136,10 @@ func processPBSProxyLogs(
 	defer func() {
 		if tmpFile != nil {
 			if err := tmpFile.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}()
@@ -184,10 +184,10 @@ func processPBSProxyLogs(
 		}
 
 		if _, err := tmpWriter.WriteString(line); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := tmpWriter.WriteByte('\n'); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -197,19 +197,19 @@ func processPBSProxyLogs(
 	pbsWarningRawCount := 0
 	clientCompleted := false
 
-	clientFile, err := os.Open(clientLogFile.Path)
+	clientFile, err := os.Open(clientLogFile.JobLogPath())
 	if err != nil {
 		return false, false, 0, fmt.Errorf("failed to open client log file: %w", err)
 	}
 	defer func() {
 		if err := clientFile.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
 	if !alreadyHasClientLogs {
 		if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		clientScanner := bufio.NewScanner(clientFile)
@@ -243,10 +243,10 @@ func processPBSProxyLogs(
 			}
 
 			if _, err := tmpWriter.WriteString(strings.TrimSpace(line)); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if err := tmpWriter.WriteByte('\n'); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 
@@ -269,48 +269,48 @@ func processPBSProxyLogs(
 	switch {
 	case hasError, incomplete:
 		if _, err := tmpWriter.WriteString(timestamp); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if _, err := tmpWriter.WriteString(": TASK ERROR: "); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if customErr != nil {
 			if _, err := tmpWriter.WriteString(customErrStr); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		} else {
 			if _, err := tmpWriter.WriteString(ErrUnexpected.Error()); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		cancelled = true
 
 	default:
 		if _, err := tmpWriter.WriteString(timestamp); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		succeeded = true
 		if warningsNum > 0 {
 			if _, err := tmpWriter.WriteString(": TASK WARNINGS: "); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			if _, err := tmpWriter.WriteString(strconv.Itoa(warningsNum)); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		} else if isGraceful {
 			if _, err := tmpWriter.WriteString(": TASK OK"); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		} else {
 			succeeded = false
 			if _, err := tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly"); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}
 
 	if err := tmpWriter.WriteByte('\n'); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	if err := tmpWriter.Flush(); err != nil {

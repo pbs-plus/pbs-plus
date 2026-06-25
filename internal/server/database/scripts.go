@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func (database *Database) CreateScript(tx *Transaction, script Script) (err error) {
@@ -23,21 +23,21 @@ func (database *Database) CreateScript(tx *Transaction, script Script) (err erro
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateScript: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateScript: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("CreateScript: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("CreateScript: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("CreateScript: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -72,21 +72,21 @@ func (database *Database) UpdateScript(tx *Transaction, script Script) (err erro
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateScript: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateScript: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("UpdateScript: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("UpdateScript: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("UpdateScript: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()
@@ -121,21 +121,21 @@ func (database *Database) DeleteScript(tx *Transaction, name string) (err error)
 		defer func() {
 			if p := recover(); p != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				panic(p)
 			} else if err != nil {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteScript: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteScript: failed to rollback transaction: %w", rbErr), "")
 				}
 			} else if commitNeeded {
 				if cErr := tx.Commit(); cErr != nil {
 					err = fmt.Errorf("DeleteScript: failed to commit transaction: %w", cErr)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			} else {
 				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					syslog.L.Error(fmt.Errorf("DeleteScript: failed to rollback transaction: %w", rbErr)).Write()
+					log.Error(fmt.Errorf("DeleteScript: failed to rollback transaction: %w", rbErr), "")
 				}
 			}
 		}()

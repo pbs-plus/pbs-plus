@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func isVolumeLocked(drive string) (bool, error) {
@@ -19,7 +19,7 @@ func isVolumeLocked(drive string) (bool, error) {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

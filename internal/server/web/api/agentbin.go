@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 //go:embed agentbin
@@ -114,7 +114,7 @@ func serveEmbeddedSignature(w http.ResponseWriter, r *http.Request, version, osN
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 		if _, err := w.Write(data); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		return true
 	}

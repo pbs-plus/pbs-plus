@@ -14,8 +14,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 var (
@@ -112,13 +112,13 @@ func RenewCertificateIfExpiring() error {
 	switch {
 	case cert.NotAfter.Before(now) || serverCA.NotAfter.Before(now):
 		if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 
 		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")

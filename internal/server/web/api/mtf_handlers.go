@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -60,13 +60,13 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		go func() {
 			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 			if err != nil {
-				syslog.L.Error(err).WithField("mtfJobs", decoded).Write()
+				log.Error(err, "", "mtfJobs", decoded)
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
 			defer func() {
 				if err := rpcClient.Close(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}()
 
@@ -74,11 +74,11 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop, Web: true}
 				var reply jobrpc.QueueReply
 				if err := rpcClient.Call("JobRPCService.MtfQueue", args, &reply); err != nil {
-					syslog.L.Error(err).WithField("mtfJobID", id).Write()
+					log.Error(err, "", "mtfJobID", id)
 					continue
 				}
 				if reply.Status != 200 {
-					syslog.L.Error(fmt.Errorf("%s", reply.Message)).WithField("mtfJobID", id).Write()
+					log.Error(fmt.Errorf("%s", reply.Message), "", "mtfJobID", id)
 				}
 			}
 		}()
@@ -87,7 +87,7 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -124,7 +124,7 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			if err := json.NewEncoder(w).Encode(toReturn); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -160,7 +160,7 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Status = http.StatusOK
 		response.Success = true
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -199,7 +199,7 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", job.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -233,7 +233,7 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -248,7 +248,7 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -287,7 +287,7 @@ func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Success = true
 		response.Data = upids
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -446,7 +446,7 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 		case "datasets":
 			famID, parseErr := strconv.ParseInt(r.URL.Query().Get("family"), 10, 64)
 			if parseErr != nil {
-				syslog.L.Error(parseErr).Write()
+				log.Error(parseErr, "")
 			}
 			var list []mtfdb.DataSet
 			var err error
@@ -479,7 +479,7 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -543,7 +543,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		response.Success = true
 		response.Data = st.UPID()
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -569,7 +569,7 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Success = true
 			response.Data = list
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 		case http.MethodPost:
@@ -606,7 +606,7 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Success = true
 			response.Data = mtfdb.NamespaceMapping{ID: id}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 		default:
@@ -646,7 +646,7 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Success = true
 			response.Data = m
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 		case http.MethodPut:
@@ -708,7 +708,7 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 
 		case http.MethodDelete:
@@ -724,7 +724,7 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}

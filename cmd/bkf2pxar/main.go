@@ -4,7 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	stdlog "log"
 	"os"
 	"os/signal"
 	"runtime/pprof"
@@ -14,8 +14,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func main() {
@@ -75,7 +75,7 @@ func main() {
 		snapshots, err := bkf2pxar.ListSnapshots(context.Background(), cfg)
 		printSnapshots(snapshots)
 		if err != nil {
-			log.Fatalf("list failed: %v", err)
+			stdlog.Fatalf("list failed: %v", err)
 		}
 		return
 	}
@@ -83,10 +83,10 @@ func main() {
 	if profPath := os.Getenv("BKF2PXAR_CPUPROFILE"); profPath != "" {
 		f, err := os.Create(profPath)
 		if err != nil {
-			log.Fatalf("cpu profile: %v", err)
+			stdlog.Fatalf("cpu profile: %v", err)
 		}
 		if err := pprof.StartCPUProfile(f); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		// Flush the profile on SIGINT/SIGTERM so `timeout` (which sends SIGTERM)
 		// produces a usable file; Go's default handlers exit without defers.
@@ -96,7 +96,7 @@ func main() {
 			<-sig
 			pprof.StopCPUProfile()
 			if err := f.Close(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			os.Exit(0)
 		}()
@@ -104,7 +104,7 @@ func main() {
 
 	stats, err := bkf2pxar.Run(context.Background(), cfg)
 	if err != nil {
-		log.Fatalf("conversion failed: %v", err)
+		stdlog.Fatalf("conversion failed: %v", err)
 	}
 
 	dur := time.Since(stats.StartTime).Round(time.Second)
@@ -127,7 +127,7 @@ func printSnapshots(snapshots []bkf2pxar.Snapshot) {
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(w, "  #\tSOURCE\tMACHINE\tVOLUME\tBACKUP TIME\tOWNER"); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	for _, s := range snapshots {
@@ -141,11 +141,11 @@ func printSnapshots(snapshots []bkf2pxar.Snapshot) {
 		}
 		if _, err := fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n",
 			s.Index, s.SourceFile, s.MachineName, vol, timeStr, s.Owner); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 	if err := w.Flush(); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	for _, s := range snapshots {

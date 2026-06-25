@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // CircuitBreaker prevents cascading failures when a downstream dependency
@@ -50,20 +50,15 @@ func (cb *CircuitBreaker) Call(fn func() error) error {
 		cb.failures++
 		if cb.failures >= cb.threshold {
 			cb.openUntil = time.Now().Add(cb.halfOpenAfter)
-			syslog.L.Warn().
-				WithField("circuit", cb.name).
-				WithField("failures", cb.failures).
-				WithMessage(fmt.Sprintf("circuit opened until %s", cb.openUntil.Format(time.RFC3339))).
-				Write()
+			log.Warn(fmt.Sprintf("circuit opened until %s", cb.openUntil.Format(time.RFC3339)), "failures", cb.failures, "circuit", cb.name)
+
 		}
 		return err
 	}
 
 	if cb.failures > 0 {
-		syslog.L.Info().
-			WithField("circuit", cb.name).
-			WithMessage("circuit closed, failures reset").
-			Write()
+		log.Info("circuit closed, failures reset", "circuit", cb.name)
+
 	}
 	cb.failures = 0
 	return nil

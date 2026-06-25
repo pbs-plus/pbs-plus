@@ -15,7 +15,7 @@ import (
 	"os"
 
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const (
@@ -100,7 +100,7 @@ func cmdEd25519Sign(artifact, sigOut string) {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 
@@ -139,7 +139,7 @@ func cmdECDSASign(artifact, sigOut string) {
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}()
 

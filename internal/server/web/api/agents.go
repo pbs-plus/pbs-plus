@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
@@ -22,7 +22,7 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		err := syslog.ParseAndLogWindowsEntry(r.Body)
+		err := log.ParseAndLogWindowsEntry(r.Body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -58,7 +58,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if len(authHeaderSplit) != 2 || authHeaderSplit[0] != "Bearer" {
 			w.WriteHeader(http.StatusUnauthorized)
 			WriteErrorResponse(w, fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader))
-			syslog.L.Error(fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader)).Write()
+			log.Error(fmt.Errorf("[%s]: unauthorized bearer access: %s", r.RemoteAddr, authHeader), "")
 			return
 		}
 
@@ -67,14 +67,14 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			WriteErrorResponse(w, fmt.Errorf("[%s]: token not found", r.RemoteAddr))
-			syslog.L.Error(fmt.Errorf("[%s]: token not found", r.RemoteAddr)).Write()
+			log.Error(fmt.Errorf("[%s]: token not found", r.RemoteAddr), "")
 			return
 		}
 
 		if token.Revoked {
 			w.WriteHeader(http.StatusUnauthorized)
 			WriteErrorResponse(w, fmt.Errorf("[%s]: token already revoked", r.RemoteAddr))
-			syslog.L.Error(fmt.Errorf("[%s]: token already revoked", r.RemoteAddr)).Write()
+			log.Error(fmt.Errorf("[%s]: token already revoked", r.RemoteAddr), "")
 			return
 		}
 
@@ -83,14 +83,14 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
 		if len(reqParsed.Drives) == 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, fmt.Errorf("no drives provided"))
-			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
+			log.Error(fmt.Errorf("no drives provided"), "")
 			return
 		}
 
@@ -98,7 +98,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -106,7 +106,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -121,13 +121,12 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		clientIP = strings.Split(clientIP, ":")[0]
-
-		syslog.L.Info().WithMessage("bootstrapping target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
+		log.Info("bootstrapping target")
 		tx, err := storeInstance.TargetSvc.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -141,33 +140,33 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		_, err = storeInstance.AgentHostSvc.GetAgentHost(reqParsed.Hostname)
 		if err == nil {
-			syslog.L.Info().WithMessage("updating host target details").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives}).Write()
+			log.Info("updating host target details")
 			err = storeInstance.AgentHostSvc.UpdateAgentHost(tx, host)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 				return
 			}
 		} else {
-			syslog.L.Info().WithMessage("creating new host target").WithFields(map[string]any{"target": reqParsed.Hostname, "clientIP": clientIP, "drives": reqParsed.Drives, "error": err.Error()}).Write()
+			log.Info("creating new host target")
 			err = storeInstance.AgentHostSvc.CreateAgentHost(tx, host)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 				return
 			}
 		}
 
 		for _, drive := range reqParsed.Drives {
-			syslog.L.Info().WithMessage("bootstrapping drive").WithFields(map[string]any{"drive": drive}).Write()
+			log.Info("bootstrapping drive")
 
 			newTarget := database.Target{
 				AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
@@ -194,48 +193,48 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				err := storeInstance.TargetSvc.DeleteTarget(tx, newTarget.Name)
 				if err != nil {
 					if err := tx.Rollback(); err != nil {
-						syslog.L.Error(err).Write()
+						log.Error(err, "")
 					}
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 					return
 				}
 
 				err = storeInstance.TargetSvc.CreateTarget(tx, newTarget)
 				if err != nil {
 					if err := tx.Rollback(); err != nil {
-						syslog.L.Error(err).Write()
+						log.Error(err, "")
 					}
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 					return
 				}
-				syslog.L.Info().WithMessage("updated existing target auth").WithFields(map[string]any{"target": newTarget.Name}).Write()
+				log.Info("updated existing target auth")
 			} else {
 				err := storeInstance.TargetSvc.CreateTarget(tx, newTarget)
 				if err != nil {
 					if err := tx.Rollback(); err != nil {
-						syslog.L.Error(err).Write()
+						log.Error(err, "")
 					}
 					w.WriteHeader(http.StatusInternalServerError)
 					WriteErrorResponse(w, err)
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 					return
 				}
-				syslog.L.Info().WithMessage("created new target").WithFields(map[string]any{"target": newTarget.Name}).Write()
+				log.Info("created new target")
 			}
 		}
 
 		err = tx.Commit()
 		if err != nil {
 			if err := tx.Rollback(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -244,7 +243,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 	}
@@ -262,7 +261,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -271,14 +270,14 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			w.WriteHeader(http.StatusForbidden)
 			hostnameErr := fmt.Errorf("hostname mismatch: authenticated as %q but request claims %q", authHostname, reqParsed.Hostname)
 			WriteErrorResponse(w, hostnameErr)
-			syslog.L.Error(hostnameErr).Write()
+			log.Error(hostnameErr, "")
 			return
 		}
 
 		if len(reqParsed.Drives) == 0 {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, fmt.Errorf("no drives provided"))
-			syslog.L.Error(fmt.Errorf("no drives provided")).Write()
+			log.Error(fmt.Errorf("no drives provided"), "")
 			return
 		}
 
@@ -286,7 +285,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -294,7 +293,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -307,25 +306,24 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			clientIP = forwarded
 		}
 		clientIP = strings.Split(clientIP, ":")[0]
-
-		syslog.L.Info().WithMessage("renewing target certificates").WithFields(map[string]any{"target": reqParsed.Hostname}).Write()
+		log.Info("renewing target certificates")
 
 		tx, err := storeInstance.TargetSvc.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
 		currentHost, err := storeInstance.AgentHostSvc.GetAgentHost(reqParsed.Hostname)
 		if err != nil {
 			if err := tx.Rollback(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -340,11 +338,11 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		err = storeInstance.AgentHostSvc.UpdateAgentHost(tx, host)
 		if err != nil {
 			if err := tx.Rollback(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -353,7 +351,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			existingTarget, err := storeInstance.TargetSvc.GetTarget(targetName)
 			if err != nil {
-				syslog.L.Warn().WithMessage("target not found during renewal, skipping").WithFields(map[string]any{"target": targetName}).Write()
+				log.Warn("target not found during renewal, skipping")
 				continue
 			}
 
@@ -379,36 +377,35 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			err = storeInstance.TargetSvc.DeleteTarget(tx, targetName)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 				return
 			}
 
 			err = storeInstance.TargetSvc.CreateTarget(tx, updatedTarget)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, err)
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 				return
 			}
-
-			syslog.L.Info().WithMessage("renewed target certificate").WithFields(map[string]any{"target": targetName}).Write()
+			log.Info("renewed target certificate")
 		}
 
 		err = tx.Commit()
 		if err != nil {
 			if err := tx.Rollback(); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 
@@ -417,7 +414,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 			return
 		}
 	}

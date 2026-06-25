@@ -9,10 +9,10 @@ import (
 	"net/rpc"
 	"os"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 type BackupQueueArgs struct {
@@ -135,7 +135,7 @@ func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error
 
 func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
 	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -161,11 +161,8 @@ func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath 
 		close(ready)
 		rpc.Accept(listener)
 	}()
-
-	syslog.L.Info().
-		WithMessage("RPC server listening").
-		WithField("socket", socketPath).
-		Write()
+	log.Info("RPC server listening",
+		"socket", socketPath)
 
 	<-ready
 
@@ -181,18 +178,16 @@ func RunJobRPCServer(ctx context.Context, socketPath string, manager *jobs.Manag
 
 	select {
 	case <-ctx.Done():
-		syslog.L.Info().
-			WithMessage("rpc mount server shutting down due to context cancellation").
-			WithField("socket", socketPath).
-			Write()
+		log.Info("rpc mount server shutting down due to context cancellation",
+			"socket", socketPath)
+
 		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	case <-watcher:
-		syslog.L.Info().
-			WithMessage("rpc mount server shut down unexpectedly").
-			WithField("socket", socketPath).
-			Write()
+		log.Info("rpc mount server shut down unexpectedly",
+			"socket", socketPath)
+
 	}
 
 	return nil

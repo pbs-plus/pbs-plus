@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -63,7 +63,7 @@ func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -97,14 +97,14 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			for _, jobID := range decodedJobIDs {
 				vJob, err := storeInstance.Database.GetVerificationJob(jobID)
 				if err != nil {
-					syslog.L.Error(err).WithField("verificationJobID", jobID).Write()
+					log.Error(err, "", "verificationJobID", jobID)
 					continue
 				}
 
 				if stop {
 					for _, jobID := range decodedJobIDs {
 						if !verification.StopJob(jobID) {
-							syslog.L.Warn().WithField("verificationJobID", jobID).WithMessage("job not running, cannot stop").Write()
+							log.Warn("job not running, cannot stop", "verificationJobID", jobID)
 						}
 					}
 					continue
@@ -112,7 +112,7 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 				vj, err := verification.NewVerificationJob(vJob, storeInstance, true)
 				if err != nil {
-					syslog.L.Error(err).WithField("verificationJobID", jobID).Write()
+					log.Error(err, "", "verificationJobID", jobID)
 					continue
 				}
 				go func(id string) {
@@ -157,7 +157,7 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			Success: true,
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -275,7 +275,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 
 		if filtersJSON := r.FormValue("filters"); filtersJSON != "" {
 			if err := json.Unmarshal([]byte(filtersJSON), &job.SpotConfig.Filters); err != nil {
-				syslog.L.Error(err).WithMessage("failed to parse filters JSON").Write()
+				log.Error(err, "failed to parse filters JSON")
 			}
 		}
 
@@ -320,7 +320,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			Success: true,
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -350,11 +350,11 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 
 			jobBytes, err := json.Marshal(job)
 			if err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			var jobMap map[string]any
 			if err := json.Unmarshal(jobBytes, &jobMap); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			jobMap["notification-batch"] = GetJobBatchName(storeInstance, "verification", jobID)
 			response.Data = job // keep struct for type compatibility
@@ -365,7 +365,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				"success": true,
 				"data":    jobMap,
 			}); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -458,7 +458,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			}
 			if filtersJSON := r.FormValue("filters"); filtersJSON != "" {
 				if err := json.Unmarshal([]byte(filtersJSON), &job.SpotConfig.Filters); err != nil {
-					syslog.L.Error(err).Write()
+					log.Error(err, "")
 				}
 			}
 
@@ -484,7 +484,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				Success: true,
 			}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -506,7 +506,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				Success: true,
 			}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 			return
 		}
@@ -545,7 +545,7 @@ func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
 			"data":    agg,
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -585,7 +585,7 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 			"data":    flatResults,
 		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
@@ -629,7 +629,7 @@ func VerificationResultsExportHandler(storeInstance *store.Store) http.HandlerFu
 
 func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResult) {
 	if _, err := fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Status,Total Population,Sampled,Verified,Failed,Skipped,Confidence 95%,Confidence 99%,Started At,Completed At"); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	for _, r := range results {
 		startedAt := formatTimestamp(r.StartedAt)
@@ -650,14 +650,14 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 			startedAt,
 			completedAt,
 		); err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 	}
 }
 
 func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult) {
 	if _, err := fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Total Population,Sample Size,File Path,File Size,Status,Message,Confidence 95%,Confidence 99%"); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	for _, r := range results {
 		conf := ComputeConfidence(r.TotalPopulation, r.TotalFiles, r.FailedFiles)
@@ -675,7 +675,7 @@ func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult
 				conf.Confidence95,
 				conf.Confidence99,
 			); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 	}

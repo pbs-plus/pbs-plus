@@ -15,7 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // TestReadDirBulk is the main test suite for readDirBulk
@@ -90,8 +90,7 @@ func TestReadDirBulk(t *testing.T) {
 func newTestDirReader(path string) (*DirReader, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		syslog.L.Error(err).WithMessage("newTestDirReader: failed to open directory").
-			WithField("path", path).Write()
+		log.Error(err, "newTestDirReader: failed to open directory", "path", path)
 		return nil, err
 	}
 	return NewDirReader(f, path)

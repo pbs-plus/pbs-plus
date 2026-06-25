@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
@@ -18,12 +18,9 @@ func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
 	}
 
 	localFullPath := filepath.Join(basePath, safeRequestedPath)
+	log.Info("received filetree request",
 
-	syslog.L.Info().
-		WithMessage("received filetree request").
-		WithField("path", safeRequestedPath).
-		WithField("resolved", localFullPath).
-		Write()
+		"resolved", localFullPath, "path", safeRequestedPath)
 
 	entries, err := os.ReadDir(localFullPath)
 	if err != nil {

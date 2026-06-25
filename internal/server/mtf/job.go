@@ -19,7 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const mtfWorkerType = "mtf2pxar"
@@ -38,7 +38,7 @@ type mtfJob struct {
 	mapper      *mtfdb.Mapper
 	queueTask   *tasklog.QueuedTask
 	task        *Task
-	logger      *syslog.JobLogger
+	logger      *log.Logger
 	started     atomic.Bool
 	cleanupOnce sync.Once
 }
@@ -48,7 +48,7 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *
 		job:    job,
 		store:  st,
 		mapper: mapper,
-		logger: syslog.NewJobLogger(job.ID),
+		logger: log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	return &jobs.Job{
 		ID:        job.ID,
@@ -80,13 +80,13 @@ func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 		wid := tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID)
 		qt, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, web)
 		if err != nil {
-			syslog.L.Error(err).WithJob(j.job.ID).WithMessage("mtf: failed to create queue task").Write()
+			log.Error(err, "mtf: failed to create queue task")
 			return nil // non-fatal
 		}
 		j.queueTask = qt
 
 		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
-			syslog.L.Error(err).WithJob(j.job.ID).Write()
+			log.Error(err, "")
 		}
 		return nil
 	}
@@ -112,7 +112,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 
 	j.started.Store(true)
 	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
-		syslog.L.Error(err).WithJob(j.job.ID).Write()
+		log.Error(err, "")
 	}
 
 	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
@@ -173,7 +173,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		vol := mtfdb.DataSetVolume{Device: device, MachineName: host}
 		mapped, err := mapper.Map(ctx, vol)
 		if err != nil {
-			syslog.L.Error(err).WithJob(job.ID).WithMessage("mtf: namespace mapping failed").Write()
+			log.Error(err, "mtf: namespace mapping failed")
 			return baseNS
 		}
 		if mapped == "" {
@@ -197,7 +197,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 
 	tapeCfg, err := tape.ReadConfig()
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 
 	if job.Changer != "" {
@@ -367,7 +367,7 @@ func (j *mtfJob) onSuccess() {
 			LastSuccessfulUpid:    task.UPID(),
 			LastSuccessfulEndtime: time.Now().Unix(),
 		}, ""); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	j.notify(nil)
 }
@@ -382,7 +382,7 @@ func (j *mtfJob) onError(runErr error) {
 		if task != nil {
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
-				syslog.L.Error(err).Write()
+				log.Error(err, "")
 			}
 		}
 		return
@@ -398,7 +398,7 @@ func (j *mtfJob) onError(runErr error) {
 			LastRunEndtime: time.Now().Unix(),
 			RetryCount:     job.History.RetryCount + 1,
 		}, ""); err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	j.notify(runErr)
 }
@@ -454,9 +454,7 @@ func (j *mtfJob) cleanup() {
 			cancel()
 		}
 		if logger != nil {
-			if err := logger.Close(); err != nil {
-				syslog.L.Error(err).Write()
-			}
+			logger.Close()
 		}
 		if qt != nil {
 			qt.Close()

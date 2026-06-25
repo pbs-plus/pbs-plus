@@ -9,7 +9,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const (
@@ -33,8 +33,8 @@ type DirReader struct {
 }
 
 func NewDirReader(handle *os.File, path string) (*DirReader, error) {
-	syslog.L.Debug().WithMessage("NewDirReader: initializing directory reader").
-		WithField("path", path).Write()
+	log.Debug("NewDirReader: initializing directory reader",
+		"path", path)
 
 	reader := &DirReader{
 		file:         handle,
@@ -70,8 +70,8 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	defer r.mu.Unlock()
 
 	if r.noMoreFiles && len(r.pending) == 0 {
-		syslog.L.Debug().WithMessage("DirReader.NextBatch: no more files (cached)").
-			WithField("path", r.path).Write()
+		log.Debug("DirReader.NextBatch: no more files (cached)",
+			"path", r.path)
 		return nil, os.ErrProcessDone
 	}
 
@@ -124,8 +124,8 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			break
 		}
 		if err != nil {
-			syslog.L.Error(err).WithMessage("DirReader.NextBatch: read failed").
-				WithField("path", r.path).Write()
+			log.Error(err, "DirReader.NextBatch: read failed",
+				"path", r.path)
 			return nil, err
 		}
 
@@ -170,13 +170,9 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 
 	result := make([]byte, r.encodeWriter.Len())
 	copy(result, r.encodeWriter.Bytes())
+	log.Debug("DirReader.NextBatch: batch encoded",
 
-	syslog.L.Debug().WithMessage("DirReader.NextBatch: batch encoded").
-		WithField("path", r.path).
-		WithField("bytes", len(result)).
-		WithField("entries_count", entryCount).
-		WithField("pending_count", len(r.pending)).
-		Write()
+		"pending_count", len(r.pending), "entries_count", entryCount, "bytes", len(result), "path", r.path)
 
 	return result, nil
 }
@@ -188,9 +184,8 @@ func (r *DirReader) Close() error {
 	if r.closed {
 		return nil
 	}
-
-	syslog.L.Debug().WithMessage("DirReader.Close: closing file").
-		WithField("path", r.path).Write()
+	log.Debug("DirReader.Close: closing file",
+		"path", r.path)
 
 	r.encodeWriter.Reset()
 	r.pending = r.pending[:0]

@@ -3,7 +3,7 @@ package database
 import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func init() {
@@ -20,7 +20,7 @@ func Decrypt(ciphertext string) (string, error) {
 
 func (d *Database) MigrateSecrets() error {
 	if err := crypto.MigrateNaclKeyIfExists(); err != nil {
-		syslog.L.Error(err).WithMessage("database: failed to migrate nacl key").Write()
+		log.Error(err, "database: failed to migrate nacl key")
 		return err
 	}
 
@@ -30,12 +30,11 @@ func (d *Database) MigrateSecrets() error {
 
 	if !crypto.NaclKeyExists() {
 		if err := crypto.MarkMigrated(); err != nil {
-			syslog.L.Error(err).WithMessage("database: failed to mark fresh install as migrated").Write()
+			log.Error(err, "database: failed to mark fresh install as migrated")
 		}
 		return nil
 	}
-
-	syslog.L.Info().WithMessage("database: migrating secrets from nacl-box to aes-256-gcm").Write()
+	log.Info("database: migrating secrets from nacl-box to aes-256-gcm")
 
 	rows, err := d.readDb.QueryContext(d.ctx, "SELECT name, secret_s3 FROM targets WHERE secret_s3 != '' AND secret_s3 IS NOT NULL")
 	if err != nil {
@@ -66,11 +65,10 @@ func (d *Database) MigrateSecrets() error {
 		}
 		migrated++
 	}
-
-	syslog.L.Info().WithMessage("database: migrated secrets").WithField("count", migrated).Write()
+	log.Info("database: migrated secrets", "count", migrated)
 
 	if err := crypto.MarkMigrated(); err != nil {
-		syslog.L.Error(err).WithMessage("database: failed to mark migration complete").Write()
+		log.Error(err, "database: failed to mark migration complete")
 		return err
 	}
 

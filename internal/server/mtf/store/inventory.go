@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
 func (d *Database) ListMediaFamilies(ctx context.Context) ([]MediaFamily, error) {
@@ -31,12 +31,12 @@ func (d *Database) GetMediaFamily(ctx context.Context, id int64) (MediaFamily, e
 func (d *Database) enrichFamily(ctx context.Context, f MediaFamily) MediaFamily {
 	carts, err := d.readQueries.ListCartridgesByFamily(ctx, f.ID)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	f.CartridgeCount = len(carts)
 	dsets, err := d.readQueries.ListDataSetsByFamily(ctx, f.ID)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	f.DataSetCount = len(dsets)
 	if f.Name == "" {
@@ -145,7 +145,7 @@ func (d *Database) ListDataSetsByFamily(ctx context.Context, familyID int64) ([]
 		ds := dataSetFromRow(r)
 		vols, err := d.readQueries.ListVolumesByDataSet(ctx, r.ID)
 		if err != nil {
-			syslog.L.Error(err).Write()
+			log.Error(err, "")
 		}
 		ds.Volumes = volumesFromRows(vols)
 		out = append(out, ds)
@@ -161,7 +161,7 @@ func (d *Database) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 	ds := dataSetFromRow(r)
 	vols, err := d.readQueries.ListVolumesByDataSet(ctx, r.ID)
 	if err != nil {
-		syslog.L.Error(err).Write()
+		log.Error(err, "")
 	}
 	ds.Volumes = volumesFromRows(vols)
 	return ds, nil

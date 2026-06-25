@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
@@ -16,7 +17,6 @@ import (
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 
 	_ "modernc.org/sqlite"
 )
@@ -69,7 +69,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 
 	mtfDB, err := mtfdb.Initialize(ctx, "")
 	if err != nil {
-		syslog.L.Error(err).WithMessage("Initialize: mtf store").Write()
+		log.Error(err, "Initialize: mtf store")
 	}
 	var mtfMapper *mtfdb.Mapper
 	if mtfDB != nil {
@@ -79,12 +79,12 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				syslog.L.Error(fmt.Errorf("store initialization panic: %v", r)).
-					WithMessage("Initialize: GetAllBackups panicked").Write()
+				log.Error(fmt.Errorf("store initialization panic: %v", r),
+					"Initialize: GetAllBackups panicked")
 			}
 		}()
 		if _, err := db.GetAllBackups(); err != nil {
-			syslog.L.Error(err).WithMessage("Initialize: GetAllBackups failed").Write()
+			log.Error(err, "Initialize: GetAllBackups failed")
 		}
 	}()
 

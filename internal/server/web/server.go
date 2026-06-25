@@ -16,9 +16,9 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
 	"net/http/pprof"
 )
 
@@ -121,7 +121,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := storeInstance.Database.Ping(ctx); err != nil {
-			syslog.L.Error(err).WithMessage("readiness check failed").Write()
+			log.Error(err, "readiness check failed")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
@@ -194,28 +194,26 @@ func (s *Server) StartARPC() error {
 		if len(strings.Split(id, "|")) > 1 {
 			return false
 		}
-
-		syslog.L.Debug().WithMessage("checking client authorization").WithField("id", id).Write()
+		log.Debug("checking client authorization", "id", id)
 
 		if len(certs) == 0 {
-			syslog.L.Error(fmt.Errorf("no client certificates received")).WithMessage("client unauthorized").WithField("id", id).Write()
+			log.Error(fmt.Errorf("no client certificates received"), "client unauthorized", "id", id)
 			return false
 		}
 
 		trustedCert, err := s.Store.Database.LoadAgentHostCert(id)
 		if err != nil {
-			syslog.L.Error(err).WithMessage("client unauthorized").WithField("id", id).Write()
+			log.Error(err, "client unauthorized", "id", id)
 			return false
 		}
 
 		for _, cert := range certs {
 			if cert.Equal(trustedCert) {
-				syslog.L.Debug().WithMessage("client authorized").WithField("id", id).Write()
+				log.Debug("client authorized", "id", id)
 				return true
 			}
 		}
-
-		syslog.L.Error(fmt.Errorf("did not match trusted certificate")).WithMessage("client unauthorized").WithField("id", id).Write()
+		log.Error(fmt.Errorf("did not match trusted certificate"), "client unauthorized", "id", id)
 		return false
 	})
 
@@ -237,30 +235,30 @@ func (s *Server) StartAll() {
 	})
 
 	s.wg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("Starting agent endpoint on %s", s.AgentServer.Addr)).Write()
+		log.Info(fmt.Sprintf("Starting agent endpoint on %s", s.AgentServer.Addr))
 		if err := s.Store.CertManager.ServeTLS(s.AgentServer); err != nil {
-			syslog.L.Error(err).WithMessage("http agent endpoint server failed").Write()
+			log.Error(err, "http agent endpoint server failed")
 		}
 	})
 
 	s.wg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("arpc: endpoint starting on tcp %s", conf.ARPCServerPort)).Write()
+		log.Info(fmt.Sprintf("arpc: endpoint starting on tcp %s", conf.ARPCServerPort))
 		if err := s.StartARPC(); err != nil {
-			syslog.L.Error(err).WithMessage("arpc agent endpoint server failed").Write()
+			log.Error(err, "arpc agent endpoint server failed")
 		}
 	})
 
 	s.wg.Go(func() {
-		syslog.L.Info().WithMessage(fmt.Sprintf("arpc: quic endpoint starting on udp %s", conf.ARPCQuicPort)).Write()
+		log.Info(fmt.Sprintf("arpc: quic endpoint starting on udp %s", conf.ARPCQuicPort))
 		if err := s.StartARPCQuic(); err != nil {
-			syslog.L.Error(err).WithMessage("arpc quic agent endpoint server failed").Write()
+			log.Error(err, "arpc quic agent endpoint server failed")
 		}
 	})
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	close(s.shutdownCh)
-	syslog.L.Info().WithMessage("shutting down HTTP servers").Write()
+	log.Info("shutting down HTTP servers")
 
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()

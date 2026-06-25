@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/syslog"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/xtaci/smux"
 )
 
@@ -71,7 +71,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 	conn, err := dialServerContext(ctx, serverAddr, arpcTls)
 	if err != nil {
-		syslog.L.Info().WithField("NextProtos", arpcTls.NextProtos).WithField("serverAddr", serverAddr).Write()
+		log.Info("", "serverAddr", serverAddr, "NextProtos", arpcTls.NextProtos)
 		return nil, fmt.Errorf("server not reachable (%s): %w", serverAddr, err)
 	}
 
@@ -83,7 +83,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 
 	pipe, err := newStreamPipe(ctx, smuxC, conn, serverAddr, arpcTls)
 	if err != nil {
-		syslog.L.Debug().WithMessage("closing tun and conn due to stream pipe err init").Write()
+		log.Debug("closing tun and conn due to stream pipe err init")
 		_ = smuxC.Close()
 		_ = conn.Close()
 		return nil, fmt.Errorf("failed to create pipe: %w", err)
@@ -195,8 +195,7 @@ func (s *StreamPipe) Serve() error {
 	for {
 		select {
 		case <-s.ctx.Done():
-
-			syslog.L.Debug().WithMessage("closing pipe due to context cancellation").Write()
+			log.Debug("closing pipe due to context cancellation")
 			return s.ctx.Err()
 		default:
 		}
@@ -204,7 +203,7 @@ func (s *StreamPipe) Serve() error {
 		stream, err := s.tun.AcceptStream()
 		if err != nil {
 			if s.tun.IsClosed() {
-				syslog.L.Debug().WithMessage("closing pipe due to closed tun").Write()
+				log.Debug("closing pipe due to closed tun")
 				return fmt.Errorf("session closed: %w", err)
 			}
 			return err
@@ -215,7 +214,7 @@ func (s *StreamPipe) Serve() error {
 		s.mu.RUnlock()
 
 		if router == nil {
-			syslog.L.Debug().WithMessage("closing stream due to invalid router").Write()
+			log.Debug("closing stream due to invalid router")
 			_ = stream.Close()
 			continue
 		}
@@ -223,10 +222,8 @@ func (s *StreamPipe) Serve() error {
 		go func(st *smux.Stream) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					syslog.L.Debug().
-						WithField("panic", fmt.Sprintf("%v", rec)).
-						WithMessage("recovered from panic in handler").
-						Write()
+					log.Debug("recovered from panic in handler", "panic", fmt.Sprintf("%v", rec))
+
 				}
 				_ = stream.Close()
 			}()
@@ -239,12 +236,12 @@ func (s *StreamPipe) Close() {
 	s.cancelFunc()
 
 	if s.tun != nil && !s.tun.IsClosed() {
-		syslog.L.Debug().WithMessage("closing tunnel due to pipe close").Write()
+		log.Debug("closing tunnel due to pipe close")
 		_ = s.tun.Close()
 	}
 
 	if s.conn != nil {
-		syslog.L.Debug().WithMessage("closing conn due to pipe close").Write()
+		log.Debug("closing conn due to pipe close")
 		_ = s.conn.Close()
 	}
 }
