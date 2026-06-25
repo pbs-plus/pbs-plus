@@ -211,6 +211,7 @@ type verificationJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
+	logger        *log.Logger
 	task          *VerificationTask
 	queueTask     *tasklog.QueuedTask
 	job           database.VerificationJob
@@ -235,6 +236,7 @@ func NewVerificationJob(
 		job:           job,
 		storeInstance: storeInstance,
 		web:           web,
+		logger:        log.WithScope(log.Scope{JobID: job.ID}),
 	}
 
 	return &jobs.Job{
@@ -302,17 +304,17 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 	wid := tasklog.FormatWorkerID(job.Store, "host-", job.ID)
 	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "verification", wid, v.web)
 	if err != nil {
-		log.Error(err, "failed to create queue task, not fatal")
+		v.logger.Error(err, "failed to create queue task, not fatal")
 	} else {
 		v.mu.Lock()
 		v.queueTask = queueTask
 		v.mu.Unlock()
 
 		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
-			log.Error(err, "failed to set queue task, not fatal")
+			v.logger.Error(err, "failed to set queue task, not fatal")
 		}
 	}
-	log.Info("verification job starting", "source", source, "jobID", job.ID)
+	v.logger.Info("verification job starting", "source", source)
 
 	return nil
 }
@@ -338,7 +340,7 @@ func (v *verificationJob) execute(ctx context.Context) error {
 	}
 
 	if err := v.updateJobStatus(false, vTask.Task); err != nil {
-		log.Error(err, "failed to update job with task UPID")
+		v.logger.Error(err, "failed to update job with task UPID")
 	}
 
 	if job.TargetMode == "namespace" {
@@ -442,7 +444,7 @@ func (v *verificationJob) executeVerification(
 ) error {
 	defer func() {
 		if err := vs.Close(); err != nil {
-			log.Error(err, "")
+			v.logger.Error(err, "")
 		}
 	}()
 	defer agentTCP.Close()
@@ -476,7 +478,7 @@ func (v *verificationJob) executeVerification(
 	if err != nil {
 		// Mark the stale result as skipped so we don't leave orphaned "running" records
 		if err := v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix()); err != nil {
-			log.Error(err, "")
+			v.logger.Error(err, "")
 		}
 		return fmt.Errorf("failed to sample files: %w", err)
 	}
@@ -590,14 +592,14 @@ func (v *verificationJob) executeVerification(
 	}
 
 	if err := v.storeInstance.Database.UpdateVerificationResult(*result); err != nil {
-		log.Error(err, "failed to update verification result", "jobID", job.ID)
+		v.logger.Error(err, "failed to update verification result")
 	}
 
 	return nil
 }
 
 func (v *verificationJob) onError(err error) {
-	log.Error(err, "verification job failed", "jobID", v.job.ID)
+	v.logger.Error(err, "verification job failed")
 
 	v.mu.RLock()
 	t := v.task
@@ -606,7 +608,7 @@ func (v *verificationJob) onError(err error) {
 
 	if rID > 0 {
 		if markErr := v.storeInstance.Database.MarkVerificationResultStatus(rID, "failed", time.Now().Unix()); markErr != nil {
-			log.Error(markErr, "failed to mark result as failed", "jobID", v.job.ID)
+			v.logger.Error(markErr, "failed to mark result as failed")
 		}
 	}
 
@@ -617,7 +619,7 @@ func (v *verificationJob) onError(err error) {
 	}
 
 	if err := v.updateJobHistory(false, 0); err != nil {
-		log.Error(err, "failed to update job history on error", "jobID", v.job.ID)
+		v.logger.Error(err, "failed to update job history on error")
 	}
 
 	if v.storeInstance.BatchTracker != nil {
@@ -636,7 +638,7 @@ func (v *verificationJob) onError(err error) {
 }
 
 func (v *verificationJob) onSuccess() {
-	log.Info("verification job completed successfully", "jobID", v.job.ID)
+	v.logger.Info("verification job completed successfully")
 
 	v.mu.RLock()
 	t := v.task
@@ -657,12 +659,12 @@ func (v *verificationJob) onSuccess() {
 		if failed > 0 {
 			t.CloseWarn(failed)
 			if err := v.updateJobHistory(true, failed); err != nil {
-				log.Error(err, "failed to update job history", "jobID", v.job.ID)
+				v.logger.Error(err, "failed to update job history")
 			}
 		} else if skipped > 0 {
 			t.CloseWarn(skipped)
 			if err := v.updateJobHistory(true, skipped); err != nil {
-				log.Error(err, "failed to update job history", "jobID", v.job.ID)
+				v.logger.Error(err, "failed to update job history")
 			}
 		} else {
 			t.CloseOK()
@@ -670,7 +672,7 @@ func (v *verificationJob) onSuccess() {
 	}
 
 	if err := v.updateJobHistory(true, 0); err != nil {
-		log.Error(err, "failed to update job history on success", "jobID", v.job.ID)
+		v.logger.Error(err, "failed to update job history on success")
 	}
 
 	var notifyErr error
@@ -830,7 +832,7 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 
 		snapFiles, err := os.ReadDir(filepath.Join(groupDir, entry.Name()))
 		if err != nil {
-			log.Error(err, "")
+			v.logger.Error(err, "")
 		}
 		var files []string
 		for _, f := range snapFiles {

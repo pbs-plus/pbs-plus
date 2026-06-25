@@ -32,6 +32,7 @@ type restoreJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
+	logger       *log.Logger
 	task         *RestoreTask
 	queueTask    *tasklog.QueuedTask
 	waitGroup    *sync.WaitGroup
@@ -68,6 +69,7 @@ func NewRestoreJob(
 		web:           web,
 		waitGroup:     &sync.WaitGroup{},
 		task:          task,
+		logger:        log.WithScope(log.Scope{JobID: job.ID}),
 	}
 
 	return &jobs.Job{
@@ -85,7 +87,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 	b.cancel = cancel
 
 	b.updateRestoreWithTask(b.task.Task)
-	log.Info("Received restore request")
+	b.logger.Info("Received restore request")
 
 	switch b.job.DestTarget.Type {
 	case database.TargetTypeAgent:
@@ -103,10 +105,10 @@ func (b *restoreJob) preExecute(ctx context.Context) error {
 	wid := tasklog.FormatWorkerID(b.job.Store, "host-", b.job.DestTarget.GetHostname())
 	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "reader", wid, b.web)
 	if err != nil {
-		log.Error(err, "failed to create queue task, not fatal")
+		b.logger.Error(err, "failed to create queue task, not fatal")
 	} else {
 		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
-			log.Error(err, "failed to set queue task, not fatal")
+			b.logger.Error(err, "failed to set queue task, not fatal")
 		}
 	}
 	b.queueTask = queueTask
@@ -119,7 +121,7 @@ func (b *restoreJob) preExecute(ctx context.Context) error {
 }
 
 func (b *restoreJob) onError(err error) {
-	log.Error(err, "", "jobID", b.job.ID)
+	b.logger.Error(err, "")
 
 	if errors.Is(err, jobs.ErrOneInstance) {
 		return
@@ -136,7 +138,7 @@ func (b *restoreJob) onError(err error) {
 	b.task.CloseErr(err)
 
 	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance); err != nil {
-		log.Error(err, "")
+		b.logger.Error(err, "")
 	}
 
 	if b.storeInstance.BatchTracker != nil {
@@ -165,12 +167,12 @@ func (b *restoreJob) onSuccess() {
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
 		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance); err != nil {
-			log.Error(err, "")
+			b.logger.Error(err, "")
 		}
 	} else {
 		b.task.CloseOK()
 		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance); err != nil {
-			log.Error(err, "")
+			b.logger.Error(err, "")
 		}
 	}
 
@@ -210,13 +212,13 @@ func (b *restoreJob) cleanup() {
 
 	if b.localClient != nil {
 		if err := b.localClient.Close(); err != nil {
-			log.Error(err, "")
+			b.logger.Error(err, "")
 		}
 	}
 
 	if b.remoteServer != nil {
 		if err := b.remoteServer.Close(); err != nil {
-			log.Error(err, "")
+			b.logger.Error(err, "")
 		}
 	}
 
@@ -260,7 +262,7 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	}
 
 	if err := b.queueTask.UpdateDescription("running pre-restore script"); err != nil {
-		log.Error(err, "")
+		b.logger.Error(err, "")
 	}
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
@@ -270,16 +272,16 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	}
 
 	scriptOut, _, err := jobs.RunShellScript(ctx, b.job.PreScript, envVars)
-	log.Info(scriptOut, "script", b.job.PreScript)
+	b.logger.Info(scriptOut, "script", b.job.PreScript)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			log.Info("pre-restore script canceled")
+			b.logger.Info("pre-restore script canceled")
 			return jobs.ErrCanceled
 		}
 		b.task.WriteString(err.Error())
 		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PreScript))
 		b.errCount.Add(1)
-		log.Error(err,
+		b.logger.Error(err,
 
 			"error encountered while running job pre-restore script")
 
@@ -425,7 +427,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("%s", err))
-					log.Error(err, "", "restore", "agent-error")
+					b.logger.Error(err, "", "restore", "agent-error")
 					b.errCount.Add(1)
 				}
 			}
@@ -435,7 +437,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
 	sessions.NewPxarReader(childKey, reader)
-	log.Info("Restore request sent")
+	b.logger.Info("Restore request sent")
 
 	b.task.WriteString(fmt.Sprintf("sending ready signal to stream pipe of %s", childKey))
 
@@ -474,7 +476,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 	}
 
 	b.localClient, b.errCh = pxar.NewLocalClient(reader, b.job.ID)
-	log.Info("Restore request sent")
+	b.logger.Info("Restore request sent")
 
 	b.task.WriteString("starting local restore")
 
@@ -498,7 +500,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("client error: %s", err.Error()))
-					log.Error(err, "", "restore", "local-error")
+					b.logger.Error(err, "", "restore", "local-error")
 					b.errCount.Add(1)
 				}
 			}
@@ -577,12 +579,12 @@ func (b *restoreJob) runPostScript() {
 
 	if b.queueTask != nil {
 		if err := b.queueTask.UpdateDescription("running post-restore script"); err != nil {
-			log.Error(err, "")
+			b.logger.Error(err, "")
 		}
 	}
 
 	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))
-	log.Info("running post-restore script",
+	b.logger.Info("running post-restore script",
 		"script", job.PostScript)
 
 	envVars, err := jobs.StructToEnvVars(job)
@@ -598,13 +600,13 @@ func (b *restoreJob) runPostScript() {
 		b.task.WriteString(err.Error())
 		b.task.WriteString(fmt.Sprintf("encountered error while running %s", b.job.PostScript))
 		b.errCount.Add(1)
-		log.Error(err,
+		b.logger.Error(err,
 			"error encountered while running job post-restore script")
 
 	}
 
 	b.task.WriteString(scriptOut)
-	log.Info(scriptOut,
+	b.logger.Info(scriptOut,
 		"script", b.job.PostScript)
 
 }
@@ -622,7 +624,7 @@ func (b *restoreJob) createOK(err error) {
 		},
 	)
 	if terr != nil {
-		log.Error(terr, "", "jobID", b.job.ID)
+		b.logger.Error(terr, "")
 		return
 	}
 
@@ -638,7 +640,7 @@ func (b *restoreJob) createOK(err error) {
 	latest.History.LastSuccessfulUpid = task.UPID
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
-		log.Error(uerr, "", "upid", task.UPID, "jobID", latest.ID)
+		b.logger.Error(uerr, "", "upid", task.UPID)
 
 	}
 }
@@ -654,7 +656,7 @@ func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
 	latest.History.LastRunEndtime = task.EndTime
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
-		log.Error(uerr, "", "upid", task.UPID, "jobID", latest.ID)
+		b.logger.Error(uerr, "", "upid", task.UPID)
 
 	}
 }

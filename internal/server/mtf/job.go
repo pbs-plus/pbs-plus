@@ -80,13 +80,13 @@ func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 		wid := tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID)
 		qt, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, web)
 		if err != nil {
-			log.Error(err, "mtf: failed to create queue task")
+			j.logger.Error(err, "mtf: failed to create queue task")
 			return nil // non-fatal
 		}
 		j.queueTask = qt
 
 		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
-			log.Error(err, "")
+			j.logger.Error(err, "")
 		}
 		return nil
 	}
@@ -112,7 +112,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 
 	j.started.Store(true)
 	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
-		log.Error(err, "")
+		j.logger.Error(err, "")
 	}
 
 	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
@@ -173,7 +173,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		vol := mtfdb.DataSetVolume{Device: device, MachineName: host}
 		mapped, err := mapper.Map(ctx, vol)
 		if err != nil {
-			log.Error(err, "mtf: namespace mapping failed")
+			j.logger.Error(err, "mtf: namespace mapping failed")
 			return baseNS
 		}
 		if mapped == "" {
@@ -197,7 +197,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 
 	tapeCfg, err := tape.ReadConfig()
 	if err != nil {
-		log.Error(err, "")
+		j.logger.Error(err, "")
 	}
 
 	if job.Changer != "" {
@@ -367,7 +367,7 @@ func (j *mtfJob) onSuccess() {
 			LastSuccessfulUpid:    task.UPID(),
 			LastSuccessfulEndtime: time.Now().Unix(),
 		}, ""); err != nil {
-		log.Error(err, "")
+		j.logger.Error(err, "")
 	}
 	j.notify(nil)
 }
@@ -382,7 +382,7 @@ func (j *mtfJob) onError(runErr error) {
 		if task != nil {
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
-				log.Error(err, "")
+				j.logger.Error(err, "")
 			}
 		}
 		return
@@ -398,7 +398,7 @@ func (j *mtfJob) onError(runErr error) {
 			LastRunEndtime: time.Now().Unix(),
 			RetryCount:     job.History.RetryCount + 1,
 		}, ""); err != nil {
-		log.Error(err, "")
+		j.logger.Error(err, "")
 	}
 	j.notify(runErr)
 }
