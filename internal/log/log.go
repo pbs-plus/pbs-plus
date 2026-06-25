@@ -27,14 +27,35 @@ type entry struct {
 	logger  *Logger
 }
 
+type taskWriter interface {
+	Log(format string, args ...any)
+	LogString(data string)
+	CloseOK()
+	CloseErr(err error)
+	CloseWarn(count uint64)
+	UPID() string
+	RequestAbort()
+	AbortRequested() bool
+}
+
+type Scope struct {
+	JobID string
+	Task  taskWriter
+}
+
 type Logger struct {
-	mu           sync.RWMutex
+	mu   *sync.RWMutex
+	root *Logger
+
 	zlog         *slog.Logger
 	hostname     string
 	Server       bool
 	disabled     bool
 	dedup        *deduplicator
 	dedupEnabled bool
+
+	jobID string
+	task  taskWriter
 }
 
 type deduplicator struct {
@@ -97,36 +118,58 @@ func init() {
 	}
 
 	L = &Logger{
+		mu:           &sync.RWMutex{},
 		zlog:         slog.New(handler),
 		dedup:        newDeduplicator(dedupWindow),
 		dedupEnabled: true,
 	}
 }
 
+func (l *Logger) core() *Logger {
+	if l.root != nil {
+		return l.root
+	}
+	return l
+}
+
 func (l *Logger) SetServiceLogger() error { return setServiceLogger(l) }
 
 func (l *Logger) Disable() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.disabled = true
+	c := l.core()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.disabled = true
 }
 
 func (l *Logger) Enable() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.disabled = false
+	c := l.core()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.disabled = false
 }
 
 func (l *Logger) DisableDeduplication() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.dedupEnabled = false
+	c := l.core()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dedupEnabled = false
 }
 
 func (l *Logger) EnableDeduplication() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.dedupEnabled = true
+	c := l.core()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dedupEnabled = true
+}
+
+func (l *Logger) WithScope(s Scope) *Logger {
+	c := l.core()
+	return &Logger{
+		mu:    c.mu,
+		root:  c,
+		jobID: s.JobID,
+		task:  s.Task,
+	}
 }
 
 func parseFields(args ...any) map[string]any {
@@ -149,6 +192,7 @@ func (l *Logger) newEntry(level string, err error, msg string, args ...any) *ent
 		fields:  parseFields(args...),
 		logger:  l,
 		dedup:   true,
+		jobID:   l.jobID,
 	}
 	if jobID, ok := e.fields["job"].(string); ok {
 		delete(e.fields, "job")
@@ -158,25 +202,25 @@ func (l *Logger) newEntry(level string, err error, msg string, args ...any) *ent
 }
 
 func (e *entry) write() {
-	l := e.logger
-	l.mu.RLock()
-	disabled := l.disabled
-	dedupEnabled := l.dedupEnabled
-	l.mu.RUnlock()
+	c := e.logger.core()
+	c.mu.RLock()
+	disabled := c.disabled
+	dedupEnabled := c.dedupEnabled
+	c.mu.RUnlock()
 
 	if disabled {
 		return
 	}
 
-	if e.dedup && dedupEnabled && l.dedup != nil {
+	if e.dedup && dedupEnabled && c.dedup != nil {
 		key := e.dedupKey()
-		if !l.dedup.shouldLog(key) {
+		if !c.dedup.shouldLog(key) {
 			return
 		}
 	}
 
 	if _, ok := e.fields["hostname"]; !ok {
-		e.fields["hostname"] = l.hostname
+		e.fields["hostname"] = c.hostname
 	}
 	if e.jobID != "" {
 		e.fields["jobID"] = e.jobID
@@ -190,7 +234,7 @@ func (e *entry) write() {
 		attrs = append(attrs, "error", e.err.Error())
 	}
 
-	l.writePlatform(e, attrs)
+	c.writePlatform(e, attrs)
 }
 
 func (e *entry) dedupKey() [32]byte {
@@ -249,6 +293,10 @@ func (e *entry) WithJSON(msg string) *entry {
 	return e
 }
 
+func (e *entry) Write() {
+	e.write()
+}
+
 func ParseAndLogWindowsEntry(body io.ReadCloser) error {
 	type jsonEntry struct {
 		Level     string         `json:"level"`
@@ -288,60 +336,15 @@ func levelFromEntry(e *entry) slog.Level {
 
 var ctxNone = context.Background()
 
-func Info(msg string, args ...any) {
-	L.newEntry("info", nil, msg, args...).write()
-}
-
-func Error(err error, msg string, args ...any) {
-	L.newEntry("error", err, msg, args...).write()
-}
-
-func Warn(msg string, args ...any) {
-	L.newEntry("warn", nil, msg, args...).write()
-}
-
-func Debug(msg string, args ...any) {
-	L.newEntry("debug", nil, msg, args...).write()
-}
-
-func WithJob(jobID string) *entry {
-	return L.newEntry("", nil, "").WithJob(jobID)
-}
-
-type taskWriter interface {
-	Log(format string, args ...any)
-	LogString(data string)
-	CloseOK()
-	CloseErr(err error)
-	CloseWarn(count uint64)
-	UPID() string
-	RequestAbort()
-	AbortRequested() bool
-}
-
-type Scope struct {
-	JobID string
-	Task  taskWriter
-}
-
-func WithScope(s Scope) *TaskLogger {
-	return &TaskLogger{jobID: s.JobID, task: s.Task}
-}
-
-type TaskLogger struct {
-	task  taskWriter
-	jobID string
-}
-
-func (l *TaskLogger) Info(msg string, args ...any) {
-	L.newEntry("info", nil, msg, args...).WithJob(l.jobID).write()
+func (l *Logger) Info(msg string, args ...any) {
+	l.newEntry("info", nil, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
 	}
 }
 
-func (l *TaskLogger) Error(err error, msg string, args ...any) {
-	L.newEntry("error", err, msg, args...).WithJob(l.jobID).write()
+func (l *Logger) Error(err error, msg string, args ...any) {
+	l.newEntry("error", err, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
 		if err != nil {
@@ -350,66 +353,90 @@ func (l *TaskLogger) Error(err error, msg string, args ...any) {
 	}
 }
 
-func (l *TaskLogger) Warn(msg string, args ...any) {
-	L.newEntry("warn", nil, msg, args...).WithJob(l.jobID).write()
+func (l *Logger) Warn(msg string, args ...any) {
+	l.newEntry("warn", nil, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
 	}
 }
 
-func (l *TaskLogger) Debug(msg string, args ...any) {
-	L.newEntry("debug", nil, msg, args...).WithJob(l.jobID).write()
+func (l *Logger) Debug(msg string, args ...any) {
+	l.newEntry("debug", nil, msg, args...).write()
 	if l.task != nil {
 		l.task.LogString(msg)
 	}
 }
 
-func (l *TaskLogger) Log(format string, args ...any) {
+func (l *Logger) Log(format string, args ...any) {
 	if l.task != nil {
 		l.task.Log(format, args...)
 	}
 }
 
-func (l *TaskLogger) LogString(data string) {
+func (l *Logger) LogString(data string) {
 	if l.task != nil {
 		l.task.LogString(data)
 	}
 }
 
-func (l *TaskLogger) CloseOK() {
+func (l *Logger) CloseOK() {
 	if l.task != nil {
 		l.task.CloseOK()
 	}
 }
 
-func (l *TaskLogger) CloseErr(err error) {
+func (l *Logger) CloseErr(err error) {
 	if l.task != nil {
 		l.task.CloseErr(err)
 	}
 }
 
-func (l *TaskLogger) CloseWarn(count uint64) {
+func (l *Logger) CloseWarn(count uint64) {
 	if l.task != nil {
 		l.task.CloseWarn(count)
 	}
 }
 
-func (l *TaskLogger) UPID() string {
+func (l *Logger) UPID() string {
 	if l.task != nil {
 		return l.task.UPID()
 	}
 	return ""
 }
 
-func (l *TaskLogger) RequestAbort() {
+func (l *Logger) RequestAbort() {
 	if l.task != nil {
 		l.task.RequestAbort()
 	}
 }
 
-func (l *TaskLogger) AbortRequested() bool {
+func (l *Logger) AbortRequested() bool {
 	if l.task != nil {
 		return l.task.AbortRequested()
 	}
 	return false
+}
+
+func Info(msg string, args ...any) {
+	L.Info(msg, args...)
+}
+
+func Error(err error, msg string, args ...any) {
+	L.Error(err, msg, args...)
+}
+
+func Warn(msg string, args ...any) {
+	L.Warn(msg, args...)
+}
+
+func Debug(msg string, args ...any) {
+	L.Debug(msg, args...)
+}
+
+func WithScope(s Scope) *Logger {
+	return L.WithScope(s)
+}
+
+func WithJob(jobID string) *entry {
+	return L.newEntry("", nil, "").WithJob(jobID)
 }
