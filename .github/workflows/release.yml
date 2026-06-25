@@ -84,7 +84,7 @@ jobs:
           if [ -z "$PUB" ]; then
             echo "Failed to derive Ed25519 pubkey"; exit 1;
           fi
-          echo "Derived Ed25519 public key length: ${
+          echo "Derived Ed25519 public key: ${PUB}"
           echo "ED25519_PUBLIC_KEY_B64=$PUB" >> "$GITHUB_ENV"
 
       - name: Run GoReleaser
