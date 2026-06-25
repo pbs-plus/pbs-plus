@@ -84,10 +84,10 @@ func (database *Database) CreateVerificationJob(tx *Transaction, job Verificatio
 	}
 
 	if job.BackupJobID == "" && job.TargetMode != "namespace" {
-		return errors.New("backup_job_id is required")
+		return fmt.Errorf("%w: backup_job_id is required", ErrValidationFailed)
 	}
 	if job.Store == "" {
-		return errors.New("store is required")
+		return fmt.Errorf("%w: store is required", ErrValidationFailed)
 	}
 	if !validate.IsValidID(job.ID) && job.ID != "" {
 		return fmt.Errorf("CreateVerificationJob: invalid id string -> %s", job.ID)
@@ -326,7 +326,7 @@ func (database *Database) UpdateVerificationJob(tx *Transaction, job Verificatio
 		return fmt.Errorf("UpdateVerificationJob: invalid id string -> %s", job.ID)
 	}
 	if job.BackupJobID == "" && job.TargetMode != "namespace" {
-		return errors.New("backup_job_id is required")
+		return fmt.Errorf("%w: backup_job_id is required", ErrValidationFailed)
 	}
 	if !validate.IsValidNamespace(job.Namespace) && job.Namespace != "" {
 		return fmt.Errorf("invalid namespace string: %s", job.Namespace)

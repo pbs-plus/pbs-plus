@@ -36,13 +36,13 @@ func (d *Database) generateUniqueMtfJobID(ctx context.Context, base string) (str
 
 func (d *Database) CreateMtfJob(ctx context.Context, j MTFJob) (MTFJob, error) {
 	if j.Datastore == "" {
-		return MTFJob{}, errors.New("datastore is required")
+		return MTFJob{}, ErrDatastoreRequired
 	}
 	if j.SourceKind == "" {
-		return MTFJob{}, errors.New("source_kind is required")
+		return MTFJob{}, ErrSourceKindRequired
 	}
 	if j.SourceRef == "" {
-		return MTFJob{}, errors.New("source_ref is required")
+		return MTFJob{}, ErrSourceRefRequired
 	}
 	if j.RetryInterval <= 0 {
 		j.RetryInterval = 1

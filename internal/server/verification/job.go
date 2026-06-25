@@ -142,11 +142,6 @@ var (
 )
 
 var (
-	ErrTargetUnreachable = jobs.ErrTargetUnreachable
-	ErrMountEmpty        = jobs.ErrMountEmpty
-	ErrSubpathNotFound   = jobs.ErrSubpathNotFound
-	ErrCanceled          = jobs.ErrCanceled
-
 	bufPool = sync.Pool{
 		New: func() any {
 			buf := make([]byte, 256*1024)
@@ -154,7 +149,6 @@ var (
 		},
 	}
 
-	// activeJobs tracks currently running verification jobs for cancellation.
 	activeJobs = struct {
 		sync.RWMutex
 		m map[string]context.CancelFunc

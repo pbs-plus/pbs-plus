@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -82,10 +81,10 @@ func (s *Scanner) ScanWithLog(ctx context.Context, opts Options, logger *log.Log
 
 func (s *Scanner) Scan(ctx context.Context, opts Options) (*Result, error) {
 	if opts.ChangerDevice != "" && opts.TapeDevice == "" {
-		return nil, errors.New("changer scan requires a tape drive device")
+		return nil, ErrChangerRequiresDrive
 	}
 	if opts.ChangerDevice == "" && opts.TapeDevice == "" && opts.BKFPath == "" {
-		return nil, errors.New("no source: provide changer+drive, drive, or bkf path")
+		return nil, ErrNoSource
 	}
 
 	src := "drive:" + opts.TapeDevice
@@ -493,7 +492,7 @@ func (s *Scanner) scanBKFFile(ctx context.Context, path, label string, res *Resu
 		files = []string{path}
 	}
 	if len(files) == 0 {
-		return errors.New("no .bkf files found")
+		return ErrNoBKFFiles
 	}
 
 	for _, f := range files {

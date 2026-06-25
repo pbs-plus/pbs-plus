@@ -195,7 +195,7 @@ func (b *backupJob) onError(err error) {
 		return
 	}
 
-	if errors.Is(err, ErrMountEmpty) {
+	if errors.Is(err, jobs.ErrMountEmpty) {
 		b.createOK(err)
 		return
 	}
@@ -506,7 +506,7 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 		qSess, qExists := b.storeInstance.ARPCAgentsManager.GetQuicPipe(job.Target.GetHostname())
 		tSess, tExists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(job.Target.GetHostname())
 		if !qExists && !tExists {
-			return fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target.Name)
+			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
 		}
 
 		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -528,12 +528,12 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 			)
 		}
 		if err != nil || !isReachable(respMsg) {
-			return fmt.Errorf("%w: %s", ErrTargetUnreachable, job.Target.Name)
+			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
 		}
 
 	case database.TargetTypeLocal:
 		if _, err := os.Stat(job.Target.Path); err != nil {
-			return fmt.Errorf("%w: %s (%v)", ErrTargetUnreachable, job.Target.Name, err)
+			return fmt.Errorf("%w: %s (%v)", jobs.ErrTargetUnreachable, job.Target.Name, err)
 		}
 
 	case database.TargetTypeS3:
@@ -647,7 +647,7 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 		b.mu.Unlock()
 
 		if agentMount.IsEmpty() {
-			return "", agentMount, nil, ErrMountEmpty
+			return "", agentMount, nil, jobs.ErrMountEmpty
 		}
 	} else if target.IsS3() {
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -675,7 +675,7 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 		b.mu.Unlock()
 
 		if s3Mount.IsEmpty() {
-			return "", nil, s3Mount, ErrMountEmpty
+			return "", nil, s3Mount, jobs.ErrMountEmpty
 		}
 	}
 
@@ -685,12 +685,12 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 		info, err := os.Stat(srcPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return "", agentMount, s3Mount, fmt.Errorf("%w: %q does not exist under the mount point", ErrSubpathNotFound, job.Subpath)
+				return "", agentMount, s3Mount, fmt.Errorf("%w: %q does not exist under the mount point", jobs.ErrSubpathNotFound, job.Subpath)
 			}
-			return "", agentMount, s3Mount, fmt.Errorf("%w: cannot access subpath %q: %w", ErrSubpathNotFound, job.Subpath, err)
+			return "", agentMount, s3Mount, fmt.Errorf("%w: cannot access subpath %q: %w", jobs.ErrSubpathNotFound, job.Subpath, err)
 		}
 		if !info.IsDir() {
-			return "", agentMount, s3Mount, fmt.Errorf("%w: %q is not a directory", ErrSubpathNotFound, job.Subpath)
+			return "", agentMount, s3Mount, fmt.Errorf("%w: %q is not a directory", jobs.ErrSubpathNotFound, job.Subpath)
 		}
 	}
 

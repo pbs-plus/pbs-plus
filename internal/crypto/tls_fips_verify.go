@@ -2,11 +2,9 @@ package crypto
 
 import (
 	"crypto/x509"
-	"errors"
 	"fmt"
 )
 
-var errNoPeerCerts = errors.New("crypto: no peer certificates")
 
 func VerifyCertSignatureFIPS(cert *x509.Certificate) error {
 	switch cert.SignatureAlgorithm {

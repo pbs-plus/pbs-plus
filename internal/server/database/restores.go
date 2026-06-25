@@ -85,13 +85,13 @@ func (database *Database) CreateRestore(tx *Transaction, restore Restore) (err e
 	}
 
 	if restore.DestTarget.Name == "" {
-		return errors.New("dest target is empty")
+		return fmt.Errorf("%w: dest target is empty", ErrValidationFailed)
 	}
 	if restore.Snapshot == "" {
-		return errors.New("snapshot is empty")
+		return fmt.Errorf("%w: snapshot is empty", ErrValidationFailed)
 	}
 	if restore.Store == "" {
-		return errors.New("datastore is empty")
+		return fmt.Errorf("%w: datastore is empty", ErrValidationFailed)
 	}
 	if !validate.IsValidID(restore.ID) && restore.ID != "" {
 		return fmt.Errorf("CreateRestore: invalid id string -> %s", restore.ID)
@@ -262,13 +262,13 @@ func (database *Database) UpdateRestore(tx *Transaction, restore Restore) (err e
 		return fmt.Errorf("UpdateRestore: invalid id string -> %s", restore.ID)
 	}
 	if restore.DestTarget.Name == "" {
-		return errors.New("dest target is empty")
+		return fmt.Errorf("%w: dest target is empty", ErrValidationFailed)
 	}
 	if restore.Snapshot == "" {
-		return errors.New("snapshot is empty")
+		return fmt.Errorf("%w: snapshot is empty", ErrValidationFailed)
 	}
 	if restore.Store == "" {
-		return errors.New("datastore is empty")
+		return fmt.Errorf("%w: datastore is empty", ErrValidationFailed)
 	}
 	if !validate.IsValidPathString(restore.SrcPath) {
 		return fmt.Errorf("invalid source path string: %s", restore.SrcPath)

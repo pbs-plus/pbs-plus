@@ -236,7 +236,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 			return cfg, fmt.Errorf("list cartridges: %w", err)
 		}
 		if len(carts) == 0 {
-			return cfg, errors.New("no cartridges in media family")
+			return cfg, ErrNoCartridges
 		}
 		allBKF := true
 		for _, c := range carts {

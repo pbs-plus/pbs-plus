@@ -3,7 +3,6 @@ package crypto
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -130,13 +129,13 @@ func naclBoxDecrypt(ciphertext string, pub, priv *[32]byte) (string, error) {
 		return "", fmt.Errorf("crypto: nacl base64 decode: %w", err)
 	}
 	if len(data) < naclNonceSize {
-		return "", errors.New("crypto: nacl ciphertext too short")
+		return "", ErrSealCiphertextTooShort
 	}
 	var nonce [24]byte
 	copy(nonce[:], data[:naclNonceSize])
 	decrypted, ok := box.Open(nil, data[naclNonceSize:], &nonce, pub, priv)
 	if !ok {
-		return "", errors.New("crypto: nacl box open failed")
+		return "", ErrSealBoxOpenFailed
 	}
 	return string(decrypted), nil
 }

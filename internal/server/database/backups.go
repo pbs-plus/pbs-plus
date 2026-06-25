@@ -86,10 +86,10 @@ func (database *Database) CreateBackup(tx *Transaction, backup Backup) (err erro
 	}
 
 	if backup.Target.Name == "" {
-		return errors.New("target is empty")
+		return fmt.Errorf("%w: target is empty", ErrValidationFailed)
 	}
 	if backup.Store == "" {
-		return errors.New("datastore is empty")
+		return fmt.Errorf("%w: datastore is empty", ErrValidationFailed)
 	}
 	if !validate.IsValidID(backup.ID) && backup.ID != "" {
 		return fmt.Errorf("CreateBackup: invalid id string -> %s", backup.ID)
@@ -312,10 +312,10 @@ func (database *Database) UpdateBackup(tx *Transaction, backup Backup) (err erro
 		return fmt.Errorf("UpdateBackup: invalid id string -> %s", backup.ID)
 	}
 	if backup.Target.Name == "" {
-		return errors.New("target is empty")
+		return fmt.Errorf("%w: target is empty", ErrValidationFailed)
 	}
 	if backup.Store == "" {
-		return errors.New("datastore is empty")
+		return fmt.Errorf("%w: datastore is empty", ErrValidationFailed)
 	}
 	if backup.RetryInterval <= 0 {
 		backup.RetryInterval = 1

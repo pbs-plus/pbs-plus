@@ -8,6 +8,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	arpcTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -66,7 +67,7 @@ func D2DFileTree(storeInstance *store.Store) http.HandlerFunc {
 			reqData := arpcTypes.FileTreeReq{HostPath: target.GetAgentHostPath(), SubPath: subPath}
 			resp, ftErr = tSess.CallData(r.Context(), "filetree", &reqData)
 		} else {
-			WriteErrorResponse(w, errors.New("target unreachable"))
+			WriteErrorResponse(w, jobs.ErrTargetUnreachable)
 			return
 		}
 

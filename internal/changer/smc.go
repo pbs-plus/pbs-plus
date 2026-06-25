@@ -2,7 +2,6 @@
 package changer
 
 import (
-	"errors"
 	"fmt"
 )
 
@@ -77,7 +76,7 @@ func readAddressAssignment(d *device) (*addressAssignment, error) {
 			return a, nil
 		}
 	}
-	return nil, errors.New("mode sense 0x1D: element-address page not found")
+	return nil, ErrElementAddressNotFound
 }
 
 func readElementStatusCDB(start, count uint16, t elementType, withVolTag bool, allocLen uint32) []byte {

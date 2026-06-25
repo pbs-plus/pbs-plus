@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
 var (
 	commonErrorMap = map[string]string{
 		"exit status 255": "lost connection with backup agent",
-		"signal: killed":  ErrCanceled.Error(),
+		"signal: killed":  jobs.ErrCanceled.Error(),
 	}
 
 	pbsCompletionMarkers = []string{
@@ -279,7 +280,7 @@ func processPBSProxyLogs(
 				clientLogFile.Error(err, "")
 			}
 		} else {
-			if _, err := tmpWriter.WriteString(ErrUnexpected.Error()); err != nil {
+			if _, err := tmpWriter.WriteString(jobs.ErrUnexpected.Error()); err != nil {
 				clientLogFile.Error(err, "")
 			}
 		}

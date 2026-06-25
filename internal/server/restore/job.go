@@ -97,7 +97,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 	case database.TargetTypeS3:
 		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
 	default:
-		return ErrTargetNotFound
+		return jobs.ErrTargetNotFound
 	}
 }
 
@@ -127,7 +127,7 @@ func (b *restoreJob) onError(err error) {
 		return
 	}
 
-	if errors.Is(err, ErrMountEmpty) {
+	if errors.Is(err, jobs.ErrMountEmpty) {
 		b.createOK(err)
 		return
 	}
@@ -303,7 +303,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	qSess, qExists := b.storeInstance.ARPCAgentsManager.GetQuicPipe(b.job.DestTarget.GetHostname())
 	tSess, tExists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget.GetHostname())
 	if !qExists && !tExists {
-		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
+		return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -325,7 +325,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		)
 	}
 	if statusErr != nil || !strings.HasPrefix(respMsg, "reachable") {
-		return fmt.Errorf("%w: %s", ErrTargetUnreachable, b.job.DestTarget.Name)
+		return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
 
 	destPath := b.job.DestSubpath

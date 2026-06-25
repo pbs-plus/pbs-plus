@@ -48,7 +48,7 @@ func (database *Database) CreateExclusion(tx *Transaction, exclusion Exclusion) 
 	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
-		return errors.New("path is empty")
+		return fmt.Errorf("%w: path is empty", ErrValidationFailed)
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
@@ -177,7 +177,7 @@ func (database *Database) UpdateExclusion(tx *Transaction, exclusion Exclusion) 
 	q = database.queries.WithTx(tx.Tx)
 
 	if exclusion.Path == "" {
-		return errors.New("path is empty")
+		return fmt.Errorf("%w: path is empty", ErrValidationFailed)
 	}
 
 	exclusion.Path = strings.ReplaceAll(exclusion.Path, "\\", "/")
