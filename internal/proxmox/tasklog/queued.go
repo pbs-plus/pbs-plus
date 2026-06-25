@@ -13,6 +13,20 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/syslog"
 )
 
+func FormatWorkerID(store, prefix, identifier string) string {
+	return proxmox.EncodeToHexEscapes(store) +
+		proxmox.EncodeToHexEscapes(":") +
+		prefix +
+		proxmox.EncodeToHexEscapes(identifier)
+}
+
+func SourceString(web bool) string {
+	if web {
+		return "web UI"
+	}
+	return "schedule"
+}
+
 type QueuedTask struct {
 	Task   proxmox.Task
 	mu     sync.Mutex
@@ -58,7 +72,7 @@ func (t *QueuedTask) Close() {
 	t.closed.Store(true)
 }
 
-func WriteQueuedLog(node, workerType, wid string, description string) (*QueuedTask, error) {
+func WriteQueuedLog(node, workerType, wid string, web bool) (*QueuedTask, error) {
 	task := NewTask(node, workerType, wid)
 	task.Status = "running"
 
@@ -67,8 +81,9 @@ func WriteQueuedLog(node, workerType, wid string, description string) (*QueuedTa
 		return nil, err
 	}
 
+	desc := fmt.Sprintf("job started from %s", SourceString(web))
 	wt := &WorkerTask{Task: task, file: file}
-	wt.LogString("TASK QUEUED: " + description)
+	wt.LogString("TASK QUEUED: " + desc)
 	if err := file.Close(); err != nil {
 		syslog.L.Error(err).Write()
 	}

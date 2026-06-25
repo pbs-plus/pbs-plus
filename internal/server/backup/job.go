@@ -127,7 +127,8 @@ func (b *backupJob) preExecute(ctx context.Context) error {
 	job := b.job
 	b.mu.RUnlock()
 
-	queueTask, err := generateBackupQueuedTask(job, b.web)
+	wid := tasklog.FormatWorkerID(job.Store, "host-", job.Target.GetHostname())
+	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "backup", wid, b.web)
 	if err != nil {
 		syslog.L.Error(err).WithMessage("failed to create queue task, not fatal").Write()
 	} else {
@@ -947,16 +948,4 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 			WithField("upid", task.UPID).
 			Write()
 	}
-}
-
-func generateBackupQueuedTask(job database.Backup, web bool) (*tasklog.QueuedTask, error) {
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(job.Target.GetHostname()))
-
-	source := "web UI"
-	if !web {
-		source = "schedule"
-	}
-	desc := fmt.Sprintf("job started from %s", source)
-
-	return tasklog.WriteQueuedLog("pbsplusgen-queue", "backup", wid, desc)
 }

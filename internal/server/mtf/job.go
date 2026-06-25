@@ -77,7 +77,8 @@ func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 		_, cancel := context.WithCancel(ctx)
 		j.cancel = cancel
 
-		qt, err := generateMtfQueuedTask(j.job.ID, j.job.Datastore, web)
+		wid := tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID)
+		qt, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, web)
 		if err != nil {
 			syslog.L.Error(err).WithJob(j.job.ID).WithMessage("mtf: failed to create queue task").Write()
 			return nil // non-fatal
@@ -510,18 +511,4 @@ func mtfWID(job mtfdb.MTFJob) string {
 	return proxmox.EncodeToHexEscapes(job.Datastore) +
 		proxmox.EncodeToHexEscapes(":") +
 		"mtf-" + proxmox.EncodeToHexEscapes(job.ID)
-}
-
-func generateMtfQueuedTask(jobID, datastore string, web bool) (*tasklog.QueuedTask, error) {
-	wid := proxmox.EncodeToHexEscapes(datastore) +
-		proxmox.EncodeToHexEscapes(":") +
-		"mtf-" + proxmox.EncodeToHexEscapes(jobID)
-
-	source := "web UI"
-	if !web {
-		source = "schedule"
-	}
-	desc := fmt.Sprintf("MTF job started from %s", source)
-
-	return tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, desc)
 }
