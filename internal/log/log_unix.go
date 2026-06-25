@@ -81,7 +81,7 @@ func (l *Logger) writeServer(e *entry, attrs []any) {
 	}
 
 	if e.jobID != "" {
-		jl := GetExistingJobLogger(e.jobID)
+		jl := getExistingJobLogger(e.jobID)
 		if jl != nil {
 			var sb strings.Builder
 			sb.WriteString("pbs-plus: ")

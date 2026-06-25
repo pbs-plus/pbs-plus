@@ -164,12 +164,14 @@ func (l *Logger) EnableDeduplication() {
 
 func (l *Logger) WithScope(s Scope) *Logger {
 	c := l.core()
-	return &Logger{
+	sl := &Logger{
 		mu:    c.mu,
 		root:  c,
 		jobID: s.JobID,
 		task:  s.Task,
 	}
+	sl.ensureJobLogger()
+	return sl
 }
 
 func parseFields(args ...any) map[string]any {
@@ -439,4 +441,8 @@ func WithScope(s Scope) *Logger {
 
 func WithJob(jobID string) *entry {
 	return L.newEntry("", nil, "").WithJob(jobID)
+}
+
+func (l *Logger) Close() {
+	l.closeJobLogger()
 }

@@ -7,28 +7,28 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/validate"
-
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-type JobLogger struct {
+type jobLogger struct {
 	*os.File
-	Path      string
+	path      string
 	jobID     string
-	Writer    *bufio.Writer
-	StartTime time.Time
+	writer    *bufio.Writer
+	startTime time.Time
 
-	sync.Mutex
+	mu sync.Mutex
 }
 
-var jobLoggers = safemap.New[string, *JobLogger]()
+var jobLoggers = safemap.New[string, *jobLogger]()
 
 func safeJobLogPath(jobID string) (string, error) {
 	if err := validate.ValidateJobId(jobID); err != nil {
@@ -47,37 +47,37 @@ func safeJobLogPath(jobID string) (string, error) {
 	return cleanPath, nil
 }
 
-func NewJobLogger(jobID string) *JobLogger {
+func newJobLogger(jobID string) *jobLogger {
 	filePath, err := safeJobLogPath(jobID)
 	if err != nil {
 		return nil
 	}
 
-	logger, _ := jobLoggers.GetOrCompute(jobID, func() *JobLogger {
+	logger, _ := jobLoggers.GetOrCompute(jobID, func() *jobLogger {
 		clientLogFile, createErr := os.Create(filePath)
 		if createErr != nil {
 			return nil
 		}
 
-		return &JobLogger{
+		return &jobLogger{
 			File:      clientLogFile,
-			Path:      filePath,
+			path:      filePath,
 			jobID:     jobID,
-			Writer:    bufio.NewWriter(clientLogFile),
-			StartTime: time.Now(),
+			writer:    bufio.NewWriter(clientLogFile),
+			startTime: time.Now(),
 		}
 	})
 
 	return logger
 }
 
-func GetExistingJobLogger(jobID string) *JobLogger {
+func getExistingJobLogger(jobID string) *jobLogger {
 	filePath, err := safeJobLogPath(jobID)
 	if err != nil {
 		return nil
 	}
 
-	logger, _ := jobLoggers.GetOrCompute(jobID, func() *JobLogger {
+	logger, _ := jobLoggers.GetOrCompute(jobID, func() *jobLogger {
 		flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
 		perm := os.FileMode(0666)
 
@@ -86,37 +86,33 @@ func GetExistingJobLogger(jobID string) *JobLogger {
 			return nil
 		}
 
-		return &JobLogger{
+		return &jobLogger{
 			File:      clientLogFile,
-			Path:      filePath,
+			path:      filePath,
 			jobID:     jobID,
-			Writer:    bufio.NewWriter(clientLogFile),
-			StartTime: time.Now(),
+			writer:    bufio.NewWriter(clientLogFile),
+			startTime: time.Now(),
 		}
 	})
-
-	if logger == nil {
-		return nil
-	}
 
 	return logger
 }
 
-func (b *JobLogger) Write(in []byte) (n int, err error) {
-	b.Lock()
-	defer b.Unlock()
+func (b *jobLogger) Write(in []byte) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	bytesConsumedFromInput := len(in)
 
 	scanner := bufio.NewScanner(bytes.NewReader(in))
-	var stringBuilder strings.Builder
+	var sb strings.Builder
 
 	hasContent := false
 	for scanner.Scan() {
 		hasContent = true
 		line := scanner.Text()
 		timestamp := time.Now().Format(time.RFC3339)
-		_, formatErr := fmt.Fprintf(&stringBuilder, "%s: %s\n", timestamp, line)
+		_, formatErr := fmt.Fprintf(&sb, "%s: %s\n", timestamp, line)
 		if formatErr != nil {
 			return 0, fmt.Errorf("error formatting log line: %w", formatErr)
 		}
@@ -126,13 +122,13 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 		return 0, fmt.Errorf("error scanning input for lines: %w", scanErr)
 	}
 
-	if hasContent || (len(in) > 0 && stringBuilder.Len() == 0) {
-		formattedLogMessage := stringBuilder.String()
+	if hasContent || (len(in) > 0 && sb.Len() == 0) {
+		formattedLogMessage := sb.String()
 		if len(formattedLogMessage) > 0 {
-			if b.Writer == nil {
+			if b.writer == nil {
 				return 0, errors.New("logger closed")
 			}
-			_, writeErr := b.Writer.WriteString(formattedLogMessage)
+			_, writeErr := b.writer.WriteString(formattedLogMessage)
 			if writeErr != nil {
 				return 0, fmt.Errorf(
 					"error writing formatted message to logger's internal buffer: %w",
@@ -140,7 +136,7 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 				)
 			}
 
-			flushErr := b.Writer.Flush()
+			flushErr := b.writer.Flush()
 			if flushErr != nil {
 				return 0, fmt.Errorf(
 					"error flushing logger buffer to file: %w",
@@ -152,21 +148,21 @@ func (b *JobLogger) Write(in []byte) (n int, err error) {
 	return bytesConsumedFromInput, nil
 }
 
-func (b *JobLogger) Flush() error {
-	b.Lock()
-	defer b.Unlock()
+func (b *jobLogger) Flush() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	return b.Writer.Flush()
+	return b.writer.Flush()
 }
 
-func (b *JobLogger) Close() error {
-	b.Lock()
-	defer b.Unlock()
+func (b *jobLogger) Close() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
 	var multiError []string
 
-	if b.Writer != nil {
-		if err := b.Writer.Flush(); err != nil {
+	if b.writer != nil {
+		if err := b.writer.Flush(); err != nil {
 			multiError = append(multiError, fmt.Sprintf("flush error: %v", err))
 		}
 	}
@@ -176,18 +172,18 @@ func (b *JobLogger) Close() error {
 			multiError = append(multiError, fmt.Sprintf("file close error: %v", err))
 		}
 		b.File = nil
-		b.Writer = nil
+		b.writer = nil
 	}
 
 	jobLoggers.Del(b.jobID)
 
-	if b.Path != "" {
-		if strings.HasPrefix(filepath.Clean(b.Path), filepath.Clean(os.TempDir())) {
-			if err := os.RemoveAll(b.Path); err != nil {
-				multiError = append(multiError, fmt.Sprintf("file remove error (%s): %v", b.Path, err))
+	if b.path != "" {
+		if strings.HasPrefix(filepath.Clean(b.path), filepath.Clean(os.TempDir())) {
+			if err := os.RemoveAll(b.path); err != nil {
+				multiError = append(multiError, fmt.Sprintf("file remove error (%s): %v", b.path, err))
 			}
 		} else {
-			multiError = append(multiError, fmt.Sprintf("refusing to delete file outside temp directory: %s", b.Path))
+			multiError = append(multiError, fmt.Sprintf("refusing to delete file outside temp directory: %s", b.path))
 		}
 	}
 
@@ -195,4 +191,33 @@ func (b *JobLogger) Close() error {
 		return errors.New(strings.Join(multiError, "; "))
 	}
 	return nil
+}
+
+func (b *jobLogger) Path() string {
+	return b.path
+}
+
+func (l *Logger) ensureJobLogger() {
+	if l.jobID == "" {
+		return
+	}
+	if l.core().Server {
+		newJobLogger(l.jobID)
+	}
+}
+
+func (l *Logger) JobStdoutWriter() io.Writer {
+	if l.jobID == "" {
+		return nil
+	}
+	return getExistingJobLogger(l.jobID)
+}
+
+func (l *Logger) closeJobLogger() {
+	if l.jobID == "" {
+		return
+	}
+	if jl := getExistingJobLogger(l.jobID); jl != nil {
+		_ = jl.Close()
+	}
 }
