@@ -48,7 +48,7 @@ func setServiceLogger(l *Logger) error {
 
 	sysWriter, err := syslog.New(syslog.LOG_ERR|syslog.LOG_LOCAL7, tag)
 	if err != nil {
-		return err
+		return nil
 	}
 
 	handler := slog.NewJSONHandler(&LogWriter{logger: sysWriter}, &slog.HandlerOptions{
