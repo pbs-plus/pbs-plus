@@ -307,3 +307,109 @@ func Debug(msg string, args ...any) {
 func WithJob(jobID string) *entry {
 	return L.newEntry("", nil, "").WithJob(jobID)
 }
+
+type taskWriter interface {
+	Log(format string, args ...any)
+	LogString(data string)
+	CloseOK()
+	CloseErr(err error)
+	CloseWarn(count uint64)
+	UPID() string
+	RequestAbort()
+	AbortRequested() bool
+}
+
+type Scope struct {
+	JobID string
+	Task  taskWriter
+}
+
+func WithScope(s Scope) *TaskLogger {
+	return &TaskLogger{jobID: s.JobID, task: s.Task}
+}
+
+type TaskLogger struct {
+	task  taskWriter
+	jobID string
+}
+
+func (l *TaskLogger) Info(msg string, args ...any) {
+	L.newEntry("info", nil, msg, args...).WithJob(l.jobID).write()
+	if l.task != nil {
+		l.task.LogString(msg)
+	}
+}
+
+func (l *TaskLogger) Error(err error, msg string, args ...any) {
+	L.newEntry("error", err, msg, args...).WithJob(l.jobID).write()
+	if l.task != nil {
+		l.task.LogString(msg)
+		if err != nil {
+			l.task.LogString(err.Error())
+		}
+	}
+}
+
+func (l *TaskLogger) Warn(msg string, args ...any) {
+	L.newEntry("warn", nil, msg, args...).WithJob(l.jobID).write()
+	if l.task != nil {
+		l.task.LogString(msg)
+	}
+}
+
+func (l *TaskLogger) Debug(msg string, args ...any) {
+	L.newEntry("debug", nil, msg, args...).WithJob(l.jobID).write()
+	if l.task != nil {
+		l.task.LogString(msg)
+	}
+}
+
+func (l *TaskLogger) Log(format string, args ...any) {
+	if l.task != nil {
+		l.task.Log(format, args...)
+	}
+}
+
+func (l *TaskLogger) LogString(data string) {
+	if l.task != nil {
+		l.task.LogString(data)
+	}
+}
+
+func (l *TaskLogger) CloseOK() {
+	if l.task != nil {
+		l.task.CloseOK()
+	}
+}
+
+func (l *TaskLogger) CloseErr(err error) {
+	if l.task != nil {
+		l.task.CloseErr(err)
+	}
+}
+
+func (l *TaskLogger) CloseWarn(count uint64) {
+	if l.task != nil {
+		l.task.CloseWarn(count)
+	}
+}
+
+func (l *TaskLogger) UPID() string {
+	if l.task != nil {
+		return l.task.UPID()
+	}
+	return ""
+}
+
+func (l *TaskLogger) RequestAbort() {
+	if l.task != nil {
+		l.task.RequestAbort()
+	}
+}
+
+func (l *TaskLogger) AbortRequested() bool {
+	if l.task != nil {
+		return l.task.AbortRequested()
+	}
+	return false
+}
