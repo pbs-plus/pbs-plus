@@ -314,7 +314,7 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 			v.logger.Error(err, "failed to set queue task, not fatal")
 		}
 	}
-	v.logger.Info("verification job starting", "source", source)
+	v.logger.Info("verification starting", "target", v.job.TargetMode, "mode", v.job.Mode, "source", source)
 
 	return nil
 }
@@ -444,7 +444,7 @@ func (v *verificationJob) executeVerification(
 ) error {
 	defer func() {
 		if err := vs.Close(); err != nil {
-			v.logger.Error(err, "")
+			v.logger.Error(err, "failed to close verify state")
 		}
 	}()
 	defer agentTCP.Close()
@@ -478,7 +478,7 @@ func (v *verificationJob) executeVerification(
 	if err != nil {
 		// Mark the stale result as skipped so we don't leave orphaned "running" records
 		if err := v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix()); err != nil {
-			v.logger.Error(err, "")
+			v.logger.Error(err, "failed to mark stale verification result as skipped")
 		}
 		return fmt.Errorf("failed to sample files: %w", err)
 	}
@@ -599,7 +599,7 @@ func (v *verificationJob) executeVerification(
 }
 
 func (v *verificationJob) onError(err error) {
-	v.logger.Error(err, "verification job failed")
+	v.logger.Error(err, "verification failed")
 
 	v.mu.RLock()
 	t := v.task
@@ -638,7 +638,7 @@ func (v *verificationJob) onError(err error) {
 }
 
 func (v *verificationJob) onSuccess() {
-	v.logger.Info("verification job completed successfully")
+	v.logger.Info("verification completed", "total_files", v.totalFiles, "failed_files", v.failedFiles, "skipped_files", v.skippedFiles)
 
 	v.mu.RLock()
 	t := v.task
@@ -832,7 +832,7 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Bac
 
 		snapFiles, err := os.ReadDir(filepath.Join(groupDir, entry.Name()))
 		if err != nil {
-			v.logger.Error(err, "")
+			v.logger.Error(err, "failed to read snapshot group directory")
 		}
 		var files []string
 		for _, f := range snapFiles {

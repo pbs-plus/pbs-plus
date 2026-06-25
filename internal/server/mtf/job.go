@@ -86,7 +86,7 @@ func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
 		j.queueTask = qt
 
 		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
-			j.logger.Error(err, "")
+			j.logger.Error(err, "failed to persist MTF job history (queued)")
 		}
 		return nil
 	}
@@ -111,8 +111,9 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	j.task = task
 
 	j.started.Store(true)
+	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore)
 	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
-		j.logger.Error(err, "")
+		j.logger.Error(err, "failed to persist MTF job history (started)")
 	}
 
 	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
@@ -197,7 +198,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 
 	tapeCfg, err := tape.ReadConfig()
 	if err != nil {
-		j.logger.Error(err, "")
+		j.logger.Error(err, "failed to read tape configuration")
 	}
 
 	if job.Changer != "" {
@@ -352,6 +353,7 @@ func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev st
 
 func (j *mtfJob) onSuccess() {
 	j.mu.RLock()
+	j.logger.Info("mtf job completed successfully")
 	task := j.task
 	job := j.job
 	j.mu.RUnlock()
@@ -367,13 +369,14 @@ func (j *mtfJob) onSuccess() {
 			LastSuccessfulUpid:    task.UPID(),
 			LastSuccessfulEndtime: time.Now().Unix(),
 		}, ""); err != nil {
-		j.logger.Error(err, "")
+		j.logger.Error(err, "failed to persist MTF job history on success")
 	}
 	j.notify(nil)
 }
 
 func (j *mtfJob) onError(runErr error) {
 	j.mu.RLock()
+	j.logger.Error(runErr, "mtf job failed")
 	task := j.task
 	job := j.job
 	j.mu.RUnlock()
@@ -382,7 +385,7 @@ func (j *mtfJob) onError(runErr error) {
 		if task != nil {
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
-				j.logger.Error(err, "")
+				j.logger.Error(err, "failed to update MTF job history on cancellation")
 			}
 		}
 		return
@@ -398,7 +401,7 @@ func (j *mtfJob) onError(runErr error) {
 			LastRunEndtime: time.Now().Unix(),
 			RetryCount:     job.History.RetryCount + 1,
 		}, ""); err != nil {
-		j.logger.Error(err, "")
+		j.logger.Error(err, "failed to persist MTF job history on error")
 	}
 	j.notify(runErr)
 }

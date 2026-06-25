@@ -87,7 +87,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 	b.cancel = cancel
 
 	b.updateRestoreWithTask(b.task.Task)
-	b.logger.Info("Received restore request")
+	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
 	switch b.job.DestTarget.Type {
 	case database.TargetTypeAgent:
@@ -121,7 +121,7 @@ func (b *restoreJob) preExecute(ctx context.Context) error {
 }
 
 func (b *restoreJob) onError(err error) {
-	b.logger.Error(err, "")
+	b.logger.Error(err, "restore job failed")
 
 	if errors.Is(err, jobs.ErrOneInstance) {
 		return
@@ -138,7 +138,7 @@ func (b *restoreJob) onError(err error) {
 	b.task.CloseErr(err)
 
 	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance); err != nil {
-		b.logger.Error(err, "")
+		b.logger.Error(err, "failed to update restore status on error")
 	}
 
 	if b.storeInstance.BatchTracker != nil {
@@ -167,12 +167,13 @@ func (b *restoreJob) onSuccess() {
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
 		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance); err != nil {
-			b.logger.Error(err, "")
+			b.logger.Error(err, "failed to update restore status with warnings")
 		}
 	} else {
 		b.task.CloseOK()
+		b.logger.Info("restore completed successfully")
 		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance); err != nil {
-			b.logger.Error(err, "")
+			b.logger.Error(err, "failed to update restore status on success")
 		}
 	}
 
@@ -212,13 +213,13 @@ func (b *restoreJob) cleanup() {
 
 	if b.localClient != nil {
 		if err := b.localClient.Close(); err != nil {
-			b.logger.Error(err, "")
+			b.logger.Error(err, "failed to close local client")
 		}
 	}
 
 	if b.remoteServer != nil {
 		if err := b.remoteServer.Close(); err != nil {
-			b.logger.Error(err, "")
+			b.logger.Error(err, "failed to close remote server")
 		}
 	}
 
@@ -262,7 +263,7 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	}
 
 	if err := b.queueTask.UpdateDescription("running pre-restore script"); err != nil {
-		b.logger.Error(err, "")
+		b.logger.Error(err, "failed to update queue task description")
 	}
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
@@ -437,7 +438,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
 	sessions.NewPxarReader(childKey, reader)
-	b.logger.Info("Restore request sent")
+	b.logger.Info("restore request sent to agent")
 
 	b.task.WriteString(fmt.Sprintf("sending ready signal to stream pipe of %s", childKey))
 
@@ -476,7 +477,7 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 	}
 
 	b.localClient, b.errCh = pxar.NewLocalClient(reader, b.job.ID)
-	b.logger.Info("Restore request sent")
+	b.logger.Info("restore request sent to agent")
 
 	b.task.WriteString("starting local restore")
 
@@ -579,7 +580,7 @@ func (b *restoreJob) runPostScript() {
 
 	if b.queueTask != nil {
 		if err := b.queueTask.UpdateDescription("running post-restore script"); err != nil {
-			b.logger.Error(err, "")
+			b.logger.Error(err, "failed to update queue task description")
 		}
 	}
 
@@ -624,7 +625,7 @@ func (b *restoreJob) createOK(err error) {
 		},
 	)
 	if terr != nil {
-		b.logger.Error(terr, "")
+		b.logger.Error(terr, "failed to generate restore OK task file")
 		return
 	}
 
@@ -640,7 +641,7 @@ func (b *restoreJob) createOK(err error) {
 	latest.History.LastSuccessfulUpid = task.UPID
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
-		b.logger.Error(uerr, "", "upid", task.UPID)
+		b.logger.Error(uerr, "failed to update restore with task", "upid", task.UPID)
 
 	}
 }
@@ -656,7 +657,7 @@ func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
 	latest.History.LastRunEndtime = task.EndTime
 
 	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
-		b.logger.Error(uerr, "", "upid", task.UPID)
+		b.logger.Error(uerr, "failed to update restore with task", "upid", task.UPID)
 
 	}
 }
