@@ -206,6 +206,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 	buf := *bptr
 	tempBuf := len(buf) < reqLen
 	if tempBuf {
+		readBufPool.Put(bptr)
 		buf = make([]byte, reqLen)
 	}
 
@@ -281,6 +282,7 @@ func (s *RemoteServer) handleReadContentAt(req *arpc.Request) (arpc.Response, er
 	buf := *bptr
 	tempBuf := len(buf) < reqLen
 	if tempBuf {
+		readBufPool.Put(bptr)
 		buf = make([]byte, reqLen)
 	}
 
