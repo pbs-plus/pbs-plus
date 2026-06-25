@@ -35,7 +35,7 @@ func NewS3FS(
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {
-	log.Debug("NewS3FS called",
+	log.Debug("newS3FS called",
 
 		"backupID", backup.ID, "bucket", bucket, "endpoint", endpoint)
 
@@ -70,7 +70,7 @@ func NewS3FS(
 
 	s3ctx, cancel := context.WithCancel(ctx)
 	memcachePath := filepath.Join(conf.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
-	log.Debug("Starting local memcached",
+	log.Debug("starting local memcached",
 
 		"backupID", backup.ID, "socketPath", memcachePath)
 
@@ -100,7 +100,7 @@ func NewS3FS(
 
 	go func() {
 		<-s3ctx.Done()
-		log.Debug("Context done, cleaning up memcache and memlocal",
+		log.Debug("context done, cleaning up memcache and memlocal",
 			"backupID", fs.Backup.ID)
 
 		if err := fs.Memcache.DeleteAll(); err != nil {
@@ -133,7 +133,7 @@ func (fs *S3FS) fullKey(fpath string) string {
 }
 
 func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTypes.AgentFileInfo, error) {
-	log.Debug("Attr called",
+	log.Debug("attr called",
 
 		"backupID", fs.Backup.ID, "isLookup", isLookup, "path", fpath)
 
@@ -156,14 +156,14 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	if err == nil {
 		fs.StatCacheHits.Add(1)
 		if err := cbor.Unmarshal(cached.Value, &fi); err == nil {
-			log.Debug("Attr cache hit",
+			log.Debug("attr cache hit",
 
 				"backupID", fs.Backup.ID, "path", fpath)
 
 			return fi, nil
 		}
 	}
-	log.Debug("Attr cache miss, issuing S3 Stat",
+	log.Debug("attr cache miss, issuing S3 Stat",
 		"path", fpath)
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
@@ -219,7 +219,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 				log.Error(err, "")
 			}
 			fs.FileCount.Add(1)
-			log.Debug("Attr counted file and cleared cache",
+			log.Debug("attr counted file and cleared cache",
 
 				"fileCount", fs.FileCount.Value(), "path", fpath)
 
@@ -232,7 +232,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 }
 
 func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
-	log.Debug("StatFS called", "backupID", fs.Backup.ID)
+	log.Debug("statFS called", "backupID", fs.Backup.ID)
 	return agentTypes.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
@@ -266,7 +266,7 @@ func (fs *S3FS) OpenFile(ctx context.Context, fpath string, flag int, perm os.Fi
 }
 
 func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error) {
-	log.Debug("ReadDir called",
+	log.Debug("readDir called",
 
 		"backupID", fs.Backup.ID, "path", fpath)
 
@@ -338,7 +338,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 			}
 		}
 	}
-	log.Debug("ReadDir completed",
+	log.Debug("readDir completed",
 
 		"count", len(entries), "path", fpath)
 

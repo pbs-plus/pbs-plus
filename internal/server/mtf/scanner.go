@@ -432,7 +432,7 @@ func (s *Scanner) scanDrive(ctx context.Context, dev, barcode string, res *Resul
 	if isPBS {
 		s.logger.Info("mtf: skipping PBS-formatted tape", "device", dev)
 		if s.logger != nil {
-			s.logger.LogString("Skipping PBS-formatted tape")
+			s.logger.LogString("skipping PBS-formatted tape")
 		}
 		return nil
 	}

@@ -86,16 +86,16 @@ func (o *Operator) Run(ctx context.Context) error {
 	}
 
 	o.informerFactory.Start(ctx.Done())
-	log.Info("Waiting for cache sync")
+	log.Info("waiting for cache sync")
 
 	if !cache.WaitForCacheSync(ctx.Done(), pvcInformer.HasSynced, podInformer.HasSynced) {
 		return nil
 	}
-	log.Info("Operator started successfully",
+	log.Info("operator started successfully",
 		"namespace", namespace)
 
 	<-ctx.Done()
-	log.Info("Operator shutting down")
+	log.Info("operator shutting down")
 	return nil
 }
 
@@ -127,7 +127,7 @@ func (o *Operator) handlePVCDelete(obj any) {
 
 	key := keyFunc(pvc)
 	if o.pvcTracker.IsTracked(key) {
-		log.Info("PVC deleted, cleaning up backup resources",
+		log.Info("pVC deleted, cleaning up backup resources",
 			"pvc", key)
 
 		o.pvcTracker.Untrack(key)
@@ -151,7 +151,7 @@ func (o *Operator) handlePodDelete(obj any) {
 	if pvcKey == "" {
 		return
 	}
-	log.Info("Backup pod deleted",
+	log.Info("backup pod deleted",
 
 		"pvc", pvcKey, "pod", pod.Namespace+"/"+pod.Name)
 
@@ -169,7 +169,7 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 
 	if !backupEnabled {
 		if wasEnabled {
-			log.Info("Backup annotation removed, cleaning up",
+			log.Info("backup annotation removed, cleaning up",
 				"pvc", key)
 
 			o.pvcTracker.Untrack(key)
@@ -198,7 +198,7 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 		oldIsRWO := isReadWriteOnce(oldPVC)
 
 		if oldIsRWO != isRWO || oldForceSnapshot != forceSnapshot {
-			log.Info("Snapshot mode changed, recreating backup pod",
+			log.Info("snapshot mode changed, recreating backup pod",
 
 				"useSnapshot", useSnapshot, "pvc", key)
 
@@ -207,7 +207,7 @@ func (o *Operator) processPVC(pvc, oldPVC *corev1.PersistentVolumeClaim) {
 			}
 		}
 	}
-	log.Info("Processing PVC for backup",
+	log.Info("processing PVC for backup",
 
 		"useSnapshot", useSnapshot, "pvc", key)
 

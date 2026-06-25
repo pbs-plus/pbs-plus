@@ -43,7 +43,7 @@ func NewPodManager(clientset kubernetes.Interface, agentImage, serverURL, bootst
 func (pm *PodManager) CreateBackupPod(ctx context.Context, pvcToMount, originalPVC *corev1.PersistentVolumeClaim, useSnapshot bool) error {
 	namespace := pvcToMount.Namespace
 	podName := pm.getPodName(originalPVC)
-	log.Info("Creating backup pod",
+	log.Info("creating backup pod",
 
 		"useSnapshot", useSnapshot, "pvc", pvcToMount.Name, "pod", namespace+"/"+podName)
 
@@ -52,14 +52,14 @@ func (pm *PodManager) CreateBackupPod(ctx context.Context, pvcToMount, originalP
 	_, err := pm.clientset.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
 		if errors.IsAlreadyExists(err) {
-			log.Info("Backup pod already exists",
+			log.Info("backup pod already exists",
 				"pod", namespace+"/"+podName)
 
 			return nil
 		}
 		return fmt.Errorf("failed to create backup pod: %w", err)
 	}
-	log.Info("Backup pod created successfully",
+	log.Info("backup pod created successfully",
 		"pod", namespace+"/"+podName)
 
 	return nil
@@ -83,7 +83,7 @@ func (pm *PodManager) GetBackupPod(ctx context.Context, pvc *corev1.PersistentVo
 func (pm *PodManager) CleanupForPVC(ctx context.Context, pvc *corev1.PersistentVolumeClaim) error {
 	namespace := pvc.Namespace
 	podName := pm.getPodName(pvc)
-	log.Info("Cleaning up backup pod",
+	log.Info("cleaning up backup pod",
 		"pod", namespace+"/"+podName)
 
 	err := pm.clientset.CoreV1().Pods(namespace).Delete(ctx, podName, metav1.DeleteOptions{

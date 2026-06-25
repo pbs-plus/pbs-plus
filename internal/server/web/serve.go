@@ -50,7 +50,7 @@ func WatchAndServe(apiServer *http.Server, certFile, keyFile string, watcherFile
 	for {
 		select {
 		case <-done:
-			log.Info("WatchAndServe: shutting down")
+			log.Info("watchAndServe: shutting down")
 			return
 		default:
 		}

@@ -3,7 +3,7 @@
 package web
 
 import (
-	"log"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"net/http"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
@@ -34,7 +34,7 @@ func CORS(store *store.Store, next http.Handler) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			_, err := w.Write([]byte{})
 			if err != nil {
-				log.Printf("cannot send 200 answer → %v", err)
+				log.Error(err, "cannot send 200 answer")
 			}
 			return
 		}

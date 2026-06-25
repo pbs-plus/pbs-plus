@@ -160,7 +160,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 		log.Error(err, "start PBS session failed")
 		return fmt.Errorf("start PBS session: %w", err)
 	}
-	log.Info("PBS session started")
+	log.Info("pBS session started")
 
 	metaName := archiveName + ".mpxar.didx"
 	payloadName := archiveName + ".ppxar.didx"

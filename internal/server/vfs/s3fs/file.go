@@ -20,7 +20,7 @@ func (f *S3File) ReadAt(buf []byte, off int64) (int, error) {
 	if off >= f.size {
 		return 0, io.EOF
 	}
-	log.Debug("ReadAt called",
+	log.Debug("readAt called",
 
 		"length", len(buf), "offset", off, "key", f.key)
 
@@ -66,7 +66,7 @@ func (f *S3File) readRemote(buf []byte, off int64) (int, error) {
 }
 
 func (f *S3File) Close() error {
-	log.Debug("Close file", "key", f.key)
+	log.Debug("close file", "key", f.key)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 

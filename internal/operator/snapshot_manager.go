@@ -45,7 +45,7 @@ func (sm *SnapshotManager) CreateSnapshotAndRestore(ctx context.Context, origina
 	timestamp := time.Now().Unix()
 	snapshotName := fmt.Sprintf("pbs-snapshot-%s-%d", originalPVC.Name, timestamp)
 	restoredPVCName := fmt.Sprintf("pbs-restored-%s-%d", originalPVC.Name, timestamp)
-	log.Info("Creating snapshot for PVC",
+	log.Info("creating snapshot for PVC",
 
 		"snapshotName", snapshotName, "originalPVC", namespace+"/"+originalPVC.Name)
 
@@ -57,7 +57,7 @@ func (sm *SnapshotManager) CreateSnapshotAndRestore(ctx context.Context, origina
 		sm.deleteVolumeSnapshot(ctx, namespace, snapshotName)
 		return nil, nil, fmt.Errorf("failed waiting for snapshot: %w", err)
 	}
-	log.Info("Creating restored PVC from snapshot",
+	log.Info("creating restored PVC from snapshot",
 		"restoredPVC", namespace+"/"+restoredPVCName)
 
 	restoredPVC, err := sm.createRestoredPVC(ctx, namespace, restoredPVCName, snapshotName, originalPVC)
@@ -74,7 +74,7 @@ func (sm *SnapshotManager) CreateSnapshotAndRestore(ctx context.Context, origina
 
 	cleanup := func() {
 		cleanupCtx := context.Background()
-		log.Info("Cleaning up snapshot resources",
+		log.Info("cleaning up snapshot resources",
 
 			"snapshot", snapshotName, "restoredPVC", restoredPVCName)
 

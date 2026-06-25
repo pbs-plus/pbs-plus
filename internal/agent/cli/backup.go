@@ -209,7 +209,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				"snapshot_path", currentSnap.Path, "mode", currentReadMode)
 
 			if err := session.Serve(); err != nil {
-				log.Warn("ARPC connection lost, attempting recovery", "error", err.Error())
+				log.Warn("aRPC connection lost, attempting recovery", "error", err.Error())
 				session.Close()
 				session = nil
 
@@ -325,7 +325,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 			}
 		}
 		if err := scanner.Err(); err != nil {
-			log.Warn("ExecBackup: stdout scanner error", "error", err.Error())
+			log.Warn("execBackup: stdout scanner error", "error", err.Error())
 		}
 	}()
 
@@ -335,7 +335,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 
 		}
 		if err := errScanner.Err(); err != nil {
-			log.Warn("ExecBackup: stderr scanner error", "error", err.Error())
+			log.Warn("execBackup: stderr scanner error", "error", err.Error())
 		}
 	}()
 
@@ -360,7 +360,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 		return nil, "", err
 	}
 	if existingSession, ok := activeSessions.Get(backupID); ok {
-		log.Info("Backup: closing existing session")
+		log.Info("backup: closing existing session")
 		existingSession.Close()
 		if err := store.EndBackup(backupID); err != nil {
 			log.Error(err, "")
@@ -372,7 +372,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 			log.Error(err, "Backup: HasActiveBackupForJob failed")
 			return nil, "", err
 		}
-		log.Info("Backup: ending previous active backup")
+		log.Info("backup: ending previous active backup")
 		if err := store.EndBackup(backupID); err != nil {
 			log.Error(err, "")
 		}

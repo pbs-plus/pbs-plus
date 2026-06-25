@@ -3,7 +3,6 @@ package cli
 import (
 	"flag"
 	"fmt"
-	stdlog "log"
 	"net"
 	"net/http"
 	"os"
@@ -69,12 +68,12 @@ func Entry() {
 					continue
 				}
 
-				stdlog.Printf("pprof server listening on http://localhost%s", addr)
-				stdlog.Println(http.Serve(listener, nil))
+				log.Info("pprof server listening", "addr", addr)
+				log.Error(http.Serve(listener, nil), "pprof server stopped")
 				return
 			}
 
-			stdlog.Printf("failed to start pprof server after %d attempts", maxAttempts)
+			log.Error(fmt.Errorf("failed to start pprof server after %d attempts", maxAttempts), "")
 		}()
 	}
 

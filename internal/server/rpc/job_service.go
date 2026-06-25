@@ -161,7 +161,7 @@ func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath 
 		close(ready)
 		rpc.Accept(listener)
 	}()
-	log.Info("RPC server listening",
+	log.Info("rPC server listening",
 		"socket", socketPath)
 
 	<-ready

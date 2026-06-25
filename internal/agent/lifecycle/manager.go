@@ -218,13 +218,13 @@ func ConnectARPC(
 					signalCertError(ErrHostNotExpected)
 					return
 				}
-				log.Warn("QUIC connection failed, falling back to TCP/mTLS", "error", connErr.Error())
+				log.Warn("qUIC connection failed, falling back to TCP/mTLS", "error", connErr.Error())
 
 				var tcpPipe *arpc.StreamPipe
 				tcpPipe, connErr = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 				if connErr == nil {
 					session = tcpPipe
-					log.Info("TCP/mTLS fallback connection established")
+					log.Info("tCP/mTLS fallback connection established")
 
 				}
 			}

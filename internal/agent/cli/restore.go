@@ -171,12 +171,12 @@ func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMod
 		})
 
 		session.SetRouter(router)
-		log.Info("ARPC connection established")
+		log.Info("aRPC connection established")
 
 		if err := session.Serve(); err != nil {
-			log.Warn("ARPC connection lost")
+			log.Warn("aRPC connection lost")
 		} else {
-			log.Info("ARPC session serve returned normally")
+			log.Info("aRPC session serve returned normally")
 		}
 
 		cancel()
@@ -289,7 +289,7 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 
 		}
 		if err := scanner.Err(); err != nil {
-			log.Warn("ExecRestore: stdout scanner error", "error", err.Error())
+			log.Warn("execRestore: stdout scanner error", "error", err.Error())
 		}
 	}()
 
@@ -299,7 +299,7 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 
 		}
 		if err := errScanner.Err(); err != nil {
-			log.Warn("ExecRestore: stderr scanner error", "error", err.Error())
+			log.Warn("execRestore: stderr scanner error", "error", err.Error())
 		}
 	}()
 	log.Info("restore: returning to parent",
@@ -331,7 +331,7 @@ func Restore(rpcSess *arpc.StreamPipe, restoreID, source, dest string, mode pxar
 		return err
 	}
 	if existingSession, ok := activeRestoreSessions.Get(restoreID); ok {
-		log.Info("Restore: closing existing session")
+		log.Info("restore: closing existing session")
 		existingSession.Close()
 		if err := store.EndRestore(restoreID); err != nil {
 			log.Error(err, "")
@@ -354,7 +354,7 @@ func Restore(rpcSess *arpc.StreamPipe, restoreID, source, dest string, mode pxar
 			log.Error(err, "Restore: HasActiveRestoreForRestore failed")
 			return err
 		}
-		log.Info("Restore: ending previous active restore")
+		log.Info("restore: ending previous active restore")
 		if err := store.EndRestore(restoreID); err != nil {
 			log.Error(err, "")
 		}

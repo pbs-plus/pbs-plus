@@ -13,9 +13,9 @@ func FIPSServerTLSConfig() *tls.Config {
 		PreferServerCipherSuites: true,
 	}
 	if fips140.Enabled() {
-		slog.Info("TLS server config: FIPS 140-3 mode active, using approved cipher suites")
+		slog.Info("tLS server config: FIPS 140-3 mode active, using approved cipher suites")
 	} else {
-		slog.Warn("TLS server config: FIPS 140-3 mode NOT active — set GODEBUG=fips140=on to enable")
+		slog.Warn("tLS server config: FIPS 140-3 mode NOT active — set GODEBUG=fips140=on to enable")
 		cfg.CipherSuites = FIPSAllowedCipherSuites
 		cfg.CurvePreferences = FIPSAllowedCurvePreferences
 	}
@@ -30,9 +30,9 @@ func FIPSClientTLSConfig(minVersion uint16) *tls.Config {
 		MinVersion: minVersion,
 	}
 	if fips140.Enabled() {
-		slog.Info("TLS client config: FIPS 140-3 mode active, using approved cipher suites")
+		slog.Info("tLS client config: FIPS 140-3 mode active, using approved cipher suites")
 	} else {
-		slog.Warn("TLS client config: FIPS 140-3 mode NOT active — set GODEBUG=fips140=on to enable")
+		slog.Warn("tLS client config: FIPS 140-3 mode NOT active — set GODEBUG=fips140=on to enable")
 		cfg.CipherSuites = FIPSAllowedCipherSuites
 		cfg.CurvePreferences = FIPSAllowedCurvePreferences
 	}

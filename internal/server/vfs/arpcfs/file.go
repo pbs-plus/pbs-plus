@@ -17,7 +17,7 @@ import (
 
 func (f *ARPCFile) Close(ctx context.Context) error {
 	if f.isClosed.Load() {
-		log.Debug("Close called on already closed file",
+		log.Debug("close called on already closed file",
 
 			"path", f.name, "backup", f.backupID)
 
@@ -33,7 +33,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 
 		return syscall.ENOENT
 	}
-	log.Debug("Issuing Close RPC",
+	log.Debug("issuing Close RPC",
 
 		"handleID", f.handleID, "path", f.name)
 
@@ -53,7 +53,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 		return nil
 	}
 	f.isClosed.Store(true)
-	log.Debug("Close RPC completed",
+	log.Debug("close RPC completed",
 
 		"handleID", f.handleID, "path", f.name)
 
@@ -61,7 +61,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 }
 
 func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, error) {
-	log.Debug("Lseek called",
+	log.Debug("lseek called",
 
 		"whence", whence, "offset", off, "path", f.name)
 
@@ -104,7 +104,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 
 		return 0, syscall.EOPNOTSUPP
 	}
-	log.Debug("Lseek completed",
+	log.Debug("lseek completed",
 
 		"newOffset", resp.NewOffset, "path", f.name)
 
@@ -130,7 +130,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 
 		return 0, syscall.ENOENT
 	}
-	log.Debug("ReadAt called",
+	log.Debug("readAt called",
 
 		"length", len(p), "offset", off, "path", f.name)
 
@@ -151,7 +151,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	}
 
 	f.fs.TotalBytes.Add(int64(n))
-	log.Debug("ReadAt completed",
+	log.Debug("readAt completed",
 
 		"bytesRead", n, "requested", len(p), "offset", off, "path", f.name)
 

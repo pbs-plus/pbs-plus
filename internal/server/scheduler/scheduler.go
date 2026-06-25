@@ -55,7 +55,7 @@ func (s *Scheduler) Start() {
 func (s *Scheduler) run() {
 	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
-	log.Info("Internal scheduler started")
+	log.Info("internal scheduler started")
 
 	for {
 		select {
@@ -86,7 +86,7 @@ func (s *Scheduler) checkBackups() {
 
 		if b.Schedule != "" {
 			if nextRun, ok := s.shouldRunScheduled(b, now); ok {
-				log.Info("Scheduler: scheduled backup is due, enqueuing", "backupID", b.ID)
+				log.Info("scheduler: scheduled backup is due, enqueuing", "backupID", b.ID)
 				s.markEnqueued(b.ID, nextRun)
 				job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
 				go s.enqueueBackup(b.ID, job)
@@ -95,7 +95,7 @@ func (s *Scheduler) checkBackups() {
 		}
 
 		if b.Retry > 0 && s.shouldRetryBackup(b, now) {
-			log.Info("Scheduler: backup retry is due, enqueuing", "backupID", b.ID)
+			log.Info("scheduler: backup retry is due, enqueuing", "backupID", b.ID)
 			job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
 			go s.enqueueBackup(b.ID, job)
 		}
@@ -197,7 +197,7 @@ func (s *Scheduler) checkRestores() {
 		}
 
 		if r.Retry > 0 && s.shouldRetryRestore(r, now) {
-			log.Info("Scheduler: restore retry is due, enqueuing", "restoreID", r.ID)
+			log.Info("scheduler: restore retry is due, enqueuing", "restoreID", r.ID)
 			job, err := restore.NewRestoreJob(r, s.storeInstance, false, false)
 			if err != nil {
 				log.Error(err, "Scheduler: failed to create restore job", "restoreID", r.ID)
@@ -249,7 +249,7 @@ func (s *Scheduler) checkMtfJobs() {
 
 		if mj.Schedule != "" {
 			if nextRun, ok := s.shouldRunScheduledMtf(mj, now); ok {
-				log.Info("Scheduler: scheduled MTF job is due, enqueuing", "mtfJobID", mj.ID)
+				log.Info("scheduler: scheduled MTF job is due, enqueuing", "mtfJobID", mj.ID)
 				s.markEnqueued(mj.ID, nextRun)
 				if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
 					go s.enqueueMtf(mj.ID, job)
@@ -261,7 +261,7 @@ func (s *Scheduler) checkMtfJobs() {
 		}
 
 		if mj.Retry > 0 && s.shouldRetryMtf(mj, now) {
-			log.Info("Scheduler: MTF job retry is due, enqueuing", "mtfJobID", mj.ID)
+			log.Info("scheduler: MTF job retry is due, enqueuing", "mtfJobID", mj.ID)
 			if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
 				go s.enqueueMtf(mj.ID, job)
 			} else {
@@ -382,7 +382,7 @@ func (s *Scheduler) checkVerifications() {
 		if now.Sub(nextRun) >= schedulerTickInterval {
 			continue
 		}
-		log.Info("Scheduler: scheduled verification is due", "verificationJobID", vJob.ID)
+		log.Info("scheduler: scheduled verification is due", "verificationJobID", vJob.ID)
 
 		if vJob.RunOnBackupComplete {
 			// Don't run yet  -  mark as pending, wait for backup completion
@@ -391,7 +391,7 @@ func (s *Scheduler) checkVerifications() {
 				if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
 					log.Error(err, "Scheduler: failed to set pending_since", "verificationJobID", vJob.ID)
 				}
-				log.Info("Scheduler: verification pending until backup completes", "verificationJobID", vJob.ID)
+				log.Info("scheduler: verification pending until backup completes", "verificationJobID", vJob.ID)
 			}
 			continue
 		}

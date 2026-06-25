@@ -101,7 +101,7 @@ func (p *PBSAuth) VerifyTicket(cookieVal string) (bool, error) {
 	}
 
 	if strings.HasPrefix(sigStr, ":") {
-		log.Warn("VerifyTicket: signature had unexpected leading colon")
+		log.Warn("verifyTicket: signature had unexpected leading colon")
 		sigStr = sigStr[1:]
 	}
 

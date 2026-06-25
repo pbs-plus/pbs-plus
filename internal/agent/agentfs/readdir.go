@@ -33,7 +33,7 @@ type DirReader struct {
 }
 
 func NewDirReader(handle *os.File, path string) (*DirReader, error) {
-	log.Debug("NewDirReader: initializing directory reader",
+	log.Debug("newDirReader: initializing directory reader",
 		"path", path)
 
 	reader := &DirReader{
@@ -70,7 +70,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 	defer r.mu.Unlock()
 
 	if r.noMoreFiles && len(r.pending) == 0 {
-		log.Debug("DirReader.NextBatch: no more files (cached)",
+		log.Debug("dirReader.NextBatch: no more files (cached)",
 			"path", r.path)
 		return nil, os.ErrProcessDone
 	}
@@ -170,7 +170,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 
 	result := make([]byte, r.encodeWriter.Len())
 	copy(result, r.encodeWriter.Bytes())
-	log.Debug("DirReader.NextBatch: batch encoded",
+	log.Debug("dirReader.NextBatch: batch encoded",
 
 		"pending_count", len(r.pending), "entries_count", entryCount, "bytes", len(result), "path", r.path)
 
@@ -184,7 +184,7 @@ func (r *DirReader) Close() error {
 	if r.closed {
 		return nil
 	}
-	log.Debug("DirReader.Close: closing file",
+	log.Debug("dirReader.Close: closing file",
 		"path", r.path)
 
 	r.encodeWriter.Reset()

@@ -46,7 +46,7 @@ func SendDataFromReader(r io.Reader, length int, stream ARPCStream) error {
 
 	if length == 0 || r == nil {
 		if r == nil {
-			log.Warn("SendDataFromReader: reader is nil, sending zero-length")
+			log.Warn("sendDataFromReader: reader is nil, sending zero-length")
 		}
 		return nil
 	}

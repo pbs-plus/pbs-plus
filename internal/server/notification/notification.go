@@ -249,6 +249,6 @@ func logFallback(n notification) {
 	if title == "" {
 		title = fmt.Sprintf("notification %s", n.ID)
 	}
-	slog.Info("PBS Plus notification (spool unavailable)",
+	slog.Info("pBS Plus notification (spool unavailable)",
 		"title", title, "severity", n.Metadata.Severity)
 }

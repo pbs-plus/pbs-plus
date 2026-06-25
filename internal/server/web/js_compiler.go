@@ -106,9 +106,9 @@ func restoreLegacyFiles() error {
 	}
 
 	if restoredAny {
-		log.Info("Legacy JavaScript modifications have been cleaned up")
+		log.Info("legacy JavaScript modifications have been cleaned up")
 	} else {
-		log.Info("No legacy JavaScript modifications found to clean up")
+		log.Info("no legacy JavaScript modifications found to clean up")
 	}
 
 	return nil
@@ -153,7 +153,7 @@ func modifyHBS(original []byte) []byte {
 	}
 
 	if strings.Contains(content, "pbs-plus-pre.js") && strings.Contains(content, "pbs-plus-custom.js") {
-		log.Info("HBS template already contains PBS-Plus modifications")
+		log.Info("hBS template already contains PBS-Plus modifications")
 		return original
 	}
 
@@ -244,13 +244,13 @@ func cleanupJSFiles(jsDir string) {
 	if err := os.Remove(preJSPath); err != nil && !os.IsNotExist(err) {
 		log.Error(err, "Failed to remove pre JS file")
 	} else if err == nil {
-		log.Info("Pre JS file removed")
+		log.Info("pre JS file removed")
 	}
 
 	if err := os.Remove(customJSPath); err != nil && !os.IsNotExist(err) {
 		log.Error(err, "Failed to remove custom JS file")
 	} else if err == nil {
-		log.Info("Custom JS file removed")
+		log.Info("custom JS file removed")
 	}
 }
 
@@ -258,7 +258,7 @@ func ModifyPBSHandlebars(hbsPath, jsDir string) error {
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("failed to create backup directory: %w", err)
 	}
-	log.Info("Checking for legacy JavaScript modifications to clean up...")
+	log.Info("checking for legacy JavaScript modifications to clean up...")
 	if err := restoreLegacyFiles(); err != nil {
 		return fmt.Errorf("failed to restore legacy files: %w", err)
 	}

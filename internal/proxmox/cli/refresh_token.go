@@ -61,7 +61,7 @@ func runCommandAndIgnoreExists(cmd *exec.Cmd, alreadyExistsKeywords []string) er
 			for _, keyword := range alreadyExistsKeywords {
 				if strings.Contains(outputStr, keyword) {
 					isAlreadyExistsError = true
-					log.Info("Resource already exists (ignored error): " + cmd.String() + " - Output: " + outputStr)
+					log.Info("resource already exists (ignored error): " + cmd.String() + " - Output: " + outputStr)
 					break
 				}
 			}
@@ -182,7 +182,7 @@ func createAPIToken() (*APIToken, error) {
 	if cmdErr != nil {
 		alreadyExistsTokenMsg := "token '" + proxmox.AuthToken + "' for user '" + proxmox.AuthUser + "' already exists"
 		if strings.Contains(rawOutputStr, alreadyExistsTokenMsg) {
-			log.Info("Token " + proxmox.AuthID + " already exists. Attempting to delete and regenerate.")
+			log.Info("token " + proxmox.AuthID + " already exists. Attempting to delete and regenerate.")
 
 			cmdTokenDelete := exec.Command(
 				"proxmox-backup-manager",
@@ -198,9 +198,9 @@ func createAPIToken() (*APIToken, error) {
 			if deleteErr != nil {
 				log.Error(deleteErr, "Failed to delete existing token '"+proxmox.AuthID+"'. Output: "+deleteOutputStr)
 			} else {
-				log.Info("Successfully deleted existing token: " + proxmox.AuthID + ". Output: " + deleteOutputStr)
+				log.Info("successfully deleted existing token: " + proxmox.AuthID + ". Output: " + deleteOutputStr)
 			}
-			log.Info("Retrying token generation for: " + proxmox.AuthID)
+			log.Info("retrying token generation for: " + proxmox.AuthID)
 			cmdRetry := generateTokenCmd()
 			cmdRetry.Env = os.Environ()
 			outputBytesRetry, cmdErrRetry := cmdRetry.CombinedOutput()
@@ -210,7 +210,7 @@ func createAPIToken() (*APIToken, error) {
 				log.Error(cmdErrRetry, "Failed to generate token on retry for '"+proxmox.AuthID+"'. Output: "+rawOutputStrRetry)
 				return nil, cmdErrRetry
 			}
-			log.Info("Successfully generated token on retry for " + proxmox.AuthID + ".")
+			log.Info("successfully generated token on retry for " + proxmox.AuthID + ".")
 			var parseErr error
 			finalToken, parseErr = processTokenGeneration(rawOutputStrRetry)
 			if parseErr != nil {
@@ -221,7 +221,7 @@ func createAPIToken() (*APIToken, error) {
 			return nil, cmdErr
 		}
 	} else {
-		log.Info("Successfully generated token on first try for " + proxmox.AuthID + ".")
+		log.Info("successfully generated token on first try for " + proxmox.AuthID + ".")
 		var parseErr error
 		finalToken, parseErr = processTokenGeneration(rawOutputStr)
 		if parseErr != nil {
@@ -243,7 +243,7 @@ func createAPIToken() (*APIToken, error) {
 	if err := runCommandAndIgnoreExists(cmdAclToken, []string{"entry '" + proxmox.AuthID + "' already exists"}); err != nil {
 		return nil, err
 	}
-	log.Info("User token creation process completed successfully.")
+	log.Info("user token creation process completed successfully.")
 	return finalToken, nil
 }
 

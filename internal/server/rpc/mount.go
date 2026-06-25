@@ -87,7 +87,7 @@ type MountRPCService struct {
 }
 
 func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
-	log.Info("Received backup request")
+	log.Info("received backup request")
 
 	backup, err := s.Store.Database.GetBackup(args.BackupID)
 	if err != nil {
@@ -183,13 +183,13 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	reply.Status = 200
 	reply.Message = backupMode + "|" + backup.Namespace
 	reply.BackupMode = backupMode
-	log.Info("Mounting successful")
+	log.Info("mounting successful")
 
 	return nil
 }
 
 func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
-	log.Info("Received S3 backup request")
+	log.Info("received S3 backup request")
 
 	backup, err := s.Store.Database.GetBackup(args.BackupID)
 	if err != nil {
@@ -228,13 +228,13 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 
 	reply.Status = 200
 	reply.Message = backup.Namespace
-	log.Info("Mounting successful")
+	log.Info("mounting successful")
 
 	return nil
 }
 
 func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) error {
-	log.Info("Received cleanup request")
+	log.Info("received cleanup request")
 
 	childKey := args.TargetHostname + "|" + args.BackupID
 	sessions.DisconnectSession(childKey)
@@ -253,7 +253,7 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 	qSess, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
 	tSess, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
 	if !qExists && !tExists {
-		log.Info("Target unreachable, assuming cleanup successful.",
+		log.Info("target unreachable, assuming cleanup successful.",
 			"jobID", args.BackupID)
 
 		reply.Status = 200
@@ -286,14 +286,14 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 
 	reply.Status = 200
 	reply.Message = "Cleanup successful"
-	log.Info("Cleanup successful",
+	log.Info("cleanup successful",
 		"backupID", args.BackupID)
 
 	return nil
 }
 
 func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
-	log.Info("Received status request")
+	log.Info("received status request")
 
 	_, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
 	_, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
@@ -342,7 +342,7 @@ func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath str
 		close(ready)
 		rpc.Accept(listener)
 	}()
-	log.Info("RPC server listening",
+	log.Info("rPC server listening",
 		"socket", socketPath)
 
 	<-ready
