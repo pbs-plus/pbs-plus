@@ -32,17 +32,11 @@ type RestoreOptions struct {
 	DestDir string
 }
 
-// reportErr sends a metadata error to the server immediately (never batched
-// or deferred). Metadata errors are non-fatal — content is already in place —
 func (st *restoreState) reportErr(ctx context.Context, op, path string, err error) {
 	if err == nil {
 		return
 	}
-	e := fmt.Errorf("%s %q: %w", op, path, err)
-	if serr := st.client.SendError(ctx, e); serr != nil {
-		log.Error(e, "", "sendErr", serr.Error(), "op", op, "restore", "error-report-failed")
-
-	}
+	log.Error(fmt.Errorf("%s %q: %w", op, path, err), "non-fatal metadata error", "op", op, "path", path)
 }
 
 // runJobRecovered wraps processJob with panic recovery. An unrecovered panic
