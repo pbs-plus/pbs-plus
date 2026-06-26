@@ -103,7 +103,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions/{id}", ServerOnly(storeInstance, api.AlertExclusionSingleHandler(storeInstance)))
 
 	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
-	apiMux.HandleFunc("/api2/json/plus/ca-fingerprint", api.CAFingerprintHandler(storeInstance))
+	apiMux.HandleFunc("/api2/json/plus/ca-fingerprint", ServerOnly(storeInstance, api.CAFingerprintHandler(storeInstance)))
 
 	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(storeInstance, version))
 	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinaryHandler(storeInstance, version))
