@@ -35,6 +35,16 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
+	go p.run()
+	return nil
+}
+
+func (p *pbsService) run() {
+	_ = log.L.SetServiceLogger()
+	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerURL", Value: os.Getenv("PBS_PLUS_INIT_SERVER_URL")})
+	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "BootstrapToken", Value: os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN")})
+	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerCAFingerprint", Value: os.Getenv("PBS_PLUS_INIT_SERVER_CA_FINGERPRINT")})
+
 	if os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE") != "true" && os.Getenv("PBS_PLUS__I_AM_INSIDE_CONTAINER") != "true" {
 		_, _ = updater.New(updater.Config{
 			MinConstraint:  ">= 0.52.0",
@@ -45,22 +55,12 @@ func (p *pbsService) Start(s service.Service) error {
 				if err != nil {
 					log.Error(err, "updater exiting with error")
 				}
-				log.Info("exiting for service manager to restart with updated binary")
+				log.Info("exiting for restart with updated binary")
 				os.Exit(1)
 			},
-			Service: s,
 			Context: p.ctx,
 		})
 	}
-	go p.run()
-	return nil
-}
-
-func (p *pbsService) run() {
-	_ = log.L.SetServiceLogger()
-	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerURL", Value: os.Getenv("PBS_PLUS_INIT_SERVER_URL")})
-	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "BootstrapToken", Value: os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN")})
-	_ = registry.CreateEntryIfNotExists(&registry.RegistryEntry{Path: registry.CONFIG, Key: "ServerCAFingerprint", Value: os.Getenv("PBS_PLUS_INIT_SERVER_CA_FINGERPRINT")})
 
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
