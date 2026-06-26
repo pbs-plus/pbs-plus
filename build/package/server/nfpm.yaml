@@ -1,0 +1,41 @@
+# nfpm v2 config for the PBS Plus server .deb package.
+# Used by the build-server CI job (after checksums are embedded).
+#
+# Usage (from repo root):
+#   VERSION=v0.97.0 nfpm pkg --packager deb \
+#     --target pbs-plus-v0.97.0-amd64.deb \
+#     --config build/package/server/nfpm.yaml
+#
+# Requires: dist-bins/pbs-plus (server binary) and dist-bins/bkf2pxar
+# to be present (downloaded from the goreleaser Phase 1 release).
+
+package_name: pbs-plus
+version: ${VERSION}
+section: utils
+priority: optional
+vendor: Son Roy Almerol
+homepage: https://github.com/pbs-plus/pbs-plus
+maintainer: Son Roy Almerol <github@snry.me>
+description: |
+  PBS Plus is a project focused on extending Proxmox Backup Server (PBS)
+  with advanced features to create a more competitive backup solution.
+license: MIT
+arch: amd64
+
+depends:
+  - proxmox-backup-server (>= 3.2)
+  - proxmox-backup-client (>= 3.2.5)
+  - fuse3
+  - memcached
+
+contents:
+  - src: ./dist-bins/pbs-plus
+    dst: /usr/bin/pbs-plus
+  - src: ./dist-bins/bkf2pxar
+    dst: /usr/bin/bkf2pxar
+  - src: ./build/package/server/pbs-plus.service
+    dst: /lib/systemd/system/pbs-plus.service
+    type: config
+
+scripts:
+  postinstall: ./build/package/server/postinst

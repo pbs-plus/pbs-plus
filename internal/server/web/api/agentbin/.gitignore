@@ -1,5 +1,6 @@
-# Binary files are populated by the release build script.
-# Only VERSION is tracked in git; actual binaries are excluded.
+# Checksums file is populated by the release build script.
+# VERSION and checksums.txt are tracked; actual binaries are excluded.
 *
 !VERSION
+!checksums.txt
 !/.gitignore

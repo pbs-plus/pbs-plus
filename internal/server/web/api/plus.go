@@ -3,7 +3,9 @@
 package api
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -84,7 +86,7 @@ type fetchError struct {
 
 func (e *fetchError) Error() string { return e.message }
 
-func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http.Request) {
+func getCachedOrFetch(targetURL, filename, expectedChecksum string, w http.ResponseWriter, r *http.Request) {
 	if filepath.Base(filename) != filename {
 		http.Error(w, "Invalid filename", http.StatusBadRequest)
 		return
@@ -101,7 +103,22 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	w.Header().Set("X-Cache", "MISS")
 
 	_, err, _ := downloadFlight.Do(filename, func() (any, error) {
-		return nil, fetchToCache(targetURL, cachePath)
+		if err := fetchToCache(targetURL, cachePath); err != nil {
+			return nil, err
+		}
+
+		if expectedChecksum != "" {
+			if err := verifyCachedChecksum(cachePath, expectedChecksum); err != nil {
+				if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
+					log.Error(rmErr, "")
+				}
+				return nil, err
+			}
+		} else {
+			log.Error(fmt.Errorf("no embedded checksum for %s; serving without verification", filename), "")
+		}
+
+		return nil, nil
 	})
 	if err != nil {
 		fe, ok := err.(*fetchError)
@@ -181,6 +198,34 @@ func fetchToCache(targetURL, cachePath string) error {
 		return &fetchError{status: http.StatusInternalServerError, message: "Failed to write download"}
 	}
 
+	return nil
+}
+
+// verifyCachedChecksum reads the cached file, computes its sha256, and compares
+// against the expected checksum. Returns a *fetchError on mismatch.
+func verifyCachedChecksum(path, expected string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return &fetchError{status: http.StatusInternalServerError, message: "Failed to read cached file for verification"}
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return &fetchError{status: http.StatusInternalServerError, message: "Failed to compute checksum"}
+	}
+	actual := hex.EncodeToString(h.Sum(nil))
+
+	if !strings.EqualFold(actual, expected) {
+		return &fetchError{
+			status:  http.StatusInternalServerError,
+			message: fmt.Sprintf("Checksum mismatch for %s: expected %s, got %s", filepath.Base(path), expected, actual),
+		}
+	}
 	return nil
 }
 
@@ -326,7 +371,8 @@ func DownloadMsiHandler(storeInstance *store.Store, version string) http.Handler
 
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.msi", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -349,13 +395,10 @@ func DownloadBinaryHandler(storeInstance *store.Store, version string) http.Hand
 			return
 		}
 
-		if serveEmbeddedBinary(w, r, version, platform.OS, platform.Arch) {
-			return
-		}
-
 		filename := buildFilename("pbs-plus-agent", version, platform)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -378,13 +421,10 @@ func DownloadSigHandler(storeInstance *store.Store, version string) http.Handler
 			return
 		}
 
-		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".sig") {
-			return
-		}
-
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.sig", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -407,13 +447,10 @@ func DownloadECDSASigHandler(storeInstance *store.Store, version string) http.Ha
 			return
 		}
 
-		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".ecdsa-sig") {
-			return
-		}
-
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.ecdsa-sig", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -436,13 +473,10 @@ func DownloadChecksumHandler(storeInstance *store.Store, version string) http.Ha
 			return
 		}
 
-		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".sha256") {
-			return
-		}
-
 		filename := buildFilename("pbs-plus-agent", version, platform) + ".sha256"
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 

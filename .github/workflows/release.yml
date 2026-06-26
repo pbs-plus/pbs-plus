@@ -11,6 +11,9 @@ permissions:
   packages: write
 
 jobs:
+  # ─── Phase 1: goreleaser builds all non-server artifacts (agents, tools) ───
+  # The server is deliberately NOT built here — it must be built AFTER all
+  # artifacts (including the MSI) exist so their checksums can be embedded.
   goreleaser:
     runs-on: ubuntu-24.04
     steps:
@@ -98,6 +101,7 @@ jobs:
           ED25519_SEED_B64: ${{ secrets.ED25519_SEED_B64 }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
 
+  # ─── Phase 2: Build MSI (needs goreleaser for the Windows agent binary) ───
   build-msi:
     needs: goreleaser
     runs-on: windows-2025
@@ -111,11 +115,9 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $version = $tag -replace '^v', ''
-          # WiX requires X.X.X.X format
           if ($version -notmatch '\.\d+$') {
             $version = $version + ".0"
           }
-          # Handle RC versions (e.g., 1.0.0-rc1 -> 1.0.0.0)
           $version = $version -replace '-.*', ''
           echo "VERSION=$version" >> $env:GITHUB_ENV
           echo "TAG_VERSION=$tag" >> $env:GITHUB_ENV
@@ -128,9 +130,6 @@ jobs:
           $asset = "pbs-plus-agent-$tag-windows-amd64.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/$asset"
 
-          Write-Host "Downloading from: $url"
-
-          # Wait for GoReleaser to finish and asset to be available
           $maxAttempts = 30
           $attempt = 0
           $downloaded = $false
@@ -151,7 +150,6 @@ jobs:
             throw "Failed to download Windows agent after $maxAttempts attempts"
           }
 
-          # Verify the file exists and has content
           if (-not (Test-Path "pbs-plus-agent.exe")) {
             throw "Downloaded file does not exist"
           }
@@ -164,8 +162,7 @@ jobs:
           }
 
       - name: Install WiX Toolset
-        run: |
-          choco install wixtoolset -y
+        run: choco install wixtoolset -y
 
       - name: Refresh environment
         shell: pwsh
@@ -179,22 +176,15 @@ jobs:
           $env:VERSION = "${{ env.VERSION }}"
           $env:AGENT_EXE_PATH = "${{ github.workspace }}\pbs-plus-agent.exe"
 
-          Write-Host "Building MSI with version: $env:VERSION"
-          Write-Host "Agent executable: $env:AGENT_EXE_PATH"
-
-          # Verify executable exists
           if (-not (Test-Path $env:AGENT_EXE_PATH)) {
             throw "Agent executable not found at $env:AGENT_EXE_PATH"
           }
 
-          # Create output directory
           New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\msi-output" | Out-Null
 
           $licensePath = "${{ github.workspace }}\build\package\windows_agent\license.rtf"
           Copy-Item "$licensePath" -Destination "${{ github.workspace }}\msi-output\license.rtf"
-          Write-Host "✓ License copied to build directory"
 
-          # Build WiX object file
           $candlePath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\candle.exe"
           if (-not (Test-Path $candlePath)) {
             throw "candle.exe not found at $candlePath"
@@ -209,9 +199,6 @@ jobs:
             throw "candle.exe failed with exit code $LASTEXITCODE"
           }
 
-          Write-Host "WiX object file created successfully"
-
-          # Link MSI
           $lightPath = "C:\Program Files (x86)\WiX Toolset v3.14\bin\light.exe"
           if (-not (Test-Path $lightPath)) {
             throw "light.exe not found at $lightPath"
@@ -228,9 +215,6 @@ jobs:
             throw "light.exe failed with exit code $LASTEXITCODE"
           }
 
-          Write-Host "MSI created successfully"
-
-          # Verify MSI was created
           $msiPath = "${{ github.workspace }}\msi-output\pbs-plus-agent-${{ env.TAG_VERSION }}-windows-amd64.msi"
           if (-not (Test-Path $msiPath)) {
             throw "MSI file was not created at $msiPath"
@@ -239,11 +223,100 @@ jobs:
           $msiSize = (Get-Item $msiPath).Length
           Write-Host "MSI file size: $msiSize bytes"
 
+      - name: Compute MSI checksum
+        shell: pwsh
+        run: |
+          $msiName = "pbs-plus-agent-${{ env.TAG_VERSION }}-windows-amd64.msi"
+          $msiPath = "${{ github.workspace }}\msi-output\$msiName"
+          $hash = (Get-FileHash $msiPath -Algorithm SHA256).Hash.ToLower()
+          "$hash" | Out-File -Encoding ascii -NoNewline "$msiPath.sha256"
+          Write-Host "MSI sha256: $hash"
+
       - name: Upload MSI to release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             ./msi-output/pbs-plus-agent-${{ env.TAG_VERSION }}-windows-amd64.msi
+            ./msi-output/pbs-plus-agent-${{ env.TAG_VERSION }}-windows-amd64.msi.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Phase 3: Build server with embedded checksums (needs all artifacts) ───
+  # This job downloads all proxied artifacts from the release, computes their
+  # sha256 hashes, embeds them into the server binary, then builds + publishes.
+  build-server:
+    needs: [goreleaser, build-msi]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.26"
+
+      - name: Generate embedded checksums
+        run: |
+          TAG="${{ github.ref_name }}"
+          GITHUB_REPOSITORY="${{ github.repository }}" \
+            ./build/scripts/generate-embedded-checksums.sh "$TAG"
+          echo "=== checksums.txt (first 20 lines) ==="
+          head -20 internal/server/web/api/agentbin/checksums.txt
+          ENTRIES=$(grep -c '=' internal/server/web/api/agentbin/checksums.txt || true)
+          echo "Total checksum entries: $ENTRIES"
+
+      - name: Build server binary
+        run: |
+          TAG="${{ github.ref_name }}"
+          mkdir -p dist-bins
+          CGO_ENABLED=1 GOEXPERIMENT=greenteagc GOFIPS140=latest \
+            go build \
+            -ldflags "-X 'main.Version=$TAG'" \
+            -o dist-bins/pbs-plus \
+            ./cmd/pbs_plus
+          echo "Server binary size: $(stat -c%s dist-bins/pbs-plus) bytes"
+
+      - name: Download bkf2pxar from release
+        run: |
+          TAG="${{ github.ref_name }}"
+          mkdir -p dist-bins
+          curl -sfL -o dist-bins/bkf2pxar \
+            "https://github.com/${{ github.repository }}/releases/download/$TAG/pbs-plus-bkf2pxar-$TAG-linux-amd64"
+          chmod +x dist-bins/bkf2pxar
+          echo "bkf2pxar size: $(stat -c%s dist-bins/bkf2pxar) bytes"
+
+      - name: Install nfpm
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+
+      - name: Build deb package
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          VERSION="$VERSION" nfpm pkg \
+            --packager deb \
+            --target "pbs-plus-${TAG}-amd64.deb" \
+            --config build/package/server/nfpm.yaml
+          echo "Deb size: $(stat -c%s pbs-plus-${TAG}-amd64.deb) bytes"
+
+      - name: Prepare release artifacts
+        run: |
+          TAG="${{ github.ref_name }}"
+          mkdir -p server-output
+          cp dist-bins/pbs-plus "server-output/pbs-plus-${TAG}-linux-amd64"
+          cp "pbs-plus-${TAG}-amd64.deb" "server-output/"
+          cd server-output
+          sha256sum "pbs-plus-${TAG}-linux-amd64" | awk '{print $1}' > "pbs-plus-${TAG}-linux-amd64.sha256"
+          sha256sum "pbs-plus-${TAG}-amd64.deb" | awk '{print $1}' > "pbs-plus-${TAG}-amd64.deb.sha256"
+
+      - name: Upload server artifacts to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ./server-output/pbs-plus-${{ github.ref_name }}-linux-amd64
+            ./server-output/pbs-plus-${{ github.ref_name }}-linux-amd64.sha256
+            ./server-output/pbs-plus-${{ github.ref_name }}-amd64.deb
+            ./server-output/pbs-plus-${{ github.ref_name }}-amd64.deb.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -279,7 +352,6 @@ jobs:
             ghcr.io/${{ github.repository }}-agent
           tags: |
             type=ref,event=tag
-            # Add "latest" only for final tags (not -rcN)
             type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') }}
 
       - name: Build and push
