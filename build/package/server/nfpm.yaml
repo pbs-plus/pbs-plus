@@ -9,7 +9,7 @@
 # Requires: dist-bins/pbs-plus (server binary) and dist-bins/bkf2pxar
 # to be present (downloaded from the goreleaser Phase 1 release).
 
-package_name: pbs-plus
+name: pbs-plus
 version: ${VERSION}
 section: utils
 priority: optional
