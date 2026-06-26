@@ -17,7 +17,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
-
 type contentHandle struct {
 	rc       io.ReadCloser
 	fileSize uint64
@@ -187,6 +186,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 	}
 
 	handleID := atomic.AddUint64(&s.handleCounter, 1)
+	s.contentHandles.Set(handleID, &contentHandle{rc: rc, fileSize: params.FileSize})
 
 	reqLen := params.Length
 	if reqLen <= 0 {
