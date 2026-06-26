@@ -19,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"golang.org/x/sync/singleflight"
 )
 
 //go:embed install-agent.ps1
@@ -37,6 +38,8 @@ var (
 	}
 	versionRegex = regexp.MustCompile(`^[a-zA-Z0-9\._-]+$`)
 )
+
+var downloadFlight singleflight.Group
 
 const maxDownloadSize = 200 << 20
 
@@ -74,6 +77,13 @@ func getCacheDir() string {
 	return dir
 }
 
+type fetchError struct {
+	status  int
+	message string
+}
+
+func (e *fetchError) Error() string { return e.message }
+
 func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http.Request) {
 	if filepath.Base(filename) != filename {
 		http.Error(w, "Invalid filename", http.StatusBadRequest)
@@ -90,11 +100,26 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 
 	w.Header().Set("X-Cache", "MISS")
 
+	_, err, _ := downloadFlight.Do(filename, func() (any, error) {
+		return nil, fetchToCache(targetURL, cachePath)
+	})
+	if err != nil {
+		fe, ok := err.(*fetchError)
+		if !ok {
+			fe = &fetchError{status: http.StatusInternalServerError, message: err.Error()}
+		}
+		http.Error(w, fe.message, fe.status)
+		return
+	}
+
+	http.ServeFile(w, r, cachePath)
+}
+
+func fetchToCache(targetURL, cachePath string) error {
 	resp, err := githubDownloadClient.Get(targetURL)
 	if err != nil {
 		log.Error(err, "")
-		http.Error(w, "Failed to reach upstream", http.StatusBadGateway)
-		return
+		return &fetchError{status: http.StatusBadGateway, message: "Failed to reach upstream"}
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -108,13 +133,11 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 			body = readBody
 		}
 		log.Error(fmt.Errorf("upstream returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(body))), "")
-		http.Error(w, "Upstream returned error", resp.StatusCode)
-		return
+		return &fetchError{status: resp.StatusCode, message: "Upstream returned error"}
 	}
 
 	if resp.ContentLength > maxDownloadSize {
-		http.Error(w, "Response too large", http.StatusBadGateway)
-		return
+		return &fetchError{status: http.StatusBadGateway, message: "Response too large"}
 	}
 
 	limitedReader := io.LimitReader(resp.Body, maxDownloadSize+1)
@@ -122,10 +145,17 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	tmpFile, err := os.CreateTemp(getCacheDir(), "download-*")
 	if err != nil {
 		log.Error(err, "")
-		if _, err := io.Copy(w, limitedReader); err != nil {
+		return &fetchError{status: http.StatusInternalServerError, message: "Failed to create temporary file"}
+	}
+	tmpName := tmpFile.Name()
+
+	cleanup := func() {
+		if err := tmpFile.Close(); err != nil {
 			log.Error(err, "")
 		}
-		return
+		if removeErr := os.Remove(tmpName); removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Error(removeErr, "")
+		}
 	}
 
 	if err := tmpFile.Chmod(0600); err != nil {
@@ -134,35 +164,24 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 
 	written, err := io.Copy(tmpFile, limitedReader)
 	if err != nil {
-		if closeErr := tmpFile.Close(); closeErr != nil {
-			log.Error(closeErr, "")
-		}
-		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
-			log.Error(removeErr, "")
-		}
+		cleanup()
 		log.Error(err, "")
-		http.Error(w, "Failed to write download", http.StatusInternalServerError)
-		return
+		return &fetchError{status: http.StatusInternalServerError, message: "Failed to write download"}
 	}
 	if written > maxDownloadSize {
-		if closeErr := tmpFile.Close(); closeErr != nil {
-			log.Error(closeErr, "")
-		}
-		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil && !os.IsNotExist(removeErr) {
-			log.Error(removeErr, "")
-		}
-		http.Error(w, "Response too large", http.StatusBadGateway)
-		return
+		cleanup()
+		return &fetchError{status: http.StatusBadGateway, message: "Response too large"}
 	}
 	if err := tmpFile.Close(); err != nil {
 		log.Error(err, "")
 	}
 
-	if err := os.Rename(tmpFile.Name(), cachePath); err != nil {
+	if err := os.Rename(tmpName, cachePath); err != nil {
 		log.Error(err, "")
+		return &fetchError{status: http.StatusInternalServerError, message: "Failed to write download"}
 	}
 
-	http.ServeFile(w, r, cachePath)
+	return nil
 }
 
 func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.HandlerFunc {
