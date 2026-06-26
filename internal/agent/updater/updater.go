@@ -10,6 +10,7 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -28,6 +29,8 @@ import (
 var (
 	ECDSAPublicKeyB64   = ""
 	Ed25519PublicKeyB64 = ""
+
+	ErrAlreadyLatest = errors.New("already on latest version")
 )
 
 const (
@@ -88,7 +91,7 @@ func New(cfg Config) (*Updater, error) {
 
 	if cfg.FetchOnStart {
 		go func() {
-			if err := up.CheckNow(); err != nil {
+			if err := up.CheckNow(); err != nil && !errors.Is(err, ErrAlreadyLatest) {
 				log.Error(err, "initial update check failed")
 			}
 		}()
@@ -109,7 +112,7 @@ func (u *Updater) poll(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := u.CheckNow(); err != nil {
+			if err := u.CheckNow(); err != nil && !errors.Is(err, ErrAlreadyLatest) {
 				log.Error(err, "scheduled update check failed")
 			}
 		}
@@ -129,7 +132,7 @@ func (u *Updater) CheckNow() error {
 	}
 
 	if version == "" || version == conf.Version {
-		return fmt.Errorf("updater: already on latest version")
+		return fmt.Errorf("%w: server=%q current=%q", ErrAlreadyLatest, version, conf.Version)
 	}
 
 	constr, err := semver.NewConstraint(u.cfg.MinConstraint)
@@ -150,7 +153,6 @@ func (u *Updater) CheckNow() error {
 	}
 
 	if !u.cfg.UpgradeConfirm(version) {
-		log.Info("upgrade not confirmed by user")
 		return nil
 	}
 
