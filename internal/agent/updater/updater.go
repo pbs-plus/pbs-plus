@@ -282,6 +282,9 @@ func (u *Updater) fetchBinary(params string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read binary: %w", err)
 	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("binary download is empty (0 bytes)")
+	}
 	if len(data) > maxBinarySize {
 		return nil, fmt.Errorf("binary exceeds maximum allowed size of %d bytes", maxBinarySize)
 	}

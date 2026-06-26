@@ -161,6 +161,8 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	if err := os.Rename(tmpFile.Name(), cachePath); err != nil {
 		log.Error(err, "")
 	}
+
+	http.ServeFile(w, r, cachePath)
 }
 
 func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.HandlerFunc {
