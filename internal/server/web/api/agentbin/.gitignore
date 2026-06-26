@@ -1,6 +1,7 @@
-# Checksums file is populated by the release build script.
-# VERSION and checksums.txt are tracked; actual binaries are excluded.
+# Ignore everything except checksums.txt and .gitignore.
+# Agent binaries are no longer embedded in the server binary.
+# checksums.txt is a tracked dev placeholder (empty); the release
+# build overwrites it with real checksums via generate-embedded-checksums.sh.
 *
-!VERSION
 !checksums.txt
 !/.gitignore

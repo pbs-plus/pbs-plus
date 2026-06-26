@@ -289,12 +289,10 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 
 func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ev := embeddedVersion()
-		v := version
-		if ev != "" {
-			v = ev
-		}
-		toReturn := VersionResponse{Version: v, Embedded: ev != ""}
+		// Agent binaries are no longer embedded in the server. All downloads
+		// are proxied from GitHub and verified against embedded checksums.
+		// Agents must always verify update signatures (ECDSA/Ed25519).
+		toReturn := VersionResponse{Version: version, Embedded: false}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
 			log.Error(err, "")

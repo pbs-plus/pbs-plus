@@ -9,7 +9,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-//go:embed agentbin/VERSION agentbin/checksums.txt
+//go:embed agentbin/checksums.txt
 var agentBinFS embed.FS
 
 // embeddedChecksums maps artifact filenames to their expected sha256 hashes.
@@ -40,18 +40,6 @@ func init() {
 			embeddedChecksums[filename] = checksum
 		}
 	}
-}
-
-func embeddedVersion() string {
-	data, err := agentBinFS.ReadFile("agentbin/VERSION")
-	if err != nil {
-		return ""
-	}
-	v := strings.TrimSpace(string(data))
-	if v == "" || v == "dev" {
-		return ""
-	}
-	return v
 }
 
 // embeddedChecksum returns the expected sha256 for the given artifact
