@@ -4,6 +4,8 @@ package api
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,7 +16,7 @@ import (
 	"time"
 )
 
-func TestFetchToCacheCoalescesConcurrentRequests(t *testing.T) {
+func TestDownloadAndVerifyCoalescesConcurrentRequests(t *testing.T) {
 	var hitCount atomic.Int64
 	payload := bytes.Repeat([]byte("a"), 4<<10)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,6 +31,8 @@ func TestFetchToCacheCoalescesConcurrentRequests(t *testing.T) {
 	defer os.Remove(cachePath)
 
 	targetURL := srv.URL + "/" + filename
+	expectedSum := sha256.Sum256(payload)
+	expectedChecksum := hex.EncodeToString(expectedSum[:])
 
 	const numCallers = 50
 	var wg sync.WaitGroup
@@ -41,7 +45,7 @@ func TestFetchToCacheCoalescesConcurrentRequests(t *testing.T) {
 			defer wg.Done()
 			<-start
 			_, err, _ := downloadFlight.Do(filename, func() (any, error) {
-				return nil, fetchToCache(targetURL, cachePath)
+				return nil, downloadAndVerify(targetURL, cachePath, filename, expectedChecksum)
 			})
 			errs[idx] = err
 		}(i)
@@ -68,7 +72,7 @@ func TestFetchToCacheCoalescesConcurrentRequests(t *testing.T) {
 	}
 }
 
-func TestFetchToCacheErrorPropagatesToAllCallers(t *testing.T) {
+func TestDownloadAndVerifyErrorPropagatesToAllCallers(t *testing.T) {
 	var hitCount atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hitCount.Add(1)
@@ -94,7 +98,7 @@ func TestFetchToCacheErrorPropagatesToAllCallers(t *testing.T) {
 			defer wg.Done()
 			<-start
 			_, err, _ := downloadFlight.Do(filename, func() (any, error) {
-				return nil, fetchToCache(targetURL, cachePath)
+				return nil, downloadAndVerify(targetURL, cachePath, filename, "")
 			})
 			errs[idx] = err
 		}(i)
@@ -116,6 +120,40 @@ func TestFetchToCacheErrorPropagatesToAllCallers(t *testing.T) {
 		}
 		if fe.status != http.StatusNotFound {
 			t.Errorf("caller %d: status = %d, want %d", i, fe.status, http.StatusNotFound)
+		}
+	}
+}
+
+func TestDownloadAndVerifyChecksumMismatchDeletesTempFile(t *testing.T) {
+	payload := []byte("tampered content")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	filename := "test-checksum-mismatch.bin"
+	cachePath := filepath.Join(getCacheDir(), filename)
+	defer os.Remove(cachePath)
+
+	wrongChecksum := "0000000000000000000000000000000000000000000000000000000000000000"
+
+	err := downloadAndVerify(srv.URL+"/"+filename, cachePath, filename, wrongChecksum)
+	if err == nil {
+		t.Fatal("expected checksum mismatch error, got nil")
+	}
+
+	// Cache file must NOT exist (temp file cleaned up, never renamed).
+	if _, err := os.Stat(cachePath); !os.IsNotExist(err) {
+		t.Errorf("cache file should not exist after checksum failure; stat err = %v", err)
+	}
+
+	// Verify no leftover temp files.
+	entries, _ := os.ReadDir(getCacheDir())
+	for _, e := range entries {
+		if filepath.Base(e.Name()) != filepath.Base(filename) {
+			if e.Name() != filepath.Base(cachePath) {
+				t.Errorf("leftover temp file in cache dir: %s", e.Name())
+			}
 		}
 	}
 }

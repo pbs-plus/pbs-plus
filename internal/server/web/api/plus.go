@@ -94,6 +94,8 @@ func getCachedOrFetch(targetURL, filename, expectedChecksum string, w http.Respo
 
 	cachePath := filepath.Join(getCacheDir(), filename)
 
+	// Cache HIT: file was verified before it was renamed to cachePath, so
+	// serving from cache is safe without re-verification.
 	if info, err := os.Stat(cachePath); err == nil && !info.IsDir() {
 		w.Header().Set("X-Cache", "HIT")
 		http.ServeFile(w, r, cachePath)
@@ -102,23 +104,12 @@ func getCachedOrFetch(targetURL, filename, expectedChecksum string, w http.Respo
 
 	w.Header().Set("X-Cache", "MISS")
 
+	// Cache MISS: download + verify inside singleflight so concurrent
+	// requests for the same artifact share one download. The file is
+	// only renamed to cachePath AFTER checksum verification passes,
+	// preventing any request from serving an unverified file.
 	_, err, _ := downloadFlight.Do(filename, func() (any, error) {
-		if err := fetchToCache(targetURL, cachePath); err != nil {
-			return nil, err
-		}
-
-		if expectedChecksum != "" {
-			if err := verifyCachedChecksum(cachePath, expectedChecksum); err != nil {
-				if rmErr := os.Remove(cachePath); rmErr != nil && !os.IsNotExist(rmErr) {
-					log.Error(rmErr, "")
-				}
-				return nil, err
-			}
-		} else {
-			log.Error(fmt.Errorf("no embedded checksum for %s; serving without verification", filename), "")
-		}
-
-		return nil, nil
+		return nil, downloadAndVerify(targetURL, cachePath, filename, expectedChecksum)
 	})
 	if err != nil {
 		fe, ok := err.(*fetchError)
@@ -132,7 +123,11 @@ func getCachedOrFetch(targetURL, filename, expectedChecksum string, w http.Respo
 	http.ServeFile(w, r, cachePath)
 }
 
-func fetchToCache(targetURL, cachePath string) error {
+// downloadAndVerify fetches the artifact from GitHub into a temp file while
+// computing its sha256 in-flight, verifies the checksum, and only then
+// atomically renames the temp file to cachePath. This ensures no request
+// can ever observe an unverified file at cachePath (no TOCTOU race).
+func downloadAndVerify(targetURL, cachePath, filename, expectedChecksum string) error {
 	resp, err := githubDownloadClient.Get(targetURL)
 	if err != nil {
 		log.Error(err, "")
@@ -157,8 +152,6 @@ func fetchToCache(targetURL, cachePath string) error {
 		return &fetchError{status: http.StatusBadGateway, message: "Response too large"}
 	}
 
-	limitedReader := io.LimitReader(resp.Body, maxDownloadSize+1)
-
 	tmpFile, err := os.CreateTemp(getCacheDir(), "download-*")
 	if err != nil {
 		log.Error(err, "")
@@ -167,9 +160,6 @@ func fetchToCache(targetURL, cachePath string) error {
 	tmpName := tmpFile.Name()
 
 	cleanup := func() {
-		if err := tmpFile.Close(); err != nil {
-			log.Error(err, "")
-		}
 		if removeErr := os.Remove(tmpName); removeErr != nil && !os.IsNotExist(removeErr) {
 			log.Error(removeErr, "")
 		}
@@ -179,7 +169,11 @@ func fetchToCache(targetURL, cachePath string) error {
 		log.Error(err, "failed to set permissions on temp file")
 	}
 
-	written, err := io.Copy(tmpFile, limitedReader)
+	// Stream the response body to the temp file while simultaneously
+	// computing the sha256 hash (zero extra disk read).
+	h := sha256.New()
+	limitedReader := io.LimitReader(resp.Body, maxDownloadSize+1)
+	written, err := io.Copy(io.MultiWriter(tmpFile, h), limitedReader)
 	if err != nil {
 		cleanup()
 		log.Error(err, "")
@@ -193,39 +187,29 @@ func fetchToCache(targetURL, cachePath string) error {
 		log.Error(err, "")
 	}
 
+	actualChecksum := hex.EncodeToString(h.Sum(nil))
+	// Verify checksum BEFORE renaming to cachePath. The file is invisible
+	// to concurrent requests while it lives at tmpName.
+	if expectedChecksum != "" {
+		if !strings.EqualFold(actualChecksum, expectedChecksum) {
+			cleanup()
+			return &fetchError{
+				status:  http.StatusInternalServerError,
+				message: fmt.Sprintf("Checksum mismatch for %s: expected %s, got %s", filename, expectedChecksum, actualChecksum),
+			}
+		}
+	} else {
+		log.Error(fmt.Errorf("no embedded checksum for %s; serving without verification", filename), "")
+	}
+
+	// Atomically promote the verified temp file to the cache path.
+	// After this point, concurrent STAT checks will find a verified HIT.
 	if err := os.Rename(tmpName, cachePath); err != nil {
 		log.Error(err, "")
+		cleanup()
 		return &fetchError{status: http.StatusInternalServerError, message: "Failed to write download"}
 	}
 
-	return nil
-}
-
-// verifyCachedChecksum reads the cached file, computes its sha256, and compares
-// against the expected checksum. Returns a *fetchError on mismatch.
-func verifyCachedChecksum(path, expected string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return &fetchError{status: http.StatusInternalServerError, message: "Failed to read cached file for verification"}
-	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return &fetchError{status: http.StatusInternalServerError, message: "Failed to compute checksum"}
-	}
-	actual := hex.EncodeToString(h.Sum(nil))
-
-	if !strings.EqualFold(actual, expected) {
-		return &fetchError{
-			status:  http.StatusInternalServerError,
-			message: fmt.Sprintf("Checksum mismatch for %s: expected %s, got %s", filepath.Base(path), expected, actual),
-		}
-	}
 	return nil
 }
 
