@@ -34,6 +34,15 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
+	if os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE") != "true" {
+		_, _ = updater.New(updater.Config{
+			MinConstraint: ">= 0.52.0", PollInterval: 2 * time.Minute, FetchOnStart: true,
+			UpgradeConfirm: func(v string) bool { return true },
+			Exit:           func(err error) {},
+			Service:        s,
+			Context:        p.ctx,
+		})
+	}
 	go p.run()
 	return nil
 }
@@ -41,17 +50,6 @@ func (p *pbsService) Start(s service.Service) error {
 func (p *pbsService) run() {
 	_ = log.L.SetServiceLogger()
 	_ = windows.SetPriorityClass(windows.CurrentProcess(), 0x00000040)
-
-	if os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE") != "true" {
-		_, _ = updater.New(updater.Config{
-			MinConstraint:  ">= 0.52.0",
-			PollInterval:   2 * time.Minute,
-			FetchOnStart:   true,
-			UpgradeConfirm: func(v string) bool { return true },
-			Exit:           func(err error) {},
-			Context:        p.ctx,
-		})
-	}
 
 	if err := lifecycle.WaitForServerURL(p.ctx); err != nil {
 		return
