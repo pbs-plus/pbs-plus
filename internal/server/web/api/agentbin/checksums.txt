@@ -1,0 +1,3 @@
+# Auto-generated during release build. DO NOT EDIT manually.
+# Format: filename=sha256 (one per line)
+# Empty for local/dev builds — downloads served without verification.

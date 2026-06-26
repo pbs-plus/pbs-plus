@@ -12,19 +12,10 @@ before:
     - ./build/scripts/build-agent-binaries.sh v{{.Version}}
 
 builds:
-  # Server build (Linux)
-  - id: server
-    main: ./cmd/pbs_plus
-    binary: pbs-plus
-    env:
-      - GOEXPERIMENT=greenteagc
-      - GOFIPS140=latest
-    goos:
-      - linux
-    goarch:
-      - amd64
-    ldflags:
-      - -X 'main.Version=v{{.Version}}'
+  # NOTE: The server is NOT built by goreleaser. It is built in a separate
+  # CI job (build-server) AFTER all agent/tool artifacts and the MSI are
+  # published, so that their checksums can be embedded in the server binary.
+  # See .github/workflows/release.yml → build-server job.
 
   # Linux Agent
   - id: linux-agent
@@ -165,13 +156,6 @@ binary_signs:
     artifacts: binary
 
 archives:
-  - id: server
-    ids:
-      - server
-    name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    formats:
-      - binary
-
   - id: linux-agent
     ids:
       - linux-agent
@@ -220,35 +204,6 @@ checksum:
   split: true
 
 nfpms:
-  - id: server-deb
-    ids:
-      - server
-      - bkf2pxar
-    package_name: "{{ .ProjectName }}"
-    vendor: Son Roy Almerol
-    homepage: "https://github.com/{{ .Env.GITHUB_REPOSITORY }}"
-    maintainer: Son Roy Almerol <github@snry.me>
-    description: >
-      PBS Plus is a project focused on extending Proxmox Backup Server (PBS) 
-      with advanced features to create a more competitive backup solution
-    license: MIT
-    formats:
-      - deb
-    dependencies:
-      - proxmox-backup-server (>= 3.2)
-      - proxmox-backup-client (>= 3.2.5)
-      - fuse3
-      - memcached
-    contents:
-      - src: ./build/package/server/pbs-plus.service
-        dst: /lib/systemd/system/pbs-plus.service
-        type: config
-    scripts:
-      postinstall: ./build/package/server/postinst
-    overrides:
-      deb:
-        file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
-
   - id: linux-agent-deb
     ids:
       - linux-agent

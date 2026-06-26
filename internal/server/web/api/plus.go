@@ -3,7 +3,9 @@
 package api
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -84,7 +86,7 @@ type fetchError struct {
 
 func (e *fetchError) Error() string { return e.message }
 
-func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http.Request) {
+func getCachedOrFetch(targetURL, filename, expectedChecksum string, w http.ResponseWriter, r *http.Request) {
 	if filepath.Base(filename) != filename {
 		http.Error(w, "Invalid filename", http.StatusBadRequest)
 		return
@@ -92,6 +94,8 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 
 	cachePath := filepath.Join(getCacheDir(), filename)
 
+	// Cache HIT: file was verified before it was renamed to cachePath, so
+	// serving from cache is safe without re-verification.
 	if info, err := os.Stat(cachePath); err == nil && !info.IsDir() {
 		w.Header().Set("X-Cache", "HIT")
 		http.ServeFile(w, r, cachePath)
@@ -100,8 +104,12 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 
 	w.Header().Set("X-Cache", "MISS")
 
+	// Cache MISS: download + verify inside singleflight so concurrent
+	// requests for the same artifact share one download. The file is
+	// only renamed to cachePath AFTER checksum verification passes,
+	// preventing any request from serving an unverified file.
 	_, err, _ := downloadFlight.Do(filename, func() (any, error) {
-		return nil, fetchToCache(targetURL, cachePath)
+		return nil, downloadAndVerify(targetURL, cachePath, filename, expectedChecksum)
 	})
 	if err != nil {
 		fe, ok := err.(*fetchError)
@@ -115,7 +123,11 @@ func getCachedOrFetch(targetURL, filename string, w http.ResponseWriter, r *http
 	http.ServeFile(w, r, cachePath)
 }
 
-func fetchToCache(targetURL, cachePath string) error {
+// downloadAndVerify fetches the artifact from GitHub into a temp file while
+// computing its sha256 in-flight, verifies the checksum, and only then
+// atomically renames the temp file to cachePath. This ensures no request
+// can ever observe an unverified file at cachePath (no TOCTOU race).
+func downloadAndVerify(targetURL, cachePath, filename, expectedChecksum string) error {
 	resp, err := githubDownloadClient.Get(targetURL)
 	if err != nil {
 		log.Error(err, "")
@@ -140,8 +152,6 @@ func fetchToCache(targetURL, cachePath string) error {
 		return &fetchError{status: http.StatusBadGateway, message: "Response too large"}
 	}
 
-	limitedReader := io.LimitReader(resp.Body, maxDownloadSize+1)
-
 	tmpFile, err := os.CreateTemp(getCacheDir(), "download-*")
 	if err != nil {
 		log.Error(err, "")
@@ -150,9 +160,6 @@ func fetchToCache(targetURL, cachePath string) error {
 	tmpName := tmpFile.Name()
 
 	cleanup := func() {
-		if err := tmpFile.Close(); err != nil {
-			log.Error(err, "")
-		}
 		if removeErr := os.Remove(tmpName); removeErr != nil && !os.IsNotExist(removeErr) {
 			log.Error(removeErr, "")
 		}
@@ -162,7 +169,11 @@ func fetchToCache(targetURL, cachePath string) error {
 		log.Error(err, "failed to set permissions on temp file")
 	}
 
-	written, err := io.Copy(tmpFile, limitedReader)
+	// Stream the response body to the temp file while simultaneously
+	// computing the sha256 hash (zero extra disk read).
+	h := sha256.New()
+	limitedReader := io.LimitReader(resp.Body, maxDownloadSize+1)
+	written, err := io.Copy(io.MultiWriter(tmpFile, h), limitedReader)
 	if err != nil {
 		cleanup()
 		log.Error(err, "")
@@ -176,8 +187,26 @@ func fetchToCache(targetURL, cachePath string) error {
 		log.Error(err, "")
 	}
 
+	actualChecksum := hex.EncodeToString(h.Sum(nil))
+	// Verify checksum BEFORE renaming to cachePath. The file is invisible
+	// to concurrent requests while it lives at tmpName.
+	if expectedChecksum != "" {
+		if !strings.EqualFold(actualChecksum, expectedChecksum) {
+			cleanup()
+			return &fetchError{
+				status:  http.StatusInternalServerError,
+				message: fmt.Sprintf("Checksum mismatch for %s: expected %s, got %s", filename, expectedChecksum, actualChecksum),
+			}
+		}
+	} else {
+		log.Error(fmt.Errorf("no embedded checksum for %s; serving without verification", filename), "")
+	}
+
+	// Atomically promote the verified temp file to the cache path.
+	// After this point, concurrent STAT checks will find a verified HIT.
 	if err := os.Rename(tmpName, cachePath); err != nil {
 		log.Error(err, "")
+		cleanup()
 		return &fetchError{status: http.StatusInternalServerError, message: "Failed to write download"}
 	}
 
@@ -244,12 +273,10 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 
 func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ev := embeddedVersion()
-		v := version
-		if ev != "" {
-			v = ev
-		}
-		toReturn := VersionResponse{Version: v, Embedded: ev != ""}
+		// Agent binaries are no longer embedded in the server. All downloads
+		// are proxied from GitHub and verified against embedded checksums.
+		// Agents must always verify update signatures (ECDSA/Ed25519).
+		toReturn := VersionResponse{Version: version, Embedded: false}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(toReturn); err != nil {
 			log.Error(err, "")
@@ -326,7 +353,8 @@ func DownloadMsiHandler(storeInstance *store.Store, version string) http.Handler
 
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.msi", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -349,13 +377,10 @@ func DownloadBinaryHandler(storeInstance *store.Store, version string) http.Hand
 			return
 		}
 
-		if serveEmbeddedBinary(w, r, version, platform.OS, platform.Arch) {
-			return
-		}
-
 		filename := buildFilename("pbs-plus-agent", version, platform)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -378,13 +403,10 @@ func DownloadSigHandler(storeInstance *store.Store, version string) http.Handler
 			return
 		}
 
-		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".sig") {
-			return
-		}
-
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.sig", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -407,13 +429,10 @@ func DownloadECDSASigHandler(storeInstance *store.Store, version string) http.Ha
 			return
 		}
 
-		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".ecdsa-sig") {
-			return
-		}
-
 		filename := fmt.Sprintf("pbs-plus-agent-%s-%s-%s.ecdsa-sig", version, platform.OS, platform.Arch)
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
@@ -436,13 +455,10 @@ func DownloadChecksumHandler(storeInstance *store.Store, version string) http.Ha
 			return
 		}
 
-		if serveEmbeddedSignature(w, r, version, platform.OS, platform.Arch, ".sha256") {
-			return
-		}
-
 		filename := buildFilename("pbs-plus-agent", version, platform) + ".sha256"
 		targetURL := fmt.Sprintf("%s%s/%s", PBS_DOWNLOAD_BASE, version, filename)
-		getCachedOrFetch(targetURL, filename, w, r)
+		checksum, _ := embeddedChecksum(filename)
+		getCachedOrFetch(targetURL, filename, checksum, w, r)
 	}
 }
 
