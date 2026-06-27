@@ -12,7 +12,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
+	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
@@ -52,7 +52,7 @@ func main() {
 		die("at least one BKF path or -tape device is required")
 	}
 
-	cfg := bkf2pxar.Config{
+	cfg := tapeio.Config{
 		PBSURL:        *pbsURL,
 		Datastore:     *datastore,
 		Namespace:     *namespace,
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	if *listMode {
-		snapshots, err := bkf2pxar.ListSnapshots(context.Background(), cfg)
+		snapshots, err := tapeio.ListSnapshots(context.Background(), cfg)
 		printSnapshots(snapshots)
 		if err != nil {
 			stdlog.Fatalf("list failed: %v", err)
@@ -102,7 +102,7 @@ func main() {
 		}()
 	}
 
-	stats, err := bkf2pxar.Run(context.Background(), cfg)
+	stats, err := tapeio.Run(context.Background(), cfg)
 	if err != nil {
 		stdlog.Fatalf("conversion failed: %v", err)
 	}
@@ -119,7 +119,7 @@ func main() {
 	}
 }
 
-func printSnapshots(snapshots []bkf2pxar.Snapshot) {
+func printSnapshots(snapshots []tapeio.Snapshot) {
 	if len(snapshots) == 0 {
 		fmt.Fprintln(os.Stderr, "No snapshots found.")
 		return

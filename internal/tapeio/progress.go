@@ -1,4 +1,4 @@
-package bkf2pxar
+package tapeio
 
 import (
 	"context"

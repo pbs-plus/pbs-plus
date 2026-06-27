@@ -1,4 +1,4 @@
-package bkf2pxar
+package tapeio
 
 import (
 	"bufio"
@@ -22,7 +22,6 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
-	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 )
 
 type Config struct {
@@ -84,7 +83,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	var snapshots []Snapshot
 
 	if cfg.TapeDevice != "" {
-		rc, err := tapeio.OpenTapeReader(cfg.TapeDevice)
+		rc, err := OpenTapeReader(cfg.TapeDevice)
 		if err != nil {
 			return nil, err
 		}
@@ -433,7 +432,7 @@ func (c *converter) runTape() error {
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
 	}
-	rc, err := tapeio.OpenTapeReader(c.cfg.TapeDevice)
+	rc, err := OpenTapeReader(c.cfg.TapeDevice)
 	if err != nil {
 		return err
 	}
@@ -442,6 +441,18 @@ func (c *converter) runTape() error {
 			log.Error(err, "")
 		}
 	}()
+
+	if c.cfg.SnapshotSel >= 0 {
+		if pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel); sErr != nil {
+			return sErr
+		} else if ok {
+			c.logf("Locating to snapshot %d at PBA %d", c.cfg.SnapshotSel, pba)
+			if err := rc.SeekBlock(pba); err != nil {
+				return fmt.Errorf("seek to snapshot %d (PBA %d): %w", c.cfg.SnapshotSel, pba, err)
+			}
+			c.snapshotIdx = c.cfg.SnapshotSel - 1
+		}
+	}
 
 	r := mtf.NewReader(rc)
 	if c.cfg.Spanning {
@@ -452,7 +463,7 @@ func (c *converter) runTape() error {
 }
 
 func (c *converter) runChanger() error {
-	f, err := tapeio.NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
+	f, err := NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
 	if err != nil {
 		return err
 	}
@@ -546,6 +557,9 @@ func (c *converter) processReader(r *mtf.Reader) error {
 			if err := c.finishSnapshot(); err != nil {
 				return err
 			}
+			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
+				return nil
+			}
 			c.snapshotIdx++
 			c.meta = backupMeta{}
 			c.rootPrefix = ""
@@ -560,6 +574,9 @@ func (c *converter) processReader(r *mtf.Reader) error {
 		case mtf.KindSetEnd:
 			if err := c.finishSnapshot(); err != nil {
 				return err
+			}
+			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
+				return nil
 			}
 
 		case mtf.KindEntry:
@@ -685,6 +702,17 @@ func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) 
 	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
 }
 
+func locateSnapshotPBA(rc *TapeReader, sel int) (pba int64, ok bool, err error) {
+	sm, sErr := mtf.ReadSetMap(rc)
+	if sErr != nil {
+		return 0, false, fmt.Errorf("read set map for snapshot locate: %w", sErr)
+	}
+	if sm == nil || sel < 0 || sel >= len(sm.Entries) {
+		return 0, false, nil
+	}
+	return int64(sm.Entries[sel].SSETPBA) - 1, true, nil
+}
+
 func setupTapeContinuation(r *mtf.Reader, dev string) {
 	r.SetContinuation(func(ct mtf.Continuation) (mtf.Tape, error) {
 		fmt.Fprintf(os.Stderr, "\n== Insert tape %d (media %s) and press Enter ==\n",
@@ -693,7 +721,7 @@ func setupTapeContinuation(r *mtf.Reader, dev string) {
 		if _, err := fmt.Scanln(&buf); err != nil {
 			log.Error(err, "")
 		}
-		return tapeio.OpenTapeReader(dev)
+		return OpenTapeReader(dev)
 	})
 }
 

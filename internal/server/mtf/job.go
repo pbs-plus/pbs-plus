@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
+	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
@@ -136,7 +136,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 		task.LogString(msg)
 	}
 
-	stats, runErr := bkf2pxar.Run(ctx, cfg)
+	stats, runErr := tapeio.Run(ctx, cfg)
 	if runErr != nil {
 		task.LogString("Migration job summary:")
 		if stats != nil {
@@ -162,7 +162,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	return nil
 }
 
-func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
+func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 	job := j.job
 	mapper := j.mapper
 
@@ -183,7 +183,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		return mapped
 	}
 
-	cfg := bkf2pxar.Config{
+	cfg := tapeio.Config{
 		PBSURL:            token.DefaultAPIURL,
 		Datastore:         job.Datastore,
 		Namespace:         baseNS,
@@ -273,7 +273,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	return cfg, nil
 }
 
-func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg bkf2pxar.Config, tapeCfg *tape.Config) (bkf2pxar.Config, error) {
+func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tapeio.Config, tapeCfg *tape.Config) (tapeio.Config, error) {
 	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
 	if err != nil {
 		return cfg, err
@@ -300,7 +300,7 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg bkf
 		}
 		cfg.DriveIndex = idx
 	}
-	snaps, err := bkf2pxar.ListSnapshots(ctx, cfg)
+	snaps, err := tapeio.ListSnapshots(ctx, cfg)
 	if err != nil {
 		return cfg, fmt.Errorf("list snapshots: %w", err)
 	}
