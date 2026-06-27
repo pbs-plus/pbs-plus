@@ -1,7 +1,6 @@
 package tapeio
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -381,7 +380,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 		AuthToken:     authToken,
 		Namespace:     c.currentNS,
 		SkipTLSVerify: c.cfg.SkipTLS,
-	}, c.chunkCfg, true)
+	}, c.chunkCfg, c.cfg.Compress)
 
 	return store.StartSession(c.ctx, backupproxy.BackupConfig{
 		BackupType:          datastore.BackupHost,
@@ -539,14 +538,74 @@ func (c *converter) runFiles() error {
 }
 
 // entries to pxar. Each SSET boundary starts a fresh session.
+type tapeOp struct {
+	kind    opKind
+	header  *mtf.Header
+	rootPfx string
+	dataOff int64
+	dataLen int64
+	ssetIdx int
+}
+
+type opKind int
+
+const (
+	opVolume opKind = iota
+	opDir
+	opSymlink
+	opFile
+	opSet
+	opSetEnd
+	opEnd
+)
+
+func (c *converter) runPipeline(r *mtf.Reader) error {
+	sp, err := newSpool(spoolCapBytes)
+	if err != nil {
+		return fmt.Errorf("create spool: %w", err)
+	}
+	defer func() {
+		if err := sp.close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	ops := make(chan tapeOp, opChanCap)
+	pumpErr := make(chan error, 1)
+
+	go func() {
+		pumpErr <- c.pump(r, sp, ops)
+	}()
+
+	encErr := c.drain(ops, sp)
+
+	if perr := <-pumpErr; perr != nil && encErr == nil {
+		return perr
+	}
+	return encErr
+}
+
 func (c *converter) processReader(r *mtf.Reader) error {
+	return c.runPipeline(r)
+}
+
+const (
+	spoolCapBytes = 512 << 20
+	opChanCap     = 256
+)
+
+func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
+	finish := func(err error) error {
+		ops <- tapeOp{kind: opEnd}
+		return err
+	}
 	for {
 		block, err := r.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("read block: %w", err)
+			return finish(fmt.Errorf("read block: %w", err))
 		}
 
 		switch block.Kind {
@@ -557,33 +616,19 @@ func (c *converter) processReader(r *mtf.Reader) error {
 				}
 				c.logf("Tape: %s, created %s", block.Tape.Name, block.Tape.CreateTime.Format("2006-01-02 15:04"))
 			}
-
 		case mtf.KindSet:
-			if err := c.finishSnapshot(); err != nil {
-				return err
-			}
-			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
-				return nil
-			}
 			c.snapshotIdx++
 			c.meta = backupMeta{}
 			c.rootPrefix = ""
-			c.dirStack = nil
 			if block.Set != nil {
 				c.meta.SetName = block.Set.Name
 				c.meta.Owner = block.Set.Owner
 				c.meta.BackupTime = block.Set.CreateTime
 			}
 			c.logf("SSET #%d: %q (%s)", c.snapshotIdx, c.meta.SetName, c.meta.BackupTime.Format("2006-01-02 15:04"))
-
+			ops <- tapeOp{kind: opSet, ssetIdx: c.snapshotIdx}
 		case mtf.KindSetEnd:
-			if err := c.finishSnapshot(); err != nil {
-				return err
-			}
-			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
-				return nil
-			}
-
+			ops <- tapeOp{kind: opSetEnd}
 		case mtf.KindEntry:
 			if !c.snapshotSelected() {
 				continue
@@ -592,119 +637,169 @@ func (c *converter) processReader(r *mtf.Reader) error {
 			if h.Type == mtf.EntryVolume {
 				c.meta.HostName = h.MachineName
 				c.rootPrefix = h.Name
-				if err := c.ensureSession(); err != nil {
-					return err
-				}
+				ops <- tapeOp{kind: opVolume, header: h, rootPfx: c.rootPrefix}
 				continue
 			}
-			if err := c.ensureSession(); err != nil {
-				return err
-			}
-			c.logf("Volume: machine=%s device=%s", h.MachineName, h.Name)
-			if err := c.processEntry(r, h); err != nil {
-				return err
+			if err := c.pumpEntry(r, sp, ops, h); err != nil {
+				return finish(err)
 			}
 		}
 	}
-
 	if r.TruncatedByEOTM() {
 		c.logf("WARNING: data set spans further media - use spanning and provide all tapes/files")
 	}
+	return finish(nil)
+}
 
+func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mtf.Header) error {
+	c.logf("Volume: machine=%s device=%s", h.MachineName, h.Name)
+	op := tapeOp{kind: opDir, header: h, rootPfx: c.rootPrefix}
+	switch h.Type {
+	case mtf.EntryDirectory:
+		c.prog.dirs.Add(1)
+		op.kind = opDir
+	case mtf.EntryFile:
+		c.prog.files.Add(1)
+		if h.IsSymlink {
+			op.kind = opSymlink
+		} else {
+			op.kind = opFile
+			off, err := sp.write(r, h.Size)
+			if err != nil {
+				return fmt.Errorf("spool file %q: %w", h.Name, err)
+			}
+			op.dataOff = off
+			op.dataLen = h.Size
+			c.prog.bytes.Add(h.Size)
+		}
+	}
+	ops <- op
+	return nil
+}
+
+func (c *converter) drain(ops <-chan tapeOp, sp *spool) error {
+	for op := range ops {
+		switch op.kind {
+		case opSet:
+			if err := c.finishSnapshot(); err != nil {
+				return err
+			}
+			if c.cfg.SnapshotSel >= 0 && op.ssetIdx > c.cfg.SnapshotSel {
+				return nil
+			}
+		case opSetEnd:
+			if err := c.finishSnapshot(); err != nil {
+				return err
+			}
+			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
+				return nil
+			}
+		case opVolume:
+			c.meta.HostName = op.header.MachineName
+			c.rootPrefix = op.rootPfx
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+		case opDir:
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+			if err := c.consumeDir(op.header); err != nil {
+				return err
+			}
+		case opSymlink:
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+			if err := c.consumeSymlink(op.header); err != nil {
+				return err
+			}
+		case opFile:
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+			if err := c.consumeFile(sp, op); err != nil {
+				return err
+			}
+		case opEnd:
+			return c.finishSnapshot()
+		}
+	}
 	return c.finishSnapshot()
 }
 
-func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
+func (c *converter) consumeDir(h *mtf.Header) error {
 	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
 	relPath = strings.TrimPrefix(relPath, "/")
-
 	if relPath == "" {
 		return nil
 	}
-
 	components := strings.Split(relPath, "/")
 	parent := components[:len(components)-1]
 	name := sanitizeName(components[len(components)-1])
-
 	for len(c.dirStack) > len(parent) {
 		if err := c.writer.EndDirectory(); err != nil {
 			return err
 		}
 		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-
-	switch h.Type {
-	case mtf.EntryDirectory:
-		c.prog.dirs.Add(1)
-		meta := mtfToPxarMeta(h, format.ModeIFDIR)
-		c.logf("  d %s", relPath)
-		if err := c.writer.BeginDirectory(name, &meta); err != nil {
-			return fmt.Errorf("begin dir %q: %w", name, err)
-		}
-		c.dirStack = append(c.dirStack, name)
-
-	case mtf.EntryFile:
-		c.prog.files.Add(1)
-		if h.IsSymlink {
-			c.logf("  l %s -> %s", relPath, h.LinkTarget)
-			if err := c.writeSymlink(h, name, relPath); err != nil {
-				return err
-			}
-		} else {
-			if err := c.writeFile(r, h, name, relPath); err != nil {
-				return err
-			}
-			c.prog.bytes.Add(h.Size)
-		}
+	c.logf("  d %s", relPath)
+	meta := mtfToPxarMeta(h, format.ModeIFDIR)
+	if err := c.writer.BeginDirectory(name, &meta); err != nil {
+		return fmt.Errorf("begin dir %q: %w", name, err)
 	}
-
+	c.dirStack = append(c.dirStack, name)
 	return nil
 }
 
-func (c *converter) writeSymlink(h *mtf.Header, name, relPath string) error {
-	meta := mtfToPxarMeta(h, format.ModeIFLNK)
-	entry := &pxar.Entry{
-		Metadata:   meta,
-		Kind:       pxar.KindSymlink,
-		LinkTarget: h.LinkTarget,
+func (c *converter) consumeSymlink(h *mtf.Header) error {
+	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
+	relPath = strings.TrimPrefix(relPath, "/")
+	if relPath == "" {
+		return nil
 	}
+	components := strings.Split(relPath, "/")
+	name := sanitizeName(components[len(components)-1])
+	for len(c.dirStack) > len(components)-1 {
+		if err := c.writer.EndDirectory(); err != nil {
+			return err
+		}
+		c.dirStack = c.dirStack[:len(c.dirStack)-1]
+	}
+	c.logf("  l %s -> %s", relPath, h.LinkTarget)
+	meta := mtfToPxarMeta(h, format.ModeIFLNK)
+	entry := &pxar.Entry{Metadata: meta, Kind: pxar.KindSymlink, LinkTarget: h.LinkTarget}
 	entry.SetFileName(name)
 	return c.writer.WriteEntry(entry, nil)
 }
 
-func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) error {
-	meta := mtfToPxarMeta(h, format.ModeIFREG)
-	entry := &pxar.Entry{
-		Metadata: meta,
-		Kind:     pxar.KindFile,
-		FileSize: uint64(h.Size),
+func (c *converter) consumeFile(sp *spool, op tapeOp) error {
+	h := op.header
+	relPath := strings.TrimPrefix(h.Name, op.rootPfx)
+	relPath = strings.TrimPrefix(relPath, "/")
+	if relPath == "" {
+		return nil
 	}
+	components := strings.Split(relPath, "/")
+	name := sanitizeName(components[len(components)-1])
+	for len(c.dirStack) > len(components)-1 {
+		if err := c.writer.EndDirectory(); err != nil {
+			return err
+		}
+		c.dirStack = c.dirStack[:len(c.dirStack)-1]
+	}
+	meta := mtfToPxarMeta(h, format.ModeIFREG)
+	entry := &pxar.Entry{Metadata: meta, Kind: pxar.KindFile, FileSize: uint64(h.Size)}
 	entry.SetFileName(name)
 	if h.IsHardLink && h.LinkTarget != "" {
 		c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
 	} else {
 		c.logf("  f %s (%d bytes)", relPath, h.Size)
 	}
-
-	// Decouple tape reads from the encoder: a goroutine pumps the tape into
-	// an io.Pipe (32 MiB buffer) so the drive streams in large bursts instead
-	// of stop/start cycles that limit throughput.
-	pr, pw := io.Pipe()
-	go func() {
-		defer func() {
-			if err := pw.Close(); err != nil {
-				log.Error(err, "")
-			}
-		}()
-		bw := bufio.NewWriterSize(pw, 32<<20)
-		if _, err := io.Copy(bw, r); err != nil {
-			log.Error(err, "")
-		}
-		if err := bw.Flush(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
+	data := sp.reader(op.dataOff, op.dataLen)
+	err := c.writer.WriteEntryReader(entry, data, uint64(h.Size))
+	sp.consume(op.dataLen)
+	return err
 }
 
 func locateSnapshotPBA(rc *TapeReader, sel int) (pba int64, ok bool, err error) {
