@@ -22,6 +22,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
+	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 )
 
 type Config struct {
@@ -83,7 +84,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	var snapshots []Snapshot
 
 	if cfg.TapeDevice != "" {
-		rc, err := openTapeReader(cfg.TapeDevice)
+		rc, err := tapeio.OpenTapeReader(cfg.TapeDevice)
 		if err != nil {
 			return nil, err
 		}
@@ -432,7 +433,7 @@ func (c *converter) runTape() error {
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
 	}
-	rc, err := openTapeReader(c.cfg.TapeDevice)
+	rc, err := tapeio.OpenTapeReader(c.cfg.TapeDevice)
 	if err != nil {
 		return err
 	}
@@ -451,24 +452,24 @@ func (c *converter) runTape() error {
 }
 
 func (c *converter) runChanger() error {
-	f, err := newFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
+	f, err := tapeio.NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
 	if err != nil {
 		return err
 	}
-	defer f.close()
+	defer f.Close()
 
 	for {
-		rc, err := f.loadFirst()
+		rc, _, _, err := f.LoadNext()
 		if err != nil {
 			return nil
 		}
 		r := mtf.NewReader(rc)
-		r.SetContinuation(f.asContinuation())
+		r.SetContinuation(f.AsContinuation())
 		if err := c.processReader(r); err != nil {
 			if err := rc.Close(); err != nil {
 				log.Error(err, "")
 			}
-			if err := f.unloadCurrent(); err != nil {
+			if err := f.UnloadCurrent(); err != nil {
 				log.Error(err, "")
 			}
 			return err
@@ -476,10 +477,10 @@ func (c *converter) runChanger() error {
 		if err := rc.Close(); err != nil {
 			log.Error(err, "")
 		}
-		if err := f.unloadCurrent(); err != nil {
+		if err := f.UnloadCurrent(); err != nil {
 			log.Error(err, "")
 		}
-		f.markProcessed()
+		f.MarkProcessed()
 	}
 }
 
@@ -692,11 +693,7 @@ func setupTapeContinuation(r *mtf.Reader, dev string) {
 		if _, err := fmt.Scanln(&buf); err != nil {
 			log.Error(err, "")
 		}
-		rc, err := openTapeReader(dev)
-		if err != nil {
-			return nil, err
-		}
-		return rc, nil
+		return tapeio.OpenTapeReader(dev)
 	})
 }
 

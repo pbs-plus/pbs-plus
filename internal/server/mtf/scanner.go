@@ -10,11 +10,10 @@ import (
 	"time"
 
 	mtflib "github.com/pbs-plus/go-mtf"
-	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
-	"github.com/pbs-plus/pbs-plus/internal/changer"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
@@ -39,9 +38,9 @@ func ListTapeLabels() (map[string]bool, error) {
 	}
 	var entries []pbsMediaEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, fmt.Errorf("parse PBS inventory: %w", err)
+		return nil, err
 	}
-	labels := make(map[string]bool, len(entries))
+	labels := make(map[string]bool)
 	for _, e := range entries {
 		if e.ID.Label.LabelText != "" {
 			labels[e.ID.Label.LabelText] = true
@@ -51,17 +50,17 @@ func ListTapeLabels() (map[string]bool, error) {
 }
 
 type Options struct {
-	ChangerDevice string
 	TapeDevice    string
+	ChangerDevice string
 	DriveIndex    int
 	BKFPath       string
 	Label         string
 }
 
 type Result struct {
-	RunID      int64
 	Cartridges int
 	Families   int
+	DataSets   int
 	Duration   time.Duration
 }
 
@@ -87,279 +86,203 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (*Result, error) {
 		return nil, ErrNoSource
 	}
 
-	src := "drive:" + opts.TapeDevice
-	if opts.ChangerDevice != "" {
+	res := &Result{}
+
+	var src string
+	switch {
+	case opts.ChangerDevice != "":
 		src = "changer:" + opts.ChangerDevice + " drive:" + opts.TapeDevice
-	}
-	if opts.BKFPath != "" {
+	case opts.TapeDevice != "":
+		src = "tape:" + opts.TapeDevice
+	default:
 		src = "bkf:" + opts.BKFPath
 	}
-	s.logger.Info("mtf inventory scan starting", "source", src)
 
-	runID, err := s.db.Queries().CreateInventoryRun(ctx, mtfquery.CreateInventoryRunParams{
-		Changer:   nullStr(opts.ChangerDevice),
-		StartedAt: nullInt(time.Now().Unix()),
-	})
-	if err != nil {
-		s.logger.Error(err, "mtf: create inventory run")
-		return nil, fmt.Errorf("create inventory run: %w", err)
-	}
+	s.logger.Info("mtf: starting scan", "source", src)
 
-	start := time.Now()
-	res := &Result{RunID: runID}
+	runStart := time.Now()
+
 	var scanErr error
-
 	switch {
-	case opts.BKFPath != "":
-		scanErr = s.scanBKFFile(ctx, opts.BKFPath, opts.Label, res)
 	case opts.ChangerDevice != "":
 		scanErr = s.scanChanger(ctx, opts, res)
-	default:
+	case opts.TapeDevice != "":
 		scanErr = s.scanDrive(ctx, opts.TapeDevice, "", res)
+	default:
+		scanErr = s.scanBKFFile(ctx, opts.BKFPath, "", res)
 	}
+	res.Duration = time.Since(runStart)
 
-	status := "completed"
-	msg := ""
 	if scanErr != nil {
-		status = "failed"
-		msg = scanErr.Error()
-		s.logger.Error(scanErr, "mtf inventory scan failed", "source", src)
-	} else {
-		s.logger.Info("mtf inventory scan completed",
-
-			"duration", res.Duration.String(), "families", res.Families, "cartridges", res.Cartridges, "source", src)
-
+		s.logger.Error(scanErr, "mtf: scan failed")
+		return res, scanErr
 	}
-	res.Duration = time.Since(start)
-	if err := s.db.Queries().CompleteInventoryRun(ctx, mtfquery.CompleteInventoryRunParams{
-		CompletedAt: nullInt(time.Now().Unix()),
-		Status:      nullStr(status),
-		Cartridges:  nullInt(int64(res.Cartridges)),
-		Message:     nullStr(msg),
-		ID:          runID,
-	}); err != nil {
-		s.logger.Error(err, "")
-	}
-	return res, scanErr
+
+	s.logger.Info("mtf: scan complete",
+		"cartridges", res.Cartridges,
+		"families", res.Families,
+		"datasets", res.DataSets,
+		"elapsed", res.Duration.Round(time.Second))
+
+	return res, nil
 }
 
-// scanChanger uses the same feeder pattern as bkf2pxar: load each tape,
 func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) error {
 	s.logger.Info("mtf: opening changer", "device", opts.ChangerDevice)
-	chg, err := changer.Open(opts.ChangerDevice)
-	if err != nil {
-		s.logger.Error(err, "mtf: open changer", "device", opts.ChangerDevice)
-		return fmt.Errorf("open changer %s: %w", opts.ChangerDevice, err)
-	}
-	defer func() {
-		if err := chg.Close(); err != nil {
-			s.logger.Error(err, "")
-		}
-	}()
-
-	st, err := chg.Status()
-	if err != nil {
-		s.logger.Error(err, "mtf: changer status")
-		return fmt.Errorf("changer status: %w", err)
-	}
-
 	pbsLabels, err := ListTapeLabels()
 	if err != nil {
 		s.logger.Error(err, "")
 	}
-	processed := make(map[string]bool)
 
-	for i, slot := range st.Slots {
+	f, err := tapeio.NewFeeder(opts.ChangerDevice, opts.TapeDevice, opts.DriveIndex,
+		tapeio.WithSkip(func(barcode string) bool {
+			return pbsLabels != nil && pbsLabels[barcode]
+		}),
+	)
+	if err != nil {
+		s.logger.Error(err, "mtf: open changer", "device", opts.ChangerDevice)
+		return fmt.Errorf("open changer %s: %w", opts.ChangerDevice, err)
+	}
+	defer f.Close()
+
+	if st := f.Status(); st != nil {
+		for dIdx, drive := range st.Drives {
+			if !drive.Full {
+				continue
+			}
+			barcode := drive.VolumeTag
+			if barcode == "" {
+				barcode = fmt.Sprintf("DRIVE%02d", dIdx)
+			}
+			if tapeio.IsCleaningTape(barcode) {
+				continue
+			}
+			if pbsLabels != nil && pbsLabels[barcode] {
+				s.logger.Info("mtf: skipping PBS tape in drive", "barcode", barcode)
+				if s.logger != nil {
+					s.logger.LogString(fmt.Sprintf("Drive %d: skipping PBS tape %s", dIdx, barcode))
+				}
+				continue
+			}
+			s.logger.Info("mtf: scanning tape in drive", "barcode", barcode)
+			if s.logger != nil {
+				s.logger.LogString(fmt.Sprintf("Drive %d: scanning %s...", dIdx, barcode))
+				s.logger.LogString(fmt.Sprintf("Drive %d: rewinding...", dIdx))
+			}
+			rc, oErr := tapeio.OpenTapeReader(opts.TapeDevice)
+			if oErr != nil {
+				s.logger.Error(oErr, "mtf: open tape in drive", "barcode", barcode)
+				if s.logger != nil {
+					s.logger.LogString(fmt.Sprintf("Drive %d: open failed  -  %v", dIdx, oErr))
+				}
+				continue
+			}
+			if s.logger != nil {
+				s.logger.LogString(fmt.Sprintf("Drive %d: reading catalog...", dIdx))
+			}
+			sm, smErr := mtflib.ReadSetMap(rc)
+			if smErr != nil {
+				s.logger.Error(smErr, "")
+			}
+			if sm != nil && len(sm.Entries) > 0 {
+				if s.logger != nil {
+					s.logger.LogString(fmt.Sprintf("Drive %d: found %d data sets via catalog", dIdx, len(sm.Entries)))
+				}
+				if iErr := s.indexSetMap(ctx, rc, barcode, sm, res); iErr != nil {
+					s.logger.Error(iErr, "mtf: index drive tape failed", "barcode", barcode)
+					if s.logger != nil {
+						s.logger.LogString(fmt.Sprintf("Drive %d: index failed  -  %v", dIdx, iErr))
+					}
+				}
+			} else {
+				if s.logger != nil {
+					s.logger.LogString(fmt.Sprintf("Drive %d: no catalog, doing full census...", dIdx))
+				}
+				if rErr := rc.Rewind(); rErr != nil {
+					s.logger.Error(rErr, "")
+				}
+				r := mtflib.NewReader(rc)
+				if cErr := s.indexReader(ctx, r, barcode, false, "", res, func() error { return nil }); cErr != nil {
+					s.logger.Error(cErr, "mtf: census drive tape failed", "barcode", barcode)
+					if s.logger != nil {
+						s.logger.LogString(fmt.Sprintf("Drive %d: census failed  -  %v", dIdx, cErr))
+					}
+				}
+			}
+			if cErr := rc.Close(); cErr != nil {
+				s.logger.Error(cErr, "")
+			}
+		}
+	}
+
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if !slot.Full || slot.ImportExport {
-			continue
+		rc, bc, slot, lErr := f.LoadNext()
+		if lErr != nil {
+			return nil
 		}
-		barcode := slot.VolumeTag
+		barcode := bc
 		if barcode == "" {
-			barcode = fmt.Sprintf("SLOT%03d", i+1)
-		}
-		if bkf2pxar.IsCleaningTape(barcode) {
-			continue
-		}
-		if processed[barcode] {
-			continue
-		}
-		if pbsLabels != nil && pbsLabels[barcode] {
-			s.logger.Info("mtf: skipping PBS tape", "barcode", barcode)
-			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Slot %d: skipping PBS tape %s", i+1, barcode))
-			}
-			continue
+			barcode = fmt.Sprintf("SLOT%03d", slot)
 		}
 		s.logger.Info("mtf: scanning cartridge", "barcode", barcode)
 		if s.logger != nil {
-			s.logger.LogString(fmt.Sprintf("Slot %d: loading %s...", i+1, barcode))
+			s.logger.LogString(fmt.Sprintf("Slot %d: loading %s...", slot, barcode))
+			s.logger.LogString(fmt.Sprintf("Slot %d: rewinding %s...", slot, barcode))
+			s.logger.LogString(fmt.Sprintf("Slot %d: reading catalog...", slot))
 		}
 
-		if err := chg.Load(st, i+1, opts.DriveIndex); err != nil {
-			s.logger.Error(err, "mtf: load failed", "barcode", barcode)
-			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Slot %d: load failed  -  %v", i+1, err))
-			}
-			continue
-		}
-		loaded := true
-
-		if s.logger != nil {
-			s.logger.LogString(fmt.Sprintf("Slot %d: rewinding %s...", i+1, barcode))
-		}
-		rc, err := bkf2pxar.OpenTapeReader(opts.TapeDevice)
-		if err != nil {
-			s.logger.Error(err, "mtf: open tape", "barcode", barcode)
-			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Slot %d: open failed  -  %v", i+1, err))
-			}
-			if err := chg.Unload(st, opts.DriveIndex, i+1); err != nil {
-				s.logger.Error(err, "")
-			}
-			continue
-		}
-
-		// Fast path: read Set Map (same as bkf2pxar -list).
-		if s.logger != nil {
-			s.logger.LogString(fmt.Sprintf("Slot %d: reading catalog...", i+1))
-		}
-		sm, err := mtflib.ReadSetMap(rc)
-		if err != nil {
-			s.logger.Error(err, "")
+		sm, smErr := mtflib.ReadSetMap(rc)
+		if smErr != nil {
+			s.logger.Error(smErr, "")
 		}
 		if sm != nil && len(sm.Entries) > 0 {
 			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Slot %d: found %d data sets via catalog", i+1, len(sm.Entries)))
+				s.logger.LogString(fmt.Sprintf("Slot %d: found %d data sets via catalog", slot, len(sm.Entries)))
 			}
-			if err := s.indexSetMap(ctx, rc, barcode, sm, res); err != nil {
-				s.logger.Error(err, "mtf: index set map failed", "barcode", barcode)
+			if iErr := s.indexSetMap(ctx, rc, barcode, sm, res); iErr != nil {
+				s.logger.Error(iErr, "mtf: index set map failed", "barcode", barcode)
 				if s.logger != nil {
-					s.logger.LogString(fmt.Sprintf("Slot %d: index failed  -  %v", i+1, err))
+					s.logger.LogString(fmt.Sprintf("Slot %d: index failed  -  %v", slot, iErr))
 				}
 			}
 		} else {
-			// Fallback: Census forward walk (only for tapes without Set Map).
 			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Slot %d: no catalog, doing full census...", i+1))
+				s.logger.LogString(fmt.Sprintf("Slot %d: no catalog, doing full census...", slot))
 			}
-			if err := rc.Rewind(); err != nil {
-				s.logger.Error(err, "")
+			if rErr := rc.Rewind(); rErr != nil {
+				s.logger.Error(rErr, "")
 			}
 			r := mtflib.NewReader(rc)
-			if err := s.indexReader(ctx, r, barcode, false, "", res, func() error {
+			if cErr := s.indexReader(ctx, r, barcode, false, "", res, func() error {
 				return nil
-			}); err != nil {
-				s.logger.Error(err, "mtf: census failed", "barcode", barcode)
+			}); cErr != nil {
+				s.logger.Error(cErr, "mtf: census failed", "barcode", barcode)
 				if s.logger != nil {
-					s.logger.LogString(fmt.Sprintf("Slot %d: census failed  -  %v", i+1, err))
+					s.logger.LogString(fmt.Sprintf("Slot %d: census failed  -  %v", slot, cErr))
 				}
 			}
 		}
-		if err := rc.Close(); err != nil {
-			s.logger.Error(err, "")
+		if cErr := rc.Close(); cErr != nil {
+			s.logger.Error(cErr, "")
 		}
-
 		if s.logger != nil {
-			s.logger.LogString(fmt.Sprintf("Slot %d: unloading %s...", i+1, barcode))
+			s.logger.LogString(fmt.Sprintf("Slot %d: unloading %s...", slot, barcode))
 		}
-		if err := chg.Unload(st, opts.DriveIndex, i+1); err != nil {
-			s.logger.Error(err, "mtf: unload failed", "barcode", barcode)
-		} else {
-			loaded = false
+		if uErr := f.UnloadCurrent(); uErr != nil {
+			s.logger.Error(uErr, "mtf: unload failed", "barcode", barcode)
 		}
-		if loaded {
-			if err := chg.Unload(st, opts.DriveIndex, i+1); err != nil {
-				s.logger.Error(err, "")
-			}
-		}
-
-		processed[barcode] = true
+		f.MarkProcessed()
 		s.logger.Info("mtf: cartridge scanned", "barcode", barcode)
 	}
-
-	for dIdx, drive := range st.Drives {
-		if !drive.Full {
-			continue
-		}
-		barcode := drive.VolumeTag
-		if barcode == "" {
-			barcode = fmt.Sprintf("DRIVE%02d", dIdx)
-		}
-		if bkf2pxar.IsCleaningTape(barcode) || processed[barcode] {
-			continue
-		}
-		if pbsLabels != nil && pbsLabels[barcode] {
-			s.logger.Info("mtf: skipping PBS tape in drive", "barcode", barcode)
-			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Drive %d: skipping PBS tape %s", dIdx, barcode))
-			}
-			continue
-		}
-		msg := fmt.Sprintf("Drive %d: scanning %s...", dIdx, barcode)
-		s.logger.Info("mtf: scanning tape in drive", "barcode", barcode)
-		if s.logger != nil {
-			s.logger.LogString(msg)
-		}
-		if s.logger != nil {
-			s.logger.LogString(fmt.Sprintf("Drive %d: rewinding...", dIdx))
-		}
-		rc, err := bkf2pxar.OpenTapeReader(opts.TapeDevice)
-		if err != nil {
-			s.logger.Error(err, "mtf: open tape in drive", "barcode", barcode)
-			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Drive %d: open failed  -  %v", dIdx, err))
-			}
-			continue
-		}
-		if s.logger != nil {
-			s.logger.LogString(fmt.Sprintf("Drive %d: reading catalog...", dIdx))
-		}
-		sm, err := mtflib.ReadSetMap(rc)
-		if err != nil {
-			s.logger.Error(err, "")
-		}
-		if sm != nil && len(sm.Entries) > 0 {
-			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Drive %d: found %d data sets via catalog", dIdx, len(sm.Entries)))
-			}
-			if err := s.indexSetMap(ctx, rc, barcode, sm, res); err != nil {
-				s.logger.Error(err, "mtf: index drive tape failed", "barcode", barcode)
-				if s.logger != nil {
-					s.logger.LogString(fmt.Sprintf("Drive %d: index failed  -  %v", dIdx, err))
-				}
-			}
-		} else {
-			if s.logger != nil {
-				s.logger.LogString(fmt.Sprintf("Drive %d: no catalog, doing full census...", dIdx))
-			}
-			if err := rc.Rewind(); err != nil {
-				s.logger.Error(err, "")
-			}
-			r := mtflib.NewReader(rc)
-			if err := s.indexReader(ctx, r, barcode, false, "", res, func() error { return nil }); err != nil {
-				s.logger.Error(err, "mtf: census drive tape failed", "barcode", barcode)
-				if s.logger != nil {
-					s.logger.LogString(fmt.Sprintf("Drive %d: census failed  -  %v", dIdx, err))
-				}
-			}
-		}
-		if err := rc.Close(); err != nil {
-			s.logger.Error(err, "")
-		}
-		processed[barcode] = true
-	}
-
-	return nil
 }
 
-func (s *Scanner) indexSetMap(ctx context.Context, rc *mtflib.DriveTape, barcode string, sm *mtflib.SetMap, res *Result) error {
+func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcode string, sm *mtflib.SetMap, res *Result) error {
 	if s.logger != nil {
 		s.logger.LogString("  Reading TAPE header...")
 	}
-	// Rewind to BOT, read just the first TAPE block (no full Census).
 	if err := rc.Rewind(); err != nil {
 		s.logger.Error(err, "")
 	}
@@ -424,7 +347,7 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *mtflib.DriveTape, barcode
 }
 
 func (s *Scanner) scanDrive(ctx context.Context, dev, barcode string, res *Result) error {
-	isPBS, err := bkf2pxar.IsPBSTape(dev)
+	isPBS, err := tapeio.IsPBSTape(dev)
 	if err != nil {
 		s.logger.Error(err, "mtf: check tape type", "device", dev)
 		return fmt.Errorf("check tape type: %w", err)
@@ -440,7 +363,7 @@ func (s *Scanner) scanDrive(ctx context.Context, dev, barcode string, res *Resul
 	if s.logger != nil {
 		s.logger.LogString(fmt.Sprintf("Reading tape from %s...", dev))
 	}
-	rc, err := bkf2pxar.OpenTapeReader(dev)
+	rc, err := tapeio.OpenTapeReader(dev)
 	if err != nil {
 		return err
 	}
@@ -462,7 +385,6 @@ func (s *Scanner) scanDrive(ctx context.Context, dev, barcode string, res *Resul
 	if sm != nil && len(sm.Entries) > 0 {
 		return s.indexSetMap(ctx, rc, barcode, sm, res)
 	}
-	// Fallback.
 	if err := rc.Rewind(); err != nil {
 		s.logger.Error(err, "")
 	}

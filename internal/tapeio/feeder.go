@@ -1,4 +1,4 @@
-package bkf2pxar
+package tapeio
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-type feeder struct {
+type Feeder struct {
 	chg        *changer.Changer
 	tapeDev    string
 	driveIndex int
@@ -20,12 +20,18 @@ type feeder struct {
 	loadedBarcode string
 	loadedSlot    int
 
-	probed map[string]int
-
+	probed    map[string]int
 	processed map[string]bool
+	skip      func(barcode string) bool
 }
 
-func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
+type Option func(*Feeder)
+
+func WithSkip(fn func(barcode string) bool) Option {
+	return func(f *Feeder) { f.skip = fn }
+}
+
+func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Feeder, error) {
 	chg, err := changer.Open(changerDev)
 	if err != nil {
 		return nil, fmt.Errorf("open changer %s: %w", changerDev, err)
@@ -37,52 +43,70 @@ func newFeeder(changerDev, tapeDev string, driveIndex int) (*feeder, error) {
 		}
 		return nil, fmt.Errorf("changer inventory: %w", err)
 	}
-	return &feeder{
+	f := &Feeder{
 		chg:        chg,
 		tapeDev:    tapeDev,
 		driveIndex: driveIndex,
 		status:     st,
 		probed:     make(map[string]int),
 		processed:  make(map[string]bool),
-	}, nil
+	}
+	for _, o := range opts {
+		o(f)
+	}
+	return f, nil
 }
 
-func (f *feeder) close() {
+func (f *Feeder) Close() {
 	if err := f.chg.Close(); err != nil {
 		log.Error(err, "")
 	}
 }
 
-func (f *feeder) markProcessed() {
-	if f.loadedBarcode != "" {
-		f.processed[f.loadedBarcode] = true
+func (f *Feeder) Status() *changer.Status { return f.status }
+
+func (f *Feeder) RefreshStatus() error {
+	st, err := f.chg.Status()
+	if err != nil {
+		return err
 	}
+	f.status = st
+	return nil
 }
 
-func (f *feeder) loadFirst() (*tapeReader, error) {
+func (f *Feeder) LoadNext() (*TapeReader, string, int, error) {
 	for i, s := range f.status.Slots {
 		if !s.Full || s.ImportExport {
 			continue
 		}
-		if isCleaningTape(s.VolumeTag) {
+		bc := s.VolumeTag
+		if IsCleaningTape(bc) {
 			continue
 		}
-		if f.processed[s.VolumeTag] {
+		if f.processed[bc] {
 			continue
 		}
-		return f.loadSlot(i + 1)
+		if f.skip != nil && f.skip(bc) {
+			f.processed[bc] = true
+			continue
+		}
+		rc, err := f.loadSlot(i + 1)
+		if err != nil {
+			return nil, bc, i + 1, err
+		}
+		return rc, bc, i + 1, nil
 	}
-	return nil, fmt.Errorf("no data tapes found in changer (only %d slot(s), %d full)",
+	return nil, "", 0, fmt.Errorf("no data tapes found in changer (only %d slot(s), %d full)",
 		len(f.status.Slots), countFull(f.status))
 }
 
-func (f *feeder) loadSlot(slot int) (*tapeReader, error) {
+func (f *Feeder) loadSlot(slot int) (*TapeReader, error) {
 	bc := f.status.Slots[slot-1].VolumeTag
 	fmt.Fprintf(os.Stderr, "== loading slot %d (%s) into drive %d ==\n", slot, barcodeOrUnknown(bc), f.driveIndex)
 	if err := f.chg.Load(f.status, slot, f.driveIndex); err != nil {
 		return nil, fmt.Errorf("load slot %d: %w", slot, err)
 	}
-	rc, err := openTapeReader(f.tapeDev)
+	rc, err := OpenTapeReader(f.tapeDev)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +118,7 @@ func (f *feeder) loadSlot(slot int) (*tapeReader, error) {
 	return rc, nil
 }
 
-func (f *feeder) unloadCurrent() error {
+func (f *Feeder) UnloadCurrent() error {
 	if f.loadedSlot == 0 {
 		return nil
 	}
@@ -109,14 +133,19 @@ func (f *feeder) unloadCurrent() error {
 	return nil
 }
 
-func (f *feeder) asContinuation() func(mtf.Continuation) (mtf.Tape, error) {
+func (f *Feeder) MarkProcessed() {
+	if f.loadedBarcode != "" {
+		f.processed[f.loadedBarcode] = true
+	}
+}
+
+func (f *Feeder) AsContinuation() func(mtf.Continuation) (mtf.Tape, error) {
 	return func(c mtf.Continuation) (mtf.Tape, error) {
 		return f.nextMedium(c)
 	}
 }
 
-// c.Sequence+1, verifies its identity from the TAPE block, and returns
-func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
+func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	wantSeq := 0
 	wantMFMID := uint32(0)
 	if c.Media != nil {
@@ -125,7 +154,7 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	}
 	fmt.Fprintf(os.Stderr, "\n== EOTM: need next tape (family 0x%08X, sequence %d) ==\n", wantMFMID, wantSeq)
 
-	if err := f.unloadCurrent(); err != nil {
+	if err := f.UnloadCurrent(); err != nil {
 		log.Error(err, "")
 	}
 
@@ -134,7 +163,7 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			if !s.Full || s.ImportExport {
 				continue
 			}
-			if isCleaningTape(s.VolumeTag) {
+			if IsCleaningTape(s.VolumeTag) {
 				continue
 			}
 			if f.processed[s.VolumeTag] {
@@ -155,14 +184,14 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 				if err := rc.Close(); err != nil {
 					log.Error(err, "")
 				}
-				if err := f.unloadCurrent(); err != nil {
+				if err := f.UnloadCurrent(); err != nil {
 					log.Error(err, "")
 				}
 				continue
 			}
 			if ok {
 				fmt.Fprintf(os.Stderr, "   slot %d: matched sequence %d\n", slot, wantSeq)
-				rc, err := openTapeReader(f.tapeDev)
+				rc, err := OpenTapeReader(f.tapeDev)
 				if err != nil {
 					return nil, err
 				}
@@ -172,23 +201,20 @@ func (f *feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			if err := rc.Close(); err != nil {
 				log.Error(err, "")
 			}
-			if err := f.unloadCurrent(); err != nil {
+			if err := f.UnloadCurrent(); err != nil {
 				log.Error(err, "")
 			}
 		}
 		if pass == 0 {
-			st, err := f.chg.Status()
-			if err == nil {
-				f.status = st
+			if err := f.RefreshStatus(); err != nil {
+				log.Error(err, "")
 			}
 		}
 	}
 	return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in changer", wantMFMID, wantSeq)
 }
 
-// verifyTape peeks at the TAPE block and reports whether its MFMID/Sequence
-// match. It closes the probe reader; the caller reopens on a match.
-func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool, error) {
+func (f *Feeder) verifyTape(rc *TapeReader, wantMFMID uint32, wantSeq int) (bool, error) {
 	r := mtf.NewReader(rc)
 	blk, err := r.Next()
 	if err := rc.Close(); err != nil {
@@ -206,21 +232,6 @@ func (f *feeder) verifyTape(rc *tapeReader, wantMFMID uint32, wantSeq int) (bool
 		return false, nil
 	}
 	return gotSeq == wantSeq, nil
-}
-
-func isCleaningTape(barcode string) bool {
-	b := barcode
-	if len(b) >= 3 {
-		switch b[:3] {
-		case "CLN", "CCL", "CLG", "DCL":
-			return true
-		}
-	}
-	return false
-}
-
-func IsCleaningTape(barcode string) bool {
-	return isCleaningTape(barcode)
 }
 
 func countFull(st *changer.Status) int {
