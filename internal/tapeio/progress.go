@@ -10,13 +10,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-// progress is the live migration counter. Fields are atomic so the reporter
-// goroutine can read them concurrently with the conversion loop.
 type progress struct {
 	startTime time.Time
 	files     atomic.Int64
 	dirs      atomic.Int64
 	bytes     atomic.Int64
+	tapeBytes atomic.Int64
 }
 
 func newProgress() *progress {
@@ -32,7 +31,7 @@ func (p *progress) report(ctx context.Context, w io.Writer, interval time.Durati
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
 	go func() {
-		var lastBytes int64
+		var lastBytes, lastTape int64
 		lastTime := time.Now()
 		for {
 			select {
@@ -44,24 +43,29 @@ func (p *progress) report(ctx context.Context, w io.Writer, interval time.Durati
 				return
 			case now := <-ticker.C:
 				cur := p.bytes.Load()
+				curTape := p.tapeBytes.Load()
 				dt := now.Sub(lastTime).Seconds()
-				var inst float64
+				var inst, tapeInst float64
 				if dt > 0 {
 					inst = float64(cur-lastBytes) / 1e6 / dt
+					tapeInst = float64(curTape-lastTape) / 1e6 / dt
 				}
 				lastBytes = cur
+				lastTape = curTape
 				lastTime = now
-				// Suppress the line when nothing moved (first intervals spend time
 				if cur == 0 || inst == 0 {
 					continue
 				}
 				elapsed := now.Sub(p.startTime).Seconds()
-				var avg float64
+				var avg, tapeAvg float64
 				if elapsed > 0 {
 					avg = float64(cur) / 1e6 / elapsed
+					tapeAvg = float64(curTape) / 1e6 / elapsed
 				}
-				if _, err := fmt.Fprintf(w, "progress: %d files, %.1f MB | inst %.1f MB/s | avg %.1f MB/s | %s\n",
-					p.files.Load(), float64(cur)/1e6, inst, avg, now.Sub(p.startTime).Round(time.Second)); err != nil {
+				if _, err := fmt.Fprintf(w, "progress: %d files, %.1f MB | tape %.1f/%.1f MB/s | ingest %.1f/%.1f MB/s | %s\n",
+					p.files.Load(), float64(cur)/1e6,
+					tapeInst, tapeAvg, inst, avg,
+					now.Sub(p.startTime).Round(time.Second)); err != nil {
 					log.Error(err, "")
 				}
 			}

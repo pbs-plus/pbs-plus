@@ -714,7 +714,7 @@ func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mt
 			op.data = blob
 			op.dataSize = n
 			op.size = n
-			c.prog.bytes.Add(n)
+			c.prog.tapeBytes.Add(n)
 			if h.IsHardLink {
 				c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
 			} else {
@@ -821,6 +821,9 @@ func (c *converter) consumeFile(sp *spool, op tapeOp) error {
 	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindFile, FileSize: uint64(op.size)}
 	entry.SetFileName(op.name)
 	err := c.writer.WriteEntryReader(entry, bytes.NewReader(op.data), uint64(op.size))
+	if err == nil {
+		c.prog.bytes.Add(op.dataSize)
+	}
 	sp.release(op.dataSize)
 	return err
 }
