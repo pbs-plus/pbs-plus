@@ -618,11 +618,17 @@ const (
 
 func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 	finish := func(err error) error {
+		c.prog.tapePhysBytes.Store(r.Position())
 		ops <- tapeOp{kind: opEnd}
 		return err
 	}
+	var lastPos int64 = r.Position()
 	for {
 		block, err := r.Next()
+		if pos := r.Position(); pos > lastPos {
+			c.prog.tapePhysBytes.Add(pos - lastPos)
+			lastPos = pos
+		}
 		if err == io.EOF {
 			break
 		}
