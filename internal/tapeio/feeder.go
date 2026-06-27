@@ -19,6 +19,7 @@ type Feeder struct {
 
 	loadedBarcode string
 	loadedSlot    int
+	loadedSrcSlot int
 
 	probed    map[string]int
 	processed map[string]bool
@@ -63,8 +64,6 @@ func (f *Feeder) Close() {
 	}
 }
 
-func (f *Feeder) Status() *changer.Status { return f.status }
-
 func (f *Feeder) RefreshStatus() error {
 	st, err := f.chg.Status()
 	if err != nil {
@@ -72,32 +71,6 @@ func (f *Feeder) RefreshStatus() error {
 	}
 	f.status = st
 	return nil
-}
-
-func (f *Feeder) LoadNext() (*TapeReader, string, int, error) {
-	for i, s := range f.status.Slots {
-		if !s.Full || s.ImportExport {
-			continue
-		}
-		bc := s.VolumeTag
-		if IsCleaningTape(bc) {
-			continue
-		}
-		if f.processed[bc] {
-			continue
-		}
-		if f.skip != nil && f.skip(bc) {
-			f.processed[bc] = true
-			continue
-		}
-		rc, err := f.loadSlot(i + 1)
-		if err != nil {
-			return nil, bc, i + 1, err
-		}
-		return rc, bc, i + 1, nil
-	}
-	return nil, "", 0, fmt.Errorf("no data tapes found in changer (only %d slot(s), %d full)",
-		len(f.status.Slots), countFull(f.status))
 }
 
 func (f *Feeder) loadSlot(slot int) (*TapeReader, error) {
@@ -133,10 +106,109 @@ func (f *Feeder) UnloadCurrent() error {
 	return nil
 }
 
-func (f *Feeder) MarkProcessed() {
-	if f.loadedBarcode != "" {
-		f.processed[f.loadedBarcode] = true
+func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) error {
+	if f.status != nil {
+		for dIdx, drive := range f.status.Drives {
+			if !drive.Full {
+				continue
+			}
+			bc := drive.VolumeTag
+			if bc == "" || IsCleaningTape(bc) || f.processed[bc] {
+				continue
+			}
+			if f.skip != nil && f.skip(bc) {
+				f.processed[bc] = true
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "== drive %d has %s loaded; reading in place ==\n", dIdx, barcodeOrUnknown(bc))
+			rc, err := OpenTapeReader(f.tapeDev)
+			if err != nil {
+				return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
+			}
+			f.loadedBarcode = bc
+			f.loadedSlot = 0
+			f.loadedSrcSlot = slotIndexForAddr(f.status, drive.LoadedSlotAddr)
+			vErr := visit(rc, bc)
+			if cErr := rc.Close(); cErr != nil {
+				log.Error(cErr, "")
+			}
+			f.processed[bc] = true
+			if uErr := f.unloadInDrive(); uErr != nil {
+				if vErr == nil {
+					vErr = uErr
+				}
+			}
+			f.loadedBarcode = ""
+			f.loadedSrcSlot = 0
+			if vErr != nil {
+				return vErr
+			}
+		}
 	}
+
+	for i, s := range f.status.Slots {
+		if !s.Full || s.ImportExport {
+			continue
+		}
+		bc := s.VolumeTag
+		if IsCleaningTape(bc) || f.processed[bc] {
+			continue
+		}
+		if f.skip != nil && f.skip(bc) {
+			f.processed[bc] = true
+			continue
+		}
+		slot := i + 1
+		rc, lErr := f.loadSlot(slot)
+		if lErr != nil {
+			return fmt.Errorf("load slot %d: %w", slot, lErr)
+		}
+		vErr := visit(rc, bc)
+		if cErr := rc.Close(); cErr != nil {
+			log.Error(cErr, "")
+		}
+		if uErr := f.UnloadCurrent(); uErr != nil {
+			log.Error(uErr, "")
+		}
+		f.processed[bc] = true
+		if vErr != nil {
+			return vErr
+		}
+	}
+	return nil
+}
+
+func slotIndexForAddr(st *changer.Status, addr uint16) int {
+	if addr == 0 {
+		return 0
+	}
+	for i, s := range st.Slots {
+		if s.ElementAddress == addr {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func (f *Feeder) unloadInDrive() error {
+	slot := f.loadedSrcSlot
+	if slot == 0 {
+		for i, s := range f.status.Slots {
+			if !s.Full && !s.ImportExport {
+				slot = i + 1
+				break
+			}
+		}
+	}
+	if slot == 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "== unloading drive %d -> slot %d (%s) ==\n",
+		f.driveIndex, slot, barcodeOrUnknown(f.loadedBarcode))
+	if err := f.chg.Unload(f.status, f.driveIndex, slot); err != nil {
+		return fmt.Errorf("unload drive -> slot %d: %w", slot, err)
+	}
+	return nil
 }
 
 func (f *Feeder) AsContinuation() func(mtf.Continuation) (mtf.Tape, error) {
@@ -232,16 +304,6 @@ func (f *Feeder) verifyTape(rc *TapeReader, wantMFMID uint32, wantSeq int) (bool
 		return false, nil
 	}
 	return gotSeq == wantSeq, nil
-}
-
-func countFull(st *changer.Status) int {
-	n := 0
-	for _, s := range st.Slots {
-		if s.Full {
-			n++
-		}
-	}
-	return n
 }
 
 func barcodeOrUnknown(bc string) string {

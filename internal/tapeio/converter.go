@@ -475,30 +475,11 @@ func (c *converter) runChanger() error {
 	}
 	defer f.Close()
 
-	for {
-		rc, _, _, err := f.LoadNext()
-		if err != nil {
-			return nil
-		}
+	return f.ForEachTape(func(rc *TapeReader, barcode string) error {
 		r := mtf.NewReader(rc)
 		r.SetContinuation(f.AsContinuation())
-		if err := c.processReader(r); err != nil {
-			if err := rc.Close(); err != nil {
-				log.Error(err, "")
-			}
-			if err := f.UnloadCurrent(); err != nil {
-				log.Error(err, "")
-			}
-			return err
-		}
-		if err := rc.Close(); err != nil {
-			log.Error(err, "")
-		}
-		if err := f.UnloadCurrent(); err != nil {
-			log.Error(err, "")
-		}
-		f.MarkProcessed()
-	}
+		return c.processReader(r)
+	})
 }
 
 func (c *converter) runFiles() error {
