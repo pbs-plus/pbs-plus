@@ -448,15 +448,15 @@ func (c *converter) runTape() error {
 	}
 
 	if c.cfg.SnapshotSel >= 0 {
+		if _, err := r.Next(); err != nil {
+			return fmt.Errorf("read TAPE descriptor: %w", err)
+		}
 		pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel)
 		if sErr != nil {
 			return sErr
 		}
 		if ok {
 			c.logf("Locating to snapshot %d at PBA %d", c.cfg.SnapshotSel, pba)
-			if _, err := r.Next(); err != nil {
-				return fmt.Errorf("read TAPE descriptor: %w", err)
-			}
 			if err := r.SeekToBlock(pba); err != nil {
 				return fmt.Errorf("seek to snapshot %d: %w", c.cfg.SnapshotSel, err)
 			}
