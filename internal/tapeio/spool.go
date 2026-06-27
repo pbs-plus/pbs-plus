@@ -4,43 +4,35 @@ import (
 	"io"
 	"os"
 	"sync"
-	"syscall"
 )
 
 type spool struct {
-	dir string
-	mu  sync.Mutex
-	cv  *sync.Cond
-
+	mu     sync.Mutex
+	cv     *sync.Cond
 	live   int64
 	cap    int64
-	margin int64
 	closed bool
 }
 
-func newSpool(dir string, capBytes, margin int64) (*spool, error) {
-	if dir == "" {
-		dir = os.TempDir()
+func newSpool(_ string, capBytes, _ int64) (*spool, error) {
+	if capBytes <= 0 {
+		capBytes = 1 << 30
 	}
-	if margin < 0 {
-		margin = 0
-	}
-	s := &spool{dir: dir, cap: capBytes, margin: margin}
+	s := &spool{cap: capBytes}
 	s.cv = sync.NewCond(&s.mu)
 	return s, nil
 }
 
-func (s *spool) freeSpace() int64 {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(s.dir, &st); err != nil {
-		return 1<<62 - 1
-	}
-	return int64(st.Bavail) * int64(st.Bsize)
-}
-
 func (s *spool) reserve(size int64) error {
 	s.mu.Lock()
-	for !s.closed && (s.live+size > s.cap || s.freeSpace()-size < s.margin) {
+	for !s.closed {
+		if size > s.cap {
+			if s.live == 0 {
+				break
+			}
+		} else if s.live+size <= s.cap {
+			break
+		}
 		s.cv.Wait()
 	}
 	if s.closed {
@@ -52,23 +44,12 @@ func (s *spool) reserve(size int64) error {
 	return nil
 }
 
-func (s *spool) write(r io.Reader) (f *os.File, n int64, err error) {
-	f, err = os.CreateTemp(s.dir, "bkf2pxar-blob-*")
+func (s *spool) read(r io.Reader) ([]byte, int64, error) {
+	b, err := io.ReadAll(r)
 	if err != nil {
 		return nil, 0, err
 	}
-	n, err = io.Copy(f, r)
-	if err != nil {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-		return nil, 0, err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		_ = f.Close()
-		_ = os.Remove(f.Name())
-		return nil, 0, err
-	}
-	return f, n, nil
+	return b, int64(len(b)), nil
 }
 
 func (s *spool) adjust(delta int64) {
@@ -78,9 +59,7 @@ func (s *spool) adjust(delta int64) {
 	s.mu.Unlock()
 }
 
-func (s *spool) consume(f *os.File, size int64) {
-	_ = f.Close()
-	_ = os.Remove(f.Name())
+func (s *spool) release(size int64) {
 	s.mu.Lock()
 	s.live -= size
 	s.cv.Signal()

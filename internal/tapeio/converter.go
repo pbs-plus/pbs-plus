@@ -1,6 +1,7 @@
 package tapeio
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -548,7 +549,7 @@ type tapeOp struct {
 	linkTgt  string
 	hardLink bool
 	rootPfx  string
-	file     *os.File
+	data     []byte
 	dataSize int64
 	ssetIdx  int
 }
@@ -570,7 +571,7 @@ func (c *converter) runPipeline(r *mtf.Reader) error {
 	if cap <= 0 {
 		cap = defaultSpoolCapBytes
 	}
-	sp, err := newSpool(c.cfg.SpoolDir, cap, defaultSpoolMargin)
+	sp, err := newSpool(c.cfg.SpoolDir, cap, 0)
 	if err != nil {
 		return fmt.Errorf("create spool: %w", err)
 	}
@@ -594,9 +595,8 @@ func (c *converter) runPipeline(r *mtf.Reader) error {
 	}
 	go func() {
 		for op := range ops {
-			if op.kind == opFile && op.file != nil {
-				_ = op.file.Close()
-				_ = os.Remove(op.file.Name())
+			if op.kind == opFile {
+				sp.release(op.dataSize)
 			}
 		}
 	}()
@@ -612,8 +612,7 @@ func (c *converter) processReader(r *mtf.Reader) error {
 }
 
 const (
-	defaultSpoolCapBytes = 4 << 30
-	defaultSpoolMargin   = 1 << 30
+	defaultSpoolCapBytes = 256 << 20
 	opChanCap            = 256
 )
 
@@ -705,14 +704,14 @@ func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mt
 			if err := sp.reserve(h.Size); err != nil {
 				return fmt.Errorf("spool reserve %q: %w", h.Name, err)
 			}
-			blob, n, err := sp.write(r)
+			blob, n, err := sp.read(r)
 			if err != nil {
 				return fmt.Errorf("spool file %q: %w", h.Name, err)
 			}
 			if n != h.Size {
 				sp.adjust(n - h.Size)
 			}
-			op.file = blob
+			op.data = blob
 			op.dataSize = n
 			op.size = n
 			c.prog.bytes.Add(n)
@@ -821,8 +820,8 @@ func (c *converter) consumeFile(sp *spool, op tapeOp) error {
 	}
 	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindFile, FileSize: uint64(op.size)}
 	entry.SetFileName(op.name)
-	err := c.writer.WriteEntryReader(entry, op.file, uint64(op.size))
-	sp.consume(op.file, op.dataSize)
+	err := c.writer.WriteEntryReader(entry, bytes.NewReader(op.data), uint64(op.size))
+	sp.release(op.dataSize)
 	return err
 }
 

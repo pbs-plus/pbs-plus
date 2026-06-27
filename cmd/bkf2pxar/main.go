@@ -33,6 +33,7 @@ func main() {
 	compress := flag.Bool("compress", false, "Enable zstd compression for chunks (off by default; useful for remote PBS, wasteful for localhost)")
 	spanning := flag.Bool("spanning", false, "Enable media spanning for multi-tape sets")
 	spoolDir := flag.String("spool-dir", "", "Directory for the disk-backed tape spool (default os.TempDir). Use a directory on a volume with free space for large migrations.")
+	spoolCap := flag.Int64("spool-cap", 0, "In-memory spool cap in bytes (0 = default 1 GiB). Bounds peak memory used to buffer tape data ahead of the encoder.")
 	listMode := flag.Bool("list", false, "List snapshots (backup sets) in the input and exit")
 	snapshotSel := flag.Int("snapshot", -1, "Migrate only snapshot N (0-based; use -list to see available)")
 	skipTLS := flag.Bool("skip-tls-verify", true, "Skip TLS certificate verification")
@@ -71,6 +72,7 @@ func main() {
 		Spanning:      *spanning,
 		SnapshotSel:   *snapshotSel,
 		SpoolDir:      *spoolDir,
+		SpoolCapBytes: *spoolCap,
 	}
 
 	if *listMode {
