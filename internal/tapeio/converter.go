@@ -42,10 +42,11 @@ type Config struct {
 	Spanning            bool
 	SnapshotSel         int
 	IgnoreNewerPrevious bool
-	// NamespaceResolver overrides Namespace per snapshot. It receives the
-	NamespaceResolver func(host, device string) string
-	OnSnapshot        func(backupID, namespace string)
-	TaskLog           func(string)
+	SpoolDir            string
+	SpoolCapBytes       int64
+	NamespaceResolver   func(host, device string) string
+	OnSnapshot          func(backupID, namespace string)
+	TaskLog             func(string)
 }
 
 type Stats struct {
@@ -537,14 +538,19 @@ func (c *converter) runFiles() error {
 	return nil
 }
 
-// entries to pxar. Each SSET boundary starts a fresh session.
 type tapeOp struct {
-	kind    opKind
-	header  *mtf.Header
-	rootPfx string
-	dataOff int64
-	dataLen int64
-	ssetIdx int
+	kind     opKind
+	name     string
+	depth    int
+	relPath  string
+	meta     pxar.Metadata
+	size     int64
+	linkTgt  string
+	hardLink bool
+	rootPfx  string
+	file     *os.File
+	dataSize int64
+	ssetIdx  int
 }
 
 type opKind int
@@ -560,7 +566,11 @@ const (
 )
 
 func (c *converter) runPipeline(r *mtf.Reader) error {
-	sp, err := newSpool(spoolCapBytes)
+	cap := c.cfg.SpoolCapBytes
+	if cap <= 0 {
+		cap = defaultSpoolCapBytes
+	}
+	sp, err := newSpool(c.cfg.SpoolDir, cap, defaultSpoolMargin)
 	if err != nil {
 		return fmt.Errorf("create spool: %w", err)
 	}
@@ -579,6 +589,18 @@ func (c *converter) runPipeline(r *mtf.Reader) error {
 
 	encErr := c.drain(ops, sp)
 
+	if err := sp.close(); err != nil {
+		log.Error(err, "")
+	}
+	go func() {
+		for op := range ops {
+			if op.kind == opFile && op.file != nil {
+				_ = op.file.Close()
+				_ = os.Remove(op.file.Name())
+			}
+		}
+	}()
+
 	if perr := <-pumpErr; perr != nil && encErr == nil {
 		return perr
 	}
@@ -590,8 +612,9 @@ func (c *converter) processReader(r *mtf.Reader) error {
 }
 
 const (
-	spoolCapBytes = 512 << 20
-	opChanCap     = 256
+	defaultSpoolCapBytes = 4 << 30
+	defaultSpoolMargin   = 1 << 30
+	opChanCap            = 256
 )
 
 func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
@@ -637,7 +660,7 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 			if h.Type == mtf.EntryVolume {
 				c.meta.HostName = h.MachineName
 				c.rootPrefix = h.Name
-				ops <- tapeOp{kind: opVolume, header: h, rootPfx: c.rootPrefix}
+				ops <- tapeOp{kind: opVolume, rootPfx: c.rootPrefix}
 				continue
 			}
 			if err := c.pumpEntry(r, sp, ops, h); err != nil {
@@ -652,25 +675,52 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 }
 
 func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mtf.Header) error {
-	c.logf("Volume: machine=%s device=%s", h.MachineName, h.Name)
-	op := tapeOp{kind: opDir, header: h, rootPfx: c.rootPrefix}
+	relPath := strings.TrimPrefix(strings.TrimPrefix(h.Name, c.rootPrefix), "/")
+	components := strings.Split(relPath, "/")
+	op := tapeOp{
+		rootPfx: c.rootPrefix,
+		relPath: relPath,
+		name:    sanitizeName(components[len(components)-1]),
+		depth:   len(components) - 1,
+	}
 	switch h.Type {
 	case mtf.EntryDirectory:
 		c.prog.dirs.Add(1)
 		op.kind = opDir
+		op.meta = mtfToPxarMeta(h, format.ModeIFDIR)
+		c.logf("  d %s", relPath)
 	case mtf.EntryFile:
 		c.prog.files.Add(1)
 		if h.IsSymlink {
 			op.kind = opSymlink
+			op.meta = mtfToPxarMeta(h, format.ModeIFLNK)
+			op.linkTgt = h.LinkTarget
+			c.logf("  l %s -> %s", relPath, h.LinkTarget)
 		} else {
 			op.kind = opFile
-			off, err := sp.write(r, h.Size)
+			op.meta = mtfToPxarMeta(h, format.ModeIFREG)
+			op.size = h.Size
+			op.hardLink = h.IsHardLink
+			op.linkTgt = h.LinkTarget
+			if err := sp.reserve(h.Size); err != nil {
+				return fmt.Errorf("spool reserve %q: %w", h.Name, err)
+			}
+			blob, n, err := sp.write(r)
 			if err != nil {
 				return fmt.Errorf("spool file %q: %w", h.Name, err)
 			}
-			op.dataOff = off
-			op.dataLen = h.Size
-			c.prog.bytes.Add(h.Size)
+			if n != h.Size {
+				sp.adjust(n - h.Size)
+			}
+			op.file = blob
+			op.dataSize = n
+			op.size = n
+			c.prog.bytes.Add(n)
+			if h.IsHardLink {
+				c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
+			} else {
+				c.logf("  f %s (%d bytes)", relPath, h.Size)
+			}
 		}
 	}
 	ops <- op
@@ -678,24 +728,22 @@ func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mt
 }
 
 func (c *converter) drain(ops <-chan tapeOp, sp *spool) error {
+	snapIdx := -1
 	for op := range ops {
 		switch op.kind {
 		case opSet:
 			if err := c.finishSnapshot(); err != nil {
 				return err
 			}
-			if c.cfg.SnapshotSel >= 0 && op.ssetIdx > c.cfg.SnapshotSel {
-				return nil
-			}
+			snapIdx = op.ssetIdx
 		case opSetEnd:
 			if err := c.finishSnapshot(); err != nil {
 				return err
 			}
-			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
+			if c.cfg.SnapshotSel >= 0 && snapIdx == c.cfg.SnapshotSel {
 				return nil
 			}
 		case opVolume:
-			c.meta.HostName = op.header.MachineName
 			c.rootPrefix = op.rootPfx
 			if err := c.ensureSession(); err != nil {
 				return err
@@ -704,14 +752,14 @@ func (c *converter) drain(ops <-chan tapeOp, sp *spool) error {
 			if err := c.ensureSession(); err != nil {
 				return err
 			}
-			if err := c.consumeDir(op.header); err != nil {
+			if err := c.consumeDir(op); err != nil {
 				return err
 			}
 		case opSymlink:
 			if err := c.ensureSession(); err != nil {
 				return err
 			}
-			if err := c.consumeSymlink(op.header); err != nil {
+			if err := c.consumeSymlink(op); err != nil {
 				return err
 			}
 		case opFile:
@@ -728,77 +776,53 @@ func (c *converter) drain(ops <-chan tapeOp, sp *spool) error {
 	return c.finishSnapshot()
 }
 
-func (c *converter) consumeDir(h *mtf.Header) error {
-	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
-	relPath = strings.TrimPrefix(relPath, "/")
-	if relPath == "" {
+func (c *converter) consumeDir(op tapeOp) error {
+	if op.relPath == "" {
 		return nil
 	}
-	components := strings.Split(relPath, "/")
-	parent := components[:len(components)-1]
-	name := sanitizeName(components[len(components)-1])
-	for len(c.dirStack) > len(parent) {
+	for len(c.dirStack) > op.depth {
 		if err := c.writer.EndDirectory(); err != nil {
 			return err
 		}
 		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-	c.logf("  d %s", relPath)
-	meta := mtfToPxarMeta(h, format.ModeIFDIR)
-	if err := c.writer.BeginDirectory(name, &meta); err != nil {
-		return fmt.Errorf("begin dir %q: %w", name, err)
+	meta := op.meta
+	if err := c.writer.BeginDirectory(op.name, &meta); err != nil {
+		return fmt.Errorf("begin dir %q: %w", op.name, err)
 	}
-	c.dirStack = append(c.dirStack, name)
+	c.dirStack = append(c.dirStack, op.name)
 	return nil
 }
 
-func (c *converter) consumeSymlink(h *mtf.Header) error {
-	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
-	relPath = strings.TrimPrefix(relPath, "/")
-	if relPath == "" {
+func (c *converter) consumeSymlink(op tapeOp) error {
+	if op.relPath == "" {
 		return nil
 	}
-	components := strings.Split(relPath, "/")
-	name := sanitizeName(components[len(components)-1])
-	for len(c.dirStack) > len(components)-1 {
+	for len(c.dirStack) > op.depth {
 		if err := c.writer.EndDirectory(); err != nil {
 			return err
 		}
 		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-	c.logf("  l %s -> %s", relPath, h.LinkTarget)
-	meta := mtfToPxarMeta(h, format.ModeIFLNK)
-	entry := &pxar.Entry{Metadata: meta, Kind: pxar.KindSymlink, LinkTarget: h.LinkTarget}
-	entry.SetFileName(name)
+	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindSymlink, LinkTarget: op.linkTgt}
+	entry.SetFileName(op.name)
 	return c.writer.WriteEntry(entry, nil)
 }
 
 func (c *converter) consumeFile(sp *spool, op tapeOp) error {
-	h := op.header
-	relPath := strings.TrimPrefix(h.Name, op.rootPfx)
-	relPath = strings.TrimPrefix(relPath, "/")
-	if relPath == "" {
+	if op.relPath == "" {
 		return nil
 	}
-	components := strings.Split(relPath, "/")
-	name := sanitizeName(components[len(components)-1])
-	for len(c.dirStack) > len(components)-1 {
+	for len(c.dirStack) > op.depth {
 		if err := c.writer.EndDirectory(); err != nil {
 			return err
 		}
 		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-	meta := mtfToPxarMeta(h, format.ModeIFREG)
-	entry := &pxar.Entry{Metadata: meta, Kind: pxar.KindFile, FileSize: uint64(h.Size)}
-	entry.SetFileName(name)
-	if h.IsHardLink && h.LinkTarget != "" {
-		c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
-	} else {
-		c.logf("  f %s (%d bytes)", relPath, h.Size)
-	}
-	data := sp.reader(op.dataOff, op.dataLen)
-	err := c.writer.WriteEntryReader(entry, data, uint64(h.Size))
-	sp.consume(op.dataLen)
+	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindFile, FileSize: uint64(op.size)}
+	entry.SetFileName(op.name)
+	err := c.writer.WriteEntryReader(entry, op.file, uint64(op.size))
+	sp.consume(op.file, op.dataSize)
 	return err
 }
 

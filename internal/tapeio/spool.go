@@ -4,84 +4,87 @@ import (
 	"io"
 	"os"
 	"sync"
-
-	"github.com/pbs-plus/pbs-plus/internal/log"
+	"syscall"
 )
 
 type spool struct {
-	f  *os.File
-	mu sync.Mutex
-	cv *sync.Cond
+	dir string
+	mu  sync.Mutex
+	cv  *sync.Cond
 
-	writeOff int64
-	readOff  int64
-	outBytes int64
-	capBytes int64
-
+	live   int64
+	cap    int64
+	margin int64
 	closed bool
 }
 
-func newSpool(capBytes int64) (*spool, error) {
-	f, err := os.CreateTemp("", "bkf2pxar-spool-*")
-	if err != nil {
-		return nil, err
+func newSpool(dir string, capBytes, margin int64) (*spool, error) {
+	if dir == "" {
+		dir = os.TempDir()
 	}
-	s := &spool{f: f, capBytes: capBytes}
+	if margin < 0 {
+		margin = 0
+	}
+	s := &spool{dir: dir, cap: capBytes, margin: margin}
 	s.cv = sync.NewCond(&s.mu)
 	return s, nil
 }
 
-func (s *spool) write(r io.Reader, size int64) (int64, error) {
+func (s *spool) freeSpace() int64 {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(s.dir, &st); err != nil {
+		return 1<<62 - 1
+	}
+	return int64(st.Bavail) * int64(st.Bsize)
+}
+
+func (s *spool) reserve(size int64) error {
 	s.mu.Lock()
-	for s.outBytes+size > s.capBytes && !s.closed {
+	for !s.closed && (s.live+size > s.cap || s.freeSpace()-size < s.margin) {
 		s.cv.Wait()
 	}
 	if s.closed {
 		s.mu.Unlock()
-		return 0, os.ErrClosed
+		return os.ErrClosed
 	}
-	off := s.writeOff
-	s.writeOff += size
-	s.outBytes += size
+	s.live += size
 	s.mu.Unlock()
+	return nil
+}
 
-	if _, err := io.Copy(io.NewOffsetWriter(s.f, off), io.LimitReader(r, size)); err != nil {
-		return 0, err
+func (s *spool) write(r io.Reader) (f *os.File, n int64, err error) {
+	f, err = os.CreateTemp(s.dir, "bkf2pxar-blob-*")
+	if err != nil {
+		return nil, 0, err
 	}
-	return off, nil
+	n, err = io.Copy(f, r)
+	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return nil, 0, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		return nil, 0, err
+	}
+	return f, n, nil
 }
 
-func (s *spool) reader(off, size int64) io.Reader {
-	return io.NewSectionReader(s.f, off, size)
-}
-
-func (s *spool) consume(size int64) {
+func (s *spool) adjust(delta int64) {
 	s.mu.Lock()
-	s.readOff += size
-	s.outBytes -= size
-	if s.readOff >= s.capBytes/2 && !s.closed {
-		if err := s.compactLocked(); err != nil {
-			log.Error(err, "")
-		}
-	}
+	s.live += delta
 	s.cv.Signal()
 	s.mu.Unlock()
 }
 
-func (s *spool) compactLocked() error {
-	live := s.writeOff - s.readOff
-	if s.readOff <= 0 || live <= 0 {
-		return nil
-	}
-	buf := make([]byte, 32<<20)
-	src := io.NewSectionReader(s.f, s.readOff, live)
-	dst := io.NewOffsetWriter(s.f, 0)
-	if _, err := io.CopyBuffer(dst, src, buf); err != nil {
-		return err
-	}
-	s.writeOff = live
-	s.readOff = 0
-	return s.f.Truncate(live)
+func (s *spool) consume(f *os.File, size int64) {
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+	s.mu.Lock()
+	s.live -= size
+	s.cv.Signal()
+	s.mu.Unlock()
 }
 
 func (s *spool) close() error {
@@ -89,9 +92,5 @@ func (s *spool) close() error {
 	s.closed = true
 	s.cv.Broadcast()
 	s.mu.Unlock()
-	err := s.f.Close()
-	if rerr := os.Remove(s.f.Name()); err == nil {
-		err = rerr
-	}
-	return err
+	return nil
 }
