@@ -442,21 +442,26 @@ func (c *converter) runTape() error {
 		}
 	}()
 
-	if c.cfg.SnapshotSel >= 0 {
-		if pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel); sErr != nil {
-			return sErr
-		} else if ok {
-			c.logf("Locating to snapshot %d at PBA %d", c.cfg.SnapshotSel, pba)
-			if err := rc.SeekBlock(pba); err != nil {
-				return fmt.Errorf("seek to snapshot %d (PBA %d): %w", c.cfg.SnapshotSel, pba, err)
-			}
-			c.snapshotIdx = c.cfg.SnapshotSel - 1
-		}
-	}
-
 	r := mtf.NewReader(rc)
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
+	}
+
+	if c.cfg.SnapshotSel >= 0 {
+		pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel)
+		if sErr != nil {
+			return sErr
+		}
+		if ok {
+			c.logf("Locating to snapshot %d at PBA %d", c.cfg.SnapshotSel, pba)
+			if _, err := r.Next(); err != nil {
+				return fmt.Errorf("read TAPE descriptor: %w", err)
+			}
+			if err := r.SeekToBlock(pba); err != nil {
+				return fmt.Errorf("seek to snapshot %d: %w", c.cfg.SnapshotSel, err)
+			}
+			c.snapshotIdx = c.cfg.SnapshotSel - 1
+		}
 	}
 
 	return c.processReader(r)
