@@ -163,6 +163,10 @@ github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 h1:onHthvaw9LFnH4t2D
 github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58/go.mod h1:DXv8WO4yhMYhSNPKjeNKa5WY9YCIEBRbNzFFPJbWO6Y=
 github.com/pbs-plus/go-mtf v0.24.0 h1:8rFY2czXHehPgdnOHo96q1khQNTxn3aaVfmVtbU6ugM=
 github.com/pbs-plus/go-mtf v0.24.0/go.mod h1:zOwNiCqMWreOS7O/dW/1vgwPrN1xZXYmmD/udPaXpgU=
+github.com/pbs-plus/go-mtf v0.24.1 h1:dpg9PlXdOU7m3Wps1JJTpg7io8gqrhjODIoIfnsGs7M=
+github.com/pbs-plus/go-mtf v0.24.1/go.mod h1:zOwNiCqMWreOS7O/dW/1vgwPrN1xZXYmmD/udPaXpgU=
+github.com/pbs-plus/go-mtf v0.25.0 h1:f+bLIjANWCRIeSEU/RE79zXonDemyn+tiagxK/jy5ZQ=
+github.com/pbs-plus/go-mtf v0.25.0/go.mod h1:zOwNiCqMWreOS7O/dW/1vgwPrN1xZXYmmD/udPaXpgU=
 github.com/pbs-plus/go-tapedrive v0.5.1 h1:OLeFJQM+tzUQDNrKqViPhrCx0BJWcuQ/AalwoZ1LmsI=
 github.com/pbs-plus/go-tapedrive v0.5.1/go.mod h1:LO90B9vMnFbP/q5+Ci3/8RnuyBHZ2nw7qxQkCfjzKok=
 github.com/pbs-plus/pxar v0.33.1 h1:pAr7azbCMMklgFL9j9U+JXDhVI+IqaVZnWakkYBem/o=
