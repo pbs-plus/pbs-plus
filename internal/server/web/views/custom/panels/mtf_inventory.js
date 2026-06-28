@@ -316,12 +316,12 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
   },
 
   tbar: [
-    { xtype: "proxmoxButton", text: gettext("Run Scan"), selModel: false, handler: "startScan" },
+    { text: gettext("Reload"), handler: "reload" },
     "-",
+    { text: gettext("Run Scan"), handler: "startScan", iconCls: "fa fa-search" },
     { xtype: "proxmoxButton", text: gettext("View Data Sets"), disabled: true, handler: "showDataSets", enableFn: (rec) => !!rec.get("media_family_id") },
-    { xtype: "proxmoxButton", text: gettext("Migrate Cartridge"), disabled: true, handler: "migrateCartridge", enableFn: (rec) => true },
-    { xtype: "proxmoxButton", text: gettext("Migrate Set"), disabled: true, handler: "migrateFamily", enableFn: (rec) => true },
-    { xtype: "proxmoxButton", text: gettext("Reload"), selModel: false, handler: "reload" },
+    { xtype: "proxmoxButton", text: gettext("Migrate Cartridge"), disabled: true, handler: "migrateCartridge", enableFn: () => true },
+    { xtype: "proxmoxButton", text: gettext("Migrate Set"), disabled: true, handler: "migrateFamily", enableFn: () => true },
   ],
 
   columns: [
