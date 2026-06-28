@@ -172,6 +172,15 @@ Ext.define("PBS.MtfManagement.JobView", {
 
     init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+      view.getStore().on("datachanged", function () {
+        var sel = view.getSelectionModel().getSelection();
+        view.query("proxmoxButton").forEach(function (btn) {
+          if (btn.enableFn && btn.selModel) {
+            var rec = sel.length > 0 ? sel[0] : null;
+            btn.setDisabled(!rec || btn.enableFn(rec) === false);
+          }
+        });
+      });
     },
   },
 
