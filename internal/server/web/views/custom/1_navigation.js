@@ -35,21 +35,23 @@ Ext.onReady(function () {
       });
 
       let ensureMtfNode = function () {
-        let r = Ext.getStore("NavigationStore").getRoot();
-        let tapeNode = r.findChild("path", "pbsTapeManagement", false);
-        if (!tapeNode) {
-          return;
-        }
-        if (tapeNode.findChild("path", "pbsMtfManagement", false)) {
-          return;
-        }
-        tapeNode.insertChild(0, {
-          text: "MTF Migration",
-          iconCls: "fa fa-archive",
-          id: "mtf_tapes",
-          path: "pbsMtfManagement",
-          leaf: true,
-        });
+        Ext.defer(function () {
+          let r = Ext.getStore("NavigationStore").getRoot();
+          let tapeNode = r.findChild("path", "pbsTapeManagement", false);
+          if (!tapeNode) {
+            return;
+          }
+          if (tapeNode.findChild("path", "pbsMtfManagement", false)) {
+            return;
+          }
+          tapeNode.appendChild({
+            text: "MTF Migration",
+            iconCls: "fa fa-archive",
+            id: "mtf_tapes",
+            path: "pbsMtfManagement",
+            leaf: true,
+          });
+        }, 0);
       };
 
       ensureMtfNode();

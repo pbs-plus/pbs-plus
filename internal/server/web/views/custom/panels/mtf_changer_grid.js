@@ -38,30 +38,11 @@ Ext.define("PBS.MtfManagement.ChangerGrid", {
       if (!selection || selection.length < 1) {
         return;
       }
-      this.openStatus(selection[0].data.name);
-    },
-
-    openStatus: function (changerName) {
-      Ext.create("Ext.window.Window", {
-        title: Ext.String.format(gettext("Changer") + ": {0}", changerName),
-        maximized: true,
-        layout: "fit",
-        items: [
-          {
-            xtype: "pbsChangerStatus",
-            changer: changerName,
-          },
-        ],
-      }).show();
+      location.hash = `#Changer-${encodeURIComponent(selection[0].data.name)}`;
     },
 
     onDblClick: function () {
-      let view = this.getView();
-      let selection = view.getSelection();
-      if (!selection || selection.length < 1) {
-        return;
-      }
-      this.openStatus(selection[0].data.name);
+      this.showStatus();
     },
 
     reload: function () {
