@@ -774,6 +774,7 @@ type flatMtfJob struct {
 	CurrentBytesSpeed     int              `json:"current_bytes_speed,omitempty"`
 	CurrentBytesTotal     int64            `json:"current_bytes_total,omitempty"`
 	CurrentFileCount      int64            `json:"current_file_count,omitempty"`
+	CurrentFolderCount    int64            `json:"current_folder_count,omitempty"`
 	ReadSpeedHuman        string           `json:"read_speed_human"`
 	ReadTotalHuman        string           `json:"read_total_human"`
 	ProcessingSpeedHuman  string           `json:"processing_speed_human"`
@@ -795,6 +796,7 @@ func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 	}
 	if p, ok := mtf.ProgressFor(j.ID); ok {
 		f.CurrentFileCount = p.Files
+		f.CurrentFolderCount = p.Dirs
 		f.CurrentBytesTotal = p.Bytes
 		if p.IngestInst > 0 {
 			f.CurrentBytesSpeed = int(p.IngestInst)
