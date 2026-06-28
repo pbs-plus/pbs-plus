@@ -21,7 +21,7 @@ Ext.define("PBS.MtfManagement.JobView", {
     },
 
     reload: function () {
-      this.getView().getStore().load();
+      this.getView().getStore().rstore.load();
     },
 
     addJob: function () {

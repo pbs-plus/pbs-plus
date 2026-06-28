@@ -8,7 +8,7 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
     xclass: "Ext.app.ViewController",
 
     reload: function () {
-      this.getView().getStore().load();
+      this.getView().getStore().rstore.load();
     },
 
     startScan: function () {
@@ -44,7 +44,7 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
               Ext.create("PBS.plusWindow.TaskViewer", {
                 upid: response.result.data,
                 taskDone: function () {
-                  view.getStore().load();
+                  view.getStore().rstore.load();
                   me.close();
                 },
               }).show();
@@ -148,7 +148,7 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
           },
         ],
         listeners: {
-          destroy: () => view.getStore().load(),
+          destroy: () => view.getStore().rstore.load(),
         },
       });
       win.show();
@@ -258,8 +258,16 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
       });
     },
 
+    startStore: function () {
+      this.getView().getStore().rstore.startUpdate();
+    },
+
+    stopStore: function () {
+      this.getView().getStore().rstore.stopUpdate();
+    },
+
     init: function (view) {
-      Proxmox.Utils.monStoreErrors(view, view.getStore());
+      Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
       this.checkScanStatus();
       this.scanPoll = setInterval(() => this.checkScanStatus(), 5000);
       view.on("destroy", () => { if (this.scanPoll) clearInterval(this.scanPoll); });
@@ -288,16 +296,23 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
   },
 
   listeners: {
-    activate: function () { this.getController().reload(); this.getController().checkScanStatus(); },
+    beforedestroy: 'stopStore',
+    deactivate: 'stopStore',
+    activate: function () { this.getController().startStore(); this.getController().checkScanStatus(); },
     itemdblclick: 'showDataSets',
   },
 
   store: {
-    model: "pbs-mtf-cartridge",
-    autoLoad: true,
-    proxy: {
-      type: "pbsplus",
-      url: pbsPlusBaseUrl + "/api2/extjs/config/mtf-inventory?type=cartridges",
+    type: "diff",
+    rstore: {
+      type: "update",
+      storeid: "pbs-mtf-cartridge",
+      model: "pbs-mtf-cartridge",
+      proxy: {
+        type: "pbsplus",
+        url: pbsPlusBaseUrl + "/api2/extjs/config/mtf-inventory?type=cartridges",
+      },
+      interval: 5000,
     },
     sorters: "media_family_name",
     groupField: "media_family_name",
