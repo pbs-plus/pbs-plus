@@ -3,6 +3,7 @@ package tapeio
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 )
+
+var errSnapshotDone = errors.New("selected snapshot processed")
 
 type Config struct {
 	PBSURL        string
@@ -525,7 +528,7 @@ func (c *converter) runChanger() error {
 		defer f.Close()
 	}
 
-	return f.ForEachTape(func(rc *TapeReader, barcode string) error {
+	err := f.ForEachTape(func(rc *TapeReader, barcode string) error {
 		select {
 		case <-c.ctx.Done():
 			return c.ctx.Err()
@@ -536,8 +539,18 @@ func (c *converter) runChanger() error {
 		if err := c.locateToSnapshot(rc, r); err != nil {
 			return err
 		}
-		return c.processReader(r)
+		if err := c.processReader(r); err != nil {
+			return err
+		}
+		if c.cfg.SnapshotSel >= 0 {
+			return errSnapshotDone
+		}
+		return nil
 	})
+	if errors.Is(err, errSnapshotDone) {
+		return nil
+	}
+	return err
 }
 
 func (c *converter) runFiles() error {
