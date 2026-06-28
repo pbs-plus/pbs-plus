@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -252,15 +251,18 @@ func (database *Database) GetBackup(id string) (Backup, error) {
 
 func (database *Database) populateBackupExtras(backup *Backup) {
 	if backup.History.LastRunUpid != "" {
-		task, err := tasklog.GetTaskByUPID(backup.History.LastRunUpid)
-		if err == nil {
-			backup.History.LastRunStarttime = task.StartTime
-			backup.History.LastRunEndtime = task.EndTime
-			if task.Status == "stopped" {
-				backup.History.LastRunState = task.ExitStatus
-				backup.History.Duration = task.EndTime - task.StartTime
-			} else if task.StartTime > 0 {
-				backup.History.Duration = time.Now().Unix() - task.StartTime
+		if r, ok := tasklog.ResolveHistoryFields(backup.History.LastRunUpid); ok {
+			if r.Starttime > 0 {
+				backup.History.LastRunStarttime = r.Starttime
+			}
+			if r.Endtime > 0 {
+				backup.History.LastRunEndtime = r.Endtime
+				backup.History.Duration = r.Duration
+			} else if r.Starttime > 0 {
+				backup.History.Duration = r.Duration
+			}
+			if r.State != "" {
+				backup.History.LastRunState = r.State
 			}
 		}
 	}
