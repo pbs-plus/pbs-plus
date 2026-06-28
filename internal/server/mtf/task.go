@@ -13,7 +13,7 @@ type ScanTask struct {
 }
 
 func NewScanTask(opts Options) (*ScanTask, error) {
-	wt, err := tasklog.NewWorkerTask("", "mtfscan", scanWID(opts))
+	wt, err := tasklog.NewWorkerTask("pbsplus", "mtfscan", scanWID(opts))
 	if err != nil {
 		log.Error(err, "mtf: create scan task log")
 		return nil, err

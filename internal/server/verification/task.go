@@ -15,7 +15,7 @@ type VerificationTask struct {
 
 func NewVerificationTask(job database.VerificationJob) (*VerificationTask, error) {
 	wid := proxmox.EncodeToHexEscapes(job.ID)
-	wt, err := tasklog.NewWorkerTask("", "verification", wid)
+	wt, err := tasklog.NewWorkerTask("pbsplus", "verification", wid)
 	if err != nil {
 		return nil, err
 	}

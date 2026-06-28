@@ -8,25 +8,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
-func nodeName() string {
-	if h := conf.Env.Hostname; h != "" {
-		return proxmox.NormalizeHostname(h)
-	}
-	h, err := os.Hostname()
-	if err != nil {
-		return "pbsplus"
-	}
-	return proxmox.NormalizeHostname(h)
-}
-
 func NewTask(node, workerType, wid string) proxmox.Task {
-	if node == "" {
-		node = nodeName()
-	}
 	task := proxmox.Task{
 		Node:       node,
 		PID:        os.Getpid(),

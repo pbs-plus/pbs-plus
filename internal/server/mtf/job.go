@@ -544,7 +544,7 @@ func (j *mtfJob) cleanup() {
 }
 
 func startTask(job mtfdb.MTFJob) (*Task, error) {
-	wt, err := tasklog.NewWorkerTask("", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil, err
 	}
@@ -564,7 +564,7 @@ func (t *Task) CloseErr(taskErr error) {
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
-	wt, err := tasklog.NewWorkerTask("", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil
 	}

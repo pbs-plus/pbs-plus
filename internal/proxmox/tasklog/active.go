@@ -47,7 +47,7 @@ func IsActive(upid string) bool {
 }
 
 func CleanupActiveTasks() error {
-	targetNode := nodeName()
+	targetNode := "pbsplus"
 
 	f, err := os.OpenFile(conf.ActiveLogsPath, os.O_RDWR|os.O_CREATE, 0660)
 	if err != nil {
