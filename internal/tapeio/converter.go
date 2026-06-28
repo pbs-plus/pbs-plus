@@ -429,6 +429,27 @@ func (c *converter) snapshotSelected() bool {
 	return c.cfg.SnapshotSel < 0 || c.snapshotIdx == c.cfg.SnapshotSel
 }
 
+func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
+	if c.cfg.SnapshotSel < 0 {
+		return nil
+	}
+	if _, err := r.Next(); err != nil {
+		return fmt.Errorf("read TAPE descriptor: %w", err)
+	}
+	pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel)
+	if sErr != nil {
+		return sErr
+	}
+	if ok {
+		c.logf("Locating to snapshot %d at PBA %d", c.cfg.SnapshotSel, pba)
+		if err := r.SeekToBlock(pba); err != nil {
+			return fmt.Errorf("seek to snapshot %d: %w", c.cfg.SnapshotSel, err)
+		}
+		c.snapshotIdx = c.cfg.SnapshotSel - 1
+	}
+	return nil
+}
+
 func (c *converter) runTape() error {
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
@@ -447,24 +468,9 @@ func (c *converter) runTape() error {
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
 	}
-
-	if c.cfg.SnapshotSel >= 0 {
-		if _, err := r.Next(); err != nil {
-			return fmt.Errorf("read TAPE descriptor: %w", err)
-		}
-		pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel)
-		if sErr != nil {
-			return sErr
-		}
-		if ok {
-			c.logf("Locating to snapshot %d at PBA %d", c.cfg.SnapshotSel, pba)
-			if err := r.SeekToBlock(pba); err != nil {
-				return fmt.Errorf("seek to snapshot %d: %w", c.cfg.SnapshotSel, err)
-			}
-			c.snapshotIdx = c.cfg.SnapshotSel - 1
-		}
+	if err := c.locateToSnapshot(rc, r); err != nil {
+		return err
 	}
-
 	return c.processReader(r)
 }
 
@@ -478,6 +484,9 @@ func (c *converter) runChanger() error {
 	return f.ForEachTape(func(rc *TapeReader, barcode string) error {
 		r := mtf.NewReader(rc)
 		r.SetContinuation(f.AsContinuation())
+		if err := c.locateToSnapshot(rc, r); err != nil {
+			return err
+		}
 		return c.processReader(r)
 	})
 }

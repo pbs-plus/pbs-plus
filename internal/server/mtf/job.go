@@ -20,6 +20,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/changer"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 )
 
 const mtfWorkerType = "backup"
@@ -188,6 +189,11 @@ func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 		Verbose:           false,
 		Spanning:          job.Spanning,
 		NamespaceResolver: resolver,
+		OnSnapshot: func(backupID, namespace string) {
+			if err := cli.EnsureNamespace(job.Datastore, namespace); err != nil {
+				j.logger.Error(err, "failed to ensure namespace", "namespace", namespace)
+			}
+		},
 	}
 	if cfg.AuthToken == "" {
 		cfg.AuthToken = token.ReadLocal()

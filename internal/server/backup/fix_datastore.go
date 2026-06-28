@@ -34,35 +34,12 @@ func CreateNamespace(namespace string, backup database.Backup, storeInstance *st
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
 
-	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
-	if err != nil {
-		return fmt.Errorf("CreateNamespace: failed to get datastore; %w", err)
-	}
-
-	namespaceSplit := strings.Split(namespace, "/")
-
-	fullNamespacePath := datastoreInfo.Path
-	parentNamespacePath := datastoreInfo.Path
-
-	for i, ns := range namespaceSplit {
-		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
-		if i == 0 {
-			parentNamespacePath = filepath.Join(parentNamespacePath, "ns", ns)
-		}
-	}
-
-	err = os.MkdirAll(fullNamespacePath, os.FileMode(0755))
-	if err != nil {
-		return fmt.Errorf("CreateNamespace: error creating namespace -> %w", err)
-	}
-
-	err = os.Chown(parentNamespacePath, 34, 34)
-	if err != nil {
-		return fmt.Errorf("CreateNamespace: error changing filesystem owner -> %w", err)
+	if err := cli.EnsureNamespace(backup.Store, namespace); err != nil {
+		return fmt.Errorf("CreateNamespace: %w", err)
 	}
 
 	backup.Namespace = namespace
-	err = storeInstance.Database.UpdateBackup(nil, backup)
+	err := storeInstance.Database.UpdateBackup(nil, backup)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: error updating backup to namespace -> %w", err)
 	}
