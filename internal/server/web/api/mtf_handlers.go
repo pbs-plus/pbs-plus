@@ -493,8 +493,8 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		opts := mtf.Options{
-			ChangerDevice: r.FormValue("changer"),
-			TapeDevice:    tape.ResolveDevice(r.FormValue("drive")),
+			ChangerDevice: tape.ResolveChanger(r.FormValue("changer")),
+			TapeDevice:    tape.ResolveDrive(r.FormValue("drive")),
 			DriveIndex:    atoiDefault(r.FormValue("drive_index"), 0),
 			BKFPath:       r.FormValue("bkf_path"),
 			Label:         r.FormValue("label"),

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"syscall"
 
 	mtf "github.com/pbs-plus/go-mtf"
 	"github.com/pbs-plus/go-tapedrive"
@@ -45,6 +46,9 @@ func (t *TapeReader) Close() error { return t.d.Close() }
 func OpenTapeReader(dev string) (*TapeReader, error) {
 	d, err := tapedrive.Open(dev)
 	if err != nil {
+		if errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("tape device %s is in use by another operation", dev)
+		}
 		return nil, fmt.Errorf("open %s: %w", dev, err)
 	}
 	if err := d.SetLogicalAddressing(); err != nil {

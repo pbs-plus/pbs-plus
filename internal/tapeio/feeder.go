@@ -1,8 +1,10 @@
 package tapeio
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"syscall"
 
 	mtf "github.com/pbs-plus/go-mtf"
 
@@ -35,6 +37,9 @@ func WithSkip(fn func(barcode string) bool) Option {
 func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Feeder, error) {
 	chg, err := changer.Open(changerDev)
 	if err != nil {
+		if errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("changer %s is in use by another operation", changerDev)
+		}
 		return nil, fmt.Errorf("open changer %s: %w", changerDev, err)
 	}
 	st, err := chg.Status()
