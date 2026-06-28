@@ -107,6 +107,7 @@ type MTFJob struct {
 	NotificationMode  string     `json:"notification-mode"`
 	Spanning          bool       `json:"spanning"`
 	OverwriteMappings bool       `json:"overwrite_mappings"`
+	KeepLoaded        bool       `json:"keep_loaded"`
 	Changer           string     `json:"changer"`
 	Drive             string     `json:"drive"`
 	CurrentPID        string     `json:"current_pid"`

@@ -290,6 +290,13 @@ Ext.define("PBS.MtfManagement.JobEdit", {
             boxLabel: gettext("Bypass namespace mapping rules, use value as-is"),
             value: false,
           },
+          {
+            xtype: "proxmoxcheckbox",
+            name: "keep_loaded",
+            fieldLabel: gettext("Keep Loaded"),
+            boxLabel: gettext("Leave the tape in the drive after the job finishes"),
+            value: true,
+          },
         ],
         columnB: [
           {

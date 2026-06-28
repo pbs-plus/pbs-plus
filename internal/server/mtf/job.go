@@ -309,7 +309,7 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 		if cfg.ChangerDevice != "" && len(carts) > 0 {
 			feeder, err := tapeio.NewFeeder(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, tapeio.WithLog(func(msg string) {
 				j.task.LogString(msg)
-			}), tapeio.WithContext(ctx))
+			}), tapeio.WithContext(ctx), tapeio.WithKeepLoaded(j.job.KeepLoaded))
 			if err != nil {
 				return cfg, fmt.Errorf("open changer: %w", err)
 			}
@@ -321,8 +321,20 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 			}
 		}
 	}
+	wantSet := ds.SetNumber
 	wantMachine := ds.MachineName
+	wantTime := ds.WriteTime
 	cfg.SnapshotResolver = func(entries []mtf.SetMapEntry) int {
+		for i, e := range entries {
+			if int(e.SetNumber) == wantSet {
+				return i
+			}
+		}
+		for i, e := range entries {
+			if wantTime != 0 && e.WriteTime.Unix() == wantTime {
+				return i
+			}
+		}
 		for i, e := range entries {
 			for _, v := range e.Volumes {
 				if v.MachineName == wantMachine {

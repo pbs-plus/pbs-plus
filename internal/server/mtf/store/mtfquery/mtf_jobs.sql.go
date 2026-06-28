@@ -24,13 +24,13 @@ func (q *Queries) CountMtfJobs(ctx context.Context) (int64, error) {
 const createMtfJob = `-- name: CreateMtfJob :exec
 INSERT INTO mtf_jobs (
     id, source_kind, source_ref, datastore, namespace, comment,
-    notification_mode, spanning, overwrite_mappings, changer, drive,
+    notification_mode, spanning, overwrite_mappings, keep_loaded, changer, drive,
     current_pid, last_run_upid, last_successful_upid,
     last_run_status, retry_count,
     last_run_starttime, last_run_endtime, last_successful_endtime, duration
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?,
     ?, ?, ?,
     ?, ?,
     ?, ?, ?, ?
@@ -47,6 +47,7 @@ type CreateMtfJobParams struct {
 	NotificationMode      sql.NullString `json:"notification_mode"`
 	Spanning              sql.NullInt64  `json:"spanning"`
 	OverwriteMappings     sql.NullInt64  `json:"overwrite_mappings"`
+	KeepLoaded            int64          `json:"keep_loaded"`
 	Changer               sql.NullString `json:"changer"`
 	Drive                 sql.NullString `json:"drive"`
 	CurrentPid            sql.NullString `json:"current_pid"`
@@ -71,6 +72,7 @@ func (q *Queries) CreateMtfJob(ctx context.Context, arg CreateMtfJobParams) erro
 		arg.NotificationMode,
 		arg.Spanning,
 		arg.OverwriteMappings,
+		arg.KeepLoaded,
 		arg.Changer,
 		arg.Drive,
 		arg.CurrentPid,
@@ -99,7 +101,7 @@ func (q *Queries) DeleteMtfJob(ctx context.Context, id string) (int64, error) {
 }
 
 const getMtfJob = `-- name: GetMtfJob :one
-SELECT id, source_kind, source_ref, datastore, namespace, comment, notification_mode, spanning, overwrite_mappings, changer, drive, current_pid, last_run_upid, last_successful_upid, last_run_status, retry_count, last_run_starttime, last_run_endtime, last_successful_endtime, duration, created_at FROM mtf_jobs WHERE id = ? LIMIT 1
+SELECT id, source_kind, source_ref, datastore, namespace, comment, notification_mode, spanning, overwrite_mappings, changer, drive, current_pid, last_run_upid, last_successful_upid, last_run_status, retry_count, last_run_starttime, last_run_endtime, last_successful_endtime, duration, created_at, keep_loaded FROM mtf_jobs WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) GetMtfJob(ctx context.Context, id string) (MtfJob, error) {
@@ -127,12 +129,13 @@ func (q *Queries) GetMtfJob(ctx context.Context, id string) (MtfJob, error) {
 		&i.LastSuccessfulEndtime,
 		&i.Duration,
 		&i.CreatedAt,
+		&i.KeepLoaded,
 	)
 	return i, err
 }
 
 const listAllMtfJobs = `-- name: ListAllMtfJobs :many
-SELECT id, source_kind, source_ref, datastore, namespace, comment, notification_mode, spanning, overwrite_mappings, changer, drive, current_pid, last_run_upid, last_successful_upid, last_run_status, retry_count, last_run_starttime, last_run_endtime, last_successful_endtime, duration, created_at FROM mtf_jobs ORDER BY id
+SELECT id, source_kind, source_ref, datastore, namespace, comment, notification_mode, spanning, overwrite_mappings, changer, drive, current_pid, last_run_upid, last_successful_upid, last_run_status, retry_count, last_run_starttime, last_run_endtime, last_successful_endtime, duration, created_at, keep_loaded FROM mtf_jobs ORDER BY id
 `
 
 func (q *Queries) ListAllMtfJobs(ctx context.Context) ([]MtfJob, error) {
@@ -166,6 +169,7 @@ func (q *Queries) ListAllMtfJobs(ctx context.Context) ([]MtfJob, error) {
 			&i.LastSuccessfulEndtime,
 			&i.Duration,
 			&i.CreatedAt,
+			&i.KeepLoaded,
 		); err != nil {
 			return nil, err
 		}
@@ -181,7 +185,7 @@ func (q *Queries) ListAllMtfJobs(ctx context.Context) ([]MtfJob, error) {
 }
 
 const listQueuedMtfJobs = `-- name: ListQueuedMtfJobs :many
-SELECT id, source_kind, source_ref, datastore, namespace, comment, notification_mode, spanning, overwrite_mappings, changer, drive, current_pid, last_run_upid, last_successful_upid, last_run_status, retry_count, last_run_starttime, last_run_endtime, last_successful_endtime, duration, created_at FROM mtf_jobs WHERE last_run_upid LIKE '%pbsplusgen-queue%' ORDER BY id
+SELECT id, source_kind, source_ref, datastore, namespace, comment, notification_mode, spanning, overwrite_mappings, changer, drive, current_pid, last_run_upid, last_successful_upid, last_run_status, retry_count, last_run_starttime, last_run_endtime, last_successful_endtime, duration, created_at, keep_loaded FROM mtf_jobs WHERE last_run_upid LIKE '%pbsplusgen-queue%' ORDER BY id
 `
 
 func (q *Queries) ListQueuedMtfJobs(ctx context.Context) ([]MtfJob, error) {
@@ -215,6 +219,7 @@ func (q *Queries) ListQueuedMtfJobs(ctx context.Context) ([]MtfJob, error) {
 			&i.LastSuccessfulEndtime,
 			&i.Duration,
 			&i.CreatedAt,
+			&i.KeepLoaded,
 		); err != nil {
 			return nil, err
 		}
@@ -244,7 +249,7 @@ const updateMtfJob = `-- name: UpdateMtfJob :exec
 UPDATE mtf_jobs
 SET source_kind = ?, source_ref = ?, datastore = ?, namespace = ?,
     comment = ?, notification_mode = ?, spanning = ?,
-    overwrite_mappings = ?, changer = ?, drive = ?,
+    overwrite_mappings = ?, keep_loaded = ?, changer = ?, drive = ?,
     last_run_upid = ?, last_successful_upid = ?,
     last_run_status = ?, retry_count = ?,
     last_run_starttime = ?, last_run_endtime = ?,
@@ -261,6 +266,7 @@ type UpdateMtfJobParams struct {
 	NotificationMode      sql.NullString `json:"notification_mode"`
 	Spanning              sql.NullInt64  `json:"spanning"`
 	OverwriteMappings     sql.NullInt64  `json:"overwrite_mappings"`
+	KeepLoaded            int64          `json:"keep_loaded"`
 	Changer               sql.NullString `json:"changer"`
 	Drive                 sql.NullString `json:"drive"`
 	LastRunUpid           sql.NullString `json:"last_run_upid"`
@@ -284,6 +290,7 @@ func (q *Queries) UpdateMtfJob(ctx context.Context, arg UpdateMtfJobParams) erro
 		arg.NotificationMode,
 		arg.Spanning,
 		arg.OverwriteMappings,
+		arg.KeepLoaded,
 		arg.Changer,
 		arg.Drive,
 		arg.LastRunUpid,

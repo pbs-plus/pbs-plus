@@ -18,6 +18,7 @@ type Feeder struct {
 	tapeDev    string
 	driveIndex int
 	ctx        context.Context
+	keepLoaded bool
 
 	status *changer.Status
 
@@ -43,6 +44,10 @@ func WithLog(fn func(string)) Option {
 
 func WithContext(ctx context.Context) Option {
 	return func(f *Feeder) { f.ctx = ctx }
+}
+
+func WithKeepLoaded(keep bool) Option {
+	return func(f *Feeder) { f.keepLoaded = keep }
 }
 
 func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Feeder, error) {
@@ -173,9 +178,11 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 				log.Error(cErr, "")
 			}
 			f.processed[bc] = true
-			if uErr := f.unloadInDrive(); uErr != nil {
-				if vErr == nil {
-					vErr = uErr
+			if !f.keepLoaded {
+				if uErr := f.unloadInDrive(); uErr != nil {
+					if vErr == nil {
+						vErr = uErr
+					}
 				}
 			}
 			f.loadedBarcode = ""
@@ -210,8 +217,10 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 		if cErr := rc.Close(); cErr != nil {
 			log.Error(cErr, "")
 		}
-		if uErr := f.UnloadCurrent(); uErr != nil {
-			log.Error(uErr, "")
+		if !f.keepLoaded {
+			if uErr := f.UnloadCurrent(); uErr != nil {
+				log.Error(uErr, "")
+			}
 		}
 		f.processed[bc] = true
 		if vErr != nil {

@@ -116,6 +116,7 @@ type MtfJob struct {
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
 	Duration              sql.NullInt64  `json:"duration"`
 	CreatedAt             sql.NullInt64  `json:"created_at"`
+	KeepLoaded            int64          `json:"keep_loaded"`
 }
 
 type NamespaceMapping struct {
