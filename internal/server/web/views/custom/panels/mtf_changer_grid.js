@@ -32,6 +32,38 @@ Ext.define("PBS.MtfManagement.ChangerGrid", {
       }).show();
     },
 
+    showStatus: function () {
+      let view = this.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
+      this.openStatus(selection[0].data.name);
+    },
+
+    openStatus: function (changerName) {
+      Ext.create("Ext.window.Window", {
+        title: Ext.String.format(gettext("Changer") + ": {0}", changerName),
+        maximized: true,
+        layout: "fit",
+        items: [
+          {
+            xtype: "pbsChangerStatus",
+            changer: changerName,
+          },
+        ],
+      }).show();
+    },
+
+    onDblClick: function () {
+      let view = this.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
+      this.openStatus(selection[0].data.name);
+    },
+
     reload: function () {
       this.getView().getStore().rstore.load();
     },
@@ -50,25 +82,25 @@ Ext.define("PBS.MtfManagement.ChangerGrid", {
   },
 
   listeners: {
-    beforedestroy: 'stopStore',
-    deactivate: 'stopStore',
-    activate: 'startStore',
-    itemdblclick: 'onEdit',
+    beforedestroy: "stopStore",
+    deactivate: "stopStore",
+    activate: "startStore",
+    itemdblclick: "onDblClick",
   },
 
   store: {
-    type: 'diff',
+    type: "diff",
     rstore: {
-      type: 'update',
-      storeid: 'proxmox-tape-changers',
-      model: 'pbs-model-changers',
+      type: "update",
+      storeid: "proxmox-tape-changers",
+      model: "pbs-model-changers",
       proxy: {
-        type: 'proxmox',
-        url: '/api2/json/tape/changer',
+        type: "proxmox",
+        url: "/api2/json/tape/changer",
         queryParam: null,
       },
     },
-    sorters: 'name',
+    sorters: "name",
   },
 
   tbar: [
@@ -84,6 +116,13 @@ Ext.define("PBS.MtfManagement.ChangerGrid", {
       xtype: "proxmoxButton",
       handler: "onEdit",
       disabled: true,
+    },
+    {
+      text: gettext("Status"),
+      xtype: "proxmoxButton",
+      handler: "showStatus",
+      disabled: true,
+      iconCls: "fa fa-window-restore",
     },
     {
       xtype: "proxmoxStdRemoveButton",
