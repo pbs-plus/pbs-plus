@@ -171,6 +171,7 @@ func (s *Scanner) processTape(ctx context.Context, rc *tapeio.TapeReader, barcod
 			if s.logger != nil {
 				s.logger.LogString(fmt.Sprintf("%s: index failed  -  %v", barcode, iErr))
 			}
+			return fmt.Errorf("%s: %w", barcode, iErr)
 		}
 		return nil
 	}
@@ -186,6 +187,7 @@ func (s *Scanner) processTape(ctx context.Context, rc *tapeio.TapeReader, barcod
 		if s.logger != nil {
 			s.logger.LogString(fmt.Sprintf("%s: census failed  -  %v", barcode, cErr))
 		}
+		return fmt.Errorf("%s: %w", barcode, cErr)
 	}
 	return nil
 }
