@@ -90,7 +90,6 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}/upids", ServerOnly(storeInstance, api.ExtJsMtfJobUPIDsHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/mtf-inventory", ServerOnly(storeInstance, api.ExtJsMtfInventoryHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/mtf-scan", ServerOnly(storeInstance, api.ExtJsMtfScanHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-job-progress", ServerOnly(storeInstance, api.ExtJsMtfJobProgressHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping", ServerOnly(storeInstance, api.ExtJsMtfMappingHandler(storeInstance)))
 	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping/{id}", ServerOnly(storeInstance, api.ExtJsMtfMappingSingleHandler(storeInstance)))
 

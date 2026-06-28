@@ -491,38 +491,6 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsMtfJobProgressHandler(storeInstance *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
-			return
-		}
-		all := mtf.AllProgress()
-		data := make([]map[string]any, 0, len(all))
-		for jobID, p := range all {
-			row := map[string]any{
-				"job":         jobID,
-				"files":       p.Files,
-				"dirs":        p.Dirs,
-				"bytes":       p.Bytes,
-				"ingest_inst": p.IngestInst,
-				"ingest_avg":  p.IngestAvg,
-				"tape_inst":   p.TapeInst,
-				"tape_avg":    p.TapeAvg,
-				"phys_inst":   p.PhysInst,
-				"phys_avg":    p.PhysAvg,
-				"updated_at":  p.UpdatedAt,
-			}
-			data = append(data, row)
-		}
-		resp := map[string]any{"success": true, "data": data}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			log.Error(err, "")
-		}
-	}
-}
-
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
@@ -802,10 +770,17 @@ type flatMtfJob struct {
 	RetryCount            int              `json:"retry-count"`
 	Duration              int64            `json:"duration"`
 	StatusParsed          ParsedTaskStatus `json:"status_parsed"`
+	CurrentFilesSpeed     int              `json:"current_files_speed,omitempty"`
+	CurrentBytesSpeed     int              `json:"current_bytes_speed,omitempty"`
+	CurrentBytesTotal     int64            `json:"current_bytes_total,omitempty"`
+	CurrentFileCount      int64            `json:"current_file_count,omitempty"`
+	ReadSpeedHuman        string           `json:"read_speed_human"`
+	ReadTotalHuman        string           `json:"read_total_human"`
+	ProcessingSpeedHuman  string           `json:"processing_speed_human"`
 }
 
 func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
-	return flatMtfJob{
+	f := flatMtfJob{
 		MTFJob:                j,
 		LastRunUpid:           j.History.LastRunUpid,
 		LastRunStarttime:      j.History.LastRunStarttime,
@@ -818,6 +793,21 @@ func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 		Duration:              j.History.Duration,
 		StatusParsed:          ParseTaskStatus(j.History.LastRunState),
 	}
+	if p, ok := mtf.ProgressFor(j.ID); ok {
+		f.CurrentFileCount = p.Files
+		f.CurrentBytesTotal = p.Bytes
+		if p.IngestInst > 0 {
+			f.CurrentBytesSpeed = int(p.IngestInst)
+			f.ReadSpeedHuman = HumanReadableSpeed(int(p.IngestInst))
+		}
+		if p.Bytes > 0 {
+			f.ReadTotalHuman = HumanReadableBytes(int(p.Bytes))
+		}
+		if p.IngestAvg > 0 {
+			f.ProcessingSpeedHuman = fmt.Sprintf("%.1f MB/s avg", p.IngestAvg)
+		}
+	}
+	return f
 }
 
 func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
