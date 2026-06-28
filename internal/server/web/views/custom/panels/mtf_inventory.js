@@ -288,7 +288,7 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
   },
 
   listeners: {
-    activate: function () { this.reload(); this.checkScanStatus(); },
+    activate: function () { this.getController().reload(); this.getController().checkScanStatus(); },
     itemdblclick: 'showDataSets',
   },
 
