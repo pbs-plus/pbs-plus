@@ -197,32 +197,13 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
     },
 
     openJobWindow: function (defaults) {
-      let view = this.getView();
       let ctrl = this;
       Ext.create("PBS.MtfManagement.JobEdit", {
         autoShow: true,
         sourceKind: defaults.source_kind,
+        sourceRef: defaults.source_ref,
+        defaultJobId: defaults.id,
         listeners: {
-          afterrender: function (win) {
-            if (win.jobId) return;
-            win.method = "POST";
-            win.isCreate = true;
-            win.down("form").getForm().setValues({ id: defaults.id });
-            // The window's own afterrender has already started loading
-            // the source store (via sourceKind). Wait for it and then
-            // set the source_ref so the combo resolves display text.
-            let combo = win.down("combobox[name=source_ref]");
-            if (combo && defaults.source_ref) {
-              let store = combo.store;
-              if (store.isLoading()) {
-                store.on("load", function () {
-                  combo.setValue(defaults.source_ref);
-                }, null, { single: true });
-              } else {
-                combo.setValue(defaults.source_ref);
-              }
-            }
-          },
           destroy: function () {
             ctrl.reload();
           },

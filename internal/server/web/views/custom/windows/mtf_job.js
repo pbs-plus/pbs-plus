@@ -59,9 +59,6 @@ Ext.define("PBS.MtfManagement.JobEdit", {
       this.loadSourceStore(value);
     },
 
-    // Loads the source_ref dropdown store for the given kind. If sourceRef
-    // is provided (= edit flow), the combo value is re-applied after load
-    // so it resolves the display text from the transformed store records.
     loadSourceStore: function (kind, sourceRef) {
       let view = this.getView();
       let combo = view.down("combobox[name=source_ref]");
@@ -86,6 +83,20 @@ Ext.define("PBS.MtfManagement.JobEdit", {
         },
       });
     },
+
+    defaultDatastore: function () {
+      let sel = this.getView().down("pbsDataStoreSelector");
+      if (!sel || sel.getValue()) return;
+      try {
+        let dsNode = Ext.getStore("NavigationStore").getRoot().findChild("id", "datastores", false);
+        if (dsNode && dsNode.childNodes && dsNode.childNodes.length) {
+          let first = dsNode.childNodes[0].get("text");
+          if (first && first !== "Add Datastore") {
+            sel.setValue(first);
+          }
+        }
+      } catch (e) {}
+    },
   },
 
   listeners: {
@@ -94,13 +105,18 @@ Ext.define("PBS.MtfManagement.JobEdit", {
         win.getController().loadForm(win.jobId);
         return;
       }
-      // Create flow: pre-load the source store if sourceKind was provided
-      // (e.g. when opening from inventory).
       if (win.sourceKind) {
         let kindCombo = win.down("combobox[name=source_kind]");
         if (kindCombo) kindCombo.setValue(win.sourceKind);
-        win.getController().loadSourceStore(win.sourceKind);
+        win.getController().loadSourceStore(win.sourceKind, win.sourceRef);
       }
+      Ext.defer(function () {
+        let form = win.down("form").getForm();
+        if (win.defaultJobId && form.findField("id")) {
+          form.findField("id").setValue(win.defaultJobId);
+        }
+        win.getController().defaultDatastore();
+      }, 200);
     },
   },
 
