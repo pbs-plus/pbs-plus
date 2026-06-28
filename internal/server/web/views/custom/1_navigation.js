@@ -44,7 +44,7 @@ Ext.onReady(function () {
           return;
         }
         tapeNode.insertChild(0, {
-          text: "MTF Tapes",
+          text: "MTF Migration",
           iconCls: "fa fa-archive",
           id: "mtf_tapes",
           path: "pbsMtfManagement",
