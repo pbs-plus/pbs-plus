@@ -255,6 +255,9 @@ func toInt64(s string) int64 {
 
 func ToInt64(s string) int64 {
 	var n int64
+	if s == "" {
+		return 0
+	}
 	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
 		log.Error(err, "")
 	}

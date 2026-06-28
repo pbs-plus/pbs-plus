@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
@@ -18,11 +16,12 @@ import (
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-const mtfWorkerType = "mtf2pxar"
+const mtfWorkerType = "backup"
 
 type Task struct {
 	*tasklog.WorkerTask
@@ -36,14 +35,12 @@ type mtfJob struct {
 	job         mtfdb.MTFJob
 	store       *store.Store
 	mapper      *mtfdb.Mapper
-	queueTask   *tasklog.QueuedTask
 	task        *Task
 	logger      *log.Logger
-	started     atomic.Bool
 	cleanupOnce sync.Once
 }
 
-func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *jobs.Job {
+func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper) *jobs.Job {
 	j := &mtfJob{
 		job:    job,
 		store:  st,
@@ -52,7 +49,6 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *
 	}
 	return &jobs.Job{
 		ID:        job.ID,
-		PreExec:   j.preExecute(web),
 		Execute:   j.execute,
 		OnSuccess: j.onSuccess,
 		OnError:   j.onError,
@@ -60,7 +56,7 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *
 	}
 }
 
-func NewJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
+func NewJob(jobID string, st *store.Store) (*jobs.Job, error) {
 	ctx := st.Ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -69,30 +65,13 @@ func NewJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newJob(j, st, st.MtfMapper, web), nil
-}
-
-func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
-		_, cancel := context.WithCancel(ctx)
-		j.cancel = cancel
-
-		wid := tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID)
-		qt, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, web)
-		if err != nil {
-			j.logger.Error(err, "mtf: failed to create queue task")
-			return nil // non-fatal
-		}
-		j.queueTask = qt
-
-		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
-			j.logger.Error(err, "failed to persist MTF job history (queued)")
-		}
-		return nil
-	}
+	return newJob(j, st, st.MtfMapper), nil
 }
 
 func (j *mtfJob) execute(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	j.cancel = cancel
+
 	select {
 	case <-ctx.Done():
 		return jobs.ErrCanceled
@@ -110,7 +89,6 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	}
 	j.task = task
 
-	j.started.Store(true)
 	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore)
 	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history (started)")
@@ -450,7 +428,6 @@ func (j *mtfJob) cleanup() {
 		j.mu.Lock()
 		cancel := j.cancel
 		logger := j.logger
-		qt := j.queueTask
 		j.mu.Unlock()
 
 		if cancel != nil {
@@ -458,9 +435,6 @@ func (j *mtfJob) cleanup() {
 		}
 		if logger != nil {
 			logger.Close()
-		}
-		if qt != nil {
-			qt.Close()
 		}
 	})
 }

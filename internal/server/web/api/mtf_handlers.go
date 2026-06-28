@@ -59,6 +59,7 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		stop := r.Method == http.MethodDelete
 
 		go func() {
+			log.Info("mtf job run request", "ids", decoded, "stop", stop)
 			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 			if err != nil {
 				log.Error(err, "", "mtfJobs", decoded)
