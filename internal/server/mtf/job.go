@@ -38,6 +38,7 @@ type mtfJob struct {
 	mapper      *mtfdb.Mapper
 	task        *Task
 	logger      *log.Logger
+	feeder      *tapeio.Feeder
 	cleanupOnce sync.Once
 }
 
@@ -305,11 +306,12 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 		if cfg.ChangerDevice != "" && len(carts) > 0 {
 			feeder, err := tapeio.NewFeeder(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, tapeio.WithLog(func(msg string) {
 				j.task.LogString(msg)
-			}))
+			}), tapeio.WithContext(ctx))
 			if err != nil {
 				return cfg, fmt.Errorf("open changer: %w", err)
 			}
 			cfg.Feeder = feeder
+			j.feeder = feeder
 			if err := feeder.LoadBarcode(carts[0].Barcode); err != nil {
 				feeder.Close()
 				return cfg, fmt.Errorf("load cartridge: %w", err)
@@ -465,10 +467,14 @@ func (j *mtfJob) cleanup() {
 		j.mu.Lock()
 		cancel := j.cancel
 		logger := j.logger
+		feeder := j.feeder
 		j.mu.Unlock()
 
 		if cancel != nil {
 			cancel()
+		}
+		if feeder != nil {
+			feeder.Close()
 		}
 		if logger != nil {
 			logger.Close()

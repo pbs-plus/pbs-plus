@@ -452,6 +452,11 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 }
 
 func (c *converter) runTape() error {
+	select {
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	default:
+	}
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
 	}
@@ -479,7 +484,7 @@ func (c *converter) runChanger() error {
 	f := c.cfg.Feeder
 	if f == nil {
 		var err error
-		f, err = NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex, WithLog(func(msg string) { c.logf("%s", msg) }))
+		f, err = NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex, WithLog(func(msg string) { c.logf("%s", msg) }), WithContext(c.ctx))
 		if err != nil {
 			return err
 		}
@@ -487,6 +492,11 @@ func (c *converter) runChanger() error {
 	}
 
 	return f.ForEachTape(func(rc *TapeReader, barcode string) error {
+		select {
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		default:
+		}
 		r := mtf.NewReader(rc)
 		r.SetContinuation(f.AsContinuation())
 		if err := c.locateToSnapshot(rc, r); err != nil {
@@ -519,6 +529,11 @@ func (c *converter) runFiles() error {
 	}
 
 	for _, f := range files {
+		select {
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		default:
+		}
 		r, err := mtf.Open(f)
 		if err != nil {
 			return fmt.Errorf("open %s: %w", f, err)
@@ -619,6 +634,12 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 	}
 	var lastPos int64 = r.Position()
 	for {
+		select {
+		case <-c.ctx.Done():
+			return finish(c.ctx.Err())
+		default:
+		}
+
 		block, err := r.Next()
 		if pos := r.Position(); pos > lastPos {
 			c.prog.tapePhysBytes.Add(pos - lastPos)

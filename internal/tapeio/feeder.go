@@ -1,6 +1,7 @@
 package tapeio
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ type Feeder struct {
 	chg        *changer.Changer
 	tapeDev    string
 	driveIndex int
+	ctx        context.Context
 
 	status *changer.Status
 
@@ -39,6 +41,10 @@ func WithLog(fn func(string)) Option {
 	return func(f *Feeder) { f.logf = fn }
 }
 
+func WithContext(ctx context.Context) Option {
+	return func(f *Feeder) { f.ctx = ctx }
+}
+
 func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Feeder, error) {
 	chg, err := changer.Open(changerDev)
 	if err != nil {
@@ -58,6 +64,7 @@ func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Fee
 		chg:        chg,
 		tapeDev:    tapeDev,
 		driveIndex: driveIndex,
+		ctx:        context.Background(),
 		status:     st,
 		probed:     make(map[string]int),
 		processed:  make(map[string]bool),
@@ -78,6 +85,15 @@ func (f *Feeder) log(msg string) {
 func (f *Feeder) Close() {
 	if err := f.chg.Close(); err != nil {
 		log.Error(err, "")
+	}
+}
+
+func (f *Feeder) cancelled() bool {
+	select {
+	case <-f.ctx.Done():
+		return true
+	default:
+		return false
 	}
 }
 
@@ -126,6 +142,9 @@ func (f *Feeder) UnloadCurrent() error {
 func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) error {
 	if f.status != nil {
 		for dIdx, drive := range f.status.Drives {
+			if f.cancelled() {
+				return f.ctx.Err()
+			}
 			if !drive.Full {
 				continue
 			}
@@ -164,6 +183,9 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 	}
 
 	for i, s := range f.status.Slots {
+		if f.cancelled() {
+			return f.ctx.Err()
+		}
 		if !s.Full || s.ImportExport {
 			continue
 		}
@@ -234,6 +256,9 @@ func (f *Feeder) AsContinuation() func(mtf.Continuation) (mtf.Tape, error) {
 }
 
 func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
+	if f.cancelled() {
+		return nil, f.ctx.Err()
+	}
 	wantSeq := 0
 	wantMFMID := uint32(0)
 	if c.Media != nil {
@@ -248,6 +273,9 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 
 	for pass := range 2 {
 		for i, s := range f.status.Slots {
+			if f.cancelled() {
+				return nil, f.ctx.Err()
+			}
 			if !s.Full || s.ImportExport {
 				continue
 			}
@@ -292,6 +320,9 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			if err := f.UnloadCurrent(); err != nil {
 				log.Error(err, "")
 			}
+		}
+		if f.cancelled() {
+			return nil, f.ctx.Err()
 		}
 		if pass == 0 {
 			if err := f.RefreshStatus(); err != nil {
