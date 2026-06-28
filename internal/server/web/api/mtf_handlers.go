@@ -798,9 +798,9 @@ func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 		f.CurrentFileCount = p.Files
 		f.CurrentFolderCount = p.Dirs
 		f.CurrentBytesTotal = p.Bytes
-		if p.IngestInst > 0 {
-			f.CurrentBytesSpeed = int(p.IngestInst)
-			f.ReadSpeedHuman = HumanReadableSpeed(int(p.IngestInst))
+		if p.PhysInst > 0 {
+			f.CurrentBytesSpeed = int(p.PhysInst * 1e6)
+			f.ReadSpeedHuman = HumanReadableSpeed(int(p.PhysInst * 1e6))
 		}
 		if p.Bytes > 0 {
 			f.ReadTotalHuman = HumanReadableBytes(int(p.Bytes))

@@ -439,13 +439,16 @@ func (j *mtfJob) onSuccess() {
 	if task == nil || task.UPID() == "" {
 		return
 	}
+	end := time.Now().Unix()
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:           task.UPID(),
 			LastRunStatus:         database.JobStatusSuccess,
-			LastRunEndtime:        time.Now().Unix(),
+			LastRunStarttime:      job.History.LastRunStarttime,
+			LastRunEndtime:        end,
+			Duration:              end - job.History.LastRunStarttime,
 			LastSuccessfulUpid:    task.UPID(),
-			LastSuccessfulEndtime: time.Now().Unix(),
+			LastSuccessfulEndtime: end,
 		}, ""); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history on success")
 	}
@@ -461,8 +464,9 @@ func (j *mtfJob) onError(runErr error) {
 
 	if errors.Is(runErr, jobs.ErrCanceled) {
 		if task != nil {
+			end := time.Now().Unix()
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
+				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunStarttime: job.History.LastRunStarttime, LastRunEndtime: end, Duration: end - job.History.LastRunStarttime}, ""); err != nil {
 				j.logger.Error(err, "failed to update MTF job history on cancellation")
 			}
 		}
@@ -472,12 +476,15 @@ func (j *mtfJob) onError(runErr error) {
 	if task == nil || task.UPID() == "" {
 		task = j.errorTask(runErr)
 	}
+	end := time.Now().Unix()
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
-			LastRunUpid:    task.UPID(),
-			LastRunStatus:  database.JobStatusFailed,
-			LastRunEndtime: time.Now().Unix(),
-			RetryCount:     job.History.RetryCount + 1,
+			LastRunUpid:      task.UPID(),
+			LastRunStatus:    database.JobStatusFailed,
+			LastRunStarttime: job.History.LastRunStarttime,
+			LastRunEndtime:   end,
+			Duration:         end - job.History.LastRunStarttime,
+			RetryCount:       job.History.RetryCount + 1,
 		}, ""); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history on error")
 	}
