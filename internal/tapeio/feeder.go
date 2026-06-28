@@ -112,12 +112,9 @@ func (f *Feeder) loadSlot(slot int) (*TapeReader, error) {
 	if err := f.chg.Load(f.status, slot, f.driveIndex); err != nil {
 		return nil, fmt.Errorf("load slot %d: %w", slot, err)
 	}
-	rc, err := OpenTapeReader(f.tapeDev)
+	rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
 	if err != nil {
 		return nil, err
-	}
-	if f.logf != nil {
-		rc.WithLog(func(msg string) { f.logf(msg) })
 	}
 	f.loadedBarcode = bc
 	f.loadedSlot = slot
@@ -164,12 +161,9 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 				continue
 			}
 			f.log(fmt.Sprintf("Drive %d has %s loaded; reading in place", dIdx, barcodeOrUnknown(bc)))
-			rc, err := OpenTapeReader(f.tapeDev)
+			rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
 			if err != nil {
 				return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
-			}
-			if f.logf != nil {
-				rc.WithLog(func(msg string) { f.logf(msg) })
 			}
 			f.loadedBarcode = bc
 			f.loadedSlot = 0

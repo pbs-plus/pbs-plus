@@ -188,6 +188,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 		SkipTLS:           true,
 		Verbose:           false,
 		Spanning:          job.Spanning,
+		MigrationTag:      fmt.Sprintf("m%06d", time.Now().UnixMilli()%1000000),
 		NamespaceResolver: resolver,
 		OnSnapshot: func(backupID, namespace string) {
 			if err := cli.EnsureNamespace(job.Datastore, namespace); err != nil {

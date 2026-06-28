@@ -100,6 +100,10 @@ func (t *TapeReader) logSCSI(msg string) {
 }
 
 func OpenTapeReader(dev string) (*TapeReader, error) {
+	return OpenTapeReaderWithLog(dev, nil)
+}
+
+func OpenTapeReaderWithLog(dev string, logf func(string)) (*TapeReader, error) {
 	d, err := tapedrive.Open(dev)
 	if err != nil {
 		if errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EAGAIN) {
@@ -111,6 +115,7 @@ func OpenTapeReader(dev string) (*TapeReader, error) {
 	if err := d.SetLogicalAddressing(); err != nil {
 		log.Error(err, "")
 	}
+	fmt.Fprintf(os.Stderr, "[SCSI] %s rewind -> BOT\n", dev)
 	if err := d.Rewind(); err != nil {
 		if err := d.Close(); err != nil {
 			log.Error(err, "")
@@ -131,7 +136,9 @@ func OpenTapeReader(dev string) (*TapeReader, error) {
 		return nil, fmt.Errorf("rewind %s: drive reports block %d, want 0 (BOT)", dev, pos)
 	}
 	fmt.Fprintf(os.Stderr, "[SCSI] %s rewind OK, at block 0\n", dev)
-	return NewTapeReader(d), nil
+	tr := NewTapeReader(d)
+	tr.logf = logf
+	return tr, nil
 }
 
 func IsPBSTape(dev string) (bool, error) {

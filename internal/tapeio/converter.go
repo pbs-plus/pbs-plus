@@ -49,6 +49,7 @@ type Config struct {
 	OnSnapshot          func(backupID, namespace string)
 	TaskLog             func(string)
 	Feeder              *Feeder
+	MigrationTag        string
 }
 
 type Stats struct {
@@ -85,7 +86,11 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	var snapshots []Snapshot
 
 	if cfg.TapeDevice != "" {
-		rc, err := OpenTapeReader(cfg.TapeDevice)
+		var logf func(string)
+		if cfg.TaskLog != nil {
+			logf = cfg.TaskLog
+		}
+		rc, err := OpenTapeReaderWithLog(cfg.TapeDevice, logf)
 		if err != nil {
 			return nil, err
 		}
@@ -272,11 +277,12 @@ type converter struct {
 	session    backupproxy.BackupSession
 	writer     *transfer.RemoteDedupWriter
 	meta       backupMeta
+	tapeLabel  string
 	rootPrefix string
 	dirStack   []string
 	currentNS  string
 
-	snapshotIdx int // current SSET index (-1 before first)
+	snapshotIdx int
 }
 
 func (c *converter) logf(format string, args ...any) {
@@ -305,6 +311,12 @@ func (c *converter) ensureSession() error {
 			log.Error(hostErr, "")
 		}
 		backupID = h
+	}
+	if c.tapeLabel != "" {
+		backupID = backupID + "-" + sanitizePath(c.tapeLabel)
+	}
+	if c.cfg.MigrationTag != "" {
+		backupID = backupID + "-" + sanitizePath(c.cfg.MigrationTag)
 	}
 
 	archiveName := c.cfg.ArchiveName
@@ -467,12 +479,13 @@ func (c *converter) runTape() error {
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
 	}
-	rc, err := OpenTapeReader(c.cfg.TapeDevice)
+	var logf func(string)
+	if c.cfg.TaskLog != nil {
+		logf = c.cfg.TaskLog
+	}
+	rc, err := OpenTapeReaderWithLog(c.cfg.TapeDevice, logf)
 	if err != nil {
 		return err
-	}
-	if c.cfg.TaskLog != nil {
-		rc.WithLog(func(msg string) { c.cfg.TaskLog(msg) })
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
@@ -667,6 +680,9 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 			if block.Tape != nil {
 				if c.meta.BackupTime.IsZero() {
 					c.meta.BackupTime = block.Tape.CreateTime
+				}
+				if block.Tape.Name != "" {
+					c.tapeLabel = block.Tape.Name
 				}
 				c.logf("Tape: %s, created %s", block.Tape.Name, block.Tape.CreateTime.Format("2006-01-02 15:04"))
 			}
