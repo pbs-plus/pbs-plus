@@ -186,9 +186,7 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 			f.processed[bc] = true
 			if !f.keepLoaded {
 				if uErr := f.unloadInDrive(); uErr != nil {
-					if vErr == nil {
-						vErr = uErr
-					}
+					log.Error(uErr, "")
 				}
 			}
 			f.loadedBarcode = ""
