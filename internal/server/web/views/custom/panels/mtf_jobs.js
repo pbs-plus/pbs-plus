@@ -288,19 +288,6 @@ Ext.define("PBS.MtfManagement.JobView", {
       },
     },
     {
-      header: gettext("Throughput"),
-      dataIndex: "read_speed_human",
-      width: 160,
-      renderer: function (v, meta, rec) {
-        if (!v) {
-          return "-";
-        }
-        let total = rec.get("read_total_human") || "";
-        let avg = rec.get("processing_speed_human") || "";
-        return `<span style="color:#2196f3">${v}</span>${total ? "<br><span style=\"color:#888\">" + rec.get("current_file_count") + " files, " + total + "</span>" : ""}${avg ? "<br><span style=\"color:#888\">" + avg + "</span>" : ""}`;
-      },
-    },
-    {
       header: gettext("Status"),
       dataIndex: "last-run-status",
       width: 100,
@@ -314,6 +301,48 @@ Ext.define("PBS.MtfManagement.JobView", {
         if (!value) return "-";
         return Ext.Date.format(new Date(value * 1000), "Y-m-d H:i:s");
       },
+    },
+    {
+      text: gettext("Duration"),
+      dataIndex: "duration",
+      renderer: Proxmox.Utils.render_duration,
+      width: 60,
+    },
+    {
+      text: gettext("Read Speed"),
+      dataIndex: "read_speed_human",
+      renderer: function (value) {
+        return value || "-";
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Read Total"),
+      dataIndex: "read_total_human",
+      renderer: function (value) {
+        return value || "-";
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Processing Speed"),
+      dataIndex: "processing_speed_human",
+      renderer: function (value) {
+        return value || "-";
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Files Processed"),
+      dataIndex: "current_file_count",
+      renderer: function (value) {
+        if (!value && value !== 0) {
+          return "-";
+        }
+        return value.toLocaleString();
+      },
+      width: 60,
+      hidden: true,
     },
   ],
 });
