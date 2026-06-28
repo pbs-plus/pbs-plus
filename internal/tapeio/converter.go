@@ -79,6 +79,8 @@ type Progress struct {
 	TapeAvg    float64
 	IngestInst float64
 	IngestAvg  float64
+	FilesInst  float64
+	FilesAvg   float64
 }
 
 type Snapshot struct {

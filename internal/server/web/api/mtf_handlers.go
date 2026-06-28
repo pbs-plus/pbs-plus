@@ -805,8 +805,9 @@ func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 		if p.Bytes > 0 {
 			f.ReadTotalHuman = HumanReadableBytes(int(p.Bytes))
 		}
-		if p.IngestAvg > 0 {
-			f.ProcessingSpeedHuman = fmt.Sprintf("%.1f MB/s avg", p.IngestAvg)
+		if p.FilesInst > 0 {
+			f.CurrentFilesSpeed = int(p.FilesInst)
+			f.ProcessingSpeedHuman = FormatSpeed(int(p.FilesInst))
 		}
 	}
 	return f

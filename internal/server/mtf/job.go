@@ -148,6 +148,8 @@ func (j *mtfJob) execute(ctx context.Context) error {
 			TapeAvg:    p.TapeAvg,
 			IngestInst: p.IngestInst,
 			IngestAvg:  p.IngestAvg,
+			FilesInst:  p.FilesInst,
+			FilesAvg:   p.FilesAvg,
 			UpdatedAt:  time.Now().Unix(),
 		})
 	}

@@ -14,6 +14,8 @@ type ProgressSnapshot struct {
 	TapeAvg    float64 `json:"tape_avg"`
 	IngestInst float64 `json:"ingest_inst"`
 	IngestAvg  float64 `json:"ingest_avg"`
+	FilesInst  float64 `json:"files_inst"`
+	FilesAvg   float64 `json:"files_avg"`
 	UpdatedAt  int64   `json:"updated_at"`
 }
 

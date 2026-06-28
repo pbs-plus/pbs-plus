@@ -77,6 +77,7 @@ func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Du
 	done := make(chan struct{})
 	go func() {
 		var lastBytes, lastTape, lastPhys int64
+		var lastFiles int64
 		lastTime := time.Now()
 		for {
 			select {
@@ -90,23 +91,29 @@ func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Du
 				cur := p.bytes.Load()
 				curTape := p.tapeBytes.Load()
 				curPhys := p.tapePhysBytes.Load()
+				curFiles := p.files.Load()
 				dt := now.Sub(lastTime).Seconds()
 				var inst, tapeInst, physInst float64
+				var filesInst float64
 				if dt > 0 {
 					inst = float64(cur-lastBytes) / 1e6 / dt
 					tapeInst = float64(curTape-lastTape) / 1e6 / dt
 					physInst = float64(curPhys-lastPhys) / 1e6 / dt
+					filesInst = float64(curFiles-lastFiles) / dt
 				}
 				lastBytes = cur
 				lastTape = curTape
 				lastPhys = curPhys
+				lastFiles = curFiles
 				lastTime = now
 				procElapsed := p.procElapsed()
 				var avg, tapeAvg, physAvg float64
+				var filesAvg float64
 				if procElapsed > 0 {
 					avg = float64(cur) / 1e6 / procElapsed
 					tapeAvg = float64(curTape) / 1e6 / procElapsed
 					physAvg = float64(curPhys) / 1e6 / procElapsed
+					filesAvg = float64(curFiles) / procElapsed
 				}
 				if _, err := fmt.Fprintf(w, "progress: %d files, %.1f MB | phys %.1f/%.1f MB/s | tape %.1f/%.1f MB/s | ingest %.1f/%.1f MB/s | %s\n",
 					p.files.Load(), float64(cur)/1e6,
@@ -125,6 +132,8 @@ func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Du
 						TapeAvg:    tapeAvg,
 						IngestInst: inst,
 						IngestAvg:  avg,
+						FilesInst:  filesInst,
+						FilesAvg:   filesAvg,
 					})
 				}
 			}
