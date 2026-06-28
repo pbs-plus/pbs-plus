@@ -475,7 +475,7 @@ func (c *converter) runTape() error {
 }
 
 func (c *converter) runChanger() error {
-	f, err := NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
+	f, err := NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex, WithLog(func(msg string) { c.logf("%s", msg) }))
 	if err != nil {
 		return err
 	}

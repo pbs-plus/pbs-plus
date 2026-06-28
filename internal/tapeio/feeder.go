@@ -26,12 +26,17 @@ type Feeder struct {
 	probed    map[string]int
 	processed map[string]bool
 	skip      func(barcode string) bool
+	logf      func(string)
 }
 
 type Option func(*Feeder)
 
 func WithSkip(fn func(barcode string) bool) Option {
 	return func(f *Feeder) { f.skip = fn }
+}
+
+func WithLog(fn func(string)) Option {
+	return func(f *Feeder) { f.logf = fn }
 }
 
 func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Feeder, error) {
@@ -63,6 +68,13 @@ func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Fee
 	return f, nil
 }
 
+func (f *Feeder) log(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+	if f.logf != nil {
+		f.logf(msg)
+	}
+}
+
 func (f *Feeder) Close() {
 	if err := f.chg.Close(); err != nil {
 		log.Error(err, "")
@@ -80,7 +92,7 @@ func (f *Feeder) RefreshStatus() error {
 
 func (f *Feeder) loadSlot(slot int) (*TapeReader, error) {
 	bc := f.status.Slots[slot-1].VolumeTag
-	fmt.Fprintf(os.Stderr, "== loading slot %d (%s) into drive %d ==\n", slot, barcodeOrUnknown(bc), f.driveIndex)
+	f.log(fmt.Sprintf("Loading slot %d (%s) into drive %d", slot, barcodeOrUnknown(bc), f.driveIndex))
 	if err := f.chg.Load(f.status, slot, f.driveIndex); err != nil {
 		return nil, fmt.Errorf("load slot %d: %w", slot, err)
 	}
@@ -102,7 +114,7 @@ func (f *Feeder) UnloadCurrent() error {
 	}
 	slot := f.loadedSlot
 	bc := f.loadedBarcode
-	fmt.Fprintf(os.Stderr, "== unloading drive %d -> slot %d (%s) ==\n", f.driveIndex, slot, barcodeOrUnknown(bc))
+	f.log(fmt.Sprintf("Unloading drive %d -> slot %d (%s)", f.driveIndex, slot, barcodeOrUnknown(bc)))
 	if err := f.chg.Unload(f.status, f.driveIndex, slot); err != nil {
 		return fmt.Errorf("unload to slot %d: %w", slot, err)
 	}
@@ -125,7 +137,7 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 				f.processed[bc] = true
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "== drive %d has %s loaded; reading in place ==\n", dIdx, barcodeOrUnknown(bc))
+			f.log(fmt.Sprintf("Drive %d has %s loaded; reading in place", dIdx, barcodeOrUnknown(bc)))
 			rc, err := OpenTapeReader(f.tapeDev)
 			if err != nil {
 				return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
@@ -208,8 +220,7 @@ func (f *Feeder) unloadInDrive() error {
 	if slot == 0 {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "== unloading drive %d -> slot %d (%s) ==\n",
-		f.driveIndex, slot, barcodeOrUnknown(f.loadedBarcode))
+	f.log(fmt.Sprintf("Unloading drive %d -> slot %d (%s)", f.driveIndex, slot, barcodeOrUnknown(f.loadedBarcode)))
 	if err := f.chg.Unload(f.status, f.driveIndex, slot); err != nil {
 		return fmt.Errorf("unload drive -> slot %d: %w", slot, err)
 	}
@@ -229,7 +240,7 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		wantSeq = int(c.Media.Sequence) + 1
 		wantMFMID = c.Media.MFMID
 	}
-	fmt.Fprintf(os.Stderr, "\n== EOTM: need next tape (family 0x%08X, sequence %d) ==\n", wantMFMID, wantSeq)
+	f.log(fmt.Sprintf("End of tape: need next tape (family 0x%08X, sequence %d)", wantMFMID, wantSeq))
 
 	if err := f.UnloadCurrent(); err != nil {
 		log.Error(err, "")
@@ -252,12 +263,12 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			}
 			rc, err := f.loadSlot(slot)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "   slot %d: %v\n", slot, err)
+				f.log(fmt.Sprintf("  slot %d: %v", slot, err))
 				continue
 			}
 			ok, err := f.verifyTape(rc, wantMFMID, wantSeq)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "   slot %d verify: %v\n", slot, err)
+				f.log(fmt.Sprintf("  slot %d verify: %v", slot, err))
 				if err := rc.Close(); err != nil {
 					log.Error(err, "")
 				}
@@ -267,14 +278,14 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 				continue
 			}
 			if ok {
-				fmt.Fprintf(os.Stderr, "   slot %d: matched sequence %d\n", slot, wantSeq)
+				f.log(fmt.Sprintf("  slot %d: matched sequence %d", slot, wantSeq))
 				rc, err := OpenTapeReader(f.tapeDev)
 				if err != nil {
 					return nil, err
 				}
 				return rc, nil
 			}
-			fmt.Fprintf(os.Stderr, "   slot %d: not the wanted tape\n", slot)
+			f.log(fmt.Sprintf("  slot %d: not the wanted tape", slot))
 			if err := rc.Close(); err != nil {
 				log.Error(err, "")
 			}

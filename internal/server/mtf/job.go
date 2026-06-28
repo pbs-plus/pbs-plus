@@ -344,6 +344,7 @@ func (j *mtfJob) loadFirstCartridge(changerDev, tapeDev string, driveIdx int, ca
 				break
 			}
 		}
+		j.task.LogString(fmt.Sprintf("Unloading %s from drive %d -> slot %d", driveBarcode, driveIdx, unloadSlot))
 		if err := chg.Unload(st, driveIdx, unloadSlot); err != nil {
 			return fmt.Errorf("unload drive %d: %w", driveIdx, err)
 		}
@@ -353,6 +354,7 @@ func (j *mtfJob) loadFirstCartridge(changerDev, tapeDev string, driveIdx int, ca
 	for i, s := range st.Slots {
 		if s.Full && s.VolumeTag == barcode {
 			slotIdx := i + 1
+			j.task.LogString(fmt.Sprintf("Loading cartridge %s from slot %d into drive %d", barcode, slotIdx, driveIdx))
 			j.logger.Info("loading cartridge into drive", "barcode", barcode, "slot", slotIdx, "drive", driveIdx)
 			if err := chg.Load(st, slotIdx, driveIdx); err != nil {
 				return fmt.Errorf("load slot %d into drive %d: %w", slotIdx, driveIdx, err)
