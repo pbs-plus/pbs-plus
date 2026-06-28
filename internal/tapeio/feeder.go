@@ -322,6 +322,50 @@ func (f *Feeder) verifyTape(rc *TapeReader, wantMFMID uint32, wantSeq int) (bool
 	return gotSeq == wantSeq, nil
 }
 
+func (f *Feeder) LoadBarcode(barcode string) error {
+	if f.status == nil {
+		return fmt.Errorf("feeder has no changer status")
+	}
+
+	if f.driveIndex < len(f.status.Drives) && f.status.Drives[f.driveIndex].Full {
+		driveBarcode := f.status.Drives[f.driveIndex].VolumeTag
+		if driveBarcode == barcode {
+			f.log(fmt.Sprintf("Cartridge %s already in drive %d", barcode, f.driveIndex))
+			return nil
+		}
+		unloadSlot := 0
+		for i, s := range f.status.Slots {
+			if !s.Full && !s.ImportExport {
+				unloadSlot = i + 1
+				break
+			}
+		}
+		if unloadSlot == 0 {
+			return fmt.Errorf("no empty slot to unload %s from drive %d", driveBarcode, f.driveIndex)
+		}
+		f.log(fmt.Sprintf("Unloading %s from drive %d -> slot %d", driveBarcode, f.driveIndex, unloadSlot))
+		if err := f.chg.Unload(f.status, f.driveIndex, unloadSlot); err != nil {
+			return fmt.Errorf("unload drive %d: %w", f.driveIndex, err)
+		}
+		f.status.Drives[f.driveIndex].Full = false
+	}
+
+	for i, s := range f.status.Slots {
+		if s.Full && s.VolumeTag == barcode {
+			slotIdx := i + 1
+			f.log(fmt.Sprintf("Loading cartridge %s from slot %d into drive %d", barcode, slotIdx, f.driveIndex))
+			if err := f.chg.Load(f.status, slotIdx, f.driveIndex); err != nil {
+				return fmt.Errorf("load slot %d into drive %d: %w", slotIdx, f.driveIndex, err)
+			}
+			f.loadedBarcode = barcode
+			f.loadedSlot = slotIdx
+			return nil
+		}
+	}
+
+	return fmt.Errorf("cartridge %s not found in changer slots", barcode)
+}
+
 func barcodeOrUnknown(bc string) string {
 	if bc == "" {
 		return "no barcode"

@@ -48,6 +48,7 @@ type Config struct {
 	NamespaceResolver   func(host, device string) string
 	OnSnapshot          func(backupID, namespace string)
 	TaskLog             func(string)
+	Feeder              *Feeder
 }
 
 type Stats struct {
@@ -475,11 +476,15 @@ func (c *converter) runTape() error {
 }
 
 func (c *converter) runChanger() error {
-	f, err := NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex, WithLog(func(msg string) { c.logf("%s", msg) }))
-	if err != nil {
-		return err
+	f := c.cfg.Feeder
+	if f == nil {
+		var err error
+		f, err = NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex, WithLog(func(msg string) { c.logf("%s", msg) }))
+		if err != nil {
+			return err
+		}
+		defer f.Close()
 	}
-	defer f.Close()
 
 	return f.ForEachTape(func(rc *TapeReader, barcode string) error {
 		r := mtf.NewReader(rc)

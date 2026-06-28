@@ -13,7 +13,7 @@ Ext.define('PBS.plusWindow.TaskViewer', {
     }
 
     let task = Proxmox.Utils.parse_task_upid(me.upid);
-    // Declare statgrid first so it is available in renderer closures.
+    let node = Proxmox.NodeName || task.node;
     let statgrid;
 
     let rows = {
@@ -105,7 +105,7 @@ Ext.define('PBS.plusWindow.TaskViewer', {
     };
 
     let statstore = Ext.create('Proxmox.data.ObjectStore', {
-      url: `/api2/json/nodes/${task.node}/tasks/${encodeURIComponent(me.upid)}/status`,
+      url: `/api2/json/nodes/${node}/tasks/${encodeURIComponent(me.upid)}/status`,
       interval: 1000,
       rows: rows
     });
@@ -115,7 +115,7 @@ Ext.define('PBS.plusWindow.TaskViewer', {
 
     const stopTask = () => {
       Proxmox.Utils.API2Request({
-        url: `/nodes/${task.node}/tasks/${encodeURIComponent(me.upid)}`,
+        url: `/nodes/${node}/tasks/${encodeURIComponent(me.upid)}`,
         waitMsgTarget: me,
         method: 'DELETE',
         failure: response => Ext.Msg.alert(gettext('Error'), response.htmlStatus)
@@ -148,7 +148,7 @@ Ext.define('PBS.plusWindow.TaskViewer', {
       iconCls: 'fa fa-download',
       handler: () =>
         Proxmox.Utils.downloadAsFile(
-          `/api2/json/nodes/${task.node}/tasks/${encodeURIComponent(
+          `/api2/json/nodes/${node}/tasks/${encodeURIComponent(
             me.upid
           )}/log?download=1`
         )
@@ -158,7 +158,7 @@ Ext.define('PBS.plusWindow.TaskViewer', {
       title: gettext('Output'),
       tbar: [stopBtn2, '->', downloadBtn],
       border: false,
-      url: `/api2/extjs/nodes/${task.node}/tasks/${encodeURIComponent(
+      url: `/api2/extjs/nodes/${node}/tasks/${encodeURIComponent(
         me.upid
       )}/log`
     });

@@ -18,7 +18,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
-	"github.com/pbs-plus/pbs-plus/internal/changer"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 )
@@ -304,7 +303,15 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 		cfg.DriveIndex = idx
 
 		if cfg.ChangerDevice != "" && len(carts) > 0 {
-			if err := j.loadFirstCartridge(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, carts); err != nil {
+			feeder, err := tapeio.NewFeeder(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, tapeio.WithLog(func(msg string) {
+				j.task.LogString(msg)
+			}))
+			if err != nil {
+				return cfg, fmt.Errorf("open changer: %w", err)
+			}
+			cfg.Feeder = feeder
+			if err := feeder.LoadBarcode(carts[0].Barcode); err != nil {
+				feeder.Close()
 				return cfg, fmt.Errorf("load cartridge: %w", err)
 			}
 		}
@@ -320,50 +327,6 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 		}
 	}
 	return cfg, fmt.Errorf("data set machine %q not found in snapshots", ds.MachineName)
-}
-
-// device paths to avoid "no such file or directory" errors.
-func (j *mtfJob) loadFirstCartridge(changerDev, tapeDev string, driveIdx int, carts []mtfdb.Cartridge) error {
-	chg, err := changer.Open(changerDev)
-	if err != nil {
-		return fmt.Errorf("open changer %s: %w", changerDev, err)
-	}
-	defer chg.Close()
-
-	st, err := chg.Status()
-	if err != nil {
-		return fmt.Errorf("changer status: %w", err)
-	}
-
-	if driveIdx < len(st.Drives) && st.Drives[driveIdx].Full {
-		driveBarcode := st.Drives[driveIdx].VolumeTag
-		unloadSlot := 1
-		for i, s := range st.Slots {
-			if s.VolumeTag == driveBarcode {
-				unloadSlot = i + 1
-				break
-			}
-		}
-		j.task.LogString(fmt.Sprintf("Unloading %s from drive %d -> slot %d", driveBarcode, driveIdx, unloadSlot))
-		if err := chg.Unload(st, driveIdx, unloadSlot); err != nil {
-			return fmt.Errorf("unload drive %d: %w", driveIdx, err)
-		}
-	}
-
-	barcode := carts[0].Barcode
-	for i, s := range st.Slots {
-		if s.Full && s.VolumeTag == barcode {
-			slotIdx := i + 1
-			j.task.LogString(fmt.Sprintf("Loading cartridge %s from slot %d into drive %d", barcode, slotIdx, driveIdx))
-			j.logger.Info("loading cartridge into drive", "barcode", barcode, "slot", slotIdx, "drive", driveIdx)
-			if err := chg.Load(st, slotIdx, driveIdx); err != nil {
-				return fmt.Errorf("load slot %d into drive %d: %w", slotIdx, driveIdx, err)
-			}
-			return nil
-		}
-	}
-
-	return fmt.Errorf("cartridge %s not found in changer slots", barcode)
 }
 
 func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev string, driveIdx int, err error) {
@@ -514,7 +477,7 @@ func (j *mtfJob) cleanup() {
 }
 
 func startTask(job mtfdb.MTFJob) (*Task, error) {
-	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +497,7 @@ func (t *Task) CloseErr(taskErr error) {
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
-	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("", mtfWorkerType, mtfWID(job))
 	if err != nil {
 		return nil
 	}
