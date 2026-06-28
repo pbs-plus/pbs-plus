@@ -404,6 +404,7 @@ func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtfli
 			NumFiles:       nullInt(int64(e.NumFiles)),
 			NumCorrupt:     nullInt(int64(e.NumCorrupt)),
 			Size:           nullInt(0),
+			SsetPba:        int64(e.SSETPBA),
 			FirstMediaSeq:  nullInt(int64(e.MediaSeq)),
 			SourceMediaSeq: nullInt(int64(tapeSeq)),
 		})

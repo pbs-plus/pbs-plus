@@ -181,6 +181,7 @@ func dataSetFromRow(r mtfquery.DataSet) DataSet {
 		NumFiles:       ni(r.NumFiles),
 		NumCorrupt:     ni(r.NumCorrupt),
 		Size:           ni64(r.Size),
+		SSETPBA:        r.SsetPba,
 		FirstMediaSeq:  ni(r.FirstMediaSeq),
 	}
 }

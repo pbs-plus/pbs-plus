@@ -53,6 +53,7 @@ type Config struct {
 	TaskLog             func(string)
 	Feeder              *Feeder
 	MigrationTag        string
+	SnapshotPBA         int64
 	SnapshotResolver    func(entries []mtf.SetMapEntry) int
 }
 
@@ -447,6 +448,19 @@ func (c *converter) snapshotSelected() bool {
 }
 
 func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
+	if c.cfg.SnapshotPBA > 0 {
+		c.logf("Reading TAPE descriptor block (BOT + 1)")
+		if _, err := r.Next(); err != nil {
+			return fmt.Errorf("read TAPE descriptor: %w", err)
+		}
+		pba := c.cfg.SnapshotPBA - 1
+		c.logf("Locating to snapshot at PBA %d (from inventory)", pba)
+		if err := r.SeekToBlock(pba); err != nil {
+			return fmt.Errorf("seek to snapshot: %w", err)
+		}
+		c.logf("Located to snapshot, ready to read entries")
+		return nil
+	}
 	if c.cfg.SnapshotSel < 0 && c.cfg.SnapshotResolver == nil {
 		return nil
 	}

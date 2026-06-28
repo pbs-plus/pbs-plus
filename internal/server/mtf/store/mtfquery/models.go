@@ -23,6 +23,7 @@ type DataSet struct {
 	Size           sql.NullInt64  `json:"size"`
 	FirstMediaSeq  sql.NullInt64  `json:"first_media_seq"`
 	SourceMediaSeq sql.NullInt64  `json:"source_media_seq"`
+	SsetPba        int64          `json:"sset_pba"`
 }
 
 type DataSetVolume struct {

@@ -334,6 +334,9 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 	wantSet := ds.SetNumber
 	wantMachine := ds.MachineName
 	wantTime := ds.WriteTime
+	if ds.SSETPBA > 0 {
+		cfg.SnapshotPBA = ds.SSETPBA
+	}
 	cfg.SnapshotResolver = func(entries []mtf.SetMapEntry) int {
 		for i, e := range entries {
 			if int(e.SetNumber) == wantSet {
