@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"syscall"
+	"time"
 
 	mtf "github.com/pbs-plus/go-mtf"
 	"github.com/pbs-plus/go-tapedrive"
@@ -14,9 +16,14 @@ import (
 
 var pbsBlockMagic = []byte{220, 189, 175, 202, 235, 160, 165, 40}
 
-type TapeReader struct{ d *tapedrive.Drive }
+type TapeReader struct {
+	d    *tapedrive.Drive
+	logf func(string)
+}
 
 func NewTapeReader(d *tapedrive.Drive) *TapeReader { return &TapeReader{d: d} }
+
+func (t *TapeReader) WithLog(fn func(string)) { t.logf = fn }
 
 func (t *TapeReader) ReadBlock(dst []byte) (int, error) {
 	b, err := t.d.ReadBlock()
@@ -33,15 +40,64 @@ func (t *TapeReader) ReadBlock(dst []byte) (int, error) {
 	return copy(dst, b), nil
 }
 
-func (t *TapeReader) SeekBlock(block int64) error { return t.d.SeekBlock(block) }
+func (t *TapeReader) SeekBlock(block int64) error {
+	t.logSCSI(fmt.Sprintf("LOCATE -> block %d", block))
+	start := time.Now()
+	err := t.d.SeekBlock(block)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.logSCSI(fmt.Sprintf("LOCATE -> block %d: FAILED after %v: %v", block, elapsed.Round(time.Millisecond), err))
+		return err
+	}
+	pos, tellErr := t.d.TellBlock()
+	if tellErr != nil {
+		t.logSCSI(fmt.Sprintf("LOCATE -> block %d: OK after %v (tell failed: %v)", block, elapsed.Round(time.Millisecond), tellErr))
+	} else {
+		t.logSCSI(fmt.Sprintf("LOCATE -> block %d: OK after %v (now at %d)", block, elapsed.Round(time.Millisecond), pos))
+	}
+	return nil
+}
 
 func (t *TapeReader) TellBlock() (int64, error) { return t.d.TellBlock() }
 
-func (t *TapeReader) EOM() error { return t.d.EOM() }
+func (t *TapeReader) EOM() error {
+	t.logSCSI("EOM (space to end of data)")
+	start := time.Now()
+	err := t.d.EOM()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.logSCSI(fmt.Sprintf("EOM: FAILED after %v: %v", elapsed.Round(time.Millisecond), err))
+		return err
+	}
+	pos, tellErr := t.d.TellBlock()
+	if tellErr != nil {
+		t.logSCSI(fmt.Sprintf("EOM: OK after %v (tell failed: %v)", elapsed.Round(time.Millisecond), tellErr))
+	} else {
+		t.logSCSI(fmt.Sprintf("EOM: OK after %v (now at %d)", elapsed.Round(time.Millisecond), pos))
+	}
+	return nil
+}
 
-func (t *TapeReader) Rewind() error { return t.d.Rewind() }
+func (t *TapeReader) Rewind() error {
+	t.logSCSI("REWIND -> BOT")
+	start := time.Now()
+	err := t.d.Rewind()
+	elapsed := time.Since(start)
+	if err != nil {
+		t.logSCSI(fmt.Sprintf("REWIND: FAILED after %v: %v", elapsed.Round(time.Millisecond), err))
+		return err
+	}
+	t.logSCSI(fmt.Sprintf("REWIND: OK after %v", elapsed.Round(time.Millisecond)))
+	return nil
+}
 
 func (t *TapeReader) Close() error { return t.d.Close() }
+
+func (t *TapeReader) logSCSI(msg string) {
+	if t.logf != nil {
+		t.logf("[SCSI] " + msg)
+	}
+}
 
 func OpenTapeReader(dev string) (*TapeReader, error) {
 	d, err := tapedrive.Open(dev)
@@ -51,6 +107,7 @@ func OpenTapeReader(dev string) (*TapeReader, error) {
 		}
 		return nil, fmt.Errorf("open %s: %w", dev, err)
 	}
+	fmt.Fprintf(os.Stderr, "[SCSI] opened %s\n", dev)
 	if err := d.SetLogicalAddressing(); err != nil {
 		log.Error(err, "")
 	}
@@ -73,6 +130,7 @@ func OpenTapeReader(dev string) (*TapeReader, error) {
 		}
 		return nil, fmt.Errorf("rewind %s: drive reports block %d, want 0 (BOT)", dev, pos)
 	}
+	fmt.Fprintf(os.Stderr, "[SCSI] %s rewind OK, at block 0\n", dev)
 	return NewTapeReader(d), nil
 }
 

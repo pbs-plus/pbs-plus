@@ -434,9 +434,13 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 	if c.cfg.SnapshotSel < 0 {
 		return nil
 	}
-	if _, err := r.Next(); err != nil {
+	c.logf("Reading TAPE descriptor block (BOT + 1)")
+	blk, err := r.Next()
+	if err != nil {
 		return fmt.Errorf("read TAPE descriptor: %w", err)
 	}
+	c.logf("TAPE descriptor: name=%s sequence=%d family=0x%08X", blk.Tape.Name, blk.Tape.Sequence, blk.Tape.MFMID)
+	c.logf("Reading SetMap (EOM + read back)")
 	pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel)
 	if sErr != nil {
 		return sErr
@@ -447,6 +451,9 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 			return fmt.Errorf("seek to snapshot %d: %w", c.cfg.SnapshotSel, err)
 		}
 		c.snapshotIdx = c.cfg.SnapshotSel - 1
+		c.logf("Located to snapshot %d, ready to read entries", c.cfg.SnapshotSel)
+	} else {
+		c.logf("SetMap empty or snapshot %d out of range — reading sequentially", c.cfg.SnapshotSel)
 	}
 	return nil
 }
@@ -463,6 +470,9 @@ func (c *converter) runTape() error {
 	rc, err := OpenTapeReader(c.cfg.TapeDevice)
 	if err != nil {
 		return err
+	}
+	if c.cfg.TaskLog != nil {
+		rc.WithLog(func(msg string) { c.cfg.TaskLog(msg) })
 	}
 	defer func() {
 		if err := rc.Close(); err != nil {
@@ -673,6 +683,9 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 			ops <- tapeOp{kind: opSet, ssetIdx: c.snapshotIdx}
 		case mtf.KindSetEnd:
 			ops <- tapeOp{kind: opSetEnd}
+			if c.cfg.SnapshotSel >= 0 {
+				return finish(nil)
+			}
 		case mtf.KindEntry:
 			if !c.snapshotSelected() {
 				continue

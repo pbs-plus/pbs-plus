@@ -97,7 +97,7 @@ func (f *Feeder) cancelled() bool {
 	}
 }
 
-func (f *Feeder) RefreshStatus() error {
+func (f *Feeder) refreshStatus() error {
 	st, err := f.chg.Status()
 	if err != nil {
 		return err
@@ -115,6 +115,9 @@ func (f *Feeder) loadSlot(slot int) (*TapeReader, error) {
 	rc, err := OpenTapeReader(f.tapeDev)
 	if err != nil {
 		return nil, err
+	}
+	if f.logf != nil {
+		rc.WithLog(func(msg string) { f.logf(msg) })
 	}
 	f.loadedBarcode = bc
 	f.loadedSlot = slot
@@ -140,6 +143,10 @@ func (f *Feeder) UnloadCurrent() error {
 }
 
 func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) error {
+	if err := f.refreshStatus(); err != nil {
+		return fmt.Errorf("refresh changer: %w", err)
+	}
+
 	if f.status != nil {
 		for dIdx, drive := range f.status.Drives {
 			if f.cancelled() {
@@ -160,6 +167,9 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 			rc, err := OpenTapeReader(f.tapeDev)
 			if err != nil {
 				return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
+			}
+			if f.logf != nil {
+				rc.WithLog(func(msg string) { f.logf(msg) })
 			}
 			f.loadedBarcode = bc
 			f.loadedSlot = 0
@@ -259,6 +269,9 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	if f.cancelled() {
 		return nil, f.ctx.Err()
 	}
+	if err := f.refreshStatus(); err != nil {
+		return nil, fmt.Errorf("refresh changer: %w", err)
+	}
 	wantSeq := 0
 	wantMFMID := uint32(0)
 	if c.Media != nil {
@@ -325,7 +338,7 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 			return nil, f.ctx.Err()
 		}
 		if pass == 0 {
-			if err := f.RefreshStatus(); err != nil {
+			if err := f.refreshStatus(); err != nil {
 				log.Error(err, "")
 			}
 		}
@@ -358,10 +371,17 @@ func (f *Feeder) LoadBarcode(barcode string) error {
 		return fmt.Errorf("feeder has no changer status")
 	}
 
-	if f.driveIndex < len(f.status.Drives) && f.status.Drives[f.driveIndex].Full {
-		driveBarcode := f.status.Drives[f.driveIndex].VolumeTag
+	if err := f.refreshStatus(); err != nil {
+		return fmt.Errorf("refresh changer status: %w", err)
+	}
+
+	drive := f.status.Drives[f.driveIndex]
+	if drive.Full {
+		driveBarcode := drive.VolumeTag
 		if driveBarcode == barcode {
 			f.log(fmt.Sprintf("Cartridge %s already in drive %d", barcode, f.driveIndex))
+			f.loadedBarcode = barcode
+			f.loadedSlot = 0
 			return nil
 		}
 		unloadSlot := 0
@@ -378,7 +398,9 @@ func (f *Feeder) LoadBarcode(barcode string) error {
 		if err := f.chg.Unload(f.status, f.driveIndex, unloadSlot); err != nil {
 			return fmt.Errorf("unload drive %d: %w", f.driveIndex, err)
 		}
-		f.status.Drives[f.driveIndex].Full = false
+		if err := f.refreshStatus(); err != nil {
+			return fmt.Errorf("refresh after unload: %w", err)
+		}
 	}
 
 	for i, s := range f.status.Slots {
@@ -387,6 +409,9 @@ func (f *Feeder) LoadBarcode(barcode string) error {
 			f.log(fmt.Sprintf("Loading cartridge %s from slot %d into drive %d", barcode, slotIdx, f.driveIndex))
 			if err := f.chg.Load(f.status, slotIdx, f.driveIndex); err != nil {
 				return fmt.Errorf("load slot %d into drive %d: %w", slotIdx, f.driveIndex, err)
+			}
+			if err := f.refreshStatus(); err != nil {
+				return fmt.Errorf("refresh after load: %w", err)
 			}
 			f.loadedBarcode = barcode
 			f.loadedSlot = slotIdx
