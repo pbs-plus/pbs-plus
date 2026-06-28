@@ -29,6 +29,10 @@ func (p *progress) snapshot() (files, dirs int, bytes int64) {
 
 // report launches a goroutine that prints live throughput to w every interval
 func (p *progress) report(ctx context.Context, w io.Writer, interval time.Duration) (stop func()) {
+	return p.reportWith(ctx, w, interval, nil)
+}
+
+func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Duration, cb func(Progress)) (stop func()) {
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
 	go func() {
@@ -72,6 +76,19 @@ func (p *progress) report(ctx context.Context, w io.Writer, interval time.Durati
 					physInst, physAvg, tapeInst, tapeAvg, inst, avg,
 					now.Sub(p.startTime).Round(time.Second)); err != nil {
 					log.Error(err, "")
+				}
+				if cb != nil {
+					cb(Progress{
+						Files:      p.files.Load(),
+						Dirs:       p.dirs.Load(),
+						Bytes:      cur,
+						PhysInst:   physInst,
+						PhysAvg:    physAvg,
+						TapeInst:   tapeInst,
+						TapeAvg:    tapeAvg,
+						IngestInst: inst,
+						IngestAvg:  avg,
+					})
 				}
 			}
 		}

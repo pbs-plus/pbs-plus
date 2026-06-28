@@ -491,6 +491,38 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
+func ExtJsMtfJobProgressHandler(storeInstance *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+		all := mtf.AllProgress()
+		data := make([]map[string]any, 0, len(all))
+		for jobID, p := range all {
+			row := map[string]any{
+				"job":         jobID,
+				"files":       p.Files,
+				"dirs":        p.Dirs,
+				"bytes":       p.Bytes,
+				"ingest_inst": p.IngestInst,
+				"ingest_avg":  p.IngestAvg,
+				"tape_inst":   p.TapeInst,
+				"tape_avg":    p.TapeAvg,
+				"phys_inst":   p.PhysInst,
+				"phys_avg":    p.PhysAvg,
+				"updated_at":  p.UpdatedAt,
+			}
+			data = append(data, row)
+		}
+		resp := map[string]any{"success": true, "data": data}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			log.Error(err, "")
+		}
+	}
+}
+
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {

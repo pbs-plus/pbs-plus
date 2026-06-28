@@ -55,6 +55,7 @@ type Config struct {
 	MigrationTag        string
 	SnapshotPBA         int64
 	OnSetMapRead        func(entry mtf.SetMapEntry)
+	Progress            func(Progress)
 	SnapshotResolver    func(entries []mtf.SetMapEntry) int
 }
 
@@ -66,6 +67,18 @@ type Stats struct {
 	Dirs      int
 	Bytes     int64
 	StartTime time.Time
+}
+
+type Progress struct {
+	Files      int64
+	Dirs       int64
+	Bytes      int64
+	PhysInst   float64
+	PhysAvg    float64
+	TapeInst   float64
+	TapeAvg    float64
+	IngestInst float64
+	IngestAvg  float64
 }
 
 type Snapshot struct {
@@ -245,7 +258,7 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	}
 	c.stats.StartTime = c.prog.startTime
 
-	stopReport := c.prog.report(ctx, os.Stderr, 2*time.Second)
+	stopReport := c.prog.reportWith(ctx, os.Stderr, 2*time.Second, c.cfg.Progress)
 	defer stopReport()
 
 	syncStats := func() {

@@ -136,6 +136,23 @@ func (j *mtfJob) execute(ctx context.Context) error {
 		task.LogString(msg)
 	}
 
+	jobID := j.job.ID
+	cfg.Progress = func(p tapeio.Progress) {
+		PublishProgress(jobID, ProgressSnapshot{
+			Files:      p.Files,
+			Dirs:       p.Dirs,
+			Bytes:      p.Bytes,
+			PhysInst:   p.PhysInst,
+			PhysAvg:    p.PhysAvg,
+			TapeInst:   p.TapeInst,
+			TapeAvg:    p.TapeAvg,
+			IngestInst: p.IngestInst,
+			IngestAvg:  p.IngestAvg,
+			UpdatedAt:  time.Now().Unix(),
+		})
+	}
+	defer ClearProgress(jobID)
+
 	stats, runErr := tapeio.Run(ctx, cfg)
 	if runErr != nil {
 		task.LogString("Migration job summary:")

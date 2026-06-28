@@ -206,6 +206,25 @@ Ext.define("PBS.MtfManagement.JobView", {
     sorters: "id",
   },
 
+  progressStore: undefined,
+
+  initComponent: function () {
+    let me = this;
+    me.progressStore = Ext.create("Ext.data.Store", {
+      fields: ["job", "ingest_inst", "ingest_avg", "tape_inst", "tape_avg", "phys_inst", "phys_avg", "files", "bytes", "updated_at"],
+      proxy: {
+        type: "proxmox",
+        url: "/api2/json/config/mtf-job-progress",
+      },
+      autoLoad: true,
+      autoSync: true,
+    });
+    me.progressStore.on("load", function () {
+      me.getView().refresh();
+    });
+    me.callParent(arguments);
+  },
+
   tbar: [
     {
       xtype: "proxmoxButton",
@@ -285,6 +304,29 @@ Ext.define("PBS.MtfManagement.JobView", {
       sortable: true,
       renderer: function (v) {
         return v || "<span style='color:#888'>/</span>";
+      },
+    },
+    {
+      header: gettext("Throughput"),
+      dataIndex: "id",
+      width: 160,
+      renderer: function (v, meta, rec) {
+        let grid = meta.column.up("grid");
+        if (!grid || !grid.progressStore) {
+          return "-";
+        }
+        let idx = grid.progressStore.findExact("job", rec.get("id"));
+        if (idx < 0) {
+          return "-";
+        }
+        let p = grid.progressStore.getAt(idx);
+        let inst = p.get("ingest_inst");
+        let avg = p.get("ingest_avg");
+        if (!inst && !avg) {
+          return "-";
+        }
+        let mb = Ext.util.Format.fileSize(p.get("bytes"));
+        return `<span style="color:#2196f3">${inst.toFixed(1)} / ${avg.toFixed(1)} MB/s</span><br><span style="color:#888">${p.get("files")} files, ${mb}</span>`;
       },
     },
     {
