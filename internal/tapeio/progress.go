@@ -61,9 +61,6 @@ func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Du
 				lastTape = curTape
 				lastPhys = curPhys
 				lastTime = now
-				if cur == 0 || inst == 0 {
-					continue
-				}
 				elapsed := now.Sub(p.startTime).Seconds()
 				var avg, tapeAvg, physAvg float64
 				if elapsed > 0 {
