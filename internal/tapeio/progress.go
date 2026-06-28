@@ -11,7 +11,10 @@ import (
 )
 
 type progress struct {
-	startTime     time.Time
+	startTime time.Time
+	procStart atomic.Int64
+	procEnd   atomic.Int64
+
 	files         atomic.Int64
 	dirs          atomic.Int64
 	bytes         atomic.Int64
@@ -27,7 +30,44 @@ func (p *progress) snapshot() (files, dirs int, bytes int64) {
 	return int(p.files.Load()), int(p.dirs.Load()), p.bytes.Load()
 }
 
-// report launches a goroutine that prints live throughput to w every interval
+func (p *progress) markProcessing() {
+	p.procStart.CompareAndSwap(0, time.Now().UnixNano())
+}
+
+func (p *progress) markProcessingDone() {
+	p.procEnd.Store(time.Now().UnixNano())
+}
+
+func (p *progress) procElapsed() float64 {
+	start := p.procStart.Load()
+	if start == 0 {
+		return 0
+	}
+	end := p.procEnd.Load()
+	if end == 0 {
+		end = time.Now().UnixNano()
+	}
+	return float64(end-start) / 1e9
+}
+
+func (p *progress) summary(w io.Writer) {
+	elapsed := p.procElapsed()
+	cur := p.bytes.Load()
+	curTape := p.tapeBytes.Load()
+	curPhys := p.tapePhysBytes.Load()
+	files := p.files.Load()
+	dirs := p.dirs.Load()
+
+	if elapsed <= 0 || cur == 0 {
+		return
+	}
+	avg := float64(cur) / 1e6 / elapsed
+	tapeAvg := float64(curTape) / 1e6 / elapsed
+	physAvg := float64(curPhys) / 1e6 / elapsed
+	fmt.Fprintf(w, "\nprocessing summary: %d files, %d dirs, %.1f MB in %s\n", files, dirs, float64(cur)/1e6, time.Duration(elapsed*1e9).Round(time.Second))
+	fmt.Fprintf(w, "  average: ingest %.1f MB/s | tape %.1f MB/s | phys %.1f MB/s\n", avg, tapeAvg, physAvg)
+}
+
 func (p *progress) report(ctx context.Context, w io.Writer, interval time.Duration) (stop func()) {
 	return p.reportWith(ctx, w, interval, nil)
 }
@@ -61,12 +101,12 @@ func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Du
 				lastTape = curTape
 				lastPhys = curPhys
 				lastTime = now
-				elapsed := now.Sub(p.startTime).Seconds()
+				procElapsed := p.procElapsed()
 				var avg, tapeAvg, physAvg float64
-				if elapsed > 0 {
-					avg = float64(cur) / 1e6 / elapsed
-					tapeAvg = float64(curTape) / 1e6 / elapsed
-					physAvg = float64(curPhys) / 1e6 / elapsed
+				if procElapsed > 0 {
+					avg = float64(cur) / 1e6 / procElapsed
+					tapeAvg = float64(curTape) / 1e6 / procElapsed
+					physAvg = float64(curPhys) / 1e6 / procElapsed
 				}
 				if _, err := fmt.Fprintf(w, "progress: %d files, %.1f MB | phys %.1f/%.1f MB/s | tape %.1f/%.1f MB/s | ingest %.1f/%.1f MB/s | %s\n",
 					p.files.Load(), float64(cur)/1e6,
@@ -90,5 +130,8 @@ func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Du
 			}
 		}
 	}()
-	return func() { close(done) }
+	return func() {
+		close(done)
+		p.summary(w)
+	}
 }

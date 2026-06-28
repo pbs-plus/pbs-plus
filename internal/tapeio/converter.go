@@ -705,7 +705,9 @@ const (
 )
 
 func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
+	c.prog.markProcessing()
 	finish := func(err error) error {
+		c.prog.markProcessingDone()
 		c.prog.tapePhysBytes.Store(r.Position())
 		ops <- tapeOp{kind: opEnd}
 		return err
