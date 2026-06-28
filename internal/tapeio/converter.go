@@ -683,6 +683,10 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 			break
 		}
 		if err != nil {
+			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
+				c.logf("ignoring read error after selected snapshot entries: %v", err)
+				return finish(nil)
+			}
 			return finish(fmt.Errorf("read block: %w", err))
 		}
 
