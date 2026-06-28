@@ -54,6 +54,7 @@ type Config struct {
 	Feeder              *Feeder
 	MigrationTag        string
 	SnapshotPBA         int64
+	OnSetMapRead        func(entry mtf.SetMapEntry)
 	SnapshotResolver    func(entries []mtf.SetMapEntry) int
 }
 
@@ -490,6 +491,9 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 	}
 	pba := int64(sm.Entries[sel].SSETPBA) - 1
 	c.logf("Locating to snapshot %d (%q) at PBA %d", sel, sm.Entries[sel].Name, pba)
+	if c.cfg.OnSetMapRead != nil {
+		c.cfg.OnSetMapRead(sm.Entries[sel])
+	}
 	if err := r.SeekToBlock(pba); err != nil {
 		return fmt.Errorf("seek to snapshot %d: %w", sel, err)
 	}

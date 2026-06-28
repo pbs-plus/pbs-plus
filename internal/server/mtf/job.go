@@ -336,6 +336,19 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 	wantTime := ds.WriteTime
 	if ds.SSETPBA > 0 {
 		cfg.SnapshotPBA = ds.SSETPBA
+	} else {
+		dsID := ds.ID
+		storeRef := j.store.MtfStore
+		cfg.OnSetMapRead = func(entry mtf.SetMapEntry) {
+			if entry.SSETPBA == 0 {
+				return
+			}
+			if err := storeRef.SetDataSetSsetPba(ctx, dsID, int64(entry.SSETPBA)); err != nil {
+				j.logger.Error(err, "failed to persist sset_pba", "data_set_id", dsID)
+			} else {
+				j.logger.Info("persisted sset_pba from setmap", "data_set_id", dsID, "pba", entry.SSETPBA)
+			}
+		}
 	}
 	cfg.SnapshotResolver = func(entries []mtf.SetMapEntry) int {
 		for i, e := range entries {

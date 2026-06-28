@@ -44,6 +44,7 @@ type Querier interface {
 	ListVolumesByDataSet(ctx context.Context, dataSetID int64) ([]DataSetVolume, error)
 	MappingExists(ctx context.Context, id int64) (int64, error)
 	MtfJobExists(ctx context.Context, id string) (int64, error)
+	UpdateDataSetSsetPba(ctx context.Context, arg UpdateDataSetSsetPbaParams) (int64, error)
 	UpdateMapping(ctx context.Context, arg UpdateMappingParams) error
 	UpdateMediaFamilyScan(ctx context.Context, arg UpdateMediaFamilyScanParams) error
 	UpdateMtfJob(ctx context.Context, arg UpdateMtfJobParams) error

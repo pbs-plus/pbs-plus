@@ -349,6 +349,23 @@ func (q *Queries) ListVolumesByDataSet(ctx context.Context, dataSetID int64) ([]
 	return items, nil
 }
 
+const updateDataSetSsetPba = `-- name: UpdateDataSetSsetPba :execrows
+UPDATE data_sets SET sset_pba = ? WHERE id = ?
+`
+
+type UpdateDataSetSsetPbaParams struct {
+	SsetPba int64 `json:"sset_pba"`
+	ID      int64 `json:"id"`
+}
+
+func (q *Queries) UpdateDataSetSsetPba(ctx context.Context, arg UpdateDataSetSsetPbaParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateDataSetSsetPba, arg.SsetPba, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateMediaFamilyScan = `-- name: UpdateMediaFamilyScan :exec
 UPDATE media_families SET last_scanned = ? WHERE id = ?
 `

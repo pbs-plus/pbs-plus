@@ -71,3 +71,6 @@ SELECT * FROM data_set_volumes WHERE data_set_id = ? ORDER BY id;
 
 -- name: DeleteVolumesByDataSet :execrows
 DELETE FROM data_set_volumes WHERE data_set_id = ?;
+
+-- name: UpdateDataSetSsetPba :execrows
+UPDATE data_sets SET sset_pba = ? WHERE id = ?;
