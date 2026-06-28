@@ -527,6 +527,12 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 			defer cancel()
 			tl := log.WithScope(log.Scope{Task: st.WorkerTask})
+			defer func() {
+				if r := recover(); r != nil {
+					tl.LogString(fmt.Sprintf("panic: %v", r))
+					st.CloseErr(fmt.Errorf("scan panic: %v", r))
+				}
+			}()
 			res, scanErr := sc.ScanWithLog(ctx, opts, tl)
 			if scanErr != nil {
 				tl.LogString(scanErr.Error())
