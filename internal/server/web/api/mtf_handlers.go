@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
@@ -37,8 +38,6 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		var response MtfJobRunResponse
-
 		jobIDs := r.URL.Query()["job"]
 		if len(jobIDs) == 0 {
 			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
@@ -57,6 +56,37 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		stop := r.Method == http.MethodDelete
 
+		// Single job run: synchronous — return UPID so frontend can open TaskViewer.
+		if !stop && len(decoded) == 1 {
+			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 30*time.Second)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			rpcClient := rpc.NewClient(conn)
+			defer rpcClient.Close()
+
+			args := &jobrpc.MtfJobQueueArgs{JobID: decoded[0], Stop: false}
+			var reply jobrpc.QueueReply
+			if err := rpcClient.Call("JobRPCService.MtfQueue", args, &reply); err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			if reply.Status != 200 {
+				WriteErrorResponse(w, fmt.Errorf("%s", reply.Message))
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(MtfJobRunResponse{
+				Data:    reply.UPID,
+				Status:  http.StatusOK,
+				Success: true,
+			})
+			return
+		}
+
+		// Batch run or stop: fire-and-forget async.
 		go func() {
 			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 			if err != nil {
@@ -64,14 +94,10 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
-			defer func() {
-				if err := rpcClient.Close(); err != nil {
-					log.Error(err, "")
-				}
-			}()
+			defer rpcClient.Close()
 
 			for _, id := range decoded {
-				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop, Web: true}
+				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop}
 				var reply jobrpc.QueueReply
 				if err := rpcClient.Call("JobRPCService.MtfQueue", args, &reply); err != nil {
 					log.Error(err, "", "mtfJobID", id)
@@ -84,11 +110,10 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}()
 
 		w.Header().Set("Content-Type", "application/json")
-		response.Status = http.StatusOK
-		response.Success = true
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			log.Error(err, "")
-		}
+		json.NewEncoder(w).Encode(MtfJobRunResponse{
+			Status:  http.StatusOK,
+			Success: true,
+		})
 	}
 }
 
@@ -299,15 +324,12 @@ func mtfJobFromForm(r *http.Request) (mtfdb.MTFJob, error) {
 		SourceRef:         r.FormValue("source_ref"),
 		Datastore:         r.FormValue("datastore"),
 		Namespace:         r.FormValue("namespace"),
-		Schedule:          r.FormValue("schedule"),
 		Comment:           r.FormValue("comment"),
 		NotificationMode:  r.FormValue("notification-mode"),
 		Changer:           r.FormValue("changer"),
 		Drive:             r.FormValue("drive"),
 		Spanning:          r.FormValue("spanning") == "1" || r.FormValue("spanning") == "true",
 		OverwriteMappings: r.FormValue("overwrite_mappings") == "1" || r.FormValue("overwrite_mappings") == "true",
-		Retry:             atoiDefault(r.FormValue("retry"), 0),
-		RetryInterval:     atoiDefault(r.FormValue("retry-interval"), 1),
 	}
 
 	if j.SourceKind != "cartridge" && j.SourceKind != "family" && j.SourceKind != "dataset" {
@@ -350,9 +372,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	if v := r.FormValue("source_ref"); v != "" {
 		job.SourceRef = v
 	}
-	if v := r.FormValue("schedule"); v != "" {
-		job.Schedule = v
-	}
 	if v := r.FormValue("comment"); v != "" {
 		job.Comment = v
 	}
@@ -371,12 +390,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	if r.FormValue("overwrite_mappings") != "" {
 		job.OverwriteMappings = r.FormValue("overwrite_mappings") == "1" || r.FormValue("overwrite_mappings") == "true"
 	}
-	if v := r.FormValue("retry"); v != "" {
-		job.Retry = atoiDefault(v, 0)
-	}
-	if v := r.FormValue("retry-interval"); v != "" {
-		job.RetryInterval = atoiDefault(v, 1)
-	}
 
 	if delArr, ok := r.Form["delete"]; ok {
 		for _, attr := range delArr {
@@ -389,8 +402,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 				job.SourceRef = ""
 			case "source_kind":
 				job.SourceKind = ""
-			case "schedule":
-				job.Schedule = ""
 			case "comment":
 				job.Comment = ""
 			case "notification-mode":
@@ -403,10 +414,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 				job.Spanning = false
 			case "overwrite_mappings":
 				job.OverwriteMappings = false
-			case "retry":
-				job.Retry = 0
-			case "retry-interval":
-				job.RetryInterval = 1
 			}
 		}
 	}
@@ -486,6 +493,15 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			active, upid := mtfScanInProgress()
+			resp := map[string]any{"success": true, "data": map[string]any{"active": active, "upid": upid}}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				log.Error(err, "")
+			}
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -501,14 +517,18 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		opts := mtf.Options{
-			ChangerDevice: r.FormValue("changer"),
-			TapeDevice:    tape.ResolveDevice(r.FormValue("drive")),
+			ChangerDevice: tape.ResolveChanger(r.FormValue("changer")),
+			TapeDevice:    tape.ResolveDrive(r.FormValue("drive")),
 			DriveIndex:    atoiDefault(r.FormValue("drive_index"), 0),
 			BKFPath:       r.FormValue("bkf_path"),
 			Label:         r.FormValue("label"),
 		}
 
-		// Create a task with full active/archive pipeline (matches restore pattern).
+		if active, _ := mtfScanInProgress(); active {
+			WriteErrorResponse(w, fmt.Errorf("an MTF inventory scan is already in progress"))
+			return
+		}
+
 		st, err := mtf.NewScanTask(opts)
 		if err != nil {
 			WriteErrorResponse(w, fmt.Errorf("create scan task: %w", err))
@@ -527,6 +547,12 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
 			defer cancel()
 			tl := log.WithScope(log.Scope{Task: st.WorkerTask})
+			defer func() {
+				if r := recover(); r != nil {
+					tl.LogString(fmt.Sprintf("panic: %v", r))
+					st.CloseErr(fmt.Errorf("scan panic: %v", r))
+				}
+			}()
 			res, scanErr := sc.ScanWithLog(ctx, opts, tl)
 			if scanErr != nil {
 				tl.LogString(scanErr.Error())
@@ -744,10 +770,18 @@ type flatMtfJob struct {
 	RetryCount            int              `json:"retry-count"`
 	Duration              int64            `json:"duration"`
 	StatusParsed          ParsedTaskStatus `json:"status_parsed"`
+	CurrentFilesSpeed     int              `json:"current_files_speed,omitempty"`
+	CurrentBytesSpeed     int              `json:"current_bytes_speed,omitempty"`
+	CurrentBytesTotal     int64            `json:"current_bytes_total,omitempty"`
+	CurrentFileCount      int64            `json:"current_file_count,omitempty"`
+	CurrentFolderCount    int64            `json:"current_folder_count,omitempty"`
+	ReadSpeedHuman        string           `json:"read_speed_human"`
+	ReadTotalHuman        string           `json:"read_total_human"`
+	ProcessingSpeedHuman  string           `json:"processing_speed_human"`
 }
 
 func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
-	return flatMtfJob{
+	f := flatMtfJob{
 		MTFJob:                j,
 		LastRunUpid:           j.History.LastRunUpid,
 		LastRunStarttime:      j.History.LastRunStarttime,
@@ -760,6 +794,29 @@ func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 		Duration:              j.History.Duration,
 		StatusParsed:          ParseTaskStatus(j.History.LastRunState),
 	}
+	if j.History.LastRunUpid != "" && (int(j.History.LastRunStatus) == 0 || j.History.LastRunState == "") {
+		if r, ok := tasklog.ResolveHistoryFields(j.History.LastRunUpid); ok {
+			tasklog.ApplyResolved(r, &f.LastRunStarttime, &f.LastRunEndtime, &f.Duration, &f.LastRunState)
+			if f.LastRunState != "" {
+				f.StatusParsed = ParseTaskStatus(f.LastRunState)
+			}
+		}
+	}
+	if p, ok := mtf.ProgressFor(j.ID); ok {
+		f.CurrentFileCount = p.Files
+		f.CurrentFolderCount = p.Dirs
+		f.CurrentBytesTotal = p.Bytes
+		f.CurrentBytesSpeed = int(p.PhysInst * 1e6)
+		f.CurrentFilesSpeed = int(p.FilesInst)
+		FillSpeedFields(&LiveStats{
+			FileCount:   p.Files,
+			FolderCount: p.Dirs,
+			BytesTotal:  p.Bytes,
+			BytesSpeed:  int(p.PhysInst * 1e6),
+			FilesSpeed:  int(p.FilesInst),
+		}, &f.ReadSpeedHuman, &f.ReadTotalHuman, &f.ProcessingSpeedHuman)
+	}
+	return f
 }
 
 func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
@@ -769,7 +826,6 @@ func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 		"source_ref":         j.SourceRef,
 		"datastore":          j.Datastore,
 		"namespace":          j.Namespace,
-		"schedule":           j.Schedule,
 		"comment":            j.Comment,
 		"notification-mode":  j.NotificationMode,
 		"notification-batch": "",
@@ -777,8 +833,6 @@ func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 		"drive":              j.Drive,
 		"spanning":           j.Spanning,
 		"overwrite_mappings": j.OverwriteMappings,
-		"retry":              j.Retry,
-		"retry-interval":     j.RetryInterval,
 	}
 }
 
@@ -792,4 +846,17 @@ func atoiDefault(s string, def int) int {
 		return def
 	}
 	return n
+}
+
+func mtfScanInProgress() (bool, string) {
+	tasks, err := tasklog.ListTasks(true)
+	if err != nil {
+		return false, ""
+	}
+	for _, t := range tasks {
+		if t.Task.WorkerType == "mtfscan" {
+			return true, t.UPID
+		}
+	}
+	return false, ""
 }

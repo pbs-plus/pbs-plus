@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/bkf2pxar"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
@@ -18,11 +16,15 @@ import (
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/tapeio"
+
+	mtf "github.com/pbs-plus/go-mtf"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 )
 
-const mtfWorkerType = "mtf2pxar"
+const mtfWorkerType = "backup"
 
 type Task struct {
 	*tasklog.WorkerTask
@@ -36,14 +38,13 @@ type mtfJob struct {
 	job         mtfdb.MTFJob
 	store       *store.Store
 	mapper      *mtfdb.Mapper
-	queueTask   *tasklog.QueuedTask
 	task        *Task
 	logger      *log.Logger
-	started     atomic.Bool
+	feeder      *tapeio.Feeder
 	cleanupOnce sync.Once
 }
 
-func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *jobs.Job {
+func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper) *jobs.Job {
 	j := &mtfJob{
 		job:    job,
 		store:  st,
@@ -52,7 +53,6 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *
 	}
 	return &jobs.Job{
 		ID:        job.ID,
-		PreExec:   j.preExecute(web),
 		Execute:   j.execute,
 		OnSuccess: j.onSuccess,
 		OnError:   j.onError,
@@ -60,60 +60,60 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper, web bool) *
 	}
 }
 
-func NewJob(jobID string, st *store.Store, web bool) (*jobs.Job, error) {
+func NewJob(jobID string, st *store.Store) (*jobs.Job, string, error) {
 	ctx := st.Ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	j, err := st.MtfStore.GetMtfJob(ctx, jobID)
+	jobRec, err := st.MtfStore.GetMtfJob(ctx, jobID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return newJob(j, st, st.MtfMapper, web), nil
-}
 
-func (j *mtfJob) preExecute(web bool) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
-		_, cancel := context.WithCancel(ctx)
-		j.cancel = cancel
-
-		wid := tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID)
-		qt, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "mtf2pxar", wid, web)
-		if err != nil {
-			j.logger.Error(err, "mtf: failed to create queue task")
-			return nil // non-fatal
-		}
-		j.queueTask = qt
-
-		if err := j.persistHistory(qt.Task, database.JobStatusUnknown, true); err != nil {
-			j.logger.Error(err, "failed to persist MTF job history (queued)")
-		}
-		return nil
+	task, err := startTask(jobRec)
+	if err != nil {
+		return nil, "", fmt.Errorf("start task: %w", err)
 	}
+
+	mj := &mtfJob{
+		job:    jobRec,
+		store:  st,
+		mapper: st.MtfMapper,
+		logger: log.WithScope(log.Scope{JobID: jobRec.ID}),
+		task:   task,
+	}
+
+	return &jobs.Job{
+		ID:        jobRec.ID,
+		Execute:   mj.execute,
+		OnSuccess: mj.onSuccess,
+		OnError:   mj.onError,
+		Cleanup:   mj.cleanup,
+	}, task.UPID(), nil
 }
 
 func (j *mtfJob) execute(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	j.cancel = cancel
+
+	task := j.task
+
 	select {
 	case <-ctx.Done():
 		return jobs.ErrCanceled
 	default:
 	}
 
-	cfg, err := j.buildConfig(ctx)
-	if err != nil {
-		return err
-	}
-
-	task, err := startTask(j.job)
-	if err != nil {
-		return fmt.Errorf("start task: %w", err)
-	}
-	j.task = task
-
-	j.started.Store(true)
-	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore)
+	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore, "upid", task.UPID())
 	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history (started)")
+	}
+
+	cfg, err := j.buildConfig(ctx)
+	if err != nil {
+		task.LogString(fmt.Sprintf("MTF migration failed during setup: %s", err.Error()))
+		task.CloseErr(err)
+		return err
 	}
 
 	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
@@ -136,7 +136,26 @@ func (j *mtfJob) execute(ctx context.Context) error {
 		task.LogString(msg)
 	}
 
-	stats, runErr := bkf2pxar.Run(ctx, cfg)
+	jobID := j.job.ID
+	cfg.Progress = func(p tapeio.Progress) {
+		PublishProgress(jobID, ProgressSnapshot{
+			Files:      p.Files,
+			Dirs:       p.Dirs,
+			Bytes:      p.Bytes,
+			PhysInst:   p.PhysInst,
+			PhysAvg:    p.PhysAvg,
+			TapeInst:   p.TapeInst,
+			TapeAvg:    p.TapeAvg,
+			IngestInst: p.IngestInst,
+			IngestAvg:  p.IngestAvg,
+			FilesInst:  p.FilesInst,
+			FilesAvg:   p.FilesAvg,
+			UpdatedAt:  time.Now().Unix(),
+		})
+	}
+	defer ClearProgress(jobID)
+
+	stats, runErr := tapeio.Run(ctx, cfg)
 	if runErr != nil {
 		task.LogString("Migration job summary:")
 		if stats != nil {
@@ -162,7 +181,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	return nil
 }
 
-func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
+func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 	job := j.job
 	mapper := j.mapper
 
@@ -183,14 +202,20 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 		return mapped
 	}
 
-	cfg := bkf2pxar.Config{
+	cfg := tapeio.Config{
 		PBSURL:            token.DefaultAPIURL,
 		Datastore:         job.Datastore,
 		Namespace:         baseNS,
 		SkipTLS:           true,
 		Verbose:           false,
 		Spanning:          job.Spanning,
+		MigrationTag:      fmt.Sprintf("m%06d", time.Now().UnixMilli()%1000000),
 		NamespaceResolver: resolver,
+		OnSnapshot: func(backupID, namespace string) {
+			if err := cli.EnsureNamespace(job.Datastore, namespace); err != nil {
+				j.logger.Error(err, "failed to ensure namespace", "namespace", namespace)
+			}
+		},
 	}
 	if cfg.AuthToken == "" {
 		cfg.AuthToken = token.ReadLocal()
@@ -273,7 +298,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (bkf2pxar.Config, error) {
 	return cfg, nil
 }
 
-func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg bkf2pxar.Config, tapeCfg *tape.Config) (bkf2pxar.Config, error) {
+func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tapeio.Config, tapeCfg *tape.Config) (tapeio.Config, error) {
 	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
 	if err != nil {
 		return cfg, err
@@ -299,21 +324,74 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg bkf
 			cfg.ChangerDevice = chg
 		}
 		cfg.DriveIndex = idx
-	}
-	snaps, err := bkf2pxar.ListSnapshots(ctx, cfg)
-	if err != nil {
-		return cfg, fmt.Errorf("list snapshots: %w", err)
-	}
-	for i, s := range snaps {
-		if s.MachineName == ds.MachineName {
-			cfg.SnapshotSel = i
-			return cfg, nil
+
+		if cfg.ChangerDevice != "" && len(carts) > 0 {
+			seqToBarcode := make(map[int]string, len(carts))
+			for _, c := range carts {
+				seqToBarcode[c.Sequence] = c.Barcode
+			}
+			feeder, err := tapeio.NewFeeder(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, tapeio.WithLog(func(msg string) {
+				j.task.LogString(msg)
+			}), tapeio.WithContext(ctx), tapeio.WithKeepLoaded(j.job.KeepLoaded), tapeio.WithSequenceResolver(func(seq int) string {
+				return seqToBarcode[seq]
+			}))
+			if err != nil {
+				return cfg, fmt.Errorf("open changer: %w", err)
+			}
+			cfg.Feeder = feeder
+			j.feeder = feeder
+			wantBarcode := seqToBarcode[ds.FirstMediaSeq]
+			if wantBarcode == "" {
+				wantBarcode = carts[0].Barcode
+			}
+			if err := feeder.LoadBarcodeWait(wantBarcode); err != nil {
+				feeder.Close()
+				return cfg, fmt.Errorf("load cartridge %s: %w", wantBarcode, err)
+			}
 		}
 	}
-	return cfg, fmt.Errorf("data set machine %q not found in snapshots", ds.MachineName)
+	wantSet := ds.SetNumber
+	wantMachine := ds.MachineName
+	wantTime := ds.WriteTime
+	if ds.SSETPBA > 0 {
+		cfg.SnapshotPBA = ds.SSETPBA
+	} else {
+		dsID := ds.ID
+		storeRef := j.store.MtfStore
+		cfg.OnSetMapRead = func(entry mtf.SetMapEntry) {
+			if entry.SSETPBA == 0 {
+				return
+			}
+			if err := storeRef.SetDataSetSsetPba(ctx, dsID, int64(entry.SSETPBA)); err != nil {
+				j.logger.Error(err, "failed to persist sset_pba", "data_set_id", dsID)
+			} else {
+				j.logger.Info("persisted sset_pba from setmap", "data_set_id", dsID, "pba", entry.SSETPBA)
+			}
+		}
+	}
+	cfg.SnapshotResolver = func(entries []mtf.SetMapEntry) int {
+		for i, e := range entries {
+			if int(e.SetNumber) == wantSet {
+				return i
+			}
+		}
+		for i, e := range entries {
+			if wantTime != 0 && e.WriteTime.Unix() == wantTime {
+				return i
+			}
+		}
+		for i, e := range entries {
+			for _, v := range e.Volumes {
+				if v.MachineName == wantMachine {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	return cfg, nil
 }
 
-// device paths to avoid "no such file or directory" errors.
 func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev string, driveIdx int, err error) {
 	if tapeCfg == nil || len(tapeCfg.Drives) == 0 {
 		return "/dev/nst0", "", 0, nil
@@ -361,13 +439,16 @@ func (j *mtfJob) onSuccess() {
 	if task == nil || task.UPID() == "" {
 		return
 	}
+	end := time.Now().Unix()
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:           task.UPID(),
 			LastRunStatus:         database.JobStatusSuccess,
-			LastRunEndtime:        time.Now().Unix(),
+			LastRunStarttime:      job.History.LastRunStarttime,
+			LastRunEndtime:        end,
+			Duration:              end - job.History.LastRunStarttime,
 			LastSuccessfulUpid:    task.UPID(),
-			LastSuccessfulEndtime: time.Now().Unix(),
+			LastSuccessfulEndtime: end,
 		}, ""); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history on success")
 	}
@@ -383,8 +464,9 @@ func (j *mtfJob) onError(runErr error) {
 
 	if errors.Is(runErr, jobs.ErrCanceled) {
 		if task != nil {
+			end := time.Now().Unix()
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunEndtime: time.Now().Unix()}, ""); err != nil {
+				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunStarttime: job.History.LastRunStarttime, LastRunEndtime: end, Duration: end - job.History.LastRunStarttime}, ""); err != nil {
 				j.logger.Error(err, "failed to update MTF job history on cancellation")
 			}
 		}
@@ -394,12 +476,15 @@ func (j *mtfJob) onError(runErr error) {
 	if task == nil || task.UPID() == "" {
 		task = j.errorTask(runErr)
 	}
+	end := time.Now().Unix()
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
-			LastRunUpid:    task.UPID(),
-			LastRunStatus:  database.JobStatusFailed,
-			LastRunEndtime: time.Now().Unix(),
-			RetryCount:     job.History.RetryCount + 1,
+			LastRunUpid:      task.UPID(),
+			LastRunStatus:    database.JobStatusFailed,
+			LastRunStarttime: job.History.LastRunStarttime,
+			LastRunEndtime:   end,
+			Duration:         end - job.History.LastRunStarttime,
+			RetryCount:       job.History.RetryCount + 1,
 		}, ""); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history on error")
 	}
@@ -450,17 +535,17 @@ func (j *mtfJob) cleanup() {
 		j.mu.Lock()
 		cancel := j.cancel
 		logger := j.logger
-		qt := j.queueTask
+		feeder := j.feeder
 		j.mu.Unlock()
 
 		if cancel != nil {
 			cancel()
 		}
+		if feeder != nil {
+			feeder.Close()
+		}
 		if logger != nil {
 			logger.Close()
-		}
-		if qt != nil {
-			qt.Close()
 		}
 	})
 }

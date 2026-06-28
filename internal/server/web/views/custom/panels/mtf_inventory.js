@@ -8,7 +8,7 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
     xclass: "Ext.app.ViewController",
 
     reload: function () {
-      this.getView().getStore().load();
+      this.getView().getStore().rstore.load();
     },
 
     startScan: function () {
@@ -44,7 +44,7 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
               Ext.create("PBS.plusWindow.TaskViewer", {
                 upid: response.result.data,
                 taskDone: function () {
-                  view.getStore().load();
+                  view.getStore().rstore.load();
                   me.close();
                 },
               }).show();
@@ -148,7 +148,7 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
           },
         ],
         listeners: {
-          destroy: () => view.getStore().load(),
+          destroy: () => view.getStore().rstore.load(),
         },
       });
       win.show();
@@ -197,32 +197,13 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
     },
 
     openJobWindow: function (defaults) {
-      let view = this.getView();
       let ctrl = this;
       Ext.create("PBS.MtfManagement.JobEdit", {
         autoShow: true,
         sourceKind: defaults.source_kind,
+        sourceRef: defaults.source_ref,
+        defaultJobId: defaults.id,
         listeners: {
-          afterrender: function (win) {
-            if (win.jobId) return;
-            win.method = "POST";
-            win.isCreate = true;
-            win.down("form").getForm().setValues({ id: defaults.id });
-            // The window's own afterrender has already started loading
-            // the source store (via sourceKind). Wait for it and then
-            // set the source_ref so the combo resolves display text.
-            let combo = win.down("combobox[name=source_ref]");
-            if (combo && defaults.source_ref) {
-              let store = combo.store;
-              if (store.isLoading()) {
-                store.on("load", function () {
-                  combo.setValue(defaults.source_ref);
-                }, null, { single: true });
-              } else {
-                combo.setValue(defaults.source_ref);
-              }
-            }
-          },
           destroy: function () {
             ctrl.reload();
           },
@@ -277,22 +258,61 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
       });
     },
 
+    startStore: function () {
+      this.getView().getStore().rstore.startUpdate();
+    },
+
+    stopStore: function () {
+      this.getView().getStore().rstore.stopUpdate();
+    },
+
     init: function (view) {
-      Proxmox.Utils.monStoreErrors(view, view.getStore());
+      Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+      this.checkScanStatus();
+      this.scanPoll = setInterval(() => this.checkScanStatus(), 5000);
+      view.on("destroy", () => { if (this.scanPoll) clearInterval(this.scanPoll); });
+    },
+
+    checkScanStatus: function () {
+      let view = this.getView();
+      if (!view || view.isDestroyed) return;
+      let btn = view.down("#mtfScanBtn");
+      let status = view.down("#mtfScanStatus");
+      PBS.PlusUtils.API2Request({
+        url: "/api2/extjs/config/mtf-scan",
+        method: "GET",
+        success: function (resp) {
+          let d = resp.result.data || {};
+          if (d.active) {
+            if (btn) { btn.setDisabled(true); btn.setText(gettext("Scan in progress…")); }
+            if (status) { status.show(); status.setHtml('<i class="fa fa-refresh fa-spin"></i> ' + gettext("An inventory scan is running.")); }
+          } else {
+            if (btn) { btn.setDisabled(false); btn.setText(gettext("Run Scan")); }
+            if (status) { status.hide(); }
+          }
+        },
+      });
     },
   },
 
   listeners: {
-    activate: 'reload',
+    beforedestroy: 'stopStore',
+    deactivate: 'stopStore',
+    activate: function () { this.getController().startStore(); this.getController().checkScanStatus(); },
     itemdblclick: 'showDataSets',
   },
 
   store: {
-    model: "pbs-mtf-cartridge",
-    autoLoad: true,
-    proxy: {
-      type: "pbsplus",
-      url: pbsPlusBaseUrl + "/api2/extjs/config/mtf-inventory?type=cartridges",
+    type: "diff",
+    rstore: {
+      type: "update",
+      storeid: "pbs-mtf-cartridge",
+      model: "pbs-mtf-cartridge",
+      proxy: {
+        type: "pbsplus",
+        url: pbsPlusBaseUrl + "/api2/extjs/config/mtf-inventory?type=cartridges",
+      },
+      interval: 5000,
     },
     sorters: "media_family_name",
     groupField: "media_family_name",
@@ -316,12 +336,14 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
   },
 
   tbar: [
-    { xtype: "proxmoxButton", text: gettext("Run Scan"), selModel: false, handler: "startScan" },
+    { text: gettext("Reload"), handler: "reload" },
     "-",
+    { text: gettext("Run Scan"), handler: "startScan", iconCls: "fa fa-search", itemId: "mtfScanBtn" },
+    { xtype: "tbtext", itemId: "mtfScanStatus", hidden: true, cls: "proxmox-warning-row", html: "" },
+    "->",
     { xtype: "proxmoxButton", text: gettext("View Data Sets"), disabled: true, handler: "showDataSets", enableFn: (rec) => !!rec.get("media_family_id") },
-    { xtype: "proxmoxButton", text: gettext("Migrate Cartridge"), disabled: true, handler: "migrateCartridge", enableFn: (rec) => true },
-    { xtype: "proxmoxButton", text: gettext("Migrate Set"), disabled: true, handler: "migrateFamily", enableFn: (rec) => true },
-    { xtype: "proxmoxButton", text: gettext("Reload"), selModel: false, handler: "reload" },
+    { xtype: "proxmoxButton", text: gettext("Migrate Cartridge"), disabled: true, handler: "migrateCartridge", enableFn: () => true },
+    { xtype: "proxmoxButton", text: gettext("Migrate Set"), disabled: true, handler: "migrateFamily", enableFn: () => true },
   ],
 
   columns: [

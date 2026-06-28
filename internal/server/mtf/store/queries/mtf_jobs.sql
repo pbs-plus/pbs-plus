@@ -1,15 +1,15 @@
 -- name: CreateMtfJob :exec
 INSERT INTO mtf_jobs (
-    id, source_kind, source_ref, datastore, namespace, schedule, comment,
-    notification_mode, spanning, overwrite_mappings, changer, drive,
+    id, source_kind, source_ref, datastore, namespace, comment,
+    notification_mode, spanning, overwrite_mappings, keep_loaded, changer, drive,
     current_pid, last_run_upid, last_successful_upid,
-    last_run_status, retry_count, retry, retry_interval,
+    last_run_status, retry_count,
     last_run_starttime, last_run_endtime, last_successful_endtime, duration
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?,
     ?, ?, ?,
-    ?, ?, ?, ?,
+    ?, ?,
     ?, ?, ?, ?
 );
 
@@ -25,10 +25,10 @@ SELECT * FROM mtf_jobs WHERE last_run_upid LIKE '%pbsplusgen-queue%' ORDER BY id
 -- name: UpdateMtfJob :exec
 UPDATE mtf_jobs
 SET source_kind = ?, source_ref = ?, datastore = ?, namespace = ?,
-    schedule = ?, comment = ?, notification_mode = ?, spanning = ?,
-    overwrite_mappings = ?, changer = ?, drive = ?,
+    comment = ?, notification_mode = ?, spanning = ?,
+    overwrite_mappings = ?, keep_loaded = ?, changer = ?, drive = ?,
     last_run_upid = ?, last_successful_upid = ?,
-    last_run_status = ?, retry_count = ?, retry = ?, retry_interval = ?,
+    last_run_status = ?, retry_count = ?,
     last_run_starttime = ?, last_run_endtime = ?,
     last_successful_endtime = ?, duration = ?
 WHERE id = ?;

@@ -39,6 +39,10 @@ Ext.define("PBS.MtfManagement.JobEdit", {
           view.method = "PUT";
           view.jobId = data.id;
           view.isCreate = false;
+          let btn = view.down("[reference=submitbutton]") || view.down("button[reference=submitbutton]");
+          if (btn) {
+            btn.setText(gettext("Update"));
+          }
           form.setValues(data);
           // Load the source store for the saved kind. Once it finishes,
           // re-apply the source_ref so the combo resolves display text.
@@ -59,9 +63,6 @@ Ext.define("PBS.MtfManagement.JobEdit", {
       this.loadSourceStore(value);
     },
 
-    // Loads the source_ref dropdown store for the given kind. If sourceRef
-    // is provided (= edit flow), the combo value is re-applied after load
-    // so it resolves the display text from the transformed store records.
     loadSourceStore: function (kind, sourceRef) {
       let view = this.getView();
       let combo = view.down("combobox[name=source_ref]");
@@ -86,6 +87,20 @@ Ext.define("PBS.MtfManagement.JobEdit", {
         },
       });
     },
+
+    defaultDatastore: function () {
+      let sel = this.getView().down("pbsDataStoreSelector");
+      if (!sel || sel.getValue()) return;
+      try {
+        let dsNode = Ext.getStore("NavigationStore").getRoot().findChild("id", "datastores", false);
+        if (dsNode && dsNode.childNodes && dsNode.childNodes.length) {
+          let first = dsNode.childNodes[0].get("text");
+          if (first && first !== "Add Datastore") {
+            sel.setValue(first);
+          }
+        }
+      } catch (e) {}
+    },
   },
 
   listeners: {
@@ -94,13 +109,20 @@ Ext.define("PBS.MtfManagement.JobEdit", {
         win.getController().loadForm(win.jobId);
         return;
       }
-      // Create flow: pre-load the source store if sourceKind was provided
-      // (e.g. when opening from inventory).
+      win.method = "POST";
+      win.isCreate = true;
       if (win.sourceKind) {
         let kindCombo = win.down("combobox[name=source_kind]");
         if (kindCombo) kindCombo.setValue(win.sourceKind);
-        win.getController().loadSourceStore(win.sourceKind);
+        win.getController().loadSourceStore(win.sourceKind, win.sourceRef);
       }
+      Ext.defer(function () {
+        let form = win.down("form").getForm();
+        if (win.defaultJobId && form.findField("id")) {
+          form.findField("id").setValue(win.defaultJobId);
+        }
+        win.getController().defaultDatastore();
+      }, 200);
     },
   },
 
@@ -126,6 +148,7 @@ Ext.define("PBS.MtfManagement.JobEdit", {
             renderer: Ext.htmlEncode,
             allowBlank: true,
             editable: true,
+            emptyText: gettext("auto-generated from source"),
           },
           {
             xtype: "proxmoxKVComboBox",
@@ -271,6 +294,13 @@ Ext.define("PBS.MtfManagement.JobEdit", {
             boxLabel: gettext("Bypass namespace mapping rules, use value as-is"),
             value: false,
           },
+          {
+            xtype: "proxmoxcheckbox",
+            name: "keep_loaded",
+            fieldLabel: gettext("Keep Loaded"),
+            boxLabel: gettext("Leave the tape in the drive after the job finishes"),
+            value: true,
+          },
         ],
         columnB: [
           {
@@ -278,25 +308,6 @@ Ext.define("PBS.MtfManagement.JobEdit", {
             name: "comment",
             fieldLabel: gettext("Comment"),
             width: "100%",
-          },
-          {
-            xtype: "textfield",
-            name: "schedule",
-            fieldLabel: gettext("Schedule"),
-            width: "100%",
-            emptyText: gettext("calendar event, e.g. mon..fri 02:00"),
-          },
-          {
-            xtype: "textfield",
-            name: "retry",
-            fieldLabel: gettext("Number of retries"),
-            emptyText: gettext("0"),
-          },
-          {
-            xtype: "textfield",
-            name: "retry-interval",
-            fieldLabel: gettext("Retry interval (minutes)"),
-            emptyText: gettext("1"),
           },
         ],
       },

@@ -70,6 +70,7 @@ type DataSet struct {
 	NumFiles       int             `json:"num_files"`
 	NumCorrupt     int             `json:"num_corrupt"`
 	Size           int64           `json:"size"`
+	SSETPBA        int64           `json:"sset_pba"`
 	FirstMediaSeq  int             `json:"first_media_seq"`
 	SourceMediaSeq int             `json:"source_media_seq"`
 	Volumes        []DataSetVolume `json:"volumes"`
@@ -103,15 +104,13 @@ type MTFJob struct {
 	SourceLabel       string     `json:"source_label"`
 	Datastore         string     `json:"datastore"`
 	Namespace         string     `json:"namespace"`
-	Schedule          string     `json:"schedule"`
 	Comment           string     `json:"comment"`
 	NotificationMode  string     `json:"notification-mode"`
 	Spanning          bool       `json:"spanning"`
 	OverwriteMappings bool       `json:"overwrite_mappings"`
+	KeepLoaded        bool       `json:"keep_loaded"`
 	Changer           string     `json:"changer"`
 	Drive             string     `json:"drive"`
-	Retry             int        `json:"retry"`
-	RetryInterval     int        `json:"retry-interval"`
 	CurrentPID        string     `json:"current_pid"`
 	History           JobHistory `json:"history"`
 	CreatedAt         int64      `json:"created_at"`

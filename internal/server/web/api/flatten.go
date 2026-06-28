@@ -50,15 +50,13 @@ func FlattenBackup(b database.Backup) FlatBackup {
 		fb.TargetSizeHuman = HumanReadableBytes(b.Target.VolumeUsedBytes)
 	}
 
-	if b.CurrentStats.CurrentBytesSpeed > 0 {
-		fb.ReadSpeedHuman = HumanReadableSpeed(b.CurrentStats.CurrentBytesSpeed)
-	}
-	if b.CurrentStats.CurrentBytesTotal > 0 {
-		fb.ReadTotalHuman = HumanReadableBytes(b.CurrentStats.CurrentBytesTotal)
-	}
-	if b.CurrentStats.CurrentFilesSpeed > 0 {
-		fb.ProcessingSpeedHuman = FormatSpeed(b.CurrentStats.CurrentFilesSpeed)
-	}
+	FillSpeedFields(&LiveStats{
+		FileCount:   int64(b.CurrentStats.CurrentFileCount),
+		FolderCount: int64(b.CurrentStats.CurrentFolderCount),
+		FilesSpeed:  b.CurrentStats.CurrentFilesSpeed,
+		BytesSpeed:  b.CurrentStats.CurrentBytesSpeed,
+		BytesTotal:  int64(b.CurrentStats.CurrentBytesTotal),
+	}, &fb.ReadSpeedHuman, &fb.ReadTotalHuman, &fb.ProcessingSpeedHuman)
 
 	fb.StatusParsed = ParseTaskStatus(b.History.LastRunState)
 
@@ -135,15 +133,13 @@ func FlattenRestore(r database.Restore) FlatRestore {
 		fr.TargetSizeHuman = HumanReadableBytes(r.DestTarget.VolumeUsedBytes)
 	}
 
-	if r.CurrentStats.CurrentBytesSpeed > 0 {
-		fr.ReadSpeedHuman = HumanReadableSpeed(r.CurrentStats.CurrentBytesSpeed)
-	}
-	if r.CurrentStats.CurrentBytesTotal > 0 {
-		fr.ReadTotalHuman = HumanReadableBytes(r.CurrentStats.CurrentBytesTotal)
-	}
-	if r.CurrentStats.CurrentFilesSpeed > 0 {
-		fr.ProcessingSpeedHuman = FormatSpeed(r.CurrentStats.CurrentFilesSpeed)
-	}
+	FillSpeedFields(&LiveStats{
+		FileCount:   int64(r.CurrentStats.CurrentFileCount),
+		FolderCount: int64(r.CurrentStats.CurrentFolderCount),
+		FilesSpeed:  r.CurrentStats.CurrentFilesSpeed,
+		BytesSpeed:  r.CurrentStats.CurrentBytesSpeed,
+		BytesTotal:  int64(r.CurrentStats.CurrentBytesTotal),
+	}, &fr.ReadSpeedHuman, &fr.ReadTotalHuman, &fr.ProcessingSpeedHuman)
 
 	fr.StatusParsed = ParseTaskStatus(r.History.LastRunState)
 

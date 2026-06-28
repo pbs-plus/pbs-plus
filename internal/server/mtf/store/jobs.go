@@ -44,12 +44,6 @@ func (d *Database) CreateMtfJob(ctx context.Context, j MTFJob) (MTFJob, error) {
 	if j.SourceRef == "" {
 		return MTFJob{}, ErrSourceRefRequired
 	}
-	if j.RetryInterval <= 0 {
-		j.RetryInterval = 1
-	}
-	if j.Retry < 0 {
-		j.Retry = 0
-	}
 
 	var err error
 	if j.ID == "" {
@@ -172,15 +166,13 @@ func mtfJobFromRow(r mtfquery.MtfJob) MTFJob {
 		SourceRef:         r.SourceRef,
 		Datastore:         r.Datastore,
 		Namespace:         ns(r.Namespace),
-		Schedule:          ns(r.Schedule),
 		Comment:           ns(r.Comment),
 		NotificationMode:  ns(r.NotificationMode),
 		Spanning:          nb(r.Spanning),
 		OverwriteMappings: nb(r.OverwriteMappings),
+		KeepLoaded:        r.KeepLoaded != 0,
 		Changer:           ns(r.Changer),
 		Drive:             ns(r.Drive),
-		Retry:             ni(r.Retry),
-		RetryInterval:     ni(r.RetryInterval),
 		CurrentPID:        ns(r.CurrentPid),
 		History: JobHistory{
 			LastRunUpid:           ns(r.LastRunUpid),
@@ -220,11 +212,11 @@ func mtfJobCreateParams(j MTFJob) mtfquery.CreateMtfJobParams {
 		SourceRef:          j.SourceRef,
 		Datastore:          j.Datastore,
 		Namespace:          sql.NullString{String: j.Namespace, Valid: j.Namespace != ""},
-		Schedule:           sql.NullString{String: j.Schedule, Valid: j.Schedule != ""},
 		Comment:            sql.NullString{String: j.Comment, Valid: j.Comment != ""},
 		NotificationMode:   sql.NullString{String: j.NotificationMode, Valid: j.NotificationMode != ""},
 		Spanning:           sql.NullInt64{Int64: boolToInt(j.Spanning), Valid: true},
 		OverwriteMappings:  sql.NullInt64{Int64: boolToInt(j.OverwriteMappings), Valid: true},
+		KeepLoaded:         boolToInt(j.KeepLoaded),
 		Changer:            sql.NullString{String: j.Changer, Valid: j.Changer != ""},
 		Drive:              sql.NullString{String: j.Drive, Valid: j.Drive != ""},
 		CurrentPid:         sql.NullString{},
@@ -232,8 +224,6 @@ func mtfJobCreateParams(j MTFJob) mtfquery.CreateMtfJobParams {
 		LastSuccessfulUpid: sql.NullString{},
 		LastRunStatus:      sql.NullInt64{},
 		RetryCount:         sql.NullInt64{},
-		Retry:              sql.NullInt64{Int64: int64(j.Retry), Valid: true},
-		RetryInterval:      sql.NullInt64{Int64: int64(j.RetryInterval), Valid: true},
 	}
 }
 
@@ -243,19 +233,17 @@ func mtfJobUpdateParams(j MTFJob) mtfquery.UpdateMtfJobParams {
 		SourceRef:             j.SourceRef,
 		Datastore:             j.Datastore,
 		Namespace:             sql.NullString{String: j.Namespace, Valid: j.Namespace != ""},
-		Schedule:              sql.NullString{String: j.Schedule, Valid: j.Schedule != ""},
 		Comment:               sql.NullString{String: j.Comment, Valid: j.Comment != ""},
 		NotificationMode:      sql.NullString{String: j.NotificationMode, Valid: j.NotificationMode != ""},
 		Spanning:              sql.NullInt64{Int64: boolToInt(j.Spanning), Valid: true},
 		OverwriteMappings:     sql.NullInt64{Int64: boolToInt(j.OverwriteMappings), Valid: true},
+		KeepLoaded:            boolToInt(j.KeepLoaded),
 		Changer:               sql.NullString{String: j.Changer, Valid: j.Changer != ""},
 		Drive:                 sql.NullString{String: j.Drive, Valid: j.Drive != ""},
 		LastRunUpid:           sql.NullString{String: j.History.LastRunUpid, Valid: j.History.LastRunUpid != ""},
 		LastSuccessfulUpid:    sql.NullString{String: j.History.LastSuccessfulUpid, Valid: j.History.LastSuccessfulUpid != ""},
 		LastRunStatus:         sql.NullInt64{Int64: int64(j.History.LastRunStatus), Valid: true},
 		RetryCount:            sql.NullInt64{Int64: int64(j.History.RetryCount), Valid: true},
-		Retry:                 sql.NullInt64{Int64: int64(j.Retry), Valid: true},
-		RetryInterval:         sql.NullInt64{Int64: int64(j.RetryInterval), Valid: true},
 		LastRunStarttime:      sql.NullInt64{Int64: j.History.LastRunStarttime, Valid: true},
 		LastRunEndtime:        sql.NullInt64{Int64: j.History.LastRunEndtime, Valid: true},
 		LastSuccessfulEndtime: sql.NullInt64{Int64: j.History.LastSuccessfulEndtime, Valid: true},
@@ -270,6 +258,9 @@ func toInt64(s string) int64 {
 
 func ToInt64(s string) int64 {
 	var n int64
+	if s == "" {
+		return 0
+	}
 	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
 		log.Error(err, "")
 	}

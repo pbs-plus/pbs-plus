@@ -22,9 +22,9 @@ DELETE FROM media_families WHERE id = ?;
 -- name: CreateDataSet :execlastid
 INSERT INTO data_sets (
     media_family_id, set_number, name, description, owner, machine_name,
-    write_time, num_directories, num_files, num_corrupt, size, first_media_seq,
-    source_media_seq
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    write_time, num_directories, num_files, num_corrupt, size, sset_pba,
+    first_media_seq, source_media_seq
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetDataSet :one
 SELECT * FROM data_sets WHERE id = ? LIMIT 1;
@@ -41,12 +41,12 @@ SELECT * FROM data_sets ORDER BY write_time DESC;
 -- name: DeleteDataSetsByFamily :execrows
 DELETE FROM data_sets WHERE media_family_id = ?;
 
--- name: UpsertDataSet :execlastid
+-- name: UpsertDataSet :one
 INSERT INTO data_sets (
     media_family_id, set_number, name, description, owner, machine_name,
-    write_time, num_directories, num_files, num_corrupt, size, first_media_seq,
-    source_media_seq
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    write_time, num_directories, num_files, num_corrupt, size, sset_pba,
+    first_media_seq, source_media_seq
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(media_family_id, set_number) DO UPDATE SET
     name = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.name ELSE data_sets.name END,
     description = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.description ELSE data_sets.description END,
@@ -57,8 +57,10 @@ ON CONFLICT(media_family_id, set_number) DO UPDATE SET
     num_files = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.num_files ELSE data_sets.num_files END,
     num_corrupt = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.num_corrupt ELSE data_sets.num_corrupt END,
     size = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.size ELSE data_sets.size END,
+    sset_pba = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.sset_pba ELSE data_sets.sset_pba END,
     first_media_seq = CASE WHEN excluded.source_media_seq >= data_sets.source_media_seq THEN excluded.first_media_seq ELSE data_sets.first_media_seq END,
-    source_media_seq = CASE WHEN excluded.source_media_seq > data_sets.source_media_seq THEN excluded.source_media_seq ELSE data_sets.source_media_seq END;
+    source_media_seq = CASE WHEN excluded.source_media_seq > data_sets.source_media_seq THEN excluded.source_media_seq ELSE data_sets.source_media_seq END
+RETURNING id;
 
 -- name: CreateDataSetVolume :exec
 INSERT INTO data_set_volumes (data_set_id, device, volume_label, machine_name, mapped_namespace)
@@ -69,3 +71,6 @@ SELECT * FROM data_set_volumes WHERE data_set_id = ? ORDER BY id;
 
 -- name: DeleteVolumesByDataSet :execrows
 DELETE FROM data_set_volumes WHERE data_set_id = ?;
+
+-- name: UpdateDataSetSsetPba :execrows
+UPDATE data_sets SET sset_pba = ? WHERE id = ?;

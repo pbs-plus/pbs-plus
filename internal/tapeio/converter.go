@@ -1,8 +1,9 @@
-package bkf2pxar
+package tapeio
 
 import (
-	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 )
 
+var errSnapshotDone = errors.New("selected snapshot processed")
+
 type Config struct {
 	PBSURL        string
 	Datastore     string
@@ -43,10 +46,17 @@ type Config struct {
 	Spanning            bool
 	SnapshotSel         int
 	IgnoreNewerPrevious bool
-	// NamespaceResolver overrides Namespace per snapshot. It receives the
-	NamespaceResolver func(host, device string) string
-	OnSnapshot        func(backupID, namespace string)
-	TaskLog           func(string)
+	SpoolDir            string
+	SpoolCapBytes       int64
+	NamespaceResolver   func(host, device string) string
+	OnSnapshot          func(backupID, namespace string)
+	TaskLog             func(string)
+	Feeder              *Feeder
+	MigrationTag        string
+	SnapshotPBA         int64
+	OnSetMapRead        func(entry mtf.SetMapEntry)
+	Progress            func(Progress)
+	SnapshotResolver    func(entries []mtf.SetMapEntry) int
 }
 
 type Stats struct {
@@ -57,6 +67,20 @@ type Stats struct {
 	Dirs      int
 	Bytes     int64
 	StartTime time.Time
+}
+
+type Progress struct {
+	Files      int64
+	Dirs       int64
+	Bytes      int64
+	PhysInst   float64
+	PhysAvg    float64
+	TapeInst   float64
+	TapeAvg    float64
+	IngestInst float64
+	IngestAvg  float64
+	FilesInst  float64
+	FilesAvg   float64
 }
 
 type Snapshot struct {
@@ -83,7 +107,11 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 	var snapshots []Snapshot
 
 	if cfg.TapeDevice != "" {
-		rc, err := openTapeReader(cfg.TapeDevice)
+		var logf func(string)
+		if cfg.TaskLog != nil {
+			logf = cfg.TaskLog
+		}
+		rc, err := OpenTapeReaderWithLog(cfg.TapeDevice, logf)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +260,7 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 	}
 	c.stats.StartTime = c.prog.startTime
 
-	stopReport := c.prog.report(ctx, os.Stderr, 2*time.Second)
+	stopReport := c.prog.reportWith(ctx, os.Stderr, 2*time.Second, c.cfg.Progress)
 	defer stopReport()
 
 	syncStats := func() {
@@ -270,11 +298,12 @@ type converter struct {
 	session    backupproxy.BackupSession
 	writer     *transfer.RemoteDedupWriter
 	meta       backupMeta
+	tapeLabel  string
 	rootPrefix string
 	dirStack   []string
 	currentNS  string
 
-	snapshotIdx int // current SSET index (-1 before first)
+	snapshotIdx int
 }
 
 func (c *converter) logf(format string, args ...any) {
@@ -303,6 +332,12 @@ func (c *converter) ensureSession() error {
 			log.Error(hostErr, "")
 		}
 		backupID = h
+	}
+	if c.tapeLabel != "" {
+		backupID = backupID + "-" + sanitizePath(c.tapeLabel)
+	}
+	if c.cfg.MigrationTag != "" {
+		backupID = backupID + "-" + sanitizePath(c.cfg.MigrationTag)
 	}
 
 	archiveName := c.cfg.ArchiveName
@@ -381,7 +416,7 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 		AuthToken:     authToken,
 		Namespace:     c.currentNS,
 		SkipTLSVerify: c.cfg.SkipTLS,
-	}, c.chunkCfg, true)
+	}, c.chunkCfg, c.cfg.Compress)
 
 	return store.StartSession(c.ctx, backupproxy.BackupConfig{
 		BackupType:          datastore.BackupHost,
@@ -428,11 +463,74 @@ func (c *converter) snapshotSelected() bool {
 	return c.cfg.SnapshotSel < 0 || c.snapshotIdx == c.cfg.SnapshotSel
 }
 
+func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
+	if c.cfg.SnapshotPBA > 0 {
+		c.logf("Reading TAPE descriptor block (BOT + 1)")
+		if _, err := r.Next(); err != nil {
+			return fmt.Errorf("read TAPE descriptor: %w", err)
+		}
+		pba := c.cfg.SnapshotPBA - 1
+		c.logf("Locating to snapshot at PBA %d (from inventory)", pba)
+		if err := r.SeekToBlock(pba); err != nil {
+			return fmt.Errorf("seek to snapshot: %w", err)
+		}
+		c.logf("Located to snapshot, ready to read entries")
+		return nil
+	}
+	if c.cfg.SnapshotSel < 0 && c.cfg.SnapshotResolver == nil {
+		return nil
+	}
+	c.logf("Reading TAPE descriptor block (BOT + 1)")
+	blk, err := r.Next()
+	if err != nil {
+		return fmt.Errorf("read TAPE descriptor: %w", err)
+	}
+	c.logf("TAPE descriptor: name=%s sequence=%d family=0x%08X", blk.Tape.Name, blk.Tape.Sequence, blk.Tape.MFMID)
+	c.logf("Reading SetMap (EOM + read back)")
+	sm, sErr := mtf.ReadSetMap(rc)
+	if sErr != nil {
+		return fmt.Errorf("read set map for snapshot locate: %w", sErr)
+	}
+	if sm == nil || len(sm.Entries) == 0 {
+		c.logf("SetMap empty, reading sequentially")
+		return nil
+	}
+	sel := c.cfg.SnapshotSel
+	if c.cfg.SnapshotResolver != nil {
+		sel = c.cfg.SnapshotResolver(sm.Entries)
+		c.cfg.SnapshotSel = sel
+	}
+	if sel < 0 || sel >= len(sm.Entries) {
+		c.logf("Snapshot selection %d out of range (%d entries), reading sequentially", sel, len(sm.Entries))
+		return nil
+	}
+	pba := int64(sm.Entries[sel].SSETPBA) - 1
+	c.logf("Locating to snapshot %d (%q) at PBA %d", sel, sm.Entries[sel].Name, pba)
+	if c.cfg.OnSetMapRead != nil {
+		c.cfg.OnSetMapRead(sm.Entries[sel])
+	}
+	if err := r.SeekToBlock(pba); err != nil {
+		return fmt.Errorf("seek to snapshot %d: %w", sel, err)
+	}
+	c.snapshotIdx = sel - 1
+	c.logf("Located to snapshot %d, ready to read entries", sel)
+	return nil
+}
+
 func (c *converter) runTape() error {
+	select {
+	case <-c.ctx.Done():
+		return c.ctx.Err()
+	default:
+	}
 	if c.cfg.ChangerDevice != "" {
 		return c.runChanger()
 	}
-	rc, err := openTapeReader(c.cfg.TapeDevice)
+	var logf func(string)
+	if c.cfg.TaskLog != nil {
+		logf = c.cfg.TaskLog
+	}
+	rc, err := OpenTapeReaderWithLog(c.cfg.TapeDevice, logf)
 	if err != nil {
 		return err
 	}
@@ -446,41 +544,46 @@ func (c *converter) runTape() error {
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
 	}
-
+	if err := c.locateToSnapshot(rc, r); err != nil {
+		return err
+	}
 	return c.processReader(r)
 }
 
 func (c *converter) runChanger() error {
-	f, err := newFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex)
-	if err != nil {
-		return err
-	}
-	defer f.close()
-
-	for {
-		rc, err := f.loadFirst()
+	f := c.cfg.Feeder
+	if f == nil {
+		var err error
+		f, err = NewFeeder(c.cfg.ChangerDevice, c.cfg.TapeDevice, c.cfg.DriveIndex, WithLog(func(msg string) { c.logf("%s", msg) }), WithContext(c.ctx))
 		if err != nil {
-			return nil
-		}
-		r := mtf.NewReader(rc)
-		r.SetContinuation(f.asContinuation())
-		if err := c.processReader(r); err != nil {
-			if err := rc.Close(); err != nil {
-				log.Error(err, "")
-			}
-			if err := f.unloadCurrent(); err != nil {
-				log.Error(err, "")
-			}
 			return err
 		}
-		if err := rc.Close(); err != nil {
-			log.Error(err, "")
-		}
-		if err := f.unloadCurrent(); err != nil {
-			log.Error(err, "")
-		}
-		f.markProcessed()
+		defer f.Close()
 	}
+
+	err := f.ForEachTape(func(rc *TapeReader, barcode string) error {
+		select {
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		default:
+		}
+		r := mtf.NewReader(rc)
+		r.SetContinuation(f.AsContinuation())
+		if err := c.locateToSnapshot(rc, r); err != nil {
+			return err
+		}
+		if err := c.processReader(r); err != nil {
+			return err
+		}
+		if c.cfg.SnapshotSel >= 0 {
+			return errSnapshotDone
+		}
+		return nil
+	})
+	if errors.Is(err, errSnapshotDone) {
+		return nil
+	}
+	return err
 }
 
 func (c *converter) runFiles() error {
@@ -506,6 +609,11 @@ func (c *converter) runFiles() error {
 	}
 
 	for _, f := range files {
+		select {
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		default:
+		}
 		r, err := mtf.Open(f)
 		if err != nil {
 			return fmt.Errorf("open %s: %w", f, err)
@@ -521,15 +629,113 @@ func (c *converter) runFiles() error {
 	return nil
 }
 
-// entries to pxar. Each SSET boundary starts a fresh session.
+type tapeOp struct {
+	kind     opKind
+	name     string
+	depth    int
+	relPath  string
+	meta     pxar.Metadata
+	size     int64
+	linkTgt  string
+	hardLink bool
+	rootPfx  string
+	data     []byte
+	dataSize int64
+	ssetIdx  int
+}
+
+type opKind int
+
+const (
+	opVolume opKind = iota
+	opDir
+	opSymlink
+	opFile
+	opSet
+	opSetEnd
+	opEnd
+)
+
+func (c *converter) runPipeline(r *mtf.Reader) error {
+	cap := c.cfg.SpoolCapBytes
+	if cap <= 0 {
+		cap = defaultSpoolCapBytes
+	}
+	sp, err := newSpool(c.cfg.SpoolDir, cap, 0)
+	if err != nil {
+		return fmt.Errorf("create spool: %w", err)
+	}
+	defer func() {
+		if err := sp.close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	ops := make(chan tapeOp, opChanCap)
+	pumpErr := make(chan error, 1)
+
+	go func() {
+		pumpErr <- c.pump(r, sp, ops)
+	}()
+
+	encErr := c.drain(ops, sp)
+
+	if err := sp.close(); err != nil {
+		log.Error(err, "")
+	}
+	go func() {
+		for op := range ops {
+			if op.kind == opFile {
+				sp.release(op.dataSize)
+			}
+		}
+	}()
+
+	if perr := <-pumpErr; perr != nil && encErr == nil {
+		return perr
+	}
+	return encErr
+}
+
 func (c *converter) processReader(r *mtf.Reader) error {
+	return c.runPipeline(r)
+}
+
+const (
+	defaultSpoolCapBytes = 256 << 20
+	opChanCap            = 256
+)
+
+func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
+	c.prog.markProcessing()
+	finish := func(err error) error {
+		c.prog.markProcessingDone()
+		c.prog.tapePhysBytes.Store(r.Position())
+		ops <- tapeOp{kind: opEnd}
+		return err
+	}
+	var lastPos int64 = r.Position()
 	for {
+		select {
+		case <-c.ctx.Done():
+			return finish(c.ctx.Err())
+		default:
+		}
+
 		block, err := r.Next()
+		if pos := r.Position(); pos > lastPos {
+			c.prog.tapePhysBytes.Add(pos - lastPos)
+			lastPos = pos
+		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("read block: %w", err)
+			if c.cfg.SnapshotSel >= 0 && c.snapshotIdx == c.cfg.SnapshotSel {
+				c.logf("ignoring read error after selected snapshot entries: %v", err)
+				return finish(nil)
+			}
+			return finish(fmt.Errorf("read block: %w", err))
 		}
 
 		switch block.Kind {
@@ -538,29 +744,27 @@ func (c *converter) processReader(r *mtf.Reader) error {
 				if c.meta.BackupTime.IsZero() {
 					c.meta.BackupTime = block.Tape.CreateTime
 				}
+				if block.Tape.Name != "" {
+					c.tapeLabel = block.Tape.Name
+				}
 				c.logf("Tape: %s, created %s", block.Tape.Name, block.Tape.CreateTime.Format("2006-01-02 15:04"))
 			}
-
 		case mtf.KindSet:
-			if err := c.finishSnapshot(); err != nil {
-				return err
-			}
 			c.snapshotIdx++
 			c.meta = backupMeta{}
 			c.rootPrefix = ""
-			c.dirStack = nil
 			if block.Set != nil {
 				c.meta.SetName = block.Set.Name
 				c.meta.Owner = block.Set.Owner
 				c.meta.BackupTime = block.Set.CreateTime
 			}
 			c.logf("SSET #%d: %q (%s)", c.snapshotIdx, c.meta.SetName, c.meta.BackupTime.Format("2006-01-02 15:04"))
-
+			ops <- tapeOp{kind: opSet, ssetIdx: c.snapshotIdx}
 		case mtf.KindSetEnd:
-			if err := c.finishSnapshot(); err != nil {
-				return err
+			ops <- tapeOp{kind: opSetEnd}
+			if c.cfg.SnapshotSel >= 0 {
+				return finish(nil)
 			}
-
 		case mtf.KindEntry:
 			if !c.snapshotSelected() {
 				continue
@@ -569,119 +773,173 @@ func (c *converter) processReader(r *mtf.Reader) error {
 			if h.Type == mtf.EntryVolume {
 				c.meta.HostName = h.MachineName
 				c.rootPrefix = h.Name
-				if err := c.ensureSession(); err != nil {
-					return err
-				}
+				ops <- tapeOp{kind: opVolume, rootPfx: c.rootPrefix}
 				continue
 			}
-			if err := c.ensureSession(); err != nil {
-				return err
-			}
-			c.logf("Volume: machine=%s device=%s", h.MachineName, h.Name)
-			if err := c.processEntry(r, h); err != nil {
-				return err
+			if err := c.pumpEntry(r, sp, ops, h); err != nil {
+				return finish(err)
 			}
 		}
 	}
-
 	if r.TruncatedByEOTM() {
 		c.logf("WARNING: data set spans further media - use spanning and provide all tapes/files")
 	}
+	return finish(nil)
+}
 
+func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mtf.Header) error {
+	relPath := strings.TrimPrefix(strings.TrimPrefix(h.Name, c.rootPrefix), "/")
+	components := strings.Split(relPath, "/")
+	op := tapeOp{
+		rootPfx: c.rootPrefix,
+		relPath: relPath,
+		name:    sanitizeName(components[len(components)-1]),
+		depth:   len(components) - 1,
+	}
+	switch h.Type {
+	case mtf.EntryDirectory:
+		c.prog.dirs.Add(1)
+		op.kind = opDir
+		op.meta = mtfToPxarMeta(h, format.ModeIFDIR)
+		c.logf("  d %s", relPath)
+	case mtf.EntryFile:
+		c.prog.files.Add(1)
+		if h.IsSymlink {
+			op.kind = opSymlink
+			op.meta = mtfToPxarMeta(h, format.ModeIFLNK)
+			op.linkTgt = h.LinkTarget
+			c.logf("  l %s -> %s", relPath, h.LinkTarget)
+		} else {
+			op.kind = opFile
+			op.meta = mtfToPxarMeta(h, format.ModeIFREG)
+			op.size = h.Size
+			op.hardLink = h.IsHardLink
+			op.linkTgt = h.LinkTarget
+			if err := sp.reserve(h.Size); err != nil {
+				return fmt.Errorf("spool reserve %q: %w", h.Name, err)
+			}
+			blob, n, err := sp.read(r)
+			if err != nil {
+				return fmt.Errorf("spool file %q: %w", h.Name, err)
+			}
+			if n != h.Size {
+				sp.adjust(n - h.Size)
+			}
+			op.data = blob
+			op.dataSize = n
+			op.size = n
+			c.prog.tapeBytes.Add(n)
+			if h.IsHardLink {
+				c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
+			} else {
+				c.logf("  f %s (%d bytes)", relPath, h.Size)
+			}
+		}
+	}
+	ops <- op
+	return nil
+}
+
+func (c *converter) drain(ops <-chan tapeOp, sp *spool) error {
+	snapIdx := -1
+	for op := range ops {
+		switch op.kind {
+		case opSet:
+			if err := c.finishSnapshot(); err != nil {
+				return err
+			}
+			snapIdx = op.ssetIdx
+		case opSetEnd:
+			if err := c.finishSnapshot(); err != nil {
+				return err
+			}
+			if c.cfg.SnapshotSel >= 0 && snapIdx == c.cfg.SnapshotSel {
+				return nil
+			}
+		case opVolume:
+			c.rootPrefix = op.rootPfx
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+		case opDir:
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+			if err := c.consumeDir(op); err != nil {
+				return err
+			}
+		case opSymlink:
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+			if err := c.consumeSymlink(op); err != nil {
+				return err
+			}
+		case opFile:
+			if err := c.ensureSession(); err != nil {
+				return err
+			}
+			if err := c.consumeFile(sp, op); err != nil {
+				return err
+			}
+		case opEnd:
+			return c.finishSnapshot()
+		}
+	}
 	return c.finishSnapshot()
 }
 
-func (c *converter) processEntry(r io.Reader, h *mtf.Header) error {
-	relPath := strings.TrimPrefix(h.Name, c.rootPrefix)
-	relPath = strings.TrimPrefix(relPath, "/")
-
-	if relPath == "" {
+func (c *converter) consumeDir(op tapeOp) error {
+	if op.relPath == "" {
 		return nil
 	}
-
-	components := strings.Split(relPath, "/")
-	parent := components[:len(components)-1]
-	name := sanitizeName(components[len(components)-1])
-
-	for len(c.dirStack) > len(parent) {
+	for len(c.dirStack) > op.depth {
 		if err := c.writer.EndDirectory(); err != nil {
 			return err
 		}
 		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-
-	switch h.Type {
-	case mtf.EntryDirectory:
-		c.prog.dirs.Add(1)
-		meta := mtfToPxarMeta(h, format.ModeIFDIR)
-		c.logf("  d %s", relPath)
-		if err := c.writer.BeginDirectory(name, &meta); err != nil {
-			return fmt.Errorf("begin dir %q: %w", name, err)
-		}
-		c.dirStack = append(c.dirStack, name)
-
-	case mtf.EntryFile:
-		c.prog.files.Add(1)
-		if h.IsSymlink {
-			c.logf("  l %s -> %s", relPath, h.LinkTarget)
-			if err := c.writeSymlink(h, name, relPath); err != nil {
-				return err
-			}
-		} else {
-			if err := c.writeFile(r, h, name, relPath); err != nil {
-				return err
-			}
-			c.prog.bytes.Add(h.Size)
-		}
+	meta := op.meta
+	if err := c.writer.BeginDirectory(op.name, &meta); err != nil {
+		return fmt.Errorf("begin dir %q: %w", op.name, err)
 	}
-
+	c.dirStack = append(c.dirStack, op.name)
 	return nil
 }
 
-func (c *converter) writeSymlink(h *mtf.Header, name, relPath string) error {
-	meta := mtfToPxarMeta(h, format.ModeIFLNK)
-	entry := &pxar.Entry{
-		Metadata:   meta,
-		Kind:       pxar.KindSymlink,
-		LinkTarget: h.LinkTarget,
+func (c *converter) consumeSymlink(op tapeOp) error {
+	if op.relPath == "" {
+		return nil
 	}
-	entry.SetFileName(name)
+	for len(c.dirStack) > op.depth {
+		if err := c.writer.EndDirectory(); err != nil {
+			return err
+		}
+		c.dirStack = c.dirStack[:len(c.dirStack)-1]
+	}
+	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindSymlink, LinkTarget: op.linkTgt}
+	entry.SetFileName(op.name)
 	return c.writer.WriteEntry(entry, nil)
 }
 
-func (c *converter) writeFile(r io.Reader, h *mtf.Header, name, relPath string) error {
-	meta := mtfToPxarMeta(h, format.ModeIFREG)
-	entry := &pxar.Entry{
-		Metadata: meta,
-		Kind:     pxar.KindFile,
-		FileSize: uint64(h.Size),
+func (c *converter) consumeFile(sp *spool, op tapeOp) error {
+	if op.relPath == "" {
+		return nil
 	}
-	entry.SetFileName(name)
-	if h.IsHardLink && h.LinkTarget != "" {
-		c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
-	} else {
-		c.logf("  f %s (%d bytes)", relPath, h.Size)
+	for len(c.dirStack) > op.depth {
+		if err := c.writer.EndDirectory(); err != nil {
+			return err
+		}
+		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-
-	// Decouple tape reads from the encoder: a goroutine pumps the tape into
-	// an io.Pipe (32 MiB buffer) so the drive streams in large bursts instead
-	// of stop/start cycles that limit throughput.
-	pr, pw := io.Pipe()
-	go func() {
-		defer func() {
-			if err := pw.Close(); err != nil {
-				log.Error(err, "")
-			}
-		}()
-		bw := bufio.NewWriterSize(pw, 32<<20)
-		if _, err := io.Copy(bw, r); err != nil {
-			log.Error(err, "")
-		}
-		if err := bw.Flush(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-	return c.writer.WriteEntryReader(entry, pr, uint64(h.Size))
+	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindFile, FileSize: uint64(op.size)}
+	entry.SetFileName(op.name)
+	err := c.writer.WriteEntryReader(entry, bytes.NewReader(op.data), uint64(op.size))
+	if err == nil {
+		c.prog.bytes.Add(op.dataSize)
+	}
+	sp.release(op.dataSize)
+	return err
 }
 
 func setupTapeContinuation(r *mtf.Reader, dev string) {
@@ -692,11 +950,7 @@ func setupTapeContinuation(r *mtf.Reader, dev string) {
 		if _, err := fmt.Scanln(&buf); err != nil {
 			log.Error(err, "")
 		}
-		rc, err := openTapeReader(dev)
-		if err != nil {
-			return nil, err
-		}
-		return rc, nil
+		return OpenTapeReader(dev)
 	})
 }
 

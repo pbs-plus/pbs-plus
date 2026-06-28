@@ -32,6 +32,15 @@ Ext.define("PBS.MtfManagement.DriveGrid", {
       }).show();
     },
 
+    showStatus: function () {
+      let view = this.getView();
+      let selection = view.getSelection();
+      if (!selection || selection.length < 1) {
+        return;
+      }
+      location.hash = `#Drive-${encodeURIComponent(selection[0].data.name)}`;
+    },
+
     reload: function () {
       this.getView().getStore().rstore.load();
     },
@@ -50,33 +59,33 @@ Ext.define("PBS.MtfManagement.DriveGrid", {
   },
 
   listeners: {
-    beforedestroy: 'stopStore',
-    deactivate: 'stopStore',
-    activate: 'startStore',
-    itemdblclick: 'onEdit',
+    beforedestroy: "stopStore",
+    deactivate: "stopStore",
+    activate: "startStore",
+    itemdblclick: "showStatus",
   },
 
   store: {
-    type: 'diff',
+    type: "diff",
     rstore: {
-      type: 'update',
-      storeid: 'proxmox-tape-drives',
-      model: 'pbs-model-drives',
+      type: "update",
+      storeid: "proxmox-tape-drives",
+      model: "pbs-model-drives",
       proxy: {
-        type: 'proxmox',
-        url: '/api2/json/tape/drive',
+        type: "proxmox",
+        url: "/api2/json/tape/drive",
         queryParam: null,
       },
     },
-    sorters: 'name',
-    groupField: 'changer',
+    sorters: "name",
+    groupField: "changer",
   },
 
   features: [
     {
-      ftype: 'grouping',
+      ftype: "grouping",
       groupHeaderTpl: [
-        '{name:this.formatName} ({rows.length} Drive{[values.rows.length > 1 ? "s" : ""]})',
+        "{name:this.formatName} ({rows.length} Drive{[values.rows.length > 1 ? \"s\" : \"\"]})",
         {
           formatName: function (changer) {
             if (!changer) {
@@ -102,6 +111,13 @@ Ext.define("PBS.MtfManagement.DriveGrid", {
       xtype: "proxmoxButton",
       handler: "onEdit",
       disabled: true,
+    },
+    {
+      text: gettext("Status"),
+      xtype: "proxmoxButton",
+      handler: "showStatus",
+      disabled: true,
+      iconCls: "fa fa-window-restore",
     },
     {
       xtype: "proxmoxStdRemoveButton",

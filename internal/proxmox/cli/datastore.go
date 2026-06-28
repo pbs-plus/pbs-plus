@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 type DatastoreInfo struct {
@@ -32,4 +34,12 @@ func GetDatastoreInfo(datastoreName string) (DatastoreInfo, error) {
 		return DatastoreInfo{}, err
 	}
 	return info, nil
+}
+
+func EnsureNamespace(datastore, namespace string) error {
+	ds, err := GetDatastoreInfo(datastore)
+	if err != nil {
+		return fmt.Errorf("get datastore info for %q: %w", datastore, err)
+	}
+	return proxmox.EnsureNamespacePath(ds.Path, namespace)
 }

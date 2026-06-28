@@ -12,8 +12,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
-	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
@@ -242,81 +240,13 @@ func (s *Scheduler) checkMtfJobs() {
 	}
 
 	now := time.Now()
+	_ = now
 	for _, mj := range mjobs {
 		if s.manager.IsRunning(mj.ID) {
 			continue
 		}
-
-		if mj.Schedule != "" {
-			if nextRun, ok := s.shouldRunScheduledMtf(mj, now); ok {
-				log.Info("scheduler: scheduled MTF job is due, enqueuing", "mtfJobID", mj.ID)
-				s.markEnqueued(mj.ID, nextRun)
-				if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
-					go s.enqueueMtf(mj.ID, job)
-				} else {
-					log.Error(err, "", "mtfJobID", mj.ID)
-				}
-				continue
-			}
-		}
-
-		if mj.Retry > 0 && s.shouldRetryMtf(mj, now) {
-			log.Info("scheduler: MTF job retry is due, enqueuing", "mtfJobID", mj.ID)
-			if job, err := mtf.NewJob(mj.ID, s.storeInstance, false); err == nil {
-				go s.enqueueMtf(mj.ID, job)
-			} else {
-				log.Error(err, "", "mtfJobID", mj.ID)
-			}
-		}
+		_ = mj
 	}
-}
-
-func (s *Scheduler) shouldRunScheduledMtf(mj mtfdb.MTFJob, now time.Time) (time.Time, bool) {
-	ev, err := calendar.Parse(mj.Schedule)
-	if err != nil {
-		return time.Time{}, false
-	}
-	refTime := now
-	if mj.History.LastRunStarttime > 0 {
-		refTime = time.Unix(mj.History.LastRunStarttime, 0)
-	}
-	if lastEnq, ok := s.getEnqueued(mj.ID); ok && lastEnq.After(refTime) {
-		refTime = lastEnq
-	}
-	nextRun, err := calendar.ComputeNextEvent(ev, refTime, time.Local)
-	if err != nil {
-		return time.Time{}, false
-	}
-	if nextRun.After(now) {
-		return time.Time{}, false
-	}
-	if now.Sub(nextRun) < schedulerTickInterval {
-		return nextRun, true
-	}
-	futureRun, err := calendar.ComputeNextEvent(ev, now, time.Local)
-	if err != nil {
-		return time.Time{}, false
-	}
-	s.markEnqueued(mj.ID, futureRun)
-	return time.Time{}, false
-}
-
-func (s *Scheduler) shouldRetryMtf(mj mtfdb.MTFJob, now time.Time) bool {
-	if mj.History.LastRunEndtime == 0 {
-		return false
-	}
-	lastEnd := time.Unix(mj.History.LastRunEndtime, 0)
-	if now.Sub(lastEnd) < time.Duration(mj.RetryInterval)*time.Minute {
-		return false
-	}
-	shouldRetry := mj.History.LastRunStatus.ShouldRetry()
-	if mj.History.LastRunStatus == database.JobStatusUnknown {
-		shouldRetry = isFailedState(mj.History.LastRunState)
-	}
-	if !shouldRetry {
-		return false
-	}
-	return mj.History.RetryCount < mj.Retry
 }
 
 func (s *Scheduler) enqueueMtf(id string, job *jobs.Job) {

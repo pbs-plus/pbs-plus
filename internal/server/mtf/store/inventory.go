@@ -167,6 +167,14 @@ func (d *Database) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 	return ds, nil
 }
 
+func (d *Database) SetDataSetSsetPba(ctx context.Context, id int64, pba int64) error {
+	_, err := d.queries.UpdateDataSetSsetPba(ctx, mtfquery.UpdateDataSetSsetPbaParams{
+		SsetPba: pba,
+		ID:      id,
+	})
+	return err
+}
+
 func dataSetFromRow(r mtfquery.DataSet) DataSet {
 	return DataSet{
 		ID:             r.ID,
@@ -181,6 +189,7 @@ func dataSetFromRow(r mtfquery.DataSet) DataSet {
 		NumFiles:       ni(r.NumFiles),
 		NumCorrupt:     ni(r.NumCorrupt),
 		Size:           ni64(r.Size),
+		SSETPBA:        r.SsetPba,
 		FirstMediaSeq:  ni(r.FirstMediaSeq),
 	}
 }

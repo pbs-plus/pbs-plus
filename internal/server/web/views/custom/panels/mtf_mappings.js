@@ -267,7 +267,7 @@ Ext.define("PBS.MtfManagement.MappingPanel", {
               },
             });
           },
-          destroy: () => view.getStore().load(),
+          destroy: () => view.getStore().rstore.load(),
         },
       });
       win.show();
@@ -304,27 +304,40 @@ Ext.define("PBS.MtfManagement.MappingPanel", {
     },
 
     reload: function () {
-      this.getView().getStore().load();
+      this.getView().getStore().rstore.load();
+    },
+
+    startStore: function () {
+      this.getView().getStore().rstore.startUpdate();
+    },
+
+    stopStore: function () {
+      this.getView().getStore().rstore.stopUpdate();
     },
 
     init: function (view) {
-      Proxmox.Utils.monStoreErrors(view, view.getStore());
+      Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
     },
   },
 
   listeners: {
-    activate: function () {
-      this.getStore().load();
-    },
+    beforedestroy: 'stopStore',
+    deactivate: 'stopStore',
+    activate: 'startStore',
     itemdblclick: "onEdit",
   },
 
   store: {
-    model: "pbs-mtf-mapping",
-    autoLoad: true,
-    proxy: {
-      type: "pbsplus",
-      url: pbsPlusBaseUrl + "/api2/extjs/config/mtf-mapping",
+    type: "diff",
+    rstore: {
+      type: "update",
+      storeid: "pbs-mtf-mapping",
+      model: "pbs-mtf-mapping",
+      proxy: {
+        type: "pbsplus",
+        url: pbsPlusBaseUrl + "/api2/extjs/config/mtf-mapping",
+      },
+      interval: 5000,
     },
     sorters: [
       { property: "is_default", direction: "DESC" },

@@ -33,13 +33,41 @@ Ext.onReady(function () {
         expanded: true,
         children: [],
       });
-      root.insertChild(index + 3, {
-        text: "MTF Tapes",
-        iconCls: "fa fa-archive",
-        id: "mtf_tapes",
-        path: "pbsMtfManagement",
-        leaf: true,
-      });
+
+      let ensureMtfNode = function () {
+        Ext.defer(function () {
+          let r = Ext.getStore("NavigationStore").getRoot();
+          let tapeNode = r.findChild("path", "pbsTapeManagement", false);
+          if (!tapeNode) {
+            return;
+          }
+          if (tapeNode.findChild("path", "pbsMtfManagement", false)) {
+            return;
+          }
+          tapeNode.appendChild({
+            text: "MTF Migration",
+            iconCls: "fa fa-archive",
+            id: "mtf_tapes",
+            path: "pbsMtfManagement",
+            leaf: true,
+          });
+        }, 0);
+      };
+
+      ensureMtfNode();
+
+      let hookTapeStore = function () {
+        let nt = Ext.ComponentQuery.query("navigationtree")[0];
+        if (nt && nt.tapeStore) {
+          nt.tapeStore.on("load", ensureMtfNode);
+          return true;
+        }
+        return false;
+      };
+
+      if (!hookTapeStore()) {
+        Ext.defer(hookTapeStore, 2000);
+      }
     }
   }
 });

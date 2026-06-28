@@ -21,7 +21,7 @@ Ext.define("PBS.MtfManagement.JobView", {
     },
 
     reload: function () {
-      this.getView().getStore().load();
+      this.getView().getStore().rstore.load();
     },
 
     addJob: function () {
@@ -98,28 +98,30 @@ Ext.define("PBS.MtfManagement.JobView", {
       }
 
       let id = selection[0].data.id;
-      Ext.Msg.confirm(
-        gettext("Confirm"),
-        Ext.String.format(gettext("Start migration job '{0}'?"), id),
-        function (btn) {
-          if (btn !== "yes") {
-            return;
+      PBS.PlusUtils.API2Request({
+        url:
+          "/api2/extjs/d2d/mtf-job?job=" +
+          encodeURIComponent(encodePathValue(id)),
+        method: "POST",
+        waitMsgTarget: view,
+        success: function (response) {
+          let upid = response.result.data;
+          me.reload();
+          if (upid) {
+            Ext.create("PBS.plusWindow.TaskViewer", {
+              upid: upid,
+              taskDone: function () {
+                me.reload();
+              },
+            }).show();
+          } else {
+            me.reload();
           }
-          PBS.PlusUtils.API2Request({
-            url:
-              "/api2/extjs/d2d/mtf-job?job=" +
-              encodeURIComponent(encodePathValue(id)),
-            method: "POST",
-            waitMsgTarget: view,
-            success: function () {
-              me.reload();
-            },
-            failure: function (resp) {
-              Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
-            },
-          });
         },
-      );
+        failure: function (resp) {
+          Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+        },
+      });
     },
 
     stopJob: function () {
@@ -170,6 +172,15 @@ Ext.define("PBS.MtfManagement.JobView", {
 
     init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+      view.getStore().on("datachanged", function () {
+        var sel = view.getSelectionModel().getSelection();
+        view.query("proxmoxButton").forEach(function (btn) {
+          if (btn.enableFn && btn.selModel) {
+            var rec = sel.length > 0 ? sel[0] : null;
+            btn.setDisabled(!rec || btn.enableFn(rec) === false);
+          }
+        });
+      });
     },
   },
 
@@ -277,15 +288,6 @@ Ext.define("PBS.MtfManagement.JobView", {
       },
     },
     {
-      header: gettext("Schedule"),
-      dataIndex: "schedule",
-      width: 130,
-      sortable: true,
-      renderer: function (v) {
-        return v || "-";
-      },
-    },
-    {
       header: gettext("Status"),
       dataIndex: "last-run-status",
       width: 100,
@@ -299,6 +301,48 @@ Ext.define("PBS.MtfManagement.JobView", {
         if (!value) return "-";
         return Ext.Date.format(new Date(value * 1000), "Y-m-d H:i:s");
       },
+    },
+    {
+      text: gettext("Duration"),
+      dataIndex: "duration",
+      renderer: Proxmox.Utils.render_duration,
+      width: 60,
+    },
+    {
+      text: gettext("Read Speed"),
+      dataIndex: "read_speed_human",
+      renderer: function (value) {
+        return value || "-";
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Read Total"),
+      dataIndex: "read_total_human",
+      renderer: function (value) {
+        return value || "-";
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Processing Speed"),
+      dataIndex: "processing_speed_human",
+      renderer: function (value) {
+        return value || "-";
+      },
+      width: 60,
+    },
+    {
+      text: gettext("Files Processed"),
+      dataIndex: "current_file_count",
+      renderer: function (value) {
+        if (!value && value !== 0) {
+          return "-";
+        }
+        return value.toLocaleString();
+      },
+      width: 60,
+      hidden: true,
     },
   ],
 });
