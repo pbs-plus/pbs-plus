@@ -105,6 +105,8 @@ Ext.define("PBS.MtfManagement.JobEdit", {
         win.getController().loadForm(win.jobId);
         return;
       }
+      win.method = "POST";
+      win.isCreate = true;
       if (win.sourceKind) {
         let kindCombo = win.down("combobox[name=source_kind]");
         if (kindCombo) kindCombo.setValue(win.sourceKind);
@@ -142,6 +144,7 @@ Ext.define("PBS.MtfManagement.JobEdit", {
             renderer: Ext.htmlEncode,
             allowBlank: true,
             editable: true,
+            emptyText: gettext("auto-generated from source"),
           },
           {
             xtype: "proxmoxKVComboBox",
@@ -294,25 +297,6 @@ Ext.define("PBS.MtfManagement.JobEdit", {
             name: "comment",
             fieldLabel: gettext("Comment"),
             width: "100%",
-          },
-          {
-            xtype: "textfield",
-            name: "schedule",
-            fieldLabel: gettext("Schedule"),
-            width: "100%",
-            emptyText: gettext("calendar event, e.g. mon..fri 02:00"),
-          },
-          {
-            xtype: "textfield",
-            name: "retry",
-            fieldLabel: gettext("Number of retries"),
-            emptyText: gettext("0"),
-          },
-          {
-            xtype: "textfield",
-            name: "retry-interval",
-            fieldLabel: gettext("Retry interval (minutes)"),
-            emptyText: gettext("1"),
           },
         ],
       },

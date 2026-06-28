@@ -277,15 +277,6 @@ Ext.define("PBS.MtfManagement.JobView", {
       },
     },
     {
-      header: gettext("Schedule"),
-      dataIndex: "schedule",
-      width: 130,
-      sortable: true,
-      renderer: function (v) {
-        return v || "-";
-      },
-    },
-    {
       header: gettext("Status"),
       dataIndex: "last-run-status",
       width: 100,

@@ -164,16 +164,12 @@ func TestJobCRUD(t *testing.T) {
 		t.Fatalf("UpsertMediaFamily: %v", err)
 	}
 
-	job, err := db.CreateMtfJob(ctx, MTFJob{
+	_, err := db.CreateMtfJob(ctx, MTFJob{
 		ID: "my-mtf-job", SourceKind: "family", SourceRef: "42",
 		Datastore: "local", Namespace: "base", Spanning: true,
-		Retry: 2, RetryInterval: 5,
 	})
 	if err != nil {
 		t.Fatalf("CreateMtfJob: %v", err)
-	}
-	if job.Retry != 2 || job.RetryInterval != 5 {
-		t.Errorf("retry config = %d/%d, want 2/5", job.Retry, job.RetryInterval)
 	}
 
 	got, err := db.GetMtfJob(ctx, "my-mtf-job")

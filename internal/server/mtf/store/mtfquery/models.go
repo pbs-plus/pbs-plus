@@ -100,7 +100,6 @@ type MtfJob struct {
 	SourceRef             string         `json:"source_ref"`
 	Datastore             string         `json:"datastore"`
 	Namespace             sql.NullString `json:"namespace"`
-	Schedule              sql.NullString `json:"schedule"`
 	Comment               sql.NullString `json:"comment"`
 	NotificationMode      sql.NullString `json:"notification_mode"`
 	Spanning              sql.NullInt64  `json:"spanning"`
@@ -112,8 +111,6 @@ type MtfJob struct {
 	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
 	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
 	RetryCount            sql.NullInt64  `json:"retry_count"`
-	Retry                 sql.NullInt64  `json:"retry"`
-	RetryInterval         sql.NullInt64  `json:"retry_interval"`
 	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
 	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`

@@ -299,15 +299,12 @@ func mtfJobFromForm(r *http.Request) (mtfdb.MTFJob, error) {
 		SourceRef:         r.FormValue("source_ref"),
 		Datastore:         r.FormValue("datastore"),
 		Namespace:         r.FormValue("namespace"),
-		Schedule:          r.FormValue("schedule"),
 		Comment:           r.FormValue("comment"),
 		NotificationMode:  r.FormValue("notification-mode"),
 		Changer:           r.FormValue("changer"),
 		Drive:             r.FormValue("drive"),
 		Spanning:          r.FormValue("spanning") == "1" || r.FormValue("spanning") == "true",
 		OverwriteMappings: r.FormValue("overwrite_mappings") == "1" || r.FormValue("overwrite_mappings") == "true",
-		Retry:             atoiDefault(r.FormValue("retry"), 0),
-		RetryInterval:     atoiDefault(r.FormValue("retry-interval"), 1),
 	}
 
 	if j.SourceKind != "cartridge" && j.SourceKind != "family" && j.SourceKind != "dataset" {
@@ -350,9 +347,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	if v := r.FormValue("source_ref"); v != "" {
 		job.SourceRef = v
 	}
-	if v := r.FormValue("schedule"); v != "" {
-		job.Schedule = v
-	}
 	if v := r.FormValue("comment"); v != "" {
 		job.Comment = v
 	}
@@ -371,12 +365,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	if r.FormValue("overwrite_mappings") != "" {
 		job.OverwriteMappings = r.FormValue("overwrite_mappings") == "1" || r.FormValue("overwrite_mappings") == "true"
 	}
-	if v := r.FormValue("retry"); v != "" {
-		job.Retry = atoiDefault(v, 0)
-	}
-	if v := r.FormValue("retry-interval"); v != "" {
-		job.RetryInterval = atoiDefault(v, 1)
-	}
 
 	if delArr, ok := r.Form["delete"]; ok {
 		for _, attr := range delArr {
@@ -389,8 +377,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 				job.SourceRef = ""
 			case "source_kind":
 				job.SourceKind = ""
-			case "schedule":
-				job.Schedule = ""
 			case "comment":
 				job.Comment = ""
 			case "notification-mode":
@@ -403,10 +389,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 				job.Spanning = false
 			case "overwrite_mappings":
 				job.OverwriteMappings = false
-			case "retry":
-				job.Retry = 0
-			case "retry-interval":
-				job.RetryInterval = 1
 			}
 		}
 	}
@@ -775,7 +757,6 @@ func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 		"source_ref":         j.SourceRef,
 		"datastore":          j.Datastore,
 		"namespace":          j.Namespace,
-		"schedule":           j.Schedule,
 		"comment":            j.Comment,
 		"notification-mode":  j.NotificationMode,
 		"notification-batch": "",
@@ -783,8 +764,6 @@ func flattenMtfJobForEdit(j mtfdb.MTFJob) map[string]any {
 		"drive":              j.Drive,
 		"spanning":           j.Spanning,
 		"overwrite_mappings": j.OverwriteMappings,
-		"retry":              j.Retry,
-		"retry-interval":     j.RetryInterval,
 	}
 }
 

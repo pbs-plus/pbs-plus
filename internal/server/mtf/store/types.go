@@ -103,15 +103,12 @@ type MTFJob struct {
 	SourceLabel       string     `json:"source_label"`
 	Datastore         string     `json:"datastore"`
 	Namespace         string     `json:"namespace"`
-	Schedule          string     `json:"schedule"`
 	Comment           string     `json:"comment"`
 	NotificationMode  string     `json:"notification-mode"`
 	Spanning          bool       `json:"spanning"`
 	OverwriteMappings bool       `json:"overwrite_mappings"`
 	Changer           string     `json:"changer"`
 	Drive             string     `json:"drive"`
-	Retry             int        `json:"retry"`
-	RetryInterval     int        `json:"retry-interval"`
 	CurrentPID        string     `json:"current_pid"`
 	History           JobHistory `json:"history"`
 	CreatedAt         int64      `json:"created_at"`
