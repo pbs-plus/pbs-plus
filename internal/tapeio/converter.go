@@ -462,7 +462,7 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 		return fmt.Errorf("read set map for snapshot locate: %w", sErr)
 	}
 	if sm == nil || len(sm.Entries) == 0 {
-		c.logf("SetMap empty — reading sequentially")
+		c.logf("SetMap empty, reading sequentially")
 		return nil
 	}
 	sel := c.cfg.SnapshotSel
@@ -471,7 +471,7 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 		c.cfg.SnapshotSel = sel
 	}
 	if sel < 0 || sel >= len(sm.Entries) {
-		c.logf("Snapshot selection %d out of range (%d entries) — reading sequentially", sel, len(sm.Entries))
+		c.logf("Snapshot selection %d out of range (%d entries), reading sequentially", sel, len(sm.Entries))
 		return nil
 	}
 	pba := int64(sm.Entries[sel].SSETPBA) - 1

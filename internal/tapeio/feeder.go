@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 
 	mtf "github.com/pbs-plus/go-mtf"
 
@@ -26,10 +27,11 @@ type Feeder struct {
 	loadedSlot    int
 	loadedSrcSlot int
 
-	probed    map[string]int
-	processed map[string]bool
-	skip      func(barcode string) bool
-	logf      func(string)
+	probed      map[string]int
+	processed   map[string]bool
+	skip        func(barcode string) bool
+	logf        func(string)
+	seqResolver func(seq int) string
 }
 
 type Option func(*Feeder)
@@ -48,6 +50,10 @@ func WithContext(ctx context.Context) Option {
 
 func WithKeepLoaded(keep bool) Option {
 	return func(f *Feeder) { f.keepLoaded = keep }
+}
+
+func WithSequenceResolver(fn func(seq int) string) Option {
+	return func(f *Feeder) { f.seqResolver = fn }
 }
 
 func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Feeder, error) {
@@ -287,66 +293,86 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		log.Error(err, "")
 	}
 
-	for pass := range 2 {
-		for i, s := range f.status.Slots {
-			if f.cancelled() {
-				return nil, f.ctx.Err()
-			}
-			if !s.Full || s.ImportExport {
-				continue
-			}
-			if IsCleaningTape(s.VolumeTag) {
-				continue
-			}
-			if f.processed[s.VolumeTag] {
-				continue
-			}
-			slot := i + 1
-			if slot == f.loadedSlot {
-				continue
-			}
-			rc, err := f.loadSlot(slot)
-			if err != nil {
-				f.log(fmt.Sprintf("  slot %d: %v", slot, err))
-				continue
-			}
-			ok, err := f.verifyTape(rc, wantMFMID, wantSeq)
-			if err != nil {
-				f.log(fmt.Sprintf("  slot %d verify: %v", slot, err))
-				if err := rc.Close(); err != nil {
-					log.Error(err, "")
+	if f.seqResolver != nil {
+		barcode := f.seqResolver(wantSeq)
+		if barcode == "" {
+			return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in inventory", wantMFMID, wantSeq)
+		}
+		if !f.tapeInChanger(barcode) {
+			f.log(fmt.Sprintf("tape %s (family 0x%08X sequence %d) not in changer, waiting for operator", barcode, wantMFMID, wantSeq))
+		}
+		if err := f.LoadBarcodeWait(barcode); err != nil {
+			return nil, fmt.Errorf("load %s: %w", barcode, err)
+		}
+		rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
+		if err != nil {
+			return nil, err
+		}
+		if wantMFMID != 0 {
+			if ok, vErr := f.verifyTape(rc, wantMFMID, wantSeq); vErr != nil || !ok {
+				if cerr := rc.Close(); cerr != nil {
+					log.Error(cerr, "")
 				}
-				if err := f.UnloadCurrent(); err != nil {
-					log.Error(err, "")
-				}
-				continue
-			}
-			if ok {
-				f.log(fmt.Sprintf("  slot %d: matched sequence %d", slot, wantSeq))
-				rc, err := OpenTapeReader(f.tapeDev)
-				if err != nil {
-					return nil, err
-				}
-				return rc, nil
-			}
-			f.log(fmt.Sprintf("  slot %d: not the wanted tape", slot))
-			if err := rc.Close(); err != nil {
-				log.Error(err, "")
-			}
-			if err := f.UnloadCurrent(); err != nil {
-				log.Error(err, "")
+				return nil, fmt.Errorf("tape %s is not family 0x%08X sequence %d", barcode, wantMFMID, wantSeq)
 			}
 		}
+		f.log(fmt.Sprintf("Loaded sequence %d (%s)", wantSeq, barcode))
+		return rc, nil
+	}
+
+	for i, s := range f.status.Slots {
 		if f.cancelled() {
 			return nil, f.ctx.Err()
 		}
-		if pass == 0 {
-			if err := f.refreshStatus(); err != nil {
-				log.Error(err, "")
-			}
+		if !s.Full || s.ImportExport || IsCleaningTape(s.VolumeTag) || f.processed[s.VolumeTag] {
+			continue
 		}
+		slot := i + 1
+		if slot == f.loadedSlot {
+			continue
+		}
+		rc, err := f.loadSlot(slot)
+		if err != nil {
+			f.log(fmt.Sprintf("  slot %d: %v", slot, err))
+			continue
+		}
+		ok, err := f.verifyTape(rc, wantMFMID, wantSeq)
+		if err != nil || !ok {
+			if err != nil {
+				f.log(fmt.Sprintf("  slot %d verify: %v", slot, err))
+			} else {
+				f.log(fmt.Sprintf("  slot %d: not sequence %d", slot, wantSeq))
+			}
+			if cerr := rc.Close(); cerr != nil {
+				log.Error(cerr, "")
+			}
+			if uerr := f.UnloadCurrent(); uerr != nil {
+				log.Error(uerr, "")
+			}
+			continue
+		}
+		f.log(fmt.Sprintf("  slot %d: matched sequence %d", slot, wantSeq))
+		rc2, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
+		if err != nil {
+			return nil, err
+		}
+		return rc2, nil
 	}
 	return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in changer", wantMFMID, wantSeq)
+}
+
+func (f *Feeder) tapeInChanger(barcode string) bool {
+	for _, s := range f.status.Slots {
+		if s.Full && s.VolumeTag == barcode {
+			return true
+		}
+	}
+	for _, d := range f.status.Drives {
+		if d.Full && d.VolumeTag == barcode {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *Feeder) verifyTape(rc *TapeReader, wantMFMID uint32, wantSeq int) (bool, error) {
@@ -367,6 +393,49 @@ func (f *Feeder) verifyTape(rc *TapeReader, wantMFMID uint32, wantSeq int) (bool
 		return false, nil
 	}
 	return gotSeq == wantSeq, nil
+}
+
+func (f *Feeder) LoadBarcodeWait(barcode string) error {
+	var lastReason string
+	first := true
+	for {
+		if f.cancelled() {
+			return f.ctx.Err()
+		}
+		if !first {
+			for range 50 {
+				if f.cancelled() {
+					return f.ctx.Err()
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		first = false
+
+		if err := f.refreshStatus(); err != nil {
+			if reason := fmt.Sprintf("refresh changer: %v", err); reason != lastReason {
+				f.log(fmt.Sprintf("Please insert media '%s': %s", barcode, reason))
+				lastReason = reason
+			}
+			continue
+		}
+		if !f.tapeInChanger(barcode) {
+			const reason = "tape is not in the changer"
+			if reason != lastReason {
+				f.log(fmt.Sprintf("Please insert media '%s' into the changer (%s)", barcode, reason))
+				lastReason = reason
+			}
+			continue
+		}
+		if err := f.LoadBarcode(barcode); err != nil {
+			if reason := fmt.Sprintf("load failed: %v", err); reason != lastReason {
+				f.log(fmt.Sprintf("Please insert media '%s': %s", barcode, reason))
+				lastReason = reason
+			}
+			continue
+		}
+		return nil
+	}
 }
 
 func (f *Feeder) LoadBarcode(barcode string) error {

@@ -307,17 +307,27 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 		cfg.DriveIndex = idx
 
 		if cfg.ChangerDevice != "" && len(carts) > 0 {
+			seqToBarcode := make(map[int]string, len(carts))
+			for _, c := range carts {
+				seqToBarcode[c.Sequence] = c.Barcode
+			}
 			feeder, err := tapeio.NewFeeder(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, tapeio.WithLog(func(msg string) {
 				j.task.LogString(msg)
-			}), tapeio.WithContext(ctx), tapeio.WithKeepLoaded(j.job.KeepLoaded))
+			}), tapeio.WithContext(ctx), tapeio.WithKeepLoaded(j.job.KeepLoaded), tapeio.WithSequenceResolver(func(seq int) string {
+				return seqToBarcode[seq]
+			}))
 			if err != nil {
 				return cfg, fmt.Errorf("open changer: %w", err)
 			}
 			cfg.Feeder = feeder
 			j.feeder = feeder
-			if err := feeder.LoadBarcode(carts[0].Barcode); err != nil {
+			wantBarcode := seqToBarcode[ds.FirstMediaSeq]
+			if wantBarcode == "" {
+				wantBarcode = carts[0].Barcode
+			}
+			if err := feeder.LoadBarcodeWait(wantBarcode); err != nil {
 				feeder.Close()
-				return cfg, fmt.Errorf("load cartridge: %w", err)
+				return cfg, fmt.Errorf("load cartridge %s: %w", wantBarcode, err)
 			}
 		}
 	}
