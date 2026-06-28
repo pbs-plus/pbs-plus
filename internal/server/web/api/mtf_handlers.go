@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
@@ -468,6 +469,15 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			active, upid := mtfScanInProgress()
+			resp := map[string]any{"success": true, "data": map[string]any{"active": active, "upid": upid}}
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				log.Error(err, "")
+			}
+			return
+		}
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
@@ -490,7 +500,11 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			Label:         r.FormValue("label"),
 		}
 
-		// Create a task with full active/archive pipeline (matches restore pattern).
+		if active, _ := mtfScanInProgress(); active {
+			WriteErrorResponse(w, fmt.Errorf("an MTF inventory scan is already in progress"))
+			return
+		}
+
 		st, err := mtf.NewScanTask(opts)
 		if err != nil {
 			WriteErrorResponse(w, fmt.Errorf("create scan task: %w", err))
@@ -777,4 +791,17 @@ func atoiDefault(s string, def int) int {
 		return def
 	}
 	return n
+}
+
+func mtfScanInProgress() (bool, string) {
+	tasks, err := tasklog.ListTasks(true)
+	if err != nil {
+		return false, ""
+	}
+	for _, t := range tasks {
+		if t.Task.WorkerType == "mtfscan" {
+			return true, t.UPID
+		}
+	}
+	return false, ""
 }

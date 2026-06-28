@@ -260,11 +260,35 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
 
     init: function (view) {
       Proxmox.Utils.monStoreErrors(view, view.getStore());
+      this.checkScanStatus();
+      this.scanPoll = setInterval(() => this.checkScanStatus(), 5000);
+      view.on("destroy", () => { if (this.scanPoll) clearInterval(this.scanPoll); });
+    },
+
+    checkScanStatus: function () {
+      let view = this.getView();
+      if (!view || view.isDestroyed) return;
+      let btn = view.down("#mtfScanBtn");
+      let status = view.down("#mtfScanStatus");
+      PBS.PlusUtils.API2Request({
+        url: "/api2/extjs/config/mtf-scan",
+        method: "GET",
+        success: function (resp) {
+          let d = resp.result.data || {};
+          if (d.active) {
+            if (btn) { btn.setDisabled(true); btn.setText(gettext("Scan in progress…")); }
+            if (status) { status.show(); status.setHtml('<i class="fa fa-refresh fa-spin"></i> ' + gettext("An inventory scan is running.")); }
+          } else {
+            if (btn) { btn.setDisabled(false); btn.setText(gettext("Run Scan")); }
+            if (status) { status.hide(); }
+          }
+        },
+      });
     },
   },
 
   listeners: {
-    activate: 'reload',
+    activate: function () { this.reload(); this.checkScanStatus(); },
     itemdblclick: 'showDataSets',
   },
 
@@ -299,7 +323,9 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
   tbar: [
     { text: gettext("Reload"), handler: "reload" },
     "-",
-    { text: gettext("Run Scan"), handler: "startScan", iconCls: "fa fa-search" },
+    { text: gettext("Run Scan"), handler: "startScan", iconCls: "fa fa-search", itemId: "mtfScanBtn" },
+    { xtype: "tbtext", itemId: "mtfScanStatus", hidden: true, cls: "proxmox-warning-row", html: "" },
+    "->",
     { xtype: "proxmoxButton", text: gettext("View Data Sets"), disabled: true, handler: "showDataSets", enableFn: (rec) => !!rec.get("media_family_id") },
     { xtype: "proxmoxButton", text: gettext("Migrate Cartridge"), disabled: true, handler: "migrateCartridge", enableFn: () => true },
     { xtype: "proxmoxButton", text: gettext("Migrate Set"), disabled: true, handler: "migrateFamily", enableFn: () => true },
