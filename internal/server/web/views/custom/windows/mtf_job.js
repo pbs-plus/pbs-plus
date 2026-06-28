@@ -39,6 +39,10 @@ Ext.define("PBS.MtfManagement.JobEdit", {
           view.method = "PUT";
           view.jobId = data.id;
           view.isCreate = false;
+          let btn = view.down("[reference=submitbutton]") || view.down("button[reference=submitbutton]");
+          if (btn) {
+            btn.setText(gettext("Update"));
+          }
           form.setValues(data);
           // Load the source store for the saved kind. Once it finishes,
           // re-apply the source_ref so the combo resolves display text.

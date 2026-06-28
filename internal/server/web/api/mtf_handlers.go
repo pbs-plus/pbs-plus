@@ -794,6 +794,23 @@ func flattenMtfJob(j mtfdb.MTFJob) flatMtfJob {
 		Duration:              j.History.Duration,
 		StatusParsed:          ParseTaskStatus(j.History.LastRunState),
 	}
+	if j.History.LastRunUpid != "" && (int(j.History.LastRunStatus) == 0 || j.History.LastRunState == "") {
+		if task, err := tasklog.GetTaskByUPID(j.History.LastRunUpid); err == nil {
+			if task.StartTime > 0 {
+				f.LastRunStarttime = task.StartTime
+			}
+			if task.EndTime > 0 {
+				f.LastRunEndtime = task.EndTime
+				f.Duration = task.EndTime - task.StartTime
+			} else if task.StartTime > 0 {
+				f.Duration = time.Now().Unix() - task.StartTime
+			}
+			if task.Status == "stopped" {
+				f.LastRunState = task.ExitStatus
+				f.StatusParsed = ParseTaskStatus(task.ExitStatus)
+			}
+		}
+	}
 	if p, ok := mtf.ProgressFor(j.ID); ok {
 		f.CurrentFileCount = p.Files
 		f.CurrentFolderCount = p.Dirs
