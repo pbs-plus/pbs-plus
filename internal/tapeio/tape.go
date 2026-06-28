@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"syscall"
 	"time"
 
@@ -111,33 +110,31 @@ func OpenTapeReaderWithLog(dev string, logf func(string)) (*TapeReader, error) {
 		}
 		return nil, fmt.Errorf("open %s: %w", dev, err)
 	}
-	fmt.Fprintf(os.Stderr, "[SCSI] opened %s\n", dev)
+	tr := NewTapeReader(d)
+	tr.logf = logf
+	tr.logSCSI(fmt.Sprintf("opened %s", dev))
 	if err := d.SetLogicalAddressing(); err != nil {
 		log.Error(err, "")
 	}
-	fmt.Fprintf(os.Stderr, "[SCSI] %s rewind -> BOT\n", dev)
-	if err := d.Rewind(); err != nil {
-		if err := d.Close(); err != nil {
-			log.Error(err, "")
+	if err := tr.Rewind(); err != nil {
+		if cerr := d.Close(); cerr != nil {
+			log.Error(cerr, "")
 		}
 		return nil, fmt.Errorf("rewind %s: %w", dev, err)
 	}
 	pos, err := d.TellBlock()
 	if err != nil {
-		if err := d.Close(); err != nil {
-			log.Error(err, "")
+		if cerr := d.Close(); cerr != nil {
+			log.Error(cerr, "")
 		}
 		return nil, fmt.Errorf("read-position after rewind %s: %w", dev, err)
 	}
 	if pos != 0 {
-		if err := d.Close(); err != nil {
-			log.Error(err, "")
+		if cerr := d.Close(); cerr != nil {
+			log.Error(cerr, "")
 		}
 		return nil, fmt.Errorf("rewind %s: drive reports block %d, want 0 (BOT)", dev, pos)
 	}
-	fmt.Fprintf(os.Stderr, "[SCSI] %s rewind OK, at block 0\n", dev)
-	tr := NewTapeReader(d)
-	tr.logf = logf
 	return tr, nil
 }
 

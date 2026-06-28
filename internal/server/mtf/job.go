@@ -18,6 +18,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
+	mtf "github.com/pbs-plus/go-mtf"
+
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 )
@@ -319,17 +321,18 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 			}
 		}
 	}
-	snaps, err := tapeio.ListSnapshots(ctx, cfg)
-	if err != nil {
-		return cfg, fmt.Errorf("list snapshots: %w", err)
-	}
-	for i, s := range snaps {
-		if s.MachineName == ds.MachineName {
-			cfg.SnapshotSel = i
-			return cfg, nil
+	wantMachine := ds.MachineName
+	cfg.SnapshotResolver = func(entries []mtf.SetMapEntry) int {
+		for i, e := range entries {
+			for _, v := range e.Volumes {
+				if v.MachineName == wantMachine {
+					return i
+				}
+			}
 		}
+		return -1
 	}
-	return cfg, fmt.Errorf("data set machine %q not found in snapshots", ds.MachineName)
+	return cfg, nil
 }
 
 func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev string, driveIdx int, err error) {

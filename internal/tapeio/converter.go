@@ -50,6 +50,7 @@ type Config struct {
 	TaskLog             func(string)
 	Feeder              *Feeder
 	MigrationTag        string
+	SnapshotResolver    func(entries []mtf.SetMapEntry) int
 }
 
 type Stats struct {
@@ -443,7 +444,7 @@ func (c *converter) snapshotSelected() bool {
 }
 
 func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
-	if c.cfg.SnapshotSel < 0 {
+	if c.cfg.SnapshotSel < 0 && c.cfg.SnapshotResolver == nil {
 		return nil
 	}
 	c.logf("Reading TAPE descriptor block (BOT + 1)")
@@ -453,20 +454,30 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 	}
 	c.logf("TAPE descriptor: name=%s sequence=%d family=0x%08X", blk.Tape.Name, blk.Tape.Sequence, blk.Tape.MFMID)
 	c.logf("Reading SetMap (EOM + read back)")
-	pba, ok, sErr := locateSnapshotPBA(rc, c.cfg.SnapshotSel)
+	sm, sErr := mtf.ReadSetMap(rc)
 	if sErr != nil {
-		return sErr
+		return fmt.Errorf("read set map for snapshot locate: %w", sErr)
 	}
-	if ok {
-		c.logf("Locating to snapshot %d at PBA %d", c.cfg.SnapshotSel, pba)
-		if err := r.SeekToBlock(pba); err != nil {
-			return fmt.Errorf("seek to snapshot %d: %w", c.cfg.SnapshotSel, err)
-		}
-		c.snapshotIdx = c.cfg.SnapshotSel - 1
-		c.logf("Located to snapshot %d, ready to read entries", c.cfg.SnapshotSel)
-	} else {
-		c.logf("SetMap empty or snapshot %d out of range — reading sequentially", c.cfg.SnapshotSel)
+	if sm == nil || len(sm.Entries) == 0 {
+		c.logf("SetMap empty — reading sequentially")
+		return nil
 	}
+	sel := c.cfg.SnapshotSel
+	if c.cfg.SnapshotResolver != nil {
+		sel = c.cfg.SnapshotResolver(sm.Entries)
+		c.cfg.SnapshotSel = sel
+	}
+	if sel < 0 || sel >= len(sm.Entries) {
+		c.logf("Snapshot selection %d out of range (%d entries) — reading sequentially", sel, len(sm.Entries))
+		return nil
+	}
+	pba := int64(sm.Entries[sel].SSETPBA) - 1
+	c.logf("Locating to snapshot %d (%q) at PBA %d", sel, sm.Entries[sel].Name, pba)
+	if err := r.SeekToBlock(pba); err != nil {
+		return fmt.Errorf("seek to snapshot %d: %w", sel, err)
+	}
+	c.snapshotIdx = sel - 1
+	c.logf("Located to snapshot %d, ready to read entries", sel)
 	return nil
 }
 
@@ -877,17 +888,6 @@ func (c *converter) consumeFile(sp *spool, op tapeOp) error {
 	}
 	sp.release(op.dataSize)
 	return err
-}
-
-func locateSnapshotPBA(rc *TapeReader, sel int) (pba int64, ok bool, err error) {
-	sm, sErr := mtf.ReadSetMap(rc)
-	if sErr != nil {
-		return 0, false, fmt.Errorf("read set map for snapshot locate: %w", sErr)
-	}
-	if sm == nil || sel < 0 || sel >= len(sm.Entries) {
-		return 0, false, nil
-	}
-	return int64(sm.Entries[sel].SSETPBA) - 1, true, nil
 }
 
 func setupTapeContinuation(r *mtf.Reader, dev string) {
