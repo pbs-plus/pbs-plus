@@ -102,16 +102,16 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	default:
 	}
 
+	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore, "upid", task.UPID())
+	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
+		j.logger.Error(err, "failed to persist MTF job history (started)")
+	}
+
 	cfg, err := j.buildConfig(ctx)
 	if err != nil {
 		task.LogString(fmt.Sprintf("MTF migration failed during setup: %s", err.Error()))
 		task.CloseErr(err)
 		return err
-	}
-
-	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore, "upid", task.UPID())
-	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
-		j.logger.Error(err, "failed to persist MTF job history (started)")
 	}
 
 	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",

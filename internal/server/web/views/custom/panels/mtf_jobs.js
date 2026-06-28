@@ -106,6 +106,7 @@ Ext.define("PBS.MtfManagement.JobView", {
         waitMsgTarget: view,
         success: function (response) {
           let upid = response.result.data;
+          me.reload();
           if (upid) {
             Ext.create("PBS.plusWindow.TaskViewer", {
               upid: upid,
