@@ -98,28 +98,29 @@ Ext.define("PBS.MtfManagement.JobView", {
       }
 
       let id = selection[0].data.id;
-      Ext.Msg.confirm(
-        gettext("Confirm"),
-        Ext.String.format(gettext("Start migration job '{0}'?"), id),
-        function (btn) {
-          if (btn !== "yes") {
-            return;
+      PBS.PlusUtils.API2Request({
+        url:
+          "/api2/extjs/d2d/mtf-job?job=" +
+          encodeURIComponent(encodePathValue(id)),
+        method: "POST",
+        waitMsgTarget: view,
+        success: function (response) {
+          let upid = response.result.data;
+          if (upid) {
+            Ext.create("PBS.plusWindow.TaskViewer", {
+              upid: upid,
+              taskDone: function () {
+                me.reload();
+              },
+            }).show();
+          } else {
+            me.reload();
           }
-          PBS.PlusUtils.API2Request({
-            url:
-              "/api2/extjs/d2d/mtf-job?job=" +
-              encodeURIComponent(encodePathValue(id)),
-            method: "POST",
-            waitMsgTarget: view,
-            success: function () {
-              me.reload();
-            },
-            failure: function (resp) {
-              Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
-            },
-          });
         },
-      );
+        failure: function (resp) {
+          Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+        },
+      });
     },
 
     stopJob: function () {

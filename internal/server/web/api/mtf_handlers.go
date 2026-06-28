@@ -38,8 +38,6 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		var response MtfJobRunResponse
-
 		jobIDs := r.URL.Query()["job"]
 		if len(jobIDs) == 0 {
 			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
@@ -58,22 +56,48 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		stop := r.Method == http.MethodDelete
 
+		// Single job run: synchronous — return UPID so frontend can open TaskViewer.
+		if !stop && len(decoded) == 1 {
+			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 30*time.Second)
+			if err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			rpcClient := rpc.NewClient(conn)
+			defer rpcClient.Close()
+
+			args := &jobrpc.MtfJobQueueArgs{JobID: decoded[0], Stop: false}
+			var reply jobrpc.QueueReply
+			if err := rpcClient.Call("JobRPCService.MtfQueue", args, &reply); err != nil {
+				WriteErrorResponse(w, err)
+				return
+			}
+			if reply.Status != 200 {
+				WriteErrorResponse(w, fmt.Errorf("%s", reply.Message))
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(MtfJobRunResponse{
+				Data:    reply.UPID,
+				Status:  http.StatusOK,
+				Success: true,
+			})
+			return
+		}
+
+		// Batch run or stop: fire-and-forget async.
 		go func() {
-			log.Info("mtf job run request", "ids", decoded, "stop", stop)
 			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 			if err != nil {
 				log.Error(err, "", "mtfJobs", decoded)
 				return
 			}
 			rpcClient := rpc.NewClient(conn)
-			defer func() {
-				if err := rpcClient.Close(); err != nil {
-					log.Error(err, "")
-				}
-			}()
+			defer rpcClient.Close()
 
 			for _, id := range decoded {
-				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop, Web: true}
+				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop}
 				var reply jobrpc.QueueReply
 				if err := rpcClient.Call("JobRPCService.MtfQueue", args, &reply); err != nil {
 					log.Error(err, "", "mtfJobID", id)
@@ -86,11 +110,10 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		}()
 
 		w.Header().Set("Content-Type", "application/json")
-		response.Status = http.StatusOK
-		response.Success = true
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			log.Error(err, "")
-		}
+		json.NewEncoder(w).Encode(MtfJobRunResponse{
+			Status:  http.StatusOK,
+			Success: true,
+		})
 	}
 }
 

@@ -39,6 +39,7 @@ type MtfJobQueueArgs struct {
 type QueueReply struct {
 	Status  int
 	Message string
+	UPID    string
 }
 
 var BackupJobFactory func(database.Backup, *store.Store, bool, bool, []string) *jobs.Job
@@ -46,7 +47,7 @@ var BackupJobFactory func(database.Backup, *store.Store, bool, bool, []string) *
 var RestoreJobFactory func(database.Restore, *store.Store, bool, bool) (*jobs.Job, error)
 
 // MtfJobFactory creates an MTF tape → pxar migration job operation. Set
-var MtfJobFactory func(string, *store.Store) (*jobs.Job, error)
+var MtfJobFactory func(string, *store.Store) (*jobs.Job, string, error)
 
 type JobRPCService struct {
 	ctx     context.Context
@@ -118,7 +119,7 @@ func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error
 		return nil
 	}
 
-	jobOp, err := MtfJobFactory(args.JobID, s.Store)
+	jobOp, upid, err := MtfJobFactory(args.JobID, s.Store)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
@@ -130,6 +131,7 @@ func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error
 		return nil
 	}
 	reply.Status = 200
+	reply.UPID = upid
 	return nil
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
+	"github.com/pbs-plus/pbs-plus/internal/changer"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -56,21 +57,43 @@ func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper) *jobs.Job {
 	}
 }
 
-func NewJob(jobID string, st *store.Store) (*jobs.Job, error) {
+func NewJob(jobID string, st *store.Store) (*jobs.Job, string, error) {
 	ctx := st.Ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	j, err := st.MtfStore.GetMtfJob(ctx, jobID)
+	jobRec, err := st.MtfStore.GetMtfJob(ctx, jobID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return newJob(j, st, st.MtfMapper), nil
+
+	task, err := startTask(jobRec)
+	if err != nil {
+		return nil, "", fmt.Errorf("start task: %w", err)
+	}
+
+	mj := &mtfJob{
+		job:    jobRec,
+		store:  st,
+		mapper: st.MtfMapper,
+		logger: log.WithScope(log.Scope{JobID: jobRec.ID}),
+		task:   task,
+	}
+
+	return &jobs.Job{
+		ID:        jobRec.ID,
+		Execute:   mj.execute,
+		OnSuccess: mj.onSuccess,
+		OnError:   mj.onError,
+		Cleanup:   mj.cleanup,
+	}, task.UPID(), nil
 }
 
 func (j *mtfJob) execute(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	j.cancel = cancel
+
+	task := j.task
 
 	select {
 	case <-ctx.Done():
@@ -80,16 +103,12 @@ func (j *mtfJob) execute(ctx context.Context) error {
 
 	cfg, err := j.buildConfig(ctx)
 	if err != nil {
+		task.LogString(fmt.Sprintf("MTF migration failed during setup: %s", err.Error()))
+		task.CloseErr(err)
 		return err
 	}
 
-	task, err := startTask(j.job)
-	if err != nil {
-		return fmt.Errorf("start task: %w", err)
-	}
-	j.task = task
-
-	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore)
+	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore, "upid", task.UPID())
 	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history (started)")
 	}
@@ -277,6 +296,12 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 			cfg.ChangerDevice = chg
 		}
 		cfg.DriveIndex = idx
+
+		if cfg.ChangerDevice != "" && len(carts) > 0 {
+			if err := j.loadFirstCartridge(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, carts); err != nil {
+				return cfg, fmt.Errorf("load cartridge: %w", err)
+			}
+		}
 	}
 	snaps, err := tapeio.ListSnapshots(ctx, cfg)
 	if err != nil {
@@ -292,6 +317,47 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 }
 
 // device paths to avoid "no such file or directory" errors.
+func (j *mtfJob) loadFirstCartridge(changerDev, tapeDev string, driveIdx int, carts []mtfdb.Cartridge) error {
+	chg, err := changer.Open(changerDev)
+	if err != nil {
+		return fmt.Errorf("open changer %s: %w", changerDev, err)
+	}
+	defer chg.Close()
+
+	st, err := chg.Status()
+	if err != nil {
+		return fmt.Errorf("changer status: %w", err)
+	}
+
+	if driveIdx < len(st.Drives) && st.Drives[driveIdx].Full {
+		driveBarcode := st.Drives[driveIdx].VolumeTag
+		unloadSlot := 1
+		for i, s := range st.Slots {
+			if s.VolumeTag == driveBarcode {
+				unloadSlot = i + 1
+				break
+			}
+		}
+		if err := chg.Unload(st, driveIdx, unloadSlot); err != nil {
+			return fmt.Errorf("unload drive %d: %w", driveIdx, err)
+		}
+	}
+
+	barcode := carts[0].Barcode
+	for i, s := range st.Slots {
+		if s.Full && s.VolumeTag == barcode {
+			slotIdx := i + 1
+			j.logger.Info("loading cartridge into drive", "barcode", barcode, "slot", slotIdx, "drive", driveIdx)
+			if err := chg.Load(st, slotIdx, driveIdx); err != nil {
+				return fmt.Errorf("load slot %d into drive %d: %w", slotIdx, driveIdx, err)
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("cartridge %s not found in changer slots", barcode)
+}
+
 func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev string, driveIdx int, err error) {
 	if tapeCfg == nil || len(tapeCfg.Drives) == 0 {
 		return "/dev/nst0", "", 0, nil
