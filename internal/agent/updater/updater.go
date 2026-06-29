@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/Masterminds/semver"
@@ -31,6 +32,9 @@ var (
 	Ed25519PublicKeyB64 = ""
 
 	ErrAlreadyLatest = errors.New("already on latest version")
+
+	defaultMu      sync.Mutex
+	defaultUpdater *Updater
 )
 
 const (
@@ -53,6 +57,7 @@ type Config struct {
 type Updater struct {
 	cfg    Config
 	cancel context.CancelFunc
+	mu     sync.Mutex
 }
 
 type VersionResp struct {
@@ -63,9 +68,6 @@ type VersionResp struct {
 func New(cfg Config) (*Updater, error) {
 	if cfg.MinConstraint == "" {
 		cfg.MinConstraint = ">= 0.52.0"
-	}
-	if cfg.PollInterval <= 0 {
-		cfg.PollInterval = 2 * time.Minute
 	}
 	if cfg.UpgradeConfirm == nil {
 		cfg.UpgradeConfirm = func(string) bool { return true }
@@ -88,6 +90,10 @@ func New(cfg Config) (*Updater, error) {
 
 	ctx, cancel := context.WithCancel(cfg.Context)
 	up := &Updater{cfg: cfg, cancel: cancel}
+
+	defaultMu.Lock()
+	defaultUpdater = up
+	defaultMu.Unlock()
 
 	if cfg.FetchOnStart {
 		go func() {
@@ -125,7 +131,39 @@ func (u *Updater) Stop() {
 	}
 }
 
+// TriggerUpdate performs a single, on-demand update check using the default
+// updater if one was registered via New. This is invoked by the push-based
+// update path (aRPC "update" method) so the server can request an update from
+// the UI. It is safe to call concurrently with the poll loop.
+func TriggerUpdate() error {
+	defaultMu.Lock()
+	up := defaultUpdater
+	defaultMu.Unlock()
+
+	if up != nil {
+		return up.CheckNow()
+	}
+
+	// No default updater registered (e.g. auto-update disabled). Build a
+	// one-shot updater that reuses the same check/apply logic without
+	// starting any background goroutines.
+	up = &Updater{cfg: Config{
+		MinConstraint:  ">= 0.52.0",
+		UpgradeConfirm: func(string) bool { return true },
+		Exit: func(err error) {
+			if err != nil {
+				log.Error(err, "updater exit with error")
+			}
+			os.Exit(0)
+		},
+	}}
+	return up.CheckNow()
+}
+
 func (u *Updater) CheckNow() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
 	version, embedded, err := u.fetchLatestVersion()
 	if err != nil {
 		return fmt.Errorf("updater: fetch latest version: %w", err)

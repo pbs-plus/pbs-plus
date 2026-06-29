@@ -51,6 +51,24 @@ func (p *pbsService) Start(s service.Service) error {
 			Service: s,
 			Context: p.ctx,
 		})
+	} else {
+		// Register a singleton updater (no polling) so the server can still
+		// push updates on demand via aRPC.
+		_, _ = updater.New(updater.Config{
+			MinConstraint:  ">= 0.52.0",
+			PollInterval:   0,
+			FetchOnStart:   false,
+			UpgradeConfirm: func(v string) bool { return true },
+			Exit: func(err error) {
+				if err != nil {
+					log.Error(err, "updater exiting with error")
+				}
+				log.Info("exiting for service manager to restart with updated binary")
+				os.Exit(1)
+			},
+			Service: s,
+			Context: p.ctx,
+		})
 	}
 	go p.run()
 	return nil

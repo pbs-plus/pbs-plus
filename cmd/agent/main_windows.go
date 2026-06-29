@@ -42,6 +42,16 @@ func (p *pbsService) Start(s service.Service) error {
 			Service:        s,
 			Context:        p.ctx,
 		})
+	} else {
+		_, _ = updater.New(updater.Config{
+			MinConstraint:  ">= 0.52.0",
+			PollInterval:   0,
+			FetchOnStart:   false,
+			UpgradeConfirm: func(v string) bool { return true },
+			Exit:           func(err error) {},
+			Service:        s,
+			Context:        p.ctx,
+		})
 	}
 	go p.run()
 	return nil

@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/agent/sync"
+	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
@@ -302,6 +303,18 @@ func ConnectARPC(
 			router.Handle("cleanup", sync.BackupCloseHandler)
 			router.Handle("cleanup_restore", sync.RestoreCloseHandler)
 			router.Handle("verify_start", cli.VerifyStartHandler)
+			router.Handle("update", func(req *arpc.Request) (arpc.Response, error) {
+				if err := updater.TriggerUpdate(); err != nil {
+					return arpc.Response{}, arpc.WrapError(err)
+				}
+				data, err := cbor.Marshal(map[string]string{
+					"status": "update triggered",
+				})
+				if err != nil {
+					return arpc.Response{}, arpc.WrapError(err)
+				}
+				return arpc.Response{Status: 200, Data: data}, nil
+			})
 			session.SetRouter(router)
 			backoff = base
 
