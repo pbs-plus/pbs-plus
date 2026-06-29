@@ -1,0 +1,1 @@
+ALTER TABLE mtf_cartridges ADD COLUMN pba_offset INTEGER NOT NULL DEFAULT 0;

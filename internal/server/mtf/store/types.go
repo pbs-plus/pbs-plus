@@ -26,6 +26,7 @@ type Cartridge struct {
 	MediaFamilyID   int64  `json:"media_family_id"`
 	MediaFamilyName string `json:"media_family_name"`
 	Sequence        int    `json:"sequence"`
+	PbaOffset       int64  `json:"pba_offset"`
 	Role            string `json:"role"`
 	CatalogType     int    `json:"catalog_type"`
 	IsBkfFile       bool   `json:"is_bkf_file"`

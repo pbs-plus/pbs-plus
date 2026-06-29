@@ -469,9 +469,8 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 		if _, err := r.Next(); err != nil {
 			return fmt.Errorf("read TAPE descriptor: %w", err)
 		}
-		pba := c.cfg.SnapshotPBA - 1
-		c.logf("Locating to snapshot at PBA %d (from inventory)", pba)
-		if err := r.SeekToBlock(pba); err != nil {
+		c.logf("Locating to snapshot at PBA %d (from inventory)", c.cfg.SnapshotPBA)
+		if err := r.SeekToBlock(c.cfg.SnapshotPBA); err != nil {
 			return fmt.Errorf("seek to snapshot: %w", err)
 		}
 		c.logf("Located to snapshot, ready to read entries")
@@ -481,6 +480,10 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 		return nil
 	}
 	c.logf("Reading TAPE descriptor block (BOT + 1)")
+	if _, err := r.Next(); err != nil {
+		return fmt.Errorf("read TAPE descriptor: %w", err)
+	}
+	c.logf("Reading SetMap (EOM + read back)")
 	blk, err := r.Next()
 	if err != nil {
 		return fmt.Errorf("read TAPE descriptor: %w", err)
@@ -504,7 +507,14 @@ func (c *converter) locateToSnapshot(rc *TapeReader, r *mtf.Reader) error {
 		c.logf("Snapshot selection %d out of range (%d entries), reading sequentially", sel, len(sm.Entries))
 		return nil
 	}
-	pba := int64(sm.Entries[sel].SSETPBA) - 1
+	pba := int64(sm.Entries[sel].SSETPBA)
+	if len(sm.Entries) > 0 && sm.Entries[0].SSETPBA > 0 {
+		if pos, pErr := rc.TellBlock(); pErr == nil {
+			offset := int64(sm.Entries[0].SSETPBA) - pos
+			pba -= offset
+			c.logf("Calibrated PBA %d (raw=%d, offset=%d, firstPos=%d)", pba, sm.Entries[sel].SSETPBA, offset, pos)
+		}
+	}
 	c.logf("Locating to snapshot %d (%q) at PBA %d", sel, sm.Entries[sel].Name, pba)
 	if c.cfg.OnSetMapRead != nil {
 		c.cfg.OnSetMapRead(sm.Entries[sel])

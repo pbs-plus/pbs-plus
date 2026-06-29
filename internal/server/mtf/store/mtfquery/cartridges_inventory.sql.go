@@ -76,7 +76,7 @@ func (q *Queries) DeleteCartridge(ctx context.Context, barcode string) (int64, e
 }
 
 const getCartridge = `-- name: GetCartridge :one
-SELECT barcode, label, media_family_id, sequence, role, catalog_type, is_bkf_file, source_path, volumes, directories, files, empty_files, file_bytes, sparse_files, compressed_files, encrypted_files, has_catalog, catalog_bytes, sets_closed, status, last_scanned, created_at FROM mtf_cartridges WHERE barcode = ? LIMIT 1
+SELECT barcode, label, media_family_id, sequence, role, catalog_type, is_bkf_file, source_path, volumes, directories, files, empty_files, file_bytes, sparse_files, compressed_files, encrypted_files, has_catalog, catalog_bytes, sets_closed, status, last_scanned, created_at, pba_offset FROM mtf_cartridges WHERE barcode = ? LIMIT 1
 `
 
 func (q *Queries) GetCartridge(ctx context.Context, barcode string) (MtfCartridge, error) {
@@ -105,6 +105,7 @@ func (q *Queries) GetCartridge(ctx context.Context, barcode string) (MtfCartridg
 		&i.Status,
 		&i.LastScanned,
 		&i.CreatedAt,
+		&i.PbaOffset,
 	)
 	return i, err
 }
@@ -129,7 +130,7 @@ func (q *Queries) GetInventoryRun(ctx context.Context, id int64) (MtfInventoryRu
 }
 
 const listCartridges = `-- name: ListCartridges :many
-SELECT barcode, label, media_family_id, sequence, role, catalog_type, is_bkf_file, source_path, volumes, directories, files, empty_files, file_bytes, sparse_files, compressed_files, encrypted_files, has_catalog, catalog_bytes, sets_closed, status, last_scanned, created_at FROM mtf_cartridges ORDER BY media_family_id, sequence
+SELECT barcode, label, media_family_id, sequence, role, catalog_type, is_bkf_file, source_path, volumes, directories, files, empty_files, file_bytes, sparse_files, compressed_files, encrypted_files, has_catalog, catalog_bytes, sets_closed, status, last_scanned, created_at, pba_offset FROM mtf_cartridges ORDER BY media_family_id, sequence
 `
 
 func (q *Queries) ListCartridges(ctx context.Context) ([]MtfCartridge, error) {
@@ -164,6 +165,7 @@ func (q *Queries) ListCartridges(ctx context.Context) ([]MtfCartridge, error) {
 			&i.Status,
 			&i.LastScanned,
 			&i.CreatedAt,
+			&i.PbaOffset,
 		); err != nil {
 			return nil, err
 		}
@@ -179,7 +181,7 @@ func (q *Queries) ListCartridges(ctx context.Context) ([]MtfCartridge, error) {
 }
 
 const listCartridgesByFamily = `-- name: ListCartridgesByFamily :many
-SELECT barcode, label, media_family_id, sequence, role, catalog_type, is_bkf_file, source_path, volumes, directories, files, empty_files, file_bytes, sparse_files, compressed_files, encrypted_files, has_catalog, catalog_bytes, sets_closed, status, last_scanned, created_at FROM mtf_cartridges WHERE media_family_id = ? ORDER BY sequence
+SELECT barcode, label, media_family_id, sequence, role, catalog_type, is_bkf_file, source_path, volumes, directories, files, empty_files, file_bytes, sparse_files, compressed_files, encrypted_files, has_catalog, catalog_bytes, sets_closed, status, last_scanned, created_at, pba_offset FROM mtf_cartridges WHERE media_family_id = ? ORDER BY sequence
 `
 
 func (q *Queries) ListCartridgesByFamily(ctx context.Context, mediaFamilyID int64) ([]MtfCartridge, error) {
@@ -214,6 +216,7 @@ func (q *Queries) ListCartridgesByFamily(ctx context.Context, mediaFamilyID int6
 			&i.Status,
 			&i.LastScanned,
 			&i.CreatedAt,
+			&i.PbaOffset,
 		); err != nil {
 			return nil, err
 		}
@@ -270,14 +273,14 @@ INSERT INTO mtf_cartridges (
     volumes, directories, files, empty_files, file_bytes,
     sparse_files, compressed_files, encrypted_files,
     has_catalog, catalog_bytes, sets_closed,
-    status, last_scanned
+    status, last_scanned, pba_offset
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
     ?, ?,
     ?, ?, ?, ?, ?,
     ?, ?, ?,
     ?, ?, ?,
-    ?, ?
+    ?, ?, ?
 )
 ON CONFLICT(barcode) DO UPDATE SET
     label = excluded.label,
@@ -299,7 +302,8 @@ ON CONFLICT(barcode) DO UPDATE SET
     catalog_bytes = excluded.catalog_bytes,
     sets_closed = excluded.sets_closed,
     status = excluded.status,
-    last_scanned = excluded.last_scanned
+    last_scanned = excluded.last_scanned,
+    pba_offset = excluded.pba_offset
 `
 
 type UpsertCartridgeParams struct {
@@ -324,6 +328,7 @@ type UpsertCartridgeParams struct {
 	SetsClosed      sql.NullInt64  `json:"sets_closed"`
 	Status          sql.NullString `json:"status"`
 	LastScanned     sql.NullInt64  `json:"last_scanned"`
+	PbaOffset       int64          `json:"pba_offset"`
 }
 
 func (q *Queries) UpsertCartridge(ctx context.Context, arg UpsertCartridgeParams) error {
@@ -349,6 +354,7 @@ func (q *Queries) UpsertCartridge(ctx context.Context, arg UpsertCartridgeParams
 		arg.SetsClosed,
 		arg.Status,
 		arg.LastScanned,
+		arg.PbaOffset,
 	)
 	return err
 }

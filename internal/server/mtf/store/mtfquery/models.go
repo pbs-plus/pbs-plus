@@ -67,6 +67,7 @@ type MtfCartridge struct {
 	Status          sql.NullString `json:"status"`
 	LastScanned     sql.NullInt64  `json:"last_scanned"`
 	CreatedAt       sql.NullInt64  `json:"created_at"`
+	PbaOffset       int64          `json:"pba_offset"`
 }
 
 type MtfChanger struct {

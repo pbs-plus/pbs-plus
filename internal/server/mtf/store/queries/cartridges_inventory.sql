@@ -5,14 +5,14 @@ INSERT INTO mtf_cartridges (
     volumes, directories, files, empty_files, file_bytes,
     sparse_files, compressed_files, encrypted_files,
     has_catalog, catalog_bytes, sets_closed,
-    status, last_scanned
+    status, last_scanned, pba_offset
 ) VALUES (
     ?, ?, ?, ?, ?, ?,
     ?, ?,
     ?, ?, ?, ?, ?,
     ?, ?, ?,
     ?, ?, ?,
-    ?, ?
+    ?, ?, ?
 )
 ON CONFLICT(barcode) DO UPDATE SET
     label = excluded.label,
@@ -34,7 +34,8 @@ ON CONFLICT(barcode) DO UPDATE SET
     catalog_bytes = excluded.catalog_bytes,
     sets_closed = excluded.sets_closed,
     status = excluded.status,
-    last_scanned = excluded.last_scanned;
+    last_scanned = excluded.last_scanned,
+    pba_offset = excluded.pba_offset;
 
 -- name: GetCartridge :one
 SELECT * FROM mtf_cartridges WHERE barcode = ? LIMIT 1;

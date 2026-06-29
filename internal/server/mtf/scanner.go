@@ -208,6 +208,13 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcod
 		return fmt.Errorf("first block is not a TAPE block")
 	}
 
+	var pbaOffset int64
+	if sm != nil && len(sm.Entries) > 0 {
+		if pos, pErr := rc.TellBlock(); pErr == nil {
+			pbaOffset = int64(sm.Entries[0].SSETPBA) - pos
+		}
+	}
+
 	fam := r.Family()
 	famID := int64(fam.ID)
 	if famID == 0 {
@@ -242,6 +249,7 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcod
 		HasCatalog:    nullInt(1),
 		Status:        nullStr("online"),
 		LastScanned:   nullInt(time.Now().Unix()),
+		PbaOffset:     pbaOffset,
 	}); err != nil {
 		return fmt.Errorf("upsert cartridge: %w", err)
 	}
@@ -464,6 +472,7 @@ func cartridgeParams(barcode string, famID int64, cen mtflib.Census, isBKF bool,
 		SetsClosed:      nullInt(int64(cen.SetsClosed)),
 		Status:          nullStr("online"),
 		LastScanned:     nullInt(time.Now().Unix()),
+		PbaOffset:       0,
 	}
 }
 

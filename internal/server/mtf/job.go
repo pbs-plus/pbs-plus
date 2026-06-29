@@ -353,8 +353,8 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 	wantSet := ds.SetNumber
 	wantMachine := ds.MachineName
 	wantTime := ds.WriteTime
-	if ds.SSETPBA > 0 {
-		cfg.SnapshotPBA = ds.SSETPBA
+	if ds.SSETPBA > 0 && len(carts) > 0 {
+		cfg.SnapshotPBA = ds.SSETPBA - carts[0].PbaOffset
 	} else {
 		dsID := ds.ID
 		storeRef := j.store.MtfStore
