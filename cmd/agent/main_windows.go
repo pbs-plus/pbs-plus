@@ -34,6 +34,17 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
+	pending := updater.CheckPendingOnBoot()
+	if pending {
+		go func() {
+			select {
+			case <-p.ctx.Done():
+			case <-time.After(updater.CommitGrace):
+				updater.CommitUpdate()
+			}
+		}()
+	}
+
 	if os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE") != "true" {
 		_, _ = updater.New(updater.Config{
 			MinConstraint: ">= 0.52.0", PollInterval: 2 * time.Minute, FetchOnStart: true,

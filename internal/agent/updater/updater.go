@@ -88,6 +88,8 @@ func New(cfg Config) (*Updater, error) {
 		log.Error(err, "update cleanup error, non-fatal")
 	}
 
+	pruneStaleArtifacts()
+
 	ctx, cancel := context.WithCancel(cfg.Context)
 	up := &Updater{cfg: cfg, cancel: cancel}
 
@@ -164,6 +166,12 @@ func (u *Updater) CheckNow() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
+	if exePath, err := os.Executable(); err == nil {
+		if p, ok := readPending(exePath); ok {
+			return fmt.Errorf("updater: update to %s still pending health confirmation (attempt %d)", p.Version, p.Attempts)
+		}
+	}
+
 	version, embedded, err := u.fetchLatestVersion()
 	if err != nil {
 		return fmt.Errorf("updater: fetch latest version: %w", err)
@@ -236,6 +244,10 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 		return fmt.Errorf("fetch binary: %w", err)
 	}
 
+	if err := sanityCheckBinary(binary); err != nil {
+		return fmt.Errorf("sanity check: %w", err)
+	}
+
 	verified := false
 
 	if embedded {
@@ -281,26 +293,35 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
-	newPath := exePath + ".new"
-	oldPath := exePath + ".old"
+	staged := stagedPathOf(exePath)
+	previous := previousPathOf(exePath)
 
-	if err := os.WriteFile(newPath, binary, 0755); err != nil {
-		return fmt.Errorf("write new binary: %w", err)
+	if err := atomicWriteFile(staged, binary, 0o755); err != nil {
+		return fmt.Errorf("stage new binary: %w", err)
 	}
 
-	if err := os.Rename(exePath, oldPath); err != nil {
-		return fmt.Errorf("rename current binary: %w", err)
+	if err := copyFile(previous, exePath, 0o755); err != nil {
+		_ = os.Remove(staged)
+		return fmt.Errorf("snapshot previous binary: %w", err)
 	}
 
-	if err := os.Rename(newPath, exePath); err != nil {
-		rerr := os.Rename(oldPath, exePath)
-		if rerr != nil {
-			log.Error(rerr, "rollback failed: could not restore original binary")
-		}
-		return fmt.Errorf("rename new binary: %w", err)
+	pending := &pendingUpdate{
+		Version:      version,
+		PreviousPath: previous,
+		StartedAt:    time.Now(),
+	}
+	if err := writePending(exePath, pending); err != nil {
+		_ = os.Remove(staged)
+		return fmt.Errorf("write pending marker: %w", err)
 	}
 
-	_ = os.Remove(oldPath)
+	if err := swapBinary(staged, exePath); err != nil {
+		removePending(exePath)
+		return fmt.Errorf("swap binary: %w", err)
+	}
+
+	log.Info("updater: staged update applied, awaiting health confirmation",
+		"version", version)
 
 	restartCallback(u.cfg)
 	return nil
@@ -471,4 +492,45 @@ func parseECDSASignature(data []byte) (*ecdsaSig, error) {
 	}
 
 	return &sig, nil
+}
+
+func sanityCheckBinary(data []byte) error {
+	if len(data) < 4 {
+		return fmt.Errorf("binary too small (%d bytes)", len(data))
+	}
+	switch runtime.GOOS {
+	case "windows":
+		if data[0] != 'M' || data[1] != 'Z' {
+			return fmt.Errorf("missing PE (MZ) magic")
+		}
+	case "darwin":
+		magic := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+		switch magic {
+		case 0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe:
+		default:
+			return fmt.Errorf("missing Mach-O magic")
+		}
+	default:
+		if data[0] != 0x7f || data[1] != 'E' || data[2] != 'L' || data[3] != 'F' {
+			return fmt.Errorf("missing ELF magic")
+		}
+	}
+	return nil
+}
+
+func swapBinary(staged, exePath string) error {
+	tmpOld := exePath + ".swapping"
+	_ = os.Remove(tmpOld)
+
+	if err := os.Rename(exePath, tmpOld); err != nil {
+		return fmt.Errorf("move current binary aside: %w", err)
+	}
+	if err := os.Rename(staged, exePath); err != nil {
+		if rerr := os.Rename(tmpOld, exePath); rerr != nil {
+			log.Error(rerr, "updater: swap rollback failed, original binary could not be restored")
+		}
+		return fmt.Errorf("install staged binary: %w", err)
+	}
+	_ = os.Remove(tmpOld)
+	return nil
 }
