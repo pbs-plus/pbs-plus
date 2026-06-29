@@ -398,6 +398,10 @@ func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtfli
 				break
 			}
 		}
+		ssetPba := int64(e.SSETPBA)
+		if int(e.MediaSeq) != tapeSeq {
+			ssetPba = 0
+		}
 		dsID, err := s.db.Queries().UpsertDataSet(ctx, mtfquery.UpsertDataSetParams{
 			MediaFamilyID:  famID,
 			SetNumber:      nullInt(int64(e.SetNumber)),
@@ -410,7 +414,7 @@ func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtfli
 			NumFiles:       nullInt(int64(e.NumFiles)),
 			NumCorrupt:     nullInt(int64(e.NumCorrupt)),
 			Size:           nullInt(0),
-			SsetPba:        int64(e.SSETPBA),
+			SsetPba:        ssetPba,
 			FirstMediaSeq:  nullInt(int64(e.MediaSeq)),
 			SourceMediaSeq: nullInt(int64(tapeSeq)),
 		})

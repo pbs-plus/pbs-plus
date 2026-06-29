@@ -353,13 +353,14 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 	wantSet := ds.SetNumber
 	wantMachine := ds.MachineName
 	wantTime := ds.WriteTime
-	if ds.SSETPBA > 0 && len(carts) > 0 {
+	currentSeq := int(carts[0].Sequence)
+	if ds.SSETPBA > 0 && len(carts) > 0 && ds.FirstMediaSeq == currentSeq {
 		offset := carts[0].PbaOffset
 		if offset == 0 {
 			offset = 1
 		}
 		cfg.SnapshotPBA = ds.SSETPBA - offset
-	} else {
+	} else if ds.SSETPBA > 0 && len(carts) > 0 {
 		dsID := ds.ID
 		storeRef := j.store.MtfStore
 		cfg.OnSetMapRead = func(entry mtf.SetMapEntry) {
@@ -374,6 +375,11 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 		}
 	}
 	cfg.SnapshotResolver = func(entries []mtf.SetMapEntry) int {
+		for i, e := range entries {
+			if int(e.SetNumber) == wantSet && int(e.MediaSeq) == currentSeq {
+				return i
+			}
+		}
 		for i, e := range entries {
 			if int(e.SetNumber) == wantSet {
 				return i
