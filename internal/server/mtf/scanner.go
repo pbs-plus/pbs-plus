@@ -95,9 +95,11 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (*Result, error) {
 }
 
 func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) error {
-	s.logger.Info("mtf: opening changer", "device", opts.ChangerDevice)
+	s.logger.Info("mtf: opening changer", "device", opts.ChangerDevice, "drive_index", opts.DriveIndex)
 
-	f, err := tapeio.NewFeeder(opts.ChangerDevice, opts.TapeDevice, opts.DriveIndex)
+	f, err := tapeio.NewFeeder(opts.ChangerDevice, opts.TapeDevice, opts.DriveIndex,
+		tapeio.WithLog(func(msg string) { s.logger.LogString(msg) }),
+	)
 	if err != nil {
 		s.logger.Error(err, "mtf: open changer", "device", opts.ChangerDevice)
 		return fmt.Errorf("open changer %s: %w", opts.ChangerDevice, err)

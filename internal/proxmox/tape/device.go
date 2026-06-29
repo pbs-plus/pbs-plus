@@ -42,6 +42,37 @@ func ResolveDrive(nameOrPath string) string {
 	return ResolveDevice(resolved)
 }
 
+func ResolveDriveIndex(nameOrPath string) int {
+	if nameOrPath == "" {
+		return 0
+	}
+	cfg, err := ReadConfig()
+	if err != nil {
+		return 0
+	}
+	for _, d := range cfg.Drives {
+		if d.Name == nameOrPath {
+			return d.ChangerDrivenum
+		}
+	}
+	target := normalizeDriveBase(nameOrPath)
+	for _, d := range cfg.Drives {
+		if normalizeDriveBase(d.Path) == target {
+			return d.ChangerDrivenum
+		}
+	}
+	return 0
+}
+
+func normalizeDriveBase(path string) string {
+	for _, sfx := range []string{"-sg", "-nst", "-st"} {
+		if b, ok := strings.CutSuffix(path, sfx); ok {
+			return b
+		}
+	}
+	return path
+}
+
 func resolveConfiguredDevice(nameOrPath string, lookup func(*Config) []string) string {
 	if nameOrPath == "" {
 		return nameOrPath
