@@ -2,6 +2,7 @@ package tapeio
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"unicode"
 
@@ -91,9 +92,18 @@ func digitVal(b byte) int {
 }
 
 func detectDriveGen(tapeDev string) int {
+	for _, p := range sgProbePaths(tapeDev) {
+		if gen := tryInquireGen(p); gen != ltUndefined || p == tapeDev {
+			return gen
+		}
+	}
+	return ltUndefined
+}
+
+func tryInquireGen(tapeDev string) int {
 	d, err := tapedrive.Open(tapeDev)
 	if err != nil {
-		log.Error(err, "lto: cannot open drive for INQUIRY")
+		log.Error(err, "lto: cannot open drive for INQUIRY", "device", tapeDev)
 		return ltUndefined
 	}
 	defer func() {
@@ -103,7 +113,7 @@ func detectDriveGen(tapeDev string) int {
 	}()
 	in, err := d.Inquiry()
 	if err != nil {
-		log.Error(err, "lto: INQUIRY failed")
+		log.Error(err, "lto: INQUIRY failed", "device", tapeDev)
 		return ltUndefined
 	}
 	gen := productLTOGen(in.Product)
@@ -115,6 +125,16 @@ func detectDriveGen(tapeDev string) int {
 			"vendor", in.Vendor, "product", in.Product, "generation", gen)
 	}
 	return gen
+}
+
+func sgProbePaths(tapeDev string) []string {
+	if before, ok := strings.CutSuffix(tapeDev, "-nst"); ok {
+		sg := before + "-sg"
+		if _, err := os.Stat(sg); err == nil {
+			return []string{sg, tapeDev}
+		}
+	}
+	return []string{tapeDev}
 }
 
 func _genDesc(gen int) string {
