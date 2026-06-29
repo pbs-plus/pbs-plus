@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 	"time"
@@ -14,18 +15,18 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
+var ErrStateDesync = errors.New("tape state desync: drive contents do not match expected cartridge")
+
 type Feeder struct {
 	chg        *changer.Changer
 	tapeDev    string
 	driveIndex int
+	driveGen   int
 	ctx        context.Context
 	keepLoaded bool
 
-	status *changer.Status
-
 	loadedBarcode string
 	loadedSlot    int
-	loadedSrcSlot int
 
 	probed      map[string]int
 	processed   map[string]bool
@@ -64,8 +65,7 @@ func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Fee
 		}
 		return nil, fmt.Errorf("open changer %s: %w", changerDev, err)
 	}
-	st, err := chg.Status()
-	if err != nil {
+	if _, err := chg.Status(); err != nil {
 		if err := chg.Close(); err != nil {
 			log.Error(err, "")
 		}
@@ -75,8 +75,8 @@ func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Fee
 		chg:        chg,
 		tapeDev:    tapeDev,
 		driveIndex: driveIndex,
+		driveGen:   detectDriveGen(tapeDev),
 		ctx:        context.Background(),
-		status:     st,
 		probed:     make(map[string]int),
 		processed:  make(map[string]bool),
 	}
@@ -108,31 +108,69 @@ func (f *Feeder) cancelled() bool {
 	}
 }
 
-func (f *Feeder) refreshStatus() error {
-	st, err := f.chg.Status()
-	if err != nil {
-		return err
-	}
-	f.status = st
-	return nil
+func (f *Feeder) currentStatus() (*changer.Status, error) {
+	return f.chg.Status()
 }
 
-func (f *Feeder) loadSlot(slot int) (*TapeReader, error) {
-	bc := f.status.Slots[slot-1].VolumeTag
+func findSlotByBarcode(st *changer.Status, barcode string) int {
+	for i, s := range st.Slots {
+		if s.Full && !s.ImportExport && s.VolumeTag == barcode {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func findFreeStorageSlot(st *changer.Status) int {
+	for i, s := range st.Slots {
+		if !s.Full && !s.ImportExport {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func (f *Feeder) loadSlot(slot int, expectedBarcode string) (*TapeReader, error) {
+	st, err := f.currentStatus()
+	if err != nil {
+		return nil, fmt.Errorf("read status before load: %w", err)
+	}
+	bc := st.Slots[slot-1].VolumeTag
 	f.log(fmt.Sprintf("Loading slot %d (%s) into drive %d", slot, barcodeOrUnknown(bc), f.driveIndex))
-	if err := f.chg.Load(f.status, slot, f.driveIndex); err != nil {
+
+	after, err := f.chg.LoadSlot(slot, f.driveIndex)
+	if err != nil {
 		return nil, fmt.Errorf("load slot %d: %w", slot, err)
 	}
+
+	if err := f.verifyLoaded(after, expectedBarcode); err != nil {
+		return nil, err
+	}
+
 	rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
 	if err != nil {
 		return nil, err
 	}
-	f.loadedBarcode = bc
+	f.loadedBarcode = expectedBarcode
 	f.loadedSlot = slot
 	if bc != "" {
 		f.probed[bc] = slot
 	}
 	return rc, nil
+}
+
+func (f *Feeder) verifyLoaded(st *changer.Status, expectedBarcode string) error {
+	if f.driveIndex < 0 || f.driveIndex >= len(st.Drives) {
+		return fmt.Errorf("%w: drive index %d out of range (%d drives reported)", ErrStateDesync, f.driveIndex, len(st.Drives))
+	}
+	drive := st.Drives[f.driveIndex]
+	if !drive.Full {
+		return fmt.Errorf("%w: drive %d is empty after load of slot %s", ErrStateDesync, f.driveIndex, barcodeOrUnknown(expectedBarcode))
+	}
+	if expectedBarcode != "" && drive.VolumeTag != "" && drive.VolumeTag != expectedBarcode {
+		return fmt.Errorf("%w: drive %d reports %s, expected %s", ErrStateDesync, f.driveIndex, drive.VolumeTag, expectedBarcode)
+	}
+	return nil
 }
 
 func (f *Feeder) UnloadCurrent() error {
@@ -142,7 +180,7 @@ func (f *Feeder) UnloadCurrent() error {
 	slot := f.loadedSlot
 	bc := f.loadedBarcode
 	f.log(fmt.Sprintf("Unloading drive %d -> slot %d (%s)", f.driveIndex, slot, barcodeOrUnknown(bc)))
-	if err := f.chg.Unload(f.status, f.driveIndex, slot); err != nil {
+	if _, err := f.chg.Unload(slot, f.driveIndex); err != nil {
 		return fmt.Errorf("unload to slot %d: %w", slot, err)
 	}
 	f.loadedSlot = 0
@@ -150,54 +188,118 @@ func (f *Feeder) UnloadCurrent() error {
 	return nil
 }
 
+func (f *Feeder) unloadDriveToFreeSlot(st *changer.Status) error {
+	slot := findFreeStorageSlot(st)
+	if slot == 0 {
+		return fmt.Errorf("no empty slot to unload drive %d", f.driveIndex)
+	}
+	bc := ""
+	if f.driveIndex < len(st.Drives) {
+		bc = st.Drives[f.driveIndex].VolumeTag
+	}
+	f.log(fmt.Sprintf("Unloading drive %d -> slot %d (%s)", f.driveIndex, slot, barcodeOrUnknown(bc)))
+	if _, err := f.chg.Unload(slot, f.driveIndex); err != nil {
+		return fmt.Errorf("unload drive -> slot %d: %w", slot, err)
+	}
+	return nil
+}
+
+func (f *Feeder) ensureDriveEmpty(st *changer.Status) (*changer.Status, error) {
+	if f.driveIndex < 0 || f.driveIndex >= len(st.Drives) {
+		return st, nil
+	}
+	if !st.Drives[f.driveIndex].Full {
+		return st, nil
+	}
+	if st.Drives[f.driveIndex].VolumeTag == f.loadedBarcode && f.loadedBarcode != "" {
+		return st, nil
+	}
+	if err := f.unloadDriveToFreeSlot(st); err != nil {
+		return nil, err
+	}
+	return f.currentStatus()
+}
+
 func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) error {
-	if err := f.refreshStatus(); err != nil {
+	st, err := f.currentStatus()
+	if err != nil {
 		return fmt.Errorf("refresh changer: %w", err)
 	}
 
-	if f.status != nil {
-		for dIdx, drive := range f.status.Drives {
-			if f.cancelled() {
-				return f.ctx.Err()
+	for dIdx, drive := range st.Drives {
+		if f.cancelled() {
+			return f.ctx.Err()
+		}
+		if !drive.Full {
+			continue
+		}
+		bc := drive.VolumeTag
+		if bc == "" || IsCleaningTape(bc) || f.processed[bc] {
+			continue
+		}
+		if f.skip != nil && f.skip(bc) {
+			f.processed[bc] = true
+			continue
+		}
+		if dIdx != f.driveIndex {
+			f.log(fmt.Sprintf("Drive %d has %s loaded; skipping (configured drive is %d)", dIdx, barcodeOrUnknown(bc), f.driveIndex))
+			continue
+		}
+		if f.skipGenTooNew(bc) {
+			cur, _ := f.currentStatus()
+			if cur != nil && dIdx < len(cur.Drives) && cur.Drives[dIdx].Full {
+				if uErr := f.unloadDriveToFreeSlot(cur); uErr != nil {
+					log.Error(uErr, "")
+				}
 			}
-			if !drive.Full {
-				continue
-			}
-			bc := drive.VolumeTag
-			if bc == "" || IsCleaningTape(bc) || f.processed[bc] {
-				continue
-			}
-			if f.skip != nil && f.skip(bc) {
-				f.processed[bc] = true
-				continue
-			}
-			f.log(fmt.Sprintf("Drive %d has %s loaded; reading in place", dIdx, barcodeOrUnknown(bc)))
-			rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
-			if err != nil {
-				return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
-			}
-			f.loadedBarcode = bc
-			f.loadedSlot = 0
-			f.loadedSrcSlot = slotIndexForAddr(f.status, drive.LoadedSlotAddr)
-			vErr := visit(rc, bc)
+			continue
+		}
+		f.log(fmt.Sprintf("Drive %d has %s loaded; reading in place", dIdx, barcodeOrUnknown(bc)))
+		rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
+		if err != nil {
+			return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
+		}
+		f.loadedBarcode = bc
+		f.loadedSlot = 0
+		if pErr := f.probeReadable(rc); pErr != nil {
+			f.log(fmt.Sprintf("Skipping %s: drive %d cannot read tape (%v)", bc, dIdx, pErr))
 			if cErr := rc.Close(); cErr != nil {
 				log.Error(cErr, "")
 			}
 			f.processed[bc] = true
 			if !f.keepLoaded {
-				if uErr := f.unloadInDrive(); uErr != nil {
-					log.Error(uErr, "")
+				cur, _ := f.currentStatus()
+				if cur != nil {
+					if uErr := f.unloadDriveToFreeSlot(cur); uErr != nil {
+						log.Error(uErr, "")
+					}
 				}
 			}
 			f.loadedBarcode = ""
-			f.loadedSrcSlot = 0
-			if vErr != nil {
-				return vErr
+			f.loadedSlot = 0
+			continue
+		}
+		vErr := visit(rc, bc)
+		if cErr := rc.Close(); cErr != nil {
+			log.Error(cErr, "")
+		}
+		f.processed[bc] = true
+		if !f.keepLoaded {
+			cur, _ := f.currentStatus()
+			if cur != nil {
+				if uErr := f.unloadDriveToFreeSlot(cur); uErr != nil {
+					log.Error(uErr, "")
+				}
 			}
+		}
+		f.loadedBarcode = ""
+		f.loadedSlot = 0
+		if vErr != nil {
+			return vErr
 		}
 	}
 
-	for i, s := range f.status.Slots {
+	for i, s := range st.Slots {
 		if f.cancelled() {
 			return f.ctx.Err()
 		}
@@ -212,10 +314,28 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 			f.processed[bc] = true
 			continue
 		}
+		if f.skipGenTooNew(bc) {
+			continue
+		}
 		slot := i + 1
-		rc, lErr := f.loadSlot(slot)
+		rc, lErr := f.loadSlot(slot, bc)
 		if lErr != nil {
-			return fmt.Errorf("load slot %d: %w", slot, lErr)
+			f.log(fmt.Sprintf("Skipping %s (slot %d): load failed: %v", bc, slot, lErr))
+			f.processed[bc] = true
+			continue
+		}
+		if pErr := f.probeReadable(rc); pErr != nil {
+			f.log(fmt.Sprintf("Skipping %s (slot %d): drive cannot read tape (%v)", bc, slot, pErr))
+			if cErr := rc.Close(); cErr != nil {
+				log.Error(cErr, "")
+			}
+			if !f.keepLoaded {
+				if uErr := f.UnloadCurrent(); uErr != nil {
+					log.Error(uErr, "")
+				}
+			}
+			f.processed[bc] = true
+			continue
 		}
 		vErr := visit(rc, bc)
 		if cErr := rc.Close(); cErr != nil {
@@ -234,38 +354,6 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 	return nil
 }
 
-func slotIndexForAddr(st *changer.Status, addr uint16) int {
-	if addr == 0 {
-		return 0
-	}
-	for i, s := range st.Slots {
-		if s.ElementAddress == addr {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-func (f *Feeder) unloadInDrive() error {
-	slot := f.loadedSrcSlot
-	if slot == 0 {
-		for i, s := range f.status.Slots {
-			if !s.Full && !s.ImportExport {
-				slot = i + 1
-				break
-			}
-		}
-	}
-	if slot == 0 {
-		return nil
-	}
-	f.log(fmt.Sprintf("Unloading drive %d -> slot %d (%s)", f.driveIndex, slot, barcodeOrUnknown(f.loadedBarcode)))
-	if err := f.chg.Unload(f.status, f.driveIndex, slot); err != nil {
-		return fmt.Errorf("unload drive -> slot %d: %w", slot, err)
-	}
-	return nil
-}
-
 func (f *Feeder) AsContinuation() func(mtf.Continuation) (mtf.Tape, error) {
 	return func(c mtf.Continuation) (mtf.Tape, error) {
 		return f.nextMedium(c)
@@ -275,9 +363,6 @@ func (f *Feeder) AsContinuation() func(mtf.Continuation) (mtf.Tape, error) {
 func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	if f.cancelled() {
 		return nil, f.ctx.Err()
-	}
-	if err := f.refreshStatus(); err != nil {
-		return nil, fmt.Errorf("refresh changer: %w", err)
 	}
 	wantSeq := 0
 	wantMFMID := uint32(0)
@@ -296,7 +381,15 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		if barcode == "" {
 			return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in inventory", wantMFMID, wantSeq)
 		}
-		if !f.tapeInChanger(barcode) {
+		if !f.tapeGenCandidate(barcode) {
+			return nil, fmt.Errorf("tape %s (%s) needed for family 0x%08X sequence %d is newer than %s drive and cannot be read",
+				barcode, _genDesc(barcodeLTOGen(barcode)), wantMFMID, wantSeq, _genDesc(f.driveGen))
+		}
+		st, err := f.currentStatus()
+		if err != nil {
+			return nil, fmt.Errorf("refresh changer: %w", err)
+		}
+		if findSlotByBarcode(st, barcode) == 0 && !tapeInDrives(st, barcode) {
 			f.log(fmt.Sprintf("tape %s (family 0x%08X sequence %d) not in changer, waiting for operator", barcode, wantMFMID, wantSeq))
 		}
 		if err := f.LoadBarcodeWait(barcode); err != nil {
@@ -318,18 +411,25 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		return rc, nil
 	}
 
-	for i, s := range f.status.Slots {
+	st, err := f.currentStatus()
+	if err != nil {
+		return nil, fmt.Errorf("refresh changer: %w", err)
+	}
+	for i, s := range st.Slots {
 		if f.cancelled() {
 			return nil, f.ctx.Err()
 		}
 		if !s.Full || s.ImportExport || IsCleaningTape(s.VolumeTag) || f.processed[s.VolumeTag] {
 			continue
 		}
+		if f.skipGenTooNew(s.VolumeTag) {
+			continue
+		}
 		slot := i + 1
 		if slot == f.loadedSlot {
 			continue
 		}
-		rc, err := f.loadSlot(slot)
+		rc, err := f.loadSlot(slot, s.VolumeTag)
 		if err != nil {
 			f.log(fmt.Sprintf("  slot %d: %v", slot, err))
 			continue
@@ -359,18 +459,51 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in changer", wantMFMID, wantSeq)
 }
 
-func (f *Feeder) tapeInChanger(barcode string) bool {
-	for _, s := range f.status.Slots {
-		if s.Full && s.VolumeTag == barcode {
-			return true
-		}
+func (f *Feeder) tapeGenCandidate(bc string) bool {
+	if f.driveGen == ltUndefined {
+		return true
 	}
-	for _, d := range f.status.Drives {
+	tapeGen := barcodeLTOGen(bc)
+	if tapeGen == ltUndefined {
+		return true
+	}
+	return ltoGenCandidate(f.driveGen, tapeGen)
+}
+
+func (f *Feeder) skipGenTooNew(bc string) bool {
+	if f.tapeGenCandidate(bc) {
+		return false
+	}
+	tapeGen := barcodeLTOGen(bc)
+	if !f.processed[bc] {
+		f.log(fmt.Sprintf("Skipping %s: %s tape is newer than %s drive", bc, _genDesc(tapeGen), _genDesc(f.driveGen)))
+	}
+	f.processed[bc] = true
+	return true
+}
+
+func tapeInDrives(st *changer.Status, barcode string) bool {
+	for _, d := range st.Drives {
 		if d.Full && d.VolumeTag == barcode {
 			return true
 		}
 	}
 	return false
+}
+
+func (f *Feeder) probeReadable(rc *TapeReader) error {
+	if err := rc.Rewind(); err != nil {
+		return fmt.Errorf("probe rewind: %w", err)
+	}
+	_, err := rc.ReadBlock(make([]byte, 1<<16))
+	switch {
+	case err == nil:
+		return rc.Rewind()
+	case errors.Is(err, mtf.ErrFilemark), errors.Is(err, io.EOF):
+		return rc.Rewind()
+	default:
+		return err
+	}
 }
 
 func (f *Feeder) verifyTape(rc *TapeReader, wantMFMID uint32, wantSeq int) (bool, error) {
@@ -410,86 +543,56 @@ func (f *Feeder) LoadBarcodeWait(barcode string) error {
 		}
 		first = false
 
-		if err := f.refreshStatus(); err != nil {
-			if reason := fmt.Sprintf("refresh changer: %v", err); reason != lastReason {
-				f.log(fmt.Sprintf("Please insert media '%s': %s", barcode, reason))
-				lastReason = reason
-			}
-			continue
-		}
-		if !f.tapeInChanger(barcode) {
-			const reason = "tape is not in the changer"
+		if err := f.LoadBarcode(barcode); err == nil {
+			return nil
+		} else {
+			reason := err.Error()
 			if reason != lastReason {
-				f.log(fmt.Sprintf("Please insert media '%s' into the changer (%s)", barcode, reason))
-				lastReason = reason
-			}
-			continue
-		}
-		if err := f.LoadBarcode(barcode); err != nil {
-			if reason := fmt.Sprintf("load failed: %v", err); reason != lastReason {
 				f.log(fmt.Sprintf("Please insert media '%s': %s", barcode, reason))
 				lastReason = reason
 			}
-			continue
 		}
-		return nil
 	}
 }
 
 func (f *Feeder) LoadBarcode(barcode string) error {
-	if f.status == nil {
-		return fmt.Errorf("feeder has no changer status")
-	}
-
-	if err := f.refreshStatus(); err != nil {
+	st, err := f.currentStatus()
+	if err != nil {
 		return fmt.Errorf("refresh changer status: %w", err)
 	}
 
-	drive := f.status.Drives[f.driveIndex]
+	if f.driveIndex < 0 || f.driveIndex >= len(st.Drives) {
+		return fmt.Errorf("%w: drive index %d out of range (%d drives reported)", ErrStateDesync, f.driveIndex, len(st.Drives))
+	}
+	drive := st.Drives[f.driveIndex]
 	if drive.Full {
-		driveBarcode := drive.VolumeTag
-		if driveBarcode == barcode {
+		if drive.VolumeTag == barcode {
 			f.log(fmt.Sprintf("Cartridge %s already in drive %d", barcode, f.driveIndex))
 			f.loadedBarcode = barcode
 			f.loadedSlot = 0
 			return nil
 		}
-		unloadSlot := 0
-		for i, s := range f.status.Slots {
-			if !s.Full && !s.ImportExport {
-				unloadSlot = i + 1
-				break
-			}
-		}
-		if unloadSlot == 0 {
-			return fmt.Errorf("no empty slot to unload %s from drive %d", driveBarcode, f.driveIndex)
-		}
-		f.log(fmt.Sprintf("Unloading %s from drive %d -> slot %d", driveBarcode, f.driveIndex, unloadSlot))
-		if err := f.chg.Unload(f.status, f.driveIndex, unloadSlot); err != nil {
-			return fmt.Errorf("unload drive %d: %w", f.driveIndex, err)
-		}
-		if err := f.refreshStatus(); err != nil {
-			return fmt.Errorf("refresh after unload: %w", err)
+		st, err = f.ensureDriveEmpty(st)
+		if err != nil {
+			return err
 		}
 	}
 
-	for i, s := range f.status.Slots {
-		if s.Full && s.VolumeTag == barcode {
-			slotIdx := i + 1
-			f.log(fmt.Sprintf("Loading cartridge %s from slot %d into drive %d", barcode, slotIdx, f.driveIndex))
-			if err := f.chg.Load(f.status, slotIdx, f.driveIndex); err != nil {
-				return fmt.Errorf("load slot %d into drive %d: %w", slotIdx, f.driveIndex, err)
-			}
-			if err := f.refreshStatus(); err != nil {
-				return fmt.Errorf("refresh after load: %w", err)
-			}
-			f.loadedBarcode = barcode
-			f.loadedSlot = slotIdx
-			return nil
-		}
+	slot := findSlotByBarcode(st, barcode)
+	if slot == 0 {
+		return fmt.Errorf("cartridge %s not found in changer slots", barcode)
 	}
-
-	return fmt.Errorf("cartridge %s not found in changer slots", barcode)
+	f.log(fmt.Sprintf("Loading cartridge %s from slot %d into drive %d", barcode, slot, f.driveIndex))
+	after, err := f.chg.LoadSlot(slot, f.driveIndex)
+	if err != nil {
+		return fmt.Errorf("load slot %d into drive %d: %w", slot, f.driveIndex, err)
+	}
+	if err := f.verifyLoaded(after, barcode); err != nil {
+		return err
+	}
+	f.loadedBarcode = barcode
+	f.loadedSlot = slot
+	return nil
 }
 
 func barcodeOrUnknown(bc string) string {
