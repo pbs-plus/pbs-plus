@@ -4,6 +4,7 @@ package application
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"strings"
 	"sync"
@@ -303,7 +304,100 @@ func (s *TargetService) RefreshStatuses() {
 	}()
 }
 
-// Ensure fmt is used (needed by sprintf patterns elsewhere)
+type callSession interface {
+	CallMessage(ctx context.Context, method string, payload any) (string, error)
+}
+
+type PushUpdateResult struct {
+	Hostname string `json:"hostname"`
+	Updated  bool   `json:"updated"`
+	Message  string `json:"message"`
+}
+
+func (s *TargetService) PushUpdate(ctx context.Context, hostnames []string, timeout time.Duration) []PushUpdateResult {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	if len(hostnames) == 0 {
+		targets, err := s.db.GetAllTargets()
+		if err != nil {
+			return nil
+		}
+		seen := make(map[string]struct{})
+		for _, t := range targets {
+			if !t.IsAgent() {
+				continue
+			}
+			h := t.GetHostname()
+			if _, ok := seen[h]; ok {
+				continue
+			}
+			seen[h] = struct{}{}
+			hostnames = append(hostnames, h)
+		}
+	}
+
+	results := make([]PushUpdateResult, len(hostnames))
+	sem := make(chan struct{}, 20)
+	var wg sync.WaitGroup
+
+	for i, host := range hostnames {
+		wg.Add(1)
+		go func(idx int, hostname string) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					results[idx] = PushUpdateResult{
+						Hostname: hostname,
+						Message:  fmt.Sprintf("panic: %v", r),
+					}
+				}
+			}()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			result := PushUpdateResult{Hostname: hostname}
+
+			var sess callSession
+			if qSess, ok := s.agentsMgr.GetQuicPipe(hostname); ok {
+				sess = qSess
+			} else if tSess, ok := s.agentsMgr.GetStreamPipe(hostname); ok {
+				sess = tSess
+			} else {
+				result.Message = "agent not connected"
+				results[idx] = result
+				return
+			}
+
+			timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+
+			respMsg, err := sess.CallMessage(timeoutCtx, "update", nil)
+			if err != nil {
+				result.Message = err.Error()
+			} else {
+				result.Updated = true
+				result.Message = respMsg
+			}
+			results[idx] = result
+		}(i, host)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+	case <-done:
+	}
+
+	return results
+}
 
 type VerificationService struct{ db *database.Database }
 

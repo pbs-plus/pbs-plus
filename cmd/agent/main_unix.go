@@ -14,6 +14,7 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/binswap"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
 	"github.com/pbs-plus/pbs-plus/internal/agent/migration"
@@ -40,6 +41,24 @@ func (p *pbsService) Start(s service.Service) error {
 			MinConstraint:  ">= 0.52.0",
 			PollInterval:   2 * time.Minute,
 			FetchOnStart:   true,
+			UpgradeConfirm: func(v string) bool { return true },
+			Exit: func(err error) {
+				if err != nil {
+					log.Error(err, "updater exiting with error")
+				}
+				log.Info("exiting for service manager to restart with updated binary")
+				os.Exit(1)
+			},
+			Service: s,
+			Context: p.ctx,
+		})
+	} else {
+		// Register a singleton updater (no polling) so the server can still
+		// push updates on demand via aRPC.
+		_, _ = updater.New(updater.Config{
+			MinConstraint:  ">= 0.52.0",
+			PollInterval:   0,
+			FetchOnStart:   false,
 			UpgradeConfirm: func(v string) bool { return true },
 			Exit: func(err error) {
 				if err != nil {
@@ -209,6 +228,8 @@ func (p *pbsService) Stop(s service.Service) error {
 }
 
 func main() {
+	pending := updater.CheckPendingOnBoot()
+
 	defer func() {
 		if r := recover(); r != nil {
 			_ = os.WriteFile("panic.log", fmt.Appendf(nil, "Panic: %v\n%s", r, debug.Stack()), 0644)
@@ -216,6 +237,15 @@ func main() {
 		}
 	}()
 	conf.Version = Version
+
+	if pending {
+		go func() {
+			select {
+			case <-time.After(binswap.CommitGrace):
+				updater.CommitUpdate()
+			}
+		}()
+	}
 
 	if err := crypto.AssertFIPS(); err != nil {
 		log.Error(err, "FIPS assertion failed")

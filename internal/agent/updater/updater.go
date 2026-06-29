@@ -17,11 +17,13 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/Masterminds/semver"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/binswap"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
@@ -31,6 +33,9 @@ var (
 	Ed25519PublicKeyB64 = ""
 
 	ErrAlreadyLatest = errors.New("already on latest version")
+
+	defaultMu      sync.Mutex
+	defaultUpdater *Updater
 )
 
 const (
@@ -53,6 +58,7 @@ type Config struct {
 type Updater struct {
 	cfg    Config
 	cancel context.CancelFunc
+	mu     sync.Mutex
 }
 
 type VersionResp struct {
@@ -63,9 +69,6 @@ type VersionResp struct {
 func New(cfg Config) (*Updater, error) {
 	if cfg.MinConstraint == "" {
 		cfg.MinConstraint = ">= 0.52.0"
-	}
-	if cfg.PollInterval <= 0 {
-		cfg.PollInterval = 2 * time.Minute
 	}
 	if cfg.UpgradeConfirm == nil {
 		cfg.UpgradeConfirm = func(string) bool { return true }
@@ -86,8 +89,16 @@ func New(cfg Config) (*Updater, error) {
 		log.Error(err, "update cleanup error, non-fatal")
 	}
 
+	if mgr, err := binswap.NewFromExecutable(); err == nil {
+		mgr.Prune()
+	}
+
 	ctx, cancel := context.WithCancel(cfg.Context)
 	up := &Updater{cfg: cfg, cancel: cancel}
+
+	defaultMu.Lock()
+	defaultUpdater = up
+	defaultMu.Unlock()
 
 	if cfg.FetchOnStart {
 		go func() {
@@ -125,7 +136,45 @@ func (u *Updater) Stop() {
 	}
 }
 
+// TriggerUpdate performs a single, on-demand update check using the default
+// updater if one was registered via New. This is invoked by the push-based
+// update path (aRPC "update" method) so the server can request an update from
+// the UI. It is safe to call concurrently with the poll loop.
+func TriggerUpdate() error {
+	defaultMu.Lock()
+	up := defaultUpdater
+	defaultMu.Unlock()
+
+	if up != nil {
+		return up.CheckNow()
+	}
+
+	// No default updater registered (e.g. auto-update disabled). Build a
+	// one-shot updater that reuses the same check/apply logic without
+	// starting any background goroutines.
+	up = &Updater{cfg: Config{
+		MinConstraint:  ">= 0.52.0",
+		UpgradeConfirm: func(string) bool { return true },
+		Exit: func(err error) {
+			if err != nil {
+				log.Error(err, "updater exit with error")
+			}
+			os.Exit(0)
+		},
+	}}
+	return up.CheckNow()
+}
+
 func (u *Updater) CheckNow() error {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	if mgr, err := binswap.NewFromExecutable(); err == nil {
+		if mgr.HasPending() {
+			return fmt.Errorf("updater: update to %s still pending health confirmation", mgr.PendingVersion())
+		}
+	}
+
 	version, embedded, err := u.fetchLatestVersion()
 	if err != nil {
 		return fmt.Errorf("updater: fetch latest version: %w", err)
@@ -198,6 +247,10 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 		return fmt.Errorf("fetch binary: %w", err)
 	}
 
+	if err := binswap.CheckBinaryMagic(binary); err != nil {
+		return fmt.Errorf("sanity check: %w", err)
+	}
+
 	verified := false
 
 	if embedded {
@@ -238,31 +291,32 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 		}
 	}
 
-	exePath, err := os.Executable()
+	mgr, err := binswap.NewFromExecutable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
-	newPath := exePath + ".new"
-	oldPath := exePath + ".old"
-
-	if err := os.WriteFile(newPath, binary, 0755); err != nil {
-		return fmt.Errorf("write new binary: %w", err)
+	if err := mgr.Stage(binary); err != nil {
+		return fmt.Errorf("stage new binary: %w", err)
 	}
 
-	if err := os.Rename(exePath, oldPath); err != nil {
-		return fmt.Errorf("rename current binary: %w", err)
+	if err := mgr.SnapshotCurrent(); err != nil {
+		mgr.Prune()
+		return fmt.Errorf("snapshot previous binary: %w", err)
 	}
 
-	if err := os.Rename(newPath, exePath); err != nil {
-		rerr := os.Rename(oldPath, exePath)
-		if rerr != nil {
-			log.Error(rerr, "rollback failed: could not restore original binary")
-		}
-		return fmt.Errorf("rename new binary: %w", err)
+	if err := mgr.MarkPending(version); err != nil {
+		mgr.Prune()
+		return fmt.Errorf("write pending marker: %w", err)
 	}
 
-	_ = os.Remove(oldPath)
+	if err := mgr.Swap(); err != nil {
+		mgr.ClearPending()
+		return fmt.Errorf("swap binary: %w", err)
+	}
+
+	log.Info("updater: staged update applied, awaiting health confirmation",
+		"version", version)
 
 	restartCallback(u.cfg)
 	return nil

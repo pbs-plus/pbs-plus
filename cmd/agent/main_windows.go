@@ -14,6 +14,7 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/binswap"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
 	"github.com/pbs-plus/pbs-plus/internal/agent/updater"
@@ -37,6 +38,16 @@ func (p *pbsService) Start(s service.Service) error {
 	if os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE") != "true" {
 		_, _ = updater.New(updater.Config{
 			MinConstraint: ">= 0.52.0", PollInterval: 2 * time.Minute, FetchOnStart: true,
+			UpgradeConfirm: func(v string) bool { return true },
+			Exit:           func(err error) {},
+			Service:        s,
+			Context:        p.ctx,
+		})
+	} else {
+		_, _ = updater.New(updater.Config{
+			MinConstraint:  ">= 0.52.0",
+			PollInterval:   0,
+			FetchOnStart:   false,
 			UpgradeConfirm: func(v string) bool { return true },
 			Exit:           func(err error) {},
 			Service:        s,
@@ -198,6 +209,8 @@ func (p *pbsService) Stop(s service.Service) error {
 }
 
 func main() {
+	pending := updater.CheckPendingOnBoot()
+
 	defer func() {
 		if r := recover(); r != nil {
 			_ = os.WriteFile("panic.log", []byte(fmt.Sprintf("Panic: %v\n%s", r, debug.Stack())), 0644)
@@ -205,6 +218,16 @@ func main() {
 		}
 	}()
 	conf.Version = Version
+
+	if pending {
+		go func() {
+			select {
+			case <-time.After(binswap.CommitGrace):
+				updater.CommitUpdate()
+			}
+		}()
+	}
+
 	cli.Entry()
 
 	if err := crypto.AssertFIPS(); err != nil {

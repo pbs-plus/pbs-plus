@@ -159,6 +159,95 @@ Ext.define("PBS.D2DManagement.TargetPanelController", {
     }).show();
   },
 
+  pushUpdate: function () {
+    let me = this;
+    let view = me.getView();
+    let selections = view.getSelection();
+    if (!selections || selections.length < 1) {
+      return;
+    }
+
+    let hostnames = [];
+    let singleTarget = false;
+
+    if (selections.length === 1) {
+      let rec = selections[0];
+      if (!rec.data.isGroup) {
+        if (rec.data.target_type === "agent" && rec.data.agent_hostname) {
+          hostnames.push(rec.data.agent_hostname);
+          singleTarget = true;
+        }
+      } else if (
+        rec.data.isGroup &&
+        rec.data.groupType === "agent" &&
+        rec.data.text
+      ) {
+        hostnames.push(rec.data.text);
+        singleTarget = true;
+      }
+    }
+
+    let confirmMsg = singleTarget
+      ? Ext.String.format(
+          "Trigger an on-demand update for agent '{0}'?",
+          hostnames[0],
+        )
+      : "Trigger an on-demand update for all connected agents?";
+
+    Ext.Msg.confirm(gettext("Confirm"), confirmMsg, (btn) => {
+      if (btn !== "yes") return;
+
+      PBS.PlusUtils.API2Request({
+        url: "/api2/extjs/config/d2d-push-update",
+        method: "POST",
+        waitMsgTarget: view,
+        jsonData: { hostnames: hostnames },
+        success: (resp) => {
+          let data = [];
+          try {
+            data = Ext.decode(resp.responseText).data || [];
+          } catch (e) {
+            data = [];
+          }
+          let updated = 0;
+          let failed = 0;
+          let messages = [];
+          data.forEach(function (r) {
+            if (r.updated) {
+              updated++;
+            } else {
+              failed++;
+              messages.push(r.hostname + ": " + r.message);
+            }
+          });
+          if (failed === 0) {
+            Ext.Msg.alert(
+              gettext("Success"),
+              Ext.String.format(
+                "Update triggered for {0} agent(s).",
+                updated,
+              ),
+            );
+          } else {
+            Ext.Msg.alert(
+              gettext("Partial Success"),
+              Ext.String.format(
+                "Updated: {0}, failed: {1}\n{2}",
+                updated,
+                failed,
+                messages.join("\n"),
+              ),
+            );
+          }
+          me.reload();
+        },
+        failure: (resp) => {
+          Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
+        },
+      });
+    });
+  },
+
   onSearch: function (field, value) {
     let me = this;
     me.searchValue = value.toLowerCase();
@@ -521,6 +610,21 @@ Ext.define("PBS.D2DManagement.TargetPanel", {
       enableFn: function (rec) {
         return rec && !rec.data.isGroup && rec.data.target_type === "s3";
       },
+    },
+    {
+      text: gettext("Update Agent"),
+      xtype: "proxmoxButton",
+      handler: "pushUpdate",
+      enableFn: function (rec) {
+        if (!rec) {
+          return false;
+        }
+        if (!rec.data.isGroup) {
+          return rec.data.target_type === "agent";
+        }
+        return rec.data.groupType === "agent";
+      },
+      disabled: true,
     },
     {
       xtype: "proxmoxButton",
