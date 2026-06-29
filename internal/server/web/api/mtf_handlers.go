@@ -516,10 +516,17 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
+		driveIdx := 0
+		if v := r.FormValue("drive_index"); v != "" {
+			driveIdx = atoiDefault(v, 0)
+		} else {
+			driveIdx = tape.ResolveDriveIndex(r.FormValue("drive"))
+		}
+
 		opts := mtf.Options{
 			ChangerDevice: tape.ResolveChanger(r.FormValue("changer")),
 			TapeDevice:    tape.ResolveDrive(r.FormValue("drive")),
-			DriveIndex:    atoiDefault(r.FormValue("drive_index"), 0),
+			DriveIndex:    driveIdx,
 			BKFPath:       r.FormValue("bkf_path"),
 			Label:         r.FormValue("label"),
 		}
