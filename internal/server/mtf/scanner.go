@@ -210,9 +210,7 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcod
 
 	var pbaOffset int64
 	if sm != nil && len(sm.Entries) > 0 {
-		if pos, pErr := rc.TellBlock(); pErr == nil {
-			pbaOffset = int64(sm.Entries[0].SSETPBA) - pos
-		}
+		pbaOffset = s.probeFirstSSET(rc, r, sm)
 	}
 
 	fam := r.Family()
@@ -515,4 +513,43 @@ func maxi(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (s *Scanner) probeFirstSSET(rc *tapeio.TapeReader, r *mtflib.Reader, sm *mtflib.SetMap) int64 {
+	if len(sm.Entries) == 0 || sm.Entries[0].SSETPBA == 0 {
+		return 0
+	}
+	rawPBA := int64(sm.Entries[0].SSETPBA)
+	candidates := []int64{rawPBA - 1, rawPBA - 2, rawPBA, rawPBA - 3, rawPBA + 1}
+	for _, cand := range candidates {
+		if cand < 0 {
+			continue
+		}
+		if err := rc.Rewind(); err != nil {
+			s.logger.Error(err, "probe: rewind")
+			continue
+		}
+		if _, err := r.Next(); err != nil {
+			s.logger.Error(err, "probe: read TAPE")
+			continue
+		}
+		if err := r.SeekToBlock(cand); err != nil {
+			continue
+		}
+		blk, err := r.Next()
+		if err != nil {
+			continue
+		}
+		if blk.Kind == mtflib.KindSet {
+			offset := rawPBA - cand
+			if s.logger != nil {
+				s.logger.LogString(fmt.Sprintf("  PBA offset calibration: stored=%d actual=%d offset=%d", rawPBA, cand, offset))
+			}
+			return offset
+		}
+	}
+	if s.logger != nil {
+		s.logger.LogString("  PBA offset calibration failed, using offset=0")
+	}
+	return 0
 }
