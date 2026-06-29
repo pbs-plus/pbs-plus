@@ -318,6 +318,8 @@ func ConnectARPC(
 			session.SetRouter(router)
 			backoff = base
 
+			updater.MarkHealthy()
+
 			serveErr := session.Serve()
 			session.Close()
 			session = nil

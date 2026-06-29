@@ -36,17 +36,6 @@ type pbsService struct {
 }
 
 func (p *pbsService) Start(s service.Service) error {
-	pending := updater.CheckPendingOnBoot()
-	if pending {
-		go func() {
-			select {
-			case <-p.ctx.Done():
-			case <-time.After(binswap.CommitGrace):
-				updater.CommitUpdate()
-			}
-		}()
-	}
-
 	if os.Getenv("PBS_PLUS_DISABLE_AUTO_UPDATE") != "true" && os.Getenv("PBS_PLUS__I_AM_INSIDE_CONTAINER") != "true" {
 		_, _ = updater.New(updater.Config{
 			MinConstraint:  ">= 0.52.0",
@@ -239,6 +228,8 @@ func (p *pbsService) Stop(s service.Service) error {
 }
 
 func main() {
+	pending := updater.CheckPendingOnBoot()
+
 	defer func() {
 		if r := recover(); r != nil {
 			_ = os.WriteFile("panic.log", fmt.Appendf(nil, "Panic: %v\n%s", r, debug.Stack()), 0644)
@@ -246,6 +237,15 @@ func main() {
 		}
 	}()
 	conf.Version = Version
+
+	if pending {
+		go func() {
+			select {
+			case <-time.After(binswap.CommitGrace):
+				updater.CommitUpdate()
+			}
+		}()
+	}
 
 	if err := crypto.AssertFIPS(); err != nil {
 		log.Error(err, "FIPS assertion failed")

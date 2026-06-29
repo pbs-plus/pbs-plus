@@ -2,6 +2,7 @@ package updater
 
 import (
 	"os"
+	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/binswap"
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -23,11 +24,22 @@ func CheckPendingOnBoot() bool {
 	return pending
 }
 
-func CommitUpdate() {
-	mgr, err := binswap.NewFromExecutable()
-	if err != nil {
-		return
-	}
-	mgr.Commit()
-	log.Info("updater: update committed (agent healthy)")
+func CommitUpdate() { markHealthyOnce() }
+
+func MarkHealthy() { markHealthyOnce() }
+
+var healthyOnce sync.Once
+
+func markHealthyOnce() {
+	healthyOnce.Do(func() {
+		mgr, err := binswap.NewFromExecutable()
+		if err != nil {
+			return
+		}
+		if !mgr.HasPending() {
+			return
+		}
+		mgr.Commit()
+		log.Info("updater: update committed (agent healthy)")
+	})
 }

@@ -4,6 +4,8 @@ const SYSTEMD_SCRIPT = `[Unit]
 Description={{.DisplayName}}
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=20
 
 [Service]
 Type=simple
