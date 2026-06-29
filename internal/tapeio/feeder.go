@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 	"time"
@@ -244,7 +245,7 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 			f.log(fmt.Sprintf("Drive %d has %s loaded; skipping (configured drive is %d)", dIdx, barcodeOrUnknown(bc), f.driveIndex))
 			continue
 		}
-		if f.skipIncompatible(bc) {
+		if f.skipGenTooNew(bc) {
 			cur, _ := f.currentStatus()
 			if cur != nil && dIdx < len(cur.Drives) && cur.Drives[dIdx].Full {
 				if uErr := f.unloadDriveToFreeSlot(cur); uErr != nil {
@@ -260,6 +261,24 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 		}
 		f.loadedBarcode = bc
 		f.loadedSlot = 0
+		if pErr := f.probeReadable(rc); pErr != nil {
+			f.log(fmt.Sprintf("Skipping %s: drive %d cannot read tape (%v)", bc, dIdx, pErr))
+			if cErr := rc.Close(); cErr != nil {
+				log.Error(cErr, "")
+			}
+			f.processed[bc] = true
+			if !f.keepLoaded {
+				cur, _ := f.currentStatus()
+				if cur != nil {
+					if uErr := f.unloadDriveToFreeSlot(cur); uErr != nil {
+						log.Error(uErr, "")
+					}
+				}
+			}
+			f.loadedBarcode = ""
+			f.loadedSlot = 0
+			continue
+		}
 		vErr := visit(rc, bc)
 		if cErr := rc.Close(); cErr != nil {
 			log.Error(cErr, "")
@@ -295,13 +314,28 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 			f.processed[bc] = true
 			continue
 		}
-		if f.skipIncompatible(bc) {
+		if f.skipGenTooNew(bc) {
 			continue
 		}
 		slot := i + 1
 		rc, lErr := f.loadSlot(slot, bc)
 		if lErr != nil {
-			return fmt.Errorf("load slot %d: %w", slot, lErr)
+			f.log(fmt.Sprintf("Skipping %s (slot %d): load failed: %v", bc, slot, lErr))
+			f.processed[bc] = true
+			continue
+		}
+		if pErr := f.probeReadable(rc); pErr != nil {
+			f.log(fmt.Sprintf("Skipping %s (slot %d): drive cannot read tape (%v)", bc, slot, pErr))
+			if cErr := rc.Close(); cErr != nil {
+				log.Error(cErr, "")
+			}
+			if !f.keepLoaded {
+				if uErr := f.UnloadCurrent(); uErr != nil {
+					log.Error(uErr, "")
+				}
+			}
+			f.processed[bc] = true
+			continue
 		}
 		vErr := visit(rc, bc)
 		if cErr := rc.Close(); cErr != nil {
@@ -347,8 +381,8 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		if barcode == "" {
 			return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in inventory", wantMFMID, wantSeq)
 		}
-		if !f.tapeReadable(barcode) {
-			return nil, fmt.Errorf("tape %s (%s) needed for family 0x%08X sequence %d is not readable on %s drive",
+		if !f.tapeGenCandidate(barcode) {
+			return nil, fmt.Errorf("tape %s (%s) needed for family 0x%08X sequence %d is newer than %s drive and cannot be read",
 				barcode, _genDesc(barcodeLTOGen(barcode)), wantMFMID, wantSeq, _genDesc(f.driveGen))
 		}
 		st, err := f.currentStatus()
@@ -388,7 +422,7 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		if !s.Full || s.ImportExport || IsCleaningTape(s.VolumeTag) || f.processed[s.VolumeTag] {
 			continue
 		}
-		if f.skipIncompatible(s.VolumeTag) {
+		if f.skipGenTooNew(s.VolumeTag) {
 			continue
 		}
 		slot := i + 1
@@ -425,7 +459,7 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 	return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in changer", wantMFMID, wantSeq)
 }
 
-func (f *Feeder) tapeReadable(bc string) bool {
+func (f *Feeder) tapeGenCandidate(bc string) bool {
 	if f.driveGen == ltUndefined {
 		return true
 	}
@@ -433,16 +467,16 @@ func (f *Feeder) tapeReadable(bc string) bool {
 	if tapeGen == ltUndefined {
 		return true
 	}
-	return ltoReadCompatible(f.driveGen, tapeGen)
+	return ltoGenCandidate(f.driveGen, tapeGen)
 }
 
-func (f *Feeder) skipIncompatible(bc string) bool {
-	if f.tapeReadable(bc) {
+func (f *Feeder) skipGenTooNew(bc string) bool {
+	if f.tapeGenCandidate(bc) {
 		return false
 	}
 	tapeGen := barcodeLTOGen(bc)
 	if !f.processed[bc] {
-		f.log(fmt.Sprintf("Skipping %s: %s tape not readable on %s drive", bc, _genDesc(tapeGen), _genDesc(f.driveGen)))
+		f.log(fmt.Sprintf("Skipping %s: %s tape is newer than %s drive", bc, _genDesc(tapeGen), _genDesc(f.driveGen)))
 	}
 	f.processed[bc] = true
 	return true
@@ -455,6 +489,21 @@ func tapeInDrives(st *changer.Status, barcode string) bool {
 		}
 	}
 	return false
+}
+
+func (f *Feeder) probeReadable(rc *TapeReader) error {
+	if err := rc.Rewind(); err != nil {
+		return fmt.Errorf("probe rewind: %w", err)
+	}
+	_, err := rc.ReadBlock(make([]byte, 1<<16))
+	switch {
+	case err == nil:
+		return rc.Rewind()
+	case errors.Is(err, mtf.ErrFilemark), errors.Is(err, io.EOF):
+		return rc.Rewind()
+	default:
+		return err
+	}
 }
 
 func (f *Feeder) verifyTape(rc *TapeReader, wantMFMID uint32, wantSeq int) (bool, error) {

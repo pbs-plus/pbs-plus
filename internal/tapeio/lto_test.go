@@ -41,25 +41,23 @@ func TestProductLTOGen(t *testing.T) {
 	}
 }
 
-func TestLTOReadCompatible(t *testing.T) {
+func TestLTOGenCandidate(t *testing.T) {
 	cases := []struct {
 		drive, tape int
 		want        bool
 	}{
 		{6, 6, true},
 		{6, 5, true},
+		{8, 6, true},
 		{6, 7, false},
 		{6, 8, false},
-		{8, 8, true},
-		{8, 7, true},
-		{8, 6, false},
-		{8, 5, false},
+		{8, 9, false},
 		{ltUndefined, 8, true},
 		{6, ltUndefined, true},
 	}
 	for _, c := range cases {
-		if got := ltoReadCompatible(c.drive, c.tape); got != c.want {
-			t.Errorf("ltoReadCompatible(drive=%d, tape=%d) = %v, want %v", c.drive, c.tape, got, c.want)
+		if got := ltoGenCandidate(c.drive, c.tape); got != c.want {
+			t.Errorf("ltoGenCandidate(drive=%d, tape=%d) = %v, want %v", c.drive, c.tape, got, c.want)
 		}
 	}
 }

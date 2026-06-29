@@ -12,17 +12,11 @@ import (
 
 const ltUndefined = 0
 
-func ltoReadCompatible(driveGen, tapeGen int) bool {
-	if driveGen <= 0 || tapeGen <= 0 {
+func ltoGenCandidate(driveGen, tapeGen int) bool {
+	if driveGen == ltUndefined || tapeGen == ltUndefined {
 		return true
 	}
-	if tapeGen == driveGen {
-		return true
-	}
-	if tapeGen == driveGen-1 {
-		return true
-	}
-	return false
+	return tapeGen <= driveGen
 }
 
 func barcodeLTOGen(barcode string) int {
