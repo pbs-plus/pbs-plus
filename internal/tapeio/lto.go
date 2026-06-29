@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/pbs-plus/go-tapedrive"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -90,17 +91,17 @@ func digitVal(b byte) int {
 }
 
 func detectDriveGen(tapeDev string) int {
-	rc, err := OpenTapeReader(tapeDev)
+	d, err := tapedrive.Open(tapeDev)
 	if err != nil {
-		log.Error(err, "lto: cannot probe drive generation")
+		log.Error(err, "lto: cannot open drive for INQUIRY")
 		return ltUndefined
 	}
 	defer func() {
-		if err := rc.Close(); err != nil {
+		if err := d.Close(); err != nil {
 			log.Error(err, "")
 		}
 	}()
-	in, err := rc.d.Inquiry()
+	in, err := d.Inquiry()
 	if err != nil {
 		log.Error(err, "lto: INQUIRY failed")
 		return ltUndefined
