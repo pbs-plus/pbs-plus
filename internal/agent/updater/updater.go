@@ -23,6 +23,7 @@ import (
 	"github.com/Masterminds/semver"
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/binswap"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
@@ -88,7 +89,9 @@ func New(cfg Config) (*Updater, error) {
 		log.Error(err, "update cleanup error, non-fatal")
 	}
 
-	pruneStaleArtifacts()
+	if mgr, err := binswap.NewFromExecutable(); err == nil {
+		mgr.Prune()
+	}
 
 	ctx, cancel := context.WithCancel(cfg.Context)
 	up := &Updater{cfg: cfg, cancel: cancel}
@@ -166,9 +169,9 @@ func (u *Updater) CheckNow() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	if exePath, err := os.Executable(); err == nil {
-		if p, ok := readPending(exePath); ok {
-			return fmt.Errorf("updater: update to %s still pending health confirmation (attempt %d)", p.Version, p.Attempts)
+	if mgr, err := binswap.NewFromExecutable(); err == nil {
+		if mgr.HasPending() {
+			return fmt.Errorf("updater: update to %s still pending health confirmation", mgr.PendingVersion())
 		}
 	}
 
@@ -244,7 +247,7 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 		return fmt.Errorf("fetch binary: %w", err)
 	}
 
-	if err := sanityCheckBinary(binary); err != nil {
+	if err := binswap.CheckBinaryMagic(binary); err != nil {
 		return fmt.Errorf("sanity check: %w", err)
 	}
 
@@ -288,35 +291,27 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 		}
 	}
 
-	exePath, err := os.Executable()
+	mgr, err := binswap.NewFromExecutable()
 	if err != nil {
 		return fmt.Errorf("get executable path: %w", err)
 	}
 
-	staged := stagedPathOf(exePath)
-	previous := previousPathOf(exePath)
-
-	if err := atomicWriteFile(staged, binary, 0o755); err != nil {
+	if err := mgr.Stage(binary); err != nil {
 		return fmt.Errorf("stage new binary: %w", err)
 	}
 
-	if err := copyFile(previous, exePath, 0o755); err != nil {
-		_ = os.Remove(staged)
+	if err := mgr.SnapshotCurrent(); err != nil {
+		mgr.Prune()
 		return fmt.Errorf("snapshot previous binary: %w", err)
 	}
 
-	pending := &pendingUpdate{
-		Version:      version,
-		PreviousPath: previous,
-		StartedAt:    time.Now(),
-	}
-	if err := writePending(exePath, pending); err != nil {
-		_ = os.Remove(staged)
+	if err := mgr.MarkPending(version); err != nil {
+		mgr.Prune()
 		return fmt.Errorf("write pending marker: %w", err)
 	}
 
-	if err := swapBinary(staged, exePath); err != nil {
-		removePending(exePath)
+	if err := mgr.Swap(); err != nil {
+		mgr.ClearPending()
 		return fmt.Errorf("swap binary: %w", err)
 	}
 
@@ -492,45 +487,4 @@ func parseECDSASignature(data []byte) (*ecdsaSig, error) {
 	}
 
 	return &sig, nil
-}
-
-func sanityCheckBinary(data []byte) error {
-	if len(data) < 4 {
-		return fmt.Errorf("binary too small (%d bytes)", len(data))
-	}
-	switch runtime.GOOS {
-	case "windows":
-		if data[0] != 'M' || data[1] != 'Z' {
-			return fmt.Errorf("missing PE (MZ) magic")
-		}
-	case "darwin":
-		magic := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
-		switch magic {
-		case 0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe:
-		default:
-			return fmt.Errorf("missing Mach-O magic")
-		}
-	default:
-		if data[0] != 0x7f || data[1] != 'E' || data[2] != 'L' || data[3] != 'F' {
-			return fmt.Errorf("missing ELF magic")
-		}
-	}
-	return nil
-}
-
-func swapBinary(staged, exePath string) error {
-	tmpOld := exePath + ".swapping"
-	_ = os.Remove(tmpOld)
-
-	if err := os.Rename(exePath, tmpOld); err != nil {
-		return fmt.Errorf("move current binary aside: %w", err)
-	}
-	if err := os.Rename(staged, exePath); err != nil {
-		if rerr := os.Rename(tmpOld, exePath); rerr != nil {
-			log.Error(rerr, "updater: swap rollback failed, original binary could not be restored")
-		}
-		return fmt.Errorf("install staged binary: %w", err)
-	}
-	_ = os.Remove(tmpOld)
-	return nil
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/kardianos/service"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
+	"github.com/pbs-plus/pbs-plus/internal/agent/binswap"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/agent/lifecycle"
 	"github.com/pbs-plus/pbs-plus/internal/agent/migration"
@@ -40,7 +41,7 @@ func (p *pbsService) Start(s service.Service) error {
 		go func() {
 			select {
 			case <-p.ctx.Done():
-			case <-time.After(updater.CommitGrace):
+			case <-time.After(binswap.CommitGrace):
 				updater.CommitUpdate()
 			}
 		}()
