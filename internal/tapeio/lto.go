@@ -122,3 +122,7 @@ func _genDesc(gen int) string {
 	}
 	return fmt.Sprintf("LTO-%d", gen)
 }
+
+func ProbeDriveGen(tapeDev string) int { return detectDriveGen(tapeDev) }
+
+func ProbeBarcodeGen(barcode string) int { return barcodeLTOGen(barcode) }
