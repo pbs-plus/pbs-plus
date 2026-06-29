@@ -399,7 +399,8 @@ func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtfli
 			}
 		}
 		ssetPba := int64(e.SSETPBA)
-		if int(e.MediaSeq) != tapeSeq {
+		onStartTape := int(e.MediaSeq) == tapeSeq
+		if !onStartTape {
 			ssetPba = 0
 		}
 		dsID, err := s.db.Queries().UpsertDataSet(ctx, mtfquery.UpsertDataSetParams{
@@ -420,6 +421,15 @@ func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtfli
 		})
 		if err != nil {
 			return fmt.Errorf("upsert data set %d: %w", e.SetNumber, err)
+		}
+		if e.SSETPBA > 0 {
+			if err := s.db.Queries().CreateDataSetTape(ctx, mtfquery.CreateDataSetTapeParams{
+				DataSetID: dsID,
+				MediaSeq:  int64(e.MediaSeq),
+				SsetPba:   int64(e.SSETPBA),
+			}); err != nil {
+				s.logger.Error(err, "failed to create data set tape", "set_number", e.SetNumber, "media_seq", e.MediaSeq)
+			}
 		}
 		if tapeSeq >= int(e.MediaSeq) {
 			if _, err := s.db.Queries().DeleteVolumesByDataSet(ctx, dsID); err != nil {

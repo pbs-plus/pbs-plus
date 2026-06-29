@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS data_set_tapes;

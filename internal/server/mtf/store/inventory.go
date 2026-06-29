@@ -164,6 +164,11 @@ func (d *Database) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 		log.Error(err, "")
 	}
 	ds.Volumes = volumesFromRows(vols)
+	tapes, err := d.readQueries.ListDataSetTapes(ctx, r.ID)
+	if err != nil {
+		log.Error(err, "")
+	}
+	ds.Tapes = dataSetTapesFromRows(tapes)
 	return ds, nil
 }
 
@@ -191,6 +196,7 @@ func dataSetFromRow(r mtfquery.DataSet) DataSet {
 		Size:           ni64(r.Size),
 		SSETPBA:        r.SsetPba,
 		FirstMediaSeq:  ni(r.FirstMediaSeq),
+		SourceMediaSeq: ni(r.SourceMediaSeq),
 	}
 }
 
@@ -204,6 +210,19 @@ func volumesFromRows(rows []mtfquery.DataSetVolume) []DataSetVolume {
 			VolumeLabel:     ns(r.VolumeLabel),
 			MachineName:     ns(r.MachineName),
 			MappedNamespace: ns(r.MappedNamespace),
+		})
+	}
+	return out
+}
+
+func dataSetTapesFromRows(rows []mtfquery.DataSetTape) []DataSetTape {
+	out := make([]DataSetTape, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, DataSetTape{
+			ID:        r.ID,
+			DataSetID: r.DataSetID,
+			MediaSeq:  r.MediaSeq,
+			SSETPBA:   r.SsetPba,
 		})
 	}
 	return out

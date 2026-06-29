@@ -14,11 +14,13 @@ type Querier interface {
 	CountMappings(ctx context.Context) (int64, error)
 	CountMtfJobs(ctx context.Context) (int64, error)
 	CreateDataSet(ctx context.Context, arg CreateDataSetParams) (int64, error)
+	CreateDataSetTape(ctx context.Context, arg CreateDataSetTapeParams) error
 	CreateDataSetVolume(ctx context.Context, arg CreateDataSetVolumeParams) error
 	CreateInventoryRun(ctx context.Context, arg CreateInventoryRunParams) (int64, error)
 	CreateMapping(ctx context.Context, arg CreateMappingParams) (int64, error)
 	CreateMtfJob(ctx context.Context, arg CreateMtfJobParams) error
 	DeleteCartridge(ctx context.Context, barcode string) (int64, error)
+	DeleteDataSetTapes(ctx context.Context, dataSetID int64) (int64, error)
 	DeleteDataSetsByFamily(ctx context.Context, mediaFamilyID int64) (int64, error)
 	DeleteMapping(ctx context.Context, id int64) (int64, error)
 	DeleteMediaFamily(ctx context.Context, id int64) (int64, error)
@@ -27,6 +29,7 @@ type Querier interface {
 	FindDataSet(ctx context.Context, arg FindDataSetParams) (DataSet, error)
 	GetCartridge(ctx context.Context, barcode string) (MtfCartridge, error)
 	GetDataSet(ctx context.Context, id int64) (DataSet, error)
+	GetDataSetTape(ctx context.Context, arg GetDataSetTapeParams) (DataSetTape, error)
 	GetInventoryRun(ctx context.Context, id int64) (MtfInventoryRun, error)
 	GetMapping(ctx context.Context, id int64) (NamespaceMapping, error)
 	GetMediaFamily(ctx context.Context, id int64) (MediaFamily, error)
@@ -35,6 +38,7 @@ type Querier interface {
 	ListAllMtfJobs(ctx context.Context) ([]MtfJob, error)
 	ListCartridges(ctx context.Context) ([]MtfCartridge, error)
 	ListCartridgesByFamily(ctx context.Context, mediaFamilyID int64) ([]MtfCartridge, error)
+	ListDataSetTapes(ctx context.Context, dataSetID int64) ([]DataSetTape, error)
 	ListDataSetsByFamily(ctx context.Context, mediaFamilyID int64) ([]DataSet, error)
 	ListEnabledMappings(ctx context.Context) ([]NamespaceMapping, error)
 	ListInventoryRuns(ctx context.Context, limit int64) ([]MtfInventoryRun, error)

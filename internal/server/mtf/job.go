@@ -18,7 +18,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
-	mtf "github.com/pbs-plus/go-mtf"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
@@ -297,111 +296,6 @@ func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 	}
 	return cfg, nil
 }
-
-func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tapeio.Config, tapeCfg *tape.Config) (tapeio.Config, error) {
-	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
-	if err != nil {
-		return cfg, err
-	}
-	allBKF := true
-	var sources []string
-	for _, c := range carts {
-		if !c.IsBkfFile {
-			allBKF = false
-			break
-		}
-		sources = append(sources, c.SourcePath)
-	}
-	if allBKF && len(sources) > 0 {
-		cfg.Sources = sources
-	} else {
-		dev, chg, idx, err := j.resolveDrivePaths(tapeCfg)
-		if err != nil {
-			return cfg, err
-		}
-		cfg.TapeDevice = dev
-		if cfg.ChangerDevice == "" {
-			cfg.ChangerDevice = chg
-		}
-		cfg.DriveIndex = idx
-
-		if cfg.ChangerDevice != "" && len(carts) > 0 {
-			seqToBarcode := make(map[int]string, len(carts))
-			for _, c := range carts {
-				seqToBarcode[c.Sequence] = c.Barcode
-			}
-			feeder, err := tapeio.NewFeeder(cfg.ChangerDevice, cfg.TapeDevice, cfg.DriveIndex, tapeio.WithLog(func(msg string) {
-				j.task.LogString(msg)
-			}), tapeio.WithContext(ctx), tapeio.WithKeepLoaded(j.job.KeepLoaded), tapeio.WithSequenceResolver(func(seq int) string {
-				return seqToBarcode[seq]
-			}))
-			if err != nil {
-				return cfg, fmt.Errorf("open changer: %w", err)
-			}
-			cfg.Feeder = feeder
-			j.feeder = feeder
-			wantBarcode := seqToBarcode[ds.FirstMediaSeq]
-			if wantBarcode == "" {
-				wantBarcode = carts[0].Barcode
-			}
-			if err := feeder.LoadBarcodeWait(wantBarcode); err != nil {
-				feeder.Close()
-				return cfg, fmt.Errorf("load cartridge %s: %w", wantBarcode, err)
-			}
-		}
-	}
-	wantSet := ds.SetNumber
-	wantMachine := ds.MachineName
-	wantTime := ds.WriteTime
-	currentSeq := int(carts[0].Sequence)
-	if ds.SSETPBA > 0 && len(carts) > 0 && ds.FirstMediaSeq == currentSeq {
-		offset := carts[0].PbaOffset
-		if offset == 0 {
-			offset = 1
-		}
-		cfg.SnapshotPBA = ds.SSETPBA - offset
-	} else if ds.SSETPBA > 0 && len(carts) > 0 {
-		dsID := ds.ID
-		storeRef := j.store.MtfStore
-		cfg.OnSetMapRead = func(entry mtf.SetMapEntry) {
-			if entry.SSETPBA == 0 {
-				return
-			}
-			if err := storeRef.SetDataSetSsetPba(ctx, dsID, int64(entry.SSETPBA)); err != nil {
-				j.logger.Error(err, "failed to persist sset_pba", "data_set_id", dsID)
-			} else {
-				j.logger.Info("persisted sset_pba from setmap", "data_set_id", dsID, "pba", entry.SSETPBA)
-			}
-		}
-	}
-	cfg.SnapshotResolver = func(entries []mtf.SetMapEntry) int {
-		for i, e := range entries {
-			if int(e.SetNumber) == wantSet && int(e.MediaSeq) == currentSeq {
-				return i
-			}
-		}
-		for i, e := range entries {
-			if int(e.SetNumber) == wantSet {
-				return i
-			}
-		}
-		for i, e := range entries {
-			if wantTime != 0 && e.WriteTime.Unix() == wantTime {
-				return i
-			}
-		}
-		for i, e := range entries {
-			for _, v := range e.Volumes {
-				if v.MachineName == wantMachine {
-					return i
-				}
-			}
-		}
-		return -1
-	}
-	return cfg, nil
-}
-
 func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev string, driveIdx int, err error) {
 	if tapeCfg == nil || len(tapeCfg.Drives) == 0 {
 		return "/dev/nst0", "", 0, nil

@@ -74,3 +74,18 @@ DELETE FROM data_set_volumes WHERE data_set_id = ?;
 
 -- name: UpdateDataSetSsetPba :execrows
 UPDATE data_sets SET sset_pba = ? WHERE id = ?;
+
+-- name: CreateDataSetTape :exec
+INSERT INTO data_set_tapes (data_set_id, media_seq, sset_pba)
+VALUES (?, ?, ?)
+ON CONFLICT(data_set_id, media_seq) DO UPDATE SET
+    sset_pba = excluded.sset_pba;
+
+-- name: ListDataSetTapes :many
+SELECT * FROM data_set_tapes WHERE data_set_id = ? ORDER BY media_seq;
+
+-- name: GetDataSetTape :one
+SELECT * FROM data_set_tapes WHERE data_set_id = ? AND media_seq = ? LIMIT 1;
+
+-- name: DeleteDataSetTapes :execrows
+DELETE FROM data_set_tapes WHERE data_set_id = ?;

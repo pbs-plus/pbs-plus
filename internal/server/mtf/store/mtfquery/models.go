@@ -26,6 +26,13 @@ type DataSet struct {
 	SsetPba        int64          `json:"sset_pba"`
 }
 
+type DataSetTape struct {
+	ID        int64 `json:"id"`
+	DataSetID int64 `json:"data_set_id"`
+	MediaSeq  int64 `json:"media_seq"`
+	SsetPba   int64 `json:"sset_pba"`
+}
+
 type DataSetVolume struct {
 	ID              int64          `json:"id"`
 	DataSetID       int64          `json:"data_set_id"`

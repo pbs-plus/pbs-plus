@@ -58,6 +58,24 @@ func (q *Queries) CreateDataSet(ctx context.Context, arg CreateDataSetParams) (i
 	return result.LastInsertId()
 }
 
+const createDataSetTape = `-- name: CreateDataSetTape :exec
+INSERT INTO data_set_tapes (data_set_id, media_seq, sset_pba)
+VALUES (?, ?, ?)
+ON CONFLICT(data_set_id, media_seq) DO UPDATE SET
+    sset_pba = excluded.sset_pba
+`
+
+type CreateDataSetTapeParams struct {
+	DataSetID int64 `json:"data_set_id"`
+	MediaSeq  int64 `json:"media_seq"`
+	SsetPba   int64 `json:"sset_pba"`
+}
+
+func (q *Queries) CreateDataSetTape(ctx context.Context, arg CreateDataSetTapeParams) error {
+	_, err := q.db.ExecContext(ctx, createDataSetTape, arg.DataSetID, arg.MediaSeq, arg.SsetPba)
+	return err
+}
+
 const createDataSetVolume = `-- name: CreateDataSetVolume :exec
 INSERT INTO data_set_volumes (data_set_id, device, volume_label, machine_name, mapped_namespace)
 VALUES (?, ?, ?, ?, ?)
@@ -80,6 +98,18 @@ func (q *Queries) CreateDataSetVolume(ctx context.Context, arg CreateDataSetVolu
 		arg.MappedNamespace,
 	)
 	return err
+}
+
+const deleteDataSetTapes = `-- name: DeleteDataSetTapes :execrows
+DELETE FROM data_set_tapes WHERE data_set_id = ?
+`
+
+func (q *Queries) DeleteDataSetTapes(ctx context.Context, dataSetID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteDataSetTapes, dataSetID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteDataSetsByFamily = `-- name: DeleteDataSetsByFamily :execrows
@@ -177,6 +207,27 @@ func (q *Queries) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 	return i, err
 }
 
+const getDataSetTape = `-- name: GetDataSetTape :one
+SELECT id, data_set_id, media_seq, sset_pba FROM data_set_tapes WHERE data_set_id = ? AND media_seq = ? LIMIT 1
+`
+
+type GetDataSetTapeParams struct {
+	DataSetID int64 `json:"data_set_id"`
+	MediaSeq  int64 `json:"media_seq"`
+}
+
+func (q *Queries) GetDataSetTape(ctx context.Context, arg GetDataSetTapeParams) (DataSetTape, error) {
+	row := q.db.QueryRowContext(ctx, getDataSetTape, arg.DataSetID, arg.MediaSeq)
+	var i DataSetTape
+	err := row.Scan(
+		&i.ID,
+		&i.DataSetID,
+		&i.MediaSeq,
+		&i.SsetPba,
+	)
+	return i, err
+}
+
 const getMediaFamily = `-- name: GetMediaFamily :one
 SELECT id, name, total_tapes, has_catalog, last_scanned, created_at FROM media_families WHERE id = ? LIMIT 1
 `
@@ -223,6 +274,38 @@ func (q *Queries) ListAllDataSets(ctx context.Context) ([]DataSet, error) {
 			&i.Size,
 			&i.FirstMediaSeq,
 			&i.SourceMediaSeq,
+			&i.SsetPba,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDataSetTapes = `-- name: ListDataSetTapes :many
+SELECT id, data_set_id, media_seq, sset_pba FROM data_set_tapes WHERE data_set_id = ? ORDER BY media_seq
+`
+
+func (q *Queries) ListDataSetTapes(ctx context.Context, dataSetID int64) ([]DataSetTape, error) {
+	rows, err := q.db.QueryContext(ctx, listDataSetTapes, dataSetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DataSetTape{}
+	for rows.Next() {
+		var i DataSetTape
+		if err := rows.Scan(
+			&i.ID,
+			&i.DataSetID,
+			&i.MediaSeq,
 			&i.SsetPba,
 		); err != nil {
 			return nil, err

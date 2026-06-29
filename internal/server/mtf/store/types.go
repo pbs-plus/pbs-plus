@@ -75,6 +75,14 @@ type DataSet struct {
 	FirstMediaSeq  int             `json:"first_media_seq"`
 	SourceMediaSeq int             `json:"source_media_seq"`
 	Volumes        []DataSetVolume `json:"volumes"`
+	Tapes          []DataSetTape   `json:"tapes"`
+}
+
+type DataSetTape struct {
+	ID        int64 `json:"id"`
+	DataSetID int64 `json:"data_set_id"`
+	MediaSeq  int64 `json:"media_seq"`
+	SSETPBA   int64 `json:"sset_pba"`
 }
 
 type DataSetVolume struct {
