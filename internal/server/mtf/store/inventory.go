@@ -148,6 +148,11 @@ func (d *Database) ListDataSetsByFamily(ctx context.Context, familyID int64) ([]
 			log.Error(err, "")
 		}
 		ds.Volumes = volumesFromRows(vols)
+		tapes, err := d.readQueries.ListDataSetTapes(ctx, r.ID)
+		if err != nil {
+			log.Error(err, "")
+		}
+		ds.Tapes = dataSetTapesFromRows(tapes)
 		out = append(out, ds)
 	}
 	return out, nil
