@@ -20,6 +20,7 @@ type Feeder struct {
 	chg        *changer.Changer
 	tapeDev    string
 	driveIndex int
+	driveGen   int
 	ctx        context.Context
 	keepLoaded bool
 
@@ -73,6 +74,7 @@ func NewFeeder(changerDev, tapeDev string, driveIndex int, opts ...Option) (*Fee
 		chg:        chg,
 		tapeDev:    tapeDev,
 		driveIndex: driveIndex,
+		driveGen:   detectDriveGen(tapeDev),
 		ctx:        context.Background(),
 		probed:     make(map[string]int),
 		processed:  make(map[string]bool),
@@ -242,6 +244,15 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 			f.log(fmt.Sprintf("Drive %d has %s loaded; skipping (configured drive is %d)", dIdx, barcodeOrUnknown(bc), f.driveIndex))
 			continue
 		}
+		if f.skipIncompatible(bc) {
+			cur, _ := f.currentStatus()
+			if cur != nil && dIdx < len(cur.Drives) && cur.Drives[dIdx].Full {
+				if uErr := f.unloadDriveToFreeSlot(cur); uErr != nil {
+					log.Error(uErr, "")
+				}
+			}
+			continue
+		}
 		f.log(fmt.Sprintf("Drive %d has %s loaded; reading in place", dIdx, barcodeOrUnknown(bc)))
 		rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
 		if err != nil {
@@ -282,6 +293,9 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 		}
 		if f.skip != nil && f.skip(bc) {
 			f.processed[bc] = true
+			continue
+		}
+		if f.skipIncompatible(bc) {
 			continue
 		}
 		slot := i + 1
@@ -333,6 +347,10 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		if barcode == "" {
 			return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in inventory", wantMFMID, wantSeq)
 		}
+		if !f.tapeReadable(barcode) {
+			return nil, fmt.Errorf("tape %s (%s) needed for family 0x%08X sequence %d is not readable on %s drive",
+				barcode, _genDesc(barcodeLTOGen(barcode)), wantMFMID, wantSeq, _genDesc(f.driveGen))
+		}
 		st, err := f.currentStatus()
 		if err != nil {
 			return nil, fmt.Errorf("refresh changer: %w", err)
@@ -370,6 +388,9 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		if !s.Full || s.ImportExport || IsCleaningTape(s.VolumeTag) || f.processed[s.VolumeTag] {
 			continue
 		}
+		if f.skipIncompatible(s.VolumeTag) {
+			continue
+		}
 		slot := i + 1
 		if slot == f.loadedSlot {
 			continue
@@ -402,6 +423,29 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		return rc2, nil
 	}
 	return nil, fmt.Errorf("tape with family 0x%08X sequence %d not found in changer", wantMFMID, wantSeq)
+}
+
+func (f *Feeder) tapeReadable(bc string) bool {
+	if f.driveGen == ltUndefined {
+		return true
+	}
+	tapeGen := barcodeLTOGen(bc)
+	if tapeGen == ltUndefined {
+		return true
+	}
+	return ltoReadCompatible(f.driveGen, tapeGen)
+}
+
+func (f *Feeder) skipIncompatible(bc string) bool {
+	if f.tapeReadable(bc) {
+		return false
+	}
+	tapeGen := barcodeLTOGen(bc)
+	if !f.processed[bc] {
+		f.log(fmt.Sprintf("Skipping %s: %s tape not readable on %s drive", bc, _genDesc(tapeGen), _genDesc(f.driveGen)))
+	}
+	f.processed[bc] = true
+	return true
 }
 
 func tapeInDrives(st *changer.Status, barcode string) bool {
