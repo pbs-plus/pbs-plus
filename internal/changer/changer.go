@@ -166,55 +166,76 @@ func (s *Status) DriveAddress(drive int) (uint16, error) {
 	return s.Drives[drive].ElementAddress, nil
 }
 
-func (c *Changer) Load(status *Status, slot, drive int) error {
-	transport := status.TransportAddress
-	src, err := status.SlotAddress(slot)
+func (c *Changer) LoadSlot(fromSlot, drivenum int) (*Status, error) {
+	status, err := c.Status()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("read status before load: %w", err)
 	}
-	dst, err := status.DriveAddress(drive)
+	cdb, err := c.moveCDB(status, fromSlot, drivenum, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cdb := moveMediumCDB(transport, src, dst)
 	if _, err := c.dev.scsi(cdb, nil, false, timeoutMove); err != nil {
-		return fmt.Errorf("load slot %d -> drive %d: %w", slot, drive, err)
+		return nil, fmt.Errorf("load slot %d -> drive %d: %w", fromSlot, drivenum, err)
 	}
-	return c.waitForDriveReady(drive)
+	if err := c.waitForDriveReady(drivenum); err != nil {
+		return nil, fmt.Errorf("load slot %d -> drive %d: %w", fromSlot, drivenum, err)
+	}
+	return c.Status()
 }
 
-func (c *Changer) Unload(status *Status, drive, slot int) error {
-	transport := status.TransportAddress
-	src, err := status.DriveAddress(drive)
+func (c *Changer) Unload(toSlot, drivenum int) (*Status, error) {
+	status, err := c.Status()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("read status before unload: %w", err)
 	}
-	dst, err := status.SlotAddress(slot)
+	cdb, err := c.moveCDB(status, toSlot, drivenum, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cdb := moveMediumCDB(transport, src, dst)
 	if _, err := c.dev.scsi(cdb, nil, false, timeoutMove); err != nil {
-		return fmt.Errorf("unload drive %d -> slot %d: %w", drive, slot, err)
+		return nil, fmt.Errorf("unload drive %d -> slot %d: %w", drivenum, toSlot, err)
 	}
-	return nil
+	return c.Status()
 }
 
-func (c *Changer) Transfer(status *Status, fromSlot, toSlot int) error {
-	transport := status.TransportAddress
+func (c *Changer) Transfer(fromSlot, toSlot int) (*Status, error) {
+	status, err := c.Status()
+	if err != nil {
+		return nil, fmt.Errorf("read status before transfer: %w", err)
+	}
 	src, err := status.SlotAddress(fromSlot)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dst, err := status.SlotAddress(toSlot)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cdb := moveMediumCDB(transport, src, dst)
+	cdb := moveMediumCDB(status.TransportAddress, src, dst)
 	if _, err := c.dev.scsi(cdb, nil, false, timeoutMove); err != nil {
-		return fmt.Errorf("transfer slot %d -> slot %d: %w", fromSlot, toSlot, err)
+		return nil, fmt.Errorf("transfer slot %d -> slot %d: %w", fromSlot, toSlot, err)
 	}
-	return nil
+	return c.Status()
+}
+
+func (c *Changer) moveCDB(status *Status, slot, drivenum int, load bool) ([]byte, error) {
+	transport := status.TransportAddress
+	slotAddr, err := status.SlotAddress(slot)
+	if err != nil {
+		return nil, err
+	}
+	driveAddr, err := status.DriveAddress(drivenum)
+	if err != nil {
+		return nil, err
+	}
+	var src, dst uint16
+	if load {
+		src, dst = slotAddr, driveAddr
+	} else {
+		src, dst = driveAddr, slotAddr
+	}
+	return moveMediumCDB(transport, src, dst), nil
 }
 
 // ready (Not-Ready/"becoming ready" 04/01 is retried for up to 5 minutes).
