@@ -147,7 +147,6 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 			log.Error(err, "")
 		}
 		r := mtf.NewReader(rc)
-		r.SkipUnnamedStreams()
 		if cfg.Spanning {
 			setupTapeContinuation(r, cfg.TapeDevice)
 		}
@@ -167,7 +166,6 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 			if err != nil {
 				return snapshots, err
 			}
-			r.SkipUnnamedStreams()
 			setupFileContinuation(r, files)
 			err = scanSnapshots(r, files[0], &snapshots)
 			if err := r.Close(); err != nil {
@@ -182,7 +180,6 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 				if err != nil {
 					return snapshots, err
 				}
-				r.SkipUnnamedStreams()
 				err = scanSnapshots(r, f, &snapshots)
 				if err := r.Close(); err != nil {
 					log.Error(err, "")
@@ -554,7 +551,6 @@ func (c *converter) runTape() error {
 	}()
 
 	r := mtf.NewReader(rc)
-	r.SkipUnnamedStreams()
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
 	}
@@ -582,7 +578,6 @@ func (c *converter) runChanger() error {
 		default:
 		}
 		r := mtf.NewReader(rc)
-		r.SkipUnnamedStreams()
 		r.SetContinuation(f.AsContinuation())
 		if err := c.locateToSnapshot(rc, r); err != nil {
 			return err
@@ -615,7 +610,6 @@ func (c *converter) runFiles() error {
 		if err != nil {
 			return fmt.Errorf("open %s: %w", files[0], err)
 		}
-		r.SkipUnnamedStreams()
 		setupFileContinuation(r, files)
 		perr := c.processReader(r)
 		if err := r.Close(); err != nil {
@@ -634,7 +628,6 @@ func (c *converter) runFiles() error {
 		if err != nil {
 			return fmt.Errorf("open %s: %w", f, err)
 		}
-		r.SkipUnnamedStreams()
 		perr := c.processReader(r)
 		if err := r.Close(); err != nil {
 			log.Error(err, "")
