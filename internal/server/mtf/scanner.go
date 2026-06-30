@@ -198,6 +198,7 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcod
 		return fmt.Errorf("upsert family: %w", err)
 	}
 
+	stats := setMapCartridgeStats(sm, int(blk.Tape.Sequence))
 	if err := s.db.Queries().UpsertCartridge(ctx, mtfquery.UpsertCartridgeParams{
 		Barcode:       barcode,
 		Label:         nullStr(blk.Tape.Name),
@@ -209,6 +210,11 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcod
 		Status:        nullStr("online"),
 		LastScanned:   nullInt(time.Now().Unix()),
 		PbaOffset:     pbaOffset,
+		Volumes:       nullInt(stats.volumes),
+		Directories:   nullInt(stats.dirs),
+		Files:         nullInt(stats.files),
+		FileBytes:     nullInt(stats.bytes),
+		SetsClosed:    nullInt(stats.setsClosed),
 	}); err != nil {
 		return fmt.Errorf("upsert cartridge: %w", err)
 	}
@@ -375,7 +381,7 @@ func (s *Scanner) indexSetMapEntries(ctx context.Context, famID int64, sm *mtfli
 			NumDirectories: nullInt(int64(e.NumDirectories)),
 			NumFiles:       nullInt(int64(e.NumFiles)),
 			NumCorrupt:     nullInt(int64(e.NumCorrupt)),
-			Size:           nullInt(0),
+			Size:           nullInt(int64(e.Size)),
 			SsetPba:        ssetPba,
 			FirstMediaSeq:  nullInt(int64(e.MediaSeq)),
 			SourceMediaSeq: nullInt(int64(tapeSeq)),
@@ -527,4 +533,30 @@ func (s *Scanner) probeFirstSSET(rc *tapeio.TapeReader, r *mtflib.Reader, sm *mt
 		s.logger.LogString("  PBA offset calibration failed, using offset=0")
 	}
 	return 0
+}
+
+type cartridgeStats struct {
+	volumes    int64
+	dirs       int64
+	files      int64
+	bytes      int64
+	setsClosed int64
+}
+
+func setMapCartridgeStats(sm *mtflib.SetMap, tapeSeq int) cartridgeStats {
+	var st cartridgeStats
+	if sm == nil {
+		return st
+	}
+	for _, e := range sm.Entries {
+		if int(e.MediaSeq) != tapeSeq {
+			continue
+		}
+		st.volumes += int64(e.NumVolumes)
+		st.dirs += int64(e.NumDirectories)
+		st.files += int64(e.NumFiles)
+		st.bytes += int64(e.Size)
+		st.setsClosed++
+	}
+	return st
 }
