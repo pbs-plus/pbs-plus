@@ -169,6 +169,8 @@ github.com/pbs-plus/go-mtf v0.25.0 h1:f+bLIjANWCRIeSEU/RE79zXonDemyn+tiagxK/jy5Z
 github.com/pbs-plus/go-mtf v0.25.0/go.mod h1:zOwNiCqMWreOS7O/dW/1vgwPrN1xZXYmmD/udPaXpgU=
 github.com/pbs-plus/go-mtf v0.25.1 h1:FUmNcIHSJYpHd3aSdVr9g1TB/Fan/rg/XPchAypv8VM=
 github.com/pbs-plus/go-mtf v0.25.1/go.mod h1:zOwNiCqMWreOS7O/dW/1vgwPrN1xZXYmmD/udPaXpgU=
+github.com/pbs-plus/go-mtf v0.26.0 h1:xuEWn+TzYw9hIHvju2h27DFSmHRy6ZvaHLoCUXTDSoo=
+github.com/pbs-plus/go-mtf v0.26.0/go.mod h1:zOwNiCqMWreOS7O/dW/1vgwPrN1xZXYmmD/udPaXpgU=
 github.com/pbs-plus/go-tapedrive v0.5.1 h1:OLeFJQM+tzUQDNrKqViPhrCx0BJWcuQ/AalwoZ1LmsI=
 github.com/pbs-plus/go-tapedrive v0.5.1/go.mod h1:LO90B9vMnFbP/q5+Ci3/8RnuyBHZ2nw7qxQkCfjzKok=
 github.com/pbs-plus/go-tapedrive v0.5.2 h1:WkkU4l44PvvB+OWk1WHPe+p1iN7DfkU2jZC4vg162SA=

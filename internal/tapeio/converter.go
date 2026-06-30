@@ -147,6 +147,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 			log.Error(err, "")
 		}
 		r := mtf.NewReader(rc)
+		r.SkipUnnamedStreams()
 		if cfg.Spanning {
 			setupTapeContinuation(r, cfg.TapeDevice)
 		}
@@ -166,6 +167,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 			if err != nil {
 				return snapshots, err
 			}
+			r.SkipUnnamedStreams()
 			setupFileContinuation(r, files)
 			err = scanSnapshots(r, files[0], &snapshots)
 			if err := r.Close(); err != nil {
@@ -180,6 +182,7 @@ func ListSnapshots(ctx context.Context, cfg Config) ([]Snapshot, error) {
 				if err != nil {
 					return snapshots, err
 				}
+				r.SkipUnnamedStreams()
 				err = scanSnapshots(r, f, &snapshots)
 				if err := r.Close(); err != nil {
 					log.Error(err, "")
@@ -551,6 +554,7 @@ func (c *converter) runTape() error {
 	}()
 
 	r := mtf.NewReader(rc)
+	r.SkipUnnamedStreams()
 	if c.cfg.Spanning {
 		setupTapeContinuation(r, c.cfg.TapeDevice)
 	}
@@ -578,6 +582,7 @@ func (c *converter) runChanger() error {
 		default:
 		}
 		r := mtf.NewReader(rc)
+		r.SkipUnnamedStreams()
 		r.SetContinuation(f.AsContinuation())
 		if err := c.locateToSnapshot(rc, r); err != nil {
 			return err
@@ -610,6 +615,7 @@ func (c *converter) runFiles() error {
 		if err != nil {
 			return fmt.Errorf("open %s: %w", files[0], err)
 		}
+		r.SkipUnnamedStreams()
 		setupFileContinuation(r, files)
 		perr := c.processReader(r)
 		if err := r.Close(); err != nil {
@@ -628,6 +634,7 @@ func (c *converter) runFiles() error {
 		if err != nil {
 			return fmt.Errorf("open %s: %w", f, err)
 		}
+		r.SkipUnnamedStreams()
 		perr := c.processReader(r)
 		if err := r.Close(); err != nil {
 			log.Error(err, "")
@@ -806,12 +813,12 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 
 func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mtf.Header) error {
 	relPath := strings.TrimPrefix(strings.TrimPrefix(h.Name, c.rootPrefix), "/")
-	components := strings.Split(relPath, "/")
+	name, depth := lastNameSegment(relPath)
 	op := tapeOp{
 		rootPfx: c.rootPrefix,
 		relPath: relPath,
-		name:    sanitizeName(components[len(components)-1]),
-		depth:   len(components) - 1,
+		name:    sanitizeName(name),
+		depth:   depth,
 	}
 	switch h.Type {
 	case mtf.EntryDirectory:
@@ -1048,6 +1055,17 @@ func collectBKFFiles(paths []string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+func lastNameSegment(relPath string) (name string, depth int) {
+	lastSep := -1
+	for i := 0; i < len(relPath); i++ {
+		if relPath[i] == '/' {
+			depth++
+			lastSep = i
+		}
+	}
+	return relPath[lastSep+1:], depth
 }
 
 func sanitizeName(name string) string {
