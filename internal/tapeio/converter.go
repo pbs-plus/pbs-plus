@@ -693,15 +693,22 @@ func (c *converter) runPipeline(r *mtf.Reader) error {
 	if err := sp.close(); err != nil {
 		log.Error(err, "")
 	}
+
+	drainDone := make(chan struct{})
 	go func() {
 		for op := range ops {
 			if op.kind == opFile {
 				sp.release(op.dataSize)
 			}
 		}
+		close(drainDone)
 	}()
 
-	if perr := <-pumpErr; perr != nil && encErr == nil {
+	perr := <-pumpErr
+	close(ops)
+	<-drainDone
+
+	if perr != nil && encErr == nil {
 		return perr
 	}
 	return encErr
