@@ -18,7 +18,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
-
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 )
@@ -117,9 +116,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 
 	task.LogString(fmt.Sprintf("MTF migration started: source=%s/%s datastore=%s namespace=%s",
 		j.job.SourceKind, j.job.SourceRef, j.job.Datastore, j.job.Namespace))
-	if j.job.Spanning {
-		task.LogString("Spanning mode: merging all cartridges of the media set")
-	}
+	task.LogString("Spanning mode: merging all cartridges of the media set")
 	if j.job.Changer != "" {
 		task.LogString(fmt.Sprintf("Changer: %s", j.job.Changer))
 	}
@@ -207,7 +204,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 		Namespace:         baseNS,
 		SkipTLS:           true,
 		Verbose:           false,
-		Spanning:          job.Spanning,
+		Spanning:          true,
 		MigrationTag:      fmt.Sprintf("m%06d", time.Now().UnixMilli()%1000000),
 		NamespaceResolver: resolver,
 		OnSnapshot: func(backupID, namespace string) {

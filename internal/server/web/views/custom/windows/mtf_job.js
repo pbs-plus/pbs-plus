@@ -282,13 +282,6 @@ Ext.define("PBS.MtfManagement.JobEdit", {
           },
           {
             xtype: "proxmoxcheckbox",
-            name: "spanning",
-            fieldLabel: gettext("Spanning"),
-            boxLabel: gettext("Merge all cartridges of the media set"),
-            value: true,
-          },
-          {
-            xtype: "proxmoxcheckbox",
             name: "overwrite_mappings",
             fieldLabel: gettext("Skip Mappings"),
             boxLabel: gettext("Bypass namespace mapping rules, use value as-is"),

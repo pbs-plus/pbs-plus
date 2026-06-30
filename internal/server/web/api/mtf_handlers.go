@@ -328,7 +328,7 @@ func mtfJobFromForm(r *http.Request) (mtfdb.MTFJob, error) {
 		NotificationMode:  r.FormValue("notification-mode"),
 		Changer:           r.FormValue("changer"),
 		Drive:             r.FormValue("drive"),
-		Spanning:          r.FormValue("spanning") == "1" || r.FormValue("spanning") == "true",
+		Spanning:          true,
 		OverwriteMappings: r.FormValue("overwrite_mappings") == "1" || r.FormValue("overwrite_mappings") == "true",
 	}
 
@@ -384,9 +384,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	if v := r.FormValue("drive"); v != "" {
 		job.Drive = v
 	}
-	if r.FormValue("spanning") != "" {
-		job.Spanning = r.FormValue("spanning") == "1" || r.FormValue("spanning") == "true"
-	}
 	if r.FormValue("overwrite_mappings") != "" {
 		job.OverwriteMappings = r.FormValue("overwrite_mappings") == "1" || r.FormValue("overwrite_mappings") == "true"
 	}
@@ -410,8 +407,6 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 				job.Changer = ""
 			case "drive":
 				job.Drive = ""
-			case "spanning":
-				job.Spanning = false
 			case "overwrite_mappings":
 				job.OverwriteMappings = false
 			}

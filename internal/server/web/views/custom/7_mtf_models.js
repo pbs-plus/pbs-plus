@@ -9,7 +9,6 @@ Ext.define("pbs-mtf-job", {
     "namespace",
     "comment",
     "notification-mode",
-    "spanning",
     "overwrite_mappings",
     "changer",
     "drive",
