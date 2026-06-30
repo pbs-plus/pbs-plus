@@ -170,7 +170,7 @@ func (s *Scanner) processTape(ctx context.Context, rc *tapeio.TapeReader, barcod
 	if s.logger != nil {
 		s.logger.LogString(fmt.Sprintf("%s: reading catalog...", barcode))
 	}
-	sm, smErr := mtflib.ReadSetMap(rc)
+	sm, tapeInfo, family, smErr := mtflib.ReadSetMapFull(rc)
 	if smErr != nil {
 		s.logger.Error(smErr, "")
 	}
@@ -178,7 +178,7 @@ func (s *Scanner) processTape(ctx context.Context, rc *tapeio.TapeReader, barcod
 		if s.logger != nil {
 			s.logger.LogString(fmt.Sprintf("%s: found %d data sets via catalog", barcode, len(sm.Entries)))
 		}
-		if iErr := s.indexSetMap(ctx, rc, barcode, sm, res); iErr != nil {
+		if iErr := s.indexSetMap(ctx, rc, barcode, sm, tapeInfo, family, res); iErr != nil {
 			s.logger.Error(iErr, "mtf: index failed", "barcode", barcode)
 			if s.logger != nil {
 				s.logger.LogString(fmt.Sprintf("%s: index failed  -  %v", barcode, iErr))
@@ -204,28 +204,31 @@ func (s *Scanner) processTape(ctx context.Context, rc *tapeio.TapeReader, barcod
 	return nil
 }
 
-func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcode string, sm *mtflib.SetMap, res *Result) error {
-	if s.logger != nil {
-		s.logger.LogString("  Reading TAPE header...")
-	}
-	if err := rc.Rewind(); err != nil {
-		s.logger.Error(err, "")
-	}
-	r := mtflib.NewReader(rc)
-	blk, err := r.Next()
-	if err != nil {
-		return fmt.Errorf("read TAPE block: %w", err)
-	}
-	if blk.Kind != mtflib.KindMedia || blk.Tape == nil {
-		return fmt.Errorf("first block is not a TAPE block")
+func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcode string, sm *mtflib.SetMap, tapeInfo *mtflib.TapeInfo, fam mtflib.MediaFamily, res *Result) error {
+	if tapeInfo == nil {
+		if s.logger != nil {
+			s.logger.LogString("  Reading TAPE header...")
+		}
+		if err := rc.Rewind(); err != nil {
+			s.logger.Error(err, "")
+		}
+		r := mtflib.NewReader(rc)
+		blk, err := r.Next()
+		if err != nil {
+			return fmt.Errorf("read TAPE block: %w", err)
+		}
+		if blk.Kind != mtflib.KindMedia || blk.Tape == nil {
+			return fmt.Errorf("first block is not a TAPE block")
+		}
+		tapeInfo = blk.Tape
+		fam = r.Family()
 	}
 
 	var pbaOffset int64
 	if sm != nil && len(sm.Entries) > 0 {
-		pbaOffset = s.probeFirstSSET(rc, r, sm)
+		pbaOffset = s.probeFirstSSET(rc, tapeInfo, sm)
 	}
 
-	fam := r.Family()
 	famID := int64(fam.ID)
 	if famID == 0 {
 		famID = syntheticFamilyID(barcode)
@@ -249,14 +252,14 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcod
 		return fmt.Errorf("upsert family: %w", err)
 	}
 
-	stats := setMapCartridgeStats(sm, int(blk.Tape.Sequence))
+	stats := setMapCartridgeStats(sm, int(tapeInfo.Sequence))
 	if err := s.db.Queries().UpsertCartridge(ctx, mtfquery.UpsertCartridgeParams{
 		Barcode:       barcode,
-		Label:         nullStr(blk.Tape.Name),
+		Label:         nullStr(tapeInfo.Name),
 		MediaFamilyID: famID,
-		Sequence:      nullInt(int64(blk.Tape.Sequence)),
+		Sequence:      nullInt(int64(tapeInfo.Sequence)),
 		Role:          nullStr("data"),
-		CatalogType:   nullInt(int64(blk.Tape.CatalogType)),
+		CatalogType:   nullInt(int64(tapeInfo.CatalogType)),
 		HasCatalog:    nullInt(1),
 		Status:        nullStr("online"),
 		LastScanned:   nullInt(time.Now().Unix()),
@@ -276,7 +279,7 @@ func (s *Scanner) indexSetMap(ctx context.Context, rc *tapeio.TapeReader, barcod
 		if s.logger != nil {
 			s.logger.LogString(fmt.Sprintf("  Indexing %d data set entries...", len(sm.Entries)))
 		}
-		if err := s.indexSetMapEntries(ctx, famID, sm, int(blk.Tape.Sequence)); err != nil {
+		if err := s.indexSetMapEntries(ctx, famID, sm, int(tapeInfo.Sequence)); err != nil {
 			return fmt.Errorf("index set map: %w", err)
 		}
 	}
@@ -547,22 +550,18 @@ func maxi(a, b int) int {
 	return b
 }
 
-func (s *Scanner) probeFirstSSET(rc *tapeio.TapeReader, r *mtflib.Reader, sm *mtflib.SetMap) int64 {
+func (s *Scanner) probeFirstSSET(rc *tapeio.TapeReader, tapeInfo *mtflib.TapeInfo, sm *mtflib.SetMap) int64 {
 	if len(sm.Entries) == 0 || sm.Entries[0].SSETPBA == 0 {
 		return 0
 	}
 	rawPBA := int64(sm.Entries[0].SSETPBA)
 	candidates := []int64{rawPBA - 1, rawPBA - 2, rawPBA, rawPBA - 3, rawPBA + 1}
+	r := mtflib.NewReader(rc)
+	if tapeInfo != nil {
+		r.SetFLBSize(tapeInfo.FLBSize)
+	}
 	for _, cand := range candidates {
 		if cand < 0 {
-			continue
-		}
-		if err := rc.Rewind(); err != nil {
-			s.logger.Error(err, "probe: rewind")
-			continue
-		}
-		if _, err := r.Next(); err != nil {
-			s.logger.Error(err, "probe: read TAPE")
 			continue
 		}
 		if err := r.SeekToBlock(cand); err != nil {
