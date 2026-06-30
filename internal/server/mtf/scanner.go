@@ -105,8 +105,18 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (*Result, error) {
 	var scanErr error
 	switch {
 	case opts.ChangerDevice != "":
+		lock, lerr := tapeio.LockTapeDevice(opts.TapeDevice)
+		if lerr != nil {
+			return res, fmt.Errorf("acquire drive lock for %s: %w", opts.TapeDevice, lerr)
+		}
+		defer func() { _ = lock.Close() }()
 		scanErr = s.scanChanger(ctx, opts, res)
 	case opts.TapeDevice != "":
+		lock, lerr := tapeio.LockTapeDevice(opts.TapeDevice)
+		if lerr != nil {
+			return res, fmt.Errorf("acquire drive lock for %s: %w", opts.TapeDevice, lerr)
+		}
+		defer func() { _ = lock.Close() }()
 		scanErr = s.scanDrive(ctx, opts.TapeDevice, "", res)
 	default:
 		scanErr = s.scanBKFFile(ctx, opts.BKFPath, "", res)

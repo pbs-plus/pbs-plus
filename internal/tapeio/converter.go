@@ -272,6 +272,13 @@ func Run(ctx context.Context, cfg Config) (*Stats, error) {
 
 	if cfg.TapeDevice != "" {
 		c.logf("Starting tape migration: device=%s changer=%s", cfg.TapeDevice, cfg.ChangerDevice)
+		lock, lerr := LockTapeDevice(cfg.TapeDevice)
+		if lerr != nil {
+			syncStats()
+			return &c.stats, lerr
+		}
+		c.logf("[tape-lock] acquired PBS drive lock for %s (%s)", cfg.TapeDevice, lock.Path())
+		defer func() { _ = lock.Close() }()
 		if err := c.runTape(); err != nil {
 			syncStats()
 			return &c.stats, err
