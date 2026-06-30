@@ -3,18 +3,51 @@ package mtf
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	mtflib "github.com/pbs-plus/go-mtf"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
+
+const pbsInventoryPath = conf.DbBasePath + "/tape/inventory.json"
+
+type pbsMediaEntry struct {
+	ID struct {
+		Label struct {
+			LabelText string `json:"label_text"`
+		} `json:"label"`
+	} `json:"id"`
+}
+
+func ListTapeLabels() (map[string]bool, error) {
+	data, err := os.ReadFile(pbsInventoryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var entries []pbsMediaEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	labels := make(map[string]bool)
+	for _, e := range entries {
+		if e.ID.Label.LabelText != "" {
+			labels[e.ID.Label.LabelText] = true
+		}
+	}
+	return labels, nil
+}
 
 type Options struct {
 	TapeDevice    string
@@ -97,7 +130,15 @@ func (s *Scanner) Scan(ctx context.Context, opts Options) (*Result, error) {
 func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) error {
 	s.logger.Info("mtf: opening changer", "device", opts.ChangerDevice, "drive_index", opts.DriveIndex)
 
+	pbsLabels, err := ListTapeLabels()
+	if err != nil {
+		s.logger.Error(err, "")
+	}
+
 	f, err := tapeio.NewFeeder(opts.ChangerDevice, opts.TapeDevice, opts.DriveIndex,
+		tapeio.WithSkip(func(barcode string) bool {
+			return pbsLabels != nil && pbsLabels[barcode]
+		}),
 		tapeio.WithLog(func(msg string) { s.logger.LogString(msg) }),
 	)
 	if err != nil {
