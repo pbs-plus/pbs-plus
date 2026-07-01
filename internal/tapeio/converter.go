@@ -1,7 +1,6 @@
 package tapeio
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -647,18 +646,13 @@ func (c *converter) runFiles() error {
 }
 
 type tapeOp struct {
-	kind     opKind
-	name     string
-	depth    int
-	relPath  string
-	meta     pxar.Metadata
-	size     int64
-	linkTgt  string
-	hardLink bool
-	rootPfx  string
-	data     []byte
-	dataSize int64
-	ssetIdx  int
+	kind    opKind
+	name    string
+	depth   int
+	relPath string
+	meta    pxar.Metadata
+	linkTgt string
+	rootPfx string
 }
 
 type opKind int
@@ -667,78 +661,37 @@ const (
 	opVolume opKind = iota
 	opDir
 	opSymlink
-	opFile
 	opSet
 	opSetEnd
 	opEnd
 )
 
-func (c *converter) runPipeline(r *mtf.Reader) error {
-	cap := c.cfg.SpoolCapBytes
-	if cap <= 0 {
-		cap = defaultSpoolCapBytes
-	}
-	sp, err := newSpool(c.cfg.SpoolDir, cap, 0)
-	if err != nil {
-		return fmt.Errorf("create spool: %w", err)
-	}
-	defer func() {
-		if err := sp.close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	ops := make(chan tapeOp, opChanCap)
-	pumpErr := make(chan error, 1)
-
-	go func() {
-		pumpErr <- c.pump(r, sp, ops)
-	}()
-
-	encErr := c.drain(ops, sp)
-
-	if err := sp.close(); err != nil {
-		log.Error(err, "")
-	}
-
-	drainDone := make(chan struct{})
-	go func() {
-		for op := range ops {
-			if op.kind == opFile {
-				sp.release(op.dataSize)
-			}
-		}
-		close(drainDone)
-	}()
-
-	perr := <-pumpErr
-	close(ops)
-	<-drainDone
-
-	if perr != nil && encErr == nil {
-		return perr
-	}
-	return encErr
-}
-
 func (c *converter) processReader(r *mtf.Reader) error {
-	return c.runPipeline(r)
+	return c.walk(r)
 }
 
-const (
-	defaultSpoolCapBytes = 256 << 20
-	opChanCap            = 256
-)
-
-func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
+// walk drives a single-threaded MTF→pxar conversion. Files are streamed
+// directly from the tape reader to the pxar writer (tape→PBS) with zero
+// intermediate buffering — the mtf.Reader is positioned at the file's STAN
+// data and handed to WriteEntryReader, which pulls bytes at ingest rate. This
+// replaces the former pump/drain/spool pipeline that buffered whole files in
+// RAM (io.ReadAll) and OOM'd on multi-GB Backup Exec archives. PBS ingest
+// speed now gates tape read, which is correct backpressure. Directories,
+// volumes and symlinks are tiny and are handled inline via the same consume*
+// helpers the drain used.
+func (c *converter) walk(r *mtf.Reader) error {
 	c.prog.markProcessing()
+	defer c.prog.markProcessingDone()
+	defer func() { c.prog.tapePhysBytes.Store(r.Position()) }()
+
+	var lastPos int64 = r.Position()
 	finish := func(err error) error {
-		c.prog.markProcessingDone()
-		c.prog.tapePhysBytes.Store(r.Position())
-		ops <- tapeOp{kind: opEnd}
+		if ferr := c.finishSnapshot(); ferr != nil && err == nil {
+			return ferr
+		}
 		return err
 	}
-	var lastPos int64 = r.Position()
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -774,6 +727,9 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 				c.logf("Tape: %s, created %s", block.Tape.Name, block.Tape.CreateTime.Format("2006-01-02 15:04"))
 			}
 		case mtf.KindSet:
+			if err := c.finishSnapshot(); err != nil {
+				return err
+			}
 			c.snapshotIdx++
 			c.meta = backupMeta{}
 			c.rootPrefix = ""
@@ -783,11 +739,12 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 				c.meta.BackupTime = block.Set.CreateTime
 			}
 			c.logf("SSET #%d: %q (%s)", c.snapshotIdx, c.meta.SetName, c.meta.BackupTime.Format("2006-01-02 15:04"))
-			ops <- tapeOp{kind: opSet, ssetIdx: c.snapshotIdx}
 		case mtf.KindSetEnd:
-			ops <- tapeOp{kind: opSetEnd}
+			if err := c.finishSnapshot(); err != nil {
+				return err
+			}
 			if c.cfg.SnapshotSel >= 0 {
-				return finish(nil)
+				return nil
 			}
 		case mtf.KindEntry:
 			if !c.snapshotSelected() {
@@ -797,10 +754,12 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 			if h.Type == mtf.EntryVolume {
 				c.meta.HostName = h.MachineName
 				c.rootPrefix = h.Name
-				ops <- tapeOp{kind: opVolume, rootPfx: c.rootPrefix}
+				if err := c.ensureSession(); err != nil {
+					return finish(err)
+				}
 				continue
 			}
-			if err := c.pumpEntry(r, sp, ops, h); err != nil {
+			if err := c.walkEntry(r, h); err != nil {
 				return finish(err)
 			}
 		}
@@ -811,7 +770,12 @@ func (c *converter) pump(r *mtf.Reader, sp *spool, ops chan<- tapeOp) error {
 	return finish(nil)
 }
 
-func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mtf.Header) error {
+// walkEntry handles a directory, symlink, or file entry inline. Files are
+// streamed from r (the mtf.Reader, positioned at the STAN data) straight into
+// the pxar writer with no buffering. After WriteEntryReader returns, r has
+// advanced past the file (its Read calls finishEntry on EOF), so the next
+// walk iteration yields the following entry.
+func (c *converter) walkEntry(r *mtf.Reader, h *mtf.Header) error {
 	relPath := strings.TrimPrefix(strings.TrimPrefix(h.Name, c.rootPrefix), "/")
 	name, depth := lastNameSegment(relPath)
 	op := tapeOp{
@@ -826,6 +790,10 @@ func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mt
 		op.kind = opDir
 		op.meta = mtfToPxarMeta(h, format.ModeIFDIR)
 		c.logf("  d %s", relPath)
+		if err := c.ensureSession(); err != nil {
+			return err
+		}
+		return c.consumeDir(op)
 	case mtf.EntryFile:
 		c.prog.files.Add(1)
 		if h.IsSymlink {
@@ -833,84 +801,44 @@ func (c *converter) pumpEntry(r *mtf.Reader, sp *spool, ops chan<- tapeOp, h *mt
 			op.meta = mtfToPxarMeta(h, format.ModeIFLNK)
 			op.linkTgt = h.LinkTarget
 			c.logf("  l %s -> %s", relPath, h.LinkTarget)
-		} else {
-			op.kind = opFile
-			op.meta = mtfToPxarMeta(h, format.ModeIFREG)
-			op.size = h.Size
-			op.hardLink = h.IsHardLink
-			op.linkTgt = h.LinkTarget
-			if err := sp.reserve(h.Size); err != nil {
-				return fmt.Errorf("spool reserve %q: %w", h.Name, err)
+			if err := c.ensureSession(); err != nil {
+				return err
 			}
-			blob, n, err := sp.read(r)
-			if err != nil {
-				return fmt.Errorf("spool file %q: %w", h.Name, err)
-			}
-			if n != h.Size {
-				sp.adjust(n - h.Size)
-			}
-			op.data = blob
-			op.dataSize = n
-			op.size = n
-			c.prog.tapeBytes.Add(n)
-			if h.IsHardLink {
-				c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
-			} else {
-				c.logf("  f %s (%d bytes)", relPath, h.Size)
-			}
+			return c.consumeSymlink(op)
 		}
+		if err := c.ensureSession(); err != nil {
+			return err
+		}
+		if h.IsHardLink {
+			c.logf("  f %s (hardlink -> %s, %d bytes)", relPath, h.LinkTarget, h.Size)
+		} else {
+			c.logf("  f %s (%d bytes)", relPath, h.Size)
+		}
+		return c.streamFile(r, h, op)
 	}
-	ops <- op
 	return nil
 }
 
-func (c *converter) drain(ops <-chan tapeOp, sp *spool) error {
-	snapIdx := -1
-	for op := range ops {
-		switch op.kind {
-		case opSet:
-			if err := c.finishSnapshot(); err != nil {
-				return err
-			}
-			snapIdx = op.ssetIdx
-		case opSetEnd:
-			if err := c.finishSnapshot(); err != nil {
-				return err
-			}
-			if c.cfg.SnapshotSel >= 0 && snapIdx == c.cfg.SnapshotSel {
-				return nil
-			}
-		case opVolume:
-			c.rootPrefix = op.rootPfx
-			if err := c.ensureSession(); err != nil {
-				return err
-			}
-		case opDir:
-			if err := c.ensureSession(); err != nil {
-				return err
-			}
-			if err := c.consumeDir(op); err != nil {
-				return err
-			}
-		case opSymlink:
-			if err := c.ensureSession(); err != nil {
-				return err
-			}
-			if err := c.consumeSymlink(op); err != nil {
-				return err
-			}
-		case opFile:
-			if err := c.ensureSession(); err != nil {
-				return err
-			}
-			if err := c.consumeFile(sp, op); err != nil {
-				return err
-			}
-		case opEnd:
-			return c.finishSnapshot()
+// streamFile writes one file's content from the mtf.Reader directly to the
+// pxar writer. r is positioned at the file's standard data stream; the pxar
+// writer pulls bytes at ingest rate. The mtf.Reader serves data via Read and
+// auto-advances past the entry when exhausted, so no manual positioning is
+// needed afterwards.
+func (c *converter) streamFile(r *mtf.Reader, h *mtf.Header, op tapeOp) error {
+	for len(c.dirStack) > op.depth {
+		if err := c.writer.EndDirectory(); err != nil {
+			return err
 		}
+		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-	return c.finishSnapshot()
+	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindFile, FileSize: uint64(h.Size)}
+	entry.SetFileName(op.name)
+	err := c.writer.WriteEntryReader(entry, r, uint64(h.Size))
+	if err == nil {
+		c.prog.bytes.Add(h.Size)
+		c.prog.tapeBytes.Add(h.Size)
+	}
+	return err
 }
 
 func (c *converter) consumeDir(op tapeOp) error {
@@ -944,26 +872,6 @@ func (c *converter) consumeSymlink(op tapeOp) error {
 	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindSymlink, LinkTarget: op.linkTgt}
 	entry.SetFileName(op.name)
 	return c.writer.WriteEntry(entry, nil)
-}
-
-func (c *converter) consumeFile(sp *spool, op tapeOp) error {
-	if op.relPath == "" {
-		return nil
-	}
-	for len(c.dirStack) > op.depth {
-		if err := c.writer.EndDirectory(); err != nil {
-			return err
-		}
-		c.dirStack = c.dirStack[:len(c.dirStack)-1]
-	}
-	entry := &pxar.Entry{Metadata: op.meta, Kind: pxar.KindFile, FileSize: uint64(op.size)}
-	entry.SetFileName(op.name)
-	err := c.writer.WriteEntryReader(entry, bytes.NewReader(op.data), uint64(op.size))
-	if err == nil {
-		c.prog.bytes.Add(op.dataSize)
-	}
-	sp.release(op.dataSize)
-	return err
 }
 
 func setupTapeContinuation(r *mtf.Reader, dev string) {
