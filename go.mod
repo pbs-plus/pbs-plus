@@ -21,7 +21,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.10.1
 	github.com/kardianos/service v1.2.4
 	github.com/klauspost/compress v1.18.6
-	github.com/minio/minio-go/v7 v7.2.0
+	github.com/minio/minio-go/v7 v7.2.1
 	github.com/minio/sha256-simd v1.0.1
 	github.com/mxk/go-vss v1.2.1
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
