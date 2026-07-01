@@ -102,8 +102,31 @@ func OpenTapeReader(dev string) (*TapeReader, error) {
 	return OpenTapeReaderWithLog(dev, nil)
 }
 
+func openTapeDriveRetry(dev string, logf func(string)) (*tapedrive.Drive, error) {
+	const (
+		retries = 50
+		sleep   = 100 * time.Millisecond
+	)
+	var lastErr error
+	for i := range retries {
+		d, err := tapedrive.Open(dev)
+		if err == nil {
+			return d, nil
+		}
+		lastErr = err
+		if !errors.Is(err, syscall.EBUSY) && !errors.Is(err, syscall.EAGAIN) {
+			return nil, err
+		}
+		if i == 0 && logf != nil {
+			logf(fmt.Sprintf("[SCSI] %s busy, waiting for drive lock to release", dev))
+		}
+		time.Sleep(sleep)
+	}
+	return nil, lastErr
+}
+
 func OpenTapeReaderWithLog(dev string, logf func(string)) (*TapeReader, error) {
-	d, err := tapedrive.Open(dev)
+	d, err := openTapeDriveRetry(dev, logf)
 	if err != nil {
 		if errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EAGAIN) {
 			return nil, fmt.Errorf("tape device %s is in use by another operation", dev)

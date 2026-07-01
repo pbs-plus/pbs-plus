@@ -146,15 +146,15 @@ func (f *Feeder) loadSlot(slot int, expectedBarcode string) (*TapeReader, error)
 	if err := f.verifyLoaded(after, expectedBarcode); err != nil {
 		return nil, err
 	}
-
-	rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
-	if err != nil {
-		return nil, err
-	}
 	f.loadedBarcode = expectedBarcode
 	f.loadedSlot = slot
 	if bc != "" {
 		f.probed[bc] = slot
+	}
+	rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
+	if err != nil {
+		f.rollbackLoaded()
+		return nil, err
 	}
 	return rc, nil
 }
@@ -186,6 +186,24 @@ func (f *Feeder) UnloadCurrent() error {
 	f.loadedSlot = 0
 	f.loadedBarcode = ""
 	return nil
+}
+
+func (f *Feeder) rollbackLoaded() {
+	if f.loadedSlot > 0 {
+		slot := f.loadedSlot
+		bc := f.loadedBarcode
+		f.log(fmt.Sprintf("Rollback: unloading drive %d -> slot %d (%s)", f.driveIndex, slot, barcodeOrUnknown(bc)))
+		if _, err := f.chg.Unload(slot, f.driveIndex); err != nil {
+			log.Error(err, "rollback: unload to slot %d", slot)
+		}
+	} else if st, err := f.currentStatus(); err == nil && f.driveIndex >= 0 && f.driveIndex < len(st.Drives) && st.Drives[f.driveIndex].Full {
+		f.log(fmt.Sprintf("Rollback: unloading drive %d -> free slot (%s)", f.driveIndex, barcodeOrUnknown(f.loadedBarcode)))
+		if err := f.unloadDriveToFreeSlot(st); err != nil {
+			log.Error(err, "rollback: unload to free slot")
+		}
+	}
+	f.loadedSlot = 0
+	f.loadedBarcode = ""
 }
 
 func (f *Feeder) unloadDriveToFreeSlot(st *changer.Status) error {
@@ -255,12 +273,13 @@ func (f *Feeder) ForEachTape(visit func(rc *TapeReader, barcode string) error) e
 			continue
 		}
 		f.log(fmt.Sprintf("Drive %d has %s loaded; reading in place", dIdx, barcodeOrUnknown(bc)))
-		rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
-		if err != nil {
-			return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
-		}
 		f.loadedBarcode = bc
 		f.loadedSlot = 0
+		rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
+		if err != nil {
+			f.rollbackLoaded()
+			return fmt.Errorf("open tape in drive %d: %w", dIdx, err)
+		}
 		if pErr := f.probeReadable(rc); pErr != nil {
 			f.log(fmt.Sprintf("Skipping %s: drive %d cannot read tape (%v)", bc, dIdx, pErr))
 			if cErr := rc.Close(); cErr != nil {
@@ -397,6 +416,7 @@ func (f *Feeder) nextMedium(c mtf.Continuation) (mtf.Tape, error) {
 		}
 		rc, err := OpenTapeReaderWithLog(f.tapeDev, f.logf)
 		if err != nil {
+			f.rollbackLoaded()
 			return nil, err
 		}
 		if wantMFMID != 0 {
