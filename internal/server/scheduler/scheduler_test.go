@@ -28,7 +28,7 @@ func TestShouldRunScheduledBackup_ResumesAfterMissedSlot(t *testing.T) {
 }
 
 func TestShouldRunScheduledVerification_ResumesAfterMissedSlot(t *testing.T) {
-	s := &Scheduler{lastEnqueuedVerify: map[string]time.Time{}}
+	s := &Scheduler{lastEnqueued: map[string]time.Time{}}
 
 	vJob := database.VerificationJob{ID: "verify-1", Schedule: "*-*-* *:00:00"}
 
@@ -48,7 +48,7 @@ func TestShouldRunScheduledVerification_ResumesAfterMissedSlot(t *testing.T) {
 }
 
 func TestShouldRunScheduledVerification_WithinWindow(t *testing.T) {
-	s := &Scheduler{lastEnqueuedVerify: map[string]time.Time{}}
+	s := &Scheduler{lastEnqueued: map[string]time.Time{}}
 
 	vJob := database.VerificationJob{ID: "verify-2", Schedule: "*-*-* *:00:00"}
 	lastEnd := time.Date(2026, 7, 2, 13, 5, 0, 0, time.Local)
@@ -62,6 +62,37 @@ func TestShouldRunScheduledVerification_WithinWindow(t *testing.T) {
 	_, runEarly := s.shouldRunScheduledVerification(vJob, lastEnd.Add(30*time.Minute))
 	if runEarly {
 		t.Fatal("should not run before the next scheduled slot")
+	}
+}
+
+func TestShouldRunScheduled_BackupAndVerificationEquivalent(t *testing.T) {
+	sched := "*-*-* *:00:00"
+	lastStart := time.Date(2026, 7, 2, 13, 0, 0, 0, time.Local)
+
+	ticks := []time.Duration{
+		30 * time.Minute,
+		55 * time.Minute,
+		90 * time.Minute,
+		2 * time.Hour,
+		2*time.Hour + 15*time.Second,
+		3*time.Hour + 90*time.Minute,
+	}
+
+	for i, dt := range ticks {
+		now := lastStart.Add(dt)
+
+		s := &Scheduler{lastEnqueued: map[string]time.Time{}}
+		b := database.Backup{ID: "x", Schedule: sched, History: database.JobHistory{LastRunStarttime: lastStart.Unix()}}
+		_, backupDue := s.shouldRunScheduled(b, now)
+
+		s = &Scheduler{lastEnqueued: map[string]time.Time{}}
+		v := database.VerificationJob{ID: "x", Schedule: sched, History: database.JobHistory{LastRunEndtime: lastStart.Unix()}}
+		_, verifyDue := s.shouldRunScheduledVerification(v, now)
+
+		if backupDue != verifyDue {
+			t.Errorf("tick %d (dt=%v): backup due=%v but verification due=%v; the two paths diverged",
+				i, dt, backupDue, verifyDue)
+		}
 	}
 }
 
