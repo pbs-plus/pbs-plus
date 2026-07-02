@@ -3,6 +3,7 @@
 package notification
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -159,5 +160,64 @@ func TestBatchTracker_SendOnTimeoutFalse_KeepsCollectingThenSends(t *testing.T) 
 	}
 	if sent.snapshot()[0].isTimeout {
 		t.Error("final flush after all jobs reported should not be marked as timeout")
+	}
+}
+
+func TestBatchTracker_DeduplicatesReReportedJobs(t *testing.T) {
+	db := newFakeBatchDB()
+	b := database.NotificationBatch{Name: "b3", WaitTimeoutSecs: 300, SendOnTimeout: true}
+	db.addBatch(b, "backup", "job-a")
+	db.addBatch(b, "backup", "job-b")
+
+	bt, sent := newTestTracker(db)
+
+	bt.RecordJobResult("notification-system", JobTypeBackup, "job-a", "ds1", nil, nil)
+	bt.RecordJobResult("notification-system", JobTypeBackup, "job-a", "ds1",
+		fmt.Errorf("boom"), nil)
+
+	if sent.count() != 0 {
+		t.Fatalf("should not flush before all jobs report, got %d", sent.count())
+	}
+
+	bt.RecordJobResult("notification-system", JobTypeBackup, "job-b", "ds1", nil, nil)
+	if !sent.waitForCount(t, 1) {
+		t.Fatalf("expected one flush, got %d", sent.count())
+	}
+
+	got := sent.snapshot()[0]
+	if len(got.results) != 2 {
+		t.Errorf("expected 2 deduplicated results (one per job), got %d", len(got.results))
+	}
+
+	var aResult *JobResult
+	for i := range got.results {
+		if got.results[i].JobID == "job-a" {
+			if aResult != nil {
+				t.Fatal("job-a appeared more than once in consolidated results")
+			}
+			aResult = &got.results[i]
+		}
+	}
+	if aResult == nil {
+		t.Fatal("job-a result missing from consolidated notification")
+	}
+	if aResult.Severity != "error" {
+		t.Errorf("expected job-a last result (error) to win, got severity %q", aResult.Severity)
+	}
+}
+
+func TestBatchTracker_EmptyBatchDoesNotPrematurelyFlush(t *testing.T) {
+	db := newFakeBatchDB()
+	b := database.NotificationBatch{Name: "b4", WaitTimeoutSecs: 300, SendOnTimeout: true}
+	db.batch[b.Name] = b
+	db.jobs[b.Name] = map[string]bool{}
+
+	bt, sent := newTestTracker(db)
+
+	bt.RecordJobResult("notification-system", JobTypeBackup, "job-x", "ds1", nil, nil)
+
+	time.Sleep(50 * time.Millisecond)
+	if sent.count() != 0 {
+		t.Fatalf("batch with no jobs should not flush on a result, got %d sends", sent.count())
 	}
 }

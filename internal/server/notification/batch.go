@@ -132,7 +132,7 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 			"batch", batch.Name, "timeout", timeout)
 	}
 
-	state.results = append(state.results, result)
+	state.results = appendOrReplaceResult(state.results, result)
 
 	if bt.allJobsReported(batch.Name, state) {
 		if timer, ok := bt.timers[batch.Name]; ok {
@@ -143,11 +143,12 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 	}
 }
 
-// allJobsReported checks if all jobs in the batch have a result buffered.
-// Must be called with bt.mu held.
 func (bt *BatchTracker) allJobsReported(batchName string, state *batchState) bool {
 	jobs, err := bt.db.GetBatchJobs(batchName)
 	if err != nil {
+		return false
+	}
+	if len(jobs) == 0 {
 		return false
 	}
 
@@ -162,6 +163,16 @@ func (bt *BatchTracker) allJobsReported(batchName string, state *batchState) boo
 		}
 	}
 	return true
+}
+
+func appendOrReplaceResult(results []JobResult, r JobResult) []JobResult {
+	for i := range results {
+		if results[i].JobType == r.JobType && results[i].JobID == r.JobID {
+			results[i] = r
+			return results
+		}
+	}
+	return append(results, r)
 }
 
 // flushBatch sends a consolidated notification for the batch.
