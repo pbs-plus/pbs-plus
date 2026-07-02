@@ -39,11 +39,11 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 	var bestTape *tapeInfo
 	var bestSeq int
 
-	if pba, ok := tapePBAs[ds.FirstMediaSeq]; ok && pba > 0 {
-		if c, ok := seqToCart[ds.FirstMediaSeq]; ok {
-			bestTape = &tapeInfo{pba, c.Barcode, c.PbaOffset}
-			bestSeq = ds.FirstMediaSeq
-		}
+	startCart, haveStartCart := seqToCart[ds.FirstMediaSeq]
+
+	if pba, ok := tapePBAs[ds.FirstMediaSeq]; ok && pba > 0 && haveStartCart {
+		bestTape = &tapeInfo{pba, startCart.Barcode, startCart.PbaOffset}
+		bestSeq = ds.FirstMediaSeq
 	}
 	if bestTape == nil {
 		for seq, pba := range tapePBAs {
@@ -56,14 +56,9 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 			}
 		}
 	}
-	if bestTape == nil && ds.SSETPBA > 0 {
-		if c, ok := seqToCart[ds.FirstMediaSeq]; ok {
-			bestTape = &tapeInfo{ds.SSETPBA, c.Barcode, c.PbaOffset}
-			bestSeq = ds.FirstMediaSeq
-		} else if len(carts) > 0 {
-			bestTape = &tapeInfo{ds.SSETPBA, carts[0].Barcode, carts[0].PbaOffset}
-			bestSeq = carts[0].Sequence
-		}
+	if bestTape == nil && ds.SSETPBA > 0 && haveStartCart {
+		bestTape = &tapeInfo{ds.SSETPBA, startCart.Barcode, startCart.PbaOffset}
+		bestSeq = ds.FirstMediaSeq
 	}
 
 	allBKF := true
@@ -104,14 +99,14 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 			cfg.Feeder = feeder
 			j.feeder = feeder
 
-			wantBarcode := ""
+			var wantBarcode string
 			if bestTape != nil {
 				wantBarcode = bestTape.barcode
 			} else {
 				wantBarcode = seqToBarcode[ds.FirstMediaSeq]
-				if wantBarcode == "" {
-					wantBarcode = carts[0].Barcode
-				}
+			}
+			if wantBarcode == "" {
+				return cfg, fmt.Errorf("cartridge for media sequence %d is not in the library; please insert tape %d of this media set and re-inventory", ds.FirstMediaSeq, ds.FirstMediaSeq)
 			}
 			if err := feeder.LoadBarcodeWait(wantBarcode); err != nil {
 				feeder.Close()
@@ -130,12 +125,11 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 			offset = 1
 		}
 		cfg.SnapshotPBA = bestTape.ssetPba - offset
-	} else if ds.SSETPBA > 0 && len(carts) > 0 {
-		c, ok := seqToCart[ds.FirstMediaSeq]
-		if !ok {
-			c = carts[0]
+	} else if ds.SSETPBA > 0 {
+		if !haveStartCart {
+			return cfg, fmt.Errorf("cartridge for media sequence %d is not in the library; please insert tape %d of this media set and re-inventory", ds.FirstMediaSeq, ds.FirstMediaSeq)
 		}
-		offset := c.PbaOffset
+		offset := startCart.PbaOffset
 		if offset == 0 {
 			offset = 1
 		}

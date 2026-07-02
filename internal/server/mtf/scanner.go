@@ -55,6 +55,7 @@ type Options struct {
 	DriveIndex    int
 	BKFPath       string
 	Label         string
+	Barcodes      []string
 }
 
 type Result struct {
@@ -145,9 +146,26 @@ func (s *Scanner) scanChanger(ctx context.Context, opts Options, res *Result) er
 		s.logger.Error(err, "")
 	}
 
+	allow := make(map[string]bool, len(opts.Barcodes))
+	for _, bc := range opts.Barcodes {
+		bc = strings.TrimSpace(bc)
+		if bc != "" {
+			allow[bc] = true
+		}
+	}
+	if len(allow) > 0 {
+		s.logger.Info("mtf: barcode filter active", "count", len(allow))
+	}
+
 	f, err := tapeio.NewFeeder(opts.ChangerDevice, opts.TapeDevice, opts.DriveIndex,
 		tapeio.WithSkip(func(barcode string) bool {
-			return pbsLabels != nil && pbsLabels[barcode]
+			if pbsLabels != nil && pbsLabels[barcode] {
+				return true
+			}
+			if len(allow) > 0 && !allow[barcode] {
+				return true
+			}
+			return false
 		}),
 		tapeio.WithLog(func(msg string) { s.logger.LogString(msg) }),
 	)

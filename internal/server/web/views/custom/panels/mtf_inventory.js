@@ -30,6 +30,9 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
           let values = me.getValues();
           delete values._source_type;
           delete values.delete;
+          if (Ext.isArray(values.barcodes)) {
+            values.barcodes = values.barcodes.join(",");
+          }
           let url = Ext.isFunction(me.submitUrl)
             ? me.submitUrl(me.url, values)
             : me.submitUrl || me.url;
@@ -103,6 +106,47 @@ Ext.define("PBS.MtfManagement.InventoryPanel", {
                   change: function (cb) {
                     let driveCombo = cb.up("window").down("#scanDriveField");
                     if (driveCombo) driveCombo.setValue("");
+                    let bcField = cb.up("window").down("#scanBarcodeField");
+                    let path = cb.getValue();
+                    if (bcField) {
+                      bcField.setValue("");
+                      bcField.getStore().loadData([]);
+                      if (path) {
+                        bcField.setLoading(true);
+                        PBS.PlusUtils.API2Request({
+                          url: "/api2/extjs/config/mtf-scan",
+                          method: "GET",
+                          params: { type: "barcodes", changer: path },
+                          success: function (resp) {
+                            let data = resp.result.data || [];
+                            bcField.getStore().loadData(data.map(function (bc) { return { barcode: bc }; }));
+                            bcField.setLoading(false);
+                          },
+                          failure: function () {
+                            bcField.setLoading(false);
+                          },
+                        });
+                      }
+                    }
+                  },
+                },
+              },
+              {
+                xtype: "combobox",
+                itemId: "scanBarcodeField",
+                name: "barcodes",
+                fieldLabel: gettext("Tapes"),
+                emptyText: gettext("All tapes in library"),
+                editable: false,
+                multiSelect: true,
+                displayField: "barcode",
+                valueField: "barcode",
+                store: { fields: ["barcode"], data: [] },
+                listConfig: { itemTpl: "{barcode}" },
+                triggers: {
+                  clear: {
+                    cls: "fa fa-times",
+                    handler: function () { this.setValue(""); },
                   },
                 },
               },

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/changer"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
@@ -489,6 +490,10 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
+			if r.URL.Query().Get("type") == "barcodes" {
+				listBarcodes(w, r)
+				return
+			}
 			active, upid := mtfScanInProgress()
 			resp := map[string]any{"success": true, "data": map[string]any{"active": active, "upid": upid}}
 			w.Header().Set("Content-Type", "application/json")
@@ -524,6 +529,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			DriveIndex:    driveIdx,
 			BKFPath:       r.FormValue("bkf_path"),
 			Label:         r.FormValue("label"),
+			Barcodes:      parseBarcodes(r),
 		}
 
 		if active, _ := mtfScanInProgress(); active {
@@ -861,4 +867,69 @@ func mtfScanInProgress() (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+func parseBarcodes(r *http.Request) []string {
+	var out []string
+	for _, raw := range r.Form["barcodes"] {
+		for bc := range strings.SplitSeq(raw, ",") {
+			bc = strings.TrimSpace(bc)
+			if bc != "" {
+				out = append(out, bc)
+			}
+		}
+	}
+	if v := strings.TrimSpace(r.FormValue("barcodes")); v != "" && len(out) == 0 {
+		for bc := range strings.SplitSeq(v, ",") {
+			bc = strings.TrimSpace(bc)
+			if bc != "" {
+				out = append(out, bc)
+			}
+		}
+	}
+	return out
+}
+
+func listBarcodes(w http.ResponseWriter, r *http.Request) {
+	changerPath := tape.ResolveChanger(r.URL.Query().Get("changer"))
+	if changerPath == "" {
+		WriteErrorResponse(w, fmt.Errorf("changer parameter is required"))
+		return
+	}
+	ch, err := changer.Open(changerPath)
+	if err != nil {
+		WriteErrorResponse(w, fmt.Errorf("open changer %s: %w", changerPath, err))
+		return
+	}
+	defer ch.Close()
+	st, err := ch.Status()
+	if err != nil {
+		WriteErrorResponse(w, fmt.Errorf("read changer status: %w", err))
+		return
+	}
+	seen := make(map[string]bool)
+	var barcodes []string
+	add := func(bc string) {
+		bc = strings.TrimSpace(bc)
+		if bc == "" || seen[bc] {
+			return
+		}
+		seen[bc] = true
+		barcodes = append(barcodes, bc)
+	}
+	for _, s := range st.Slots {
+		if s.Full {
+			add(s.VolumeTag)
+		}
+	}
+	for _, d := range st.Drives {
+		if d.Full {
+			add(d.VolumeTag)
+		}
+	}
+	resp := map[string]any{"success": true, "data": barcodes}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Error(err, "")
+	}
 }

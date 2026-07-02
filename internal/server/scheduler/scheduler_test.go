@@ -7,6 +7,44 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
+func TestShouldRunScheduledVerification_ResumesAfterMissedSlot(t *testing.T) {
+	s := &Scheduler{lastEnqueuedVerify: map[string]time.Time{}}
+
+	vJob := database.VerificationJob{ID: "verify-1", Schedule: "*-*-* *:00:00"}
+
+	lastEnd := time.Date(2026, 7, 2, 13, 5, 0, 0, time.Local)
+	vJob.History.LastRunEndtime = lastEnd.Unix()
+
+	_, runAtMiss := s.shouldRunScheduledVerification(vJob, lastEnd.Add(65*time.Minute))
+	if runAtMiss {
+		t.Fatal("should not catch up a missed slot that is over one tick old")
+	}
+
+	_, runAtNext := s.shouldRunScheduledVerification(vJob, lastEnd.Add(115*time.Minute))
+	if !runAtNext {
+		t.Fatal("verification job never resumed after a missed scheduled slot " +
+			"(nextRun frozen at the missed time, job permanently skipped)")
+	}
+}
+
+func TestShouldRunScheduledVerification_WithinWindow(t *testing.T) {
+	s := &Scheduler{lastEnqueuedVerify: map[string]time.Time{}}
+
+	vJob := database.VerificationJob{ID: "verify-2", Schedule: "*-*-* *:00:00"}
+	lastEnd := time.Date(2026, 7, 2, 13, 5, 0, 0, time.Local)
+	vJob.History.LastRunEndtime = lastEnd.Unix()
+
+	_, run := s.shouldRunScheduledVerification(vJob, lastEnd.Add(55*time.Minute+10*time.Second))
+	if !run {
+		t.Fatal("should run when the scheduled slot is within the tick window")
+	}
+
+	_, runEarly := s.shouldRunScheduledVerification(vJob, lastEnd.Add(30*time.Minute))
+	if runEarly {
+		t.Fatal("should not run before the next scheduled slot")
+	}
+}
+
 func TestIsFailedState(t *testing.T) {
 	tests := []struct {
 		state    string

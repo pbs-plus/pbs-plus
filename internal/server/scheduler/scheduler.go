@@ -20,22 +20,24 @@ import (
 const schedulerTickInterval = 30 * time.Second
 
 type Scheduler struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	storeInstance  *store.Store
-	manager        *jobs.Manager
-	lastEnqueued   map[string]time.Time
-	lastEnqueuedMu sync.Mutex
+	ctx                context.Context
+	cancel             context.CancelFunc
+	storeInstance      *store.Store
+	manager            *jobs.Manager
+	lastEnqueued       map[string]time.Time
+	lastEnqueuedVerify map[string]time.Time
+	lastEnqueuedMu     sync.Mutex
 }
 
 func NewScheduler(ctx context.Context, storeInstance *store.Store, manager *jobs.Manager) *Scheduler {
 	newCtx, cancel := context.WithCancel(ctx)
 	return &Scheduler{
-		ctx:           newCtx,
-		cancel:        cancel,
-		storeInstance: storeInstance,
-		manager:       manager,
-		lastEnqueued:  make(map[string]time.Time),
+		ctx:                newCtx,
+		cancel:             cancel,
+		storeInstance:      storeInstance,
+		manager:            manager,
+		lastEnqueued:       make(map[string]time.Time),
+		lastEnqueuedVerify: make(map[string]time.Time),
 	}
 }
 
@@ -155,6 +157,50 @@ func (s *Scheduler) getEnqueued(backupID string) (time.Time, bool) {
 	defer s.lastEnqueuedMu.Unlock()
 	t, ok := s.lastEnqueued[backupID]
 	return t, ok
+}
+
+func (s *Scheduler) markEnqueuedVerify(id string, t time.Time) {
+	s.lastEnqueuedMu.Lock()
+	defer s.lastEnqueuedMu.Unlock()
+	s.lastEnqueuedVerify[id] = t
+}
+
+func (s *Scheduler) getEnqueuedVerify(id string) (time.Time, bool) {
+	s.lastEnqueuedMu.Lock()
+	defer s.lastEnqueuedMu.Unlock()
+	t, ok := s.lastEnqueuedVerify[id]
+	return t, ok
+}
+
+func (s *Scheduler) shouldRunScheduledVerification(vJob database.VerificationJob, now time.Time) (time.Time, bool) {
+	ev, err := calendar.Parse(vJob.Schedule)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	refTime := now
+	if vJob.History.LastRunEndtime > 0 {
+		refTime = time.Unix(vJob.History.LastRunEndtime, 0)
+	}
+	if lastEnq, ok := s.getEnqueuedVerify(vJob.ID); ok && lastEnq.After(refTime) {
+		refTime = lastEnq
+	}
+
+	nextRun, err := calendar.ComputeNextEvent(ev, refTime, time.Local)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	if nextRun.After(now) {
+		return time.Time{}, false
+	}
+
+	if now.Sub(nextRun) < schedulerTickInterval {
+		return nextRun, true
+	}
+
+	s.markEnqueuedVerify(vJob.ID, nextRun)
+	return time.Time{}, false
 }
 
 func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
@@ -290,28 +336,11 @@ func (s *Scheduler) checkVerifications() {
 			continue
 		}
 
-		ev, err := calendar.Parse(vJob.Schedule)
-		if err != nil {
+		nextRun, due := s.shouldRunScheduledVerification(vJob, now)
+		if !due {
 			continue
 		}
-
-		refTime := now
-		if vJob.History.LastRunEndtime > 0 {
-			refTime = time.Unix(vJob.History.LastRunEndtime, 0)
-		}
-
-		nextRun, err := calendar.ComputeNextEvent(ev, refTime, time.Local)
-		if err != nil {
-			continue
-		}
-
-		if nextRun.After(now) {
-			continue
-		}
-
-		if now.Sub(nextRun) >= schedulerTickInterval {
-			continue
-		}
+		s.markEnqueuedVerify(vJob.ID, nextRun)
 		log.Info("scheduler: scheduled verification is due", "verificationJobID", vJob.ID)
 
 		if vJob.RunOnBackupComplete {
