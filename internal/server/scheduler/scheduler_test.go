@@ -7,6 +7,26 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
+func TestShouldRunScheduledBackup_ResumesAfterMissedSlot(t *testing.T) {
+	s := &Scheduler{lastEnqueued: map[string]time.Time{}}
+
+	b := database.Backup{ID: "backup-1", Schedule: "*-*-* *:00:00"}
+
+	lastStart := time.Date(2026, 7, 2, 13, 0, 0, 0, time.Local)
+	b.History.LastRunStarttime = lastStart.Unix()
+
+	_, runAtMiss := s.shouldRunScheduled(b, lastStart.Add(90*time.Minute))
+	if runAtMiss {
+		t.Fatal("should not catch up a missed slot that is over one tick old")
+	}
+
+	_, runAtNext := s.shouldRunScheduled(b, lastStart.Add(2*time.Hour))
+	if !runAtNext {
+		t.Fatal("backup job skipped the first scheduled slot after a missed run " +
+			"(lastEnqueued recorded the future slot, off-by-one)")
+	}
+}
+
 func TestShouldRunScheduledVerification_ResumesAfterMissedSlot(t *testing.T) {
 	s := &Scheduler{lastEnqueuedVerify: map[string]time.Time{}}
 

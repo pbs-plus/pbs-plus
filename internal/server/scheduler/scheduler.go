@@ -134,14 +134,7 @@ func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.T
 		return nextRun, true
 	}
 
-	// The scheduled time was missed by more than one check interval.
-	futureRun, err := calendar.ComputeNextEvent(ev, now, time.Local)
-	if err != nil {
-		return time.Time{}, false
-	}
-
-	// Mark this future run as already counted so we don't re-trigger
-	s.markEnqueued(b.ID, futureRun)
+	s.markEnqueued(b.ID, nextRun)
 
 	return time.Time{}, false
 }
