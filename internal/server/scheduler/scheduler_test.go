@@ -75,24 +75,53 @@ func TestShouldRunScheduled_BackupAndVerificationEquivalent(t *testing.T) {
 		90 * time.Minute,
 		2 * time.Hour,
 		2*time.Hour + 15*time.Second,
-		3*time.Hour + 90*time.Minute,
+		3 * time.Hour,
 	}
+
+	s := &Scheduler{lastEnqueued: map[string]time.Time{}}
 
 	for i, dt := range ticks {
 		now := lastStart.Add(dt)
 
-		s := &Scheduler{lastEnqueued: map[string]time.Time{}}
-		b := database.Backup{ID: "x", Schedule: sched, History: database.JobHistory{LastRunStarttime: lastStart.Unix()}}
+		b := database.Backup{ID: "eq", Schedule: sched, History: database.JobHistory{LastRunStarttime: lastStart.Unix()}}
 		_, backupDue := s.shouldRunScheduled(b, now)
 
-		s = &Scheduler{lastEnqueued: map[string]time.Time{}}
-		v := database.VerificationJob{ID: "x", Schedule: sched, History: database.JobHistory{LastRunEndtime: lastStart.Unix()}}
+		v := database.VerificationJob{ID: "eq", Schedule: sched, History: database.JobHistory{LastRunEndtime: lastStart.Unix()}}
 		_, verifyDue := s.shouldRunScheduledVerification(v, now)
 
 		if backupDue != verifyDue {
 			t.Errorf("tick %d (dt=%v): backup due=%v but verification due=%v; the two paths diverged",
 				i, dt, backupDue, verifyDue)
 		}
+	}
+}
+
+func TestShouldRunScheduled_EnqueuedStateIsNamespaced(t *testing.T) {
+	sched := "*-*-* *:00:00"
+	base := time.Date(2026, 7, 2, 13, 5, 0, 0, time.Local)
+	refUnix := base.Unix()
+
+	b := database.Backup{ID: "shared-id", Schedule: sched, History: database.JobHistory{LastRunStarttime: refUnix}}
+	v := database.VerificationJob{ID: "shared-id", Schedule: sched, History: database.JobHistory{LastRunEndtime: refUnix}}
+
+	miss := base.Add(90 * time.Minute)
+	next := base.Add(115 * time.Minute)
+
+	s := &Scheduler{lastEnqueued: map[string]time.Time{}}
+
+	_, bMiss := s.shouldRunScheduled(b, miss)
+	if bMiss {
+		t.Fatal("backup should not catch up the missed slot")
+	}
+	_, vMiss := s.shouldRunScheduledVerification(v, miss)
+	if vMiss {
+		t.Fatal("verification should not catch up the missed slot")
+	}
+
+	_, bDue := s.shouldRunScheduled(b, next)
+	_, vDue := s.shouldRunScheduledVerification(v, next)
+	if !bDue || !vDue {
+		t.Fatalf("both should fire at the next occurrence; backup=%v verify=%v", bDue, vDue)
 	}
 }
 

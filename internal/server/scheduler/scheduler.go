@@ -248,12 +248,6 @@ func (s *Scheduler) checkMtfJobs() {
 	}
 }
 
-func (s *Scheduler) enqueueMtf(id string, job *jobs.Job) {
-	if err := s.manager.Enqueue(job); err != nil {
-		log.Error(err, "Scheduler: failed to enqueue MTF job", "mtfJobID", id)
-	}
-}
-
 func (s *Scheduler) enqueueBackup(id string, job *jobs.Job) {
 	if err := s.manager.Enqueue(job); err != nil {
 		log.Error(err, "Scheduler: failed to enqueue backup", "backupID", id)
