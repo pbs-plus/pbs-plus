@@ -17,21 +17,20 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
 
-// The tracker checks if the job belongs to a notification batch:
-//
-//	(or the timeout fires), flush a single consolidated notification.
-//
-// Thread-safe. Designed to be embedded in the store or started as a
-// long-running goroutine.
-type BatchTracker struct {
-	db *database.Database
+type batchDB interface {
+	GetBatchForJob(jobType, jobID string) (database.NotificationBatch, error)
+	GetBatchJobs(batchName string) ([]database.NotificationBatchJob, error)
+}
 
-	// mu protects the pending map.
+type BatchTracker struct {
+	db batchDB
+
+	send func(batch database.NotificationBatch, results []JobResult, isTimeout bool)
+
 	mu sync.Mutex
 
 	pending map[string]*batchState
 
-	// timers tracks active flush timers per batch.
 	timers map[string]*time.Timer
 }
 
@@ -50,11 +49,13 @@ type JobResult struct {
 }
 
 func NewBatchTracker(db *database.Database) *BatchTracker {
-	return &BatchTracker{
+	bt := &BatchTracker{
 		db:      db,
 		pending: make(map[string]*batchState),
 		timers:  make(map[string]*time.Timer),
 	}
+	bt.send = bt.sendBatchNotification
+	return bt
 }
 
 func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, datastore string, jobErr error, details map[string]string) {
@@ -173,11 +174,9 @@ func (bt *BatchTracker) flushBatch(batchName string, isTimeout bool) {
 	}
 
 	if isTimeout && !state.batch.SendOnTimeout {
-		// Don't send on timeout  -  wait for all jobs.
-		slog.Info("notification batch timeout reached but send-on-timeout is disabled, skipping",
-			"batch", batchName, "collected", len(state.results))
-		delete(bt.pending, batchName)
 		delete(bt.timers, batchName)
+		slog.Info("notification batch timeout reached but send-on-timeout is disabled, keeping collected results",
+			"batch", batchName, "collected", len(state.results))
 		bt.mu.Unlock()
 		return
 	}
@@ -186,7 +185,7 @@ func (bt *BatchTracker) flushBatch(batchName string, isTimeout bool) {
 	delete(bt.timers, batchName)
 	bt.mu.Unlock()
 
-	bt.sendBatchNotification(state.batch, state.results, isTimeout)
+	bt.send(state.batch, state.results, isTimeout)
 }
 
 func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, results []JobResult, isTimeout bool) {
