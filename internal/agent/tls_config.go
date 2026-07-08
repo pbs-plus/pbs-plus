@@ -71,6 +71,15 @@ func GetTLSConfig() (*tls.Config, error) {
 		return nil, fmt.Errorf("GetTLSConfig: key entry is empty after decryption")
 	}
 
+	if !bytes.Contains(certPEM, []byte("-----BEGIN")) {
+		log.Error(nil, "GetTLSConfig: cert data missing PEM header",
+			"certLen", len(certPEM),
+			"certHex", fmt.Sprintf("%x", certPEM[:min(len(certPEM), 80)]),
+			"keyLen", len(keyPEM),
+			"keyHasBegin", bytes.Contains(keyPEM, []byte("-----BEGIN")))
+		return nil, fmt.Errorf("GetTLSConfig: cert data missing PEM header (len=%d, prefix=%q)", len(certPEM), certPEM[:min(len(certPEM), 40)])
+	}
+
 	tlsConfig, err := mtls.BuildClientTLS(certPEM, keyPEM, []byte(serverCertReg.Value), legacyCertPEM)
 	if err != nil {
 		return nil, fmt.Errorf("GetTLSConfig: buildclienttls error -> %w", err)

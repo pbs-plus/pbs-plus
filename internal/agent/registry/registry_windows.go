@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/billgraziano/dpapi"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -127,17 +128,32 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 	}
 	defer baseKey.Close()
 
-	val, _, err := baseKey.GetStringValue(key)
+	val, valType, err := baseKey.GetStringValue(key)
 	if err != nil {
 		return nil, fmt.Errorf("GetEntry error: key not found")
 	}
 
 	if isSecret {
+		diagLen := len(val)
+		if diagLen > 40 {
+			log.Debug("GetEntry: raw registry value", "path", path, "key", key, "type", valType, "len", diagLen, "prefix", val[:40])
+		} else {
+			log.Debug("GetEntry: raw registry value", "path", path, "key", key, "type", valType, "len", diagLen, "prefix", val)
+		}
+
 		plain, err := dpapi.Decrypt(val)
 		if err != nil {
 			return nil, fmt.Errorf("GetEntry decryption error: %w", err)
 		}
 		val = plain
+
+		plainLen := len(val)
+		startsPEM := strings.HasPrefix(val, "-----BEGIN")
+		if plainLen > 40 {
+			log.Debug("GetEntry: decrypted value", "path", path, "key", key, "len", plainLen, "startsPEM", startsPEM, "prefix", fmt.Sprintf("%q", val[:40]))
+		} else {
+			log.Debug("GetEntry: decrypted value", "path", path, "key", key, "len", plainLen, "startsPEM", startsPEM, "value", fmt.Sprintf("%q", val))
+		}
 	}
 
 	if isSecret && isPEMData(val) {
