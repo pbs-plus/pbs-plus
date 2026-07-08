@@ -65,20 +65,14 @@ func GetTLSConfig() (*tls.Config, error) {
 	keyPEM := []byte(keyReg.Value)
 
 	if len(certPEM) == 0 {
-		log.Error(nil, "GetTLSConfig: cert entry is empty after decryption, clearing auth entries for re-bootstrap")
-		clearAuthEntries()
 		return nil, fmt.Errorf("GetTLSConfig: cert entry is empty after decryption")
 	}
 	if len(keyPEM) == 0 {
-		log.Error(nil, "GetTLSConfig: key entry is empty after decryption, clearing auth entries for re-bootstrap")
-		clearAuthEntries()
 		return nil, fmt.Errorf("GetTLSConfig: key entry is empty after decryption")
 	}
 
 	tlsConfig, err := mtls.BuildClientTLS(certPEM, keyPEM, []byte(serverCertReg.Value), legacyCertPEM)
 	if err != nil {
-		log.Error(err, "GetTLSConfig: failed to build client TLS, clearing auth entries for re-bootstrap")
-		clearAuthEntries()
 		return nil, fmt.Errorf("GetTLSConfig: buildclienttls error -> %w", err)
 	}
 

@@ -303,6 +303,10 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 			}
 			val = decrypted
 		}
+
+		if isSecret && isPEMData(val) {
+			val = normalizePEMData(val)
+		}
 		entry = &RegistryEntry{
 			Path:     path,
 			Key:      key,
