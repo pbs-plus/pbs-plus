@@ -72,6 +72,35 @@ func migrateFromFileSecretsToRegistry() error {
 	return nil
 }
 
+func isPEMData(value string) bool {
+	return strings.Contains(value, "-----BEGIN") && strings.Contains(value, "-----END")
+}
+
+func normalizePEMData(pemData string) string {
+	pemData = strings.ReplaceAll(pemData, "\r\n", "\n")
+	pemData = strings.ReplaceAll(pemData, "\r", "\n")
+	lines := strings.Split(pemData, "\n")
+	var normalized []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	res := strings.Join(normalized, "\n")
+	if !strings.HasSuffix(res, "\n") {
+		res += "\n"
+	}
+	return res
+}
+
+func preprocessValue(value string, isSecret bool) string {
+	if isSecret && isPEMData(value) {
+		return normalizePEMData(value)
+	}
+	return value
+}
+
 func writeSecretDPAPIToRegistry(path, key, plaintext string) error {
 	enc, err := dpapi.EncryptMachineLocal(plaintext)
 	if err != nil {
@@ -128,8 +157,10 @@ func CreateEntry(entry *RegistryEntry) error {
 		return fmt.Errorf("CreateEntry error: key already exists")
 	}
 
+	value := preprocessValue(entry.Value, entry.IsSecret)
+
 	if entry.IsSecret {
-		return writeSecretDPAPIToRegistry(entry.Path, entry.Key, entry.Value)
+		return writeSecretDPAPIToRegistry(entry.Path, entry.Key, value)
 	}
 
 	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, entry.Path, registry.SET_VALUE)
@@ -138,7 +169,27 @@ func CreateEntry(entry *RegistryEntry) error {
 	}
 	defer baseKey.Close()
 
-	return baseKey.SetStringValue(entry.Key, entry.Value)
+	return baseKey.SetStringValue(entry.Key, value)
+}
+
+func UpsertEntry(entry *RegistryEntry) error {
+	if err := ensureInitialized(); err != nil {
+		return err
+	}
+
+	value := preprocessValue(entry.Value, entry.IsSecret)
+
+	if entry.IsSecret {
+		return writeSecretDPAPIToRegistry(entry.Path, entry.Key, value)
+	}
+
+	baseKey, _, err := registry.CreateKey(registry.LOCAL_MACHINE, entry.Path, registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("UpsertEntry error: %w", err)
+	}
+	defer baseKey.Close()
+
+	return baseKey.SetStringValue(entry.Key, value)
 }
 
 func CreateEntryIfNotExists(entry *RegistryEntry) error {

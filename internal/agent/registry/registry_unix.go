@@ -343,6 +343,30 @@ func CreateEntry(entry *RegistryEntry) error {
 	})
 }
 
+func UpsertEntry(entry *RegistryEntry) error {
+	return withLock(false, func() error {
+		reg, err := loadRegistry()
+		if err != nil {
+			return err
+		}
+		p := lcPath(entry.Path)
+		k := toTomlKey(entry.Key)
+		value := preprocessValue(entry.Value, entry.IsSecret)
+		if entry.IsSecret {
+			enc, err := encrypt(value)
+			if err != nil {
+				return fmt.Errorf("UpsertEntry error encrypting: %w", err)
+			}
+			value = enc
+		}
+		if reg[p] == nil {
+			reg[p] = make(map[string]string)
+		}
+		reg[p][k] = value
+		return saveRegistry(reg)
+	})
+}
+
 func CreateEntryIfNotExists(entry *RegistryEntry) error {
 	return withLock(false, func() error {
 		reg, err := loadRegistry()

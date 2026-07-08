@@ -64,8 +64,21 @@ func GetTLSConfig() (*tls.Config, error) {
 	certPEM := []byte(certReg.Value)
 	keyPEM := []byte(keyReg.Value)
 
+	if len(certPEM) == 0 {
+		log.Error(nil, "GetTLSConfig: cert entry is empty after decryption, clearing auth entries for re-bootstrap")
+		clearAuthEntries()
+		return nil, fmt.Errorf("GetTLSConfig: cert entry is empty after decryption")
+	}
+	if len(keyPEM) == 0 {
+		log.Error(nil, "GetTLSConfig: key entry is empty after decryption, clearing auth entries for re-bootstrap")
+		clearAuthEntries()
+		return nil, fmt.Errorf("GetTLSConfig: key entry is empty after decryption")
+	}
+
 	tlsConfig, err := mtls.BuildClientTLS(certPEM, keyPEM, []byte(serverCertReg.Value), legacyCertPEM)
 	if err != nil {
+		log.Error(err, "GetTLSConfig: failed to build client TLS, clearing auth entries for re-bootstrap")
+		clearAuthEntries()
 		return nil, fmt.Errorf("GetTLSConfig: buildclienttls error -> %w", err)
 	}
 
@@ -80,6 +93,19 @@ func InvalidateTLSConfigCache() {
 	defer tlsConfigMutex.Unlock()
 	tlsConfigCache = nil
 	cacheExpiry = time.Time{}
+}
+
+func clearAuthEntries() {
+	if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
+		log.Error(err, "")
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
+		log.Error(err, "")
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
+		log.Error(err, "")
+	}
+	InvalidateTLSConfigCache()
 }
 
 func RenewCertificateIfExpiring() error {
@@ -97,12 +123,16 @@ func RenewCertificateIfExpiring() error {
 
 	cert, err := mtls.ParseCertInfo([]byte(certReg.Value))
 	if err != nil {
-		return fmt.Errorf("RenewCertificateIfExpiring: failed to parse certificate - %w", err)
+		log.Error(err, "RenewCertificateIfExpiring: corrupt certificate entry, clearing for re-bootstrap")
+		clearAuthEntries()
+		return fmt.Errorf("RenewCertificateIfExpiring: corrupt certificate entry, cleared for re-bootstrap - %w", err)
 	}
 
 	serverCA, err := mtls.ParseCertInfo([]byte(serverCAReg.Value))
 	if err != nil {
-		return fmt.Errorf("RenewCertificateIfExpiring: failed to parse server CA - %w", err)
+		log.Error(err, "RenewCertificateIfExpiring: corrupt server CA entry, clearing for re-bootstrap")
+		clearAuthEntries()
+		return fmt.Errorf("RenewCertificateIfExpiring: corrupt server CA entry, cleared for re-bootstrap - %w", err)
 	}
 
 	now := time.Now()
@@ -111,16 +141,7 @@ func RenewCertificateIfExpiring() error {
 
 	switch {
 	case cert.NotAfter.Before(now) || serverCA.NotAfter.Before(now):
-		if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
-			log.Error(err, "")
-		}
-		if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
-			log.Error(err, "")
-		}
-		if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
-			log.Error(err, "")
-		}
-
+		clearAuthEntries()
 		return fmt.Errorf("certificate has expired, agent needs to be bootstrapped again")
 	case timeUntilExpiry < renewalWindow || caTimeUntilExpiry < renewalWindow:
 		log.Info("certificate expires soon, renewing", "hours_left", timeUntilExpiry.Hours())
@@ -200,20 +221,20 @@ func renewCertificate() error {
 	legacyServerCA, err := registry.GetEntry(registry.AUTH, "ServerCA", true)
 	if err == nil {
 		legacyServerCA.Key = "LegacyServerCA"
-		if err = registry.CreateEntry(legacyServerCA); err != nil {
-			return fmt.Errorf("renewCertificate: error storing ca to registry -> %w", err)
+		if err = registry.UpsertEntry(legacyServerCA); err != nil {
+			return fmt.Errorf("renewCertificate: error storing legacy ca to registry -> %w", err)
 		}
 	}
 
-	if err = registry.CreateEntry(&caEntry); err != nil {
+	if err = registry.UpsertEntry(&caEntry); err != nil {
 		return fmt.Errorf("renewCertificate: error storing ca to registry -> %w", err)
 	}
 
-	if err = registry.CreateEntry(&certEntry); err != nil {
+	if err = registry.UpsertEntry(&certEntry); err != nil {
 		return fmt.Errorf("renewCertificate: error storing cert to registry -> %w", err)
 	}
 
-	if err = registry.CreateEntry(&privEntry); err != nil {
+	if err = registry.UpsertEntry(&privEntry); err != nil {
 		return fmt.Errorf("renewCertificate: error storing priv to registry -> %w", err)
 	}
 
