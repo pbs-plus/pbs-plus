@@ -42,6 +42,7 @@ func (p *pbsService) Start(s service.Service) error {
 			Exit:           func(err error) {},
 			Service:        s,
 			Context:        p.ctx,
+			BootstrapReady: lifecycle.BootstrapReady(),
 		})
 	} else {
 		_, _ = updater.New(updater.Config{

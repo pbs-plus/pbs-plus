@@ -25,8 +25,17 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-// until manually re-bootstrapped or re-added by an admin.
 var ErrHostNotExpected = errors.New("host not expected by server - requires re-bootstrap")
+
+var bootstrapDone chan struct{}
+
+func init() {
+	bootstrapDone = make(chan struct{})
+}
+
+func BootstrapReady() <-chan struct{} {
+	return bootstrapDone
+}
 
 func isCertError(err error) bool {
 	msg := err.Error()
@@ -125,6 +134,7 @@ func WaitForBootstrap(ctx context.Context) error {
 
 		if errCA == nil && errCert == nil && errPriv == nil && serverCA != nil && cert != nil && priv != nil {
 			if err := agent.RenewCertificateIfExpiring(); err == nil {
+				close(bootstrapDone)
 				return nil
 			}
 		} else {

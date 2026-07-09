@@ -53,6 +53,7 @@ type Config struct {
 	Exit           func(error)
 	Service        service.Service
 	Context        context.Context
+	BootstrapReady <-chan struct{}
 }
 
 type Updater struct {
@@ -102,6 +103,13 @@ func New(cfg Config) (*Updater, error) {
 
 	if cfg.FetchOnStart {
 		go func() {
+			if cfg.BootstrapReady != nil {
+				select {
+				case <-cfg.BootstrapReady:
+				case <-cfg.Context.Done():
+					return
+				}
+			}
 			if err := up.CheckNow(); err != nil && !errors.Is(err, ErrAlreadyLatest) {
 				log.Error(err, "initial update check failed")
 			}

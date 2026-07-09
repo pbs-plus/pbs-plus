@@ -3,8 +3,11 @@
 package registry
 
 import (
+	"bytes"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -147,6 +150,18 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 		}
 		val = plain
 
+		if !isPEMData(val) {
+			if decoded, err := base64.StdEncoding.DecodeString(val); err == nil {
+				if isPEMData(string(decoded)) {
+					log.Info("GetEntry: decoded base64 layer to PEM", "path", path, "key", key)
+					val = string(decoded)
+				} else {
+					log.Info("GetEntry: decoded base64 layer to DER, wrapping as PEM", "path", path, "key", key)
+					val = pemEncodeDER(decoded, key)
+				}
+			}
+		}
+
 		plainLen := len(val)
 		startsPEM := strings.HasPrefix(val, "-----BEGIN")
 		if plainLen > 40 {
@@ -166,6 +181,31 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 		Value:    val,
 		IsSecret: isSecret,
 	}, nil
+}
+
+func pemEncodeDER(der []byte, key string) string {
+	var blockType string
+	switch strings.ToLower(key) {
+	case "cert":
+		blockType = "CERTIFICATE"
+	case "priv", "key":
+		if _, err := x509.ParsePKCS8PrivateKey(der); err == nil {
+			blockType = "PRIVATE KEY"
+		} else if _, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+			blockType = "RSA PRIVATE KEY"
+		} else if _, err := x509.ParseECPrivateKey(der); err == nil {
+			blockType = "EC PRIVATE KEY"
+		} else {
+			blockType = "PRIVATE KEY"
+		}
+	case "serverca", "legacyserverca":
+		blockType = "CERTIFICATE"
+	default:
+		blockType = "CERTIFICATE"
+	}
+	var buf bytes.Buffer
+	pem.Encode(&buf, &pem.Block{Type: blockType, Bytes: der})
+	return buf.String()
 }
 
 func CreateEntry(entry *RegistryEntry) error {

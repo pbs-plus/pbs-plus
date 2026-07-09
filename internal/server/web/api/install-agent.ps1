@@ -5,6 +5,26 @@
 $serverUrl = "{{.ServerUrl}}"
 $bootstrapToken = "{{.BootstrapToken}}"
 $caFingerprint = "{{.ServerCAFingerprint}}"
+
+# If the template didn't populate the fingerprint (empty or still a template tag),
+# try fetching it from the server's CA fingerprint endpoint.
+if ($caFingerprint -eq "" -or $caFingerprint -eq "{{.ServerCAFingerprint}}") {
+    try {
+        $fpUrl = "$serverUrl/api2/json/plus/ca-fingerprint"
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            $caFingerprint = (curl.exe -k -s "$fpUrl").Trim()
+        } else {
+            $caFingerprint = (Invoke-WebRequest -Uri $fpUrl -UseBasicParsing -SkipCertificateCheck).Content.Trim()
+        }
+        if ($caFingerprint -eq "" -or $caFingerprint.Length -ne 64) {
+            Write-Host "Warning: CA fingerprint from server is invalid, TLS pinning disabled" -ForegroundColor Yellow
+            $caFingerprint = ""
+        }
+    } catch {
+        Write-Host "Warning: Could not fetch CA fingerprint from server, TLS pinning disabled" -ForegroundColor Yellow
+        $caFingerprint = ""
+    }
+}
 $msiUrl = "{{.ServerUrl}}/api2/json/plus/msi"
 $oldInstallDir = "${env:ProgramFiles(x86)}\PBS Plus Agent"
 

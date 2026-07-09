@@ -4,7 +4,9 @@ package registry
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -302,6 +304,25 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 				return fmt.Errorf("GetEntry error: %w", err)
 			}
 			val = decrypted
+
+			if !isPEMData(val) {
+				if decoded, err := base64.StdEncoding.DecodeString(val); err == nil {
+					if isPEMData(string(decoded)) {
+						val = string(decoded)
+					} else {
+						var blockType string
+						switch strings.ToLower(key) {
+						case "priv", "key":
+							blockType = "PRIVATE KEY"
+						default:
+							blockType = "CERTIFICATE"
+						}
+						var buf bytes.Buffer
+						pem.Encode(&buf, &pem.Block{Type: blockType, Bytes: decoded})
+						val = buf.String()
+					}
+				}
+			}
 		}
 
 		if isSecret && isPEMData(val) {
