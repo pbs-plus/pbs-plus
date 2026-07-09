@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -788,7 +789,7 @@ func (c *converter) walkEntry(r *mtf.Reader, h *mtf.Header) error {
 	case mtf.EntryDirectory:
 		c.prog.dirs.Add(1)
 		op.kind = opDir
-		op.meta = mtfToPxarMeta(h, format.ModeIFDIR)
+		op.meta = mtfToPxarMeta(h, format.ModeIFDIR, c.meta.BackupTime)
 		c.logf("  d %s", relPath)
 		if err := c.ensureSession(); err != nil {
 			return err
@@ -798,7 +799,7 @@ func (c *converter) walkEntry(r *mtf.Reader, h *mtf.Header) error {
 		c.prog.files.Add(1)
 		if h.IsSymlink {
 			op.kind = opSymlink
-			op.meta = mtfToPxarMeta(h, format.ModeIFLNK)
+			op.meta = mtfToPxarMeta(h, format.ModeIFLNK, c.meta.BackupTime)
 			op.linkTgt = h.LinkTarget
 			c.logf("  l %s -> %s", relPath, h.LinkTarget)
 			if err := c.ensureSession(); err != nil {
@@ -900,10 +901,36 @@ func setupFileContinuation(r *mtf.Reader, files []string) {
 	})
 }
 
-func mtfToPxarMeta(h *mtf.Header, fileType uint64) pxar.Metadata {
+func mtfToPxarMeta(h *mtf.Header, fileType uint64, fallbackTime time.Time) pxar.Metadata {
 	var m pxar.Metadata
 	m.Stat.Mode = fileType | (uint64(h.UnixMode()) &^ format.ModeIFMT)
-	m.Stat.Mtime = format.NewStatxTimestampFromTime(h.ModTime)
+
+	modTime := h.ModTime
+	if modTime.IsZero() {
+		if !h.CreateTime.IsZero() {
+			modTime = h.CreateTime
+		} else if !h.AccessTime.IsZero() {
+			modTime = h.AccessTime
+		} else if !h.BirthTime.IsZero() {
+			modTime = h.BirthTime
+		} else if !fallbackTime.IsZero() {
+			modTime = fallbackTime
+		}
+	}
+	m.Stat.Mtime = format.NewStatxTimestampFromTime(modTime)
+
+	if !h.ModTime.IsZero() {
+		m.XAttrs = append(m.XAttrs, format.NewXAttr(
+			[]byte("user.lastwritetime"), []byte(strconv.FormatInt(h.ModTime.Unix(), 10))))
+	}
+	if !h.CreateTime.IsZero() {
+		m.XAttrs = append(m.XAttrs, format.NewXAttr(
+			[]byte("user.creationtime"), []byte(strconv.FormatInt(h.CreateTime.Unix(), 10))))
+	}
+	if !h.AccessTime.IsZero() {
+		m.XAttrs = append(m.XAttrs, format.NewXAttr(
+			[]byte("user.lastaccesstime"), []byte(strconv.FormatInt(h.AccessTime.Unix(), 10))))
+	}
 
 	if len(h.SecurityDescriptor) > 0 {
 		if ownerSID := h.OwnerSID(); ownerSID != nil {
@@ -913,7 +940,7 @@ func mtfToPxarMeta(h *mtf.Header, fileType uint64) pxar.Metadata {
 
 	if len(h.ExtendedAttributes) > 0 {
 		if xattrs := parseNTEA(h.ExtendedAttributes); len(xattrs) > 0 {
-			m.XAttrs = xattrs
+			m.XAttrs = append(m.XAttrs, xattrs...)
 		}
 	}
 
