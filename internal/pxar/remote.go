@@ -210,6 +210,7 @@ func (s *RemoteServer) handleReadContent(req *arpc.Request) (arpc.Response, erro
 			if err := rc.Close(); err != nil {
 				log.Error(err, "")
 			}
+			s.contentHandles.Del(handleID)
 		}
 	}}, nil
 }
