@@ -3,11 +3,8 @@
 package registry
 
 import (
-	"bytes"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,50 +56,41 @@ func migrateFromFileSecretsToRegistry() error {
 		return nil
 	}
 
+	failed := 0
 	for b64k, val := range legacySecrets {
 		raw, err := base64.StdEncoding.DecodeString(b64k)
 		if err != nil {
+			failed++
 			continue
 		}
 		parts := strings.SplitN(string(raw), "|", 2)
 		if len(parts) != 2 {
+			failed++
 			continue
 		}
-		_ = writeSecretDPAPIToRegistry(parts[0], parts[1], val)
-	}
 
-	_ = os.Remove(legacySecretFilePath)
-	_ = os.Remove(legacyKeyFilePath)
-	return nil
-}
+		normalized, err := unwrapBase64Layers(val, parts[1])
+		if err != nil {
+			failed++
+			continue
+		}
+		if isPEMData(normalized) {
+			normalized = normalizePEMData(normalized)
+		}
 
-func isPEMData(value string) bool {
-	return strings.Contains(value, "-----BEGIN") && strings.Contains(value, "-----END")
-}
-
-func normalizePEMData(pemData string) string {
-	pemData = strings.ReplaceAll(pemData, "\r\n", "\n")
-	pemData = strings.ReplaceAll(pemData, "\r", "\n")
-	lines := strings.Split(pemData, "\n")
-	var normalized []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			normalized = append(normalized, trimmed)
+		if err := writeSecretDPAPIToRegistry(parts[0], parts[1], normalized); err != nil {
+			failed++
+			continue
 		}
 	}
-	res := strings.Join(normalized, "\n")
-	if !strings.HasSuffix(res, "\n") {
-		res += "\n"
-	}
-	return res
-}
 
-func preprocessValue(value string, isSecret bool) string {
-	if isSecret && isPEMData(value) {
-		return normalizePEMData(value)
+	if failed == 0 {
+		_ = os.Remove(legacySecretFilePath)
+		_ = os.Remove(legacyKeyFilePath)
+	} else {
+		log.Error(fmt.Errorf("migration: %d entries failed to migrate", failed), "legacy secrets not removed")
 	}
-	return value
+	return nil
 }
 
 func writeSecretDPAPIToRegistry(path, key, plaintext string) error {
@@ -150,16 +138,11 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 		}
 		val = plain
 
-		if !isPEMData(val) {
-			if decoded, err := base64.StdEncoding.DecodeString(val); err == nil {
-				if isPEMData(string(decoded)) {
-					log.Info("GetEntry: decoded base64 layer to PEM", "path", path, "key", key)
-					val = string(decoded)
-				} else {
-					log.Info("GetEntry: decoded base64 layer to DER, wrapping as PEM", "path", path, "key", key)
-					val = pemEncodeDER(decoded, key)
-				}
-			}
+		unwrapped, err := unwrapBase64Layers(val, key)
+		if err != nil {
+			log.Error(err, "GetEntry: unwrapBase64Layers", "path", path, "key", key)
+		} else {
+			val = unwrapped
 		}
 
 		plainLen := len(val)
@@ -181,31 +164,6 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 		Value:    val,
 		IsSecret: isSecret,
 	}, nil
-}
-
-func pemEncodeDER(der []byte, key string) string {
-	var blockType string
-	switch strings.ToLower(key) {
-	case "cert":
-		blockType = "CERTIFICATE"
-	case "priv", "key":
-		if _, err := x509.ParsePKCS8PrivateKey(der); err == nil {
-			blockType = "PRIVATE KEY"
-		} else if _, err := x509.ParsePKCS1PrivateKey(der); err == nil {
-			blockType = "RSA PRIVATE KEY"
-		} else if _, err := x509.ParseECPrivateKey(der); err == nil {
-			blockType = "EC PRIVATE KEY"
-		} else {
-			blockType = "PRIVATE KEY"
-		}
-	case "serverca", "legacyserverca":
-		blockType = "CERTIFICATE"
-	default:
-		blockType = "CERTIFICATE"
-	}
-	var buf bytes.Buffer
-	pem.Encode(&buf, &pem.Block{Type: blockType, Bytes: der})
-	return buf.String()
 }
 
 func CreateEntry(entry *RegistryEntry) error {

@@ -4,9 +4,7 @@ package registry
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -83,35 +81,6 @@ func toSnakeCase(str string) string {
 	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
 	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
 	return strings.ToLower(snake)
-}
-
-func isPEMData(value string) bool {
-	return strings.Contains(value, "-----BEGIN") && strings.Contains(value, "-----END")
-}
-
-func normalizePEMData(pemData string) string {
-	pemData = strings.ReplaceAll(pemData, "\r\n", "\n")
-	pemData = strings.ReplaceAll(pemData, "\r", "\n")
-	lines := strings.Split(pemData, "\n")
-	var normalized []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			normalized = append(normalized, trimmed)
-		}
-	}
-	res := strings.Join(normalized, "\n")
-	if !strings.HasSuffix(res, "\n") {
-		res += "\n"
-	}
-	return res
-}
-
-func preprocessValue(value string, isSecret bool) string {
-	if isSecret && isPEMData(value) {
-		return normalizePEMData(value)
-	}
-	return value
 }
 
 func lcPath(p string) string {
@@ -305,23 +274,11 @@ func GetEntry(path string, key string, isSecret bool) (*RegistryEntry, error) {
 			}
 			val = decrypted
 
-			if !isPEMData(val) {
-				if decoded, err := base64.StdEncoding.DecodeString(val); err == nil {
-					if isPEMData(string(decoded)) {
-						val = string(decoded)
-					} else {
-						var blockType string
-						switch strings.ToLower(key) {
-						case "priv", "key":
-							blockType = "PRIVATE KEY"
-						default:
-							blockType = "CERTIFICATE"
-						}
-						var buf bytes.Buffer
-						pem.Encode(&buf, &pem.Block{Type: blockType, Bytes: decoded})
-						val = buf.String()
-					}
-				}
+			unwrapped, unwrapErr := unwrapBase64Layers(val, key)
+			if unwrapErr != nil {
+				log.Error(unwrapErr, "GetEntry: unwrapBase64Layers", "path", path, "key", key)
+			} else {
+				val = unwrapped
 			}
 		}
 
