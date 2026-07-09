@@ -122,8 +122,8 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 			return nil, fmt.Errorf("failed to create split archive reader: %w", err)
 		}
 
-		archiveReader.SetPayloadCacheSize(0)
-		archiveReader.SetMetaCacheSize(8)
+		archiveReader.SetPayloadCacheSize(4)
+		archiveReader.SetMetaCacheSize(16)
 
 		pr := &PxarReader{
 			ofs:       vfs.NewLocalFS(archiveReader).SetMaxCache(4096),
