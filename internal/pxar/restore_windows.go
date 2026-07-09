@@ -15,6 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 	"golang.org/x/sys/windows"
 )
@@ -40,6 +41,8 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 
 	h := windows.Handle(file.Fd())
 	path := file.Name()
+
+	log.Debug("applyMeta", "path", path, "mtime_secs", e.MtimeSecs, "entry_start", e.EntryRangeStart, "entry_end", e.EntryRangeEnd)
 
 	xattrs, lerr := st.client.ListXAttrs(ctx, e.EntryRangeStart, e.EntryRangeEnd)
 	if lerr != nil {
