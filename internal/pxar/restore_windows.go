@@ -4,6 +4,7 @@ package pxar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -378,26 +379,8 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 		return nil
 	}
 
-	pathPtr, err := windows.UTF16PtrFromString(dst)
-	if err != nil {
-		return err
-	}
-
-	h, err := windows.CreateFile(
-		pathPtr,
-		windows.FILE_WRITE_ATTRIBUTES,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil,
-		windows.OPEN_EXISTING,
-		windows.FILE_FLAG_BACKUP_SEMANTICS,
-		0,
-	)
-	if err != nil {
-		return err
-	}
-
-	df := os.NewFile(uintptr(h), dst)
-	return applyMeta(ctx, st, df, dirEntry)
+	deferDirMeta(st, dst, dirEntry)
+	return nil
 }
 
 func sidPtr(s *windows.SID) uintptr {
@@ -419,4 +402,44 @@ func localFreePtr(p uintptr) {
 		return
 	}
 	_, _, _ = procLocalFree.Call(p)
+}
+
+func deferDirMeta(st *restoreState, dest string, info pxar.FileInfo) {
+	st.pendingMu.Lock()
+	st.pendingDirMeta = append(st.pendingDirMeta, dirMeta{dest: dest, info: info})
+	st.pendingMu.Unlock()
+}
+
+func applyDeferredDirMeta(ctx context.Context, st *restoreState) error {
+	st.pendingMu.Lock()
+	dirs := st.pendingDirMeta
+	st.pendingDirMeta = nil
+	st.pendingMu.Unlock()
+
+	var errs []error
+	for _, d := range dirs {
+		pathPtr, err := windows.UTF16PtrFromString(d.dest)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("dir meta %q: %w", d.dest, err))
+			continue
+		}
+		h, err := windows.CreateFile(
+			pathPtr,
+			windows.FILE_WRITE_ATTRIBUTES,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+			nil,
+			windows.OPEN_EXISTING,
+			windows.FILE_FLAG_BACKUP_SEMANTICS,
+			0,
+		)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("dir meta open %q: %w", d.dest, err))
+			continue
+		}
+		df := os.NewFile(uintptr(h), d.dest)
+		if err := applyMeta(ctx, st, df, d.info); err != nil {
+			errs = append(errs, fmt.Errorf("dir meta %q: %w", d.dest, err))
+		}
+	}
+	return errors.Join(errs...)
 }

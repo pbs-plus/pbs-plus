@@ -68,12 +68,19 @@ type restoreJob struct {
 }
 
 type restoreState struct {
-	client *Client
-	fsCap  filesystemCapabilities
-	noAttr bool
-	hl     *hardlinkIndex
-	jobs   chan<- restoreJob
-	wg     *sync.WaitGroup
+	client         *Client
+	fsCap          filesystemCapabilities
+	noAttr         bool
+	hl             *hardlinkIndex
+	jobs           chan<- restoreJob
+	wg             *sync.WaitGroup
+	pendingDirMeta []dirMeta
+	pendingMu      sync.Mutex
+}
+
+type dirMeta struct {
+	dest string
+	info pxar.FileInfo
 }
 
 const unixSecsMax = 32503680000
@@ -293,6 +300,13 @@ func restoreNormal(ctx context.Context, client *Client, sources []string, destDi
 			}
 		}
 	}()
+
+	if err := applyDeferredDirMeta(workerCtx, st); err != nil {
+		if serr := client.SendError(workerCtx, err); serr != nil {
+			log.Error(err, "", "sendErr", serr.Error(), "restore", "error-report-failed")
+		}
+	}
+
 	log.Info("restore: content restore complete, returning to caller")
 
 	return ctx.Err()

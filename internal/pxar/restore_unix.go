@@ -5,6 +5,7 @@ package pxar
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -271,9 +272,32 @@ func restoreDir(ctx context.Context, st *restoreState, job restoreJob) error {
 		return nil
 	}
 
-	df, err := os.Open(dst)
-	if err != nil {
-		return err
+	deferDirMeta(st, dst, dirEntry)
+	return nil
+}
+
+func deferDirMeta(st *restoreState, dest string, info pxar.FileInfo) {
+	st.pendingMu.Lock()
+	st.pendingDirMeta = append(st.pendingDirMeta, dirMeta{dest: dest, info: info})
+	st.pendingMu.Unlock()
+}
+
+func applyDeferredDirMeta(ctx context.Context, st *restoreState) error {
+	st.pendingMu.Lock()
+	dirs := st.pendingDirMeta
+	st.pendingDirMeta = nil
+	st.pendingMu.Unlock()
+
+	var errs []error
+	for _, d := range dirs {
+		df, err := os.Open(d.dest)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("dir meta open %q: %w", d.dest, err))
+			continue
+		}
+		if err := applyMeta(ctx, st, df, d.info); err != nil {
+			errs = append(errs, fmt.Errorf("dir meta %q: %w", d.dest, err))
+		}
 	}
-	return applyMeta(ctx, st, df, dirEntry)
+	return errors.Join(errs...)
 }
