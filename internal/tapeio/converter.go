@@ -807,6 +807,7 @@ func (c *converter) walkEntry(r *mtf.Reader, h *mtf.Header) error {
 			}
 			return c.consumeSymlink(op)
 		}
+		op.meta = mtfToPxarMeta(h, format.ModeIFREG, c.meta.BackupTime)
 		if err := c.ensureSession(); err != nil {
 			return err
 		}
