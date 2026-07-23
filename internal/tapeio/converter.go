@@ -380,7 +380,7 @@ func (c *converter) ensureSession() error {
 
 	rootMeta := pxar.DirMetadata(0o755).
 		Owner(0, 0).
-		Mtime(format.NewStatxTimestampFromTime(backupTime)).
+		MtimeTime(backupTime).
 		Build()
 
 	w, err := transfer.NewRemoteDedupWriter(c.ctx, s,
@@ -438,31 +438,29 @@ func (c *converter) createSession(backupID string, backupTime time.Time) (backup
 	})
 }
 
-// finishSnapshot closes open directories and finalizes the current
 func (c *converter) finishSnapshot() error {
 	if c.writer == nil {
 		return nil
 	}
+	writer, session := c.writer, c.session
+	c.writer, c.session = nil, nil
+	defer writer.Close()
+	defer session.Close()
+
 	for len(c.dirStack) > 0 {
-		if err := c.writer.EndDirectory(); err != nil {
+		if err := writer.EndDirectory(); err != nil {
 			return err
 		}
 		c.dirStack = c.dirStack[:len(c.dirStack)-1]
 	}
-	if err := c.writer.Finish(); err != nil {
-		c.writer = nil
-		c.session = nil
+	if err := writer.Finish(); err != nil {
 		return fmt.Errorf("finish writer: %w", err)
 	}
-	if _, err := c.session.Finish(c.ctx); err != nil {
-		c.writer = nil
-		c.session = nil
+	if _, err := session.Finish(c.ctx); err != nil {
 		return fmt.Errorf("finish session: %w", err)
 	}
 	files, dirs, bytes := c.prog.snapshot()
 	c.logf("Snapshot complete: %d files, %d dirs, %d bytes", files, dirs, bytes)
-	c.writer = nil
-	c.session = nil
 	return nil
 }
 
