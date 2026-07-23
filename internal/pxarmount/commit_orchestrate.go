@@ -197,6 +197,8 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	if err := writer.Begin(&rootMeta, transfer.Options{Format: format.FormatVersion2}); err != nil {
 		return fmt.Errorf("begin archive: %w", err)
 	}
+	defer writer.Close()
+	defer session.Close()
 
 	prog.SetPhase(PhaseWalk)
 	prog.SetMsg("Archiving files")
