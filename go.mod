@@ -31,7 +31,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
 	github.com/quic-go/quic-go v0.60.0
-	github.com/rclone/rclone v1.74.3
+	github.com/rclone/rclone v1.74.4
 	github.com/stretchr/testify v1.11.1
 	github.com/xtaci/smux v1.5.57
 	github.com/zeebo/xxh3 v1.1.0
@@ -103,6 +103,7 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
+	github.com/zeebo/assert v1.3.1 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
