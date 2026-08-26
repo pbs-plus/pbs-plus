@@ -14,7 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 
@@ -24,7 +24,7 @@ import (
 type Store struct {
 	Ctx               context.Context
 	Database          *coredb.DB
-	MtfStore          *mtfdb.Database
+	MtfStore          *mtfdb.DB
 	MtfMapper         *mtfdb.Mapper
 	BackupSvc         *application.BackupService
 	RestoreSvc        *application.RestoreService
