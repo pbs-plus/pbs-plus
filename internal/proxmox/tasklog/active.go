@@ -219,8 +219,7 @@ func Reconcile(newUPID string) error {
 			continue
 		}
 
-		active, aerr := workerIsActive(info.Task)
-		if aerr != nil || active {
+		if workerIsActiveLocal(info.Task) {
 			kept = append(kept, info)
 			continue
 		}

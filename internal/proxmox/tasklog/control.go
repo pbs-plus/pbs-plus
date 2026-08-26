@@ -159,6 +159,14 @@ func upidIsLocal(task proxmox.Task) bool {
 	return err == nil && task.PID == os.Getpid() && task.PStart == p
 }
 
+func workerIsActiveLocal(task proxmox.Task) bool {
+	if upidIsLocal(task) {
+		_, active := lookupWorker(task.TaskId)
+		return active
+	}
+	return processRunningPStart(task.PID, task.PStart)
+}
+
 func workerIsActive(task proxmox.Task) (bool, error) {
 	if upidIsLocal(task) {
 		_, active := lookupWorker(task.TaskId)

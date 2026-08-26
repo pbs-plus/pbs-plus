@@ -174,7 +174,7 @@ func TestReconcile_FoldsDeadWorkers(t *testing.T) {
 	}
 }
 
-func TestReconcileArchivesInactiveForeignWorker(t *testing.T) {
+func TestReconcileKeepsLiveForeignWorker(t *testing.T) {
 	setupTaskDirs(t)
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestTasklogHelperProcess$")
@@ -225,15 +225,15 @@ func TestReconcileArchivesInactiveForeignWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(active) != 0 {
-		t.Fatalf("active = %#v, want empty after inactive foreign task reconciliation", active)
+	if len(active) != 1 || active[0].UPID != upid {
+		t.Fatalf("active = %#v, want live foreign task %s retained", active, upid)
 	}
 	archive, err := readTaskFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(archive) != 1 || archive[0].UPID != upid || archive[0].State == nil || archive[0].State.Status != StatusOK {
-		t.Fatalf("archive = %#v, want terminal foreign task %s", archive, upid)
+	if len(archive) != 0 {
+		t.Fatalf("archive = %#v, want empty: the owning process archives its own task", archive)
 	}
 
 	resolved, err := GetTaskByUPID(upid)
