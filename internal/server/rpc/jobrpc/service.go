@@ -4,17 +4,15 @@ package jobrpc
 
 import (
 	"context"
-	"fmt"
-	"net"
-	"net/rpc"
-	"os"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpcserver"
 )
+
+const ServiceName = "JobRPCService"
 
 type BackupQueueArgs struct {
 	Job             coredb.Backup
@@ -161,63 +159,10 @@ func (s *Service) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
 	return nil
 }
 
-func StartServer(watcher chan<- struct{}, ctx context.Context, socketPath string, engine *jobs.Engine, app *application.Runtime) error {
-	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
-		log.Error(err, "")
-	}
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", socketPath, err)
-	}
-
-	service := &Service{
+func RunServer(ctx context.Context, socketPath string, engine *jobs.Engine, app *application.Runtime) error {
+	return rpcserver.Run(ctx, socketPath, ServiceName, &Service{
 		ctx:    ctx,
 		Store:  app,
 		Engine: engine,
-	}
-
-	server := rpc.NewServer()
-	if err := server.RegisterName("JobRPCService", service); err != nil {
-		return fmt.Errorf("failed to register rpc service: %w", err)
-	}
-
-	ready := make(chan struct{})
-
-	go func() {
-		if watcher != nil {
-			defer close(watcher)
-		}
-		close(ready)
-		server.Accept(listener)
-	}()
-	log.Info("rPC server listening",
-		"socket", socketPath)
-
-	<-ready
-
-	return nil
-}
-
-func RunServer(ctx context.Context, socketPath string, engine *jobs.Engine, app *application.Runtime) error {
-	watcher := make(chan struct{}, 1)
-	err := StartServer(watcher, ctx, socketPath, engine, app)
-	if err != nil {
-		return err
-	}
-
-	select {
-	case <-ctx.Done():
-		log.Info("rpc mount server shutting down due to context cancellation",
-			"socket", socketPath)
-
-		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
-		}
-	case <-watcher:
-		log.Info("rpc mount server shut down unexpectedly",
-			"socket", socketPath)
-
-	}
-
-	return nil
+	})
 }

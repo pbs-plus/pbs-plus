@@ -131,7 +131,7 @@ func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 					ExtraExclusions: nil,
 				}
 				var reply jobrpc.QueueReply
-				if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
+				if err := rpcClient.Call(jobrpc.ServiceName+".BackupQueue", args, &reply); err != nil {
 					log.Error(err, "", "backupID", backupID)
 					continue
 				}

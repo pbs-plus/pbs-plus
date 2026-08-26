@@ -59,7 +59,7 @@ func ExtJsMtfJobRunHandler(app *application.Runtime) http.HandlerFunc {
 
 			args := &jobrpc.MtfJobQueueArgs{JobID: decoded[0], Stop: false}
 			var reply jobrpc.QueueReply
-			if err := rpcClient.Call("JobRPCService.MtfQueue", args, &reply); err != nil {
+			if err := rpcClient.Call(jobrpc.ServiceName+".MtfQueue", args, &reply); err != nil {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
@@ -90,7 +90,7 @@ func ExtJsMtfJobRunHandler(app *application.Runtime) http.HandlerFunc {
 			for _, id := range decoded {
 				args := &jobrpc.MtfJobQueueArgs{JobID: id, Stop: stop}
 				var reply jobrpc.QueueReply
-				if err := rpcClient.Call("JobRPCService.MtfQueue", args, &reply); err != nil {
+				if err := rpcClient.Call(jobrpc.ServiceName+".MtfQueue", args, &reply); err != nil {
 					log.Error(err, "", "mtfJobID", id)
 					continue
 				}
