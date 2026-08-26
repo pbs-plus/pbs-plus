@@ -43,16 +43,12 @@ runs:
         case "$state" in
           OK)
             ;;
-          WARNINGS:\ [1-9][0-9]*)
-            if [[ '${{ inputs.allow-warnings }}' != 'true' ]]; then
-              echo "Unexpected task warnings: $state"
+          *)
+            if ! [[ "$state" =~ ^WARNINGS:\ [1-9][0-9]*$ ]] || [[ '${{ inputs.allow-warnings }}' != 'true' ]]; then
+              echo "Task failed: $state"
               exit 1
             fi
             echo "Accepted task warnings after restore integrity verification: $state"
-            ;;
-          *)
-            echo "Task failed: $state"
-            exit 1
             ;;
         esac
 
