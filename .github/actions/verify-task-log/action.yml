@@ -29,6 +29,29 @@ runs:
         if [[ '${{ inputs.append-job-id }}' == 'true' ]]; then
           history_url+="/$job_id_encoded"
         fi
+        diagnose() {
+          exit_code=$?
+          if ((exit_code == 0)); then
+            return
+          fi
+          trap - EXIT
+          set +e
+          printf '%s\n' "Task-log verification failed with exit code $exit_code"
+          printf '%s\n' "History endpoint: $history_url"
+          printf '%s\n' "Task history response:"
+          docker exec pbs-plus-test curl -k -sS "$history_url" -H "Accept: application/json" || true
+          if [[ -n ${upid:-} ]]; then
+            printf '%s\n' "Task UPID: $upid"
+            docker exec -e UPID="$upid" pbs-plus-test sh -ec 'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); path="/var/log/proxmox-backup/tasks/$bucket/$UPID"; printf "%s\\n" "Task log path: $path"; ls -la "/var/log/proxmox-backup/tasks/$bucket"; if [ -f "$path" ]; then cat "$path"; fi; printf "%s\\n" "Archive entries:"; awk -v upid="$UPID" '\''$1 == upid { print }'\'' /var/log/proxmox-backup/tasks/archive' || true
+          fi
+          printf '%s\n' "PBS Plus server logs (last 200 lines):"
+          docker logs --tail=200 pbs-plus-test 2>&1 || true
+          printf '%s\n' "PBS Plus agent logs (last 200 lines):"
+          docker logs --tail=200 pbs-plus-agent 2>&1 || true
+          exit "$exit_code"
+        }
+        trap diagnose EXIT
+
         response=$(docker exec pbs-plus-test curl -k -fsS "$history_url" -H "Accept: application/json")
         history=$(jq -er --arg job_id "$job_id" 'if .data | type == "object" then .data.history else .data[] | select(.id == $job_id) end' <<<"$response")
         upid=$(jq -er '."last-run-upid"' <<<"$history")
