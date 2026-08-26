@@ -44,7 +44,6 @@ type Querier interface {
 	ListInventoryRuns(ctx context.Context, limit int64) ([]MtfInventoryRun, error)
 	ListMappings(ctx context.Context) ([]NamespaceMapping, error)
 	ListMediaFamilies(ctx context.Context) ([]MediaFamily, error)
-	ListQueuedMtfJobs(ctx context.Context) ([]MtfJob, error)
 	ListVolumesByDataSet(ctx context.Context, dataSetID int64) ([]DataSetVolume, error)
 	MappingExists(ctx context.Context, id int64) (int64, error)
 	MtfJobExists(ctx context.Context, id string) (int64, error)

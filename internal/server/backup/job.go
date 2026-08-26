@@ -28,7 +28,6 @@ type backupJob struct {
 
 	Task      proxmox.Task
 	currOwner string
-	queueTask *tasklog.QueuedTask
 	waitGroup *sync.WaitGroup
 	err       error
 
@@ -38,7 +37,6 @@ type backupJob struct {
 
 	app             *application.Runtime
 	skipCheck       bool
-	web             bool
 	extraExclusions []string
 
 	cleanupOnce sync.Once
@@ -49,23 +47,6 @@ type backupJob struct {
 	srcPath    string
 	cmd        *exec.Cmd
 	upid       string
-}
-
-func (b *backupJob) enqueue(ctx context.Context) error {
-	wid := tasklog.FormatWorkerID(b.job.Store, "host-", b.job.Target.GetHostname())
-	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "backup", wid, b.web)
-	if err != nil {
-		b.logger.Error(err, "failed to create queue task, not fatal")
-	} else {
-		if err := updateBackupStatus(false, 0, b.job, queueTask.Task, b.app); err != nil {
-			b.logger.Error(err, "failed to set queue task, not fatal")
-		}
-	}
-
-	b.mu.Lock()
-	b.queueTask = queueTask
-	b.mu.Unlock()
-	return nil
 }
 
 func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid string) error {
@@ -123,15 +104,6 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	case <-ctx.Done():
 		return nil, proxmox.Task{}, "", jobs.ErrCanceled
 	default:
-	}
-
-	b.mu.RLock()
-	qt := b.queueTask
-	b.mu.RUnlock()
-	if qt != nil {
-		if err := qt.UpdateDescription("waiting for proxmox-backup-client to start"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
 	}
 
 	startupMu := b.app.Engine.StartupMu()

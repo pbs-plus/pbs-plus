@@ -30,7 +30,7 @@ type verifyResult struct {
 	SkippedFiles int `json:"skippedFiles"`
 }
 
-// Register registers the verification workflow: queue, select,
+// Register registers the verification workflow: select,
 // start-task, verify, finalize. Candidate order is pinned by the
 // select activity; verify checkpoints its position across retries.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
@@ -51,24 +51,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 	v := &verificationJob{
 		job:    job,
 		app:    app,
-		web:    input.Web,
 		logger: log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer v.cleanup()
-
-	stage := func(name string, body func(context.Context) error) error {
-		_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-			if err := body(ctx); err != nil {
-				return nil, err
-			}
-			return json.RawMessage(`{}`), nil
-		})
-		return err
-	}
-
-	if err := stage("queue", v.enqueue); err != nil {
-		return v.finalizeFailed(w, err)
-	}
 
 	selectResRaw, err := w.Activity("select", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		backups := v.selectCandidates(ctx)
@@ -100,9 +85,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 		v.mu.Lock()
 		v.task = vTask
 		v.mu.Unlock()
-		if v.queueTask != nil {
-			v.queueTask.Close()
-		}
 		if err := v.updateJobStatus(false, vTask.Task); err != nil {
 			v.logger.Error(err, "failed to update job with task UPID")
 		}

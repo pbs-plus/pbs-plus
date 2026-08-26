@@ -117,9 +117,6 @@ func (v *verificationJob) cleanup() {
 	if v.cancel != nil {
 		v.cancel()
 	}
-	if v.queueTask != nil {
-		v.queueTask.Close()
-	}
 }
 
 func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) error {

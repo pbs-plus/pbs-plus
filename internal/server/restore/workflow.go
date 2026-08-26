@@ -23,7 +23,7 @@ type runResult struct {
 	ErrCount int32 `json:"errCount"`
 }
 
-// Register registers the restore workflow: queue, pre-script,
+// Register registers the restore workflow: pre-script,
 // start-task, run, finalize. Each stage is a durable activity.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
 	return engine.Register(jobs.WorkflowRestore, func(w *jobs.WorkflowContext) error {
@@ -44,7 +44,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		job:       job,
 		app:       app,
 		skipCheck: input.SkipCheck,
-		web:       input.Web,
 		waitGroup: &sync.WaitGroup{},
 		logger:    log.WithScope(log.Scope{JobID: job.ID}),
 	}
@@ -60,9 +59,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		return err
 	}
 
-	if err := stage("queue", b.enqueue); err != nil {
-		return b.finalizeFailed(w, err)
-	}
 	if err := stage("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}

@@ -82,15 +82,6 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	default:
 	}
 
-	b.mu.RLock()
-	qt := b.queueTask
-	b.mu.RUnlock()
-	if qt != nil {
-		if err := qt.UpdateDescription("mounting target to server"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
-	}
-
 	var (
 		srcPath    = target.Path
 		agentMount *mountrpc.AgentMount
@@ -103,17 +94,6 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	b.mu.RUnlock()
 
 	if target.IsAgent() {
-		if job.SourceMode == "snapshot" {
-			b.mu.RLock()
-			qt := b.queueTask
-			b.mu.RUnlock()
-			if qt != nil {
-				if err := qt.UpdateDescription("waiting for agent to finish snapshot"); err != nil {
-					b.logger.Error(err, "failed to update queue task description")
-				}
-			}
-		}
-
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 

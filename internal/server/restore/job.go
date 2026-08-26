@@ -19,7 +19,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -35,7 +34,6 @@ type restoreJob struct {
 	logger       *log.Logger
 	task         *RestoreTask
 	upid         string
-	queueTask    *tasklog.QueuedTask
 	waitGroup    *sync.WaitGroup
 	err          error
 	errChClosed  atomic.Bool
@@ -49,21 +47,6 @@ type restoreJob struct {
 	agentPipe    *arpc.StreamPipe
 	app          *application.Runtime
 	skipCheck    bool
-	web          bool
-}
-
-func (b *restoreJob) enqueue(ctx context.Context) error {
-	wid := tasklog.FormatWorkerID(b.job.Store, "host-", b.job.DestTarget.GetHostname())
-	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "reader", wid, b.web)
-	if err != nil {
-		b.logger.Error(err, "failed to create queue task, not fatal")
-	} else {
-		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.app); err != nil {
-			b.logger.Error(err, "failed to set queue task, not fatal")
-		}
-	}
-	b.queueTask = queueTask
-	return nil
 }
 
 func (b *restoreJob) execute(ctx context.Context) error {
@@ -165,10 +148,6 @@ func (b *restoreJob) finalizeSuccess() {
 }
 
 func (b *restoreJob) cleanup() {
-	if b.queueTask != nil {
-		b.queueTask.Close()
-	}
-
 	childKey := b.job.GetStreamID()
 
 	agentRPC, ok := b.app.Agents.GetStreamPipe(childKey)
@@ -227,9 +206,6 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	default:
 	}
 
-	if err := b.queueTask.UpdateDescription("running pre-restore script"); err != nil {
-		b.logger.Error(err, "failed to update queue task description")
-	}
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
 	envVars, err := jobs.StructToEnvVars(b.job)
@@ -541,12 +517,6 @@ func (b *restoreJob) runPostScript() {
 
 	if job.PostScript == "" {
 		return
-	}
-
-	if b.queueTask != nil {
-		if err := b.queueTask.UpdateDescription("running post-restore script"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
 	}
 
 	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))

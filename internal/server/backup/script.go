@@ -27,15 +27,6 @@ func (b *backupJob) runPreScript(ctx context.Context) error {
 	default:
 	}
 
-	b.mu.RLock()
-	qt := b.queueTask
-	b.mu.RUnlock()
-	if qt != nil {
-		if err := qt.UpdateDescription("running pre-backup script"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
-	}
-
 	envVars, err := jobs.StructToEnvVars(job)
 	if err != nil {
 		envVars = []string{}
@@ -82,15 +73,6 @@ func (b *backupJob) runTargetMountScript(ctx context.Context, target coredb.Targ
 	default:
 	}
 
-	b.mu.RLock()
-	qt := b.queueTask
-	b.mu.RUnlock()
-	if qt != nil {
-		if err := qt.UpdateDescription("running target mount script"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
-	}
-
 	envVars, err := jobs.StructToEnvVars(target)
 	if err != nil {
 		envVars = []string{}
@@ -119,13 +101,7 @@ func (b *backupJob) runPostScript(success bool, warningsNum int) {
 
 	b.mu.RLock()
 	job = b.job
-	qt := b.queueTask
 	b.mu.RUnlock()
-	if qt != nil {
-		if err := qt.UpdateDescription("running post-backup script"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
-	}
 	b.logger.Info("running post-backup script",
 		"script", job.PostScript)
 

@@ -184,56 +184,6 @@ func (q *Queries) ListAllMtfJobs(ctx context.Context) ([]MtfJob, error) {
 	return items, nil
 }
 
-const listQueuedMtfJobs = `-- name: ListQueuedMtfJobs :many
-SELECT id, source_kind, source_ref, datastore, namespace, comment, notification_mode, spanning, overwrite_mappings, changer, drive, current_pid, last_run_upid, last_successful_upid, last_run_status, retry_count, last_run_starttime, last_run_endtime, last_successful_endtime, duration, created_at, keep_loaded FROM mtf_jobs WHERE last_run_upid LIKE '%pbsplusgen-queue%' ORDER BY id
-`
-
-func (q *Queries) ListQueuedMtfJobs(ctx context.Context) ([]MtfJob, error) {
-	rows, err := q.db.QueryContext(ctx, listQueuedMtfJobs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []MtfJob{}
-	for rows.Next() {
-		var i MtfJob
-		if err := rows.Scan(
-			&i.ID,
-			&i.SourceKind,
-			&i.SourceRef,
-			&i.Datastore,
-			&i.Namespace,
-			&i.Comment,
-			&i.NotificationMode,
-			&i.Spanning,
-			&i.OverwriteMappings,
-			&i.Changer,
-			&i.Drive,
-			&i.CurrentPid,
-			&i.LastRunUpid,
-			&i.LastSuccessfulUpid,
-			&i.LastRunStatus,
-			&i.RetryCount,
-			&i.LastRunStarttime,
-			&i.LastRunEndtime,
-			&i.LastSuccessfulEndtime,
-			&i.Duration,
-			&i.CreatedAt,
-			&i.KeepLoaded,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const mtfJobExists = `-- name: MtfJobExists :one
 SELECT 1 FROM mtf_jobs WHERE id = ? LIMIT 1
 `

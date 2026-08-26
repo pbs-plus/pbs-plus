@@ -12,7 +12,6 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
@@ -40,11 +39,9 @@ type verificationJob struct {
 	logger     *log.Logger
 	task       *VerificationTask
 	upid       string
-	queueTask  *tasklog.QueuedTask
 	job        coredb.VerificationJob
 	backupJobs []coredb.Backup
 	app        *application.Runtime
-	web        bool
 
 	// result counts set by execute, used by onSuccess/onError to close task
 	failedFiles     int
@@ -52,28 +49,6 @@ type verificationJob struct {
 	totalFiles      int
 	resultID        int
 	totalPopulation int
-}
-
-func (v *verificationJob) enqueue(ctx context.Context) error {
-	source := "schedule"
-	if v.web {
-		source = "web UI"
-	}
-	wid := tasklog.FormatWorkerID(v.job.Store, "host-", v.job.ID)
-	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "verification", wid, v.web)
-	if err != nil {
-		v.logger.Error(err, "failed to create queue task, not fatal")
-	} else {
-		v.mu.Lock()
-		v.queueTask = queueTask
-		v.mu.Unlock()
-
-		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
-			v.logger.Error(err, "failed to set queue task, not fatal")
-		}
-	}
-	v.logger.Info("verification starting", "target", v.job.TargetMode, "mode", v.job.Mode, "source", source)
-	return nil
 }
 
 // selectCandidates picks the backup jobs to verify, in verification

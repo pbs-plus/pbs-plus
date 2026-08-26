@@ -45,9 +45,6 @@ func (s *BackupService) GetBackup(id string) (coredb.Backup, error) { return s.d
 func (s *BackupService) CreateBackup(b coredb.Backup) error         { return s.db.CreateBackup(nil, b) }
 func (s *BackupService) UpdateBackup(b coredb.Backup) error         { return s.db.UpdateBackup(nil, b) }
 func (s *BackupService) DeleteBackup(id string) error               { return s.db.DeleteBackup(nil, id) }
-func (s *BackupService) GetAllQueuedBackups() ([]coredb.Backup, error) {
-	return s.db.GetAllQueuedBackups()
-}
 
 func jobStatsFromVFS(stats vfs.VFSStats) coredb.JobStats {
 	return coredb.JobStats{

@@ -46,19 +46,6 @@ LEFT JOIN targets t ON j.target = t.name
 LEFT JOIN agent_hosts ah ON t.agent_host = ah.name
 ORDER BY j.id;
 
--- name: ListQueuedBackups :many
-SELECT
-    j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath,
-    j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid,
-    j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
-    j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
-    j.last_run_status, j.retry_count,
-    t.volume_used_bytes, t.mount_script
-FROM backups j
-LEFT JOIN targets t ON j.target = t.name
-WHERE j.last_run_upid LIKE '%pbsplusgen-queue%'
-ORDER BY j.id;
-
 -- name: UpdateBackup :exec
 UPDATE backups
 SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,

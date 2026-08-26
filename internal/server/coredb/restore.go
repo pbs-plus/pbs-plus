@@ -423,49 +423,6 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 	return restores, nil
 }
 
-func (db *Store) GetAllQueuedRestores() ([]Restore, error) {
-	rows, err := db.readQueries.ListQueuedRestores(db.ctx)
-	if err != nil {
-		return nil, fmt.Errorf("GetAllQueuedRestores: error querying restores: %w", err)
-	}
-
-	restores := make([]Restore, len(rows))
-	for i, row := range rows {
-		restore := Restore{
-			ID:               row.ID,
-			Store:            row.Store,
-			Snapshot:         row.Snapshot,
-			SrcPath:          row.SrcPath,
-			Mode:             int(row.RestoreMode),
-			NotificationMode: fromNullString(row.NotificationMode),
-			DestTarget: Target{
-				Name:      row.DestTarget,
-				AgentHost: AgentHost{},
-			},
-			DestSubpath: fromNullString(row.DestSubpath),
-			Comment:     fromNullString(row.Comment),
-			CurrentPID:  fromNullStringToInt(row.CurrentPid),
-			History: JobHistory{
-				LastRunUpid:        fromNullString(row.LastRunUpid),
-				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
-			},
-			Retry:         fromNullInt64(row.Retry),
-			RetryInterval: fromNullInt64(row.RetryInterval),
-			PreScript:     row.PreScript,
-			PostScript:    row.PostScript,
-		}
-
-		if row.Namespace.Valid {
-			restore.Namespace = row.Namespace.String
-		}
-
-		db.populateRestoreExtras(&restore)
-		restores[i] = restore
-	}
-
-	return restores, nil
-}
-
 func (db *Store) DeleteRestore(tx *Transaction, id string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
@@ -537,8 +494,14 @@ func (r *Restore) GetAllUPIDs() []Tasks {
 
 	upids := make([]Tasks, 0, len(logs))
 
-	for _, log := range logs {
-		task, err := tasklog.GetTaskByUPID(log.Name())
+	for _, entry := range logs {
+		if tasklog.IsQueuedUPID(entry.Name()) {
+			if err := os.Remove(filepath.Join(restoreLogsPath, entry.Name())); err != nil && !os.IsNotExist(err) {
+				log.Error(fmt.Errorf("GetAllUPIDs: failed removing queued task link: %w", err), "", "id", r.ID)
+			}
+			continue
+		}
+		task, err := tasklog.GetTaskByUPID(entry.Name())
 		if err != nil {
 			continue
 		}

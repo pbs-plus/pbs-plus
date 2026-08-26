@@ -525,78 +525,6 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 	return backups, nil
 }
 
-func (db *Store) GetAllQueuedBackups() ([]Backup, error) {
-	rows, err := db.readQueries.ListQueuedBackups(db.ctx)
-	if err != nil {
-		return nil, fmt.Errorf("GetAllQueuedBackups: error querying backups: %w", err)
-	}
-
-	allExclusions, err := db.readQueries.ListAllBackupExclusions(db.ctx)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("GetAllQueuedBackups: error querying exclusions: %w", err)
-	}
-
-	exclusionsByJob := make(map[string][]Exclusion)
-	for _, excl := range allExclusions {
-		exclusionsByJob[excl.JobID] = append(exclusionsByJob[excl.JobID], Exclusion{
-			JobID: excl.JobID,
-			Path:  excl.Path,
-		})
-	}
-
-	backups := make([]Backup, len(rows))
-	for i, row := range rows {
-		backup := Backup{
-			ID:         row.ID,
-			Store:      row.Store,
-			Mode:       interfaceToString(row.Mode),
-			SourceMode: interfaceToString(row.SourceMode),
-			ReadMode:   interfaceToString(row.ReadMode),
-			Target: Target{
-				Name:            row.Target,
-				AgentHost:       AgentHost{},
-				MountScript:     row.MountScript.String,
-				VolumeUsedBytes: int(row.VolumeUsedBytes.Int64),
-			},
-			Subpath:          row.Subpath.String,
-			Schedule:         row.Schedule.String,
-			Comment:          row.Comment.String,
-			NotificationMode: row.NotificationMode.String,
-			Namespace:        row.Namespace.String,
-			CurrentPID:       fromNullStringToInt(row.CurrentPid),
-			History: JobHistory{
-				LastRunUpid:        fromNullString(row.LastRunUpid),
-				LastSuccessfulUpid: fromNullString(row.LastSuccessfulUpid),
-				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
-				RetryCount:         fromNullInt64(row.RetryCount),
-			},
-			Retry:         fromNullInt64(row.Retry),
-			RetryInterval: fromNullInt64(row.RetryInterval),
-			MaxDirEntries: fromNullInt64(row.MaxDirEntries),
-			PreScript:     row.PreScript,
-			PostScript:    row.PostScript,
-			IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
-			LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
-		}
-
-		backup.Exclusions = exclusionsByJob[row.ID]
-		if backup.Exclusions == nil {
-			backup.Exclusions = make([]Exclusion, 0)
-		}
-
-		pathSlice := make([]string, len(backup.Exclusions))
-		for k, exclusion := range backup.Exclusions {
-			pathSlice[k] = exclusion.Path
-		}
-		backup.RawExclusions = strings.Join(pathSlice, "\n")
-
-		db.populateBackupExtras(&backup)
-		backups[i] = backup
-	}
-
-	return backups, nil
-}
-
 func (db *Store) DeleteBackup(tx *Transaction, id string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
@@ -687,8 +615,14 @@ func (b *Backup) GetAllUPIDs() []Tasks {
 
 	upids := make([]Tasks, 0, len(logs))
 
-	for _, log := range logs {
-		task, err := tasklog.GetTaskByUPID(log.Name())
+	for _, entry := range logs {
+		if tasklog.IsQueuedUPID(entry.Name()) {
+			if err := os.Remove(filepath.Join(backupLogsPath, entry.Name())); err != nil && !os.IsNotExist(err) {
+				log.Error(fmt.Errorf("GetAllUPIDs: failed removing queued task link: %w", err), "", "id", b.ID)
+			}
+			continue
+		}
+		task, err := tasklog.GetTaskByUPID(entry.Name())
 		if err != nil {
 			continue
 		}

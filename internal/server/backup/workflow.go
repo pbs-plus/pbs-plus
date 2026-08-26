@@ -30,7 +30,7 @@ type waitResult struct {
 	Warnings  int  `json:"warnings"`
 }
 
-// Register registers the backup workflow: queue, pre-script, validate,
+// Register registers the backup workflow: pre-script, validate,
 // mount-script, start, wait, finalize. Each stage is a durable
 // activity; completed stages are skipped on replay after a crash.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
@@ -52,7 +52,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		job:             job,
 		app:             app,
 		skipCheck:       input.SkipCheck,
-		web:             input.Web,
 		logger:          log.WithScope(log.Scope{JobID: job.ID}),
 		extraExclusions: input.ExtraExclusions,
 		waitGroup:       &sync.WaitGroup{},
@@ -69,9 +68,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		return err
 	}
 
-	if err := stage("queue", b.enqueue); err != nil {
-		return b.finalizeFailed(w, err)
-	}
 	if err := stage("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
@@ -129,12 +125,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 // start mounts the source and launches proxmox-backup-client, returning
 // the durable task identity for the wait activity.
 func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
-	if qt := b.queueTask; qt != nil {
-		if err := qt.UpdateDescription("operation ready, waiting for queue to free up"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
-	}
-
 	srcPath, agentMount, s3Mount, err := b.mountSource(ctx, b.job.Target)
 	if err != nil {
 		return nil, err

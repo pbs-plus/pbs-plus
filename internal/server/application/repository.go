@@ -12,7 +12,6 @@ type BackupRepository interface {
 	CreateBackup(tx *coredb.Transaction, backup coredb.Backup) error
 	UpdateBackup(tx *coredb.Transaction, backup coredb.Backup) error
 	DeleteBackup(tx *coredb.Transaction, id string) error
-	GetAllQueuedBackups() ([]coredb.Backup, error)
 }
 
 type TargetRepository interface {
