@@ -26,9 +26,13 @@ runs:
         state=$(jq -er '.data.history."last-run-state"' <<<"$history")
         endtime=$(jq -er '.data.history."last-run-endtime"' <<<"$history")
 
-        upid_pattern='^UPID:pbsplus:[[:xdigit:]]{8}:[[:xdigit:]]{8,9}:[[:xdigit:]]{8,16}:[[:xdigit:]]{8}:[^[:space:]:]+:[^[:space:]:]*:[^[:space:]:]+:$'
+        upid_pattern='^UPID:[^[:space:]:]+:[[:xdigit:]]{8}:[[:xdigit:]]{8,9}:[[:xdigit:]]{8,16}:[[:xdigit:]]{8}:[^[:space:]:]+:[^[:space:]:]*:[^[:space:]:]+:$'
         if ! [[ "$upid" =~ $upid_pattern ]]; then
           echo "Invalid PBS UPID: $upid"
+          exit 1
+        fi
+        if [[ "$(cut -d: -f2 <<<"$upid")" != "$(docker exec pbs-plus-test hostname)" ]]; then
+          echo "Task UPID node does not match the PBS hostname: $upid"
           exit 1
         fi
         if [[ "$upid" != *":${{ inputs.worker-type }}:"* ]]; then
