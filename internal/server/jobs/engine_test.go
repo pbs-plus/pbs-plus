@@ -22,9 +22,9 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 	var firstRuns atomic.Int32
 	var secondRuns atomic.Int32
 	if err := engine.Register("test.replay", func(workflow *WorkflowContext) error {
-		if _, err := workflow.Activity("first", json.RawMessage(`{"value":1}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+		if err := workflow.Step("first", func(context.Context) error {
 			firstRuns.Add(1)
-			return json.RawMessage(`{"done":true}`), nil
+			return nil
 		}); err != nil {
 			return err
 		}
@@ -162,7 +162,7 @@ func TestEngine_InvalidateReRunsActivity(t *testing.T) {
 	}
 }
 
-func TestEngine_DetachedFinalizerRunsOnCancel(t *testing.T) {
+func TestEngine_FinalizerRunsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -176,12 +176,11 @@ func TestEngine_DetachedFinalizerRunsOnCancel(t *testing.T) {
 			return nil, ctx.Err()
 		})
 		if err != nil {
-			_, ferr := workflow.ActivityCtx(workflow.Detached(), "finalize", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+			if ferr := workflow.Finalize(func(context.Context) error {
 				finalized <- struct{}{}
-				return json.RawMessage(`{}`), nil
-			})
-			if ferr != nil {
-				t.Errorf("detached finalizer failed: %v", ferr)
+				return nil
+			}); ferr != nil {
+				t.Errorf("finalizer failed: %v", ferr)
 			}
 		}
 		return err

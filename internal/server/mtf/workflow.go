@@ -58,31 +58,27 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	}
 	queued.Close()
 
-	_, err = w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err = w.Step("run", func(ctx context.Context) error {
 		if j.task == nil {
 			if err := j.reattach(startRes.UPID); err != nil {
-				return nil, err
+				return err
 			}
 		}
-		if err := j.execute(ctx); err != nil {
-			return nil, err
-		}
-		return json.RawMessage(`{}`), nil
+		return j.execute(ctx)
 	})
 	if err != nil {
 		return j.finalizeFailed(w, startRes.UPID, err)
 	}
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		if j.task == nil {
 			if err := j.reattach(startRes.UPID); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		j.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 func (j *mtfJob) finalizeFailed(w *jobs.WorkflowContext, upid string, runErr error) error {
@@ -90,13 +86,12 @@ func (j *mtfJob) finalizeFailed(w *jobs.WorkflowContext, upid string, runErr err
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		if j.task == nil && upid != "" {
 			_ = j.reattach(upid)
 		}
 		j.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		j.logger.Error(err, "failed to run mtf failure finalizer")
@@ -170,18 +165,17 @@ func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) er
 		return jobs.NonRetryable(fmt.Errorf("decoding mtf scan result: %w", err))
 	}
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		if task == nil {
 			wt, err := tasklog.ReopenWorkerTask(startRes.UPID)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			task = &ScanTask{WorkerTask: wt}
 		}
 		task.CloseOK(&scanRes)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 func runScanActivity(ctx context.Context, app *application.Runtime, opts Options, st *ScanTask) (result json.RawMessage, err error) {
@@ -209,17 +203,16 @@ func finalizeScanFailed(w *jobs.WorkflowContext, task *ScanTask, upid string, ru
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		if task == nil {
 			wt, err := tasklog.ReopenWorkerTask(upid)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			task = &ScanTask{WorkerTask: wt}
 		}
 		task.CloseErr(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		log.Error(err, "failed to run MTF scan failure finalizer", "upid", upid)

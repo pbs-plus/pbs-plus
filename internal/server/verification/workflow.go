@@ -165,7 +165,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 	v.skippedFiles = verifyRes.SkippedFiles
 	v.mu.Unlock()
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		if v.task == nil {
 			if vTask, err := ReopenVerificationTask(job, v.upid); err == nil {
 				v.mu.Lock()
@@ -174,9 +174,8 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 			}
 		}
 		v.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 // verifyCandidates walks the pinned candidate list from `start`,
@@ -297,8 +296,7 @@ func (v *verificationJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) 
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		if v.task == nil && v.upid != "" {
 			if vTask, terr := ReopenVerificationTask(v.job, v.upid); terr == nil {
 				v.mu.Lock()
@@ -307,7 +305,7 @@ func (v *verificationJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) 
 			}
 		}
 		v.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		v.logger.Error(err, "failed to run verification failure finalizer")

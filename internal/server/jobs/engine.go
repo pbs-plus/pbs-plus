@@ -219,12 +219,37 @@ func (e *Engine) StartupMu() *sync.Mutex {
 }
 
 func (w *WorkflowContext) Activity(name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {
-	return w.ActivityCtx(w.Context, name, input, activity)
+	return w.activity(w.Context, name, input, activity)
 }
 
-// ActivityCtx runs an activity under an explicit context; finalizers
-// use Detached so exactly-once completion work survives cancellation.
-func (w *WorkflowContext) ActivityCtx(ctx context.Context, name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {
+func (w *WorkflowContext) Step(name string, step func(context.Context) error) error {
+	if step == nil {
+		return errors.New("workflow step is required")
+	}
+	_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ ActivityInfo) (json.RawMessage, error) {
+		if err := step(ctx); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	return err
+}
+
+// Finalize runs the durable finalizer after cancellation.
+func (w *WorkflowContext) Finalize(finalizer func(context.Context) error) error {
+	if finalizer == nil {
+		return errors.New("workflow finalizer is required")
+	}
+	_, err := w.activity(context.WithoutCancel(w.Context), "finalize", json.RawMessage(`{}`), func(ctx context.Context, _ ActivityInfo) (json.RawMessage, error) {
+		if err := finalizer(ctx); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	return err
+}
+
+func (w *WorkflowContext) activity(ctx context.Context, name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {
 	if activity == nil {
 		return nil, errors.New("workflow activity is required")
 	}
@@ -259,12 +284,6 @@ func (w *WorkflowContext) ActivityCtx(ctx context.Context, name string, input js
 		return nil, err
 	}
 	return result, nil
-}
-
-// Detached returns a context that outlives workflow cancellation, for
-// finalization that must complete exactly once.
-func (w *WorkflowContext) Detached() context.Context {
-	return context.WithoutCancel(w.Context)
 }
 
 func (i ActivityInfo) Checkpoint(ctx context.Context, value json.RawMessage) error {

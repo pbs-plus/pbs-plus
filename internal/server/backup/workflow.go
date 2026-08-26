@@ -64,23 +64,13 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 	defer queued.Close()
 
-	stage := func(name string, body func(context.Context) error) error {
-		_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-			if err := body(ctx); err != nil {
-				return nil, err
-			}
-			return json.RawMessage(`{}`), nil
-		})
-		return err
-	}
-
-	if err := stage("pre-script", b.runPreScript); err != nil {
+	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
-	if err := stage("validate", b.validateTargetConnection); err != nil {
+	if err := w.Step("validate", b.validateTargetConnection); err != nil {
 		return b.finalizeFailed(w, err)
 	}
-	if err := stage("mount-script", func(ctx context.Context) error {
+	if err := w.Step("mount-script", func(ctx context.Context) error {
 		return b.runTargetMountScript(ctx, job.Target)
 	}); err != nil {
 		return b.finalizeFailed(w, err)
@@ -122,11 +112,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		return jobs.NonRetryable(fmt.Errorf("decoding backup wait result: %w", err))
 	}
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		b.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 // start mounts the source and launches proxmox-backup-client, returning
@@ -189,10 +178,9 @@ func (b *backupJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error 
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		b.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		b.logger.Error(err, "failed to run backup failure finalizer")

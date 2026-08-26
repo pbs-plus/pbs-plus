@@ -55,17 +55,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	}
 	defer queued.Close()
 
-	stage := func(name string, body func(context.Context) error) error {
-		_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-			if err := body(ctx); err != nil {
-				return nil, err
-			}
-			return json.RawMessage(`{}`), nil
-		})
-		return err
-	}
-
-	if err := stage("pre-script", b.runPreScript); err != nil {
+	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
 
@@ -113,7 +103,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	}
 	b.errCount.Store(runRes.ErrCount)
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		if b.task == nil {
 			task, err := ReopenRestoreTask(job, b.upid)
 			if err == nil {
@@ -123,9 +113,8 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 			}
 		}
 		b.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 func (b *restoreJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error {
@@ -140,8 +129,7 @@ func (b *restoreJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		if b.task == nil && b.upid != "" {
 			if task, err := ReopenRestoreTask(b.job, b.upid); err == nil {
 				b.mu.Lock()
@@ -150,7 +138,7 @@ func (b *restoreJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error
 			}
 		}
 		b.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		b.logger.Error(err, "failed to run restore failure finalizer")
