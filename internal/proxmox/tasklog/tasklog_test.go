@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -170,6 +171,103 @@ func TestReconcile_FoldsDeadWorkers(t *testing.T) {
 	}
 	if len(arch) != 1 || arch[0].State == nil || arch[0].State.Status != StatusOK {
 		t.Fatalf("archive = %#v, want folded OK entry", arch)
+	}
+}
+
+func TestReconcilePreservesLiveForeignWorker(t *testing.T) {
+	setupTaskDirs(t)
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTasklogHelperProcess$")
+	cmd.Env = append(os.Environ(), "GO_WANT_TASKLOG_HELPER_PROCESS=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || ready != "ready\n" {
+		t.Fatalf("foreign worker ready = %q, %v", ready, err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	pstart, err := processStartTime(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := NewTask("pbs", "backup", "foreign")
+	task.PID = cmd.Process.Pid
+	task.PStart = pstart
+	upid := task.GenerateUPID()
+
+	path, err := UPIDLogPath(upid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(time.Now().Format(time.RFC3339)+": TASK OK\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(activeTasks, []byte(upid+"\n"), 0660); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Reconcile(""); err != nil {
+		t.Fatal(err)
+	}
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].UPID != upid || active[0].State != nil {
+		t.Fatalf("active = %#v, want running foreign task %s", active, upid)
+	}
+	archive, err := readTaskFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archive) != 0 {
+		t.Fatalf("archive = %#v, want no tasks", archive)
+	}
+
+	resolved, err := GetTaskByUPID(upid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Status != "stopped" || resolved.ExitStatus != "OK" {
+		t.Fatalf("GetTaskByUPID = %#v, want stopped/OK", resolved)
+	}
+}
+
+func TestTasklogHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_TASKLOG_HELPER_PROCESS") != "1" {
+		return
+	}
+	ln, err := net.Listen("unix", controlSocketPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	if _, err := fmt.Fprintln(os.Stdout, "ready"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := bufio.NewReader(conn).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprint(conn, "OK: false\n"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -405,6 +503,7 @@ func TestReadStatusFromLogPBSFindMapSemantics(t *testing.T) {
 		t.Fatalf("ReadStatusFromLog = %+v, want error 'real failure'", state)
 	}
 
+	unregisterWorker(wt.Task.TaskId)
 	task, err := GetTaskByUPID(wt.UPID())
 	if err != nil {
 		t.Fatal(err)
@@ -413,7 +512,6 @@ func TestReadStatusFromLogPBSFindMapSemantics(t *testing.T) {
 		t.Fatalf("GetTaskByUPID = %+v, want stopped/real failure", task)
 	}
 
-	unregisterWorker(wt.Task.TaskId)
 	if err := Reconcile(""); err != nil {
 		t.Fatal(err)
 	}
@@ -423,39 +521,6 @@ func TestReadStatusFromLogPBSFindMapSemantics(t *testing.T) {
 	}
 	if !strings.Contains(string(archive), wt.UPID()+" ") {
 		t.Fatalf("archive = %q, want %q", archive, wt.UPID())
-	}
-}
-
-func TestChangeUPIDStartTimeArchivesTerminalTask(t *testing.T) {
-	setupTaskDirs(t)
-
-	wt, err := NewWorkerTask("pbsplus", "rename", "task")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt.CloseOK()
-
-	start := time.Unix(wt.Task.StartTime+1, 0)
-	newUPID, err := ChangeUPIDStartTime(wt.UPID(), start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if newUPID == wt.UPID() {
-		t.Fatal("ChangeUPIDStartTime did not change the UPID")
-	}
-	active, err := readTaskFile(activeTasks)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(active) != 0 {
-		t.Fatalf("active = %#v, want no tasks", active)
-	}
-	archive, err := os.ReadFile(archivePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(archive), wt.UPID()+" ") || !strings.Contains(string(archive), newUPID+" ") {
-		t.Fatalf("archive = %q, want only %q", archive, newUPID)
 	}
 }
 

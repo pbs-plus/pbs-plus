@@ -10,7 +10,9 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"golang.org/x/sys/unix"
@@ -26,7 +28,11 @@ const controlSocketDir = "/run/proxmox-backup"
 var controlSocketOnce sync.Once
 
 func controlSocketPath() string {
-	return "@" + controlSocketDir + "/control-" + strconv.Itoa(os.Getpid()) + ".sock"
+	return controlSocketPathForPID(os.Getpid())
+}
+
+func controlSocketPathForPID(pid int) string {
+	return "@" + controlSocketDir + "/control-" + strconv.Itoa(pid) + ".sock"
 }
 
 func startControlSocket() {
@@ -149,4 +155,54 @@ func dispatchControlCommand(command string, args json.RawMessage) (any, error) {
 func upidIsLocal(task proxmox.Task) bool {
 	p, err := selfPStart()
 	return err == nil && task.PID == os.Getpid() && task.PStart == p
+}
+
+func workerIsActive(task proxmox.Task) (bool, error) {
+	if upidIsLocal(task) {
+		_, active := lookupWorker(task.TaskId)
+		return active, nil
+	}
+	if !processRunningPStart(task.PID, task.PStart) {
+		return false, nil
+	}
+
+	conn, err := net.DialTimeout("unix", controlSocketPathForPID(task.PID), time.Second)
+	if err != nil {
+		return false, fmt.Errorf("tasklog: connect worker control socket: %w", err)
+	}
+	defer func() {
+		if cerr := conn.Close(); cerr != nil {
+			slog.Error("tasklog: close worker control socket", "error", cerr)
+		}
+	}()
+
+	req, err := json.Marshal(struct {
+		Command string `json:"command"`
+		Args    any    `json:"args"`
+	}{
+		Command: "worker-task-status",
+		Args: struct {
+			UPID string `json:"upid"`
+		}{UPID: task.UPID},
+	})
+	if err != nil {
+		return false, fmt.Errorf("tasklog: encode worker status request: %w", err)
+	}
+	if _, err := fmt.Fprintf(conn, "%s\n", req); err != nil {
+		return false, fmt.Errorf("tasklog: send worker status request: %w", err)
+	}
+
+	reply, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return false, fmt.Errorf("tasklog: read worker status reply: %w", err)
+	}
+	data, ok := strings.CutPrefix(strings.TrimSpace(reply), "OK: ")
+	if !ok {
+		return false, fmt.Errorf("tasklog: invalid worker status reply %q", strings.TrimSpace(reply))
+	}
+	var active bool
+	if err := json.Unmarshal([]byte(data), &active); err != nil {
+		return false, fmt.Errorf("tasklog: decode worker status reply: %w", err)
+	}
+	return active, nil
 }

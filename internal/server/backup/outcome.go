@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 )
@@ -183,17 +182,6 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	b.logger.Info("updating job status", "succeeded", succeeded, "cancelled", cancelled, "warnings", warningsNum)
-
-	startTime := logger.JobStartTime()
-
-	if newUpid, err := tasklog.ChangeUPIDStartTime(upid, startTime); err == nil {
-		upid = newUpid
-		b.mu.Lock()
-		if b.Task.UPID != "" {
-			b.Task.UPID = newUpid
-		}
-		b.mu.Unlock()
-	}
 
 	b.mu.RLock()
 	currentJob := b.job

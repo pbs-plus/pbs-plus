@@ -19,7 +19,11 @@ import (
 var workerTaskList sync.Map
 
 var selfPStart = sync.OnceValues(func() (uint64, error) {
-	data, err := os.ReadFile("/proc/self/stat")
+	return processStartTime(os.Getpid())
+})
+
+func processStartTime(pid int) (uint64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return 0, err
 	}
@@ -37,11 +41,8 @@ var selfPStart = sync.OnceValues(func() (uint64, error) {
 		return 0, err
 	}
 	return p, nil
-})
+}
 
-// normalizeTaskID canonicalizes a UPID task-id (8-16 hex digits,
-// possibly with leading zeros or mixed case) so registry keys written by
-// us and keys parsed back from a PBS UPID string collide correctly.
 func normalizeTaskID(id string) string {
 	n, err := strconv.ParseUint(id, 16, 64)
 	if err != nil {
@@ -82,22 +83,6 @@ func workerIsActiveLocal(task proxmox.Task) bool {
 // exists and was started at the given pstart, matching PBS's
 // check_process_running_pstart.
 func processRunningPStart(pid int, pstart uint64) bool {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return false
-	}
-	stat := string(data)
-	cmdend := strings.LastIndexByte(stat, ')')
-	if cmdend < 0 || cmdend+1 >= len(stat) {
-		return false
-	}
-	fields := strings.Fields(stat[cmdend+1:])
-	if len(fields) < 20 {
-		return false
-	}
-	start, err := strconv.ParseUint(fields[19], 10, 64)
-	if err != nil {
-		return false
-	}
-	return start == pstart
+	start, err := processStartTime(pid)
+	return err == nil && start == pstart
 }

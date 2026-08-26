@@ -63,17 +63,17 @@ func GetTaskByUPID(upid string) (proxmox.Task, error) {
 		return proxmox.Task{}, fmt.Errorf("tasklog: parse upid: %w", err)
 	}
 
-	parsed.Status = "stopped"
-	state, statusErr := ReadStatusFromLog(upid)
-	if statusErr == nil && state.Status != StatusUnknown {
-		parsed.ExitStatus = state.String()
-		parsed.EndTime = state.EndTime
-		return parsed, nil
+	active, err := workerIsActive(parsed)
+	if err != nil {
+		return proxmox.Task{}, err
 	}
-	if workerIsActiveLocal(parsed) {
+	if active {
 		parsed.Status = "running"
 		return parsed, nil
 	}
+
+	parsed.Status = "stopped"
+	state, statusErr := ReadStatusFromLog(upid)
 
 	if statusErr != nil {
 		parsed.ExitStatus = "unknown"

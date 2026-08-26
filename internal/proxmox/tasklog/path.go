@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
@@ -48,89 +47,4 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 	}
 
 	return file, path, nil
-}
-
-// ChangeUPIDStartTime rewrites a task's starttime, renames its log file
-// to the new UPID's path, and leaves a symlink at the old path.
-func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
-	parsedTask, err := proxmox.ParseUPID(upid)
-	if err != nil {
-		return "", err
-	}
-	path, err := UPIDLogPath(upid)
-	if err != nil {
-		return "", err
-	}
-
-	parsedTask.StartTime = startTime.Unix()
-	newUpid := parsedTask.GenerateUPID()
-	newPath, err := UPIDLogPath(newUpid)
-	if err != nil {
-		return "", err
-	}
-
-	if oldInfo, err := os.Stat(path); err == nil {
-		if newInfo, newErr := os.Stat(newPath); newErr == nil && os.SameFile(oldInfo, newInfo) {
-			if err := Reconcile(""); err != nil {
-				return "", err
-			}
-			return newUpid, nil
-		}
-	}
-
-	if err := os.Rename(path, newPath); err != nil {
-		return "", err
-	}
-	slog.Info("updated UPID start time")
-
-	if err := os.Symlink(newPath, path); err != nil {
-		slog.Error(err.Error())
-	}
-
-	if err := replaceTaskUPID(upid, newUpid, parsedTask); err != nil {
-		return "", err
-	}
-	if err := Reconcile(""); err != nil {
-		return "", err
-	}
-
-	return newUpid, nil
-}
-
-func replaceTaskUPID(oldUPID, newUPID string, task proxmox.Task) error {
-	lock, err := lockTaskList(true)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-
-	active, err := readTaskFile(activeTasks)
-	if err != nil {
-		return err
-	}
-	for i := range active {
-		if active[i].UPID == oldUPID {
-			active[i].UPID = newUPID
-			active[i].Task = task
-			return replaceFile(activeTasks, renderTaskList(active), 0660)
-		}
-	}
-
-	archive, err := readTaskFile(archivePath)
-	if err != nil {
-		return err
-	}
-	updated := false
-	for i := range archive {
-		if archive[i].UPID == oldUPID {
-			archive[i].UPID = newUPID
-			archive[i].Task = task
-			updated = true
-		}
-	}
-	if updated {
-		return replaceFile(archivePath, renderTaskList(archive), 0660)
-	}
-
-	return nil
 }
