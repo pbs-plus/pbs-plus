@@ -5,7 +5,9 @@ package tasklog
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
@@ -168,6 +170,9 @@ func workerIsActive(task proxmox.Task) (bool, error) {
 
 	conn, err := net.DialTimeout("unix", controlSocketPathForPID(task.PID), time.Second)
 	if err != nil {
+		if errors.Is(err, unix.ECONNREFUSED) || errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
 		return false, fmt.Errorf("tasklog: connect worker control socket: %w", err)
 	}
 	defer func() {

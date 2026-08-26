@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 // workerTaskList mirrors PBS's WORKER_TASK_LIST: the in-process registry
@@ -66,17 +64,6 @@ func lookupWorker(taskID string) (*WorkerTask, bool) {
 	}
 	wt, ok := v.(*WorkerTask)
 	return wt, ok
-}
-
-// workerIsActiveLocal reports whether the worker behind a UPID is still
-// running: registry membership for our own process, /proc pid+pstart for
-// any other process. Same contract as PBS's worker_is_active_local.
-func workerIsActiveLocal(task proxmox.Task) bool {
-	if p, err := selfPStart(); err == nil && task.PID == os.Getpid() && task.PStart == p {
-		_, ok := lookupWorker(task.TaskId)
-		return ok
-	}
-	return processRunningPStart(task.PID, task.PStart)
 }
 
 // processRunningPStart checks /proc/<pid>/stat to see whether the process

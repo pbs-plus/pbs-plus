@@ -219,18 +219,19 @@ func Reconcile(newUPID string) error {
 			continue
 		}
 
-		if !workerIsActiveLocal(info.Task) {
-			now := time.Now().Unix()
-			state, serr := ReadStatusFromLog(info.UPID)
-			if serr != nil {
-				state = TaskState{Status: StatusUnknown, EndTime: now}
-			}
-			info.State = &state
-			finished = append(finished, info)
+		active, aerr := workerIsActive(info.Task)
+		if aerr != nil || active {
+			kept = append(kept, info)
 			continue
 		}
 
-		kept = append(kept, info)
+		now := time.Now().Unix()
+		state, serr := ReadStatusFromLog(info.UPID)
+		if serr != nil {
+			state = TaskState{Status: StatusUnknown, EndTime: now}
+		}
+		info.State = &state
+		finished = append(finished, info)
 	}
 
 	if newUPID != "" {
