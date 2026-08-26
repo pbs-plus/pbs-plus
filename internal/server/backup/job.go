@@ -68,7 +68,7 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 			b.mu.Unlock()
 			return err
 		}
-		return b.waitTaskByUPID(ctx, upid)
+		return nil
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
