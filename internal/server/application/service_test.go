@@ -69,7 +69,7 @@ func TestBackupService_GetBackup_NotFound(t *testing.T) {
 }
 
 func TestBackupService_ListBackups_Empty(t *testing.T) {
-	// BackupService currently depends on concrete *coredb.Database.
+
 	// This test verifies the mock pattern compiles. Future: inject interface.
 	repo := &mockBackupRepo{backups: make(map[string]coredb.Backup)}
 	backups, err := repo.GetAllBackups()

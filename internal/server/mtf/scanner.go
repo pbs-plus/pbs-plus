@@ -66,11 +66,11 @@ type Result struct {
 }
 
 type Scanner struct {
-	db     *mtfdb.DB
+	db     *mtfdb.Store
 	logger *log.Logger
 }
 
-func NewScanner(db *mtfdb.DB) *Scanner {
+func NewScanner(db *mtfdb.Store) *Scanner {
 	return &Scanner{db: db}
 }
 

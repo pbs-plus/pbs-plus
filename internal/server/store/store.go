@@ -23,8 +23,8 @@ import (
 
 type Store struct {
 	Ctx               context.Context
-	Database          *coredb.DB
-	MtfStore          *mtfdb.DB
+	Database          *coredb.Store
+	MtfStore          *mtfdb.Store
 	MtfMapper         *mtfdb.Mapper
 	BackupSvc         *application.BackupService
 	RestoreSvc        *application.RestoreService

@@ -26,7 +26,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func mtfStore(st *store.Store) *mtfdb.DB {
+func mtfStore(st *store.Store) *mtfdb.Store {
 	if st == nil {
 		return nil
 	}
