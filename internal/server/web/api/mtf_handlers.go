@@ -22,7 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
