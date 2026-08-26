@@ -18,22 +18,22 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func mtfStore(st *store.Store) *mtfdb.Store {
-	if st == nil {
+func mtfStore(app *application.Runtime) *mtfdb.Store {
+	if app == nil {
 		return nil
 	}
-	return st.MtfStore
+	return app.MtfDB
 }
 
-func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfJobRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -119,9 +119,9 @@ func ExtJsMtfJobRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfJobHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ms := mtfStore(storeInstance)
+		ms := mtfStore(app)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
@@ -182,7 +182,7 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		ApplyJobBatchAssignment(storeInstance, "backup", created.ID, r.FormValue("notification-batch"))
+		ApplyJobBatchAssignment(app, "backup", created.ID, r.FormValue("notification-batch"))
 
 		response.Status = http.StatusOK
 		response.Success = true
@@ -192,13 +192,13 @@ func ExtJsMtfJobHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfJobSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
-		ms := mtfStore(storeInstance)
+		ms := mtfStore(app)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
@@ -223,7 +223,7 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			flat := flattenMtfJobForEdit(job)
-			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", job.ID)
+			flat["notification-batch"] = GetJobBatchName(app, "backup", job.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
@@ -254,7 +254,7 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			ApplyJobBatchAssignment(storeInstance, "backup", updated.ID, r.FormValue("notification-batch"))
+			ApplyJobBatchAssignment(app, "backup", updated.ID, r.FormValue("notification-batch"))
 
 			response := MtfJobConfigResponse{}
 			response.Status = http.StatusOK
@@ -282,13 +282,13 @@ func ExtJsMtfJobSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsMtfJobUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfJobUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
-		ms := mtfStore(storeInstance)
+		ms := mtfStore(app)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
@@ -418,13 +418,13 @@ func mtfJobMergeForm(job mtfdb.MTFJob, r *http.Request) (mtfdb.MTFJob, error) {
 	return job, nil
 }
 
-func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfInventoryHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
-		ms := mtfStore(storeInstance)
+		ms := mtfStore(app)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
@@ -488,7 +488,7 @@ func ExtJsMtfInventoryHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfScanHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			if r.URL.Query().Get("type") == "barcodes" {
@@ -507,7 +507,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
-		ms := mtfStore(storeInstance)
+		ms := mtfStore(app)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
@@ -547,7 +547,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			WriteErrorResponse(w, err)
 			return
 		}
-		execution, created, err := storeInstance.Engine.Submit(context.Background(), request)
+		execution, created, err := app.Engine.Submit(context.Background(), request)
 		if err != nil || !created {
 			if err == nil {
 				err = fmt.Errorf("an MTF inventory scan is already in progress")
@@ -567,9 +567,9 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfMappingHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ms := mtfStore(storeInstance)
+		ms := mtfStore(app)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
@@ -617,7 +617,7 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			if mapper := storeInstance.MtfMapper; mapper != nil {
+			if mapper := app.MtfMapper; mapper != nil {
 				mapper.Invalidate()
 			}
 
@@ -634,13 +634,13 @@ func ExtJsMtfMappingHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMtfMappingSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
-		ms := mtfStore(storeInstance)
+		ms := mtfStore(app)
 		if ms == nil {
 			WriteErrorResponse(w, fmt.Errorf("MTF store unavailable"))
 			return
@@ -719,7 +719,7 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			if mapper := storeInstance.MtfMapper; mapper != nil {
+			if mapper := app.MtfMapper; mapper != nil {
 				mapper.Invalidate()
 			}
 
@@ -735,7 +735,7 @@ func ExtJsMtfMappingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				WriteErrorResponse(w, err)
 				return
 			}
-			if mapper := storeInstance.MtfMapper; mapper != nil {
+			if mapper := app.MtfMapper; mapper != nil {
 				mapper.Invalidate()
 			}
 
