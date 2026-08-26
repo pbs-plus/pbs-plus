@@ -137,9 +137,10 @@ func main() {
 }
 
 func validateEnvironment() error {
-	// Best-effort cleanup; the tasks/active directory may not exist in test
-	// environments or Docker containers. Ignore errors from this step.
-	if err := tasklog.CleanupActiveTasks(); err != nil {
+	// PBS-style startup reconciliation: fold dead workers out of the
+	// active list into the archive. Best effort; the tasks directory may
+	// not exist in test environments or Docker containers.
+	if err := tasklog.Reconcile(""); err != nil {
 		log.Error(err, "")
 	}
 

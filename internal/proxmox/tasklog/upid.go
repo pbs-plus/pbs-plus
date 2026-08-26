@@ -24,8 +24,8 @@ func NewTask(node, workerType, wid string) proxmox.Task {
 	pidHex := fmt.Sprintf("%08X", task.PID)
 	pstartHex := fmt.Sprintf("%08X", task.PStart)
 	startHex := fmt.Sprintf("%08X", uint32(task.StartTime))
-	taskID := fmt.Sprintf("%08X", rand.Uint32())
+	task.TaskId = fmt.Sprintf("%08X", rand.Uint32())
 	task.UPID = fmt.Sprintf("UPID:%s:%s:%s:%s:%s:%s:%s:%s:",
-		task.Node, pidHex, pstartHex, taskID, startHex, task.WorkerType, task.WID, task.User)
+		task.Node, pidHex, pstartHex, task.TaskId, startHex, task.WorkerType, task.WID, task.User)
 	return task
 }

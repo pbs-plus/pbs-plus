@@ -96,12 +96,17 @@ func GetPStart() uint64 {
 		return uint64(pstart.Add(1))
 	}
 
-	fields := strings.Fields(string(data))
-	if len(fields) < 22 {
+	stat := string(data)
+	cmdend := strings.LastIndexByte(stat, ')')
+	if cmdend < 0 || cmdend+1 >= len(stat) {
+		return uint64(pstart.Add(1))
+	}
+	fields := strings.Fields(stat[cmdend+1:])
+	if len(fields) < 20 {
 		return uint64(pstart.Add(1))
 	}
 
-	pstartA, err := strconv.ParseUint(fields[21], 10, 64)
+	pstartA, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
 		return uint64(pstart.Add(1))
 	}
@@ -141,16 +146,25 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 	return newUpid, nil
 }
 
+// EncodeToHexEscapes mirrors PBS's systemd-unit-compatible escape_id:
+// '/' becomes '-', a leading '.' is escaped, [A-Za-z0-9_.] stay literal,
+// everything else becomes lowercase \xNN. Used inside UPID worker IDs so
+// pbs-plus UPIDs round-trip with the real daemon's parser.
 func EncodeToHexEscapes(input string) string {
 	var encoded strings.Builder
-	for _, char := range input {
-		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
-			encoded.WriteRune(char)
-		} else {
-			encoded.WriteString(fmt.Sprintf(`\x%02x`, char))
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+		switch {
+		case c == '/':
+			encoded.WriteByte('-')
+		case i == 0 && c == '.':
+			fmt.Fprintf(&encoded, `\x%02x`, c)
+		case c == '_' || c == '.' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+			encoded.WriteByte(c)
+		default:
+			fmt.Fprintf(&encoded, `\x%02x`, c)
 		}
 	}
-
 	return encoded.String()
 }
 

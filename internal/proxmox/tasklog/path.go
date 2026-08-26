@@ -7,9 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"log/slog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"log/slog"
 )
 
 func UPIDLogPath(upid string) (string, error) {
@@ -18,7 +17,7 @@ func UPIDLogPath(upid string) (string, error) {
 		return "", fmt.Errorf("tasklog: invalid upid: %w", err)
 	}
 	logFolder := fmt.Sprintf("%02X", parsed.PStart&0xFF)
-	return filepath.Join(conf.TaskLogsBasePath, logFolder, upid), nil
+	return filepath.Join(taskDir, logFolder, upid), nil
 }
 
 func CreateTaskLogFile(upid string) (*os.File, string, error) {
@@ -40,7 +39,7 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 		return nil, "", err
 	}
 
-	if err := file.Chown(34, 34); err != nil {
+	if err := file.Chown(34, 34); err != nil && os.Geteuid() == 0 {
 		if cerr := file.Close(); cerr != nil {
 			slog.Error(cerr.Error())
 		}
