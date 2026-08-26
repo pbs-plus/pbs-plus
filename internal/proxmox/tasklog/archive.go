@@ -57,9 +57,6 @@ func ListTasks(activeOnly bool) ([]TaskListInfo, error) {
 	return results, nil
 }
 
-// GetTaskByUPID resolves a UPID's current state: running when the worker
-// is still alive (registry or /proc), otherwise the finished state read
-// from the log tail.
 func GetTaskByUPID(upid string) (proxmox.Task, error) {
 	parsed, err := proxmox.ParseUPID(upid)
 	if err != nil {
@@ -67,13 +64,18 @@ func GetTaskByUPID(upid string) (proxmox.Task, error) {
 	}
 
 	parsed.Status = "stopped"
+	state, statusErr := ReadStatusFromLog(upid)
+	if statusErr == nil && state.Status != StatusUnknown {
+		parsed.ExitStatus = state.String()
+		parsed.EndTime = state.EndTime
+		return parsed, nil
+	}
 	if workerIsActiveLocal(parsed) {
 		parsed.Status = "running"
 		return parsed, nil
 	}
 
-	state, err := ReadStatusFromLog(upid)
-	if err != nil {
+	if statusErr != nil {
 		parsed.ExitStatus = "unknown"
 	} else {
 		parsed.ExitStatus = state.String()

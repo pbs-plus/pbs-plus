@@ -404,6 +404,14 @@ func TestReadStatusFromLogPBSFindMapSemantics(t *testing.T) {
 	if state.Status != StatusError || state.Message != "real failure" {
 		t.Fatalf("ReadStatusFromLog = %+v, want error 'real failure'", state)
 	}
+
+	task, err := GetTaskByUPID(wt.UPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "stopped" || task.ExitStatus != "real failure" {
+		t.Fatalf("GetTaskByUPID = %+v, want stopped/real failure", task)
+	}
 }
 
 func TestControlSocketPBSProtocol(t *testing.T) {
