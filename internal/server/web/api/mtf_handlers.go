@@ -917,3 +917,33 @@ func listBarcodes(w http.ResponseWriter, r *http.Request) {
 		log.Error(err, "")
 	}
 }
+
+type MtfJobConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    any               `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}
+
+type MtfJobRunResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    string            `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}
+
+type MtfInventoryResponse struct {
+	Data    any    `json:"data"`
+	Digest  string `json:"digest"`
+	Success bool   `json:"success"`
+}
+
+type MtfMappingConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    any               `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}
