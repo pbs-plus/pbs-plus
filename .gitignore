@@ -1,16 +1,19 @@
-internal/vmware/test
 test
 target
-
-# Go binaries
-/operator
-pbs-plus
-pbs-plus-agent
-/agent
-/pbs_plus
-*.exe
-/pxar-mount
+internal/vmware/test
 internal/pxarmount/journal.db
-pbs-plus-server
-arpc.test
-bkf2pxar
+
+# Built binaries, anchored to the repo root so they cannot shadow cmd/ dirs
+/agent
+/agent.exe
+/bkf2pxar
+/operator
+/pbs-plus
+/pbs-plus-agent
+/pbs-plus-server
+/pbs_plus
+/pxar-mount
+*.exe
+
+# Test binaries
+*.test
