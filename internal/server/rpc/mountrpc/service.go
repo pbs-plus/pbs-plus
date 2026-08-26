@@ -329,7 +329,8 @@ func StartServer(watcher chan<- struct{}, ctx context.Context, socketPath string
 		jobCtxCancels: safemap.New[string, context.CancelFunc](),
 	}
 
-	if err := rpc.Register(service); err != nil {
+	server := rpc.NewServer()
+	if err := server.Register(service); err != nil {
 		return fmt.Errorf("failed to register rpc service: %w", err)
 	}
 
@@ -340,7 +341,7 @@ func StartServer(watcher chan<- struct{}, ctx context.Context, socketPath string
 			defer close(watcher)
 		}
 		close(ready)
-		rpc.Accept(listener)
+		server.Accept(listener)
 	}()
 	log.Info("rPC server listening",
 		"socket", socketPath)
