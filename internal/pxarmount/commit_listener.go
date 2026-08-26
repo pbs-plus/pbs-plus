@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type CommitRequest struct {

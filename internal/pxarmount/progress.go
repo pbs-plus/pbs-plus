@@ -2,12 +2,13 @@ package pxarmount
 
 import (
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"io"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 type ProgressPhase int
