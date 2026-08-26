@@ -84,7 +84,7 @@ func (b *backupJob) finalizeFailure(err error) {
 	}
 }
 
-func (b *backupJob) finalizeSuccess() {
+func (b *backupJob) finalizeSuccess(succeeded bool, warningsNum int) {
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
@@ -97,8 +97,6 @@ func (b *backupJob) finalizeSuccess() {
 	}
 
 	b.waitGroup.Wait()
-
-	succeeded, warningsNum := b.processPBSLogs(nil, b.upid)
 
 	if currOwner != "" {
 		b.logger.Info("setting owner to datastore owner")

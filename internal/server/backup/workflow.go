@@ -113,7 +113,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 
 	return w.Step("finalize", func(context.Context) error {
-		b.finalizeSuccess()
+		b.finalizeSuccess(waitRes.Succeeded, waitRes.Warnings)
 		return nil
 	})
 }

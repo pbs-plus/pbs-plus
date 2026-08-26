@@ -56,6 +56,7 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 
 	clientLines := []string{
 		"client: starting",
+		"pbs-plus: WARNING: owner metadata was unavailable",
 		"Duration: 1.00s",
 		"End Time: 2026-06-25T20:01:00-04:00",
 	}
@@ -76,24 +77,32 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	}
 	writeLines(t, realClientPath, clientLines, 0666)
 
-	succeeded, cancelled, warnings, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil)
-	if err != nil {
-		t.Fatalf("mergePBSLogs: %v", err)
-	}
-	if !succeeded {
-		t.Errorf("succeeded = false, want true")
-	}
-	if cancelled {
-		t.Errorf("cancelled = true, want false")
-	}
-	if warnings != 0 {
-		t.Errorf("warnings = %d, want 0", warnings)
+	for range 2 {
+		succeeded, cancelled, warnings, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil)
+		if err != nil {
+			t.Fatalf("mergePBSLogs: %v", err)
+		}
+		if !succeeded {
+			t.Error("succeeded = false, want true")
+		}
+		if cancelled {
+			t.Error("cancelled = true, want false")
+		}
+		if warnings != 1 {
+			t.Errorf("warnings = %d, want 1", warnings)
+		}
 	}
 
 	mergedProxy := readLines(t, proxyLog)
 
-	if !contains(mergedProxy, "TASK OK") {
-		t.Errorf("proxy log missing TASK OK status line; got:\n%s", strings.Join(mergedProxy, "\n"))
+	terminalCount := 0
+	for _, line := range mergedProxy {
+		if strings.Contains(line, ": TASK ") {
+			terminalCount++
+		}
+	}
+	if terminalCount != 1 || !strings.HasSuffix(mergedProxy[len(mergedProxy)-1], "TASK WARNINGS: 1") {
+		t.Errorf("proxy log terminal lines = %d, want one PBS Plus TASK WARNINGS: 1 line; got:\n%s", terminalCount, strings.Join(mergedProxy, "\n"))
 	}
 	if contains(mergedProxy, "upload_chunk done:") {
 		t.Errorf("proxy log still contains junk line; got:\n%s", strings.Join(mergedProxy, "\n"))

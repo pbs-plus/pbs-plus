@@ -136,7 +136,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	}
 
 	currOwner, err := GetCurrentOwner(job, b.app)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		b.logger.Error(err, "failed to get current datastore owner")
 	}
 	if err := FixDatastore(job, b.app); err != nil {
