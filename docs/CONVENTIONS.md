@@ -24,8 +24,10 @@ CI checks the ones a linter can express. See `.golangci.yml`.
 
 ## Directories
 
-- `cmd/<binary-name>` holds one `package main` each. The directory name is
-  kebab-case and matches the binary that entry point produces.
+- `cmd/<entrypoint>` holds one `package main` each. The directory name is
+  kebab-case and names the entry point. It matches the produced binary minus
+  any distribution prefix, so `cmd/agent` may ship as `pbs-plus-agent`, but
+  `cmd/pbs_plus` shipping `pbs-plus` is a violation.
 - `internal/` holds every non-exported package. A directory containing
   subpackages holds no `.go` files of its own; it is a namespace, not a
   dumping ground.

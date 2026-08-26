@@ -14,7 +14,7 @@ graph TD
     root --> sqlc["sqlc.yaml"]
     root --> goreleaser["goreleaser.yaml"]
 
-    cmd --> pbs_plus["pbs_plus/ — Server binary"]
+    cmd --> pbs-plus["pbs-plus/ - Server binary"]
     cmd --> agent["agent/ — Agent binary (Linux/Windows)"]
     cmd --> pxarmount["pxar-mount/ — FUSE mount binary"]
     cmd --> operator["operator/ — K8s operator"]
@@ -42,7 +42,7 @@ graph TD
 
 ```bash
 # Server
-go build -o pbs-plus ./cmd/pbs_plus
+go build -o pbs-plus ./cmd/pbs-plus
 
 # Linux agent
 CGO_ENABLED=0 go build -tags=agent -o pbs-plus-agent ./cmd/agent
@@ -60,10 +60,10 @@ goreleaser release --clean
 
 Reuses two workflows:
 
-| Workflow | Jobs | What it does |
-|---|---|---|
-| `go-tests.yml` | `ubuntu-24.04`, `windows-2025` | `go test -race ./...` on both platforms |
-| `e2e-tests.yml` | `ubuntu-24.04` | Full Docker-based integration test |
+| Workflow        | Jobs                           | What it does                            |
+| --------------- | ------------------------------ | --------------------------------------- |
+| `go-tests.yml`  | `ubuntu-24.04`, `windows-2025` | `go test -race ./...` on both platforms |
+| `e2e-tests.yml` | `ubuntu-24.04`                 | Full Docker-based integration test      |
 
 ### E2E test flow
 
@@ -84,33 +84,34 @@ The E2E test builds Docker images, deploys a PBS+ server container, runs an agen
 
 All E2E steps are in `.github/actions/` as reusable composite actions:
 
-| Action | Description |
-|---|---|
-| `setup-test-env` | Install Go, Rust, FUSE deps |
-| `build-images` | Build server and agent Docker images |
-| `setup-pbs-server` | Start PBS+ container, wait for readiness |
-| `test-endpoints` | Verify HTTPS endpoints |
-| `init-pbs` | Create datastore, job, generate token |
-| `setup-agent` | Create test data, start agent container |
-| `run-backup` | Trigger and verify backup |
-| `run-restore` | Trigger and verify restore with integrity check |
-| `run-pxar-e2e` | Run pxar-mount FUSE e2e test inside PBS container |
-| `show-logs` | Dump container logs on failure |
-| `cleanup` | Remove containers and network |
+| Action             | Description                                       |
+| ------------------ | ------------------------------------------------- |
+| `setup-test-env`   | Install Go, Rust, FUSE deps                       |
+| `build-images`     | Build server and agent Docker images              |
+| `setup-pbs-server` | Start PBS+ container, wait for readiness          |
+| `test-endpoints`   | Verify HTTPS endpoints                            |
+| `init-pbs`         | Create datastore, job, generate token             |
+| `setup-agent`      | Create test data, start agent container           |
+| `run-backup`       | Trigger and verify backup                         |
+| `run-restore`      | Trigger and verify restore with integrity check   |
+| `run-pxar-e2e`     | Run pxar-mount FUSE e2e test inside PBS container |
+| `show-logs`        | Dump container logs on failure                    |
+| `cleanup`          | Remove containers and network                     |
 
 ### pxar-mount E2E script
 
 Located at `.github/actions/run-pxar-e2e/run.sh`. Configurable via environment variables:
 
-| Variable | Default | Description |
-|---|---|---|
-| `PBS_STORE` | `/mnt/test` | PBS datastore path inside container |
-| `NAMESPACE` | `test` | PBS namespace |
-| `BACKUP_ID` | `test-host` | Backup host ID |
-| `BACKUP_DISK` | `Root` | Disk ID (matches agent drive letter) |
-| `PXAR_MOUNT_BIN` | `/usr/bin/pxar-mount` | Path to pxar-mount binary |
+| Variable         | Default               | Description                          |
+| ---------------- | --------------------- | ------------------------------------ |
+| `PBS_STORE`      | `/mnt/test`           | PBS datastore path inside container  |
+| `NAMESPACE`      | `test`                | PBS namespace                        |
+| `BACKUP_ID`      | `test-host`           | Backup host ID                       |
+| `BACKUP_DISK`    | `Root`                | Disk ID (matches agent drive letter) |
+| `PXAR_MOUNT_BIN` | `/usr/bin/pxar-mount` | Path to pxar-mount binary            |
 
 Test phases:
+
 1. Init mode — fresh archive, create files, commit, re-commit
 2. Mount mode — mount existing archive, mutations, commit
 3. Fresh mount — verify committed data persists in new snapshot
