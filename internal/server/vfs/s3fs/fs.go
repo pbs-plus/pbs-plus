@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -383,4 +384,13 @@ func (fs *S3FS) Unmount(ctx context.Context) {
 		}
 	}
 	fs.Cancel()
+}
+
+type S3FS struct {
+	*vfs.VFSBase
+
+	client      *minio.Client
+	bucket      string
+	prefix      string
+	loggedPaths sync.Map
 }

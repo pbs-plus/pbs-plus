@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -155,4 +156,13 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	}
 
 	return n, nil
+}
+
+type ARPCFile struct {
+	fs       *ARPCFS
+	name     string
+	offset   int64
+	handleID fswire.FileHandleID
+	isClosed atomic.Bool
+	backupID string
 }

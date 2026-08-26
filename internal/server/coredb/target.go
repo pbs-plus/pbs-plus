@@ -497,3 +497,35 @@ func (t *Target) IsS3() bool {
 func (t *Target) IsLocal() bool {
 	return t.Type == TargetTypeLocal
 }
+
+type Target struct {
+	Name             string     `json:"name"`
+	Type             TargetType `json:"target_type"`
+	Path             string     `json:"path"`
+	AgentHost        AgentHost  `json:"agent_host"`
+	VolumeID         string     `json:"volume_id,omitempty"`
+	MountScript      string     `json:"mount_script"`
+	AgentVersion     string     `json:"agent_version"`
+	ConnectionStatus bool       `json:"connection_status"`
+	JobCount         int        `json:"job_count"`
+	VolumeType       string     `json:"volume_type"`
+	VolumeName       string     `json:"volume_name"`
+	VolumeFS         string     `json:"volume_fs"`
+	VolumeTotalBytes int        `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes  int        `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes  int        `json:"volume_free_bytes,omitempty"`
+	VolumeTotal      string     `json:"volume_total"`
+	VolumeUsed       string     `json:"volume_used"`
+	VolumeFree       string     `json:"volume_free"`
+	S3Info           *S3Url     `json:"s3_info"`
+}
+
+type AgentHost struct {
+	Name            string `json:"name"`
+	IP              string `json:"ip"`
+	Auth            string `json:"-"`
+	TokenUsed       string `json:"-"`
+	OperatingSystem string `json:"os"`
+}
+
+type TargetType string

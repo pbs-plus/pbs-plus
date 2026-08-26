@@ -701,3 +701,59 @@ func (b *Backup) GetAllUPIDs() []Tasks {
 
 	return upids
 }
+
+type Backup struct {
+	ID               string      `json:"id"`
+	Store            string      `json:"store"`
+	SourceMode       string      `json:"sourcemode"`
+	ReadMode         string      `json:"readmode"`
+	Mode             string      `json:"mode"`
+	Target           Target      `json:"target"`
+	IncludeXattr     bool        `json:"include-xattr"`
+	LegacyXattr      bool        `json:"legacy-xattr"`
+	Subpath          string      `json:"subpath"`
+	Schedule         string      `json:"schedule"`
+	Comment          string      `json:"comment"`
+	NotificationMode string      `json:"notification-mode"`
+	PreScript        string      `json:"pre_script"`
+	PostScript       string      `json:"post_script"`
+	Namespace        string      `json:"ns"`
+	NextRun          int64       `json:"next-run"`
+	Retry            int         `json:"retry"`
+	RetryInterval    int         `json:"retry-interval"`
+	MaxDirEntries    int         `json:"max-dir-entries"`
+	CurrentPID       int         `json:"current_pid"`
+	Exclusions       []Exclusion `json:"exclusions"`
+	RawExclusions    string      `json:"rawexclusions"`
+	UPIDs            []Tasks     `json:"upids"`
+	CurrentStats     JobStats    `json:"current-stats"`
+	History          JobHistory  `json:"history"`
+}
+
+type Tasks struct {
+	UPID    string `json:"upid"`
+	Endtime int64  `json:"endtime"`
+	Status  string `json:"status"`
+}
+
+type JobStats struct {
+	CurrentFileCount   int `json:"current_file_count,omitempty"`
+	CurrentFolderCount int `json:"current_folder_count,omitempty"`
+	CurrentFilesSpeed  int `json:"current_files_speed,omitempty"`
+	CurrentBytesSpeed  int `json:"current_bytes_speed,omitempty"`
+	CurrentBytesTotal  int `json:"current_bytes_total,omitempty"`
+	StatCacheHits      int `json:"stat_cache_hits,omitempty"`
+}
+
+type JobHistory struct {
+	LastRunUpid           string    `json:"last-run-upid"`
+	LastRunStarttime      int64     `json:"last-run-starttime"`
+	LastRunState          string    `json:"last-run-state"` // human-readable message (legacy, for display)
+	LastRunStatus         JobStatus `json:"last-run-status"`
+	LastRunEndtime        int64     `json:"last-run-endtime"`
+	LastSuccessfulEndtime int64     `json:"last-successful-endtime"`
+	LastSuccessfulUpid    string    `json:"last-successful-upid"`
+	RetryCount            int       `json:"retry-count"`
+	LatestSnapshotSize    int       `json:"latest_snapshot_size,omitempty"`
+	Duration              int64     `json:"duration"`
+}

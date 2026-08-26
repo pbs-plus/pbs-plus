@@ -37,7 +37,13 @@ CI checks the ones a linter can express. See `.golangci.yml`.
 ## Files
 
 - A file is named for the domain concept it holds, never for the Go kind it
-  holds. `target.go`, not `types.go`. `backupstatus.go`, not `structs.go`.
+  holds. `target.go`, not `types.go`. `job_status.go`, not `structs.go`.
+- Multi-word file names separate words with an underscore: `agent_host.go`,
+  `mount_unit.go`, `encode_path.go`. This matches the existing tree and the
+  shape `sqlc` generates.
+- A domain's model and its queries live in one file, named for the domain in
+  the singular: `backup.go` holds both `Backup` and the backup queries. A
+  `backup.go`/`backups.go` pair is ambiguous by construction.
 - Banned file names: `types.go`, `helpers.go`, `shared.go`, `common.go`,
   `misc.go`, `util.go`, `utils.go`, and any `_`-suffixed variant of them.
 - Two file names are permitted to name a Go kind rather than a concept, because

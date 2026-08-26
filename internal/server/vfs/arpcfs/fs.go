@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -512,4 +513,14 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 	log.Debug("context canceled",
 		"backupID", fs.Backup.ID)
 
+}
+
+type ARPCFS struct {
+	*vfs.VFSBase
+
+	agentManager *arpc.AgentsManager
+	sessionId    string
+	Hostname     string
+	backupMode   string
+	loggedPaths  sync.Map
 }

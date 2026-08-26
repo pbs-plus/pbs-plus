@@ -266,3 +266,44 @@ func ToInt64(s string) int64 {
 	}
 	return n
 }
+
+type MTFJob struct {
+	ID                string     `json:"id"`
+	SourceKind        string     `json:"source_kind"`
+	SourceRef         string     `json:"source_ref"`
+	SourceLabel       string     `json:"source_label"`
+	Datastore         string     `json:"datastore"`
+	Namespace         string     `json:"namespace"`
+	Comment           string     `json:"comment"`
+	NotificationMode  string     `json:"notification-mode"`
+	Spanning          bool       `json:"spanning"`
+	OverwriteMappings bool       `json:"overwrite_mappings"`
+	KeepLoaded        bool       `json:"keep_loaded"`
+	Changer           string     `json:"changer"`
+	Drive             string     `json:"drive"`
+	CurrentPID        string     `json:"current_pid"`
+	History           JobHistory `json:"history"`
+	CreatedAt         int64      `json:"created_at"`
+}
+
+type JobHistory struct {
+	LastRunUpid           string    `json:"last-run-upid"`
+	LastRunStarttime      int64     `json:"last-run-starttime"`
+	LastRunState          string    `json:"last-run-state"`
+	LastRunStatus         JobStatus `json:"last-run-status"`
+	LastRunEndtime        int64     `json:"last-run-endtime"`
+	LastSuccessfulEndtime int64     `json:"last-successful-endtime"`
+	LastSuccessfulUpid    string    `json:"last-successful-upid"`
+	RetryCount            int       `json:"retry-count"`
+	Duration              int64     `json:"duration"`
+}
+
+type InventoryRun struct {
+	ID          int64  `json:"id"`
+	Changer     string `json:"changer"`
+	StartedAt   int64  `json:"started_at"`
+	CompletedAt int64  `json:"completed_at"`
+	Status      string `json:"status"`
+	Cartridges  int    `json:"cartridges"`
+	Message     string `json:"message"`
+}

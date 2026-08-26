@@ -309,3 +309,16 @@ func (s *DirStream) Close() {
 
 	}
 }
+
+type DirStream struct {
+	fs            *ARPCFS
+	path          string
+	handleId      fswire.FileHandleID
+	closed        int32
+	maxedOut      int32
+	mu            sync.Mutex
+	lastResp      fswire.ReadDirEntries
+	curIdx        uint64
+	totalReturned uint64
+	cborDec       cbor.DecMode
+}

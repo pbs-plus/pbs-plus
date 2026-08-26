@@ -568,3 +568,73 @@ func (db *Store) GetLatestVerificationResult(jobID string) (VerificationResult, 
 
 	return r, nil
 }
+
+type VerificationJob struct {
+	ID                  string          `json:"id"`
+	BackupJobID         string          `json:"backup_job_id"`
+	Store               string          `json:"store"`
+	Namespace           string          `json:"ns"`
+	Mode                string          `json:"mode"`
+	Schedule            string          `json:"schedule"`
+	Comment             string          `json:"comment"`
+	NotificationMode    string          `json:"notification-mode"`
+	SpotConfig          SpotCheckConfig `json:"spot_config"`
+	NextRun             int64           `json:"next-run"`
+	Retry               int             `json:"retry"`
+	RetryInterval       int             `json:"retry-interval"`
+	History             JobHistory      `json:"history"`
+	TargetMode          string          `json:"target_mode"`
+	Recursive           bool            `json:"recursive"`
+	RunOnBackupComplete bool            `json:"run_on_backup_complete"`
+	PendingSince        int64           `json:"pending_since"`
+	CreatedAt           int64           `json:"created_at"`
+}
+
+type SpotCheckConfig struct {
+	SampleCount        int               `json:"sample_count"`
+	SampleCountPercent float64           `json:"sample_count_percent"`
+	SamplingStrategy   string            `json:"sampling_strategy"` // random, systematic, stratified
+	UseLatest          bool              `json:"use_latest"`
+	DateFrom           string            `json:"date_from"` // RFC3339 or empty
+	DateTo             string            `json:"date_to"`   // RFC3339 or empty
+	Filters            []SpotCheckFilter `json:"filters"`
+	FailThreshold      int               `json:"fail_threshold"`
+}
+
+// SpotCheckFilter defines a filter for selecting files in spot checks.
+// Exclude filters take precedence: a file matching any exclude filter is
+// always rejected, regardless of include filters.
+
+// SpotCheckFilter defines a filter for selecting files in spot checks.
+// Exclude filters take precedence: a file matching any exclude filter is
+// always rejected, regardless of include filters.
+type SpotCheckFilter struct {
+	FilterType  string `json:"filter_type"`
+	PathPattern string `json:"path_pattern"`
+	MinSize     int64  `json:"min_size"`
+	MaxSize     int64  `json:"max_size"`
+}
+
+type VerificationResult struct {
+	ID                int                      `json:"id"`
+	VerificationJobID string                   `json:"verification_job_id"`
+	UPID              string                   `json:"upid"`
+	Snapshot          string                   `json:"snapshot"`
+	SnapshotTime      int64                    `json:"snapshot_time"`
+	TotalPopulation   int                      `json:"total_population"`
+	TotalFiles        int                      `json:"total_files"`
+	VerifiedFiles     int                      `json:"verified_files"`
+	FailedFiles       int                      `json:"failed_files"`
+	SkippedFiles      int                      `json:"skipped_files"`
+	Status            string                   `json:"status"`
+	StartedAt         int64                    `json:"started_at"`
+	CompletedAt       int64                    `json:"completed_at"`
+	Details           []VerificationFileResult `json:"details"`
+}
+
+type VerificationFileResult struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}

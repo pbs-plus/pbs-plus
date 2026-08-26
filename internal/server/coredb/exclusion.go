@@ -248,3 +248,9 @@ func (db *Store) DeleteExclusion(tx *Transaction, path string) (err error) {
 	commitNeeded = true
 	return nil
 }
+
+type Exclusion struct {
+	Path    string `json:"path"`
+	Comment string `json:"comment"`
+	JobID   string `json:"job_id"`
+}
