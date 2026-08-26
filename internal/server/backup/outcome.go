@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 )
@@ -182,6 +183,9 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	b.logger.Info("updating job status", "succeeded", succeeded, "cancelled", cancelled, "warnings", warningsNum)
+	if err := tasklog.Reconcile(""); err != nil {
+		b.logger.Error(err, "failed to reconcile task log")
+	}
 
 	b.mu.RLock()
 	currentJob := b.job
