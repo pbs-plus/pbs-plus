@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 )
 
 // GetLocalDrives returns a slice of DriveInfo containing detailed information about each local drive
-func GetLocalDrives() ([]types.DriveInfo, error) {
+func GetLocalDrives() ([]fswire.DriveInfo, error) {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs("/", &stat); err != nil {
 		return nil, fmt.Errorf("failed to get filesystem stats for root: %w", err)
@@ -20,11 +20,11 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 	freeBytes := stat.Bfree * uint64(stat.Bsize)
 	usedBytes := totalBytes - freeBytes
 
-	totalHuman := types.HumanizeBytes(totalBytes)
-	usedHuman := types.HumanizeBytes(usedBytes)
-	freeHuman := types.HumanizeBytes(freeBytes)
+	totalHuman := fswire.HumanizeBytes(totalBytes)
+	usedHuman := fswire.HumanizeBytes(usedBytes)
+	freeHuman := fswire.HumanizeBytes(freeBytes)
 
-	drive := types.DriveInfo{
+	drive := fswire.DriveInfo{
 		Letter:     "Root",
 		Type:       "Fixed",
 		VolumeName: "Root",
@@ -37,5 +37,5 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 		Free:       freeHuman,
 	}
 
-	return []types.DriveInfo{drive}, nil
+	return []fswire.DriveInfo{drive}, nil
 }

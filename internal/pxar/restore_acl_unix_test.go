@@ -5,7 +5,7 @@ package pxar
 import (
 	"testing"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 )
 
 // TestPackACLDropsUnknownTags verifies the defensive guard inside
@@ -18,14 +18,14 @@ func TestPackACLDropsUnknownTags(t *testing.T) {
 		"group": {}, "mask": {}, "other": {},
 	}
 
-	entries := []types.PosixACL{
+	entries := []fswire.PosixACL{
 		{Tag: "user_obj", Perms: 7},
 		{Tag: "", Perms: 5},      // empty → dropped
 		{Tag: "bogus", Perms: 1}, // unknown → dropped
 		{Tag: "other", Perms: 4},
 	}
 
-	var kept []types.PosixACL
+	var kept []fswire.PosixACL
 	for _, ent := range entries {
 		if _, ok := known[ent.Tag]; !ok {
 			continue

@@ -14,7 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 	"golang.org/x/sys/windows"
@@ -173,7 +173,7 @@ func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windo
 	var dacl *windows.ACL
 	if d, ok := xattrs["user.acls"]; ok {
 		if detectACLFlavor(d) == aclWindows {
-			var winACLs []types.WinACL
+			var winACLs []fswire.WinACL
 			if uerr := cbor.Unmarshal(d, &winACLs); uerr != nil {
 				st.reportErr(ctx, "decode acls", path, uerr)
 			} else {
@@ -310,7 +310,7 @@ func buildFileAttributes(fa map[string]bool) uint32 {
 
 // buildDACLFromACEs builds a DACL from WinACL entries, returning allocated SIDs
 // so the caller can free them after SetSecurityInfo consumes the ACL.
-func buildDACLFromACEs(winACLs []types.WinACL) (acl *windows.ACL, sids []*windows.SID, err error) {
+func buildDACLFromACEs(winACLs []fswire.WinACL) (acl *windows.ACL, sids []*windows.SID, err error) {
 	if len(winACLs) == 0 {
 		return nil, nil, nil
 	}

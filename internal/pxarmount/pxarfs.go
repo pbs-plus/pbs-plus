@@ -12,12 +12,12 @@ import (
 	"unsafe"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	pxar "github.com/pbs-plus/pxar"
+	upstreampxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/accessor"
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 
-	pbspxar "github.com/pbs-plus/pbs-plus/internal/pxar"
+	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
@@ -262,15 +262,15 @@ func (fs *PxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (
 	return fs.readFileContent(input.NodeId, int64(input.Offset), int64(len(buf)), buf)
 }
 
-var rootEntry = pxar.Entry{
+var rootEntry = upstreampxar.Entry{
 	Path: "/",
-	Kind: pxar.KindDirectory,
+	Kind: upstreampxar.KindDirectory,
 }
 
-func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
+func (fs *PxarFS) readEntryForNode(n *node) (*upstreampxar.Entry, error) {
 	if n.inode == RootInode {
 		e := rootEntry
-		e.Metadata = pxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
+		e.Metadata = upstreampxar.Metadata{Stat: format.Stat{Mode: n.mode, UID: n.uid, GID: n.gid}}
 		return &e, nil
 	}
 	if fs.reader == nil {
@@ -286,18 +286,18 @@ func (fs *PxarFS) readEntryForNode(n *node) (*pxar.Entry, error) {
 //
 // Returns atimeNs and mtimeNs in Unix nanoseconds. Malformed/absent xattrs
 // fall back to Stat.Mtime, exactly like parseXattrUnixSecs on the restore side.
-func resolvePxarTimes(entry *pxar.Entry) (atimeNs, mtimeNs int64) {
+func resolvePxarTimes(entry *upstreampxar.Entry) (atimeNs, mtimeNs int64) {
 	mtimeNs = int64(entry.Metadata.Stat.Mtime.Secs)*1_000_000_000 + int64(entry.Metadata.Stat.Mtime.Nanos)
 	atimeNs = mtimeNs
 	for _, xa := range entry.Metadata.XAttrs {
 		name := xa.Name()
 		switch string(name) {
-		case pbspxar.XAttrLastAccessTime:
-			if secs, ok := pbspxar.ParseXattrUnixSecs(xa.Value()); ok {
+		case pxar.XAttrLastAccessTime:
+			if secs, ok := pxar.ParseXattrUnixSecs(xa.Value()); ok {
 				atimeNs = secs * 1_000_000_000
 			}
-		case pbspxar.XAttrLastWriteTime:
-			if secs, ok := pbspxar.ParseXattrUnixSecs(xa.Value()); ok {
+		case pxar.XAttrLastWriteTime:
+			if secs, ok := pxar.ParseXattrUnixSecs(xa.Value()); ok {
 				mtimeNs = secs * 1_000_000_000
 			}
 		}
@@ -474,7 +474,7 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 
 	entries := make([]dirEntrySlim, 0, 64)
 	t0 := time.Now()
-	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *pxar.Entry) error {
+	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *upstreampxar.Entry) error {
 		entries = append(entries, dirEntrySlim{
 			name:          e.FileName(),
 			inode:         ToInode(e),
@@ -640,7 +640,7 @@ func (fs *PxarFS) GetNode(ino uint64) *node {
 	return &n
 }
 
-func (fs *PxarFS) GetPxarEntry(ino uint64) (*pxar.Entry, error) {
+func (fs *PxarFS) GetPxarEntry(ino uint64) (*upstreampxar.Entry, error) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
 	fs.mu.RUnlock()
@@ -656,7 +656,7 @@ func (fs *PxarFS) ReadDirRaw(ino uint64) ([]dirEntrySlim, error) {
 	return fs.readDirRaw(ino)
 }
 
-func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*pxar.Entry) ([]dirEntrySlim, error) {
+func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*upstreampxar.Entry) ([]dirEntrySlim, error) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
 	fs.mu.RUnlock()
@@ -674,7 +674,7 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*pxar.Entry) ([]
 	entries := make([]dirEntrySlim, 0, 64)
 
 	fs.readerMu.RLock()
-	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: false}, func(e *pxar.Entry) error {
+	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: false}, func(e *upstreampxar.Entry) error {
 		slim := dirEntrySlim{
 			name:          e.FileName(),
 			inode:         ToInode(e),

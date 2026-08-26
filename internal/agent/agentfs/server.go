@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
-type AgentFSServer struct {
+type Server struct {
 	ctx              context.Context
 	ctxCancel        context.CancelFunc
 	jobID            string
@@ -20,13 +20,13 @@ type AgentFSServer struct {
 	handleIdGen      *IDGenerator
 	handles          *safemap.Map[uint64, *FileHandle]
 	arpcRouter       *arpc.Router
-	statFs           types.StatFS
+	statFs           fswire.StatFS
 	allocGranularity uint32
 	readMode         string
 	idBuf            []byte
 }
 
-func NewAgentFSServer(jobID string, readMode string, snapshot snapshots.Snapshot) *AgentFSServer {
+func NewServer(jobID string, readMode string, snapshot snapshots.Snapshot) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	allocGranularity := getAllocGranularity()
@@ -34,7 +34,7 @@ func NewAgentFSServer(jobID string, readMode string, snapshot snapshots.Snapshot
 		allocGranularity = 65536
 	}
 
-	s := &AgentFSServer{
+	s := &Server{
 		snapshot:         snapshot,
 		jobID:            jobID,
 		handles:          safemap.New[uint64, *FileHandle](),
@@ -53,7 +53,7 @@ func NewAgentFSServer(jobID string, readMode string, snapshot snapshots.Snapshot
 	return s
 }
 
-func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
+func (s *Server) RegisterHandlers(r *arpc.Router) {
 	r.Handle("OpenFile", safeHandler(s.handleOpenFile))
 	r.Handle("Attr", safeHandler(s.handleAttr))
 	r.Handle("Xattr", safeHandler(s.handleXattr))
@@ -66,7 +66,7 @@ func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
 	s.arpcRouter = r
 }
 
-func (s *AgentFSServer) Close() {
+func (s *Server) Close() {
 	if s.arpcRouter != nil {
 		r := s.arpcRouter
 		r.CloseHandle("OpenFile")

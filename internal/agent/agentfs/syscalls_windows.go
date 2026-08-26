@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/windows"
 )
 
@@ -34,7 +34,7 @@ func openForAttrs(path string) (windows.Handle, error) {
 	)
 }
 
-func getStatFS(driveLetter string) (types.StatFS, error) {
+func getStatFS(driveLetter string) (fswire.StatFS, error) {
 	driveLetter = strings.TrimSpace(driveLetter)
 	driveLetter = strings.ToUpper(driveLetter)
 
@@ -43,7 +43,7 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 	}
 
 	if len(driveLetter) != 2 || driveLetter[1] != ':' {
-		return types.StatFS{}, fmt.Errorf("invalid drive letter format: %s", driveLetter)
+		return fswire.StatFS{}, fmt.Errorf("invalid drive letter format: %s", driveLetter)
 	}
 
 	path := driveLetter + `\`
@@ -52,7 +52,7 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 
 	rootPath, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return types.StatFS{}, err
+		return fswire.StatFS{}, err
 	}
 
 	ret, _, err := procGetDiskFreeSpace.Call(
@@ -63,13 +63,13 @@ func getStatFS(driveLetter string) (types.StatFS, error) {
 		uintptr(unsafe.Pointer(&totalNumberOfClusters)),
 	)
 	if ret == 0 {
-		return types.StatFS{}, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
+		return fswire.StatFS{}, fmt.Errorf("GetDiskFreeSpaceW failed: %w", err)
 	}
 
 	blockSize := uint64(sectorsPerCluster) * uint64(bytesPerSector)
 	totalBlocks := uint64(totalNumberOfClusters)
 
-	stat := types.StatFS{
+	stat := fswire.StatFS{
 		Bsize:   blockSize,
 		Blocks:  totalBlocks,
 		Bfree:   0,

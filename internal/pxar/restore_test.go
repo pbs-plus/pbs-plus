@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	pxar "github.com/pbs-plus/pxar"
 )
 
@@ -250,7 +250,7 @@ func TestParseXattrUnixSecsOldBinaryDecodeWouldBeInvalid(t *testing.T) {
 // apply its destination-native type  -  otherwise a foreign payload would be
 // decoded into zero-value entries and written as a corrupt ACL.
 func TestDetectACLFlavor(t *testing.T) {
-	posix, err := cbor.Marshal([]types.PosixACL{
+	posix, err := cbor.Marshal([]fswire.PosixACL{
 		{Tag: "user_obj", Perms: 0o7},
 		{Tag: "user", ID: 1000, Perms: 0o6},
 		{Tag: "other", Perms: 0o5, IsDefault: true},
@@ -259,7 +259,7 @@ func TestDetectACLFlavor(t *testing.T) {
 		t.Fatalf("marshal posix: %v", err)
 	}
 
-	win, err := cbor.Marshal([]types.WinACL{
+	win, err := cbor.Marshal([]fswire.WinACL{
 		{SID: "S-1-5-32-544", AccessMask: 0x1F01FF, Type: 0}, // ACCESS_ALLOWED_ACE
 		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: 0},
 	})
@@ -269,7 +269,7 @@ func TestDetectACLFlavor(t *testing.T) {
 
 	// Empty WinACL slice with no SID discriminator must not be mistaken for
 	// a Windows ACL  -  it has neither discriminator and resolves to aclNone.
-	winZeroTag, _ := cbor.Marshal([]types.WinACL{{Type: 0}})
+	winZeroTag, _ := cbor.Marshal([]fswire.WinACL{{Type: 0}})
 
 	tests := []struct {
 		name string

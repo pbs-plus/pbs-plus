@@ -8,7 +8,7 @@ import (
 	"os"
 	"unsafe"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/unix"
 )
 
@@ -18,7 +18,7 @@ const (
 		unix.STATX_ATTR_AUTOMOUNT
 )
 
-func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, error) {
+func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, error) {
 	if r.closed {
 		return nil, os.ErrClosed
 	}
@@ -30,7 +30,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	}
 
 	fd := int(r.file.Fd())
-	out := make([]types.AgentFileInfo, 0, min(limit, 128))
+	out := make([]fswire.AgentFileInfo, 0, min(limit, 128))
 
 	const statxMask = unix.STATX_TYPE | unix.STATX_MODE | unix.STATX_SIZE |
 		unix.STATX_BLOCKS | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_CTIME
@@ -88,7 +88,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				mode |= 0x80000000
 			}
 
-			info := types.AgentFileInfo{
+			info := fswire.AgentFileInfo{
 				Name:           name,
 				Size:           int64(sx.Size),
 				Mode:           mode,

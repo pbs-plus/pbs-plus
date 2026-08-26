@@ -9,11 +9,11 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/windows"
 )
 
-func (s *AgentFSServer) abs(filename string) string {
+func (s *Server) abs(filename string) string {
 	path := Join(s.snapshot.Path, filename)
 	if strings.HasPrefix(path, `\\?\`) || strings.HasPrefix(path, `\??\`) {
 		return path
@@ -35,7 +35,7 @@ func (s *AgentFSServer) abs(filename string) string {
 	return `\\?\` + path
 }
 
-func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
+func (s *Server) platformOpen(path string) (*FileHandle, error) {
 	pathUTF16, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, err
@@ -64,15 +64,15 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 	return fh, nil
 }
 
-func (s *AgentFSServer) platformStat(path string) (types.AgentFileInfo, error) {
+func (s *Server) platformStat(path string) (fswire.AgentFileInfo, error) {
 	h, err := openForAttrs(path)
 	if err != nil {
-		return types.AgentFileInfo{}, err
+		return fswire.AgentFileInfo{}, err
 	}
 	defer windows.CloseHandle(h)
 	var nfo fileNetworkOpenInformation
 	if err := ntQueryFileNetworkOpenInformation(h, &nfo); err != nil {
-		return types.AgentFileInfo{}, err
+		return fswire.AgentFileInfo{}, err
 	}
 	bs := s.statFs.Bsize
 	if bs == 0 {
@@ -82,7 +82,7 @@ func (s *AgentFSServer) platformStat(path string) (types.AgentFileInfo, error) {
 	if alloc < 0 {
 		alloc = 0
 	}
-	return types.AgentFileInfo{
+	return fswire.AgentFileInfo{
 		Name: filepath.Base(filepath.Clean(path)),
 		Size: nfo.EndOfFile,
 		Mode: windowsFileModeFromHandle(h, nfo.FileAttributes),
@@ -95,13 +95,13 @@ func (s *AgentFSServer) platformStat(path string) (types.AgentFileInfo, error) {
 	}, nil
 }
 
-func (s *AgentFSServer) platformXstat(path string, aclOnly bool) (types.AgentFileInfo, error) {
+func (s *Server) platformXstat(path string, aclOnly bool) (fswire.AgentFileInfo, error) {
 	h, err := openForAttrs(path)
 	if err != nil {
-		return types.AgentFileInfo{}, err
+		return fswire.AgentFileInfo{}, err
 	}
 	defer windows.CloseHandle(h)
-	info := types.AgentFileInfo{}
+	info := fswire.AgentFileInfo{}
 	if !aclOnly {
 		var nfo fileNetworkOpenInformation
 		if err := ntQueryFileNetworkOpenInformation(h, &nfo); err == nil {
@@ -129,7 +129,7 @@ func (s *AgentFSServer) platformXstat(path string, aclOnly bool) (types.AgentFil
 	return info, nil
 }
 
-func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
+func (s *Server) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
 	h, err := windows.CreateFileMapping(windows.Handle(fh.file.Fd()), nil, windows.PAGE_READONLY, 0, 0, nil)
 	if err != nil {
 		return nil, nil, false
@@ -145,7 +145,7 @@ func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]b
 	return data, func() {}, true
 }
 
-func (s *AgentFSServer) platformLseek(fh *FileHandle, off int64, whence int) (int64, error) {
+func (s *Server) platformLseek(fh *FileHandle, off int64, whence int) (int64, error) {
 	var std fileStandardInfo
 	if err := getFileStandardInfoByHandle(windows.Handle(fh.file.Fd()), &std); err != nil {
 		return 0, err
@@ -170,9 +170,9 @@ func (s *AgentFSServer) platformLseek(fh *FileHandle, off int64, whence int) (in
 	return next, nil
 }
 
-func (s *AgentFSServer) platformCloseResources(*FileHandle) {}
+func (s *Server) platformCloseResources(*FileHandle) {}
 
-func (s *AgentFSServer) initializeStatFS() error {
+func (s *Server) initializeStatFS() error {
 	if s.snapshot.SourcePath == "" {
 		return nil
 	}

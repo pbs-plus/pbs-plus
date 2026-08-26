@@ -8,19 +8,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"golang.org/x/sys/unix"
 )
 
-func (s *AgentFSServer) abs(filename string) string {
+func (s *Server) abs(filename string) string {
 	if filename == "" || filename == "." || filename == "/" {
 		return s.snapshot.Path
 	}
 	return Join(s.snapshot.Path, filename)
 }
 
-func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
+func (s *Server) platformOpen(path string) (*FileHandle, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, err
@@ -50,10 +50,10 @@ func (s *AgentFSServer) platformOpen(path string) (*FileHandle, error) {
 	return fh, nil
 }
 
-func (s *AgentFSServer) platformStat(path string) (types.AgentFileInfo, error) {
+func (s *Server) platformStat(path string) (fswire.AgentFileInfo, error) {
 	var st unix.Stat_t
 	if err := unix.Fstatat(unix.AT_FDCWD, path, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-		return types.AgentFileInfo{}, err
+		return fswire.AgentFileInfo{}, err
 	}
 	bs := s.statFs.Bsize
 	if bs == 0 {
@@ -64,7 +64,7 @@ func (s *AgentFSServer) platformStat(path string) (types.AgentFileInfo, error) {
 	if !isDir {
 		blocks = uint64((st.Size + int64(bs) - 1) / int64(bs))
 	}
-	return types.AgentFileInfo{
+	return fswire.AgentFileInfo{
 		Name:    lastPathElem(path),
 		Size:    st.Size,
 		Mode:    uint32(modeFromUnix(uint32(st.Mode))),
@@ -74,20 +74,20 @@ func (s *AgentFSServer) platformStat(path string) (types.AgentFileInfo, error) {
 	}, nil
 }
 
-func (s *AgentFSServer) platformXstat(path string, aclOnly bool) (types.AgentFileInfo, error) {
+func (s *Server) platformXstat(path string, aclOnly bool) (fswire.AgentFileInfo, error) {
 	acls, err := GetUnixACLs(path, -1)
 	if err != nil {
-		return types.AgentFileInfo{}, err
+		return fswire.AgentFileInfo{}, err
 	}
 
-	info := types.AgentFileInfo{
+	info := fswire.AgentFileInfo{
 		PosixACLs: acls,
 	}
 
 	if !aclOnly {
 		var st unix.Stat_t
 		if err := unix.Fstatat(unix.AT_FDCWD, path, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
-			return types.AgentFileInfo{}, err
+			return fswire.AgentFileInfo{}, err
 		}
 		info.Owner = strconv.FormatUint(uint64(st.Uid), 10)
 		info.Group = strconv.FormatUint(uint64(st.Gid), 10)
@@ -99,7 +99,7 @@ func (s *AgentFSServer) platformXstat(path string, aclOnly bool) (types.AgentFil
 	return info, nil
 }
 
-func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
+func (s *Server) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
 	aligned := off - (off % int64(s.allocGranularity))
 	diff := int(off - aligned)
 	size := length + diff
@@ -114,7 +114,7 @@ func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]b
 	}, true
 }
 
-func (s *AgentFSServer) platformLseek(fh *FileHandle, off int64, whence int) (int64, error) {
+func (s *Server) platformLseek(fh *FileHandle, off int64, whence int) (int64, error) {
 	var next int64
 	switch whence {
 	case io.SeekStart:
@@ -132,9 +132,9 @@ func (s *AgentFSServer) platformLseek(fh *FileHandle, off int64, whence int) (in
 	return next, nil
 }
 
-func (s *AgentFSServer) platformCloseResources(fh *FileHandle) {}
+func (s *Server) platformCloseResources(fh *FileHandle) {}
 
-func (s *AgentFSServer) initializeStatFS() error {
+func (s *Server) initializeStatFS() error {
 	if s.snapshot.SourcePath == "" {
 		return nil
 	}
@@ -142,7 +142,7 @@ func (s *AgentFSServer) initializeStatFS() error {
 	if err := unix.Statfs(s.snapshot.SourcePath, &st); err != nil {
 		return err
 	}
-	s.statFs = types.StatFS{
+	s.statFs = fswire.StatFS{
 		Bsize:   uint64(st.Bsize),
 		Blocks:  uint64(st.Blocks),
 		Bfree:   uint64(st.Bfree),

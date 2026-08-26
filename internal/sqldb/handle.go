@@ -20,8 +20,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DB is one SQLite database with a read-only pool and a single writer.
-type DB struct {
+// Handle is one SQLite database with a read-only pool and a single writer.
+type Handle struct {
 	reader *sql.DB
 	writer *sql.DB
 	lock   chan struct{}
@@ -30,7 +30,7 @@ type DB struct {
 // Tx releases the writer lock on commit or rollback.
 type Tx struct {
 	*sql.Tx
-	db *DB
+	db *Handle
 }
 
 func (t *Tx) Commit() error {
@@ -47,7 +47,7 @@ func (t *Tx) Rollback() error {
 
 // Begin starts a write transaction; the caller must commit or roll it
 // back, which releases the writer.
-func (d *DB) Begin(ctx context.Context) (*Tx, error) {
+func (d *Handle) Begin(ctx context.Context) (*Tx, error) {
 	select {
 	case <-d.lock:
 	case <-ctx.Done():
@@ -64,7 +64,7 @@ func (d *DB) Begin(ctx context.Context) (*Tx, error) {
 
 // RunInTransaction runs fn in a write transaction; error rolls back,
 // panic rolls back and re-panics.
-func (d *DB) RunInTransaction(ctx context.Context, fn func(*Tx) error) error {
+func (d *Handle) RunInTransaction(ctx context.Context, fn func(*Tx) error) error {
 	t, err := d.Begin(ctx)
 	if err != nil {
 		return err
@@ -93,21 +93,21 @@ func (d *DB) RunInTransaction(ctx context.Context, fn func(*Tx) error) error {
 }
 
 // Writer returns the single-writer handle, for sqlc query binding.
-func (d *DB) Writer() *sql.DB { return d.writer }
+func (d *Handle) Writer() *sql.DB { return d.writer }
 
 // Reader returns the read-only handle, for sqlc query binding.
-func (d *DB) Reader() *sql.DB { return d.reader }
+func (d *Handle) Reader() *sql.DB { return d.reader }
 
-func (d *DB) Ping(ctx context.Context) error {
+func (d *Handle) Ping(ctx context.Context) error {
 	return d.reader.PingContext(ctx)
 }
 
-func (d *DB) Close() error {
+func (d *Handle) Close() error {
 	return errors.Join(d.reader.Close(), d.writer.Close())
 }
 
 // Migrate applies the embedded up migrations from subdir of fs.
-func (d *DB) Migrate(fs embed.FS, subdir string) error {
+func (d *Handle) Migrate(fs embed.FS, subdir string) error {
 	driver, err := sqlite.WithInstance(d.writer, &sqlite.Config{})
 	if err != nil {
 		return fmt.Errorf("sqldb: migrate driver: %w", err)
@@ -130,7 +130,7 @@ func (d *DB) Migrate(fs embed.FS, subdir string) error {
 }
 
 // Open opens or creates the SQLite database at path and applies migrations.
-func Open(path string, fs embed.FS, subdir string) (*DB, error) {
+func Open(path string, fs embed.FS, subdir string) (*Handle, error) {
 	if path == "" {
 		return nil, errors.New("sqldb: path is required")
 	}
@@ -156,7 +156,7 @@ func Open(path string, fs embed.FS, subdir string) (*DB, error) {
 
 	lock := make(chan struct{}, 1)
 	lock <- struct{}{}
-	db := &DB{reader: reader, writer: writer, lock: lock}
+	db := &Handle{reader: reader, writer: writer, lock: lock}
 	if err := db.Migrate(fs, subdir); err != nil {
 		return nil, err
 	}

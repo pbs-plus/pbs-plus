@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/unix"
 )
 
@@ -25,7 +25,7 @@ const (
 	ACL_EA_VERSION = 0x0002
 )
 
-func GetUnixACLs(path string, fd int) ([]types.PosixACL, error) {
+func GetUnixACLs(path string, fd int) ([]fswire.PosixACL, error) {
 	access, err := getACL(path, fd, XATTR_NAME_ACL_ACCESS, false)
 	if err != nil && !isNoAttr(err) {
 		return nil, err
@@ -38,7 +38,7 @@ func GetUnixACLs(path string, fd int) ([]types.PosixACL, error) {
 
 	return append(access, defaultAcl...), nil
 }
-func getACL(path string, fd int, attr string, isDefault bool) ([]types.PosixACL, error) {
+func getACL(path string, fd int, attr string, isDefault bool) ([]fswire.PosixACL, error) {
 	var size int
 	var err error
 	if fd > 0 {
@@ -63,7 +63,7 @@ func getACL(path string, fd int, attr string, isDefault bool) ([]types.PosixACL,
 
 	return parseUnixACL(buf, isDefault)
 }
-func parseUnixACL(buf []byte, isDefault bool) ([]types.PosixACL, error) {
+func parseUnixACL(buf []byte, isDefault bool) ([]fswire.PosixACL, error) {
 	if len(buf) < 4 {
 		return nil, fmt.Errorf("ACL too short")
 	}
@@ -79,7 +79,7 @@ func parseUnixACL(buf []byte, isDefault bool) ([]types.PosixACL, error) {
 	}
 
 	count := len(buf) / 8
-	result := make([]types.PosixACL, 0, count)
+	result := make([]fswire.PosixACL, 0, count)
 
 	for i := range count {
 		off := i * 8
@@ -105,7 +105,7 @@ func parseUnixACL(buf []byte, isDefault bool) ([]types.PosixACL, error) {
 			continue
 		}
 
-		result = append(result, types.PosixACL{
+		result = append(result, fswire.PosixACL{
 			Tag:       tagStr,
 			ID:        id,
 			Perms:     uint8(perms),

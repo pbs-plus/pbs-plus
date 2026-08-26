@@ -20,7 +20,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
-	agentverification "github.com/pbs-plus/pbs-plus/internal/agent/verification"
+	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
@@ -86,7 +86,7 @@ func cmdVerify(verifyID *string) {
 		defer session.Close()
 
 		router := arpc.NewRouter()
-		router.Handle("verify_chunk_file", agentverification.VerifyChunkFileHandler)
+		router.Handle("verify_chunk_file", verification.VerifyChunkFileHandler)
 		session.SetRouter(router)
 		log.Info("verify: session ready, serving")
 		if err := session.Serve(); err != nil {
@@ -107,7 +107,7 @@ func cmdVerify(verifyID *string) {
 
 // VerifyStartHandler is the ARPC handler that forks a verification worker
 func VerifyStartHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData agentverification.VerifyStartReq
+	var reqData verification.VerifyStartReq
 	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
 		return arpc.Response{}, err
 	}

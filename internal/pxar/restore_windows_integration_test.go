@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	pxar "github.com/pbs-plus/pxar"
 	"golang.org/x/sys/windows"
 )
@@ -98,7 +98,7 @@ func (m *mockClient) drainErrCh(ctx context.Context) {
 func buildWindowsXattrs(t *testing.T) map[string][]byte {
 	t.Helper()
 
-	winACLs, err := cbor.Marshal([]types.WinACL{
+	winACLs, err := cbor.Marshal([]fswire.WinACL{
 		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
 		{SID: "S-1-5-32-545", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
 	})
