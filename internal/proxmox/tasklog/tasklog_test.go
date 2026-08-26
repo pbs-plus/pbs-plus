@@ -467,6 +467,38 @@ func TestChangeUPIDStartTimeArchivesTerminalTask(t *testing.T) {
 	}
 }
 
+func TestChangeUPIDStartTimeReconcilesRenamedTerminalTask(t *testing.T) {
+	setupTaskDirs(t)
+
+	wt, err := NewWorkerTask("pbsplus", "rename", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Unix(wt.Task.StartTime+1, 0)
+	newUPID, err := ChangeUPIDStartTime(wt.UPID(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.mu.Lock()
+	_, err = wt.file.WriteString(time.Now().Format(time.RFC3339) + ": TASK OK\n")
+	wt.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ChangeUPIDStartTime(wt.UPID(), start); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(archive), newUPID+" ") {
+		t.Fatalf("archive = %q, want %q", archive, newUPID)
+	}
+}
+
 func TestControlSocketPBSProtocol(t *testing.T) {
 	setupTaskDirs(t)
 

@@ -71,6 +71,9 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 
 	if oldInfo, err := os.Stat(path); err == nil {
 		if newInfo, newErr := os.Stat(newPath); newErr == nil && os.SameFile(oldInfo, newInfo) {
+			if err := Reconcile(""); err != nil {
+				return "", err
+			}
 			return newUpid, nil
 		}
 	}
