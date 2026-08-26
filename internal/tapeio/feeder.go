@@ -18,7 +18,7 @@ import (
 var ErrStateDesync = errors.New("tape state desync: drive contents do not match expected cartridge")
 
 type Feeder struct {
-	chg        *changer.Changer
+	chg        *changer.Device
 	tapeDev    string
 	driveIndex int
 	driveGen   int

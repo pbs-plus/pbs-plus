@@ -11,8 +11,8 @@ import (
 	"os"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb/corequery"
 	"github.com/pbs-plus/pbs-plus/internal/sqldb"
 )
@@ -27,7 +27,7 @@ type Store struct {
 	queries      *corequery.Queries
 	readQueries  *corequery.Queries
 	ctx          context.Context
-	TokenManager *mtls.TokenManager
+	TokenManager *crypto.TokenManager
 }
 
 // Transaction releases the writer lock on commit or rollback.

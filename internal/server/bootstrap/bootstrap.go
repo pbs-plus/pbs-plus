@@ -13,7 +13,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -53,7 +52,7 @@ func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Schedule
 	}
 
 	// Initialize token manager
-	tokenManager, err := mtls.NewTokenManager(mtls.TokenConfig{
+	tokenManager, err := crypto.NewTokenManager(crypto.TokenConfig{
 		TokenExpiration: conf.AuthTokenExpiration,
 		SecretKey:       string(secKey),
 	})
