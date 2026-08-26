@@ -219,12 +219,6 @@ func Reconcile(newUPID string) error {
 			continue
 		}
 
-		if state, serr := ReadStatusFromLog(info.UPID); info.Task.Node != "pbsplusgen-queue" && serr == nil && state.Status != StatusUnknown {
-			info.State = &state
-			finished = append(finished, info)
-			continue
-		}
-
 		if !workerIsActiveLocal(info.Task) {
 			now := time.Now().Unix()
 			state, serr := ReadStatusFromLog(info.UPID)
