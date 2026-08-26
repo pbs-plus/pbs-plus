@@ -27,6 +27,7 @@ type Querier interface {
 	GetActivity(ctx context.Context, arg GetActivityParams) (JobExecutionActivity, error)
 	GetExecution(ctx context.Context, id string) (JobExecution, error)
 	GetExecutionByDedupeKey(ctx context.Context, dedupeKey string) (JobExecution, error)
+	InvalidateActivity(ctx context.Context, arg InvalidateActivityParams) (int64, error)
 	ListClaimableExecutionIDs(ctx context.Context, runAt int64) ([]string, error)
 	ListExecutionEvents(ctx context.Context, executionID string) ([]JobExecutionEvent, error)
 	ListExecutionResources(ctx context.Context, executionID string) ([]string, error)

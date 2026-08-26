@@ -463,6 +463,25 @@ func (q *Queries) GetExecutionByDedupeKey(ctx context.Context, dedupeKey string)
 	return i, err
 }
 
+const invalidateActivity = `-- name: InvalidateActivity :execrows
+UPDATE job_execution_activities
+SET state = 'pending', result = NULL, checkpoint = NULL, completed_at = NULL
+WHERE execution_id = ? AND name = ? AND state = 'completed'
+`
+
+type InvalidateActivityParams struct {
+	ExecutionID string `json:"execution_id"`
+	Name        string `json:"name"`
+}
+
+func (q *Queries) InvalidateActivity(ctx context.Context, arg InvalidateActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, invalidateActivity, arg.ExecutionID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const listClaimableExecutionIDs = `-- name: ListClaimableExecutionIDs :many
 SELECT id
 FROM job_executions

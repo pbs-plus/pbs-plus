@@ -136,6 +136,11 @@ UPDATE job_execution_activities
 SET state = 'completed', result = ?, completed_at = ?
 WHERE execution_id = ? AND name = ? AND state = 'running';
 
+-- name: InvalidateActivity :execrows
+UPDATE job_execution_activities
+SET state = 'pending', result = NULL, checkpoint = NULL, completed_at = NULL
+WHERE execution_id = ? AND name = ? AND state = 'completed';
+
 -- name: FailActivity :execrows
 UPDATE job_execution_activities
 SET state = 'pending', last_error = ?

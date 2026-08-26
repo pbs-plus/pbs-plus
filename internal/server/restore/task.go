@@ -29,6 +29,15 @@ func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 	}, nil
 }
 
+// ReopenRestoreTask reattaches to an existing restore task by UPID.
+func ReopenRestoreTask(job database.Restore, upid string) (*RestoreTask, error) {
+	wt, err := tasklog.ReopenWorkerTask(upid)
+	if err != nil {
+		return nil, err
+	}
+	return &RestoreTask{WorkerTask: wt, restore: job}, nil
+}
+
 func (t *RestoreTask) WriteString(data string) {
 	t.LogString(data)
 }

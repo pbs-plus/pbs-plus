@@ -9,8 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"log/slog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"log/slog"
+	"path/filepath"
 )
 
 type WorkerTask struct {
@@ -115,6 +116,37 @@ func CreateState(result error, warnCount uint64) TaskState {
 		return TaskState{Status: StatusWarning, EndTime: endtime, WarnCount: warnCount}
 	}
 	return TaskState{Status: StatusOK, EndTime: endtime}
+}
+
+// ReopenWorkerTask reattaches to an existing task log by UPID so a
+// restarted process can continue appending to and closing a task it
+// did not create in memory.
+func ReopenWorkerTask(upid string) (*WorkerTask, error) {
+	parsed, err := proxmox.ParseUPID(upid)
+	if err != nil {
+		return nil, fmt.Errorf("tasklog: parse upid: %w", err)
+	}
+
+	path, err := UPIDLogPath(upid)
+	if err != nil {
+		return nil, err
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("tasklog: ensure log dir: %w", err)
+	}
+
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("tasklog: open log file: %w", err)
+	}
+
+	if err := AddActive(upid); err != nil {
+		slog.Error(err.Error(), "upid", upid)
+	}
+
+	return &WorkerTask{Task: parsed, file: file}, nil
 }
 
 func (w *WorkerTask) writeLogLine(format string, args ...any) {

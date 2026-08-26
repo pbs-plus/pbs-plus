@@ -34,6 +34,7 @@ type restoreJob struct {
 
 	logger       *log.Logger
 	task         *RestoreTask
+	upid         string
 	queueTask    *tasklog.QueuedTask
 	waitGroup    *sync.WaitGroup
 	err          error
@@ -51,35 +52,18 @@ type restoreJob struct {
 	web           bool
 }
 
-func NewRestoreJob(
-	job database.Restore,
-	storeInstance *store.Store,
-	skipCheck bool,
-	web bool,
-) (*jobs.Job, error) {
-	task, err := GetRestoreTask(job)
+func (b *restoreJob) enqueue(ctx context.Context) error {
+	wid := tasklog.FormatWorkerID(b.job.Store, "host-", b.job.DestTarget.GetHostname())
+	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "reader", wid, b.web)
 	if err != nil {
-		return nil, err
+		b.logger.Error(err, "failed to create queue task, not fatal")
+	} else {
+		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
+			b.logger.Error(err, "failed to set queue task, not fatal")
+		}
 	}
-
-	j := &restoreJob{
-		job:           job,
-		storeInstance: storeInstance,
-		skipCheck:     skipCheck,
-		web:           web,
-		waitGroup:     &sync.WaitGroup{},
-		task:          task,
-		logger:        log.WithScope(log.Scope{JobID: job.ID}),
-	}
-
-	return &jobs.Job{
-		ID:        job.ID,
-		PreExec:   j.preExecute,
-		Execute:   j.execute,
-		OnSuccess: j.onSuccess,
-		OnError:   j.onError,
-		Cleanup:   j.cleanup,
-	}, nil
+	b.queueTask = queueTask
+	return nil
 }
 
 func (b *restoreJob) execute(ctx context.Context) error {
@@ -101,26 +85,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 	}
 }
 
-func (b *restoreJob) preExecute(ctx context.Context) error {
-	wid := tasklog.FormatWorkerID(b.job.Store, "host-", b.job.DestTarget.GetHostname())
-	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "reader", wid, b.web)
-	if err != nil {
-		b.logger.Error(err, "failed to create queue task, not fatal")
-	} else {
-		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
-			b.logger.Error(err, "failed to set queue task, not fatal")
-		}
-	}
-	b.queueTask = queueTask
-
-	if err := b.runPreScript(ctx); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (b *restoreJob) onError(err error) {
+func (b *restoreJob) finalizeFailure(err error) {
 	b.logger.Error(err, "restore job failed")
 
 	if errors.Is(err, jobs.ErrOneInstance) {
@@ -158,7 +123,7 @@ func (b *restoreJob) onError(err error) {
 	}
 }
 
-func (b *restoreJob) onSuccess() {
+func (b *restoreJob) finalizeSuccess() {
 	b.task.WriteString("Restore job summary:")
 	b.writeStatsSummary()
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))

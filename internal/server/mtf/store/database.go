@@ -65,7 +65,7 @@ func (d *Database) Ping(ctx context.Context) error {
 func (d *Database) Queries() *mtfquery.Queries { return d.queries }
 
 func (d *Database) NewTransaction() (*Transaction, error) {
-	return d.DB.Begin(context.Background())
+	return d.Begin(context.Background())
 }
 
 // RunInTransaction runs fn in a write transaction; error rolls back,

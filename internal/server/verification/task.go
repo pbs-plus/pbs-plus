@@ -26,6 +26,15 @@ func NewVerificationTask(job database.VerificationJob) (*VerificationTask, error
 	}, nil
 }
 
+// ReopenVerificationTask reattaches to an existing task by UPID.
+func ReopenVerificationTask(job database.VerificationJob, upid string) (*VerificationTask, error) {
+	wt, err := tasklog.ReopenWorkerTask(upid)
+	if err != nil {
+		return nil, err
+	}
+	return &VerificationTask{WorkerTask: wt, job: job}, nil
+}
+
 func (t *VerificationTask) WriteString(data string) {
 	t.LogString(data)
 }

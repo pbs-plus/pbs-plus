@@ -110,6 +110,156 @@ func TestEngine_CancelRunningWorkflow(t *testing.T) {
 	waitForWorkflowState(t, ctx, engine, execution.ID, store.StateCanceled)
 }
 
+func TestEngine_InvalidateReRunsActivity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	engine, _ := newTestEngine(t, ctx)
+	var startRuns atomic.Int32
+	if err := engine.Register("test.invalidate", func(workflow *WorkflowContext) error {
+		if _, err := workflow.Activity("start", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+			startRuns.Add(1)
+			return json.RawMessage(`{"upid":"u1"}`), nil
+		}); err != nil {
+			return err
+		}
+		_, err := workflow.Activity("wait", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+			return nil, Retryable(errors.New("task failed"), 10*time.Millisecond)
+		})
+		if err != nil {
+			_ = workflow.Invalidate("start")
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+
+	if _, _, err := engine.Submit(ctx, testWorkflowSubmit("test.invalidate", "invalidate")); err != nil {
+		t.Fatal(err)
+	}
+
+	execID := "workflow-invalidate"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		execution, err := engine.Get(ctx, execID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if execution.State == store.StateFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("execution state = %q, want failed", execution.State)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if startRuns.Load() < 2 {
+		t.Fatalf("start activity ran %d times, want >= 2 after invalidation", startRuns.Load())
+	}
+}
+
+func TestEngine_DetachedFinalizerRunsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	engine, _ := newTestEngine(t, ctx)
+	started := make(chan struct{})
+	finalized := make(chan struct{}, 1)
+	if err := engine.Register("test.detached", func(workflow *WorkflowContext) error {
+		_, err := workflow.Activity("work", json.RawMessage(`{}`), func(ctx context.Context, _ ActivityInfo) (json.RawMessage, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+		if err != nil {
+			_, ferr := workflow.ActivityCtx(workflow.Detached(), "finalize", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+				finalized <- struct{}{}
+				return json.RawMessage(`{}`), nil
+			})
+			if ferr != nil {
+				t.Errorf("detached finalizer failed: %v", ferr)
+			}
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+
+	execution, _, err := engine.Submit(ctx, testWorkflowSubmit("test.detached", "detached"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("workflow did not start")
+	}
+	if _, err := engine.Cancel(ctx, execution.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finalized:
+	case <-time.After(3 * time.Second):
+		t.Fatal("detached finalizer did not run after cancellation")
+	}
+	waitForWorkflowState(t, ctx, engine, execution.ID, store.StateCanceled)
+}
+
+func TestEngine_CheckpointResumesActivity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	engine, _ := newTestEngine(t, ctx)
+	var resumedFrom atomic.Int32
+	if err := engine.Register("test.checkpoint", func(workflow *WorkflowContext) error {
+		_, err := workflow.Activity("verify", json.RawMessage(`{}`), func(ctx context.Context, info ActivityInfo) (json.RawMessage, error) {
+			start := 0
+			if len(info.ResumeCheckpoint) > 0 {
+				var cp struct {
+					Next int `json:"next"`
+				}
+				if err := json.Unmarshal(info.ResumeCheckpoint, &cp); err == nil && cp.Next > 0 {
+					resumedFrom.Store(int32(cp.Next))
+				}
+				start = cp.Next
+			}
+			if start == 0 {
+				cp, _ := json.Marshal(struct {
+					Next int `json:"next"`
+				}{Next: 3})
+				if err := info.Checkpoint(ctx, cp); err != nil {
+					return nil, err
+				}
+				return nil, Retryable(errors.New("resume me"), 10*time.Millisecond)
+			}
+			return json.RawMessage(`{}`), nil
+		})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+
+	if _, _, err := engine.Submit(ctx, testWorkflowSubmit("test.checkpoint", "checkpoint")); err != nil {
+		t.Fatal(err)
+	}
+	waitForWorkflowState(t, ctx, engine, "workflow-checkpoint", store.StateSucceeded)
+	if resumedFrom.Load() != 3 {
+		t.Fatalf("activity resumed from %d, want 3", resumedFrom.Load())
+	}
+}
+
 func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	ctx := context.Background()
 	_, db := newTestEngine(t, ctx)

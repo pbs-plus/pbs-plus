@@ -521,6 +521,26 @@ func (d *DB) FailActivity(ctx context.Context, executionID, name, lastError stri
 	})
 }
 
+// InvalidateActivity un-completes a completed activity so a retry
+// re-runs it; used when a later activity reveals the completed one's
+// external effect actually failed.
+func (d *DB) InvalidateActivity(ctx context.Context, executionID, name string) error {
+	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
+		q := d.write.WithTx(tx.Tx)
+		updated, err := q.InvalidateActivity(ctx, jobquery.InvalidateActivityParams{
+			ExecutionID: executionID,
+			Name:        name,
+		})
+		if err != nil {
+			return fmt.Errorf("invalidating activity: %w", err)
+		}
+		if updated == 0 {
+			return ErrNotFound
+		}
+		return createEvent(ctx, q, executionID, "activity.invalidated", map[string]string{"name": name})
+	})
+}
+
 func (d *DB) ListEvents(ctx context.Context, executionID string) ([]Event, error) {
 	rows, err := d.read.ListExecutionEvents(ctx, executionID)
 	if err != nil {
