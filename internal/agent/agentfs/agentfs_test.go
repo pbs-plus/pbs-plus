@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	mathRand "math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -189,26 +188,6 @@ func newTestClientTLS(t *testing.T) *tls.Config {
 		ServerName:   "localhost",
 		MinVersion:   tls.VersionTLS13,
 	}
-}
-
-type latencyConn struct {
-	net.Conn
-	delay time.Duration
-}
-
-func (l *latencyConn) randomDelay() {
-	jitter := time.Duration(mathRand.Int63n(int64(l.delay)))
-	time.Sleep(l.delay + jitter)
-}
-
-func (l *latencyConn) Read(b []byte) (n int, err error) {
-	l.randomDelay()
-	return l.Conn.Read(b)
-}
-
-func (l *latencyConn) Write(b []byte) (n int, err error) {
-	l.randomDelay()
-	return l.Conn.Write(b)
 }
 
 func createLargeTestFile(t *testing.T, path string, size int) {

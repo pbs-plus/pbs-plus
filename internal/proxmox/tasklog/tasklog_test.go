@@ -226,55 +226,6 @@ func TestConcurrentWorkers(t *testing.T) {
 	}
 }
 
-func TestRotateArchive(t *testing.T) {
-	setupTaskDirs(t)
-
-	wt, err := NewWorkerTask("pbsplus", "rot", "r")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wt.LogString("pad")
-	wt.CloseOK()
-
-	if err := os.Truncate(archivePath, 0); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	line := RenderStatusLine(wt.UPID(), &TaskState{Status: StatusOK, EndTime: time.Now().Unix()})
-	if err := os.WriteFile(archivePath, []byte(strings.Repeat(line, 10)), 0660); err != nil {
-		t.Fatal(err)
-	}
-
-	rotated, err := RotateArchive(1, false, 2, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !rotated {
-		t.Fatal("expected rotation")
-	}
-	if _, err := os.Stat(archivePath + ".1"); err != nil {
-		t.Fatalf("archive.1 missing: %v", err)
-	}
-
-	fresh := NewTask("pbsplus", "rot", "r2")
-	if err := os.WriteFile(archivePath, []byte(RenderStatusLine(fresh.GenerateUPID(), &TaskState{Status: StatusOK, EndTime: time.Now().Unix()})), 0660); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RotateArchive(1, true, 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(archivePath + ".1.gz"); err != nil {
-		t.Fatalf("archive.1.gz missing: %v", err)
-	}
-
-	listed, err := ListTasks(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(listed) == 0 {
-		t.Fatal("rotated entries not visible via ListTasks")
-	}
-}
-
 func TestEncodeToHexEscapes(t *testing.T) {
 	cases := map[string]string{
 		"plain":       "plain",

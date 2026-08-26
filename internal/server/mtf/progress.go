@@ -1,7 +1,5 @@
 package mtf
 
-import "maps"
-
 import "sync"
 
 type ProgressSnapshot struct {
@@ -41,12 +39,4 @@ func ProgressFor(jobID string) (ProgressSnapshot, bool) {
 	p, ok := progressByJobID[jobID]
 	progressMu.RUnlock()
 	return p, ok
-}
-
-func AllProgress() map[string]ProgressSnapshot {
-	progressMu.RLock()
-	defer progressMu.RUnlock()
-	out := make(map[string]ProgressSnapshot, len(progressByJobID))
-	maps.Copy(out, progressByJobID)
-	return out
 }

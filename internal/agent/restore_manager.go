@@ -72,30 +72,6 @@ func (bs *RestoreStore) EndRestore(jobID string) error {
 	})
 }
 
-func (bs *RestoreStore) HasActiveRestores() (bool, error) {
-	if err := bs.fileLock.Lock(); err != nil {
-		return false, err
-	}
-	defer func() {
-		if err := bs.fileLock.Unlock(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	sessions := make(map[string]*RestoreSessionData)
-	data, err := os.ReadFile(bs.filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if err := json.Unmarshal(data, &sessions); err != nil {
-		return false, err
-	}
-	return len(sessions) > 0, nil
-}
-
 func (bs *RestoreStore) HasActiveRestoreForJob(job string) (bool, error) {
 	if err := bs.fileLock.Lock(); err != nil {
 		return false, err
@@ -120,4 +96,27 @@ func (bs *RestoreStore) HasActiveRestoreForJob(job string) (bool, error) {
 
 	_, exists := sessions[job]
 	return exists, nil
+}
+func (bs *RestoreStore) HasActiveRestores() (bool, error) {
+	if err := bs.fileLock.Lock(); err != nil {
+		return false, err
+	}
+	defer func() {
+		if err := bs.fileLock.Unlock(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	sessions := make(map[string]*RestoreSessionData)
+	data, err := os.ReadFile(bs.filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal(data, &sessions); err != nil {
+		return false, err
+	}
+	return len(sessions) > 0, nil
 }

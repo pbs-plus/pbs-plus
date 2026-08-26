@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -350,9 +349,4 @@ func (bt *BatchTracker) PendingBatches() map[string]int {
 		out[name] = len(state.results)
 	}
 	return out
-}
-
-// EnsureSpoolDir creates the notification spool directory if it doesn't exist.
-func EnsureSpoolDir() error {
-	return os.MkdirAll(SpoolDir, 0770)
 }

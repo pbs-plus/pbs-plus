@@ -20,15 +20,6 @@ func Open(path string) (*Changer, error) {
 
 func (c *Changer) Close() error { return c.dev.close() }
 
-func (c *Changer) Inventory() error { return initializeElementStatus(c.dev) }
-
-type SlotStatus struct {
-	ElementAddress uint16
-	Full           bool
-	VolumeTag      string // barcode, if Full and readable (else "")
-	ImportExport   bool   // mail slot rather than a magazine slot
-}
-
 type DriveStatus struct {
 	ElementAddress uint16
 	Full           bool
@@ -199,26 +190,6 @@ func (c *Changer) Unload(toSlot, drivenum int) (*Status, error) {
 	return c.Status()
 }
 
-func (c *Changer) Transfer(fromSlot, toSlot int) (*Status, error) {
-	status, err := c.Status()
-	if err != nil {
-		return nil, fmt.Errorf("read status before transfer: %w", err)
-	}
-	src, err := status.SlotAddress(fromSlot)
-	if err != nil {
-		return nil, err
-	}
-	dst, err := status.SlotAddress(toSlot)
-	if err != nil {
-		return nil, err
-	}
-	cdb := moveMediumCDB(status.TransportAddress, src, dst)
-	if _, err := c.dev.scsi(cdb, nil, false, timeoutMove); err != nil {
-		return nil, fmt.Errorf("transfer slot %d -> slot %d: %w", fromSlot, toSlot, err)
-	}
-	return c.Status()
-}
-
 func (c *Changer) moveCDB(status *Status, slot, drivenum int, load bool) ([]byte, error) {
 	transport := status.TransportAddress
 	slotAddr, err := status.SlotAddress(slot)
@@ -261,4 +232,11 @@ func (c *Changer) waitForDriveReady(drive int) error {
 		time.Sleep(time.Second)
 	}
 	return ErrDriveNotReady
+}
+
+type SlotStatus struct {
+	ElementAddress uint16
+	Full           bool
+	VolumeTag      string // barcode, if Full and readable (else "")
+	ImportExport   bool   // mail slot rather than a magazine slot
 }

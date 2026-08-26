@@ -30,7 +30,7 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 		}
 		_, err := workflow.Activity("second", json.RawMessage(`{"value":2}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
 			if secondRuns.Add(1) == 1 {
-				return nil, Retryable(errors.New("temporary failure"), time.Second)
+				return nil, &RetryableError{Err: errors.New("temporary failure"), Delay: time.Second}
 			}
 			return json.RawMessage(`{"done":true}`), nil
 		})
@@ -124,7 +124,7 @@ func TestEngine_InvalidateReRunsActivity(t *testing.T) {
 			return err
 		}
 		_, err := workflow.Activity("wait", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
-			return nil, Retryable(errors.New("task failed"), 10*time.Millisecond)
+			return nil, &RetryableError{Err: errors.New("task failed"), Delay: 10 * time.Millisecond}
 		})
 		if err != nil {
 			_ = workflow.Invalidate("start")
@@ -238,7 +238,7 @@ func TestEngine_CheckpointResumesActivity(t *testing.T) {
 				if err := info.Checkpoint(ctx, cp); err != nil {
 					return nil, err
 				}
-				return nil, Retryable(errors.New("resume me"), 10*time.Millisecond)
+				return nil, &RetryableError{Err: errors.New("resume me"), Delay: 10 * time.Millisecond}
 			}
 			return json.RawMessage(`{}`), nil
 		})

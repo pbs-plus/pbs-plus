@@ -68,10 +68,6 @@ func (p *progress) summary(w io.Writer) {
 	fmt.Fprintf(w, "  average: ingest %.1f MB/s | tape %.1f MB/s | phys %.1f MB/s\n", avg, tapeAvg, physAvg)
 }
 
-func (p *progress) report(ctx context.Context, w io.Writer, interval time.Duration) (stop func()) {
-	return p.reportWith(ctx, w, interval, nil)
-}
-
 func (p *progress) reportWith(ctx context.Context, w io.Writer, interval time.Duration, cb func(Progress)) (stop func()) {
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})

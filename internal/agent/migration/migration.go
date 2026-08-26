@@ -137,13 +137,3 @@ func copyFile(src, dst string) error {
 
 	return destFile.Sync()
 }
-
-// LegacyPathsAvailable returns true if the legacy paths still exist
-// This can be used by the RPM postinst script to check if migration is needed
-func LegacyPathsAvailable() bool {
-	info, err := os.Stat(OldStatePath)
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
-}

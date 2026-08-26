@@ -59,27 +59,6 @@ func newCommitHub(mainSocketPath string, verbose bool) (*commitHub, error) {
 	return h, nil
 }
 
-func MonitorSocketPath() string {
-	if globalCommitHub == nil {
-		return ""
-	}
-	return globalCommitHub.sockPath
-}
-
-func LogFilePath() string {
-	if globalCommitHub == nil {
-		return ""
-	}
-	return globalCommitHub.logPath
-}
-
-func IsCommitRunning() bool {
-	if globalCommitHub == nil {
-		return false
-	}
-	return globalCommitHub.jobID.Load() > 0
-}
-
 func (h *commitHub) acceptLoop() {
 	for {
 		conn, err := h.listener.Accept()

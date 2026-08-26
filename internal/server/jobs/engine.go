@@ -85,13 +85,6 @@ func (e nonRetryableError) Unwrap() error {
 	return e.err
 }
 
-func Retryable(err error, delay time.Duration) error {
-	if err == nil {
-		return nil
-	}
-	return &RetryableError{Err: err, Delay: delay}
-}
-
 func NonRetryable(err error) error {
 	if err == nil {
 		return nil

@@ -280,20 +280,6 @@ func checkAgentAuth(store *store.Store, r *http.Request) (string, error) {
 	return agentHostname, nil
 }
 
-// validateAgentHostnameMatch returns an error if the body hostname doesn't match
-func validateAgentHostnameMatch(authHostname, bodyHostname string) error {
-	if authHostname == "" {
-		return fmt.Errorf("no authenticated agent hostname")
-	}
-	if bodyHostname == "" {
-		return fmt.Errorf("missing hostname in request body")
-	}
-	if authHostname != bodyHostname {
-		return fmt.Errorf("hostname mismatch: authenticated as %q but request claims %q", authHostname, bodyHostname)
-	}
-	return nil
-}
-
 func checkProxyAuth(r *http.Request) error {
 	auth, err := GetPBSAuth()
 	if err != nil {

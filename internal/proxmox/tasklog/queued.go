@@ -34,10 +34,6 @@ type QueuedTask struct {
 	path   string
 }
 
-func (t *QueuedTask) Lock() { t.mu.Lock() }
-
-func (t *QueuedTask) Unlock() { t.mu.Unlock() }
-
 func (t *QueuedTask) UpdateDescription(desc string) error {
 	if t.closed.Load() {
 		return nil

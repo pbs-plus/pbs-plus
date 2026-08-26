@@ -736,36 +736,12 @@ func BenchmarkB11_PaddingRatio(b *testing.B) {
 		}
 	}
 
-	ow := &commitWalkState{
-		origChunkIndex: idx,
-	}
-
 	b.Run("lookupDynamicEntries", func(b *testing.B) {
 		b.ReportAllocs()
 		rangeStart := refs[0].sortKey
 		rangeEnd := refs[numFiles-1].sortKey + refs[numFiles-1].pxarSlim.fileSize
 		for i := 0; i < b.N; i++ {
 			lookupDynamicEntries(idx, rangeStart, rangeEnd)
-		}
-	})
-
-	b.Run("shouldReuse_aligned", func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			ow.shouldReuse(refs)
-		}
-	})
-
-	b.Run("shouldReuse_misaligned", func(b *testing.B) {
-		misaligned := make([]commitEntry, numFiles)
-		copy(misaligned, refs)
-		misaligned[0].sortKey = chunkSize/2 + 1234
-		for i := 1; i < numFiles; i++ {
-			misaligned[i].sortKey = misaligned[0].sortKey + uint64(i)*4096
-		}
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			ow.shouldReuse(misaligned)
 		}
 	})
 }
@@ -831,59 +807,6 @@ func TestLookupDynamicEntries(t *testing.T) {
 	}
 }
 
-func TestShouldReuse(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 10, 1000)
-
-	ow := &commitWalkState{origChunkIndex: idx}
-
-	tests := []struct {
-		name      string
-		refs      []commitEntry
-		wantReuse bool
-	}{
-		{
-			"aligned_full_chunks",
-			func() []commitEntry {
-				refs := make([]commitEntry, 1000)
-				for i := range refs {
-					refs[i] = commitEntry{
-						sortKey:  uint64(i * 10),
-						pxarSlim: &dirEntrySlim{fileSize: 10},
-					}
-				}
-				return refs
-			}(),
-			true,
-		},
-		{
-			"single_file_aligned",
-			[]commitEntry{
-				{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 900}},
-			},
-			true,
-		},
-		{
-			"nil_index_fallback",
-			[]commitEntry{{sortKey: 500, pxarSlim: &dirEntrySlim{fileSize: 10}}},
-			false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ow.shouldReuse(tt.refs)
-			if got != tt.wantReuse {
-				t.Errorf("shouldReuse() = %v, want %v", got, tt.wantReuse)
-			}
-		})
-	}
-
-	owNil := &commitWalkState{origChunkIndex: nil}
-	if !owNil.shouldReuse([]commitEntry{{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 100}}}) {
-		t.Error("shouldReuse with nil index should return true")
-	}
-}
-
 func TestRangeHoleDetection(t *testing.T) {
 	idx := buildSyntheticDIDX(t, 10, 1000)
 
@@ -923,50 +846,6 @@ func TestRangeHoleDetection(t *testing.T) {
 	noGapNil := owNil.origChunkIndex != nil && owNil.batchRangeEnd != 0 && uint64(500) > owNil.batchRangeEnd
 	if noGapNil {
 		t.Error("nil origChunkIndex should not trigger hole detection")
-	}
-}
-
-func TestCrossBatchChunkContinuation(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 10, 1000)
-
-	ow := &commitWalkState{origChunkIndex: idx}
-
-	refs1 := []commitEntry{
-		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 800}},
-	}
-	_ = refs1
-	chunks1, _, _ := lookupDynamicEntries(idx, 0, 816)
-	ow.savedChunk = chunks1[len(chunks1)-1]
-	ow.hasSavedChunk = true
-
-	refs2 := []commitEntry{
-		{sortKey: 816, pxarSlim: &dirEntrySlim{fileSize: 167}},
-	}
-
-	ow2 := &commitWalkState{
-		origChunkIndex: idx,
-		savedChunk:     ow.savedChunk,
-		hasSavedChunk:  true,
-	}
-
-	reuse := ow2.shouldReuse(refs2)
-	if !reuse {
-		t.Error("shouldReuse with continuation should return true (padding absorbed)")
-	}
-
-	ow3 := &commitWalkState{
-		origChunkIndex: idx,
-	}
-	var fakeChunk reusableChunk
-	fakeChunk.digest = [32]byte{0xFF}
-	fakeChunk.endOffset = 999999
-	fakeChunk.size = 1000
-	ow3.savedChunk = fakeChunk
-	ow3.hasSavedChunk = true
-
-	reuse3 := ow3.shouldReuse(refs2)
-	if reuse3 {
-		t.Error("shouldReuse with non-matching continuation chunk should return false (padding not absorbed)")
 	}
 }
 
@@ -1029,62 +908,6 @@ func TestLookupDynamicEntriesChunkPadding(t *testing.T) {
 	}
 
 	_ = endPad1
-}
-
-func TestFlushPendingRefsReencodeClearsLastChunk(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 10, 1000)
-
-	ow := &commitWalkState{
-		mfs:            &MutableFS{},
-		origChunkIndex: idx,
-		pendingRefs:    make([]commitEntry, 0, 64),
-	}
-
-	ow.hasSavedChunk = true
-	ow.savedChunk = reusableChunk{digest: [32]byte{0xAA}, endOffset: 99999, size: 1000, padding: 100}
-
-	refs := []commitEntry{
-		{sortKey: 0, pxarSlim: &dirEntrySlim{fileSize: 900}},
-	}
-	reuse := ow.shouldReuse(refs)
-	if !reuse {
-		t.Fatal("should reuse batch fitting within first chunk")
-	}
-	if !ow.hasSavedChunk {
-		t.Error("shouldReuse should not modify hasSavedChunk")
-	}
-}
-
-func TestPaddingRatioWithTinyFileInHugeChunk(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 3, 4000000)
-
-	refs := []commitEntry{
-		{sortKey: 100, pxarSlim: &dirEntrySlim{fileSize: 200}},
-	}
-	ow := &commitWalkState{origChunkIndex: idx}
-	reuse := ow.shouldReuse(refs)
-	startPad := uint64(100)
-	endPad := uint64(4000000 - 316)
-	totalPad := startPad + endPad
-	totalSize := uint64(216) + totalPad
-	ratio := float64(totalPad) / float64(totalSize)
-	want := ratio <= 0.1
-	if reuse != want {
-		t.Errorf("shouldReuse=%v, want %v (ratio=%.4f)", reuse, want, ratio)
-	}
-}
-
-func TestPaddingRatioRejectsHighWaste(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 2, 4000000)
-
-	refs := []commitEntry{
-		{sortKey: 4000000 - 10, pxarSlim: &dirEntrySlim{fileSize: 20}},
-	}
-	ow := &commitWalkState{origChunkIndex: idx}
-	reuse := ow.shouldReuse(refs)
-	if reuse {
-		t.Error("file spanning chunk boundary with huge padding should re-encode")
-	}
 }
 
 type offsetTrackingWriter struct {

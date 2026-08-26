@@ -28,78 +28,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func ExecVerification(verifyID string) (int, error) {
-	log.Info("verify: exec begin")
-	if err := validate.ValidateJobId(verifyID); err != nil {
-		return -1, fmt.Errorf("invalid verifyID: %w", err)
-	}
-
-	tokenBytes, err := crypto.SecureRandomBytes(32)
-	if err != nil {
-		return -1, err
-	}
-	token := base64.StdEncoding.EncodeToString(tokenBytes)
-
-	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-verify-%s", verifyID))
-	if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
-		return -1, err
-	}
-
-	defer func() {
-		time.Sleep(5 * time.Second)
-		if err := os.Remove(tokenFile); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
-		}
-	}()
-
-	execCmd, err := os.Executable()
-	if err != nil {
-		return -1, err
-	}
-
-	args := []string{
-		"--cmdMode=verify",
-		"--id=" + verifyID,
-		"--token=" + token,
-	}
-
-	cmd := exec.Command(execCmd, args...)
-	setProcAttributes(cmd)
-	cmd.Env = os.Environ()
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return -1, err
-	}
-
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return -1, err
-	}
-
-	if err := cmd.Start(); err != nil {
-		return -1, err
-	}
-	log.Info("verify: child process started", "args", strings.Join(args, " "), "pid", cmd.Process.Pid)
-
-	go func() {
-		for scanner := bufio.NewScanner(stdoutPipe); scanner.Scan(); {
-			log.Info(scanner.Text(), "forked", true)
-
-		}
-	}()
-
-	go func() {
-		for errScanner := bufio.NewScanner(stderrPipe); errScanner.Scan(); {
-			log.Error(errors.New(errScanner.Text()), "", "forked", true)
-
-		}
-	}()
-	log.Info("verify: returning to parent", "pid", cmd.Process.Pid)
-
-	return cmd.Process.Pid, nil
-}
-
 func cmdVerify(verifyID *string) {
 	if *verifyID == "" {
 		fmt.Fprintln(os.Stderr, "Error: verifyID is required")
@@ -190,4 +118,75 @@ func VerifyStartHandler(req *arpc.Request) (arpc.Response, error) {
 	}
 
 	return arpc.Response{Status: 200, Message: fmt.Sprintf("%d", pid)}, nil
+}
+func ExecVerification(verifyID string) (int, error) {
+	log.Info("verify: exec begin")
+	if err := validate.ValidateJobId(verifyID); err != nil {
+		return -1, fmt.Errorf("invalid verifyID: %w", err)
+	}
+
+	tokenBytes, err := crypto.SecureRandomBytes(32)
+	if err != nil {
+		return -1, err
+	}
+	token := base64.StdEncoding.EncodeToString(tokenBytes)
+
+	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-verify-%s", verifyID))
+	if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
+		return -1, err
+	}
+
+	defer func() {
+		time.Sleep(5 * time.Second)
+		if err := os.Remove(tokenFile); err != nil && !os.IsNotExist(err) {
+			log.Error(err, "")
+		}
+	}()
+
+	execCmd, err := os.Executable()
+	if err != nil {
+		return -1, err
+	}
+
+	args := []string{
+		"--cmdMode=verify",
+		"--id=" + verifyID,
+		"--token=" + token,
+	}
+
+	cmd := exec.Command(execCmd, args...)
+	setProcAttributes(cmd)
+	cmd.Env = os.Environ()
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return -1, err
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return -1, err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	log.Info("verify: child process started", "args", strings.Join(args, " "), "pid", cmd.Process.Pid)
+
+	go func() {
+		for scanner := bufio.NewScanner(stdoutPipe); scanner.Scan(); {
+			log.Info(scanner.Text(), "forked", true)
+
+		}
+	}()
+
+	go func() {
+		for errScanner := bufio.NewScanner(stderrPipe); errScanner.Scan(); {
+			log.Error(errors.New(errScanner.Text()), "", "forked", true)
+
+		}
+	}()
+	log.Info("verify: returning to parent", "pid", cmd.Process.Pid)
+
+	return cmd.Process.Pid, nil
 }

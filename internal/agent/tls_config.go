@@ -98,19 +98,6 @@ func InvalidateTLSConfigCache() {
 	cacheExpiry = time.Time{}
 }
 
-func clearAuthEntries() {
-	if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
-		log.Error(err, "")
-	}
-	if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
-		log.Error(err, "")
-	}
-	if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
-		log.Error(err, "")
-	}
-	InvalidateTLSConfigCache()
-}
-
 func RenewCertificateIfExpiring() error {
 	const renewalWindow = max(conf.TLSCARotationGraceDays-1, 1) * 24 * time.Hour
 
@@ -153,6 +140,18 @@ func RenewCertificateIfExpiring() error {
 		log.Info("certificate valid, no renewal needed", "days_left", timeUntilExpiry.Hours()/24)
 		return nil
 	}
+}
+func clearAuthEntries() {
+	if err := registry.DeleteEntry(registry.AUTH, "Cert"); err != nil {
+		log.Error(err, "")
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "Priv"); err != nil {
+		log.Error(err, "")
+	}
+	if err := registry.DeleteEntry(registry.AUTH, "ServerCA"); err != nil {
+		log.Error(err, "")
+	}
+	InvalidateTLSConfigCache()
 }
 
 func renewCertificate() error {

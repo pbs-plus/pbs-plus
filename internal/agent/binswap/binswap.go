@@ -109,11 +109,6 @@ func (m *Manager) Rollback() error {
 	return nil
 }
 
-func (m *Manager) PreviousExists() bool {
-	_, err := os.Stat(m.previousPath())
-	return err == nil
-}
-
 func (m *Manager) HasPending() bool {
 	_, ok := m.readPending()
 	return ok
@@ -154,39 +149,35 @@ func (m *Manager) Prune() {
 	}
 }
 
-func (m *Manager) stagedPath() string   { return m.exePath + stagedSuffix }
-func (m *Manager) previousPath() string { return m.exePath + previousSuffix }
-func (m *Manager) pendingPath() string  { return m.exePath + pendingSuffix }
-func (m *Manager) swapTempPath() string { return m.exePath + swapTempSuffix }
-func (m *Manager) badPath() string      { return m.exePath + badSuffix }
-
-func (m *Manager) readPending() (*pendingUpdate, bool) {
-	data, err := os.ReadFile(m.pendingPath())
-	if err != nil {
-		return nil, false
-	}
-	var p pendingUpdate
-	if err := json.Unmarshal(data, &p); err != nil {
-		_ = os.Remove(m.pendingPath())
-		return nil, false
-	}
-	return &p, true
-}
-
-func (m *Manager) writePending(p *pendingUpdate) error {
-	data, err := json.Marshal(p)
-	if err != nil {
-		return err
-	}
-	return atomicWriteFile(m.pendingPath(), data, 0o644)
-}
-
 func (m *Manager) PendingVersion() string {
 	if p, ok := m.readPending(); ok {
 		return p.Version
 	}
 	return ""
 }
+
+func copyFile(dst, src string, perm os.FileMode) error {
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(dst, data, perm)
+}
+func (m *Manager) stagedPath() string { return m.exePath + stagedSuffix }
+
+func (m *Manager) previousPath() string { return m.exePath + previousSuffix }
+
+func (m *Manager) pendingPath() string { return m.exePath + pendingSuffix }
+
+func (m *Manager) swapTempPath() string { return m.exePath + swapTempSuffix }
+
+func (m *Manager) badPath() string { return m.exePath + badSuffix }
 
 func atomicWriteFile(dst string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(dst)
@@ -230,17 +221,23 @@ func atomicWriteFile(dst string, data []byte, perm os.FileMode) error {
 	committed = true
 	return nil
 }
+func (m *Manager) readPending() (*pendingUpdate, bool) {
+	data, err := os.ReadFile(m.pendingPath())
+	if err != nil {
+		return nil, false
+	}
+	var p pendingUpdate
+	if err := json.Unmarshal(data, &p); err != nil {
+		_ = os.Remove(m.pendingPath())
+		return nil, false
+	}
+	return &p, true
+}
 
-func copyFile(dst, src string, perm os.FileMode) error {
-	f, err := os.Open(src)
+func (m *Manager) writePending(p *pendingUpdate) error {
+	data, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return err
-	}
-	return atomicWriteFile(dst, data, perm)
+	return atomicWriteFile(m.pendingPath(), data, 0o644)
 }

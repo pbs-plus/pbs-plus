@@ -186,7 +186,6 @@ func Bootstrap() error {
 
 	return nil
 }
-
 func bootstrapTLSConfig() *tls.Config {
 	pin, err := registry.GetEntry(registry.CONFIG, "ServerCAFingerprint", false)
 	if err != nil {

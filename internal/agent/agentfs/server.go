@@ -12,7 +12,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
-
 type AgentFSServer struct {
 	ctx              context.Context
 	ctxCancel        context.CancelFunc
@@ -54,21 +53,6 @@ func NewAgentFSServer(jobID string, readMode string, snapshot snapshots.Snapshot
 	return s
 }
 
-func safeHandler(fn func(req *arpc.Request) (arpc.Response, error)) func(req *arpc.Request) (arpc.Response, error) {
-	return func(req *arpc.Request) (res arpc.Response, err error) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error(fmt.Errorf("panic in handler: %v", r),
-					fmt.Sprintf("panic in handler: %v", r),
-					"payload", req.Payload)
-
-				err = os.ErrInvalid
-			}
-		}()
-		return fn(req)
-	}
-}
-
 func (s *AgentFSServer) RegisterHandlers(r *arpc.Router) {
 	r.Handle("OpenFile", safeHandler(s.handleOpenFile))
 	r.Handle("Attr", safeHandler(s.handleAttr))
@@ -96,4 +80,18 @@ func (s *AgentFSServer) Close() {
 	}
 
 	s.ctxCancel()
+}
+func safeHandler(fn func(req *arpc.Request) (arpc.Response, error)) func(req *arpc.Request) (arpc.Response, error) {
+	return func(req *arpc.Request) (res arpc.Response, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error(fmt.Errorf("panic in handler: %v", r),
+					fmt.Sprintf("panic in handler: %v", r),
+					"payload", req.Payload)
+
+				err = os.ErrInvalid
+			}
+		}()
+		return fn(req)
+	}
 }

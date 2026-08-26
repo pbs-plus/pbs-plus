@@ -107,9 +107,3 @@ func moveMediumCDB(transport, source, dest uint16) []byte {
 		0,
 	}
 }
-
-func initializeElementStatus(d *device) error {
-	cdb := []byte{cmdInitializeElementStatus, 0, 0, 0, 0, 0}
-	_, err := d.scsi(cdb, nil, false, timeoutInventory)
-	return err
-}

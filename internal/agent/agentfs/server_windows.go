@@ -129,10 +129,6 @@ func (s *AgentFSServer) platformXstat(path string, aclOnly bool) (types.AgentFil
 	return info, nil
 }
 
-func (s *AgentFSServer) platformPread(f *os.File, b []byte, off int64) (int, error) {
-	return f.ReadAt(b, off)
-}
-
 func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
 	h, err := windows.CreateFileMapping(windows.Handle(fh.file.Fd()), nil, windows.PAGE_READONLY, 0, 0, nil)
 	if err != nil {
@@ -174,12 +170,7 @@ func (s *AgentFSServer) platformLseek(fh *FileHandle, off int64, whence int) (in
 	return next, nil
 }
 
-func (s *AgentFSServer) platformCloseResources(fh *FileHandle) {
-	if fh.mapping != 0 {
-		windows.CloseHandle(windows.Handle(fh.mapping))
-		fh.mapping = 0
-	}
-}
+func (s *AgentFSServer) platformCloseResources(*FileHandle) {}
 
 func (s *AgentFSServer) initializeStatFS() error {
 	if s.snapshot.SourcePath == "" {

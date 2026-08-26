@@ -192,10 +192,6 @@ func (b *jobLogger) Close() error {
 	return nil
 }
 
-func (b *jobLogger) Path() string {
-	return b.path
-}
-
 func (l *Logger) ensureJobLogger() {
 	if l.jobID == "" {
 		return
@@ -247,6 +243,10 @@ func (l *Logger) FlushJobLog() error {
 		return nil
 	}
 	return jl.Flush()
+}
+
+func (l *Logger) Close() {
+	l.closeJobLogger()
 }
 
 func (l *Logger) closeJobLogger() {

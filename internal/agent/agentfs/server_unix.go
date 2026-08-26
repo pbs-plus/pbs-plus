@@ -99,10 +99,6 @@ func (s *AgentFSServer) platformXstat(path string, aclOnly bool) (types.AgentFil
 	return info, nil
 }
 
-func (s *AgentFSServer) platformPread(f *os.File, b []byte, off int64) (int, error) {
-	return unix.Pread(int(f.Fd()), b, off)
-}
-
 func (s *AgentFSServer) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
 	aligned := off - (off % int64(s.allocGranularity))
 	diff := int(off - aligned)

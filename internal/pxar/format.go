@@ -170,10 +170,6 @@ func (r *PxarReader) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (
 	return r.ofs.GetAttr(entryStart)
 }
 
-func (r *PxarReader) Read(ctx context.Context, contentStart, contentEnd, offset uint64, size uint) ([]byte, error) {
-	return r.ofs.Read(contentStart, contentEnd, offset, size)
-}
-
 func (r *PxarReader) ReadFileContentReader(ctx context.Context, contentStart, contentEnd uint64) (io.ReadCloser, error) {
 	return r.ofs.ReadContentReader(contentStart, contentEnd)
 }

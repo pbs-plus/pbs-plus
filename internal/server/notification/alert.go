@@ -18,11 +18,6 @@ const (
 	AlertTargetOffline      AlertType = "target-offline"
 )
 
-// Unlike Send (which is for job completion), alerts are for monitoring conditions.
-func SendAlert(alertType AlertType, severity string, details map[string]string) {
-	sendAlertWithData(alertType, severity, details, nil)
-}
-
 // SendAlertWithData is like SendAlert but also accepts structured data for templates.
 // The extraData map is merged at the top level of template data, allowing arrays/objects.
 func SendAlertWithData(alertType AlertType, severity string, details map[string]string, extraData map[string]any) {

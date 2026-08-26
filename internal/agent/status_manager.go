@@ -72,30 +72,6 @@ func (bs *BackupStore) EndBackup(jobID string) error {
 	})
 }
 
-func (bs *BackupStore) HasActiveBackups() (bool, error) {
-	if err := bs.fileLock.Lock(); err != nil {
-		return false, err
-	}
-	defer func() {
-		if err := bs.fileLock.Unlock(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	sessions := make(map[string]*BackupSessionData)
-	data, err := os.ReadFile(bs.filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	if err := json.Unmarshal(data, &sessions); err != nil {
-		return false, err
-	}
-	return len(sessions) > 0, nil
-}
-
 func (bs *BackupStore) HasActiveBackupForJob(job string) (bool, error) {
 	if err := bs.fileLock.Lock(); err != nil {
 		return false, err
@@ -130,4 +106,27 @@ func (bs *BackupStore) ClearAll() error {
 			delete(sessions, job)
 		}
 	})
+}
+func (bs *BackupStore) HasActiveBackups() (bool, error) {
+	if err := bs.fileLock.Lock(); err != nil {
+		return false, err
+	}
+	defer func() {
+		if err := bs.fileLock.Unlock(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	sessions := make(map[string]*BackupSessionData)
+	data, err := os.ReadFile(bs.filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := json.Unmarshal(data, &sessions); err != nil {
+		return false, err
+	}
+	return len(sessions) > 0, nil
 }

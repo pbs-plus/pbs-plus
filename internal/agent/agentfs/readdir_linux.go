@@ -18,20 +18,6 @@ const (
 		unix.STATX_ATTR_AUTOMOUNT
 )
 
-func shouldExcludeStatx(sx *unix.Statx_t) bool {
-	fileType := sx.Mode & unix.S_IFMT
-
-	if fileType == unix.S_IFSOCK || fileType == unix.S_IFBLK || fileType == unix.S_IFCHR || fileType == unix.S_IFLNK {
-		return true
-	}
-
-	if sx.Attributes_mask&excludedAttrs != 0 && sx.Attributes&excludedAttrs != 0 {
-		return true
-	}
-
-	return false
-}
-
 func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, error) {
 	if r.closed {
 		return nil, os.ErrClosed
@@ -131,14 +117,27 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	}
 	return out, nil
 }
-
-func statxTimestampToNano(ts unix.StatxTimestamp) int64 {
-	return int64(ts.Sec)*1e9 + int64(ts.Nsec)
-}
-
 func statxBirthTimeNano(sx *unix.Statx_t) int64 {
 	if sx.Mask&unix.STATX_BTIME != 0 {
 		return statxTimestampToNano(sx.Btime)
 	}
 	return statxTimestampToNano(sx.Ctime)
+}
+
+func shouldExcludeStatx(sx *unix.Statx_t) bool {
+	fileType := sx.Mode & unix.S_IFMT
+
+	if fileType == unix.S_IFSOCK || fileType == unix.S_IFBLK || fileType == unix.S_IFCHR || fileType == unix.S_IFLNK {
+		return true
+	}
+
+	if sx.Attributes_mask&excludedAttrs != 0 && sx.Attributes&excludedAttrs != 0 {
+		return true
+	}
+
+	return false
+}
+
+func statxTimestampToNano(ts unix.StatxTimestamp) int64 {
+	return int64(ts.Sec)*1e9 + int64(ts.Nsec)
 }

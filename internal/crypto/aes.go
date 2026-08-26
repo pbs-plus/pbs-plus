@@ -30,23 +30,6 @@ func (km *KeyManager) GetOrCreate() ([]byte, error) {
 	return km.loadOrGenerate()
 }
 
-func (km *KeyManager) loadOrGenerate() ([]byte, error) {
-	if data, err := os.ReadFile(km.keyFile); err == nil && len(data) == aes256KeySize {
-		return data, nil
-	}
-	key := make([]byte, aes256KeySize)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return nil, fmt.Errorf("crypto: generate key: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(km.keyFile), 0o700); err != nil {
-		return nil, fmt.Errorf("crypto: create key dir: %w", err)
-	}
-	if err := os.WriteFile(km.keyFile, key, 0o600); err != nil {
-		return nil, fmt.Errorf("crypto: write key: %w", err)
-	}
-	return key, nil
-}
-
 func EncryptWithKey(plaintext string, key []byte) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -86,4 +69,20 @@ func DecryptWithKey(ciphertext string, key []byte) (string, error) {
 		return "", fmt.Errorf("crypto: decrypt: %w", err)
 	}
 	return string(pt), nil
+}
+func (km *KeyManager) loadOrGenerate() ([]byte, error) {
+	if data, err := os.ReadFile(km.keyFile); err == nil && len(data) == aes256KeySize {
+		return data, nil
+	}
+	key := make([]byte, aes256KeySize)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, fmt.Errorf("crypto: generate key: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(km.keyFile), 0o700); err != nil {
+		return nil, fmt.Errorf("crypto: create key dir: %w", err)
+	}
+	if err := os.WriteFile(km.keyFile, key, 0o600); err != nil {
+		return nil, fmt.Errorf("crypto: write key: %w", err)
+	}
+	return key, nil
 }

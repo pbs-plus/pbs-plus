@@ -143,34 +143,6 @@ func (l *Logger) core() *Logger {
 
 func (l *Logger) SetServiceLogger() error { return setServiceLogger(l) }
 
-func (l *Logger) Disable() {
-	c := l.core()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.disabled = true
-}
-
-func (l *Logger) Enable() {
-	c := l.core()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.disabled = false
-}
-
-func (l *Logger) DisableDeduplication() {
-	c := l.core()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.dedupEnabled = false
-}
-
-func (l *Logger) EnableDeduplication() {
-	c := l.core()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.dedupEnabled = true
-}
-
 func (l *Logger) WithScope(s Scope) *Logger {
 	c := l.core()
 	sl := &Logger{
@@ -308,43 +280,14 @@ func (e *entry) dedupKey() [32]byte {
 	return [32]byte(h.Sum(nil))
 }
 
-func (e *entry) SkipDedup() *entry {
-	e.dedup = false
-	return e
-}
-
 func (e *entry) WithJob(jobID string) *entry {
 	e.jobID = jobID
-	return e
-}
-
-func (e *entry) WithField(key string, value any) *entry {
-	e.fields[key] = value
 	return e
 }
 
 func (e *entry) WithFields(fields map[string]any) *entry {
 	maps.Copy(e.fields, fields)
 	return e
-}
-
-func (e *entry) WithMessage(msg string) *entry {
-	e.message = msg
-	return e
-}
-
-func (e *entry) WithJSON(msg string) *entry {
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(msg), &parsed); err == nil {
-		maps.Copy(e.fields, parsed)
-	} else {
-		e.message = msg
-	}
-	return e
-}
-
-func (e *entry) Write() {
-	e.write()
 }
 
 func ParseAndLogWindowsEntry(body io.ReadCloser) error {
@@ -437,54 +380,10 @@ func (l *Logger) Debug(msg string, args ...any) {
 	}
 }
 
-func (l *Logger) Log(format string, args ...any) {
-	if l.task != nil {
-		l.task.Log(format, args...)
-	}
-}
-
 func (l *Logger) LogString(data string) {
 	if l.task != nil {
 		l.task.LogString(data)
 	}
-}
-
-func (l *Logger) CloseOK() {
-	if l.task != nil {
-		l.task.CloseOK()
-	}
-}
-
-func (l *Logger) CloseErr(err error) {
-	if l.task != nil {
-		l.task.CloseErr(err)
-	}
-}
-
-func (l *Logger) CloseWarn(count uint64) {
-	if l.task != nil {
-		l.task.CloseWarn(count)
-	}
-}
-
-func (l *Logger) UPID() string {
-	if l.task != nil {
-		return l.task.UPID()
-	}
-	return ""
-}
-
-func (l *Logger) RequestAbort() {
-	if l.task != nil {
-		l.task.RequestAbort()
-	}
-}
-
-func (l *Logger) AbortRequested() bool {
-	if l.task != nil {
-		return l.task.AbortRequested()
-	}
-	return false
 }
 
 func Info(msg string, args ...any) {
@@ -505,12 +404,4 @@ func Debug(msg string, args ...any) {
 
 func WithScope(s Scope) *Logger {
 	return L.WithScope(s)
-}
-
-func WithJob(jobID string) *entry {
-	return L.newEntry("", nil, "").WithJob(jobID)
-}
-
-func (l *Logger) Close() {
-	l.closeJobLogger()
 }

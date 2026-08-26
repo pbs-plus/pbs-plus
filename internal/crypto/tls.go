@@ -32,14 +32,6 @@ func FIPSClientTLSConfig(minVersion uint16) *tls.Config {
 	return cfg
 }
 
-func FIPSActive() bool {
-	return fips140.Enabled()
-}
-
-func FIPSStrict() bool {
-	return fips140.Enforced()
-}
-
 func AssertFIPS() error {
 	if fips140.Enabled() {
 		return nil

@@ -38,7 +38,6 @@ func GetUnixACLs(path string, fd int) ([]types.PosixACL, error) {
 
 	return append(access, defaultAcl...), nil
 }
-
 func getACL(path string, fd int, attr string, isDefault bool) ([]types.PosixACL, error) {
 	var size int
 	var err error
@@ -64,7 +63,6 @@ func getACL(path string, fd int, attr string, isDefault bool) ([]types.PosixACL,
 
 	return parseUnixACL(buf, isDefault)
 }
-
 func parseUnixACL(buf []byte, isDefault bool) ([]types.PosixACL, error) {
 	if len(buf) < 4 {
 		return nil, fmt.Errorf("ACL too short")
