@@ -36,6 +36,7 @@ type Engine struct {
 	runnersMu sync.RWMutex
 	runners   map[string]Workflow
 	running   sync.Map
+	startupMu sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -204,12 +205,24 @@ func (e *Engine) Cancel(ctx context.Context, id string) (database.WorkflowExecut
 	return execution, nil
 }
 
+func (e *Engine) CancelDefinition(ctx context.Context, kind, definitionID string) (database.WorkflowExecution, error) {
+	execution, err := e.database.GetActiveWorkflowExecution(ctx, kind, definitionID)
+	if err != nil {
+		return database.WorkflowExecution{}, err
+	}
+	return e.Cancel(ctx, execution.ID)
+}
+
 func (e *Engine) Get(ctx context.Context, id string) (database.WorkflowExecution, error) {
 	return e.database.GetWorkflowExecution(ctx, id)
 }
 
 func (e *Engine) Events(ctx context.Context, id string) ([]database.WorkflowEvent, error) {
 	return e.database.ListWorkflowExecutionEvents(ctx, id)
+}
+
+func (e *Engine) StartupMu() *sync.Mutex {
+	return &e.startupMu
 }
 
 func (w *WorkflowContext) Activity(name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {

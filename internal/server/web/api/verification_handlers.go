@@ -13,8 +13,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/verification"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -95,59 +95,30 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		go func() {
 			for _, jobID := range decodedJobIDs {
-				vJob, err := storeInstance.Database.GetVerificationJob(jobID)
-				if err != nil {
-					log.Error(err, "", "verificationJobID", jobID)
-					continue
-				}
-
 				if stop {
-					for _, jobID := range decodedJobIDs {
-						if !verification.StopJob(jobID) {
-							log.Warn("job not running, cannot stop", "verificationJobID", jobID)
-						}
+					if _, err := storeInstance.Engine.CancelDefinition(context.Background(), jobs.WorkflowVerification, jobID); err != nil {
+						log.Warn("job not running, cannot stop", "verificationJobID", jobID, "error", err)
 					}
 					continue
 				}
 
-				vj, err := verification.NewVerificationJob(vJob, storeInstance, true)
+				request, err := jobs.NewWorkflowSubmit(
+					jobs.WorkflowVerification,
+					jobID,
+					"manual",
+					"",
+					jobs.VerificationInput{Web: true},
+					[]string{"verification:" + jobID},
+					1,
+					time.Minute,
+				)
 				if err != nil {
 					log.Error(err, "", "verificationJobID", jobID)
 					continue
 				}
-				go func(id string) {
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-					defer cancel()
-
-					verification.RegisterJob(id, cancel)
-					defer verification.UnregisterJob(id)
-
-					defer func() {
-						if vj.Cleanup != nil {
-							vj.Cleanup()
-						}
-					}()
-
-					if vj.PreExec != nil {
-						if err := vj.PreExec(ctx); err != nil {
-							if vj.OnError != nil {
-								vj.OnError(err)
-							}
-							return
-						}
-					}
-
-					if err := vj.Execute(ctx); err != nil {
-						if vj.OnError != nil {
-							vj.OnError(err)
-						}
-						return
-					}
-
-					if vj.OnSuccess != nil {
-						vj.OnSuccess()
-					}
-				}(jobID)
+				if _, _, err := storeInstance.Engine.Submit(context.Background(), request); err != nil {
+					log.Error(err, "", "verificationJobID", jobID)
+				}
 			}
 		}()
 

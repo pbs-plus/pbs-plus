@@ -152,6 +152,20 @@ func (d *Database) GetWorkflowExecution(ctx context.Context, id string) (Workflo
 	return workflowExecutionFromSQLC(row), nil
 }
 
+func (d *Database) GetActiveWorkflowExecution(ctx context.Context, kind, definitionID string) (WorkflowExecution, error) {
+	row, err := d.readQueries.GetActiveWorkflowExecutionByDefinition(ctx, sqlc.GetActiveWorkflowExecutionByDefinitionParams{
+		Kind:         kind,
+		DefinitionID: definitionID,
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return WorkflowExecution{}, ErrWorkflowExecutionNotFound
+	}
+	if err != nil {
+		return WorkflowExecution{}, fmt.Errorf("getting active workflow execution: %w", err)
+	}
+	return workflowExecutionFromSQLC(row), nil
+}
+
 func (d *Database) ClaimWorkflowExecution(ctx context.Context, owner string, now, leaseUntil time.Time) (WorkflowExecution, bool, error) {
 	if owner == "" || !leaseUntil.After(now) {
 		return WorkflowExecution{}, false, errors.New("invalid workflow lease")

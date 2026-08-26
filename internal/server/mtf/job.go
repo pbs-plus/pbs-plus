@@ -42,22 +42,6 @@ type mtfJob struct {
 	cleanupOnce sync.Once
 }
 
-func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper) *jobs.Job {
-	j := &mtfJob{
-		job:    job,
-		store:  st,
-		mapper: mapper,
-		logger: log.WithScope(log.Scope{JobID: job.ID}),
-	}
-	return &jobs.Job{
-		ID:        job.ID,
-		Execute:   j.execute,
-		OnSuccess: j.onSuccess,
-		OnError:   j.onError,
-		Cleanup:   j.cleanup,
-	}
-}
-
 func NewJob(jobID string, st *store.Store) (*jobs.Job, string, error) {
 	ctx := st.Ctx
 	if ctx == nil {

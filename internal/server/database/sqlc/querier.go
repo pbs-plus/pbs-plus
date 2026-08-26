@@ -54,6 +54,7 @@ type Querier interface {
 	DeleteWorkflowResourceLocks(ctx context.Context, executionID string) error
 	FailWorkflowActivity(ctx context.Context, arg FailWorkflowActivityParams) (int64, error)
 	FinishWorkflowExecution(ctx context.Context, arg FinishWorkflowExecutionParams) (int64, error)
+	GetActiveWorkflowExecutionByDefinition(ctx context.Context, arg GetActiveWorkflowExecutionByDefinitionParams) (JobExecution, error)
 	GetAgentHost(ctx context.Context, name string) (AgentHost, error)
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
 	GetAlertExclusion(ctx context.Context, id int64) (AlertExclusion, error)

@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
@@ -523,7 +524,7 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			driveIdx = tape.ResolveDriveIndex(r.FormValue("drive"))
 		}
 
-		opts := mtf.Options{
+		input := jobs.MtfScanInput{
 			ChangerDevice: tape.ResolveChanger(r.FormValue("changer")),
 			TapeDevice:    tape.ResolveDrive(r.FormValue("drive")),
 			DriveIndex:    driveIdx,
@@ -532,51 +533,34 @@ func ExtJsMtfScanHandler(storeInstance *store.Store) http.HandlerFunc {
 			Barcodes:      parseBarcodes(r),
 		}
 
-		if active, _ := mtfScanInProgress(); active {
-			WriteErrorResponse(w, fmt.Errorf("an MTF inventory scan is already in progress"))
-			return
-		}
-
-		st, err := mtf.NewScanTask(opts)
+		request, err := jobs.NewWorkflowSubmit(
+			jobs.WorkflowMtfScan,
+			"inventory-scan",
+			"manual",
+			"",
+			input,
+			[]string{"mtf-scan"},
+			1,
+			time.Minute,
+		)
 		if err != nil {
-			WriteErrorResponse(w, fmt.Errorf("create scan task: %w", err))
+			WriteErrorResponse(w, err)
 			return
 		}
-		src := "changer " + opts.ChangerDevice
-		if opts.BKFPath != "" {
-			src = ".bkf: " + opts.BKFPath
-		} else if opts.TapeDevice != "" {
-			src = "drive: " + opts.TapeDevice
-		}
-		st.LogString("MTF inventory scan started (" + src + ")")
-
-		go func() {
-			sc := mtf.NewScanner(ms)
-			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Hour)
-			defer cancel()
-			tl := log.WithScope(log.Scope{Task: st.WorkerTask})
-			defer func() {
-				if r := recover(); r != nil {
-					tl.LogString(fmt.Sprintf("panic: %v", r))
-					st.CloseErr(fmt.Errorf("scan panic: %v", r))
-				}
-			}()
-			res, scanErr := sc.ScanWithLog(ctx, opts, tl)
-			if scanErr != nil {
-				tl.LogString(scanErr.Error())
-				st.CloseErr(scanErr)
-				return
+		execution, created, err := storeInstance.Engine.Submit(context.Background(), request)
+		if err != nil || !created {
+			if err == nil {
+				err = fmt.Errorf("an MTF inventory scan is already in progress")
 			}
-			tl.LogString(fmt.Sprintf("Scan completed: %d cartridges, %d families (%s)",
-				res.Cartridges, res.Families, res.Duration.Truncate(time.Second)))
-			st.CloseOK(res)
-		}()
+			WriteErrorResponse(w, err)
+			return
+		}
 
 		response := MtfJobRunResponse{}
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
 		response.Success = true
-		response.Data = st.UPID()
+		response.Data = execution.ID
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Error(err, "")
 		}

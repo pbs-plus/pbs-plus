@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
@@ -37,80 +38,95 @@ type MtfJobQueueArgs struct {
 }
 
 type QueueReply struct {
-	Status  int
-	Message string
-	UPID    string
+	Status      int
+	Message     string
+	ExecutionID string
+	UPID        string
 }
 
-var BackupJobFactory func(database.Backup, *store.Store, bool, bool, []string) *jobs.Job
-
-var RestoreJobFactory func(database.Restore, *store.Store, bool, bool) (*jobs.Job, error)
-
-// MtfJobFactory creates an MTF tape → pxar migration job operation. Set
-var MtfJobFactory func(string, *store.Store) (*jobs.Job, string, error)
-
 type JobRPCService struct {
-	ctx     context.Context
-	Store   *store.Store
-	Manager *jobs.Manager
+	ctx    context.Context
+	Store  *store.Store
+	Engine *jobs.Engine
 }
 
 func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 	if args.Stop {
-		err := s.Manager.StopJob(args.Job.ID)
-		if err != nil {
+		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowBackup, args.Job.ID); err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
 			return nil
 		}
-
 		reply.Status = 200
 		return nil
 	}
 
-	jobOp := BackupJobFactory(args.Job, s.Store, args.SkipCheck, args.Web, args.ExtraExclusions)
-	if err := s.Manager.Enqueue(jobOp); err != nil {
+	request, err := jobs.NewWorkflowSubmit(
+		jobs.WorkflowBackup,
+		args.Job.ID,
+		"manual",
+		"",
+		jobs.BackupInput{SkipCheck: args.SkipCheck, Web: args.Web, ExtraExclusions: args.ExtraExclusions},
+		[]string{"backup:" + args.Job.ID, "target:" + args.Job.Target.Name},
+		args.Job.Retry+1,
+		time.Duration(max(args.Job.RetryInterval, 1))*time.Minute,
+	)
+	if err != nil {
+		reply.Status = 500
+		reply.Message = err.Error()
+		return nil
+	}
+	execution, _, err := s.Engine.Submit(s.ctx, request)
+	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
 	}
 	reply.Status = 200
-
+	reply.ExecutionID = execution.ID
 	return nil
 }
 
 func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
 	if args.Stop {
-		err := s.Manager.StopJob(args.Job.ID)
-		if err != nil {
+		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowRestore, args.Job.ID); err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
 			return nil
 		}
-
 		reply.Status = 200
 		return nil
 	}
 
-	jobOp, err := RestoreJobFactory(args.Job, s.Store, args.SkipCheck, args.Web)
+	request, err := jobs.NewWorkflowSubmit(
+		jobs.WorkflowRestore,
+		args.Job.ID,
+		"manual",
+		"",
+		jobs.RestoreInput{SkipCheck: args.SkipCheck, Web: args.Web},
+		[]string{"restore:" + args.Job.ID, "target:" + args.Job.DestTarget.Name},
+		args.Job.Retry+1,
+		time.Duration(max(args.Job.RetryInterval, 1))*time.Minute,
+	)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
 	}
-	if err := s.Manager.Enqueue(jobOp); err != nil {
+	execution, _, err := s.Engine.Submit(s.ctx, request)
+	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
 	}
 	reply.Status = 200
-
+	reply.ExecutionID = execution.ID
 	return nil
 }
 
 func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
 	if args.Stop {
-		if err := s.Manager.StopJob(args.JobID); err != nil {
+		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowMtfMigration, args.JobID); err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
 			return nil
@@ -119,23 +135,33 @@ func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error
 		return nil
 	}
 
-	jobOp, upid, err := MtfJobFactory(args.JobID, s.Store)
+	request, err := jobs.NewWorkflowSubmit(
+		jobs.WorkflowMtfMigration,
+		args.JobID,
+		"manual",
+		"",
+		struct{}{},
+		[]string{"mtf:" + args.JobID},
+		1,
+		time.Minute,
+	)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
 	}
-	if err := s.Manager.Enqueue(jobOp); err != nil {
+	execution, _, err := s.Engine.Submit(s.ctx, request)
+	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
 	}
 	reply.Status = 200
-	reply.UPID = upid
+	reply.ExecutionID = execution.ID
 	return nil
 }
 
-func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
+func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, engine *jobs.Engine, storeInstance *store.Store) error {
 	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
 		log.Error(err, "")
 	}
@@ -145,9 +171,9 @@ func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath 
 	}
 
 	service := &JobRPCService{
-		ctx:     ctx,
-		Store:   storeInstance,
-		Manager: manager,
+		ctx:    ctx,
+		Store:  storeInstance,
+		Engine: engine,
 	}
 
 	if err := rpc.Register(service); err != nil {
@@ -171,9 +197,9 @@ func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath 
 	return nil
 }
 
-func RunJobRPCServer(ctx context.Context, socketPath string, manager *jobs.Manager, storeInstance *store.Store) error {
+func RunJobRPCServer(ctx context.Context, socketPath string, engine *jobs.Engine, storeInstance *store.Store) error {
 	watcher := make(chan struct{}, 1)
-	err := StartJobRPCServer(watcher, ctx, socketPath, manager, storeInstance)
+	err := StartJobRPCServer(watcher, ctx, socketPath, engine, storeInstance)
 	if err != nil {
 		return err
 	}

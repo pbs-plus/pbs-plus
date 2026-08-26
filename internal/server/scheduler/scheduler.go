@@ -4,39 +4,26 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/verification"
 )
 
 const schedulerTickInterval = 30 * time.Second
 
 type Scheduler struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	storeInstance  *store.Store
-	manager        *jobs.Manager
-	lastEnqueued   map[string]time.Time
-	lastEnqueuedMu sync.Mutex
+	ctx           context.Context
+	cancel        context.CancelFunc
+	storeInstance *store.Store
 }
 
-func NewScheduler(ctx context.Context, storeInstance *store.Store, manager *jobs.Manager) *Scheduler {
+func NewScheduler(ctx context.Context, storeInstance *store.Store) *Scheduler {
 	newCtx, cancel := context.WithCancel(ctx)
-	return &Scheduler{
-		ctx:           newCtx,
-		cancel:        cancel,
-		storeInstance: storeInstance,
-		manager:       manager,
-		lastEnqueued:  make(map[string]time.Time),
-	}
+	return &Scheduler{ctx: newCtx, cancel: cancel, storeInstance: storeInstance}
 }
 
 func (s *Scheduler) Start() {
@@ -63,9 +50,26 @@ func (s *Scheduler) run() {
 			s.checkBackups()
 			s.checkRestores()
 			s.checkVerifications()
-			s.checkMtfJobs()
 		}
 	}
+}
+
+func (s *Scheduler) submitBackup(b database.Backup, trigger string, occurrence time.Time) error {
+	request, err := jobs.NewWorkflowSubmit(
+		jobs.WorkflowBackup,
+		b.ID,
+		trigger,
+		fmt.Sprintf("backup:%s:%s:%d", b.ID, trigger, occurrence.Unix()),
+		jobs.BackupInput{},
+		[]string{"backup:" + b.ID, "target:" + b.Target.Name},
+		b.Retry+1,
+		time.Duration(max(b.RetryInterval, 1))*time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.storeInstance.Engine.Submit(s.storeInstance.Ctx, request)
+	return err
 }
 
 func (s *Scheduler) checkBackups() {
@@ -78,105 +82,59 @@ func (s *Scheduler) checkBackups() {
 	now := time.Now()
 
 	for _, b := range backups {
-		if s.manager.IsRunning(b.ID) {
-			continue
-		}
-
 		if b.Schedule != "" {
-			if nextRun, ok := s.shouldRunScheduled(b, now); ok {
-				log.Info("scheduler: scheduled backup is due, enqueuing", "backupID", b.ID, "nextRun", nextRun)
-				job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
-				go s.enqueueBackup(b.ID, job)
-				continue
+			if nextRun, ok := s.shouldRunScheduled(b.Schedule, b.History.LastRunStarttime, now); ok {
+				log.Info("scheduler: scheduled backup is due, submitting", "backupID", b.ID, "nextRun", nextRun)
+				if err := s.submitBackup(b, "scheduled", nextRun); err != nil {
+					log.Error(err, "Scheduler: failed to submit backup", "backupID", b.ID)
+				}
 			}
 		}
-
 		if b.Retry > 0 && s.shouldRetryBackup(b, now) {
-			log.Info("scheduler: backup retry is due, enqueuing", "backupID", b.ID)
-			job := backup.NewBackupJob(b, s.storeInstance, false, false, nil)
-			go s.enqueueBackup(b.ID, job)
+			log.Info("scheduler: backup retry is due, submitting", "backupID", b.ID)
+			if err := s.submitBackup(b, "retry", time.Unix(b.History.LastRunEndtime, 0)); err != nil {
+				log.Error(err, "Scheduler: failed to submit backup retry", "backupID", b.ID)
+			}
 		}
 	}
 }
 
-func (s *Scheduler) computeScheduledRun(schedule, enqKey string, refTime, now time.Time) (time.Time, bool) {
+// shouldRunScheduled reports the occurrence of schedule due after lastRun.
+// Occurrence-keyed dedupe makes submission exactly-once across restarts; downtime yields one catch-up run.
+func (s *Scheduler) shouldRunScheduled(schedule string, lastRun int64, now time.Time) (time.Time, bool) {
 	ev, err := calendar.Parse(schedule)
 	if err != nil {
 		return time.Time{}, false
 	}
-
-	if lastEnq, ok := s.getEnqueued(enqKey); ok && lastEnq.After(refTime) {
-		refTime = lastEnq
+	refTime := now
+	if lastRun > 0 {
+		refTime = time.Unix(lastRun, 0)
 	}
-
 	nextRun, err := calendar.ComputeNextEvent(ev, refTime, time.Local)
-	if err != nil {
+	if err != nil || nextRun.After(now) {
 		return time.Time{}, false
 	}
-
-	if nextRun.After(now) {
-		return time.Time{}, false
-	}
-
-	if now.Sub(nextRun) < schedulerTickInterval {
-		s.markEnqueued(enqKey, nextRun)
-		return nextRun, true
-	}
-
-	s.markEnqueued(enqKey, nextRun)
-	return time.Time{}, false
-}
-
-func (s *Scheduler) shouldRunScheduled(b database.Backup, now time.Time) (time.Time, bool) {
-	refTime := now
-	if b.History.LastRunStarttime > 0 {
-		refTime = time.Unix(b.History.LastRunStarttime, 0)
-	}
-	return s.computeScheduledRun(b.Schedule, "backup:"+b.ID, refTime, now)
-}
-
-func (s *Scheduler) shouldRunScheduledVerification(vJob database.VerificationJob, now time.Time) (time.Time, bool) {
-	refTime := now
-	if vJob.History.LastRunEndtime > 0 {
-		refTime = time.Unix(vJob.History.LastRunEndtime, 0)
-	}
-	return s.computeScheduledRun(vJob.Schedule, "verification:"+vJob.ID, refTime, now)
-}
-
-func (s *Scheduler) markEnqueued(enqKey string, t time.Time) {
-	s.lastEnqueuedMu.Lock()
-	defer s.lastEnqueuedMu.Unlock()
-	s.lastEnqueued[enqKey] = t
-}
-
-func (s *Scheduler) getEnqueued(enqKey string) (time.Time, bool) {
-	s.lastEnqueuedMu.Lock()
-	defer s.lastEnqueuedMu.Unlock()
-	t, ok := s.lastEnqueued[enqKey]
-	return t, ok
+	return nextRun, true
 }
 
 func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
 	if b.History.LastRunEndtime == 0 {
 		return false
 	}
-
-	lastEnd := time.Unix(b.History.LastRunEndtime, 0)
-	if now.Sub(lastEnd) < time.Duration(b.RetryInterval)*time.Minute {
+	if now.Sub(time.Unix(b.History.LastRunEndtime, 0)) < time.Duration(b.RetryInterval)*time.Minute {
 		return false
 	}
-
-	// Fall back to legacy string parsing for records before migration
-	shouldRetry := b.History.LastRunStatus.ShouldRetry()
-	if b.History.LastRunStatus == database.JobStatusUnknown {
-		shouldRetry = isFailedState(b.History.LastRunState)
-	}
-
-	if !shouldRetry {
+	if !lastRunRetryable(b.History.LastRunStatus, b.History.LastRunState) {
 		return false
 	}
-
 	return b.History.RetryCount < b.Retry
+}
+
+func lastRunRetryable(status database.JobStatus, state string) bool {
+	if status == database.JobStatusUnknown {
+		return database.JobStatusFromString(state).ShouldRetry()
+	}
+	return status.ShouldRetry()
 }
 
 func (s *Scheduler) checkRestores() {
@@ -189,18 +147,25 @@ func (s *Scheduler) checkRestores() {
 	now := time.Now()
 
 	for _, r := range restores {
-		if s.manager.IsRunning(r.ID) {
+		if r.Retry == 0 || !s.shouldRetryRestore(r, now) {
 			continue
 		}
-
-		if r.Retry > 0 && s.shouldRetryRestore(r, now) {
-			log.Info("scheduler: restore retry is due, enqueuing", "restoreID", r.ID)
-			job, err := restore.NewRestoreJob(r, s.storeInstance, false, false)
-			if err != nil {
-				log.Error(err, "Scheduler: failed to create restore job", "restoreID", r.ID)
-				continue
-			}
-			go s.enqueueRestore(r.ID, job)
+		request, err := jobs.NewWorkflowSubmit(
+			jobs.WorkflowRestore,
+			r.ID,
+			"retry",
+			fmt.Sprintf("restore:%s:retry:%d-%d", r.ID, r.History.LastRunEndtime, r.History.RetryCount),
+			jobs.RestoreInput{},
+			[]string{"restore:" + r.ID, "target:" + r.DestTarget.Name},
+			r.Retry+1,
+			time.Duration(max(r.RetryInterval, 1))*time.Minute,
+		)
+		if err != nil {
+			log.Error(err, "Scheduler: failed to build restore submit", "restoreID", r.ID)
+			continue
+		}
+		if _, _, err := s.storeInstance.Engine.Submit(s.storeInstance.Ctx, request); err != nil {
+			log.Error(err, "Scheduler: failed to submit restore", "restoreID", r.ID)
 		}
 	}
 }
@@ -209,60 +174,13 @@ func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
 	if r.History.LastRunEndtime == 0 {
 		return false
 	}
-
-	lastEnd := time.Unix(r.History.LastRunEndtime, 0)
-	if now.Sub(lastEnd) < time.Duration(r.RetryInterval)*time.Minute {
+	if now.Sub(time.Unix(r.History.LastRunEndtime, 0)) < time.Duration(r.RetryInterval)*time.Minute {
 		return false
 	}
-
-	shouldRetry := r.History.LastRunStatus.ShouldRetry()
-	if r.History.LastRunStatus == database.JobStatusUnknown {
-		shouldRetry = isFailedState(r.History.LastRunState)
-	}
-
-	if !shouldRetry {
+	if !lastRunRetryable(r.History.LastRunStatus, r.History.LastRunState) {
 		return false
 	}
-
 	return r.History.RetryCount < r.Retry
-}
-
-func (s *Scheduler) checkMtfJobs() {
-	ms := s.storeInstance.MtfStore
-	if ms == nil {
-		return
-	}
-	mjobs, err := ms.ListMtfJobs(s.ctx)
-	if err != nil {
-		log.Error(err, "Scheduler: failed to get MTF jobs")
-		return
-	}
-
-	now := time.Now()
-	_ = now
-	for _, mj := range mjobs {
-		if s.manager.IsRunning(mj.ID) {
-			continue
-		}
-		_ = mj
-	}
-}
-
-func (s *Scheduler) enqueueBackup(id string, job *jobs.Job) {
-	if err := s.manager.Enqueue(job); err != nil {
-		log.Error(err, "Scheduler: failed to enqueue backup", "backupID", id)
-	}
-}
-func (s *Scheduler) enqueueRestore(id string, job *jobs.Job) {
-	if err := s.manager.Enqueue(job); err != nil {
-		log.Error(err, "Scheduler: failed to enqueue restore", "restoreID", id)
-	}
-}
-
-// isFailedState provides backward compatibility for legacy records that don't have
-// the typed LastRunStatus field. It parses the string status to determine if
-func isFailedState(state string) bool {
-	return database.JobStatusFromString(state).ShouldRetry()
 }
 
 func (s *Scheduler) checkVerifications() {
@@ -275,48 +193,46 @@ func (s *Scheduler) checkVerifications() {
 	now := time.Now()
 
 	for _, vJob := range vJobs {
-		if s.manager.IsRunning(vJob.ID) {
-			continue
-		}
-
 		if vJob.Schedule == "" {
 			continue
 		}
-
-		nextRun, due := s.shouldRunScheduledVerification(vJob, now)
-		if !due {
+		if _, due := s.shouldRunScheduled(vJob.Schedule, vJob.History.LastRunEndtime, now); !due {
 			continue
 		}
-		log.Info("scheduler: scheduled verification is due", "verificationJobID", vJob.ID, "nextRun", nextRun)
-
 		if vJob.RunOnBackupComplete {
-			// Don't run yet  -  mark as pending, wait for backup completion
 			if vJob.PendingSince == 0 {
 				vJob.PendingSince = now.Unix()
 				if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
 					log.Error(err, "Scheduler: failed to set pending_since", "verificationJobID", vJob.ID)
 				}
-				log.Info("scheduler: verification pending until backup completes", "verificationJobID", vJob.ID)
 			}
 			continue
 		}
-
-		job, err := verification.NewVerificationJob(vJob, s.storeInstance, false)
-		if err != nil {
-			log.Error(err, "Scheduler: failed to create verification job", "verificationJobID", vJob.ID)
-			continue
+		if err := s.submitVerification(vJob, "scheduled", time.Unix(vJob.History.LastRunEndtime, 0)); err != nil {
+			log.Error(err, "Scheduler: failed to submit verification", "verificationJobID", vJob.ID)
 		}
-
-		go func(id string) {
-			if err := s.manager.Enqueue(job); err != nil {
-				log.Error(err, "Scheduler: failed to enqueue verification", "verificationJobID", id)
-			}
-		}(vJob.ID)
 	}
 }
 
-// TriggerPendingVerifications checks for verification jobs that are pending
-// (waiting for backup completion) targeting the given backup job, and enqueues them.
+func (s *Scheduler) submitVerification(vJob database.VerificationJob, trigger string, occurrence time.Time) error {
+	request, err := jobs.NewWorkflowSubmit(
+		jobs.WorkflowVerification,
+		vJob.ID,
+		trigger,
+		fmt.Sprintf("verification:%s:%s:%d", vJob.ID, trigger, occurrence.Unix()),
+		jobs.VerificationInput{},
+		[]string{"verification:" + vJob.ID},
+		vJob.Retry+1,
+		time.Duration(max(vJob.RetryInterval, 1))*time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+	_, _, err = s.storeInstance.Engine.Submit(s.storeInstance.Ctx, request)
+	return err
+}
+
+// TriggerPendingVerifications submits verification jobs that waited on backup completion.
 func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 	vJobs, err := s.storeInstance.Database.GetAllVerificationJobs()
 	if err != nil {
@@ -334,44 +250,27 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 		if vJob.PendingSince == 0 {
 			continue
 		}
-
 		matched := false
 		if vJob.TargetMode == "backup_job" && vJob.BackupJobID == backupJobID {
 			matched = true
-		} else if vJob.TargetMode == "namespace" {
-			if vJob.Store == completedBackup.Store {
-				if vJob.Recursive {
-					matched = vJob.Namespace == "" || completedBackup.Namespace == vJob.Namespace || strings.HasPrefix(completedBackup.Namespace, vJob.Namespace+"/")
-				} else {
-					matched = completedBackup.Namespace == vJob.Namespace
-				}
+		} else if vJob.TargetMode == "namespace" && vJob.Store == completedBackup.Store {
+			if vJob.Recursive {
+				matched = vJob.Namespace == "" || completedBackup.Namespace == vJob.Namespace || strings.HasPrefix(completedBackup.Namespace, vJob.Namespace+"/")
+			} else {
+				matched = completedBackup.Namespace == vJob.Namespace
 			}
 		}
-
 		if !matched {
 			continue
 		}
-		if s.manager.IsRunning(vJob.ID) {
-			continue
-		}
-		log.Info("backup completed, triggering pending verification", "backupJobID", backupJobID, "verificationJobID", vJob.ID)
 
 		vJob.PendingSince = 0
 		if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
 			log.Error(err, "failed to clear pending_since", "verificationJobID", vJob.ID)
 			continue
 		}
-
-		job, err := verification.NewVerificationJob(vJob, s.storeInstance, false)
-		if err != nil {
-			log.Error(err, "failed to create verification job", "verificationJobID", vJob.ID)
-			continue
+		if err := s.submitVerification(vJob, "backup_complete", time.Unix(vJob.History.LastRunEndtime, 0)); err != nil {
+			log.Error(err, "failed to submit verification", "backupJobID", backupJobID, "verificationJobID", vJob.ID)
 		}
-
-		go func(id string) {
-			if err := s.manager.Enqueue(job); err != nil {
-				log.Error(err, "failed to enqueue verification", "verificationJobID", id)
-			}
-		}(vJob.ID)
 	}
 }

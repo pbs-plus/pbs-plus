@@ -35,7 +35,7 @@ type Store struct {
 	TargetSvc         *application.TargetService
 	VerificationSvc   *application.VerificationService
 	ARPCAgentsManager *arpc.AgentsManager
-	Manager           *jobs.Manager
+	Engine            *jobs.Engine
 	BatchTracker      *notification.BatchTracker
 	AlertScanner      *notification.AlertScanner
 	OnBackupComplete  func(backupJobID string) // called after backup completion to trigger pending verifications
@@ -118,6 +118,9 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 }
 
 func (s *Store) Close() error {
+	if s.Engine != nil {
+		s.Engine.Close()
+	}
 	if s.Database != nil {
 		return s.Database.Close()
 	}

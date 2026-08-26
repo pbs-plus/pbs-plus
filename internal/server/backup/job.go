@@ -1,4 +1,3 @@
-
 //go:build linux
 
 package backup
@@ -713,7 +712,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 		}
 	}
 
-	startupMu := b.storeInstance.Manager.StartupMu()
+	startupMu := b.storeInstance.Engine.StartupMu()
 	startupMu.Lock()
 
 	b.mu.RLock()

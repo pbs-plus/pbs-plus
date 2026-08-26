@@ -21,6 +21,16 @@ SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
 FROM job_executions
 WHERE dedupe_key = ?;
 
+-- name: GetActiveWorkflowExecutionByDefinition :one
+SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
+    max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
+    lease_until, cancel_requested, last_error, parent_execution_id, created_at,
+    started_at, finished_at
+FROM job_executions
+WHERE kind = ? AND definition_id = ? AND state IN ('pending', 'running')
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: CreateWorkflowExecutionResource :exec
 INSERT INTO job_execution_resources (execution_id, resource_key) VALUES (?, ?);
 

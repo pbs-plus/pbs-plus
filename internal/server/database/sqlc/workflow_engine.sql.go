@@ -314,6 +314,50 @@ func (q *Queries) FinishWorkflowExecution(ctx context.Context, arg FinishWorkflo
 	return result.RowsAffected()
 }
 
+const getActiveWorkflowExecutionByDefinition = `-- name: GetActiveWorkflowExecutionByDefinition :one
+SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
+    max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
+    lease_until, cancel_requested, last_error, parent_execution_id, created_at,
+    started_at, finished_at
+FROM job_executions
+WHERE kind = ? AND definition_id = ? AND state IN ('pending', 'running')
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetActiveWorkflowExecutionByDefinitionParams struct {
+	Kind         string `json:"kind"`
+	DefinitionID string `json:"definition_id"`
+}
+
+func (q *Queries) GetActiveWorkflowExecutionByDefinition(ctx context.Context, arg GetActiveWorkflowExecutionByDefinitionParams) (JobExecution, error) {
+	row := q.db.QueryRowContext(ctx, getActiveWorkflowExecutionByDefinition, arg.Kind, arg.DefinitionID)
+	var i JobExecution
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DefinitionID,
+		&i.Trigger,
+		&i.DedupeKey,
+		&i.Payload,
+		&i.State,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.RetryInitialSeconds,
+		&i.RetryMaxSeconds,
+		&i.RunAt,
+		&i.LeaseOwner,
+		&i.LeaseUntil,
+		&i.CancelRequested,
+		&i.LastError,
+		&i.ParentExecutionID,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const getWorkflowActivity = `-- name: GetWorkflowActivity :one
 SELECT execution_id, name, input_hash, state, attempt, result, checkpoint,
     last_error, created_at, started_at, completed_at
