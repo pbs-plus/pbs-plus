@@ -155,7 +155,7 @@ func ReadStatusFromLog(upid string) (TaskState, error) {
 
 		state, stErr := FromEndtimeAndMessage(endtime.Unix(), rest)
 		if stErr != nil {
-			return TaskState{Status: StatusUnknown, EndTime: endtime.Unix()}, nil
+			continue
 		}
 		return state, nil
 	}

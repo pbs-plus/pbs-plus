@@ -48,6 +48,8 @@ func (s TaskState) ResultText() string {
 
 func FromEndtimeAndMessage(endtime int64, msg string) (TaskState, error) {
 	switch {
+	case msg == "":
+		return TaskState{}, fmt.Errorf("unable to parse task status")
 	case msg == "unknown":
 		return TaskState{Status: StatusUnknown, EndTime: endtime}, nil
 	case msg == "OK":

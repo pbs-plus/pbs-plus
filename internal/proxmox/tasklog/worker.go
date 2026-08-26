@@ -36,10 +36,11 @@ func NewWorkerTask(node, workerType, wid string) (*WorkerTask, error) {
 		Task: task,
 		file: file,
 	}
-	workerTaskList.Store(task.TaskId, wt)
+	registerWorker(wt)
+	startControlSocket()
 
 	if err := Reconcile(task.UPID); err != nil {
-		workerTaskList.Delete(task.TaskId)
+		unregisterWorker(task.TaskId)
 		wt.close()
 		return nil, fmt.Errorf("tasklog: register active task: %w", err)
 	}
@@ -88,7 +89,7 @@ func (w *WorkerTask) CloseWithStatus(state TaskState) {
 		slog.Error(err.Error())
 	}
 
-	workerTaskList.Delete(w.Task.TaskId)
+	unregisterWorker(w.Task.TaskId)
 	if err := Reconcile(""); err != nil {
 		slog.Error("tasklog: reconcile after close", "error", err, "upid", w.Task.UPID)
 	}
@@ -152,10 +153,11 @@ func ReopenWorkerTask(upid string) (*WorkerTask, error) {
 	}
 
 	wt := &WorkerTask{Task: parsed, file: file}
-	workerTaskList.Store(parsed.TaskId, wt)
+	registerWorker(wt)
+	startControlSocket()
 
 	if err := Reconcile(upid); err != nil {
-		workerTaskList.Delete(parsed.TaskId)
+		unregisterWorker(parsed.TaskId)
 		wt.close()
 		return nil, fmt.Errorf("tasklog: register active task: %w", err)
 	}

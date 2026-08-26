@@ -25,6 +25,24 @@ var (
 	lockPath    = conf.TaskLogsBasePath + "/.active.lock"
 )
 
+// PBS runs its task-managing daemon as the backup user (uid/gid 34 on
+// Debian); every shared file we create must be owned by it or the real
+// proxmox-backup loses access to the task list.
+const (
+	backupUID = 34
+	backupGID = 34
+)
+
+// chownTaskFile gives a shared task-list file to the backup user. Fatal
+// when running as root (like PBS's CreateOptions::owner); a no-op error
+// for unprivileged dev/test runs.
+func chownTaskFile(path string) error {
+	if err := os.Chown(path, backupUID, backupGID); err != nil && os.Geteuid() == 0 {
+		return fmt.Errorf("tasklog: chown %s: %w", path, err)
+	}
+	return nil
+}
+
 const lockTimeout = 15 * time.Second
 
 // taskListLock is PBS's TaskListLockGuard: an flock on tasks/.active.lock
@@ -32,9 +50,24 @@ const lockTimeout = 15 * time.Second
 type taskListLock struct{ f *os.File }
 
 func lockTaskList(exclusive bool) (*taskListLock, error) {
+	// PBS's init_worker_tasks creates the task dir before anyone touches
+	// the lock; do the same so a first run can take the lock at all.
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		return nil, fmt.Errorf("tasklog: create task dir: %w", err)
+	}
+	if err := chownTaskFile(taskDir); err != nil {
+		return nil, err
+	}
+
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0660)
 	if err != nil {
 		return nil, fmt.Errorf("tasklog: open task list lock: %w", err)
+	}
+	if err := chownTaskFile(lockPath); err != nil {
+		if cerr := f.Close(); cerr != nil {
+			slog.Error(cerr.Error())
+		}
+		return nil, err
 	}
 
 	how := syscall.LOCK_SH
@@ -143,6 +176,9 @@ func replaceFile(path, content string, perm os.FileMode) error {
 	if err := os.Chmod(tmpName, perm); err != nil {
 		return fmt.Errorf("tasklog: chmod temp file: %w", err)
 	}
+	if err := chownTaskFile(tmpName); err != nil {
+		return err
+	}
 	return os.Rename(tmpName, path)
 }
 
@@ -154,6 +190,12 @@ func appendArchiveLines(finished []TaskListInfo) error {
 	archive, err := os.OpenFile(archivePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0660)
 	if err != nil {
 		return fmt.Errorf("tasklog: open archive: %w", err)
+	}
+	if err := chownTaskFile(archivePath); err != nil {
+		if cerr := archive.Close(); cerr != nil {
+			slog.Error(cerr.Error())
+		}
+		return err
 	}
 	defer func() {
 		if cerr := archive.Close(); cerr != nil {
