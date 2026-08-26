@@ -17,3 +17,6 @@ internal/pxarmount/journal.db
 
 # Test binaries
 *.test
+
+# Agent session state
+/.pi/
