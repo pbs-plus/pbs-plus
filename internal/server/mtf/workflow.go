@@ -34,6 +34,11 @@ func RegisterMigration(engine *jobs.Engine, app *application.Runtime) error {
 
 func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	defer j.cleanup()
+	queued, err := tasklog.NewQueuedTask(mtfWorkerType, tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID), w.Execution.Trigger == "manual")
+	if err != nil {
+		return fmt.Errorf("creating queued MTF migration task: %w", err)
+	}
+	defer queued.Close()
 
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		task, err := startTask(j.job)
@@ -52,6 +57,7 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	if err := json.Unmarshal(startResRaw, &startRes); err != nil {
 		return jobs.NonRetryable(fmt.Errorf("decoding mtf start result: %w", err))
 	}
+	queued.Close()
 
 	_, err = w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		if j.task == nil {
@@ -123,6 +129,12 @@ func RegisterScan(engine *jobs.Engine, app *application.Runtime) error {
 }
 
 func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) error {
+	queued, err := tasklog.NewQueuedTask("mtfscan", scanWID(opts), w.Execution.Trigger == "manual")
+	if err != nil {
+		return fmt.Errorf("creating queued MTF scan task: %w", err)
+	}
+	defer queued.Close()
+
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		st, err := NewScanTask(opts)
 		if err != nil {
@@ -139,6 +151,7 @@ func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) er
 	if err := json.Unmarshal(startResRaw, &startRes); err != nil {
 		return jobs.NonRetryable(fmt.Errorf("decoding mtf scan start result: %w", err))
 	}
+	queued.Close()
 
 	scanErr := func() error {
 		_, err := w.Activity("scan", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
