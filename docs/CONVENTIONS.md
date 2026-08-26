@@ -62,6 +62,18 @@ CI checks the ones a linter can express. See `.golangci.yml`.
 - A type name is not required to be unique across the repository. It is
   required to be unambiguous once qualified. `conf.Config` and `mtls.Config`
   are fine.
+- Deliberate parallel shapes that were audited and KEEP their names:
+  `coredb.Store`/`jobdb.Store`/`mtfdb.Store` (one per database, qualified by
+  domain), `jobrpc.Service`/`mountrpc.Service`, `arpcfs.Node`/`s3fs.Node`,
+  `arpcfs.FileHandle`/`s3fs.FileHandle`, `<pkg>.Config`, and every
+  `<domain>` vs `<domain>query` model pair (sqlc row mirrors its domain
+  model - the package suffix disambiguates).
+- `mtls.TokenManager` was a pure delegation wrapper around
+  `crypto.TokenManager` and was deleted rather than renamed. Wrappers that
+  add nothing are the worst naming problem: two names for one thing.
+- `changer.Changer` was renamed `changer.Device` (stutter).
+- `snapshots.SnapshotManager` stays: the package exports a `Manager`
+  singleton, so call sites say `snapshots.Manager` with no stutter.
 - A type name IS wrong when the qualified name still fails to say which of two
   things it is, or when the same name models different things on both sides of
   the agent/server boundary and both get imported into one file.
@@ -72,6 +84,22 @@ CI checks the ones a linter can express. See `.golangci.yml`.
   sites does not have that property.
 - After any rename of a struct field, grep struct tags and `text/template`
   references. `gopls` guards compilation, not reflection.
+
+## Nesting
+
+- Prefer a deep tree over a flat file list, but a directory is a package in
+  Go: nest only where the boundary is real. Before splitting a package,
+  measure (a) how many unexported identifiers would cross the boundary and be
+  forced to export, and (b) whether most methods hang off one receiver type -
+  methods on a type cannot live in another package.
+- Audited outcome: `web/api` nests into per-domain packages (measured cost:
+  two identifiers); `coredb` stays flat (94 of 108 methods are on `*Store`);
+  `pxarmount`, `pxar`, `agentfs` stay flat (double-digit unexported
+  crossings); `internal/` top level stays flat by consumer group (any umbrella
+  name for the shared half would be `common` in disguise, and `internal/tape`
+  would collide with `proxmox/tape`).
+- Subpackage names end in their role when the bare domain is taken:
+  `backupapi`, `targetapi` - never an import alias.
 
 ## Commits during a restructure
 
