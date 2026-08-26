@@ -177,7 +177,7 @@ func StartServer(watcher chan<- struct{}, ctx context.Context, socketPath string
 	}
 
 	server := rpc.NewServer()
-	if err := server.Register(service); err != nil {
+	if err := server.RegisterName("JobRPCService", service); err != nil {
 		return fmt.Errorf("failed to register rpc service: %w", err)
 	}
 
