@@ -213,3 +213,16 @@ func ComputeAggregate(results []coredb.VerificationResult) VerificationAggregate
 func FormatSpeed(speed int) string {
 	return fmt.Sprintf("%.2f files/s", float64(speed))
 }
+
+type VerificationAggregate struct {
+	TotalJobs    int     `json:"total_jobs"`
+	TotalRuns    int     `json:"total_runs"`
+	TotalFiles   int     `json:"total_files"`
+	TotalFailed  int     `json:"total_failed"`
+	TotalSkipped int     `json:"total_skipped"`
+	PassRate     float64 `json:"pass_rate"`
+	CleanRuns    int     `json:"clean_runs"`
+	FailedRuns   int     `json:"failed_runs"`
+	Last30Days   int     `json:"last_30_days"`
+	Confidence   float64 `json:"confidence"`
+}

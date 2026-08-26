@@ -1,9 +1,0 @@
-Batch:    {{batch}}
-Total:    {{total}}
-Failed:   {{errors}}
-Success:  {{successful}}
-{{#if timeout}}Note: partial results (timeout reached){{/if}}
-
-Results:
-{{#each jobs}}  {{#if error}}FAIL{{else}}OK{{/if}} {{job-type}}/{{job-id}} ({{datastore}}){{#if error}} - {{error}}{{/if}}
-{{/each}}

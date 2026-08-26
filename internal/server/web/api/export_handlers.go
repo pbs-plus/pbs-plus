@@ -130,3 +130,8 @@ func D2DTargetTreeHandler(app *application.Runtime) http.HandlerFunc {
 		}
 	}
 }
+
+type TargetsTreeResponse struct {
+	Data   []TargetTreeNode `json:"data"`
+	Digest string           `json:"digest"`
+}

@@ -145,3 +145,16 @@ func ExtJsTokenSingleHandler(app *application.Runtime) http.HandlerFunc {
 		}
 	}
 }
+
+type TokensResponse struct {
+	Data   []coredb.AgentToken `json:"data"`
+	Digest string              `json:"digest"`
+}
+
+type TokenConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    coredb.AgentToken `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}

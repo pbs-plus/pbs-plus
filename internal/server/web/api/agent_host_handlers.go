@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -54,4 +55,12 @@ func ExtJsAgentSingleHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 	}
+}
+
+type AgentConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    coredb.AgentHost  `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
 }

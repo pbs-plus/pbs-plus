@@ -208,3 +208,16 @@ func ExtJsScriptSingleHandler(app *application.Runtime) http.HandlerFunc {
 		}
 	}
 }
+
+type ScriptsResponse struct {
+	Data   []coredb.Script `json:"data"`
+	Digest string          `json:"digest"`
+}
+
+type ScriptConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    coredb.Script     `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}

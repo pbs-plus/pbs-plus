@@ -482,3 +482,15 @@ func CAFingerprintHandler(app *application.Runtime) http.HandlerFunc {
 		}
 	}
 }
+
+type VersionResponse struct {
+	Version  string `json:"version"`
+	Embedded bool   `json:"embedded,omitempty"`
+}
+
+type ScriptConfig struct {
+	AgentUrl            string
+	ServerUrl           string
+	BootstrapToken      string
+	ServerCAFingerprint string
+}

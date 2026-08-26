@@ -418,3 +418,17 @@ func ExtJsTargetS3SecretHandler(app *application.Runtime) http.HandlerFunc {
 		}
 	}
 }
+
+type TargetsResponse struct {
+	Data    []coredb.Target `json:"data"`
+	Digest  string          `json:"digest"`
+	Success bool            `json:"success"`
+}
+
+type TargetConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    coredb.Target     `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}

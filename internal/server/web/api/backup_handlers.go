@@ -584,3 +584,27 @@ func ExtJsBackupUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 		}
 	}
 }
+
+type BackupConfigResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    any               `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}
+
+type BackupUPIDsResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    []coredb.Tasks    `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}
+
+type BackupRunResponse struct {
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    string            `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
+}
