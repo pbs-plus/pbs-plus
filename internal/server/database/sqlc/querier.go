@@ -13,10 +13,6 @@ type Querier interface {
 	AddJobToBatch(ctx context.Context, arg AddJobToBatchParams) error
 	AgentHostExists(ctx context.Context, name string) (int64, error)
 	BackupExists(ctx context.Context, id string) (int64, error)
-	CancelPendingWorkflowExecution(ctx context.Context, arg CancelPendingWorkflowExecutionParams) (int64, error)
-	CheckpointWorkflowActivity(ctx context.Context, arg CheckpointWorkflowActivityParams) (int64, error)
-	ClaimWorkflowExecution(ctx context.Context, arg ClaimWorkflowExecutionParams) (int64, error)
-	CompleteWorkflowActivity(ctx context.Context, arg CompleteWorkflowActivityParams) (int64, error)
 	CountBackups(ctx context.Context) (int64, error)
 	CountRestores(ctx context.Context) (int64, error)
 	CreateAgentHost(ctx context.Context, arg CreateAgentHostParams) error
@@ -30,12 +26,6 @@ type Querier interface {
 	CreateToken(ctx context.Context, arg CreateTokenParams) error
 	CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error
 	CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) (sql.Result, error)
-	CreateWorkflowActivity(ctx context.Context, arg CreateWorkflowActivityParams) (int64, error)
-	CreateWorkflowExecution(ctx context.Context, arg CreateWorkflowExecutionParams) error
-	CreateWorkflowExecutionEvent(ctx context.Context, arg CreateWorkflowExecutionEventParams) error
-	CreateWorkflowExecutionResource(ctx context.Context, arg CreateWorkflowExecutionResourceParams) error
-	CreateWorkflowResourceLock(ctx context.Context, arg CreateWorkflowResourceLockParams) (int64, error)
-	DelayWorkflowExecution(ctx context.Context, arg DelayWorkflowExecutionParams) error
 	DeleteAgentHost(ctx context.Context, name string) (int64, error)
 	DeleteAlertExclusion(ctx context.Context, id int64) error
 	DeleteAlertExclusionsByType(ctx context.Context, alertType string) error
@@ -43,7 +33,6 @@ type Querier interface {
 	DeleteBackup(ctx context.Context, id string) (int64, error)
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
-	DeleteExpiredWorkflowResourceLocks(ctx context.Context, leaseUntil int64) error
 	DeleteNotificationBatch(ctx context.Context, name string) error
 	DeleteRestore(ctx context.Context, id string) (int64, error)
 	DeleteScript(ctx context.Context, path string) (int64, error)
@@ -51,10 +40,6 @@ type Querier interface {
 	DeleteToken(ctx context.Context, token string) error
 	DeleteVerificationJob(ctx context.Context, id string) (int64, error)
 	DeleteVerificationResults(ctx context.Context, verificationJobID string) (int64, error)
-	DeleteWorkflowResourceLocks(ctx context.Context, executionID string) error
-	FailWorkflowActivity(ctx context.Context, arg FailWorkflowActivityParams) (int64, error)
-	FinishWorkflowExecution(ctx context.Context, arg FinishWorkflowExecutionParams) (int64, error)
-	GetActiveWorkflowExecutionByDefinition(ctx context.Context, arg GetActiveWorkflowExecutionByDefinitionParams) (JobExecution, error)
 	GetAgentHost(ctx context.Context, name string) (AgentHost, error)
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
 	GetAlertExclusion(ctx context.Context, id int64) (AlertExclusion, error)
@@ -75,9 +60,6 @@ type Querier interface {
 	GetToken(ctx context.Context, token string) (Token, error)
 	GetVerificationJob(ctx context.Context, id string) (VerificationJob, error)
 	GetVerificationResults(ctx context.Context, verificationJobID string) ([]VerificationResult, error)
-	GetWorkflowActivity(ctx context.Context, arg GetWorkflowActivityParams) (JobExecutionActivity, error)
-	GetWorkflowExecution(ctx context.Context, id string) (JobExecution, error)
-	GetWorkflowExecutionByDedupeKey(ctx context.Context, dedupeKey string) (JobExecution, error)
 	ListAlertExclusions(ctx context.Context, alertType string) ([]AlertExclusion, error)
 	ListAlertSettings(ctx context.Context) ([]AlertSetting, error)
 	ListAllAgentHosts(ctx context.Context) ([]AgentHost, error)
@@ -91,28 +73,19 @@ type Querier interface {
 	ListAllTokensWithDetails(ctx context.Context) ([]ListAllTokensWithDetailsRow, error)
 	ListAllVerificationJobs(ctx context.Context) ([]VerificationJob, error)
 	ListBatchJobs(ctx context.Context) ([]NotificationBatchJob, error)
-	ListClaimableWorkflowExecutionIDs(ctx context.Context, runAt int64) ([]string, error)
 	ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusionsRow, error)
 	ListNonRevokedTokens(ctx context.Context) ([]Token, error)
 	ListNotificationBatches(ctx context.Context) ([]NotificationBatch, error)
 	ListQueuedBackups(ctx context.Context) ([]ListQueuedBackupsRow, error)
 	ListQueuedRestores(ctx context.Context) ([]ListQueuedRestoresRow, error)
 	ListTargetsByAgentHost(ctx context.Context, agentHost sql.NullString) ([]ListTargetsByAgentHostRow, error)
-	ListWorkflowExecutionEvents(ctx context.Context, executionID string) ([]JobExecutionEvent, error)
-	ListWorkflowExecutionResources(ctx context.Context, executionID string) ([]string, error)
 	MarkVerificationResultStatus(ctx context.Context, arg MarkVerificationResultStatusParams) error
-	ReleaseWorkflowExecutionClaim(ctx context.Context, arg ReleaseWorkflowExecutionClaimParams) error
 	RemoveJobFromAllBatches(ctx context.Context, arg RemoveJobFromAllBatchesParams) error
 	RemoveJobFromBatch(ctx context.Context, arg RemoveJobFromBatchParams) error
 	RemoveJobsByBatch(ctx context.Context, batchName string) error
-	RenewWorkflowExecutionLease(ctx context.Context, arg RenewWorkflowExecutionLeaseParams) (int64, error)
-	RenewWorkflowResourceLocks(ctx context.Context, arg RenewWorkflowResourceLocksParams) error
-	RequestWorkflowExecutionCancellation(ctx context.Context, id string) (int64, error)
-	RequeueExpiredWorkflowExecutions(ctx context.Context, arg RequeueExpiredWorkflowExecutionsParams) error
 	RestoreExists(ctx context.Context, id string) (int64, error)
 	RevokeToken(ctx context.Context, token string) error
 	ScriptExists(ctx context.Context, path string) (int64, error)
-	StartWorkflowActivity(ctx context.Context, arg StartWorkflowActivityParams) (int64, error)
 	TargetExists(ctx context.Context, name string) (int64, error)
 	UpdateAgentHost(ctx context.Context, arg UpdateAgentHostParams) error
 	UpdateAlertLastSent(ctx context.Context, arg UpdateAlertLastSentParams) error

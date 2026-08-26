@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
 )
 
 const (
@@ -42,17 +42,17 @@ type MtfScanInput struct {
 	Barcodes      []string `json:"barcodes"`
 }
 
-func NewWorkflowSubmit(kind, definitionID, trigger, dedupeKey string, payload any, resources []string, maxAttempts int, retryDelay time.Duration) (database.WorkflowSubmit, error) {
+func NewWorkflowSubmit(kind, definitionID, trigger, dedupeKey string, payload any, resources []string, maxAttempts int, retryDelay time.Duration) (store.SubmitRequest, error) {
 	if dedupeKey == "" {
-		id, err := newExecutionID()
+		id, err := NewExecutionID()
 		if err != nil {
-			return database.WorkflowSubmit{}, err
+			return store.SubmitRequest{}, err
 		}
 		dedupeKey = id
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return database.WorkflowSubmit{}, fmt.Errorf("encoding workflow payload: %w", err)
+		return store.SubmitRequest{}, fmt.Errorf("encoding workflow payload: %w", err)
 	}
 	if maxAttempts < 1 {
 		maxAttempts = 1
@@ -60,7 +60,7 @@ func NewWorkflowSubmit(kind, definitionID, trigger, dedupeKey string, payload an
 	if retryDelay < time.Second {
 		retryDelay = time.Second
 	}
-	return database.WorkflowSubmit{
+	return store.SubmitRequest{
 		Kind:              kind,
 		DefinitionID:      definitionID,
 		Trigger:           trigger,

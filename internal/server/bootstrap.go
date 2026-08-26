@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	jobsstore "github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/server/rpc"
@@ -88,7 +89,11 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		}
 	}()
 
-	engine, err := jobs.NewEngine(storeInstance.Database, jobs.EngineConfig{MaxConcurrent: conf.MaxConcurrentClients})
+	engineDB, err := jobsstore.Open("")
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening workflow engine database: %w", err)
+	}
+	engine, err := jobs.NewEngine(engineDB, jobs.EngineConfig{MaxConcurrent: conf.MaxConcurrentClients})
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating workflow engine: %w", err)
 	}

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
 )
 
 func TestEngine_ReplaysCompletedActivities(t *testing.T) {
@@ -51,7 +51,7 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 		t.Fatal("first submission was not created")
 	}
 
-	execution = waitForWorkflowState(t, ctx, engine, execution.ID, database.WorkflowExecutionSucceeded)
+	execution = waitForWorkflowState(t, ctx, engine, execution.ID, store.StateSucceeded)
 	if firstRuns.Load() != 1 {
 		t.Fatalf("first activity ran %d times, want 1", firstRuns.Load())
 	}
@@ -68,7 +68,7 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 	if len(events) < 8 {
 		t.Fatalf("event count = %d, want durable workflow history", len(events))
 	}
-	if events[0].Type != "workflow.submitted" {
+	if events[0].Type != "execution.submitted" {
 		t.Fatalf("first event = %q, want workflow.submitted", events[0].Type)
 	}
 	_ = db
@@ -107,7 +107,7 @@ func TestEngine_CancelRunningWorkflow(t *testing.T) {
 	if _, err := engine.Cancel(ctx, execution.ID); err != nil {
 		t.Fatal(err)
 	}
-	waitForWorkflowState(t, ctx, engine, execution.ID, database.WorkflowExecutionCanceled)
+	waitForWorkflowState(t, ctx, engine, execution.ID, store.StateCanceled)
 }
 
 func TestDatabase_ClaimsResourceOnce(t *testing.T) {
@@ -117,29 +117,29 @@ func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	first.Resources = []string{"target:test"}
 	second := testWorkflowSubmit("test.lock", "second")
 	second.Resources = []string{"target:test"}
-	if _, _, err := db.SubmitWorkflow(ctx, first); err != nil {
+	if _, _, err := db.Submit(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := db.SubmitWorkflow(ctx, second); err != nil {
+	if _, _, err := db.Submit(ctx, second); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	claimed, ok, err := db.ClaimWorkflowExecution(ctx, "worker-a", now, now.Add(3*time.Second))
+	claimed, ok, err := db.Claim(ctx, "worker-a", now, now.Add(3*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !ok || claimed.ID != first.ID {
 		t.Fatalf("first claim = %#v, %t", claimed, ok)
 	}
-	if _, ok, err := db.ClaimWorkflowExecution(ctx, "worker-b", now, now.Add(3*time.Second)); err != nil {
+	if _, ok, err := db.Claim(ctx, "worker-b", now, now.Add(3*time.Second)); err != nil {
 		t.Fatal(err)
 	} else if ok {
 		t.Fatal("second execution claimed while its resource was locked")
 	}
-	if err := db.FinishWorkflowExecution(ctx, first.ID, "worker-a", database.WorkflowExecutionSucceeded, now, ""); err != nil {
+	if err := db.Finish(ctx, first.ID, "worker-a", store.StateSucceeded, now, ""); err != nil {
 		t.Fatal(err)
 	}
-	claimed, ok, err = db.ClaimWorkflowExecution(ctx, "worker-b", now.Add(time.Second), now.Add(4*time.Second))
+	claimed, ok, err = db.Claim(ctx, "worker-b", now.Add(time.Second), now.Add(4*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,9 +148,9 @@ func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	}
 }
 
-func newTestEngine(t *testing.T, ctx context.Context) (*Engine, *database.Database) {
+func newTestEngine(t *testing.T, ctx context.Context) (*Engine, *store.DB) {
 	t.Helper()
-	db, err := database.Initialize(ctx, filepath.Join(t.TempDir(), "engine.db"))
+	db, err := store.Open(filepath.Join(t.TempDir(), "jobs.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,8 +171,8 @@ func newTestEngine(t *testing.T, ctx context.Context) (*Engine, *database.Databa
 	return engine, db
 }
 
-func testWorkflowSubmit(kind, suffix string) database.WorkflowSubmit {
-	return database.WorkflowSubmit{
+func testWorkflowSubmit(kind, suffix string) store.SubmitRequest {
+	return store.SubmitRequest{
 		ID:                "workflow-" + suffix,
 		Kind:              kind,
 		DefinitionID:      "definition-" + suffix,
@@ -186,7 +186,7 @@ func testWorkflowSubmit(kind, suffix string) database.WorkflowSubmit {
 	}
 }
 
-func waitForWorkflowState(t *testing.T, ctx context.Context, engine *Engine, id, want string) database.WorkflowExecution {
+func waitForWorkflowState(t *testing.T, ctx context.Context, engine *Engine, id, want string) store.Execution {
 	t.Helper()
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()

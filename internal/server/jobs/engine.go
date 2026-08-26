@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
 )
 
 type EngineConfig struct {
@@ -26,7 +26,7 @@ type EngineConfig struct {
 }
 
 type Engine struct {
-	database      *database.Database
+	db            *store.DB
 	owner         string
 	leaseDuration time.Duration
 	pollInterval  time.Duration
@@ -48,7 +48,7 @@ type Workflow func(*WorkflowContext) error
 type Activity func(context.Context, ActivityInfo) (json.RawMessage, error)
 
 type ActivityInfo struct {
-	Execution        database.WorkflowExecution
+	Execution        store.Execution
 	Name             string
 	ResumeCheckpoint json.RawMessage
 	checkpoint       func(context.Context, json.RawMessage) error
@@ -56,8 +56,8 @@ type ActivityInfo struct {
 
 type WorkflowContext struct {
 	Context   context.Context
-	Execution database.WorkflowExecution
-	database  *database.Database
+	Execution store.Execution
+	db        *store.DB
 }
 
 type RetryableError struct {
@@ -99,8 +99,8 @@ func NonRetryable(err error) error {
 	return nonRetryableError{err: err}
 }
 
-func NewEngine(database *database.Database, config EngineConfig) (*Engine, error) {
-	if database == nil {
+func NewEngine(db *store.DB, config EngineConfig) (*Engine, error) {
+	if db == nil {
 		return nil, errors.New("workflow database is required")
 	}
 	if config.MaxConcurrent < 1 {
@@ -123,7 +123,7 @@ func NewEngine(database *database.Database, config EngineConfig) (*Engine, error
 		config.Owner = fmt.Sprintf("%s:%d", hostname, os.Getpid())
 	}
 	return &Engine{
-		database:      database,
+		db:            db,
 		owner:         config.Owner,
 		leaseDuration: config.LeaseDuration,
 		pollInterval:  config.PollInterval,
@@ -172,20 +172,20 @@ func (e *Engine) Close() {
 	e.wg.Wait()
 }
 
-func (e *Engine) Submit(ctx context.Context, request database.WorkflowSubmit) (database.WorkflowExecution, bool, error) {
+func (e *Engine) Submit(ctx context.Context, request store.SubmitRequest) (store.Execution, bool, error) {
 	if request.ID == "" {
-		id, err := newExecutionID()
+		id, err := NewExecutionID()
 		if err != nil {
-			return database.WorkflowExecution{}, false, err
+			return store.Execution{}, false, err
 		}
 		request.ID = id
 	}
 	if request.RunAt.IsZero() {
 		request.RunAt = time.Now()
 	}
-	execution, created, err := e.database.SubmitWorkflow(ctx, request)
+	execution, created, err := e.db.Submit(ctx, request)
 	if err != nil {
-		return database.WorkflowExecution{}, false, err
+		return store.Execution{}, false, err
 	}
 	if created {
 		e.signal()
@@ -193,10 +193,10 @@ func (e *Engine) Submit(ctx context.Context, request database.WorkflowSubmit) (d
 	return execution, created, nil
 }
 
-func (e *Engine) Cancel(ctx context.Context, id string) (database.WorkflowExecution, error) {
-	execution, err := e.database.CancelWorkflowExecution(ctx, id, time.Now())
+func (e *Engine) Cancel(ctx context.Context, id string) (store.Execution, error) {
+	execution, err := e.db.Cancel(ctx, id, time.Now())
 	if err != nil {
-		return database.WorkflowExecution{}, err
+		return store.Execution{}, err
 	}
 	if value, ok := e.running.Load(id); ok {
 		value.(context.CancelFunc)()
@@ -205,20 +205,20 @@ func (e *Engine) Cancel(ctx context.Context, id string) (database.WorkflowExecut
 	return execution, nil
 }
 
-func (e *Engine) CancelDefinition(ctx context.Context, kind, definitionID string) (database.WorkflowExecution, error) {
-	execution, err := e.database.GetActiveWorkflowExecution(ctx, kind, definitionID)
+func (e *Engine) CancelDefinition(ctx context.Context, kind, definitionID string) (store.Execution, error) {
+	execution, err := e.db.GetActiveExecution(ctx, kind, definitionID)
 	if err != nil {
-		return database.WorkflowExecution{}, err
+		return store.Execution{}, err
 	}
 	return e.Cancel(ctx, execution.ID)
 }
 
-func (e *Engine) Get(ctx context.Context, id string) (database.WorkflowExecution, error) {
-	return e.database.GetWorkflowExecution(ctx, id)
+func (e *Engine) Get(ctx context.Context, id string) (store.Execution, error) {
+	return e.db.GetExecution(ctx, id)
 }
 
-func (e *Engine) Events(ctx context.Context, id string) ([]database.WorkflowEvent, error) {
-	return e.database.ListWorkflowExecutionEvents(ctx, id)
+func (e *Engine) Events(ctx context.Context, id string) ([]store.Event, error) {
+	return e.db.ListEvents(ctx, id)
 }
 
 func (e *Engine) StartupMu() *sync.Mutex {
@@ -234,7 +234,7 @@ func (w *WorkflowContext) Activity(name string, input json.RawMessage, activity 
 		return nil, err
 	}
 	hash := sha256.Sum256(canonicalInput)
-	record, completed, err := w.database.StartWorkflowActivity(w.Context, w.Execution.ID, name, hex.EncodeToString(hash[:]), time.Now())
+	record, completed, err := w.db.StartActivity(w.Context, w.Execution.ID, name, hex.EncodeToString(hash[:]), time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -246,17 +246,17 @@ func (w *WorkflowContext) Activity(name string, input json.RawMessage, activity 
 		Name:             name,
 		ResumeCheckpoint: record.Checkpoint,
 		checkpoint: func(ctx context.Context, value json.RawMessage) error {
-			return w.database.CheckpointWorkflowActivity(ctx, w.Execution.ID, name, value)
+			return w.db.CheckpointActivity(ctx, w.Execution.ID, name, value)
 		},
 	}
 	result, err := activity(w.Context, info)
 	if err != nil {
-		if retryErr := w.database.RetryWorkflowActivity(w.Context, w.Execution.ID, name, err.Error()); retryErr != nil {
+		if retryErr := w.db.FailActivity(w.Context, w.Execution.ID, name, err.Error()); retryErr != nil {
 			return nil, fmt.Errorf("recording workflow activity failure: %w", retryErr)
 		}
 		return nil, err
 	}
-	if err := w.database.CompleteWorkflowActivity(w.Context, w.Execution.ID, name, result, time.Now()); err != nil {
+	if err := w.db.CompleteActivity(w.Context, w.Execution.ID, name, result, time.Now()); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -295,7 +295,7 @@ func (e *Engine) dispatch() bool {
 			return true
 		}
 
-		execution, claimed, err := e.database.ClaimWorkflowExecution(e.ctx, e.owner, time.Now(), time.Now().Add(e.leaseDuration))
+		execution, claimed, err := e.db.Claim(e.ctx, e.owner, time.Now(), time.Now().Add(e.leaseDuration))
 		if err != nil {
 			<-e.slots
 			log.Error(err, "workflow engine claim failed")
@@ -312,7 +312,7 @@ func (e *Engine) dispatch() bool {
 	}
 }
 
-func (e *Engine) runExecution(execution database.WorkflowExecution) {
+func (e *Engine) runExecution(execution store.Execution) {
 	e.runnersMu.RLock()
 	workflow := e.runners[execution.Kind]
 	e.runnersMu.RUnlock()
@@ -330,7 +330,7 @@ func (e *Engine) runExecution(execution database.WorkflowExecution) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- workflow(&WorkflowContext{Context: ctx, Execution: execution, database: e.database})
+		done <- workflow(&WorkflowContext{Context: ctx, Execution: execution, db: e.db})
 	}()
 
 	heartbeat := time.NewTicker(e.leaseDuration / 3)
@@ -341,7 +341,7 @@ func (e *Engine) runExecution(execution database.WorkflowExecution) {
 			e.finish(execution, err)
 			return
 		case <-heartbeat.C:
-			if err := e.database.RenewWorkflowExecutionLease(e.ctx, execution.ID, e.owner, time.Now().Add(e.leaseDuration)); err != nil {
+			if err := e.db.RenewLease(e.ctx, execution.ID, e.owner, time.Now().Add(e.leaseDuration)); err != nil {
 				cancel()
 				log.Error(err, "workflow engine lease renewal failed", "executionID", execution.ID)
 			}
@@ -353,8 +353,8 @@ func (e *Engine) runExecution(execution database.WorkflowExecution) {
 	}
 }
 
-func (e *Engine) finish(execution database.WorkflowExecution, runErr error) {
-	current, err := e.database.GetWorkflowExecution(e.ctx, execution.ID)
+func (e *Engine) finish(execution store.Execution, runErr error) {
+	current, err := e.db.GetExecution(e.ctx, execution.ID)
 	if err != nil {
 		log.Error(err, "workflow engine state lookup failed", "executionID", execution.ID)
 		return
@@ -366,11 +366,11 @@ func (e *Engine) finish(execution database.WorkflowExecution, runErr error) {
 		return
 	}
 	if runErr == nil {
-		state := database.WorkflowExecutionSucceeded
+		state := store.StateSucceeded
 		if execution.CancelRequested {
-			state = database.WorkflowExecutionCanceled
+			state = store.StateCanceled
 		}
-		if err := e.database.FinishWorkflowExecution(e.ctx, execution.ID, e.owner, state, time.Now(), ""); err != nil {
+		if err := e.db.Finish(e.ctx, execution.ID, e.owner, state, time.Now(), ""); err != nil {
 			log.Error(err, "workflow engine completion failed", "executionID", execution.ID)
 		}
 		return
@@ -378,21 +378,21 @@ func (e *Engine) finish(execution database.WorkflowExecution, runErr error) {
 
 	var nonRetryable nonRetryableError
 	if errors.As(runErr, &nonRetryable) || execution.Attempt >= execution.MaxAttempts {
-		if err := e.database.FinishWorkflowExecution(e.ctx, execution.ID, e.owner, database.WorkflowExecutionFailed, time.Now(), runErr.Error()); err != nil {
+		if err := e.db.Finish(e.ctx, execution.ID, e.owner, store.StateFailed, time.Now(), runErr.Error()); err != nil {
 			log.Error(err, "workflow engine failure completion failed", "executionID", execution.ID)
 		}
 		return
 	}
 
 	delay := retryDelay(execution, runErr)
-	if err := e.database.FinishWorkflowExecution(e.ctx, execution.ID, e.owner, database.WorkflowExecutionPending, time.Now().Add(delay), runErr.Error()); err != nil {
+	if err := e.db.Finish(e.ctx, execution.ID, e.owner, store.StatePending, time.Now().Add(delay), runErr.Error()); err != nil {
 		log.Error(err, "workflow engine retry scheduling failed", "executionID", execution.ID)
 		return
 	}
 	e.signal()
 }
 
-func retryDelay(execution database.WorkflowExecution, err error) time.Duration {
+func retryDelay(execution store.Execution, err error) time.Duration {
 	delay := execution.RetryInitialDelay
 	var retryable *RetryableError
 	if errors.As(err, &retryable) && retryable.Delay > 0 {
@@ -421,7 +421,7 @@ func canonicalJSON(value json.RawMessage) ([]byte, error) {
 	return json.Marshal(decoded)
 }
 
-func newExecutionID() (string, error) {
+func NewExecutionID() (string, error) {
 	var bytes [16]byte
 	if _, err := rand.Read(bytes[:]); err != nil {
 		return "", fmt.Errorf("generating workflow execution ID: %w", err)

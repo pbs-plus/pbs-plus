@@ -1,4 +1,4 @@
-CREATE TABLE job_executions (
+CREATE TABLE IF NOT EXISTS job_executions (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
     definition_id TEXT NOT NULL,
@@ -21,23 +21,23 @@ CREATE TABLE job_executions (
     finished_at INTEGER
 );
 
-CREATE INDEX job_executions_claim_idx ON job_executions(state, run_at, lease_until);
+CREATE INDEX IF NOT EXISTS job_executions_claim_idx ON job_executions(state, run_at, lease_until);
 
-CREATE TABLE job_execution_resources (
+CREATE TABLE IF NOT EXISTS job_execution_resources (
     execution_id TEXT NOT NULL REFERENCES job_executions(id) ON DELETE CASCADE,
     resource_key TEXT NOT NULL,
     PRIMARY KEY (execution_id, resource_key)
 );
 
-CREATE TABLE job_resource_locks (
+CREATE TABLE IF NOT EXISTS job_resource_locks (
     resource_key TEXT PRIMARY KEY,
     execution_id TEXT NOT NULL REFERENCES job_executions(id) ON DELETE CASCADE,
     lease_until INTEGER NOT NULL
 );
 
-CREATE INDEX job_resource_locks_lease_idx ON job_resource_locks(lease_until);
+CREATE INDEX IF NOT EXISTS job_resource_locks_lease_idx ON job_resource_locks(lease_until);
 
-CREATE TABLE job_execution_activities (
+CREATE TABLE IF NOT EXISTS job_execution_activities (
     execution_id TEXT NOT NULL REFERENCES job_executions(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     input_hash TEXT NOT NULL,
@@ -52,7 +52,7 @@ CREATE TABLE job_execution_activities (
     PRIMARY KEY (execution_id, name)
 );
 
-CREATE TABLE job_execution_events (
+CREATE TABLE IF NOT EXISTS job_execution_events (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     execution_id TEXT NOT NULL REFERENCES job_executions(id) ON DELETE CASCADE,
     event_type TEXT NOT NULL,
@@ -60,20 +60,4 @@ CREATE TABLE job_execution_events (
     created_at INTEGER NOT NULL
 );
 
-CREATE INDEX job_execution_events_execution_idx ON job_execution_events(execution_id, sequence);
-
-CREATE TABLE job_schedules (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    definition_id TEXT NOT NULL,
-    schedule TEXT NOT NULL,
-    timezone TEXT NOT NULL,
-    request TEXT NOT NULL,
-    recovery_policy TEXT NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 1,
-    last_run_at INTEGER,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE UNIQUE INDEX job_schedules_definition_idx ON job_schedules(kind, definition_id);
+CREATE INDEX IF NOT EXISTS job_execution_events_execution_idx ON job_execution_events(execution_id, sequence);

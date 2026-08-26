@@ -3,60 +3,60 @@
 //   sqlc v1.30.0
 // source: workflow_engine.sql
 
-package sqlc
+package jobquery
 
 import (
 	"context"
 	"database/sql"
 )
 
-const cancelPendingWorkflowExecution = `-- name: CancelPendingWorkflowExecution :execrows
+const cancelPendingExecution = `-- name: CancelPendingExecution :execrows
 UPDATE job_executions
 SET state = 'canceled', finished_at = ?, lease_owner = NULL, lease_until = NULL
 WHERE id = ? AND state = 'pending' AND cancel_requested = 1
 `
 
-type CancelPendingWorkflowExecutionParams struct {
+type CancelPendingExecutionParams struct {
 	FinishedAt sql.NullInt64 `json:"finished_at"`
 	ID         string        `json:"id"`
 }
 
-func (q *Queries) CancelPendingWorkflowExecution(ctx context.Context, arg CancelPendingWorkflowExecutionParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, cancelPendingWorkflowExecution, arg.FinishedAt, arg.ID)
+func (q *Queries) CancelPendingExecution(ctx context.Context, arg CancelPendingExecutionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelPendingExecution, arg.FinishedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const checkpointWorkflowActivity = `-- name: CheckpointWorkflowActivity :execrows
+const checkpointActivity = `-- name: CheckpointActivity :execrows
 UPDATE job_execution_activities
 SET checkpoint = ?
 WHERE execution_id = ? AND name = ? AND state = 'running'
 `
 
-type CheckpointWorkflowActivityParams struct {
+type CheckpointActivityParams struct {
 	Checkpoint  sql.NullString `json:"checkpoint"`
 	ExecutionID string         `json:"execution_id"`
 	Name        string         `json:"name"`
 }
 
-func (q *Queries) CheckpointWorkflowActivity(ctx context.Context, arg CheckpointWorkflowActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, checkpointWorkflowActivity, arg.Checkpoint, arg.ExecutionID, arg.Name)
+func (q *Queries) CheckpointActivity(ctx context.Context, arg CheckpointActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, checkpointActivity, arg.Checkpoint, arg.ExecutionID, arg.Name)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const claimWorkflowExecution = `-- name: ClaimWorkflowExecution :execrows
+const claimExecution = `-- name: ClaimExecution :execrows
 UPDATE job_executions
 SET state = 'running', attempt = attempt + 1, lease_owner = ?, lease_until = ?,
     started_at = COALESCE(started_at, ?)
 WHERE id = ? AND state = 'pending' AND cancel_requested = 0 AND run_at <= ?
 `
 
-type ClaimWorkflowExecutionParams struct {
+type ClaimExecutionParams struct {
 	LeaseOwner sql.NullString `json:"lease_owner"`
 	LeaseUntil sql.NullInt64  `json:"lease_until"`
 	StartedAt  sql.NullInt64  `json:"started_at"`
@@ -64,8 +64,8 @@ type ClaimWorkflowExecutionParams struct {
 	RunAt      int64          `json:"run_at"`
 }
 
-func (q *Queries) ClaimWorkflowExecution(ctx context.Context, arg ClaimWorkflowExecutionParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, claimWorkflowExecution,
+func (q *Queries) ClaimExecution(ctx context.Context, arg ClaimExecutionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimExecution,
 		arg.LeaseOwner,
 		arg.LeaseUntil,
 		arg.StartedAt,
@@ -78,21 +78,21 @@ func (q *Queries) ClaimWorkflowExecution(ctx context.Context, arg ClaimWorkflowE
 	return result.RowsAffected()
 }
 
-const completeWorkflowActivity = `-- name: CompleteWorkflowActivity :execrows
+const completeActivity = `-- name: CompleteActivity :execrows
 UPDATE job_execution_activities
 SET state = 'completed', result = ?, completed_at = ?
 WHERE execution_id = ? AND name = ? AND state = 'running'
 `
 
-type CompleteWorkflowActivityParams struct {
+type CompleteActivityParams struct {
 	Result      sql.NullString `json:"result"`
 	CompletedAt sql.NullInt64  `json:"completed_at"`
 	ExecutionID string         `json:"execution_id"`
 	Name        string         `json:"name"`
 }
 
-func (q *Queries) CompleteWorkflowActivity(ctx context.Context, arg CompleteWorkflowActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, completeWorkflowActivity,
+func (q *Queries) CompleteActivity(ctx context.Context, arg CompleteActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, completeActivity,
 		arg.Result,
 		arg.CompletedAt,
 		arg.ExecutionID,
@@ -104,22 +104,22 @@ func (q *Queries) CompleteWorkflowActivity(ctx context.Context, arg CompleteWork
 	return result.RowsAffected()
 }
 
-const createWorkflowActivity = `-- name: CreateWorkflowActivity :execrows
+const createActivity = `-- name: CreateActivity :execrows
 INSERT INTO job_execution_activities (
     execution_id, name, input_hash, state, created_at
 ) VALUES (?, ?, ?, 'pending', ?)
 ON CONFLICT(execution_id, name) DO NOTHING
 `
 
-type CreateWorkflowActivityParams struct {
+type CreateActivityParams struct {
 	ExecutionID string `json:"execution_id"`
 	Name        string `json:"name"`
 	InputHash   string `json:"input_hash"`
 	CreatedAt   int64  `json:"created_at"`
 }
 
-func (q *Queries) CreateWorkflowActivity(ctx context.Context, arg CreateWorkflowActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, createWorkflowActivity,
+func (q *Queries) CreateActivity(ctx context.Context, arg CreateActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createActivity,
 		arg.ExecutionID,
 		arg.Name,
 		arg.InputHash,
@@ -131,7 +131,7 @@ func (q *Queries) CreateWorkflowActivity(ctx context.Context, arg CreateWorkflow
 	return result.RowsAffected()
 }
 
-const createWorkflowExecution = `-- name: CreateWorkflowExecution :exec
+const createExecution = `-- name: CreateExecution :exec
 INSERT INTO job_executions (
     id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, created_at,
@@ -139,7 +139,7 @@ INSERT INTO job_executions (
 ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?)
 `
 
-type CreateWorkflowExecutionParams struct {
+type CreateExecutionParams struct {
 	ID                  string         `json:"id"`
 	Kind                string         `json:"kind"`
 	DefinitionID        string         `json:"definition_id"`
@@ -154,8 +154,8 @@ type CreateWorkflowExecutionParams struct {
 	ParentExecutionID   sql.NullString `json:"parent_execution_id"`
 }
 
-func (q *Queries) CreateWorkflowExecution(ctx context.Context, arg CreateWorkflowExecutionParams) error {
-	_, err := q.db.ExecContext(ctx, createWorkflowExecution,
+func (q *Queries) CreateExecution(ctx context.Context, arg CreateExecutionParams) error {
+	_, err := q.db.ExecContext(ctx, createExecution,
 		arg.ID,
 		arg.Kind,
 		arg.DefinitionID,
@@ -172,20 +172,20 @@ func (q *Queries) CreateWorkflowExecution(ctx context.Context, arg CreateWorkflo
 	return err
 }
 
-const createWorkflowExecutionEvent = `-- name: CreateWorkflowExecutionEvent :exec
+const createExecutionEvent = `-- name: CreateExecutionEvent :exec
 INSERT INTO job_execution_events (execution_id, event_type, data, created_at)
 VALUES (?, ?, ?, ?)
 `
 
-type CreateWorkflowExecutionEventParams struct {
+type CreateExecutionEventParams struct {
 	ExecutionID string `json:"execution_id"`
 	EventType   string `json:"event_type"`
 	Data        string `json:"data"`
 	CreatedAt   int64  `json:"created_at"`
 }
 
-func (q *Queries) CreateWorkflowExecutionEvent(ctx context.Context, arg CreateWorkflowExecutionEventParams) error {
-	_, err := q.db.ExecContext(ctx, createWorkflowExecutionEvent,
+func (q *Queries) CreateExecutionEvent(ctx context.Context, arg CreateExecutionEventParams) error {
+	_, err := q.db.ExecContext(ctx, createExecutionEvent,
 		arg.ExecutionID,
 		arg.EventType,
 		arg.Data,
@@ -194,21 +194,21 @@ func (q *Queries) CreateWorkflowExecutionEvent(ctx context.Context, arg CreateWo
 	return err
 }
 
-const createWorkflowExecutionResource = `-- name: CreateWorkflowExecutionResource :exec
+const createExecutionResource = `-- name: CreateExecutionResource :exec
 INSERT INTO job_execution_resources (execution_id, resource_key) VALUES (?, ?)
 `
 
-type CreateWorkflowExecutionResourceParams struct {
+type CreateExecutionResourceParams struct {
 	ExecutionID string `json:"execution_id"`
 	ResourceKey string `json:"resource_key"`
 }
 
-func (q *Queries) CreateWorkflowExecutionResource(ctx context.Context, arg CreateWorkflowExecutionResourceParams) error {
-	_, err := q.db.ExecContext(ctx, createWorkflowExecutionResource, arg.ExecutionID, arg.ResourceKey)
+func (q *Queries) CreateExecutionResource(ctx context.Context, arg CreateExecutionResourceParams) error {
+	_, err := q.db.ExecContext(ctx, createExecutionResource, arg.ExecutionID, arg.ResourceKey)
 	return err
 }
 
-const createWorkflowResourceLock = `-- name: CreateWorkflowResourceLock :execrows
+const createResourceLock = `-- name: CreateResourceLock :execrows
 INSERT INTO job_resource_locks (resource_key, execution_id, lease_until)
 VALUES (?, ?, ?)
 ON CONFLICT(resource_key) DO UPDATE SET
@@ -217,80 +217,80 @@ ON CONFLICT(resource_key) DO UPDATE SET
 WHERE job_resource_locks.execution_id = excluded.execution_id
 `
 
-type CreateWorkflowResourceLockParams struct {
+type CreateResourceLockParams struct {
 	ResourceKey string `json:"resource_key"`
 	ExecutionID string `json:"execution_id"`
 	LeaseUntil  int64  `json:"lease_until"`
 }
 
-func (q *Queries) CreateWorkflowResourceLock(ctx context.Context, arg CreateWorkflowResourceLockParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, createWorkflowResourceLock, arg.ResourceKey, arg.ExecutionID, arg.LeaseUntil)
+func (q *Queries) CreateResourceLock(ctx context.Context, arg CreateResourceLockParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createResourceLock, arg.ResourceKey, arg.ExecutionID, arg.LeaseUntil)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const delayWorkflowExecution = `-- name: DelayWorkflowExecution :exec
+const delayExecution = `-- name: DelayExecution :exec
 UPDATE job_executions SET run_at = ? WHERE id = ? AND state = 'pending'
 `
 
-type DelayWorkflowExecutionParams struct {
+type DelayExecutionParams struct {
 	RunAt int64  `json:"run_at"`
 	ID    string `json:"id"`
 }
 
-func (q *Queries) DelayWorkflowExecution(ctx context.Context, arg DelayWorkflowExecutionParams) error {
-	_, err := q.db.ExecContext(ctx, delayWorkflowExecution, arg.RunAt, arg.ID)
+func (q *Queries) DelayExecution(ctx context.Context, arg DelayExecutionParams) error {
+	_, err := q.db.ExecContext(ctx, delayExecution, arg.RunAt, arg.ID)
 	return err
 }
 
-const deleteExpiredWorkflowResourceLocks = `-- name: DeleteExpiredWorkflowResourceLocks :exec
+const deleteExpiredResourceLocks = `-- name: DeleteExpiredResourceLocks :exec
 DELETE FROM job_resource_locks WHERE lease_until < ?
 `
 
-func (q *Queries) DeleteExpiredWorkflowResourceLocks(ctx context.Context, leaseUntil int64) error {
-	_, err := q.db.ExecContext(ctx, deleteExpiredWorkflowResourceLocks, leaseUntil)
+func (q *Queries) DeleteExpiredResourceLocks(ctx context.Context, leaseUntil int64) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredResourceLocks, leaseUntil)
 	return err
 }
 
-const deleteWorkflowResourceLocks = `-- name: DeleteWorkflowResourceLocks :exec
+const deleteResourceLocks = `-- name: DeleteResourceLocks :exec
 DELETE FROM job_resource_locks WHERE execution_id = ?
 `
 
-func (q *Queries) DeleteWorkflowResourceLocks(ctx context.Context, executionID string) error {
-	_, err := q.db.ExecContext(ctx, deleteWorkflowResourceLocks, executionID)
+func (q *Queries) DeleteResourceLocks(ctx context.Context, executionID string) error {
+	_, err := q.db.ExecContext(ctx, deleteResourceLocks, executionID)
 	return err
 }
 
-const failWorkflowActivity = `-- name: FailWorkflowActivity :execrows
+const failActivity = `-- name: FailActivity :execrows
 UPDATE job_execution_activities
 SET state = 'pending', last_error = ?
 WHERE execution_id = ? AND name = ? AND state = 'running'
 `
 
-type FailWorkflowActivityParams struct {
+type FailActivityParams struct {
 	LastError   sql.NullString `json:"last_error"`
 	ExecutionID string         `json:"execution_id"`
 	Name        string         `json:"name"`
 }
 
-func (q *Queries) FailWorkflowActivity(ctx context.Context, arg FailWorkflowActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, failWorkflowActivity, arg.LastError, arg.ExecutionID, arg.Name)
+func (q *Queries) FailActivity(ctx context.Context, arg FailActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, failActivity, arg.LastError, arg.ExecutionID, arg.Name)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const finishWorkflowExecution = `-- name: FinishWorkflowExecution :execrows
+const finishExecution = `-- name: FinishExecution :execrows
 UPDATE job_executions
 SET state = ?, run_at = ?, lease_owner = NULL, lease_until = NULL,
     last_error = ?, finished_at = ?
 WHERE id = ? AND state = 'running' AND lease_owner = ?
 `
 
-type FinishWorkflowExecutionParams struct {
+type FinishExecutionParams struct {
 	State      string         `json:"state"`
 	RunAt      int64          `json:"run_at"`
 	LastError  sql.NullString `json:"last_error"`
@@ -299,8 +299,8 @@ type FinishWorkflowExecutionParams struct {
 	LeaseOwner sql.NullString `json:"lease_owner"`
 }
 
-func (q *Queries) FinishWorkflowExecution(ctx context.Context, arg FinishWorkflowExecutionParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, finishWorkflowExecution,
+func (q *Queries) FinishExecution(ctx context.Context, arg FinishExecutionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, finishExecution,
 		arg.State,
 		arg.RunAt,
 		arg.LastError,
@@ -314,7 +314,7 @@ func (q *Queries) FinishWorkflowExecution(ctx context.Context, arg FinishWorkflo
 	return result.RowsAffected()
 }
 
-const getActiveWorkflowExecutionByDefinition = `-- name: GetActiveWorkflowExecutionByDefinition :one
+const getActiveExecutionByDefinition = `-- name: GetActiveExecutionByDefinition :one
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
@@ -325,13 +325,13 @@ ORDER BY created_at DESC
 LIMIT 1
 `
 
-type GetActiveWorkflowExecutionByDefinitionParams struct {
+type GetActiveExecutionByDefinitionParams struct {
 	Kind         string `json:"kind"`
 	DefinitionID string `json:"definition_id"`
 }
 
-func (q *Queries) GetActiveWorkflowExecutionByDefinition(ctx context.Context, arg GetActiveWorkflowExecutionByDefinitionParams) (JobExecution, error) {
-	row := q.db.QueryRowContext(ctx, getActiveWorkflowExecutionByDefinition, arg.Kind, arg.DefinitionID)
+func (q *Queries) GetActiveExecutionByDefinition(ctx context.Context, arg GetActiveExecutionByDefinitionParams) (JobExecution, error) {
+	row := q.db.QueryRowContext(ctx, getActiveExecutionByDefinition, arg.Kind, arg.DefinitionID)
 	var i JobExecution
 	err := row.Scan(
 		&i.ID,
@@ -358,20 +358,20 @@ func (q *Queries) GetActiveWorkflowExecutionByDefinition(ctx context.Context, ar
 	return i, err
 }
 
-const getWorkflowActivity = `-- name: GetWorkflowActivity :one
+const getActivity = `-- name: GetActivity :one
 SELECT execution_id, name, input_hash, state, attempt, result, checkpoint,
     last_error, created_at, started_at, completed_at
 FROM job_execution_activities
 WHERE execution_id = ? AND name = ?
 `
 
-type GetWorkflowActivityParams struct {
+type GetActivityParams struct {
 	ExecutionID string `json:"execution_id"`
 	Name        string `json:"name"`
 }
 
-func (q *Queries) GetWorkflowActivity(ctx context.Context, arg GetWorkflowActivityParams) (JobExecutionActivity, error) {
-	row := q.db.QueryRowContext(ctx, getWorkflowActivity, arg.ExecutionID, arg.Name)
+func (q *Queries) GetActivity(ctx context.Context, arg GetActivityParams) (JobExecutionActivity, error) {
+	row := q.db.QueryRowContext(ctx, getActivity, arg.ExecutionID, arg.Name)
 	var i JobExecutionActivity
 	err := row.Scan(
 		&i.ExecutionID,
@@ -389,7 +389,7 @@ func (q *Queries) GetWorkflowActivity(ctx context.Context, arg GetWorkflowActivi
 	return i, err
 }
 
-const getWorkflowExecution = `-- name: GetWorkflowExecution :one
+const getExecution = `-- name: GetExecution :one
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
@@ -398,8 +398,8 @@ FROM job_executions
 WHERE id = ?
 `
 
-func (q *Queries) GetWorkflowExecution(ctx context.Context, id string) (JobExecution, error) {
-	row := q.db.QueryRowContext(ctx, getWorkflowExecution, id)
+func (q *Queries) GetExecution(ctx context.Context, id string) (JobExecution, error) {
+	row := q.db.QueryRowContext(ctx, getExecution, id)
 	var i JobExecution
 	err := row.Scan(
 		&i.ID,
@@ -426,7 +426,7 @@ func (q *Queries) GetWorkflowExecution(ctx context.Context, id string) (JobExecu
 	return i, err
 }
 
-const getWorkflowExecutionByDedupeKey = `-- name: GetWorkflowExecutionByDedupeKey :one
+const getExecutionByDedupeKey = `-- name: GetExecutionByDedupeKey :one
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
@@ -435,8 +435,8 @@ FROM job_executions
 WHERE dedupe_key = ?
 `
 
-func (q *Queries) GetWorkflowExecutionByDedupeKey(ctx context.Context, dedupeKey string) (JobExecution, error) {
-	row := q.db.QueryRowContext(ctx, getWorkflowExecutionByDedupeKey, dedupeKey)
+func (q *Queries) GetExecutionByDedupeKey(ctx context.Context, dedupeKey string) (JobExecution, error) {
+	row := q.db.QueryRowContext(ctx, getExecutionByDedupeKey, dedupeKey)
 	var i JobExecution
 	err := row.Scan(
 		&i.ID,
@@ -463,7 +463,7 @@ func (q *Queries) GetWorkflowExecutionByDedupeKey(ctx context.Context, dedupeKey
 	return i, err
 }
 
-const listClaimableWorkflowExecutionIDs = `-- name: ListClaimableWorkflowExecutionIDs :many
+const listClaimableExecutionIDs = `-- name: ListClaimableExecutionIDs :many
 SELECT id
 FROM job_executions
 WHERE state = 'pending' AND cancel_requested = 0 AND run_at <= ?
@@ -471,8 +471,8 @@ ORDER BY run_at, created_at
 LIMIT 32
 `
 
-func (q *Queries) ListClaimableWorkflowExecutionIDs(ctx context.Context, runAt int64) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listClaimableWorkflowExecutionIDs, runAt)
+func (q *Queries) ListClaimableExecutionIDs(ctx context.Context, runAt int64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listClaimableExecutionIDs, runAt)
 	if err != nil {
 		return nil, err
 	}
@@ -494,15 +494,15 @@ func (q *Queries) ListClaimableWorkflowExecutionIDs(ctx context.Context, runAt i
 	return items, nil
 }
 
-const listWorkflowExecutionEvents = `-- name: ListWorkflowExecutionEvents :many
+const listExecutionEvents = `-- name: ListExecutionEvents :many
 SELECT sequence, execution_id, event_type, data, created_at
 FROM job_execution_events
 WHERE execution_id = ?
 ORDER BY sequence
 `
 
-func (q *Queries) ListWorkflowExecutionEvents(ctx context.Context, executionID string) ([]JobExecutionEvent, error) {
-	rows, err := q.db.QueryContext(ctx, listWorkflowExecutionEvents, executionID)
+func (q *Queries) ListExecutionEvents(ctx context.Context, executionID string) ([]JobExecutionEvent, error) {
+	rows, err := q.db.QueryContext(ctx, listExecutionEvents, executionID)
 	if err != nil {
 		return nil, err
 	}
@@ -530,12 +530,12 @@ func (q *Queries) ListWorkflowExecutionEvents(ctx context.Context, executionID s
 	return items, nil
 }
 
-const listWorkflowExecutionResources = `-- name: ListWorkflowExecutionResources :many
+const listExecutionResources = `-- name: ListExecutionResources :many
 SELECT resource_key FROM job_execution_resources WHERE execution_id = ? ORDER BY resource_key
 `
 
-func (q *Queries) ListWorkflowExecutionResources(ctx context.Context, executionID string) ([]string, error) {
-	rows, err := q.db.QueryContext(ctx, listWorkflowExecutionResources, executionID)
+func (q *Queries) ListExecutionResources(ctx context.Context, executionID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listExecutionResources, executionID)
 	if err != nil {
 		return nil, err
 	}
@@ -557,99 +557,99 @@ func (q *Queries) ListWorkflowExecutionResources(ctx context.Context, executionI
 	return items, nil
 }
 
-const releaseWorkflowExecutionClaim = `-- name: ReleaseWorkflowExecutionClaim :exec
+const releaseExecutionClaim = `-- name: ReleaseExecutionClaim :exec
 UPDATE job_executions
 SET state = 'pending', lease_owner = NULL, lease_until = NULL, run_at = ?
 WHERE id = ? AND state = 'running' AND lease_owner = ?
 `
 
-type ReleaseWorkflowExecutionClaimParams struct {
+type ReleaseExecutionClaimParams struct {
 	RunAt      int64          `json:"run_at"`
 	ID         string         `json:"id"`
 	LeaseOwner sql.NullString `json:"lease_owner"`
 }
 
-func (q *Queries) ReleaseWorkflowExecutionClaim(ctx context.Context, arg ReleaseWorkflowExecutionClaimParams) error {
-	_, err := q.db.ExecContext(ctx, releaseWorkflowExecutionClaim, arg.RunAt, arg.ID, arg.LeaseOwner)
+func (q *Queries) ReleaseExecutionClaim(ctx context.Context, arg ReleaseExecutionClaimParams) error {
+	_, err := q.db.ExecContext(ctx, releaseExecutionClaim, arg.RunAt, arg.ID, arg.LeaseOwner)
 	return err
 }
 
-const renewWorkflowExecutionLease = `-- name: RenewWorkflowExecutionLease :execrows
+const renewExecutionLease = `-- name: RenewExecutionLease :execrows
 UPDATE job_executions SET lease_until = ?
 WHERE id = ? AND state = 'running' AND lease_owner = ?
 `
 
-type RenewWorkflowExecutionLeaseParams struct {
+type RenewExecutionLeaseParams struct {
 	LeaseUntil sql.NullInt64  `json:"lease_until"`
 	ID         string         `json:"id"`
 	LeaseOwner sql.NullString `json:"lease_owner"`
 }
 
-func (q *Queries) RenewWorkflowExecutionLease(ctx context.Context, arg RenewWorkflowExecutionLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, renewWorkflowExecutionLease, arg.LeaseUntil, arg.ID, arg.LeaseOwner)
+func (q *Queries) RenewExecutionLease(ctx context.Context, arg RenewExecutionLeaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renewExecutionLease, arg.LeaseUntil, arg.ID, arg.LeaseOwner)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const renewWorkflowResourceLocks = `-- name: RenewWorkflowResourceLocks :exec
+const renewResourceLocks = `-- name: RenewResourceLocks :exec
 UPDATE job_resource_locks SET lease_until = ? WHERE execution_id = ?
 `
 
-type RenewWorkflowResourceLocksParams struct {
+type RenewResourceLocksParams struct {
 	LeaseUntil  int64  `json:"lease_until"`
 	ExecutionID string `json:"execution_id"`
 }
 
-func (q *Queries) RenewWorkflowResourceLocks(ctx context.Context, arg RenewWorkflowResourceLocksParams) error {
-	_, err := q.db.ExecContext(ctx, renewWorkflowResourceLocks, arg.LeaseUntil, arg.ExecutionID)
+func (q *Queries) RenewResourceLocks(ctx context.Context, arg RenewResourceLocksParams) error {
+	_, err := q.db.ExecContext(ctx, renewResourceLocks, arg.LeaseUntil, arg.ExecutionID)
 	return err
 }
 
-const requestWorkflowExecutionCancellation = `-- name: RequestWorkflowExecutionCancellation :execrows
+const requestExecutionCancellation = `-- name: RequestExecutionCancellation :execrows
 UPDATE job_executions SET cancel_requested = 1
 WHERE id = ? AND state IN ('pending', 'running')
 `
 
-func (q *Queries) RequestWorkflowExecutionCancellation(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, requestWorkflowExecutionCancellation, id)
+func (q *Queries) RequestExecutionCancellation(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, requestExecutionCancellation, id)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
-const requeueExpiredWorkflowExecutions = `-- name: RequeueExpiredWorkflowExecutions :exec
+const requeueExpiredExecutions = `-- name: RequeueExpiredExecutions :exec
 UPDATE job_executions
 SET state = 'pending', lease_owner = NULL, lease_until = NULL, run_at = ?
 WHERE state = 'running' AND lease_until < ? AND cancel_requested = 0
 `
 
-type RequeueExpiredWorkflowExecutionsParams struct {
+type RequeueExpiredExecutionsParams struct {
 	RunAt      int64         `json:"run_at"`
 	LeaseUntil sql.NullInt64 `json:"lease_until"`
 }
 
-func (q *Queries) RequeueExpiredWorkflowExecutions(ctx context.Context, arg RequeueExpiredWorkflowExecutionsParams) error {
-	_, err := q.db.ExecContext(ctx, requeueExpiredWorkflowExecutions, arg.RunAt, arg.LeaseUntil)
+func (q *Queries) RequeueExpiredExecutions(ctx context.Context, arg RequeueExpiredExecutionsParams) error {
+	_, err := q.db.ExecContext(ctx, requeueExpiredExecutions, arg.RunAt, arg.LeaseUntil)
 	return err
 }
 
-const startWorkflowActivity = `-- name: StartWorkflowActivity :execrows
+const startActivity = `-- name: StartActivity :execrows
 UPDATE job_execution_activities
 SET state = 'running', attempt = attempt + 1, started_at = ?, last_error = NULL
 WHERE execution_id = ? AND name = ? AND state IN ('pending', 'running')
 `
 
-type StartWorkflowActivityParams struct {
+type StartActivityParams struct {
 	StartedAt   sql.NullInt64 `json:"started_at"`
 	ExecutionID string        `json:"execution_id"`
 	Name        string        `json:"name"`
 }
 
-func (q *Queries) StartWorkflowActivity(ctx context.Context, arg StartWorkflowActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, startWorkflowActivity, arg.StartedAt, arg.ExecutionID, arg.Name)
+func (q *Queries) StartActivity(ctx context.Context, arg StartActivityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, startActivity, arg.StartedAt, arg.ExecutionID, arg.Name)
 	if err != nil {
 		return 0, err
 	}

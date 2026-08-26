@@ -202,10 +202,10 @@ func (database *Database) GetVerificationJob(id string) (VerificationJob, error)
 }
 
 func (database *Database) populateVerificationJobExtras(job *VerificationJob) {
-	if database.readDb != nil {
+	if database.Reader() != nil {
 		var targetMode string
 		var recursive int
-		if err := database.readDb.QueryRowContext(database.ctx,
+		if err := database.Reader().QueryRowContext(database.ctx,
 			"SELECT COALESCE(target_mode, 'backup_job'), COALESCE(recursive, 0) FROM verification_jobs WHERE id = ?",
 			job.ID,
 		).Scan(&targetMode, &recursive); err == nil {
