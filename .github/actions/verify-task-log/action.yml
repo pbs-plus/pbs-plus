@@ -11,6 +11,9 @@ inputs:
   allow-warnings:
     required: false
     default: "false"
+  append-job-id:
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -20,11 +23,17 @@ runs:
       run: |
         set -euo pipefail
 
-        job_id_encoded=$(printf '%s' '${{ inputs.job-id }}' | base64 -w0)
-        history=$(docker exec pbs-plus-test curl -k -fsS "https://localhost:8017/api2/extjs/${{ inputs.endpoint }}/${job_id_encoded}" -H "Accept: application/json")
-        upid=$(jq -er '.data.history."last-run-upid"' <<<"$history")
-        state=$(jq -er '.data.history."last-run-state"' <<<"$history")
-        endtime=$(jq -er '.data.history."last-run-endtime"' <<<"$history")
+        job_id='${{ inputs.job-id }}'
+        job_id_encoded=$(printf '%s' "$job_id" | base64 -w0)
+        history_url="https://localhost:8017/api2/${{ inputs.endpoint }}"
+        if [[ '${{ inputs.append-job-id }}' == 'true' ]]; then
+          history_url+="/$job_id_encoded"
+        fi
+        response=$(docker exec pbs-plus-test curl -k -fsS "$history_url" -H "Accept: application/json")
+        history=$(jq -er --arg job_id "$job_id" 'if .data | type == "object" then .data.history else .data[] | select(.id == $job_id) end' <<<"$response")
+        upid=$(jq -er '."last-run-upid"' <<<"$history")
+        state=$(jq -er '."last-run-state"' <<<"$history")
+        endtime=$(jq -er '."last-run-endtime"' <<<"$history")
 
         upid_pattern='^UPID:[^[:space:]:]+:[[:xdigit:]]{8}:[[:xdigit:]]{8,9}:[[:xdigit:]]{8,16}:[[:xdigit:]]{8}:[^[:space:]:]+:[^[:space:]:]*:[^[:space:]:]+:$'
         if ! [[ "$upid" =~ $upid_pattern ]]; then
