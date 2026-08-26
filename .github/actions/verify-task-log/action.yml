@@ -42,7 +42,7 @@ runs:
           docker exec pbs-plus-test curl -k -sS "$history_url" -H "Accept: application/json" || true
           if [[ -n ${upid:-} ]]; then
             printf '%s\n' "Task UPID: $upid"
-            docker exec -e UPID="$upid" pbs-plus-test sh -ec 'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); path="/var/log/proxmox-backup/tasks/$bucket/$UPID"; printf "%s\\n" "Task log path: $path"; ls -la "/var/log/proxmox-backup/tasks/$bucket"; if [ -f "$path" ]; then cat "$path"; fi; printf "%s\\n" "Archive entries:"; awk -v upid="$UPID" '\''$1 == upid { print }'\'' /var/log/proxmox-backup/tasks/archive' || true
+            docker exec -e UPID="$upid" pbs-plus-test sh -ec 'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); path="/var/log/proxmox-backup/tasks/$bucket/$UPID"; printf "%s\\n" "Task log path: $path"; ls -la "/var/log/proxmox-backup/tasks/$bucket"; if [ -f "$path" ]; then cat "$path"; fi; printf "%s\\n" "Archive entries:"; awk '\''$1 == ENVIRON["UPID"] { print }'\'' /var/log/proxmox-backup/tasks/archive' || true
           fi
           printf '%s\n' "PBS Plus server logs (last 200 lines):"
           docker logs --tail=200 pbs-plus-test 2>&1 || true
@@ -100,7 +100,7 @@ runs:
           exit 1
         fi
 
-        archive_line=$(docker exec -e UPID="$upid" pbs-plus-test sh -ec 'awk -v upid="$UPID" '\''$1 == upid { line = $0 } END { print line }'\'' /var/log/proxmox-backup/tasks/archive')
+        archive_line=$(docker exec -e UPID="$upid" pbs-plus-test sh -ec 'awk '\''$1 == ENVIRON["UPID"] { line = $0 } END { print line }'\'' /var/log/proxmox-backup/tasks/archive')
         read -r archive_upid archive_endtime archive_state <<<"$archive_line"
         if [[ "$archive_upid" != "$upid" ]] || ! [[ "$archive_endtime" =~ ^[[:xdigit:]]{8}$ ]] || [[ "$archive_state" != "$state" ]]; then
           echo "Invalid PBS archive entry: $archive_line"
