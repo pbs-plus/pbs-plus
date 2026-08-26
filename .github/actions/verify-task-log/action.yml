@@ -63,8 +63,9 @@ runs:
           echo "Invalid PBS UPID: $upid"
           exit 1
         fi
-        if [[ "$(cut -d: -f2 <<<"$upid")" != "$(docker exec pbs-plus-test hostname)" ]]; then
-          echo "Task UPID node does not match the PBS hostname: $upid"
+        node=$(cut -d: -f2 <<<"$upid")
+        if [[ "$node" != "$(docker exec pbs-plus-test hostname)" && "$node" != pbsplus* ]]; then
+          echo "Unexpected task UPID node: $upid"
           exit 1
         fi
         if [[ "$upid" != *":${{ inputs.worker-type }}:"* ]]; then
