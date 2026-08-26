@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package mtfdb
 
 import (
 	"context"
@@ -10,15 +10,15 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb/mtfquery"
 	"github.com/pbs-plus/pbs-plus/internal/sqldb"
 )
 
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-type Database struct {
-	*sqldb.DB
+type Store struct {
+	*sqldb.Handle
 	queries     *mtfquery.Queries
 	readQueries *mtfquery.Queries
 }
@@ -26,7 +26,7 @@ type Database struct {
 // Transaction releases the writer lock on commit or rollback.
 type Transaction = sqldb.Tx
 
-func Initialize(ctx context.Context, dbPath string) (*Database, error) {
+func Initialize(ctx context.Context, dbPath string) (*Store, error) {
 	if dbPath == "" {
 		dbPath = "/etc/proxmox-backup/pbs-plus/tapes.db"
 	}
@@ -36,8 +36,8 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("tapestore: %w", err)
 	}
 
-	d := &Database{
-		DB:          db,
+	d := &Store{
+		Handle:      db,
 		queries:     mtfquery.New(db.Writer()),
 		readQueries: mtfquery.New(db.Reader()),
 	}
@@ -58,20 +58,20 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	return d, nil
 }
 
-func (d *Database) Ping(ctx context.Context) error {
-	return d.DB.Ping(ctx)
+func (d *Store) Ping(ctx context.Context) error {
+	return d.Handle.Ping(ctx)
 }
 
-func (d *Database) Queries() *mtfquery.Queries { return d.queries }
+func (d *Store) Queries() *mtfquery.Queries { return d.queries }
 
-func (d *Database) NewTransaction() (*Transaction, error) {
+func (d *Store) NewTransaction() (*Transaction, error) {
 	return d.Begin(context.Background())
 }
 
 // RunInTransaction runs fn in a write transaction; error rolls back,
 // panic rolls back and re-panics.
-func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *mtfquery.Queries) error) error {
-	return d.DB.RunInTransaction(ctx, func(tx *Transaction) error {
+func (d *Store) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *mtfquery.Queries) error) error {
+	return d.Handle.RunInTransaction(ctx, func(tx *Transaction) error {
 		return fn(tx, d.queries.WithTx(tx.Tx))
 	})
 }

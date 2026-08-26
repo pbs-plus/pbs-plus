@@ -20,10 +20,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/bootstrap"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/web"
 )
 
@@ -78,14 +78,14 @@ func main() {
 	}
 	_ = cli.GetToken()
 
-	storeInstance, err := store.Initialize(mainCtx, nil)
+	app, err := application.New(mainCtx, nil)
 	if err != nil {
 		log.Error(err, "failed to initialize store")
 		return
 	}
 
 	if len(backupsRun) > 0 || len(restoresRun) > 0 {
-		runOneShotJobs(storeInstance, backupsRun, restoresRun, extExclusions, *stop, *webRun)
+		runOneShotJobs(app, backupsRun, restoresRun, extExclusions, *stop, *webRun)
 		return
 	}
 
@@ -104,14 +104,14 @@ func main() {
 
 	// Bootstrap: cert generation, secret key, token manager, mount cleanup,
 	// queue cleanup, scheduler, and RPC servers.
-	_, _, err = backend.Bootstrap(mainCtx, storeInstance)
+	_, _, err = bootstrap.Run(mainCtx, app)
 	if err != nil {
 		log.Error(err, "bootstrap failed")
 		return
 	}
 
 	// Create and start all HTTP/ARPC servers.
-	server, err := web.NewServer(storeInstance, Version)
+	server, err := web.NewServer(app, Version)
 	if err != nil {
 		log.Error(err, "failed to create server")
 		return
@@ -156,7 +156,7 @@ func validateEnvironment() error {
 	return nil
 }
 
-func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExclusions []string, stop, webRun bool) {
+func runOneShotJobs(app *application.Runtime, backupsRun, restoresRun, extExclusions []string, stop, webRun bool) {
 	conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
 	if err != nil {
 		log.Error(err, "", "restores", restoresRun, "backups", backupsRun)
@@ -171,7 +171,7 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 	}()
 
 	for _, backupRun := range backupsRun {
-		backupTask, err := storeInstance.Database.GetBackup(backupRun)
+		backupTask, err := app.CoreDB.GetBackup(backupRun)
 		if err != nil {
 			log.Error(err, "", "backupID", backupRun)
 			continue
@@ -195,7 +195,7 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 	}
 
 	for _, restoreRun := range restoresRun {
-		restoreTask, err := storeInstance.Database.GetRestore(restoreRun)
+		restoreTask, err := app.CoreDB.GetRestore(restoreRun)
 		if err != nil {
 			log.Error(err, "", "restoreID", restoreRun)
 			continue

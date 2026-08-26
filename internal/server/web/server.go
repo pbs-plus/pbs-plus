@@ -16,27 +16,28 @@ import (
 	"sync"
 	"time"
 
+	"net/http/pprof"
+
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api"
-	"net/http/pprof"
 )
 
 type Server struct {
 	APIServer   *http.Server
 	AgentServer *http.Server
 	ARPCRouter  arpc.Router
-	Store       *store.Store
+	Store       *application.Runtime
 	Version     string
 
 	shutdownCh chan struct{}
 	wg         sync.WaitGroup
 }
 
-func NewServer(storeInstance *store.Store, version string) (*Server, error) {
+func NewServer(app *application.Runtime, version string) (*Server, error) {
 	apiLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -44,79 +45,79 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux := http.NewServeMux()
 	agentMux := http.NewServeMux()
 
-	apiMux.HandleFunc("/api2/json/d2d/backup", ServerOnly(storeInstance, api.D2DBackupHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/restore", ServerOnly(storeInstance, api.D2DRestoreHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/target", ServerOnly(storeInstance, api.D2DTargetHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/target/tree", ServerOnly(storeInstance, api.D2DTargetTreeHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/script", ServerOnly(storeInstance, api.D2DScriptHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/token", ServerOnly(storeInstance, api.D2DTokenHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", ServerOnly(storeInstance, api.D2DFileTree(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/exclusion", AgentOrServer(storeInstance, api.D2DExclusionHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/backup", ServerOnly(app, api.D2DBackupHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/restore", ServerOnly(app, api.D2DRestoreHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/target", ServerOnly(app, api.D2DTargetHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/target/tree", ServerOnly(app, api.D2DTargetTreeHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/script", ServerOnly(app, api.D2DScriptHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/token", ServerOnly(app, api.D2DTokenHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/filetree/{target}", ServerOnly(app, api.D2DFileTree(app)))
+	apiMux.HandleFunc("/api2/json/d2d/exclusion", AgentOrServer(app, api.D2DExclusionHandler(app)))
 
-	apiMux.HandleFunc("/api2/extjs/d2d/backup", ServerOnly(storeInstance, api.ExtJsBackupRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/d2d/backup/export", ServerOnly(storeInstance, api.ExtJsBackupCSVExportHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/d2d/restore", ServerOnly(storeInstance, api.ExtJsRestoreRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target", ServerOnly(storeInstance, api.ExtJsTargetHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target-status", ServerOnly(storeInstance, api.D2DTargetStatusHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-push-update", ServerOnly(storeInstance, api.ExtJsPushUpdateHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", ServerOnly(storeInstance, api.ExtJsTargetSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", ServerOnly(storeInstance, api.ExtJsTargetS3SecretHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", ServerOnly(storeInstance, api.ExtJsAgentSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-mount/{datastore}", ServerOnly(storeInstance, api.ExtJsMountHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", ServerOnly(storeInstance, api.ExtJsUnmountHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", ServerOnly(storeInstance, api.ExtJsUnmountAllHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-script", ServerOnly(storeInstance, api.ExtJsScriptHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-script/{path}", ServerOnly(storeInstance, api.ExtJsScriptSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-token", ServerOnly(storeInstance, api.ExtJsTokenHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-token/{token}", ServerOnly(storeInstance, api.ExtJsTokenSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion", ServerOnly(storeInstance, api.ExtJsExclusionHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", ServerOnly(storeInstance, api.ExtJsExclusionSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup", ServerOnly(storeInstance, api.ExtJsBackupHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", ServerOnly(storeInstance, api.ExtJsBackupSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", ServerOnly(storeInstance, api.ExtJsBackupUPIDsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-restore", ServerOnly(storeInstance, api.ExtJsRestoreHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", ServerOnly(storeInstance, api.ExtJsRestoreSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/plus/agent/install/win", api.AgentInstallScriptHandler(storeInstance, version))
-	apiMux.HandleFunc("/api2/json/d2d/verification", ServerOnly(storeInstance, api.D2DVerificationHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/d2d/verification", ServerOnly(storeInstance, api.ExtJsVerificationRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-verification", ServerOnly(storeInstance, api.ExtJsVerificationConfigHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}", ServerOnly(storeInstance, api.ExtJsVerificationConfigSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results", ServerOnly(storeInstance, api.ExtJsVerificationResultsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results/export", ServerOnly(storeInstance, api.VerificationResultsExportHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/verification/aggregate", ServerOnly(storeInstance, api.VerificationAggregateHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/d2d/backup", ServerOnly(app, api.ExtJsBackupRunHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/d2d/backup/export", ServerOnly(app, api.ExtJsBackupCSVExportHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/d2d/restore", ServerOnly(app, api.ExtJsRestoreRunHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target", ServerOnly(app, api.ExtJsTargetHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target-status", ServerOnly(app, api.D2DTargetStatusHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-push-update", ServerOnly(app, api.ExtJsPushUpdateHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}", ServerOnly(app, api.ExtJsTargetSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-target/{target}/s3-secret", ServerOnly(app, api.ExtJsTargetS3SecretHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-agent/{agent}", ServerOnly(app, api.ExtJsAgentSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-mount/{datastore}", ServerOnly(app, api.ExtJsMountHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", ServerOnly(app, api.ExtJsUnmountHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", ServerOnly(app, api.ExtJsUnmountAllHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-script", ServerOnly(app, api.ExtJsScriptHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-script/{path}", ServerOnly(app, api.ExtJsScriptSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-token", ServerOnly(app, api.ExtJsTokenHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-token/{token}", ServerOnly(app, api.ExtJsTokenSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion", ServerOnly(app, api.ExtJsExclusionHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-exclusion/{exclusion}", ServerOnly(app, api.ExtJsExclusionSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup", ServerOnly(app, api.ExtJsBackupHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}", ServerOnly(app, api.ExtJsBackupSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-backup/{backup}/upids", ServerOnly(app, api.ExtJsBackupUPIDsHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-restore", ServerOnly(app, api.ExtJsRestoreHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/disk-restore/{restore}", ServerOnly(app, api.ExtJsRestoreSingleHandler(app)))
+	apiMux.HandleFunc("/plus/agent/install/win", api.AgentInstallScriptHandler(app, version))
+	apiMux.HandleFunc("/api2/json/d2d/verification", ServerOnly(app, api.D2DVerificationHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/d2d/verification", ServerOnly(app, api.ExtJsVerificationRunHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-verification", ServerOnly(app, api.ExtJsVerificationConfigHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}", ServerOnly(app, api.ExtJsVerificationConfigSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results", ServerOnly(app, api.ExtJsVerificationResultsHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-verification/{id}/results/export", ServerOnly(app, api.VerificationResultsExportHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/verification/aggregate", ServerOnly(app, api.VerificationAggregateHandler(app)))
 
-	apiMux.HandleFunc("/api2/extjs/d2d/mtf-job", ServerOnly(storeInstance, api.ExtJsMtfJobRunHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-job", ServerOnly(storeInstance, api.ExtJsMtfJobHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}", ServerOnly(storeInstance, api.ExtJsMtfJobSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}/upids", ServerOnly(storeInstance, api.ExtJsMtfJobUPIDsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-inventory", ServerOnly(storeInstance, api.ExtJsMtfInventoryHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-scan", ServerOnly(storeInstance, api.ExtJsMtfScanHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping", ServerOnly(storeInstance, api.ExtJsMtfMappingHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping/{id}", ServerOnly(storeInstance, api.ExtJsMtfMappingSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/extjs/d2d/mtf-job", ServerOnly(app, api.ExtJsMtfJobRunHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-job", ServerOnly(app, api.ExtJsMtfJobHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}", ServerOnly(app, api.ExtJsMtfJobSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-job/{job}/upids", ServerOnly(app, api.ExtJsMtfJobUPIDsHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-inventory", ServerOnly(app, api.ExtJsMtfInventoryHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-scan", ServerOnly(app, api.ExtJsMtfScanHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping", ServerOnly(app, api.ExtJsMtfMappingHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/mtf-mapping/{id}", ServerOnly(app, api.ExtJsMtfMappingSingleHandler(app)))
 
-	apiMux.HandleFunc("/api2/json/d2d/notification-batch", ServerOnly(storeInstance, api.NotificationBatchHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/notification-batch/jobs", ServerOnly(storeInstance, api.NotificationBatchJobsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/notification-batch/status", ServerOnly(storeInstance, api.NotificationBatchStatusHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/notification-batch", ServerOnly(app, api.NotificationBatchHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/notification-batch/jobs", ServerOnly(app, api.NotificationBatchJobsHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/notification-batch/status", ServerOnly(app, api.NotificationBatchStatusHandler(app)))
 
-	apiMux.HandleFunc("/api2/json/d2d/alert-settings", ServerOnly(storeInstance, api.AlertSettingsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/alert-settings/{name}", ServerOnly(storeInstance, api.AlertSettingSingleHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions", ServerOnly(storeInstance, api.AlertExclusionsHandler(storeInstance)))
-	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions/{id}", ServerOnly(storeInstance, api.AlertExclusionSingleHandler(storeInstance)))
+	apiMux.HandleFunc("/api2/json/d2d/alert-settings", ServerOnly(app, api.AlertSettingsHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/alert-settings/{name}", ServerOnly(app, api.AlertSettingSingleHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions", ServerOnly(app, api.AlertExclusionsHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/alert-exclusions/{id}", ServerOnly(app, api.AlertExclusionSingleHandler(app)))
 
-	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(storeInstance))
-	apiMux.HandleFunc("/api2/json/plus/ca-fingerprint", ServerOnly(storeInstance, api.CAFingerprintHandler(storeInstance)))
+	apiMux.HandleFunc("/plus/metrics", api.PrometheusMetricsHandler(app))
+	apiMux.HandleFunc("/api2/json/plus/ca-fingerprint", ServerOnly(app, api.CAFingerprintHandler(app)))
 
-	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinaryHandler(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsiHandler(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSigHandler(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/binary/ecdsa-sig", api.DownloadECDSASigHandler(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksumHandler(storeInstance, version))
-	agentMux.HandleFunc("/api2/json/d2d/target/agent", AgentOnly(storeInstance, api.D2DTargetAgentHandler(storeInstance)))
-	agentMux.HandleFunc("/api2/json/d2d/agent-log", AgentOnly(storeInstance, api.AgentLogHandler(storeInstance)))
+	agentMux.HandleFunc("/api2/json/plus/version", api.VersionHandler(app, version))
+	agentMux.HandleFunc("/api2/json/plus/binary", api.DownloadBinaryHandler(app, version))
+	agentMux.HandleFunc("/api2/json/plus/msi", api.DownloadMsiHandler(app, version))
+	agentMux.HandleFunc("/api2/json/plus/binary/sig", api.DownloadSigHandler(app, version))
+	agentMux.HandleFunc("/api2/json/plus/binary/ecdsa-sig", api.DownloadECDSASigHandler(app, version))
+	agentMux.HandleFunc("/api2/json/plus/binary/checksum", api.DownloadChecksumHandler(app, version))
+	agentMux.HandleFunc("/api2/json/d2d/target/agent", AgentOnly(app, api.D2DTargetAgentHandler(app)))
+	agentMux.HandleFunc("/api2/json/d2d/agent-log", AgentOnly(app, api.AgentLogHandler(app)))
 
-	agentMux.HandleFunc("/plus/agent/bootstrap", api.AgentBootstrapHandler(storeInstance))
-	agentMux.HandleFunc("/plus/agent/renew", AgentOnly(storeInstance, api.AgentRenewHandler(storeInstance)))
+	agentMux.HandleFunc("/plus/agent/bootstrap", api.AgentBootstrapHandler(app))
+	agentMux.HandleFunc("/plus/agent/renew", AgentOnly(app, api.AgentRenewHandler(app)))
 
 	apiMux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -124,7 +125,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiMux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if err := storeInstance.Database.Ping(ctx); err != nil {
+		if err := app.CoreDB.Ping(ctx); err != nil {
 			log.Error(err, "readiness check failed")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -141,7 +142,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 	apiHandler := SecurityHeaders(RateLimit(Recovery(RequestLogger(apiLogger)(RequestID(apiMux)))))
 	agentHandler := SecurityHeaders(RateLimit(Recovery(RequestLogger(apiLogger)(RequestID(agentMux)))))
 
-	serverConfig, err := storeInstance.CertManager.APIServerTLSConfig()
+	serverConfig, err := app.CertManager.APIServerTLSConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build server TLS config: %w", err)
 	}
@@ -184,7 +185,7 @@ func NewServer(storeInstance *store.Store, version string) (*Server, error) {
 		APIServer:   apiServer,
 		AgentServer: agentServer,
 		ARPCRouter:  router,
-		Store:       storeInstance,
+		Store:       app,
 		Version:     version,
 		shutdownCh:  make(chan struct{}),
 	}, nil
@@ -196,7 +197,7 @@ func (s *Server) StartARPC() error {
 		return fmt.Errorf("failed to build server TLS config: %w", err)
 	}
 
-	s.Store.ARPCAgentsManager.SetExtraExpectFunc(func(id string, certs []*x509.Certificate) bool {
+	s.Store.Agents.SetExtraExpectFunc(func(id string, certs []*x509.Certificate) bool {
 		if len(strings.Split(id, "|")) > 1 {
 			return false
 		}
@@ -207,7 +208,7 @@ func (s *Server) StartARPC() error {
 			return false
 		}
 
-		trustedCert, err := s.Store.Database.LoadAgentHostCert(id)
+		trustedCert, err := s.Store.CoreDB.LoadAgentHostCert(id)
 		if err != nil {
 			log.Error(err, "client unauthorized", "id", id)
 			return false
@@ -223,7 +224,7 @@ func (s *Server) StartARPC() error {
 		return false
 	})
 
-	return arpc.ListenAndServe(s.Store.Ctx, conf.ARPCServerPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
+	return arpc.ListenAndServe(s.Store.Ctx, conf.ARPCServerPort, s.Store.Agents, arpcTlsConfig, s.ARPCRouter)
 }
 
 func (s *Server) StartARPCQuic() error {
@@ -232,7 +233,7 @@ func (s *Server) StartARPCQuic() error {
 		return fmt.Errorf("failed to build server TLS config: %w", err)
 	}
 
-	return arpc.ListenAndServeQuic(s.Store.Ctx, conf.ARPCQuicPort, s.Store.ARPCAgentsManager, arpcTlsConfig, s.ARPCRouter)
+	return arpc.ListenAndServeQuic(s.Store.Ctx, conf.ARPCQuicPort, s.Store.Agents, arpcTlsConfig, s.ARPCRouter)
 }
 
 func (s *Server) StartAll() {

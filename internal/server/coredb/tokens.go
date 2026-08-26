@@ -28,7 +28,7 @@ func generateWinInstall(token string) string {
 		`iex(New-Object Net.WebClient).DownloadString("https://%s:%s/plus/agent/install/win?t=%s")`, hostname, strings.TrimPrefix(conf.ServerAPIExtPort, ":"), token)
 }
 
-func (db *DB) CreateToken(expiration time.Duration, comment string) error {
+func (db *Store) CreateToken(expiration time.Duration, comment string) error {
 	tokenStr, err := db.TokenManager.GenerateToken(expiration)
 	if err != nil {
 		return fmt.Errorf("CreateToken: error generating token: %w", err)
@@ -47,7 +47,7 @@ func (db *DB) CreateToken(expiration time.Duration, comment string) error {
 	return nil
 }
 
-func (db *DB) GetToken(tokenStr string) (AgentToken, error) {
+func (db *Store) GetToken(tokenStr string) (AgentToken, error) {
 	row, err := db.readQueries.GetToken(db.ctx, tokenStr)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -73,7 +73,7 @@ func (db *DB) GetToken(tokenStr string) (AgentToken, error) {
 	return tokenProp, nil
 }
 
-func (db *DB) GetAllTokens(includeRevoked bool) ([]AgentToken, error) {
+func (db *Store) GetAllTokens(includeRevoked bool) ([]AgentToken, error) {
 	var rows []corequery.Token
 	var err error
 
@@ -104,7 +104,7 @@ func (db *DB) GetAllTokens(includeRevoked bool) ([]AgentToken, error) {
 	return tokens, nil
 }
 
-func (db *DB) RevokeToken(tokenData AgentToken) error {
+func (db *Store) RevokeToken(tokenData AgentToken) error {
 	current, err := db.GetToken(tokenData.Token)
 	if err != nil {
 		return fmt.Errorf("RevokeToken: fetch current token: %w", err)
@@ -124,7 +124,7 @@ func (db *DB) RevokeToken(tokenData AgentToken) error {
 	return nil
 }
 
-func (db *DB) pruneOldTokensKeepLastValid(keep int) error {
+func (db *Store) pruneOldTokensKeepLastValid(keep int) error {
 	rows, err := db.readQueries.ListAllTokensWithDetails(db.ctx)
 	if err != nil {
 		return fmt.Errorf("pruneOldTokensKeepLastValid: query tokens: %w", err)

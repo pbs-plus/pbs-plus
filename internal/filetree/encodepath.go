@@ -1,4 +1,4 @@
-package server
+package filetree
 
 import (
 	"encoding/base64"
@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func EncodePath(decoded string) string {
+func encodePath(decoded string) string {
 	encoded := base64.StdEncoding.EncodeToString([]byte(decoded))
 	encoded = strings.TrimRight(encoded, "=")
 	encoded = strings.ReplaceAll(encoded, "+", "-")

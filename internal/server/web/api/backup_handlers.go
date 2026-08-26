@@ -14,20 +14,20 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DBackupHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		allBackups, err := storeInstance.BackupSvc.ListBackups()
+		allBackups, err := app.Backup.ListBackups()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -37,13 +37,13 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 		var staleDays int
 		var skipUnscheduled bool
 		var excludedJobs map[string]bool
-		if setting, err := storeInstance.Database.GetAlertSetting("stale-backup"); err == nil {
+		if setting, err := app.CoreDB.GetAlertSetting("stale-backup"); err == nil {
 			staleDays = setting.Threshold
 			skipUnscheduled = setting.SkipUnscheduled
 			if staleDays <= 0 {
 				staleDays = 7
 			}
-			excluded, err := storeInstance.Database.GetExcludedValues("stale-backup", "job")
+			excluded, err := app.CoreDB.GetExcludedValues("stale-backup", "job")
 			if err != nil {
 				log.Error(err, "")
 			}
@@ -71,7 +71,7 @@ func D2DBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -112,7 +112,7 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			}()
 
 			for _, backupID := range decodedBackupIDs {
-				backupTask, err := storeInstance.Database.GetBackup(backupID)
+				backupTask, err := app.CoreDB.GetBackup(backupID)
 				if err != nil {
 					log.Error(err, "", "backupID", backupID)
 					continue
@@ -145,7 +145,7 @@ func ExtJsBackupRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupConfigResponse{}
 		if r.Method != http.MethodPost {
@@ -285,13 +285,13 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			newBackup.Exclusions = append(newBackup.Exclusions, exclusionInst)
 		}
 
-		err = storeInstance.BackupSvc.CreateBackup(newBackup)
+		err = app.Backup.CreateBackup(newBackup)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		ApplyJobBatchAssignment(storeInstance, "backup", newBackup.ID, r.FormValue("notification-batch"))
+		ApplyJobBatchAssignment(app, "backup", newBackup.ID, r.FormValue("notification-batch"))
 
 		response.Status = http.StatusOK
 		response.Success = true
@@ -301,7 +301,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
@@ -318,7 +318,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			backup, err := storeInstance.BackupSvc.GetBackup(backupID)
+			backup, err := app.Backup.GetBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -485,13 +485,13 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.BackupSvc.UpdateBackup(backup)
+			err = app.Backup.UpdateBackup(backup)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
 
-			ApplyJobBatchAssignment(storeInstance, "backup", backup.ID, r.FormValue("notification-batch"))
+			ApplyJobBatchAssignment(app, "backup", backup.ID, r.FormValue("notification-batch"))
 
 			response.Status = http.StatusOK
 			response.Success = true
@@ -509,7 +509,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			backup, err := storeInstance.BackupSvc.GetBackup(backupID)
+			backup, err := app.Backup.GetBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -518,7 +518,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			flat := FlattenBackupForEdit(backup)
-			flat["notification-batch"] = GetJobBatchName(storeInstance, "backup", backup.ID)
+			flat["notification-batch"] = GetJobBatchName(app, "backup", backup.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
@@ -534,7 +534,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err := storeInstance.BackupSvc.DeleteBackup(backupID)
+			err := app.Backup.DeleteBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -550,7 +550,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsBackupUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupUPIDsResponse{}
 		if r.Method != http.MethodGet {
@@ -567,7 +567,7 @@ func ExtJsBackupUPIDsHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			backup, err := storeInstance.BackupSvc.GetBackup(backupID)
+			backup, err := app.Backup.GetBackup(backupID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

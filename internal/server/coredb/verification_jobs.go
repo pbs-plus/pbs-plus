@@ -17,7 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func (db *DB) CreateVerificationJob(tx *Transaction, job VerificationJob) (err error) {
+func (db *Store) CreateVerificationJob(tx *Transaction, job VerificationJob) (err error) {
 	var commitNeeded bool
 	q := db.queries
 
@@ -157,7 +157,7 @@ func (db *DB) CreateVerificationJob(tx *Transaction, job VerificationJob) (err e
 	return nil
 }
 
-func (db *DB) GetVerificationJob(id string) (VerificationJob, error) {
+func (db *Store) GetVerificationJob(id string) (VerificationJob, error) {
 	row, err := db.readQueries.GetVerificationJob(db.ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return VerificationJob{}, ErrNotFound
@@ -201,7 +201,7 @@ func (db *DB) GetVerificationJob(id string) (VerificationJob, error) {
 	return job, nil
 }
 
-func (db *DB) populateVerificationJobExtras(job *VerificationJob) {
+func (db *Store) populateVerificationJobExtras(job *VerificationJob) {
 	if db.Reader() != nil {
 		var targetMode string
 		var recursive int
@@ -243,7 +243,7 @@ func (db *DB) populateVerificationJobExtras(job *VerificationJob) {
 	}
 }
 
-func (db *DB) GetAllVerificationJobs() ([]VerificationJob, error) {
+func (db *Store) GetAllVerificationJobs() ([]VerificationJob, error) {
 	rows, err := db.readQueries.ListAllVerificationJobs(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllVerificationJobs: error querying: %w", err)
@@ -289,7 +289,7 @@ func (db *DB) GetAllVerificationJobs() ([]VerificationJob, error) {
 	return jobs, nil
 }
 
-func (db *DB) UpdateVerificationJob(tx *Transaction, job VerificationJob) (err error) {
+func (db *Store) UpdateVerificationJob(tx *Transaction, job VerificationJob) (err error) {
 	var commitNeeded bool
 	q := db.queries
 
@@ -387,7 +387,7 @@ func (db *DB) UpdateVerificationJob(tx *Transaction, job VerificationJob) (err e
 	return nil
 }
 
-func (db *DB) DeleteVerificationJob(tx *Transaction, id string) (err error) {
+func (db *Store) DeleteVerificationJob(tx *Transaction, id string) (err error) {
 	var commitNeeded bool
 	q := db.queries
 
@@ -437,7 +437,7 @@ func (db *DB) DeleteVerificationJob(tx *Transaction, id string) (err error) {
 	return nil
 }
 
-func (db *DB) CreateVerificationResult(result *VerificationResult) error {
+func (db *Store) CreateVerificationResult(result *VerificationResult) error {
 	detailsJSON, err := json.Marshal(result.Details)
 	if err != nil {
 		return fmt.Errorf("CreateVerificationResult: failed to marshal details: %w", err)
@@ -471,7 +471,7 @@ func (db *DB) CreateVerificationResult(result *VerificationResult) error {
 	return nil
 }
 
-func (db *DB) UpdateVerificationResult(result VerificationResult) error {
+func (db *Store) UpdateVerificationResult(result VerificationResult) error {
 	detailsJSON, err := json.Marshal(result.Details)
 	if err != nil {
 		return fmt.Errorf("UpdateVerificationResult: failed to marshal details: %w", err)
@@ -491,7 +491,7 @@ func (db *DB) UpdateVerificationResult(result VerificationResult) error {
 	})
 }
 
-func (db *DB) MarkVerificationResultStatus(id int, status string, completedAt int64) error {
+func (db *Store) MarkVerificationResultStatus(id int, status string, completedAt int64) error {
 	return db.queries.MarkVerificationResultStatus(db.ctx, corequery.MarkVerificationResultStatusParams{
 		Status:      toNullString(status),
 		CompletedAt: toNullInt64(int(completedAt)),
@@ -499,7 +499,7 @@ func (db *DB) MarkVerificationResultStatus(id int, status string, completedAt in
 	})
 }
 
-func (db *DB) GetVerificationResults(jobID string) ([]VerificationResult, error) {
+func (db *Store) GetVerificationResults(jobID string) ([]VerificationResult, error) {
 	rows, err := db.readQueries.GetVerificationResults(db.ctx, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("GetVerificationResults: error querying: %w", err)
@@ -535,7 +535,7 @@ func (db *DB) GetVerificationResults(jobID string) ([]VerificationResult, error)
 	return results, nil
 }
 
-func (db *DB) GetLatestVerificationResult(jobID string) (VerificationResult, error) {
+func (db *Store) GetLatestVerificationResult(jobID string) (VerificationResult, error) {
 	row, err := db.readQueries.GetLatestVerificationResult(db.ctx, jobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return VerificationResult{}, ErrNotFound

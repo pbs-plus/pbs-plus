@@ -1,14 +1,14 @@
-package store
+package mtfdb
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb/mtfquery"
 )
 
-func (d *Database) ListMediaFamilies(ctx context.Context) ([]MediaFamily, error) {
+func (d *Store) ListMediaFamilies(ctx context.Context) ([]MediaFamily, error) {
 	rows, err := d.readQueries.ListMediaFamilies(ctx)
 	if err != nil {
 		return nil, err
@@ -20,7 +20,7 @@ func (d *Database) ListMediaFamilies(ctx context.Context) ([]MediaFamily, error)
 	return out, nil
 }
 
-func (d *Database) GetMediaFamily(ctx context.Context, id int64) (MediaFamily, error) {
+func (d *Store) GetMediaFamily(ctx context.Context, id int64) (MediaFamily, error) {
 	r, err := d.readQueries.GetMediaFamily(ctx, id)
 	if err != nil {
 		return MediaFamily{}, mapErr(err, "media family")
@@ -28,7 +28,7 @@ func (d *Database) GetMediaFamily(ctx context.Context, id int64) (MediaFamily, e
 	return d.enrichFamily(ctx, familyFromRow(r)), nil
 }
 
-func (d *Database) enrichFamily(ctx context.Context, f MediaFamily) MediaFamily {
+func (d *Store) enrichFamily(ctx context.Context, f MediaFamily) MediaFamily {
 	carts, err := d.readQueries.ListCartridgesByFamily(ctx, f.ID)
 	if err != nil {
 		log.Error(err, "")
@@ -56,7 +56,7 @@ func familyFromRow(r mtfquery.MediaFamily) MediaFamily {
 	}
 }
 
-func (d *Database) ListCartridges(ctx context.Context) ([]Cartridge, error) {
+func (d *Store) ListCartridges(ctx context.Context) ([]Cartridge, error) {
 	rows, err := d.readQueries.ListCartridges(ctx)
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (d *Database) ListCartridges(ctx context.Context) ([]Cartridge, error) {
 	return out, nil
 }
 
-func (d *Database) ListCartridgesByFamily(ctx context.Context, familyID int64) ([]Cartridge, error) {
+func (d *Store) ListCartridgesByFamily(ctx context.Context, familyID int64) ([]Cartridge, error) {
 	rows, err := d.readQueries.ListCartridgesByFamily(ctx, familyID)
 	if err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func (d *Database) ListCartridgesByFamily(ctx context.Context, familyID int64) (
 	return out, nil
 }
 
-func (d *Database) GetCartridge(ctx context.Context, barcode string) (Cartridge, error) {
+func (d *Store) GetCartridge(ctx context.Context, barcode string) (Cartridge, error) {
 	r, err := d.readQueries.GetCartridge(ctx, barcode)
 	if err != nil {
 		return Cartridge{}, mapErr(err, "cartridge")
@@ -91,7 +91,7 @@ func (d *Database) GetCartridge(ctx context.Context, barcode string) (Cartridge,
 	return cartridgeFromRow(r), nil
 }
 
-func (d *Database) DeleteCartridge(ctx context.Context, barcode string) error {
+func (d *Store) DeleteCartridge(ctx context.Context, barcode string) error {
 	_, err := d.queries.DeleteCartridge(ctx, barcode)
 	return err
 }
@@ -123,7 +123,7 @@ func cartridgeFromRow(r mtfquery.MtfCartridge) Cartridge {
 	}
 }
 
-func (d *Database) ListAllDataSets(ctx context.Context) ([]DataSet, error) {
+func (d *Store) ListAllDataSets(ctx context.Context) ([]DataSet, error) {
 	rows, err := d.readQueries.ListAllDataSets(ctx)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func (d *Database) ListAllDataSets(ctx context.Context) ([]DataSet, error) {
 	return out, nil
 }
 
-func (d *Database) ListDataSetsByFamily(ctx context.Context, familyID int64) ([]DataSet, error) {
+func (d *Store) ListDataSetsByFamily(ctx context.Context, familyID int64) ([]DataSet, error) {
 	rows, err := d.readQueries.ListDataSetsByFamily(ctx, familyID)
 	if err != nil {
 		return nil, err
@@ -158,7 +158,7 @@ func (d *Database) ListDataSetsByFamily(ctx context.Context, familyID int64) ([]
 	return out, nil
 }
 
-func (d *Database) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
+func (d *Store) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 	r, err := d.readQueries.GetDataSet(ctx, id)
 	if err != nil {
 		return DataSet{}, mapErr(err, "data set")
@@ -177,7 +177,7 @@ func (d *Database) GetDataSet(ctx context.Context, id int64) (DataSet, error) {
 	return ds, nil
 }
 
-func (d *Database) SetDataSetSsetPba(ctx context.Context, id int64, pba int64) error {
+func (d *Store) SetDataSetSsetPba(ctx context.Context, id int64, pba int64) error {
 	_, err := d.queries.UpdateDataSetSsetPba(ctx, mtfquery.UpdateDataSetSsetPbaParams{
 		SsetPba: pba,
 		ID:      id,
@@ -233,7 +233,7 @@ func dataSetTapesFromRows(rows []mtfquery.DataSetTape) []DataSetTape {
 	return out
 }
 
-func (d *Database) familyNameCache(ctx context.Context) map[int64]string {
+func (d *Store) familyNameCache(ctx context.Context) map[int64]string {
 	rows, err := d.readQueries.ListMediaFamilies(ctx)
 	if err != nil {
 		return nil

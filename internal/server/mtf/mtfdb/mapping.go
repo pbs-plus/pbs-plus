@@ -1,4 +1,4 @@
-package store
+package mtfdb
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb/mtfquery"
 )
 
 type compiledRule struct {
@@ -21,14 +21,14 @@ type compiledRule struct {
 }
 
 type Mapper struct {
-	db *Database
+	db *Store
 
 	mu    sync.RWMutex
 	rules []compiledRule
 	dirty bool
 }
 
-func NewMapper(db *Database) *Mapper {
+func NewMapper(db *Store) *Mapper {
 	return &Mapper{db: db, dirty: true}
 }
 
@@ -250,7 +250,7 @@ func sanitizeNS(ns string) string {
 	return strings.Join(parts, "/")
 }
 
-func (d *Database) ListMappings(ctx context.Context) ([]NamespaceMapping, error) {
+func (d *Store) ListMappings(ctx context.Context) ([]NamespaceMapping, error) {
 	rows, err := d.readQueries.ListMappings(ctx)
 	if err != nil {
 		return nil, err
@@ -262,7 +262,7 @@ func (d *Database) ListMappings(ctx context.Context) ([]NamespaceMapping, error)
 	return out, nil
 }
 
-func (d *Database) GetMapping(ctx context.Context, id int64) (NamespaceMapping, error) {
+func (d *Store) GetMapping(ctx context.Context, id int64) (NamespaceMapping, error) {
 	r, err := d.readQueries.GetMapping(ctx, id)
 	if err != nil {
 		return NamespaceMapping{}, mapErr(err, "mapping")
@@ -270,7 +270,7 @@ func (d *Database) GetMapping(ctx context.Context, id int64) (NamespaceMapping, 
 	return mappingFromRow(r), nil
 }
 
-func (d *Database) CreateMapping(ctx context.Context, m NamespaceMapping) (int64, error) {
+func (d *Store) CreateMapping(ctx context.Context, m NamespaceMapping) (int64, error) {
 	if m.Template == "" {
 		return 0, ErrInvalidMapping
 	}
@@ -289,7 +289,7 @@ func (d *Database) CreateMapping(ctx context.Context, m NamespaceMapping) (int64
 	return id, nil
 }
 
-func (d *Database) UpdateMapping(ctx context.Context, m NamespaceMapping) error {
+func (d *Store) UpdateMapping(ctx context.Context, m NamespaceMapping) error {
 	if m.Template == "" {
 		return ErrInvalidMapping
 	}
@@ -305,12 +305,12 @@ func (d *Database) UpdateMapping(ctx context.Context, m NamespaceMapping) error 
 	})
 }
 
-func (d *Database) DeleteMapping(ctx context.Context, id int64) error {
+func (d *Store) DeleteMapping(ctx context.Context, id int64) error {
 	_, err := d.queries.DeleteMapping(ctx, id)
 	return err
 }
 
-func (d *Database) MappingExists(ctx context.Context, id int64) (bool, error) {
+func (d *Store) MappingExists(ctx context.Context, id int64) (bool, error) {
 	_, err := d.readQueries.MappingExists(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil

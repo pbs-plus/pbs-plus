@@ -81,7 +81,7 @@ func alertSettingQuietDaysJSON(days []string) string {
 	return string(b)
 }
 
-func (db *DB) GetAlertSetting(name string) (AlertSetting, error) {
+func (db *Store) GetAlertSetting(name string) (AlertSetting, error) {
 	row, err := db.readQueries.GetAlertSetting(context.Background(), name)
 	if err != nil {
 		return AlertSetting{}, err
@@ -89,7 +89,7 @@ func (db *DB) GetAlertSetting(name string) (AlertSetting, error) {
 	return sqlcToAlertSetting(row), nil
 }
 
-func (db *DB) ListAlertSettings() ([]AlertSetting, error) {
+func (db *Store) ListAlertSettings() ([]AlertSetting, error) {
 	rows, err := db.readQueries.ListAlertSettings(context.Background())
 	if err != nil {
 		return nil, err
@@ -101,7 +101,7 @@ func (db *DB) ListAlertSettings() ([]AlertSetting, error) {
 	return result, nil
 }
 
-func (db *DB) UpsertAlertSetting(setting AlertSetting) error {
+func (db *Store) UpsertAlertSetting(setting AlertSetting) error {
 	enabled := int64(0)
 	if setting.Enabled {
 		enabled = 1
@@ -125,18 +125,18 @@ func (db *DB) UpsertAlertSetting(setting AlertSetting) error {
 	})
 }
 
-func (db *DB) UpdateAlertLastSent(name string, ts int64) error {
+func (db *Store) UpdateAlertLastSent(name string, ts int64) error {
 	return db.queries.UpdateAlertLastSent(context.Background(), corequery.UpdateAlertLastSentParams{
 		LastSent: ts,
 		Name:     name,
 	})
 }
 
-func (db *DB) DeleteAlertSetting(name string) error {
+func (db *Store) DeleteAlertSetting(name string) error {
 	return db.queries.DeleteAlertSetting(context.Background(), name)
 }
 
-func (db *DB) EnsureAlertSetting(name string, defaultThreshold int, defaultSeverity string) (AlertSetting, error) {
+func (db *Store) EnsureAlertSetting(name string, defaultThreshold int, defaultSeverity string) (AlertSetting, error) {
 	setting, err := db.GetAlertSetting(name)
 	if err == nil {
 		return setting, nil
@@ -218,7 +218,7 @@ func (s AlertSetting) IsInScheduleWindow() bool {
 	return diff <= halfWindow
 }
 
-func (db *DB) CreateAlertExclusion(alertType, excludeType, excludeValue, comment string) error {
+func (db *Store) CreateAlertExclusion(alertType, excludeType, excludeValue, comment string) error {
 	return db.queries.CreateAlertExclusion(context.Background(), corequery.CreateAlertExclusionParams{
 		AlertType:    alertType,
 		ExcludeType:  excludeType,
@@ -227,11 +227,11 @@ func (db *DB) CreateAlertExclusion(alertType, excludeType, excludeValue, comment
 	})
 }
 
-func (db *DB) DeleteAlertExclusion(id int64) error {
+func (db *Store) DeleteAlertExclusion(id int64) error {
 	return db.queries.DeleteAlertExclusion(context.Background(), id)
 }
 
-func (db *DB) ListAlertExclusions(alertType string) ([]AlertExclusion, error) {
+func (db *Store) ListAlertExclusions(alertType string) ([]AlertExclusion, error) {
 	rows, err := db.readQueries.ListAlertExclusions(context.Background(), alertType)
 	if err != nil {
 		return nil, err
@@ -243,7 +243,7 @@ func (db *DB) ListAlertExclusions(alertType string) ([]AlertExclusion, error) {
 	return result, nil
 }
 
-func (db *DB) ListAllAlertExclusions() ([]AlertExclusion, error) {
+func (db *Store) ListAllAlertExclusions() ([]AlertExclusion, error) {
 	rows, err := db.readQueries.ListAllAlertExclusions(context.Background())
 	if err != nil {
 		return nil, err
@@ -255,7 +255,7 @@ func (db *DB) ListAllAlertExclusions() ([]AlertExclusion, error) {
 	return result, nil
 }
 
-func (db *DB) GetAlertExclusion(id int64) (AlertExclusion, error) {
+func (db *Store) GetAlertExclusion(id int64) (AlertExclusion, error) {
 	row, err := db.readQueries.GetAlertExclusion(context.Background(), id)
 	if err != nil {
 		return AlertExclusion{}, err
@@ -264,7 +264,7 @@ func (db *DB) GetAlertExclusion(id int64) (AlertExclusion, error) {
 }
 
 // GetExcludedValues returns a set of excluded values for a given alert type and exclude type.
-func (db *DB) GetExcludedValues(alertType, excludeType string) (map[string]bool, error) {
+func (db *Store) GetExcludedValues(alertType, excludeType string) (map[string]bool, error) {
 	rows, err := db.readQueries.GetAlertExclusionsByType(context.Background(), corequery.GetAlertExclusionsByTypeParams{
 		AlertType:   alertType,
 		ExcludeType: excludeType,

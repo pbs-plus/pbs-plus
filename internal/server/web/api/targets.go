@@ -10,9 +10,9 @@ import (
 	"os"
 	"strings"
 
-	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -25,14 +25,14 @@ type TargetStatusResult struct {
 	Error            error
 }
 
-func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
-		all, err := storeInstance.TargetSvc.GetAllTargets()
+		all, err := app.Target.GetAllTargets()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -48,10 +48,10 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 				all[i].ConnectionStatus = err == nil && validate.IsValid(all[i].Path)
 			} else {
 				// Instant: check if session exists (map lookup, no RPC)
-				if qSess, ok := storeInstance.ARPCAgentsManager.GetQuicPipe(all[i].GetHostname()); ok {
+				if qSess, ok := app.Agents.GetQuicPipe(all[i].GetHostname()); ok {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = qSess.GetVersion()
-				} else if tSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(all[i].GetHostname()); ok {
+				} else if tSess, ok := app.Agents.GetStreamPipe(all[i].GetHostname()); ok {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = tSess.GetVersion()
 				}
@@ -77,7 +77,7 @@ func D2DTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func D2DTargetStatusHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DTargetStatusHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -86,10 +86,10 @@ func D2DTargetStatusHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		// Trigger async refresh if requested
 		if strings.ToLower(r.FormValue("refresh")) == "true" {
-			storeInstance.TargetSvc.RefreshStatuses()
+			app.Target.RefreshStatuses()
 		}
 
-		cached := storeInstance.TargetSvc.GetCachedStatuses()
+		cached := app.Target.GetCachedStatuses()
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(cached); err != nil {
@@ -99,12 +99,12 @@ func D2DTargetStatusHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 type NewAgentHostnameRequest struct {
-	Hostname        string               `json:"hostname"`
-	Drives          []reqTypes.DriveInfo `json:"drives"`
-	OperatingSystem string               `json:"os"`
+	Hostname        string             `json:"hostname"`
+	Drives          []fswire.DriveInfo `json:"drives"`
+	OperatingSystem string             `json:"os"`
 }
 
-func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DTargetAgentHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -145,7 +145,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 			clientIP = strings.Split(clientIP, ":")[0]
 		}
 
-		tx, err := storeInstance.TargetSvc.NewTransaction()
+		tx, err := app.Target.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, fmt.Errorf("Failed to start transaction: %w", err))
@@ -177,7 +177,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 				VolumeTotal:      parsedDrive.Total,
 			}
 
-			err = storeInstance.TargetSvc.UpsertTarget(tx, targetData)
+			err = app.Target.UpsertTarget(tx, targetData)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				WriteErrorResponse(w, fmt.Errorf("Failed to upsert target %s: %w", targetName, err))
@@ -204,7 +204,7 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
@@ -226,7 +226,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			MountScript: r.FormValue("mount_script"),
 		}
 
-		err = storeInstance.TargetSvc.CreateTarget(nil, newTarget)
+		err = app.Target.CreateTarget(nil, newTarget)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -240,7 +240,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
@@ -266,7 +266,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			target, err := storeInstance.TargetSvc.GetTarget(validate.DecodePath(r.PathValue("target")))
+			target, err := app.Target.GetTarget(validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -294,7 +294,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.TargetSvc.UpdateTarget(nil, target)
+			err = app.Target.UpdateTarget(nil, target)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -310,14 +310,14 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			target, err := storeInstance.TargetSvc.GetTarget(validate.DecodePath(r.PathValue("target")))
+			target, err := app.Target.GetTarget(validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
 
 			if target.IsAgent() {
-				arpcSess, ok := storeInstance.ARPCAgentsManager.GetStreamPipe(target.GetHostname())
+				arpcSess, ok := app.Agents.GetStreamPipe(target.GetHostname())
 				if ok {
 					target.AgentVersion = arpcSess.GetVersion()
 					target.ConnectionStatus = false
@@ -326,7 +326,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						respMsg, err := arpcSess.CallMessage(
 							r.Context(),
 							"target_status",
-							&reqTypes.TargetStatusReq{Drive: target.VolumeID},
+							&fswire.TargetStatusReq{Drive: target.VolumeID},
 						)
 						if err == nil && strings.HasPrefix(respMsg, "reachable") {
 							target.ConnectionStatus = true
@@ -362,7 +362,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.TargetSvc.DeleteTarget(nil, validate.DecodePath(r.PathValue("target")))
+			err := app.Target.DeleteTarget(nil, validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -378,7 +378,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsTargetS3SecretHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
@@ -394,7 +394,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		target, err := storeInstance.TargetSvc.GetTarget(validate.DecodePath(r.PathValue("target")))
+		target, err := app.Target.GetTarget(validate.DecodePath(r.PathValue("target")))
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -405,7 +405,7 @@ func ExtJsTargetS3SecretHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		err = storeInstance.TargetSvc.AddS3Secret(target.Name, r.FormValue("secret"))
+		err = app.Target.AddS3Secret(target.Name, r.FormValue("secret"))
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

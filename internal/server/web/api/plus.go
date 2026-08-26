@@ -20,7 +20,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -213,7 +213,7 @@ func downloadAndVerify(targetURL, cachePath, filename, expectedChecksum string) 
 	return nil
 }
 
-func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+func AgentInstallScriptHandler(app *application.Runtime, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -246,7 +246,7 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 			config.BootstrapToken = token
 		}
 
-		if fingerprint, err := storeInstance.CertManager.CAFingerprint(); err == nil {
+		if fingerprint, err := app.CertManager.CAFingerprint(); err == nil {
 			config.ServerCAFingerprint = fingerprint
 		}
 
@@ -271,7 +271,7 @@ func AgentInstallScriptHandler(storeInstance *store.Store, version string) http.
 	}
 }
 
-func VersionHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+func VersionHandler(app *application.Runtime, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Agent binaries are no longer embedded in the server. All downloads
 		// are proxied from GitHub and verified against embedded checksums.
@@ -332,7 +332,7 @@ func buildFilename(component, version string, platform PlatformInfo) string {
 	return fmt.Sprintf("%s-%s-%s-%s%s", component, version, platform.OS, platform.Arch, platform.Ext)
 }
 
-func DownloadMsiHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadMsiHandler(app *application.Runtime, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -358,7 +358,7 @@ func DownloadMsiHandler(storeInstance *store.Store, version string) http.Handler
 	}
 }
 
-func DownloadBinaryHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadBinaryHandler(app *application.Runtime, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -384,7 +384,7 @@ func DownloadBinaryHandler(storeInstance *store.Store, version string) http.Hand
 	}
 }
 
-func DownloadSigHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadSigHandler(app *application.Runtime, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -410,7 +410,7 @@ func DownloadSigHandler(storeInstance *store.Store, version string) http.Handler
 	}
 }
 
-func DownloadECDSASigHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadECDSASigHandler(app *application.Runtime, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -436,7 +436,7 @@ func DownloadECDSASigHandler(storeInstance *store.Store, version string) http.Ha
 	}
 }
 
-func DownloadChecksumHandler(storeInstance *store.Store, version string) http.HandlerFunc {
+func DownloadChecksumHandler(app *application.Runtime, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if version == "v0.0.0" {
 			version = "dev"
@@ -462,14 +462,14 @@ func DownloadChecksumHandler(storeInstance *store.Store, version string) http.Ha
 	}
 }
 
-func CAFingerprintHandler(storeInstance *store.Store) http.HandlerFunc {
+func CAFingerprintHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		fingerprint, err := storeInstance.CertManager.CAFingerprint()
+		fingerprint, err := app.CertManager.CAFingerprint()
 		if err != nil {
 			log.Error(err, "")
 			http.Error(w, "failed to compute CA fingerprint", http.StatusInternalServerError)

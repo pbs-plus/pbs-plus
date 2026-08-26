@@ -13,7 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func (db *DB) CreateTarget(tx *Transaction, target Target) (err error) {
+func (db *Store) CreateTarget(tx *Transaction, target Target) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -80,7 +80,7 @@ func (db *DB) CreateTarget(tx *Transaction, target Target) (err error) {
 	return nil
 }
 
-func (db *DB) UpdateTarget(tx *Transaction, target Target) (err error) {
+func (db *Store) UpdateTarget(tx *Transaction, target Target) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -147,7 +147,7 @@ func (db *DB) UpdateTarget(tx *Transaction, target Target) (err error) {
 	return nil
 }
 
-func (db *DB) UpsertTarget(tx *Transaction, target Target) (err error) {
+func (db *Store) UpsertTarget(tx *Transaction, target Target) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -214,7 +214,7 @@ func (db *DB) UpsertTarget(tx *Transaction, target Target) (err error) {
 	return nil
 }
 
-func (db *DB) AddS3Secret(tx *Transaction, targetName string, secret string) (err error) {
+func (db *Store) AddS3Secret(tx *Transaction, targetName string, secret string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -264,7 +264,7 @@ func (db *DB) AddS3Secret(tx *Transaction, targetName string, secret string) (er
 	return nil
 }
 
-func (db *DB) DeleteTarget(tx *Transaction, name string) (err error) {
+func (db *Store) DeleteTarget(tx *Transaction, name string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -310,7 +310,7 @@ func (db *DB) DeleteTarget(tx *Transaction, name string) (err error) {
 	return nil
 }
 
-func (db *DB) GetTarget(name string) (Target, error) {
+func (db *Store) GetTarget(name string) (Target, error) {
 	row, err := db.readQueries.GetTarget(db.ctx, name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Target{}, ErrTargetNotFound
@@ -348,7 +348,7 @@ func (db *DB) GetTarget(name string) (Target, error) {
 	return target, nil
 }
 
-func (db *DB) GetS3Secret(name string) (string, error) {
+func (db *Store) GetS3Secret(name string) (string, error) {
 	encrypted, err := db.readQueries.GetTargetS3Secret(db.ctx, name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrSecretNotFound
@@ -369,7 +369,7 @@ func (db *DB) GetS3Secret(name string) (string, error) {
 	return decrypted, nil
 }
 
-func (db *DB) GetAllTargets() ([]Target, error) {
+func (db *Store) GetAllTargets() ([]Target, error) {
 	rows, err := db.readQueries.ListAllTargets(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTargets: error querying targets: %w", err)
@@ -408,7 +408,7 @@ func (db *DB) GetAllTargets() ([]Target, error) {
 	return targets, nil
 }
 
-func (db *DB) GetAllTargetsByAgentHost(hostname string) ([]Target, error) {
+func (db *Store) GetAllTargetsByAgentHost(hostname string) ([]Target, error) {
 	rows, err := db.readQueries.ListTargetsByAgentHost(db.ctx, toNullString(hostname))
 	if err != nil {
 		return nil, fmt.Errorf("GetAllTargetsByAgentHost: error querying targets: %w", err)

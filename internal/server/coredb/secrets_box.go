@@ -18,7 +18,7 @@ func Decrypt(ciphertext string) (string, error) {
 	return crypto.Unseal(ciphertext)
 }
 
-func (d *DB) MigrateSecrets() error {
+func (d *Store) MigrateSecrets() error {
 	if err := crypto.MigrateNaclKeyIfExists(); err != nil {
 		log.Error(err, "database: failed to migrate nacl key")
 		return err

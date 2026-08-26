@@ -1,4 +1,4 @@
-package server
+package systemd
 
 import (
 	"context"
@@ -13,7 +13,7 @@ var (
 	connMutex  sync.Mutex
 )
 
-func GetSystemdConn() (*dbus.Conn, error) {
+func Conn() (*dbus.Conn, error) {
 	connMutex.Lock()
 	defer connMutex.Unlock()
 

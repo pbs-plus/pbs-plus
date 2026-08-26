@@ -1,6 +1,6 @@
 //go:build linux
 
-package rpc
+package mountrpc
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
@@ -83,7 +83,7 @@ type AgentMount struct {
 }
 
 // AgentFSMount asks the mount RPC service to back up + mount the agent target,
-func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup coredb.Backup, target coredb.Target) (*AgentMount, error) {
+func AgentFSMount(ctx context.Context, app *application.Runtime, backup coredb.Backup, target coredb.Target) (*AgentMount, error) {
 	agentMount := &AgentMount{
 		BackupID: backup.ID,
 		Hostname: target.GetHostname(),
@@ -110,7 +110,7 @@ func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup coredb
 	}
 	var reply BackupReply
 
-	if err := callMountRPC(ctx, "MountRPCService.Backup", args, &reply); err != nil {
+	if err := callMountRPC(ctx, "Service.Backup", args, &reply); err != nil {
 		errCleanup()
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func (a *AgentMount) IsConnected() bool {
 			log.Error(err, "")
 		}
 	}()
-	if err := rpcClient.Call("MountRPCService.Status", args, &reply); err != nil {
+	if err := rpcClient.Call("Service.Status", args, &reply); err != nil {
 		return false
 	}
 	return reply.Connected
@@ -177,7 +177,7 @@ func (a *AgentMount) CloseMount() {
 		}
 	}()
 
-	if err := rpcClient.Call("MountRPCService.ARPCCleanup", args, &reply); err != nil {
+	if err := rpcClient.Call("Service.ARPCCleanup", args, &reply); err != nil {
 		log.Error(err, reply.Message)
 	}
 	log.Info(reply.Message)
@@ -197,7 +197,7 @@ type S3Mount struct {
 	isEmpty   bool
 }
 
-func S3FSMount(ctx context.Context, storeInstance *store.Store, backup coredb.Backup, target coredb.Target) (*S3Mount, error) {
+func S3FSMount(ctx context.Context, app *application.Runtime, backup coredb.Backup, target coredb.Target) (*S3Mount, error) {
 	parsedS3 := target.S3Info
 
 	s3Mount := &S3Mount{
@@ -235,7 +235,7 @@ func S3FSMount(ctx context.Context, storeInstance *store.Store, backup coredb.Ba
 	}
 	var reply BackupReply
 
-	if err := callMountRPC(ctx, "MountRPCService.S3Backup", args, &reply); err != nil {
+	if err := callMountRPC(ctx, "Service.S3Backup", args, &reply); err != nil {
 		errCleanup()
 		return nil, err
 	}

@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package jobdb
 
 import (
 	"database/sql"

@@ -14,21 +14,21 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DRestoreHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		allRestores, err := storeInstance.RestoreSvc.GetAllRestores()
+		allRestores, err := app.Restore.GetAllRestores()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -72,7 +72,7 @@ func D2DRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -113,7 +113,7 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 			}()
 
 			for _, restoreID := range decodedRestoreIDs {
-				restoreTask, err := storeInstance.Database.GetRestore(restoreID)
+				restoreTask, err := app.CoreDB.GetRestore(restoreID)
 				if err != nil {
 					log.Error(err, "", "restoreID", restoreID)
 					continue
@@ -145,7 +145,7 @@ func ExtJsRestoreRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := RestoreConfigResponse{}
 		if r.Method != http.MethodPost {
@@ -256,13 +256,13 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			RetryInterval:    retryInterval,
 		}
 
-		err = storeInstance.RestoreSvc.CreateRestore(newRestore)
+		err = app.Restore.CreateRestore(newRestore)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		ApplyJobBatchAssignment(storeInstance, "restore", newRestore.ID, r.FormValue("notification-batch"))
+		ApplyJobBatchAssignment(app, "restore", newRestore.ID, r.FormValue("notification-batch"))
 
 		response.Status = http.StatusOK
 		response.Success = true
@@ -272,7 +272,7 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := RestoreConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
@@ -289,7 +289,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			restore, err := storeInstance.RestoreSvc.GetRestore(restoreID)
+			restore, err := app.Restore.GetRestore(restoreID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -413,13 +413,13 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.RestoreSvc.UpdateRestore(restore)
+			err = app.Restore.UpdateRestore(restore)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
 
-			ApplyJobBatchAssignment(storeInstance, "restore", restore.ID, r.FormValue("notification-batch"))
+			ApplyJobBatchAssignment(app, "restore", restore.ID, r.FormValue("notification-batch"))
 
 			response.Status = http.StatusOK
 			response.Success = true
@@ -437,7 +437,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			restore, err := storeInstance.RestoreSvc.GetRestore(restoreID)
+			restore, err := app.Restore.GetRestore(restoreID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -446,7 +446,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			flat := FlattenRestoreForEdit(restore)
-			flat["notification-batch"] = GetJobBatchName(storeInstance, "restore", restore.ID)
+			flat["notification-batch"] = GetJobBatchName(app, "restore", restore.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
@@ -462,7 +462,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err := storeInstance.RestoreSvc.DeleteRestore(restoreID)
+			err := app.Restore.DeleteRestore(restoreID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

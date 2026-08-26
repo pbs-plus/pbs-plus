@@ -3,13 +3,14 @@
 package web
 
 import (
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"net/http"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/log"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 )
 
-func CORS(store *store.Store, next http.Handler) http.HandlerFunc {
+func CORS(app *application.Runtime, next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		allowedOrigin := r.Header.Get("Origin")
 		if allowedOrigin != "" {

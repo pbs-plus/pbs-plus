@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 )
@@ -25,11 +25,11 @@ type ARPCFS struct {
 type DirStream struct {
 	fs            *ARPCFS
 	path          string
-	handleId      types.FileHandleID
+	handleId      fswire.FileHandleID
 	closed        int32
 	maxedOut      int32
 	mu            sync.Mutex
-	lastResp      types.ReadDirEntries
+	lastResp      fswire.ReadDirEntries
 	curIdx        uint64
 	totalReturned uint64
 	cborDec       cbor.DecMode
@@ -39,7 +39,7 @@ type ARPCFile struct {
 	fs       *ARPCFS
 	name     string
 	offset   int64
-	handleID types.FileHandleID
+	handleID fswire.FileHandleID
 	isClosed atomic.Bool
 	backupID string
 }

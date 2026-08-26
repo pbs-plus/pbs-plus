@@ -1,6 +1,6 @@
 //go:build linux
 
-package server
+package bootstrap
 
 import (
 	"context"
@@ -14,19 +14,21 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	jobsstore "github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
-	rpcmount "github.com/pbs-plus/pbs-plus/internal/server/rpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/scheduler"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
 )
 
 // and cleanup of stale mount points and queued backups
-func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.Scheduler, *jobs.Engine, error) {
+func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Scheduler, *jobs.Engine, error) {
+	setMemLimit()
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
@@ -45,7 +47,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		return nil, nil, fmt.Errorf("failed to read .key: %w", err)
 	}
 
-	err = storeInstance.CertManager.Validate()
+	err = app.CertManager.Validate()
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate local CA and server cert: %w", err)
 	}
@@ -58,7 +60,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize token manager: %w", err)
 	}
-	storeInstance.Database.TokenManager = tokenManager
+	app.CoreDB.TokenManager = tokenManager
 
 	// Stale mount cleanup - unmount and remove all stale mount points
 	if err := cleanupStaleMounts(); err != nil {
@@ -74,7 +76,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 				log.Error(mainCtx.Err(), "mount rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.RunRPCServer(mainCtx, conf.MountSocketPath, storeInstance); err != nil {
+				if err := mountrpc.RunServer(mainCtx, conf.MountSocketPath, app); err != nil {
 					log.Error(err, "mount rpc server failed, restarting")
 					time.Sleep(backoff)
 					backoff *= 2
@@ -88,7 +90,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		}
 	}()
 
-	engineDB, err := jobsstore.Open("")
+	engineDB, err := jobdb.Open("")
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening workflow engine database: %w", err)
 	}
@@ -96,16 +98,16 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating workflow engine: %w", err)
 	}
-	if err := registerWorkflows(engine, storeInstance); err != nil {
+	if err := registerWorkflows(engine, app); err != nil {
 		return nil, nil, fmt.Errorf("registering workflow runners: %w", err)
 	}
 	if err := engine.Start(mainCtx); err != nil {
 		return nil, nil, fmt.Errorf("starting workflow engine: %w", err)
 	}
-	storeInstance.Engine = engine
-	s := scheduler.NewScheduler(mainCtx, storeInstance)
+	app.Engine = engine
+	s := scheduler.NewScheduler(mainCtx, app)
 	s.Start()
-	storeInstance.OnBackupComplete = s.TriggerPendingVerifications
+	app.OnBackupComplete = s.TriggerPendingVerifications
 
 	go func() {
 		backoff := 100 * time.Millisecond
@@ -116,7 +118,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 				log.Error(mainCtx.Err(), "backup rpc server cancelled")
 				return
 			default:
-				if err := rpcmount.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, engine, storeInstance); err != nil {
+				if err := jobrpc.RunServer(mainCtx, conf.JobMutateSocketPath, engine, app); err != nil {
 					log.Error(err, "backup rpc server failed, restarting")
 					time.Sleep(backoff)
 					backoff *= 2
@@ -133,20 +135,20 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 	return s, engine, nil
 }
 
-func registerWorkflows(engine *jobs.Engine, storeInstance *store.Store) error {
-	if err := backup.Register(engine, storeInstance); err != nil {
+func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
+	if err := backup.Register(engine, app); err != nil {
 		return fmt.Errorf("registering backup workflow: %w", err)
 	}
-	if err := restore.Register(engine, storeInstance); err != nil {
+	if err := restore.Register(engine, app); err != nil {
 		return fmt.Errorf("registering restore workflow: %w", err)
 	}
-	if err := verification.Register(engine, storeInstance); err != nil {
+	if err := verification.Register(engine, app); err != nil {
 		return fmt.Errorf("registering verification workflow: %w", err)
 	}
-	if err := mtf.RegisterMigration(engine, storeInstance); err != nil {
+	if err := mtf.RegisterMigration(engine, app); err != nil {
 		return fmt.Errorf("registering mtf migration workflow: %w", err)
 	}
-	if err := mtf.RegisterScan(engine, storeInstance); err != nil {
+	if err := mtf.RegisterScan(engine, app); err != nil {
 		return fmt.Errorf("registering mtf scan workflow: %w", err)
 	}
 	return nil

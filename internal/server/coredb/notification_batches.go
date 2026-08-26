@@ -35,7 +35,7 @@ func notificationBatchFromRow(r corequery.NotificationBatch) NotificationBatch {
 	}
 }
 
-func (db *DB) CreateNotificationBatch(batch NotificationBatch) error {
+func (db *Store) CreateNotificationBatch(batch NotificationBatch) error {
 	return db.queries.CreateNotificationBatch(db.ctx, corequery.CreateNotificationBatchParams{
 		Name:             batch.Name,
 		Comment:          toNullString(batch.Comment),
@@ -45,7 +45,7 @@ func (db *DB) CreateNotificationBatch(batch NotificationBatch) error {
 	})
 }
 
-func (db *DB) GetNotificationBatch(name string) (NotificationBatch, error) {
+func (db *Store) GetNotificationBatch(name string) (NotificationBatch, error) {
 	r, err := db.readQueries.GetNotificationBatch(db.ctx, name)
 	if err != nil {
 		return NotificationBatch{}, err
@@ -53,7 +53,7 @@ func (db *DB) GetNotificationBatch(name string) (NotificationBatch, error) {
 	return notificationBatchFromRow(r), nil
 }
 
-func (db *DB) ListNotificationBatches() ([]NotificationBatch, error) {
+func (db *Store) ListNotificationBatches() ([]NotificationBatch, error) {
 	rows, err := db.readQueries.ListNotificationBatches(db.ctx)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (db *DB) ListNotificationBatches() ([]NotificationBatch, error) {
 	return out, nil
 }
 
-func (db *DB) UpdateNotificationBatch(batch NotificationBatch) error {
+func (db *Store) UpdateNotificationBatch(batch NotificationBatch) error {
 	return db.queries.UpdateNotificationBatch(db.ctx, corequery.UpdateNotificationBatchParams{
 		Comment:          toNullString(batch.Comment),
 		NotificationMode: toNullString(batch.NotificationMode),
@@ -75,11 +75,11 @@ func (db *DB) UpdateNotificationBatch(batch NotificationBatch) error {
 	})
 }
 
-func (db *DB) DeleteNotificationBatch(name string) error {
+func (db *Store) DeleteNotificationBatch(name string) error {
 	return db.queries.DeleteNotificationBatch(db.ctx, name)
 }
 
-func (db *DB) AddJobToBatch(batchName, jobType, jobID string) error {
+func (db *Store) AddJobToBatch(batchName, jobType, jobID string) error {
 	return db.queries.AddJobToBatch(db.ctx, corequery.AddJobToBatchParams{
 		BatchName: batchName,
 		JobType:   jobType,
@@ -87,7 +87,7 @@ func (db *DB) AddJobToBatch(batchName, jobType, jobID string) error {
 	})
 }
 
-func (db *DB) RemoveJobFromBatch(batchName, jobType, jobID string) error {
+func (db *Store) RemoveJobFromBatch(batchName, jobType, jobID string) error {
 	return db.queries.RemoveJobFromBatch(db.ctx, corequery.RemoveJobFromBatchParams{
 		BatchName: batchName,
 		JobType:   jobType,
@@ -95,7 +95,7 @@ func (db *DB) RemoveJobFromBatch(batchName, jobType, jobID string) error {
 	})
 }
 
-func (db *DB) GetBatchForJob(jobType, jobID string) (NotificationBatch, error) {
+func (db *Store) GetBatchForJob(jobType, jobID string) (NotificationBatch, error) {
 	r, err := db.readQueries.GetBatchForJob(db.ctx, corequery.GetBatchForJobParams{
 		JobType: jobType,
 		JobID:   jobID,
@@ -109,7 +109,7 @@ func (db *DB) GetBatchForJob(jobType, jobID string) (NotificationBatch, error) {
 	return notificationBatchFromRow(r), nil
 }
 
-func (db *DB) GetBatchJobs(batchName string) ([]NotificationBatchJob, error) {
+func (db *Store) GetBatchJobs(batchName string) ([]NotificationBatchJob, error) {
 	rows, err := db.readQueries.GetBatchJobsByBatch(db.ctx, batchName)
 	if err != nil {
 		return nil, err
@@ -125,18 +125,18 @@ func (db *DB) GetBatchJobs(batchName string) ([]NotificationBatchJob, error) {
 	return out, nil
 }
 
-func (db *DB) RemoveJobsByBatch(batchName string) error {
+func (db *Store) RemoveJobsByBatch(batchName string) error {
 	return db.queries.RemoveJobsByBatch(db.ctx, batchName)
 }
 
-func (db *DB) RemoveJobFromAllBatches(jobType, jobID string) error {
+func (db *Store) RemoveJobFromAllBatches(jobType, jobID string) error {
 	return db.queries.RemoveJobFromAllBatches(db.ctx, corequery.RemoveJobFromAllBatchesParams{
 		JobType: jobType,
 		JobID:   jobID,
 	})
 }
 
-func (db *DB) ListBatchJobs() ([]NotificationBatchJob, error) {
+func (db *Store) ListBatchJobs() ([]NotificationBatchJob, error) {
 	rows, err := db.readQueries.ListBatchJobs(db.ctx)
 	if err != nil {
 		return nil, err
@@ -152,7 +152,7 @@ func (db *DB) ListBatchJobs() ([]NotificationBatchJob, error) {
 	return out, nil
 }
 
-func (db *DB) GetBackupLastRunEndtime(jobID string) int64 {
+func (db *Store) GetBackupLastRunEndtime(jobID string) int64 {
 	b, err := db.GetBackup(jobID)
 	if err != nil {
 		return 0
@@ -161,7 +161,7 @@ func (db *DB) GetBackupLastRunEndtime(jobID string) int64 {
 }
 
 // GetRestoreLastRunEndtime returns the last run endtime for a restore job, or 0 if not found.
-func (db *DB) GetRestoreLastRunEndtime(jobID string) int64 {
+func (db *Store) GetRestoreLastRunEndtime(jobID string) int64 {
 	r, err := db.GetRestore(jobID)
 	if err != nil {
 		return 0
@@ -170,7 +170,7 @@ func (db *DB) GetRestoreLastRunEndtime(jobID string) int64 {
 }
 
 // AllBatchJobsCompleted checks if all jobs in a batch have completed
-func (db *DB) AllBatchJobsCompleted(batchName string) bool {
+func (db *Store) AllBatchJobsCompleted(batchName string) bool {
 	jobs, err := db.GetBatchJobs(batchName)
 	if err != nil || len(jobs) == 0 {
 		return false
@@ -196,7 +196,7 @@ func (db *DB) AllBatchJobsCompleted(batchName string) bool {
 	return true
 }
 
-func (db *DB) WaitForBatchCompletion(batchName string, timeout time.Duration, checkInterval time.Duration) bool {
+func (db *Store) WaitForBatchCompletion(batchName string, timeout time.Duration, checkInterval time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if db.AllBatchJobsCompleted(batchName) {

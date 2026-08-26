@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -330,23 +330,23 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 	return m
 }
 
-func PrometheusMetricsHandler(storeInstance *store.Store) http.HandlerFunc {
+func PrometheusMetricsHandler(app *application.Runtime) http.HandlerFunc {
 	handler := promhttp.HandlerFor(globalRegistry, promhttp.HandlerOpts{
 		Registry: globalRegistry,
 	})
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		updateMetrics(globalMetrics, storeInstance, time.Now().Unix())
+		updateMetrics(globalMetrics, app, time.Now().Unix())
 		handler.ServeHTTP(w, r)
 	}
 }
 
-func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
+func updateMetrics(m *metrics, app *application.Runtime, now int64) {
 	currentBackupLabels := make(map[string]prometheus.Labels)
 	currentTargetLabels := make(map[string]prometheus.Labels)
 	currentTargetInfoLabels := make(map[string]prometheus.Labels)
 
-	backups, err := storeInstance.BackupSvc.ListBackups()
+	backups, err := app.Backup.ListBackups()
 	if err != nil {
 		log.Error(err,
 
@@ -481,7 +481,7 @@ func updateMetrics(m *metrics, storeInstance *store.Store, now int64) {
 	m.backupsLastRunFailedTotal.Set(float64(failedCount))
 	m.backupsLastRunSuccessTotal.Set(float64(successCount))
 
-	targets, err := storeInstance.TargetSvc.GetAllTargets()
+	targets, err := app.Target.GetAllTargets()
 	if err != nil {
 		log.Error(err,
 

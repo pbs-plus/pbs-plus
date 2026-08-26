@@ -18,8 +18,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
-	backend "github.com/pbs-plus/pbs-plus/internal/server"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -94,7 +94,7 @@ func removeEmptyDirsToBase(path, basePath string) {
 	}
 }
 
-func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -166,9 +166,9 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		serviceName := backend.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
+		serviceName := systemd.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
-		if err := backend.StopMountService(r.Context(), serviceName); err != nil {
+		if err := systemd.StopMountService(r.Context(), serviceName); err != nil {
 			log.Error(err, "")
 		}
 		if IsMounted(mountPoint) {
@@ -199,7 +199,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 		args = append(args, mountPoint)
 
-		if err := backend.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
+		if err := systemd.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
 			WriteErrorResponse(w, fmt.Errorf("start mount service: %w", err))
 			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
 				log.Error(err, "")
@@ -217,7 +217,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if !mountOK {
-			if err := backend.StopMountService(r.Context(), serviceName); err != nil {
+			if err := systemd.StopMountService(r.Context(), serviceName); err != nil {
 				log.Error(err, "")
 			}
 			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
@@ -235,7 +235,7 @@ func ExtJsMountHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -299,9 +299,9 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 			datastore,
 		))
 
-		serviceName := backend.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
+		serviceName := systemd.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
 
-		if err := backend.StopMountService(r.Context(), serviceName); err != nil {
+		if err := systemd.StopMountService(r.Context(), serviceName); err != nil {
 			log.Error(err, "")
 		}
 
@@ -325,7 +325,7 @@ func ExtJsUnmountHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -359,7 +359,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		services, err := backend.ListMountServices(r.Context())
+		services, err := systemd.ListMountServices(r.Context())
 		if err != nil {
 			WriteErrorResponse(w, fmt.Errorf("list services: %w", err))
 			return
@@ -372,7 +372,7 @@ func ExtJsUnmountAllHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		for _, svc := range services {
 			if strings.HasPrefix(svc, prefix) {
-				if err := backend.StopMountService(r.Context(), svc); err != nil {
+				if err := systemd.StopMountService(r.Context(), svc); err != nil {
 					log.Error(err, "")
 				}
 			}

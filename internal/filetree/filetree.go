@@ -1,15 +1,15 @@
-package server
+package filetree
 
 import (
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
+func Read(basePath string, subPath string) (fswire.FileTreeResp, error) {
 	rawPath := filepath.Clean(subPath)
 	rawPath = strings.TrimPrefix(rawPath, filepath.VolumeName(rawPath))
 	safeRequestedPath := strings.TrimLeft(rawPath, string(filepath.Separator))
@@ -24,10 +24,10 @@ func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
 
 	entries, err := os.ReadDir(localFullPath)
 	if err != nil {
-		return types.FileTreeResp{}, err
+		return fswire.FileTreeResp{}, err
 	}
 
-	var catalog []types.FileTreeEntry
+	var catalog []fswire.FileTreeEntry
 	for _, entry := range entries {
 		info, err := entry.Info()
 		if err != nil {
@@ -35,9 +35,9 @@ func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
 		}
 
 		virtualItemPath := filepath.Join(safeRequestedPath, entry.Name())
-		encodedPath := EncodePath(virtualItemPath)
+		encodedPath := encodePath(virtualItemPath)
 
-		item := types.FileTreeEntry{
+		item := fswire.FileTreeEntry{
 			Filepath: encodedPath,
 			Text:     entry.Name(),
 			Leaf:     !entry.IsDir(),
@@ -53,5 +53,5 @@ func FileTree(basePath string, subPath string) (types.FileTreeResp, error) {
 
 		catalog = append(catalog, item)
 	}
-	return types.FileTreeResp{Data: catalog}, nil
+	return fswire.FileTreeResp{Data: catalog}, nil
 }

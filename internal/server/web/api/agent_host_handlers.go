@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func ExtJsAgentSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsAgentSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := AgentConfigResponse{}
 		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
@@ -23,7 +23,7 @@ func ExtJsAgentSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodGet {
-			agent, err := storeInstance.AgentHostSvc.GetAgentHost(validate.DecodePath(r.PathValue("agent")))
+			agent, err := app.AgentHost.GetAgentHost(validate.DecodePath(r.PathValue("agent")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -40,7 +40,7 @@ func ExtJsAgentSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.AgentHostSvc.DeleteAgentHost(validate.DecodePath(r.PathValue("agent")))
+			err := app.AgentHost.DeleteAgentHost(validate.DecodePath(r.PathValue("agent")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

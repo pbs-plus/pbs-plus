@@ -11,9 +11,9 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 type startResult struct {
@@ -33,26 +33,26 @@ type verifyResult struct {
 // Register registers the verification workflow: queue, select,
 // start-task, verify, finalize. Candidate order is pinned by the
 // select activity; verify checkpoints its position across retries.
-func Register(engine *jobs.Engine, storeInstance *store.Store) error {
+func Register(engine *jobs.Engine, app *application.Runtime) error {
 	return engine.Register(jobs.WorkflowVerification, func(w *jobs.WorkflowContext) error {
 		var input jobs.VerificationInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding verification workflow input: %w", err))
 		}
-		job, err := storeInstance.Database.GetVerificationJob(w.Execution.DefinitionID)
+		job, err := app.CoreDB.GetVerificationJob(w.Execution.DefinitionID)
 		if err != nil {
 			return jobs.NonRetryable(fmt.Errorf("getting verification workflow definition: %w", err))
 		}
-		return runWorkflow(w, storeInstance, job, input)
+		return runWorkflow(w, app, job, input)
 	})
 }
 
-func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job coredb.VerificationJob, input jobs.VerificationInput) error {
+func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.VerificationJob, input jobs.VerificationInput) error {
 	v := &verificationJob{
-		job:           job,
-		storeInstance: storeInstance,
-		web:           input.Web,
-		logger:        log.WithScope(log.Scope{JobID: job.ID}),
+		job:    job,
+		app:    app,
+		web:    input.Web,
+		logger: log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer v.cleanup()
 
@@ -130,7 +130,7 @@ func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job coredb
 
 		backups := make([]coredb.Backup, len(selectRes.BackupJobIDs))
 		for i, id := range selectRes.BackupJobIDs {
-			backup, err := storeInstance.Database.GetBackup(id)
+			backup, err := app.CoreDB.GetBackup(id)
 			if err != nil {
 				return nil, fmt.Errorf("getting backup job %s: %w", id, err)
 			}
@@ -230,9 +230,9 @@ func (v *verificationJob) verifyCandidates(ctx context.Context, backups []coredb
 			CallMessage(ctx context.Context, method string, payload any) (string, error)
 		}
 		var controlSess caller
-		if sess, ok := v.storeInstance.ARPCAgentsManager.GetQuicPipe(hostname); ok {
+		if sess, ok := v.app.Agents.GetQuicPipe(hostname); ok {
 			controlSess = sess
-		} else if sess, ok := v.storeInstance.ARPCAgentsManager.GetStreamPipe(hostname); ok {
+		} else if sess, ok := v.app.Agents.GetStreamPipe(hostname); ok {
 			controlSess = sess
 		} else {
 			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': agent '%s' not connected", backup.ID, hostname))
@@ -241,14 +241,14 @@ func (v *verificationJob) verifyCandidates(ctx context.Context, backups []coredb
 			continue
 		}
 
-		v.storeInstance.ARPCAgentsManager.Expect(streamID)
+		v.app.Agents.Expect(streamID)
 
 		verifyReq := verification.VerifyStartReq{VerifyID: v.job.ID}
 		forkCtx, forkCancel := context.WithTimeout(ctx, 30*time.Second)
 		_, forkErr := controlSess.CallMessage(forkCtx, "verify_start", &verifyReq)
 		forkCancel()
 		if forkErr != nil {
-			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
+			v.app.Agents.NotExpect(streamID)
 			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to fork verification worker: %v", backup.ID, forkErr))
 			lastStartupErr = forkErr
 			consumed()
@@ -256,16 +256,16 @@ func (v *verificationJob) verifyCandidates(ctx context.Context, backups []coredb
 		}
 
 		pipeCtx, pipeCancel := context.WithTimeout(ctx, 30*time.Second)
-		agentTCP, waitErr := v.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, streamID)
+		agentTCP, waitErr := v.app.Agents.WaitStreamPipe(pipeCtx, streamID)
 		pipeCancel()
 		if waitErr != nil {
-			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
+			v.app.Agents.NotExpect(streamID)
 			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': verification worker did not connect: %v", backup.ID, waitErr))
 			lastStartupErr = waitErr
 			consumed()
 			continue
 		}
-		v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
+		v.app.Agents.NotExpect(streamID)
 
 		vTask.WriteString(fmt.Sprintf("verification worker connected via TCP for job '%s'", backup.ID))
 

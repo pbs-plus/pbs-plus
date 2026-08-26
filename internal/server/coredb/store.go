@@ -22,8 +22,8 @@ var migrations embed.FS
 
 const maxAttempts = 100
 
-type DB struct {
-	*sqldb.DB
+type Store struct {
+	*sqldb.Handle
 	queries      *corequery.Queries
 	readQueries  *corequery.Queries
 	ctx          context.Context
@@ -33,7 +33,7 @@ type DB struct {
 // Transaction releases the writer lock on commit or rollback.
 type Transaction = sqldb.Tx
 
-func Initialize(ctx context.Context, dbPath string) (*DB, error) {
+func Initialize(ctx context.Context, dbPath string) (*Store, error) {
 	if dbPath == "" {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
@@ -48,8 +48,8 @@ func Initialize(ctx context.Context, dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("Initialize: %w", err)
 	}
 
-	d := &DB{
-		DB:          db,
+	d := &Store{
+		Handle:      db,
 		queries:     corequery.New(db.Writer()),
 		readQueries: corequery.New(db.Reader()),
 		ctx:         ctx,
@@ -79,16 +79,16 @@ func Initialize(ctx context.Context, dbPath string) (*DB, error) {
 	return d, nil
 }
 
-func (d *DB) NewTransaction() (*Transaction, error) {
-	return d.DB.Begin(d.ctx)
+func (d *Store) NewTransaction() (*Transaction, error) {
+	return d.Handle.Begin(d.ctx)
 }
 
-func (d *DB) Ping(ctx context.Context) error {
-	return d.DB.Ping(ctx)
+func (d *Store) Ping(ctx context.Context) error {
+	return d.Handle.Ping(ctx)
 }
 
 // JobCount returns at least 1 so the queue never has a zero-size buffer.
-func (d *DB) JobCount(ctx context.Context) (int, error) {
+func (d *Store) JobCount(ctx context.Context) (int, error) {
 	backupCount, err := d.readQueries.CountBackups(ctx)
 	if err != nil {
 		return 1, fmt.Errorf("JobCount: count backups: %w", err)
@@ -102,8 +102,8 @@ func (d *DB) JobCount(ctx context.Context) (int, error) {
 
 // RunInTransaction runs fn in a write transaction; error rolls back,
 // panic rolls back and re-panics.
-func (d *DB) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *corequery.Queries) error) error {
-	return d.DB.RunInTransaction(ctx, func(tx *Transaction) error {
+func (d *Store) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *corequery.Queries) error) error {
+	return d.Handle.RunInTransaction(ctx, func(tx *Transaction) error {
 		return fn(tx, d.queries.WithTx(tx.Tx))
 	})
 }

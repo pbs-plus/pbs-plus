@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func (db *DB) generateUniqueRestoreID(restore Restore) (string, error) {
+func (db *Store) generateUniqueRestoreID(restore Restore) (string, error) {
 	baseID := validate.Slugify(restore.DestTarget.Name)
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
@@ -43,7 +43,7 @@ func (db *DB) generateUniqueRestoreID(restore Restore) (string, error) {
 	return "", fmt.Errorf("failed to generate a unique restore ID after %d attempts", maxAttempts)
 }
 
-func (db *DB) CreateRestore(tx *Transaction, restore Restore) (err error) {
+func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -141,7 +141,7 @@ func (db *DB) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	return nil
 }
 
-func (db *DB) GetRestore(id string) (Restore, error) {
+func (db *Store) GetRestore(id string) (Restore, error) {
 	row, err := db.readQueries.GetRestore(db.ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Restore{}, ErrRestoreNotFound
@@ -205,7 +205,7 @@ func (db *DB) GetRestore(id string) (Restore, error) {
 	return restore, nil
 }
 
-func (db *DB) populateRestoreExtras(restore *Restore) {
+func (db *Store) populateRestoreExtras(restore *Restore) {
 	if restore.History.LastRunUpid != "" {
 		task, err := tasklog.GetTaskByUPID(restore.History.LastRunUpid)
 		if err == nil {
@@ -225,7 +225,7 @@ func (db *DB) populateRestoreExtras(restore *Restore) {
 	}
 }
 
-func (db *DB) UpdateRestore(tx *Transaction, restore Restore) (err error) {
+func (db *Store) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -319,7 +319,7 @@ func (db *DB) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 	return nil
 }
 
-func (db *DB) linkRestoreLog(restoreID, upid string) {
+func (db *Store) linkRestoreLog(restoreID, upid string) {
 	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, restoreID)
 	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
 		log.Error(fmt.Errorf("linkRestoreLog: failed to create log dir: %w", err), "", "id", restoreID)
@@ -358,7 +358,7 @@ func (db *DB) linkRestoreLog(restoreID, upid string) {
 	}
 }
 
-func (db *DB) GetAllRestores() ([]Restore, error) {
+func (db *Store) GetAllRestores() ([]Restore, error) {
 	rows, err := db.readQueries.ListAllRestores(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllRestores: error querying restores: %w", err)
@@ -423,7 +423,7 @@ func (db *DB) GetAllRestores() ([]Restore, error) {
 	return restores, nil
 }
 
-func (db *DB) GetAllQueuedRestores() ([]Restore, error) {
+func (db *Store) GetAllQueuedRestores() ([]Restore, error) {
 	rows, err := db.readQueries.ListQueuedRestores(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllQueuedRestores: error querying restores: %w", err)
@@ -466,7 +466,7 @@ func (db *DB) GetAllQueuedRestores() ([]Restore, error) {
 	return restores, nil
 }
 
-func (db *DB) DeleteRestore(tx *Transaction, id string) (err error) {
+func (db *Store) DeleteRestore(tx *Transaction, id string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 

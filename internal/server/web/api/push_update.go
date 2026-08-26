@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 )
 
 type pushUpdateRequest struct {
@@ -29,7 +29,7 @@ type applicationPushUpdateResult struct {
 	Message  string `json:"message"`
 }
 
-func ExtJsPushUpdateHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsPushUpdateHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -52,7 +52,7 @@ func ExtJsPushUpdateHandler(storeInstance *store.Store) http.HandlerFunc {
 		ctx, cancel := withTimeout(r.Context(), timeout+10*time.Second)
 		defer cancel()
 
-		results := storeInstance.TargetSvc.PushUpdate(ctx, req.Hostnames, timeout)
+		results := app.Target.PushUpdate(ctx, req.Hostnames, timeout)
 
 		out := make([]applicationPushUpdateResult, len(results))
 		for i, res := range results {

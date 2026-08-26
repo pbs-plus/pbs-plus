@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package application
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
@@ -21,29 +20,29 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Store struct {
-	Ctx               context.Context
-	Database          *coredb.Store
-	MtfStore          *mtfdb.Store
-	MtfMapper         *mtfdb.Mapper
-	BackupSvc         *application.BackupService
-	RestoreSvc        *application.RestoreService
-	ExclusionSvc      *application.ExclusionService
-	AgentHostSvc      *application.AgentHostService
-	TokenSvc          *application.TokenService
-	ScriptSvc         *application.ScriptService
-	TargetSvc         *application.TargetService
-	VerificationSvc   *application.VerificationService
-	ARPCAgentsManager *arpc.AgentsManager
-	Engine            *jobs.Engine
-	BatchTracker      *notification.BatchTracker
-	AlertScanner      *notification.AlertScanner
-	OnBackupComplete  func(backupJobID string) // called after backup completion to trigger pending verifications
-	arpcFS            *safemap.Map[string, *arpcfs.ARPCFS]
-	CertManager       *mtls.CertManager
+type Runtime struct {
+	Ctx              context.Context
+	CoreDB           *coredb.Store
+	MtfDB            *mtfdb.Store
+	MtfMapper        *mtfdb.Mapper
+	Backup           *BackupService
+	Restore          *RestoreService
+	Exclusion        *ExclusionService
+	AgentHost        *AgentHostService
+	Token            *TokenService
+	Script           *ScriptService
+	Target           *TargetService
+	Verification     *VerificationService
+	Agents           *arpc.AgentsManager
+	Engine           *jobs.Engine
+	BatchTracker     *notification.BatchTracker
+	AlertScanner     *notification.AlertScanner
+	OnBackupComplete func(backupJobID string) // called after backup completion to trigger pending verifications
+	arpcFS           *safemap.Map[string, *arpcfs.ARPCFS]
+	CertManager      *mtls.CertManager
 }
 
-func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
+func New(ctx context.Context, paths map[string]string) (*Runtime, error) {
 	sqlitePath := ""
 	if paths != nil {
 		sqlitePathTmp, ok := paths["sqlite"]
@@ -58,14 +57,14 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	}
 
 	agentsManager := arpc.NewAgentsManager()
-	backupSvc := application.NewBackupService(db)
-	restoreSvc := application.NewRestoreService(db)
-	exclusionSvc := application.NewExclusionService(db)
-	agentHostSvc := application.NewAgentHostService(db)
-	tokenSvc := application.NewTokenService(db)
-	scriptSvc := application.NewScriptService(db)
-	targetSvc := application.NewTargetService(db, agentsManager)
-	verificationSvc := application.NewVerificationService(db)
+	backupSvc := NewBackupService(db)
+	restoreSvc := NewRestoreService(db)
+	exclusionSvc := NewExclusionService(db)
+	agentHostSvc := NewAgentHostService(db)
+	tokenSvc := NewTokenService(db)
+	scriptSvc := NewScriptService(db)
+	targetSvc := NewTargetService(db, agentsManager)
+	verificationSvc := NewVerificationService(db)
 
 	mtfDB, err := mtfdb.Initialize(ctx, "")
 	if err != nil {
@@ -88,22 +87,22 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		}
 	}()
 
-	store := &Store{
-		Ctx:               ctx,
-		Database:          db,
-		MtfStore:          mtfDB,
-		MtfMapper:         mtfMapper,
-		BackupSvc:         backupSvc,
-		RestoreSvc:        restoreSvc,
-		ExclusionSvc:      exclusionSvc,
-		AgentHostSvc:      agentHostSvc,
-		TokenSvc:          tokenSvc,
-		ScriptSvc:         scriptSvc,
-		TargetSvc:         targetSvc,
-		VerificationSvc:   verificationSvc,
-		arpcFS:            safemap.New[string, *arpcfs.ARPCFS](),
-		ARPCAgentsManager: agentsManager,
-		CertManager:       mtls.NewCertManager(),
+	store := &Runtime{
+		Ctx:          ctx,
+		CoreDB:       db,
+		MtfDB:        mtfDB,
+		MtfMapper:    mtfMapper,
+		Backup:       backupSvc,
+		Restore:      restoreSvc,
+		Exclusion:    exclusionSvc,
+		AgentHost:    agentHostSvc,
+		Token:        tokenSvc,
+		Script:       scriptSvc,
+		Target:       targetSvc,
+		Verification: verificationSvc,
+		arpcFS:       safemap.New[string, *arpcfs.ARPCFS](),
+		Agents:       agentsManager,
+		CertManager:  mtls.NewCertManager(),
 	}
 
 	store.BatchTracker = notification.NewBatchTracker(db)
@@ -117,12 +116,12 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 	return store, nil
 }
 
-func (s *Store) Close() error {
+func (s *Runtime) Close() error {
 	if s.Engine != nil {
 		s.Engine.Close()
 	}
-	if s.Database != nil {
-		return s.Database.Close()
+	if s.CoreDB != nil {
+		return s.CoreDB.Close()
 	}
 	return nil
 }

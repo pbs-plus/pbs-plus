@@ -1,4 +1,4 @@
-package server
+package bootstrap
 
 import (
 	"time"
@@ -7,7 +7,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-func init() {
+func setMemLimit() {
 	if _, err := memlimit.SetGoMemLimitWithOpts(
 		memlimit.WithRatio(0.9),
 		memlimit.WithProvider(

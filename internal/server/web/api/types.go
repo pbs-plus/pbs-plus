@@ -226,7 +226,7 @@ type BackupConfigResponse struct {
 type BackupUPIDsResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    []coredb.Tasks  `json:"data"`
+	Data    []coredb.Tasks    `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
@@ -257,50 +257,50 @@ type RestoreRunResponse struct {
 
 type TargetsResponse struct {
 	Data    []coredb.Target `json:"data"`
-	Digest  string            `json:"digest"`
-	Success bool              `json:"success"`
+	Digest  string          `json:"digest"`
+	Success bool            `json:"success"`
 }
 
 type TargetConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    coredb.Target   `json:"data"`
+	Data    coredb.Target     `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
 
 type AgentConfigResponse struct {
-	Errors  map[string]string  `json:"errors"`
-	Message string             `json:"message"`
-	Data    coredb.AgentHost `json:"data"`
-	Status  int                `json:"status"`
-	Success bool               `json:"success"`
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
+	Data    coredb.AgentHost  `json:"data"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
 }
 
 type TokensResponse struct {
 	Data   []coredb.AgentToken `json:"data"`
-	Digest string                `json:"digest"`
+	Digest string              `json:"digest"`
 }
 
 type TokenConfigResponse struct {
-	Errors  map[string]string   `json:"errors"`
-	Message string              `json:"message"`
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
 	Data    coredb.AgentToken `json:"data"`
-	Status  int                 `json:"status"`
-	Success bool                `json:"success"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
 }
 
 type ExclusionsResponse struct {
 	Data   []coredb.Exclusion `json:"data"`
-	Digest string               `json:"digest"`
+	Digest string             `json:"digest"`
 }
 
 type ExclusionConfigResponse struct {
-	Errors  map[string]string   `json:"errors"`
-	Message string              `json:"message"`
+	Errors  map[string]string `json:"errors"`
+	Message string            `json:"message"`
 	Data    *coredb.Exclusion `json:"data"`
-	Status  int                 `json:"status"`
-	Success bool                `json:"success"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
 }
 
 type VersionResponse struct {
@@ -317,13 +317,13 @@ type ScriptConfig struct {
 
 type ScriptsResponse struct {
 	Data   []coredb.Script `json:"data"`
-	Digest string            `json:"digest"`
+	Digest string          `json:"digest"`
 }
 
 type ScriptConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    coredb.Script   `json:"data"`
+	Data    coredb.Script     `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }

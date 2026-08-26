@@ -1,6 +1,6 @@
 //go:build linux
 
-package store
+package application
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupTestStore(t *testing.T) *Store {
+func setupTestStore(t *testing.T) *Runtime {
 	t.Helper()
 
 	dir, err := os.MkdirTemp("", "pbs-plus-test-*")
@@ -27,7 +27,7 @@ func setupTestStore(t *testing.T) *Store {
 		"sqlite": dbPath,
 	}
 
-	store, err := Initialize(t.Context(), paths)
+	store, err := New(t.Context(), paths)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -54,11 +54,11 @@ func TestBackupCRUD(t *testing.T) {
 			Namespace:        "test",
 		}
 
-		err := store.Database.CreateBackup(nil, backup)
+		err := store.CoreDB.CreateBackup(nil, backup)
 		assert.NoError(t, err)
 
 		// Test Get
-		retrievedBackup, err := store.Database.GetBackup(backup.ID)
+		retrievedBackup, err := store.CoreDB.GetBackup(backup.ID)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrievedBackup)
 		assert.Equal(t, backup.ID, retrievedBackup.ID)
@@ -67,23 +67,23 @@ func TestBackupCRUD(t *testing.T) {
 
 		// Test Update
 		backup.Comment = "Updated comment"
-		err = store.Database.UpdateBackup(nil, backup)
+		err = store.CoreDB.UpdateBackup(nil, backup)
 		assert.NoError(t, err)
 
-		updatedBackup, err := store.Database.GetBackup(backup.ID)
+		updatedBackup, err := store.CoreDB.GetBackup(backup.ID)
 		assert.NoError(t, err)
 		assert.Equal(t, "Updated comment", updatedBackup.Comment)
 
 		// Test GetAll
-		backups, err := store.Database.GetAllBackups()
+		backups, err := store.CoreDB.GetAllBackups()
 		assert.NoError(t, err)
 		assert.Len(t, backups, 1)
 
 		// Test Delete
-		err = store.Database.DeleteBackup(nil, backup.ID)
+		err = store.CoreDB.DeleteBackup(nil, backup.ID)
 		assert.NoError(t, err)
 
-		_, err = store.Database.GetBackup(backup.ID)
+		_, err = store.CoreDB.GetBackup(backup.ID)
 		assert.ErrorIs(t, err, coredb.ErrBackupNotFound)
 	})
 
@@ -106,14 +106,14 @@ func TestBackupCRUD(t *testing.T) {
 					NotificationMode: "always",
 					Namespace:        "test",
 				}
-				err := store.Database.CreateBackup(nil, backup)
+				err := store.CoreDB.CreateBackup(nil, backup)
 				assert.NoError(t, err)
 			}(i)
 		}
 		wg.Wait()
 
 		// Verify all backups were created
-		backups, err := store.Database.GetAllBackups()
+		backups, err := store.CoreDB.GetAllBackups()
 		assert.NoError(t, err)
 		assert.Len(t, backups, backupCount)
 	})
@@ -129,7 +129,7 @@ func TestBackupCRUD(t *testing.T) {
 			NotificationMode: "always",
 			Namespace:        "test",
 		}
-		err := store.Database.CreateBackup(nil, backup)
+		err := store.CoreDB.CreateBackup(nil, backup)
 		assert.Error(t, err) // Should reject special characters
 	})
 }
@@ -181,7 +181,7 @@ func TestBackupValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateBackup(nil, tt.backup)
+			err := store.CoreDB.CreateBackup(nil, tt.backup)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -241,7 +241,7 @@ func TestTargetValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateTarget(nil, tt.target)
+			err := store.CoreDB.CreateTarget(nil, tt.target)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" && err != nil {
@@ -298,7 +298,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Database.CreateExclusion(nil, tt.exclusion)
+			err := store.CoreDB.CreateExclusion(nil, tt.exclusion)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -322,14 +322,14 @@ func TestConcurrentOperations(t *testing.T) {
 					Name: (fmt.Sprintf("concurrent-target-%d", idx)),
 					Path: (fmt.Sprintf("/path/to/target-%d", idx)),
 				}
-				err := store.Database.CreateTarget(nil, target)
+				err := store.CoreDB.CreateTarget(nil, target)
 				assert.NoError(t, err)
 			}(i)
 		}
 		wg.Wait()
 
 		// Verify all targets were created
-		targets, err := store.Database.GetAllTargets()
+		targets, err := store.CoreDB.GetAllTargets()
 		assert.NoError(t, err)
 		assert.Len(t, targets, targetCount)
 	})
@@ -354,7 +354,7 @@ func TestConcurrentOperations(t *testing.T) {
 						Name: fmt.Sprintf("concurrent-target-%d", i),
 						Path: fmt.Sprintf("/path/to/target-%d", i),
 					}
-					_ = store.Database.CreateTarget(nil, target)
+					_ = store.CoreDB.CreateTarget(nil, target)
 				}
 			}
 			doneCh <- struct{}{}
@@ -368,7 +368,7 @@ func TestConcurrentOperations(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					_, _ = store.Database.GetAllTargets()
+					_, _ = store.CoreDB.GetAllTargets()
 				}
 			}
 			doneCh <- struct{}{}

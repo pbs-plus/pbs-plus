@@ -9,35 +9,35 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func NotificationBatchHandler(storeInstance *store.Store) http.HandlerFunc {
+func NotificationBatchHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			if name := r.URL.Query().Get("batch"); name != "" {
-				getNotificationBatch(storeInstance, w, r, name)
+				getNotificationBatch(app, w, r, name)
 			} else {
-				listNotificationBatches(storeInstance, w, r)
+				listNotificationBatches(app, w, r)
 			}
 		case http.MethodPost:
-			createNotificationBatch(storeInstance, w, r)
+			createNotificationBatch(app, w, r)
 		case http.MethodPut:
-			updateNotificationBatch(storeInstance, w, r)
+			updateNotificationBatch(app, w, r)
 		case http.MethodDelete:
-			deleteNotificationBatch(storeInstance, w, r)
+			deleteNotificationBatch(app, w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
 }
 
-func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
-	batches, err := storeInstance.Database.ListNotificationBatches()
+func listNotificationBatches(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
+	batches, err := app.CoreDB.ListNotificationBatches()
 	if err != nil {
 		WriteErrorResponse(w, err)
 		return
@@ -50,7 +50,7 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 
 	result := make([]batchWithCount, len(batches))
 	for i, b := range batches {
-		jobs, err := storeInstance.Database.GetBatchJobs(b.Name)
+		jobs, err := app.CoreDB.GetBatchJobs(b.Name)
 		if err != nil {
 			log.Error(err, "")
 		}
@@ -80,8 +80,8 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 	}
 }
 
-func getNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request, name string) {
-	batch, err := storeInstance.Database.GetNotificationBatch(name)
+func getNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request, name string) {
+	batch, err := app.CoreDB.GetNotificationBatch(name)
 	if err != nil || batch.Name == "" {
 		http.Error(w, "Batch not found", http.StatusNotFound)
 		return
@@ -96,7 +96,7 @@ func getNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *
 	}
 }
 
-func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+func createNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
 		http.Error(w, "Missing batch name", http.StatusBadRequest)
@@ -107,7 +107,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		return
 	}
 
-	existing, err := storeInstance.Database.GetNotificationBatch(name)
+	existing, err := app.CoreDB.GetNotificationBatch(name)
 	if err != nil {
 		log.Error(err, "")
 	}
@@ -129,7 +129,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		SendOnTimeout:    sendOnTimeout,
 	}
 
-	if err := storeInstance.Database.CreateNotificationBatch(batch); err != nil {
+	if err := app.CoreDB.CreateNotificationBatch(batch); err != nil {
 		WriteErrorResponse(w, err)
 		return
 	}
@@ -141,14 +141,14 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		}
 		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
 			for _, j := range jobList {
-				if err := storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
+				if err := app.CoreDB.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
 					log.Error(err, "")
 				}
 			}
 		}
 	}
 
-	created, err := storeInstance.Database.GetNotificationBatch(name)
+	created, err := app.CoreDB.GetNotificationBatch(name)
 	if err != nil {
 		log.Error(err, "")
 	}
@@ -162,14 +162,14 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	}
 }
 
-func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+func updateNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("batch")
 	if name == "" {
 		http.Error(w, "Missing batch parameter", http.StatusBadRequest)
 		return
 	}
 
-	existing, err := storeInstance.Database.GetNotificationBatch(name)
+	existing, err := app.CoreDB.GetNotificationBatch(name)
 	if err != nil || existing.Name == "" {
 		http.Error(w, "Batch not found", http.StatusNotFound)
 		return
@@ -190,7 +190,7 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 		existing.SendOnTimeout = v == "1" || v == "true"
 	}
 
-	if err := storeInstance.Database.UpdateNotificationBatch(existing); err != nil {
+	if err := app.CoreDB.UpdateNotificationBatch(existing); err != nil {
 		WriteErrorResponse(w, err)
 		return
 	}
@@ -201,18 +201,18 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 			JobID   string `json:"job-id"`
 		}
 		if err := json.Unmarshal([]byte(jobs), &jobList); err == nil {
-			if err := storeInstance.Database.RemoveJobsByBatch(name); err != nil {
+			if err := app.CoreDB.RemoveJobsByBatch(name); err != nil {
 				log.Error(err, "")
 			}
 			for _, j := range jobList {
-				if err := storeInstance.Database.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
+				if err := app.CoreDB.AddJobToBatch(name, j.JobType, j.JobID); err != nil {
 					log.Error(err, "")
 				}
 			}
 		}
 	}
 
-	updated, err := storeInstance.Database.GetNotificationBatch(name)
+	updated, err := app.CoreDB.GetNotificationBatch(name)
 	if err != nil {
 		log.Error(err, "")
 	}
@@ -226,14 +226,14 @@ func updateNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	}
 }
 
-func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+func deleteNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("batch")
 	if name == "" {
 		http.Error(w, "Missing batch parameter", http.StatusBadRequest)
 		return
 	}
 
-	if err := storeInstance.Database.DeleteNotificationBatch(name); err != nil {
+	if err := app.CoreDB.DeleteNotificationBatch(name); err != nil {
 		WriteErrorResponse(w, err)
 		return
 	}
@@ -247,25 +247,25 @@ func deleteNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	}
 }
 
-func NotificationBatchJobsHandler(storeInstance *store.Store) http.HandlerFunc {
+func NotificationBatchJobsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			listBatchJobs(storeInstance, w, r)
+			listBatchJobs(app, w, r)
 		case http.MethodPost:
-			addBatchJob(storeInstance, w, r)
+			addBatchJob(app, w, r)
 		case http.MethodDelete:
-			removeBatchJob(storeInstance, w, r)
+			removeBatchJob(app, w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
 }
 
-func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+func listBatchJobs(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	batchName := r.URL.Query().Get("batch")
 	if batchName == "" {
-		allJobs, err := storeInstance.Database.ListBatchJobs()
+		allJobs, err := app.CoreDB.ListBatchJobs()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -277,7 +277,7 @@ func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	jobs, err := storeInstance.Database.GetBatchJobs(batchName)
+	jobs, err := app.CoreDB.GetBatchJobs(batchName)
 	if err != nil {
 		WriteErrorResponse(w, err)
 		return
@@ -289,7 +289,7 @@ func listBatchJobs(storeInstance *store.Store, w http.ResponseWriter, r *http.Re
 	}
 }
 
-func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+func addBatchJob(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	batchName := r.FormValue("batch-name")
 	jobType := r.FormValue("job-type")
 	jobID := r.FormValue("job-id")
@@ -304,7 +304,7 @@ func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := storeInstance.Database.AddJobToBatch(batchName, jobType, jobID); err != nil {
+	if err := app.CoreDB.AddJobToBatch(batchName, jobType, jobID); err != nil {
 		WriteErrorResponse(w, err)
 		return
 	}
@@ -322,7 +322,7 @@ func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Requ
 	}
 }
 
-func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Request) {
+func removeBatchJob(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	batchName := r.FormValue("batch-name")
 	jobType := r.FormValue("job-type")
 	jobID := r.FormValue("job-id")
@@ -332,7 +332,7 @@ func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := storeInstance.Database.RemoveJobFromBatch(batchName, jobType, jobID); err != nil {
+	if err := app.CoreDB.RemoveJobFromBatch(batchName, jobType, jobID); err != nil {
 		WriteErrorResponse(w, err)
 		return
 	}
@@ -343,14 +343,14 @@ func removeBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.R
 	}
 }
 
-func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc {
+func NotificationBatchStatusHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		if storeInstance.BatchTracker == nil {
+		if app.BatchTracker == nil {
 			w.Header().Set("Content-Type", "application/json")
 			if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]int{}}); err != nil {
 				log.Error(err, "")
@@ -358,7 +358,7 @@ func NotificationBatchStatusHandler(storeInstance *store.Store) http.HandlerFunc
 			return
 		}
 
-		pending := storeInstance.BatchTracker.PendingBatches()
+		pending := app.BatchTracker.PendingBatches()
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{"success": true, "data": pending}); err != nil {
@@ -390,26 +390,26 @@ func formValueBool(r *http.Request, key string, defaultVal bool) bool {
 // ApplyJobBatchAssignment syncs a job's batch membership based on the
 //   - If value is empty or matches delete: job is removed from all batches.
 //   - If value is a batch name: job is added to that batch (and removed from others).
-func ApplyJobBatchAssignment(storeInstance *store.Store, jobType, jobID, batchName string) {
-	if err := storeInstance.Database.RemoveJobFromAllBatches(jobType, jobID); err != nil {
+func ApplyJobBatchAssignment(app *application.Runtime, jobType, jobID, batchName string) {
+	if err := app.CoreDB.RemoveJobFromAllBatches(jobType, jobID); err != nil {
 		log.Error(err, "")
 	}
 
 	if batchName != "" {
 		// Verify the batch exists before assigning
-		batch, err := storeInstance.Database.GetNotificationBatch(batchName)
+		batch, err := app.CoreDB.GetNotificationBatch(batchName)
 		if err != nil || batch.Name == "" {
 			return
 		}
-		if err := storeInstance.Database.AddJobToBatch(batchName, jobType, jobID); err != nil {
+		if err := app.CoreDB.AddJobToBatch(batchName, jobType, jobID); err != nil {
 			log.Error(err, "")
 		}
 	}
 }
 
 // GetJobBatchName returns the name of the batch a job is assigned to, or "" if none.
-func GetJobBatchName(storeInstance *store.Store, jobType, jobID string) string {
-	batch, err := storeInstance.Database.GetBatchForJob(jobType, jobID)
+func GetJobBatchName(app *application.Runtime, jobType, jobID string) string {
+	batch, err := app.CoreDB.GetBatchForJob(jobType, jobID)
 	if err != nil {
 		return ""
 	}

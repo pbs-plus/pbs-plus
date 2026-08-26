@@ -15,7 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb/corequery"
 )
 
-func (db *DB) CreateAgentHost(tx *Transaction, host AgentHost) (err error) {
+func (db *Store) CreateAgentHost(tx *Transaction, host AgentHost) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -64,7 +64,7 @@ func (db *DB) CreateAgentHost(tx *Transaction, host AgentHost) (err error) {
 	return nil
 }
 
-func (db *DB) UpdateAgentHost(tx *Transaction, host AgentHost) (err error) {
+func (db *Store) UpdateAgentHost(tx *Transaction, host AgentHost) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -113,7 +113,7 @@ func (db *DB) UpdateAgentHost(tx *Transaction, host AgentHost) (err error) {
 	return nil
 }
 
-func (db *DB) DeleteAgentHost(tx *Transaction, name string) (err error) {
+func (db *Store) DeleteAgentHost(tx *Transaction, name string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -159,7 +159,7 @@ func (db *DB) DeleteAgentHost(tx *Transaction, name string) (err error) {
 	return nil
 }
 
-func (db *DB) GetAgentHost(name string) (AgentHost, error) {
+func (db *Store) GetAgentHost(name string) (AgentHost, error) {
 	row, err := db.readQueries.GetAgentHost(db.ctx, name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentHost{}, ErrAgentHostNotFound
@@ -177,7 +177,7 @@ func (db *DB) GetAgentHost(name string) (AgentHost, error) {
 	}, nil
 }
 
-func (db *DB) GetAllAgentHosts() ([]AgentHost, error) {
+func (db *Store) GetAllAgentHosts() ([]AgentHost, error) {
 	rows, err := db.readQueries.ListAllAgentHosts(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllAgentHosts: error querying agent hosts: %w", err)
@@ -197,7 +197,7 @@ func (db *DB) GetAllAgentHosts() ([]AgentHost, error) {
 	return hosts, nil
 }
 
-func (db *DB) GetAgentHostAuth(hostname string) (string, error) {
+func (db *Store) GetAgentHostAuth(hostname string) (string, error) {
 	auth, err := db.readQueries.GetAgentHostAuth(db.ctx, hostname)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrAgentHostNotFound
@@ -209,7 +209,7 @@ func (db *DB) GetAgentHostAuth(hostname string) (string, error) {
 	return fromNullString(auth), nil
 }
 
-func (db *DB) LoadAgentHostCert(hostname string) (*x509.Certificate, error) {
+func (db *Store) LoadAgentHostCert(hostname string) (*x509.Certificate, error) {
 	authValue, err := db.GetAgentHostAuth(hostname)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get auth values for hostname %s: %w", hostname, err)

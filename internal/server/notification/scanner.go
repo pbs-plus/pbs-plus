@@ -15,10 +15,10 @@ const (
 )
 
 type AlertScanner struct {
-	db *coredb.DB
+	db *coredb.Store
 }
 
-func NewAlertScanner(db *coredb.DB) *AlertScanner {
+func NewAlertScanner(db *coredb.Store) *AlertScanner {
 	return &AlertScanner{db: db}
 }
 

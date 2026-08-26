@@ -47,7 +47,7 @@ type JobResult struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-func NewBatchTracker(db *coredb.DB) *BatchTracker {
+func NewBatchTracker(db *coredb.Store) *BatchTracker {
 	bt := &BatchTracker{
 		db:      db,
 		pending: make(map[string]*batchState),

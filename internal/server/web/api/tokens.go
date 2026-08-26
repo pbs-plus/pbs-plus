@@ -9,21 +9,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func D2DTokenHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DTokenHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		all, err := storeInstance.TokenSvc.GetAllTokens()
+		all, err := app.Token.GetAllTokens()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -49,7 +49,7 @@ func D2DTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsTokenHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TokenConfigResponse{}
 		if r.Method != http.MethodPost {
@@ -82,7 +82,7 @@ func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		}
 
-		err = storeInstance.TokenSvc.CreateToken(duration, newToken.Comment)
+		err = app.Token.CreateToken(duration, newToken.Comment)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -96,7 +96,7 @@ func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsTokenSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsTokenSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TokenConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
@@ -107,7 +107,7 @@ func ExtJsTokenSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.Method == http.MethodGet {
-			token, err := storeInstance.TokenSvc.GetToken(validate.DecodePath(r.PathValue("token")))
+			token, err := app.Token.GetToken(validate.DecodePath(r.PathValue("token")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -124,13 +124,13 @@ func ExtJsTokenSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			token, err := storeInstance.TokenSvc.GetToken(validate.DecodePath(r.PathValue("token")))
+			token, err := app.Token.GetToken(validate.DecodePath(r.PathValue("token")))
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
 
-			err = storeInstance.TokenSvc.RevokeToken(token)
+			err = app.Token.RevokeToken(token)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

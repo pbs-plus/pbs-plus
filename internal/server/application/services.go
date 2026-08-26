@@ -10,16 +10,16 @@ import (
 	"sync"
 	"time"
 
-	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
-type BackupService struct{ db *coredb.DB }
+type BackupService struct{ db *coredb.Store }
 
-func NewBackupService(db *coredb.DB) *BackupService { return &BackupService{db: db} }
+func NewBackupService(db *coredb.Store) *BackupService { return &BackupService{db: db} }
 
 func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 	backups, err := s.db.GetAllBackups()
@@ -44,7 +44,7 @@ func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 func (s *BackupService) GetBackup(id string) (coredb.Backup, error) { return s.db.GetBackup(id) }
 func (s *BackupService) CreateBackup(b coredb.Backup) error         { return s.db.CreateBackup(nil, b) }
 func (s *BackupService) UpdateBackup(b coredb.Backup) error         { return s.db.UpdateBackup(nil, b) }
-func (s *BackupService) DeleteBackup(id string) error                 { return s.db.DeleteBackup(nil, id) }
+func (s *BackupService) DeleteBackup(id string) error               { return s.db.DeleteBackup(nil, id) }
 func (s *BackupService) GetAllQueuedBackups() ([]coredb.Backup, error) {
 	return s.db.GetAllQueuedBackups()
 }
@@ -60,19 +60,19 @@ func jobStatsFromVFS(stats vfs.VFSStats) coredb.JobStats {
 	}
 }
 
-type RestoreService struct{ db *coredb.DB }
+type RestoreService struct{ db *coredb.Store }
 
-func NewRestoreService(db *coredb.DB) *RestoreService { return &RestoreService{db: db} }
+func NewRestoreService(db *coredb.Store) *RestoreService { return &RestoreService{db: db} }
 
 func (s *RestoreService) GetAllRestores() ([]coredb.Restore, error)    { return s.db.GetAllRestores() }
 func (s *RestoreService) GetRestore(id string) (coredb.Restore, error) { return s.db.GetRestore(id) }
 func (s *RestoreService) CreateRestore(r coredb.Restore) error         { return s.db.CreateRestore(nil, r) }
 func (s *RestoreService) UpdateRestore(r coredb.Restore) error         { return s.db.UpdateRestore(nil, r) }
-func (s *RestoreService) DeleteRestore(id string) error                  { return s.db.DeleteRestore(nil, id) }
+func (s *RestoreService) DeleteRestore(id string) error                { return s.db.DeleteRestore(nil, id) }
 
-type ExclusionService struct{ db *coredb.DB }
+type ExclusionService struct{ db *coredb.Store }
 
-func NewExclusionService(db *coredb.DB) *ExclusionService { return &ExclusionService{db: db} }
+func NewExclusionService(db *coredb.Store) *ExclusionService { return &ExclusionService{db: db} }
 
 func (s *ExclusionService) GetAllGlobalExclusions() ([]coredb.Exclusion, error) {
 	return s.db.GetAllGlobalExclusions()
@@ -88,9 +88,9 @@ func (s *ExclusionService) UpdateExclusion(e coredb.Exclusion) error {
 }
 func (s *ExclusionService) DeleteExclusion(path string) error { return s.db.DeleteExclusion(nil, path) }
 
-type AgentHostService struct{ db *coredb.DB }
+type AgentHostService struct{ db *coredb.Store }
 
-func NewAgentHostService(db *coredb.DB) *AgentHostService { return &AgentHostService{db: db} }
+func NewAgentHostService(db *coredb.Store) *AgentHostService { return &AgentHostService{db: db} }
 
 func (s *AgentHostService) GetAgentHost(hostname string) (coredb.AgentHost, error) {
 	return s.db.GetAgentHost(hostname)
@@ -105,27 +105,27 @@ func (s *AgentHostService) DeleteAgentHost(hostname string) error {
 	return s.db.DeleteAgentHost(nil, hostname)
 }
 
-type TokenService struct{ db *coredb.DB }
+type TokenService struct{ db *coredb.Store }
 
-func NewTokenService(db *coredb.DB) *TokenService { return &TokenService{db: db} }
+func NewTokenService(db *coredb.Store) *TokenService { return &TokenService{db: db} }
 
 func (s *TokenService) GetAllTokens() ([]coredb.AgentToken, error)    { return s.db.GetAllTokens(false) }
 func (s *TokenService) GetToken(id string) (coredb.AgentToken, error) { return s.db.GetToken(id) }
-func (s *TokenService) CreateToken(d time.Duration, c string) error     { return s.db.CreateToken(d, c) }
+func (s *TokenService) CreateToken(d time.Duration, c string) error   { return s.db.CreateToken(d, c) }
 func (s *TokenService) RevokeToken(t coredb.AgentToken) error         { return s.db.RevokeToken(t) }
 
-type ScriptService struct{ db *coredb.DB }
+type ScriptService struct{ db *coredb.Store }
 
-func NewScriptService(db *coredb.DB) *ScriptService { return &ScriptService{db: db} }
+func NewScriptService(db *coredb.Store) *ScriptService { return &ScriptService{db: db} }
 
 func (s *ScriptService) GetAllScripts() ([]coredb.Script, error)      { return s.db.GetAllScripts() }
 func (s *ScriptService) GetScript(path string) (coredb.Script, error) { return s.db.GetScript(path) }
 func (s *ScriptService) CreateScript(sc coredb.Script) error          { return s.db.CreateScript(nil, sc) }
 func (s *ScriptService) UpdateScript(sc coredb.Script) error          { return s.db.UpdateScript(nil, sc) }
-func (s *ScriptService) DeleteScript(path string) error                 { return s.db.DeleteScript(nil, path) }
+func (s *ScriptService) DeleteScript(path string) error               { return s.db.DeleteScript(nil, path) }
 
 type TargetService struct {
-	db          *coredb.DB
+	db          *coredb.Store
 	agentsMgr   *arpc.AgentsManager
 	statusCache map[string]TargetStatusResult
 	statusMu    sync.RWMutex
@@ -133,7 +133,7 @@ type TargetService struct {
 	refreshMu   sync.Mutex
 }
 
-func NewTargetService(db *coredb.DB, agentsMgr *arpc.AgentsManager) *TargetService {
+func NewTargetService(db *coredb.Store, agentsMgr *arpc.AgentsManager) *TargetService {
 	return &TargetService{
 		db:          db,
 		agentsMgr:   agentsMgr,
@@ -207,7 +207,7 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 					timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 					defer cancel()
 					respMsg, err := arpcSessTcp.CallMessage(timeoutCtx, "target_status",
-						&reqTypes.TargetStatusReq{Drive: tgt.VolumeID})
+						&fswire.TargetStatusReq{Drive: tgt.VolumeID})
 					if err == nil && strings.HasPrefix(respMsg, "reachable") {
 						result.ConnectionStatus = true
 						if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
@@ -225,7 +225,7 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 				defer cancel()
 				respMsg, err := arpcSess.CallMessage(timeoutCtx, "target_status",
-					&reqTypes.TargetStatusReq{Drive: tgt.VolumeID})
+					&fswire.TargetStatusReq{Drive: tgt.VolumeID})
 				if err == nil && strings.HasPrefix(respMsg, "reachable") {
 					result.ConnectionStatus = true
 					if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
@@ -399,9 +399,9 @@ func (s *TargetService) PushUpdate(ctx context.Context, hostnames []string, time
 	return results
 }
 
-type VerificationService struct{ db *coredb.DB }
+type VerificationService struct{ db *coredb.Store }
 
-func NewVerificationService(db *coredb.DB) *VerificationService {
+func NewVerificationService(db *coredb.Store) *VerificationService {
 	return &VerificationService{db: db}
 }
 

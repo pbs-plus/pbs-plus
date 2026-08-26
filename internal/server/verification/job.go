@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	sha256simd "github.com/minio/sha256-simd"
 	"io"
 	"math"
 	mrand "math/rand"
@@ -17,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	sha256simd "github.com/minio/sha256-simd"
+
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
@@ -24,10 +25,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/transfer"
@@ -38,7 +39,7 @@ import (
 // was last successfully verified. Jobs that have never been verified receive
 // the maximum weight. This ensures uniform coverage over successive runs and
 // prevents the same backup job from being selected repeatedly.
-func weightedShuffleBackups(backups []coredb.Backup, db *coredb.DB, verificationJobID string) []coredb.Backup {
+func weightedShuffleBackups(backups []coredb.Backup, db *coredb.Store, verificationJobID string) []coredb.Backup {
 	if len(backups) <= 1 {
 		return backups
 	}
@@ -176,14 +177,14 @@ type verificationJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
-	logger        *log.Logger
-	task          *VerificationTask
-	upid          string
-	queueTask     *tasklog.QueuedTask
-	job           coredb.VerificationJob
-	backupJobs    []coredb.Backup
-	storeInstance *store.Store
-	web           bool
+	logger     *log.Logger
+	task       *VerificationTask
+	upid       string
+	queueTask  *tasklog.QueuedTask
+	job        coredb.VerificationJob
+	backupJobs []coredb.Backup
+	app        *application.Runtime
+	web        bool
 
 	// result counts set by execute, used by onSuccess/onError to close task
 	failedFiles     int
@@ -223,7 +224,7 @@ func (v *verificationJob) selectCandidates(ctx context.Context) []coredb.Backup 
 	var backups []coredb.Backup
 
 	if job.TargetMode == "namespace" {
-		allBackups, err := v.storeInstance.Database.GetAllBackups()
+		allBackups, err := v.app.CoreDB.GetAllBackups()
 		if err != nil {
 			return nil
 		}
@@ -245,9 +246,9 @@ func (v *verificationJob) selectCandidates(ctx context.Context) []coredb.Backup 
 				}
 			}
 		}
-		backups = weightedShuffleBackups(backups, v.storeInstance.Database, job.ID)
+		backups = weightedShuffleBackups(backups, v.app.CoreDB, job.ID)
 	} else {
-		backup, err := v.storeInstance.Database.GetBackup(job.BackupJobID)
+		backup, err := v.app.CoreDB.GetBackup(job.BackupJobID)
 		if err != nil {
 			return nil
 		}
@@ -293,7 +294,7 @@ func (v *verificationJob) executeVerification(
 		StartedAt:         time.Now().Unix(),
 		Details:           []coredb.VerificationFileResult{},
 	}
-	if err := v.storeInstance.Database.CreateVerificationResult(result); err != nil {
+	if err := v.app.CoreDB.CreateVerificationResult(result); err != nil {
 		vTask.WriteString(fmt.Sprintf("failed to create verification result: %v", err))
 		return fmt.Errorf("failed to create verification result: %w", err)
 	}
@@ -306,7 +307,7 @@ func (v *verificationJob) executeVerification(
 	sampledFiles, err := v.sampleFiles(ctx, job, vs, snapshot)
 	if err != nil {
 		// Mark the stale result as skipped so we don't leave orphaned "running" records
-		if err := v.storeInstance.Database.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix()); err != nil {
+		if err := v.app.CoreDB.MarkVerificationResultStatus(result.ID, "skipped", time.Now().Unix()); err != nil {
 			v.logger.Error(err, "failed to mark stale verification result as skipped")
 		}
 		return fmt.Errorf("failed to sample files: %w", err)
@@ -420,7 +421,7 @@ func (v *verificationJob) executeVerification(
 		result.Status = "completed"
 	}
 
-	if err := v.storeInstance.Database.UpdateVerificationResult(*result); err != nil {
+	if err := v.app.CoreDB.UpdateVerificationResult(*result); err != nil {
 		v.logger.Error(err, "failed to update verification result")
 	}
 
@@ -436,7 +437,7 @@ func (v *verificationJob) finalizeFailure(err error) {
 	v.mu.RUnlock()
 
 	if rID > 0 {
-		if markErr := v.storeInstance.Database.MarkVerificationResultStatus(rID, "failed", time.Now().Unix()); markErr != nil {
+		if markErr := v.app.CoreDB.MarkVerificationResultStatus(rID, "failed", time.Now().Unix()); markErr != nil {
 			v.logger.Error(markErr, "failed to mark result as failed")
 		}
 	}
@@ -451,8 +452,8 @@ func (v *verificationJob) finalizeFailure(err error) {
 		v.logger.Error(err, "failed to update job history on error")
 	}
 
-	if v.storeInstance.BatchTracker != nil {
-		v.storeInstance.BatchTracker.RecordJobResult(
+	if v.app.BatchTracker != nil {
+		v.app.BatchTracker.RecordJobResult(
 			v.job.NotificationMode,
 			notification.JobTypeVerification,
 			v.job.ID,
@@ -508,9 +509,9 @@ func (v *verificationJob) finalizeSuccess() {
 	if failed > 0 {
 		notifyErr = fmt.Errorf("verification found %d failed files", failed)
 	}
-	if v.storeInstance.BatchTracker != nil {
+	if v.app.BatchTracker != nil {
 		verified := total - failed - skipped
-		v.storeInstance.BatchTracker.RecordJobResult(
+		v.app.BatchTracker.RecordJobResult(
 			v.job.NotificationMode,
 			notification.JobTypeVerification,
 			v.job.ID,
@@ -538,7 +539,7 @@ func (v *verificationJob) cleanup() {
 }
 
 func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) error {
-	job, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
+	job, err := v.app.CoreDB.GetVerificationJob(v.job.ID)
 	if err != nil {
 		return err
 	}
@@ -549,7 +550,7 @@ func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) err
 	if succeeded {
 		job.History.LastSuccessfulUpid = task.UPID
 	}
-	return v.storeInstance.Database.UpdateVerificationJob(nil, job)
+	return v.app.CoreDB.UpdateVerificationJob(nil, job)
 }
 
 // using the standard PBS task system (mirrors backup/restore pattern).
@@ -569,16 +570,16 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 		warningsNum,
 		vTask.Task,
 		func() (coredb.JobHistory, int, error) {
-			j, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
+			j, err := v.app.CoreDB.GetVerificationJob(v.job.ID)
 			return j.History, 0, err
 		},
 		func(history coredb.JobHistory, _ int) error {
-			j, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
+			j, err := v.app.CoreDB.GetVerificationJob(v.job.ID)
 			if err != nil {
 				return err
 			}
 			j.History = history
-			return v.storeInstance.Database.UpdateVerificationJob(nil, j)
+			return v.app.CoreDB.UpdateVerificationJob(nil, j)
 		},
 	)
 }

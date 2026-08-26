@@ -6,17 +6,17 @@ import (
 
 	mtf "github.com/pbs-plus/go-mtf"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
-	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 )
 
 func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tapeio.Config, tapeCfg *tape.Config) (tapeio.Config, error) {
-	carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
+	carts, err := j.store.MtfDB.ListCartridgesByFamily(ctx, ds.MediaFamilyID)
 	if err != nil {
 		return cfg, err
 	}
 
-	dsTapes, err := j.store.MtfStore.Queries().ListDataSetTapes(ctx, ds.ID)
+	dsTapes, err := j.store.MtfDB.Queries().ListDataSetTapes(ctx, ds.ID)
 	if err != nil {
 		j.logger.Error(err, "failed to list data set tapes", "data_set_id", ds.ID)
 	}
@@ -136,7 +136,7 @@ func (j *mtfJob) configForDataSet(ctx context.Context, ds mtfdb.DataSet, cfg tap
 		cfg.SnapshotPBA = ds.SSETPBA - offset
 	} else {
 		dsID := ds.ID
-		storeRef := j.store.MtfStore
+		storeRef := j.store.MtfDB
 		cfg.OnSetMapRead = func(entry mtf.SetMapEntry) {
 			if entry.SSETPBA == 0 {
 				return

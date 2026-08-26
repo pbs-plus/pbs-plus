@@ -12,18 +12,18 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 type VerificationJobConfigResponse struct {
-	Errors  map[string]string        `json:"errors"`
-	Message string                   `json:"message"`
+	Errors  map[string]string      `json:"errors"`
+	Message string                 `json:"message"`
 	Data    coredb.VerificationJob `json:"data"`
-	Status  int                      `json:"status"`
-	Success bool                     `json:"success"`
+	Status  int                    `json:"status"`
+	Success bool                   `json:"success"`
 }
 
 type VerificationRunResponse struct {
@@ -34,14 +34,14 @@ type VerificationRunResponse struct {
 	Success bool              `json:"success"`
 }
 
-func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DVerificationHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		jobs, err := storeInstance.VerificationSvc.ListVerificationJobs()
+		jobs, err := app.Verification.ListVerificationJobs()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -68,7 +68,7 @@ func D2DVerificationHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsVerificationRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -96,7 +96,7 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 		go func() {
 			for _, jobID := range decodedJobIDs {
 				if stop {
-					if _, err := storeInstance.Engine.CancelDefinition(context.Background(), jobs.WorkflowVerification, jobID); err != nil {
+					if _, err := app.Engine.CancelDefinition(context.Background(), jobs.WorkflowVerification, jobID); err != nil {
 						log.Warn("job not running, cannot stop", "verificationJobID", jobID, "error", err)
 					}
 					continue
@@ -116,7 +116,7 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 					log.Error(err, "", "verificationJobID", jobID)
 					continue
 				}
-				if _, _, err := storeInstance.Engine.Submit(context.Background(), request); err != nil {
+				if _, _, err := app.Engine.Submit(context.Background(), request); err != nil {
 					log.Error(err, "", "verificationJobID", jobID)
 				}
 			}
@@ -133,7 +133,7 @@ func ExtJsVerificationRunHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsVerificationConfigHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -210,7 +210,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 				WriteErrorResponse(w, fmt.Errorf("backup_job_id is required"))
 				return
 			}
-			backup, err := storeInstance.Database.GetBackup(backupJobID)
+			backup, err := app.CoreDB.GetBackup(backupJobID)
 			if err != nil {
 				WriteErrorResponse(w, fmt.Errorf("failed to get backup job: %w", err))
 				return
@@ -278,12 +278,12 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			}
 		}
 
-		if err := storeInstance.VerificationSvc.CreateVerificationJob(job); err != nil {
+		if err := app.Verification.CreateVerificationJob(job); err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		ApplyJobBatchAssignment(storeInstance, "verification", job.ID, r.FormValue("notification-batch"))
+		ApplyJobBatchAssignment(app, "verification", job.ID, r.FormValue("notification-batch"))
 
 		response := VerificationJobConfigResponse{
 			Data:    job,
@@ -297,7 +297,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 }
 
 // ExtJsVerificationConfigSingleHandler handles GET/PUT/DELETE for a single verification job.
-func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsVerificationConfigSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
@@ -308,7 +308,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				return
 			}
 
-			job, err := storeInstance.VerificationSvc.GetVerificationJob(jobID)
+			job, err := app.Verification.GetVerificationJob(jobID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -327,7 +327,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 			if err := json.Unmarshal(jobBytes, &jobMap); err != nil {
 				log.Error(err, "")
 			}
-			jobMap["notification-batch"] = GetJobBatchName(storeInstance, "verification", jobID)
+			jobMap["notification-batch"] = GetJobBatchName(app, "verification", jobID)
 			response.Data = job // keep struct for type compatibility
 
 			w.Header().Set("Content-Type", "application/json")
@@ -348,7 +348,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				return
 			}
 
-			job, err := storeInstance.VerificationSvc.GetVerificationJob(jobID)
+			job, err := app.Verification.GetVerificationJob(jobID)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -377,7 +377,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 					job.Namespace = v
 				}
 			} else if job.BackupJobID != "" {
-				backup, err := storeInstance.Database.GetBackup(job.BackupJobID)
+				backup, err := app.CoreDB.GetBackup(job.BackupJobID)
 				if err == nil {
 					job.Store = backup.Store
 					job.Namespace = backup.Namespace
@@ -442,12 +442,12 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				job.RunOnBackupComplete = r.FormValue("run_on_backup_complete") == "true"
 			}
 
-			if err := storeInstance.VerificationSvc.UpdateVerificationJob(job); err != nil {
+			if err := app.Verification.UpdateVerificationJob(job); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
 
-			ApplyJobBatchAssignment(storeInstance, "verification", job.ID, r.FormValue("notification-batch"))
+			ApplyJobBatchAssignment(app, "verification", job.ID, r.FormValue("notification-batch"))
 
 			response := VerificationJobConfigResponse{
 				Data:    job,
@@ -467,7 +467,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 				return
 			}
 
-			if err := storeInstance.VerificationSvc.DeleteVerificationJob(jobID); err != nil {
+			if err := app.Verification.DeleteVerificationJob(jobID); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
@@ -486,7 +486,7 @@ func ExtJsVerificationConfigSingleHandler(storeInstance *store.Store) http.Handl
 	}
 }
 
-func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
+func VerificationAggregateHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -495,13 +495,13 @@ func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 
-		results, err := storeInstance.VerificationSvc.GetAllVerificationResults()
+		results, err := app.Verification.GetAllVerificationResults()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		jobs, err := storeInstance.VerificationSvc.ListVerificationJobs()
+		jobs, err := app.Verification.ListVerificationJobs()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -521,7 +521,7 @@ func VerificationAggregateHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsVerificationResultsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -536,13 +536,13 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 			return
 		}
 
-		results, err := storeInstance.VerificationSvc.GetVerificationResults(jobID)
+		results, err := app.Verification.GetVerificationResults(jobID)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
 		}
 
-		job, err := storeInstance.VerificationSvc.GetVerificationJob(jobID)
+		job, err := app.Verification.GetVerificationJob(jobID)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -561,7 +561,7 @@ func ExtJsVerificationResultsHandler(storeInstance *store.Store) http.HandlerFun
 	}
 }
 
-func VerificationResultsExportHandler(storeInstance *store.Store) http.HandlerFunc {
+func VerificationResultsExportHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -574,7 +574,7 @@ func VerificationResultsExportHandler(storeInstance *store.Store) http.HandlerFu
 			return
 		}
 
-		results, err := storeInstance.VerificationSvc.GetVerificationResults(jobID)
+		results, err := app.Verification.GetVerificationResults(jobID)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

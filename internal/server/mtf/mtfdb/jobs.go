@@ -1,4 +1,4 @@
-package store
+package mtfdb
 
 import (
 	"context"
@@ -7,12 +7,12 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb/mtfquery"
 )
 
 const mtfJobMaxAttempts = 100
 
-func (d *Database) generateUniqueMtfJobID(ctx context.Context, base string) (string, error) {
+func (d *Store) generateUniqueMtfJobID(ctx context.Context, base string) (string, error) {
 	if base == "" {
 		base = "tape-job"
 	}
@@ -34,7 +34,7 @@ func (d *Database) generateUniqueMtfJobID(ctx context.Context, base string) (str
 	return "", fmt.Errorf("failed to generate unique tape job id after %d attempts", mtfJobMaxAttempts)
 }
 
-func (d *Database) CreateMtfJob(ctx context.Context, j MTFJob) (MTFJob, error) {
+func (d *Store) CreateMtfJob(ctx context.Context, j MTFJob) (MTFJob, error) {
 	if j.Datastore == "" {
 		return MTFJob{}, ErrDatastoreRequired
 	}
@@ -64,11 +64,11 @@ func (d *Database) CreateMtfJob(ctx context.Context, j MTFJob) (MTFJob, error) {
 	return d.GetMtfJob(ctx, j.ID)
 }
 
-func (d *Database) UpdateMtfJob(ctx context.Context, j MTFJob) error {
+func (d *Store) UpdateMtfJob(ctx context.Context, j MTFJob) error {
 	return d.queries.UpdateMtfJob(ctx, mtfJobUpdateParams(j))
 }
 
-func (d *Database) GetMtfJob(ctx context.Context, id string) (MTFJob, error) {
+func (d *Store) GetMtfJob(ctx context.Context, id string) (MTFJob, error) {
 	r, err := d.readQueries.GetMtfJob(ctx, id)
 	if err != nil {
 		return MTFJob{}, mapErr(err, "tape job")
@@ -78,7 +78,7 @@ func (d *Database) GetMtfJob(ctx context.Context, id string) (MTFJob, error) {
 	return j, nil
 }
 
-func (d *Database) ListMtfJobs(ctx context.Context) ([]MTFJob, error) {
+func (d *Store) ListMtfJobs(ctx context.Context) ([]MTFJob, error) {
 	rows, err := d.readQueries.ListAllMtfJobs(ctx)
 	if err != nil {
 		return nil, err
@@ -92,7 +92,7 @@ func (d *Database) ListMtfJobs(ctx context.Context) ([]MTFJob, error) {
 	return out, nil
 }
 
-func (d *Database) ListQueuedMtfJobs(ctx context.Context) ([]MTFJob, error) {
+func (d *Store) ListQueuedMtfJobs(ctx context.Context) ([]MTFJob, error) {
 	rows, err := d.readQueries.ListQueuedMtfJobs(ctx)
 	if err != nil {
 		return nil, err
@@ -104,12 +104,12 @@ func (d *Database) ListQueuedMtfJobs(ctx context.Context) ([]MTFJob, error) {
 	return out, nil
 }
 
-func (d *Database) DeleteMtfJob(ctx context.Context, id string) error {
+func (d *Store) DeleteMtfJob(ctx context.Context, id string) error {
 	_, err := d.queries.DeleteMtfJob(ctx, id)
 	return err
 }
 
-func (d *Database) MtfJobExists(ctx context.Context, id string) (bool, error) {
+func (d *Store) MtfJobExists(ctx context.Context, id string) (bool, error) {
 	_, err := d.readQueries.MtfJobExists(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -120,7 +120,7 @@ func (d *Database) MtfJobExists(ctx context.Context, id string) (bool, error) {
 	return true, nil
 }
 
-func (d *Database) UpdateMtfJobHistory(ctx context.Context, id string, h JobHistory, currentPID string) error {
+func (d *Store) UpdateMtfJobHistory(ctx context.Context, id string, h JobHistory, currentPID string) error {
 	return d.queries.UpdateMtfJobHistory(ctx, mtfquery.UpdateMtfJobHistoryParams{
 		CurrentPid:            sql.NullString{String: currentPID, Valid: currentPID != ""},
 		LastRunUpid:           sql.NullString{String: h.LastRunUpid, Valid: h.LastRunUpid != ""},
@@ -135,7 +135,7 @@ func (d *Database) UpdateMtfJobHistory(ctx context.Context, id string, h JobHist
 	})
 }
 
-func (d *Database) sourceLabel(ctx context.Context, kind, ref string) string {
+func (d *Store) sourceLabel(ctx context.Context, kind, ref string) string {
 	switch kind {
 	case "cartridge":
 		c, err := d.GetCartridge(ctx, ref)

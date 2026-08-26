@@ -8,22 +8,22 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 const schedulerTickInterval = 30 * time.Second
 
 type Scheduler struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	storeInstance *store.Store
+	ctx    context.Context
+	cancel context.CancelFunc
+	app    *application.Runtime
 }
 
-func NewScheduler(ctx context.Context, storeInstance *store.Store) *Scheduler {
+func NewScheduler(ctx context.Context, app *application.Runtime) *Scheduler {
 	newCtx, cancel := context.WithCancel(ctx)
-	return &Scheduler{ctx: newCtx, cancel: cancel, storeInstance: storeInstance}
+	return &Scheduler{ctx: newCtx, cancel: cancel, app: app}
 }
 
 func (s *Scheduler) Start() {
@@ -68,12 +68,12 @@ func (s *Scheduler) submitBackup(b coredb.Backup, trigger string, occurrence tim
 	if err != nil {
 		return err
 	}
-	_, _, err = s.storeInstance.Engine.Submit(s.storeInstance.Ctx, request)
+	_, _, err = s.app.Engine.Submit(s.app.Ctx, request)
 	return err
 }
 
 func (s *Scheduler) checkBackups() {
-	backups, err := s.storeInstance.Database.GetAllBackups()
+	backups, err := s.app.CoreDB.GetAllBackups()
 	if err != nil {
 		log.Error(err, "Scheduler: failed to get all backups")
 		return
@@ -138,7 +138,7 @@ func lastRunRetryable(status coredb.JobStatus, state string) bool {
 }
 
 func (s *Scheduler) checkRestores() {
-	restores, err := s.storeInstance.Database.GetAllRestores()
+	restores, err := s.app.CoreDB.GetAllRestores()
 	if err != nil {
 		log.Error(err, "Scheduler: failed to get all restores")
 		return
@@ -164,7 +164,7 @@ func (s *Scheduler) checkRestores() {
 			log.Error(err, "Scheduler: failed to build restore submit", "restoreID", r.ID)
 			continue
 		}
-		if _, _, err := s.storeInstance.Engine.Submit(s.storeInstance.Ctx, request); err != nil {
+		if _, _, err := s.app.Engine.Submit(s.app.Ctx, request); err != nil {
 			log.Error(err, "Scheduler: failed to submit restore", "restoreID", r.ID)
 		}
 	}
@@ -184,7 +184,7 @@ func (s *Scheduler) shouldRetryRestore(r coredb.Restore, now time.Time) bool {
 }
 
 func (s *Scheduler) checkVerifications() {
-	vJobs, err := s.storeInstance.Database.GetAllVerificationJobs()
+	vJobs, err := s.app.CoreDB.GetAllVerificationJobs()
 	if err != nil {
 		log.Error(err, "Scheduler: failed to get verification jobs")
 		return
@@ -202,7 +202,7 @@ func (s *Scheduler) checkVerifications() {
 		if vJob.RunOnBackupComplete {
 			if vJob.PendingSince == 0 {
 				vJob.PendingSince = now.Unix()
-				if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
+				if err := s.app.CoreDB.UpdateVerificationJob(nil, vJob); err != nil {
 					log.Error(err, "Scheduler: failed to set pending_since", "verificationJobID", vJob.ID)
 				}
 			}
@@ -228,19 +228,19 @@ func (s *Scheduler) submitVerification(vJob coredb.VerificationJob, trigger stri
 	if err != nil {
 		return err
 	}
-	_, _, err = s.storeInstance.Engine.Submit(s.storeInstance.Ctx, request)
+	_, _, err = s.app.Engine.Submit(s.app.Ctx, request)
 	return err
 }
 
 // TriggerPendingVerifications submits verification jobs that waited on backup completion.
 func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
-	vJobs, err := s.storeInstance.Database.GetAllVerificationJobs()
+	vJobs, err := s.app.CoreDB.GetAllVerificationJobs()
 	if err != nil {
 		log.Error(err, "TriggerPendingVerifications: failed to list verification jobs")
 		return
 	}
 
-	completedBackup, err := s.storeInstance.Database.GetBackup(backupJobID)
+	completedBackup, err := s.app.CoreDB.GetBackup(backupJobID)
 	if err != nil {
 		log.Error(err, "TriggerPendingVerifications: failed to get backup job")
 		return
@@ -265,7 +265,7 @@ func (s *Scheduler) TriggerPendingVerifications(backupJobID string) {
 		}
 
 		vJob.PendingSince = 0
-		if err := s.storeInstance.Database.UpdateVerificationJob(nil, vJob); err != nil {
+		if err := s.app.CoreDB.UpdateVerificationJob(nil, vJob); err != nil {
 			log.Error(err, "failed to clear pending_since", "verificationJobID", vJob.ID)
 			continue
 		}

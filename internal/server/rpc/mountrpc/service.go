@@ -1,6 +1,6 @@
 //go:build linux
 
-package rpc
+package mountrpc
 
 import (
 	"context"
@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
@@ -80,16 +80,16 @@ type WarnCountReply struct {
 	Count int
 }
 
-type MountRPCService struct {
+type Service struct {
 	ctx           context.Context
-	Store         *store.Store
+	Store         *application.Runtime
 	jobCtxCancels *safemap.Map[string, context.CancelFunc]
 }
 
-func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
+func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
 	log.Info("received backup request")
 
-	backup, err := s.Store.Database.GetBackup(args.BackupID)
+	backup, err := s.Store.CoreDB.GetBackup(args.BackupID)
 	if err != nil {
 		reply.Status = 404
 		reply.Message = "unable to get backup from id"
@@ -101,15 +101,15 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	// Retrieve the ARPC session for the target (QUIC preferred, TCP fallback).
 	var respMsg string
-	if qPipe, ok := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname); ok {
-		backupReq := types.BackupReq{
+	if qPipe, ok := s.Store.Agents.GetQuicPipe(args.TargetHostname); ok {
+		backupReq := fswire.BackupReq{
 			Drive:      args.Drive,
 			BackupID:   args.BackupID,
 			SourceMode: backup.SourceMode,
 			ReadMode:   backup.ReadMode,
 		}
 
-		s.Store.ARPCAgentsManager.Expect(backup.GetStreamID())
+		s.Store.Agents.Expect(backup.GetStreamID())
 
 		var err error
 		respMsg, err = qPipe.CallMessage(ctx, "backup", &backupReq)
@@ -119,15 +119,15 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 			reply.Message = err.Error()
 			return errors.New(reply.Message)
 		}
-	} else if tcpPipe, ok := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname); ok {
-		backupReq := types.BackupReq{
+	} else if tcpPipe, ok := s.Store.Agents.GetStreamPipe(args.TargetHostname); ok {
+		backupReq := fswire.BackupReq{
 			Drive:      args.Drive,
 			BackupID:   args.BackupID,
 			SourceMode: backup.SourceMode,
 			ReadMode:   backup.ReadMode,
 		}
 
-		s.Store.ARPCAgentsManager.Expect(backup.GetStreamID())
+		s.Store.Agents.Expect(backup.GetStreamID())
 
 		var err error
 		respMsg, err = tcpPipe.CallMessage(ctx, "backup", &backupReq)
@@ -154,7 +154,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
 		backup.Namespace = backupRespSplit[1]
-		if err := s.Store.Database.UpdateBackup(nil, backup); err != nil {
+		if err := s.Store.CoreDB.UpdateBackup(nil, backup); err != nil {
 			log.Error(err, "", "namespace", backupRespSplit[1])
 		}
 	}
@@ -162,7 +162,7 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	backupCtx, backupCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.BackupID, backupCancel)
 
-	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.ARPCAgentsManager, backup.GetStreamID(), args.TargetHostname, backup, backupMode)
+	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.Agents, backup.GetStreamID(), args.TargetHostname, backup, backupMode)
 	if arpcFS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create ARPCFS"
@@ -188,17 +188,17 @@ func (s *MountRPCService) Backup(args *BackupArgs, reply *BackupReply) error {
 	return nil
 }
 
-func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
+func (s *Service) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
 	log.Info("received S3 backup request")
 
-	backup, err := s.Store.Database.GetBackup(args.BackupID)
+	backup, err := s.Store.CoreDB.GetBackup(args.BackupID)
 	if err != nil {
 		reply.Status = 404
 		reply.Message = "unable to get backup from id"
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	secretKey, err := s.Store.Database.GetS3Secret(backup.Target.Name)
+	secretKey, err := s.Store.CoreDB.GetS3Secret(backup.Target.Name)
 	if err != nil {
 		reply.Status = 404
 		reply.Message = "unable to get secret key of target"
@@ -233,7 +233,7 @@ func (s *MountRPCService) S3Backup(args *S3BackupArgs, reply *BackupReply) error
 	return nil
 }
 
-func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) error {
+func (s *Service) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) error {
 	log.Info("received cleanup request")
 
 	childKey := args.TargetHostname + "|" + args.BackupID
@@ -247,11 +247,11 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 		ctxCancel()
 	}
 
-	s.Store.ARPCAgentsManager.NotExpect(childKey)
+	s.Store.Agents.NotExpect(childKey)
 
 	// Try QUIC first, then TCP fallback
-	qSess, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
-	tSess, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
+	qSess, qExists := s.Store.Agents.GetQuicPipe(args.TargetHostname)
+	tSess, tExists := s.Store.Agents.GetStreamPipe(args.TargetHostname)
 	if !qExists && !tExists {
 		log.Info("target unreachable, assuming cleanup successful.",
 			"jobID", args.BackupID)
@@ -261,7 +261,7 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 		return nil
 	}
 
-	cleanupReq := types.BackupReq{
+	cleanupReq := fswire.BackupReq{
 		Drive:    args.Drive,
 		BackupID: args.BackupID,
 	}
@@ -292,11 +292,11 @@ func (s *MountRPCService) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) er
 	return nil
 }
 
-func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
+func (s *Service) Status(args *StatusArgs, reply *StatusReply) error {
 	log.Info("received status request")
 
-	_, qExists := s.Store.ARPCAgentsManager.GetQuicPipe(args.TargetHostname)
-	_, tExists := s.Store.ARPCAgentsManager.GetStreamPipe(args.TargetHostname)
+	_, qExists := s.Store.Agents.GetQuicPipe(args.TargetHostname)
+	_, tExists := s.Store.Agents.GetStreamPipe(args.TargetHostname)
 	controlOk := qExists || tExists
 	if !controlOk {
 		reply.Connected = false
@@ -304,7 +304,7 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	}
 
 	childKey := args.TargetHostname + "|" + args.BackupID
-	_, exists := s.Store.ARPCAgentsManager.GetStreamPipe(childKey)
+	_, exists := s.Store.Agents.GetStreamPipe(childKey)
 	if !exists {
 		reply.Connected = false
 		return nil
@@ -314,7 +314,7 @@ func (s *MountRPCService) Status(args *StatusArgs, reply *StatusReply) error {
 	return nil
 }
 
-func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, storeInstance *store.Store) error {
+func StartServer(watcher chan<- struct{}, ctx context.Context, socketPath string, app *application.Runtime) error {
 	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
 		log.Error(err, "")
 	}
@@ -323,9 +323,9 @@ func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath str
 		return fmt.Errorf("failed to listen on %s: %w", socketPath, err)
 	}
 
-	service := &MountRPCService{
+	service := &Service{
 		ctx:           ctx,
-		Store:         storeInstance,
+		Store:         app,
 		jobCtxCancels: safemap.New[string, context.CancelFunc](),
 	}
 
@@ -350,9 +350,9 @@ func StartRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath str
 	return nil
 }
 
-func RunRPCServer(ctx context.Context, socketPath string, storeInstance *store.Store) error {
+func RunServer(ctx context.Context, socketPath string, app *application.Runtime) error {
 	watcher := make(chan struct{}, 1)
-	err := StartRPCServer(watcher, ctx, socketPath, storeInstance)
+	err := StartServer(watcher, ctx, socketPath, app)
 	if err != nil {
 		return err
 	}

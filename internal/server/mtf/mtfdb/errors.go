@@ -1,4 +1,4 @@
-package store
+package mtfdb
 
 import (
 	"database/sql"

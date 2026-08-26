@@ -9,21 +9,21 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func D2DScriptHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DScriptHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		all, err := storeInstance.ScriptSvc.GetAllScripts()
+		all, err := app.Script.GetAllScripts()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -49,7 +49,7 @@ func D2DScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsScriptHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsScriptHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := ScriptConfigResponse{}
 		if r.Method != http.MethodPost {
@@ -82,7 +82,7 @@ func ExtJsScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 			Description: r.FormValue("description"),
 		}
 
-		err = storeInstance.ScriptSvc.CreateScript(newScript)
+		err = app.Script.CreateScript(newScript)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -96,7 +96,7 @@ func ExtJsScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsScriptSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := ScriptConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
@@ -125,7 +125,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			script, err := storeInstance.ScriptSvc.GetScript(currentPath)
+			script, err := app.Script.GetScript(currentPath)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -148,7 +148,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.ScriptSvc.UpdateScript(script)
+			err = app.Script.UpdateScript(script)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -164,7 +164,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			script, err := storeInstance.ScriptSvc.GetScript(currentPath)
+			script, err := app.Script.GetScript(currentPath)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -189,7 +189,7 @@ func ExtJsScriptSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err := storeInstance.ScriptSvc.DeleteScript(currentPath)
+			err := app.Script.DeleteScript(currentPath)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

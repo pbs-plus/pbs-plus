@@ -1,4 +1,4 @@
-package server
+package systemd
 
 import (
 	"context"
@@ -27,7 +27,7 @@ func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime stri
 }
 
 func CreateMountService(ctx context.Context, serviceName, mountPoint string, args []string) error {
-	conn, err := GetSystemdConn()
+	conn, err := Conn()
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func CreateMountService(ctx context.Context, serviceName, mountPoint string, arg
 }
 
 func StopMountService(ctx context.Context, serviceName string) error {
-	conn, err := GetSystemdConn()
+	conn, err := Conn()
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func StopMountService(ctx context.Context, serviceName string) error {
 }
 
 func ListMountServices(ctx context.Context) ([]string, error) {
-	conn, err := GetSystemdConn()
+	conn, err := Conn()
 	if err != nil {
 		return nil, err
 	}

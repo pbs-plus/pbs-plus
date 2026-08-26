@@ -18,7 +18,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
-	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -132,14 +132,14 @@ func (fs *S3FS) fullKey(fpath string) string {
 	return fs.prefix + p
 }
 
-func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTypes.AgentFileInfo, error) {
+func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (fswire.AgentFileInfo, error) {
 	log.Debug("attr called",
 
 		"backupID", fs.Backup.ID, "isLookup", isLookup, "path", fpath)
 
 	now := time.Now().Unix()
 	if fpath == "/" || fpath == "" {
-		return agentTypes.AgentFileInfo{
+		return fswire.AgentFileInfo{
 			IsDir:          true,
 			Mode:           uint32(os.ModeDir | 0555),
 			CreationTime:   now,
@@ -151,7 +151,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	key := fs.fullKey(fpath)
 	cacheKey := fs.GetCacheKey(attrPrefix, key)
 
-	var fi agentTypes.AgentFileInfo
+	var fi fswire.AgentFileInfo
 	cached, err := fs.Memcache.Get(cacheKey)
 	if err == nil {
 		fs.StatCacheHits.Add(1)
@@ -172,7 +172,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	objInfo, err := fs.client.StatObject(ctxN, fs.bucket, key, minio.StatObjectOptions{})
 	if err == nil {
 		mod := objInfo.LastModified.Unix()
-		fi = agentTypes.AgentFileInfo{
+		fi = fswire.AgentFileInfo{
 			Name:           path.Base(fpath),
 			IsDir:          false,
 			Mode:           0644,
@@ -192,10 +192,10 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 		_, ok := <-objects
 
 		if !ok {
-			return agentTypes.AgentFileInfo{}, syscall.ENOENT
+			return fswire.AgentFileInfo{}, syscall.ENOENT
 		}
 
-		fi = agentTypes.AgentFileInfo{
+		fi = fswire.AgentFileInfo{
 			Name:           path.Base(fpath),
 			IsDir:          true,
 			Mode:           uint32(os.ModeDir | 0555),
@@ -231,9 +231,9 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (agentTyp
 	return fi, nil
 }
 
-func (fs *S3FS) StatFS(ctx context.Context) (agentTypes.StatFS, error) {
+func (fs *S3FS) StatFS(ctx context.Context) (fswire.StatFS, error) {
 	log.Debug("statFS called", "backupID", fs.Backup.ID)
-	return agentTypes.StatFS{
+	return fswire.StatFS{
 		Bsize:   4096,
 		Blocks:  1 << 50,
 		Bfree:   1 << 49,
@@ -289,7 +289,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 	defer cancelN()
 
 	opts := minio.ListObjectsOptions{Prefix: prefix, Recursive: false}
-	entries := make(agentTypes.ReadDirEntries, 0)
+	entries := make(fswire.ReadDirEntries, 0)
 	seenNames := make(map[string]bool)
 
 	for obj := range fs.client.ListObjects(ctxN, fs.bucket, opts) {
@@ -318,7 +318,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 			mode = uint32(os.ModeDir | 0555)
 		}
 
-		entry := agentTypes.AgentFileInfo{
+		entry := fswire.AgentFileInfo{
 			Name:           name,
 			IsDir:          isDir,
 			Mode:           mode,

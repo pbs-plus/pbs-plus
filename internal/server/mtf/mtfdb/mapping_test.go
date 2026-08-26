@@ -1,4 +1,4 @@
-package store
+package mtfdb
 
 import (
 	"context"
@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb/mtfquery"
 )
 
-func testDB(t *testing.T) *Database {
+func testDB(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
 	db, err := Initialize(context.Background(), filepath.Join(dir, "mtf.db"))

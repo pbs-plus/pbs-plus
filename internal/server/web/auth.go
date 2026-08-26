@@ -20,7 +20,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 )
 
 func getClientInfo(r *http.Request) string {
@@ -196,9 +196,9 @@ func alphabetHint(s string) string {
 	return fmt.Sprintf("+/=%t/%t, -_=%t/%t", hasPlus, hasSlash, hasDash, hasUnderscore)
 }
 
-func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
-	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hostname, err := checkAgentAuth(store, r)
+func AgentOnly(app *application.Runtime, next http.Handler) http.HandlerFunc {
+	return CORS(app, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hostname, err := checkAgentAuth(app, r)
 		if err != nil {
 			log.Error(err, "", "hostname", getClientInfo(r), "mode", "agent_only")
 
@@ -211,8 +211,8 @@ func AgentOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	}))
 }
 
-func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
-	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func ServerOnly(app *application.Runtime, next http.Handler) http.HandlerFunc {
+	return CORS(app, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := checkProxyAuth(r); err != nil && !IsLocalhost(r) {
 			log.Error(err, "", "hostname", getClientInfo(r), "mode", "server_only")
 
@@ -224,12 +224,12 @@ func ServerOnly(store *store.Store, next http.Handler) http.HandlerFunc {
 	}))
 }
 
-func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
-	return CORS(store, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func AgentOrServer(app *application.Runtime, next http.Handler) http.HandlerFunc {
+	return CORS(app, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authenticated := false
 		var lastErr error
 
-		hostname, agentErr := checkAgentAuth(store, r)
+		hostname, agentErr := checkAgentAuth(app, r)
 		if agentErr == nil {
 			authenticated = true
 		} else {
@@ -256,7 +256,7 @@ func AgentOrServer(store *store.Store, next http.Handler) http.HandlerFunc {
 	}))
 }
 
-func checkAgentAuth(store *store.Store, r *http.Request) (string, error) {
+func checkAgentAuth(app *application.Runtime, r *http.Request) (string, error) {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		return "", fmt.Errorf("CheckAgentAuth: client certificate required")
 	}
@@ -268,7 +268,7 @@ func checkAgentAuth(store *store.Store, r *http.Request) (string, error) {
 		return "", fmt.Errorf("CheckAgentAuth: missing certificate subject common name")
 	}
 
-	trustedCert, err := store.Database.LoadAgentHostCert(agentHostname)
+	trustedCert, err := app.CoreDB.LoadAgentHostCert(agentHostname)
 	if err != nil {
 		return "", fmt.Errorf("CheckAgentAuth: certificate not trusted")
 	}

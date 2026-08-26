@@ -9,13 +9,13 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
-func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
+func AgentLogHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -40,13 +40,13 @@ func AgentLogHandler(storeInstance *store.Store) http.HandlerFunc {
 }
 
 type BootstrapRequest struct {
-	Hostname        string            `json:"hostname"`
-	CSR             string            `json:"csr"`
-	OperatingSystem string            `json:"os"`
-	Drives          []types.DriveInfo `json:"drives"`
+	Hostname        string             `json:"hostname"`
+	CSR             string             `json:"csr"`
+	OperatingSystem string             `json:"os"`
+	Drives          []fswire.DriveInfo `json:"drives"`
 }
 
-func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
+func AgentBootstrapHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -63,7 +63,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		tokenStr := authHeaderSplit[1]
-		token, err := storeInstance.TokenSvc.GetToken(tokenStr)
+		token, err := app.Token.GetToken(tokenStr)
 		if err != nil {
 			w.WriteHeader(http.StatusUnauthorized)
 			WriteErrorResponse(w, fmt.Errorf("[%s]: token not found", r.RemoteAddr))
@@ -102,7 +102,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		cert, ca, err := storeInstance.CertManager.SignCSR(decodedCSR)
+		cert, ca, err := app.CertManager.SignCSR(decodedCSR)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -122,7 +122,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 		clientIP = strings.Split(clientIP, ":")[0]
 		log.Info("bootstrapping target")
-		tx, err := storeInstance.TargetSvc.NewTransaction()
+		tx, err := app.Target.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -138,10 +138,10 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
 
-		_, err = storeInstance.AgentHostSvc.GetAgentHost(reqParsed.Hostname)
+		_, err = app.AgentHost.GetAgentHost(reqParsed.Hostname)
 		if err == nil {
 			log.Info("updating host target details")
-			err = storeInstance.AgentHostSvc.UpdateAgentHost(tx, host)
+			err = app.AgentHost.UpdateAgentHost(tx, host)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
 					log.Error(err, "")
@@ -153,7 +153,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 		} else {
 			log.Info("creating new host target")
-			err = storeInstance.AgentHostSvc.CreateAgentHost(tx, host)
+			err = app.AgentHost.CreateAgentHost(tx, host)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
 					log.Error(err, "")
@@ -184,13 +184,13 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			newTarget.Name = coredb.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
-			existingTarget, err := storeInstance.TargetSvc.GetTarget(newTarget.Name)
+			existingTarget, err := app.Target.GetTarget(newTarget.Name)
 			if err == nil {
 				newTarget.JobCount = existingTarget.JobCount
 				newTarget.AgentVersion = existingTarget.AgentVersion
 				newTarget.ConnectionStatus = existingTarget.ConnectionStatus
 
-				err := storeInstance.TargetSvc.DeleteTarget(tx, newTarget.Name)
+				err := app.Target.DeleteTarget(tx, newTarget.Name)
 				if err != nil {
 					if err := tx.Rollback(); err != nil {
 						log.Error(err, "")
@@ -201,7 +201,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 					return
 				}
 
-				err = storeInstance.TargetSvc.CreateTarget(tx, newTarget)
+				err = app.Target.CreateTarget(tx, newTarget)
 				if err != nil {
 					if err := tx.Rollback(); err != nil {
 						log.Error(err, "")
@@ -213,7 +213,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 				log.Info("updated existing target auth")
 			} else {
-				err := storeInstance.TargetSvc.CreateTarget(tx, newTarget)
+				err := app.Target.CreateTarget(tx, newTarget)
 				if err != nil {
 					if err := tx.Rollback(); err != nil {
 						log.Error(err, "")
@@ -249,7 +249,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
+func AgentRenewHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
@@ -289,7 +289,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		cert, ca, err := storeInstance.CertManager.SignCSR(decodedCSR)
+		cert, ca, err := app.CertManager.SignCSR(decodedCSR)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -308,7 +308,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		clientIP = strings.Split(clientIP, ":")[0]
 		log.Info("renewing target certificates")
 
-		tx, err := storeInstance.TargetSvc.NewTransaction()
+		tx, err := app.Target.NewTransaction()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			WriteErrorResponse(w, err)
@@ -316,7 +316,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		currentHost, err := storeInstance.AgentHostSvc.GetAgentHost(reqParsed.Hostname)
+		currentHost, err := app.AgentHost.GetAgentHost(reqParsed.Hostname)
 		if err != nil {
 			if err := tx.Rollback(); err != nil {
 				log.Error(err, "")
@@ -335,7 +335,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			OperatingSystem: reqParsed.OperatingSystem,
 		}
 
-		err = storeInstance.AgentHostSvc.UpdateAgentHost(tx, host)
+		err = app.AgentHost.UpdateAgentHost(tx, host)
 		if err != nil {
 			if err := tx.Rollback(); err != nil {
 				log.Error(err, "")
@@ -349,7 +349,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, drive := range reqParsed.Drives {
 			targetName := coredb.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
-			existingTarget, err := storeInstance.TargetSvc.GetTarget(targetName)
+			existingTarget, err := app.Target.GetTarget(targetName)
 			if err != nil {
 				log.Warn("target not found during renewal, skipping")
 				continue
@@ -374,7 +374,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				MountScript:      existingTarget.MountScript,
 			}
 
-			err = storeInstance.TargetSvc.DeleteTarget(tx, targetName)
+			err = app.Target.DeleteTarget(tx, targetName)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
 					log.Error(err, "")
@@ -385,7 +385,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			err = storeInstance.TargetSvc.CreateTarget(tx, updatedTarget)
+			err = app.Target.CreateTarget(tx, updatedTarget)
 			if err != nil {
 				if err := tx.Rollback(); err != nil {
 					log.Error(err, "")

@@ -11,7 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
 )
 
 type ErrorResponse struct {
@@ -27,9 +27,9 @@ func statusFromErr(err error) int {
 		errors.Is(err, coredb.ErrTokenNotFound) ||
 		errors.Is(err, coredb.ErrSecretNotFound) ||
 		errors.Is(err, coredb.ErrAgentHostNotFound) ||
-		errors.Is(err, store.ErrNotFound) ||
-		errors.Is(err, store.ErrInvalidID) ||
-		errors.Is(err, store.ErrInvalidMapping) {
+		errors.Is(err, mtfdb.ErrNotFound) ||
+		errors.Is(err, mtfdb.ErrInvalidID) ||
+		errors.Is(err, mtfdb.ErrInvalidMapping) {
 		return http.StatusNotFound
 	}
 

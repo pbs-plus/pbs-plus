@@ -3,7 +3,7 @@
 // Package store persists durable workflow executions in a dedicated
 // SQLite database, separate from the main PBS Plus database, so engine
 // write churn can never contend with configuration writes.
-package store
+package jobdb
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/sqldb"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/store/jobquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb/jobquery"
 )
 
 //go:embed migrations/*.sql
@@ -101,16 +101,16 @@ type Event struct {
 	CreatedAt   time.Time
 }
 
-// DB is the engine database handle.
-type DB struct {
-	*sqldb.DB
+// Store is the engine database handle.
+type Store struct {
+	*sqldb.Handle
 	write *jobquery.Queries
 	read  *jobquery.Queries
 }
 
 // Open opens (creating if needed) the engine database at path and
 // applies migrations. Empty path falls back to DefaultPath.
-func Open(path string) (*DB, error) {
+func Open(path string) (*Store, error) {
 	if path == "" {
 		path = DefaultPath
 	}
@@ -118,12 +118,12 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DB{DB: db, write: jobquery.New(db.Writer()), read: jobquery.New(db.Reader())}, nil
+	return &Store{Handle: db, write: jobquery.New(db.Writer()), read: jobquery.New(db.Reader())}, nil
 }
 
 // Submit inserts a new execution; when DedupeKey already exists it
 // returns the existing execution with created=false.
-func (d *DB) Submit(ctx context.Context, req SubmitRequest) (Execution, bool, error) {
+func (d *Store) Submit(ctx context.Context, req SubmitRequest) (Execution, bool, error) {
 	if err := validateSubmit(req); err != nil {
 		return Execution{}, false, err
 	}
@@ -180,7 +180,7 @@ func (d *DB) Submit(ctx context.Context, req SubmitRequest) (Execution, bool, er
 	return execution, created, nil
 }
 
-func (d *DB) GetExecution(ctx context.Context, id string) (Execution, error) {
+func (d *Store) GetExecution(ctx context.Context, id string) (Execution, error) {
 	row, err := d.read.GetExecution(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Execution{}, ErrNotFound
@@ -191,7 +191,7 @@ func (d *DB) GetExecution(ctx context.Context, id string) (Execution, error) {
 	return executionFromRow(row), nil
 }
 
-func (d *DB) GetActiveExecution(ctx context.Context, kind, definitionID string) (Execution, error) {
+func (d *Store) GetActiveExecution(ctx context.Context, kind, definitionID string) (Execution, error) {
 	row, err := d.read.GetActiveExecutionByDefinition(ctx, jobquery.GetActiveExecutionByDefinitionParams{
 		Kind:         kind,
 		DefinitionID: definitionID,
@@ -208,7 +208,7 @@ func (d *DB) GetActiveExecution(ctx context.Context, kind, definitionID string) 
 // Claim requeues expired executions, purges expired resource locks,
 // then atomically claims one due execution together with its resource
 // locks. Executions whose resources are busy are deferred, not claimed.
-func (d *DB) Claim(ctx context.Context, owner string, now, leaseUntil time.Time) (Execution, bool, error) {
+func (d *Store) Claim(ctx context.Context, owner string, now, leaseUntil time.Time) (Execution, bool, error) {
 	if owner == "" || !leaseUntil.After(now) {
 		return Execution{}, false, errors.New("invalid claim lease")
 	}
@@ -296,7 +296,7 @@ func (d *DB) Claim(ctx context.Context, owner string, now, leaseUntil time.Time)
 	return claimed, ok, nil
 }
 
-func (d *DB) RenewLease(ctx context.Context, id, owner string, leaseUntil time.Time) error {
+func (d *Store) RenewLease(ctx context.Context, id, owner string, leaseUntil time.Time) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.RenewExecutionLease(ctx, jobquery.RenewExecutionLeaseParams{
@@ -322,7 +322,7 @@ func (d *DB) RenewLease(ctx context.Context, id, owner string, leaseUntil time.T
 
 // Cancel requests cancellation; a pending execution cancels immediately,
 // a running one cancels when its worker observes the request.
-func (d *DB) Cancel(ctx context.Context, id string, now time.Time) (Execution, error) {
+func (d *Store) Cancel(ctx context.Context, id string, now time.Time) (Execution, error) {
 	var execution Execution
 	err := d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
@@ -368,7 +368,7 @@ func (d *DB) Cancel(ctx context.Context, id string, now time.Time) (Execution, e
 
 // Finish transitions a claimed execution to a terminal state, or back
 // to pending with a delayed run_at when a retry is scheduled.
-func (d *DB) Finish(ctx context.Context, id, owner, state string, runAt time.Time, lastError string) error {
+func (d *Store) Finish(ctx context.Context, id, owner, state string, runAt time.Time, lastError string) error {
 	switch state {
 	case StatePending, StateSucceeded, StateFailed, StateCanceled:
 	default:
@@ -408,7 +408,7 @@ func (d *DB) Finish(ctx context.Context, id, owner, state string, runAt time.Tim
 // StartActivity returns the activity for (execution, name), starting it
 // unless it already completed; completed activities report done=true
 // with their persisted result.
-func (d *DB) StartActivity(ctx context.Context, executionID, name, inputHash string, now time.Time) (Activity, bool, error) {
+func (d *Store) StartActivity(ctx context.Context, executionID, name, inputHash string, now time.Time) (Activity, bool, error) {
 	if executionID == "" || name == "" || inputHash == "" {
 		return Activity{}, false, errors.New("invalid activity")
 	}
@@ -466,7 +466,7 @@ func (d *DB) StartActivity(ctx context.Context, executionID, name, inputHash str
 	return activity, completed, nil
 }
 
-func (d *DB) CheckpointActivity(ctx context.Context, executionID, name string, checkpoint []byte) error {
+func (d *Store) CheckpointActivity(ctx context.Context, executionID, name string, checkpoint []byte) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.CheckpointActivity(ctx, jobquery.CheckpointActivityParams{
@@ -484,7 +484,7 @@ func (d *DB) CheckpointActivity(ctx context.Context, executionID, name string, c
 	})
 }
 
-func (d *DB) CompleteActivity(ctx context.Context, executionID, name string, result []byte, now time.Time) error {
+func (d *Store) CompleteActivity(ctx context.Context, executionID, name string, result []byte, now time.Time) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.CompleteActivity(ctx, jobquery.CompleteActivityParams{
@@ -503,7 +503,7 @@ func (d *DB) CompleteActivity(ctx context.Context, executionID, name string, res
 	})
 }
 
-func (d *DB) FailActivity(ctx context.Context, executionID, name, lastError string) error {
+func (d *Store) FailActivity(ctx context.Context, executionID, name, lastError string) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.FailActivity(ctx, jobquery.FailActivityParams{
@@ -524,7 +524,7 @@ func (d *DB) FailActivity(ctx context.Context, executionID, name, lastError stri
 // InvalidateActivity un-completes a completed activity so a retry
 // re-runs it; used when a later activity reveals the completed one's
 // external effect actually failed.
-func (d *DB) InvalidateActivity(ctx context.Context, executionID, name string) error {
+func (d *Store) InvalidateActivity(ctx context.Context, executionID, name string) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.InvalidateActivity(ctx, jobquery.InvalidateActivityParams{
@@ -541,7 +541,7 @@ func (d *DB) InvalidateActivity(ctx context.Context, executionID, name string) e
 	})
 }
 
-func (d *DB) ListEvents(ctx context.Context, executionID string) ([]Event, error) {
+func (d *Store) ListEvents(ctx context.Context, executionID string) ([]Event, error) {
 	rows, err := d.read.ListExecutionEvents(ctx, executionID)
 	if err != nil {
 		return nil, fmt.Errorf("listing execution events: %w", err)

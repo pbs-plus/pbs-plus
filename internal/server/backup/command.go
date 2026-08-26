@@ -13,8 +13,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 func getBackupId(target coredb.Target) (string, error) {
@@ -39,7 +39,7 @@ func getBackupId(target coredb.Target) (string, error) {
 	return hostname, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup coredb.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -96,14 +96,14 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, storeInstan
 		addExclusion(exclusion.Path)
 	}
 
-	if globalExclusions, err := storeInstance.Database.GetAllGlobalExclusions(); err == nil {
+	if globalExclusions, err := app.CoreDB.GetAllGlobalExclusions(); err == nil {
 		for _, exclusion := range globalExclusions {
 			addExclusion(exclusion.Path)
 		}
 	}
 
 	if backup.Namespace != "" {
-		if err := CreateNamespace(backup.Namespace, backup, storeInstance); err != nil {
+		if err := CreateNamespace(backup.Namespace, backup, app); err != nil {
 			logger.Error(err, "")
 		}
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)

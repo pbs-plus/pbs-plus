@@ -1,6 +1,6 @@
 //go:build linux
 
-package rpc
+package jobrpc
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 type BackupQueueArgs struct {
@@ -44,13 +44,13 @@ type QueueReply struct {
 	UPID        string
 }
 
-type JobRPCService struct {
+type Service struct {
 	ctx    context.Context
-	Store  *store.Store
+	Store  *application.Runtime
 	Engine *jobs.Engine
 }
 
-func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
+func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 	if args.Stop {
 		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowBackup, args.Job.ID); err != nil {
 			reply.Status = 500
@@ -87,7 +87,7 @@ func (s *JobRPCService) BackupQueue(args *BackupQueueArgs, reply *QueueReply) er
 	return nil
 }
 
-func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
+func (s *Service) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
 	if args.Stop {
 		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowRestore, args.Job.ID); err != nil {
 			reply.Status = 500
@@ -124,7 +124,7 @@ func (s *JobRPCService) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) 
 	return nil
 }
 
-func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
+func (s *Service) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
 	if args.Stop {
 		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowMtfMigration, args.JobID); err != nil {
 			reply.Status = 500
@@ -161,7 +161,7 @@ func (s *JobRPCService) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error
 	return nil
 }
 
-func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath string, engine *jobs.Engine, storeInstance *store.Store) error {
+func StartServer(watcher chan<- struct{}, ctx context.Context, socketPath string, engine *jobs.Engine, app *application.Runtime) error {
 	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
 		log.Error(err, "")
 	}
@@ -170,9 +170,9 @@ func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath 
 		return fmt.Errorf("failed to listen on %s: %w", socketPath, err)
 	}
 
-	service := &JobRPCService{
+	service := &Service{
 		ctx:    ctx,
-		Store:  storeInstance,
+		Store:  app,
 		Engine: engine,
 	}
 
@@ -197,9 +197,9 @@ func StartJobRPCServer(watcher chan<- struct{}, ctx context.Context, socketPath 
 	return nil
 }
 
-func RunJobRPCServer(ctx context.Context, socketPath string, engine *jobs.Engine, storeInstance *store.Store) error {
+func RunServer(ctx context.Context, socketPath string, engine *jobs.Engine, app *application.Runtime) error {
 	watcher := make(chan struct{}, 1)
-	err := StartJobRPCServer(watcher, ctx, socketPath, engine, storeInstance)
+	err := StartServer(watcher, ctx, socketPath, engine, app)
 	if err != nil {
 		return err
 	}

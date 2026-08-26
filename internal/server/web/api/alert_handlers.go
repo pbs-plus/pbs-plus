@@ -7,14 +7,14 @@ import (
 	"strconv"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
-func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
+func AlertSettingsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			settings, err := storeInstance.Database.ListAlertSettings()
+			settings, err := app.CoreDB.ListAlertSettings()
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -41,7 +41,7 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			setting, err := storeInstance.Database.GetAlertSetting(name)
+			setting, err := app.CoreDB.GetAlertSetting(name)
 			if err != nil {
 				WriteErrorResponse(w, fmt.Errorf("alert setting not found: %w", err))
 				return
@@ -86,7 +86,7 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			if err := storeInstance.Database.UpsertAlertSetting(setting); err != nil {
+			if err := app.CoreDB.UpsertAlertSetting(setting); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
@@ -104,7 +104,7 @@ func AlertSettingsHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func AlertSettingSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 		if name == "" {
@@ -113,7 +113,7 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			setting, err := storeInstance.Database.GetAlertSetting(name)
+			setting, err := app.CoreDB.GetAlertSetting(name)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -134,7 +134,7 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			setting, err := storeInstance.Database.GetAlertSetting(name)
+			setting, err := app.CoreDB.GetAlertSetting(name)
 			if err != nil {
 				WriteErrorResponse(w, fmt.Errorf("alert setting not found: %w", err))
 				return
@@ -179,7 +179,7 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			if err := storeInstance.Database.UpsertAlertSetting(setting); err != nil {
+			if err := app.CoreDB.UpsertAlertSetting(setting); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
@@ -197,7 +197,7 @@ func AlertSettingSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
+func AlertExclusionsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			alertType := r.URL.Query().Get("type")
@@ -205,9 +205,9 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 			var err error
 
 			if alertType != "" {
-				exclusions, err = storeInstance.Database.ListAlertExclusions(alertType)
+				exclusions, err = app.CoreDB.ListAlertExclusions(alertType)
 			} else {
-				exclusions, err = storeInstance.Database.ListAllAlertExclusions()
+				exclusions, err = app.CoreDB.ListAllAlertExclusions()
 			}
 
 			if err != nil {
@@ -240,7 +240,7 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			if err := storeInstance.Database.CreateAlertExclusion(alertType, excludeType, excludeValue, comment); err != nil {
+			if err := app.CoreDB.CreateAlertExclusion(alertType, excludeType, excludeValue, comment); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
@@ -257,7 +257,7 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func AlertExclusionSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.PathValue("id")
 		if idStr == "" {
@@ -272,7 +272,7 @@ func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			if err := storeInstance.Database.DeleteAlertExclusion(id); err != nil {
+			if err := app.CoreDB.DeleteAlertExclusion(id); err != nil {
 				WriteErrorResponse(w, err)
 				return
 			}
@@ -286,7 +286,7 @@ func AlertExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			exclusion, err := storeInstance.Database.GetAlertExclusion(id)
+			exclusion, err := app.CoreDB.GetAlertExclusion(id)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

@@ -4,12 +4,12 @@ package backup
 
 import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
-func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, task proxmox.Task, storeInstance *store.Store) error {
+func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, task proxmox.Task, app *application.Runtime) error {
 	return jobs.UpdateJobHistory(
 		backup.ID,
 		backup.CurrentPID,
@@ -17,17 +17,17 @@ func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, t
 		warningsNum,
 		task,
 		func() (coredb.JobHistory, int, error) {
-			b, err := storeInstance.Database.GetBackup(backup.ID)
+			b, err := app.CoreDB.GetBackup(backup.ID)
 			return b.History, b.CurrentPID, err
 		},
 		func(history coredb.JobHistory, currentPID int) error {
-			b, err := storeInstance.Database.GetBackup(backup.ID)
+			b, err := app.CoreDB.GetBackup(backup.ID)
 			if err != nil {
 				return err
 			}
 			b.CurrentPID = currentPID
 			b.History = history
-			return storeInstance.Database.UpdateBackup(nil, b)
+			return app.CoreDB.UpdateBackup(nil, b)
 		},
 	)
 }

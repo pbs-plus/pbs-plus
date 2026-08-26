@@ -11,7 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb/corequery"
 )
 
-func (db *DB) CreateScript(tx *Transaction, script Script) (err error) {
+func (db *Store) CreateScript(tx *Transaction, script Script) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -60,7 +60,7 @@ func (db *DB) CreateScript(tx *Transaction, script Script) (err error) {
 	return nil
 }
 
-func (db *DB) UpdateScript(tx *Transaction, script Script) (err error) {
+func (db *Store) UpdateScript(tx *Transaction, script Script) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -109,7 +109,7 @@ func (db *DB) UpdateScript(tx *Transaction, script Script) (err error) {
 	return nil
 }
 
-func (db *DB) DeleteScript(tx *Transaction, name string) (err error) {
+func (db *Store) DeleteScript(tx *Transaction, name string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -155,7 +155,7 @@ func (db *DB) DeleteScript(tx *Transaction, name string) (err error) {
 	return nil
 }
 
-func (db *DB) GetScript(path string) (Script, error) {
+func (db *Store) GetScript(path string) (Script, error) {
 	row, err := db.readQueries.GetScript(db.ctx, path)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Script{}, sql.ErrNoRows
@@ -172,7 +172,7 @@ func (db *DB) GetScript(path string) (Script, error) {
 	}, nil
 }
 
-func (db *DB) GetAllScripts() ([]Script, error) {
+func (db *Store) GetAllScripts() ([]Script, error) {
 	rows, err := db.readQueries.ListAllScripts(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllScripts: error querying scripts: %w", err)

@@ -9,14 +9,14 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DExclusionHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
@@ -24,7 +24,7 @@ func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			all, err := storeInstance.ExclusionSvc.GetAllGlobalExclusions()
+			all, err := app.Exclusion.GetAllGlobalExclusions()
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -51,7 +51,7 @@ func D2DExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsExclusionHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPost {
@@ -85,7 +85,7 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			Comment: comment,
 		}
 
-		err = storeInstance.ExclusionSvc.CreateExclusion(newExclusion)
+		err = app.Exclusion.CreateExclusion(newExclusion)
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -99,7 +99,7 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 	}
 }
 
-func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsExclusionSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
@@ -127,7 +127,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			exclusion, err := storeInstance.ExclusionSvc.GetExclusion(pathDecoded)
+			exclusion, err := app.Exclusion.GetExclusion(pathDecoded)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -163,7 +163,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				}
 			}
 
-			err = storeInstance.ExclusionSvc.UpdateExclusion(*exclusion)
+			err = app.Exclusion.UpdateExclusion(*exclusion)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -179,7 +179,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodGet {
-			exclusion, err := storeInstance.ExclusionSvc.GetExclusion(pathDecoded)
+			exclusion, err := app.Exclusion.GetExclusion(pathDecoded)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return
@@ -196,7 +196,7 @@ func ExtJsExclusionSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		if r.Method == http.MethodDelete {
-			err = storeInstance.ExclusionSvc.DeleteExclusion(pathDecoded)
+			err = app.Exclusion.DeleteExclusion(pathDecoded)
 			if err != nil {
 				WriteErrorResponse(w, err)
 				return

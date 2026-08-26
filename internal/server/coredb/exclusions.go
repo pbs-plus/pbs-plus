@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func (db *DB) CreateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
+func (db *Store) CreateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -69,7 +69,7 @@ func (db *DB) CreateExclusion(tx *Transaction, exclusion Exclusion) (err error) 
 	return nil
 }
 
-func (db *DB) GetAllBackupExclusions(backupID string) ([]Exclusion, error) {
+func (db *Store) GetAllBackupExclusions(backupID string) ([]Exclusion, error) {
 	rows, err := db.readQueries.GetBackupExclusions(db.ctx, backupID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllBackupExclusions: error querying exclusions: %w", err)
@@ -96,7 +96,7 @@ func (db *DB) GetAllBackupExclusions(backupID string) ([]Exclusion, error) {
 	return exclusions, nil
 }
 
-func (db *DB) GetAllGlobalExclusions() ([]Exclusion, error) {
+func (db *Store) GetAllGlobalExclusions() ([]Exclusion, error) {
 	rows, err := db.readQueries.ListGlobalExclusions(db.ctx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("GetAllGlobalExclusions: error querying exclusions: %w", err)
@@ -123,7 +123,7 @@ func (db *DB) GetAllGlobalExclusions() ([]Exclusion, error) {
 	return exclusions, nil
 }
 
-func (db *DB) GetExclusion(path string) (*Exclusion, error) {
+func (db *Store) GetExclusion(path string) (*Exclusion, error) {
 	row, err := db.readQueries.GetExclusion(db.ctx, corequery.GetExclusionParams{
 		JobID: "",
 		Path:  path,
@@ -143,7 +143,7 @@ func (db *DB) GetExclusion(path string) (*Exclusion, error) {
 	return excl, nil
 }
 
-func (db *DB) UpdateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
+func (db *Store) UpdateExclusion(tx *Transaction, exclusion Exclusion) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -202,7 +202,7 @@ func (db *DB) UpdateExclusion(tx *Transaction, exclusion Exclusion) (err error) 
 	return nil
 }
 
-func (db *DB) DeleteExclusion(tx *Transaction, path string) (err error) {
+func (db *Store) DeleteExclusion(tx *Transaction, path string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 

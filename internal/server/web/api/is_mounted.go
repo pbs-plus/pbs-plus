@@ -4,9 +4,10 @@ package api
 
 import (
 	"bufio"
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func IsMounted(path string) bool {

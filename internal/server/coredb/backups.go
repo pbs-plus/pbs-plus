@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func (db *DB) generateUniqueJobId(backup Backup) (string, error) {
+func (db *Store) generateUniqueJobId(backup Backup) (string, error) {
 	baseID := validate.Slugify(backup.Target.Name)
 	if baseID == "" {
 		return "", fmt.Errorf("invalid target: slugified value is empty")
@@ -43,7 +43,7 @@ func (db *DB) generateUniqueJobId(backup Backup) (string, error) {
 	return "", fmt.Errorf("failed to generate a unique backup ID after %d attempts", maxAttempts)
 }
 
-func (db *DB) CreateBackup(tx *Transaction, backup Backup) (err error) {
+func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -168,7 +168,7 @@ func (db *DB) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	return nil
 }
 
-func (db *DB) GetBackup(id string) (Backup, error) {
+func (db *Store) GetBackup(id string) (Backup, error) {
 	row, err := db.readQueries.GetBackup(db.ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Backup{}, ErrBackupNotFound
@@ -249,7 +249,7 @@ func (db *DB) GetBackup(id string) (Backup, error) {
 	return backup, nil
 }
 
-func (db *DB) populateBackupExtras(backup *Backup) {
+func (db *Store) populateBackupExtras(backup *Backup) {
 	if backup.History.LastRunUpid != "" {
 		if r, ok := tasklog.ResolveHistoryFields(backup.History.LastRunUpid); ok {
 			if r.Starttime > 0 {
@@ -277,7 +277,7 @@ func (db *DB) populateBackupExtras(backup *Backup) {
 	}
 }
 
-func (db *DB) UpdateBackup(tx *Transaction, backup Backup) (err error) {
+func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -396,7 +396,7 @@ func (db *DB) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 	return nil
 }
 
-func (db *DB) linkBackupLog(backupID, upid string) {
+func (db *Store) linkBackupLog(backupID, upid string) {
 	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, backupID)
 	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
 		log.Error(fmt.Errorf("linkBackupLog: failed to create log dir: %w", err), "", "id", backupID)
@@ -435,7 +435,7 @@ func (db *DB) linkBackupLog(backupID, upid string) {
 	}
 }
 
-func (db *DB) GetAllBackups() ([]Backup, error) {
+func (db *Store) GetAllBackups() ([]Backup, error) {
 	rows, err := db.readQueries.ListAllBackups(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllBackups: error querying backups: %w", err)
@@ -525,7 +525,7 @@ func (db *DB) GetAllBackups() ([]Backup, error) {
 	return backups, nil
 }
 
-func (db *DB) GetAllQueuedBackups() ([]Backup, error) {
+func (db *Store) GetAllQueuedBackups() ([]Backup, error) {
 	rows, err := db.readQueries.ListQueuedBackups(db.ctx)
 	if err != nil {
 		return nil, fmt.Errorf("GetAllQueuedBackups: error querying backups: %w", err)
@@ -597,7 +597,7 @@ func (db *DB) GetAllQueuedBackups() ([]Backup, error) {
 	return backups, nil
 }
 
-func (db *DB) DeleteBackup(tx *Transaction, id string) (err error) {
+func (db *Store) DeleteBackup(tx *Transaction, id string) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 

@@ -9,17 +9,17 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 )
 
-func ExtJsBackupCSVExportHandler(storeInstance *store.Store) http.HandlerFunc {
+func ExtJsBackupCSVExportHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
 
-		allBackups, err := storeInstance.BackupSvc.ListBackups()
+		allBackups, err := app.Backup.ListBackups()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return
@@ -98,14 +98,14 @@ func csvEscapeField(s string) string {
 	return csvEscape(s)
 }
 
-func D2DTargetTreeHandler(storeInstance *store.Store) http.HandlerFunc {
+func D2DTargetTreeHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
 			return
 		}
 
-		all, err := storeInstance.TargetSvc.GetAllTargets()
+		all, err := app.Target.GetAllTargets()
 		if err != nil {
 			WriteErrorResponse(w, err)
 			return

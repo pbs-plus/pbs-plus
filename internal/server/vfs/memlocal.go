@@ -12,11 +12,12 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
