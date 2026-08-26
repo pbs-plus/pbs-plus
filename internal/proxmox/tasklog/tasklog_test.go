@@ -412,6 +412,59 @@ func TestReadStatusFromLogPBSFindMapSemantics(t *testing.T) {
 	if task.Status != "stopped" || task.ExitStatus != "real failure" {
 		t.Fatalf("GetTaskByUPID = %+v, want stopped/real failure", task)
 	}
+
+	if err := Reconcile(""); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(archive), wt.UPID()+" ") {
+		t.Fatalf("archive = %q, want %q", archive, wt.UPID())
+	}
+}
+
+func TestChangeUPIDStartTimeArchivesTerminalTask(t *testing.T) {
+	setupTaskDirs(t)
+
+	wt, err := NewWorkerTask("pbsplus", "rename", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.mu.Lock()
+	_, err = wt.file.WriteString(time.Now().Format(time.RFC3339) + ": TASK OK\n")
+	wt.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Unix(wt.Task.StartTime+1, 0)
+	newUPID, err := ChangeUPIDStartTime(wt.UPID(), start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newUPID == wt.UPID() {
+		t.Fatal("ChangeUPIDStartTime did not change the UPID")
+	}
+	if _, err := ChangeUPIDStartTime(wt.UPID(), start); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active = %#v, want no tasks", active)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(archive), newUPID+" ") {
+		t.Fatalf("archive = %q, want %q", archive, newUPID)
+	}
 }
 
 func TestControlSocketPBSProtocol(t *testing.T) {

@@ -214,10 +214,18 @@ func Reconcile(newUPID string) error {
 	var finished []TaskListInfo
 	kept := activeList[:0]
 	for _, info := range activeList {
-		switch {
-		case info.State != nil:
+		if info.State != nil {
 			finished = append(finished, info)
-		case !workerIsActiveLocal(info.Task):
+			continue
+		}
+
+		if state, serr := ReadStatusFromLog(info.UPID); info.Task.Node != "pbsplusgen-queue" && serr == nil && state.Status != StatusUnknown {
+			info.State = &state
+			finished = append(finished, info)
+			continue
+		}
+
+		if !workerIsActiveLocal(info.Task) {
 			now := time.Now().Unix()
 			state, serr := ReadStatusFromLog(info.UPID)
 			if serr != nil {
@@ -225,9 +233,10 @@ func Reconcile(newUPID string) error {
 			}
 			info.State = &state
 			finished = append(finished, info)
-		default:
-			kept = append(kept, info)
+			continue
 		}
+
+		kept = append(kept, info)
 	}
 
 	if newUPID != "" {

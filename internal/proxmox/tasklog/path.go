@@ -69,6 +69,12 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 		return "", err
 	}
 
+	if oldInfo, err := os.Stat(path); err == nil {
+		if newInfo, newErr := os.Stat(newPath); newErr == nil && os.SameFile(oldInfo, newInfo) {
+			return newUpid, nil
+		}
+	}
+
 	if err := os.Rename(path, newPath); err != nil {
 		return "", err
 	}
@@ -78,5 +84,34 @@ func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
 		slog.Error(err.Error())
 	}
 
+	if err := replaceActiveUPID(upid, newUpid, parsedTask); err != nil {
+		return "", err
+	}
+	if err := Reconcile(""); err != nil {
+		return "", err
+	}
+
 	return newUpid, nil
+}
+
+func replaceActiveUPID(oldUPID, newUPID string, task proxmox.Task) error {
+	lock, err := lockTaskList(true)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		return err
+	}
+	for i := range active {
+		if active[i].UPID == oldUPID {
+			active[i].UPID = newUPID
+			active[i].Task = task
+			return replaceFile(activeTasks, renderTaskList(active), 0660)
+		}
+	}
+
+	return nil
 }
