@@ -83,6 +83,55 @@ func TestWorkerTask_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {
+	setupTaskDirs(t)
+
+	queued, err := NewQueuedTask("backup", "abc", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upid := queued.UPID()
+
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].UPID != upid || active[0].State != nil {
+		t.Fatalf("active = %#v, want single running %s", active, upid)
+	}
+	listed, err := ListTasks(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].UPID != upid || listed[0].State != nil {
+		t.Fatalf("ListTasks(true) = %#v, want single running %s", listed, upid)
+	}
+
+	queued.Close()
+
+	active, err = readTaskFile(activeTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active after close = %#v, want empty", active)
+	}
+	archive, err := readTaskFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archive) != 0 {
+		t.Fatalf("archive after close = %#v, want empty", archive)
+	}
+	path, err := UPIDLogPath(upid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("queued task log still exists: %v", err)
+	}
+}
+
 func TestReconcile_FoldsDeadWorkers(t *testing.T) {
 	setupTaskDirs(t)
 

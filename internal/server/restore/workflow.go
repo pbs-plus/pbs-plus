@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -48,6 +49,11 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		logger:    log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer b.cleanup()
+	queued, err := tasklog.NewQueuedTask("reader", tasklog.FormatWorkerID(job.Store, "host-", job.DestTarget.GetHostname()), input.Web)
+	if err != nil {
+		return fmt.Errorf("creating queued restore task: %w", err)
+	}
+	defer queued.Close()
 
 	stage := func(name string, body func(context.Context) error) error {
 		_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
@@ -81,6 +87,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		return jobs.NonRetryable(fmt.Errorf("decoding restore start result: %w", err))
 	}
 	b.upid = startRes.UPID
+	queued.Close()
 
 	runResRaw, err := w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		if b.task == nil {

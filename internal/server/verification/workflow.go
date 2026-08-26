@@ -11,6 +11,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -54,6 +56,11 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 		logger: log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer v.cleanup()
+	queued, err := tasklog.NewQueuedTask("verification", proxmox.EncodeToHexEscapes(job.ID), input.Web)
+	if err != nil {
+		return fmt.Errorf("creating queued verification task: %w", err)
+	}
+	defer queued.Close()
 
 	selectResRaw, err := w.Activity("select", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		backups := v.selectCandidates(ctx)
@@ -98,6 +105,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 		return jobs.NonRetryable(fmt.Errorf("decoding verification start result: %w", err))
 	}
 	v.upid = startRes.UPID
+	queued.Close()
 
 	verifyResRaw, err := w.Activity("verify", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
 		if v.task == nil {
