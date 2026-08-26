@@ -36,7 +36,7 @@ func GetBackupTask(
 	}
 	backupID = proxmox.NormalizeHostname(backupID)
 
-	searchString := fmt.Sprintf(":backup:%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(backupID))
+	searchString := ":backup:" + tasklog.FormatWorkerID(job.Store, "host-", backupID)
 
 	close(readyChan)
 
@@ -57,7 +57,7 @@ func GetBackupTask(
 
 func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
+	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 
 	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", "backup", wid)
 	if err != nil {
@@ -77,7 +77,7 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 
 func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
+	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 
 	wt, err := tasklog.NewWorkerTask("pbsplusgen-ok", "backup", wid)
 	if err != nil {

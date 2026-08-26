@@ -3,8 +3,6 @@
 package restore
 
 import (
-	"fmt"
-
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
@@ -17,7 +15,7 @@ type RestoreTask struct {
 
 func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 	targetName := job.DestTarget.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
+	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 	wt, err := tasklog.NewWorkerTask("pbsplus", "reader", wid)
 	if err != nil {
 		return nil, err
@@ -56,7 +54,7 @@ func (t *RestoreTask) CloseWarn(warning int) {
 
 func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
 	targetName := job.DestTarget.GetHostname()
-	wid := fmt.Sprintf("%s%shost-%s", proxmox.EncodeToHexEscapes(job.Store), proxmox.EncodeToHexEscapes(":"), proxmox.EncodeToHexEscapes(targetName))
+	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 
 	wt, err := tasklog.NewWorkerTask("pbsplusgen-ok", "reader", wid)
 	if err != nil {

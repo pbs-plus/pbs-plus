@@ -448,7 +448,7 @@ func (j *mtfJob) cleanup() {
 }
 
 func startTask(job mtfdb.MTFJob) (*Task, error) {
-	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, tasklog.FormatWorkerID(job.Datastore, "mtf-", job.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +468,7 @@ func (t *Task) CloseErr(taskErr error) {
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
-	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, tasklog.FormatWorkerID(job.Datastore, "mtf-", job.ID))
 	if err != nil {
 		return nil
 	}
@@ -480,10 +480,4 @@ func errorTask(job mtfdb.MTFJob, runErr error) *Task {
 		WorkerTask: wt,
 		job:        job,
 	}
-}
-
-func mtfWID(job mtfdb.MTFJob) string {
-	return proxmox.EncodeToHexEscapes(job.Datastore) +
-		proxmox.EncodeToHexEscapes(":") +
-		"mtf-" + proxmox.EncodeToHexEscapes(job.ID)
 }

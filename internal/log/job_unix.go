@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -111,9 +112,7 @@ func (b *jobLogger) Write(in []byte) (n int, err error) {
 	for scanner.Scan() {
 		hasContent = true
 		line := scanner.Text()
-		timestamp := time.Now().Format(time.RFC3339)
-		_, formatErr := fmt.Fprintf(&sb, "%s: %s\n", timestamp, line)
-		if formatErr != nil {
+		if _, formatErr := sb.WriteString(proxmox.FormatLogLine(time.Now(), line) + "\n"); formatErr != nil {
 			return 0, fmt.Errorf("error formatting log line: %w", formatErr)
 		}
 	}

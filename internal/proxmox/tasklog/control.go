@@ -110,7 +110,7 @@ func peerAllowed(conn net.Conn) bool {
 		if err != nil {
 			return
 		}
-		allowed = cred.Uid == 0 || cred.Uid == backupUID || cred.Gid == backupGID ||
+		allowed = cred.Uid == 0 || cred.Uid == proxmox.BackupUID || cred.Gid == proxmox.BackupGID ||
 			cred.Uid == uint32(os.Geteuid())
 	})
 	return rcErr == nil && allowed

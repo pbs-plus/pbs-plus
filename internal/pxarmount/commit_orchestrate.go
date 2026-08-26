@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pxar/backupproxy"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
 	"github.com/pbs-plus/pxar/buzhash"
 	"github.com/pbs-plus/pxar/datastore"
@@ -318,7 +319,7 @@ func ensureNamespaceDir(pbsStore, namespace string) error {
 		if err := os.MkdirAll(cur, 0o755); err != nil {
 			return err
 		}
-		if err := os.Chown(cur, 34, 34); err != nil {
+		if err := proxmox.ChownBackupUser(cur); err != nil {
 			log.Error(err, "")
 		}
 	}

@@ -4,11 +4,12 @@ package tasklog
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"log/slog"
 )
 
 func UPIDLogPath(upid string) (string, error) {
@@ -28,10 +29,10 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		slog.Error(err.Error())
+		return nil, "", fmt.Errorf("tasklog: create task log dir: %w", err)
 	}
-	if err := os.Chown(dir, 34, 34); err != nil {
-		slog.Error(err.Error())
+	if err := proxmox.ChownBackupUser(dir); err != nil {
+		return nil, "", err
 	}
 
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
@@ -39,7 +40,7 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 		return nil, "", err
 	}
 
-	if err := file.Chown(34, 34); err != nil && os.Geteuid() == 0 {
+	if err := file.Chown(proxmox.BackupUID, proxmox.BackupGID); err != nil && os.Geteuid() == 0 {
 		if cerr := file.Close(); cerr != nil {
 			slog.Error(cerr.Error())
 		}
@@ -47,4 +48,35 @@ func CreateTaskLogFile(upid string) (*os.File, string, error) {
 	}
 
 	return file, path, nil
+}
+
+// ChangeUPIDStartTime rewrites a task's starttime, renames its log file
+// to the new UPID's path, and leaves a symlink at the old path.
+func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
+	parsedTask, err := proxmox.ParseUPID(upid)
+	if err != nil {
+		return "", err
+	}
+	path, err := UPIDLogPath(upid)
+	if err != nil {
+		return "", err
+	}
+
+	parsedTask.StartTime = startTime.Unix()
+	newUpid := parsedTask.GenerateUPID()
+	newPath, err := UPIDLogPath(newUpid)
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.Rename(path, newPath); err != nil {
+		return "", err
+	}
+	slog.Info("updated UPID start time")
+
+	if err := os.Symlink(newPath, path); err != nil {
+		slog.Error(err.Error())
+	}
+
+	return newUpid, nil
 }

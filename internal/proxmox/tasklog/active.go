@@ -25,24 +25,6 @@ var (
 	lockPath    = conf.TaskLogsBasePath + "/.active.lock"
 )
 
-// PBS runs its task-managing daemon as the backup user (uid/gid 34 on
-// Debian); every shared file we create must be owned by it or the real
-// proxmox-backup loses access to the task list.
-const (
-	backupUID = 34
-	backupGID = 34
-)
-
-// chownTaskFile gives a shared task-list file to the backup user. Fatal
-// when running as root (like PBS's CreateOptions::owner); a no-op error
-// for unprivileged dev/test runs.
-func chownTaskFile(path string) error {
-	if err := os.Chown(path, backupUID, backupGID); err != nil && os.Geteuid() == 0 {
-		return fmt.Errorf("tasklog: chown %s: %w", path, err)
-	}
-	return nil
-}
-
 const lockTimeout = 15 * time.Second
 
 // taskListLock is PBS's TaskListLockGuard: an flock on tasks/.active.lock
@@ -55,7 +37,7 @@ func lockTaskList(exclusive bool) (*taskListLock, error) {
 	if err := os.MkdirAll(taskDir, 0755); err != nil {
 		return nil, fmt.Errorf("tasklog: create task dir: %w", err)
 	}
-	if err := chownTaskFile(taskDir); err != nil {
+	if err := proxmox.ChownBackupUser(taskDir); err != nil {
 		return nil, err
 	}
 
@@ -63,7 +45,7 @@ func lockTaskList(exclusive bool) (*taskListLock, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tasklog: open task list lock: %w", err)
 	}
-	if err := chownTaskFile(lockPath); err != nil {
+	if err := proxmox.ChownBackupUser(lockPath); err != nil {
 		if cerr := f.Close(); cerr != nil {
 			slog.Error(cerr.Error())
 		}
@@ -176,7 +158,7 @@ func replaceFile(path, content string, perm os.FileMode) error {
 	if err := os.Chmod(tmpName, perm); err != nil {
 		return fmt.Errorf("tasklog: chmod temp file: %w", err)
 	}
-	if err := chownTaskFile(tmpName); err != nil {
+	if err := proxmox.ChownBackupUser(tmpName); err != nil {
 		return err
 	}
 	return os.Rename(tmpName, path)
@@ -191,7 +173,7 @@ func appendArchiveLines(finished []TaskListInfo) error {
 	if err != nil {
 		return fmt.Errorf("tasklog: open archive: %w", err)
 	}
-	if err := chownTaskFile(archivePath); err != nil {
+	if err := proxmox.ChownBackupUser(archivePath); err != nil {
 		if cerr := archive.Close(); cerr != nil {
 			slog.Error(cerr.Error())
 		}

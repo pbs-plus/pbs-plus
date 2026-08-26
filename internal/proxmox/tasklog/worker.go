@@ -175,9 +175,8 @@ func dirName(path string) string {
 }
 
 func (w *WorkerTask) writeLogLine(format string, args ...any) {
-	timestamp := time.Now().Format(time.RFC3339)
-	line := fmt.Sprintf("%s: "+format+"\n", append([]any{timestamp}, args...)...)
-	if _, err := w.file.WriteString(line); err != nil {
+	msg := fmt.Sprintf(format, args...)
+	if _, err := w.file.WriteString(proxmox.FormatLogLine(time.Now(), msg) + "\n"); err != nil {
 		slog.Error(err.Error())
 	}
 }

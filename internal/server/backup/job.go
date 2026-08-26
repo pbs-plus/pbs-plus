@@ -299,7 +299,7 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 
 	startTime := logger.JobStartTime()
 
-	if newUpid, err := proxmox.ChangeUPIDStartTime(upid, startTime); err == nil {
+	if newUpid, err := tasklog.ChangeUPIDStartTime(upid, startTime); err == nil {
 		upid = newUpid
 		b.mu.Lock()
 		if b.Task.UPID != "" {
