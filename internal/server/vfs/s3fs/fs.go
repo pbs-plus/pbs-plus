@@ -21,7 +21,7 @@ import (
 	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 )
 
@@ -31,7 +31,7 @@ const (
 
 func NewS3FS(
 	ctx context.Context,
-	backup database.Backup,
+	backup coredb.Backup,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
 	useSSL bool,
 ) *S3FS {

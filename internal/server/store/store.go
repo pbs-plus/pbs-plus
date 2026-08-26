@@ -12,7 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
-	sqlite "github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
@@ -23,7 +23,7 @@ import (
 
 type Store struct {
 	Ctx               context.Context
-	Database          *sqlite.Database
+	Database          *coredb.DB
 	MtfStore          *mtfdb.Database
 	MtfMapper         *mtfdb.Mapper
 	BackupSvc         *application.BackupService
@@ -52,7 +52,7 @@ func Initialize(ctx context.Context, paths map[string]string) (*Store, error) {
 		}
 	}
 
-	db, err := sqlite.Initialize(ctx, sqlitePath)
+	db, err := coredb.Initialize(ctx, sqlitePath)
 	if err != nil {
 		return nil, fmt.Errorf("Initialize: error initializing database -> %w", err)
 	}

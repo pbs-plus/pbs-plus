@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
@@ -47,7 +47,7 @@ func Register(engine *jobs.Engine, storeInstance *store.Store) error {
 	})
 }
 
-func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job database.Backup, input jobs.BackupInput) error {
+func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job coredb.Backup, input jobs.BackupInput) error {
 	b := &backupJob{
 		job:             job,
 		storeInstance:   storeInstance,

@@ -8,7 +8,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
@@ -54,7 +54,7 @@ func (s *Scheduler) run() {
 	}
 }
 
-func (s *Scheduler) submitBackup(b database.Backup, trigger string, occurrence time.Time) error {
+func (s *Scheduler) submitBackup(b coredb.Backup, trigger string, occurrence time.Time) error {
 	request, err := jobs.NewWorkflowSubmit(
 		jobs.WorkflowBackup,
 		b.ID,
@@ -117,7 +117,7 @@ func (s *Scheduler) shouldRunScheduled(schedule string, lastRun int64, now time.
 	return nextRun, true
 }
 
-func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
+func (s *Scheduler) shouldRetryBackup(b coredb.Backup, now time.Time) bool {
 	if b.History.LastRunEndtime == 0 {
 		return false
 	}
@@ -130,9 +130,9 @@ func (s *Scheduler) shouldRetryBackup(b database.Backup, now time.Time) bool {
 	return b.History.RetryCount < b.Retry
 }
 
-func lastRunRetryable(status database.JobStatus, state string) bool {
-	if status == database.JobStatusUnknown {
-		return database.JobStatusFromString(state).ShouldRetry()
+func lastRunRetryable(status coredb.JobStatus, state string) bool {
+	if status == coredb.JobStatusUnknown {
+		return coredb.JobStatusFromString(state).ShouldRetry()
 	}
 	return status.ShouldRetry()
 }
@@ -170,7 +170,7 @@ func (s *Scheduler) checkRestores() {
 	}
 }
 
-func (s *Scheduler) shouldRetryRestore(r database.Restore, now time.Time) bool {
+func (s *Scheduler) shouldRetryRestore(r coredb.Restore, now time.Time) bool {
 	if r.History.LastRunEndtime == 0 {
 		return false
 	}
@@ -214,7 +214,7 @@ func (s *Scheduler) checkVerifications() {
 	}
 }
 
-func (s *Scheduler) submitVerification(vJob database.VerificationJob, trigger string, occurrence time.Time) error {
+func (s *Scheduler) submitVerification(vJob coredb.VerificationJob, trigger string, occurrence time.Time) error {
 	request, err := jobs.NewWorkflowSubmit(
 		jobs.WorkflowVerification,
 		vJob.ID,

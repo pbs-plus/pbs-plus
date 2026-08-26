@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 )
 
@@ -21,7 +21,7 @@ func TestFlattenMtfJobShape(t *testing.T) {
 		History: store.JobHistory{
 			LastRunUpid:    "UPID:abc",
 			LastRunState:   "OK",
-			LastRunStatus:  database.JobStatusSuccess,
+			LastRunStatus:  coredb.JobStatusSuccess,
 			LastRunEndtime: 1700000000,
 		},
 	}
@@ -34,7 +34,7 @@ func TestFlattenMtfJobShape(t *testing.T) {
 	if flat.LastRunState != "OK" {
 		t.Errorf("LastRunState = %q", flat.LastRunState)
 	}
-	if flat.LastRunStatus != int(database.JobStatusSuccess) {
+	if flat.LastRunStatus != int(coredb.JobStatusSuccess) {
 		t.Errorf("LastRunStatus = %d", flat.LastRunStatus)
 	}
 	if flat.StatusParsed.Category != "ok" || flat.StatusParsed.Icon == "" {

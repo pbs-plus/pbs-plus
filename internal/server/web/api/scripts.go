@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -77,7 +77,7 @@ func ExtJsScriptHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newScript := database.Script{
+		newScript := coredb.Script{
 			Path:        path,
 			Description: r.FormValue("description"),
 		}

@@ -21,7 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
@@ -43,7 +43,7 @@ type restoreJob struct {
 	errCount     atomic.Int32
 	receivedDone atomic.Bool
 
-	job           database.Restore
+	job           coredb.Restore
 	remoteServer  *pxar.RemoteServer
 	localClient   *pxar.Client
 	agentPipe     *arpc.StreamPipe
@@ -74,11 +74,11 @@ func (b *restoreJob) execute(ctx context.Context) error {
 	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
 	switch b.job.DestTarget.Type {
-	case database.TargetTypeAgent:
+	case coredb.TargetTypeAgent:
 		return b.agentExecute(ctx)
-	case database.TargetTypeLocal:
+	case coredb.TargetTypeLocal:
 		return b.localExecute(ctx)
-	case database.TargetTypeS3:
+	case coredb.TargetTypeS3:
 		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
 	default:
 		return jobs.ErrTargetNotFound

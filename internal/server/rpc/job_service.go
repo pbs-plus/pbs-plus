@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 type BackupQueueArgs struct {
-	Job             database.Backup
+	Job             coredb.Backup
 	SkipCheck       bool
 	Web             bool
 	Stop            bool
@@ -25,7 +25,7 @@ type BackupQueueArgs struct {
 }
 
 type RestoreQueueArgs struct {
-	Job       database.Restore
+	Job       coredb.Restore
 	SkipCheck bool
 	Web       bool
 	Stop      bool

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 type FlatBackup struct {
@@ -226,7 +226,7 @@ type BackupConfigResponse struct {
 type BackupUPIDsResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    []database.Tasks  `json:"data"`
+	Data    []coredb.Tasks  `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
@@ -256,7 +256,7 @@ type RestoreRunResponse struct {
 }
 
 type TargetsResponse struct {
-	Data    []database.Target `json:"data"`
+	Data    []coredb.Target `json:"data"`
 	Digest  string            `json:"digest"`
 	Success bool              `json:"success"`
 }
@@ -264,7 +264,7 @@ type TargetsResponse struct {
 type TargetConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    database.Target   `json:"data"`
+	Data    coredb.Target   `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }
@@ -272,33 +272,33 @@ type TargetConfigResponse struct {
 type AgentConfigResponse struct {
 	Errors  map[string]string  `json:"errors"`
 	Message string             `json:"message"`
-	Data    database.AgentHost `json:"data"`
+	Data    coredb.AgentHost `json:"data"`
 	Status  int                `json:"status"`
 	Success bool               `json:"success"`
 }
 
 type TokensResponse struct {
-	Data   []database.AgentToken `json:"data"`
+	Data   []coredb.AgentToken `json:"data"`
 	Digest string                `json:"digest"`
 }
 
 type TokenConfigResponse struct {
 	Errors  map[string]string   `json:"errors"`
 	Message string              `json:"message"`
-	Data    database.AgentToken `json:"data"`
+	Data    coredb.AgentToken `json:"data"`
 	Status  int                 `json:"status"`
 	Success bool                `json:"success"`
 }
 
 type ExclusionsResponse struct {
-	Data   []database.Exclusion `json:"data"`
+	Data   []coredb.Exclusion `json:"data"`
 	Digest string               `json:"digest"`
 }
 
 type ExclusionConfigResponse struct {
 	Errors  map[string]string   `json:"errors"`
 	Message string              `json:"message"`
-	Data    *database.Exclusion `json:"data"`
+	Data    *coredb.Exclusion `json:"data"`
 	Status  int                 `json:"status"`
 	Success bool                `json:"success"`
 }
@@ -316,14 +316,14 @@ type ScriptConfig struct {
 }
 
 type ScriptsResponse struct {
-	Data   []database.Script `json:"data"`
+	Data   []coredb.Script `json:"data"`
 	Digest string            `json:"digest"`
 }
 
 type ScriptConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    database.Script   `json:"data"`
+	Data    coredb.Script   `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
 }

@@ -12,27 +12,27 @@ import (
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
-type BackupService struct{ db *database.Database }
+type BackupService struct{ db *coredb.DB }
 
-func NewBackupService(db *database.Database) *BackupService { return &BackupService{db: db} }
+func NewBackupService(db *coredb.DB) *BackupService { return &BackupService{db: db} }
 
-func (s *BackupService) ListBackups() ([]database.Backup, error) {
+func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 	backups, err := s.db.GetAllBackups()
 	if err != nil {
 		return nil, err
 	}
 	for i, b := range backups {
 		switch b.Target.Type {
-		case database.TargetTypeAgent:
+		case coredb.TargetTypeAgent:
 			if sess := sessions.GetSessionARPCFS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}
-		case database.TargetTypeS3:
+		case coredb.TargetTypeS3:
 			if sess := sessions.GetSessionS3FS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}
@@ -41,16 +41,16 @@ func (s *BackupService) ListBackups() ([]database.Backup, error) {
 	return backups, nil
 }
 
-func (s *BackupService) GetBackup(id string) (database.Backup, error) { return s.db.GetBackup(id) }
-func (s *BackupService) CreateBackup(b database.Backup) error         { return s.db.CreateBackup(nil, b) }
-func (s *BackupService) UpdateBackup(b database.Backup) error         { return s.db.UpdateBackup(nil, b) }
+func (s *BackupService) GetBackup(id string) (coredb.Backup, error) { return s.db.GetBackup(id) }
+func (s *BackupService) CreateBackup(b coredb.Backup) error         { return s.db.CreateBackup(nil, b) }
+func (s *BackupService) UpdateBackup(b coredb.Backup) error         { return s.db.UpdateBackup(nil, b) }
 func (s *BackupService) DeleteBackup(id string) error                 { return s.db.DeleteBackup(nil, id) }
-func (s *BackupService) GetAllQueuedBackups() ([]database.Backup, error) {
+func (s *BackupService) GetAllQueuedBackups() ([]coredb.Backup, error) {
 	return s.db.GetAllQueuedBackups()
 }
 
-func jobStatsFromVFS(stats vfs.VFSStats) database.JobStats {
-	return database.JobStats{
+func jobStatsFromVFS(stats vfs.VFSStats) coredb.JobStats {
+	return coredb.JobStats{
 		CurrentFileCount:   int(stats.FilesAccessed),
 		CurrentFolderCount: int(stats.FoldersAccessed),
 		CurrentBytesTotal:  int(stats.TotalBytes),
@@ -60,72 +60,72 @@ func jobStatsFromVFS(stats vfs.VFSStats) database.JobStats {
 	}
 }
 
-type RestoreService struct{ db *database.Database }
+type RestoreService struct{ db *coredb.DB }
 
-func NewRestoreService(db *database.Database) *RestoreService { return &RestoreService{db: db} }
+func NewRestoreService(db *coredb.DB) *RestoreService { return &RestoreService{db: db} }
 
-func (s *RestoreService) GetAllRestores() ([]database.Restore, error)    { return s.db.GetAllRestores() }
-func (s *RestoreService) GetRestore(id string) (database.Restore, error) { return s.db.GetRestore(id) }
-func (s *RestoreService) CreateRestore(r database.Restore) error         { return s.db.CreateRestore(nil, r) }
-func (s *RestoreService) UpdateRestore(r database.Restore) error         { return s.db.UpdateRestore(nil, r) }
+func (s *RestoreService) GetAllRestores() ([]coredb.Restore, error)    { return s.db.GetAllRestores() }
+func (s *RestoreService) GetRestore(id string) (coredb.Restore, error) { return s.db.GetRestore(id) }
+func (s *RestoreService) CreateRestore(r coredb.Restore) error         { return s.db.CreateRestore(nil, r) }
+func (s *RestoreService) UpdateRestore(r coredb.Restore) error         { return s.db.UpdateRestore(nil, r) }
 func (s *RestoreService) DeleteRestore(id string) error                  { return s.db.DeleteRestore(nil, id) }
 
-type ExclusionService struct{ db *database.Database }
+type ExclusionService struct{ db *coredb.DB }
 
-func NewExclusionService(db *database.Database) *ExclusionService { return &ExclusionService{db: db} }
+func NewExclusionService(db *coredb.DB) *ExclusionService { return &ExclusionService{db: db} }
 
-func (s *ExclusionService) GetAllGlobalExclusions() ([]database.Exclusion, error) {
+func (s *ExclusionService) GetAllGlobalExclusions() ([]coredb.Exclusion, error) {
 	return s.db.GetAllGlobalExclusions()
 }
-func (s *ExclusionService) GetExclusion(path string) (*database.Exclusion, error) {
+func (s *ExclusionService) GetExclusion(path string) (*coredb.Exclusion, error) {
 	return s.db.GetExclusion(path)
 }
-func (s *ExclusionService) CreateExclusion(e database.Exclusion) error {
+func (s *ExclusionService) CreateExclusion(e coredb.Exclusion) error {
 	return s.db.CreateExclusion(nil, e)
 }
-func (s *ExclusionService) UpdateExclusion(e database.Exclusion) error {
+func (s *ExclusionService) UpdateExclusion(e coredb.Exclusion) error {
 	return s.db.UpdateExclusion(nil, e)
 }
 func (s *ExclusionService) DeleteExclusion(path string) error { return s.db.DeleteExclusion(nil, path) }
 
-type AgentHostService struct{ db *database.Database }
+type AgentHostService struct{ db *coredb.DB }
 
-func NewAgentHostService(db *database.Database) *AgentHostService { return &AgentHostService{db: db} }
+func NewAgentHostService(db *coredb.DB) *AgentHostService { return &AgentHostService{db: db} }
 
-func (s *AgentHostService) GetAgentHost(hostname string) (database.AgentHost, error) {
+func (s *AgentHostService) GetAgentHost(hostname string) (coredb.AgentHost, error) {
 	return s.db.GetAgentHost(hostname)
 }
-func (s *AgentHostService) CreateAgentHost(tx *database.Transaction, h database.AgentHost) error {
+func (s *AgentHostService) CreateAgentHost(tx *coredb.Transaction, h coredb.AgentHost) error {
 	return s.db.CreateAgentHost(tx, h)
 }
-func (s *AgentHostService) UpdateAgentHost(tx *database.Transaction, h database.AgentHost) error {
+func (s *AgentHostService) UpdateAgentHost(tx *coredb.Transaction, h coredb.AgentHost) error {
 	return s.db.UpdateAgentHost(tx, h)
 }
 func (s *AgentHostService) DeleteAgentHost(hostname string) error {
 	return s.db.DeleteAgentHost(nil, hostname)
 }
 
-type TokenService struct{ db *database.Database }
+type TokenService struct{ db *coredb.DB }
 
-func NewTokenService(db *database.Database) *TokenService { return &TokenService{db: db} }
+func NewTokenService(db *coredb.DB) *TokenService { return &TokenService{db: db} }
 
-func (s *TokenService) GetAllTokens() ([]database.AgentToken, error)    { return s.db.GetAllTokens(false) }
-func (s *TokenService) GetToken(id string) (database.AgentToken, error) { return s.db.GetToken(id) }
+func (s *TokenService) GetAllTokens() ([]coredb.AgentToken, error)    { return s.db.GetAllTokens(false) }
+func (s *TokenService) GetToken(id string) (coredb.AgentToken, error) { return s.db.GetToken(id) }
 func (s *TokenService) CreateToken(d time.Duration, c string) error     { return s.db.CreateToken(d, c) }
-func (s *TokenService) RevokeToken(t database.AgentToken) error         { return s.db.RevokeToken(t) }
+func (s *TokenService) RevokeToken(t coredb.AgentToken) error         { return s.db.RevokeToken(t) }
 
-type ScriptService struct{ db *database.Database }
+type ScriptService struct{ db *coredb.DB }
 
-func NewScriptService(db *database.Database) *ScriptService { return &ScriptService{db: db} }
+func NewScriptService(db *coredb.DB) *ScriptService { return &ScriptService{db: db} }
 
-func (s *ScriptService) GetAllScripts() ([]database.Script, error)      { return s.db.GetAllScripts() }
-func (s *ScriptService) GetScript(path string) (database.Script, error) { return s.db.GetScript(path) }
-func (s *ScriptService) CreateScript(sc database.Script) error          { return s.db.CreateScript(nil, sc) }
-func (s *ScriptService) UpdateScript(sc database.Script) error          { return s.db.UpdateScript(nil, sc) }
+func (s *ScriptService) GetAllScripts() ([]coredb.Script, error)      { return s.db.GetAllScripts() }
+func (s *ScriptService) GetScript(path string) (coredb.Script, error) { return s.db.GetScript(path) }
+func (s *ScriptService) CreateScript(sc coredb.Script) error          { return s.db.CreateScript(nil, sc) }
+func (s *ScriptService) UpdateScript(sc coredb.Script) error          { return s.db.UpdateScript(nil, sc) }
 func (s *ScriptService) DeleteScript(path string) error                 { return s.db.DeleteScript(nil, path) }
 
 type TargetService struct {
-	db          *database.Database
+	db          *coredb.DB
 	agentsMgr   *arpc.AgentsManager
 	statusCache map[string]TargetStatusResult
 	statusMu    sync.RWMutex
@@ -133,7 +133,7 @@ type TargetService struct {
 	refreshMu   sync.Mutex
 }
 
-func NewTargetService(db *database.Database, agentsMgr *arpc.AgentsManager) *TargetService {
+func NewTargetService(db *coredb.DB, agentsMgr *arpc.AgentsManager) *TargetService {
 	return &TargetService{
 		db:          db,
 		agentsMgr:   agentsMgr,
@@ -141,24 +141,24 @@ func NewTargetService(db *database.Database, agentsMgr *arpc.AgentsManager) *Tar
 	}
 }
 
-func (s *TargetService) GetAllTargets() ([]database.Target, error)      { return s.db.GetAllTargets() }
-func (s *TargetService) GetTarget(name string) (database.Target, error) { return s.db.GetTarget(name) }
-func (s *TargetService) CreateTarget(tx *database.Transaction, t database.Target) error {
+func (s *TargetService) GetAllTargets() ([]coredb.Target, error)      { return s.db.GetAllTargets() }
+func (s *TargetService) GetTarget(name string) (coredb.Target, error) { return s.db.GetTarget(name) }
+func (s *TargetService) CreateTarget(tx *coredb.Transaction, t coredb.Target) error {
 	return s.db.CreateTarget(tx, t)
 }
-func (s *TargetService) UpdateTarget(tx *database.Transaction, t database.Target) error {
+func (s *TargetService) UpdateTarget(tx *coredb.Transaction, t coredb.Target) error {
 	return s.db.UpdateTarget(tx, t)
 }
-func (s *TargetService) DeleteTarget(tx *database.Transaction, name string) error {
+func (s *TargetService) DeleteTarget(tx *coredb.Transaction, name string) error {
 	return s.db.DeleteTarget(tx, name)
 }
-func (s *TargetService) UpsertTarget(tx *database.Transaction, t database.Target) error {
+func (s *TargetService) UpsertTarget(tx *coredb.Transaction, t coredb.Target) error {
 	return s.db.UpsertTarget(tx, t)
 }
 func (s *TargetService) AddS3Secret(name, secret string) error {
 	return s.db.AddS3Secret(nil, name, secret)
 }
-func (s *TargetService) NewTransaction() (*database.Transaction, error) {
+func (s *TargetService) NewTransaction() (*coredb.Transaction, error) {
 	return s.db.NewTransaction()
 }
 
@@ -169,14 +169,14 @@ type TargetStatusResult struct {
 	Error            error
 }
 
-func (s *TargetService) CheckStatus(ctx context.Context, targets []database.Target, checkStatus bool, timeout time.Duration) []TargetStatusResult {
+func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target, checkStatus bool, timeout time.Duration) []TargetStatusResult {
 	results := make([]TargetStatusResult, len(targets))
 	sem := make(chan struct{}, 20)
 	var wg sync.WaitGroup
 
 	for i, target := range targets {
 		wg.Add(1)
-		go func(idx int, tgt database.Target) {
+		go func(idx int, tgt coredb.Target) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
@@ -282,7 +282,7 @@ func (s *TargetService) RefreshStatuses() {
 			return
 		}
 
-		agentTargets := make([]database.Target, 0)
+		agentTargets := make([]coredb.Target, 0)
 		for _, t := range targets {
 			if t.IsAgent() {
 				agentTargets = append(agentTargets, t)
@@ -399,46 +399,46 @@ func (s *TargetService) PushUpdate(ctx context.Context, hostnames []string, time
 	return results
 }
 
-type VerificationService struct{ db *database.Database }
+type VerificationService struct{ db *coredb.DB }
 
-func NewVerificationService(db *database.Database) *VerificationService {
+func NewVerificationService(db *coredb.DB) *VerificationService {
 	return &VerificationService{db: db}
 }
 
-func (s *VerificationService) ListVerificationJobs() ([]database.VerificationJob, error) {
+func (s *VerificationService) ListVerificationJobs() ([]coredb.VerificationJob, error) {
 	return s.db.GetAllVerificationJobs()
 }
-func (s *VerificationService) GetVerificationJob(id string) (database.VerificationJob, error) {
+func (s *VerificationService) GetVerificationJob(id string) (coredb.VerificationJob, error) {
 	return s.db.GetVerificationJob(id)
 }
-func (s *VerificationService) CreateVerificationJob(j database.VerificationJob) error {
+func (s *VerificationService) CreateVerificationJob(j coredb.VerificationJob) error {
 	return s.db.CreateVerificationJob(nil, j)
 }
-func (s *VerificationService) UpdateVerificationJob(j database.VerificationJob) error {
+func (s *VerificationService) UpdateVerificationJob(j coredb.VerificationJob) error {
 	return s.db.UpdateVerificationJob(nil, j)
 }
 func (s *VerificationService) DeleteVerificationJob(id string) error {
 	return s.db.DeleteVerificationJob(nil, id)
 }
-func (s *VerificationService) GetVerificationResults(jobID string) ([]database.VerificationResult, error) {
+func (s *VerificationService) GetVerificationResults(jobID string) ([]coredb.VerificationResult, error) {
 	return s.db.GetVerificationResults(jobID)
 }
-func (s *VerificationService) GetLatestVerificationResult(jobID string) (database.VerificationResult, error) {
+func (s *VerificationService) GetLatestVerificationResult(jobID string) (coredb.VerificationResult, error) {
 	return s.db.GetLatestVerificationResult(jobID)
 }
-func (s *VerificationService) CreateVerificationResult(r *database.VerificationResult) error {
+func (s *VerificationService) CreateVerificationResult(r *coredb.VerificationResult) error {
 	return s.db.CreateVerificationResult(r)
 }
-func (s *VerificationService) UpdateVerificationResult(r database.VerificationResult) error {
+func (s *VerificationService) UpdateVerificationResult(r coredb.VerificationResult) error {
 	return s.db.UpdateVerificationResult(r)
 }
 
-func (s *VerificationService) GetAllVerificationResults() ([]database.VerificationResult, error) {
+func (s *VerificationService) GetAllVerificationResults() ([]coredb.VerificationResult, error) {
 	jobs, err := s.db.GetAllVerificationJobs()
 	if err != nil {
 		return nil, err
 	}
-	var all []database.VerificationResult
+	var all []coredb.VerificationResult
 	for _, j := range jobs {
 		results, err := s.db.GetVerificationResults(j.ID)
 		if err != nil {

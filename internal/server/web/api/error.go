@@ -9,7 +9,7 @@ import (
 	"net/http"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 )
@@ -21,12 +21,12 @@ type ErrorResponse struct {
 }
 
 func statusFromErr(err error) int {
-	if errors.Is(err, database.ErrBackupNotFound) ||
-		errors.Is(err, database.ErrTargetNotFound) ||
-		errors.Is(err, database.ErrRestoreNotFound) ||
-		errors.Is(err, database.ErrTokenNotFound) ||
-		errors.Is(err, database.ErrSecretNotFound) ||
-		errors.Is(err, database.ErrAgentHostNotFound) ||
+	if errors.Is(err, coredb.ErrBackupNotFound) ||
+		errors.Is(err, coredb.ErrTargetNotFound) ||
+		errors.Is(err, coredb.ErrRestoreNotFound) ||
+		errors.Is(err, coredb.ErrTokenNotFound) ||
+		errors.Is(err, coredb.ErrSecretNotFound) ||
+		errors.Is(err, coredb.ErrAgentHostNotFound) ||
 		errors.Is(err, store.ErrNotFound) ||
 		errors.Is(err, store.ErrInvalidID) ||
 		errors.Is(err, store.ErrInvalidMapping) {

@@ -13,11 +13,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
-func getBackupId(target database.Target) (string, error) {
+func getBackupId(target coredb.Target) (string, error) {
 	if target.IsAgent() {
 		if target.Name == "" {
 			return "", fmt.Errorf("target name is required for agent backup")
@@ -39,7 +39,7 @@ func getBackupId(target database.Target) (string, error) {
 	return hostname, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup database.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup coredb.Backup, storeInstance *store.Store, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}

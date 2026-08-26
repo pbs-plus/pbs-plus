@@ -11,7 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
@@ -87,7 +87,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	}
 
 	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore, "upid", task.UPID())
-	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
+	if err := j.persistHistory(task.Task, coredb.JobStatusUnknown, true); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history (started)")
 	}
 
@@ -332,7 +332,7 @@ func (j *mtfJob) finalizeSuccess() {
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:           task.UPID(),
-			LastRunStatus:         database.JobStatusSuccess,
+			LastRunStatus:         coredb.JobStatusSuccess,
 			LastRunStarttime:      start,
 			LastRunEndtime:        end,
 			Duration:              end - start,
@@ -359,7 +359,7 @@ func (j *mtfJob) finalizeFailure(runErr error) {
 				start = end
 			}
 			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunStarttime: start, LastRunEndtime: end, Duration: end - start}, ""); err != nil {
+				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: coredb.JobStatusCanceled, LastRunStarttime: start, LastRunEndtime: end, Duration: end - start}, ""); err != nil {
 				j.logger.Error(err, "failed to update MTF job history on cancellation")
 			}
 		}
@@ -377,7 +377,7 @@ func (j *mtfJob) finalizeFailure(runErr error) {
 	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:      task.UPID(),
-			LastRunStatus:    database.JobStatusFailed,
+			LastRunStatus:    coredb.JobStatusFailed,
 			LastRunStarttime: start,
 			LastRunEndtime:   end,
 			Duration:         end - start,
@@ -411,7 +411,7 @@ func (j *mtfJob) notify(err error) {
 	)
 }
 
-func (j *mtfJob) persistHistory(task proxmox.Task, status database.JobStatus, running bool) error {
+func (j *mtfJob) persistHistory(task proxmox.Task, status coredb.JobStatus, running bool) error {
 	start := task.StartTime
 	if start == 0 {
 		start = time.Now().Unix()

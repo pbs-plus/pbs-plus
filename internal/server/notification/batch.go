@@ -13,18 +13,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 type batchDB interface {
-	GetBatchForJob(jobType, jobID string) (database.NotificationBatch, error)
-	GetBatchJobs(batchName string) ([]database.NotificationBatchJob, error)
+	GetBatchForJob(jobType, jobID string) (coredb.NotificationBatch, error)
+	GetBatchJobs(batchName string) ([]coredb.NotificationBatchJob, error)
 }
 
 type BatchTracker struct {
 	db batchDB
 
-	send func(batch database.NotificationBatch, results []JobResult, isTimeout bool)
+	send func(batch coredb.NotificationBatch, results []JobResult, isTimeout bool)
 
 	mu sync.Mutex
 
@@ -35,7 +35,7 @@ type BatchTracker struct {
 
 type batchState struct {
 	results []JobResult
-	batch   database.NotificationBatch
+	batch   coredb.NotificationBatch
 }
 
 type JobResult struct {
@@ -47,7 +47,7 @@ type JobResult struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-func NewBatchTracker(db *database.Database) *BatchTracker {
+func NewBatchTracker(db *coredb.DB) *BatchTracker {
 	bt := &BatchTracker{
 		db:      db,
 		pending: make(map[string]*batchState),
@@ -198,7 +198,7 @@ func (bt *BatchTracker) flushBatch(batchName string, isTimeout bool) {
 	bt.send(state.batch, state.results, isTimeout)
 }
 
-func (bt *BatchTracker) sendBatchNotification(batch database.NotificationBatch, results []JobResult, isTimeout bool) {
+func (bt *BatchTracker) sendBatchNotification(batch coredb.NotificationBatch, results []JobResult, isTimeout bool) {
 	if len(results) == 0 {
 		return
 	}

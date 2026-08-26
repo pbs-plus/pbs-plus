@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	sqlite "github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,10 +43,10 @@ func TestBackupCRUD(t *testing.T) {
 	store := setupTestStore(t)
 
 	t.Run("Basic CRUD Operations", func(t *testing.T) {
-		backup := sqlite.Backup{
+		backup := coredb.Backup{
 			ID:               "test-backup-1",
 			Store:            "local",
-			Target:           sqlite.Target{Name: "test-target"},
+			Target:           coredb.Target{Name: "test-target"},
 			Subpath:          "backups/test",
 			Schedule:         "daily",
 			Comment:          "Test backup backup",
@@ -84,7 +84,7 @@ func TestBackupCRUD(t *testing.T) {
 		assert.NoError(t, err)
 
 		_, err = store.Database.GetBackup(backup.ID)
-		assert.ErrorIs(t, err, sqlite.ErrBackupNotFound)
+		assert.ErrorIs(t, err, coredb.ErrBackupNotFound)
 	})
 
 	t.Run("Concurrent Operations", func(t *testing.T) {
@@ -96,10 +96,10 @@ func TestBackupCRUD(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				backup := sqlite.Backup{
+				backup := coredb.Backup{
 					ID:               fmt.Sprintf("concurrent-backup-%d", idx),
 					Store:            "local",
-					Target:           sqlite.Target{Name: "test-target"},
+					Target:           coredb.Target{Name: "test-target"},
 					Subpath:          fmt.Sprintf("backups/test-%d", idx),
 					Schedule:         `mon..fri *-*-* 00:00:00`,
 					Comment:          fmt.Sprintf("Concurrent test backup %d", idx),
@@ -119,10 +119,10 @@ func TestBackupCRUD(t *testing.T) {
 	})
 
 	t.Run("Special Characters", func(t *testing.T) {
-		backup := sqlite.Backup{
+		backup := coredb.Backup{
 			ID:               "test-backup-special-!@#$%^",
 			Store:            "local",
-			Target:           sqlite.Target{Name: "test-target"},
+			Target:           coredb.Target{Name: "test-target"},
 			Subpath:          "backups/test/special/!@#$%^",
 			Schedule:         `mon..fri *-*-* 00:00:00`,
 			Comment:          "Test backup with special characters !@#$%^",
@@ -139,16 +139,16 @@ func TestBackupValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		backup  sqlite.Backup
+		backup  coredb.Backup
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid backup with all fields",
-			backup: sqlite.Backup{
+			backup: coredb.Backup{
 				ID:               "test-valid",
 				Store:            "local",
-				Target:           sqlite.Target{Name: "test"},
+				Target:           coredb.Target{Name: "test"},
 				Subpath:          "valid/path",
 				Schedule:         `*-*-* 00:00:00`,
 				Comment:          "Valid test backup",
@@ -159,10 +159,10 @@ func TestBackupValidation(t *testing.T) {
 		},
 		{
 			name: "invalid schedule string",
-			backup: sqlite.Backup{
+			backup: coredb.Backup{
 				ID:        "test-invalid-cron",
 				Store:     "local",
-				Target:    sqlite.Target{Name: "test"},
+				Target:    coredb.Target{Name: "test"},
 				Schedule:  "invalid-cron",
 				Namespace: "test",
 			},
@@ -171,7 +171,7 @@ func TestBackupValidation(t *testing.T) {
 		},
 		{
 			name: "empty required fields",
-			backup: sqlite.Backup{
+			backup: coredb.Backup{
 				ID: "test-empty",
 			},
 			wantErr: true,
@@ -199,13 +199,13 @@ func TestTargetValidation(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		target  sqlite.Target
+		target  coredb.Target
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name: "valid local target",
-			target: sqlite.Target{
+			target: coredb.Target{
 				Name: ("local-target"),
 				Path: ("/valid/path"),
 			},
@@ -213,7 +213,7 @@ func TestTargetValidation(t *testing.T) {
 		},
 		{
 			name: "valid agent target",
-			target: sqlite.Target{
+			target: coredb.Target{
 				Name: ("agent-target"),
 				Path: ("agent://192.168.1.100/C"),
 			},
@@ -221,7 +221,7 @@ func TestTargetValidation(t *testing.T) {
 		},
 		{
 			name: "invalid agent URL",
-			target: sqlite.Target{
+			target: coredb.Target{
 				Name: ("invalid-agent"),
 				Path: ("agent:/invalid-url"),
 			},
@@ -230,7 +230,7 @@ func TestTargetValidation(t *testing.T) {
 		},
 		{
 			name: "empty path",
-			target: sqlite.Target{
+			target: coredb.Target{
 				Name: ("empty-path"),
 				Path: (""),
 			},
@@ -259,12 +259,12 @@ func TestExclusionPatternValidation(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		exclusion sqlite.Exclusion
+		exclusion coredb.Exclusion
 		wantErr   bool
 	}{
 		{
 			name: "valid glob pattern",
-			exclusion: sqlite.Exclusion{
+			exclusion: coredb.Exclusion{
 				Path:    "*.tmp",
 				Comment: "Temporary files",
 			},
@@ -272,7 +272,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "valid regex pattern",
-			exclusion: sqlite.Exclusion{
+			exclusion: coredb.Exclusion{
 				Path:    "^.*\\.bak$",
 				Comment: "Backup files",
 			},
@@ -280,7 +280,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "invalid pattern syntax",
-			exclusion: sqlite.Exclusion{
+			exclusion: coredb.Exclusion{
 				Path:    "[invalid[pattern",
 				Comment: "Invalid pattern",
 			},
@@ -288,7 +288,7 @@ func TestExclusionPatternValidation(t *testing.T) {
 		},
 		{
 			name: "empty pattern",
-			exclusion: sqlite.Exclusion{
+			exclusion: coredb.Exclusion{
 				Path:    "",
 				Comment: "Empty pattern",
 			},
@@ -318,7 +318,7 @@ func TestConcurrentOperations(t *testing.T) {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				target := sqlite.Target{
+				target := coredb.Target{
 					Name: (fmt.Sprintf("concurrent-target-%d", idx)),
 					Path: (fmt.Sprintf("/path/to/target-%d", idx)),
 				}
@@ -350,7 +350,7 @@ func TestConcurrentOperations(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					target := sqlite.Target{
+					target := coredb.Target{
 						Name: fmt.Sprintf("concurrent-target-%d", i),
 						Path: fmt.Sprintf("/path/to/target-%d", i),
 					}

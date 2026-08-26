@@ -11,7 +11,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
@@ -130,7 +130,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		host := database.AgentHost{
+		host := coredb.AgentHost{
 			Name:            reqParsed.Hostname,
 			IP:              clientIP,
 			Auth:            encodedCert,
@@ -168,8 +168,8 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 		for _, drive := range reqParsed.Drives {
 			log.Info("bootstrapping drive")
 
-			newTarget := database.Target{
-				AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
+			newTarget := coredb.Target{
+				AgentHost:        coredb.AgentHost{Name: reqParsed.Hostname},
 				VolumeID:         drive.Letter,
 				VolumeType:       drive.Type,
 				VolumeFS:         drive.FileSystem,
@@ -182,7 +182,7 @@ func AgentBootstrapHandler(storeInstance *store.Store) http.HandlerFunc {
 				VolumeName:       drive.VolumeName,
 			}
 
-			newTarget.Name = database.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
+			newTarget.Name = coredb.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
 			existingTarget, err := storeInstance.TargetSvc.GetTarget(newTarget.Name)
 			if err == nil {
@@ -327,7 +327,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		host := database.AgentHost{
+		host := coredb.AgentHost{
 			Name:            reqParsed.Hostname,
 			IP:              clientIP,
 			Auth:            encodedCert,
@@ -347,7 +347,7 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 		}
 
 		for _, drive := range reqParsed.Drives {
-			targetName := database.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
+			targetName := coredb.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
 			existingTarget, err := storeInstance.TargetSvc.GetTarget(targetName)
 			if err != nil {
@@ -355,9 +355,9 @@ func AgentRenewHandler(storeInstance *store.Store) http.HandlerFunc {
 				continue
 			}
 
-			updatedTarget := database.Target{
+			updatedTarget := coredb.Target{
 				Name:             targetName,
-				AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
+				AgentHost:        coredb.AgentHost{Name: reqParsed.Hostname},
 				VolumeID:         drive.Letter,
 				VolumeType:       drive.Type,
 				VolumeFS:         drive.FileSystem,

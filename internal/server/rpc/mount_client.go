@@ -14,7 +14,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
@@ -83,7 +83,7 @@ type AgentMount struct {
 }
 
 // AgentFSMount asks the mount RPC service to back up + mount the agent target,
-func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup database.Backup, target database.Target) (*AgentMount, error) {
+func AgentFSMount(ctx context.Context, storeInstance *store.Store, backup coredb.Backup, target coredb.Target) (*AgentMount, error) {
 	agentMount := &AgentMount{
 		BackupID: backup.ID,
 		Hostname: target.GetHostname(),
@@ -197,7 +197,7 @@ type S3Mount struct {
 	isEmpty   bool
 }
 
-func S3FSMount(ctx context.Context, storeInstance *store.Store, backup database.Backup, target database.Target) (*S3Mount, error) {
+func S3FSMount(ctx context.Context, storeInstance *store.Store, backup coredb.Backup, target coredb.Target) (*S3Mount, error) {
 	parsedS3 := target.S3Info
 
 	s3Mount := &S3Mount{

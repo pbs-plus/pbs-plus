@@ -9,23 +9,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 type fakeBatchDB struct {
 	mu    sync.Mutex
 	jobs  map[string]map[string]bool
-	batch map[string]database.NotificationBatch
+	batch map[string]coredb.NotificationBatch
 }
 
 func newFakeBatchDB() *fakeBatchDB {
 	return &fakeBatchDB{
 		jobs:  make(map[string]map[string]bool),
-		batch: make(map[string]database.NotificationBatch),
+		batch: make(map[string]coredb.NotificationBatch),
 	}
 }
 
-func (f *fakeBatchDB) addBatch(b database.NotificationBatch, jobType, jobID string) {
+func (f *fakeBatchDB) addBatch(b coredb.NotificationBatch, jobType, jobID string) {
 	f.batch[b.Name] = b
 	if f.jobs[b.Name] == nil {
 		f.jobs[b.Name] = make(map[string]bool)
@@ -33,7 +33,7 @@ func (f *fakeBatchDB) addBatch(b database.NotificationBatch, jobType, jobID stri
 	f.jobs[b.Name][jobType+":"+jobID] = true
 }
 
-func (f *fakeBatchDB) GetBatchForJob(jobType, jobID string) (database.NotificationBatch, error) {
+func (f *fakeBatchDB) GetBatchForJob(jobType, jobID string) (coredb.NotificationBatch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := jobType + ":" + jobID
@@ -42,16 +42,16 @@ func (f *fakeBatchDB) GetBatchForJob(jobType, jobID string) (database.Notificati
 			return f.batch[name], nil
 		}
 	}
-	return database.NotificationBatch{}, nil
+	return coredb.NotificationBatch{}, nil
 }
 
-func (f *fakeBatchDB) GetBatchJobs(batchName string) ([]database.NotificationBatchJob, error) {
+func (f *fakeBatchDB) GetBatchJobs(batchName string) ([]coredb.NotificationBatchJob, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []database.NotificationBatchJob
+	var out []coredb.NotificationBatchJob
 	for key := range f.jobs[batchName] {
 		jt, id, _ := strings.Cut(key, ":")
-		out = append(out, database.NotificationBatchJob{BatchName: batchName, JobType: jt, JobID: id})
+		out = append(out, coredb.NotificationBatchJob{BatchName: batchName, JobType: jt, JobID: id})
 	}
 	return out, nil
 }
@@ -105,7 +105,7 @@ func newTestTracker(db *fakeBatchDB) (*BatchTracker, *sentRecorder) {
 		db:      db,
 		pending: make(map[string]*batchState),
 		timers:  make(map[string]*time.Timer),
-		send: func(b database.NotificationBatch, r []JobResult, isTimeout bool) {
+		send: func(b coredb.NotificationBatch, r []JobResult, isTimeout bool) {
 			rec.record(sentNotification{batch: b.Name, results: r, isTimeout: isTimeout})
 		},
 	}
@@ -114,7 +114,7 @@ func newTestTracker(db *fakeBatchDB) (*BatchTracker, *sentRecorder) {
 
 func TestBatchTracker_AllJobsReport_FlushesOnce(t *testing.T) {
 	db := newFakeBatchDB()
-	b := database.NotificationBatch{Name: "b1", WaitTimeoutSecs: 300, SendOnTimeout: true}
+	b := coredb.NotificationBatch{Name: "b1", WaitTimeoutSecs: 300, SendOnTimeout: true}
 	db.addBatch(b, "backup", "job-a")
 	db.addBatch(b, "backup", "job-b")
 
@@ -140,7 +140,7 @@ func TestBatchTracker_AllJobsReport_FlushesOnce(t *testing.T) {
 
 func TestBatchTracker_SendOnTimeoutFalse_KeepsCollectingThenSends(t *testing.T) {
 	db := newFakeBatchDB()
-	b := database.NotificationBatch{Name: "b2", WaitTimeoutSecs: 300, SendOnTimeout: false}
+	b := coredb.NotificationBatch{Name: "b2", WaitTimeoutSecs: 300, SendOnTimeout: false}
 	db.addBatch(b, "backup", "job-a")
 	db.addBatch(b, "backup", "job-b")
 
@@ -165,7 +165,7 @@ func TestBatchTracker_SendOnTimeoutFalse_KeepsCollectingThenSends(t *testing.T) 
 
 func TestBatchTracker_DeduplicatesReReportedJobs(t *testing.T) {
 	db := newFakeBatchDB()
-	b := database.NotificationBatch{Name: "b3", WaitTimeoutSecs: 300, SendOnTimeout: true}
+	b := coredb.NotificationBatch{Name: "b3", WaitTimeoutSecs: 300, SendOnTimeout: true}
 	db.addBatch(b, "backup", "job-a")
 	db.addBatch(b, "backup", "job-b")
 
@@ -208,7 +208,7 @@ func TestBatchTracker_DeduplicatesReReportedJobs(t *testing.T) {
 
 func TestBatchTracker_EmptyBatchDoesNotPrematurelyFlush(t *testing.T) {
 	db := newFakeBatchDB()
-	b := database.NotificationBatch{Name: "b4", WaitTimeoutSecs: 300, SendOnTimeout: true}
+	b := coredb.NotificationBatch{Name: "b4", WaitTimeoutSecs: 300, SendOnTimeout: true}
 	db.batch[b.Name] = b
 	db.jobs[b.Name] = map[string]bool{}
 

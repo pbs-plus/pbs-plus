@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc"
@@ -37,7 +37,7 @@ type backupJob struct {
 
 	logger *log.Logger
 
-	job database.Backup
+	job coredb.Backup
 
 	storeInstance   *store.Store
 	skipCheck       bool
@@ -401,7 +401,7 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 	b.mu.RUnlock()
 
 	switch job.Target.Type {
-	case database.TargetTypeAgent:
+	case coredb.TargetTypeAgent:
 		qSess, qExists := b.storeInstance.ARPCAgentsManager.GetQuicPipe(job.Target.GetHostname())
 		tSess, tExists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(job.Target.GetHostname())
 		if !qExists && !tExists {
@@ -430,12 +430,12 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
 		}
 
-	case database.TargetTypeLocal:
+	case coredb.TargetTypeLocal:
 		if _, err := os.Stat(job.Target.Path); err != nil {
 			return fmt.Errorf("%w: %s (%v)", jobs.ErrTargetUnreachable, job.Target.Name, err)
 		}
 
-	case database.TargetTypeS3:
+	case coredb.TargetTypeS3:
 	}
 
 	return nil
@@ -445,7 +445,7 @@ func isReachable(msg string) bool {
 	return len(msg) >= 9 && msg[:9] == "reachable"
 }
 
-func (b *backupJob) runTargetMountScript(ctx context.Context, target database.Target) error {
+func (b *backupJob) runTargetMountScript(ctx context.Context, target coredb.Target) error {
 	if target.MountScript == "" {
 		return nil
 	}
@@ -482,7 +482,7 @@ func (b *backupJob) runTargetMountScript(ctx context.Context, target database.Ta
 	return nil
 }
 
-func (b *backupJob) mountSource(ctx context.Context, target database.Target) (string, *rpc.AgentMount, *rpc.S3Mount, error) {
+func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (string, *rpc.AgentMount, *rpc.S3Mount, error) {
 	select {
 	case <-ctx.Done():
 		return "", nil, nil, jobs.ErrCanceled
@@ -596,7 +596,7 @@ func (b *backupJob) mountSource(ctx context.Context, target database.Target) (st
 	return srcPath, agentMount, s3Mount, nil
 }
 
-func (b *backupJob) startBackup(ctx context.Context, srcPath string, target database.Target) (*exec.Cmd, proxmox.Task, string, error) {
+func (b *backupJob) startBackup(ctx context.Context, srcPath string, target coredb.Target) (*exec.Cmd, proxmox.Task, string, error) {
 	select {
 	case <-ctx.Done():
 		return nil, proxmox.Task{}, "", jobs.ErrCanceled
@@ -703,7 +703,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target data
 	return cmd, task, currOwner, nil
 }
 
-func (b *backupJob) startTaskMonitoring(ctx context.Context, target database.Target) (<-chan proxmox.Task, <-chan struct{}, <-chan error) {
+func (b *backupJob) startTaskMonitoring(ctx context.Context, target coredb.Target) (<-chan proxmox.Task, <-chan struct{}, <-chan error) {
 	readyChan := make(chan struct{})
 	taskChan := make(chan proxmox.Task, 1)
 	errChan := make(chan error, 1)

@@ -9,7 +9,7 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
 	"github.com/pbs-plus/pbs-plus/internal/sqldb"
 )
@@ -76,4 +76,4 @@ func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction
 	})
 }
 
-type JobStatus = database.JobStatus
+type JobStatus = coredb.JobStatus

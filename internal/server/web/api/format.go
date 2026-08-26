@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 func HumanReadableBytes(bytes int) string {
@@ -177,7 +177,7 @@ func clamp01(v float64) float64 {
 	return v
 }
 
-func ComputeAggregate(results []database.VerificationResult) VerificationAggregate {
+func ComputeAggregate(results []coredb.VerificationResult) VerificationAggregate {
 	var agg VerificationAggregate
 	thirtyDaysAgo := time.Now().Unix() - 30*24*3600
 

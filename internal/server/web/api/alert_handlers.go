@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
@@ -201,7 +201,7 @@ func AlertExclusionsHandler(storeInstance *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			alertType := r.URL.Query().Get("type")
-			var exclusions []database.AlertExclusion
+			var exclusions []coredb.AlertExclusion
 			var err error
 
 			if alertType != "" {

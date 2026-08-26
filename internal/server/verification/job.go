@@ -24,7 +24,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
@@ -38,7 +38,7 @@ import (
 // was last successfully verified. Jobs that have never been verified receive
 // the maximum weight. This ensures uniform coverage over successive runs and
 // prevents the same backup job from being selected repeatedly.
-func weightedShuffleBackups(backups []database.Backup, db *database.Database, verificationJobID string) []database.Backup {
+func weightedShuffleBackups(backups []coredb.Backup, db *coredb.DB, verificationJobID string) []coredb.Backup {
 	if len(backups) <= 1 {
 		return backups
 	}
@@ -95,7 +95,7 @@ func weightedShuffleBackups(backups []database.Backup, db *database.Database, ve
 		return backups
 	}
 
-	result := make([]database.Backup, 0, len(backups))
+	result := make([]coredb.Backup, 0, len(backups))
 	remWeights := make([]float64, len(weights))
 	copy(remWeights, weights)
 
@@ -180,8 +180,8 @@ type verificationJob struct {
 	task          *VerificationTask
 	upid          string
 	queueTask     *tasklog.QueuedTask
-	job           database.VerificationJob
-	backupJobs    []database.Backup
+	job           coredb.VerificationJob
+	backupJobs    []coredb.Backup
 	storeInstance *store.Store
 	web           bool
 
@@ -218,9 +218,9 @@ func (v *verificationJob) enqueue(ctx context.Context) error {
 // selectCandidates picks the backup jobs to verify, in verification
 // order. The weighted shuffle lives here so the durable activity
 // result pins a stable order for the checkpointed verify stage.
-func (v *verificationJob) selectCandidates(ctx context.Context) []database.Backup {
+func (v *verificationJob) selectCandidates(ctx context.Context) []coredb.Backup {
 	job := v.job
-	var backups []database.Backup
+	var backups []coredb.Backup
 
 	if job.TargetMode == "namespace" {
 		allBackups, err := v.storeInstance.Database.GetAllBackups()
@@ -252,7 +252,7 @@ func (v *verificationJob) selectCandidates(ctx context.Context) []database.Backu
 			return nil
 		}
 		if backup.Target.IsAgent() {
-			backups = []database.Backup{backup}
+			backups = []coredb.Backup{backup}
 		}
 	}
 
@@ -265,8 +265,8 @@ func (v *verificationJob) selectCandidates(ctx context.Context) []database.Backu
 func (v *verificationJob) executeVerification(
 	ctx context.Context,
 	vTask *VerificationTask,
-	job database.VerificationJob,
-	backup database.Backup,
+	job coredb.VerificationJob,
+	backup coredb.Backup,
 	snapshot *snapshotInfo,
 	vs *verifyState,
 	agentTCP *arpc.StreamPipe,
@@ -284,14 +284,14 @@ func (v *verificationJob) executeVerification(
 
 	vTask.WriteString(fmt.Sprintf("selected snapshot: %s", snapshot.Snapshot))
 
-	result := &database.VerificationResult{
+	result := &coredb.VerificationResult{
 		VerificationJobID: job.ID,
 		UPID:              vTask.UPID(),
 		Snapshot:          snapshot.Snapshot,
 		SnapshotTime:      snapshot.BackupTime,
 		Status:            "running",
 		StartedAt:         time.Now().Unix(),
-		Details:           []database.VerificationFileResult{},
+		Details:           []coredb.VerificationFileResult{},
 	}
 	if err := v.storeInstance.Database.CreateVerificationResult(result); err != nil {
 		vTask.WriteString(fmt.Sprintf("failed to create verification result: %v", err))
@@ -329,7 +329,7 @@ func (v *verificationJob) executeVerification(
 
 	type indexedResult struct {
 		index  int
-		result database.VerificationFileResult
+		result coredb.VerificationFileResult
 	}
 
 	filesCh := make(chan int, len(sampledFiles))
@@ -346,7 +346,7 @@ func (v *verificationJob) executeVerification(
 			for idx := range filesCh {
 				select {
 				case <-ctx.Done():
-					resultsCh <- indexedResult{index: idx, result: database.VerificationFileResult{
+					resultsCh <- indexedResult{index: idx, result: coredb.VerificationFileResult{
 						Path: sampledFiles[idx].Path, Size: sampledFiles[idx].Size, Status: "skipped", Message: "canceled",
 					}}
 					continue
@@ -366,7 +366,7 @@ func (v *verificationJob) executeVerification(
 	}()
 
 	// workers never block on send. We drain all results to avoid goroutine leaks.
-	ordered := make([]database.VerificationFileResult, len(sampledFiles))
+	ordered := make([]coredb.VerificationFileResult, len(sampledFiles))
 	collected := 0
 	thresholdHit := false
 
@@ -568,11 +568,11 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 		succeeded,
 		warningsNum,
 		vTask.Task,
-		func() (database.JobHistory, int, error) {
+		func() (coredb.JobHistory, int, error) {
 			j, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
 			return j.History, 0, err
 		},
-		func(history database.JobHistory, _ int) error {
+		func(history coredb.JobHistory, _ int) error {
 			j, err := v.storeInstance.Database.GetVerificationJob(v.job.ID)
 			if err != nil {
 				return err
@@ -591,7 +591,7 @@ type snapshotInfo struct {
 	Files      []string
 }
 
-func (v *verificationJob) selectSnapshot(ctx context.Context, job database.VerificationJob, backup database.Backup) (*snapshotInfo, error) {
+func (v *verificationJob) selectSnapshot(ctx context.Context, job coredb.VerificationJob, backup coredb.Backup) (*snapshotInfo, error) {
 	snapshots, err := v.listSnapshots(ctx, backup)
 	if err != nil {
 		return nil, err
@@ -628,7 +628,7 @@ func (v *verificationJob) selectSnapshot(ctx context.Context, job database.Verif
 	return &filtered[idx], nil
 }
 
-func (v *verificationJob) listSnapshots(ctx context.Context, backup database.Backup) ([]snapshotInfo, error) {
+func (v *verificationJob) listSnapshots(ctx context.Context, backup coredb.Backup) ([]snapshotInfo, error) {
 	backupID := proxmox.NormalizeHostname(backup.Target.GetHostname())
 	backupType := "host"
 
@@ -725,7 +725,7 @@ func filterByDateRange(snapshots []snapshotInfo, dateFrom, dateTo string) []snap
 
 // openArchive opens the pxar archive for the given snapshot, returning a
 // verifyState that can be used for both file enumeration and content extraction.
-func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo) (*verifyState, error) {
+func (v *verificationJob) openArchive(backup coredb.Backup, snap *snapshotInfo) (*verifyState, error) {
 	dsInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore info: %w", err)
@@ -799,7 +799,7 @@ func (v *verificationJob) openArchive(backup database.Backup, snap *snapshotInfo
 
 // sampleFiles walks the pxar archive to enumerate files, then returns a sample
 // based on the configured strategy (random, systematic, or stratified).
-func (v *verificationJob) sampleFiles(ctx context.Context, job database.VerificationJob, vs *verifyState, snap *snapshotInfo) ([]fileEntry, error) {
+func (v *verificationJob) sampleFiles(ctx context.Context, job coredb.VerificationJob, vs *verifyState, snap *snapshotInfo) ([]fileEntry, error) {
 	root, err := vs.fs.Root()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get archive root: %w", err)
@@ -919,7 +919,7 @@ func topLevelDir(path string) string {
 	return before
 }
 
-func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix string, files []fileEntry, cfg database.SpotCheckConfig) ([]fileEntry, error) {
+func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix string, files []fileEntry, cfg coredb.SpotCheckConfig) ([]fileEntry, error) {
 	if entry.IsDir() {
 		children, err := fs.ReadDir(entry.EntryRangeStart)
 		if err != nil {
@@ -953,12 +953,12 @@ func (v *verificationJob) walkDir(fs *vfs.LocalFS, entry *pxar.FileInfo, prefix 
 // matchesFilters checks if a file matches the spot check filter criteria.
 // Exclude filters take absolute precedence: if a file matches any exclude
 // non-excluded files are eligible. Otherwise the file must match at least
-func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg database.SpotCheckConfig) bool {
+func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg coredb.SpotCheckConfig) bool {
 	if len(cfg.Filters) == 0 {
 		return true
 	}
 
-	var includes, excludes []database.SpotCheckFilter
+	var includes, excludes []coredb.SpotCheckFilter
 	for _, f := range cfg.Filters {
 		if f.FilterType == "exclude" {
 			excludes = append(excludes, f)
@@ -987,7 +987,7 @@ func (v *verificationJob) matchesFilters(path string, entry *pxar.FileInfo, cfg 
 	return false
 }
 
-func filterMatchesFile(path string, entry *pxar.FileInfo, filter database.SpotCheckFilter) bool {
+func filterMatchesFile(path string, entry *pxar.FileInfo, filter coredb.SpotCheckFilter) bool {
 	if filter.PathPattern != "" {
 		if strings.Contains(filter.PathPattern, "*") {
 			matched, err := filepath.Match(filter.PathPattern, filepath.Base(path))
@@ -1022,9 +1022,9 @@ func (v *verificationJob) verifyFile(
 	agentTCP *arpc.StreamPipe,
 	vs *verifyState,
 	file fileEntry,
-	backup database.Backup,
-) database.VerificationFileResult {
-	result := database.VerificationFileResult{
+	backup coredb.Backup,
+) coredb.VerificationFileResult {
+	result := coredb.VerificationFileResult{
 		Path:   file.Path,
 		Size:   file.Size,
 		Status: "error",

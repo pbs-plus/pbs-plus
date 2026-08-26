@@ -1,12 +1,12 @@
 version: "2"
 sql:
   - engine: "sqlite"
-    queries: "internal/server/database/queries"
-    schema: "internal/server/database/migrations"
+    queries: "internal/server/coredb/queries"
+    schema: "internal/server/coredb/migrations"
     gen:
       go:
-        package: "sqlc"
-        out: "internal/server/database/sqlc"
+        package: "corequery"
+        out: "internal/server/coredb/corequery"
         sql_package: "database/sql"
         emit_json_tags: true
         emit_prepared_queries: false

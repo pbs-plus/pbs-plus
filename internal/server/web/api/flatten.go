@@ -4,10 +4,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
-func FlattenBackup(b database.Backup) FlatBackup {
+func FlattenBackup(b coredb.Backup) FlatBackup {
 	fb := FlatBackup{
 		ID:               b.ID,
 		Store:            b.Store,
@@ -66,7 +66,7 @@ func FlattenBackup(b database.Backup) FlatBackup {
 // If staleDays > 0, sets Stale=true for jobs whose last-successful-endtime
 // is older than staleDays. If skipUnscheduled is true, jobs with no schedule
 // are never marked stale. excludedJobs is a set of job IDs to skip.
-func FlattenBackups(backups []database.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool) []FlatBackup {
+func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool) []FlatBackup {
 	result := make([]FlatBackup, len(backups))
 	var cutoff int64
 	if staleDays > 0 {
@@ -96,7 +96,7 @@ func FlattenBackups(backups []database.Backup, staleDays int, skipUnscheduled bo
 	return result
 }
 
-func FlattenRestore(r database.Restore) FlatRestore {
+func FlattenRestore(r coredb.Restore) FlatRestore {
 	fr := FlatRestore{
 		ID:               r.ID,
 		Store:            r.Store,
@@ -146,7 +146,7 @@ func FlattenRestore(r database.Restore) FlatRestore {
 	return fr
 }
 
-func FlattenRestores(restores []database.Restore) []FlatRestore {
+func FlattenRestores(restores []coredb.Restore) []FlatRestore {
 	result := make([]FlatRestore, len(restores))
 	for i := range restores {
 		result[i] = FlattenRestore(restores[i])
@@ -154,7 +154,7 @@ func FlattenRestores(restores []database.Restore) []FlatRestore {
 	return result
 }
 
-func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
+func FlattenVerificationJob(vj coredb.VerificationJob) FlatVerificationJob {
 	fvj := FlatVerificationJob{
 		ID:                  vj.ID,
 		BackupJobID:         vj.BackupJobID,
@@ -204,7 +204,7 @@ func FlattenVerificationJob(vj database.VerificationJob) FlatVerificationJob {
 	return fvj
 }
 
-func FlattenVerificationJobs(jobs []database.VerificationJob) []FlatVerificationJob {
+func FlattenVerificationJobs(jobs []coredb.VerificationJob) []FlatVerificationJob {
 	result := make([]FlatVerificationJob, len(jobs))
 	for i := range jobs {
 		result[i] = FlattenVerificationJob(jobs[i])
@@ -212,7 +212,7 @@ func FlattenVerificationJobs(jobs []database.VerificationJob) []FlatVerification
 	return result
 }
 
-func FlattenVerificationResult(r database.VerificationResult, namespace string) FlatVerificationResult {
+func FlattenVerificationResult(r coredb.VerificationResult, namespace string) FlatVerificationResult {
 	fr := FlatVerificationResult{
 		ID:                r.ID,
 		VerificationJobID: r.VerificationJobID,
@@ -263,7 +263,7 @@ func FlattenVerificationResult(r database.VerificationResult, namespace string) 
 	return fr
 }
 
-func FlattenVerificationResults(results []database.VerificationResult, namespace string) []FlatVerificationResult {
+func FlattenVerificationResults(results []coredb.VerificationResult, namespace string) []FlatVerificationResult {
 	fr := make([]FlatVerificationResult, len(results))
 	for i := range results {
 		fr[i] = FlattenVerificationResult(results[i], namespace)
@@ -278,7 +278,7 @@ func formatSnapshotLabel(snapshot, namespace string) string {
 	return namespace + ": " + snapshot
 }
 
-func BuildTargetTree(targets []database.Target) []TargetTreeNode {
+func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 	var localTargets []TargetTreeNode
 	agentGroups := map[string]*TargetTreeNode{}
 	var s3Targets []TargetTreeNode
@@ -309,7 +309,7 @@ func BuildTargetTree(targets []database.Target) []TargetTreeNode {
 		}
 
 		switch t.Type {
-		case database.TargetTypeAgent:
+		case coredb.TargetTypeAgent:
 			hostname := t.AgentHost.Name
 			node.AgentHostname = hostname
 			node.OS = t.AgentHost.OperatingSystem
@@ -334,7 +334,7 @@ func BuildTargetTree(targets []database.Target) []TargetTreeNode {
 				localTargets = append(localTargets, node)
 			}
 
-		case database.TargetTypeS3:
+		case coredb.TargetTypeS3:
 			node.IconCls = "fa fa-cloud"
 			s3Targets = append(s3Targets, node)
 
@@ -408,7 +408,7 @@ func renderFileStatusHuman(status string) string {
 	}
 }
 
-func FlattenBackupForEdit(b database.Backup) map[string]any {
+func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 	return map[string]any{
 		"id":                 b.ID,
 		"store":              b.Store,
@@ -433,7 +433,7 @@ func FlattenBackupForEdit(b database.Backup) map[string]any {
 	}
 }
 
-func FlattenRestoreForEdit(r database.Restore) map[string]any {
+func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 	return map[string]any{
 		"id":                 r.ID,
 		"store":              r.Store,

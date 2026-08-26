@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -44,7 +44,7 @@ func listNotificationBatches(storeInstance *store.Store, w http.ResponseWriter, 
 	}
 
 	type batchWithCount struct {
-		database.NotificationBatch
+		coredb.NotificationBatch
 		JobCount int `json:"job-count"`
 	}
 
@@ -121,7 +121,7 @@ func createNotificationBatch(storeInstance *store.Store, w http.ResponseWriter, 
 	timeoutSecs := formValueInt(r, "wait-timeout-secs", 300)
 	sendOnTimeout := formValueBool(r, "send-on-timeout", true)
 
-	batch := database.NotificationBatch{
+	batch := coredb.NotificationBatch{
 		Name:             name,
 		Comment:          comment,
 		NotificationMode: mode,
@@ -312,7 +312,7 @@ func addBatchJob(storeInstance *store.Store, w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		"success": true,
-		"data": database.NotificationBatchJob{
+		"data": coredb.NotificationBatchJob{
 			BatchName: batchName,
 			JobType:   jobType,
 			JobID:     jobID,

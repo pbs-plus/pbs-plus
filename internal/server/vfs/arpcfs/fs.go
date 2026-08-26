@@ -18,7 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 )
 
@@ -52,7 +52,7 @@ func isIgnoredPath(p string) bool {
 	return false
 }
 
-func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup database.Backup, backupMode string) *ARPCFS {
+func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup coredb.Backup, backupMode string) *ARPCFS {
 	log.Debug("newARPCFS called",
 
 		"backupMode", backupMode, "backupID", backup.ID, "hostname", hostname)

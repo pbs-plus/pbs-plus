@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -65,7 +65,7 @@ func ExtJsTokenHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newToken := database.AgentToken{
+		newToken := coredb.AgentToken{
 			Comment: r.FormValue("comment"),
 		}
 

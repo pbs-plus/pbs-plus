@@ -14,7 +14,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -243,13 +243,13 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newBackup := database.Backup{
+		newBackup := coredb.Backup{
 			ID:               id,
 			Store:            datastore,
 			SourceMode:       r.FormValue("sourcemode"),
 			ReadMode:         r.FormValue("readmode"),
 			Mode:             r.FormValue("mode"),
-			Target:           database.Target{Name: r.FormValue("target")},
+			Target:           coredb.Target{Name: r.FormValue("target")},
 			Subpath:          subpath,
 			Schedule:         r.FormValue("schedule"),
 			Comment:          r.FormValue("comment"),
@@ -258,7 +258,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 			NotificationMode: r.FormValue("notification-mode"),
 			Retry:            retry,
 			RetryInterval:    retryInterval,
-			Exclusions:       []database.Exclusion{},
+			Exclusions:       []coredb.Exclusion{},
 			PreScript:        preScript,
 			PostScript:       postScript,
 			IncludeXattr:     includeXattr,
@@ -277,7 +277,7 @@ func ExtJsBackupHandler(storeInstance *store.Store) http.HandlerFunc {
 				return
 			}
 
-			exclusionInst := database.Exclusion{
+			exclusionInst := coredb.Exclusion{
 				Path:  exclusion,
 				JobID: newBackup.ID,
 			}
@@ -422,7 +422,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 			}
 			backup.Subpath = subpath
 			backup.Namespace = namespace
-			backup.Exclusions = []database.Exclusion{}
+			backup.Exclusions = []coredb.Exclusion{}
 
 			if r.FormValue("rawexclusions") != "" {
 				rawExclusions := r.FormValue("rawexclusions")
@@ -437,7 +437,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 						return
 					}
 
-					exclusionInst := database.Exclusion{
+					exclusionInst := coredb.Exclusion{
 						Path:  exclusion,
 						JobID: backup.ID,
 					}
@@ -480,7 +480,7 @@ func ExtJsBackupSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 					case "post_script":
 						backup.PostScript = ""
 					case "rawexclusions":
-						backup.Exclusions = []database.Exclusion{}
+						backup.Exclusions = []coredb.Exclusion{}
 					}
 				}
 			}

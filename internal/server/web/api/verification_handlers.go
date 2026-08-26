@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -21,7 +21,7 @@ import (
 type VerificationJobConfigResponse struct {
 	Errors  map[string]string        `json:"errors"`
 	Message string                   `json:"message"`
-	Data    database.VerificationJob `json:"data"`
+	Data    coredb.VerificationJob `json:"data"`
 	Status  int                      `json:"status"`
 	Success bool                     `json:"success"`
 }
@@ -219,7 +219,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			namespace = backup.Namespace
 		}
 
-		job := database.VerificationJob{
+		job := coredb.VerificationJob{
 			ID:               r.FormValue("id"),
 			BackupJobID:      backupJobID,
 			Store:            store,
@@ -232,7 +232,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 			NotificationMode: r.FormValue("notification-mode"),
 			Retry:            retry,
 			RetryInterval:    retryInterval,
-			SpotConfig: database.SpotCheckConfig{
+			SpotConfig: coredb.SpotCheckConfig{
 				SampleCount:        sampleCount,
 				SampleCountPercent: sampleCountPercent,
 				SamplingStrategy:   r.FormValue("sampling_strategy"),
@@ -251,7 +251,7 @@ func ExtJsVerificationConfigHandler(storeInstance *store.Store) http.HandlerFunc
 		}
 
 		if spotConfigJSON := r.FormValue("spot_config"); spotConfigJSON != "" {
-			var sc database.SpotCheckConfig
+			var sc coredb.SpotCheckConfig
 			if err := json.Unmarshal([]byte(spotConfigJSON), &sc); err == nil {
 				if sc.SampleCount > 0 {
 					job.SpotConfig.SampleCount = sc.SampleCount
@@ -598,7 +598,7 @@ func VerificationResultsExportHandler(storeInstance *store.Store) http.HandlerFu
 	}
 }
 
-func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResult) {
+func writeSummaryCSV(w http.ResponseWriter, results []coredb.VerificationResult) {
 	if _, err := fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Status,Total Population,Sampled,Verified,Failed,Skipped,Confidence 95%,Confidence 99%,Started At,Completed At"); err != nil {
 		log.Error(err, "")
 	}
@@ -626,7 +626,7 @@ func writeSummaryCSV(w http.ResponseWriter, results []database.VerificationResul
 	}
 }
 
-func writeDetailCSV(w http.ResponseWriter, results []database.VerificationResult) {
+func writeDetailCSV(w http.ResponseWriter, results []coredb.VerificationResult) {
 	if _, err := fmt.Fprintln(w, "Job ID,Run ID,Snapshot,Total Population,Sample Size,File Path,File Size,Status,Message,Confidence 95%,Confidence 99%"); err != nil {
 		log.Error(err, "")
 	}

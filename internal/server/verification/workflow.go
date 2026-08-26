@@ -11,7 +11,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
@@ -47,7 +47,7 @@ func Register(engine *jobs.Engine, storeInstance *store.Store) error {
 	})
 }
 
-func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job database.VerificationJob, input jobs.VerificationInput) error {
+func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job coredb.VerificationJob, input jobs.VerificationInput) error {
 	v := &verificationJob{
 		job:           job,
 		storeInstance: storeInstance,
@@ -128,7 +128,7 @@ func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job databa
 			v.mu.Unlock()
 		}
 
-		backups := make([]database.Backup, len(selectRes.BackupJobIDs))
+		backups := make([]coredb.Backup, len(selectRes.BackupJobIDs))
 		for i, id := range selectRes.BackupJobIDs {
 			backup, err := storeInstance.Database.GetBackup(id)
 			if err != nil {
@@ -192,7 +192,7 @@ func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job databa
 // verifyCandidates walks the pinned candidate list from `start`,
 // checkpointing candidates that were consumed so retries resume at the
 // next candidate instead of re-verifying completed ones.
-func (v *verificationJob) verifyCandidates(ctx context.Context, backups []database.Backup, start int, info jobs.ActivityInfo) error {
+func (v *verificationJob) verifyCandidates(ctx context.Context, backups []coredb.Backup, start int, info jobs.ActivityInfo) error {
 	vTask := v.task
 	if vTask == nil {
 		return fmt.Errorf("verification task not started")

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
 )
 
@@ -189,7 +189,7 @@ func TestJobCRUD(t *testing.T) {
 		t.Errorf("comment = %q", got2.Comment)
 	}
 
-	hist := JobHistory{LastRunUpid: "UPID:...", LastRunStatus: database.JobStatusSuccess}
+	hist := JobHistory{LastRunUpid: "UPID:...", LastRunStatus: coredb.JobStatusSuccess}
 	if err := db.UpdateMtfJobHistory(ctx, "my-mtf-job", hist, ""); err != nil {
 		t.Fatalf("UpdateMtfJobHistory: %v", err)
 	}

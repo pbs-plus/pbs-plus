@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	reqTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -160,11 +160,11 @@ func D2DTargetAgentHandler(storeInstance *store.Store) http.HandlerFunc {
 		}()
 
 		for _, parsedDrive := range reqParsed.Drives {
-			targetName := database.GetAgentTargetName(reqParsed.Hostname, parsedDrive.Letter, reqParsed.OperatingSystem)
+			targetName := coredb.GetAgentTargetName(reqParsed.Hostname, parsedDrive.Letter, reqParsed.OperatingSystem)
 
-			targetData := database.Target{
+			targetData := coredb.Target{
 				Name:             targetName,
-				AgentHost:        database.AgentHost{Name: reqParsed.Hostname},
+				AgentHost:        coredb.AgentHost{Name: reqParsed.Hostname},
 				VolumeID:         parsedDrive.Letter,
 				VolumeType:       parsedDrive.Type,
 				VolumeName:       parsedDrive.VolumeName,
@@ -220,7 +220,7 @@ func ExtJsTargetHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newTarget := database.Target{
+		newTarget := coredb.Target{
 			Name:        r.FormValue("name"),
 			Path:        r.FormValue("path"),
 			MountScript: r.FormValue("mount_script"),
@@ -259,7 +259,7 @@ func ExtJsTargetSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 
 			path := r.FormValue("path")
 			if path != "" {
-				_, s3Err := database.ParseS3Url(path)
+				_, s3Err := coredb.ParseS3Url(path)
 				if !validate.IsValid(path) && s3Err != nil {
 					WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
 					return

@@ -14,7 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	jobrpc "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
@@ -239,14 +239,14 @@ func ExtJsRestoreHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newRestore := database.Restore{
+		newRestore := coredb.Restore{
 			ID:               id,
 			Store:            store,
 			Namespace:        namespace,
 			Snapshot:         snapshot,
 			SrcPath:          srcPath,
 			Mode:             mode,
-			DestTarget:       database.Target{Name: r.FormValue("dest-target")},
+			DestTarget:       coredb.Target{Name: r.FormValue("dest-target")},
 			DestSubpath:      destSubpath,
 			PreScript:        preScript,
 			PostScript:       postScript,
@@ -330,7 +330,7 @@ func ExtJsRestoreSingleHandler(storeInstance *store.Store) http.HandlerFunc {
 				restore.SrcPath = r.FormValue("src-path")
 			}
 			if r.FormValue("dest-target") != "" {
-				restore.DestTarget = database.Target{Name: r.FormValue("dest-target")}
+				restore.DestTarget = coredb.Target{Name: r.FormValue("dest-target")}
 			}
 			if r.FormValue("dest-subpath") != "" {
 				if err := validate.ValidateSubpath("dest-subpath", r.FormValue("dest-subpath")); err != nil {

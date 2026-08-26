@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -80,7 +80,7 @@ func ExtJsExclusionHandler(storeInstance *store.Store) http.HandlerFunc {
 			return
 		}
 
-		newExclusion := database.Exclusion{
+		newExclusion := coredb.Exclusion{
 			Path:    path,
 			Comment: comment,
 		}
