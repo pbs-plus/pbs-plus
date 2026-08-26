@@ -1,0 +1,81 @@
+name: Verify Proxmox Task Log
+description: Validate terminal task status and on-disk PBS task-log format
+
+inputs:
+  endpoint:
+    required: true
+  job-id:
+    required: true
+  worker-type:
+    required: true
+  allow-warnings:
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Verify task status and log
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        job_id_encoded=$(printf '%s' '${{ inputs.job-id }}' | base64 -w0)
+        history=$(docker exec pbs-plus-test curl -k -fsS "https://localhost:8017/api2/extjs/${{ inputs.endpoint }}/${job_id_encoded}" -H "Accept: application/json")
+        upid=$(jq -er '.data.history."last-run-upid"' <<<"$history")
+        state=$(jq -er '.data.history."last-run-state"' <<<"$history")
+        endtime=$(jq -er '.data.history."last-run-endtime"' <<<"$history")
+
+        upid_pattern='^UPID:pbsplus:[[:xdigit:]]{8}:[[:xdigit:]]{8,9}:[[:xdigit:]]{8,16}:[[:xdigit:]]{8}:[^[:space:]:]+:[^[:space:]:]*:[^[:space:]:]+:$'
+        if ! [[ "$upid" =~ $upid_pattern ]]; then
+          echo "Invalid PBS UPID: $upid"
+          exit 1
+        fi
+        if [[ "$upid" != *":${{ inputs.worker-type }}:"* ]]; then
+          echo "Unexpected worker type in UPID: $upid"
+          exit 1
+        fi
+        if ! [[ "$endtime" =~ ^[1-9][0-9]*$ ]]; then
+          echo "Invalid task end time: $endtime"
+          exit 1
+        fi
+
+        case "$state" in
+          OK)
+            ;;
+          WARNINGS:\ [1-9][0-9]*)
+            if [[ '${{ inputs.allow-warnings }}' != 'true' ]]; then
+              echo "Unexpected task warnings: $state"
+              exit 1
+            fi
+            echo "Accepted task warnings after restore integrity verification: $state"
+            ;;
+          *)
+            echo "Task failed: $state"
+            exit 1
+            ;;
+        esac
+
+        task_log=$(docker exec -e UPID="$upid" pbs-plus-test sh -ec 'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); cat "/var/log/proxmox-backup/tasks/$bucket/$UPID"')
+        terminal=$(printf '%s\n' "$task_log" | tail -n 1)
+        terminal_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2}): TASK (OK|WARNINGS: [1-9][0-9]*)$'
+        if ! [[ "$terminal" =~ $terminal_pattern ]]; then
+          echo "Invalid PBS task-log terminal line: $terminal"
+          exit 1
+        fi
+        if [[ "${terminal#*: TASK }" != "$state" ]]; then
+          echo "Task-log status does not match history: $terminal / $state"
+          exit 1
+        fi
+
+        archive_line=$(docker exec -e UPID="$upid" pbs-plus-test sh -ec 'awk -v upid="$UPID" '\''$1 == upid { line = $0 } END { print line }'\'' /var/log/proxmox-backup/tasks/archive')
+        read -r archive_upid archive_endtime archive_state <<<"$archive_line"
+        if [[ "$archive_upid" != "$upid" ]] || ! [[ "$archive_endtime" =~ ^[[:xdigit:]]{8}$ ]] || [[ "$archive_state" != "$state" ]]; then
+          echo "Invalid PBS archive entry: $archive_line"
+          exit 1
+        fi
+
+        printf '%s\n' "Task history: $upid $state $endtime"
+        printf '%s\n' "Task archive: $archive_line"
+        printf '%s\n' "Task log:"
+        printf '%s\n' "$task_log"

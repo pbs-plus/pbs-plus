@@ -50,15 +50,37 @@ jobs:
         with:
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
+      - name: Verify backup task log
+        uses: ./.github/actions/verify-task-log
+        with:
+          endpoint: config/disk-backup
+          job-id: test-backup-job
+          worker-type: backup
+
       - name: Run restore test
         uses: ./.github/actions/run-restore
         with:
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
+      - name: Verify restore task log
+        uses: ./.github/actions/verify-task-log
+        with:
+          endpoint: config/disk-restore
+          job-id: test-restore
+          worker-type: reader
+          allow-warnings: true
+
       - name: Run verification test
         uses: ./.github/actions/run-verification
         with:
           timeout-seconds: 120
+
+      - name: Verify verification task log
+        uses: ./.github/actions/verify-task-log
+        with:
+          endpoint: config/d2d-verification
+          job-id: test-verify-basic
+          worker-type: verification
 
       - name: Run pxar-mount e2e tests
         uses: ./.github/actions/run-pxar-e2e
