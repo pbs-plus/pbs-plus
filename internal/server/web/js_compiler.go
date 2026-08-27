@@ -18,6 +18,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/web/ui"
 )
 
 //go:embed all:views/custom
@@ -33,8 +34,8 @@ var legacyJSPaths = []string{
 	"/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js",
 }
 
-func compileJS(embedded *embed.FS) []byte {
-	parts, err := sortedWalk(*embedded, ".")
+func compileJS(embedded *embed.FS, skip func(string) bool) []byte {
+	parts, err := sortedWalk(*embedded, ".", skip)
 	if err != nil {
 		log.Error(err, "")
 		return nil
@@ -42,7 +43,14 @@ func compileJS(embedded *embed.FS) []byte {
 	return bytes.Join(parts, []byte("\n"))
 }
 
-func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
+func isMigratedCustomSource(path string) bool {
+	return strings.HasSuffix(path, "/5_models.js") ||
+		strings.HasSuffix(path, "/panels/scripts.js") ||
+		strings.HasSuffix(path, "/selectors/scripts.js") ||
+		strings.HasSuffix(path, "/windows/script.js")
+}
+
+func sortedWalk(embedded fs.FS, root string, skip func(string) bool) ([][]byte, error) {
 	var filePaths []string
 	err := fs.WalkDir(embedded, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -59,6 +67,9 @@ func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 	sort.Strings(filePaths)
 	var results [][]byte
 	for _, p := range filePaths {
+		if skip != nil && skip(p) {
+			continue
+		}
 		data, err := fs.ReadFile(embedded, p)
 		if err != nil {
 			return nil, err
@@ -119,7 +130,7 @@ func writeJSFiles(jsDir string) error {
 		return fmt.Errorf("failed to create JS directory: %w", err)
 	}
 
-	preJS := compileJS(&preJsFS)
+	preJS := compileJS(&preJsFS, nil)
 	if len(preJS) > 0 {
 		preJSPath := filepath.Join(jsDir, "pbs-plus-pre.js")
 		if err := os.WriteFile(preJSPath, preJS, 0644); err != nil {
@@ -129,7 +140,7 @@ func writeJSFiles(jsDir string) error {
 
 	}
 
-	customJS := compileJS(&customJsFS)
+	customJS := append(compileJS(&customJsFS, isMigratedCustomSource), ui.Render()...)
 	if len(customJS) > 0 {
 		customJSPath := filepath.Join(jsDir, "pbs-plus-custom.js")
 		if err := os.WriteFile(customJSPath, customJS, 0644); err != nil {

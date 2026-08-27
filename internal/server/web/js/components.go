@@ -145,8 +145,10 @@ func API2Request(config Obj) Raw { return Call("PBS.PlusUtils.API2Request", conf
 
 // ModelField is a store field. Type is empty for plain string fields.
 type ModelField struct {
-	Name string
-	Type string
+	Name    string
+	Type    string
+	Convert Raw
+	Extra   Obj
 }
 
 // Fields builds untyped model fields from their names.
@@ -166,6 +168,7 @@ func Typed(fields []ModelField, name, typ string) []ModelField {
 // Model is an Ext.data.Model class backed by a PBS-Plus API path.
 type Model struct {
 	Name         string
+	Extend       string
 	Fields       []ModelField
 	IDProperty   string
 	APIPath      string
@@ -176,13 +179,19 @@ type Model struct {
 func (m Model) Config() Obj {
 	fields := make(Arr, len(m.Fields))
 	for i, f := range m.Fields {
-		if f.Type == "" {
+		if f.Type == "" && f.Convert == "" && len(f.Extra) == 0 {
 			fields[i] = f.Name
 			continue
 		}
-		fields[i] = Obj{"name": f.Name, "type": f.Type}
+		field := Obj{"name": f.Name, "type": f.Type}
+		set(field, "convert", f.Convert)
+		fields[i] = merge(field, f.Extra)
 	}
-	o := Obj{"extend": "Ext.data.Model", "fields": fields}
+	extend := m.Extend
+	if extend == "" {
+		extend = "Ext.data.Model"
+	}
+	o := Obj{"extend": extend, "fields": fields}
 	set(o, "idProperty", m.IDProperty)
 	if m.APIPath != "" {
 		root := m.RootProperty
