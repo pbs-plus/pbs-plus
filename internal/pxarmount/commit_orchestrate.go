@@ -50,24 +50,12 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
-	mfs.freezeMu.Lock()
-	mfs.frozen = true
-	mfs.freezeMu.Unlock()
+	mfs.mutationMu.Lock()
+	defer mfs.mutationMu.Unlock()
 
 	if err := mfs.journal.Sync(); err != nil {
-		mfs.freezeMu.Lock()
-		mfs.frozen = false
-		mfs.freezeMu.Unlock()
-		mfs.freezeCond.Broadcast()
 		return fmt.Errorf("sync journal before commit: %w", err)
 	}
-
-	defer func() {
-		mfs.freezeMu.Lock()
-		mfs.frozen = false
-		mfs.freezeMu.Unlock()
-		mfs.freezeCond.Broadcast()
-	}()
 
 	prog.SetPhase(PhasePrepare)
 	prog.SetMsg("Resolving PBS connection")
@@ -222,13 +210,9 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 		}
 	}
 
-	ow.mfs.pxar.readerMu.RLock()
-
 	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
-		ow.mfs.pxar.readerMu.RUnlock()
 		return fmt.Errorf("walk overlay: %w", err)
 	}
-	ow.mfs.pxar.readerMu.RUnlock()
 
 	prog.SetPhase(PhaseUpload)
 	prog.SetMsg(fmt.Sprintf("Flushing upload (%d new/modified files)", ow.mutableFiles))
@@ -376,22 +360,15 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		}
 		return fmt.Errorf("create new reader: %w", err)
 	}
-	log.Info("postCommit: clear+sync journal")
-	if err := mfs.journal.Clear(); err != nil {
-		return fmt.Errorf("clear journal: %w", err)
-	}
-	if err := mfs.journal.Sync(); err != nil {
-		return fmt.Errorf("sync journal after clear: %w", err)
-	}
+	log.Info("postCommit: hotSwap reader")
+	mfs.pxar.HotSwap(newReader)
+	log.Info("postCommit: hotSwap done")
 	log.Info("postCommit: munmap old data")
 	for _, d := range mfs.mmapData {
 		if err := munmap(d); err != nil {
 			log.Error(err, "")
 		}
 	}
-	log.Info("postCommit: hotSwap reader")
-	mfs.pxar.HotSwap(newReader)
-	log.Info("postCommit: hotSwap done")
 	mfs.mmapData = nil
 	if len(metaData) > 0 {
 		mfs.mmapData = append(mfs.mmapData, metaData)
@@ -422,6 +399,14 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		if err := os.RemoveAll(filepath.Join(mfs.mutableDir, e.Name())); err != nil {
 			return fmt.Errorf("remove mutable entry %s: %w", e.Name(), err)
 		}
+	}
+
+	log.Info("postCommit: clear+sync journal")
+	if err := mfs.journal.Clear(); err != nil {
+		return fmt.Errorf("clear journal: %w", err)
+	}
+	if err := mfs.journal.Sync(); err != nil {
+		return fmt.Errorf("sync journal after clear: %w", err)
 	}
 
 	return nil

@@ -76,8 +76,11 @@ func (fs *PxarFS) Init(server *fuse.Server) {
 }
 
 func (fs *PxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) fuse.Status {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.dbgf("Lookup parent=%d name=%q ENTER", header.NodeId, name)
-	entries, err := fs.readDirRaw(header.NodeId)
+	entries, err := fs.readDirRawLocked(header.NodeId)
 	if err != nil {
 		fs.dbgf("Lookup parent=%d name=%q err=%v", header.NodeId, name, err)
 		return fuse.ToStatus(err)
@@ -97,6 +100,9 @@ func (fs *PxarFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name str
 }
 
 func (fs *PxarFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse.AttrOut) fuse.Status {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.mu.RLock()
 	n, ok := fs.nodes[input.NodeId]
 	fs.mu.RUnlock()
@@ -121,7 +127,10 @@ func (fs *PxarFS) OpenDir(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 }
 
 func (fs *PxarFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
-	entries, err := fs.readDirRaw(input.NodeId)
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
+	entries, err := fs.readDirRawLocked(input.NodeId)
 	if err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -159,8 +168,11 @@ func (fs *PxarFS) ReadDir(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.
 }
 
 func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *fuse.DirEntryList) fuse.Status {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.dbgf("ReadDirPlus ino=%d off=%d ENTER", input.NodeId, input.Offset)
-	entries, err := fs.readDirRaw(input.NodeId)
+	entries, err := fs.readDirRawLocked(input.NodeId)
 	if err != nil {
 		fs.dbgf("ReadDirPlus ino=%d off=%d err=%v", input.NodeId, input.Offset, err)
 		return fuse.ToStatus(err)
@@ -248,17 +260,6 @@ func (fs *PxarFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.Ope
 
 func (fs *PxarFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
 	fs.dbgf("Read ino=%d off=%d size=%d ENTER", input.NodeId, input.Offset, len(buf))
-	fs.mu.RLock()
-	n, ok := fs.nodes[input.NodeId]
-	fs.mu.RUnlock()
-	if !ok {
-		fs.dbgf("Read ino=%d off=%d ENOENT", input.NodeId, input.Offset)
-		return nil, fuse.ENOENT
-	}
-	if n.isDir {
-		return nil, fuse.EISDIR
-	}
-
 	return fs.readFileContent(input.NodeId, int64(input.Offset), int64(len(buf)), buf)
 }
 
@@ -336,6 +337,9 @@ func (fs *PxarFS) ResolvedTimes(n *node) (atimeNs, mtimeNs int64) {
 }
 
 func (fs *PxarFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byte, fuse.Status) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.mu.RLock()
 	n, ok := fs.nodes[header.NodeId]
 	fs.mu.RUnlock()
@@ -354,6 +358,9 @@ func (fs *PxarFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]byt
 }
 
 func (fs *PxarFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []byte) (uint32, fuse.Status) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.mu.RLock()
 	n, ok := fs.nodes[header.NodeId]
 	fs.mu.RUnlock()
@@ -396,6 +403,9 @@ func (fs *PxarFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest 
 }
 
 func (fs *PxarFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string, dest []byte) (uint32, fuse.Status) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.mu.RLock()
 	n, ok := fs.nodes[header.NodeId]
 	fs.mu.RUnlock()
@@ -439,6 +449,12 @@ func (fs *PxarFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.Stat
 }
 
 func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+	return fs.readDirRawLocked(inode)
+}
+
+func (fs *PxarFS) readDirRawLocked(inode uint64) ([]dirEntrySlim, error) {
 	fs.mu.RLock()
 	n, ok := fs.nodes[inode]
 	fs.mu.RUnlock()
@@ -460,9 +476,6 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 		fs.dbgf("readDirRaw ino=%d nil-reader", inode)
 		return nil, nil
 	}
-
-	fs.readerMu.RLock()
-	defer fs.readerMu.RUnlock()
 
 	if fs.reader == nil {
 		return nil, nil
@@ -503,11 +516,20 @@ func (fs *PxarFS) readDirRaw(inode uint64) ([]dirEntrySlim, error) {
 }
 
 func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fuse.ReadResult, fuse.Status) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
 	fs.mu.RUnlock()
 	if !ok {
 		return nil, fuse.ENOENT
+	}
+	if n.isDir {
+		return nil, fuse.EISDIR
+	}
+	if fs.readerAt == nil {
+		return nil, fuse.EIO
 	}
 
 	fileSize := int64(n.fileSize)
@@ -641,14 +663,15 @@ func (fs *PxarFS) GetNode(ino uint64) *node {
 }
 
 func (fs *PxarFS) GetPxarEntry(ino uint64) (*upstreampxar.Entry, error) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
 	fs.mu.RUnlock()
 	if !ok {
 		return nil, syscall.ENOENT
 	}
-	fs.readerMu.Lock()
-	defer fs.readerMu.Unlock()
 	return fs.readEntryForNode(&n)
 }
 
@@ -657,6 +680,9 @@ func (fs *PxarFS) ReadDirRaw(ino uint64) ([]dirEntrySlim, error) {
 }
 
 func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*upstreampxar.Entry) ([]dirEntrySlim, error) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
 	fs.mu.RUnlock()
@@ -673,7 +699,6 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*upstreampxar.En
 
 	entries := make([]dirEntrySlim, 0, 64)
 
-	fs.readerMu.RLock()
 	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: false}, func(e *upstreampxar.Entry) error {
 		slim := dirEntrySlim{
 			name:          e.FileName(),
@@ -697,7 +722,6 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*upstreampxar.En
 		}
 		return nil
 	})
-	fs.readerMu.RUnlock()
 	if listErr != nil {
 		return nil, listErr
 	}
@@ -706,13 +730,14 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*upstreampxar.En
 }
 
 func (fs *PxarFS) HotSwap(reader *transfer.SplitReader) {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
 	fs.readerMu.Lock()
 	defer fs.readerMu.Unlock()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 
 	fs.dirEntries.Clear()
 	fs.reader = reader
+	fs.readerAt = nil
 	fs.nodes = make(map[uint64]node)
 
 	if reader != nil {

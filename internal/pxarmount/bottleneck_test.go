@@ -222,7 +222,7 @@ func BenchmarkJournal_ConcurrentReadWrite(b *testing.B) {
 	}
 }
 
-func BenchmarkFreeze_ContendedWait(b *testing.B) {
+func BenchmarkMutationGate_ContendedWait(b *testing.B) {
 	mfs, cleanup := benchMutableFS(b)
 	defer cleanup()
 
@@ -232,9 +232,7 @@ func BenchmarkFreeze_ContendedWait(b *testing.B) {
 			b.ReportAllocs()
 
 			for range b.N {
-				mfs.freezeMu.Lock()
-				mfs.frozen = true
-				mfs.freezeMu.Unlock()
+				mfs.mutationMu.Lock()
 
 				var wg sync.WaitGroup
 				wg.Add(concurrentOps)
@@ -242,15 +240,12 @@ func BenchmarkFreeze_ContendedWait(b *testing.B) {
 				for range concurrentOps {
 					go func() {
 						defer wg.Done()
-						mfs.waitIfFrozen()
+						mfs.beginMutation()
+						mfs.endMutation()
 					}()
 				}
 
-				mfs.freezeMu.Lock()
-				mfs.frozen = false
-				mfs.freezeMu.Unlock()
-				mfs.freezeCond.Broadcast()
-
+				mfs.mutationMu.Unlock()
 				wg.Wait()
 			}
 		})

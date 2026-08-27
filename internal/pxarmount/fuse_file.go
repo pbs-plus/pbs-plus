@@ -14,6 +14,9 @@ import (
 )
 
 func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.OpenOut) fuse.Status {
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("Open: ino=%d path=%q flags=0x%x", input.NodeId, path, input.Flags)
 	if path == "" {
@@ -100,7 +103,9 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 }
 
 func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []byte) (uint32, fuse.Status) {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
 		return 0, fuse.ENOENT
@@ -156,7 +161,9 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 }
 
 func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse.AttrOut) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
 		return fuse.ENOENT
@@ -260,7 +267,9 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 }
 
 func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name string, out *fuse.CreateOut) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	fs.debugf("Create: parent=%d name=%q", input.NodeId, name)
 	parentPath := fs.inodeToPath(input.NodeId)
 	childPath := joinPath(parentPath, name)
@@ -322,9 +331,9 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 }
 
 func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
-	// Sync dirty node metadata to journal on close.
-	// inoLock serializes with concurrent SetAttr on the same inode so
-	// neither overwrites the other's journal write.
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	inoMu := fs.getInoLock(input.NodeId)
 	inoMu.Lock()
 	if meta, ok := fs.dirtyMeta.LoadAndDelete(input.NodeId); ok {
@@ -350,7 +359,9 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 }
 
 func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
-	// Sync journal so metadata durability matches data durability.
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	if err := fs.journal.Sync(); err != nil {
 		log.Error(err, "")
 	}
@@ -372,6 +383,9 @@ func (fs *MutableFS) fsyncInternal(_, fhID uint64) fuse.Status {
 }
 
 func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	if input.Fh == 0 {
 		return // pxar passthrough, no fd to close
 	}
@@ -398,6 +412,9 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 // still be open file handles (Read/Write/Flush/Release) that need the
 // inode→path mapping. Those are cleaned up in unmapInode (Unlink,
 func (fs *MutableFS) Forget(nodeID, nlookup uint64) {
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	fs.inoLocks.Delete(nodeID)
 	if path, ok := fs.pathLookup.Load(nodeID); ok {
 		fs.ensureLocks.Delete(path)

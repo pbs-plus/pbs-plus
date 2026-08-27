@@ -11,7 +11,9 @@ import (
 )
 
 func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name string, out *fuse.EntryOut) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	parentPath := fs.inodeToPath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -63,7 +65,9 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 }
 
 func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name string, out *fuse.EntryOut) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	parentPath := fs.inodeToPath(input.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -114,7 +118,9 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 }
 
 func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, linkName string, out *fuse.EntryOut) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	parentPath := fs.inodeToPath(header.NodeId)
 	childPath := joinPath(parentPath, linkName)
 
@@ -166,7 +172,13 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 }
 
 func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
+	return fs.unlink(header, name)
+}
+
+func (fs *MutableFS) unlink(header *fuse.InHeader, name string) fuse.Status {
 	parentPath := fs.inodeToPath(header.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -202,7 +214,9 @@ func (fs *MutableFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name 
 }
 
 func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	parentPath := fs.inodeToPath(header.NodeId)
 	childPath := joinPath(parentPath, name)
 
@@ -246,11 +260,13 @@ func (fs *MutableFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name s
 		}
 	}
 
-	return fs.Unlink(cancel, header, name)
+	return fs.unlink(header, name)
 }
 
 func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldName string, newName string) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	oldParentPath := fs.inodeToPath(input.NodeId)
 	newParentPath := fs.inodeToPath(input.Newdir)
 	oldPath := joinPath(oldParentPath, oldName)
@@ -384,6 +400,5 @@ func (fs *MutableFS) Readlink(cancel <-chan struct{}, header *fuse.InHeader) ([]
 }
 
 func (fs *MutableFS) Link(cancel <-chan struct{}, input *fuse.LinkIn, name string, out *fuse.EntryOut) fuse.Status {
-	fs.waitIfFrozen()
 	return fuse.ENOSYS
 }
