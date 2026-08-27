@@ -103,7 +103,7 @@ func (ow *commitWalkState) flushPendingRefs(keepLastChunk bool) error {
 		if keepLastChunk || ow.reusePlanner == nil {
 			return nil
 		}
-		return ow.injectChunks(ow.reusePlanner.Flush())
+		return ow.injectChunks(ow.reusePlanner.FlushRange())
 	}
 	defer func() {
 		ow.pendingRefs = ow.pendingRefs[:0]
@@ -119,9 +119,9 @@ func (ow *commitWalkState) flushPendingRefs(keepLastChunk bool) error {
 	}
 
 	rangeStart, rangeEnd := pendingRefsRange(ow.pendingRefs)
-	plan := ow.reusePlanner.Plan(rangeStart, rangeEnd, keepLastChunk)
+	plan := ow.reusePlanner.PlanRange(rangeStart, rangeEnd, keepLastChunk)
 	if !plan.Reusable {
-		if err := ow.injectChunks(plan.Chunks); err != nil {
+		if err := ow.injectChunks(plan); err != nil {
 			return err
 		}
 		return ow.reencodeAll()
@@ -132,11 +132,11 @@ func (ow *commitWalkState) flushPendingRefs(keepLastChunk bool) error {
 	if err != nil {
 		return err
 	}
-	if err := ow.injectChunks(plan.Chunks); err != nil {
+	if err := ow.injectChunks(plan); err != nil {
 		return err
 	}
 	if len(deferred) > 0 {
-		if err := ow.injectChunks(ow.reusePlanner.Flush()); err != nil {
+		if err := ow.injectChunks(ow.reusePlanner.FlushRange()); err != nil {
 			return err
 		}
 	}
@@ -202,23 +202,23 @@ func (ow *commitWalkState) reencodeOne(e *commitEntry) error {
 
 const injectBatchSize = 128
 
-func (ow *commitWalkState) injectChunks(chunks []datastore.ChunkInfo) error {
-	for len(chunks) > 0 {
-		batch := chunks
-		if len(batch) > injectBatchSize {
-			batch = batch[:injectBatchSize]
-		}
-		refs := make([]backupproxy.KnownChunkRef, len(batch))
-		for i := range batch {
+func (ow *commitWalkState) injectChunks(plan datastore.ChunkReuseRange) error {
+	for offset := 0; offset < plan.ChunkCount(); offset += injectBatchSize {
+		count := min(injectBatchSize, plan.ChunkCount()-offset)
+		refs := make([]backupproxy.KnownChunkRef, count)
+		for i := range count {
+			chunk, ok := plan.Chunk(offset + i)
+			if !ok {
+				return fmt.Errorf("missing reused chunk %d", offset+i)
+			}
 			refs[i] = backupproxy.KnownChunkRef{
-				Digest: batch[i].Digest,
-				Size:   batch[i].End - batch[i].Start,
+				Digest: chunk.Digest,
+				Size:   chunk.End - chunk.Start,
 			}
 		}
 		if err := ow.writer.InjectChunks(refs); err != nil {
 			return err
 		}
-		chunks = chunks[len(batch):]
 	}
 	return nil
 }
