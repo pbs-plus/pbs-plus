@@ -40,6 +40,7 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.D2DManagement.TokenPanel"`),
 		[]byte(`Ext.define("PBS.MtfManagement.JobView"`),
 		[]byte(`Ext.define("PBS.MtfManagement.InventoryPanel"`),
+		[]byte(`Ext.define("PBS.MtfManagement.MappingPanel"`),
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),

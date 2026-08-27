@@ -212,13 +212,30 @@ type Store struct {
 	Data           []Option
 	APIPath        string
 	Sorters        string
+	SortBy         []Sorter
 	GroupField     string
 	Proxy          StoreProxy
 	QueryParamNull bool
 	Interval       int
 }
 
-// StoreProxy identifies the ExtJS proxy family used by a store.
+type Sorter struct {
+	Property  string
+	Direction string
+}
+
+func (s Sorter) Config() Obj {
+	return Obj{"property": s.Property, "direction": s.Direction}
+}
+
+func sorters(list []Sorter) Arr {
+	out := make(Arr, len(list))
+	for i, s := range list {
+		out[i] = s.Config()
+	}
+	return out
+}
+
 type StoreProxy string
 
 const (
@@ -263,6 +280,9 @@ func (s Store) Config() Obj {
 	set(rstore, "interval", s.Interval)
 	o := Obj{"type": "diff", "rstore": rstore}
 	set(o, "sorters", s.Sorters)
+	if len(s.SortBy) > 0 {
+		o["sorters"] = sorters(s.SortBy)
+	}
 	set(o, "groupField", s.GroupField)
 	return o
 }
