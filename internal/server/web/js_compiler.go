@@ -21,9 +21,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/web/ui"
 )
 
-//go:embed all:views/custom
-var customJsFS embed.FS
-
 //go:embed all:views/pre
 var preJsFS embed.FS
 
@@ -34,8 +31,8 @@ var legacyJSPaths = []string{
 	"/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js",
 }
 
-func compileJS(embedded *embed.FS, skip func(string) bool) []byte {
-	parts, err := sortedWalk(*embedded, ".", skip)
+func compileJS(embedded *embed.FS) []byte {
+	parts, err := sortedWalk(*embedded, ".")
 	if err != nil {
 		log.Error(err, "")
 		return nil
@@ -43,52 +40,7 @@ func compileJS(embedded *embed.FS, skip func(string) bool) []byte {
 	return bytes.Join(parts, []byte("\n"))
 }
 
-func isMigratedCustomSource(path string) bool {
-	return strings.HasSuffix(path, "/1_navigation.js") ||
-		strings.HasSuffix(path, "/2_disk_backup.js") ||
-		strings.HasSuffix(path, "/3_snapshot_mount.js") ||
-		strings.HasSuffix(path, "/4_data_verification.js") ||
-		strings.HasSuffix(path, "/5_models.js") ||
-		strings.HasSuffix(path, "/6_mtf_tapes.js") ||
-		strings.HasSuffix(path, "/7_mtf_models.js") ||
-		strings.HasSuffix(path, "/panels/alert_settings.js") ||
-		strings.HasSuffix(path, "/panels/backups.js") ||
-		strings.HasSuffix(path, "/panels/exclusions.js") ||
-		strings.HasSuffix(path, "/panels/mtf_changer_grid.js") ||
-		strings.HasSuffix(path, "/panels/mtf_drive_grid.js") ||
-		strings.HasSuffix(path, "/panels/mtf_inventory.js") ||
-		strings.HasSuffix(path, "/panels/mtf_jobs.js") ||
-		strings.HasSuffix(path, "/panels/mtf_mappings.js") ||
-		strings.HasSuffix(path, "/panels/mounts.js") ||
-		strings.HasSuffix(path, "/panels/notification_batches.js") ||
-		strings.HasSuffix(path, "/panels/notifications.js") ||
-		strings.HasSuffix(path, "/panels/restores.js") ||
-		strings.HasSuffix(path, "/panels/scripts.js") ||
-		strings.HasSuffix(path, "/panels/verifications.js") ||
-		strings.HasSuffix(path, "/windows/verification.js") ||
-		strings.HasSuffix(path, "/panels/targets.js") ||
-		strings.HasSuffix(path, "/panels/tokens.js") ||
-		strings.HasSuffix(path, "/selectors/calendarevents.js") ||
-		strings.HasSuffix(path, "/selectors/exclusions.js") ||
-		strings.HasSuffix(path, "/selectors/namespaces.js") ||
-		strings.HasSuffix(path, "/selectors/scripts.js") ||
-		strings.HasSuffix(path, "/selectors/snapshot_path_selector.js") ||
-		strings.HasSuffix(path, "/selectors/snapshots.js") ||
-		strings.HasSuffix(path, "/selectors/target_path_selector.js") ||
-		strings.HasSuffix(path, "/selectors/targets.js") ||
-		strings.HasSuffix(path, "/selectors/tokens.js") ||
-		strings.HasSuffix(path, "/windows/backup.js") ||
-		strings.HasSuffix(path, "/windows/exclusion.js") ||
-		strings.HasSuffix(path, "/windows/mtf_job.js") ||
-		strings.HasSuffix(path, "/windows/notification_batch.js") ||
-		strings.HasSuffix(path, "/windows/path_browser.js") ||
-		strings.HasSuffix(path, "/windows/restore.js") ||
-		strings.HasSuffix(path, "/windows/script.js") ||
-		strings.HasSuffix(path, "/windows/target.js") ||
-		strings.HasSuffix(path, "/windows/token.js")
-}
-
-func sortedWalk(embedded fs.FS, root string, skip func(string) bool) ([][]byte, error) {
+func sortedWalk(embedded fs.FS, root string) ([][]byte, error) {
 	var filePaths []string
 	err := fs.WalkDir(embedded, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -105,9 +57,6 @@ func sortedWalk(embedded fs.FS, root string, skip func(string) bool) ([][]byte, 
 	sort.Strings(filePaths)
 	var results [][]byte
 	for _, p := range filePaths {
-		if skip != nil && skip(p) {
-			continue
-		}
 		data, err := fs.ReadFile(embedded, p)
 		if err != nil {
 			return nil, err
@@ -168,7 +117,7 @@ func writeJSFiles(jsDir string) error {
 		return fmt.Errorf("failed to create JS directory: %w", err)
 	}
 
-	preJS := compileJS(&preJsFS, nil)
+	preJS := compileJS(&preJsFS)
 	if len(preJS) > 0 {
 		preJSPath := filepath.Join(jsDir, "pbs-plus-pre.js")
 		if err := os.WriteFile(preJSPath, preJS, 0644); err != nil {
@@ -178,7 +127,7 @@ func writeJSFiles(jsDir string) error {
 
 	}
 
-	customJS := append(compileJS(&customJsFS, isMigratedCustomSource), ui.Render()...)
+	customJS := ui.Render()
 	if len(customJS) > 0 {
 		customJSPath := filepath.Join(jsDir, "pbs-plus-custom.js")
 		if err := os.WriteFile(customJSPath, customJS, 0644); err != nil {

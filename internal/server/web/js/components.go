@@ -505,9 +505,6 @@ func (t Tool) Config() Obj {
 		o["listeners"] = listeners
 	}
 	if t.Render != "" {
-		if listeners == nil {
-			listeners = Obj{}
-		}
 		listeners["render"] = t.Render
 		o["listeners"] = listeners
 	}

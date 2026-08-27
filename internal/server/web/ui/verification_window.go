@@ -207,10 +207,10 @@ var verificationOptionsPanel = js.Panel{
 			"Each run samples files from a snapshot and validates their integrity." +
 			'</span>'`, Margin: "0 0 8 0"},
 		js.Field{XType: js.XDisplayEditField, Name: "id", Label: "Job ID", Renderer: "Ext.htmlEncode",
-			AllowBlank: js.Bool(true), EditableWhenCreate: true},
+			AllowBlank: new(true), EditableWhenCreate: true},
 		js.Field{XType: js.XCombo, Name: "target_mode", Label: "Target Mode", QueryMode: "local",
 			Store: js.Arr{js.Arr{"backup_job", js.T("Backup Job")}, js.Arr{"namespace", js.T("Namespace")}},
-			Value: "backup_job", Editable: js.Bool(false), ForceSelection: true,
+			Value: "backup_job", Editable: new(false), ForceSelection: true,
 			AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Backup Job: verify snapshots from a single backup job. " +
 				"Namespace: randomly select from all backup jobs in a datastore namespace.")},
 			ChangeFn: js.Func("combo, val", `
@@ -228,11 +228,11 @@ var verificationOptionsPanel = js.Panel{
 			`)},
 		js.Field{XType: js.XCombo, Reference: "backupJobField", Label: "Backup Job", Name: "backup_job_id",
 			Store:        js.Store{Fields: js.Fields("id"), APIPath: "/api2/json/d2d/backup"},
-			DisplayField: "id", ValueField: "id", AllowBlank: js.Bool(false)},
+			DisplayField: "id", ValueField: "id", AllowBlank: new(false)},
 		js.Field{XType: js.XFieldContainer, Reference: "namespaceFields", Layout: "vbox", Hidden: true,
 			Disabled: true, Width: "100%", Items: js.Items(
 				js.Field{XType: js.XDataStoreSelector, Label: "Datastore", Name: "store", Reference: "nsDatastore",
-					AllowBlank: js.Bool(false), Width: "100%"},
+					AllowBlank: new(false), Width: "100%"},
 				js.Field{XType: "pbsD2DNamespaceSelector", Label: "Namespace", Name: "ns", Reference: "nsNamespace",
 					EmptyText: "Root", Width: "100%", Margin: "5 0 0 0"},
 				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Width: "100%", Padding: "5 0 0 0",
@@ -253,7 +253,7 @@ var verificationOptionsPanel = js.Panel{
 				"successfully after the scheduled time has passed.")}},
 		js.Field{XType: js.XCombo, Label: "Verification Mode", Name: "mode", QueryMode: "local",
 			Store: js.Raw("verificationModes"), DisplayField: "display", ValueField: "value",
-			Editable: js.Bool(false), ForceSelection: true, AllowBlank: js.Bool(false), Value: "random_spot",
+			Editable: new(false), ForceSelection: true, AllowBlank: new(false), Value: "random_spot",
 			AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Random Spot Check: sample a random set of files from each snapshot and " +
 				"verify their contents against the source agent. This provides statistical " +
 				"confidence in backup integrity without reading every file.")}},
@@ -294,7 +294,7 @@ var verificationSpotCheckPanel = js.Panel{
 			'With 60+ samples and zero failures, confidence exceeds 95%.</span>'`, Margin: "0 0 8 0"},
 		js.Field{XType: js.XCombo, Label: "Sample Mode", Name: "sample_count_mode", QueryMode: "local",
 			Store: js.Arr{js.Arr{"absolute", "Absolute Count"}, js.Arr{"percent", "Percentage"}},
-			Value: "absolute", Editable: js.Bool(false), ForceSelection: true,
+			Value: "absolute", Editable: new(false), ForceSelection: true,
 			ChangeFn: js.Func("combo, val", `
 				var panel = combo.up("pbsD2DVerificationSpotCheckPanel") || combo.up("panel");
 				if (!panel) return;
@@ -309,15 +309,15 @@ var verificationSpotCheckPanel = js.Panel{
 				}
 			`)},
 		js.Field{XType: js.XNumberField, Label: "Sample Count", Name: "sample_count",
-			MinValue: 1, MaxValue: 100000, Value: 60, AllowBlank: js.Bool(false),
+			MinValue: 1, MaxValue: 100000, Value: 60, AllowBlank: new(false),
 			AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Number of files to verify per run. 60 samples with zero failures gives " +
 				"95% confidence that at least 95% of data is intact.")}},
 		js.Field{XType: js.XNumberField, Label: "Sample Percentage", Name: "sample_count_percent",
-			MinValue: 0.01, MaxValue: 100, DecimalPrecision: 2, Value: 10, AllowBlank: js.Bool(false),
+			MinValue: 0.01, MaxValue: 100, DecimalPrecision: 2, Value: 10, AllowBlank: new(false),
 			Hidden: true, Disabled: true},
 		js.Field{XType: js.XCombo, Label: "Sampling Strategy", Name: "sampling_strategy", QueryMode: "local",
 			Store: js.Arr{js.Arr{"random", "Random"}, js.Arr{"systematic", "Systematic"}, js.Arr{"stratified", "Stratified"}},
-			Value: "random", Editable: js.Bool(false), ForceSelection: true,
+			Value: "random", Editable: new(false), ForceSelection: true,
 			ChangeFn: js.Func("combo, val", `
 				var descBox = combo.up("pbsD2DVerificationSpotCheckPanel") || combo.up("panel");
 				if (descBox && descBox.down("[reference=strategyDesc]")) {
@@ -337,7 +337,7 @@ var verificationSpotCheckPanel = js.Panel{
 	),
 	Column2: js.Items(
 		js.Field{XType: js.XNumberField, Label: "Fail Threshold", Name: "fail_threshold",
-			MinValue: 0, MaxValue: 100000, Value: 0, AllowBlank: js.Bool(true), EmptyText: "No limit",
+			MinValue: 0, MaxValue: 100000, Value: 0, AllowBlank: new(true), EmptyText: "No limit",
 			AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Stop verification after this many file failures. " +
 				"Set to 0 to verify all sampled files regardless of failures.")}},
 	),
@@ -348,7 +348,7 @@ var verificationSpotCheckPanel = js.Panel{
 				js.Panel{
 					Reference: "filterGrid", MinHeight: 120, MaxHeight: 250, Margin: "0 0 5 0",
 					EmptyText:  "No filters defined  -  all files are eligible",
-					ViewConfig: &js.ViewConfig{DeferEmptyText: js.Bool(false)},
+					ViewConfig: &js.ViewConfig{DeferEmptyText: new(false)},
 					Store: js.Store{
 						Fields:  js.Fields("filter_type", "path_pattern", "min_size", "max_size"),
 						RawData: js.Arr{},

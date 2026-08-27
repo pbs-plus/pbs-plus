@@ -8,7 +8,7 @@ import (
 )
 
 func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
-	source := append(compileJS(&customJsFS, isMigratedCustomSource), ui.Render()...)
+	source := ui.Render()
 
 	for _, name := range [][]byte{
 		[]byte(`Ext.define("pbs-model-scripts"`),
