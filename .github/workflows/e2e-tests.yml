@@ -58,6 +58,11 @@ jobs:
           append-job-id: false
           worker-type: backup
 
+      - name: Run concurrent backup correlation test
+        uses: ./.github/actions/run-concurrent-backups
+        with:
+          timeout-seconds: 240
+
       - name: Run restore test
         uses: ./.github/actions/run-restore
         with:

@@ -1,0 +1,134 @@
+name: Run Concurrent Backup Correlation Test
+description: Queue backups together and validate each job owns its PBS task
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "240"
+    description: Timeout for all backup jobs to complete
+
+runs:
+  using: composite
+  steps:
+    - name: Create concurrent backup jobs
+      shell: bash
+      run: |
+        set -euo pipefail
+        for index in 01 02 03 04; do
+          job="concurrent-backup-${index}"
+          namespace="concurrent-${index}"
+          docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017/api2/extjs/config/disk-backup" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "id=${job}" \
+            -d "target=test-host - Root" \
+            -d "subpath=/test-backup" \
+            -d "store=test" \
+            -d "ns=${namespace}" \
+            -d "schedule=" \
+            -d "retry=" \
+            -d "retry-interval=" \
+            -d "max-dir-entries=" \
+            -d "mode=" \
+            -d "sourcemode=" \
+            -d "readmode=" \
+            -d "include-xattr=" \
+            -d "comment=" \
+            -d "rawexclusions=" \
+            -d "pre_script=" \
+            -d "post_script="
+        done
+
+    - name: Queue backup jobs concurrently
+      shell: bash
+      run: |
+        set -euo pipefail
+        for index in 01 02 03 04; do
+          job="concurrent-backup-${index}"
+          encoded_job=$(printf '%s' "$job" | base64 -w0)
+          (
+            response=$(docker exec pbs-plus-test curl -k -sS -o /dev/null -w '%{http_code}' -X POST "https://localhost:8017/api2/extjs/d2d/backup?job=${encoded_job}" -H "Content-Type: application/x-www-form-urlencoded")
+            if [[ "$response" != 200 ]]; then
+              printf 'failed to queue %s: HTTP %s\n' "$job" "$response"
+              exit 1
+            fi
+          ) &
+        done
+        wait
+
+    - name: Validate backup UPID ownership
+      shell: bash
+      run: |
+        set -euo pipefail
+        timeout=${{ inputs.timeout-seconds }}
+        deadline=$((SECONDS + timeout))
+        jobs=(concurrent-backup-01 concurrent-backup-02 concurrent-backup-03 concurrent-backup-04)
+
+        while ((SECONDS < deadline)); do
+          history=$(docker exec pbs-plus-test curl -k -fsS "https://localhost:8017/api2/json/d2d/backup" -H "Accept: application/json")
+          complete=true
+          for job in "${jobs[@]}"; do
+            state=$(jq -r --arg job "$job" '.data[] | select(.id == $job) | ."last-run-state" // empty' <<<"$history")
+            upid=$(jq -r --arg job "$job" '.data[] | select(.id == $job) | ."last-run-upid" // empty' <<<"$history")
+            if [[ "$state" != OK || -z "$upid" ]]; then
+              complete=false
+              break
+            fi
+          done
+          if [[ "$complete" == true ]]; then
+            break
+          fi
+          sleep 2
+        done
+
+        if [[ "$complete" != true ]]; then
+          printf '%s\n' "Concurrent backups did not all finish successfully"
+          printf '%s\n' "$history"
+          exit 1
+        fi
+
+        declare -A owners
+        for index in 01 02 03 04; do
+          job="concurrent-backup-${index}"
+          namespace="concurrent-${index}"
+          upid=$(jq -er --arg job "$job" '.data[] | select(.id == $job) | ."last-run-upid"' <<<"$history")
+
+          if [[ "$upid" != *":backup:"* ]]; then
+            printf '%s\n' "Unexpected worker type for ${job}: ${upid}"
+            exit 1
+          fi
+          if [[ -v "owners[$upid]" ]]; then
+            printf '%s\n' "${job} and ${owners[$upid]} share UPID ${upid}"
+            exit 1
+          fi
+          owners[$upid]=$job
+
+          task_log=$(docker exec -e UPID="$upid" pbs-plus-test sh -ec 'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); cat "/var/log/proxmox-backup/tasks/$bucket/$UPID"')
+          if ! grep -Fq "Starting backup: [${namespace}]:" <<<"$task_log"; then
+            printf '%s\n' "${job} is associated with a task outside namespace ${namespace}: ${upid}"
+            printf '%s\n' "$task_log"
+            exit 1
+          fi
+
+          archive_line=$(docker exec -e UPID="$upid" pbs-plus-test sh -ec 'awk '\''$1 == ENVIRON["UPID"] { line = $0 } END { print line }'\'' /var/log/proxmox-backup/tasks/archive')
+          if [[ "${archive_line%% *}" != "$upid" ]]; then
+            printf '%s\n' "${job} UPID is absent from the PBS archive: ${upid}"
+            exit 1
+          fi
+          printf '%s\n' "${job}: ${upid}"
+        done
+
+    - name: Show concurrent backup diagnostics
+      if: failure()
+      shell: bash
+      run: |
+        set +e
+        echo "=== Backup job history ==="
+        docker exec pbs-plus-test curl -k -sS "https://localhost:8017/api2/json/d2d/backup" -H "Accept: application/json" | jq '.data[] | select(.id | startswith("concurrent-backup-"))'
+        echo "=== Active PBS tasks ==="
+        docker exec pbs-plus-test cat /var/log/proxmox-backup/tasks/active || true
+        echo "=== Archived PBS backup tasks ==="
+        docker exec pbs-plus-test sh -ec 'awk '\''$1 ~ /^UPID:/ && $1 ~ /:backup:/ { print }'\'' /var/log/proxmox-backup/tasks/archive' || true
+        echo "=== PBS Plus server logs ==="
+        docker logs --tail=400 pbs-plus-test || true
+        echo "=== PBS Plus agent logs ==="
+        docker logs --tail=400 pbs-plus-agent || true
