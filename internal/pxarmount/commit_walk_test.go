@@ -196,24 +196,8 @@ func TestCommitWalkUncachedNodesEmptyDirectories(t *testing.T) {
 		t.Errorf("ops: %v", w.ops)
 	}
 
-	hasDir2a := false
-	hasDir2b := false
-	for _, r := range w.refs {
-		if r.name == "file_dir2a.txt" {
-			hasDir2a = true
-		}
-		if r.name == "file_dir2b.txt" {
-			hasDir2b = true
-		}
-	}
-	for _, f := range w.emptyFiles {
-		if f == "file_dir2a.txt" {
-			hasDir2a = true
-		}
-		if f == "file_dir2b.txt" {
-			hasDir2b = true
-		}
-	}
+	hasDir2a := w.hasFile("file_dir2a.txt")
+	hasDir2b := w.hasFile("file_dir2b.txt")
 	if !hasDir2a || !hasDir2b {
 		t.Errorf("BUG REPRODUCED: dir2 files missing (dir2a=%v dir2b=%v)", hasDir2a, hasDir2b)
 	}
@@ -316,15 +300,8 @@ func TestCommitWalkWithRegisteredNodes(t *testing.T) {
 		t.Errorf("ops: %v", w.ops)
 	}
 
-	hasDir2a, hasDir2b := false, false
-	for _, r := range w.refs {
-		if r.name == "file_dir2a.txt" {
-			hasDir2a = true
-		}
-		if r.name == "file_dir2b.txt" {
-			hasDir2b = true
-		}
-	}
+	hasDir2a := w.hasFile("file_dir2a.txt")
+	hasDir2b := w.hasFile("file_dir2b.txt")
 	if !hasDir2a || !hasDir2b {
 		t.Errorf("dir2 files missing with registered nodes (dir2a=%v dir2b=%v)", hasDir2a, hasDir2b)
 	}
@@ -362,13 +339,7 @@ func TestCommitWalkDeepNesting(t *testing.T) {
 		t.Errorf("ops: %v", w.ops)
 	}
 
-	hasDeep := false
-	for _, r := range w.refs {
-		if r.name == "deep.txt" {
-			hasDeep = true
-		}
-	}
-	if !hasDeep {
+	if !w.hasFile("deep.txt") {
 		t.Errorf("deepest file missing (dir1/dir2/dir3/deep.txt)")
 	}
 }
@@ -513,28 +484,9 @@ func TestJournalDirMergesPxarChildren(t *testing.T) {
 
 	t.Logf("ops: %v", w.ops)
 
-	hasPxrFile := false
-	hasNewFile := false
-	hasDir2 := false
-	for _, r := range w.refs {
-		if r.name == "file_dir1.txt" {
-			hasPxrFile = true
-		}
-		if r.name == "newfile.txt" {
-			hasNewFile = true
-		}
-	}
-	for _, f := range w.emptyFiles {
-		if f == "file_dir1.txt" {
-			hasPxrFile = true
-		}
-		if f == "newfile.txt" {
-			hasNewFile = true
-		}
-	}
-	if w.dirOpens >= 3 {
-		hasDir2 = true
-	}
+	hasPxrFile := w.hasFile("file_dir1.txt")
+	hasNewFile := w.hasFile("newfile.txt")
+	hasDir2 := w.dirOpens >= 3
 
 	if !hasPxrFile {
 		t.Errorf("BUG: pxar file file_dir1.txt missing from dir1  -  " +

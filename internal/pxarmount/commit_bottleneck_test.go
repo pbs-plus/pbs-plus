@@ -896,6 +896,7 @@ type offsetTrackingWriter struct {
 	noopWriter
 	refOffsets    []uint64
 	injectedSizes []uint64
+	reencoded     int
 }
 
 func (w *offsetTrackingWriter) WriteEntryRef(_ *pxar.Entry, offset uint64) error {
@@ -915,6 +916,10 @@ func (w *offsetTrackingWriter) Encoder() *encoder.Encoder {
 }
 
 func (w *offsetTrackingWriter) WriteEntryReader(entry *pxar.Entry, r io.Reader, size uint64) error {
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return err
+	}
+	w.reencoded++
 	return nil
 }
 
@@ -963,30 +968,50 @@ func TestFlushPendingRefsOffsetCorrectness(t *testing.T) {
 		}
 	})
 
-	t.Run("no origIndex writes absolute offsets", func(t *testing.T) {
+	t.Run("no origIndex reencodes", func(t *testing.T) {
+		storeDir, metaPath, payloadPath := createTestArchive(t)
+		pxarFS := openTestArchive(t, storeDir, metaPath, payloadPath)
+		entries, err := pxarFS.ReadDirFull(RootInode, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var slim *dirEntrySlim
+		for i := range entries {
+			if entries[i].isReg {
+				slim = &entries[i]
+				break
+			}
+		}
+		if slim == nil {
+			t.Fatal("test archive has no regular file")
+		}
+		pxarEntry, err := pxarFS.Reader().ReadEntryAt(int64(slim.entryStart))
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		w := &offsetTrackingWriter{}
 		ow := &commitWalkState{
-			mfs:           &MutableFS{verbose: false},
+			mfs:           NewMutableFS(pxarFS, nil, t.TempDir()),
 			writer:        w,
 			xattrCache:    make(map[int64][]format.XAttr),
 			redirectCache: make(map[string]*pxar.Entry),
-			pendingRefs: []commitEntry{
-				{name: "a", sortKey: 100, pxarSlim: &dirEntrySlim{payloadOffset: 100, fileSize: 50}, cachedEntry: &pxar.Entry{Path: "a", Kind: pxar.KindFile, FileSize: 50, PayloadOffset: 100}},
-				{name: "b", sortKey: 300, pxarSlim: &dirEntrySlim{payloadOffset: 300, fileSize: 50}, cachedEntry: &pxar.Entry{Path: "b", Kind: pxar.KindFile, FileSize: 50, PayloadOffset: 300}},
-			},
+			pendingRefs: []commitEntry{{
+				name:        slim.name,
+				sortKey:     slim.payloadOffset,
+				pxarSlim:    slim,
+				cachedEntry: pxarEntry,
+			}},
 		}
 
 		if err := ow.flushPendingRefs(); err != nil {
 			t.Fatal(err)
 		}
-		if len(w.refOffsets) != 2 {
-			t.Fatalf("expected 2 refs, got %d", len(w.refOffsets))
+		if len(w.refOffsets) != 0 {
+			t.Fatalf("emitted %d unbacked refs", len(w.refOffsets))
 		}
-		if w.refOffsets[0] != 100 {
-			t.Errorf("ref[0]=%d want 100", w.refOffsets[0])
-		}
-		if w.refOffsets[1] != 300 {
-			t.Errorf("ref[1]=%d want 300", w.refOffsets[1])
+		if w.reencoded != 1 {
+			t.Fatalf("reencoded %d entries, want 1", w.reencoded)
 		}
 	})
 }

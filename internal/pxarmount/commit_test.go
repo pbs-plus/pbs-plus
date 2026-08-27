@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 
@@ -65,6 +66,18 @@ func (w *trackingWriter) InjectChunks(_ []backupproxy.KnownChunkRef) error { ret
 func (w *trackingWriter) Encoder() *encoder.Encoder                        { return nil }
 func (w *trackingWriter) Finish() error                                    { return nil }
 func (w *trackingWriter) Close() error                                     { return nil }
+
+func (w *trackingWriter) hasFile(name string) bool {
+	for _, ref := range w.refs {
+		if ref.name == name {
+			return true
+		}
+	}
+	if slices.Contains(w.backedFiles, name) {
+		return true
+	}
+	return slices.Contains(w.emptyFiles, name)
+}
 
 func TestMergeMetaWithPxar(t *testing.T) {
 	journalMeta := pxar.Metadata{

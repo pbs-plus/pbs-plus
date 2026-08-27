@@ -113,15 +113,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 		return fmt.Errorf("invalid backup type %q: %w", backupType, err)
 	}
 
-	var prev *backupproxy.PreviousBackupRef
-	if mfs.origSnapshot.BackupID != "" && mfs.origSnapshot.BackupTime > 0 {
-		prev = &backupproxy.PreviousBackupRef{
-			BackupType: bt,
-			BackupID:   mfs.origSnapshot.BackupID,
-			BackupTime: mfs.origSnapshot.BackupTime,
-			Namespace:  mfs.origSnapshot.Namespace,
-		}
-	}
+	prev := previousBackupRef(mfs.origSnapshot, backupType, backupID, namespace, bt)
 
 	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
 		BaseURL:       pbsURL,
@@ -155,7 +147,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	payloadName := archiveName + ".ppxar.didx"
 
 	var origPayloadIdx []byte
-	if mfs.origPpxarDidx != "" {
+	if prev != nil && mfs.origPpxarDidx != "" {
 		idx, err := os.ReadFile(mfs.origPpxarDidx)
 		if err != nil {
 			log.Error(err, "")
@@ -247,6 +239,19 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 
 	prog.Done(fmt.Sprintf("committed %s/%s (%d new files)", namespace, backupID, ow.mutableFiles))
 	return nil
+}
+
+func previousBackupRef(orig snapshotRef, backupType, backupID, namespace string, bt datastore.BackupType) *backupproxy.PreviousBackupRef {
+	if orig.BackupID == "" || orig.BackupTime <= 0 ||
+		orig.BackupType != backupType || orig.BackupID != backupID || orig.Namespace != namespace {
+		return nil
+	}
+	return &backupproxy.PreviousBackupRef{
+		BackupType: bt,
+		BackupID:   orig.BackupID,
+		BackupTime: orig.BackupTime,
+		Namespace:  orig.Namespace,
+	}
 }
 
 func nodeToMetadata(n *GraphNode, xattrs []format.XAttr) pxar.Metadata {

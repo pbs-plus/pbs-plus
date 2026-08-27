@@ -159,11 +159,7 @@ func (ow *commitWalkState) flushPendingRefs() error {
 	insertionSortPendingRefs(ow.pendingRefs)
 
 	if ow.origChunkIndex == nil {
-		deferred, err := ow.encodeRefs(0)
-		if err != nil {
-			return err
-		}
-		return ow.reencodeAt(deferred)
+		return ow.reencodeAll()
 	}
 
 	rangeStart, rangeEnd := pendingRefsRange(ow.pendingRefs)
