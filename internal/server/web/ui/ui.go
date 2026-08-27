@@ -20,6 +20,7 @@ func Render() []byte {
 	items = append(items, mtfInventoryPanel)
 	items = append(items, mtfMappingPanel)
 	items = append(items, restorePanel)
+	items = append(items, backupPanel)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

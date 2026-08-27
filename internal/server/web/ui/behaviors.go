@@ -18,6 +18,12 @@ var enableOnRecord = js.Func("rec", `return true;`)
 
 var dashIfEmpty = js.Func("value", `return value || "-";`)
 
+// jobIdle and jobStoppable are selectionEvery expressions over a job record r.
+const (
+	jobIdle      = `!r.data["last-run-upid"] || !!r.data["last-run-state"]`
+	jobStoppable = `!!r.data["last-run-upid"] && ((r.data["last-run-state"] || "") === "" || (r.data["last-run-state"] || "").startsWith("QUEUED:"))`
+)
+
 var countIfSet = js.Func("value", `
 	if (!value && value !== 0) return "-";
 	return value.toLocaleString();
@@ -105,9 +111,64 @@ func openEditWindow(class, idField string) js.Raw {
 	`, class, idField))
 }
 
-// confirmRemove builds a controller handler that deletes every selected record
-// after a confirmation prompt. idExpr is the JavaScript expression producing
-// the record id, evaluated with rec in scope.
+// editJobWindow opens class on the selected record; duplicateJobWindow drops the id so it saves as new.
+func editJobWindow(class string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let me = this;
+		let selection = me.getView().getSelection();
+		if (!selection || selection.length < 1) {
+			return;
+		}
+		Ext.create(%q, {
+			id: selection[0].data.id,
+			autoShow: true,
+			listeners: { destroy: () => me.reload() },
+		}).show();
+	`, class))
+}
+
+func duplicateJobWindow(class string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let me = this;
+		let selection = me.getView().getSelection();
+		if (!selection || selection.length < 1) {
+			return;
+		}
+		let jobData = Ext.Object.merge({}, selection[0].data);
+		delete jobData.id;
+		Ext.create(%q, {
+			autoShow: true,
+			jobData: jobData,
+			listeners: { destroy: () => me.reload() },
+		}).show();
+	`, class))
+}
+
+// runJobs POSTs every selected job id to baseURL as repeated job= parameters.
+func runJobs(baseURL, singular, plural string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		const me = this;
+		const view = me.getView();
+		const recs = view.getSelection();
+		if (!recs.length) return;
+		const ids = recs.map((r) => r.getId());
+		const list = ids.map(Ext.String.htmlEncode).join("', '");
+		const msg = ids.length > 1
+			? Ext.String.format(gettext(%q), list)
+			: Ext.String.format(gettext(%q), list);
+		Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
+			if (btn !== "yes") return;
+			PBS.PlusUtils.API2Request({
+				url: %q + ids.map((id) => "job=" + encodeURIComponent(encodePathValue(id))).join("&"),
+				method: "POST",
+				waitMsgTarget: view,
+				success: () => me.reload(),
+				failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+			});
+		});
+	`, plural, singular, baseURL))
+}
+
 // A prompt containing {0} is formatted with the list of selected record ids.
 func confirmRemove(baseURL, idExpr, prompt string) js.Raw {
 	msg := fmt.Sprintf("gettext(%q)", prompt)

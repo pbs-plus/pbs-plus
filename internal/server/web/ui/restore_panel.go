@@ -4,8 +4,6 @@ import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
 const restoreRunURL = "/api2/extjs/d2d/restore?"
 
-const restoreIdle = `!r.data["last-run-upid"] || !!r.data["last-run-state"]`
-
 var restorePanel = js.Panel{
 	Name: "PBS.config.DiskRestoreJobView", XType: "pbsDiskRestoreJobView",
 	Title: "Disk Restore Jobs", StateID: "grid-disk-restore-jobs-v1",
@@ -22,58 +20,14 @@ var restorePanel = js.Panel{
 	},
 	Listeners: js.Listeners{ItemDblClick: "editJob"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
-		"onSearchKeyUp": searchFilter("id", "ns", "snapshot", "src-path", "dest-target", "comment", "dest-subpath"),
-		"addJob":        openEditWindow("PBS.D2DManagement.RestoreJobEdit", ""),
-		"editJob": js.Func("", `
-			let me = this;
-			let selection = me.getView().getSelection();
-			if (!selection || selection.length < 1) {
-				return;
-			}
-			Ext.create("PBS.D2DManagement.RestoreJobEdit", {
-				id: selection[0].data.id,
-				autoShow: true,
-				listeners: { destroy: () => me.reload() },
-			}).show();
-		`),
-		"duplicateJob": js.Func("", `
-			let me = this;
-			let selection = me.getView().getSelection();
-			if (!selection || selection.length < 1) {
-				return;
-			}
-			let jobData = Ext.Object.merge({}, selection[0].data);
-			delete jobData.id;
-			Ext.create("PBS.D2DManagement.RestoreJobEdit", {
-				autoShow: true,
-				jobData: jobData,
-				listeners: { destroy: () => me.reload() },
-			}).show();
-		`),
+		"onSearchKeyUp":      searchFilter("id", "ns", "snapshot", "src-path", "dest-target", "comment", "dest-subpath"),
+		"addJob":             openEditWindow("PBS.D2DManagement.RestoreJobEdit", ""),
+		"editJob":            editJobWindow("PBS.D2DManagement.RestoreJobEdit"),
+		"duplicateJob":       duplicateJobWindow("PBS.D2DManagement.RestoreJobEdit"),
 		"removeJobs":         confirmRemove("/api2/extjs/config/disk-restore/", "encodePathValue(rec.getId())", "Remove selected entries?"),
 		"openTaskLog":        openTaskLog("last-run-upid"),
 		"openSuccessTaskLog": openTaskLog("last-successful-upid"),
-		"runJobs": js.Func("", `
-			const me = this;
-			const view = me.getView();
-			const recs = view.getSelection();
-			if (!recs.length) return;
-			const ids = recs.map((r) => r.getId());
-			const list = ids.map(Ext.String.htmlEncode).join("', '");
-			const msg = ids.length > 1
-				? Ext.String.format(gettext("Start restore jobs '{0}'?"), list)
-				: Ext.String.format(gettext("Start restore job '{0}'?"), list);
-			Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
-				if (btn !== "yes") return;
-				PBS.PlusUtils.API2Request({
-					url: "`+restoreRunURL+`" + ids.map((id) => "job=" + encodeURIComponent(encodePathValue(id))).join("&"),
-					method: "POST",
-					waitMsgTarget: view,
-					success: () => me.reload(),
-					failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-				});
-			});
-		`),
+		"runJobs":            runJobs(restoreRunURL, "Start restore job '{0}'?", "Start restore jobs '{0}'?"),
 		"stopJobs": js.Func("", `
 			const me = this;
 			const view = me.getView();
@@ -108,10 +62,10 @@ var restorePanel = js.Panel{
 		{Text: "Add Job", Handler: "addJob", SelModel: new(false)},
 		{Text: "Duplicate Job", Handler: "duplicateJob", Disabled: true, EnableFn: enableOnSingleSelection},
 		{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: selectionOne(`!recs[0].data["last-run-upid"] || !!recs[0].data["last-run-state"]`)},
-		{Text: "Remove Job(s)", Handler: "removeJobs", Disabled: true, EnableFn: selectionEvery(restoreIdle)}, js.Sep(),
+		{Text: "Remove Job(s)", Handler: "removeJobs", Disabled: true, EnableFn: selectionEvery(jobIdle)}, js.Sep(),
 		{Text: "Show Log", Handler: "openTaskLog", Disabled: true, EnableFn: selectionOne(`!!recs[0].data["last-run-upid"]`)}, js.Sep(),
-		{Text: "Run Job(s)", Handler: "runJobs", Disabled: true, EnableFn: selectionEvery(restoreIdle)},
-		{Text: "Stop Job(s)", Handler: "stopJobs", Disabled: true, EnableFn: selectionEvery(`!!r.data["last-run-upid"] && ((r.data["last-run-state"] || "") === "" || (r.data["last-run-state"] || "").startsWith("QUEUED:"))`)},
+		{Text: "Run Job(s)", Handler: "runJobs", Disabled: true, EnableFn: selectionEvery(jobIdle)},
+		{Text: "Stop Job(s)", Handler: "stopJobs", Disabled: true, EnableFn: selectionEvery(jobStoppable)},
 		js.Fill(), searchTool(),
 	},
 	Columns: []js.Column{
