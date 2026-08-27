@@ -59,6 +59,7 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.D2DVerification.OptionsInputPanel"`),
 		[]byte(`Ext.define("PBS.D2DVerification.SpotCheckInputPanel"`),
 		[]byte(`Ext.define("PBS.D2DVerification.JobEdit"`),
+		[]byte("override: 'PBS.TapeManagement.SnapshotGrid'"),
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),
