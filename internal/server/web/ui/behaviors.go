@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
 )
@@ -11,6 +12,11 @@ var enableOnSelection = js.Func("", `
 	let recs = this.up("grid").getSelection();
 	return recs.length > 0;
 `)
+
+// enableOnRecord enables a button for any record; Proxmox passes null when nothing is selected.
+var enableOnRecord = js.Func("rec", `return true;`)
+
+var dashIfEmpty = js.Func("value", `return value || "-";`)
 
 var enableOnSingleSelection = js.Func("", `
 	let recs = this.up("grid").getSelection();
@@ -46,7 +52,12 @@ func openEditWindow(class, idField string) js.Raw {
 // confirmRemove builds a controller handler that deletes every selected record
 // after a confirmation prompt. idExpr is the JavaScript expression producing
 // the record id, evaluated with rec in scope.
+// A prompt containing {0} is formatted with the list of selected record ids.
 func confirmRemove(baseURL, idExpr, prompt string) js.Raw {
+	msg := fmt.Sprintf("gettext(%q)", prompt)
+	if strings.Contains(prompt, "{0}") {
+		msg = fmt.Sprintf(`Ext.String.format(gettext(%q), recs.map((rec) => Ext.String.htmlEncode(rec.getId())).join("', '"))`, prompt)
+	}
 	return js.Func("", fmt.Sprintf(`
 		const me = this;
 		const view = me.getView();
@@ -56,7 +67,7 @@ func confirmRemove(baseURL, idExpr, prompt string) js.Raw {
 		}
 		Ext.Msg.confirm(
 			gettext("Confirm"),
-			gettext(%q),
+			%s,
 			(btn) => {
 				if (btn !== "yes") {
 					return;
@@ -72,7 +83,7 @@ func confirmRemove(baseURL, idExpr, prompt string) js.Raw {
 				});
 			},
 		);
-	`, prompt, baseURL, idExpr))
+	`, msg, baseURL, idExpr))
 }
 
 // copySelectionWindow shows one field of the selected record in a copyable dialog.

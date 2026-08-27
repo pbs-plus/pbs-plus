@@ -215,6 +215,7 @@ type Store struct {
 	GroupField     string
 	Proxy          StoreProxy
 	QueryParamNull bool
+	Interval       int
 }
 
 // StoreProxy identifies the ExtJS proxy family used by a store.
@@ -255,15 +256,12 @@ func (s Store) Config() Obj {
 		set(plain, "sorters", s.Sorters)
 		return plain
 	}
-	o := Obj{
-		"type": "diff",
-		"rstore": Obj{
-			"type":    "update",
-			"storeid": s.StoreID,
-			"model":   s.Model,
-			"proxy":   proxy,
-		},
+	rstore := Obj{"type": "update", "storeid": s.StoreID, "model": s.Model}
+	if s.APIPath != "" {
+		rstore["proxy"] = proxy
 	}
+	set(rstore, "interval", s.Interval)
+	o := Obj{"type": "diff", "rstore": rstore}
 	set(o, "sorters", s.Sorters)
 	set(o, "groupField", s.GroupField)
 	return o
@@ -274,7 +272,7 @@ type Column struct {
 	Text           string
 	DataIndex      string
 	XType          XType
-	Flex           int
+	Flex           float64
 	Width          int
 	Hidden         bool
 	Sortable       *bool
@@ -383,6 +381,22 @@ func (l Listeners) Config() Obj {
 	set(o, "itemdblclick", l.ItemDblClick)
 	set(o, "afterrender", l.AfterRender)
 	set(o, "selectionchange", l.SelectionChange)
+	return o
+}
+
+type ViewConfig struct {
+	GetRowClass    Raw
+	TrackOver      *bool
+	StripeRows     *bool
+	DeferEmptyText *bool
+}
+
+func (v ViewConfig) Config() Obj {
+	o := Obj{}
+	set(o, "getRowClass", v.GetRowClass)
+	set(o, "trackOver", v.TrackOver)
+	set(o, "stripeRows", v.StripeRows)
+	set(o, "deferEmptyText", v.DeferEmptyText)
 	return o
 }
 
@@ -716,6 +730,7 @@ type Panel struct {
 	Columns           []Column
 	Tbar              []Tool
 	Grouping          *Grouping
+	ViewConfig        *ViewConfig
 	Controller        Controller
 	Listeners         Listeners
 	MultiSelect       bool
@@ -795,6 +810,9 @@ func (p Panel) Config() Obj {
 	}
 	if p.Grouping != nil {
 		o["features"] = Arr{p.Grouping.Config()}
+	}
+	if p.ViewConfig != nil {
+		o["viewConfig"] = p.ViewConfig.Config()
 	}
 	for k, v := range p.Methods {
 		o[k] = v
