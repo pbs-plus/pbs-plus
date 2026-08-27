@@ -20,9 +20,13 @@ import (
 
 var quicNextProtos = []string{"pbsarpc-quic"}
 
+// Bounds how long an idle agent holds a dead session: stateless resets only
+// cover datagrams over 42 bytes, and idle agents send 25-byte keepalives.
+const quicMaxIdleTimeout = 90 * time.Second
+
 func quicConfig() *quic.Config {
 	return &quic.Config{
-		MaxIdleTimeout:             5 * time.Minute,
+		MaxIdleTimeout:             quicMaxIdleTimeout,
 		KeepAlivePeriod:            30 * time.Second,
 		HandshakeIdleTimeout:       10 * time.Second,
 		MaxIncomingStreams:         1 << 16,
@@ -376,13 +380,29 @@ func NewQuicTransport(addr string, resetSecret []byte) (*quic.Transport, error) 
 
 	key, err := statelessResetKey(resetSecret)
 	if err != nil {
-		_ = transport.Close()
+		_ = CloseQuicTransport(transport)
 		return nil, fmt.Errorf("derive quic stateless reset key: %w", err)
 	}
 	transport.StatelessResetKey = key
 	log.Info("arpc: quic stateless reset enabled", "addr", addr)
 
 	return transport, nil
+}
+
+// quic.Transport.Close only closes a socket it opened itself, so a
+// caller-supplied Conn stays bound unless it is closed explicitly.
+func CloseQuicTransport(transport *quic.Transport) error {
+	if transport == nil {
+		return nil
+	}
+
+	err := transport.Close()
+	if transport.Conn != nil {
+		if cerr := transport.Conn.Close(); err == nil {
+			err = cerr
+		}
+	}
+	return err
 }
 
 func ListenQuic(transport *quic.Transport, tlsConfig *tls.Config) (*quic.Listener, error) {
@@ -482,7 +502,7 @@ func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsM
 	if err != nil {
 		return err
 	}
-	defer func() { _ = transport.Close() }()
+	defer func() { _ = CloseQuicTransport(transport) }()
 
 	listener, err := ListenQuic(transport, tlsConfig)
 	if err != nil {
