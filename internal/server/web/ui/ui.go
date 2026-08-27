@@ -17,6 +17,7 @@ func Render() []byte {
 	items = append(items, notificationBatchPanel)
 	items = append(items, tokenPanel)
 	items = append(items, mtfJobPanel)
+	items = append(items, mtfInventoryPanel)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

@@ -275,6 +275,7 @@ type Column struct {
 	Flex           float64
 	Width          int
 	Hidden         bool
+	Align          string
 	Sortable       *bool
 	Renderer       Raw
 	RendererMethod string
@@ -290,6 +291,7 @@ func (c Column) Config() Obj {
 	set(o, "flex", c.Flex)
 	set(o, "width", c.Width)
 	set(o, "hidden", c.Hidden)
+	set(o, "align", c.Align)
 	set(o, "sortable", c.Sortable)
 	set(o, "renderer", c.Renderer)
 	set(o, "renderer", c.RendererMethod)
@@ -309,12 +311,19 @@ type Tool struct {
 	IconCls               string
 	StandardRemoveBaseURL string
 	Callback              string
+	ItemID                string
+	Hidden                bool
+	Cls                   string
+	HTML                  string
 
-	separator bool
+	separator string
 }
 
 // Sep is the toolbar separator entry.
-func Sep() Tool { return Tool{separator: true} }
+func Sep() Tool { return Tool{separator: "-"} }
+
+// Fill pushes the remaining toolbar entries to the far end.
+func Fill() Tool { return Tool{separator: "->"} }
 
 func (t Tool) Config() Obj {
 	xtype := string(XProxmoxButton)
@@ -334,14 +343,18 @@ func (t Tool) Config() Obj {
 	set(o, "iconCls", t.IconCls)
 	set(o, "baseurl", t.StandardRemoveBaseURL)
 	set(o, "callback", t.Callback)
+	set(o, "itemId", t.ItemID)
+	set(o, "hidden", t.Hidden)
+	set(o, "cls", t.Cls)
+	set(o, "html", t.HTML)
 	return o
 }
 
 func tools(list []Tool) Arr {
 	out := make(Arr, len(list))
 	for i, t := range list {
-		if t.separator {
-			out[i] = "-"
+		if t.separator != "" {
+			out[i] = t.separator
 			continue
 		}
 		out[i] = t.Config()
