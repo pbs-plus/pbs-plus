@@ -244,7 +244,14 @@ func (s *Server) StartARPCQuic() error {
 		return fmt.Errorf("failed to build server TLS config: %w", err)
 	}
 
-	return arpc.ListenAndServeQuic(s.Store.Ctx, conf.ARPCQuicPort, s.Store.Agents, arpcTlsConfig, s.ARPCRouter)
+	resetSecret, err := os.ReadFile(s.Store.CertManager.ServerKeyPath)
+	if err != nil {
+		log.Error(err, "arpc: cannot read server key for quic stateless reset",
+			"path", s.Store.CertManager.ServerKeyPath)
+		resetSecret = nil
+	}
+
+	return arpc.ListenAndServeQuic(s.Store.Ctx, conf.ARPCQuicPort, s.Store.Agents, arpcTlsConfig, s.ARPCRouter, resetSecret)
 }
 
 func (s *Server) StartAll() {
