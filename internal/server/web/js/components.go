@@ -206,11 +206,12 @@ func (m Model) AppendJS(dst []byte, indent int) []byte {
 
 // Store is the diff-over-update store every PBS-Plus grid uses.
 type Store struct {
-	StoreID       string
-	Model         string
-	APIPath       string
-	Sorters       string
-	Proxy         StoreProxy
+	StoreID        string
+	Model          string
+	APIPath        string
+	Sorters        string
+	GroupField     string
+	Proxy          StoreProxy
 	QueryParamNull bool
 }
 
@@ -241,10 +242,11 @@ func (s Store) Config() Obj {
 			"type":    "update",
 			"storeid": s.StoreID,
 			"model":   s.Model,
-			"proxy": proxy,
+			"proxy":   proxy,
 		},
 	}
 	set(o, "sorters", s.Sorters)
+	set(o, "groupField", s.GroupField)
 	return o
 }
 
@@ -278,14 +280,14 @@ func (c Column) Config() Obj {
 // Tool is a toolbar entry. Handler names a controller method; HandlerFn holds
 // an inline function instead.
 type Tool struct {
-	Text      string
-	XType     XType
-	Handler   string
-	HandlerFn Raw
-	Disabled  bool
-	SelModel  *bool
-	EnableFn  Raw
-	IconCls   string
+	Text                  string
+	XType                 XType
+	Handler               string
+	HandlerFn             Raw
+	Disabled              bool
+	SelModel              *bool
+	EnableFn              Raw
+	IconCls               string
 	StandardRemoveBaseURL string
 	Callback              string
 
@@ -375,6 +377,7 @@ type Grid struct {
 	Store            Component
 	Columns          []Column
 	Tbar             []Tool
+	Grouping         *Grouping
 	Controller       Controller
 	Listeners        Listeners
 	MultiSelect      bool
@@ -424,7 +427,19 @@ func (g Grid) Config() Obj {
 	if len(g.Tbar) > 0 {
 		o["tbar"] = tools(g.Tbar)
 	}
+	if g.Grouping != nil {
+		o["features"] = Arr{g.Grouping.Config()}
+	}
 	return o
+}
+
+type Grouping struct {
+	HeaderTemplate string
+	FormatName     Raw
+}
+
+func (g Grouping) Config() Obj {
+	return Obj{"ftype": "grouping", "groupHeaderTpl": Arr{g.HeaderTemplate, Obj{"formatName": g.FormatName}}}
 }
 
 func (g Grid) AppendJS(dst []byte, indent int) []byte {
