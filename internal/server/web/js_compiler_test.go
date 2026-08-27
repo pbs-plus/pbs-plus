@@ -12,6 +12,11 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 
 	for _, name := range [][]byte{
 		[]byte(`Ext.define("pbs-model-scripts"`),
+		[]byte(`Ext.define("pbs-mtf-job"`),
+		[]byte(`Ext.define("pbs-mtf-family"`),
+		[]byte(`Ext.define("pbs-mtf-cartridge"`),
+		[]byte(`Ext.define("pbs-mtf-dataset"`),
+		[]byte(`Ext.define("pbs-mtf-mapping"`),
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),

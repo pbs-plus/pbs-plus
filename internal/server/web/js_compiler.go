@@ -45,6 +45,7 @@ func compileJS(embedded *embed.FS, skip func(string) bool) []byte {
 
 func isMigratedCustomSource(path string) bool {
 	return strings.HasSuffix(path, "/5_models.js") ||
+		strings.HasSuffix(path, "/7_mtf_models.js") ||
 		strings.HasSuffix(path, "/panels/scripts.js") ||
 		strings.HasSuffix(path, "/selectors/scripts.js") ||
 		strings.HasSuffix(path, "/windows/script.js")
