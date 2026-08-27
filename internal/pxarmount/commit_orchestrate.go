@@ -208,6 +208,9 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
 		return fmt.Errorf("walk overlay: %w", err)
 	}
+	if err := ow.flushPendingRefs(false); err != nil {
+		return fmt.Errorf("flush payload refs: %w", err)
+	}
 
 	prog.SetPhase(PhaseUpload)
 	prog.SetMsg(fmt.Sprintf("Flushing upload (%d new/modified files)", ow.mutableFiles))

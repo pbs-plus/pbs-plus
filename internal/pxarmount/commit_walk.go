@@ -133,7 +133,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 			(entry.node == nil && entry.pxarSlim != nil && entry.pxarSlim.isDir)
 
 		if isDir {
-			if err := ow.flushPendingRefs(); err != nil {
+			if err := ow.flushPendingRefs(true); err != nil {
 				return err
 			}
 
@@ -161,7 +161,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	if err := ow.flushPendingRefs(); err != nil {
+	if err := ow.flushPendingRefs(true); err != nil {
 		return err
 	}
 
@@ -182,14 +182,14 @@ func (ow *commitWalkState) emitJournalEntry(e *commitEntry, parentRelPath string
 
 	switch node.Kind {
 	case NodeDir:
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 		return ow.emitJournalDir(e, parentRelPath)
 
 	case NodeFile:
 		if node.HasData {
-			if err := ow.flushPendingRefs(); err != nil {
+			if err := ow.flushPendingRefs(false); err != nil {
 				return err
 			}
 			childPath := ow.buildPath(parentRelPath, e.name)
@@ -208,7 +208,7 @@ func (ow *commitWalkState) emitJournalEntry(e *commitEntry, parentRelPath string
 			}
 			return nil
 		}
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			return err
 		}
 		xattrs := ow.ensureXAttrs(node.ID)
@@ -221,7 +221,7 @@ func (ow *commitWalkState) emitJournalEntry(e *commitEntry, parentRelPath string
 		return ow.writer.WriteEntry(entry, nil)
 
 	case NodeSymlink:
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 		xattrs := ow.ensureXAttrs(node.ID)
@@ -248,14 +248,14 @@ func (ow *commitWalkState) emitPxarEntry(e *commitEntry, parentRelPath string) e
 	}
 
 	if slim.isDir {
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 		return ow.emitPxarDir(e, parentRelPath)
 	}
 
 	if slim.isSymlink {
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(true); err != nil {
 			return err
 		}
 		return ow.emitPxarSymlink(e)

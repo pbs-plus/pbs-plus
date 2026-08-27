@@ -1004,7 +1004,7 @@ func TestFlushPendingRefsOffsetCorrectness(t *testing.T) {
 			}},
 		}
 
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
 		if len(w.refOffsets) != 0 {

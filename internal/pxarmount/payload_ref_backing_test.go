@@ -139,10 +139,64 @@ func TestPayloadRefsAlwaysBackedByInjectedChunks(t *testing.T) {
 		ow := newState(w)
 
 		ow.pendingRefs = []commitEntry{ce("a", 100, 7500)}
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
 		assertRefsBacked(t, w)
+	})
+
+	t.Run("final flush backs held chunk", func(t *testing.T) {
+		w := newMockInjectionWriter(t, 10000)
+		ow := newState(w)
+
+		ow.pendingRefs = []commitEntry{ce("a", 100, 7500)}
+		if err := ow.flushPendingRefs(true); err != nil {
+			t.Fatal(err)
+		}
+		if !ow.hasSavedChunk {
+			t.Fatal("last chunk was not held")
+		}
+		if err := ow.flushPendingRefs(false); err != nil {
+			t.Fatal(err)
+		}
+		if ow.hasSavedChunk {
+			t.Fatal("last chunk remained held after final flush")
+		}
+		assertRefsBacked(t, w)
+	})
+
+	t.Run("continued ranges inject shared chunk once", func(t *testing.T) {
+		w := newMockInjectionWriter(t, 10000)
+		ow := newState(w)
+
+		ow.pendingRefs = []commitEntry{ce("a", 100, 7500)}
+		if err := ow.flushPendingRefs(true); err != nil {
+			t.Fatal(err)
+		}
+		ow.pendingRefs = []commitEntry{ce("b", 7616, 200)}
+		if err := ow.flushPendingRefs(false); err != nil {
+			t.Fatal(err)
+		}
+
+		var injected uint64
+		for _, span := range w.spans {
+			if span.injected {
+				injected += span.end - span.start
+			}
+		}
+		if injected != 2*chunkSize {
+			t.Fatalf("injected %d bytes, want %d", injected, 2*chunkSize)
+		}
+		assertRefsBacked(t, w)
+	})
+
+	t.Run("deduplicated chunks at different positions stay distinct", func(t *testing.T) {
+		digest := [32]byte{1}
+		first := reusableChunk{digest: digest, endOffset: chunkSize}
+		second := reusableChunk{digest: digest, endOffset: 2 * chunkSize}
+		if first.sameIndexedChunkAs(second) {
+			t.Fatal("distinct index entries compared equal")
+		}
 	})
 
 	t.Run("payload write between batches", func(t *testing.T) {
@@ -150,7 +204,7 @@ func TestPayloadRefsAlwaysBackedByInjectedChunks(t *testing.T) {
 		ow := newState(w)
 
 		ow.pendingRefs = []commitEntry{ce("a", 100, 7500)}
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -160,7 +214,7 @@ func TestPayloadRefsAlwaysBackedByInjectedChunks(t *testing.T) {
 		}
 
 		ow.pendingRefs = []commitEntry{ce("d", 8100, 3800)}
-		if err := ow.flushPendingRefs(); err != nil {
+		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
 
