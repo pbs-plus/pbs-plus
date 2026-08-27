@@ -24,6 +24,15 @@ type NotificationBatchJob struct {
 	JobID     string `json:"job-id"`
 }
 
+type NotificationBatchResult struct {
+	JobType    string `json:"job-type"`
+	JobID      string `json:"job-id"`
+	Datastore  string `json:"datastore"`
+	Error      string `json:"error"`
+	Severity   string `json:"severity"`
+	RecordedAt int64  `json:"recorded-at"`
+}
+
 func notificationBatchFromRow(r corequery.NotificationBatch) NotificationBatch {
 	return NotificationBatch{
 		Name:             r.Name,
@@ -150,6 +159,69 @@ func (db *Store) ListBatchJobs() ([]NotificationBatchJob, error) {
 		}
 	}
 	return out, nil
+}
+
+// RecordBatchResult stores one job's outcome, replacing any earlier result for that job.
+func (db *Store) RecordBatchResult(batchName string, r NotificationBatchResult) error {
+	return db.queries.UpsertBatchResult(db.ctx, corequery.UpsertBatchResultParams{
+		BatchName:  batchName,
+		JobType:    r.JobType,
+		JobID:      r.JobID,
+		Datastore:  r.Datastore,
+		Error:      r.Error,
+		Severity:   r.Severity,
+		RecordedAt: r.RecordedAt,
+	})
+}
+
+func (db *Store) GetBatchResults(batchName string) ([]NotificationBatchResult, error) {
+	rows, err := db.readQueries.GetBatchResults(db.ctx, batchName)
+	if err != nil {
+		return nil, err
+	}
+	return batchResultsFromRows(rows), nil
+}
+
+// TakeBatchResults reads and clears a batch's results in one transaction, so two flushes cannot both send them.
+func (db *Store) TakeBatchResults(batchName string) ([]NotificationBatchResult, error) {
+	var out []NotificationBatchResult
+	err := db.RunInTransaction(db.ctx, func(_ *Transaction, q *corequery.Queries) error {
+		rows, err := q.GetBatchResults(db.ctx, batchName)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		if err := q.DeleteBatchResults(db.ctx, batchName); err != nil {
+			return err
+		}
+		out = batchResultsFromRows(rows)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (db *Store) ListBatchesWithResults() ([]string, error) {
+	return db.readQueries.ListBatchesWithResults(db.ctx)
+}
+
+func batchResultsFromRows(rows []corequery.NotificationBatchResult) []NotificationBatchResult {
+	out := make([]NotificationBatchResult, len(rows))
+	for i, r := range rows {
+		out[i] = NotificationBatchResult{
+			JobType:    r.JobType,
+			JobID:      r.JobID,
+			Datastore:  r.Datastore,
+			Error:      r.Error,
+			Severity:   r.Severity,
+			RecordedAt: r.RecordedAt,
+		}
+	}
+	return out
 }
 
 func (db *Store) GetBackupLastRunEndtime(jobID string) int64 {

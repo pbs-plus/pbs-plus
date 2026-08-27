@@ -4,6 +4,7 @@ package notification
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -13,15 +14,17 @@ import (
 )
 
 type fakeBatchDB struct {
-	mu    sync.Mutex
-	jobs  map[string]map[string]bool
-	batch map[string]coredb.NotificationBatch
+	mu      sync.Mutex
+	jobs    map[string]map[string]bool
+	batch   map[string]coredb.NotificationBatch
+	results map[string][]coredb.NotificationBatchResult
 }
 
 func newFakeBatchDB() *fakeBatchDB {
 	return &fakeBatchDB{
-		jobs:  make(map[string]map[string]bool),
-		batch: make(map[string]coredb.NotificationBatch),
+		jobs:    make(map[string]map[string]bool),
+		batch:   make(map[string]coredb.NotificationBatch),
+		results: make(map[string][]coredb.NotificationBatchResult),
 	}
 }
 
@@ -31,6 +34,15 @@ func (f *fakeBatchDB) addBatch(b coredb.NotificationBatch, jobType, jobID string
 		f.jobs[b.Name] = make(map[string]bool)
 	}
 	f.jobs[b.Name][jobType+":"+jobID] = true
+}
+
+// expireResults backdates collected results past any plausible wait timeout.
+func (f *fakeBatchDB) expireResults(batchName string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.results[batchName] {
+		f.results[batchName][i].RecordedAt -= 86400
+	}
 }
 
 func (f *fakeBatchDB) GetBatchForJob(jobType, jobID string) (coredb.NotificationBatch, error) {
@@ -53,6 +65,56 @@ func (f *fakeBatchDB) GetBatchJobs(batchName string) ([]coredb.NotificationBatch
 		jt, id, _ := strings.Cut(key, ":")
 		out = append(out, coredb.NotificationBatchJob{BatchName: batchName, JobType: jt, JobID: id})
 	}
+	return out, nil
+}
+
+func (f *fakeBatchDB) GetNotificationBatch(name string) (coredb.NotificationBatch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.batch[name]
+	if !ok {
+		return coredb.NotificationBatch{}, fmt.Errorf("batch %q not found", name)
+	}
+	return b, nil
+}
+
+func (f *fakeBatchDB) RecordBatchResult(batchName string, r coredb.NotificationBatchResult) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.results[batchName] {
+		if f.results[batchName][i].JobType == r.JobType && f.results[batchName][i].JobID == r.JobID {
+			f.results[batchName][i] = r
+			return nil
+		}
+	}
+	f.results[batchName] = append(f.results[batchName], r)
+	return nil
+}
+
+func (f *fakeBatchDB) GetBatchResults(batchName string) ([]coredb.NotificationBatchResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]coredb.NotificationBatchResult, len(f.results[batchName]))
+	copy(out, f.results[batchName])
+	return out, nil
+}
+
+func (f *fakeBatchDB) TakeBatchResults(batchName string) ([]coredb.NotificationBatchResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.results[batchName]
+	delete(f.results, batchName)
+	return out, nil
+}
+
+func (f *fakeBatchDB) ListBatchesWithResults() ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for name := range f.results {
+		out = append(out, name)
+	}
+	sort.Strings(out)
 	return out, nil
 }
 
@@ -102,9 +164,7 @@ func (s *sentRecorder) waitForCount(t *testing.T, n int) bool {
 func newTestTracker(db *fakeBatchDB) (*BatchTracker, *sentRecorder) {
 	rec := &sentRecorder{}
 	bt := &BatchTracker{
-		db:      db,
-		pending: make(map[string]*batchState),
-		timers:  make(map[string]*time.Timer),
+		db: db,
 		send: func(b coredb.NotificationBatch, r []JobResult, isTimeout bool) {
 			rec.record(sentNotification{batch: b.Name, results: r, isTimeout: isTimeout})
 		},
@@ -148,7 +208,8 @@ func TestBatchTracker_SendOnTimeoutFalse_KeepsCollectingThenSends(t *testing.T) 
 
 	bt.RecordJobResult("notification-system", JobTypeBackup, "job-a", "ds1", nil, nil)
 
-	bt.flushBatch("b2", true)
+	db.expireResults("b2")
+	bt.evaluateAll()
 	if sent.count() != 0 {
 		t.Fatalf("should not send on timeout when send-on-timeout is disabled, got %d sends", sent.count())
 	}
@@ -203,6 +264,53 @@ func TestBatchTracker_DeduplicatesReReportedJobs(t *testing.T) {
 	}
 	if aResult.Severity != "error" {
 		t.Errorf("expected job-a last result (error) to win, got severity %q", aResult.Severity)
+	}
+}
+
+func TestBatchTracker_RecoversPendingBatchAfterRestart(t *testing.T) {
+	db := newFakeBatchDB()
+	b := coredb.NotificationBatch{Name: "b5", WaitTimeoutSecs: 300, SendOnTimeout: true}
+	db.addBatch(b, "backup", "job-a")
+	db.addBatch(b, "backup", "job-b")
+
+	before, _ := newTestTracker(db)
+	before.RecordJobResult("notification-system", JobTypeBackup, "job-a", "ds1", nil, nil)
+
+	after, sent := newTestTracker(db)
+	after.RecordJobResult("notification-system", JobTypeBackup, "job-b", "ds1", nil, nil)
+
+	if !sent.waitForCount(t, 1) {
+		t.Fatalf("restart lost results collected before it; expected 1 consolidated notification, got %d", sent.count())
+	}
+	if got := len(sent.snapshot()[0].results); got != 2 {
+		t.Errorf("expected both pre- and post-restart results, got %d", got)
+	}
+}
+
+func TestBatchTracker_TimeoutSendsPartialBatch(t *testing.T) {
+	db := newFakeBatchDB()
+	b := coredb.NotificationBatch{Name: "b6", WaitTimeoutSecs: 300, SendOnTimeout: true}
+	db.addBatch(b, "backup", "job-a")
+	db.addBatch(b, "backup", "job-b")
+
+	bt, sent := newTestTracker(db)
+	bt.RecordJobResult("notification-system", JobTypeBackup, "job-a", "ds1", nil, nil)
+	if sent.count() != 0 {
+		t.Fatalf("should not flush before the timeout elapsed, got %d", sent.count())
+	}
+
+	db.expireResults("b6")
+	bt.evaluateAll()
+
+	if !sent.waitForCount(t, 1) {
+		t.Fatalf("expected a timeout flush, got %d", sent.count())
+	}
+	got := sent.snapshot()[0]
+	if !got.isTimeout {
+		t.Error("partial flush should be marked as timeout")
+	}
+	if len(got.results) != 1 {
+		t.Errorf("expected the single reported result, got %d", len(got.results))
 	}
 }
 

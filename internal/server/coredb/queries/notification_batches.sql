@@ -44,3 +44,24 @@ DELETE FROM notification_batch_jobs WHERE job_type = ? AND job_id = ?;
 
 -- name: ListBatchJobs :many
 SELECT * FROM notification_batch_jobs ORDER BY batch_name, job_type, job_id;
+
+-- name: UpsertBatchResult :exec
+INSERT INTO notification_batch_results (
+    batch_name, job_type, job_id, datastore, error, severity, recorded_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (batch_name, job_type, job_id) DO UPDATE SET
+    datastore = excluded.datastore,
+    error = excluded.error,
+    severity = excluded.severity,
+    recorded_at = excluded.recorded_at;
+
+-- name: GetBatchResults :many
+SELECT * FROM notification_batch_results
+WHERE batch_name = ?
+ORDER BY recorded_at, job_type, job_id;
+
+-- name: DeleteBatchResults :exec
+DELETE FROM notification_batch_results WHERE batch_name = ?;
+
+-- name: ListBatchesWithResults :many
+SELECT DISTINCT batch_name FROM notification_batch_results ORDER BY batch_name;
