@@ -25,6 +25,8 @@ func Render() []byte {
 	items = append(items, mountPanel)
 	items = append(items, targetPanelController)
 	items = append(items, targetPanel)
+	items = append(items, alertsPanel)
+	items = append(items, alertEditWindow)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

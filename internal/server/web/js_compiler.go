@@ -51,6 +51,7 @@ func isMigratedCustomSource(path string) bool {
 		strings.HasSuffix(path, "/5_models.js") ||
 		strings.HasSuffix(path, "/6_mtf_tapes.js") ||
 		strings.HasSuffix(path, "/7_mtf_models.js") ||
+		strings.HasSuffix(path, "/panels/alert_settings.js") ||
 		strings.HasSuffix(path, "/panels/backups.js") ||
 		strings.HasSuffix(path, "/panels/exclusions.js") ||
 		strings.HasSuffix(path, "/panels/mtf_changer_grid.js") ||

@@ -7,7 +7,7 @@ var notificationBatchPanel = js.Panel{
 	Title: "Notification Batches", StateID: "grid-notification-batches-v1",
 	MultiSelect: true, CheckboxSelection: true,
 	Store: js.Store{
-		Fields:  []string{"name", "comment", "notification-mode", "wait-timeout-secs", "send-on-timeout", "created-at", "job-count"},
+		Fields:  js.Fields("name", "comment", "notification-mode", "wait-timeout-secs", "send-on-timeout", "created-at", "job-count"),
 		APIPath: "/api2/json/d2d/notification-batch", Sorters: "name",
 	},
 	Listeners: js.Listeners{ItemDblClick: "editBatch"},

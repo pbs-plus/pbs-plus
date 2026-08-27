@@ -212,9 +212,10 @@ type Model struct {
 	RootProperty string
 }
 
-func (m Model) Config() Obj {
-	fields := make(Arr, len(m.Fields))
-	for i, f := range m.Fields {
+// modelFields lowers fields to a config array, keeping plain names bare.
+func modelFields(list []ModelField) Arr {
+	fields := make(Arr, len(list))
+	for i, f := range list {
 		if f.Type == "" && f.Convert == "" {
 			fields[i] = f.Name
 			continue
@@ -223,6 +224,11 @@ func (m Model) Config() Obj {
 		set(field, "convert", f.Convert)
 		fields[i] = field
 	}
+	return fields
+}
+
+func (m Model) Config() Obj {
+	fields := modelFields(m.Fields)
 	extend := m.Extend
 	if extend == "" {
 		extend = "Ext.data.Model"
@@ -251,7 +257,8 @@ func (m Model) AppendJS(dst []byte, indent int) []byte {
 type Store struct {
 	StoreID        string
 	Model          string
-	Fields         []string
+	Fields         []ModelField
+	AutoLoad       *bool
 	Data           []Option
 	APIPath        string
 	Sorters        string
@@ -300,8 +307,14 @@ func (s Store) Config() Obj {
 		proxy["queryParam"] = Raw("null")
 	}
 	if len(s.Fields) > 0 {
-		plain := Obj{"fields": stringsToArr(s.Fields), "autoLoad": true, "proxy": proxy}
+		plain := Obj{"fields": modelFields(s.Fields), "autoLoad": true, "proxy": proxy}
+		if s.AutoLoad != nil {
+			plain["autoLoad"] = *s.AutoLoad
+		}
 		set(plain, "sorters", s.Sorters)
+		if len(s.SortBy) > 0 {
+			plain["sorters"] = sorters(s.SortBy)
+		}
 		return plain
 	}
 	if len(s.Data) > 0 {
@@ -389,6 +402,7 @@ type Tool struct {
 	Cls                   string
 	HTML                  string
 	HTMLRaw               Raw
+	Bind                  Obj
 	Reference             string
 	Dock                  string
 	Style                 Obj
@@ -433,6 +447,7 @@ func (t Tool) Config() Obj {
 	set(o, "cls", t.Cls)
 	set(o, "html", t.HTML)
 	set(o, "html", t.HTMLRaw)
+	set(o, "bind", t.Bind)
 	set(o, "reference", t.Reference)
 	set(o, "dock", t.Dock)
 	set(o, "style", t.Style)
@@ -614,6 +629,22 @@ type Field struct {
 	IconCls                  string
 	Items                    Arr
 	AfterRender              Raw
+	Reference                string
+	Bind                     Obj
+	MinValue                 int
+	MaxValue                 int
+	ComboItems               Arr
+	BoxLabel                 string
+	InputValue               any
+	UncheckedValue           any
+	Checked                  *bool
+	Margins                  string
+	Hidden                   bool
+	Format                   string
+	SubmitFormat             string
+	Columns                  int
+	SubmitValue              bool
+	ChangeFn                 Raw
 }
 
 func (f Field) Config() Obj {
@@ -656,27 +687,58 @@ func (f Field) Config() Obj {
 	}
 	set(o, "iconCls", f.IconCls)
 	set(o, "items", f.Items)
-	set(o, "listeners", listener("afterrender", f.AfterRender))
+	set(o, "reference", f.Reference)
+	set(o, "bind", f.Bind)
+	set(o, "minValue", f.MinValue)
+	set(o, "maxValue", f.MaxValue)
+	set(o, "comboItems", f.ComboItems)
+	if f.BoxLabel != "" {
+		o["boxLabel"] = T(f.BoxLabel)
+	}
+	if f.InputValue != nil {
+		o["inputValue"] = f.InputValue
+	}
+	if f.UncheckedValue != nil {
+		o["uncheckedValue"] = f.UncheckedValue
+	}
+	set(o, "checked", f.Checked)
+	set(o, "margins", f.Margins)
+	set(o, "hidden", f.Hidden)
+	set(o, "format", f.Format)
+	set(o, "submitFormat", f.SubmitFormat)
+	set(o, "columns", f.Columns)
+	set(o, "submitValue", f.SubmitValue)
+	listeners := listener("afterrender", f.AfterRender)
+	if f.ChangeFn != "" {
+		if listeners == nil {
+			listeners = Obj{}
+		}
+		listeners["change"] = f.ChangeFn
+	}
+	set(o, "listeners", listeners)
 	return o
 }
 
 // EditWindow is a PBS.plusWindow.Edit dialog. CBindData receives the window
 // initialConfig and normally sets me.url and me.method.
 type EditWindow struct {
-	Name         string
-	XType        XType
-	Extend       string
-	Subject      string
-	Width        string
-	PixelWidth   int
-	Resizable    bool
-	NotResizable bool
-	IsCreate     bool
-	IsAdd        bool
-	Method       string
-	CBindData    Raw
-	Items        Arr
-	Methods      map[string]Raw
+	Name          string
+	XType         XType
+	Extend        string
+	Subject       string
+	Title         string
+	Width         string
+	PixelWidth    int
+	Resizable     bool
+	NotResizable  bool
+	IsCreate      bool
+	IsAdd         bool
+	Method        string
+	CBindData     Raw
+	ViewModelData Obj
+	Controller    Controller
+	Items         Arr
+	Methods       map[string]Raw
 }
 
 func (w EditWindow) Config() Obj {
@@ -692,6 +754,9 @@ func (w EditWindow) Config() Obj {
 		o["alias"] = "widget." + string(w.XType)
 	}
 	set(o, "subject", w.Subject)
+	if w.Title != "" {
+		o["title"] = T(w.Title)
+	}
 	set(o, "width", w.Width)
 	set(o, "width", w.PixelWidth)
 	set(o, "resizable", w.Resizable)
@@ -702,6 +767,12 @@ func (w EditWindow) Config() Obj {
 	set(o, "isAdd", w.IsAdd)
 	set(o, "method", w.Method)
 	set(o, "cbindData", w.CBindData)
+	if len(w.ViewModelData) > 0 {
+		o["viewModel"] = Obj{"data": w.ViewModelData}
+	}
+	if w.Controller.Methods != nil || w.Controller.Control != nil {
+		o["controller"] = w.Controller.Config()
+	}
 	set(o, "items", w.Items)
 	for k, v := range w.Methods {
 		o[k] = v
@@ -870,14 +941,18 @@ type Panel struct {
 	Items             Arr
 	Column1           Arr
 	Column2           Arr
+	ColumnB           Arr
 	FieldDefaults     Obj
 	Padding           int
 	Border            bool
+	BorderOff         bool
 	PanelDefaults     bool
 	Store             Component
 	Columns           []Column
 	Tbar              []Tool
 	DockedItems       []Tool
+	Reference         string
+	BodyPadding       int
 	Grouping          *Grouping
 	ViewConfig        *ViewConfig
 	Controller        Controller
@@ -902,16 +977,21 @@ const (
 )
 
 func (p Panel) Config() Obj {
-	extend := p.Extend
-	if extend == "" {
-		extend = "Ext.panel.Panel"
-		if len(p.Columns) > 0 {
-			extend = "Ext.grid.Panel"
+	o := Obj{}
+	if p.Name == "" {
+		o["xtype"] = string(p.inlineXType())
+	} else {
+		extend := p.Extend
+		if extend == "" {
+			extend = "Ext.panel.Panel"
+			if len(p.Columns) > 0 {
+				extend = "Ext.grid.Panel"
+			}
 		}
-	}
-	o := Obj{"extend": extend}
-	if p.XType != "" {
-		o["alias"] = "widget." + string(p.XType)
+		o["extend"] = extend
+		if p.XType != "" {
+			o["alias"] = "widget." + string(p.XType)
+		}
 	}
 	if p.Title != "" {
 		o["title"] = T(p.Title)
@@ -921,12 +1001,18 @@ func (p Panel) Config() Obj {
 		o["stateId"] = p.StateID
 	}
 	set(o, "layout", p.Layout)
+	set(o, "reference", p.Reference)
+	set(o, "bodyPadding", p.BodyPadding)
 	set(o, "items", p.Items)
 	set(o, "column1", p.Column1)
 	set(o, "column2", p.Column2)
+	set(o, "columnB", p.ColumnB)
 	set(o, "fieldDefaults", p.FieldDefaults)
 	set(o, "padding", p.Padding)
 	set(o, "border", p.Border)
+	if p.BorderOff {
+		o["border"] = false
+	}
 	if p.PanelDefaults {
 		o["defaults"] = Obj{"border": false, "xtype": string(XPanel)}
 	}
@@ -990,6 +1076,26 @@ func (p Panel) Config() Obj {
 		o[k] = v
 	}
 	return o
+}
+
+// inlineXType names the xtype for an item-position Panel; instance configs
+// select their class by xtype, never extend.
+func (p Panel) inlineXType() XType {
+	if p.XType != "" {
+		return p.XType
+	}
+	if len(p.Columns) > 0 {
+		return XGrid
+	}
+	switch p.Extend {
+	case ExtTabPanel:
+		return XTabPanel
+	case ExtInputPanel:
+		return XInputPanel
+	case ExtFieldContainer:
+		return XFieldContainer
+	}
+	return XPanel
 }
 
 func (p Panel) AppendJS(dst []byte, indent int) []byte {

@@ -47,6 +47,8 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.D2DSnapshotMount.DatastorePanel"`),
 		[]byte(`Ext.define("PBS.D2DManagement.TargetPanelController"`),
 		[]byte(`Ext.define("PBS.D2DManagement.TargetPanel"`),
+		[]byte(`Ext.define("PBS.D2DManagement.Alerts"`),
+		[]byte(`Ext.define("PBS.D2DManagement.AlertEditWindow"`),
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),
