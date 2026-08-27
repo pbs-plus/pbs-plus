@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 func Definitions() []js.Value {
 	items := append(models, scriptSelector, scriptEditWindow, scriptPanel)

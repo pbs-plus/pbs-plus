@@ -208,11 +208,11 @@ func Typed(fields []ModelField, name, typ string) []ModelField {
 
 // Model is an Ext.data.Model class backed by a PBS-Plus API path.
 type Model struct {
-	Name         string
-	Extend       string
-	Fields       []ModelField
-	IDProperty   string
-	APIPath      string
+	Name       string
+	Extend     string
+	Fields     []ModelField
+	IDProperty string
+	APIPath    string
 }
 
 // modelFields lowers fields to a config array, keeping plain names bare.

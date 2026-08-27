@@ -1,6 +1,8 @@
 package ui
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var coreViews = []js.Value{
 	js.Panel{
