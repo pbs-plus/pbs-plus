@@ -117,6 +117,10 @@ func set(o Obj, k string, v any) {
 		if t != 0 {
 			o[k] = t
 		}
+	case float64:
+		if t != 0 {
+			o[k] = t
+		}
 	case bool:
 		if t {
 			o[k] = true
@@ -260,6 +264,7 @@ type Store struct {
 	Fields         []ModelField
 	AutoLoad       *bool
 	Listeners      Obj
+	RawData        Arr
 	Data           []Option
 	APIPath        string
 	Sorters        string
@@ -320,6 +325,9 @@ func (s Store) Config() Obj {
 		}
 		set(plain, "sorters", s.Sorters)
 		set(plain, "listeners", s.Listeners)
+		if s.RawData != nil {
+			plain["data"] = s.RawData
+		}
 		if len(s.SortBy) > 0 {
 			plain["sorters"] = sorters(s.SortBy)
 		}
@@ -422,6 +430,7 @@ type Tool struct {
 	Menu                  Arr
 	CBind                 Obj
 	ClearTrigger          *ClearTrigger
+	Render                Raw
 
 	separator string
 }
@@ -493,6 +502,13 @@ func (t Tool) Config() Obj {
 		listeners["change"] = Obj{"fn": t.Change, "buffer": buffer}
 	}
 	if len(listeners) > 0 {
+		o["listeners"] = listeners
+	}
+	if t.Render != "" {
+		if listeners == nil {
+			listeners = Obj{}
+		}
+		listeners["render"] = t.Render
 		o["listeners"] = listeners
 	}
 	return o
@@ -639,8 +655,10 @@ type Field struct {
 	AfterRender              Raw
 	Reference                string
 	Bind                     Obj
-	MinValue                 int
-	MaxValue                 int
+	MinValue                 float64
+	MaxValue                 float64
+	DecimalPrecision         int
+	Collapsible              bool
 	ComboItems               Arr
 	BoxLabel                 string
 	InputValue               any
@@ -668,6 +686,10 @@ type Field struct {
 	Store                    any
 	Change                   string
 	TriggerAction            string
+	HTMLRaw                  Raw
+	Cls                      string
+	Style                    Obj
+	Flex                     int
 }
 
 func (f Field) Config() Obj {
@@ -779,6 +801,10 @@ func (f Field) Config() Obj {
 	}
 	set(o, "listeners", listeners)
 	set(o, "triggerAction", f.TriggerAction)
+	set(o, "html", f.HTMLRaw)
+	set(o, "cls", f.Cls)
+	set(o, "style", f.Style)
+	set(o, "flex", f.Flex)
 	return o
 }
 
@@ -1026,7 +1052,7 @@ type Panel struct {
 	Store             Component
 	Columns           []Column
 	Tbar              []Tool
-	Fbar             []Tool
+	Fbar              []Tool
 	DockedItems       []Tool
 	Reference         string
 	BodyPadding       int
@@ -1045,6 +1071,13 @@ type Panel struct {
 	RowLines          bool
 	Scroll            bool
 	MaxHeight         int
+	MinHeight         int
+	Width             int
+	Margin            string
+	Modal             bool
+	NotResizable      bool
+	EmptyText         string
+	ListenersRaw      Obj
 	ControllerRef     string
 	SelModel          *SelModel
 }
@@ -1109,6 +1142,16 @@ func (p Panel) Config() Obj {
 	set(o, "rowLines", p.RowLines)
 	set(o, "scroll", p.Scroll)
 	set(o, "maxHeight", p.MaxHeight)
+	set(o, "minHeight", p.MinHeight)
+	set(o, "width", p.Width)
+	set(o, "margin", p.Margin)
+	set(o, "modal", p.Modal)
+	if p.NotResizable {
+		o["resizable"] = false
+	}
+	if p.EmptyText != "" {
+		o["emptyText"] = T(p.EmptyText)
+	}
 	if p.SelModel != nil {
 		o["selModel"] = p.SelModel.Config()
 	}
@@ -1134,6 +1177,13 @@ func (p Panel) Config() Obj {
 	}
 	if lc := listeners.Config(); len(lc) > 0 {
 		o["listeners"] = lc
+	}
+	if len(p.ListenersRaw) > 0 {
+		if lc, ok := o["listeners"].(Obj); ok {
+			maps.Copy(lc, p.ListenersRaw)
+		} else {
+			o["listeners"] = p.ListenersRaw
+		}
 	}
 	if len(p.Columns) > 0 {
 		cols := make(Arr, len(p.Columns))

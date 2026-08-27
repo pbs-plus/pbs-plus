@@ -35,6 +35,11 @@ func Render() []byte {
 	items = append(items, mtfJobEdit)
 	items = append(items, notificationBatchEdit)
 	items = append(items, pathBrowserWindow)
+	items = append(items, verificationHelpers)
+	items = append(items, verificationFilterEditWindow)
+	items = append(items, verificationOptionsPanel)
+	items = append(items, verificationSpotCheckPanel)
+	items = append(items, verificationJobEdit)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }
