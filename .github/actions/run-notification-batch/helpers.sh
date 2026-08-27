@@ -83,6 +83,37 @@ wait_for_agent_reconnect() {
 	return 1
 }
 
+server_log_count() {
+	local needle="$1"
+	docker logs pbs-plus-test 2>&1 | grep -cF "$needle" || true
+}
+
+wait_for_server_log_increase() {
+	local needle="$1"
+	local before="$2"
+	local timeout="$3"
+	local start=$SECONDS
+	local deadline=$((SECONDS + timeout))
+	local seen
+
+	printf 'waiting for the restarted server to log %q (had %s, timeout %ss)\n' \
+		"$needle" "$before" "$timeout"
+
+	while ((SECONDS < deadline)); do
+		seen=$(server_log_count "$needle")
+		if ((seen > before)); then
+			printf 'restarted server logged %q after %ss (%s occurrences)\n' \
+				"$needle" "$((SECONDS - start))" "$seen"
+			return 0
+		fi
+		sleep 2
+	done
+
+	printf 'restarted server never logged %q within %ss\n' "$needle" "$timeout"
+	docker logs --tail=200 pbs-plus-test 2>&1 | grep -Fi quic || true
+	return 1
+}
+
 batch_pending() {
 	local batch="$1"
 	api "https://localhost:8017/api2/json/d2d/notification-batch/status" |
