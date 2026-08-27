@@ -133,10 +133,19 @@ func Render(items ...Value) []byte {
 }
 
 // Func builds a function literal. params is the raw parameter list and body
-// the raw statement list, both dedented and reindented on render.
+// the raw statement list, both dedented and reindented on render. A params
+// value of "async" or "async <names>" emits an async function.
 func Func(params, body string) Raw {
 	body = strings.TrimRight(dedent(body), "\n")
-	return Raw(fmt.Sprintf("function (%s) {\n%s\n}", params, indentLines(body, 1)))
+	async := ""
+	if params == "async" {
+		params = ""
+		async = "async "
+	} else if rest, ok := strings.CutPrefix(params, "async "); ok {
+		params = rest
+		async = "async "
+	}
+	return Raw(fmt.Sprintf("%sfunction (%s) {\n%s\n}", async, params, indentLines(body, 1)))
 }
 
 // T wraps s in a gettext call.

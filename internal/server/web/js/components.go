@@ -301,6 +301,9 @@ type Column struct {
 	Sortable       *bool
 	Renderer       Raw
 	RendererMethod string
+	Format         string
+	Items          Arr
+	Listeners      Obj
 }
 
 func (c Column) Config() Obj {
@@ -319,6 +322,9 @@ func (c Column) Config() Obj {
 	set(o, "sortable", c.Sortable)
 	set(o, "renderer", c.Renderer)
 	set(o, "renderer", c.RendererMethod)
+	set(o, "format", c.Format)
+	set(o, "items", c.Items)
+	set(o, "listeners", c.Listeners)
 	return o
 }
 
@@ -339,12 +345,17 @@ type Tool struct {
 	Hidden                bool
 	Cls                   string
 	HTML                  string
+	HTMLRaw               Raw
 	Reference             string
 	Dock                  string
 	Style                 Obj
 	EmptyText             string
 	Width                 int
 	KeyUp                 string
+	Change                string
+	Menu                  Arr
+	CBind                 Obj
+	ClearTrigger          bool
 
 	separator string
 }
@@ -377,6 +388,7 @@ func (t Tool) Config() Obj {
 	set(o, "hidden", t.Hidden)
 	set(o, "cls", t.Cls)
 	set(o, "html", t.HTML)
+	set(o, "html", t.HTMLRaw)
 	set(o, "reference", t.Reference)
 	set(o, "dock", t.Dock)
 	set(o, "style", t.Style)
@@ -384,9 +396,24 @@ func (t Tool) Config() Obj {
 		o["emptyText"] = T(t.EmptyText)
 	}
 	set(o, "width", t.Width)
+	set(o, "menu", t.Menu)
+	set(o, "cbind", t.CBind)
+	if t.ClearTrigger {
+		o["triggers"] = Obj{"clear": Obj{
+			"cls": "pmx-clear-trigger", "weight": -1, "hidden": true,
+			"handler": Raw(`function () { this.triggers.clear.setVisible(false); this.setValue(""); }`),
+		}}
+	}
+	listeners := Obj{}
 	if t.KeyUp != "" {
 		o["enableKeyEvents"] = true
-		o["listeners"] = Obj{"keyup": Obj{"fn": t.KeyUp, "buffer": 300}}
+		listeners["keyup"] = Obj{"fn": t.KeyUp, "buffer": 300}
+	}
+	if t.Change != "" {
+		listeners["change"] = Obj{"fn": t.Change, "buffer": 500}
+	}
+	if len(listeners) > 0 {
+		o["listeners"] = listeners
 	}
 	return o
 }
@@ -407,10 +434,12 @@ func tools(list []Tool) Arr {
 // function literal, normally built with Func.
 type Controller struct {
 	Methods map[string]Raw
+	Control Obj
 }
 
 func (c Controller) Config() Obj {
 	o := Obj{"xclass": "Ext.app.ViewController"}
+	set(o, "control", c.Control)
 	for k, v := range c.Methods {
 		o[k] = v
 	}
@@ -423,6 +452,7 @@ type Listeners struct {
 	Deactivate      string
 	BeforeDestroy   string
 	ItemDblClick    string
+	ItemContextMenu string
 	AfterRender     string
 	SelectionChange string
 }
@@ -433,6 +463,7 @@ func (l Listeners) Config() Obj {
 	set(o, "deactivate", l.Deactivate)
 	set(o, "beforedestroy", l.BeforeDestroy)
 	set(o, "itemdblclick", l.ItemDblClick)
+	set(o, "itemcontextmenu", l.ItemContextMenu)
 	set(o, "afterrender", l.AfterRender)
 	set(o, "selectionchange", l.SelectionChange)
 	return o
@@ -798,6 +829,9 @@ type Panel struct {
 	CheckboxSelection bool
 	NoStoreLifecycle  bool
 	Methods           map[string]Raw
+	RootVisible       *bool
+	ConfigProps       Obj
+	Mixins            []string
 }
 
 const (
@@ -838,6 +872,11 @@ func (p Panel) Config() Obj {
 	set(o, "multiSelect", p.MultiSelect)
 	if p.CheckboxSelection {
 		o["selType"] = "checkboxmodel"
+	}
+	set(o, "rootVisible", p.RootVisible)
+	set(o, "config", p.ConfigProps)
+	if len(p.Mixins) > 0 {
+		o["mixins"] = p.Mixins
 	}
 
 	ctrl := p.Controller
