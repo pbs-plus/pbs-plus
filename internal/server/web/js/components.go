@@ -213,7 +213,6 @@ type Model struct {
 	Fields       []ModelField
 	IDProperty   string
 	APIPath      string
-	RootProperty string
 }
 
 // modelFields lowers fields to a config array, keeping plain names bare.
@@ -240,14 +239,10 @@ func (m Model) Config() Obj {
 	o := Obj{"extend": extend, "fields": fields}
 	set(o, "idProperty", m.IDProperty)
 	if m.APIPath != "" {
-		root := m.RootProperty
-		if root == "" {
-			root = "data"
-		}
 		o["proxy"] = Obj{
 			"type":   "pbsplus",
 			"url":    PlusURL(m.APIPath),
-			"reader": Obj{"type": "json", "rootProperty": root},
+			"reader": Obj{"type": "json", "rootProperty": "data"},
 		}
 	}
 	return o
@@ -678,7 +673,6 @@ type Field struct {
 	OnlyDirs                 bool
 	Padding                  string
 	Margin                   string
-	LabelAlign               string
 	AutoEl                   Obj
 	Store                    any
 	Change                   string
@@ -774,7 +768,6 @@ func (f Field) Config() Obj {
 	set(o, "onlyDirs", f.OnlyDirs)
 	set(o, "padding", f.Padding)
 	set(o, "margin", f.Margin)
-	set(o, "labelAlign", f.LabelAlign)
 	set(o, "autoEl", f.AutoEl)
 	if f.Store != nil {
 		if c, ok := f.Store.(Component); ok {
@@ -1028,7 +1021,7 @@ func (s Selector) AppendJS(dst []byte, indent int) []byte {
 // Panel is every container class: grid, field container, input panel, tab
 // panel or plain panel. Extend picks the base class, defaulting to a grid when
 // Columns are set. A Panel with a Store stops updates on deactivate/destroy,
-// restarts on activate and monitors store errors unless NoStoreLifecycle is set.
+// restarts on activate and monitors store errors.
 type Panel struct {
 	Name              string
 	XType             XType
@@ -1059,7 +1052,6 @@ type Panel struct {
 	Listeners         Listeners
 	MultiSelect       bool
 	CheckboxSelection bool
-	NoStoreLifecycle  bool
 	Methods           map[string]Raw
 	RootVisible       *bool
 	ConfigProps       Obj
@@ -1160,13 +1152,11 @@ func (p Panel) Config() Obj {
 	}
 	if p.Store != nil {
 		o["store"] = p.Store.Config()
-		if !p.NoStoreLifecycle {
-			if s, ok := p.Store.(Store); ok && len(s.Fields) > 0 {
-				ctrl = withReload(ctrl)
-			} else {
-				ctrl = withStoreLifecycle(ctrl)
-				listeners = withStoreListeners(listeners)
-			}
+		if s, ok := p.Store.(Store); ok && len(s.Fields) > 0 {
+			ctrl = withReload(ctrl)
+		} else {
+			ctrl = withStoreLifecycle(ctrl)
+			listeners = withStoreListeners(listeners)
 		}
 	}
 	if len(ctrl.Methods) > 0 {
