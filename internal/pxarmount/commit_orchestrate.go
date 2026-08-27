@@ -2,6 +2,7 @@ package pxarmount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -97,12 +98,14 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	if archiveName == "" {
 		archiveName = backupID
 	}
-	now := time.Now().Unix()
-	if now <= lastCommitTime {
-		now = lastCommitTime + 1
+	backupTime, err := nextBackupTime(
+		snapshotGroupDir(mfs.pbsStore, backupType, backupID, namespace),
+		max(time.Now().Unix(), lastCommitTime+1, mfs.origSnapshot.BackupTime+1),
+	)
+	if err != nil {
+		return err
 	}
-	lastCommitTime = now
-	backupTime := now
+	lastCommitTime = backupTime
 
 	if err := ensureNamespaceDir(mfs.pbsStore, namespace); err != nil {
 		return fmt.Errorf("ensure namespace dir: %w", err)
@@ -317,13 +320,7 @@ func ensureNamespaceDir(pbsStore, namespace string) error {
 
 func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName string, backupTime int64) error {
 	log.Info("postCommit: resolve groupDir")
-	var groupDir string
-	if mfs.origPpxarDidx != "" {
-		origDir := filepath.Dir(mfs.origPpxarDidx)
-		groupDir = filepath.Dir(origDir)
-	} else {
-		groupDir = snapshotGroupDir(mfs.pbsStore, backupType, backupID, namespace)
-	}
+	groupDir := snapshotGroupDir(mfs.pbsStore, backupType, backupID, namespace)
 
 	newTimeISO := time.Unix(backupTime, 0).UTC().Format("2006-01-02T15:04:05Z")
 	snapDir := filepath.Join(groupDir, newTimeISO)
@@ -415,6 +412,20 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 	}
 
 	return nil
+}
+
+func nextBackupTime(groupDir string, candidate int64) (int64, error) {
+	for {
+		name := time.Unix(candidate, 0).UTC().Format("2006-01-02T15:04:05Z")
+		_, err := os.Stat(filepath.Join(groupDir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			return candidate, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("check backup timestamp %d: %w", candidate, err)
+		}
+		candidate++
+	}
 }
 
 func snapshotGroupDir(pbsStore, backupType, backupID, namespace string) string {
