@@ -482,12 +482,20 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 	total := len(items)
 
 	var (
-		idx      atomic.Int64
-		verified atomic.Int64
-		firstErr error
-		errOnce  sync.Once
+		idx        atomic.Int64
+		verified   atomic.Int64
+		failed     atomic.Bool
+		firstErr   error
+		errOnce    sync.Once
+		progressMu sync.Mutex
 	)
 
+	recordError := func(err error) {
+		errOnce.Do(func() {
+			firstErr = err
+			failed.Store(true)
+		})
+	}
 	lastProgress := time.Now()
 
 	hasher := func() {
@@ -501,14 +509,14 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 			}
 			it := &items[i]
 
-			if firstErr != nil {
+			if failed.Load() {
 				return
 			}
 
 			abs := mfs.mutablePath(it.relPath)
 			f, err := os.Open(abs)
 			if err != nil {
-				errOnce.Do(func() { firstErr = fmt.Errorf("open backed file %q for verification: %w", it.relPath, err) })
+				recordError(fmt.Errorf("open backed file %q for verification: %w", it.relPath, err))
 				return
 			}
 			h.Reset()
@@ -517,20 +525,22 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 				log.Error(err, "")
 			}
 			if err != nil {
-				errOnce.Do(func() { firstErr = fmt.Errorf("hash backed file %q: %w", it.relPath, err) })
+				recordError(fmt.Errorf("hash backed file %q: %w", it.relPath, err))
 				return
 			}
 			if h.Sum64() != it.expected {
-				errOnce.Do(func() { firstErr = fmt.Errorf("backed file %q content hash differs", it.relPath) })
+				recordError(fmt.Errorf("backed file %q content hash differs", it.relPath))
 				return
 			}
 
 			done := verified.Add(1)
+			progressMu.Lock()
 			if time.Since(lastProgress) >= 200*time.Millisecond || int(done) == total {
 				pct := int(done) * 100 / total
 				prog.SetMsg(fmt.Sprintf("%s (%d/%d, %d%%)", it.relPath, int(done), total, pct))
 				lastProgress = time.Now()
 			}
+			progressMu.Unlock()
 		}
 	}
 
