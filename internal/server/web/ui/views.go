@@ -8,6 +8,7 @@ var coreViews = []js.Value{
 	js.Panel{
 		Name:   "PBS.D2DManagement",
 		XType:  "pbsD2DManagement",
+		Title:  "Disk Backup",
 		Extend: js.ExtTabPanel,
 		Border: true,
 		Items: js.Items(
@@ -26,6 +27,7 @@ var coreViews = []js.Value{
 		Name:   "PBS.D2DSnapshotMount",
 		Extend: js.ExtTabPanel,
 		XType:  "pbsD2DSnapshotMount",
+		Title:  "Snapshot Mount",
 		Border: true,
 		Methods: map[string]js.Raw{"initComponent": js.Func("", `
 			var me = this;
@@ -57,6 +59,7 @@ var coreViews = []js.Value{
 		Name:   "PBS.D2DDataVerification",
 		Extend: js.ExtTabPanel,
 		XType:  "pbsD2DDataVerification",
+		Title:  "Data Verification",
 		Border: true,
 		Methods: map[string]js.Raw{"initComponent": js.Func("", `
 			var me = this;
