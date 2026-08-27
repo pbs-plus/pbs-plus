@@ -308,8 +308,14 @@ func (s Store) Config() Obj {
 		proxy["queryParam"] = Raw("null")
 	}
 	if len(s.Fields) > 0 {
-		plain := Obj{"fields": modelFields(s.Fields), "autoLoad": true, "proxy": proxy}
-		if s.AutoLoad != nil {
+		plain := Obj{"fields": modelFields(s.Fields)}
+		if s.APIPath != "" {
+			plain["proxy"] = proxy
+			plain["autoLoad"] = true
+			if s.AutoLoad != nil {
+				plain["autoLoad"] = *s.AutoLoad
+			}
+		} else if s.AutoLoad != nil {
 			plain["autoLoad"] = *s.AutoLoad
 		}
 		set(plain, "sorters", s.Sorters)
@@ -1036,6 +1042,8 @@ type Panel struct {
 	Mixins            []string
 	UseArrows         bool
 	RowLines          bool
+	Scroll            bool
+	MaxHeight         int
 	ControllerRef     string
 	SelModel          *SelModel
 }
@@ -1098,6 +1106,8 @@ func (p Panel) Config() Obj {
 	}
 	set(o, "useArrows", p.UseArrows)
 	set(o, "rowLines", p.RowLines)
+	set(o, "scroll", p.Scroll)
+	set(o, "maxHeight", p.MaxHeight)
 	if p.SelModel != nil {
 		o["selModel"] = p.SelModel.Config()
 	}
