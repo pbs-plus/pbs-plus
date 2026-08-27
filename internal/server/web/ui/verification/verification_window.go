@@ -204,10 +204,7 @@ var verificationOptionsPanel = js.Panel{
 	Name: "PBS.D2DVerification.OptionsInputPanel", XType: "pbsD2DVerificationOptionsPanel",
 	Extend: js.ExtInputPanel,
 	Column1: js.Items(
-		js.Field{XType: js.XComponent, HTML: `'<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
-			"Configure which backup snapshots to verify and how often to run checks. " +
-			"Each run samples files from a snapshot and validates their integrity." +
-			'</span>'`, Margin: "0 0 8 0"},
+		js.Field{XType: js.XComponent, HTML: `<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">Configure which backup snapshots to verify and how often to run checks. Each run samples files from a snapshot and validates their integrity.</span>`, Margin: "0 0 8 0"},
 		js.Field{XType: js.XDisplayEditField, Name: "id", Label: "Job ID", Renderer: "Ext.htmlEncode",
 			AllowBlank: new(true), EditableWhenCreate: true},
 		js.Field{XType: js.XCombo, Name: "target_mode", Label: "Target Mode", QueryMode: "local",
@@ -290,10 +287,7 @@ var verificationSpotCheckPanel = js.Panel{
 	Name: "PBS.D2DVerification.SpotCheckInputPanel", XType: "pbsD2DVerificationSpotCheckPanel",
 	Extend: js.ExtInputPanel,
 	Column1: js.Items(
-		js.Field{XType: js.XComponent, HTML: `'<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">' +
-			"Control how many files are checked per run and how they are selected. " +
-			"More samples yield higher statistical confidence. " +
-			'With 60+ samples and zero failures, confidence exceeds 95%.</span>'`, Margin: "0 0 8 0"},
+		js.Field{XType: js.XComponent, HTML: `<span class="pmx-hint" style="display:block;padding:4px 6px;font-size:11px;">Control how many files are checked per run and how they are selected. More samples yield higher statistical confidence. With 60+ samples and zero failures, confidence exceeds 95%.</span>`, Margin: "0 0 8 0"},
 		js.Field{XType: js.XCombo, Label: "Sample Mode", Name: "sample_count_mode", QueryMode: "local",
 			Store: js.Arr{js.Arr{"absolute", "Absolute Count"}, js.Arr{"percent", "Percentage"}},
 			Value: "absolute", Editable: new(false), ForceSelection: true,
