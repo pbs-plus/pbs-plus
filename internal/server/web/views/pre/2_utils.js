@@ -175,6 +175,11 @@ Ext.define("PBS.PlusUtils", {
       return "-";
     }
 
+    let qstatus = record.get("status_parsed");
+    if (qstatus && qstatus.category === "queued") {
+      return `<i class="fa fa-${qstatus.icon}"></i> ${qstatus.text}`;
+    }
+
     if (
       !record.data["last-run-endtime"] &&
       !store.getById("last-run-endtime")?.data.value &&

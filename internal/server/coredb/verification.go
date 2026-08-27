@@ -231,6 +231,8 @@ func (db *Store) populateVerificationJobExtras(job *VerificationJob) {
 			if task.Status == "stopped" {
 				job.History.LastRunState = task.ExitStatus
 				job.History.Duration = task.EndTime - task.StartTime
+			} else if qs := tasklog.QueuedState(task.UPID); qs != "" {
+				job.History.LastRunState = qs
 			} else if task.StartTime > 0 {
 				job.History.Duration = time.Now().Unix() - task.StartTime
 			}

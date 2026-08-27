@@ -5,12 +5,23 @@ package tasklog
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"log/slog"
 )
 
 type QueuedTask struct {
 	*WorkerTask
+}
+
+var queuedStates sync.Map
+
+// QueuedState returns the job status text for a live queued task UPID.
+func QueuedState(upid string) string {
+	if v, ok := queuedStates.Load(upid); ok {
+		return v.(string)
+	}
+	return ""
 }
 
 func SourceString(web bool) string {
@@ -27,6 +38,7 @@ func NewQueuedTask(workerType, wid string, web bool) (*QueuedTask, error) {
 		return nil, err
 	}
 	worker.LogString(fmt.Sprintf("TASK QUEUED: job started from %s", SourceString(web)))
+	queuedStates.Store(worker.UPID(), fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
 	return &QueuedTask{WorkerTask: worker}, nil
 }
 
@@ -67,6 +79,7 @@ func (t *QueuedTask) Close() {
 
 	unregisterWorker(t.Task.TaskId)
 	t.close()
+	queuedStates.Delete(t.UPID())
 
 	path, err := UPIDLogPath(t.UPID())
 	if err != nil {
