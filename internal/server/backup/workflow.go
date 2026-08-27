@@ -76,8 +76,8 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		return b.finalizeFailed(w, err)
 	}
 
-	startResRaw, err := w.Activity("start", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
-		return b.start(ctx, info)
+	startResRaw, err := w.Activity("start", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+		return b.start(ctx)
 	})
 	if err != nil {
 		return b.finalizeFailed(w, err)
@@ -120,7 +120,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 
 // start mounts the source and launches proxmox-backup-client, returning
 // the durable task identity for the wait activity.
-func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
+func (b *backupJob) start(ctx context.Context) (json.RawMessage, error) {
 	srcPath, agentMount, s3Mount, err := b.mountSource(ctx, b.job.Target)
 	if err != nil {
 		return nil, err
@@ -153,13 +153,6 @@ func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.Raw
 
 	b.started.Store(true)
 	b.logger.Info("backup task started", "upid", task.UPID)
-
-	if cmd.Process != nil {
-		checkpoint, err := json.Marshal(map[string]int{"pid": cmd.Process.Pid})
-		if err == nil {
-			_ = info.Checkpoint(ctx, checkpoint)
-		}
-	}
 
 	return json.Marshal(startResult{UPID: task.UPID, Owner: currOwner})
 }

@@ -232,7 +232,10 @@ func (v *verificationJob) verifyCandidates(ctx context.Context, backups []coredb
 
 		v.app.Agents.Expect(streamID)
 
-		verifyReq := verification.VerifyStartReq{VerifyID: v.job.ID}
+		verifyReq := verification.VerifyStartReq{
+			VerifyID:       v.job.ID,
+			IdempotencyKey: info.IdempotencyKey,
+		}
 		forkCtx, forkCancel := context.WithTimeout(ctx, 30*time.Second)
 		_, forkErr := controlSess.CallMessage(forkCtx, "verify_start", &verifyReq)
 		forkCancel()

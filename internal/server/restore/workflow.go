@@ -79,7 +79,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	b.upid = startRes.UPID
 	queued.Close()
 
-	runResRaw, err := w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	runResRaw, err := w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
 		if b.task == nil {
 			task, err := ReopenRestoreTask(job, b.upid)
 			if err != nil {
@@ -89,7 +89,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 			b.task = task
 			b.mu.Unlock()
 		}
-		if err := b.execute(ctx); err != nil {
+		if err := b.execute(ctx, info.IdempotencyKey); err != nil {
 			return nil, err
 		}
 		return json.Marshal(runResult{ErrCount: b.errCount.Load()})

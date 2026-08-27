@@ -52,11 +52,12 @@ type (
 	}
 
 	RestoreReq struct {
-		RestoreID string `cbor:"job_id"`
-		SrcPath   string `cbor:"src_path"`
-		DestPath  string `cbor:"dest_path"`
-		Mode      int    `cbor:"mode"`
-		Extras    string `cbor:"extras,omitempty"`
+		RestoreID      string `cbor:"job_id"`
+		SrcPath        string `cbor:"src_path"`
+		DestPath       string `cbor:"dest_path"`
+		Mode           int    `cbor:"mode"`
+		IdempotencyKey string `cbor:"idempotency_key,omitempty"`
+		Extras         string `cbor:"extras,omitempty"`
 	}
 
 	RestoreCloseReq struct {

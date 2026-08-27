@@ -58,13 +58,22 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	}
 	queued.Close()
 
-	err = w.Step("run", func(ctx context.Context) error {
+	_, err = w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
+		if len(info.ResumeCheckpoint) != 0 {
+			return nil, jobs.NonRetryable(errors.New("MTF migration interrupted after tape I/O started; submit a new execution to retry"))
+		}
+		if err := info.Checkpoint(ctx, json.RawMessage(`{"started":true}`)); err != nil {
+			return nil, err
+		}
 		if j.task == nil {
 			if err := j.reattach(startRes.UPID); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		return j.execute(ctx)
+		if err := j.execute(ctx); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
 	})
 	if err != nil {
 		return j.finalizeFailed(w, startRes.UPID, err)

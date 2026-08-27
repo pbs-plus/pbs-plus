@@ -139,7 +139,7 @@ func (s *Service) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
 		"manual",
 		"",
 		struct{}{},
-		[]string{"mtf:" + args.JobID},
+		[]string{"mtf:" + args.JobID, "mtf-tape"},
 		1,
 		time.Minute,
 	)

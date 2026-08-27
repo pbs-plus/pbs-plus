@@ -49,7 +49,7 @@ type restoreJob struct {
 	skipCheck    bool
 }
 
-func (b *restoreJob) execute(ctx context.Context) error {
+func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel
 
@@ -58,7 +58,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 
 	switch b.job.DestTarget.Type {
 	case coredb.TargetTypeAgent:
-		return b.agentExecute(ctx)
+		return b.agentExecute(ctx, idempotencyKey)
 	case coredb.TargetTypeLocal:
 		return b.localExecute(ctx)
 	case coredb.TargetTypeS3:
@@ -235,7 +235,7 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	return nil
 }
 
-func (b *restoreJob) agentExecute(ctx context.Context) error {
+func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) error {
 	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
@@ -295,10 +295,11 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	}
 
 	restoreReq := fswire.RestoreReq{
-		RestoreID: b.job.ID,
-		SrcPath:   srcPath,
-		DestPath:  destPath,
-		Mode:      b.job.Mode,
+		RestoreID:      b.job.ID,
+		SrcPath:        srcPath,
+		DestPath:       destPath,
+		Mode:           b.job.Mode,
+		IdempotencyKey: idempotencyKey,
 	}
 
 	b.app.Agents.Expect(b.job.GetStreamID())
