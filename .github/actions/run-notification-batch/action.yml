@@ -1,0 +1,178 @@
+name: Run Notification Batch Test
+description: Verify batched notifications survive a restart and that PBS drains the spool
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "240"
+    description: Timeout for each backup job to complete
+
+runs:
+  using: composite
+  steps:
+    - name: Create batched backup jobs
+      shell: bash
+      run: |
+        set -euo pipefail
+        for index in 01 02; do
+          job="notify-batch-${index}"
+          docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017/api2/extjs/config/disk-backup" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "id=${job}" \
+            -d "target=test-host - Root" \
+            -d "subpath=/test-backup" \
+            -d "store=test" \
+            -d "ns=notify-${index}" \
+            -d "schedule=" \
+            -d "retry=" \
+            -d "retry-interval=" \
+            -d "max-dir-entries=" \
+            -d "mode=" \
+            -d "sourcemode=" \
+            -d "readmode=" \
+            -d "include-xattr=" \
+            -d "comment=" \
+            -d "rawexclusions=" \
+            -d "pre_script=" \
+            -d "post_script="
+          printf 'created %s\n' "$job"
+        done
+
+    - name: Create notification batch covering both jobs
+      shell: bash
+      run: |
+        set -euo pipefail
+        response=$(docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017/api2/json/d2d/notification-batch" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "name=e2e-notify-batch" \
+          -d "wait-timeout-secs=600" \
+          -d "send-on-timeout=1" \
+          -d 'jobs=[{"job-type":"backup","job-id":"notify-batch-01"},{"job-type":"backup","job-id":"notify-batch-02"}]')
+        printf '%s\n' "$response"
+
+        assigned=$(docker exec pbs-plus-test curl -k -fsS "https://localhost:8017/api2/json/d2d/notification-batch?batch=e2e-notify-batch" | jq -r '.data.name // empty')
+        if [[ "$assigned" != e2e-notify-batch ]]; then
+          printf '%s\n' "batch was not created"
+          exit 1
+        fi
+
+    - name: Run first batched job
+      shell: bash
+      run: |
+        set -euo pipefail
+        source "${GITHUB_ACTION_PATH}/helpers.sh"
+        run_backup_job notify-batch-01
+        wait_for_backup notify-batch-01 ${{ inputs.timeout-seconds }}
+
+        pending=$(batch_pending e2e-notify-batch)
+        if [[ "$pending" != 1 ]]; then
+          printf '%s\n' "expected 1 collected result before the batch completes, got ${pending}"
+          exit 1
+        fi
+        printf '%s\n' "collected 1/2 results"
+
+    - name: Restart PBS Plus mid-batch
+      shell: bash
+      run: |
+        set -euo pipefail
+        source "${GITHUB_ACTION_PATH}/helpers.sh"
+
+        connects=$(agent_connect_count)
+        docker exec pbs-plus-test /command/s6-rc -d change pbs-plus
+        docker exec pbs-plus-test /command/s6-rc -u change pbs-plus
+        wait_for_server 90
+        wait_for_agent_reconnect "$connects" 180
+
+        pending=$(batch_pending e2e-notify-batch)
+        if [[ "$pending" != 1 ]]; then
+          printf '%s\n' "restart lost the collected batch result; expected 1, got ${pending}"
+          exit 1
+        fi
+        printf '%s\n' "batch result survived the restart"
+
+    - name: Run second batched job and verify the batch flushes
+      shell: bash
+      run: |
+        set -euo pipefail
+        source "${GITHUB_ACTION_PATH}/helpers.sh"
+        run_backup_job notify-batch-02
+        wait_for_backup notify-batch-02 ${{ inputs.timeout-seconds }}
+
+        deadline=$((SECONDS + 120))
+        while ((SECONDS < deadline)); do
+          if [[ "$(batch_pending e2e-notify-batch)" == 0 ]]; then
+            break
+          fi
+          sleep 2
+        done
+
+        pending=$(batch_pending e2e-notify-batch)
+        if [[ "$pending" != 0 ]]; then
+          printf '%s\n' "batch did not flush after every job reported; ${pending} results still collected"
+          exit 1
+        fi
+
+        if ! docker logs pbs-plus-test 2>&1 | grep -F "sent batch notification" | grep -Fq "e2e-notify-batch"; then
+          printf '%s\n' "batch cleared without sending a consolidated notification"
+          docker logs --tail=200 pbs-plus-test 2>&1 | grep -Fi batch || true
+          exit 1
+        fi
+        printf '%s\n' "consolidated batch notification sent"
+
+    - name: Verify PBS drains the notification spool
+      shell: bash
+      run: |
+        set -euo pipefail
+        spool=/var/lib/proxmox-backup/notifications
+
+        deadline=$((SECONDS + 60))
+        while ((SECONDS < deadline)); do
+          left=$(docker exec pbs-plus-test sh -ec "ls -1 ${spool}/*.json 2>/dev/null | wc -l")
+          if [[ "$left" == 0 ]]; then
+            break
+          fi
+          sleep 2
+        done
+
+        left=$(docker exec pbs-plus-test sh -ec "ls -1 ${spool}/*.json 2>/dev/null | wc -l")
+        if [[ "$left" != 0 ]]; then
+          printf '%s\n' "PBS never drained the notification spool; ${left} file(s) stuck"
+          docker exec pbs-plus-test sh -ec "for f in ${spool}/*.json; do echo \"--- \$f\"; cat \"\$f\"; done" || true
+          exit 1
+        fi
+        printf '%s\n' "spool drained by PBS"
+
+        stray=$(docker exec pbs-plus-test sh -ec "ls -1 ${spool} 2>/dev/null | wc -l")
+        if [[ "$stray" != 0 ]]; then
+          printf '%s\n' "spool holds ${stray} non-notification file(s)"
+          docker exec pbs-plus-test ls -la "${spool}" || true
+          exit 1
+        fi
+
+        if docker logs pbs-plus-test 2>&1 | grep -Fq "notification worker task error"; then
+          printf '%s\n' "PBS notification worker reported an error"
+          docker logs pbs-plus-test 2>&1 | grep -F "notification worker task error" | tail -20
+          exit 1
+        fi
+        printf '%s\n' "PBS notification worker healthy"
+
+    - name: Show notification diagnostics
+      if: failure()
+      shell: bash
+      run: |
+        set +e
+        echo "=== Batch config ==="
+        docker exec pbs-plus-test curl -k -sS "https://localhost:8017/api2/json/d2d/notification-batch?batch=e2e-notify-batch"
+        echo "=== Batch status ==="
+        docker exec pbs-plus-test curl -k -sS "https://localhost:8017/api2/json/d2d/notification-batch/status"
+        echo "=== Batched job history ==="
+        docker exec pbs-plus-test curl -k -sS "https://localhost:8017/api2/json/d2d/backup" -H "Accept: application/json" | jq '.data[] | select(.id | startswith("notify-batch-"))'
+        echo "=== Spool contents ==="
+        docker exec pbs-plus-test ls -la /var/lib/proxmox-backup/notifications
+        docker exec pbs-plus-test sh -ec 'for f in /var/lib/proxmox-backup/notifications/*; do echo "--- $f"; cat "$f"; echo; done'
+        echo "=== s6 service status ==="
+        docker exec pbs-plus-test /command/s6-svstat /run/service/pbs-plus
+        echo "=== PBS Plus server logs ==="
+        docker logs --tail=400 pbs-plus-test
+        echo "=== PBS Plus agent logs ==="
+        docker logs --tail=200 pbs-plus-agent

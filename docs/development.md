@@ -77,9 +77,10 @@ The E2E test builds Docker images, deploys a PBS+ server container, runs an agen
 6. **Start agent** — Docker container, bootstraps via token
 7. **Run backup** - triggers backup, waits for completion, verifies
 8. **Run concurrent backups** - queues four jobs and validates each PBS UPID
-9. **Run restore** - restores from snapshot, verifies sha256 checksums
-10. **Run pxar-mount e2e** - FUSE mount tests (init mode, mount mode, commits, ACLs, edge cases)
-11. **Cleanup** - remove containers and network
+9. **Run notification batch** - restarts mid-batch, verifies the flush and spool drain
+10. **Run restore** - restores from snapshot, verifies sha256 checksums
+11. **Run pxar-mount e2e** - FUSE mount tests (init mode, mount mode, commits, ACLs, edge cases)
+12. **Cleanup** - remove containers and network
 
 ### Composite actions
 
@@ -95,6 +96,7 @@ All E2E steps are in `.github/actions/` as reusable composite actions:
 | `setup-agent`            | Create test data, start agent container            |
 | `run-backup`             | Trigger and verify backup                          |
 | `run-concurrent-backups` | Queue four backups and validate distinct PBS UPIDs |
+| `run-notification-batch` | Verify batched notifications survive a restart     |
 | `run-restore`            | Trigger and verify restore with integrity check    |
 | `run-pxar-e2e`           | Run pxar-mount FUSE e2e test inside PBS container  |
 | `show-logs`              | Dump container logs on failure                     |
