@@ -618,7 +618,7 @@ type Field struct {
 	Disabled                 bool
 	Renderer                 Raw
 	Width                    int
-	Height                   int
+	Height                   any
 	Layout                   string
 	Anchor                   string
 	HTML                     string
@@ -645,6 +645,19 @@ type Field struct {
 	Columns                  int
 	SubmitValue              bool
 	ChangeFn                 Raw
+	CBind                    Obj
+	QueryMode                string
+	DisplayField             string
+	ValueField               string
+	AnyMatch                 bool
+	ForceSelection           bool
+	AutoSelect               *bool
+	OnlyDirs                 bool
+	Padding                  string
+	Margin                   string
+	LabelAlign               string
+	AutoEl                   Obj
+	Store                    any
 }
 
 func (f Field) Config() Obj {
@@ -673,7 +686,9 @@ func (f Field) Config() Obj {
 	set(o, "disabled", f.Disabled)
 	set(o, "renderer", f.Renderer)
 	set(o, "width", f.Width)
-	set(o, "height", f.Height)
+	if f.Height != nil {
+		o["height"] = f.Height
+	}
 	set(o, "layout", f.Layout)
 	set(o, "anchor", f.Anchor)
 	set(o, "html", f.HTML)
@@ -708,6 +723,31 @@ func (f Field) Config() Obj {
 	set(o, "submitFormat", f.SubmitFormat)
 	set(o, "columns", f.Columns)
 	set(o, "submitValue", f.SubmitValue)
+	if f.CBind != nil || f.EditableWhenCreate || f.DeleteEmptyWhenNotCreate {
+		cbind := Obj{}
+		if f.EditableWhenCreate {
+			cbind["editable"] = "{isCreate}"
+		}
+		if f.DeleteEmptyWhenNotCreate {
+			cbind["deleteEmpty"] = "{!isCreate}"
+		}
+		maps.Copy(cbind, f.CBind)
+		o["cbind"] = cbind
+	}
+	set(o, "queryMode", f.QueryMode)
+	set(o, "displayField", f.DisplayField)
+	set(o, "valueField", f.ValueField)
+	set(o, "anyMatch", f.AnyMatch)
+	set(o, "forceSelection", f.ForceSelection)
+	set(o, "autoSelect", f.AutoSelect)
+	set(o, "onlyDirs", f.OnlyDirs)
+	set(o, "padding", f.Padding)
+	set(o, "margin", f.Margin)
+	set(o, "labelAlign", f.LabelAlign)
+	set(o, "autoEl", f.AutoEl)
+	if f.Store != nil {
+		o["store"] = f.Store
+	}
 	listeners := listener("afterrender", f.AfterRender)
 	if f.ChangeFn != "" {
 		if listeners == nil {
@@ -736,6 +776,8 @@ type EditWindow struct {
 	Method        string
 	CBindData     Raw
 	ViewModelData Obj
+	FieldDefaults Obj
+	BodyPadding   *int
 	Controller    Controller
 	Items         Arr
 	Methods       map[string]Raw
@@ -767,8 +809,12 @@ func (w EditWindow) Config() Obj {
 	set(o, "isAdd", w.IsAdd)
 	set(o, "method", w.Method)
 	set(o, "cbindData", w.CBindData)
-	if len(w.ViewModelData) > 0 {
+	if w.ViewModelData != nil {
 		o["viewModel"] = Obj{"data": w.ViewModelData}
+	}
+	set(o, "fieldDefaults", w.FieldDefaults)
+	if w.BodyPadding != nil {
+		o["bodyPadding"] = *w.BodyPadding
 	}
 	if w.Controller.Methods != nil || w.Controller.Control != nil {
 		o["controller"] = w.Controller.Config()
@@ -946,6 +992,7 @@ type Panel struct {
 	Padding           int
 	Border            bool
 	BorderOff         bool
+	CBind             Obj
 	PanelDefaults     bool
 	Store             Component
 	Columns           []Column
@@ -1002,6 +1049,7 @@ func (p Panel) Config() Obj {
 	}
 	set(o, "layout", p.Layout)
 	set(o, "reference", p.Reference)
+	set(o, "cbind", p.CBind)
 	set(o, "bodyPadding", p.BodyPadding)
 	set(o, "items", p.Items)
 	set(o, "column1", p.Column1)

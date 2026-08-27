@@ -27,6 +27,9 @@ func Render() []byte {
 	items = append(items, targetPanel)
 	items = append(items, alertsPanel)
 	items = append(items, alertEditWindow)
+	items = append(items, notificationTabs)
+	items = append(items, restoreModesStore)
+	items = append(items, restoreJobEdit)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }
