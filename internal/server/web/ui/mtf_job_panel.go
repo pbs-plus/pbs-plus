@@ -75,16 +75,7 @@ var mtfJobPanel = js.Panel{
 				},
 			);
 		`),
-		"openTaskLog": js.Func("", `
-			let selection = this.getView().getSelection();
-			if (!selection || selection.length < 1) {
-				return;
-			}
-			let upid = selection[0].data["last-run-upid"];
-			if (upid) {
-				Ext.create("PBS.plusWindow.TaskViewer", { upid }).show();
-			}
-		`),
+		"openTaskLog": openTaskLog("last-run-upid"),
 		"init": js.Func("view", `
 			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 			view.getStore().on("datachanged", function () {

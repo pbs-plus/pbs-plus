@@ -18,6 +18,62 @@ var enableOnRecord = js.Func("rec", `return true;`)
 
 var dashIfEmpty = js.Func("value", `return value || "-";`)
 
+var countIfSet = js.Func("value", `
+	if (!value && value !== 0) return "-";
+	return value.toLocaleString();
+`)
+
+// openTaskLog shows the PBS task viewer for the UPID in the named record field.
+func openTaskLog(upidField string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let selection = this.getView().getSelection();
+		if (!selection || selection.length < 1) {
+			return;
+		}
+		let upid = selection[0].data[%q];
+		if (upid) {
+			Ext.create("PBS.plusWindow.TaskViewer", { upid }).show();
+		}
+	`, upidField))
+}
+
+func searchTool() js.Tool {
+	return js.Tool{XType: js.XTextField, Reference: "searchField", EmptyText: "Search...", Width: 200, KeyUp: "onSearchKeyUp"}
+}
+
+func searchFilter(fields ...string) js.Raw {
+	tests := make([]string, len(fields))
+	for i, f := range fields {
+		tests[i] = fmt.Sprintf(`re.test(rec.get(%q))`, f)
+	}
+	return js.Func("field", fmt.Sprintf(`
+		const val = field.getValue().trim();
+		const store = this.getView().getStore();
+		store.clearFilter(true);
+		if (!val) {
+			return;
+		}
+		const re = new RegExp(Ext.String.escapeRegex(val), "i");
+		store.filterBy((rec) => %s);
+	`, strings.Join(tests, " || ")))
+}
+
+// selectionEvery enables a button while every selected record satisfies expr, with the record bound to r.
+func selectionEvery(expr string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let recs = this.up("grid").getSelection();
+		return recs.length > 0 && recs.every((r) => %s);
+	`, expr))
+}
+
+// selectionOne enables a button on a single selected record satisfying expr, with the record bound to r.
+func selectionOne(expr string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let recs = this.up("grid").getSelection();
+		return recs.length === 1 && (%s);
+	`, expr))
+}
+
 var enableOnSingleSelection = js.Func("", `
 	let recs = this.up("grid").getSelection();
 	return recs.length === 1;

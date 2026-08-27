@@ -295,6 +295,8 @@ type Column struct {
 	Flex           float64
 	Width          int
 	Hidden         bool
+	MaxWidth       int
+	MinWidth       int
 	Align          string
 	Sortable       *bool
 	Renderer       Raw
@@ -311,6 +313,8 @@ func (c Column) Config() Obj {
 	set(o, "flex", c.Flex)
 	set(o, "width", c.Width)
 	set(o, "hidden", c.Hidden)
+	set(o, "maxWidth", c.MaxWidth)
+	set(o, "minWidth", c.MinWidth)
 	set(o, "align", c.Align)
 	set(o, "sortable", c.Sortable)
 	set(o, "renderer", c.Renderer)
@@ -335,6 +339,10 @@ type Tool struct {
 	Hidden                bool
 	Cls                   string
 	HTML                  string
+	Reference             string
+	EmptyText             string
+	Width                 int
+	KeyUp                 string
 
 	separator string
 }
@@ -367,6 +375,15 @@ func (t Tool) Config() Obj {
 	set(o, "hidden", t.Hidden)
 	set(o, "cls", t.Cls)
 	set(o, "html", t.HTML)
+	set(o, "reference", t.Reference)
+	if t.EmptyText != "" {
+		o["emptyText"] = T(t.EmptyText)
+	}
+	set(o, "width", t.Width)
+	if t.KeyUp != "" {
+		o["enableKeyEvents"] = true
+		o["listeners"] = Obj{"keyup": Obj{"fn": t.KeyUp, "buffer": 300}}
+	}
 	return o
 }
 
@@ -436,10 +453,16 @@ func (v ViewConfig) Config() Obj {
 type Grouping struct {
 	HeaderTemplate string
 	FormatName     Raw
+	GroupProperty  string
+	GroupFn        Raw
 }
 
 func (g Grouping) Config() Obj {
-	return Obj{"ftype": "grouping", "groupHeaderTpl": Arr{g.HeaderTemplate, Obj{"formatName": g.FormatName}}}
+	o := Obj{"ftype": "grouping", "groupHeaderTpl": Arr{g.HeaderTemplate, Obj{"formatName": g.FormatName}}}
+	if g.GroupFn != "" {
+		o["groupers"] = Arr{Obj{"property": g.GroupProperty, "groupFn": g.GroupFn}}
+	}
+	return o
 }
 
 func withStoreLifecycle(c Controller) Controller {
