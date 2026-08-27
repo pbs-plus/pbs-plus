@@ -23,6 +23,8 @@ func Render() []byte {
 	items = append(items, backupPanel)
 	items = append(items, verificationPanel)
 	items = append(items, mountPanel)
+	items = append(items, targetPanelController)
+	items = append(items, targetPanel)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

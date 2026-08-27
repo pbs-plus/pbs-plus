@@ -5,6 +5,49 @@ import "maps"
 // XType is an ExtJS widget alias. Constants cover every xtype in use today.
 type XType string
 
+// SelModel is a row selection model config; selType is always rowmodel.
+type SelModel struct {
+	Mode          string
+	AllowDeselect bool
+}
+
+type ClearTrigger struct {
+	Cls     string
+	Weight  int
+	Hidden  bool
+	Handler string
+}
+
+func (s SelModel) Config() Obj {
+	o := Obj{"selType": "rowmodel"}
+	set(o, "mode", s.Mode)
+	if s.AllowDeselect {
+		o["allowDeselect"] = true
+	}
+	return o
+}
+
+// ControllerClass is a standalone Ext.define of a ViewController subclass,
+// referenced from panels by alias via Panel.ControllerRef.
+type ControllerClass struct {
+	Name  string
+	Alias string
+	Controller
+}
+
+func (c ControllerClass) Config() Obj {
+	o := Obj{"extend": "Ext.app.ViewController"}
+	set(o, "alias", "controller."+c.Alias)
+	inner := c.Controller.Config()
+	delete(inner, "xclass")
+	maps.Copy(o, inner)
+	return o
+}
+
+func (c ControllerClass) AppendJS(dst []byte, indent int) []byte {
+	return Class{Name: c.Name, Config: c.Config()}.AppendJS(dst, indent)
+}
+
 const (
 	XProxmoxButton     XType = "proxmoxButton"
 	XStdRemoveButton   XType = "proxmoxStdRemoveButton"
@@ -353,9 +396,10 @@ type Tool struct {
 	Width                 int
 	KeyUp                 string
 	Change                string
+	ChangeBuffer          int
 	Menu                  Arr
 	CBind                 Obj
-	ClearTrigger          bool
+	ClearTrigger          *ClearTrigger
 
 	separator string
 }
@@ -398,11 +442,20 @@ func (t Tool) Config() Obj {
 	set(o, "width", t.Width)
 	set(o, "menu", t.Menu)
 	set(o, "cbind", t.CBind)
-	if t.ClearTrigger {
-		o["triggers"] = Obj{"clear": Obj{
-			"cls": "pmx-clear-trigger", "weight": -1, "hidden": true,
-			"handler": Raw(`function () { this.triggers.clear.setVisible(false); this.setValue(""); }`),
-		}}
+	if t.ClearTrigger != nil {
+		trig := Obj{"cls": t.ClearTrigger.Cls}
+		if t.ClearTrigger.Weight != 0 {
+			trig["weight"] = t.ClearTrigger.Weight
+		}
+		if t.ClearTrigger.Hidden {
+			trig["hidden"] = true
+		}
+		if t.ClearTrigger.Handler != "" {
+			trig["handler"] = t.ClearTrigger.Handler
+		} else {
+			trig["handler"] = Raw(`function () { this.triggers.clear.setVisible(false); this.setValue(""); }`)
+		}
+		o["triggers"] = Obj{"clear": trig}
 	}
 	listeners := Obj{}
 	if t.KeyUp != "" {
@@ -410,7 +463,11 @@ func (t Tool) Config() Obj {
 		listeners["keyup"] = Obj{"fn": t.KeyUp, "buffer": 300}
 	}
 	if t.Change != "" {
-		listeners["change"] = Obj{"fn": t.Change, "buffer": 500}
+		buffer := t.ChangeBuffer
+		if buffer == 0 {
+			buffer = 500
+		}
+		listeners["change"] = Obj{"fn": t.Change, "buffer": buffer}
 	}
 	if len(listeners) > 0 {
 		o["listeners"] = listeners
@@ -832,6 +889,10 @@ type Panel struct {
 	RootVisible       *bool
 	ConfigProps       Obj
 	Mixins            []string
+	UseArrows         bool
+	RowLines          bool
+	ControllerRef     string
+	SelModel          *SelModel
 }
 
 const (
@@ -878,9 +939,17 @@ func (p Panel) Config() Obj {
 	if len(p.Mixins) > 0 {
 		o["mixins"] = p.Mixins
 	}
+	set(o, "useArrows", p.UseArrows)
+	set(o, "rowLines", p.RowLines)
+	if p.SelModel != nil {
+		o["selModel"] = p.SelModel.Config()
+	}
 
 	ctrl := p.Controller
 	listeners := p.Listeners
+	if p.ControllerRef != "" {
+		o["controller"] = p.ControllerRef
+	}
 	if p.Store != nil {
 		o["store"] = p.Store.Config()
 		if !p.NoStoreLifecycle {

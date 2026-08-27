@@ -595,7 +595,7 @@ var mountPanel = js.Panel{
 		js.Sep(),
 		{XType: js.XTbText, HTMLRaw: js.T("Search")},
 		{XType: js.XTextField, Reference: "searchbox", EmptyText: "group, date or owner",
-			ClearTrigger: true, Change: "search"},
+			ClearTrigger: &js.ClearTrigger{Cls: "pmx-clear-trigger", Weight: -1, Hidden: true}, Change: "search"},
 	},
 	Columns: []js.Column{
 		{XType: js.XTreeColumn, Text: "Backup Group", DataIndex: "text", Flex: 1, Renderer: js.Func("value, meta, record", `
