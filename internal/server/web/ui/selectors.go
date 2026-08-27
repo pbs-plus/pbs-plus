@@ -8,11 +8,7 @@ var selectors = []js.Value{
 		DisplayField: "name", ValueField: "name", APIPath: "/api2/json/d2d/exclusion", Sorters: "name",
 		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 450,
 		ListColumns: []js.Column{{Text: "Path", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Raw("Ext.String.htmlEncode")}},
-		Methods: map[string]js.Raw{"initComponent": js.Func("", `
-			let me = this;
-			me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {};
-			me.callParent();
-		`)},
+		Methods: map[string]js.Raw{"initComponent": changerExtraParams},
 		Value: js.Raw("null"),
 	},
 	js.Selector{
@@ -78,7 +74,7 @@ var selectors = []js.Value{
 			{Text: "Type", DataIndex: "target_type", Sortable: new(true), Flex: 1, Renderer: js.Func("value", `let icons = { local: '<i class="fa fa-desktop"></i> Local', agent: '<i class="fa fa-server"></i> Agent', s3: '<i class="fa fa-cloud"></i> S3' }; return icons[value] || Ext.String.htmlEncode(value || "");`)},
 			{Text: "Path / Volume", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Func("value, metaData, record", `if (record.get("target_type") === "agent") { let volumeName = record.get("volume_name"); let volumeId = record.get("volume_id"); return Ext.String.htmlEncode(volumeName || volumeId || "-"); } return value ? Ext.String.htmlEncode(value) : "-";`)},
 		},
-		Methods: map[string]js.Raw{"initComponent": js.Func("", `let me = this; me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {}; me.callParent();`)},
+		Methods: map[string]js.Raw{"initComponent": changerExtraParams},
 		Value:   js.Raw("null"), Editable: new(true), ForceSelection: new(true), QueryMode: "local",
 		MinChars: 1, FilterPickList: new(true), TypeAhead: new(false),
 	},
@@ -87,7 +83,7 @@ var selectors = []js.Value{
 		DisplayField: "name", ValueField: "name", APIPath: "/api2/json/d2d/token", Sorters: "name",
 		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 450,
 		ListColumns: []js.Column{{Text: "Token", DataIndex: "token", Sortable: new(true), Flex: 3, Renderer: js.Raw("Ext.String.htmlEncode")}, {Text: "Comment", DataIndex: "comment", Sortable: new(true), Flex: 3, Renderer: js.Raw("Ext.String.htmlEncode")}},
-		Methods:     map[string]js.Raw{"initComponent": js.Func("", `let me = this; me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {}; me.callParent();`)},
+		Methods:     map[string]js.Raw{"initComponent": changerExtraParams},
 		Value:       js.Raw("null"),
 	},
 }

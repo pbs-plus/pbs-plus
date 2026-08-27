@@ -88,6 +88,50 @@ var enableOnSingleSelection = js.Func("", `
 // openEditWindow builds a controller handler that shows class and reloads the
 // grid on close. idField is empty for add, or the record field carrying the
 // record id for edit.
+// editSelection opens class for the selected record; windows differ on both the id property name and autoLoad vs autoShow.
+func editSelection(class, prop, field, show string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let me = this;
+		let selection = me.getView().getSelection();
+		if (!selection || selection.length < 1) {
+			return;
+		}
+		Ext.create(%q, {
+			%s: selection[0].data.%s,
+			%s: true,
+			listeners: { destroy: () => me.reload() },
+		}).show();
+	`, class, prop, field, show))
+}
+
+func groupHeader(noun string) string {
+	return fmt.Sprintf(`{name:this.formatName} ({rows.length} %s{[values.rows.length > 1 ? "s" : ""]})`, noun)
+}
+
+// applyJobData seeds values from a duplicated job, which arrive after callParent.
+var applyJobData = js.Func("", `
+	let me = this;
+	me.callParent();
+	if (me.jobData) {
+		let data = Ext.apply({}, me.jobData);
+		me.setValues(data);
+	}
+`)
+
+var changerExtraParams = js.Func("", `
+	let me = this;
+	me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {};
+	me.callParent();
+`)
+
+var dropDeleteOnCreate = js.Func("values", `
+	let me = this;
+	if (me.isCreate) {
+		delete values.delete;
+	}
+	return values;
+`)
+
 func openEditWindow(class, idField string) js.Raw {
 	if idField == "" {
 		return js.Func("", fmt.Sprintf(`
@@ -97,34 +141,12 @@ func openEditWindow(class, idField string) js.Raw {
 			}).show();
 		`, class))
 	}
-	return js.Func("", fmt.Sprintf(`
-		let me = this;
-		let selection = me.getView().getSelection();
-		if (!selection || selection.length < 1) {
-			return;
-		}
-		Ext.create(%q, {
-			contentid: selection[0].data.%s,
-			autoLoad: true,
-			listeners: { destroy: () => me.reload() },
-		}).show();
-	`, class, idField))
+	return editSelection(class, "contentid", idField, "autoLoad")
 }
 
 // editJobWindow opens class on the selected record; duplicateJobWindow drops the id so it saves as new.
 func editJobWindow(class string) js.Raw {
-	return js.Func("", fmt.Sprintf(`
-		let me = this;
-		let selection = me.getView().getSelection();
-		if (!selection || selection.length < 1) {
-			return;
-		}
-		Ext.create(%q, {
-			id: selection[0].data.id,
-			autoShow: true,
-			listeners: { destroy: () => me.reload() },
-		}).show();
-	`, class))
+	return editSelection(class, "id", "id", "autoShow")
 }
 
 func duplicateJobWindow(class string) js.Raw {

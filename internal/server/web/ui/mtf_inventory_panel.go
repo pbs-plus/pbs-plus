@@ -178,7 +178,7 @@ var mtfInventoryPanel = js.Panel{
 		Sorters: "media_family_name", GroupField: "media_family_name",
 	},
 	Grouping: &js.Grouping{
-		HeaderTemplate: `{name:this.formatName} ({rows.length} Cartridge{[values.rows.length > 1 ? "s" : ""]})`,
+		HeaderTemplate: groupHeader("Cartridge"),
 		FormatName:     js.Func("name", `return name || gettext("(unknown)");`),
 	},
 	ViewConfig: &js.ViewConfig{

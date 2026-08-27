@@ -8,7 +8,7 @@ var mtfChangerGrid = js.Panel{
 	Listeners: js.Listeners{ItemDblClick: "onDblClick"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"onAdd":      js.Func("", `let me = this; Ext.create("PBS.TapeManagement.ChangerEditWindow", { listeners: { destroy: () => me.reload() } }).show();`),
-		"onEdit":     js.Func("", `let me = this; let selection = me.getView().getSelection(); if (!selection || selection.length < 1) return; Ext.create("PBS.TapeManagement.ChangerEditWindow", { changerid: selection[0].data.name, autoLoad: true, listeners: { destroy: () => me.reload() } }).show();`),
+		"onEdit":     editSelection("PBS.TapeManagement.ChangerEditWindow", "changerid", "name", "autoLoad"),
 		"showStatus": js.Func("", `let selection = this.getView().getSelection(); if (!selection || selection.length < 1) return; location.hash = "#Changer-" + encodeURIComponent(selection[0].data.name);`),
 		"onDblClick": js.Func("", `this.showStatus();`),
 	}},

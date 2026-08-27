@@ -564,16 +564,7 @@ var verificationJobEdit = js.EditWindow{
 			`),
 		},
 	},
-	Methods: map[string]js.Raw{
-		"initComponent": js.Func("", `
-			var me = this;
-			me.callParent();
-			if (me.jobData) {
-				var data = Ext.apply({}, me.jobData);
-				me.setValues(data);
-			}
-		`),
-	},
+	Methods: map[string]js.Raw{"initComponent": applyJobData},
 	Items: js.Items(js.Panel{
 		Extend: js.ExtTabPanel, BodyPadding: 10, BorderOff: true,
 		Items: js.Items(

@@ -12,18 +12,7 @@ var mtfJobPanel = js.Panel{
 	Listeners:  js.Listeners{ItemDblClick: "editJob"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"addJob": openEditWindow("PBS.MtfManagement.JobEdit", ""),
-		"editJob": js.Func("", `
-			let me = this;
-			let selection = me.getView().getSelection();
-			if (!selection || selection.length < 1) {
-				return;
-			}
-			Ext.create("PBS.MtfManagement.JobEdit", {
-				autoShow: true,
-				jobId: selection[0].data.id,
-				listeners: { destroy: () => me.reload() },
-			}).show();
-		`),
+		"editJob": editSelection("PBS.MtfManagement.JobEdit", "jobId", "id", "autoShow"),
 		"removeJobs": confirmRemove(
 			"/api2/extjs/config/mtf-job/",
 			"encodePathValue(rec.getId())",

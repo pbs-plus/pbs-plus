@@ -34,7 +34,7 @@ var backupPanel = js.Panel{
 		Sorters: "id", GroupField: "ns",
 	},
 	Grouping: &js.Grouping{
-		HeaderTemplate: `{name:this.formatName} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})`,
+		HeaderTemplate: groupHeader("Item"),
 		FormatName:     js.Func("ns", `return ns;`),
 		GroupProperty:  "ns",
 		GroupFn:        backupGroupFn,

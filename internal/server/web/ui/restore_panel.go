@@ -13,7 +13,7 @@ var restorePanel = js.Panel{
 		Sorters: "id", GroupField: "dest-target",
 	},
 	Grouping: &js.Grouping{
-		HeaderTemplate: `{name:this.formatName} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})`,
+		HeaderTemplate: groupHeader("Item"),
 		FormatName:     js.Func("target", `return target;`),
 		GroupProperty:  "dest-target",
 		GroupFn:        restoreGroupFn,

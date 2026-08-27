@@ -5,11 +5,11 @@ import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 var mtfDriveGrid = js.Panel{
 	Name: "PBS.MtfManagement.DriveGrid", XType: "pbsMtfDriveGrid",
 	Store:     js.Store{StoreID: "proxmox-tape-drives", Model: "pbs-model-drives", APIPath: "/api2/json/tape/drive", Sorters: "name", GroupField: "changer", Proxy: js.ProxyProxmox, QueryParamNull: true},
-	Grouping:  &js.Grouping{HeaderTemplate: `{name:this.formatName} ({rows.length} Drive{[values.rows.length > 1 ? "s" : ""]})`, FormatName: js.Func("changer", `if (!changer) return gettext("Standalone Drives"); return Ext.String.format(gettext("Changer {0}"), changer);`)},
+	Grouping:  &js.Grouping{HeaderTemplate: groupHeader("Drive"), FormatName: js.Func("changer", `if (!changer) return gettext("Standalone Drives"); return Ext.String.format(gettext("Changer {0}"), changer);`)},
 	Listeners: js.Listeners{ItemDblClick: "showStatus"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"onAdd":      js.Func("", `let me = this; Ext.create("PBS.TapeManagement.DriveEditWindow", { listeners: { destroy: () => me.reload() } }).show();`),
-		"onEdit":     js.Func("", `let me = this; let selection = me.getView().getSelection(); if (!selection || selection.length < 1) return; Ext.create("PBS.TapeManagement.DriveEditWindow", { driveid: selection[0].data.name, autoLoad: true, listeners: { destroy: () => me.reload() } }).show();`),
+		"onEdit":     editSelection("PBS.TapeManagement.DriveEditWindow", "driveid", "name", "autoLoad"),
 		"showStatus": js.Func("", `let selection = this.getView().getSelection(); if (!selection || selection.length < 1) return; location.hash = "#Drive-" + encodeURIComponent(selection[0].data.name);`),
 	}},
 	Tbar: []js.Tool{
