@@ -14,6 +14,7 @@ func Render() []byte {
 	items = append(items, exclusionPanel)
 	items = append(items, mtfChangerGrid)
 	items = append(items, mtfDriveGrid)
+	items = append(items, notificationBatchPanel)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

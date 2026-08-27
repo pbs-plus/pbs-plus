@@ -12,6 +12,11 @@ var enableOnSelection = js.Func("", `
 	return recs.length > 0;
 `)
 
+var enableOnSingleSelection = js.Func("", `
+	let recs = this.up("grid").getSelection();
+	return recs.length === 1;
+`)
+
 // openEditWindow builds a controller handler that shows class and reloads the
 // grid on close. idField is empty for add, or the record field carrying the
 // record id for edit.

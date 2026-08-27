@@ -208,6 +208,7 @@ func (m Model) AppendJS(dst []byte, indent int) []byte {
 type Store struct {
 	StoreID        string
 	Model          string
+	Fields         []string
 	APIPath        string
 	Sorters        string
 	GroupField     string
@@ -235,6 +236,11 @@ func (s Store) Config() Obj {
 	proxy := Obj{"type": string(proxyType), "url": url}
 	if s.QueryParamNull {
 		proxy["queryParam"] = Raw("null")
+	}
+	if len(s.Fields) > 0 {
+		plain := Obj{"fields": stringsToArr(s.Fields), "autoLoad": true, "proxy": proxy}
+		set(plain, "sorters", s.Sorters)
+		return plain
 	}
 	o := Obj{
 		"type": "diff",
@@ -369,19 +375,20 @@ func (l Listeners) Config() Obj {
 // deactivate/destroy, restarts on activate and monitors store errors unless
 // NoStoreLifecycle is set.
 type Grid struct {
-	Name             string
-	XType            XType
-	Extend           string
-	Title            string
-	StateID          string
-	Store            Component
-	Columns          []Column
-	Tbar             []Tool
-	Grouping         *Grouping
-	Controller       Controller
-	Listeners        Listeners
-	MultiSelect      bool
-	NoStoreLifecycle bool
+	Name              string
+	XType             XType
+	Extend            string
+	Title             string
+	StateID           string
+	Store             Component
+	Columns           []Column
+	Tbar              []Tool
+	Grouping          *Grouping
+	Controller        Controller
+	Listeners         Listeners
+	MultiSelect       bool
+	CheckboxSelection bool
+	NoStoreLifecycle  bool
 }
 
 func (g Grid) Config() Obj {
@@ -401,14 +408,21 @@ func (g Grid) Config() Obj {
 		o["stateId"] = g.StateID
 	}
 	set(o, "multiSelect", g.MultiSelect)
+	if g.CheckboxSelection {
+		o["selType"] = "checkboxmodel"
+	}
 
 	ctrl := g.Controller
 	listeners := g.Listeners
 	if g.Store != nil {
 		o["store"] = g.Store.Config()
 		if !g.NoStoreLifecycle {
-			ctrl = withStoreLifecycle(ctrl)
-			listeners = withStoreListeners(listeners)
+			if s, ok := g.Store.(Store); ok && len(s.Fields) > 0 {
+				ctrl = withReload(ctrl)
+			} else {
+				ctrl = withStoreLifecycle(ctrl)
+				listeners = withStoreListeners(listeners)
+			}
 		}
 	}
 	if len(ctrl.Methods) > 0 {
@@ -453,6 +467,13 @@ func withStoreLifecycle(c Controller) Controller {
 		"startStore": Func("", "this.getView().getStore().rstore.startUpdate();"),
 		"init":       Func("view", "Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);"),
 	}
+	maps.Copy(m, c.Methods)
+	c.Methods = m
+	return c
+}
+
+func withReload(c Controller) Controller {
+	m := map[string]Raw{"reload": Func("", "this.getView().getStore().load();")}
 	maps.Copy(m, c.Methods)
 	c.Methods = m
 	return c

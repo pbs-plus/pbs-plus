@@ -36,6 +36,7 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.D2DManagement.ExclusionPanel"`),
 		[]byte(`Ext.define("PBS.MtfManagement.ChangerGrid"`),
 		[]byte(`Ext.define("PBS.MtfManagement.DriveGrid"`),
+		[]byte(`Ext.define("PBS.D2DManagement.NotificationBatchView"`),
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),
