@@ -163,6 +163,8 @@ func Send(mode string, jobType JobType, jobID, datastore string, jobErr error, d
 
 // /var/lib/proxmox-backup/notifications/ every 5 seconds and calls
 func sendViaSpool(n notification) {
+	n.Metadata.Severity = normalizeSeverity(n.Metadata.Severity)
+
 	if err := os.MkdirAll(SpoolDir, 0770); err != nil {
 		log.Error(err, "failed to create notification spool dir")
 		logFallback(n)
@@ -177,16 +179,58 @@ func sendViaSpool(n notification) {
 	}
 
 	path := filepath.Join(SpoolDir, n.ID+".json")
-	if err := os.WriteFile(path, data, 0660); err != nil {
-		log.Error(err,
-
-			"failed to write notification spool file", "path", path)
-
+	if err := writeSpoolFile(path, data); err != nil {
+		log.Error(err, "failed to write notification spool file", "path", path)
 		logFallback(n)
 		return
 	}
 
 	slog.Info("queued notification via PBS spool", "id", n.ID, "severity", n.Metadata.Severity)
+}
+
+func writeSpoolFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if tmpName != "" {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0660); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	tmpName = ""
+	return nil
+}
+
+// An unknown severity fails proxmox_notify's deserialization, which wedges the
+// PBS spool worker on that file forever; clamp instead of poisoning the queue.
+func normalizeSeverity(severity string) string {
+	switch severity {
+	case "info", "notice", "warning", "error", "unknown":
+		return severity
+	default:
+		log.Error(fmt.Errorf("unknown notification severity %q, falling back to info", severity), "")
+		return "info"
+	}
 }
 
 // sendLegacy sends a notification directly via sendmail.
