@@ -271,14 +271,15 @@ func (s Store) Config() Obj {
 
 // Column is a grid column.
 type Column struct {
-	Text      string
-	DataIndex string
-	XType     XType
-	Flex      int
-	Width     int
-	Hidden    bool
-	Sortable  *bool
-	Renderer  Raw
+	Text           string
+	DataIndex      string
+	XType          XType
+	Flex           int
+	Width          int
+	Hidden         bool
+	Sortable       *bool
+	Renderer       Raw
+	RendererMethod string
 }
 
 func (c Column) Config() Obj {
@@ -293,6 +294,7 @@ func (c Column) Config() Obj {
 	set(o, "hidden", c.Hidden)
 	set(o, "sortable", c.Sortable)
 	set(o, "renderer", c.Renderer)
+	set(o, "renderer", c.RendererMethod)
 	return o
 }
 

@@ -46,7 +46,7 @@ func openEditWindow(class, idField string) js.Raw {
 // confirmRemove builds a controller handler that deletes every selected record
 // after a confirmation prompt. idExpr is the JavaScript expression producing
 // the record id, evaluated with rec in scope.
-func confirmRemove(baseURL, idExpr string) js.Raw {
+func confirmRemove(baseURL, idExpr, prompt string) js.Raw {
 	return js.Func("", fmt.Sprintf(`
 		const me = this;
 		const view = me.getView();
@@ -56,7 +56,7 @@ func confirmRemove(baseURL, idExpr string) js.Raw {
 		}
 		Ext.Msg.confirm(
 			gettext("Confirm"),
-			gettext("Remove selected entries?"),
+			gettext(%q),
 			(btn) => {
 				if (btn !== "yes") {
 					return;
@@ -72,12 +72,37 @@ func confirmRemove(baseURL, idExpr string) js.Raw {
 				});
 			},
 		);
-	`, baseURL, idExpr))
+	`, prompt, baseURL, idExpr))
 }
 
-// pathKeyedURL builds the cbindData hook for dialogs whose record id is a
-// filesystem path: POST to baseURL when creating, PUT to the encoded path
-// otherwise.
+// copySelectionWindow shows one field of the selected record in a copyable dialog.
+func copySelectionWindow(title, field string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let selection = this.getView().getSelection();
+		if (!selection || selection.length < 1) {
+			return;
+		}
+		let value = selection[0].data.%s;
+		Ext.create("Ext.window.Window", {
+			modal: true,
+			width: 600,
+			title: gettext(%q),
+			layout: "form",
+			bodyPadding: "10 0",
+			items: [{ xtype: "textfield", value: value, editable: false }],
+			buttons: [
+				{
+					xtype: "button",
+					iconCls: "fa fa-clipboard",
+					handler: async () => await navigator.clipboard.writeText(value),
+					text: gettext("Copy"),
+				},
+				{ text: gettext("Ok"), handler: function () { this.up("window").close(); } },
+			],
+		}).show();
+	`, field, title))
+}
+
 func pathKeyedURL(baseURL string) js.Raw {
 	return js.Func("initialConfig", fmt.Sprintf(`
 		let me = this;

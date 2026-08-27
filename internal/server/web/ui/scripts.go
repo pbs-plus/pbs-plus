@@ -43,6 +43,7 @@ var scriptPanel = js.Panel{
 		"removeScripts": confirmRemove(
 			"/api2/extjs/config/d2d-script/",
 			"encodePathValue(rec.getId())",
+			"Remove selected entries?",
 		),
 	}},
 	Tbar: []js.Tool{

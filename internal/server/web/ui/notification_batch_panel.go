@@ -14,24 +14,7 @@ var notificationBatchPanel = js.Panel{
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"addBatch":  js.Func("", `let me = this; Ext.create("PBS.D2DManagement.NotificationBatchEdit", { autoShow: true, listeners: { destroy: () => me.reload() } }).show();`),
 		"editBatch": js.Func("", `let me = this; let selection = me.getView().getSelection(); if (!selection || selection.length !== 1) return; Ext.create("PBS.D2DManagement.NotificationBatchEdit", { batchName: selection[0].data.name, autoShow: true, listeners: { destroy: () => me.reload() } }).show();`),
-		"removeBatches": js.Func("", `
-			let me = this;
-			let view = me.getView();
-			let recs = view.getSelection();
-			if (!recs.length) return;
-			Ext.Msg.confirm(gettext("Confirm"), gettext("Remove selected notification batches?"), function (btn) {
-				if (btn !== "yes") return;
-				recs.forEach(function (rec) {
-					PBS.PlusUtils.API2Request({
-						url: "/api2/json/d2d/notification-batch?batch=" + encodeURIComponent(rec.data.name),
-						method: "DELETE",
-						waitMsgTarget: view,
-						failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-						success: () => me.reload(),
-					});
-				});
-			});
-		`),
+		"removeBatches": confirmRemove("/api2/json/d2d/notification-batch?batch=", "rec.data.name", "Remove selected notification batches?"),
 	}},
 	Tbar: []js.Tool{
 		{Text: "Add Batch", Handler: "addBatch", SelModel: new(false)},

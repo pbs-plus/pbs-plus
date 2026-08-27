@@ -9,7 +9,7 @@ var exclusionPanel = js.Panel{
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"onAdd":            openEditWindow("PBS.D2DManagement.ExclusionEditWindow", ""),
 		"onEdit":           openEditWindow("PBS.D2DManagement.ExclusionEditWindow", "path"),
-		"removeExclusions": confirmRemove("/api2/extjs/config/d2d-exclusion/", "encodePathValue(rec.getId())"),
+		"removeExclusions": confirmRemove("/api2/extjs/config/d2d-exclusion/", "encodePathValue(rec.getId())", "Remove selected entries?"),
 	}},
 	Tbar: []js.Tool{
 		{Text: "Add", Handler: "onAdd", SelModel: new(false)}, js.Sep(),
