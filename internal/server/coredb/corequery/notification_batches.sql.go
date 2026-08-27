@@ -50,6 +50,15 @@ func (q *Queries) CreateNotificationBatch(ctx context.Context, arg CreateNotific
 	return err
 }
 
+const deleteBatchResults = `-- name: DeleteBatchResults :exec
+DELETE FROM notification_batch_results WHERE batch_name = ?
+`
+
+func (q *Queries) DeleteBatchResults(ctx context.Context, batchName string) error {
+	_, err := q.db.ExecContext(ctx, deleteBatchResults, batchName)
+	return err
+}
+
 const deleteNotificationBatch = `-- name: DeleteNotificationBatch :exec
 DELETE FROM notification_batches WHERE name = ?
 `
@@ -139,6 +148,43 @@ func (q *Queries) GetBatchJobsByJobType(ctx context.Context, jobType string) ([]
 	return items, nil
 }
 
+const getBatchResults = `-- name: GetBatchResults :many
+SELECT batch_name, job_type, job_id, datastore, error, severity, recorded_at FROM notification_batch_results
+WHERE batch_name = ?
+ORDER BY recorded_at, job_type, job_id
+`
+
+func (q *Queries) GetBatchResults(ctx context.Context, batchName string) ([]NotificationBatchResult, error) {
+	rows, err := q.db.QueryContext(ctx, getBatchResults, batchName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationBatchResult{}
+	for rows.Next() {
+		var i NotificationBatchResult
+		if err := rows.Scan(
+			&i.BatchName,
+			&i.JobType,
+			&i.JobID,
+			&i.Datastore,
+			&i.Error,
+			&i.Severity,
+			&i.RecordedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getNotificationBatch = `-- name: GetNotificationBatch :one
 SELECT name, comment, notification_mode, wait_timeout_secs, send_on_timeout, created_at FROM notification_batches WHERE name = ?
 `
@@ -174,6 +220,33 @@ func (q *Queries) ListBatchJobs(ctx context.Context) ([]NotificationBatchJob, er
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBatchesWithResults = `-- name: ListBatchesWithResults :many
+SELECT DISTINCT batch_name FROM notification_batch_results ORDER BY batch_name
+`
+
+func (q *Queries) ListBatchesWithResults(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listBatchesWithResults)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var batch_name string
+		if err := rows.Scan(&batch_name); err != nil {
+			return nil, err
+		}
+		items = append(items, batch_name)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -278,6 +351,40 @@ func (q *Queries) UpdateNotificationBatch(ctx context.Context, arg UpdateNotific
 		arg.WaitTimeoutSecs,
 		arg.SendOnTimeout,
 		arg.Name,
+	)
+	return err
+}
+
+const upsertBatchResult = `-- name: UpsertBatchResult :exec
+INSERT INTO notification_batch_results (
+    batch_name, job_type, job_id, datastore, error, severity, recorded_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (batch_name, job_type, job_id) DO UPDATE SET
+    datastore = excluded.datastore,
+    error = excluded.error,
+    severity = excluded.severity,
+    recorded_at = excluded.recorded_at
+`
+
+type UpsertBatchResultParams struct {
+	BatchName  string `json:"batch_name"`
+	JobType    string `json:"job_type"`
+	JobID      string `json:"job_id"`
+	Datastore  string `json:"datastore"`
+	Error      string `json:"error"`
+	Severity   string `json:"severity"`
+	RecordedAt int64  `json:"recorded_at"`
+}
+
+func (q *Queries) UpsertBatchResult(ctx context.Context, arg UpsertBatchResultParams) error {
+	_, err := q.db.ExecContext(ctx, upsertBatchResult,
+		arg.BatchName,
+		arg.JobType,
+		arg.JobID,
+		arg.Datastore,
+		arg.Error,
+		arg.Severity,
+		arg.RecordedAt,
 	)
 	return err
 }

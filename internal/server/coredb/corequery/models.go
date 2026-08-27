@@ -90,6 +90,16 @@ type NotificationBatchJob struct {
 	JobID     string `json:"job_id"`
 }
 
+type NotificationBatchResult struct {
+	BatchName  string `json:"batch_name"`
+	JobType    string `json:"job_type"`
+	JobID      string `json:"job_id"`
+	Datastore  string `json:"datastore"`
+	Error      string `json:"error"`
+	Severity   string `json:"severity"`
+	RecordedAt int64  `json:"recorded_at"`
+}
+
 type Restore struct {
 	ID                    string         `json:"id"`
 	Store                 string         `json:"store"`
