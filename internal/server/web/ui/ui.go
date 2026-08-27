@@ -7,5 +7,6 @@ import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 func Render() []byte {
 	items := append(models, mtfModels...)
 	items = append(items, scriptSelector, scriptEditWindow, scriptPanel)
+	items = append(items, coreViews...)
 	return js.Render(items...)
 }
