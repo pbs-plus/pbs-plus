@@ -9,6 +9,7 @@ func Render() []byte {
 	items = append(items, scriptSelector, scriptEditWindow, scriptPanel)
 	items = append(items, selectors...)
 	items = append(items, pathSelectors...)
+	items = append(items, windows...)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

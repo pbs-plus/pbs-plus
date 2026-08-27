@@ -436,6 +436,8 @@ type Field struct {
 	Value       any
 	AllowBlank  *bool
 	Editable    *bool
+	EditableWhenCreate bool
+	DeleteEmptyWhenNotCreate bool
 	Disabled    bool
 	Renderer    Raw
 	Width       int
@@ -443,6 +445,9 @@ type Field struct {
 	Layout      string
 	Anchor      string
 	HTML        string
+	EmptyText   string
+	InputType   string
+	UserCls     string
 	Items       Arr
 	AfterRender Raw
 }
@@ -460,6 +465,16 @@ func (f Field) Config() Obj {
 	}
 	set(o, "allowBlank", f.AllowBlank)
 	set(o, "editable", f.Editable)
+	if f.EditableWhenCreate || f.DeleteEmptyWhenNotCreate {
+		cbind := Obj{}
+		if f.EditableWhenCreate {
+			cbind["editable"] = "{isCreate}"
+		}
+		if f.DeleteEmptyWhenNotCreate {
+			cbind["deleteEmpty"] = "{!isCreate}"
+		}
+		o["cbind"] = cbind
+	}
 	set(o, "disabled", f.Disabled)
 	set(o, "renderer", f.Renderer)
 	set(o, "width", f.Width)
@@ -467,6 +482,11 @@ func (f Field) Config() Obj {
 	set(o, "layout", f.Layout)
 	set(o, "anchor", f.Anchor)
 	set(o, "html", f.HTML)
+	if f.EmptyText != "" {
+		o["emptyText"] = T(f.EmptyText)
+	}
+	set(o, "inputType", f.InputType)
+	set(o, "userCls", f.UserCls)
 	set(o, "items", f.Items)
 	set(o, "listeners", listener("afterrender", f.AfterRender))
 	return o
@@ -480,9 +500,12 @@ type EditWindow struct {
 	Extend    string
 	Subject   string
 	Width     string
+	PixelWidth int
 	Resizable bool
+	NotResizable bool
 	IsCreate  bool
 	IsAdd     bool
+	Method    string
 	CBindData Raw
 	Items     Arr
 	Methods   map[string]Raw
@@ -502,9 +525,14 @@ func (w EditWindow) Config() Obj {
 	}
 	set(o, "subject", w.Subject)
 	set(o, "width", w.Width)
+	set(o, "width", w.PixelWidth)
 	set(o, "resizable", w.Resizable)
+	if w.NotResizable {
+		o["resizable"] = false
+	}
 	set(o, "isCreate", w.IsCreate)
 	set(o, "isAdd", w.IsAdd)
+	set(o, "method", w.Method)
 	set(o, "cbindData", w.CBindData)
 	set(o, "items", w.Items)
 	for k, v := range w.Methods {
@@ -655,6 +683,7 @@ type InputPanel struct {
 	Column1       Arr
 	Column2       Arr
 	FieldDefaults Obj
+	Padding       int
 	Methods       map[string]Raw
 }
 
@@ -670,6 +699,7 @@ func (p InputPanel) Config() Obj {
 	set(o, "column1", p.Column1)
 	set(o, "column2", p.Column2)
 	set(o, "fieldDefaults", p.FieldDefaults)
+	set(o, "padding", p.Padding)
 	for k, v := range p.Methods {
 		o[k] = v
 	}

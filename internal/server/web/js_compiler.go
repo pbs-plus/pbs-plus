@@ -60,7 +60,10 @@ func isMigratedCustomSource(path string) bool {
 		strings.HasSuffix(path, "/selectors/target_path_selector.js") ||
 		strings.HasSuffix(path, "/selectors/targets.js") ||
 		strings.HasSuffix(path, "/selectors/tokens.js") ||
-		strings.HasSuffix(path, "/windows/script.js")
+		strings.HasSuffix(path, "/windows/exclusion.js") ||
+		strings.HasSuffix(path, "/windows/script.js") ||
+		strings.HasSuffix(path, "/windows/target.js") ||
+		strings.HasSuffix(path, "/windows/token.js")
 }
 
 func sortedWalk(embedded fs.FS, root string, skip func(string) bool) ([][]byte, error) {
