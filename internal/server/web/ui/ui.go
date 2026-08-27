@@ -8,6 +8,7 @@ func Render() []byte {
 	items := append(models, mtfModels...)
 	items = append(items, scriptSelector, scriptEditWindow, scriptPanel)
 	items = append(items, selectors...)
+	items = append(items, pathSelectors...)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

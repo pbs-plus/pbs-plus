@@ -622,6 +622,30 @@ func (s Selector) AppendJS(dst []byte, indent int) []byte {
 	return Class{Name: s.Name, Config: s.Config()}.AppendJS(dst, indent)
 }
 
+// FieldContainer is an Ext.form.FieldContainer class.
+type FieldContainer struct {
+	Name    string
+	XType   XType
+	Layout  string
+	Methods map[string]Raw
+}
+
+func (f FieldContainer) Config() Obj {
+	o := Obj{"extend": "Ext.form.FieldContainer"}
+	if f.XType != "" {
+		o["alias"] = "widget." + string(f.XType)
+	}
+	set(o, "layout", f.Layout)
+	for name, method := range f.Methods {
+		o[name] = method
+	}
+	return o
+}
+
+func (f FieldContainer) AppendJS(dst []byte, indent int) []byte {
+	return Class{Name: f.Name, Config: f.Config()}.AppendJS(dst, indent)
+}
+
 // InputPanel is a Proxmox.panel.InputPanel class.
 type InputPanel struct {
 	Name          string

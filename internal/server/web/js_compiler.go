@@ -55,7 +55,9 @@ func isMigratedCustomSource(path string) bool {
 		strings.HasSuffix(path, "/selectors/exclusions.js") ||
 		strings.HasSuffix(path, "/selectors/namespaces.js") ||
 		strings.HasSuffix(path, "/selectors/scripts.js") ||
+		strings.HasSuffix(path, "/selectors/snapshot_path_selector.js") ||
 		strings.HasSuffix(path, "/selectors/snapshots.js") ||
+		strings.HasSuffix(path, "/selectors/target_path_selector.js") ||
 		strings.HasSuffix(path, "/selectors/targets.js") ||
 		strings.HasSuffix(path, "/selectors/tokens.js") ||
 		strings.HasSuffix(path, "/windows/script.js")

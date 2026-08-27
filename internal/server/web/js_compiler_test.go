@@ -26,6 +26,8 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.form.D2DSnapshotSelector"`),
 		[]byte(`Ext.define("PBS.form.D2DTargetSelector"`),
 		[]byte(`Ext.define("PBS.form.D2DTokenSelector"`),
+		[]byte(`Ext.define("PBS.form.D2DTargetPathSelector"`),
+		[]byte(`Ext.define("PBS.form.D2DSnapshotPathSelector"`),
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),
