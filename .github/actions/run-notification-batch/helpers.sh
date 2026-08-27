@@ -41,26 +41,45 @@ wait_for_backup() {
 	return 1
 }
 
-agent_connect_count() {
-	docker logs pbs-plus-agent 2>&1 |
-		grep -cE "tls: connection established|quic: connection established" || true
+target_connected() {
+	local target="$1"
+	api "https://localhost:8017/api2/json/d2d/target" |
+		jq -r --arg t "$target" \
+			'[.data[] | select(.name == $t) | .connection_status] | first // false'
 }
 
 wait_for_agent_reconnect() {
-	local before="$1"
+	local target="$1"
 	local timeout="$2"
+	local start=$SECONDS
 	local deadline=$((SECONDS + timeout))
+	local status next_report=0
+
+	printf 'waiting for the server to see %s reconnect (timeout %ss)\n' \
+		"$target" "$timeout"
 
 	while ((SECONDS < deadline)); do
-		if (($(agent_connect_count) > before)); then
-			printf 'agent reconnected\n'
+		status=$(target_connected "$target")
+		if [[ "$status" == true ]]; then
+			printf 'agent session re-established after %ss\n' "$((SECONDS - start))"
 			return 0
+		fi
+		if ((SECONDS >= next_report)); then
+			printf '  ... still disconnected at %ss (connection_status=%s)\n' \
+				"$((SECONDS - start))" "$status"
+			next_report=$((SECONDS + 15))
 		fi
 		sleep 2
 	done
 
 	printf 'agent did not reconnect within %ss\n' "$timeout"
-	docker logs --tail=100 pbs-plus-agent
+	printf '=== targets as the server sees them ===\n'
+	api "https://localhost:8017/api2/json/d2d/target" |
+		jq -r '.data[] | "\(.name)\tconnected=\(.connection_status)\tversion=\(.agent_version)"' || true
+	printf '=== agent logs ===\n'
+	docker logs --tail=150 pbs-plus-agent
+	printf '=== server logs ===\n'
+	docker logs --tail=150 pbs-plus-test
 	return 1
 }
 
@@ -72,11 +91,14 @@ batch_pending() {
 
 wait_for_server() {
 	local timeout="$1"
+	local start=$SECONDS
 	local deadline=$((SECONDS + timeout))
+
+	printf 'waiting for the pbs-plus API to answer again (timeout %ss)\n' "$timeout"
 
 	while ((SECONDS < deadline)); do
 		if api "https://localhost:8017/api2/json/d2d/notification-batch/status" >/dev/null 2>&1; then
-			printf 'server responsive again\n'
+			printf 'server responsive again after %ss\n' "$((SECONDS - start))"
 			return 0
 		fi
 		sleep 2
