@@ -2,14 +2,14 @@
 INSERT INTO job_executions (
     id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, created_at,
-    parent_execution_id
-) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?);
+    parent_execution_id, workflow_version
+) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetExecution :one
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
-    started_at, finished_at
+    started_at, finished_at, workflow_version
 FROM job_executions
 WHERE id = ?;
 
@@ -17,7 +17,7 @@ WHERE id = ?;
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
-    started_at, finished_at
+    started_at, finished_at, workflow_version
 FROM job_executions
 WHERE dedupe_key = ?;
 
@@ -25,7 +25,7 @@ WHERE dedupe_key = ?;
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
-    started_at, finished_at
+    started_at, finished_at, workflow_version
 FROM job_executions
 WHERE kind = ? AND definition_id = ? AND state IN ('pending', 'running')
 ORDER BY created_at DESC
@@ -99,7 +99,8 @@ WHERE id = ? AND state = 'running' AND lease_owner = ?;
 
 -- name: RenewExecutionLease :execrows
 UPDATE job_executions SET lease_until = ?
-WHERE id = ? AND state = 'running' AND lease_owner = ?;
+WHERE id = ? AND state = 'running' AND lease_owner = ? AND attempt = ?
+  AND lease_until >= unixepoch();
 
 -- name: RequestExecutionCancellation :execrows
 UPDATE job_executions SET cancel_requested = 1
@@ -114,7 +115,8 @@ WHERE id = ? AND state = 'pending' AND cancel_requested = 1;
 UPDATE job_executions
 SET state = ?, run_at = ?, lease_owner = NULL, lease_until = NULL,
     last_error = ?, finished_at = ?
-WHERE id = ? AND state = 'running' AND lease_owner = ?;
+WHERE id = ? AND state = 'running' AND lease_owner = ? AND attempt = ?
+  AND lease_until >= unixepoch();
 
 -- name: CreateExecutionEvent :exec
 INSERT INTO job_execution_events (execution_id, event_type, data, created_at)
@@ -128,14 +130,25 @@ ORDER BY sequence;
 
 -- name: GetActivity :one
 SELECT execution_id, name, input_hash, state, attempt, result, checkpoint,
-    last_error, created_at, started_at, completed_at
+    last_error, created_at, started_at, completed_at, position
 FROM job_execution_activities
 WHERE execution_id = ? AND name = ?;
 
+-- name: GetActivityAtPosition :one
+SELECT execution_id, name, input_hash, state, attempt, result, checkpoint,
+    last_error, created_at, started_at, completed_at, position
+FROM job_execution_activities
+WHERE execution_id = ? AND position = ?;
+
+-- name: CountActivitiesAfterPosition :one
+SELECT COUNT(*)
+FROM job_execution_activities
+WHERE execution_id = ? AND position > ?;
+
 -- name: CreateActivity :execrows
 INSERT INTO job_execution_activities (
-    execution_id, name, input_hash, state, created_at
-) VALUES (?, ?, ?, 'pending', ?)
+    execution_id, name, input_hash, state, created_at, position
+) VALUES (?, ?, ?, 'pending', ?, ?)
 ON CONFLICT(execution_id, name) DO NOTHING;
 
 -- name: StartActivity :execrows
@@ -148,6 +161,8 @@ WHERE execution_id = ? AND name = ? AND state IN ('pending', 'running')
     WHERE id = job_execution_activities.execution_id
       AND state = 'running'
       AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
   );
 
 -- name: CheckpointActivity :execrows
@@ -160,6 +175,8 @@ WHERE execution_id = ? AND name = ? AND state = 'running'
     WHERE id = job_execution_activities.execution_id
       AND state = 'running'
       AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
   );
 
 -- name: CompleteActivity :execrows
@@ -172,6 +189,8 @@ WHERE execution_id = ? AND name = ? AND state = 'running'
     WHERE id = job_execution_activities.execution_id
       AND state = 'running'
       AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
   );
 
 -- name: InvalidateActivity :execrows
@@ -184,6 +203,8 @@ WHERE execution_id = ? AND name = ? AND state = 'completed'
     WHERE id = job_execution_activities.execution_id
       AND state = 'running'
       AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
   );
 
 -- name: FailActivity :execrows
@@ -196,4 +217,6 @@ WHERE execution_id = ? AND name = ? AND state = 'running'
     WHERE id = job_execution_activities.execution_id
       AND state = 'running'
       AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
   );

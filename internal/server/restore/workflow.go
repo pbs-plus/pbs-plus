@@ -27,7 +27,7 @@ type runResult struct {
 // Register registers the restore workflow: pre-script,
 // start-task, run, finalize. Each stage is a durable activity.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowRestore, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowRestore, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.RestoreInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding restore workflow input: %w", err))

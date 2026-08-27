@@ -40,6 +40,7 @@ var ErrNotFound = errors.New("store: execution not found")
 type SubmitRequest struct {
 	ID                string
 	Kind              string
+	WorkflowVersion   string
 	DefinitionID      string
 	Trigger           string
 	DedupeKey         string
@@ -56,6 +57,7 @@ type SubmitRequest struct {
 type Execution struct {
 	ID                string
 	Kind              string
+	WorkflowVersion   string
 	DefinitionID      string
 	Trigger           string
 	DedupeKey         string
@@ -81,6 +83,7 @@ type Execution struct {
 type Activity struct {
 	ExecutionID string
 	Name        string
+	Position    int
 	InputHash   string
 	State       string
 	Attempt     int
@@ -124,6 +127,9 @@ func Open(path string) (*Store, error) {
 // Submit inserts a new execution; when DedupeKey already exists it
 // returns the existing execution with created=false.
 func (d *Store) Submit(ctx context.Context, req SubmitRequest) (Execution, bool, error) {
+	if req.WorkflowVersion == "" {
+		req.WorkflowVersion = "1"
+	}
 	if err := validateSubmit(req); err != nil {
 		return Execution{}, false, err
 	}
@@ -145,6 +151,7 @@ func (d *Store) Submit(ctx context.Context, req SubmitRequest) (Execution, bool,
 			RunAt:               req.RunAt.Unix(),
 			CreatedAt:           time.Now().Unix(),
 			ParentExecutionID:   nullString(req.ParentExecutionID),
+			WorkflowVersion:     req.WorkflowVersion,
 		})
 		if err != nil {
 			row, getErr := q.GetExecutionByDedupeKey(ctx, req.DedupeKey)
@@ -328,13 +335,14 @@ func (d *Store) Claim(ctx context.Context, owner string, now, leaseUntil time.Ti
 	return claimed, ok, nil
 }
 
-func (d *Store) RenewLease(ctx context.Context, id, owner string, leaseUntil time.Time) error {
+func (d *Store) RenewLease(ctx context.Context, id, owner string, attempt int, leaseUntil time.Time) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.RenewExecutionLease(ctx, jobquery.RenewExecutionLeaseParams{
 			LeaseUntil: nullInt64(leaseUntil.Unix()),
 			ID:         id,
 			LeaseOwner: nullString(owner),
+			Attempt:    int64(attempt),
 		})
 		if err != nil {
 			return fmt.Errorf("renewing lease: %w", err)
@@ -400,7 +408,7 @@ func (d *Store) Cancel(ctx context.Context, id string, now time.Time) (Execution
 
 // Finish transitions a claimed execution to a terminal state, or back
 // to pending with a delayed run_at when a retry is scheduled.
-func (d *Store) Finish(ctx context.Context, id, owner, state string, runAt time.Time, lastError string) error {
+func (d *Store) Finish(ctx context.Context, id, owner string, attempt int, state string, runAt time.Time, lastError string) error {
 	switch state {
 	case StatePending, StateSucceeded, StateFailed, StateCanceled:
 	default:
@@ -419,6 +427,7 @@ func (d *Store) Finish(ctx context.Context, id, owner, state string, runAt time.
 			FinishedAt: finishedAt,
 			ID:         id,
 			LeaseOwner: nullString(owner),
+			Attempt:    int64(attempt),
 		})
 		if err != nil {
 			return fmt.Errorf("finishing execution: %w", err)
@@ -440,8 +449,8 @@ func (d *Store) Finish(ctx context.Context, id, owner, state string, runAt time.
 // StartActivity returns the activity for (execution, name), starting it
 // unless it already completed; completed activities report done=true
 // with their persisted result.
-func (d *Store) StartActivity(ctx context.Context, executionID, owner, name, inputHash string, now time.Time) (Activity, bool, error) {
-	if executionID == "" || owner == "" || name == "" || inputHash == "" {
+func (d *Store) StartActivity(ctx context.Context, executionID, owner string, attempt, position int, name, inputHash string, now time.Time) (Activity, bool, error) {
+	if executionID == "" || owner == "" || attempt < 1 || position < 1 || name == "" || inputHash == "" {
 		return Activity{}, false, errors.New("invalid activity")
 	}
 
@@ -449,13 +458,31 @@ func (d *Store) StartActivity(ctx context.Context, executionID, owner, name, inp
 	completed := false
 	err := d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
+		execution, err := q.GetExecution(ctx, executionID)
+		if err != nil {
+			return fmt.Errorf("getting workflow execution: %w", err)
+		}
+		if execution.State != StateRunning || fromNullString(execution.LeaseOwner) != owner || execution.Attempt != int64(attempt) || fromNullTime(execution.LeaseUntil).Before(time.Now()) {
+			return ErrNotFound
+		}
 		row, err := q.GetActivity(ctx, jobquery.GetActivityParams{ExecutionID: executionID, Name: name})
 		if errors.Is(err, sql.ErrNoRows) {
+			atPosition, positionErr := q.GetActivityAtPosition(ctx, jobquery.GetActivityAtPositionParams{
+				ExecutionID: executionID,
+				Position:    int64(position),
+			})
+			if positionErr == nil {
+				return fmt.Errorf("workflow replay mismatch at activity %d: recorded %q, got %q", position, atPosition.Name, name)
+			}
+			if !errors.Is(positionErr, sql.ErrNoRows) {
+				return fmt.Errorf("getting activity at position: %w", positionErr)
+			}
 			if _, err := q.CreateActivity(ctx, jobquery.CreateActivityParams{
 				ExecutionID: executionID,
 				Name:        name,
 				InputHash:   inputHash,
 				CreatedAt:   now.Unix(),
+				Position:    int64(position),
 			}); err != nil {
 				return fmt.Errorf("creating activity: %w", err)
 			}
@@ -470,6 +497,9 @@ func (d *Store) StartActivity(ctx context.Context, executionID, owner, name, inp
 		if row.InputHash != inputHash {
 			return fmt.Errorf("activity %q input changed", name)
 		}
+		if row.Position != int64(position) {
+			return fmt.Errorf("workflow replay mismatch for activity %q: recorded position %d, got %d", name, row.Position, position)
+		}
 		activity = activityFromRow(row)
 		if activity.State == "completed" {
 			completed = true
@@ -480,6 +510,7 @@ func (d *Store) StartActivity(ctx context.Context, executionID, owner, name, inp
 			ExecutionID: executionID,
 			Name:        name,
 			LeaseOwner:  nullString(owner),
+			Attempt:     int64(attempt),
 		})
 		if err != nil {
 			return fmt.Errorf("starting activity: %w", err)
@@ -503,7 +534,7 @@ func (d *Store) StartActivity(ctx context.Context, executionID, owner, name, inp
 	return activity, completed, nil
 }
 
-func (d *Store) CheckpointActivity(ctx context.Context, executionID, owner, name string, checkpoint []byte) error {
+func (d *Store) CheckpointActivity(ctx context.Context, executionID, owner string, attempt int, name string, checkpoint []byte) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.CheckpointActivity(ctx, jobquery.CheckpointActivityParams{
@@ -511,6 +542,7 @@ func (d *Store) CheckpointActivity(ctx context.Context, executionID, owner, name
 			ExecutionID: executionID,
 			Name:        name,
 			LeaseOwner:  nullString(owner),
+			Attempt:     int64(attempt),
 		})
 		if err != nil {
 			return fmt.Errorf("checkpointing activity: %w", err)
@@ -522,7 +554,7 @@ func (d *Store) CheckpointActivity(ctx context.Context, executionID, owner, name
 	})
 }
 
-func (d *Store) CompleteActivity(ctx context.Context, executionID, owner, name string, result []byte, now time.Time) error {
+func (d *Store) CompleteActivity(ctx context.Context, executionID, owner string, attempt int, name string, result []byte, now time.Time) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.CompleteActivity(ctx, jobquery.CompleteActivityParams{
@@ -531,6 +563,7 @@ func (d *Store) CompleteActivity(ctx context.Context, executionID, owner, name s
 			ExecutionID: executionID,
 			Name:        name,
 			LeaseOwner:  nullString(owner),
+			Attempt:     int64(attempt),
 		})
 		if err != nil {
 			return fmt.Errorf("completing activity: %w", err)
@@ -542,7 +575,7 @@ func (d *Store) CompleteActivity(ctx context.Context, executionID, owner, name s
 	})
 }
 
-func (d *Store) FailActivity(ctx context.Context, executionID, owner, name, lastError string) error {
+func (d *Store) FailActivity(ctx context.Context, executionID, owner string, attempt int, name, lastError string) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.FailActivity(ctx, jobquery.FailActivityParams{
@@ -550,6 +583,7 @@ func (d *Store) FailActivity(ctx context.Context, executionID, owner, name, last
 			ExecutionID: executionID,
 			Name:        name,
 			LeaseOwner:  nullString(owner),
+			Attempt:     int64(attempt),
 		})
 		if err != nil {
 			return fmt.Errorf("failing activity: %w", err)
@@ -564,13 +598,14 @@ func (d *Store) FailActivity(ctx context.Context, executionID, owner, name, last
 // InvalidateActivity un-completes a completed activity so a retry
 // re-runs it; used when a later activity reveals the completed one's
 // external effect actually failed.
-func (d *Store) InvalidateActivity(ctx context.Context, executionID, owner, name string) error {
+func (d *Store) InvalidateActivity(ctx context.Context, executionID, owner string, attempt int, name string) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.InvalidateActivity(ctx, jobquery.InvalidateActivityParams{
 			ExecutionID: executionID,
 			Name:        name,
 			LeaseOwner:  nullString(owner),
+			Attempt:     int64(attempt),
 		})
 		if err != nil {
 			return fmt.Errorf("invalidating activity: %w", err)
@@ -579,6 +614,33 @@ func (d *Store) InvalidateActivity(ctx context.Context, executionID, owner, name
 			return ErrNotFound
 		}
 		return createEvent(ctx, q, executionID, "activity.invalidated", map[string]string{"name": name})
+	})
+}
+
+func (d *Store) EnsureReplayComplete(ctx context.Context, executionID, owner string, attempt, position int) error {
+	if attempt < 1 || position < 0 {
+		return errors.New("invalid workflow replay position")
+	}
+	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
+		q := d.write.WithTx(tx.Tx)
+		row, err := q.GetExecution(ctx, executionID)
+		if err != nil {
+			return fmt.Errorf("getting workflow execution: %w", err)
+		}
+		if row.State != StateRunning || fromNullString(row.LeaseOwner) != owner || row.Attempt != int64(attempt) || fromNullTime(row.LeaseUntil).Before(time.Now()) {
+			return ErrNotFound
+		}
+		remaining, err := q.CountActivitiesAfterPosition(ctx, jobquery.CountActivitiesAfterPositionParams{
+			ExecutionID: executionID,
+			Position:    int64(position),
+		})
+		if err != nil {
+			return fmt.Errorf("checking workflow replay: %w", err)
+		}
+		if remaining != 0 {
+			return fmt.Errorf("workflow replay ended before %d recorded activities", remaining)
+		}
+		return nil
 	})
 }
 
@@ -657,6 +719,7 @@ func executionFromRow(row jobquery.JobExecution) Execution {
 	return Execution{
 		ID:                row.ID,
 		Kind:              row.Kind,
+		WorkflowVersion:   row.WorkflowVersion,
 		DefinitionID:      row.DefinitionID,
 		Trigger:           row.Trigger,
 		DedupeKey:         row.DedupeKey,
@@ -682,6 +745,7 @@ func activityFromRow(row jobquery.JobExecutionActivity) Activity {
 	return Activity{
 		ExecutionID: row.ExecutionID,
 		Name:        row.Name,
+		Position:    int(row.Position),
 		InputHash:   row.InputHash,
 		State:       row.State,
 		Attempt:     int(row.Attempt),

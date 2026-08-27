@@ -35,7 +35,7 @@ type waitResult struct {
 // mount-script, start, wait, finalize. Each stage is a durable
 // activity; completed stages are skipped on replay after a crash.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowBackup, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowBackup, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.BackupInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding backup workflow input: %w", err))

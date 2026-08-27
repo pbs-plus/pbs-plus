@@ -22,7 +22,7 @@ type taskResult struct {
 // run, finalize. Task creation is exactly-once; the tape run reattaches
 // to the task log by UPID across retries.
 func RegisterMigration(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowMtfMigration, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowMtfMigration, "1", func(w *jobs.WorkflowContext) error {
 		j, err := newMigrationJob(w.Execution.DefinitionID, app)
 		if err != nil {
 			return jobs.NonRetryable(err)
@@ -102,7 +102,7 @@ func (j *mtfJob) finalizeFailed(w *jobs.WorkflowContext, upid string, runErr err
 // RegisterScan registers the MTF inventory scan workflow: start-task,
 // scan, finalize, under the global mtf-scan resource lock.
 func RegisterScan(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowMtfScan, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowMtfScan, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.MtfScanInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding mtf scan workflow input: %w", err))

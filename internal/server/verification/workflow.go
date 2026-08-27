@@ -36,7 +36,7 @@ type verifyResult struct {
 // start-task, verify, finalize. Candidate order is pinned by the
 // select activity; verify checkpoints its position across retries.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowVerification, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowVerification, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.VerificationInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding verification workflow input: %w", err))
