@@ -118,7 +118,7 @@ var backupPanel = js.Panel{
 						return;
 					}
 					const upidStore = Ext.create("Ext.data.Store", {
-						fields: ["upid", "starttime", "endtime", "status", "duration"],
+						fields: ["upid", "starttime", "endtime", "status", "status_parsed", "duration"],
 						data: upids.map((item) => {
 							const task = Proxmox.Utils.parse_task_upid(item.upid);
 							return {
@@ -126,6 +126,7 @@ var backupPanel = js.Panel{
 								starttime: task.starttime,
 								endtime: item.endtime,
 								status: item.status,
+								status_parsed: item.status_parsed,
 								duration: item.endtime && task.starttime ? item.endtime - task.starttime : null,
 							};
 						}),

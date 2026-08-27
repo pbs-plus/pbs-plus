@@ -56,6 +56,11 @@ type ParsedTaskStatus struct {
 	Text     string `json:"text"`
 }
 
+type TasksWithStatus struct {
+	coredb.Tasks
+	StatusParsed ParsedTaskStatus `json:"status_parsed"`
+}
+
 func ParseTaskStatus(status string) ParsedTaskStatus {
 	if status == "" {
 		return ParsedTaskStatus{}
