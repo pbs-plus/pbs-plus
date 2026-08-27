@@ -2,7 +2,7 @@ package ui
 
 import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
-var mtfDriveGrid = js.Grid{
+var mtfDriveGrid = js.Panel{
 	Name: "PBS.MtfManagement.DriveGrid", XType: "pbsMtfDriveGrid",
 	Store:     js.Store{StoreID: "proxmox-tape-drives", Model: "pbs-model-drives", APIPath: "/api2/json/tape/drive", Sorters: "name", GroupField: "changer", Proxy: js.ProxyProxmox, QueryParamNull: true},
 	Grouping:  &js.Grouping{HeaderTemplate: `{name:this.formatName} ({rows.length} Drive{[values.rows.length > 1 ? "s" : ""]})`, FormatName: js.Func("changer", `if (!changer) return gettext("Standalone Drives"); return Ext.String.format(gettext("Changer {0}"), changer);`)},

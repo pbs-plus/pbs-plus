@@ -2,7 +2,7 @@ package ui
 
 import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
-var exclusionPanel = js.Grid{
+var exclusionPanel = js.Panel{
 	Name: "PBS.D2DManagement.ExclusionPanel", XType: "pbsDiskExclusionPanel",
 	Store:     js.Store{StoreID: "proxmox-disk-exclusions", Model: "pbs-model-exclusions", APIPath: "/api2/json/d2d/exclusion", Sorters: "name"},
 	Listeners: js.Listeners{ItemDblClick: "onEdit"},

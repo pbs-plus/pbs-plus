@@ -2,7 +2,7 @@ package ui
 
 import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
-var mtfChangerGrid = js.Grid{
+var mtfChangerGrid = js.Panel{
 	Name: "PBS.MtfManagement.ChangerGrid", XType: "pbsMtfChangerGrid",
 	Store:     js.Store{StoreID: "proxmox-tape-changers", Model: "pbs-model-changers", APIPath: "/api2/json/tape/changer", Sorters: "name", Proxy: js.ProxyProxmox, QueryParamNull: true},
 	Listeners: js.Listeners{ItemDblClick: "onDblClick"},

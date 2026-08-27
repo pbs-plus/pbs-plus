@@ -2,7 +2,7 @@ package ui
 
 import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
-var notificationBatchPanel = js.Grid{
+var notificationBatchPanel = js.Panel{
 	Name: "PBS.D2DManagement.NotificationBatchView", XType: "pbsNotificationBatchView",
 	Title: "Notification Batches", StateID: "grid-notification-batches-v1",
 	MultiSelect: true, CheckboxSelection: true,

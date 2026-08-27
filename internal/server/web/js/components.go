@@ -209,6 +209,7 @@ type Store struct {
 	StoreID        string
 	Model          string
 	Fields         []string
+	Data           []Option
 	APIPath        string
 	Sorters        string
 	GroupField     string
@@ -239,6 +240,18 @@ func (s Store) Config() Obj {
 	}
 	if len(s.Fields) > 0 {
 		plain := Obj{"fields": stringsToArr(s.Fields), "autoLoad": true, "proxy": proxy}
+		set(plain, "sorters", s.Sorters)
+		return plain
+	}
+	if len(s.Data) > 0 {
+		data := make(Arr, len(s.Data))
+		for i, option := range s.Data {
+			data[i] = option.Config()
+		}
+		return Obj{"fields": Arr{"value", "text"}, "data": data}
+	}
+	if s.Model == "" {
+		plain := Obj{"proxy": proxy, "autoLoad": true}
 		set(plain, "sorters", s.Sorters)
 		return plain
 	}
@@ -371,82 +384,6 @@ func (l Listeners) Config() Obj {
 	return o
 }
 
-// Grid is an Ext.grid.Panel class. A grid with a Store stops updates on
-// deactivate/destroy, restarts on activate and monitors store errors unless
-// NoStoreLifecycle is set.
-type Grid struct {
-	Name              string
-	XType             XType
-	Extend            string
-	Title             string
-	StateID           string
-	Store             Component
-	Columns           []Column
-	Tbar              []Tool
-	Grouping          *Grouping
-	Controller        Controller
-	Listeners         Listeners
-	MultiSelect       bool
-	CheckboxSelection bool
-	NoStoreLifecycle  bool
-}
-
-func (g Grid) Config() Obj {
-	extend := g.Extend
-	if extend == "" {
-		extend = "Ext.grid.Panel"
-	}
-	o := Obj{"extend": extend}
-	if g.XType != "" {
-		o["alias"] = "widget." + string(g.XType)
-	}
-	if g.Title != "" {
-		o["title"] = T(g.Title)
-	}
-	if g.StateID != "" {
-		o["stateful"] = true
-		o["stateId"] = g.StateID
-	}
-	set(o, "multiSelect", g.MultiSelect)
-	if g.CheckboxSelection {
-		o["selType"] = "checkboxmodel"
-	}
-
-	ctrl := g.Controller
-	listeners := g.Listeners
-	if g.Store != nil {
-		o["store"] = g.Store.Config()
-		if !g.NoStoreLifecycle {
-			if s, ok := g.Store.(Store); ok && len(s.Fields) > 0 {
-				ctrl = withReload(ctrl)
-			} else {
-				ctrl = withStoreLifecycle(ctrl)
-				listeners = withStoreListeners(listeners)
-			}
-		}
-	}
-	if len(ctrl.Methods) > 0 {
-		o["controller"] = ctrl.Config()
-	}
-	if lc := listeners.Config(); len(lc) > 0 {
-		o["listeners"] = lc
-	}
-	if len(g.Columns) > 0 {
-		cols := make(Arr, len(g.Columns))
-		for i, c := range g.Columns {
-			cols[i] = c.Config()
-		}
-		o["columns"] = cols
-	}
-	if len(g.Tbar) > 0 {
-		o["tbar"] = tools(g.Tbar)
-	}
-	if g.Grouping != nil {
-		o["features"] = Arr{g.Grouping.Config()}
-	}
-	return o
-}
-
 type Grouping struct {
 	HeaderTemplate string
 	FormatName     Raw
@@ -454,10 +391,6 @@ type Grouping struct {
 
 func (g Grouping) Config() Obj {
 	return Obj{"ftype": "grouping", "groupHeaderTpl": Arr{g.HeaderTemplate, Obj{"formatName": g.FormatName}}}
-}
-
-func (g Grid) AppendJS(dst []byte, indent int) []byte {
-	return Class{Name: g.Name, Config: g.Config()}.AppendJS(dst, indent)
 }
 
 func withStoreLifecycle(c Controller) Controller {
@@ -687,19 +620,10 @@ func (s Selector) Config() Obj {
 	}
 	set(o, "emptyText", s.EmptyText)
 	if s.APIPath != "" {
-		store := Obj{
-			"proxy":    Obj{"type": "pbsplus", "url": PlusURL(s.APIPath)},
-			"autoLoad": true,
-		}
-		set(store, "sorters", s.Sorters)
-		o["store"] = store
+		o["store"] = Store{APIPath: s.APIPath, Sorters: s.Sorters}.Config()
 	}
 	if len(s.Options) > 0 {
-		data := make(Arr, len(s.Options))
-		for i, option := range s.Options {
-			data[i] = option.Config()
-		}
-		o["store"] = Obj{"fields": Arr{"value", "text"}, "data": data}
+		o["store"] = Store{Data: s.Options}.Config()
 	}
 	if len(s.ListColumns) > 0 || s.ListWidth != 0 || s.ListMinWidth != 0 || s.ListMaxWidth != 0 || s.ListMinHeight != 0 || s.ListEmptyText != "" {
 		cols := make(Arr, len(s.ListColumns))
@@ -768,23 +692,34 @@ func (s Selector) AppendJS(dst []byte, indent int) []byte {
 }
 
 // FieldContainer is an Ext.form.FieldContainer class.
-// Panel is every container class: field container, input panel, tab panel or
-// plain panel. Extend picks which one; the rendered config is otherwise
-// identical across all of them.
+// Panel is every container class: grid, field container, input panel, tab
+// panel or plain panel. Extend picks the base class, defaulting to a grid when
+// Columns are set. A Panel with a Store stops updates on deactivate/destroy,
+// restarts on activate and monitors store errors unless NoStoreLifecycle is set.
 type Panel struct {
-	Name          string
-	XType         XType
-	Extend        string
-	Title         string
-	Layout        string
-	Items         Arr
-	Column1       Arr
-	Column2       Arr
-	FieldDefaults Obj
-	Padding       int
-	Border        bool
-	PanelDefaults bool
-	Methods       map[string]Raw
+	Name              string
+	XType             XType
+	Extend            string
+	Title             string
+	StateID           string
+	Layout            string
+	Items             Arr
+	Column1           Arr
+	Column2           Arr
+	FieldDefaults     Obj
+	Padding           int
+	Border            bool
+	PanelDefaults     bool
+	Store             Component
+	Columns           []Column
+	Tbar              []Tool
+	Grouping          *Grouping
+	Controller        Controller
+	Listeners         Listeners
+	MultiSelect       bool
+	CheckboxSelection bool
+	NoStoreLifecycle  bool
+	Methods           map[string]Raw
 }
 
 const (
@@ -797,6 +732,9 @@ func (p Panel) Config() Obj {
 	extend := p.Extend
 	if extend == "" {
 		extend = "Ext.panel.Panel"
+		if len(p.Columns) > 0 {
+			extend = "Ext.grid.Panel"
+		}
 	}
 	o := Obj{"extend": extend}
 	if p.XType != "" {
@@ -804,6 +742,10 @@ func (p Panel) Config() Obj {
 	}
 	if p.Title != "" {
 		o["title"] = T(p.Title)
+	}
+	if p.StateID != "" {
+		o["stateful"] = true
+		o["stateId"] = p.StateID
 	}
 	set(o, "layout", p.Layout)
 	set(o, "items", p.Items)
@@ -814,6 +756,43 @@ func (p Panel) Config() Obj {
 	set(o, "border", p.Border)
 	if p.PanelDefaults {
 		o["defaults"] = Obj{"border": false, "xtype": string(XPanel)}
+	}
+	set(o, "multiSelect", p.MultiSelect)
+	if p.CheckboxSelection {
+		o["selType"] = "checkboxmodel"
+	}
+
+	ctrl := p.Controller
+	listeners := p.Listeners
+	if p.Store != nil {
+		o["store"] = p.Store.Config()
+		if !p.NoStoreLifecycle {
+			if s, ok := p.Store.(Store); ok && len(s.Fields) > 0 {
+				ctrl = withReload(ctrl)
+			} else {
+				ctrl = withStoreLifecycle(ctrl)
+				listeners = withStoreListeners(listeners)
+			}
+		}
+	}
+	if len(ctrl.Methods) > 0 {
+		o["controller"] = ctrl.Config()
+	}
+	if lc := listeners.Config(); len(lc) > 0 {
+		o["listeners"] = lc
+	}
+	if len(p.Columns) > 0 {
+		cols := make(Arr, len(p.Columns))
+		for i, c := range p.Columns {
+			cols[i] = c.Config()
+		}
+		o["columns"] = cols
+	}
+	if len(p.Tbar) > 0 {
+		o["tbar"] = tools(p.Tbar)
+	}
+	if p.Grouping != nil {
+		o["features"] = Arr{p.Grouping.Config()}
 	}
 	for k, v := range p.Methods {
 		o[k] = v

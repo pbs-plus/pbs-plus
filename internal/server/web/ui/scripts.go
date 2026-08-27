@@ -26,7 +26,7 @@ var scriptSelector = js.Selector{
 	},
 }
 
-var scriptPanel = js.Grid{
+var scriptPanel = js.Panel{
 	Name:    "PBS.D2DManagement.ScriptPanel",
 	XType:   "pbsDiskScriptPanel",
 	StateID: "grid-disk-backup-scripts-v1",
