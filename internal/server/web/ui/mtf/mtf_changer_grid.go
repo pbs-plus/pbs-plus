@@ -1,6 +1,8 @@
 package mtf
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var mtfChangerGrid = js.Panel{
 	Name: "PBS.MtfManagement.ChangerGrid", XType: "pbsMtfChangerGrid",

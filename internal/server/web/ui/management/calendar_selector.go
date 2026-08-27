@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var calendarEventSelector = js.Selector{
 	Name: "PBS.form.D2DCalendarEvent", XType: "pbsD2DCalendarEvent", Extend: "Ext.form.field.ComboBox",

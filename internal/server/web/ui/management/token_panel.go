@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var showFingerprint = js.Func("", `
 	let win = Ext.create("Ext.window.Window", {

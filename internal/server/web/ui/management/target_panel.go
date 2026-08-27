@@ -129,7 +129,7 @@ var targetPanelController = js.ControllerClass{
 				});
 			});
 		`),
-		"onEdit":     targetWindowHandler("PBS.D2DManagement.TargetEditWindow"),
+		"onEdit":      targetWindowHandler("PBS.D2DManagement.TargetEditWindow"),
 		"setS3Secret": targetWindowHandler("PBS.D2DManagement.TargetS3Secret"),
 		"pushUpdate": js.Func("", `
 			let me = this;
@@ -396,7 +396,7 @@ var targetPanelController = js.ControllerClass{
 				return '<i class="fa fa-times critical"></i> Unreachable';
 			}
 		`),
-		"render_path": renderNonGroupField,
+		"render_path":  renderNonGroupField,
 		"render_field": renderNonGroupField,
 		"onItemDblClick": js.Func("view, record", `
 			if (!record.data.isGroup) {

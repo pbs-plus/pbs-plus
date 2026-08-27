@@ -78,7 +78,7 @@ var backupJobEdit = js.EditWindow{
 		Items: js.Items(
 			js.Panel{
 				Extend: js.ExtInputPanel, Title: "Options",
-				CBind: js.Obj{"isCreate": "{isCreate}"},
+				CBind:   js.Obj{"isCreate": "{isCreate}"},
 				Methods: map[string]js.Raw{"onGetValues": js.DropDeleteOnCreate},
 				Column1: js.Items(
 					js.Field{XType: js.XDisplayEditField, Name: "id", Label: "Job ID", Renderer: "Ext.htmlEncode", AllowBlank: new(true), EditableWhenCreate: true},

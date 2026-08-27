@@ -1,6 +1,8 @@
 package mtf
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 const mtfJobURL = "/api2/extjs/d2d/mtf-job?job="
 
@@ -11,7 +13,7 @@ var mtfJobPanel = js.Panel{
 	ViewConfig: &js.ViewConfig{TrackOver: new(false)},
 	Listeners:  js.Listeners{ItemDblClick: "editJob"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
-		"addJob": js.OpenEditWindow("PBS.MtfManagement.JobEdit", ""),
+		"addJob":  js.OpenEditWindow("PBS.MtfManagement.JobEdit", ""),
 		"editJob": js.EditSelection("PBS.MtfManagement.JobEdit", "jobId", "id", "autoShow"),
 		"removeJobs": js.ConfirmRemove(
 			"/api2/extjs/config/mtf-job/",

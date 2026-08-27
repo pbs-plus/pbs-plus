@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var notificationTabs = js.Raw(`
 // Full notification tab for job edit windows (backup, restore, verification).

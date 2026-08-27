@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var pathBrowserWindow = js.Panel{
 	Name: "PBS.window.D2DPathSelector", XType: "pbsD2DPathSelector",

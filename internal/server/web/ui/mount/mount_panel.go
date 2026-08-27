@@ -1,6 +1,8 @@
 package mount
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 // archiveActionIcon shows icon only on mountable .pxar/.mpxar archives;
 // archiveActionDisabled also refuses encrypted (crypt-mode 3) archives.
@@ -664,15 +666,15 @@ var mountPanel = js.Panel{
 		}},
 		{XType: js.XActionColumn, Text: "Actions", DataIndex: "text", Width: 150, Items: js.Arr{
 			js.Obj{
-				"handler": "mountBackup",
-				"getTip":  js.Func("v, m, rec", `return Ext.String.format(gettext("Mount '{0}'"), v);`),
-				"getClass": archiveActionIcon("fa fa-hdd-o"),
+				"handler":          "mountBackup",
+				"getTip":           js.Func("v, m, rec", `return Ext.String.format(gettext("Mount '{0}'"), v);`),
+				"getClass":         archiveActionIcon("fa fa-hdd-o"),
 				"isActionDisabled": archiveActionDisabled,
 			},
 			js.Obj{
-				"handler": "unmountBackup",
-				"getTip":  js.Func("v, m, rec", `return Ext.String.format(gettext("Unmount '{0}'"), v);`),
-				"getClass": archiveActionIcon("fa fa-eject"),
+				"handler":          "unmountBackup",
+				"getTip":           js.Func("v, m, rec", `return Ext.String.format(gettext("Unmount '{0}'"), v);`),
+				"getClass":         archiveActionIcon("fa fa-eject"),
 				"isActionDisabled": archiveActionDisabled,
 			},
 			js.Obj{

@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var selectors = []js.Value{
 	js.Selector{
@@ -8,8 +10,8 @@ var selectors = []js.Value{
 		DisplayField: "name", ValueField: "name", APIPath: "/api2/json/d2d/exclusion", Sorters: "name",
 		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 450,
 		ListColumns: []js.Column{{Text: "Path", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Raw("Ext.String.htmlEncode")}},
-		Methods: map[string]js.Raw{"initComponent": js.ChangerExtraParams},
-		Value: js.Raw("null"),
+		Methods:     map[string]js.Raw{"initComponent": js.ChangerExtraParams},
+		Value:       js.Raw("null"),
 	},
 	js.Selector{
 		Name: "PBS.form.D2DNamespaceSelector", XType: "pbsD2DNamespaceSelector", Extend: "Ext.form.field.ComboBox",

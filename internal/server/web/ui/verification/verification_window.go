@@ -1,6 +1,8 @@
 package verification
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var verificationHelpers = js.Raw(`
 var verificationModes = Ext.create("Ext.data.Store", {

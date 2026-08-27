@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var notificationBatchEdit = js.EditWindow{
 	Name: "PBS.D2DManagement.NotificationBatchEdit", XType: "pbsNotificationBatchEdit",

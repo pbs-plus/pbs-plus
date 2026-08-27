@@ -1,6 +1,8 @@
 package verification
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 const verificationRunURL = "/api2/extjs/d2d/verification?"
 

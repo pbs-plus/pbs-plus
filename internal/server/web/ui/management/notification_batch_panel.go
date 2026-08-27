@@ -1,6 +1,8 @@
 package management
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
 
 var notificationBatchPanel = js.Panel{
 	Name: "PBS.D2DManagement.NotificationBatchView", XType: "pbsNotificationBatchView",
@@ -12,8 +14,8 @@ var notificationBatchPanel = js.Panel{
 	},
 	Listeners: js.Listeners{ItemDblClick: "editBatch"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
-		"addBatch":  js.Func("", `let me = this; Ext.create("PBS.D2DManagement.NotificationBatchEdit", { autoShow: true, listeners: { destroy: () => me.reload() } }).show();`),
-		"editBatch": js.Func("", `let me = this; let selection = me.getView().getSelection(); if (!selection || selection.length !== 1) return; Ext.create("PBS.D2DManagement.NotificationBatchEdit", { batchName: selection[0].data.name, autoShow: true, listeners: { destroy: () => me.reload() } }).show();`),
+		"addBatch":      js.Func("", `let me = this; Ext.create("PBS.D2DManagement.NotificationBatchEdit", { autoShow: true, listeners: { destroy: () => me.reload() } }).show();`),
+		"editBatch":     js.Func("", `let me = this; let selection = me.getView().getSelection(); if (!selection || selection.length !== 1) return; Ext.create("PBS.D2DManagement.NotificationBatchEdit", { batchName: selection[0].data.name, autoShow: true, listeners: { destroy: () => me.reload() } }).show();`),
 		"removeBatches": js.ConfirmRemove("/api2/json/d2d/notification-batch?batch=", "rec.data.name", "Remove selected notification batches?"),
 	}},
 	Tbar: []js.Tool{
