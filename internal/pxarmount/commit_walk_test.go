@@ -294,6 +294,10 @@ func TestCommitWalkWithRegisteredNodes(t *testing.T) {
 		t.Fatalf("commitWalk failed: %v", err)
 	}
 
+	if len(ow.entryCache) != 0 {
+		t.Fatalf("entry cache retained %d files after walk", len(ow.entryCache))
+	}
+
 	totalFiles := len(w.refs) + len(w.backedFiles) + len(w.emptyFiles)
 	if totalFiles < 5 {
 		t.Errorf("expected at least 5 files with registered nodes, got %d", totalFiles)

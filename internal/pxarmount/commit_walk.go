@@ -166,7 +166,7 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 	}
 
 	pxarEntries = nil
-	_ = pxarEntries
+	clear(ow.entryCache)
 
 	for i := range deferredDirs {
 		if err := ow.processDeferredDir(&deferredDirs[i], relPath); err != nil {
