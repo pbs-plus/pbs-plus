@@ -20,14 +20,17 @@ import (
 
 var quicNextProtos = []string{"pbsarpc-quic"}
 
-// Bounds how long an idle agent holds a dead session: stateless resets only
-// cover datagrams over 42 bytes, and idle agents send 25-byte keepalives.
-const quicMaxIdleTimeout = 90 * time.Second
+// A keepalive restarts the idle clock, so shedding a dead session costs
+// KeepAlivePeriod + MaxIdleTimeout; stateless resets never cover the idle case.
+const (
+	quicKeepAlivePeriod = 15 * time.Second
+	quicMaxIdleTimeout  = 60 * time.Second
+)
 
 func quicConfig() *quic.Config {
 	return &quic.Config{
 		MaxIdleTimeout:             quicMaxIdleTimeout,
-		KeepAlivePeriod:            30 * time.Second,
+		KeepAlivePeriod:            quicKeepAlivePeriod,
 		HandshakeIdleTimeout:       10 * time.Second,
 		MaxIncomingStreams:         1 << 16,
 		MaxStreamReceiveWindow:     10 * 1024 * 1024,

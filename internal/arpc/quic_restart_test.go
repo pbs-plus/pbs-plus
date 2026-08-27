@@ -66,14 +66,10 @@ func TestNewQuicTransportSetsResetKey(t *testing.T) {
 	}
 }
 
-// This ceiling is how long an idle agent stays unusable after a server restart.
+// The two settings compose, so neither one alone bounds agent recovery.
 func TestQuicIdleTimeoutBoundsAgentRecovery(t *testing.T) {
 	cfg := quicConfig()
 
-	if cfg.MaxIdleTimeout > 2*time.Minute {
-		t.Fatalf("MaxIdleTimeout is %v; an idle agent would hold a dead "+
-			"session that long after a server restart", cfg.MaxIdleTimeout)
-	}
 	if cfg.KeepAlivePeriod <= 0 {
 		t.Fatal("keepalive disabled; healthy idle sessions would be dropped")
 	}
@@ -81,6 +77,13 @@ func TestQuicIdleTimeoutBoundsAgentRecovery(t *testing.T) {
 		t.Fatalf("keepalive %v leaves no margin under idle timeout %v; "+
 			"healthy sessions would be torn down",
 			cfg.KeepAlivePeriod, cfg.MaxIdleTimeout)
+	}
+
+	worstCase := cfg.KeepAlivePeriod + cfg.MaxIdleTimeout
+	if worstCase > 90*time.Second {
+		t.Fatalf("an idle agent needs up to %v (keepalive %v + idle %v) to "+
+			"drop a dead session and become usable again",
+			worstCase, cfg.KeepAlivePeriod, cfg.MaxIdleTimeout)
 	}
 }
 
