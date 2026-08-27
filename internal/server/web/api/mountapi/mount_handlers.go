@@ -45,7 +45,7 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 		BackupTime: strings.TrimSpace(r.FormValue("backup-time")),
 		FileName:   strings.TrimSpace(r.FormValue("file-name")),
 		Mode:       strings.TrimSpace(r.FormValue("mode")),
-		MountPath:  validate.DecodePath(strings.TrimSpace(r.FormValue("mount-path"))),
+		MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 		Force:      r.FormValue("force") == "1" || r.FormValue("force") == "true",
 	}
 	if err := validate.ValidateDatastore(f.Datastore); err != nil {
@@ -54,11 +54,11 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 	if err := validate.ValidateNamespace(f.Namespace); err != nil {
 		return f, err
 	}
-	parsedTime, err := time.Parse(time.RFC3339, f.BackupTime)
-	if err != nil {
-		return f, fmt.Errorf("invalid backup-time format: %w", err)
+	if f.BackupTime != "" {
+		if _, err := time.Parse(time.RFC3339, f.BackupTime); err != nil {
+			return f, fmt.Errorf("invalid backup-time format: %w", err)
+		}
 	}
-	_ = parsedTime
 	if f.BackupType != "" || f.BackupID != "" || f.FileName != "" {
 		if err := validate.ValidateBackupType(f.BackupType); err != nil {
 			return f, err
@@ -77,6 +77,10 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 		return f, err
 	}
 	return f, nil
+}
+
+func (f mountForm) hasBackupParams() bool {
+	return f.BackupType != "" && f.BackupID != "" && f.BackupTime != "" && f.FileName != ""
 }
 
 func (f mountForm) safeTime() (string, error) {
@@ -131,6 +135,10 @@ func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 		safeTime, err := f.safeTime()
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
+			return
+		}
+		if !f.hasBackupParams() {
+			http.Error(w, "Missing backup parameters", http.StatusBadRequest)
 			return
 		}
 		key := snapshotmount.Key(f.Datastore, f.Namespace, f.BackupType, f.BackupID, safeTime)
@@ -194,6 +202,10 @@ func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 				key = session.ServiceKey
 			}
 		} else {
+			if !f.hasBackupParams() {
+				http.Error(w, "Missing backup parameters or mount-path", http.StatusBadRequest)
+				return
+			}
 			safeTime, err := f.safeTime()
 			if err != nil {
 				respond.WriteErrorResponse(w, err)
