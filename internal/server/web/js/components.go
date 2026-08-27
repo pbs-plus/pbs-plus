@@ -206,23 +206,42 @@ func (m Model) AppendJS(dst []byte, indent int) []byte {
 
 // Store is the diff-over-update store every PBS-Plus grid uses.
 type Store struct {
-	StoreID string
-	Model   string
-	APIPath string
-	Sorters string
+	StoreID       string
+	Model         string
+	APIPath       string
+	Sorters       string
+	Proxy         StoreProxy
+	QueryParamNull bool
 }
 
+// StoreProxy identifies the ExtJS proxy family used by a store.
+type StoreProxy string
+
+const (
+	ProxyPBSPlus StoreProxy = "pbsplus"
+	ProxyProxmox StoreProxy = "proxmox"
+)
+
 func (s Store) Config() Obj {
+	proxyType := s.Proxy
+	if proxyType == "" {
+		proxyType = ProxyPBSPlus
+	}
+	url := any(PlusURL(s.APIPath))
+	if proxyType == ProxyProxmox {
+		url = s.APIPath
+	}
+	proxy := Obj{"type": string(proxyType), "url": url}
+	if s.QueryParamNull {
+		proxy["queryParam"] = Raw("null")
+	}
 	o := Obj{
 		"type": "diff",
 		"rstore": Obj{
 			"type":    "update",
 			"storeid": s.StoreID,
 			"model":   s.Model,
-			"proxy": Obj{
-				"type": "pbsplus",
-				"url":  PlusURL(s.APIPath),
-			},
+			"proxy": proxy,
 		},
 	}
 	set(o, "sorters", s.Sorters)
@@ -266,6 +285,9 @@ type Tool struct {
 	Disabled  bool
 	SelModel  *bool
 	EnableFn  Raw
+	IconCls   string
+	StandardRemoveBaseURL string
+	Callback              string
 
 	separator bool
 }
@@ -274,7 +296,11 @@ type Tool struct {
 func Sep() Tool { return Tool{separator: true} }
 
 func (t Tool) Config() Obj {
-	o := Obj{"xtype": string(XProxmoxButton)}
+	xtype := string(XProxmoxButton)
+	if t.StandardRemoveBaseURL != "" {
+		xtype = "proxmoxStdRemoveButton"
+	}
+	o := Obj{"xtype": xtype}
 	set(o, "xtype", t.XType)
 	if t.Text != "" {
 		o["text"] = T(t.Text)
@@ -284,6 +310,9 @@ func (t Tool) Config() Obj {
 	set(o, "disabled", t.Disabled)
 	set(o, "selModel", t.SelModel)
 	set(o, "enableFn", t.EnableFn)
+	set(o, "iconCls", t.IconCls)
+	set(o, "baseurl", t.StandardRemoveBaseURL)
+	set(o, "callback", t.Callback)
 	return o
 }
 

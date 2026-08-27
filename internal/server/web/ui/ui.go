@@ -12,6 +12,7 @@ func Render() []byte {
 	items = append(items, pathSelectors...)
 	items = append(items, windows...)
 	items = append(items, exclusionPanel)
+	items = append(items, mtfChangerGrid)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }
