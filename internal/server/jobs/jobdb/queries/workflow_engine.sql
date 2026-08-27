@@ -41,10 +41,27 @@ WHERE state = 'pending' AND cancel_requested = 0 AND run_at <= ?
 ORDER BY run_at, created_at
 LIMIT 32;
 
--- name: RequeueExpiredExecutions :exec
+-- name: ListExpiredCanceledExecutionIDs :many
+SELECT id
+FROM job_executions
+WHERE state = 'running' AND cancel_requested = 1 AND lease_until < ?
+ORDER BY lease_until;
+
+-- name: CancelExpiredExecution :execrows
+UPDATE job_executions
+SET state = 'canceled', lease_owner = NULL, lease_until = NULL, finished_at = ?
+WHERE id = ? AND state = 'running' AND cancel_requested = 1 AND lease_until < ?;
+
+-- name: RequeueExpiredExecutions :many
 UPDATE job_executions
 SET state = 'pending', lease_owner = NULL, lease_until = NULL, run_at = ?
-WHERE state = 'running' AND lease_until < ? AND cancel_requested = 0;
+WHERE state = 'running' AND lease_until < ? AND cancel_requested = 0
+RETURNING id;
+
+-- name: ResetRunningActivities :exec
+UPDATE job_execution_activities
+SET state = 'pending'
+WHERE execution_id = ? AND state = 'running';
 
 -- name: ClaimExecution :execrows
 UPDATE job_executions
@@ -124,24 +141,59 @@ ON CONFLICT(execution_id, name) DO NOTHING;
 -- name: StartActivity :execrows
 UPDATE job_execution_activities
 SET state = 'running', attempt = attempt + 1, started_at = ?, last_error = NULL
-WHERE execution_id = ? AND name = ? AND state IN ('pending', 'running');
+WHERE execution_id = ? AND name = ? AND state IN ('pending', 'running')
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+  );
 
 -- name: CheckpointActivity :execrows
 UPDATE job_execution_activities
 SET checkpoint = ?
-WHERE execution_id = ? AND name = ? AND state = 'running';
+WHERE execution_id = ? AND name = ? AND state = 'running'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+  );
 
 -- name: CompleteActivity :execrows
 UPDATE job_execution_activities
 SET state = 'completed', result = ?, completed_at = ?
-WHERE execution_id = ? AND name = ? AND state = 'running';
+WHERE execution_id = ? AND name = ? AND state = 'running'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+  );
 
 -- name: InvalidateActivity :execrows
 UPDATE job_execution_activities
 SET state = 'pending', result = NULL, checkpoint = NULL, completed_at = NULL
-WHERE execution_id = ? AND name = ? AND state = 'completed';
+WHERE execution_id = ? AND name = ? AND state = 'completed'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+  );
 
 -- name: FailActivity :execrows
 UPDATE job_execution_activities
 SET state = 'pending', last_error = ?
-WHERE execution_id = ? AND name = ? AND state = 'running';
+WHERE execution_id = ? AND name = ? AND state = 'running'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+  );

@@ -259,6 +259,70 @@ func TestEngine_CheckpointResumesActivity(t *testing.T) {
 	}
 }
 
+func TestDatabase_CancelsExpiredWorkflow(t *testing.T) {
+	ctx := context.Background()
+	_, db := newTestEngine(t, ctx)
+	execution, _, err := db.Submit(ctx, testWorkflowSubmit("test.cancel-expired", "cancel-expired"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	if _, ok, err := db.Claim(ctx, "worker-a", now, now.Add(time.Second)); err != nil || !ok {
+		t.Fatalf("claiming execution = %t, %v", ok, err)
+	}
+	if _, err := db.Cancel(ctx, execution.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := db.Claim(ctx, "worker-b", now.Add(2*time.Second), now.Add(3*time.Second)); err != nil || ok {
+		t.Fatalf("recovering canceled execution = %t, %v", ok, err)
+	}
+
+	execution, err = db.GetExecution(ctx, execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.State != jobdb.StateCanceled {
+		t.Fatalf("execution state = %q, want %q", execution.State, jobdb.StateCanceled)
+	}
+}
+
+func TestDatabase_FencesStaleActivityOwner(t *testing.T) {
+	ctx := context.Background()
+	_, db := newTestEngine(t, ctx)
+	_, _, err := db.Submit(ctx, testWorkflowSubmit("test.activity-fence", "activity-fence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	claimed, ok, err := db.Claim(ctx, "worker-a", now, now.Add(time.Second))
+	if err != nil || !ok {
+		t.Fatalf("claiming execution = %t, %v", ok, err)
+	}
+	if _, completed, err := db.StartActivity(ctx, claimed.ID, "worker-a", "work", "input", now); err != nil || completed {
+		t.Fatalf("starting activity = completed:%t, error:%v", completed, err)
+	}
+
+	claimed, ok, err = db.Claim(ctx, "worker-b", now.Add(2*time.Second), now.Add(3*time.Second))
+	if err != nil || !ok {
+		t.Fatalf("recovering execution = %t, %v", ok, err)
+	}
+	activity, completed, err := db.StartActivity(ctx, claimed.ID, "worker-b", "work", "input", now.Add(2*time.Second))
+	if err != nil || completed {
+		t.Fatalf("restarting activity = completed:%t, error:%v", completed, err)
+	}
+	if activity.Attempt != 2 {
+		t.Fatalf("activity attempts = %d, want 2", activity.Attempt)
+	}
+	if err := db.CompleteActivity(ctx, claimed.ID, "worker-a", "work", []byte(`{}`), now.Add(2*time.Second)); !errors.Is(err, jobdb.ErrNotFound) {
+		t.Fatalf("stale owner completion error = %v, want %v", err, jobdb.ErrNotFound)
+	}
+	if err := db.CompleteActivity(ctx, claimed.ID, "worker-b", "work", []byte(`{}`), now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	ctx := context.Background()
 	_, db := newTestEngine(t, ctx)

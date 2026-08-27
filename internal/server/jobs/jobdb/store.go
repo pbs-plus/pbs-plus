@@ -217,11 +217,43 @@ func (d *Store) Claim(ctx context.Context, owner string, now, leaseUntil time.Ti
 	ok := false
 	err := d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
-		if err := q.RequeueExpiredExecutions(ctx, jobquery.RequeueExpiredExecutionsParams{
+		canceledIDs, err := q.ListExpiredCanceledExecutionIDs(ctx, nullInt64(now.Unix()))
+		if err != nil {
+			return fmt.Errorf("listing expired canceled executions: %w", err)
+		}
+		for _, id := range canceledIDs {
+			updated, err := q.CancelExpiredExecution(ctx, jobquery.CancelExpiredExecutionParams{
+				FinishedAt: nullInt64(now.Unix()),
+				ID:         id,
+				LeaseUntil: nullInt64(now.Unix()),
+			})
+			if err != nil {
+				return fmt.Errorf("recovering canceled execution: %w", err)
+			}
+			if updated == 0 {
+				continue
+			}
+			if err := q.DeleteResourceLocks(ctx, id); err != nil {
+				return fmt.Errorf("releasing canceled execution resources: %w", err)
+			}
+			if err := createEvent(ctx, q, id, "execution.canceled", nil); err != nil {
+				return err
+			}
+		}
+		recoveredIDs, err := q.RequeueExpiredExecutions(ctx, jobquery.RequeueExpiredExecutionsParams{
 			RunAt:      now.Unix(),
 			LeaseUntil: nullInt64(now.Unix()),
-		}); err != nil {
+		})
+		if err != nil {
 			return fmt.Errorf("recovering expired executions: %w", err)
+		}
+		for _, id := range recoveredIDs {
+			if err := q.ResetRunningActivities(ctx, id); err != nil {
+				return fmt.Errorf("resetting recovered execution activities: %w", err)
+			}
+			if err := createEvent(ctx, q, id, "execution.recovered", nil); err != nil {
+				return err
+			}
 		}
 		if err := q.DeleteExpiredResourceLocks(ctx, now.Unix()); err != nil {
 			return fmt.Errorf("deleting expired resource locks: %w", err)
@@ -408,8 +440,8 @@ func (d *Store) Finish(ctx context.Context, id, owner, state string, runAt time.
 // StartActivity returns the activity for (execution, name), starting it
 // unless it already completed; completed activities report done=true
 // with their persisted result.
-func (d *Store) StartActivity(ctx context.Context, executionID, name, inputHash string, now time.Time) (Activity, bool, error) {
-	if executionID == "" || name == "" || inputHash == "" {
+func (d *Store) StartActivity(ctx context.Context, executionID, owner, name, inputHash string, now time.Time) (Activity, bool, error) {
+	if executionID == "" || owner == "" || name == "" || inputHash == "" {
 		return Activity{}, false, errors.New("invalid activity")
 	}
 
@@ -443,12 +475,17 @@ func (d *Store) StartActivity(ctx context.Context, executionID, name, inputHash 
 			completed = true
 			return nil
 		}
-		if _, err := q.StartActivity(ctx, jobquery.StartActivityParams{
+		updated, err := q.StartActivity(ctx, jobquery.StartActivityParams{
 			StartedAt:   nullInt64(now.Unix()),
 			ExecutionID: executionID,
 			Name:        name,
-		}); err != nil {
+			LeaseOwner:  nullString(owner),
+		})
+		if err != nil {
 			return fmt.Errorf("starting activity: %w", err)
+		}
+		if updated == 0 {
+			return ErrNotFound
 		}
 		if err := createEvent(ctx, q, executionID, "activity.started", map[string]string{"name": name}); err != nil {
 			return err
@@ -466,13 +503,14 @@ func (d *Store) StartActivity(ctx context.Context, executionID, name, inputHash 
 	return activity, completed, nil
 }
 
-func (d *Store) CheckpointActivity(ctx context.Context, executionID, name string, checkpoint []byte) error {
+func (d *Store) CheckpointActivity(ctx context.Context, executionID, owner, name string, checkpoint []byte) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.CheckpointActivity(ctx, jobquery.CheckpointActivityParams{
 			Checkpoint:  nullString(string(checkpoint)),
 			ExecutionID: executionID,
 			Name:        name,
+			LeaseOwner:  nullString(owner),
 		})
 		if err != nil {
 			return fmt.Errorf("checkpointing activity: %w", err)
@@ -484,7 +522,7 @@ func (d *Store) CheckpointActivity(ctx context.Context, executionID, name string
 	})
 }
 
-func (d *Store) CompleteActivity(ctx context.Context, executionID, name string, result []byte, now time.Time) error {
+func (d *Store) CompleteActivity(ctx context.Context, executionID, owner, name string, result []byte, now time.Time) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.CompleteActivity(ctx, jobquery.CompleteActivityParams{
@@ -492,6 +530,7 @@ func (d *Store) CompleteActivity(ctx context.Context, executionID, name string, 
 			CompletedAt: nullInt64(now.Unix()),
 			ExecutionID: executionID,
 			Name:        name,
+			LeaseOwner:  nullString(owner),
 		})
 		if err != nil {
 			return fmt.Errorf("completing activity: %w", err)
@@ -503,13 +542,14 @@ func (d *Store) CompleteActivity(ctx context.Context, executionID, name string, 
 	})
 }
 
-func (d *Store) FailActivity(ctx context.Context, executionID, name, lastError string) error {
+func (d *Store) FailActivity(ctx context.Context, executionID, owner, name, lastError string) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.FailActivity(ctx, jobquery.FailActivityParams{
 			LastError:   nullString(lastError),
 			ExecutionID: executionID,
 			Name:        name,
+			LeaseOwner:  nullString(owner),
 		})
 		if err != nil {
 			return fmt.Errorf("failing activity: %w", err)
@@ -524,12 +564,13 @@ func (d *Store) FailActivity(ctx context.Context, executionID, name, lastError s
 // InvalidateActivity un-completes a completed activity so a retry
 // re-runs it; used when a later activity reveals the completed one's
 // external effect actually failed.
-func (d *Store) InvalidateActivity(ctx context.Context, executionID, name string) error {
+func (d *Store) InvalidateActivity(ctx context.Context, executionID, owner, name string) error {
 	return d.RunInTransaction(ctx, func(tx *sqldb.Tx) error {
 		q := d.write.WithTx(tx.Tx)
 		updated, err := q.InvalidateActivity(ctx, jobquery.InvalidateActivityParams{
 			ExecutionID: executionID,
 			Name:        name,
+			LeaseOwner:  nullString(owner),
 		})
 		if err != nil {
 			return fmt.Errorf("invalidating activity: %w", err)

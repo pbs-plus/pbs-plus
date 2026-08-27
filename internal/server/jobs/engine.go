@@ -258,7 +258,7 @@ func (w *WorkflowContext) activity(ctx context.Context, name string, input json.
 		return nil, err
 	}
 	hash := sha256.Sum256(canonicalInput)
-	record, completed, err := w.db.StartActivity(ctx, w.Execution.ID, name, hex.EncodeToString(hash[:]), time.Now())
+	record, completed, err := w.db.StartActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, name, hex.EncodeToString(hash[:]), time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -270,17 +270,17 @@ func (w *WorkflowContext) activity(ctx context.Context, name string, input json.
 		Name:             name,
 		ResumeCheckpoint: record.Checkpoint,
 		checkpoint: func(ctx context.Context, value json.RawMessage) error {
-			return w.db.CheckpointActivity(ctx, w.Execution.ID, name, value)
+			return w.db.CheckpointActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, name, value)
 		},
 	}
 	result, err := activity(ctx, info)
 	if err != nil {
-		if retryErr := w.db.FailActivity(ctx, w.Execution.ID, name, err.Error()); retryErr != nil {
+		if retryErr := w.db.FailActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, name, err.Error()); retryErr != nil {
 			return nil, fmt.Errorf("recording workflow activity failure: %w", retryErr)
 		}
 		return nil, err
 	}
-	if err := w.db.CompleteActivity(ctx, w.Execution.ID, name, result, time.Now()); err != nil {
+	if err := w.db.CompleteActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, name, result, time.Now()); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -296,7 +296,7 @@ func (i ActivityInfo) Checkpoint(ctx context.Context, value json.RawMessage) err
 // Invalidate un-completes a completed activity so the next attempt
 // re-runs it instead of replaying its result.
 func (w *WorkflowContext) Invalidate(name string) error {
-	return w.db.InvalidateActivity(w.Context, w.Execution.ID, name)
+	return w.db.InvalidateActivity(w.Context, w.Execution.ID, w.Execution.LeaseOwner, name)
 }
 
 // IsFinalAttempt reports whether the running attempt is the
