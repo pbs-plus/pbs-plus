@@ -1026,6 +1026,7 @@ type Panel struct {
 	Store             Component
 	Columns           []Column
 	Tbar              []Tool
+	Fbar             []Tool
 	DockedItems       []Tool
 	Reference         string
 	BodyPadding       int
@@ -1143,6 +1144,9 @@ func (p Panel) Config() Obj {
 	}
 	if len(p.Tbar) > 0 {
 		o["tbar"] = tools(p.Tbar)
+	}
+	if len(p.Fbar) > 0 {
+		o["fbar"] = tools(p.Fbar)
 	}
 	if len(p.DockedItems) > 0 {
 		o["dockedItems"] = tools(p.DockedItems)

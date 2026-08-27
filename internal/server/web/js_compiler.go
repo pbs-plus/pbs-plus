@@ -80,6 +80,7 @@ func isMigratedCustomSource(path string) bool {
 		strings.HasSuffix(path, "/windows/exclusion.js") ||
 		strings.HasSuffix(path, "/windows/mtf_job.js") ||
 		strings.HasSuffix(path, "/windows/notification_batch.js") ||
+		strings.HasSuffix(path, "/windows/path_browser.js") ||
 		strings.HasSuffix(path, "/windows/restore.js") ||
 		strings.HasSuffix(path, "/windows/script.js") ||
 		strings.HasSuffix(path, "/windows/target.js") ||
