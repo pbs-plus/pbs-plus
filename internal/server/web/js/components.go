@@ -259,6 +259,7 @@ type Store struct {
 	Model          string
 	Fields         []ModelField
 	AutoLoad       *bool
+	Listeners      Obj
 	Data           []Option
 	APIPath        string
 	Sorters        string
@@ -312,6 +313,7 @@ func (s Store) Config() Obj {
 			plain["autoLoad"] = *s.AutoLoad
 		}
 		set(plain, "sorters", s.Sorters)
+		set(plain, "listeners", s.Listeners)
 		if len(s.SortBy) > 0 {
 			plain["sorters"] = sorters(s.SortBy)
 		}
@@ -617,7 +619,7 @@ type Field struct {
 	DeleteEmptyWhenNotCreate bool
 	Disabled                 bool
 	Renderer                 Raw
-	Width                    int
+	Width                    any
 	Height                   any
 	Layout                   string
 	Anchor                   string
@@ -658,6 +660,8 @@ type Field struct {
 	LabelAlign               string
 	AutoEl                   Obj
 	Store                    any
+	Change                   string
+	TriggerAction            string
 }
 
 func (f Field) Config() Obj {
@@ -685,7 +689,9 @@ func (f Field) Config() Obj {
 	}
 	set(o, "disabled", f.Disabled)
 	set(o, "renderer", f.Renderer)
-	set(o, "width", f.Width)
+	if f.Width != nil {
+		o["width"] = f.Width
+	}
 	if f.Height != nil {
 		o["height"] = f.Height
 	}
@@ -746,7 +752,11 @@ func (f Field) Config() Obj {
 	set(o, "labelAlign", f.LabelAlign)
 	set(o, "autoEl", f.AutoEl)
 	if f.Store != nil {
-		o["store"] = f.Store
+		if c, ok := f.Store.(Component); ok {
+			o["store"] = c.Config()
+		} else {
+			o["store"] = f.Store
+		}
 	}
 	listeners := listener("afterrender", f.AfterRender)
 	if f.ChangeFn != "" {
@@ -755,7 +765,14 @@ func (f Field) Config() Obj {
 		}
 		listeners["change"] = f.ChangeFn
 	}
+	if f.Change != "" {
+		if listeners == nil {
+			listeners = Obj{}
+		}
+		listeners["change"] = f.Change
+	}
 	set(o, "listeners", listeners)
+	set(o, "triggerAction", f.TriggerAction)
 	return o
 }
 
@@ -774,6 +791,8 @@ type EditWindow struct {
 	IsCreate      bool
 	IsAdd         bool
 	Method        string
+	URL           string
+	Listeners     Listeners
 	CBindData     Raw
 	ViewModelData Obj
 	FieldDefaults Obj
@@ -808,6 +827,10 @@ func (w EditWindow) Config() Obj {
 	set(o, "isCreate", w.IsCreate)
 	set(o, "isAdd", w.IsAdd)
 	set(o, "method", w.Method)
+	set(o, "url", w.URL)
+	if lc := w.Listeners.Config(); len(lc) > 0 {
+		o["listeners"] = lc
+	}
 	set(o, "cbindData", w.CBindData)
 	if w.ViewModelData != nil {
 		o["viewModel"] = Obj{"data": w.ViewModelData}

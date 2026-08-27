@@ -14,8 +14,6 @@ var restoreModes = Ext.create("Ext.data.Store", {
 `)
 
 //go:fix inline
-func bodyPadding(pixels int) *int { return new(pixels) }
-
 var restoreJobEdit = js.EditWindow{
 	Name: "PBS.D2DManagement.RestoreJobEdit", XType: "pbsDiskRestoreJobEdit",
 	Subject: "Disk Restore Job", IsAdd: true,

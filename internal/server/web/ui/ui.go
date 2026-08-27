@@ -32,6 +32,7 @@ func Render() []byte {
 	items = append(items, restoreJobEdit)
 	items = append(items, backupModeStores)
 	items = append(items, backupJobEdit)
+	items = append(items, mtfJobEdit)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }

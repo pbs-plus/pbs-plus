@@ -52,6 +52,7 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`PBS.D2DManagement.makeNotificationTab =`),
 		[]byte(`Ext.define("PBS.D2DManagement.RestoreJobEdit"`),
 		[]byte(`Ext.define("PBS.D2DManagement.BackupJobEdit"`),
+		[]byte(`Ext.define("PBS.MtfManagement.JobEdit"`),
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),
