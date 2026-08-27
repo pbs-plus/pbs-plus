@@ -13,7 +13,7 @@ var selectors = []js.Value{
 			me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {};
 			me.callParent();
 		`)},
-		Extra: js.Obj{"value": js.Raw("null")},
+		Value: js.Raw("null"),
 	},
 	js.Selector{
 		Name: "PBS.form.D2DNamespaceSelector", XType: "pbsD2DNamespaceSelector", Extend: "Ext.form.field.ComboBox",
@@ -36,14 +36,11 @@ var selectors = []js.Value{
 				} else { this.setDisabled(true); }
 			`),
 		},
-		Extra: js.Obj{
-			"config": js.Obj{"datastore": js.Raw("null")}, "allowBlank": true, "autoSelect": true,
-			"emptyText": js.T("Root"), "editable": true, "anyMatch": true, "forceSelection": false,
-			"queryMode": "local", "matchFieldWidth": false,
-			"listConfig": js.Obj{"minWidth": 170, "maxWidth": 500, "minHeight": 30, "emptyText": js.Raw("'<div class=\"x-grid-empty\">' + gettext(\"No namespaces accessible.\") + '</div>'")},
-			"triggers":   js.Obj{"clear": js.Obj{"cls": "pmx-clear-trigger", "weight": -1, "hidden": true, "handler": js.Func("", `this.triggers.clear.setVisible(false); this.setValue("");`)}},
-			"listeners":  js.Obj{"change": js.Func("field, value", `field.triggers.clear.setVisible(value !== "");`)},
-		},
+		AllowBlank: new(true), AutoSelect: new(true), ConfigNames: []string{"datastore"},
+		EmptyText: "Root", Editable: new(true), AnyMatch: new(true), ForceSelection: new(false),
+		QueryMode: "local", MatchFieldWidth: new(false), ListMinWidth: 170, ListMaxWidth: 500,
+		ListMinHeight: 30, ListEmptyText: js.Raw("'<div class=\"x-grid-empty\">' + gettext(\"No namespaces accessible.\") + '</div>'"),
+		Clearable: true, OnChange: js.Func("field, value", `field.triggers.clear.setVisible(value !== "");`),
 	},
 	js.Selector{
 		Name: "PBS.form.D2DSnapshotSelector", XType: "pbsD2DSnapshotSelector", Extend: "Ext.form.field.ComboBox",
@@ -69,7 +66,8 @@ var selectors = []js.Value{
 				if (me.getDatastore()) { me.store.getProxy().setExtraParam("ns", newNamespace || null); me.store.load(); }
 			`),
 		},
-		Extra: js.Obj{"config": js.Obj{"datastore": js.Raw("null"), "namespace": js.Raw("null")}, "queryMode": "local", "anyMatch": true, "forceSelection": false, "autoSelect": false},
+		ConfigNames: []string{"datastore", "namespace"}, QueryMode: "local", AnyMatch: new(true),
+		ForceSelection: new(false), AutoSelect: new(false),
 	},
 	js.Selector{
 		Name: "PBS.form.D2DTargetSelector", XType: "pbsD2DTargetSelector",
@@ -81,7 +79,8 @@ var selectors = []js.Value{
 			{Text: "Path / Volume", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Func("value, metaData, record", `if (record.get("target_type") === "agent") { let volumeName = record.get("volume_name"); let volumeId = record.get("volume_id"); return Ext.String.htmlEncode(volumeName || volumeId || "-"); } return value ? Ext.String.htmlEncode(value) : "-";`)},
 		},
 		Methods: map[string]js.Raw{"initComponent": js.Func("", `let me = this; me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {}; me.callParent();`)},
-		Extra:   js.Obj{"value": js.Raw("null"), "editable": true, "forceSelection": true, "queryMode": "local", "minChars": 1, "filterPickList": true, "typeAhead": false},
+		Value:   js.Raw("null"), Editable: new(true), ForceSelection: new(true), QueryMode: "local",
+		MinChars: 1, FilterPickList: new(true), TypeAhead: new(false),
 	},
 	js.Selector{
 		Name: "PBS.form.D2DTokenSelector", XType: "pbsD2DTokenSelector",
@@ -89,6 +88,6 @@ var selectors = []js.Value{
 		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 450,
 		ListColumns: []js.Column{{Text: "Token", DataIndex: "token", Sortable: new(true), Flex: 3, Renderer: js.Raw("Ext.String.htmlEncode")}, {Text: "Comment", DataIndex: "comment", Sortable: new(true), Flex: 3, Renderer: js.Raw("Ext.String.htmlEncode")}},
 		Methods:     map[string]js.Raw{"initComponent": js.Func("", `let me = this; me.store.proxy.extraParams = me.changer ? { changer: me.changer } : {}; me.callParent();`)},
-		Extra:       js.Obj{"value": js.Raw("null")},
+		Value:       js.Raw("null"),
 	},
 }

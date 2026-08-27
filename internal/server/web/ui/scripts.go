@@ -24,7 +24,6 @@ var scriptSelector = js.Selector{
 		{Text: "Path", DataIndex: "path", Flex: 3, Sortable: new(true), Renderer: "Ext.String.htmlEncode"},
 		{Text: "Description", DataIndex: "description", Flex: 3, Sortable: new(true), Renderer: "Ext.String.htmlEncode"},
 	},
-	Extra: js.Obj{"value": nil},
 }
 
 var scriptPanel = js.Grid{
@@ -79,10 +78,10 @@ var scriptEditWindow = js.EditWindow{
 			Editable:   new(true),
 		},
 		js.Field{
-			XType: js.XFieldContainer,
-			Label: "Script Content",
-			Extra: js.Obj{"layout": "anchor"},
-			Items: js.Items(codeMirrorField("script", "shell", 400)),
+			XType:  js.XFieldContainer,
+			Label:  "Script Content",
+			Layout: "anchor",
+			Items:  js.Items(codeMirrorField("script", "shell", 400)),
 		},
 	),
 	Methods: map[string]js.Raw{

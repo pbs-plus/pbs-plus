@@ -93,12 +93,10 @@ func codeMirrorField(name, mode string, height int) js.Field {
 		XType:  js.XComponent,
 		Name:   name,
 		Height: height,
-		Extra: js.Obj{
-			"itemId": "scriptEditor",
-			"anchor": "100%",
-			"html":   `<div style="height: 100%;"></div>`,
-		},
-		Listeners: js.Obj{"afterrender": js.Func("component", fmt.Sprintf(`
+		ItemID: "scriptEditor",
+		Anchor: "100%",
+		HTML:   `<div style="height: 100%;"></div>`,
+		AfterRender: js.Func("component", fmt.Sprintf(`
 			PBS.PlusUtils.LoadCodeMirror(function () {
 				let isDark =
 					window.matchMedia &&
@@ -125,6 +123,6 @@ func codeMirrorField(name, mode string, height int) js.Field {
 				component.validate = () => true;
 				setTimeout(() => editor.refresh(), 1);
 			});
-		`, mode))},
+		`, mode)),
 	}
 }

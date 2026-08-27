@@ -17,7 +17,7 @@ var coreViews = []js.Value{
 			js.Obj{"xtype": "pbsNotificationBatchView", "title": "Notification Batches", "itemId": "notification-batches", "iconCls": "fa fa-bell-o"},
 			js.Obj{"xtype": "pbsD2DAlertSettings", "title": "Alert Settings", "itemId": "alert-settings", "iconCls": "fa fa-exclamation-triangle"},
 		},
-		Extra: js.Obj{"title": "Disk Backup", "tools": js.Arr{}, "defaults": js.Obj{"border": false, "xtype": "panel"}},
+		PanelDefaults: true,
 	},
 	js.TabPanel{
 		Name:   "PBS.D2DSnapshotMount",
@@ -47,7 +47,7 @@ var coreViews = []js.Value{
 			}
 			me.callParent();
 		`)},
-		Extra: js.Obj{"title": "Snapshot Mount", "tools": js.Arr{}, "defaults": js.Obj{"border": false, "xtype": "panel"}},
+		PanelDefaults: true,
 	},
 	js.TabPanel{
 		Name:   "PBS.D2DDataVerification",
@@ -58,7 +58,7 @@ var coreViews = []js.Value{
 			me.items = [{ xtype: "pbsVerificationJobPanel", title: "Verification Jobs", itemId: "d2d-verification-jobs", iconCls: "fa fa-check-circle" }];
 			me.callParent();
 		`)},
-		Extra: js.Obj{"title": "Data Verification", "tools": js.Arr{}, "defaults": js.Obj{"border": false, "xtype": "panel"}},
+		PanelDefaults: true,
 	},
 	js.TabPanel{
 		Name:   "PBS.MtfManagement",
@@ -72,7 +72,7 @@ var coreViews = []js.Value{
 			js.Obj{"xtype": "pbsMtfMappingPanel", "title": js.T("Namespace Mappings"), "itemId": "mtf-mappings", "iconCls": "fa fa-sitemap"},
 			js.Obj{"xtype": "pbsMtfJobView", "title": js.T("Migration Jobs"), "itemId": "mtf-jobs", "iconCls": "fa fa-floppy-o"},
 		},
-		Extra: js.Obj{"defaults": js.Obj{"border": false, "xtype": "panel"}},
+		PanelDefaults: true,
 	},
 	js.Raw(`Ext.onReady(function () {
 	let store = Ext.getStore("NavigationStore");

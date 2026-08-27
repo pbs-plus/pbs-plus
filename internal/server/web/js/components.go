@@ -95,11 +95,6 @@ func set(o Obj, k string, v any) {
 	}
 }
 
-func merge(o, extra Obj) Obj {
-	maps.Copy(o, extra)
-	return o
-}
-
 // Bool returns a pointer for tri-state config fields, where an explicit false
 // differs from an unset field.
 //
@@ -148,7 +143,6 @@ type ModelField struct {
 	Name    string
 	Type    string
 	Convert Raw
-	Extra   Obj
 }
 
 // Fields builds untyped model fields from their names.
@@ -173,19 +167,18 @@ type Model struct {
 	IDProperty   string
 	APIPath      string
 	RootProperty string
-	Extra        Obj
 }
 
 func (m Model) Config() Obj {
 	fields := make(Arr, len(m.Fields))
 	for i, f := range m.Fields {
-		if f.Type == "" && f.Convert == "" && len(f.Extra) == 0 {
+		if f.Type == "" && f.Convert == "" {
 			fields[i] = f.Name
 			continue
 		}
 		field := Obj{"name": f.Name, "type": f.Type}
 		set(field, "convert", f.Convert)
-		fields[i] = merge(field, f.Extra)
+		fields[i] = field
 	}
 	extend := m.Extend
 	if extend == "" {
@@ -204,7 +197,7 @@ func (m Model) Config() Obj {
 			"reader": Obj{"type": "json", "rootProperty": root},
 		}
 	}
-	return merge(o, m.Extra)
+	return o
 }
 
 func (m Model) AppendJS(dst []byte, indent int) []byte {
@@ -217,7 +210,6 @@ type Store struct {
 	Model   string
 	APIPath string
 	Sorters string
-	Extra   Obj
 }
 
 func (s Store) Config() Obj {
@@ -234,7 +226,7 @@ func (s Store) Config() Obj {
 		},
 	}
 	set(o, "sorters", s.Sorters)
-	return merge(o, s.Extra)
+	return o
 }
 
 // Column is a grid column.
@@ -247,7 +239,6 @@ type Column struct {
 	Hidden    bool
 	Sortable  *bool
 	Renderer  Raw
-	Extra     Obj
 }
 
 func (c Column) Config() Obj {
@@ -262,7 +253,7 @@ func (c Column) Config() Obj {
 	set(o, "hidden", c.Hidden)
 	set(o, "sortable", c.Sortable)
 	set(o, "renderer", c.Renderer)
-	return merge(o, c.Extra)
+	return o
 }
 
 // Tool is a toolbar entry. Handler names a controller method; HandlerFn holds
@@ -275,7 +266,6 @@ type Tool struct {
 	Disabled  bool
 	SelModel  *bool
 	EnableFn  Raw
-	Extra     Obj
 
 	separator bool
 }
@@ -294,7 +284,7 @@ func (t Tool) Config() Obj {
 	set(o, "disabled", t.Disabled)
 	set(o, "selModel", t.SelModel)
 	set(o, "enableFn", t.EnableFn)
-	return merge(o, t.Extra)
+	return o
 }
 
 func tools(list []Tool) Arr {
@@ -313,7 +303,6 @@ func tools(list []Tool) Arr {
 // function literal, normally built with Func.
 type Controller struct {
 	Methods map[string]Raw
-	Extra   Obj
 }
 
 func (c Controller) Config() Obj {
@@ -321,7 +310,7 @@ func (c Controller) Config() Obj {
 	for k, v := range c.Methods {
 		o[k] = v
 	}
-	return merge(o, c.Extra)
+	return o
 }
 
 // Listeners maps component events to controller method names.
@@ -332,7 +321,6 @@ type Listeners struct {
 	ItemDblClick    string
 	AfterRender     string
 	SelectionChange string
-	Extra           Obj
 }
 
 func (l Listeners) Config() Obj {
@@ -343,7 +331,7 @@ func (l Listeners) Config() Obj {
 	set(o, "itemdblclick", l.ItemDblClick)
 	set(o, "afterrender", l.AfterRender)
 	set(o, "selectionchange", l.SelectionChange)
-	return merge(o, l.Extra)
+	return o
 }
 
 // Grid is an Ext.grid.Panel class. A grid with a Store stops updates on
@@ -362,7 +350,6 @@ type Grid struct {
 	Listeners        Listeners
 	MultiSelect      bool
 	NoStoreLifecycle bool
-	Extra            Obj
 }
 
 func (g Grid) Config() Obj {
@@ -392,7 +379,7 @@ func (g Grid) Config() Obj {
 			listeners = withStoreListeners(listeners)
 		}
 	}
-	if len(ctrl.Methods) > 0 || len(ctrl.Extra) > 0 {
+	if len(ctrl.Methods) > 0 {
 		o["controller"] = ctrl.Config()
 	}
 	if lc := listeners.Config(); len(lc) > 0 {
@@ -408,7 +395,7 @@ func (g Grid) Config() Obj {
 	if len(g.Tbar) > 0 {
 		o["tbar"] = tools(g.Tbar)
 	}
-	return merge(o, g.Extra)
+	return o
 }
 
 func (g Grid) AppendJS(dst []byte, indent int) []byte {
@@ -442,25 +429,29 @@ func withStoreListeners(l Listeners) Listeners {
 
 // Field is a form field or generic child component.
 type Field struct {
-	XType      XType
-	Name       string
-	Label      string
-	Value      any
-	AllowBlank *bool
-	Editable   *bool
-	Disabled   bool
-	Renderer   Raw
-	Width      int
-	Height     int
-	Items      Arr
-	Listeners  Obj
-	Extra      Obj
+	XType       XType
+	Name        string
+	ItemID      string
+	Label       string
+	Value       any
+	AllowBlank  *bool
+	Editable    *bool
+	Disabled    bool
+	Renderer    Raw
+	Width       int
+	Height      int
+	Layout      string
+	Anchor      string
+	HTML        string
+	Items       Arr
+	AfterRender Raw
 }
 
 func (f Field) Config() Obj {
 	o := Obj{}
 	set(o, "xtype", f.XType)
 	set(o, "name", f.Name)
+	set(o, "itemId", f.ItemID)
 	if f.Label != "" {
 		o["fieldLabel"] = T(f.Label)
 	}
@@ -473,9 +464,12 @@ func (f Field) Config() Obj {
 	set(o, "renderer", f.Renderer)
 	set(o, "width", f.Width)
 	set(o, "height", f.Height)
+	set(o, "layout", f.Layout)
+	set(o, "anchor", f.Anchor)
+	set(o, "html", f.HTML)
 	set(o, "items", f.Items)
-	set(o, "listeners", f.Listeners)
-	return merge(o, f.Extra)
+	set(o, "listeners", listener("afterrender", f.AfterRender))
+	return o
 }
 
 // EditWindow is a PBS.plusWindow.Edit dialog. CBindData receives the window
@@ -492,7 +486,6 @@ type EditWindow struct {
 	CBindData Raw
 	Items     Arr
 	Methods   map[string]Raw
-	Extra     Obj
 }
 
 func (w EditWindow) Config() Obj {
@@ -517,7 +510,7 @@ func (w EditWindow) Config() Obj {
 	for k, v := range w.Methods {
 		o[k] = v
 	}
-	return merge(o, w.Extra)
+	return o
 }
 
 func (w EditWindow) AppendJS(dst []byte, indent int) []byte {
@@ -526,19 +519,35 @@ func (w EditWindow) AppendJS(dst []byte, indent int) []byte {
 
 // Selector is a Proxmox.form.ComboGrid bound to a PBS-Plus API path.
 type Selector struct {
-	Name         string
-	XType        XType
-	Extend       string
-	DisplayField string
-	ValueField   string
-	APIPath      string
-	Sorters      string
-	AllowBlank   *bool
-	AutoSelect   *bool
-	ListWidth    int
-	ListColumns  []Column
-	Methods      map[string]Raw
-	Extra        Obj
+	Name            string
+	XType           XType
+	Extend          string
+	DisplayField    string
+	ValueField      string
+	APIPath         string
+	Sorters         string
+	AllowBlank      *bool
+	AutoSelect      *bool
+	ListWidth       int
+	ListColumns     []Column
+	Value           Raw
+	Editable        *bool
+	ForceSelection  *bool
+	QueryMode       string
+	MinChars        int
+	FilterPickList  *bool
+	TypeAhead       *bool
+	AnyMatch        *bool
+	MatchFieldWidth *bool
+	ConfigNames     []string
+	EmptyText       string
+	ListMinWidth    int
+	ListMaxWidth    int
+	ListMinHeight   int
+	ListEmptyText   Raw
+	Clearable       bool
+	OnChange        Raw
+	Methods         map[string]Raw
 }
 
 func (s Selector) Config() Obj {
@@ -554,6 +563,23 @@ func (s Selector) Config() Obj {
 	set(o, "valueField", s.ValueField)
 	set(o, "allowBlank", s.AllowBlank)
 	set(o, "autoSelect", s.AutoSelect)
+	set(o, "value", s.Value)
+	set(o, "editable", s.Editable)
+	set(o, "forceSelection", s.ForceSelection)
+	set(o, "queryMode", s.QueryMode)
+	set(o, "minChars", s.MinChars)
+	set(o, "filterPickList", s.FilterPickList)
+	set(o, "typeAhead", s.TypeAhead)
+	set(o, "anyMatch", s.AnyMatch)
+	set(o, "matchFieldWidth", s.MatchFieldWidth)
+	if len(s.ConfigNames) > 0 {
+		config := Obj{}
+		for _, name := range s.ConfigNames {
+			config[name] = Raw("null")
+		}
+		o["config"] = config
+	}
+	set(o, "emptyText", s.EmptyText)
 	if s.APIPath != "" {
 		store := Obj{
 			"proxy":    Obj{"type": "pbsplus", "url": PlusURL(s.APIPath)},
@@ -562,19 +588,34 @@ func (s Selector) Config() Obj {
 		set(store, "sorters", s.Sorters)
 		o["store"] = store
 	}
-	if len(s.ListColumns) > 0 {
+	if len(s.ListColumns) > 0 || s.ListWidth != 0 || s.ListMinWidth != 0 || s.ListMaxWidth != 0 || s.ListMinHeight != 0 || s.ListEmptyText != "" {
 		cols := make(Arr, len(s.ListColumns))
 		for i, c := range s.ListColumns {
 			cols[i] = c.Config()
 		}
 		list := Obj{"columns": cols}
 		set(list, "width", s.ListWidth)
+		set(list, "minWidth", s.ListMinWidth)
+		set(list, "maxWidth", s.ListMaxWidth)
+		set(list, "minHeight", s.ListMinHeight)
+		set(list, "emptyText", s.ListEmptyText)
 		o["listConfig"] = list
 	}
+	if s.Clearable {
+		o["triggers"] = Obj{"clear": Obj{"cls": "pmx-clear-trigger", "weight": -1, "hidden": true, "handler": Func("", `this.triggers.clear.setVisible(false); this.setValue("");`)}}
+	}
+	set(o, "listeners", listener("change", s.OnChange))
 	for k, v := range s.Methods {
 		o[k] = v
 	}
-	return merge(o, s.Extra)
+	return o
+}
+
+func listener(event string, handler Raw) Obj {
+	if handler == "" {
+		return nil
+	}
+	return Obj{event: handler}
 }
 
 func (s Selector) AppendJS(dst []byte, indent int) []byte {
@@ -591,7 +632,6 @@ type InputPanel struct {
 	Column2       Arr
 	FieldDefaults Obj
 	Methods       map[string]Raw
-	Extra         Obj
 }
 
 func (p InputPanel) Config() Obj {
@@ -609,7 +649,7 @@ func (p InputPanel) Config() Obj {
 	for k, v := range p.Methods {
 		o[k] = v
 	}
-	return merge(o, p.Extra)
+	return o
 }
 
 func (p InputPanel) AppendJS(dst []byte, indent int) []byte {
@@ -618,13 +658,13 @@ func (p InputPanel) AppendJS(dst []byte, indent int) []byte {
 
 // TabPanel is an Ext.tab.Panel class.
 type TabPanel struct {
-	Name    string
-	XType   XType
-	Title   string
-	Items   Arr
-	Border  bool
-	Methods map[string]Raw
-	Extra   Obj
+	Name          string
+	XType         XType
+	Title         string
+	Items         Arr
+	Border        bool
+	PanelDefaults bool
+	Methods       map[string]Raw
 }
 
 func (t TabPanel) Config() Obj {
@@ -637,10 +677,13 @@ func (t TabPanel) Config() Obj {
 	}
 	set(o, "items", t.Items)
 	set(o, "border", t.Border)
+	if t.PanelDefaults {
+		o["defaults"] = Obj{"border": false, "xtype": string(XPanel)}
+	}
 	for k, v := range t.Methods {
 		o[k] = v
 	}
-	return merge(o, t.Extra)
+	return o
 }
 
 func (t TabPanel) AppendJS(dst []byte, indent int) []byte {
