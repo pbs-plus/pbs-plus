@@ -37,7 +37,6 @@ type Engine struct {
 	runners   map[string]map[string]Workflow
 	current   map[string]string
 	running   sync.Map
-	startupMu sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -231,10 +230,6 @@ func (e *Engine) Get(ctx context.Context, id string) (jobdb.Execution, error) {
 
 func (e *Engine) Events(ctx context.Context, id string) ([]jobdb.Event, error) {
 	return e.db.ListEvents(ctx, id)
-}
-
-func (e *Engine) StartupMu() *sync.Mutex {
-	return &e.startupMu
 }
 
 func (w *WorkflowContext) Activity(name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {

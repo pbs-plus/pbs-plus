@@ -575,3 +575,71 @@ func TestControlSocketPBSProtocol(t *testing.T) {
 		t.Fatalf("foreign upid reply = %q, want ERROR", reply)
 	}
 }
+
+func TestFindNewWorkerTask(t *testing.T) {
+	setupTaskDirs(t)
+
+	workerID := FormatWorkerID("store", "host-", "node")
+	existing, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer existing.CloseOK()
+
+	before, err := SnapshotWorkerUPIDs("backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	other, err := NewWorkerTask("pbsplus", "backup", FormatWorkerID("store", "host-", "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.CloseOK()
+
+	queued, err := NewQueuedTask("backup", workerID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queued.Close()
+
+	created, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.CloseOK()
+
+	task, found, err := FindNewWorkerTask("backup", workerID, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || task.UPID != created.UPID() {
+		t.Fatalf("FindNewWorkerTask = (%#v, %t), want %q", task, found, created.UPID())
+	}
+}
+
+func TestFindNewWorkerTaskRejectsAmbiguity(t *testing.T) {
+	setupTaskDirs(t)
+
+	workerID := FormatWorkerID("store", "host-", "node")
+	before, err := SnapshotWorkerUPIDs("backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.CloseOK()
+
+	second, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.CloseOK()
+
+	if _, _, err := FindNewWorkerTask("backup", workerID, before); err == nil {
+		t.Fatal("FindNewWorkerTask accepted ambiguous tasks")
+	}
+}

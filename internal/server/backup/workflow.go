@@ -26,6 +26,12 @@ type startResult struct {
 	Owner string `json:"owner"`
 }
 
+type startCheckpoint struct {
+	WorkerID string   `json:"worker_id"`
+	Owner    string   `json:"owner"`
+	Before   []string `json:"before"`
+}
+
 type waitResult struct {
 	Succeeded bool `json:"succeeded"`
 	Warnings  int  `json:"warnings"`
@@ -58,7 +64,11 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		waitGroup:       &sync.WaitGroup{},
 	}
 	defer b.cleanup()
-	queued, err := tasklog.NewQueuedTask("backup", tasklog.FormatWorkerID(job.Store, "host-", job.Target.GetHostname()), input.Web)
+	workerID, err := backupWorkerID(job, job.Target)
+	if err != nil {
+		return jobs.NonRetryable(fmt.Errorf("determining backup worker identity: %w", err))
+	}
+	queued, err := tasklog.NewQueuedTask("backup", workerID, input.Web)
 	if err != nil {
 		return fmt.Errorf("creating queued backup task: %w", err)
 	}
@@ -76,8 +86,8 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		return b.finalizeFailed(w, err)
 	}
 
-	startResRaw, err := w.Activity("start", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-		return b.start(ctx)
+	startResRaw, err := w.Activity("start", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
+		return b.start(ctx, info)
 	})
 	if err != nil {
 		return b.finalizeFailed(w, err)
@@ -120,7 +130,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 
 // start mounts the source and launches proxmox-backup-client, returning
 // the durable task identity for the wait activity.
-func (b *backupJob) start(ctx context.Context) (json.RawMessage, error) {
+func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
 	srcPath, agentMount, s3Mount, err := b.mountSource(ctx, b.job.Target)
 	if err != nil {
 		return nil, err
@@ -132,7 +142,7 @@ func (b *backupJob) start(ctx context.Context) (json.RawMessage, error) {
 	b.s3Mount = s3Mount
 	b.mu.Unlock()
 
-	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, b.job.Target)
+	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, b.job.Target, info)
 	if err != nil {
 		return nil, err
 	}

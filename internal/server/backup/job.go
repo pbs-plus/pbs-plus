@@ -4,6 +4,7 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,38 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
+
+type backupStartLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+var backupStartLocks = struct {
+	sync.Mutex
+	locks map[string]*backupStartLock
+}{locks: make(map[string]*backupStartLock)}
+
+func lockBackupStart(workerID string) func() {
+	backupStartLocks.Lock()
+	lock := backupStartLocks.locks[workerID]
+	if lock == nil {
+		lock = &backupStartLock{}
+		backupStartLocks.locks[workerID] = lock
+	}
+	lock.refs++
+	backupStartLocks.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		backupStartLocks.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(backupStartLocks.locks, workerID)
+		}
+		backupStartLocks.Unlock()
+	}
+}
 
 type backupJob struct {
 	mu     sync.RWMutex
@@ -99,48 +132,78 @@ func (b *backupJob) waitTaskByUPID(ctx context.Context, upid string) error {
 	}
 }
 
-func (b *backupJob) startBackup(ctx context.Context, srcPath string, target coredb.Target) (*exec.Cmd, proxmox.Task, string, error) {
+func (b *backupJob) startBackup(ctx context.Context, srcPath string, target coredb.Target, info jobs.ActivityInfo) (*exec.Cmd, proxmox.Task, string, error) {
 	select {
 	case <-ctx.Done():
 		return nil, proxmox.Task{}, "", jobs.ErrCanceled
 	default:
 	}
 
-	startupMu := b.app.Engine.StartupMu()
-	startupMu.Lock()
-
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	cmd, err := prepareBackupCommand(ctx, job, b.app, srcPath, target.IsAgent(), extraExclusions, b.logger)
+	workerID, err := backupWorkerID(job, target)
 	if err != nil {
-		startupMu.Unlock()
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrPrepareBackupCommand, err)
+		return nil, proxmox.Task{}, "", fmt.Errorf("determining backup worker identity: %w", err)
+	}
+	unlockStart := lockBackupStart(workerID)
+	defer unlockStart()
+
+	var checkpoint startCheckpoint
+	before := make(map[string]struct{})
+	if len(info.ResumeCheckpoint) > 0 {
+		if err := json.Unmarshal(info.ResumeCheckpoint, &checkpoint); err != nil {
+			return nil, proxmox.Task{}, "", jobs.NonRetryable(fmt.Errorf("decoding backup start checkpoint: %w", err))
+		}
+		if checkpoint.WorkerID != workerID {
+			return nil, proxmox.Task{}, "", jobs.NonRetryable(fmt.Errorf("backup worker identity changed from %q to %q", checkpoint.WorkerID, workerID))
+		}
+		for _, upid := range checkpoint.Before {
+			before[upid] = struct{}{}
+		}
+		task, found, err := tasklog.FindNewWorkerTask("backup", workerID, before)
+		if err != nil {
+			return nil, proxmox.Task{}, "", jobs.NonRetryable(fmt.Errorf("recovering backup task: %w", err))
+		}
+		if found {
+			return nil, task, checkpoint.Owner, nil
+		}
 	}
 
-	taskChan, readyChan, errChan := b.startTaskMonitoring(ctx, target)
-
-	select {
-	case <-readyChan:
-	case err := <-errChan:
-		startupMu.Unlock()
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrTaskMonitoringInitializationFailed, err)
-	case <-ctx.Done():
-		startupMu.Unlock()
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return nil, proxmox.Task{}, "", jobs.ErrCanceled
-		}
-		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrTaskMonitoringTimedOut, ctx.Err())
+	cmd, err := prepareBackupCommand(ctx, job, b.app, srcPath, target.IsAgent(), extraExclusions, b.logger)
+	if err != nil {
+		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrPrepareBackupCommand, err)
 	}
 
 	currOwner, err := GetCurrentOwner(job, b.app)
 	if err != nil && !os.IsNotExist(err) {
 		b.logger.Error(err, "failed to get current datastore owner")
 	}
+	if checkpoint.WorkerID != "" {
+		currOwner = checkpoint.Owner
+	}
 	if err := FixDatastore(job, b.app); err != nil {
 		b.logger.Error(err, "failed to fix datastore")
+	}
+
+	if checkpoint.WorkerID == "" {
+		before, err = tasklog.SnapshotWorkerUPIDs("backup", workerID)
+		if err != nil {
+			return nil, proxmox.Task{}, "", fmt.Errorf("snapshotting backup tasks: %w", err)
+		}
+		checkpoint = startCheckpoint{WorkerID: workerID, Owner: currOwner, Before: make([]string, 0, len(before))}
+		for upid := range before {
+			checkpoint.Before = append(checkpoint.Before, upid)
+		}
+		value, err := json.Marshal(checkpoint)
+		if err != nil {
+			return nil, proxmox.Task{}, "", fmt.Errorf("encoding backup start checkpoint: %w", err)
+		}
+		if err := info.Checkpoint(ctx, value); err != nil {
+			return nil, proxmox.Task{}, "", fmt.Errorf("checkpointing backup start intent: %w", err)
+		}
 	}
 
 	b.mu.RLock()
@@ -153,13 +216,26 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	b.logger.Info("starting backup job", "args", cmd.Args)
 
 	if err := cmd.Start(); err != nil {
-		startupMu.Unlock()
 		if currOwner != "" {
 			if err := SetDatastoreOwner(job, b.app, currOwner); err != nil {
 				b.logger.Error(err, "failed to restore datastore owner after start failure")
 			}
 		}
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w (cmd: %s): %w", ErrProxmoxBackupClientStart, cmd.String(), err)
+	}
+
+	abortStart := func() {
+		if cmd.Process != nil {
+			if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+				b.logger.Error(err, "failed to kill unassociated backup process")
+			}
+			_ = cmd.Wait()
+		}
+		if currOwner != "" {
+			if err := SetDatastoreOwner(job, b.app, currOwner); err != nil {
+				b.logger.Error(err, "failed to restore datastore owner")
+			}
+		}
 	}
 
 	if cmd.Process != nil {
@@ -173,38 +249,23 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	b.mu.RUnlock()
 
 	go monitorPBSClientLogs(ctx, loggerPath, cmd, b.logger)
+	taskChan, errChan := b.startTaskMonitoring(ctx, workerID, before)
 
-	var task proxmox.Task
 	select {
-	case task = <-taskChan:
-		startupMu.Unlock()
+	case task := <-taskChan:
+		return cmd, task, currOwner, nil
 	case err := <-errChan:
-		startupMu.Unlock()
+		abortStart()
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrTaskDetectionFailed, err)
 	case <-ctx.Done():
-		startupMu.Unlock()
-		if err := cmd.Process.Kill(); err != nil {
-			b.logger.Error(err, "failed to kill process after context cancellation")
-		}
-		if currOwner != "" {
-			if err := SetDatastoreOwner(job, b.app, currOwner); err != nil {
-				b.logger.Error(err, "failed to restore datastore owner")
-			}
-		}
+		abortStart()
 		return nil, proxmox.Task{}, "", jobs.ErrCanceled
 	}
-
-	return cmd, task, currOwner, nil
 }
 
-func (b *backupJob) startTaskMonitoring(ctx context.Context, target coredb.Target) (<-chan proxmox.Task, <-chan struct{}, <-chan error) {
-	readyChan := make(chan struct{})
+func (b *backupJob) startTaskMonitoring(ctx context.Context, workerID string, before map[string]struct{}) (<-chan proxmox.Task, <-chan error) {
 	taskChan := make(chan proxmox.Task, 1)
 	errChan := make(chan error, 1)
-
-	b.mu.RLock()
-	job := b.job
-	b.mu.RUnlock()
 
 	go func() {
 		defer b.logger.Info("monitor goroutine closing")
@@ -212,7 +273,7 @@ func (b *backupJob) startTaskMonitoring(ctx context.Context, target coredb.Targe
 		timedCtx, timedCancel := context.WithTimeout(ctx, 20*time.Second)
 		defer timedCancel()
 
-		task, err := GetBackupTask(timedCtx, readyChan, job, target)
+		task, err := GetBackupTask(timedCtx, workerID, before)
 		if err != nil {
 			errChan <- err
 			return
@@ -220,5 +281,5 @@ func (b *backupJob) startTaskMonitoring(ctx context.Context, target coredb.Targe
 		taskChan <- task
 	}()
 
-	return taskChan, readyChan, errChan
+	return taskChan, errChan
 }

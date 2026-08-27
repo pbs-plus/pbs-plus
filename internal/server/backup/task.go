@@ -5,8 +5,6 @@ package backup
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
@@ -14,50 +12,40 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
-func GetBackupTask(
-	ctx context.Context,
-	readyChan chan struct{},
-	job coredb.Backup,
-	target coredb.Target,
-) (proxmox.Task, error) {
-	hostname, err := os.Hostname()
+func backupWorkerID(job coredb.Backup, target coredb.Target) (string, error) {
+	backupID, err := getBackupId(target)
 	if err != nil {
-		if hostnameBytes, err := os.ReadFile("/etc/hostname"); err == nil {
-			hostname = strings.TrimSpace(string(hostnameBytes))
-		} else {
-			hostname = "localhost"
-		}
+		return "", err
 	}
+	return tasklog.FormatWorkerID(job.Store, "host-", proxmox.NormalizeHostname(backupID)), nil
+}
 
-	startTimeThreshold := time.Now().Unix()
-	backupID := hostname
-	if target.IsAgent() {
-		backupID = target.GetHostname()
-	}
-	backupID = proxmox.NormalizeHostname(backupID)
-
-	searchString := ":backup:" + tasklog.FormatWorkerID(job.Store, "host-", backupID)
-
-	close(readyChan)
-
+func GetBackupTask(ctx context.Context, workerID string, before map[string]struct{}) (proxmox.Task, error) {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
+		task, found, err := tasklog.FindNewWorkerTask("backup", workerID, before)
+		if err != nil {
+			return proxmox.Task{}, err
+		}
+		if found {
+			return task, nil
+		}
+
 		select {
 		case <-ctx.Done():
 			return proxmox.Task{}, fmt.Errorf("timed out")
 		case <-ticker.C:
-			if task, found := tasklog.FindRunningTask("backup", searchString, startTimeThreshold); found {
-				return task, nil
-			}
 		}
 	}
 }
 
 func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
-	targetName := job.Target.GetHostname()
-	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
+	wid, err := backupWorkerID(job, job.Target)
+	if err != nil {
+		return proxmox.Task{}, err
+	}
 
 	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", "backup", wid)
 	if err != nil {
@@ -76,8 +64,10 @@ func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalDa
 }
 
 func GenerateBackupTaskOKFile(job coredb.Backup, additionalData []string) (proxmox.Task, error) {
-	targetName := job.Target.GetHostname()
-	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
+	wid, err := backupWorkerID(job, job.Target)
+	if err != nil {
+		return proxmox.Task{}, err
+	}
 
 	wt, err := tasklog.NewWorkerTask("pbsplusgen-ok", "backup", wid)
 	if err != nil {
