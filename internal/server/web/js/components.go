@@ -656,12 +656,30 @@ func (p InputPanel) AppendJS(dst []byte, indent int) []byte {
 	return Class{Name: p.Name, Config: p.Config()}.AppendJS(dst, indent)
 }
 
+// Tab is an ExtJS tab panel item.
+type Tab struct {
+	XType   XType
+	Title   string
+	ItemID  string
+	IconCls string
+}
+
+func (t Tab) Config() Obj {
+	o := Obj{"xtype": string(t.XType)}
+	set(o, "itemId", t.ItemID)
+	set(o, "iconCls", t.IconCls)
+	if t.Title != "" {
+		o["title"] = T(t.Title)
+	}
+	return o
+}
+
 // TabPanel is an Ext.tab.Panel class.
 type TabPanel struct {
 	Name          string
 	XType         XType
 	Title         string
-	Items         Arr
+	Tabs          []Tab
 	Border        bool
 	PanelDefaults bool
 	Methods       map[string]Raw
@@ -675,7 +693,13 @@ func (t TabPanel) Config() Obj {
 	if t.Title != "" {
 		o["title"] = T(t.Title)
 	}
-	set(o, "items", t.Items)
+	if len(t.Tabs) > 0 {
+		items := make(Arr, len(t.Tabs))
+		for i, tab := range t.Tabs {
+			items[i] = tab.Config()
+		}
+		o["items"] = items
+	}
 	set(o, "border", t.Border)
 	if t.PanelDefaults {
 		o["defaults"] = Obj{"border": false, "xtype": string(XPanel)}
