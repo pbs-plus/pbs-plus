@@ -340,6 +340,8 @@ type Tool struct {
 	Cls                   string
 	HTML                  string
 	Reference             string
+	Dock                  string
+	Style                 Obj
 	EmptyText             string
 	Width                 int
 	KeyUp                 string
@@ -376,6 +378,8 @@ func (t Tool) Config() Obj {
 	set(o, "cls", t.Cls)
 	set(o, "html", t.HTML)
 	set(o, "reference", t.Reference)
+	set(o, "dock", t.Dock)
+	set(o, "style", t.Style)
 	if t.EmptyText != "" {
 		o["emptyText"] = T(t.EmptyText)
 	}
@@ -785,6 +789,7 @@ type Panel struct {
 	Store             Component
 	Columns           []Column
 	Tbar              []Tool
+	DockedItems       []Tool
 	Grouping          *Grouping
 	ViewConfig        *ViewConfig
 	Controller        Controller
@@ -863,6 +868,9 @@ func (p Panel) Config() Obj {
 	}
 	if len(p.Tbar) > 0 {
 		o["tbar"] = tools(p.Tbar)
+	}
+	if len(p.DockedItems) > 0 {
+		o["dockedItems"] = tools(p.DockedItems)
 	}
 	if p.Grouping != nil {
 		o["features"] = Arr{p.Grouping.Config()}
