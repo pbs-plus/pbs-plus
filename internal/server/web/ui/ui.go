@@ -8,6 +8,7 @@ func Render() []byte {
 	items := append(models, mtfModels...)
 	items = append(items, scriptSelector, scriptEditWindow, scriptPanel)
 	items = append(items, selectors...)
+	items = append(items, calendarEventSelector)
 	items = append(items, pathSelectors...)
 	items = append(items, windows...)
 	items = append(items, exclusionPanel)

@@ -429,27 +429,27 @@ func withStoreListeners(l Listeners) Listeners {
 
 // Field is a form field or generic child component.
 type Field struct {
-	XType       XType
-	Name        string
-	ItemID      string
-	Label       string
-	Value       any
-	AllowBlank  *bool
-	Editable    *bool
-	EditableWhenCreate bool
+	XType                    XType
+	Name                     string
+	ItemID                   string
+	Label                    string
+	Value                    any
+	AllowBlank               *bool
+	Editable                 *bool
+	EditableWhenCreate       bool
 	DeleteEmptyWhenNotCreate bool
-	Disabled    bool
-	Renderer    Raw
-	Width       int
-	Height      int
-	Layout      string
-	Anchor      string
-	HTML        string
-	EmptyText   string
-	InputType   string
-	UserCls     string
-	Items       Arr
-	AfterRender Raw
+	Disabled                 bool
+	Renderer                 Raw
+	Width                    int
+	Height                   int
+	Layout                   string
+	Anchor                   string
+	HTML                     string
+	EmptyText                string
+	InputType                string
+	UserCls                  string
+	Items                    Arr
+	AfterRender              Raw
 }
 
 func (f Field) Config() Obj {
@@ -495,20 +495,20 @@ func (f Field) Config() Obj {
 // EditWindow is a PBS.plusWindow.Edit dialog. CBindData receives the window
 // initialConfig and normally sets me.url and me.method.
 type EditWindow struct {
-	Name      string
-	XType     XType
-	Extend    string
-	Subject   string
-	Width     string
-	PixelWidth int
-	Resizable bool
+	Name         string
+	XType        XType
+	Extend       string
+	Subject      string
+	Width        string
+	PixelWidth   int
+	Resizable    bool
 	NotResizable bool
-	IsCreate  bool
-	IsAdd     bool
-	Method    string
-	CBindData Raw
-	Items     Arr
-	Methods   map[string]Raw
+	IsCreate     bool
+	IsAdd        bool
+	Method       string
+	CBindData    Raw
+	Items        Arr
+	Methods      map[string]Raw
 }
 
 func (w EditWindow) Config() Obj {
@@ -568,13 +568,19 @@ type Selector struct {
 	AnyMatch        *bool
 	MatchFieldWidth *bool
 	ConfigNames     []string
+	DeleteEmpty     *bool
 	EmptyText       string
 	ListMinWidth    int
 	ListMaxWidth    int
 	ListMinHeight   int
 	ListEmptyText   Raw
 	Clearable       bool
+	AfterRender     Raw
 	OnChange        Raw
+	SubmitData      Raw
+	Options         []Option
+	Template        []string
+	DisplayTemplate []string
 	Methods         map[string]Raw
 }
 
@@ -600,11 +606,12 @@ func (s Selector) Config() Obj {
 	set(o, "typeAhead", s.TypeAhead)
 	set(o, "anyMatch", s.AnyMatch)
 	set(o, "matchFieldWidth", s.MatchFieldWidth)
-	if len(s.ConfigNames) > 0 {
+	if len(s.ConfigNames) > 0 || s.DeleteEmpty != nil {
 		config := Obj{}
 		for _, name := range s.ConfigNames {
 			config[name] = Raw("null")
 		}
+		set(config, "deleteEmpty", s.DeleteEmpty)
 		o["config"] = config
 	}
 	set(o, "emptyText", s.EmptyText)
@@ -615,6 +622,13 @@ func (s Selector) Config() Obj {
 		}
 		set(store, "sorters", s.Sorters)
 		o["store"] = store
+	}
+	if len(s.Options) > 0 {
+		data := make(Arr, len(s.Options))
+		for i, option := range s.Options {
+			data[i] = option.Config()
+		}
+		o["store"] = Obj{"fields": Arr{"value", "text"}, "data": data}
 	}
 	if len(s.ListColumns) > 0 || s.ListWidth != 0 || s.ListMinWidth != 0 || s.ListMaxWidth != 0 || s.ListMinHeight != 0 || s.ListEmptyText != "" {
 		cols := make(Arr, len(s.ListColumns))
@@ -632,11 +646,43 @@ func (s Selector) Config() Obj {
 	if s.Clearable {
 		o["triggers"] = Obj{"clear": Obj{"cls": "pmx-clear-trigger", "weight": -1, "hidden": true, "handler": Func("", `this.triggers.clear.setVisible(false); this.setValue("");`)}}
 	}
-	set(o, "listeners", listener("change", s.OnChange))
+	listeners := listener("change", s.OnChange)
+	if s.AfterRender != "" {
+		if listeners == nil {
+			listeners = Obj{}
+		}
+		listeners["afterrender"] = s.AfterRender
+	}
+	set(o, "listeners", listeners)
+	set(o, "getSubmitData", s.SubmitData)
+	if len(s.Template) > 0 {
+		o["tpl"] = stringsToArr(s.Template)
+	}
+	if len(s.DisplayTemplate) > 0 {
+		o["displayTpl"] = stringsToArr(s.DisplayTemplate)
+	}
 	for k, v := range s.Methods {
 		o[k] = v
 	}
 	return o
+}
+
+// Option is a labeled value in a local ExtJS store.
+type Option struct {
+	Value string
+	Text  string
+}
+
+func (o Option) Config() Obj {
+	return Obj{"value": o.Value, "text": T(o.Text)}
+}
+
+func stringsToArr(values []string) Arr {
+	result := make(Arr, len(values))
+	for i, value := range values {
+		result[i] = value
+	}
+	return result
 }
 
 func listener(event string, handler Raw) Obj {
