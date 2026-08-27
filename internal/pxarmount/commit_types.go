@@ -39,14 +39,9 @@ type deferredDir struct {
 }
 
 type reusableChunk struct {
-	size      uint64
-	padding   uint64
-	digest    [32]byte
-	endOffset uint64
-}
-
-func (c *reusableChunk) sameIndexedChunkAs(other *reusableChunk) bool {
-	return c.digest == other.digest && c.endOffset == other.endOffset
+	size    uint64
+	padding uint64
+	digest  [32]byte
 }
 
 type commitWalkState struct {
@@ -66,8 +61,6 @@ type commitWalkState struct {
 	origChunkIndex *datastore.DynamicIndexReader
 
 	batchRangeEnd uint64
-	savedChunk    reusableChunk
-	hasSavedChunk bool
 
 	entryBuf pxar.Entry
 }

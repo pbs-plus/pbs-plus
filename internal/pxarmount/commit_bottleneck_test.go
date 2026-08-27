@@ -780,10 +780,10 @@ func TestLookupDynamicEntries(t *testing.T) {
 		wantEndPad   uint64
 	}{
 		{"full_range", 0, 500, 5, 0, 0},
-		{"aligned_first_chunk", 0, 100, 2, 0, 100},
+		{"aligned_first_chunk", 0, 100, 1, 0, 0},
 		{"aligned_last_chunk", 400, 500, 1, 0, 0},
-		{"middle_two_chunks", 100, 300, 3, 0, 100},
-		{"misaligned_start", 50, 300, 4, 50, 100},
+		{"middle_two_chunks", 100, 300, 2, 0, 0},
+		{"misaligned_start", 50, 300, 3, 50, 0},
 		{"misaligned_end", 100, 350, 3, 0, 50},
 		{"misaligned_both", 50, 350, 4, 50, 50},
 		{"tiny_range_in_first", 10, 20, 1, 10, 80},
@@ -846,24 +846,6 @@ func TestRangeHoleDetection(t *testing.T) {
 	noGapNil := owNil.origChunkIndex != nil && owNil.batchRangeEnd != 0 && uint64(500) > owNil.batchRangeEnd
 	if noGapNil {
 		t.Error("nil origChunkIndex should not trigger hole detection")
-	}
-}
-
-func TestSameIndexedChunkAs(t *testing.T) {
-	a := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 1000}
-	b := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 1000}
-	if !a.sameIndexedChunkAs(&b) {
-		t.Error("identical chunks should match")
-	}
-
-	c := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 2000}
-	if a.sameIndexedChunkAs(&c) {
-		t.Error("same digest different endOffset should not match (dedup collision)")
-	}
-
-	d := reusableChunk{digest: [32]byte{4, 5, 6}, endOffset: 1000}
-	if a.sameIndexedChunkAs(&d) {
-		t.Error("different digest same endOffset should not match")
 	}
 }
 
@@ -966,24 +948,18 @@ func TestFlushPendingRefsOffsetCorrectness(t *testing.T) {
 		}
 	})
 
-	t.Run("keepLastChunk injects n-1 chunks", func(t *testing.T) {
-		chunks, _, _ := lookupDynamicEntries(idx, 100, 1700)
+	t.Run("every chunk in range is injected", func(t *testing.T) {
+		chunks, startPad, endPad := lookupDynamicEntries(idx, 100, 1700)
 		if len(chunks) < 2 {
 			t.Fatalf("need at least 2 chunks, got %d", len(chunks))
 		}
 
-		lastChunk := chunks[len(chunks)-1]
-		injected := chunks[:len(chunks)-1]
-
-		var injectSum, totalSum uint64
-		for _, c := range injected {
-			injectSum += c.size
-		}
+		var totalSum uint64
 		for _, c := range chunks {
 			totalSum += c.size
 		}
-		if injectSum+lastChunk.size != totalSum {
-			t.Errorf("injectSum(%d) + last(%d) != total(%d)", injectSum, lastChunk.size, totalSum)
+		if want := (1700 - 100) + startPad + endPad; totalSum != want {
+			t.Errorf("injected %d bytes, range+padding needs %d", totalSum, want)
 		}
 	})
 
@@ -1000,7 +976,7 @@ func TestFlushPendingRefsOffsetCorrectness(t *testing.T) {
 			},
 		}
 
-		if err := ow.flushPendingRefs(false); err != nil {
+		if err := ow.flushPendingRefs(); err != nil {
 			t.Fatal(err)
 		}
 		if len(w.refOffsets) != 2 {
