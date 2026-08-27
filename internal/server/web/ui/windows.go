@@ -40,7 +40,7 @@ var windows = []js.Value{
 			this.url = "/api2/extjs/config/d2d-target/" + encodeURIComponent(encodePathValue(contentid)) + "/s3-secret";
 			return {};
 		`),
-		Items: js.Items(js.InputPanel{Padding: 10, Items: js.Items(
+		Items: js.Items(js.Panel{Extend: js.ExtInputPanel, Padding: 10, Items: js.Items(
 			js.Field{XType: "proxmoxtextfield", Name: "secret", Label: "Secret Key", InputType: "password", AllowBlank: new(false), EmptyText: "Enter S3 Secret Key"},
 		)}),
 	},

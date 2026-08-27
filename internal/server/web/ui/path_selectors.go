@@ -3,8 +3,8 @@ package ui
 import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
 var pathSelectors = []js.Value{
-	js.FieldContainer{
-		Name: "PBS.form.D2DTargetPathSelector", XType: "pbsD2DTargetPathSelector", Layout: "hbox",
+	js.Panel{
+		Name: "PBS.form.D2DTargetPathSelector", XType: "pbsD2DTargetPathSelector", Extend: js.ExtFieldContainer, Layout: "hbox",
 		Methods: map[string]js.Raw{
 			"initComponent": js.Func("", `
 				let me = this;
@@ -24,8 +24,8 @@ var pathSelectors = []js.Value{
 			"setTarget": js.Func("target", `this.target = target;`),
 		},
 	},
-	js.FieldContainer{
-		Name: "PBS.form.D2DSnapshotPathSelector", XType: "pbsD2DSnapshotPathSelector", Layout: "hbox",
+	js.Panel{
+		Name: "PBS.form.D2DSnapshotPathSelector", XType: "pbsD2DSnapshotPathSelector", Extend: js.ExtFieldContainer, Layout: "hbox",
 		Methods: map[string]js.Raw{
 			"initComponent": js.Func("", `
 				let me = this;

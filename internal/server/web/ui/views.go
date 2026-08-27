@@ -3,24 +3,26 @@ package ui
 import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
 var coreViews = []js.Value{
-	js.TabPanel{
+	js.Panel{
 		Name:   "PBS.D2DManagement",
 		XType:  "pbsD2DManagement",
+		Extend: js.ExtTabPanel,
 		Border: true,
-		Tabs: []js.Tab{
-			{XType: "pbsDiskBackupJobView", Title: "Backup Jobs", ItemID: "d2d-backup-jobs", IconCls: "fa fa-floppy-o"},
-			{XType: "pbsDiskRestoreJobView", Title: "Restore Jobs", ItemID: "d2d-restore-jobs", IconCls: "fa fa-download"},
-			{XType: "pbsDiskTokenPanel", Title: "Agent Bootstrap", ItemID: "tokens", IconCls: "fa fa-handshake-o"},
-			{XType: "pbsDiskTargetPanel", Title: "Targets", ItemID: "targets", IconCls: "fa fa-desktop"},
-			{XType: "pbsDiskExclusionPanel", Title: "Global Exclusions", ItemID: "exclusions", IconCls: "fa fa-ban"},
-			{XType: "pbsDiskScriptPanel", Title: "Scripts", ItemID: "scripts", IconCls: "fa fa-file-code-o"},
-			{XType: "pbsNotificationBatchView", Title: "Notification Batches", ItemID: "notification-batches", IconCls: "fa fa-bell-o"},
-			{XType: "pbsD2DAlertSettings", Title: "Alert Settings", ItemID: "alert-settings", IconCls: "fa fa-exclamation-triangle"},
-		},
+		Items: js.Items(
+			js.Field{XType: "pbsDiskBackupJobView", Title: "Backup Jobs", ItemID: "d2d-backup-jobs", IconCls: "fa fa-floppy-o"},
+			js.Field{XType: "pbsDiskRestoreJobView", Title: "Restore Jobs", ItemID: "d2d-restore-jobs", IconCls: "fa fa-download"},
+			js.Field{XType: "pbsDiskTokenPanel", Title: "Agent Bootstrap", ItemID: "tokens", IconCls: "fa fa-handshake-o"},
+			js.Field{XType: "pbsDiskTargetPanel", Title: "Targets", ItemID: "targets", IconCls: "fa fa-desktop"},
+			js.Field{XType: "pbsDiskExclusionPanel", Title: "Global Exclusions", ItemID: "exclusions", IconCls: "fa fa-ban"},
+			js.Field{XType: "pbsDiskScriptPanel", Title: "Scripts", ItemID: "scripts", IconCls: "fa fa-file-code-o"},
+			js.Field{XType: "pbsNotificationBatchView", Title: "Notification Batches", ItemID: "notification-batches", IconCls: "fa fa-bell-o"},
+			js.Field{XType: "pbsD2DAlertSettings", Title: "Alert Settings", ItemID: "alert-settings", IconCls: "fa fa-exclamation-triangle"},
+		),
 		PanelDefaults: true,
 	},
-	js.TabPanel{
+	js.Panel{
 		Name:   "PBS.D2DSnapshotMount",
+		Extend: js.ExtTabPanel,
 		XType:  "pbsD2DSnapshotMount",
 		Border: true,
 		Methods: map[string]js.Raw{"initComponent": js.Func("", `
@@ -49,8 +51,9 @@ var coreViews = []js.Value{
 		`)},
 		PanelDefaults: true,
 	},
-	js.TabPanel{
+	js.Panel{
 		Name:   "PBS.D2DDataVerification",
+		Extend: js.ExtTabPanel,
 		XType:  "pbsD2DDataVerification",
 		Border: true,
 		Methods: map[string]js.Raw{"initComponent": js.Func("", `
@@ -60,18 +63,19 @@ var coreViews = []js.Value{
 		`)},
 		PanelDefaults: true,
 	},
-	js.TabPanel{
+	js.Panel{
 		Name:   "PBS.MtfManagement",
 		XType:  "pbsMtfManagement",
+		Extend: js.ExtTabPanel,
 		Title:  "MTF Tape Backup",
 		Border: true,
-		Tabs: []js.Tab{
-			{XType: "pbsMtfInventoryPanel", Title: "Inventory", ItemID: "mtf-inventory", IconCls: "fa fa-book"},
-			{XType: "pbsMtfChangerGrid", Title: "Changers", ItemID: "mtf-changers", IconCls: "fa fa-exchange"},
-			{XType: "pbsMtfDriveGrid", Title: "Drives", ItemID: "mtf-drives", IconCls: "pbs-icon-tape-drive"},
-			{XType: "pbsMtfMappingPanel", Title: "Namespace Mappings", ItemID: "mtf-mappings", IconCls: "fa fa-sitemap"},
-			{XType: "pbsMtfJobView", Title: "Migration Jobs", ItemID: "mtf-jobs", IconCls: "fa fa-floppy-o"},
-		},
+		Items: js.Items(
+			js.Field{XType: "pbsMtfInventoryPanel", Title: "Inventory", ItemID: "mtf-inventory", IconCls: "fa fa-book"},
+			js.Field{XType: "pbsMtfChangerGrid", Title: "Changers", ItemID: "mtf-changers", IconCls: "fa fa-exchange"},
+			js.Field{XType: "pbsMtfDriveGrid", Title: "Drives", ItemID: "mtf-drives", IconCls: "pbs-icon-tape-drive"},
+			js.Field{XType: "pbsMtfMappingPanel", Title: "Namespace Mappings", ItemID: "mtf-mappings", IconCls: "fa fa-sitemap"},
+			js.Field{XType: "pbsMtfJobView", Title: "Migration Jobs", ItemID: "mtf-jobs", IconCls: "fa fa-floppy-o"},
+		),
 		PanelDefaults: true,
 	},
 	js.Raw(`Ext.onReady(function () {

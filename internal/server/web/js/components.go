@@ -492,6 +492,8 @@ type Field struct {
 	EmptyText                string
 	InputType                string
 	UserCls                  string
+	Title                    string
+	IconCls                  string
 	Items                    Arr
 	AfterRender              Raw
 }
@@ -531,6 +533,10 @@ func (f Field) Config() Obj {
 	}
 	set(o, "inputType", f.InputType)
 	set(o, "userCls", f.UserCls)
+	if f.Title != "" {
+		o["title"] = T(f.Title)
+	}
+	set(o, "iconCls", f.IconCls)
 	set(o, "items", f.Items)
 	set(o, "listeners", listener("afterrender", f.AfterRender))
 	return o
@@ -741,119 +747,59 @@ func (s Selector) AppendJS(dst []byte, indent int) []byte {
 }
 
 // FieldContainer is an Ext.form.FieldContainer class.
-type FieldContainer struct {
-	Name    string
-	XType   XType
-	Layout  string
-	Methods map[string]Raw
-}
-
-func (f FieldContainer) Config() Obj {
-	o := Obj{"extend": "Ext.form.FieldContainer"}
-	if f.XType != "" {
-		o["alias"] = "widget." + string(f.XType)
-	}
-	set(o, "layout", f.Layout)
-	for name, method := range f.Methods {
-		o[name] = method
-	}
-	return o
-}
-
-func (f FieldContainer) AppendJS(dst []byte, indent int) []byte {
-	return Class{Name: f.Name, Config: f.Config()}.AppendJS(dst, indent)
-}
-
-// InputPanel is a Proxmox.panel.InputPanel class.
-type InputPanel struct {
+// Panel is every container class: field container, input panel, tab panel or
+// plain panel. Extend picks which one; the rendered config is otherwise
+// identical across all of them.
+type Panel struct {
 	Name          string
 	XType         XType
+	Extend        string
 	Title         string
+	Layout        string
 	Items         Arr
 	Column1       Arr
 	Column2       Arr
 	FieldDefaults Obj
 	Padding       int
+	Border        bool
+	PanelDefaults bool
 	Methods       map[string]Raw
 }
 
-func (p InputPanel) Config() Obj {
-	o := Obj{"extend": "Proxmox.panel.InputPanel"}
+const (
+	ExtFieldContainer = "Ext.form.FieldContainer"
+	ExtInputPanel     = "Proxmox.panel.InputPanel"
+	ExtTabPanel       = "Ext.tab.Panel"
+)
+
+func (p Panel) Config() Obj {
+	extend := p.Extend
+	if extend == "" {
+		extend = "Ext.panel.Panel"
+	}
+	o := Obj{"extend": extend}
 	if p.XType != "" {
 		o["alias"] = "widget." + string(p.XType)
 	}
 	if p.Title != "" {
 		o["title"] = T(p.Title)
 	}
+	set(o, "layout", p.Layout)
 	set(o, "items", p.Items)
 	set(o, "column1", p.Column1)
 	set(o, "column2", p.Column2)
 	set(o, "fieldDefaults", p.FieldDefaults)
 	set(o, "padding", p.Padding)
+	set(o, "border", p.Border)
+	if p.PanelDefaults {
+		o["defaults"] = Obj{"border": false, "xtype": string(XPanel)}
+	}
 	for k, v := range p.Methods {
 		o[k] = v
 	}
 	return o
 }
 
-func (p InputPanel) AppendJS(dst []byte, indent int) []byte {
+func (p Panel) AppendJS(dst []byte, indent int) []byte {
 	return Class{Name: p.Name, Config: p.Config()}.AppendJS(dst, indent)
-}
-
-// Tab is an ExtJS tab panel item.
-type Tab struct {
-	XType   XType
-	Title   string
-	ItemID  string
-	IconCls string
-}
-
-func (t Tab) Config() Obj {
-	o := Obj{"xtype": string(t.XType)}
-	set(o, "itemId", t.ItemID)
-	set(o, "iconCls", t.IconCls)
-	if t.Title != "" {
-		o["title"] = T(t.Title)
-	}
-	return o
-}
-
-// TabPanel is an Ext.tab.Panel class.
-type TabPanel struct {
-	Name          string
-	XType         XType
-	Title         string
-	Tabs          []Tab
-	Border        bool
-	PanelDefaults bool
-	Methods       map[string]Raw
-}
-
-func (t TabPanel) Config() Obj {
-	o := Obj{"extend": "Ext.tab.Panel"}
-	if t.XType != "" {
-		o["alias"] = "widget." + string(t.XType)
-	}
-	if t.Title != "" {
-		o["title"] = T(t.Title)
-	}
-	if len(t.Tabs) > 0 {
-		items := make(Arr, len(t.Tabs))
-		for i, tab := range t.Tabs {
-			items[i] = tab.Config()
-		}
-		o["items"] = items
-	}
-	set(o, "border", t.Border)
-	if t.PanelDefaults {
-		o["defaults"] = Obj{"border": false, "xtype": string(XPanel)}
-	}
-	for k, v := range t.Methods {
-		o[k] = v
-	}
-	return o
-}
-
-func (t TabPanel) AppendJS(dst []byte, indent int) []byte {
-	return Class{Name: t.Name, Config: t.Config()}.AppendJS(dst, indent)
 }
