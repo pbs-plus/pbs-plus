@@ -59,13 +59,9 @@ var restorePanel = js.Panel{
 		`),
 	}},
 	Tbar: []js.Tool{
-		{Text: "Add Job", Handler: "addJob", SelModel: new(false)},
-		{Text: "Duplicate Job", Handler: "duplicateJob", Disabled: true, EnableFn: enableOnSingleSelection},
-		{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: selectionOne(`!recs[0].data["last-run-upid"] || !!recs[0].data["last-run-state"]`)},
-		{Text: "Remove Job(s)", Handler: "removeJobs", Disabled: true, EnableFn: selectionEvery(jobIdle)}, js.Sep(),
-		{Text: "Show Log", Handler: "openTaskLog", Disabled: true, EnableFn: selectionOne(`!!recs[0].data["last-run-upid"]`)}, js.Sep(),
-		{Text: "Run Job(s)", Handler: "runJobs", Disabled: true, EnableFn: selectionEvery(jobIdle)},
-		{Text: "Stop Job(s)", Handler: "stopJobs", Disabled: true, EnableFn: selectionEvery(jobStoppable)},
+		addJobTool, duplicateJobTool, editIdleJobTool, removeIdleJobsTool, js.Sep(),
+		showLogTool, js.Sep(),
+		runIdleJobsTool, stopJobsTool,
 		js.Fill(), searchTool(),
 	},
 	Columns: []js.Column{

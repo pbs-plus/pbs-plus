@@ -8,9 +8,9 @@ var mtfDriveGrid = js.Panel{
 	Grouping:  &js.Grouping{HeaderTemplate: groupHeader("Drive"), FormatName: js.Func("changer", `if (!changer) return gettext("Standalone Drives"); return Ext.String.format(gettext("Changer {0}"), changer);`)},
 	Listeners: js.Listeners{ItemDblClick: "showStatus"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
-		"onAdd":      js.Func("", `let me = this; Ext.create("PBS.TapeManagement.DriveEditWindow", { listeners: { destroy: () => me.reload() } }).show();`),
+		"onAdd":      openEditWindow("PBS.TapeManagement.DriveEditWindow", ""),
 		"onEdit":     editSelection("PBS.TapeManagement.DriveEditWindow", "driveid", "name", "autoLoad"),
-		"showStatus": js.Func("", `let selection = this.getView().getSelection(); if (!selection || selection.length < 1) return; location.hash = "#Drive-" + encodeURIComponent(selection[0].data.name);`),
+		"showStatus": openStatusPage("Drive"),
 	}},
 	Tbar: []js.Tool{
 		{Text: "Add", Handler: "onAdd", SelModel: new(false)}, js.Sep(),

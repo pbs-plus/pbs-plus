@@ -85,9 +85,18 @@ var enableOnSingleSelection = js.Func("", `
 	return recs.length === 1;
 `)
 
-// openEditWindow builds a controller handler that shows class and reloads the
-// grid on close. idField is empty for add, or the record field carrying the
-// record id for edit.
+// Job-grid toolbar buttons shared by the backup, restore and verification panels.
+var (
+	addJobTool         = js.Tool{Text: "Add Job", Handler: "addJob", SelModel: new(false)}
+	duplicateJobTool   = js.Tool{Text: "Duplicate Job", Handler: "duplicateJob", Disabled: true, EnableFn: enableOnSingleSelection}
+	editIdleJobTool    = js.Tool{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: selectionOne(`!recs[0].data["last-run-upid"] || !!recs[0].data["last-run-state"]`)}
+	removeIdleJobsTool = js.Tool{Text: "Remove Job(s)", Handler: "removeJobs", Disabled: true, EnableFn: selectionEvery(jobIdle)}
+	runIdleJobsTool    = js.Tool{Text: "Run Job(s)", Handler: "runJobs", Disabled: true, EnableFn: selectionEvery(jobIdle)}
+	stopJobsTool       = js.Tool{Text: "Stop Job(s)", Handler: "stopJobs", Disabled: true, EnableFn: selectionEvery(jobStoppable)}
+	showLogTool        = js.Tool{Text: "Show Log", Handler: "openTaskLog", Disabled: true, EnableFn: selectionOne(`!!recs[0].data["last-run-upid"]`)}
+	showSuccessLogTool = js.Tool{Text: "Show last success log", Handler: "openSuccessTaskLog", Disabled: true, EnableFn: selectionOne(`!!recs[0].data["last-successful-upid"]`)}
+)
+
 // editSelection opens class for the selected record; windows differ on both the id property name and autoLoad vs autoShow.
 func editSelection(class, prop, field, show string) js.Raw {
 	return js.Func("", fmt.Sprintf(`
@@ -102,6 +111,11 @@ func editSelection(class, prop, field, show string) js.Raw {
 			listeners: { destroy: () => me.reload() },
 		}).show();
 	`, class, prop, field, show))
+}
+
+// openStatusPage jumps to the tape-management status view for the selected device.
+func openStatusPage(anchor string) js.Raw {
+	return js.Func("", fmt.Sprintf(`let selection = this.getView().getSelection(); if (!selection || selection.length < 1) return; location.hash = "#%s-" + encodeURIComponent(selection[0].data.name);`, anchor))
 }
 
 func groupHeader(noun string) string {

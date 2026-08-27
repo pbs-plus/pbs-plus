@@ -2,6 +2,23 @@ package ui
 
 import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
+// archiveActionIcon shows icon only on mountable .pxar/.mpxar archives;
+// archiveActionDisabled also refuses encrypted (crypt-mode 3) archives.
+func archiveActionIcon(icon string) js.Raw {
+	return js.Func("v, m, { data }", `
+		if (data.ty === "file" && (data.filename.endsWith(".pxar.didx") || data.filename.endsWith(".mpxar.didx"))) {
+			return "`+icon+`";
+		}
+		return "pmx-hidden";
+	`)
+}
+
+var archiveActionDisabled = js.Func("v, r, c, i, { data }", `
+	return !(data.ty === "file" &&
+		(data.filename.endsWith(".pxar.didx") || data.filename.endsWith(".mpxar.didx")) &&
+		data["crypt-mode"] < 3);
+`)
+
 var mountPanel = js.Panel{
 	Name: "PBS.D2DSnapshotMount.DatastorePanel", XType: "pbsPlusSnapshotMountDatastorePanel",
 	Extend:      "Ext.tree.Panel",
@@ -649,32 +666,14 @@ var mountPanel = js.Panel{
 			js.Obj{
 				"handler": "mountBackup",
 				"getTip":  js.Func("v, m, rec", `return Ext.String.format(gettext("Mount '{0}'"), v);`),
-				"getClass": js.Func("v, m, { data }", `
-					if (data.ty === "file" && (data.filename.endsWith(".pxar.didx") || data.filename.endsWith(".mpxar.didx"))) {
-						return "fa fa-hdd-o";
-					}
-					return "pmx-hidden";
-				`),
-				"isActionDisabled": js.Func("v, r, c, i, { data }", `
-					return !(data.ty === "file" &&
-						(data.filename.endsWith(".pxar.didx") || data.filename.endsWith(".mpxar.didx")) &&
-						data["crypt-mode"] < 3);
-				`),
+				"getClass": archiveActionIcon("fa fa-hdd-o"),
+				"isActionDisabled": archiveActionDisabled,
 			},
 			js.Obj{
 				"handler": "unmountBackup",
 				"getTip":  js.Func("v, m, rec", `return Ext.String.format(gettext("Unmount '{0}'"), v);`),
-				"getClass": js.Func("v, m, { data }", `
-					if (data.ty === "file" && (data.filename.endsWith(".pxar.didx") || data.filename.endsWith(".mpxar.didx"))) {
-						return "fa fa-eject";
-					}
-					return "pmx-hidden";
-				`),
-				"isActionDisabled": js.Func("v, r, c, i, { data }", `
-					return !(data.ty === "file" &&
-						(data.filename.endsWith(".pxar.didx") || data.filename.endsWith(".mpxar.didx")) &&
-						data["crypt-mode"] < 3);
-				`),
+				"getClass": archiveActionIcon("fa fa-eject"),
+				"isActionDisabled": archiveActionDisabled,
 			},
 			js.Obj{
 				"handler": "openBrowser",

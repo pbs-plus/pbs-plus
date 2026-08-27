@@ -7,9 +7,9 @@ var mtfChangerGrid = js.Panel{
 	Store:     js.Store{StoreID: "proxmox-tape-changers", Model: "pbs-model-changers", APIPath: "/api2/json/tape/changer", Sorters: "name", Proxy: js.ProxyProxmox, QueryParamNull: true},
 	Listeners: js.Listeners{ItemDblClick: "onDblClick"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
-		"onAdd":      js.Func("", `let me = this; Ext.create("PBS.TapeManagement.ChangerEditWindow", { listeners: { destroy: () => me.reload() } }).show();`),
+		"onAdd":      openEditWindow("PBS.TapeManagement.ChangerEditWindow", ""),
 		"onEdit":     editSelection("PBS.TapeManagement.ChangerEditWindow", "changerid", "name", "autoLoad"),
-		"showStatus": js.Func("", `let selection = this.getView().getSelection(); if (!selection || selection.length < 1) return; location.hash = "#Changer-" + encodeURIComponent(selection[0].data.name);`),
+		"showStatus": openStatusPage("Changer"),
 		"onDblClick": js.Func("", `this.showStatus();`),
 	}},
 	Tbar: []js.Tool{

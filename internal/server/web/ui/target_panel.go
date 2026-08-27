@@ -1,6 +1,34 @@
 package ui
 
-import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
+import (
+	"fmt"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
+)
+
+// targetWindowHandler opens class for the selected non-group tree node.
+func targetWindowHandler(class string) js.Raw {
+	return js.Func("", fmt.Sprintf(`
+		let me = this;
+		let view = me.getView();
+		let selection = view.getSelection();
+		if (!selection || selection.length < 1 || selection[0].data.isGroup) {
+			return;
+		}
+		Ext.create(%q, {
+			contentid: selection[0].data.name,
+			autoLoad: true,
+			listeners: { destroy: () => me.reload() },
+		}).show();
+	`, class))
+}
+
+var renderNonGroupField = js.Func("value, metaData, record", `
+	if (record.data.isGroup) {
+		return "";
+	}
+	return value || "-";
+`)
 
 var targetRowStyles = js.Raw(`
 	.pbs-row-warning-no-jobs .x-grid-cell {
@@ -101,32 +129,8 @@ var targetPanelController = js.ControllerClass{
 				});
 			});
 		`),
-		"onEdit": js.Func("", `
-			let me = this;
-			let view = me.getView();
-			let selection = view.getSelection();
-			if (!selection || selection.length < 1 || selection[0].data.isGroup) {
-				return;
-			}
-			Ext.create("PBS.D2DManagement.TargetEditWindow", {
-				contentid: selection[0].data.name,
-				autoLoad: true,
-				listeners: { destroy: () => me.reload() },
-			}).show();
-		`),
-		"setS3Secret": js.Func("", `
-			let me = this;
-			let view = me.getView();
-			let selection = view.getSelection();
-			if (!selection || selection.length < 1 || selection[0].data.isGroup) {
-				return;
-			}
-			Ext.create("PBS.D2DManagement.TargetS3Secret", {
-				contentid: selection[0].data.name,
-				autoLoad: true,
-				listeners: { destroy: () => me.reload() },
-			}).show();
-		`),
+		"onEdit":     targetWindowHandler("PBS.D2DManagement.TargetEditWindow"),
+		"setS3Secret": targetWindowHandler("PBS.D2DManagement.TargetS3Secret"),
 		"pushUpdate": js.Func("", `
 			let me = this;
 			let view = me.getView();
@@ -392,18 +396,8 @@ var targetPanelController = js.ControllerClass{
 				return '<i class="fa fa-times critical"></i> Unreachable';
 			}
 		`),
-		"render_path": js.Func("value, metaData, record", `
-			if (record.data.isGroup) {
-				return "";
-			}
-			return value || "-";
-		`),
-		"render_field": js.Func("value, metaData, record", `
-			if (record.data.isGroup) {
-				return "";
-			}
-			return value || "-";
-		`),
+		"render_path": renderNonGroupField,
+		"render_field": renderNonGroupField,
 		"onItemDblClick": js.Func("view, record", `
 			if (!record.data.isGroup) {
 				this.onEdit();

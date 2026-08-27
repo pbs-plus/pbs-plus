@@ -307,14 +307,13 @@ var verificationPanel = js.Panel{
 		`),
 	}},
 	Tbar: []js.Tool{
-		{Text: "Add Job", Handler: "addJob", SelModel: new(false)},
+		addJobTool,
 		{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: enableOnSingleSelection},
 		{Text: "Remove Job(s)", Handler: "removeJobs", Disabled: true, EnableFn: enableOnSelection}, js.Sep(),
 		{Text: "Run Job(s)", Handler: "runJobs", Disabled: true, EnableFn: enableOnSelection},
-		{Text: "Stop Job(s)", Handler: "stopJobs", Disabled: true, EnableFn: selectionEvery(jobStoppable)},
+		stopJobsTool,
 		{Text: "Show Results", Handler: "showResults", Disabled: true, EnableFn: enableOnSingleSelection}, js.Sep(),
-		{Text: "Show Log", Handler: "openTaskLog", Disabled: true, EnableFn: selectionOne(`!!recs[0].data["last-run-upid"]`)},
-		{Text: "Show last success log", Handler: "openSuccessTaskLog", Disabled: true, EnableFn: selectionOne(`!!recs[0].data["last-successful-upid"]`)},
+		showLogTool, showSuccessLogTool,
 		js.Fill(), searchTool(),
 	},
 	Columns: []js.Column{
