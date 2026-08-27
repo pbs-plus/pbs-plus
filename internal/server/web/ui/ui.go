@@ -30,6 +30,8 @@ func Render() []byte {
 	items = append(items, notificationTabs)
 	items = append(items, restoreModesStore)
 	items = append(items, restoreJobEdit)
+	items = append(items, backupModeStores)
+	items = append(items, backupJobEdit)
 	items = append(items, coreViews...)
 	return js.Render(items...)
 }
