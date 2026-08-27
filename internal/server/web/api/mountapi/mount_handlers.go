@@ -3,98 +3,114 @@
 package mountapi
 
 import (
-	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
+	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/backupapi"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
-
-	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
-	"github.com/pbs-plus/pbs-plus/internal/server/application"
-	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
-
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func parseMountPoints() ([]string, error) {
-	f, err := os.Open("/proc/self/mountinfo")
+type mountForm struct {
+	Datastore  string
+	Namespace  string
+	BackupType string
+	BackupID   string
+	BackupTime string
+	FileName   string
+	Mode       string
+	MountPath  string
+	Force      bool
+}
+
+func parseMountForm(r *http.Request) (mountForm, error) {
+	f := mountForm{
+		Datastore:  validate.DecodePath(r.PathValue("datastore")),
+		Namespace:  strings.TrimSpace(r.FormValue("ns")),
+		BackupType: strings.TrimSpace(r.FormValue("backup-type")),
+		BackupID:   strings.TrimSpace(r.FormValue("backup-id")),
+		BackupTime: strings.TrimSpace(r.FormValue("backup-time")),
+		FileName:   strings.TrimSpace(r.FormValue("file-name")),
+		Mode:       strings.TrimSpace(r.FormValue("mode")),
+		MountPath:  validate.DecodePath(strings.TrimSpace(r.FormValue("mount-path"))),
+		Force:      r.FormValue("force") == "1" || r.FormValue("force") == "true",
+	}
+	if err := validate.ValidateDatastore(f.Datastore); err != nil {
+		return f, fmt.Errorf("invalid datastore: %w", err)
+	}
+	if err := validate.ValidateNamespace(f.Namespace); err != nil {
+		return f, err
+	}
+	parsedTime, err := time.Parse(time.RFC3339, f.BackupTime)
 	if err != nil {
-		return nil, err
+		return f, fmt.Errorf("invalid backup-time format: %w", err)
 	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			log.Error(err, "")
+	_ = parsedTime
+	if f.BackupType != "" || f.BackupID != "" || f.FileName != "" {
+		if err := validate.ValidateBackupType(f.BackupType); err != nil {
+			return f, err
 		}
-	}()
-
-	var mps []string
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		parts := strings.Split(sc.Text(), " - ")
-		if len(parts) != 2 {
-			continue
+		if err := validate.ValidateBackupID(f.BackupID); err != nil {
+			return f, err
 		}
-		fields := strings.Fields(parts[0])
-		if len(fields) < 5 {
-			continue
+		if err := validate.ValidateFileName(f.FileName); err != nil {
+			return f, err
 		}
-		mp := fields[4]
-		mps = append(mps, mp)
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
+	if f.Mode != "" && f.Mode != snapshotmount.ModeRO && f.Mode != snapshotmount.ModeRW {
+		return f, fmt.Errorf("invalid mode %q", f.Mode)
 	}
-	return mps, nil
+	if err := snapshotmount.ValidateMountPath(f.MountPath); err != nil {
+		return f, err
+	}
+	return f, nil
 }
 
-func unmountPath(mountPoint string) error {
-	if err := exec.Command("fusermount3", "-uz", mountPoint).Run(); err == nil {
-		return nil
+func (f mountForm) safeTime() (string, error) {
+	parsedTime, err := time.Parse(time.RFC3339, f.BackupTime)
+	if err != nil {
+		return "", err
 	}
-
-	if err := exec.Command("fusermount", "-uz", mountPoint).Run(); err == nil {
-		return nil
-	}
-
-	if err := exec.Command("umount", "-f", "-l", mountPoint).Run(); err == nil {
-		return nil
-	}
-
-	return fmt.Errorf("failed to unmount %s", mountPoint)
+	return parsedTime.Format("2006-01-02_15-04-05"), nil
 }
 
-func removeEmptyDirsToBase(path, basePath string) {
-	path = filepath.Clean(path)
-	basePath = filepath.Clean(basePath)
+func newTask(workerType, datastore, key string) (*tasklog.WorkerTask, error) {
+	wid := tasklog.FormatWorkerID(datastore, workerType+"-", key)
+	return tasklog.NewWorkerTask("pbsplus", workerType, wid)
+}
 
-	for {
-		if path == basePath || path == "/" || !validate.IsPathWithin(basePath, path) {
-			break
-		}
-
-		entries, err := os.ReadDir(path)
-		if err != nil || len(entries) > 0 {
-			break
-		}
-
-		if err := os.Remove(path); err != nil {
-			break
-		}
-
-		path = filepath.Dir(path)
+func submitSnapshotWorkflow(w http.ResponseWriter, r *http.Request, app *application.Runtime, kind, key, lockKey string, payload any) (string, bool) {
+	request, err := jobs.NewWorkflowSubmit(kind, key, "manual", "", payload, []string{lockKey}, 1, time.Minute)
+	if err != nil {
+		respond.WriteErrorResponse(w, err)
+		return "", false
 	}
+	execution, _, err := app.Engine.Submit(r.Context(), request)
+	if err != nil {
+		respond.WriteErrorResponse(w, err)
+		return "", false
+	}
+	upid := ""
+	var input struct {
+		UPID string `json:"upid"`
+	}
+	if err := json.Unmarshal(execution.Payload, &input); err == nil {
+		upid = input.UPID
+	}
+	return upid, true
 }
 
 func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
@@ -103,139 +119,52 @@ func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
 			return
 		}
-
 		if err := r.ParseForm(); err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-
-		datastore := validate.DecodePath(r.PathValue("datastore"))
-		if err := validate.ValidateDatastore(datastore); err != nil {
-			respond.WriteErrorResponse(w, fmt.Errorf("invalid datastore: %w", err))
-			return
-		}
-
-		dsInfo, err := cli.GetDatastoreInfo(datastore)
+		f, err := parseMountForm(r)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-		pbsStoreRoot := dsInfo.Path
-		if pbsStoreRoot == "" {
-			respond.WriteErrorResponse(w, fmt.Errorf("invalid datastore configuration"))
-			return
-		}
-
-		backupType := strings.TrimSpace(r.FormValue("backup-type"))
-		backupID := strings.TrimSpace(r.FormValue("backup-id"))
-		backupTime := strings.TrimSpace(r.FormValue("backup-time"))
-		fileName := strings.TrimSpace(r.FormValue("file-name"))
-		ns := strings.TrimSpace(r.FormValue("ns"))
-
-		if err := validate.ValidateBackupType(backupType); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		if err := validate.ValidateBackupID(backupID); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		if err := validate.ValidateFileName(fileName); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		if err := validate.ValidateNamespace(ns); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-
-		parsedTime, err := time.Parse(time.RFC3339, backupTime)
-		if err != nil {
-			respond.WriteErrorResponse(w, fmt.Errorf("invalid backup-time format: %w", err))
-			return
-		}
-		safeTime := parsedTime.Format("2006-01-02_15-04-05")
-
-		mountPoint := filepath.Clean(filepath.Join(
-			conf.RestoreMountBasePath,
-			datastore,
-			ns,
-			fmt.Sprintf("%s-%s", backupType, backupID),
-			safeTime,
-		))
-
-		if err := validate.SanitizeMountPoint(mountPoint, conf.RestoreMountBasePath); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-
-		serviceName := systemd.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
-
-		if err := systemd.StopMountService(r.Context(), serviceName); err != nil {
-			log.Error(err, "")
-		}
-		if IsMounted(mountPoint) {
-			if err := unmountPath(mountPoint); err != nil {
-				log.Error(err, "")
-			}
-		}
-		if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
-		}
-
-		if err := os.MkdirAll(mountPoint, 0o755); err != nil {
-			respond.WriteErrorResponse(w, fmt.Errorf("failed to create mount-point: %w", err))
-			return
-		}
-
-		mpxarPath, ppxarPath, isMetadataSplit, err := proxmox.BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName)
+		safeTime, err := f.safeTime()
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
+		key := snapshotmount.Key(f.Datastore, f.Namespace, f.BackupType, f.BackupID, safeTime)
 
-		args := []string{"--pbs-store", pbsStoreRoot}
-		if isMetadataSplit {
-			args = append(args, "--mpxar-didx", mpxarPath, "--ppxar-didx", ppxarPath)
-		} else {
-			args = append(args, "--ppxar-didx", ppxarPath)
-		}
-		args = append(args, mountPoint)
-
-		if err := systemd.CreateMountService(r.Context(), serviceName, mountPoint, args); err != nil {
-			respond.WriteErrorResponse(w, fmt.Errorf("start mount service: %w", err))
-			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "")
-			}
+		task, err := newTask("mount", f.Datastore, key)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
 			return
 		}
-
-		mountOK := false
-		for range 30 {
-			if IsMounted(mountPoint) {
-				mountOK = true
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-
-		if !mountOK {
-			if err := systemd.StopMountService(r.Context(), serviceName); err != nil {
-				log.Error(err, "")
-			}
-			if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "")
-			}
-			respond.WriteErrorResponse(w, errors.New("mount failed"))
-			return
-		}
-
-		writeJSON(w, backupapi.BackupRunResponse{
-			Success: true,
-			Status:  http.StatusOK,
-			Message: "mounted",
+		upid, ok := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotMount, key, "snapshot-mount:"+key, jobs.SnapshotMountInput{
+			Datastore:  f.Datastore,
+			Namespace:  f.Namespace,
+			BackupType: f.BackupType,
+			BackupID:   f.BackupID,
+			BackupTime: f.BackupTime,
+			FileName:   f.FileName,
+			Mode:       f.Mode,
+			MountPath:  f.MountPath,
+			UPID:       upidTask(task),
+			Web:        true,
 		})
+		if !ok {
+			task.CloseErr(fmt.Errorf("workflow submit failed"))
+			return
+		}
+		writeRunResponse(w, upid)
 	}
+}
+
+func upidTask(task *tasklog.WorkerTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.UPID()
 }
 
 func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
@@ -248,83 +177,159 @@ func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-
-		datastore := validate.DecodePath(r.PathValue("datastore"))
-		backupType := strings.TrimSpace(r.FormValue("backup-type"))
-		backupID := strings.TrimSpace(r.FormValue("backup-id"))
-		backupTime := strings.TrimSpace(r.FormValue("backup-time"))
-		fileName := strings.TrimSpace(r.FormValue("file-name"))
-		ns := strings.TrimSpace(r.FormValue("ns"))
-
-		if err := validate.ValidateDatastore(datastore); err != nil {
-			respond.WriteErrorResponse(w, fmt.Errorf("invalid datastore: %w", err))
-			return
-		}
-		if err := validate.ValidateBackupType(backupType); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		if err := validate.ValidateBackupID(backupID); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		if err := validate.ValidateFileName(fileName); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		if err := validate.ValidateNamespace(ns); err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-
-		parsedTime, err := time.Parse(time.RFC3339, backupTime)
+		f, err := parseMountForm(r)
 		if err != nil {
-			respond.WriteErrorResponse(w, fmt.Errorf("invalid backup-time format: %w", err))
-			return
-		}
-		safeTime := parsedTime.Format("2006-01-02_15-04-05")
-
-		mountPoint := filepath.Clean(filepath.Join(
-			conf.RestoreMountBasePath,
-			datastore,
-			ns,
-			fmt.Sprintf("%s-%s", backupType, backupID),
-			safeTime,
-		))
-
-		if err := validate.SanitizeMountPoint(mountPoint, conf.RestoreMountBasePath); err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
 
-		basePath := filepath.Clean(filepath.Join(
-			conf.RestoreMountBasePath,
-			datastore,
-		))
-
-		serviceName := systemd.GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime)
-
-		if err := systemd.StopMountService(r.Context(), serviceName); err != nil {
-			log.Error(err, "")
-		}
-
-		if IsMounted(mountPoint) {
-			if err := unmountPath(mountPoint); err != nil {
-				log.Error(err, "")
+		key := ""
+		if f.MountPath != "" {
+			session, found, err := snapshotmount.FindSessionByMountPoint(f.MountPath)
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
 			}
+			if found {
+				key = session.ServiceKey
+			}
+		} else {
+			safeTime, err := f.safeTime()
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+			key = snapshotmount.Key(f.Datastore, f.Namespace, f.BackupType, f.BackupID, safeTime)
 		}
 
-		if err := os.RemoveAll(mountPoint); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
+		task, err := newTask("unmount", f.Datastore, key)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
-
-		removeEmptyDirsToBase(filepath.Dir(mountPoint), basePath)
-
-		writeJSON(w, backupapi.BackupRunResponse{
-			Success: true,
-			Status:  http.StatusOK,
-			Message: "unmounted",
+		lockKey := "snapshot-mount:" + key
+		upid, ok := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotUnmount, key, lockKey, jobs.SnapshotUnmountInput{
+			Datastore:  f.Datastore,
+			Namespace:  f.Namespace,
+			BackupType: f.BackupType,
+			BackupID:   f.BackupID,
+			BackupTime: f.BackupTime,
+			FileName:   f.FileName,
+			MountPath:  f.MountPath,
+			Force:      f.Force,
+			UPID:       upidTask(task),
+			Web:        true,
 		})
+		if !ok {
+			task.CloseErr(fmt.Errorf("workflow submit failed"))
+			return
+		}
+		writeRunResponse(w, upid)
+	}
+}
+
+func ExtJsCommitHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		f, err := parseMountForm(r)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		if f.MountPath == "" {
+			http.Error(w, "Missing mount-path parameter", http.StatusBadRequest)
+			return
+		}
+		session, found, err := snapshotmount.FindSessionByMountPoint(f.MountPath)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		if !found {
+			respond.WriteErrorResponse(w, fmt.Errorf("no mount session at %s", f.MountPath))
+			return
+		}
+		if !session.CommitCapable() {
+			respond.WriteErrorResponse(w, fmt.Errorf("mount at %s is not commit-capable (read-only or offline)", f.MountPath))
+			return
+		}
+		key := session.ServiceKey
+
+		task, err := newTask("commit", session.Datastore, key)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		upid, ok := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotCommit, key, "snapshot-mount:"+key, jobs.SnapshotCommitInput{
+			Datastore: session.Datastore,
+			MountPath: session.MountPoint,
+			UPID:      upidTask(task),
+			Web:       true,
+		})
+		if !ok {
+			task.CloseErr(fmt.Errorf("workflow submit failed"))
+			return
+		}
+		writeRunResponse(w, upid)
+	}
+}
+
+func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+		sessions, err := snapshotmount.ListSessions()
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		datastore := validate.DecodePath(r.PathValue("datastore"))
+		type sessionView struct {
+			Datastore     string `json:"datastore"`
+			Namespace     string `json:"namespace"`
+			BackupType    string `json:"backup-type"`
+			BackupID      string `json:"backup-id"`
+			BackupTime    string `json:"backup-time"`
+			FileName      string `json:"file-name"`
+			Mode          string `json:"mode"`
+			MountPoint    string `json:"mount-point"`
+			Mounted       bool   `json:"mounted"`
+			CommitCapable bool   `json:"commit-capable"`
+		}
+		views := make([]sessionView, 0, len(sessions))
+		for _, s := range sessions {
+			if datastore != "" && s.Datastore != datastore {
+				continue
+			}
+			views = append(views, sessionView{
+				Datastore:     s.Datastore,
+				Namespace:     s.Namespace,
+				BackupType:    s.BackupType,
+				BackupID:      s.BackupID,
+				BackupTime:    s.BackupTime,
+				FileName:      s.FileName,
+				Mode:          s.Mode,
+				MountPoint:    s.MountPoint,
+				Mounted:       snapshotmount.IsMounted(s.MountPoint),
+				CommitCapable: s.CommitCapable(),
+			})
+		}
+		sort.Slice(views, func(i, j int) bool {
+			if views[i].Datastore != views[j].Datastore {
+				return views[i].Datastore < views[j].Datastore
+			}
+			return views[i].MountPoint < views[j].MountPoint
+		})
+		writeJSON(w, views)
 	}
 }
 
@@ -338,10 +343,8 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-
 		datastore := validate.DecodePath(r.PathValue("datastore"))
 		ns := strings.TrimSpace(r.FormValue("ns"))
-
 		if err := validate.ValidateDatastore(datastore); err != nil {
 			respond.WriteErrorResponse(w, fmt.Errorf("invalid datastore: %w", err))
 			return
@@ -351,12 +354,43 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		base := filepath.Clean(filepath.Join(
-			conf.RestoreMountBasePath,
-			datastore,
-			ns,
-		))
+		sessions, err := snapshotmount.ListSessions()
+		if err != nil {
+			log.Error(err, "")
+		}
+		for _, s := range sessions {
+			if s.Datastore != datastore || (ns != "" && !strings.HasPrefix(s.Namespace, ns)) {
+				continue
+			}
+			if err := systemd.StopMountService(r.Context(), s.ServiceName()); err != nil {
+				log.Error(err, "")
+			}
+			if snapshotmount.IsMounted(s.MountPoint) {
+				if err := snapshotmount.UnmountPath(s.MountPoint); err != nil {
+					log.Error(err, "")
+				}
+			}
+			if s.OverlayDir != "" {
+				if err := os.RemoveAll(s.OverlayDir); err != nil {
+					log.Error(err, "")
+				}
+			}
+			if s.SocketPath != "" {
+				for _, suffix := range []string{"", ".monitor", ".log"} {
+					if err := os.Remove(s.SocketPath + suffix); err != nil && !os.IsNotExist(err) {
+						log.Error(err, "")
+					}
+				}
+			}
+			if err := snapshotmount.DeleteSession(s.ServiceKey); err != nil {
+				log.Error(err, "")
+			}
+		}
 
+		base := filepath.Clean(filepath.Join(conf.RestoreMountBasePath, datastore))
+		if ns != "" {
+			base = filepath.Join(base, ns)
+		}
 		if err := validate.SanitizeMountPoint(base, conf.RestoreMountBasePath); err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
@@ -367,12 +401,7 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, fmt.Errorf("list services: %w", err))
 			return
 		}
-
-		prefix := "pbs-plus-restore-" + datastore
-		if ns != "" {
-			prefix += "-" + strings.ReplaceAll(ns, "/", "-")
-		}
-
+		prefix := "pbs-plus-snapshot-mount-"
 		for _, svc := range services {
 			if strings.HasPrefix(svc, prefix) {
 				if err := systemd.StopMountService(r.Context(), svc); err != nil {
@@ -381,12 +410,11 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 			}
 		}
 
-		allMPs, err := parseMountPoints()
+		allMPs, err := snapshotmount.ParseMountPoints()
 		if err != nil {
 			respond.WriteErrorResponse(w, fmt.Errorf("read mounts: %w", err))
 			return
 		}
-
 		var targets []string
 		for _, mp := range allMPs {
 			clean := filepath.Clean(mp)
@@ -394,7 +422,6 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 				targets = append(targets, clean)
 			}
 		}
-
 		sort.Slice(targets, func(i, j int) bool {
 			di := strings.Count(targets[i], string(filepath.Separator))
 			dj := strings.Count(targets[j], string(filepath.Separator))
@@ -403,10 +430,9 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 			}
 			return di > dj
 		})
-
 		for _, mp := range targets {
-			if IsMounted(mp) {
-				if err := unmountPath(mp); err != nil {
+			if snapshotmount.IsMounted(mp) {
+				if err := snapshotmount.UnmountPath(mp); err != nil {
 					log.Error(err, "")
 				}
 			}
@@ -421,6 +447,18 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 			Status:  http.StatusOK,
 			Message: "unmounted all within datastore",
 		})
+	}
+}
+
+func writeRunResponse(w http.ResponseWriter, upid string) {
+	w.Header().Set("Content-Type", "application/json")
+	response := struct {
+		Success bool   `json:"success"`
+		Status  int    `json:"status"`
+		Data    string `json:"data"`
+	}{Success: true, Status: http.StatusOK, Data: upid}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Error(err, "")
 	}
 }
 

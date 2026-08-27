@@ -11,7 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
-func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime string) string {
+func MountServiceKey(datastore, ns, backupType, backupID, safeTime string) string {
 	rawID := fmt.Sprintf("%s|%s|%s|%s|%s", datastore, ns, backupType, backupID, safeTime)
 
 	shortHash := crypto.SHA256Hex([]byte(rawID))[:16]
@@ -21,7 +21,11 @@ func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime stri
 		safeDs = safeDs[:20]
 	}
 
-	name := fmt.Sprintf("pbs-plus-snapshot-mount-%s-%s", safeDs, shortHash)
+	return fmt.Sprintf("%s-%s", safeDs, shortHash)
+}
+
+func GenerateMountServiceName(datastore, ns, backupType, backupID, safeTime string) string {
+	name := fmt.Sprintf("pbs-plus-snapshot-mount-%s", MountServiceKey(datastore, ns, backupType, backupID, safeTime))
 
 	return name + ".service"
 }

@@ -16,6 +16,10 @@ const (
 	WorkflowVerification = "verification"
 	WorkflowMtfMigration = "mtf.migration"
 	WorkflowMtfScan      = "mtf.scan"
+
+	WorkflowSnapshotMount   = "snapshot.mount"
+	WorkflowSnapshotUnmount = "snapshot.unmount"
+	WorkflowSnapshotCommit  = "snapshot.commit"
 )
 
 type BackupInput struct {
@@ -40,6 +44,39 @@ type MtfScanInput struct {
 	BKFPath       string   `json:"bkf_path"`
 	Label         string   `json:"label"`
 	Barcodes      []string `json:"barcodes"`
+}
+
+type SnapshotMountInput struct {
+	Datastore  string `json:"datastore"`
+	Namespace  string `json:"namespace"`
+	BackupType string `json:"backup_type"`
+	BackupID   string `json:"backup_id"`
+	BackupTime string `json:"backup_time"`
+	FileName   string `json:"file_name"`
+	Mode       string `json:"mode"`
+	MountPath  string `json:"mount_path"`
+	UPID       string `json:"upid"`
+	Web        bool   `json:"web"`
+}
+
+type SnapshotUnmountInput struct {
+	Datastore  string `json:"datastore"`
+	Namespace  string `json:"namespace"`
+	BackupType string `json:"backup_type"`
+	BackupID   string `json:"backup_id"`
+	BackupTime string `json:"backup_time"`
+	FileName   string `json:"file_name"`
+	MountPath  string `json:"mount_path"`
+	Force      bool   `json:"force"`
+	UPID       string `json:"upid"`
+	Web        bool   `json:"web"`
+}
+
+type SnapshotCommitInput struct {
+	Datastore string `json:"datastore"`
+	MountPath string `json:"mount_path"`
+	UPID      string `json:"upid"`
+	Web       bool   `json:"web"`
 }
 
 func NewWorkflowSubmit(kind, definitionID, trigger, dedupeKey string, payload any, resources []string, maxAttempts int, retryDelay time.Duration) (jobdb.SubmitRequest, error) {
