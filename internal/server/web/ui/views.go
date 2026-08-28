@@ -27,7 +27,7 @@ var coreViews = []js.Value{
 		Name:   "PBS.D2DSnapshotMount",
 		Extend: js.ExtTabPanel,
 		XType:  "pbsD2DSnapshotMount",
-		Title:  "Snapshot Mount",
+		Title:  "Snapshots",
 		Border: true,
 		Methods: map[string]js.Raw{"initComponent": js.Func("", `
 			var me = this;
@@ -46,7 +46,8 @@ var coreViews = []js.Value{
 						});
 						var added = me.add(tabs);
 						if (added && added.length) {
-							me.setActiveTab(added[0]);
+							// land on the first datastore content tree, not Active Mounts
+							me.setActiveTab(added[2] || added[0]);
 						} else if (me.items && me.items.getCount() > 0) {
 							me.setActiveTab(me.items.getAt(0));
 						}
@@ -93,7 +94,7 @@ var coreViews = []js.Value{
 		if (notesNode) {
 			let index = root.indexOf(notesNode);
 			root.insertChild(index, { text: "Disk Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", expanded: true, children: [] });
-			root.insertChild(index + 1, { text: "Snapshot Mount", iconCls: "fa fa-hdd-o", id: "snapshot_mount", path: "pbsD2DSnapshotMount", expanded: true, children: [] });
+			root.insertChild(index + 1, { text: "Snapshots", iconCls: "fa fa-history", id: "snapshot_mount", path: "pbsD2DSnapshotMount", expanded: true, children: [] });
 			root.insertChild(index + 2, { text: "Data Verification", iconCls: "fa fa-check-circle", id: "data_verification", path: "pbsD2DDataVerification", expanded: true, children: [] });
 			root.insertChild(index + 3, { text: "MTF Migration", iconCls: "fa fa-archive", id: "mtf_tapes", path: "pbsMtfManagement", leaf: true });
 		}
