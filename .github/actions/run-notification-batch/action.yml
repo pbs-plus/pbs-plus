@@ -6,6 +6,10 @@ inputs:
     required: false
     default: "240"
     description: Timeout for each backup job to complete
+  agent-target:
+    required: false
+    default: "test-host - Root"
+    description: Target whose session must come back after the restart
 
 runs:
   using: composite
@@ -19,7 +23,7 @@ runs:
           docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017/api2/extjs/config/disk-backup" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "id=${job}" \
-            -d "target=test-host - Root" \
+            -d "target=${{ inputs.agent-target }}" \
             -d "subpath=/test-backup" \
             -d "store=test" \
             -d "ns=notify-${index}" \
@@ -77,11 +81,30 @@ runs:
         set -euo pipefail
         source "${GITHUB_ACTION_PATH}/helpers.sh"
 
-        connects=$(agent_connect_count)
+        reset_logs=$(server_log_count "quic stateless reset enabled")
+        before_pid=$(docker exec pbs-plus-test /command/s6-svstat -p /run/service/pbs-plus)
+        printf 'pbs-plus pid before restart: %s\n' "$before_pid"
+
         docker exec pbs-plus-test /command/s6-rc -d change pbs-plus
+        printf 'pbs-plus stopped\n'
         docker exec pbs-plus-test /command/s6-rc -u change pbs-plus
+
+        after_pid=$(docker exec pbs-plus-test /command/s6-svstat -p /run/service/pbs-plus)
+        printf 'pbs-plus pid after restart: %s\n' "$after_pid"
+        if [[ "$before_pid" == "$after_pid" ]]; then
+          printf '%s\n' "pbs-plus was never restarted; the durability check would prove nothing"
+          docker exec pbs-plus-test /command/s6-svstat /run/service/pbs-plus
+          exit 1
+        fi
+
         wait_for_server 90
-        wait_for_agent_reconnect "$connects" 180
+
+        if ! wait_for_server_log_increase "quic stateless reset enabled" "$reset_logs" 60; then
+          printf '%s\n' "restarted server did not enable quic stateless reset; agents cannot notice a restart before the idle timeout"
+          exit 1
+        fi
+
+        wait_for_agent_reconnect "${{ inputs.agent-target }}" 180
 
         pending=$(batch_pending e2e-notify-batch)
         if [[ "$pending" != 1 ]]; then
@@ -172,6 +195,10 @@ runs:
         docker exec pbs-plus-test sh -ec 'for f in /var/lib/proxmox-backup/notifications/*; do echo "--- $f"; cat "$f"; echo; done'
         echo "=== s6 service status ==="
         docker exec pbs-plus-test /command/s6-svstat /run/service/pbs-plus
+        echo "=== Targets as the server sees them ==="
+        docker exec pbs-plus-test curl -k -sS "https://localhost:8017/api2/json/d2d/target" | jq -r '.data[] | "\(.name)\tconnected=\(.connection_status)\tversion=\(.agent_version)"'
+        echo "=== QUIC transport lines ==="
+        docker logs pbs-plus-test 2>&1 | grep -Fi quic | tail -40
         echo "=== PBS Plus server logs ==="
         docker logs --tail=400 pbs-plus-test
         echo "=== PBS Plus agent logs ==="

@@ -2,10 +2,13 @@ package arpc
 
 import (
 	"context"
+	"crypto/hkdf"
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"maps"
 	"math"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -17,10 +20,17 @@ import (
 
 var quicNextProtos = []string{"pbsarpc-quic"}
 
+// A keepalive restarts the idle clock, so shedding a dead session costs
+// KeepAlivePeriod + MaxIdleTimeout; stateless resets never cover the idle case.
+const (
+	quicKeepAlivePeriod = 15 * time.Second
+	quicMaxIdleTimeout  = 60 * time.Second
+)
+
 func quicConfig() *quic.Config {
 	return &quic.Config{
-		MaxIdleTimeout:             5 * time.Minute,
-		KeepAlivePeriod:            30 * time.Second,
+		MaxIdleTimeout:             quicMaxIdleTimeout,
+		KeepAlivePeriod:            quicKeepAlivePeriod,
 		HandshakeIdleTimeout:       10 * time.Second,
 		MaxIncomingStreams:         1 << 16,
 		MaxStreamReceiveWindow:     10 * 1024 * 1024,
@@ -332,7 +342,76 @@ func (q *QuicPipe) GetState() ConnectionState {
 	return StateConnected
 }
 
-func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
+// statelessResetKey derives the QUIC stateless reset key from a long-lived
+// server secret. The key must be identical across restarts: it is what lets a
+// restarted server tell an agent holding a dead connection to give up now
+// instead of waiting out MaxIdleTimeout.
+func statelessResetKey(secret []byte) (*quic.StatelessResetKey, error) {
+	out, err := hkdf.Key(
+		sha256.New, secret, nil, "pbs-plus quic stateless reset v1", 32,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var key quic.StatelessResetKey
+	copy(key[:], out)
+	return &key, nil
+}
+
+// NewQuicTransport binds the UDP socket for the ARPC QUIC endpoint. The caller
+// owns the returned transport and must Close it; closing a Listener derived
+// from it does not release the socket.
+func NewQuicTransport(addr string, resetSecret []byte) (*quic.Transport, error) {
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("resolve quic address %q: %w", addr, err)
+	}
+
+	udpConn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("QUIC listen on %s: %w", addr, err)
+	}
+
+	transport := &quic.Transport{Conn: udpConn}
+
+	if len(resetSecret) == 0 {
+		log.Warn("arpc: quic stateless reset disabled, no server secret available; " +
+			"agents may need up to the idle timeout to notice a server restart")
+		return transport, nil
+	}
+
+	key, err := statelessResetKey(resetSecret)
+	if err != nil {
+		_ = CloseQuicTransport(transport)
+		return nil, fmt.Errorf("derive quic stateless reset key: %w", err)
+	}
+	transport.StatelessResetKey = key
+	log.Info("arpc: quic stateless reset enabled", "addr", addr)
+
+	return transport, nil
+}
+
+// quic.Transport.Close only closes a socket it opened itself, so a
+// caller-supplied Conn stays bound unless it is closed explicitly.
+func CloseQuicTransport(transport *quic.Transport) error {
+	if transport == nil {
+		return nil
+	}
+
+	err := transport.Close()
+	if transport.Conn != nil {
+		if cerr := transport.Conn.Close(); err == nil {
+			err = cerr
+		}
+	}
+	return err
+}
+
+func ListenQuic(transport *quic.Transport, tlsConfig *tls.Config) (*quic.Listener, error) {
+	if transport == nil {
+		return nil, fmt.Errorf("missing quic transport")
+	}
 	if tlsConfig == nil {
 		return nil, fmt.Errorf("missing tls config")
 	}
@@ -352,7 +431,7 @@ func ListenQuic(addr string, tlsConfig *tls.Config) (*quic.Listener, error) {
 		}
 	}
 
-	listener, err := quic.ListenAddr(addr, quicTLS, quicConfig())
+	listener, err := transport.Listen(quicTLS, quicConfig())
 	if err != nil {
 		return nil, fmt.Errorf("QUIC listen: %w", err)
 	}
@@ -421,8 +500,14 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 	}
 }
 
-func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router) error {
-	listener, err := ListenQuic(addr, tlsConfig)
+func ListenAndServeQuic(ctx context.Context, addr string, agentsManager *AgentsManager, tlsConfig *tls.Config, router Router, resetSecret []byte) error {
+	transport, err := NewQuicTransport(addr, resetSecret)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = CloseQuicTransport(transport) }()
+
+	listener, err := ListenQuic(transport, tlsConfig)
 	if err != nil {
 		return err
 	}
