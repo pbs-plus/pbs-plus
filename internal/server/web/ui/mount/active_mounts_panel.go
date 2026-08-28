@@ -181,6 +181,36 @@ var activeMountsPanel = js.Panel{
 				},
 			);
 		`),
+		"remount": js.Func("view, rowIdx, colIdx, item, e, rec", `
+			let d = rec.data;
+			let isInit = !d["backup-time"];
+			let params = {
+				"ns": d.namespace || "",
+				"backup-type": d["backup-type"],
+				"backup-id": d["backup-id"],
+				"mount-path": d["mount-point"],
+			};
+			let url = "/api2/extjs/config/d2d-init/" + encodeURIComponent(encodePathValue(d.datastore));
+			if (!isInit) {
+				params["backup-time"] = d["backup-time"];
+				params["file-name"] = d["file-name"];
+				params.mode = d.mode;
+				url = "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(d.datastore));
+			}
+			PBS.PlusUtils.API2Request({
+				url: url,
+				method: "POST",
+				params: params,
+				waitMsgTarget: view,
+				failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+				success: (resp) => {
+					Ext.create("PBS.plusWindow.TaskViewer", {
+						upid: resp.result.data,
+						taskDone: () => view.getStore().rstore.load(),
+					}).show();
+				},
+			});
+		`),
 	}},
 	Tbar: []js.Tool{
 		{XType: js.XButton, Text: "Reload", IconCls: "fa fa-refresh", Handler: "reload"},
@@ -204,7 +234,7 @@ var activeMountsPanel = js.Panel{
 			return v ? '<i class="fa fa-check-circle"></i> ' + gettext("Mounted")
 				: '<i class="fa fa-warning"></i> ' + gettext("Offline");
 		`)},
-		{XType: js.XActionColumn, Text: "Actions", DataIndex: "mount-point", Width: 110, Items: js.Arr{
+		{XType: js.XActionColumn, Text: "Actions", DataIndex: "mount-point", Width: 140, Items: js.Arr{
 			js.Obj{
 				"handler": "commit",
 				"tooltip": js.T("Commit changes to a new snapshot"),
@@ -213,6 +243,13 @@ var activeMountsPanel = js.Panel{
 				`),
 				"isActionDisabled": js.Func("v, r, c, i, rec", `
 					return !rec.get("commit-capable") || !rec.get("mounted");
+				`),
+			},
+			js.Obj{
+				"handler": "remount",
+				"tooltip": js.T("Remount (restores uncommitted changes of read-write sessions)"),
+				"getClass": js.Func("v, meta, rec", `
+					return rec.get("mounted") ? "pmx-hidden" : "fa fa-fw fa-play";
 				`),
 			},
 			js.Obj{
