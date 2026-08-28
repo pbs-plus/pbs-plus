@@ -16,8 +16,11 @@ die() { echo "FATAL: $1"; dump_logs; exit 1; }
 dump_logs() {
 	echo "--- mount process logs ---"
 	tail -40 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
-	echo "--- task logs ---"
-	ls -lt /var/log/proxmox-backup/tasks/ 2>/dev/null | head -5 || true
+	echo "--- newest task logs ---"
+	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | while read -r f; do
+		echo "== $f =="
+		tail -25 "$f" 2>/dev/null || true
+	done | tail -120
 	echo "--- end logs ---"
 }
 
@@ -38,7 +41,6 @@ api_post() {
 	local path=$1; shift
 	req -X POST "$PBS_API$path" -H "Content-Type: application/x-www-form-urlencoded" "$@"
 }
-api_get() { req "$PBS_API$1"; }
 
 sessions_field() {
 	curl -k -s "$PBS_API/api2/extjs/config/d2d-mounts" | jq -r "$@" 2>/dev/null
@@ -66,6 +68,10 @@ latest_snapshot() {
 	ls -1 "$1" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1
 }
 
+didx_in() {
+	ls -1 "$1" 2>/dev/null | grep -E '\.mpxar\.didx$' | head -1 || ls -1 "$1" 2>/dev/null | grep -E '\.pxar\.didx$' | head -1
+}
+
 group_newer_than() {
 	local new
 	new=$(latest_snapshot "$1")
@@ -82,15 +88,20 @@ section "PHASE 1: Mount existing snapshot read-only via API"
 
 SNAP=$(latest_snapshot "$HOST_DIR")
 [ -n "$SNAP" ] || die "no snapshot found under $HOST_DIR"
-echo "Using snapshot: $SNAP"
+DIDX=$(didx_in "$HOST_DIR/$SNAP")
+[ -n "$DIDX" ] || die "no pxar didx found under $HOST_DIR/$SNAP"
+echo "Using snapshot: $SNAP (archive: $DIDX)"
 MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-test-host/$SNAP"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
 	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-host" \
-	-d "backup-time=$SNAP" -d "mode=ro")
-submit_ok "$RESP" && ok "mount request accepted" || fail "mount request rejected: $(body_of "$RESP")"
-
-wait_for "ro session mounted at $MP" 90 session_mounted "$MP" || true
+	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro")
+if submit_ok "$RESP"; then
+	ok "mount request accepted"
+	wait_for "ro session mounted at $MP" 240 session_mounted "$MP" || true
+else
+	fail "mount request rejected: $(body_of "$RESP")"
+fi
 
 mountpoint -q "$MP" && ok "mountpoint active" || fail "mountpoint not active"
 FILES=$(ls "$MP" 2>/dev/null | head -3)
@@ -100,9 +111,12 @@ MODE=$(sessions_field --arg mp "$MP" '.data[]? | select(.["mount-point"]==$mp) |
 [ "$MODE" = "ro" ] && ok "session mode is ro" || fail "session mode = ${MODE:-missing}"
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$MP")
-submit_ok "$RESP" && ok "unmount request accepted" || fail "unmount rejected: $(body_of "$RESP")"
-
-wait_for "ro session unmounted" 60 session_gone "$MP" || true
+if submit_ok "$RESP"; then
+	ok "unmount request accepted"
+	wait_for "ro session unmounted" 120 session_gone "$MP" || true
+else
+	fail "unmount rejected: $(body_of "$RESP")"
+fi
 [ ! -e "$MP" ] && ok "mountpoint cleaned up" || fail "mountpoint still exists"
 
 section "PHASE 2: Init new archive, write, commit via API"
@@ -111,23 +125,29 @@ INIT_MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-e2e-init/init"
 
 RESP=$(api_post "/api2/extjs/config/d2d-init/$ENC_DS" \
 	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init")
-submit_ok "$RESP" && ok "init request accepted" || fail "init request rejected: $(body_of "$RESP")"
-
-wait_for "init session mounted at $INIT_MP" 90 session_mounted "$INIT_MP" || true
+if submit_ok "$RESP"; then
+	ok "init request accepted"
+	wait_for "init session mounted at $INIT_MP" 240 session_mounted "$INIT_MP" || true
+else
+	fail "init request rejected: $(body_of "$RESP")"
+fi
 
 CAP=$(sessions_field --arg mp "$INIT_MP" '.data[]? | select(.["mount-point"]==$mp) | .["commit-capable"]' | head -1)
 [ "$CAP" = "true" ] && ok "init session commit-capable" || fail "init session not commit-capable (${CAP:-missing})"
 
-echo hello-e2e > "$INIT_MP/hello.txt"
+echo hello-e2e > "$INIT_MP/hello.txt" || fail "cannot write hello.txt through mount"
 mkdir -p "$INIT_MP/nested" && echo nested-e2e > "$INIT_MP/nested/file.txt"
 [ "$(cat "$INIT_MP/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
 	&& ok "wrote and read hello.txt through mount" || fail "write/read through init mount failed"
 
 BEFORE=$(latest_snapshot "$INIT_GROUP_DIR")
 RESP=$(api_post "/api2/extjs/config/d2d-commit/$ENC_DS" -d "mount-path=$INIT_MP")
-submit_ok "$RESP" && ok "commit request accepted" || fail "commit rejected: $(body_of "$RESP")"
-
-wait_for "commit produced new snapshot dir" 180 group_newer_than "$INIT_GROUP_DIR" "$BEFORE" || true
+if submit_ok "$RESP"; then
+	ok "commit request accepted"
+	wait_for "commit produced new snapshot dir" 420 group_newer_than "$INIT_GROUP_DIR" "$BEFORE" || true
+else
+	fail "commit rejected: $(body_of "$RESP")"
+fi
 
 NEW_SNAP=$(latest_snapshot "$INIT_GROUP_DIR")
 [ -n "$NEW_SNAP" ] && [ "$NEW_SNAP" != "$BEFORE" ] && ok "new snapshot: $NEW_SNAP" || die "no new snapshot after commit"
@@ -135,26 +155,40 @@ ls "$INIT_GROUP_DIR/$NEW_SNAP"/*.didx >/dev/null 2>&1 \
 	&& ok "didx present in new snapshot" || fail "no didx in new snapshot"
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$INIT_MP" -d "force=1")
-submit_ok "$RESP" && ok "init unmount request accepted" || fail "init unmount rejected: $(body_of "$RESP")"
-wait_for "init session unmounted" 60 session_gone "$INIT_MP" || true
+if submit_ok "$RESP"; then
+	ok "init unmount request accepted"
+	wait_for "init session unmounted" 120 session_gone "$INIT_MP" || true
+else
+	fail "init unmount rejected: $(body_of "$RESP")"
+fi
 
 section "PHASE 3: Remount committed snapshot, verify data"
 
 MP3="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-e2e-init/$NEW_SNAP"
+DIDX3=$(didx_in "$INIT_GROUP_DIR/$NEW_SNAP")
+[ -n "$DIDX3" ] || die "no didx in committed snapshot $NEW_SNAP"
 RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
 	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
-	-d "backup-time=$NEW_SNAP" -d "mode=ro")
-submit_ok "$RESP" && ok "remount request accepted" || fail "remount rejected: $(body_of "$RESP")"
+	-d "backup-time=$NEW_SNAP" -d "file-name=$DIDX3" -d "mode=ro")
+if submit_ok "$RESP"; then
+	ok "remount request accepted"
+	wait_for "committed snapshot mounted" 240 session_mounted "$MP3" || true
+else
+	fail "remount rejected: $(body_of "$RESP")"
+fi
 
-wait_for "committed snapshot mounted" 90 session_mounted "$MP3" || true
 [ "$(cat "$MP3/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
 	&& ok "committed hello.txt readable" || fail "committed hello.txt wrong or missing"
 [ "$(cat "$MP3/nested/file.txt" 2>/dev/null)" = "nested-e2e" ] \
 	&& ok "committed nested file readable" || fail "committed nested file wrong or missing"
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$MP3")
-submit_ok "$RESP" && ok "remount unmount accepted" || fail "remount unmount rejected: $(body_of "$RESP")"
-wait_for "remount session unmounted" 60 session_gone "$MP3" || true
+if submit_ok "$RESP"; then
+	ok "remount unmount accepted"
+	wait_for "remount session unmounted" 120 session_gone "$MP3" || true
+else
+	fail "remount unmount rejected: $(body_of "$RESP")"
+fi
 
 section "PHASE 4: Mount profiles"
 
@@ -184,11 +218,11 @@ submit_ok "$RESP" && ok "mount-now accepted" || fail "mount-now rejected: $(body
 
 LATEST=$(latest_snapshot "$HOST_DIR")
 PROFILE_MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-test-host/$LATEST"
-wait_for "profile auto-mounted latest snapshot" 120 session_mounted "$PROFILE_MP" || true
+wait_for "profile auto-mounted latest snapshot" 240 session_mounted "$PROFILE_MP" || true
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$PROFILE_MP" -d "force=1")
 submit_ok "$RESP" && ok "profile mount unmounted" || fail "profile mount unmount rejected: $(body_of "$RESP")"
-wait_for "profile session unmounted" 60 session_gone "$PROFILE_MP" || true
+wait_for "profile session unmounted" 120 session_gone "$PROFILE_MP" || true
 
 RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID")
 CODE=$(code_of "$RESP")

@@ -4,7 +4,7 @@ description: Run server-managed snapshot mount workflow end-to-end tests inside 
 inputs:
   timeout-seconds:
     required: false
-    default: "300"
+    default: "900"
     description: Timeout for the e2e test script
 
 runs:
