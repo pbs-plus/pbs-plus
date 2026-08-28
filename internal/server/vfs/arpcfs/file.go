@@ -7,11 +7,12 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -37,7 +38,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 
 		"handleID", f.handleID, "path", f.name)
 
-	req := types.CloseReq{HandleID: f.handleID}
+	req := fswire.CloseReq{HandleID: f.handleID}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
@@ -65,7 +66,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 
 		"whence", whence, "offset", off, "path", f.name)
 
-	req := types.LseekReq{
+	req := fswire.LseekReq{
 		HandleID: f.handleID,
 		Offset:   int64(off),
 		Whence:   whence,
@@ -95,7 +96,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 		return 0, syscall.EOPNOTSUPP
 	}
 
-	var resp types.LseekResp
+	var resp fswire.LseekResp
 	if err := cbor.Unmarshal(respBytes, &resp); err != nil {
 		log.Error(err,
 
@@ -129,7 +130,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 
 		"length", len(p), "offset", off, "path", f.name)
 
-	req := types.ReadAtReq{
+	req := fswire.ReadAtReq{
 		HandleID: f.handleID,
 		Offset:   off,
 		Length:   len(p),
@@ -155,4 +156,13 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	}
 
 	return n, nil
+}
+
+type ARPCFile struct {
+	fs       *ARPCFS
+	name     string
+	offset   int64
+	handleID fswire.FileHandleID
+	isClosed atomic.Bool
+	backupID string
 }

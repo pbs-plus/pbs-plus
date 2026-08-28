@@ -6,56 +6,56 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 // mockBackupRepo implements domain.BackupRepository for testing.
 type mockBackupRepo struct {
-	backups map[string]database.Backup
+	backups map[string]coredb.Backup
 	getErr  error
 }
 
-func (m *mockBackupRepo) GetAllBackups() ([]database.Backup, error) {
+func (m *mockBackupRepo) GetAllBackups() ([]coredb.Backup, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
 	}
-	result := make([]database.Backup, 0, len(m.backups))
+	result := make([]coredb.Backup, 0, len(m.backups))
 	for _, b := range m.backups {
 		result = append(result, b)
 	}
 	return result, nil
 }
 
-func (m *mockBackupRepo) GetBackup(id string) (database.Backup, error) {
+func (m *mockBackupRepo) GetBackup(id string) (coredb.Backup, error) {
 	if m.getErr != nil {
-		return database.Backup{}, m.getErr
+		return coredb.Backup{}, m.getErr
 	}
 	b, ok := m.backups[id]
 	if !ok {
-		return database.Backup{}, database.ErrBackupNotFound
+		return coredb.Backup{}, coredb.ErrBackupNotFound
 	}
 	return b, nil
 }
 
-func (m *mockBackupRepo) CreateBackup(tx *database.Transaction, backup database.Backup) error {
+func (m *mockBackupRepo) CreateBackup(tx *coredb.Transaction, backup coredb.Backup) error {
 	if m.backups == nil {
-		m.backups = make(map[string]database.Backup)
+		m.backups = make(map[string]coredb.Backup)
 	}
 	m.backups[backup.ID] = backup
 	return nil
 }
 
-func (m *mockBackupRepo) UpdateBackup(tx *database.Transaction, backup database.Backup) error {
+func (m *mockBackupRepo) UpdateBackup(tx *coredb.Transaction, backup coredb.Backup) error {
 	m.backups[backup.ID] = backup
 	return nil
 }
 
-func (m *mockBackupRepo) DeleteBackup(tx *database.Transaction, id string) error {
+func (m *mockBackupRepo) DeleteBackup(tx *coredb.Transaction, id string) error {
 	delete(m.backups, id)
 	return nil
 }
 
-func (m *mockBackupRepo) GetAllQueuedBackups() ([]database.Backup, error) {
+func (m *mockBackupRepo) GetAllQueuedBackups() ([]coredb.Backup, error) {
 	return m.GetAllBackups()
 }
 
@@ -69,9 +69,9 @@ func TestBackupService_GetBackup_NotFound(t *testing.T) {
 }
 
 func TestBackupService_ListBackups_Empty(t *testing.T) {
-	// BackupService currently depends on concrete *database.Database.
+
 	// This test verifies the mock pattern compiles. Future: inject interface.
-	repo := &mockBackupRepo{backups: make(map[string]database.Backup)}
+	repo := &mockBackupRepo{backups: make(map[string]coredb.Backup)}
 	backups, err := repo.GetAllBackups()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -83,7 +83,7 @@ func TestBackupService_ListBackups_Empty(t *testing.T) {
 
 func TestBackupService_GetBackup_Error(t *testing.T) {
 	repo := &mockBackupRepo{
-		backups: make(map[string]database.Backup),
+		backups: make(map[string]coredb.Backup),
 		getErr:  errors.New("db down"),
 	}
 	_, err := repo.GetBackup("any")
@@ -93,8 +93,8 @@ func TestBackupService_GetBackup_Error(t *testing.T) {
 }
 
 func TestBackupService_CreateAndGet(t *testing.T) {
-	repo := &mockBackupRepo{backups: make(map[string]database.Backup)}
-	b := database.Backup{ID: "backup-1", Store: "local"}
+	repo := &mockBackupRepo{backups: make(map[string]coredb.Backup)}
+	b := coredb.Backup{ID: "backup-1", Store: "local"}
 	if err := repo.CreateBackup(nil, b); err != nil {
 		t.Fatalf("create failed: %v", err)
 	}

@@ -210,13 +210,6 @@ func UpsertEntry(entry *RegistryEntry) error {
 	return baseKey.SetStringValue(entry.Key, value)
 }
 
-func CreateEntryIfNotExists(entry *RegistryEntry) error {
-	if _, err := GetEntry(entry.Path, entry.Key, entry.IsSecret); err == nil {
-		return nil
-	}
-	return CreateEntry(entry)
-}
-
 func DeleteEntry(path string, key string) error {
 	if err := ensureInitialized(); err != nil {
 		return err

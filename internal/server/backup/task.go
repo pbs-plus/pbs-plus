@@ -11,14 +11,14 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 func GetBackupTask(
 	ctx context.Context,
 	readyChan chan struct{},
-	job database.Backup,
-	target database.Target,
+	job coredb.Backup,
+	target coredb.Target,
 ) (proxmox.Task, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -55,7 +55,7 @@ func GetBackupTask(
 	}
 }
 
-func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
+func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 
@@ -75,7 +75,7 @@ func GenerateBackupTaskErrorFile(job database.Backup, pbsError error, additional
 	return wt.Task, nil
 }
 
-func GenerateBackupTaskOKFile(job database.Backup, additionalData []string) (proxmox.Task, error) {
+func GenerateBackupTaskOKFile(job coredb.Backup, additionalData []string) (proxmox.Task, error) {
 	targetName := job.Target.GetHostname()
 	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 

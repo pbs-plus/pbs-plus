@@ -14,17 +14,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
@@ -43,13 +43,13 @@ type restoreJob struct {
 	errCount     atomic.Int32
 	receivedDone atomic.Bool
 
-	job           database.Restore
-	remoteServer  *pxar.RemoteServer
-	localClient   *pxar.Client
-	agentPipe     *arpc.StreamPipe
-	storeInstance *store.Store
-	skipCheck     bool
-	web           bool
+	job          coredb.Restore
+	remoteServer *pxar.RemoteServer
+	localClient  *pxar.Client
+	agentPipe    *arpc.StreamPipe
+	app          *application.Runtime
+	skipCheck    bool
+	web          bool
 }
 
 func (b *restoreJob) enqueue(ctx context.Context) error {
@@ -58,7 +58,7 @@ func (b *restoreJob) enqueue(ctx context.Context) error {
 	if err != nil {
 		b.logger.Error(err, "failed to create queue task, not fatal")
 	} else {
-		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.storeInstance); err != nil {
+		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.app); err != nil {
 			b.logger.Error(err, "failed to set queue task, not fatal")
 		}
 	}
@@ -74,11 +74,11 @@ func (b *restoreJob) execute(ctx context.Context) error {
 	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
 	switch b.job.DestTarget.Type {
-	case database.TargetTypeAgent:
+	case coredb.TargetTypeAgent:
 		return b.agentExecute(ctx)
-	case database.TargetTypeLocal:
+	case coredb.TargetTypeLocal:
 		return b.localExecute(ctx)
-	case database.TargetTypeS3:
+	case coredb.TargetTypeS3:
 		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
 	default:
 		return jobs.ErrTargetNotFound
@@ -102,12 +102,12 @@ func (b *restoreJob) finalizeFailure(err error) {
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
 
-	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.storeInstance); err != nil {
+	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.app); err != nil {
 		b.logger.Error(err, "failed to update restore status on error")
 	}
 
-	if b.storeInstance.BatchTracker != nil {
-		b.storeInstance.BatchTracker.RecordJobResult(
+	if b.app.BatchTracker != nil {
+		b.app.BatchTracker.RecordJobResult(
 			b.job.NotificationMode,
 			notification.JobTypeRestore,
 			b.job.ID,
@@ -131,13 +131,13 @@ func (b *restoreJob) finalizeSuccess() {
 	errCount := b.errCount.Load()
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
-		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.storeInstance); err != nil {
+		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.app); err != nil {
 			b.logger.Error(err, "failed to update restore status with warnings")
 		}
 	} else {
 		b.task.CloseOK()
 		b.logger.Info("restore completed successfully")
-		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.storeInstance); err != nil {
+		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.app); err != nil {
 			b.logger.Error(err, "failed to update restore status on success")
 		}
 	}
@@ -146,8 +146,8 @@ func (b *restoreJob) finalizeSuccess() {
 	if errCount > 0 {
 		notifyErr = fmt.Errorf("restore completed with %d errors", errCount)
 	}
-	if b.storeInstance.BatchTracker != nil {
-		b.storeInstance.BatchTracker.RecordJobResult(
+	if b.app.BatchTracker != nil {
+		b.app.BatchTracker.RecordJobResult(
 			b.job.NotificationMode,
 			notification.JobTypeRestore,
 			b.job.ID,
@@ -171,7 +171,7 @@ func (b *restoreJob) cleanup() {
 
 	childKey := b.job.GetStreamID()
 
-	agentRPC, ok := b.storeInstance.ARPCAgentsManager.GetStreamPipe(childKey)
+	agentRPC, ok := b.app.Agents.GetStreamPipe(childKey)
 	if ok {
 		agentRPC.Close()
 	}
@@ -265,8 +265,8 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget.Name))
 
-	qSess, qExists := b.storeInstance.ARPCAgentsManager.GetQuicPipe(b.job.DestTarget.GetHostname())
-	tSess, tExists := b.storeInstance.ARPCAgentsManager.GetStreamPipe(b.job.DestTarget.GetHostname())
+	qSess, qExists := b.app.Agents.GetQuicPipe(b.job.DestTarget.GetHostname())
+	tSess, tExists := b.app.Agents.GetStreamPipe(b.job.DestTarget.GetHostname())
 	if !qExists && !tExists {
 		return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
@@ -280,13 +280,13 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		respMsg, statusErr = qSess.CallMessage(
 			timeoutCtx,
 			"target_status",
-			&types.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+			&fswire.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
 		)
 	} else {
 		respMsg, statusErr = tSess.CallMessage(
 			timeoutCtx,
 			"target_status",
-			&types.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+			&fswire.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
 		)
 	}
 	if statusErr != nil || !strings.HasPrefix(respMsg, "reachable") {
@@ -318,15 +318,15 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 		srcPath = "/"
 	}
 
-	restoreReq := types.RestoreReq{
+	restoreReq := fswire.RestoreReq{
 		RestoreID: b.job.ID,
 		SrcPath:   srcPath,
 		DestPath:  destPath,
 		Mode:      b.job.Mode,
 	}
 
-	b.storeInstance.ARPCAgentsManager.Expect(b.job.GetStreamID())
-	defer b.storeInstance.ARPCAgentsManager.NotExpect(b.job.GetStreamID())
+	b.app.Agents.Expect(b.job.GetStreamID())
+	defer b.app.Agents.NotExpect(b.job.GetStreamID())
 
 	b.task.WriteString(fmt.Sprintf("calling restore to %s (%s)", b.job.DestTarget.Name, destPath))
 
@@ -347,7 +347,7 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	pipeCtx, pipeCtxCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer pipeCtxCancel()
 
-	agentRPC, err := b.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, childKey)
+	agentRPC, err := b.app.Agents.WaitStreamPipe(pipeCtx, childKey)
 	if err != nil {
 		return err
 	}
@@ -594,7 +594,7 @@ func (b *restoreJob) createOK(err error) {
 		return
 	}
 
-	latest, gerr := b.storeInstance.Database.GetRestore(b.job.ID)
+	latest, gerr := b.app.CoreDB.GetRestore(b.job.ID)
 	if gerr != nil {
 		latest = b.job
 	}
@@ -605,14 +605,14 @@ func (b *restoreJob) createOK(err error) {
 	latest.History.LastSuccessfulEndtime = task.EndTime
 	latest.History.LastSuccessfulUpid = task.UPID
 
-	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
+	if uerr := b.app.CoreDB.UpdateRestore(nil, latest); uerr != nil {
 		b.logger.Error(uerr, "failed to update restore with task", "upid", task.UPID)
 
 	}
 }
 
 func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
-	latest, gerr := b.storeInstance.Database.GetRestore(b.job.ID)
+	latest, gerr := b.app.CoreDB.GetRestore(b.job.ID)
 	if gerr != nil {
 		latest = b.job
 	}
@@ -621,7 +621,7 @@ func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
 	latest.History.LastRunState = task.Status
 	latest.History.LastRunEndtime = task.EndTime
 
-	if uerr := b.storeInstance.Database.UpdateRestore(nil, latest); uerr != nil {
+	if uerr := b.app.CoreDB.UpdateRestore(nil, latest); uerr != nil {
 		b.logger.Error(uerr, "failed to update restore with task", "upid", task.UPID)
 
 	}

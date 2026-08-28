@@ -149,39 +149,6 @@ func pendingRefsRange(refs []commitEntry) (start, end uint64) {
 	return start, end
 }
 
-func (ow *commitWalkState) shouldReuse(refs []commitEntry) bool {
-	if ow.origChunkIndex == nil || len(refs) == 0 {
-		return true
-	}
-
-	rangeStart, rangeEnd := pendingRefsRange(refs)
-	if rangeEnd <= rangeStart {
-		return true
-	}
-
-	chunks, startPadding, endPadding := lookupDynamicEntries(ow.origChunkIndex, rangeStart, rangeEnd)
-	if len(chunks) == 0 {
-		return true
-	}
-
-	padding := startPadding + endPadding
-	if ow.hasSavedChunk && chunks[0].sameIndexedChunkAs(&ow.savedChunk) {
-		used := ow.savedChunk.size - ow.savedChunk.padding
-		if used > padding {
-			padding = 0
-		} else {
-			padding -= used
-		}
-	}
-
-	totalSize := (rangeEnd - rangeStart) + padding
-	if totalSize == 0 {
-		return true
-	}
-
-	return float64(padding)/float64(totalSize) <= chunkPaddingThreshold
-}
-
 func (ow *commitWalkState) flushPendingRefs(keepLastChunk bool) error {
 	if len(ow.pendingRefs) == 0 {
 		return nil

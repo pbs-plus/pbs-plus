@@ -138,12 +138,6 @@ func (u *Updater) poll(ctx context.Context) {
 	}
 }
 
-func (u *Updater) Stop() {
-	if u.cancel != nil {
-		u.cancel()
-	}
-}
-
 // TriggerUpdate performs a single, on-demand update check using the default
 // updater if one was registered via New. This is invoked by the push-based
 // update path (aRPC "update" method) so the server can request an update from
@@ -171,6 +165,10 @@ func TriggerUpdate() error {
 		},
 	}}
 	return up.CheckNow()
+}
+
+type ecdsaSig struct {
+	R, S *big.Int
 }
 
 func (u *Updater) CheckNow() error {
@@ -219,34 +217,6 @@ func (u *Updater) CheckNow() error {
 
 	return nil
 }
-
-func (u *Updater) fetchLatestVersion() (string, bool, error) {
-	resp, err := agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
-	if err != nil {
-		return "", false, err
-	}
-	defer func() {
-		if err := resp.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	data, err := io.ReadAll(io.LimitReader(resp, maxVersionSize))
-	if err != nil {
-		return "", false, err
-	}
-	if len(data) >= maxVersionSize {
-		return "", false, fmt.Errorf("version response exceeds maximum size of %d bytes", maxVersionSize)
-	}
-
-	var vr VersionResp
-	if err := json.Unmarshal(data, &vr); err != nil {
-		return "", false, fmt.Errorf("unmarshal version response: %w", err)
-	}
-
-	return vr.Version, vr.Embedded, nil
-}
-
 func (u *Updater) applyUpdate(version string, embedded bool) error {
 	params := fmt.Sprintf("os=%s&arch=%s", runtime.GOOS, runtime.GOARCH)
 
@@ -330,6 +300,54 @@ func (u *Updater) applyUpdate(version string, embedded bool) error {
 	return nil
 }
 
+func (u *Updater) fetchLatestVersion() (string, bool, error) {
+	resp, err := agent.AgentHTTPRequest(http.MethodGet, "/api2/json/plus/version", nil, nil)
+	if err != nil {
+		return "", false, err
+	}
+	defer func() {
+		if err := resp.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	data, err := io.ReadAll(io.LimitReader(resp, maxVersionSize))
+	if err != nil {
+		return "", false, err
+	}
+	if len(data) >= maxVersionSize {
+		return "", false, fmt.Errorf("version response exceeds maximum size of %d bytes", maxVersionSize)
+	}
+
+	var vr VersionResp
+	if err := json.Unmarshal(data, &vr); err != nil {
+		return "", false, fmt.Errorf("unmarshal version response: %w", err)
+	}
+
+	return vr.Version, vr.Embedded, nil
+}
+func (u *Updater) fetchECDSASignature(params string) ([]byte, error) {
+	url := fmt.Sprintf("/api2/json/plus/binary/ecdsa-sig?%s", params)
+	rc, err := agent.AgentHTTPRequest(http.MethodGet, url, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch ECDSA signature: %w", err)
+	}
+	defer func() {
+		if err := rc.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	data, err := io.ReadAll(io.LimitReader(rc, maxSigSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read ECDSA signature: %w", err)
+	}
+	if len(data) > maxSigSize {
+		return nil, fmt.Errorf("ECDSA signature exceeds maximum allowed size of %d bytes", maxSigSize)
+	}
+	return data, nil
+}
+
 func (u *Updater) fetchBinary(params string) ([]byte, error) {
 	url := fmt.Sprintf("/api2/json/plus/binary?%s", params)
 	rc, err := agent.AgentHTTPRequest(http.MethodGet, url, nil, nil)
@@ -353,94 +371,6 @@ func (u *Updater) fetchBinary(params string) ([]byte, error) {
 		return nil, fmt.Errorf("binary exceeds maximum allowed size of %d bytes", maxBinarySize)
 	}
 	return data, nil
-}
-
-func (u *Updater) fetchECDSASignature(params string) ([]byte, error) {
-	url := fmt.Sprintf("/api2/json/plus/binary/ecdsa-sig?%s", params)
-	rc, err := agent.AgentHTTPRequest(http.MethodGet, url, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("fetch ECDSA signature: %w", err)
-	}
-	defer func() {
-		if err := rc.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	data, err := io.ReadAll(io.LimitReader(rc, maxSigSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("read ECDSA signature: %w", err)
-	}
-	if len(data) > maxSigSize {
-		return nil, fmt.Errorf("ECDSA signature exceeds maximum allowed size of %d bytes", maxSigSize)
-	}
-	return data, nil
-}
-
-func (u *Updater) fetchEd25519Signature(params string) ([]byte, error) {
-	url := fmt.Sprintf("/api2/json/plus/binary/sig?%s", params)
-	rc, err := agent.AgentHTTPRequest(http.MethodGet, url, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("fetch Ed25519 signature: %w", err)
-	}
-	defer func() {
-		if err := rc.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	data, err := io.ReadAll(io.LimitReader(rc, maxSigSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("read Ed25519 signature: %w", err)
-	}
-	if len(data) > maxSigSize {
-		return nil, fmt.Errorf("Ed25519 signature exceeds maximum allowed size of %d bytes", maxSigSize)
-	}
-	return data, nil
-}
-
-func loadECDSAPublicKey() (*ecdsa.PublicKey, error) {
-	if ECDSAPublicKeyB64 == "" {
-		return nil, fmt.Errorf("ECDSA public key not configured")
-	}
-
-	derData, err := base64.StdEncoding.DecodeString(ECDSAPublicKeyB64)
-	if err != nil {
-		return nil, fmt.Errorf("decode ECDSA public key: %w", err)
-	}
-
-	pub, err := x509.ParsePKIXPublicKey(derData)
-	if err != nil {
-		return nil, fmt.Errorf("parse ECDSA public key: %w", err)
-	}
-
-	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("public key is not ECDSA (got %T)", pub)
-	}
-
-	if ecdsaPub.Curve != elliptic.P256() {
-		return nil, fmt.Errorf("ECDSA public key must be P-256, got curve %s", ecdsaPub.Curve.Params().Name)
-	}
-
-	return ecdsaPub, nil
-}
-
-func loadEd25519PublicKey() (ed25519.PublicKey, error) {
-	if Ed25519PublicKeyB64 == "" {
-		return nil, fmt.Errorf("Ed25519 public key not configured")
-	}
-
-	b, err := base64.StdEncoding.DecodeString(Ed25519PublicKeyB64)
-	if err != nil {
-		return nil, fmt.Errorf("decode Ed25519 public key: %w", err)
-	}
-
-	if len(b) != ed25519.PublicKeySize {
-		return nil, fmt.Errorf("invalid Ed25519 public key size: got %d, want %d", len(b), ed25519.PublicKeySize)
-	}
-
-	return ed25519.PublicKey(b), nil
 }
 
 func verifyWithECDSA(binary, sigData []byte) error {
@@ -479,10 +409,27 @@ func verifyWithEd25519(binary, sigData []byte) error {
 	return nil
 }
 
-type ecdsaSig struct {
-	R, S *big.Int
-}
+func (u *Updater) fetchEd25519Signature(params string) ([]byte, error) {
+	url := fmt.Sprintf("/api2/json/plus/binary/sig?%s", params)
+	rc, err := agent.AgentHTTPRequest(http.MethodGet, url, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch Ed25519 signature: %w", err)
+	}
+	defer func() {
+		if err := rc.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
 
+	data, err := io.ReadAll(io.LimitReader(rc, maxSigSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read Ed25519 signature: %w", err)
+	}
+	if len(data) > maxSigSize {
+		return nil, fmt.Errorf("Ed25519 signature exceeds maximum allowed size of %d bytes", maxSigSize)
+	}
+	return data, nil
+}
 func parseECDSASignature(data []byte) (*ecdsaSig, error) {
 	decoded, err := base64.StdEncoding.DecodeString(string(data))
 	if err != nil {
@@ -495,4 +442,48 @@ func parseECDSASignature(data []byte) (*ecdsaSig, error) {
 	}
 
 	return &sig, nil
+}
+
+func loadEd25519PublicKey() (ed25519.PublicKey, error) {
+	if Ed25519PublicKeyB64 == "" {
+		return nil, fmt.Errorf("Ed25519 public key not configured")
+	}
+
+	b, err := base64.StdEncoding.DecodeString(Ed25519PublicKeyB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode Ed25519 public key: %w", err)
+	}
+
+	if len(b) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("invalid Ed25519 public key size: got %d, want %d", len(b), ed25519.PublicKeySize)
+	}
+
+	return ed25519.PublicKey(b), nil
+}
+
+func loadECDSAPublicKey() (*ecdsa.PublicKey, error) {
+	if ECDSAPublicKeyB64 == "" {
+		return nil, fmt.Errorf("ECDSA public key not configured")
+	}
+
+	derData, err := base64.StdEncoding.DecodeString(ECDSAPublicKeyB64)
+	if err != nil {
+		return nil, fmt.Errorf("decode ECDSA public key: %w", err)
+	}
+
+	pub, err := x509.ParsePKIXPublicKey(derData)
+	if err != nil {
+		return nil, fmt.Errorf("parse ECDSA public key: %w", err)
+	}
+
+	ecdsaPub, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("public key is not ECDSA (got %T)", pub)
+	}
+
+	if ecdsaPub.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("ECDSA public key must be P-256, got curve %s", ecdsaPub.Curve.Params().Name)
+	}
+
+	return ecdsaPub, nil
 }

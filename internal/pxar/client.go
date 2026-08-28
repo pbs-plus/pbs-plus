@@ -73,39 +73,6 @@ func (c *Client) SendError(ctx context.Context, err error) error {
 	return nil
 }
 
-// forwardErrors drains the remote error queue, delivering each error via
-// a synchronous RPC on its own goroutine. If the pipe is gone (restore
-// finished or connection lost), errors are logged and draining continues
-func (c *Client) forwardErrors() {
-	defer close(c.errFwdDone)
-	for err := range c.errFwd {
-		log.Error(err, "", "restore", "error")
-		if err := c.pipe.Call(context.Background(), "pxar.Error", errorReq{Error: err.Error()}, nil); err != nil {
-			log.Warn("restore: error forward failed",
-
-				"error", err.Error(), "restore", "error-forward-failed")
-
-		}
-	}
-}
-
-func (c *Client) GetRoot(ctx context.Context) (pxar.FileInfo, error) {
-	if c.pipe != nil {
-		var info pxar.FileInfo
-		if err := c.pipe.Call(ctx, "pxar.GetRoot", nil, &info); err != nil {
-			return pxar.FileInfo{}, err
-		}
-		return info, nil
-	}
-
-	info, err := c.pr.GetRoot(ctx)
-	if err != nil {
-		return pxar.FileInfo{}, err
-	}
-
-	return *info, nil
-}
-
 func (c *Client) LookupByPath(ctx context.Context, path string) (pxar.FileInfo, error) {
 	if c.pipe != nil {
 		params := lookupByPathReq{Path: path}
@@ -140,24 +107,6 @@ func (c *Client) ReadDir(ctx context.Context, entryEnd uint64) ([]pxar.FileInfo,
 	}
 
 	return info, nil
-}
-
-func (c *Client) GetAttr(ctx context.Context, entryStart, entryEnd uint64) (pxar.FileInfo, error) {
-	if c.pipe != nil {
-		params := getAttrReq{EntryStart: entryStart, EntryEnd: entryEnd}
-		var info pxar.FileInfo
-		if err := c.pipe.Call(ctx, "pxar.GetAttr", &params, &info); err != nil {
-			return pxar.FileInfo{}, err
-		}
-		return info, nil
-	}
-
-	info, err := c.pr.GetAttr(ctx, entryStart, entryEnd)
-	if err != nil {
-		return pxar.FileInfo{}, err
-	}
-
-	return *info, nil
 }
 
 func (c *Client) ReadLink(ctx context.Context, entryStart, entryEnd uint64) ([]byte, error) {
@@ -318,4 +267,20 @@ func (c *Client) ReadFileContentReader(ctx context.Context, contentStart, conten
 		return pr, nil
 	}
 	return c.pr.ReadFileContentReader(ctx, contentStart, contentEnd)
+}
+
+// forwardErrors drains the remote error queue, delivering each error via
+// a synchronous RPC on its own goroutine. If the pipe is gone (restore
+// finished or connection lost), errors are logged and draining continues
+func (c *Client) forwardErrors() {
+	defer close(c.errFwdDone)
+	for err := range c.errFwd {
+		log.Error(err, "", "restore", "error")
+		if err := c.pipe.Call(context.Background(), "pxar.Error", errorReq{Error: err.Error()}, nil); err != nil {
+			log.Warn("restore: error forward failed",
+
+				"error", err.Error(), "restore", "error-forward-failed")
+
+		}
+	}
 }

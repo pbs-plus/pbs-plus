@@ -9,7 +9,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 var statusMutexes sync.Map
@@ -20,8 +20,8 @@ func UpdateJobHistory(
 	succeeded bool,
 	warningsNum int,
 	task proxmox.Task,
-	getHistory func() (database.JobHistory, int, error),
-	updateHistory func(database.JobHistory, int) error,
+	getHistory func() (coredb.JobHistory, int, error),
+	updateHistory func(coredb.JobHistory, int) error,
 ) error {
 	value, _ := statusMutexes.LoadOrStore(jobID, &sync.Mutex{})
 	mu := value.(*sync.Mutex)
@@ -50,20 +50,20 @@ func UpdateJobHistory(
 	// Determine the typed status and update retry count
 	if warningsNum > 0 && succeeded {
 		history.LastRunState = fmt.Sprintf("WARNINGS: %d", warningsNum)
-		history.LastRunStatus = database.JobStatusWarnings
+		history.LastRunStatus = coredb.JobStatusWarnings
 		history.RetryCount = 0
 		history.LastSuccessfulUpid = taskFound.UPID
 		history.LastSuccessfulEndtime = task.EndTime
 	} else if succeeded {
-		history.LastRunStatus = database.JobStatusSuccess
+		history.LastRunStatus = coredb.JobStatusSuccess
 		history.RetryCount = 0
 		history.LastSuccessfulUpid = taskFound.UPID
 		history.LastSuccessfulEndtime = task.EndTime
 	} else if taskFound.ExitStatus == "operation canceled" {
 		// Manual cancellation - not a failure, don't increment retry count
-		history.LastRunStatus = database.JobStatusCanceled
+		history.LastRunStatus = coredb.JobStatusCanceled
 	} else {
-		history.LastRunStatus = database.JobStatusFailed
+		history.LastRunStatus = coredb.JobStatusFailed
 		history.RetryCount++
 	}
 

@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 type startResult struct {
@@ -25,28 +25,28 @@ type runResult struct {
 
 // Register registers the restore workflow: queue, pre-script,
 // start-task, run, finalize. Each stage is a durable activity.
-func Register(engine *jobs.Engine, storeInstance *store.Store) error {
+func Register(engine *jobs.Engine, app *application.Runtime) error {
 	return engine.Register(jobs.WorkflowRestore, func(w *jobs.WorkflowContext) error {
 		var input jobs.RestoreInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding restore workflow input: %w", err))
 		}
-		job, err := storeInstance.Database.GetRestore(w.Execution.DefinitionID)
+		job, err := app.CoreDB.GetRestore(w.Execution.DefinitionID)
 		if err != nil {
 			return jobs.NonRetryable(fmt.Errorf("getting restore workflow definition: %w", err))
 		}
-		return runWorkflow(w, storeInstance, job, input)
+		return runWorkflow(w, app, job, input)
 	})
 }
 
-func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job database.Restore, input jobs.RestoreInput) error {
+func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Restore, input jobs.RestoreInput) error {
 	b := &restoreJob{
-		job:           job,
-		storeInstance: storeInstance,
-		skipCheck:     input.SkipCheck,
-		web:           input.Web,
-		waitGroup:     &sync.WaitGroup{},
-		logger:        log.WithScope(log.Scope{JobID: job.ID}),
+		job:       job,
+		app:       app,
+		skipCheck: input.SkipCheck,
+		web:       input.Web,
+		waitGroup: &sync.WaitGroup{},
+		logger:    log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer b.cleanup()
 

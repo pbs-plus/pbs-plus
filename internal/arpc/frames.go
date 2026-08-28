@@ -52,28 +52,6 @@ func writeRejectionFrame(s ARPCStream, rejection RejectionFrame) error {
 	return err
 }
 
-func readRejectionFrame(s ARPCStream) (RejectionFrame, error) {
-	var rejection RejectionFrame
-
-	length, err := readVarint(s)
-	if err != nil {
-		return rejection, err
-	}
-
-	if length > maxRejectionSize {
-		return rejection, fmt.Errorf("rejection frame too large: %d > %d", length, maxRejectionSize)
-	}
-
-	dataLen := int(length)
-	data := make([]byte, dataLen)
-	if _, err := io.ReadFull(s, data); err != nil {
-		return rejection, err
-	}
-
-	err = cbor.Unmarshal(data, &rejection)
-	return rejection, err
-}
-
 func writeHeadersSuccess(s ARPCStream) error {
 	_, err := s.Write(successMarker)
 	return err
@@ -97,24 +75,6 @@ func readHandshakeResponse(s ARPCStream) error {
 	default:
 		return fmt.Errorf("invalid handshake response marker: 0x%02X", marker[0])
 	}
-}
-
-func validateHeaders(headers http.Header) error {
-	if len(headers) > maxHeaderCount {
-		return fmt.Errorf("too many headers: %d > %d", len(headers), maxHeaderCount)
-	}
-
-	totalSize := 0
-	for k, vals := range headers {
-		totalSize += len(k)
-		for _, v := range vals {
-			totalSize += len(v)
-		}
-		if totalSize > maxHeaderSize {
-			return errors.New("headers exceed size limit")
-		}
-	}
-	return nil
 }
 
 func writeHeadersFrame(s ARPCStream, hdr http.Header) error {
@@ -217,4 +177,43 @@ func readHeadersFrame(s ARPCStream) (http.Header, error) {
 		}
 	}
 	return h, nil
+}
+func readRejectionFrame(s ARPCStream) (RejectionFrame, error) {
+	var rejection RejectionFrame
+
+	length, err := readVarint(s)
+	if err != nil {
+		return rejection, err
+	}
+
+	if length > maxRejectionSize {
+		return rejection, fmt.Errorf("rejection frame too large: %d > %d", length, maxRejectionSize)
+	}
+
+	dataLen := int(length)
+	data := make([]byte, dataLen)
+	if _, err := io.ReadFull(s, data); err != nil {
+		return rejection, err
+	}
+
+	err = cbor.Unmarshal(data, &rejection)
+	return rejection, err
+}
+
+func validateHeaders(headers http.Header) error {
+	if len(headers) > maxHeaderCount {
+		return fmt.Errorf("too many headers: %d > %d", len(headers), maxHeaderCount)
+	}
+
+	totalSize := 0
+	for k, vals := range headers {
+		totalSize += len(k)
+		for _, v := range vals {
+			totalSize += len(v)
+		}
+		if totalSize > maxHeaderSize {
+			return errors.New("headers exceed size limit")
+		}
+	}
+	return nil
 }

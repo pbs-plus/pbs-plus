@@ -4,6 +4,7 @@ package s3fs
 
 import (
 	"io"
+	"sync"
 	"syscall"
 
 	"github.com/minio/minio-go/v7"
@@ -76,4 +77,15 @@ func (f *S3File) Close() error {
 		f.body = nil
 	}
 	return err
+}
+
+type S3File struct {
+	fs  *S3FS
+	key string
+
+	mu   sync.Mutex
+	size int64
+
+	body    io.ReadCloser
+	currPos int64
 }

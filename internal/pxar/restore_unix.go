@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
 	"github.com/pbs-plus/pxar/format"
@@ -86,7 +86,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 		if st.fsCap.supportsACLs {
 			if d, ok := xattrs[XAttrACLs]; ok {
 				if detectACLFlavor(d) == aclPosix {
-					var entries []types.PosixACL
+					var entries []fswire.PosixACL
 					if uerr := cbor.Unmarshal(d, &entries); uerr != nil {
 						st.reportErr(ctx, "decode acls", path, uerr)
 					} else {
@@ -125,12 +125,12 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	return nil
 }
 
-func applyUnixACLsFd(ctx context.Context, st *restoreState, fd int, path string, entries []types.PosixACL) {
+func applyUnixACLsFd(ctx context.Context, st *restoreState, fd int, path string, entries []fswire.PosixACL) {
 	knownTags := map[string]struct{}{
 		"user_obj": {}, "user": {}, "group_obj": {},
 		"group": {}, "mask": {}, "other": {},
 	}
-	var acc, def []types.PosixACL
+	var acc, def []fswire.PosixACL
 	for _, ent := range entries {
 		if _, ok := knownTags[ent.Tag]; !ok {
 			continue
@@ -149,7 +149,7 @@ func applyUnixACLsFd(ctx context.Context, st *restoreState, fd int, path string,
 	}
 }
 
-func packACL(entries []types.PosixACL) []byte {
+func packACL(entries []fswire.PosixACL) []byte {
 	buf := make([]byte, 4+(8*len(entries)))
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(ACL_EA_VERSION))
 	tags := map[string]uint16{

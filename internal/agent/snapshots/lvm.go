@@ -57,7 +57,6 @@ func (l *LVMSnapshotHandler) IsSupported(sourcePath string) bool {
 	}
 	return strings.TrimSpace(string(output)) == "lvm"
 }
-
 func (l *LVMSnapshotHandler) getVolumeGroupAndLogicalVolume(sourcePath string) (string, string, error) {
 	cmd := exec.Command("lvs", "--noheadings", "-o", "vg_name,lv_name", sourcePath)
 	output, err := cmd.Output()

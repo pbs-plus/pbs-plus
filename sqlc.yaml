@@ -1,12 +1,12 @@
 version: "2"
 sql:
   - engine: "sqlite"
-    queries: "internal/server/database/queries"
-    schema: "internal/server/database/migrations"
+    queries: "internal/server/coredb/queries"
+    schema: "internal/server/coredb/migrations"
     gen:
       go:
-        package: "sqlc"
-        out: "internal/server/database/sqlc"
+        package: "corequery"
+        out: "internal/server/coredb/corequery"
         sql_package: "database/sql"
         emit_json_tags: true
         emit_prepared_queries: false
@@ -15,12 +15,12 @@ sql:
         emit_empty_slices: true
         emit_pointers_for_null_types: false
   - engine: "sqlite"
-    queries: "internal/server/jobs/store/queries"
-    schema: "internal/server/jobs/store/migrations"
+    queries: "internal/server/jobs/jobdb/queries"
+    schema: "internal/server/jobs/jobdb/migrations"
     gen:
       go:
         package: "jobquery"
-        out: "internal/server/jobs/store/jobquery"
+        out: "internal/server/jobs/jobdb/jobquery"
         sql_package: "database/sql"
         emit_json_tags: true
         emit_prepared_queries: false
@@ -29,12 +29,12 @@ sql:
         emit_empty_slices: true
         emit_pointers_for_null_types: false
   - engine: "sqlite"
-    queries: "internal/server/mtf/store/queries"
-    schema: "internal/server/mtf/store/migrations"
+    queries: "internal/server/mtf/mtfdb/queries"
+    schema: "internal/server/mtf/mtfdb/migrations"
     gen:
       go:
         package: "mtfquery"
-        out: "internal/server/mtf/store/mtfquery"
+        out: "internal/server/mtf/mtfdb/mtfquery"
         sql_package: "database/sql"
         emit_json_tags: true
         emit_prepared_queries: false

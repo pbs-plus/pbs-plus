@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
@@ -23,10 +23,10 @@ import (
 )
 
 type BootstrapRequest struct {
-	Hostname        string            `json:"hostname"`
-	CSR             string            `json:"csr"`
-	Drives          []types.DriveInfo `json:"drives"`
-	OperatingSystem string            `json:"os"`
+	Hostname        string             `json:"hostname"`
+	CSR             string             `json:"csr"`
+	Drives          []fswire.DriveInfo `json:"drives"`
+	OperatingSystem string             `json:"os"`
 }
 
 type BootstrapResponse struct {
@@ -186,7 +186,6 @@ func Bootstrap() error {
 
 	return nil
 }
-
 func bootstrapTLSConfig() *tls.Config {
 	pin, err := registry.GetEntry(registry.CONFIG, "ServerCAFingerprint", false)
 	if err != nil {

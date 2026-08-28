@@ -38,17 +38,3 @@ func SecureRandomInt(max int64) (int64, error) {
 	}
 	return result, nil
 }
-
-func SecureRandomShuffle(n int, swap func(i, j int)) error {
-	if n <= 0 {
-		return nil
-	}
-	for i := n - 1; i > 0; i-- {
-		j, err := SecureRandomInt(int64(i + 1))
-		if err != nil {
-			return fmt.Errorf("crypto: SecureRandomShuffle: %w", err)
-		}
-		swap(i, int(j))
-	}
-	return nil
-}

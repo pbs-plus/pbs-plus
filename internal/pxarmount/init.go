@@ -3,8 +3,9 @@ package pxarmount
 import (
 	"flag"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func SnapshotRefForInit(namespace string) snapshotRef {

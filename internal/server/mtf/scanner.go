@@ -11,8 +11,8 @@ import (
 
 	mtflib "github.com/pbs-plus/go-mtf"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
-	"github.com/pbs-plus/pbs-plus/internal/server/mtf/store/mtfquery"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb/mtfquery"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -66,11 +66,11 @@ type Result struct {
 }
 
 type Scanner struct {
-	db     *store.Database
+	db     *mtfdb.Store
 	logger *log.Logger
 }
 
-func NewScanner(db *store.Database) *Scanner {
+func NewScanner(db *mtfdb.Store) *Scanner {
 	return &Scanner{db: db}
 }
 

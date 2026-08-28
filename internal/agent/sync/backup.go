@@ -9,7 +9,7 @@ import (
 
 	"github.com/containers/winquit/pkg/winquit"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -27,7 +27,7 @@ func init() {
 }
 
 func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
-	var reqData types.BackupReq
+	var reqData fswire.BackupReq
 	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
@@ -67,7 +67,7 @@ func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respo
 }
 
 func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData types.BackupReq
+	var reqData fswire.BackupReq
 	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
@@ -110,7 +110,7 @@ func BackupCloseHandler(req *arpc.Request) (arpc.Response, error) {
 }
 
 func StatusHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData types.TargetStatusReq
+	var reqData fswire.TargetStatusReq
 	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
 		log.Error(err, "status handler unmarshal error")
 		return arpc.Response{}, err

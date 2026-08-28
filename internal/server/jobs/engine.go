@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 )
 
 type EngineConfig struct {
@@ -26,7 +26,7 @@ type EngineConfig struct {
 }
 
 type Engine struct {
-	db            *store.DB
+	db            *jobdb.Store
 	owner         string
 	leaseDuration time.Duration
 	pollInterval  time.Duration
@@ -48,7 +48,7 @@ type Workflow func(*WorkflowContext) error
 type Activity func(context.Context, ActivityInfo) (json.RawMessage, error)
 
 type ActivityInfo struct {
-	Execution        store.Execution
+	Execution        jobdb.Execution
 	Name             string
 	ResumeCheckpoint json.RawMessage
 	checkpoint       func(context.Context, json.RawMessage) error
@@ -56,8 +56,8 @@ type ActivityInfo struct {
 
 type WorkflowContext struct {
 	Context   context.Context
-	Execution store.Execution
-	db        *store.DB
+	Execution jobdb.Execution
+	db        *jobdb.Store
 }
 
 type RetryableError struct {
@@ -85,13 +85,6 @@ func (e nonRetryableError) Unwrap() error {
 	return e.err
 }
 
-func Retryable(err error, delay time.Duration) error {
-	if err == nil {
-		return nil
-	}
-	return &RetryableError{Err: err, Delay: delay}
-}
-
 func NonRetryable(err error) error {
 	if err == nil {
 		return nil
@@ -99,7 +92,7 @@ func NonRetryable(err error) error {
 	return nonRetryableError{err: err}
 }
 
-func NewEngine(db *store.DB, config EngineConfig) (*Engine, error) {
+func NewEngine(db *jobdb.Store, config EngineConfig) (*Engine, error) {
 	if db == nil {
 		return nil, errors.New("workflow database is required")
 	}
@@ -172,11 +165,11 @@ func (e *Engine) Close() {
 	e.wg.Wait()
 }
 
-func (e *Engine) Submit(ctx context.Context, request store.SubmitRequest) (store.Execution, bool, error) {
+func (e *Engine) Submit(ctx context.Context, request jobdb.SubmitRequest) (jobdb.Execution, bool, error) {
 	if request.ID == "" {
 		id, err := NewExecutionID()
 		if err != nil {
-			return store.Execution{}, false, err
+			return jobdb.Execution{}, false, err
 		}
 		request.ID = id
 	}
@@ -185,7 +178,7 @@ func (e *Engine) Submit(ctx context.Context, request store.SubmitRequest) (store
 	}
 	execution, created, err := e.db.Submit(ctx, request)
 	if err != nil {
-		return store.Execution{}, false, err
+		return jobdb.Execution{}, false, err
 	}
 	if created {
 		e.signal()
@@ -193,10 +186,10 @@ func (e *Engine) Submit(ctx context.Context, request store.SubmitRequest) (store
 	return execution, created, nil
 }
 
-func (e *Engine) Cancel(ctx context.Context, id string) (store.Execution, error) {
+func (e *Engine) Cancel(ctx context.Context, id string) (jobdb.Execution, error) {
 	execution, err := e.db.Cancel(ctx, id, time.Now())
 	if err != nil {
-		return store.Execution{}, err
+		return jobdb.Execution{}, err
 	}
 	if value, ok := e.running.Load(id); ok {
 		value.(context.CancelFunc)()
@@ -205,19 +198,19 @@ func (e *Engine) Cancel(ctx context.Context, id string) (store.Execution, error)
 	return execution, nil
 }
 
-func (e *Engine) CancelDefinition(ctx context.Context, kind, definitionID string) (store.Execution, error) {
+func (e *Engine) CancelDefinition(ctx context.Context, kind, definitionID string) (jobdb.Execution, error) {
 	execution, err := e.db.GetActiveExecution(ctx, kind, definitionID)
 	if err != nil {
-		return store.Execution{}, err
+		return jobdb.Execution{}, err
 	}
 	return e.Cancel(ctx, execution.ID)
 }
 
-func (e *Engine) Get(ctx context.Context, id string) (store.Execution, error) {
+func (e *Engine) Get(ctx context.Context, id string) (jobdb.Execution, error) {
 	return e.db.GetExecution(ctx, id)
 }
 
-func (e *Engine) Events(ctx context.Context, id string) ([]store.Event, error) {
+func (e *Engine) Events(ctx context.Context, id string) ([]jobdb.Event, error) {
 	return e.db.ListEvents(ctx, id)
 }
 
@@ -289,7 +282,7 @@ func (w *WorkflowContext) Invalidate(name string) error {
 
 // IsFinalAttempt reports whether the running attempt is the
 // execution's last, so failure finalization can run exactly once.
-func IsFinalAttempt(execution store.Execution) bool {
+func IsFinalAttempt(execution jobdb.Execution) bool {
 	return execution.Attempt >= execution.MaxAttempts
 }
 
@@ -336,7 +329,7 @@ func (e *Engine) dispatch() bool {
 	}
 }
 
-func (e *Engine) runExecution(execution store.Execution) {
+func (e *Engine) runExecution(execution jobdb.Execution) {
 	e.runnersMu.RLock()
 	workflow := e.runners[execution.Kind]
 	e.runnersMu.RUnlock()
@@ -377,7 +370,7 @@ func (e *Engine) runExecution(execution store.Execution) {
 	}
 }
 
-func (e *Engine) finish(execution store.Execution, runErr error) {
+func (e *Engine) finish(execution jobdb.Execution, runErr error) {
 	current, err := e.db.GetExecution(e.ctx, execution.ID)
 	if err != nil {
 		log.Error(err, "workflow engine state lookup failed", "executionID", execution.ID)
@@ -390,9 +383,9 @@ func (e *Engine) finish(execution store.Execution, runErr error) {
 		return
 	}
 	if runErr == nil {
-		state := store.StateSucceeded
+		state := jobdb.StateSucceeded
 		if execution.CancelRequested {
-			state = store.StateCanceled
+			state = jobdb.StateCanceled
 		}
 		if err := e.db.Finish(e.ctx, execution.ID, e.owner, state, time.Now(), ""); err != nil {
 			log.Error(err, "workflow engine completion failed", "executionID", execution.ID)
@@ -402,21 +395,21 @@ func (e *Engine) finish(execution store.Execution, runErr error) {
 
 	var nonRetryable nonRetryableError
 	if errors.As(runErr, &nonRetryable) || execution.Attempt >= execution.MaxAttempts {
-		if err := e.db.Finish(e.ctx, execution.ID, e.owner, store.StateFailed, time.Now(), runErr.Error()); err != nil {
+		if err := e.db.Finish(e.ctx, execution.ID, e.owner, jobdb.StateFailed, time.Now(), runErr.Error()); err != nil {
 			log.Error(err, "workflow engine failure completion failed", "executionID", execution.ID)
 		}
 		return
 	}
 
 	delay := retryDelay(execution, runErr)
-	if err := e.db.Finish(e.ctx, execution.ID, e.owner, store.StatePending, time.Now().Add(delay), runErr.Error()); err != nil {
+	if err := e.db.Finish(e.ctx, execution.ID, e.owner, jobdb.StatePending, time.Now().Add(delay), runErr.Error()); err != nil {
 		log.Error(err, "workflow engine retry scheduling failed", "executionID", execution.ID)
 		return
 	}
 	e.signal()
 }
 
-func retryDelay(execution store.Execution, err error) time.Duration {
+func retryDelay(execution jobdb.Execution, err error) time.Duration {
 	delay := execution.RetryInitialDelay
 	var retryable *RetryableError
 	if errors.As(err, &retryable) && retryable.Delay > 0 {

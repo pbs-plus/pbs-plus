@@ -12,8 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 type contextKey int
@@ -182,67 +180,4 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Pragma", "no-cache")
 		next.ServeHTTP(w, r)
 	})
-}
-
-func RequireAgentAuth(st *store.Store) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hostname, err := checkAgentAuth(st, r)
-			if err != nil {
-				log.Error(err, "", "request_id", GetRequestID(r.Context()), "hostname", getClientInfo(r), "mode", "agent_only")
-
-				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-				return
-			}
-			r.Header.Set("X-PBS-Authenticated-Agent", hostname)
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-func RequireServerAuth(st *store.Store) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if err := checkProxyAuth(r); err != nil && !IsLocalhost(r) {
-				log.Error(err, "", "request_id", GetRequestID(r.Context()), "hostname", getClientInfo(r), "mode", "server_only")
-
-				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-func RequireAgentOrServerAuth(st *store.Store) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authenticated := false
-			var lastErr error
-
-			hostname, agentErr := checkAgentAuth(st, r)
-			if agentErr == nil {
-				authenticated = true
-			} else {
-				lastErr = agentErr
-			}
-
-			if err := checkProxyAuth(r); err == nil || IsLocalhost(r) {
-				authenticated = true
-			} else {
-				lastErr = err
-			}
-
-			if !authenticated {
-				log.Error(lastErr, "", "request_id", GetRequestID(r.Context()), "hostname", getClientInfo(r), "mode", "agent_or_server")
-
-				http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
-				return
-			}
-			if hostname != "" {
-				r.Header.Set("X-PBS-Authenticated-Agent", hostname)
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 }

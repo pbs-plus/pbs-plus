@@ -8,11 +8,11 @@ import (
 	"os"
 	"unsafe"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/windows"
 )
 
-func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, error) {
+func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, error) {
 	if r.closed {
 		return nil, os.ErrClosed
 	}
@@ -24,7 +24,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	}
 
 	h := windows.Handle(r.file.Fd())
-	out := make([]types.AgentFileInfo, 0, min(limit, 128))
+	out := make([]fswire.AgentFileInfo, 0, min(limit, 128))
 	var iosb IoStatusBlock
 
 	fullByteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), len(r.buf)*8)
@@ -77,7 +77,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				if name != "." && name != ".." {
 					isDir := (entry.FileAttributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0
 
-					info := types.AgentFileInfo{
+					info := fswire.AgentFileInfo{
 						Name:           name,
 						Size:           entry.EndOfFile,
 						Mode:           windowsFileModeFromHandle(0, entry.FileAttributes),

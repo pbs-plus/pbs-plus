@@ -37,7 +37,6 @@ func AgentHTTPRequest(method, url string, body io.Reader, respBody any) (io.Read
 
 	return nil, fmt.Errorf("AgentHTTPRequest: failed after %d attempts -> %w", maxRetries, lastErr)
 }
-
 func AgentHTTPRequestAttempt(method, url string, body io.Reader, respBody any) (io.ReadCloser, error) {
 	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
 	if err != nil {

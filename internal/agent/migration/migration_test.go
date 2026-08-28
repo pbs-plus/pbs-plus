@@ -190,29 +190,3 @@ func TestAgentPathsAreSet(t *testing.T) {
 		t.Error("SecretsKeyPath should not be empty")
 	}
 }
-
-func TestLegacyPathsAvailable(t *testing.T) {
-	tempDir := t.TempDir()
-	oldPath := filepath.Join(tempDir, "legacy-test")
-
-	originalOldStatePath := migration.OldStatePath
-	defer func() {
-		migration.OldStatePath = originalOldStatePath
-	}()
-	migration.OldStatePath = oldPath
-
-	// Initially should return false
-	if migration.LegacyPathsAvailable() {
-		t.Error("LegacyPathsAvailable should return false when path doesn't exist")
-	}
-
-	// Create the legacy path
-	if err := os.MkdirAll(oldPath, 0755); err != nil {
-		t.Fatalf("Failed to create legacy path: %v", err)
-	}
-
-	// Now should return true
-	if !migration.LegacyPathsAvailable() {
-		t.Error("LegacyPathsAvailable should return true when path exists")
-	}
-}

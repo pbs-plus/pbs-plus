@@ -11,8 +11,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 type taskResult struct {
@@ -22,9 +22,9 @@ type taskResult struct {
 // RegisterMigration registers the MTF migration workflow: start-task,
 // run, finalize. Task creation is exactly-once; the tape run reattaches
 // to the task log by UPID across retries.
-func RegisterMigration(engine *jobs.Engine, storeInstance *store.Store) error {
+func RegisterMigration(engine *jobs.Engine, app *application.Runtime) error {
 	return engine.Register(jobs.WorkflowMtfMigration, func(w *jobs.WorkflowContext) error {
-		j, err := newMigrationJob(w.Execution.DefinitionID, storeInstance)
+		j, err := newMigrationJob(w.Execution.DefinitionID, app)
 		if err != nil {
 			return jobs.NonRetryable(err)
 		}
@@ -101,13 +101,13 @@ func (j *mtfJob) finalizeFailed(w *jobs.WorkflowContext, upid string, runErr err
 
 // RegisterScan registers the MTF inventory scan workflow: start-task,
 // scan, finalize, under the global mtf-scan resource lock.
-func RegisterScan(engine *jobs.Engine, storeInstance *store.Store) error {
+func RegisterScan(engine *jobs.Engine, app *application.Runtime) error {
 	return engine.Register(jobs.WorkflowMtfScan, func(w *jobs.WorkflowContext) error {
 		var input jobs.MtfScanInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding mtf scan workflow input: %w", err))
 		}
-		if storeInstance.MtfStore == nil {
+		if app.MtfDB == nil {
 			return jobs.NonRetryable(fmt.Errorf("mtf store unavailable"))
 		}
 		opts := Options{
@@ -118,11 +118,11 @@ func RegisterScan(engine *jobs.Engine, storeInstance *store.Store) error {
 			Label:         input.Label,
 			Barcodes:      input.Barcodes,
 		}
-		return runScan(w, storeInstance, opts)
+		return runScan(w, app, opts)
 	})
 }
 
-func runScan(w *jobs.WorkflowContext, storeInstance *store.Store, opts Options) error {
+func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) error {
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		st, err := NewScanTask(opts)
 		if err != nil {
@@ -154,7 +154,7 @@ func runScan(w *jobs.WorkflowContext, storeInstance *store.Store, opts Options) 
 					st.CloseErr(fmt.Errorf("scan panic: %v", r))
 				}
 			}()
-			scanner := NewScanner(storeInstance.MtfStore)
+			scanner := NewScanner(app.MtfDB)
 			res, scanErr := scanner.ScanWithLog(ctx, opts, log.WithScope(log.Scope{Task: st.WorkerTask}))
 			if scanErr != nil {
 				st.LogString(scanErr.Error())
@@ -174,7 +174,5 @@ func runScan(w *jobs.WorkflowContext, storeInstance *store.Store, opts Options) 
 	}
 	return nil
 }
-
-
 
 var _ = time.Second

@@ -8,14 +8,14 @@ import (
 
 	"github.com/containers/winquit/pkg/winquit"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/agent/cli"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
-	var reqData types.RestoreReq
+	var reqData fswire.RestoreReq
 	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
@@ -55,7 +55,7 @@ func RestoreStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Resp
 }
 
 func RestoreCloseHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData types.RestoreCloseReq
+	var reqData fswire.RestoreCloseReq
 	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err

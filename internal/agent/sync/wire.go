@@ -2,19 +2,19 @@ package sync
 
 import (
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	backend "github.com/pbs-plus/pbs-plus/internal/server"
+	"github.com/pbs-plus/pbs-plus/internal/filetree"
 )
 
 func FileTreeHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Response, error) {
-	var reqData types.FileTreeReq
+	var reqData fswire.FileTreeReq
 	err := cbor.Unmarshal(req.Payload, &reqData)
 	if err != nil {
 		return arpc.Response{}, err
 	}
 
-	resp, err := backend.FileTree(reqData.HostPath, reqData.SubPath)
+	resp, err := filetree.Read(reqData.HostPath, reqData.SubPath)
 	if err != nil {
 		return arpc.Response{}, err
 	}

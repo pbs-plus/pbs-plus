@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
 // ErrTaskFailed marks a PBS backup task that terminated unsuccessfully;
@@ -33,24 +33,24 @@ type waitResult struct {
 // Register registers the backup workflow: queue, pre-script, validate,
 // mount-script, start, wait, finalize. Each stage is a durable
 // activity; completed stages are skipped on replay after a crash.
-func Register(engine *jobs.Engine, storeInstance *store.Store) error {
+func Register(engine *jobs.Engine, app *application.Runtime) error {
 	return engine.Register(jobs.WorkflowBackup, func(w *jobs.WorkflowContext) error {
 		var input jobs.BackupInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding backup workflow input: %w", err))
 		}
-		job, err := storeInstance.Database.GetBackup(w.Execution.DefinitionID)
+		job, err := app.CoreDB.GetBackup(w.Execution.DefinitionID)
 		if err != nil {
 			return jobs.NonRetryable(fmt.Errorf("getting backup workflow definition: %w", err))
 		}
-		return runWorkflow(w, storeInstance, job, input)
+		return runWorkflow(w, app, job, input)
 	})
 }
 
-func runWorkflow(w *jobs.WorkflowContext, storeInstance *store.Store, job database.Backup, input jobs.BackupInput) error {
+func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Backup, input jobs.BackupInput) error {
 	b := &backupJob{
 		job:             job,
-		storeInstance:   storeInstance,
+		app:             app,
 		skipCheck:       input.SkipCheck,
 		web:             input.Web,
 		logger:          log.WithScope(log.Scope{JobID: job.ID}),
@@ -157,9 +157,9 @@ func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.Raw
 	b.cmd = cmd
 	b.mu.Unlock()
 
-	if err := updateBackupStatus(false, 0, b.job, task, b.storeInstance); err != nil {
+	if err := updateBackupStatus(false, 0, b.job, task, b.app); err != nil {
 		if currOwner != "" {
-			if err := SetDatastoreOwner(b.job, b.storeInstance, currOwner); err != nil {
+			if err := SetDatastoreOwner(b.job, b.app, currOwner); err != nil {
 				b.logger.Error(err, "failed to update backup status after task creation")
 			}
 		}

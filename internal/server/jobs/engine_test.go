@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 )
 
 func TestEngine_ReplaysCompletedActivities(t *testing.T) {
@@ -30,7 +30,7 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 		}
 		_, err := workflow.Activity("second", json.RawMessage(`{"value":2}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
 			if secondRuns.Add(1) == 1 {
-				return nil, Retryable(errors.New("temporary failure"), time.Second)
+				return nil, &RetryableError{Err: errors.New("temporary failure"), Delay: time.Second}
 			}
 			return json.RawMessage(`{"done":true}`), nil
 		})
@@ -51,7 +51,7 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 		t.Fatal("first submission was not created")
 	}
 
-	execution = waitForWorkflowState(t, ctx, engine, execution.ID, store.StateSucceeded)
+	execution = waitForWorkflowState(t, ctx, engine, execution.ID, jobdb.StateSucceeded)
 	if firstRuns.Load() != 1 {
 		t.Fatalf("first activity ran %d times, want 1", firstRuns.Load())
 	}
@@ -107,7 +107,7 @@ func TestEngine_CancelRunningWorkflow(t *testing.T) {
 	if _, err := engine.Cancel(ctx, execution.ID); err != nil {
 		t.Fatal(err)
 	}
-	waitForWorkflowState(t, ctx, engine, execution.ID, store.StateCanceled)
+	waitForWorkflowState(t, ctx, engine, execution.ID, jobdb.StateCanceled)
 }
 
 func TestEngine_InvalidateReRunsActivity(t *testing.T) {
@@ -124,7 +124,7 @@ func TestEngine_InvalidateReRunsActivity(t *testing.T) {
 			return err
 		}
 		_, err := workflow.Activity("wait", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
-			return nil, Retryable(errors.New("task failed"), 10*time.Millisecond)
+			return nil, &RetryableError{Err: errors.New("task failed"), Delay: 10 * time.Millisecond}
 		})
 		if err != nil {
 			_ = workflow.Invalidate("start")
@@ -149,7 +149,7 @@ func TestEngine_InvalidateReRunsActivity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if execution.State == store.StateFailed {
+		if execution.State == jobdb.StateFailed {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -210,7 +210,7 @@ func TestEngine_DetachedFinalizerRunsOnCancel(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("detached finalizer did not run after cancellation")
 	}
-	waitForWorkflowState(t, ctx, engine, execution.ID, store.StateCanceled)
+	waitForWorkflowState(t, ctx, engine, execution.ID, jobdb.StateCanceled)
 }
 
 func TestEngine_CheckpointResumesActivity(t *testing.T) {
@@ -238,7 +238,7 @@ func TestEngine_CheckpointResumesActivity(t *testing.T) {
 				if err := info.Checkpoint(ctx, cp); err != nil {
 					return nil, err
 				}
-				return nil, Retryable(errors.New("resume me"), 10*time.Millisecond)
+				return nil, &RetryableError{Err: errors.New("resume me"), Delay: 10 * time.Millisecond}
 			}
 			return json.RawMessage(`{}`), nil
 		})
@@ -254,7 +254,7 @@ func TestEngine_CheckpointResumesActivity(t *testing.T) {
 	if _, _, err := engine.Submit(ctx, testWorkflowSubmit("test.checkpoint", "checkpoint")); err != nil {
 		t.Fatal(err)
 	}
-	waitForWorkflowState(t, ctx, engine, "workflow-checkpoint", store.StateSucceeded)
+	waitForWorkflowState(t, ctx, engine, "workflow-checkpoint", jobdb.StateSucceeded)
 	if resumedFrom.Load() != 3 {
 		t.Fatalf("activity resumed from %d, want 3", resumedFrom.Load())
 	}
@@ -286,7 +286,7 @@ func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	} else if ok {
 		t.Fatal("second execution claimed while its resource was locked")
 	}
-	if err := db.Finish(ctx, first.ID, "worker-a", store.StateSucceeded, now, ""); err != nil {
+	if err := db.Finish(ctx, first.ID, "worker-a", jobdb.StateSucceeded, now, ""); err != nil {
 		t.Fatal(err)
 	}
 	claimed, ok, err = db.Claim(ctx, "worker-b", now.Add(time.Second), now.Add(4*time.Second))
@@ -298,9 +298,9 @@ func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	}
 }
 
-func newTestEngine(t *testing.T, ctx context.Context) (*Engine, *store.DB) {
+func newTestEngine(t *testing.T, ctx context.Context) (*Engine, *jobdb.Store) {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "jobs.db"))
+	db, err := jobdb.Open(filepath.Join(t.TempDir(), "jobs.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,8 +321,8 @@ func newTestEngine(t *testing.T, ctx context.Context) (*Engine, *store.DB) {
 	return engine, db
 }
 
-func testWorkflowSubmit(kind, suffix string) store.SubmitRequest {
-	return store.SubmitRequest{
+func testWorkflowSubmit(kind, suffix string) jobdb.SubmitRequest {
+	return jobdb.SubmitRequest{
 		ID:                "workflow-" + suffix,
 		Kind:              kind,
 		DefinitionID:      "definition-" + suffix,
@@ -336,7 +336,7 @@ func testWorkflowSubmit(kind, suffix string) store.SubmitRequest {
 	}
 }
 
-func waitForWorkflowState(t *testing.T, ctx context.Context, engine *Engine, id, want string) store.Execution {
+func waitForWorkflowState(t *testing.T, ctx context.Context, engine *Engine, id, want string) jobdb.Execution {
 	t.Helper()
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()

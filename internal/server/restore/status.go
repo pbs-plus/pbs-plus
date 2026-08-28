@@ -4,30 +4,30 @@ package restore
 
 import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 )
 
-func updateRestoreStatus(succeeded bool, warningsNum int, restore database.Restore, task proxmox.Task, storeInstance *store.Store) error {
+func updateRestoreStatus(succeeded bool, warningsNum int, restore coredb.Restore, task proxmox.Task, app *application.Runtime) error {
 	return jobs.UpdateJobHistory(
 		restore.ID,
 		restore.CurrentPID,
 		succeeded,
 		warningsNum,
 		task,
-		func() (database.JobHistory, int, error) {
-			r, err := storeInstance.Database.GetRestore(restore.ID)
+		func() (coredb.JobHistory, int, error) {
+			r, err := app.CoreDB.GetRestore(restore.ID)
 			return r.History, r.CurrentPID, err
 		},
-		func(history database.JobHistory, currentPID int) error {
-			r, err := storeInstance.Database.GetRestore(restore.ID)
+		func(history coredb.JobHistory, currentPID int) error {
+			r, err := app.CoreDB.GetRestore(restore.ID)
 			if err != nil {
 				return err
 			}
 			r.CurrentPID = currentPID
 			r.History = history
-			return storeInstance.Database.UpdateRestore(nil, r)
+			return app.CoreDB.UpdateRestore(nil, r)
 		},
 	)
 }

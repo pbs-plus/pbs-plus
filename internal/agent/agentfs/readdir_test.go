@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -127,7 +127,7 @@ func testBasicFunctionality(t *testing.T, tempDir string) {
 	}
 
 	// Decode and verify results
-	var entries types.ReadDirEntries
+	var entries fswire.ReadDirEntries
 	if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 		t.Fatalf("Failed to decode directory entries: %v", err)
 	}
@@ -202,7 +202,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 		}
 
 		// Decode and verify results
-		var entries types.ReadDirEntries
+		var entries fswire.ReadDirEntries
 		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
@@ -216,7 +216,7 @@ func testLargeDirectory(t *testing.T, tempDir string) {
 }
 
 // Helper function to verify entries
-func verifyEntries(t *testing.T, entries types.ReadDirEntries, expected map[string]os.FileMode) {
+func verifyEntries(t *testing.T, entries fswire.ReadDirEntries, expected map[string]os.FileMode) {
 	if len(entries) != len(expected) {
 		t.Fatalf("Expected %d entries, got %d", len(expected), len(entries))
 	}
@@ -254,7 +254,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	allEntries := []types.AgentFileInfo{}
+	allEntries := []fswire.AgentFileInfo{}
 
 	for {
 		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
@@ -266,7 +266,7 @@ func testUnicodeFileNames(t *testing.T, tempDir string) {
 		}
 
 		// Decode and verify results
-		var entries types.ReadDirEntries
+		var entries fswire.ReadDirEntries
 		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
@@ -305,7 +305,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 	}
 	defer dirReader.Close()
 
-	allEntries := []types.AgentFileInfo{}
+	allEntries := []fswire.AgentFileInfo{}
 
 	for {
 		entriesBytes, err := dirReader.NextBatch(t.Context(), 0)
@@ -317,7 +317,7 @@ func testSpecialCharacters(t *testing.T, tempDir string) {
 		}
 
 		// Decode and verify results
-		var entries types.ReadDirEntries
+		var entries fswire.ReadDirEntries
 		if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 			t.Fatalf("Failed to decode directory entries: %v", err)
 		}
@@ -630,7 +630,7 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 				t.Fatalf("NextBatch failed on batch %d: %v", batchCount, err)
 			}
 
-			var entries types.ReadDirEntries
+			var entries fswire.ReadDirEntries
 			if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 				t.Fatalf("Failed to decode batch %d: %v", batchCount, err)
 			}
@@ -764,7 +764,7 @@ func testLastEntryMissing(t *testing.T, tempDir string) {
 				t.Fatalf("NextBatch failed: %v", err)
 			}
 
-			var entries types.ReadDirEntries
+			var entries fswire.ReadDirEntries
 			if err := cbor.Unmarshal(entriesBytes, &entries); err != nil {
 				t.Fatalf("Failed to decode entries: %v", err)
 			}

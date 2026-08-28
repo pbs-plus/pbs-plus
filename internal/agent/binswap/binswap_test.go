@@ -108,8 +108,8 @@ func TestSnapshotCurrent(t *testing.T) {
 	if err := m.SnapshotCurrent(); err != nil {
 		t.Fatalf("SnapshotCurrent: %v", err)
 	}
-	if !m.PreviousExists() {
-		t.Fatal("PreviousExists should be true")
+	if _, err := os.Stat(m.previousPath()); err != nil {
+		t.Fatalf("previous artifact: %v", err)
 	}
 	got, _ := os.ReadFile(m.previousPath())
 	if string(got) != "known-good" {
@@ -338,8 +338,8 @@ func TestFullSwapFlow(t *testing.T) {
 	if !m.HasPending() {
 		t.Fatal("should have pending marker")
 	}
-	if !m.PreviousExists() {
-		t.Fatal("should have previous artifact")
+	if _, err := os.Stat(m.previousPath()); err != nil {
+		t.Fatalf("previous artifact: %v", err)
 	}
 
 	pending, _ := m.CheckPending()
@@ -353,7 +353,7 @@ func TestFullSwapFlow(t *testing.T) {
 	}
 
 	m.Prune()
-	if !m.PreviousExists() {
-		t.Fatal("previous should survive prune")
+	if _, err := os.Stat(m.previousPath()); err != nil {
+		t.Fatalf("previous artifact: %v", err)
 	}
 }

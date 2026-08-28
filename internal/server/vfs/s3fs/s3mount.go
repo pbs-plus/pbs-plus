@@ -3,9 +3,10 @@
 package s3fs
 
 import (
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 	"os/exec"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func MountS3(f *S3FS, mountpoint string) error {

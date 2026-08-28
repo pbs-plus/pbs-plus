@@ -5,15 +5,15 @@ package verification
 import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 type VerificationTask struct {
 	*tasklog.WorkerTask
-	job database.VerificationJob
+	job coredb.VerificationJob
 }
 
-func NewVerificationTask(job database.VerificationJob) (*VerificationTask, error) {
+func NewVerificationTask(job coredb.VerificationJob) (*VerificationTask, error) {
 	wid := proxmox.EncodeToHexEscapes(job.ID)
 	wt, err := tasklog.NewWorkerTask("pbsplus", "verification", wid)
 	if err != nil {
@@ -27,7 +27,7 @@ func NewVerificationTask(job database.VerificationJob) (*VerificationTask, error
 }
 
 // ReopenVerificationTask reattaches to an existing task by UPID.
-func ReopenVerificationTask(job database.VerificationJob, upid string) (*VerificationTask, error) {
+func ReopenVerificationTask(job coredb.VerificationJob, upid string) (*VerificationTask, error) {
 	wt, err := tasklog.ReopenWorkerTask(upid)
 	if err != nil {
 		return nil, err

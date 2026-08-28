@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -20,7 +20,7 @@ const (
 type DirReader struct {
 	file         *os.File
 	path         string
-	pending      []types.AgentFileInfo
+	pending      []fswire.AgentFileInfo
 	encodeWriter *bytes.Buffer
 	scratch      bytes.Buffer
 	winFirstCall bool
@@ -38,31 +38,13 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 
 	reader := &DirReader{
 		file:         handle,
-		pending:      make([]types.AgentFileInfo, 0, defaultBatchSize),
+		pending:      make([]fswire.AgentFileInfo, 0, defaultBatchSize),
 		path:         path,
 		winFirstCall: true,
 		encodeWriter: bytes.NewBuffer(make([]byte, 0, defaultBufSize)),
 	}
 
 	return reader, nil
-}
-
-func (r *DirReader) tryEncode(enc *cbor.Encoder, info types.AgentFileInfo) (bool, error) {
-	r.scratch.Reset()
-	scratchEnc := cbor.NewEncoder(&r.scratch)
-	if err := scratchEnc.Encode(info); err != nil {
-		return false, err
-	}
-
-	if r.encodeWriter.Len()+r.scratch.Len() > defaultBufSize {
-		return false, nil
-	}
-
-	if err := enc.Encode(info); err != nil {
-		return false, err
-	}
-
-	return true, nil
 }
 
 func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, error) {
@@ -191,4 +173,21 @@ func (r *DirReader) Close() error {
 	r.pending = r.pending[:0]
 	r.closed = true
 	return r.file.Close()
+}
+func (r *DirReader) tryEncode(enc *cbor.Encoder, info fswire.AgentFileInfo) (bool, error) {
+	r.scratch.Reset()
+	scratchEnc := cbor.NewEncoder(&r.scratch)
+	if err := scratchEnc.Encode(info); err != nil {
+		return false, err
+	}
+
+	if r.encodeWriter.Len()+r.scratch.Len() > defaultBufSize {
+		return false, nil
+	}
+
+	if err := enc.Encode(info); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }

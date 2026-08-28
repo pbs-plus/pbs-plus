@@ -11,30 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"log/slog"
+
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 type TaskListInfo struct {
 	UPID  string
 	Task  proxmox.Task
 	State *TaskState
-}
-
-// WriteArchive appends a finished task line to the archive under the
-// exclusive task-list lock.
-func WriteArchive(upid string, state TaskState) error {
-	lock, err := lockTaskList(true)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-
-	return appendArchiveLines([]TaskListInfo{{
-		UPID:  upid,
-		Task:  proxmox.Task{},
-		State: &state,
-	}})
 }
 
 // ListTasks is PBS's TaskListInfoIterator: reconcile first (dead workers

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 const (
@@ -15,10 +15,10 @@ const (
 )
 
 type AlertScanner struct {
-	db *database.Database
+	db *coredb.Store
 }
 
-func NewAlertScanner(db *database.Database) *AlertScanner {
+func NewAlertScanner(db *coredb.Store) *AlertScanner {
 	return &AlertScanner{db: db}
 }
 
@@ -66,7 +66,7 @@ func (s *AlertScanner) ensureDefaults() {
 	}
 }
 
-func shouldSkip(setting database.AlertSetting) bool {
+func shouldSkip(setting coredb.AlertSetting) bool {
 	if !setting.Enabled {
 		return true
 	}
@@ -112,7 +112,7 @@ func (s *AlertScanner) checkUnconfiguredTargets(ctx context.Context) {
 		coveredTargets[b.Target.Name] = true
 	}
 
-	var unconfigured []database.Target
+	var unconfigured []coredb.Target
 	for _, t := range targets {
 		if coveredTargets[t.Name] {
 			continue
@@ -175,7 +175,7 @@ func (s *AlertScanner) checkStaleBackups(ctx context.Context) {
 	now := time.Now()
 	thresholdDuration := time.Duration(threshold) * 24 * time.Hour
 
-	var staleJobs []database.Backup
+	var staleJobs []coredb.Backup
 	for _, b := range backups {
 		if isExcluded(excludedJobs, b.ID) {
 			continue

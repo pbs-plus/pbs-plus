@@ -8,7 +8,7 @@ import (
 	"os"
 	"unsafe"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/unix"
 )
 
@@ -22,7 +22,7 @@ func shouldExcludeStat(st *unix.Stat_t) bool {
 	return false
 }
 
-func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, error) {
+func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, error) {
 	if r.closed {
 		return nil, os.ErrClosed
 	}
@@ -34,7 +34,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	}
 
 	fd := int(r.file.Fd())
-	out := make([]types.AgentFileInfo, 0, min(limit, 128))
+	out := make([]fswire.AgentFileInfo, 0, min(limit, 128))
 
 	fullByteBuf := unsafe.Slice((*byte)(unsafe.Pointer(&r.buf[0])), len(r.buf)*8)
 
@@ -89,7 +89,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				mode |= 0x80000000
 			}
 
-			info := types.AgentFileInfo{
+			info := fswire.AgentFileInfo{
 				Name:           name,
 				Size:           st.Size,
 				Mode:           mode,

@@ -1,0 +1,190 @@
+//go:build linux
+
+package backup
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
+)
+
+func (b *backupJob) validateTargetConnection(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return jobs.ErrCanceled
+	default:
+	}
+
+	if b.skipCheck {
+		return nil
+	}
+
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
+
+	switch job.Target.Type {
+	case coredb.TargetTypeAgent:
+		qSess, qExists := b.app.Agents.GetQuicPipe(job.Target.GetHostname())
+		tSess, tExists := b.app.Agents.GetStreamPipe(job.Target.GetHostname())
+		if !qExists && !tExists {
+			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
+		}
+
+		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		var respMsg string
+		var err error
+		if qExists {
+			respMsg, err = qSess.CallMessage(
+				timeoutCtx,
+				"target_status",
+				&fswire.TargetStatusReq{Drive: job.Target.VolumeID},
+			)
+		} else {
+			respMsg, err = tSess.CallMessage(
+				timeoutCtx,
+				"target_status",
+				&fswire.TargetStatusReq{Drive: job.Target.VolumeID},
+			)
+		}
+		if err != nil || !isReachable(respMsg) {
+			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
+		}
+
+	case coredb.TargetTypeLocal:
+		if _, err := os.Stat(job.Target.Path); err != nil {
+			return fmt.Errorf("%w: %s (%v)", jobs.ErrTargetUnreachable, job.Target.Name, err)
+		}
+
+	case coredb.TargetTypeS3:
+	}
+
+	return nil
+}
+
+func isReachable(msg string) bool {
+	return len(msg) >= 9 && msg[:9] == "reachable"
+}
+
+func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (string, *mountrpc.AgentMount, *mountrpc.S3Mount, error) {
+	select {
+	case <-ctx.Done():
+		return "", nil, nil, jobs.ErrCanceled
+	default:
+	}
+
+	b.mu.RLock()
+	qt := b.queueTask
+	b.mu.RUnlock()
+	if qt != nil {
+		if err := qt.UpdateDescription("mounting target to server"); err != nil {
+			b.logger.Error(err, "failed to update queue task description")
+		}
+	}
+
+	var (
+		srcPath    = target.Path
+		agentMount *mountrpc.AgentMount
+		s3Mount    *mountrpc.S3Mount
+		err        error
+	)
+
+	b.mu.RLock()
+	job := b.job
+	b.mu.RUnlock()
+
+	if target.IsAgent() {
+		if job.SourceMode == "snapshot" {
+			b.mu.RLock()
+			qt := b.queueTask
+			b.mu.RUnlock()
+			if qt != nil {
+				if err := qt.UpdateDescription("waiting for agent to finish snapshot"); err != nil {
+					b.logger.Error(err, "failed to update queue task description")
+				}
+			}
+		}
+
+		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer timedCtxCancel()
+
+		agentMount, err = mountrpc.AgentFSMount(timedCtx, b.app, job, target)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		srcPath = agentMount.Path
+
+		select {
+		case <-ctx.Done():
+			agentMount.Unmount()
+			agentMount.CloseMount()
+			return "", nil, nil, jobs.ErrCanceled
+		default:
+		}
+
+		b.mu.Lock()
+		if latestBackup, err := b.app.CoreDB.GetBackup(b.job.ID); err == nil {
+			b.job = latestBackup
+		}
+		job = b.job
+		b.mu.Unlock()
+
+		if agentMount.IsEmpty() {
+			return "", agentMount, nil, jobs.ErrMountEmpty
+		}
+	} else if target.IsS3() {
+		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer timedCtxCancel()
+
+		s3Mount, err = mountrpc.S3FSMount(timedCtx, b.app, job, target)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		srcPath = s3Mount.Path
+
+		select {
+		case <-ctx.Done():
+			s3Mount.Unmount()
+			s3Mount.CloseMount()
+			return "", nil, nil, jobs.ErrCanceled
+		default:
+		}
+
+		b.mu.Lock()
+		if latestBackup, err := b.app.CoreDB.GetBackup(b.job.ID); err == nil {
+			b.job = latestBackup
+		}
+		job = b.job
+		b.mu.Unlock()
+
+		if s3Mount.IsEmpty() {
+			return "", nil, s3Mount, jobs.ErrMountEmpty
+		}
+	}
+
+	srcPath = filepath.Join(srcPath, job.Subpath)
+
+	if job.Subpath != "" && !target.IsS3() {
+		info, err := os.Stat(srcPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", agentMount, s3Mount, fmt.Errorf("%w: %q does not exist under the mount point", jobs.ErrSubpathNotFound, job.Subpath)
+			}
+			return "", agentMount, s3Mount, fmt.Errorf("%w: cannot access subpath %q: %w", jobs.ErrSubpathNotFound, job.Subpath, err)
+		}
+		if !info.IsDir() {
+			return "", agentMount, s3Mount, fmt.Errorf("%w: %q is not a directory", jobs.ErrSubpathNotFound, job.Subpath)
+		}
+	}
+
+	return srcPath, agentMount, s3Mount, nil
+}

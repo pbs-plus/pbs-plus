@@ -5,7 +5,7 @@ package agent
 import (
 	"errors"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"strings"
 	"unsafe"
 
@@ -162,8 +162,8 @@ func getBusType(driveLetter string) (_STORAGE_BUS_TYPE, error) {
 }
 
 // GetLocalDrives returns a slice of DriveInfo containing detailed information about each local drive
-func GetLocalDrives() ([]types.DriveInfo, error) {
-	var drives []types.DriveInfo
+func GetLocalDrives() ([]fswire.DriveInfo, error) {
+	var drives []fswire.DriveInfo
 
 	for _, drive := range "ABCDEFGHIJKLMNOPQRSTUVWXYZ" {
 		driveLetter := string(drive)
@@ -209,9 +209,9 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 			usedBytes = totalBytes - freeBytes
 		}
 
-		totalHuman := types.HumanizeBytes(totalBytes)
-		usedHuman := types.HumanizeBytes(usedBytes)
-		freeHuman := types.HumanizeBytes(freeBytes)
+		totalHuman := fswire.HumanizeBytes(totalBytes)
+		usedHuman := fswire.HumanizeBytes(usedBytes)
+		freeHuman := fswire.HumanizeBytes(freeBytes)
 
 		driveTypeStr := getDriveTypeString(driveType)
 
@@ -258,7 +258,7 @@ func GetLocalDrives() ([]types.DriveInfo, error) {
 		volumeNameStr = strings.TrimRight(volumeNameStr, "\x00")
 		fileSystemStr = strings.TrimRight(fileSystemStr, "\x00")
 
-		drives = append(drives, types.DriveInfo{
+		drives = append(drives, fswire.DriveInfo{
 			Letter:     driveLetter,
 			Type:       driveTypeStr,
 			VolumeName: volumeNameStr,

@@ -5,15 +5,15 @@ package restore
 import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 type RestoreTask struct {
 	*tasklog.WorkerTask
-	restore database.Restore
+	restore coredb.Restore
 }
 
-func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
+func GetRestoreTask(job coredb.Restore) (*RestoreTask, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 	wt, err := tasklog.NewWorkerTask("pbsplus", "reader", wid)
@@ -28,7 +28,7 @@ func GetRestoreTask(job database.Restore) (*RestoreTask, error) {
 }
 
 // ReopenRestoreTask reattaches to an existing restore task by UPID.
-func ReopenRestoreTask(job database.Restore, upid string) (*RestoreTask, error) {
+func ReopenRestoreTask(job coredb.Restore, upid string) (*RestoreTask, error) {
 	wt, err := tasklog.ReopenWorkerTask(upid)
 	if err != nil {
 		return nil, err
@@ -52,7 +52,7 @@ func (t *RestoreTask) CloseWarn(warning int) {
 	t.WorkerTask.CloseWarn(uint64(warning))
 }
 
-func GenerateRestoreTaskOKFile(job database.Restore, additionalData []string) (proxmox.Task, error) {
+func GenerateRestoreTaskOKFile(job coredb.Restore, additionalData []string) (proxmox.Task, error) {
 	targetName := job.DestTarget.GetHostname()
 	wid := tasklog.FormatWorkerID(job.Store, "host-", targetName)
 

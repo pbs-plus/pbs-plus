@@ -6,28 +6,19 @@ import (
 	"time"
 )
 
-type Changer struct {
+type Device struct {
 	dev *device
 }
 
-func Open(path string) (*Changer, error) {
+func Open(path string) (*Device, error) {
 	d, err := openDevice(path)
 	if err != nil {
 		return nil, err
 	}
-	return &Changer{dev: d}, nil
+	return &Device{dev: d}, nil
 }
 
-func (c *Changer) Close() error { return c.dev.close() }
-
-func (c *Changer) Inventory() error { return initializeElementStatus(c.dev) }
-
-type SlotStatus struct {
-	ElementAddress uint16
-	Full           bool
-	VolumeTag      string // barcode, if Full and readable (else "")
-	ImportExport   bool   // mail slot rather than a magazine slot
-}
+func (c *Device) Close() error { return c.dev.close() }
 
 type DriveStatus struct {
 	ElementAddress uint16
@@ -42,7 +33,7 @@ type Status struct {
 	Drives           []DriveStatus
 }
 
-func (c *Changer) Status() (*Status, error) {
+func (c *Device) Status() (*Status, error) {
 	assign, err := readAddressAssignment(c.dev)
 	if err != nil {
 		return nil, err
@@ -87,7 +78,7 @@ func (c *Changer) Status() (*Status, error) {
 	return s, nil
 }
 
-func (c *Changer) readStorage(assign *addressAssignment) (storage, ie []SlotStatus, err error) {
+func (c *Device) readStorage(assign *addressAssignment) (storage, ie []SlotStatus, err error) {
 	st, err := c.readElements(assign, elemStorage, assign.FirstStorage, assign.NumStorage, true)
 	if err != nil {
 		return nil, nil, err
@@ -115,7 +106,7 @@ type rawElement struct {
 }
 
 // readElements queries one element type, paging if the changer caps the
-func (c *Changer) readElements(assign *addressAssignment, t elementType, first, count uint16, withVolTag bool) ([]rawElement, error) {
+func (c *Device) readElements(assign *addressAssignment, t elementType, first, count uint16, withVolTag bool) ([]rawElement, error) {
 	var out []rawElement
 	if count == 0 {
 		return out, nil
@@ -143,7 +134,7 @@ func (c *Changer) readElements(assign *addressAssignment, t elementType, first, 
 	return out, nil
 }
 
-func (c *Changer) queryElements(t elementType, start, count uint16, withVolTag bool) (elems []rawElement, lastAddr uint16, got uint16, err error) {
+func (c *Device) queryElements(t elementType, start, count uint16, withVolTag bool) (elems []rawElement, lastAddr uint16, got uint16, err error) {
 	cdb := readElementStatusCDB(start, count, t, withVolTag, allocLenStandard)
 	data, err := c.dev.scsi(cdb, make([]byte, allocLenStandard), true, timeoutDefault)
 	if err != nil {
@@ -166,7 +157,7 @@ func (s *Status) DriveAddress(drive int) (uint16, error) {
 	return s.Drives[drive].ElementAddress, nil
 }
 
-func (c *Changer) LoadSlot(fromSlot, drivenum int) (*Status, error) {
+func (c *Device) LoadSlot(fromSlot, drivenum int) (*Status, error) {
 	status, err := c.Status()
 	if err != nil {
 		return nil, fmt.Errorf("read status before load: %w", err)
@@ -184,7 +175,7 @@ func (c *Changer) LoadSlot(fromSlot, drivenum int) (*Status, error) {
 	return c.Status()
 }
 
-func (c *Changer) Unload(toSlot, drivenum int) (*Status, error) {
+func (c *Device) Unload(toSlot, drivenum int) (*Status, error) {
 	status, err := c.Status()
 	if err != nil {
 		return nil, fmt.Errorf("read status before unload: %w", err)
@@ -199,27 +190,7 @@ func (c *Changer) Unload(toSlot, drivenum int) (*Status, error) {
 	return c.Status()
 }
 
-func (c *Changer) Transfer(fromSlot, toSlot int) (*Status, error) {
-	status, err := c.Status()
-	if err != nil {
-		return nil, fmt.Errorf("read status before transfer: %w", err)
-	}
-	src, err := status.SlotAddress(fromSlot)
-	if err != nil {
-		return nil, err
-	}
-	dst, err := status.SlotAddress(toSlot)
-	if err != nil {
-		return nil, err
-	}
-	cdb := moveMediumCDB(status.TransportAddress, src, dst)
-	if _, err := c.dev.scsi(cdb, nil, false, timeoutMove); err != nil {
-		return nil, fmt.Errorf("transfer slot %d -> slot %d: %w", fromSlot, toSlot, err)
-	}
-	return c.Status()
-}
-
-func (c *Changer) moveCDB(status *Status, slot, drivenum int, load bool) ([]byte, error) {
+func (c *Device) moveCDB(status *Status, slot, drivenum int, load bool) ([]byte, error) {
 	transport := status.TransportAddress
 	slotAddr, err := status.SlotAddress(slot)
 	if err != nil {
@@ -239,7 +210,7 @@ func (c *Changer) moveCDB(status *Status, slot, drivenum int, load bool) ([]byte
 }
 
 // ready (Not-Ready/"becoming ready" 04/01 is retried for up to 5 minutes).
-func (c *Changer) waitForDriveReady(drive int) error {
+func (c *Device) waitForDriveReady(drive int) error {
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
 		assign, err := readAddressAssignment(c.dev)
@@ -261,4 +232,11 @@ func (c *Changer) waitForDriveReady(drive int) error {
 		time.Sleep(time.Second)
 	}
 	return ErrDriveNotReady
+}
+
+type SlotStatus struct {
+	ElementAddress uint16
+	Full           bool
+	VolumeTag      string // barcode, if Full and readable (else "")
+	ImportExport   bool   // mail slot rather than a magazine slot
 }

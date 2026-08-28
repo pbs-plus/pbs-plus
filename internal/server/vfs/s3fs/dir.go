@@ -6,11 +6,11 @@ import (
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	agentTypes "github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 )
 
 type S3DirStream struct {
-	entries agentTypes.ReadDirEntries
+	entries fswire.ReadDirEntries
 	idx     int
 }
 

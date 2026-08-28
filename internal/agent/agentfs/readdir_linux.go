@@ -8,7 +8,7 @@ import (
 	"os"
 	"unsafe"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/unix"
 )
 
@@ -18,21 +18,7 @@ const (
 		unix.STATX_ATTR_AUTOMOUNT
 )
 
-func shouldExcludeStatx(sx *unix.Statx_t) bool {
-	fileType := sx.Mode & unix.S_IFMT
-
-	if fileType == unix.S_IFSOCK || fileType == unix.S_IFBLK || fileType == unix.S_IFCHR || fileType == unix.S_IFLNK {
-		return true
-	}
-
-	if sx.Attributes_mask&excludedAttrs != 0 && sx.Attributes&excludedAttrs != 0 {
-		return true
-	}
-
-	return false
-}
-
-func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, error) {
+func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, error) {
 	if r.closed {
 		return nil, os.ErrClosed
 	}
@@ -44,7 +30,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	}
 
 	fd := int(r.file.Fd())
-	out := make([]types.AgentFileInfo, 0, min(limit, 128))
+	out := make([]fswire.AgentFileInfo, 0, min(limit, 128))
 
 	const statxMask = unix.STATX_TYPE | unix.STATX_MODE | unix.STATX_SIZE |
 		unix.STATX_BLOCKS | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_CTIME
@@ -102,7 +88,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 				mode |= 0x80000000
 			}
 
-			info := types.AgentFileInfo{
+			info := fswire.AgentFileInfo{
 				Name:           name,
 				Size:           int64(sx.Size),
 				Mode:           mode,
@@ -131,14 +117,27 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]types.AgentFileInfo, err
 	}
 	return out, nil
 }
-
-func statxTimestampToNano(ts unix.StatxTimestamp) int64 {
-	return int64(ts.Sec)*1e9 + int64(ts.Nsec)
-}
-
 func statxBirthTimeNano(sx *unix.Statx_t) int64 {
 	if sx.Mask&unix.STATX_BTIME != 0 {
 		return statxTimestampToNano(sx.Btime)
 	}
 	return statxTimestampToNano(sx.Ctime)
+}
+
+func shouldExcludeStatx(sx *unix.Statx_t) bool {
+	fileType := sx.Mode & unix.S_IFMT
+
+	if fileType == unix.S_IFSOCK || fileType == unix.S_IFBLK || fileType == unix.S_IFCHR || fileType == unix.S_IFLNK {
+		return true
+	}
+
+	if sx.Attributes_mask&excludedAttrs != 0 && sx.Attributes&excludedAttrs != 0 {
+		return true
+	}
+
+	return false
+}
+
+func statxTimestampToNano(ts unix.StatxTimestamp) int64 {
+	return int64(ts.Sec)*1e9 + int64(ts.Nsec)
 }

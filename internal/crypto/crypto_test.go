@@ -108,25 +108,6 @@ func TestDecryptWithKeyCorrupted(t *testing.T) {
 	}
 }
 
-func TestHMACSHA256(t *testing.T) {
-	key := []byte("test-key")
-	data := []byte("test-data")
-
-	mac := HMACSHA256(key, data)
-	if len(mac) != 32 {
-		t.Errorf("expected 32 bytes, got %d", len(mac))
-	}
-
-	if !VerifyHMACSHA256(key, data, mac) {
-		t.Error("HMAC verification failed")
-	}
-
-	wrongKey := []byte("wrong-key")
-	if VerifyHMACSHA256(wrongKey, data, mac) {
-		t.Error("HMAC should not verify with wrong key")
-	}
-}
-
 func TestSHA256(t *testing.T) {
 	data := []byte("hello world")
 	sum := SHA256(data)

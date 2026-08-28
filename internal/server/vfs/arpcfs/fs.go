@@ -9,16 +9,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 )
 
@@ -52,7 +53,7 @@ func isIgnoredPath(p string) bool {
 	return false
 }
 
-func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup database.Backup, backupMode string) *ARPCFS {
+func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId string, hostname string, backup coredb.Backup, backupMode string) *ARPCFS {
 	log.Debug("newARPCFS called",
 
 		"backupMode", backupMode, "backupID", backup.ID, "hostname", hostname)
@@ -177,8 +178,8 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 
 		"backupID", fs.Backup.ID, "perm", perm, "flag", flag, "path", filename)
 
-	var resp types.FileHandleID
-	req := types.OpenFileReq{
+	var resp fswire.FileHandleID
+	req := fswire.OpenFileReq{
 		Path: filename,
 		Flag: flag,
 		Perm: int(perm),
@@ -208,18 +209,18 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 	}, nil
 }
 
-func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fswire.AgentFileInfo, error) {
 	log.Debug("attr called",
 
 		"backupID", fs.Backup.ID, "isLookup", isLookup, "path", filename)
 
-	var fi types.AgentFileInfo
+	var fi fswire.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
 		log.Error(err,
 			"arpc session is nil")
 
-		return types.AgentFileInfo{}, syscall.ENOENT
+		return fswire.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	cacheKey := fs.GetCacheKey(attrPrefix, filename)
@@ -227,7 +228,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 
-	req := types.StatReq{Path: filename}
+	req := fswire.StatReq{Path: filename}
 
 	var raw []byte
 	cached, err := fs.Memcache.Get(cacheKey)
@@ -245,7 +246,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 
 		raw, err = pipe.CallData(ctxN, "Attr", &req)
 		if err != nil {
-			return types.AgentFileInfo{}, fmt.Errorf("stat: %w", err)
+			return fswire.AgentFileInfo{}, fmt.Errorf("stat: %w", err)
 		}
 		if isLookup {
 			if mcErr := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); mcErr != nil {
@@ -259,7 +260,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 
 	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
-		return types.AgentFileInfo{}, fmt.Errorf("stat decode: %w", err)
+		return fswire.AgentFileInfo{}, fmt.Errorf("stat decode: %w", err)
 	}
 
 	if !isLookup {
@@ -277,7 +278,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (typ
 	return fi, nil
 }
 
-func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (fswire.AgentFileInfo, error) {
 	log.Debug("listXattr called",
 
 		"backupID", fs.Backup.ID, "path", filename)
@@ -287,7 +288,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 
 			"backupID", fs.Backup.ID, "path", filename)
 
-		return types.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
@@ -295,17 +296,17 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 
 	cacheKey := fs.GetCacheKey(xattrPrefix, filename)
 
-	var fi types.AgentFileInfo
+	var fi fswire.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
 		log.Error(err,
 			"arpc session is nil")
 
-		return types.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
-	var fiCached types.AgentFileInfo
-	req := types.StatReq{Path: filename}
+	var fiCached fswire.AgentFileInfo
+	req := fswire.StatReq{Path: filename}
 
 	rawCached, err := fs.Memcache.Get(cacheKey)
 	if err == nil {
@@ -322,13 +323,13 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	raw, err := pipe.CallData(ctxN, "Xattr", &req)
 	if err != nil {
 		fs.logOnce(req.Path, err, "Xattr")
-		return types.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
 		fs.logOnce(req.Path, err, "Xattr")
-		return types.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	if req.AclOnly {
@@ -344,7 +345,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 
 	xattrBytes, err := cbor.Marshal(fi)
 	if err != nil {
-		return types.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	if err := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: xattrBytes, Expiration: 5}); err != nil {
@@ -354,7 +355,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (types.AgentFi
 	return fi, nil
 }
 
-func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (types.AgentFileInfo, error) {
+func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (fswire.AgentFileInfo, error) {
 	log.Debug("xattr called",
 
 		"backupID", fs.Backup.ID, "attr", attr, "path", filename)
@@ -364,12 +365,12 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (type
 
 			"backupID", fs.Backup.ID, "path", filename)
 
-		return types.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
 	cacheKey := fs.GetCacheKey(xattrPrefix, filename)
 
-	var fiCached types.AgentFileInfo
+	var fiCached fswire.AgentFileInfo
 	rawCached, err := fs.Memcache.Get(cacheKey)
 	if err != nil {
 		return fs.ListXattr(ctx, filename)
@@ -378,13 +379,13 @@ func (fs *ARPCFS) Xattr(ctx context.Context, filename string, attr string) (type
 	err = cbor.Unmarshal(rawCached.Value, &fiCached)
 	if err != nil {
 		fs.logOnce(filename, err, "Xattr")
-		return types.AgentFileInfo{}, syscall.ENODATA
+		return fswire.AgentFileInfo{}, syscall.ENODATA
 	}
 
 	return fiCached, nil
 }
 
-func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
+func (fs *ARPCFS) StatFS(ctx context.Context) (fswire.StatFS, error) {
 	log.Debug("statFS called",
 		"backupID", fs.Backup.ID)
 
@@ -396,15 +397,15 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 		log.Error(err,
 			"arpc session is nil")
 
-		return types.StatFS{}, syscall.ENOENT
+		return fswire.StatFS{}, syscall.ENOENT
 	}
 
-	var fsStat types.StatFS
+	var fsStat fswire.StatFS
 	raw, err := pipe.CallData(ctxN, "StatFS", nil)
 	if err != nil {
 		log.Error(err, "")
 
-		return types.StatFS{}, syscall.ENOENT
+		return fswire.StatFS{}, syscall.ENOENT
 	}
 
 	err = cbor.Unmarshal(raw, &fsStat)
@@ -412,7 +413,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (types.StatFS, error) {
 		log.Error(err,
 			"failed to handle statfs decode")
 
-		return types.StatFS{}, syscall.ENOENT
+		return fswire.StatFS{}, syscall.ENOENT
 	}
 	log.Debug("statFS completed",
 		"backupID", fs.Backup.ID)
@@ -438,8 +439,8 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 		return DirStream{}, syscall.ENOENT
 	}
 
-	var handleId types.FileHandleID
-	openReq := types.OpenFileReq{Path: path}
+	var handleId fswire.FileHandleID
+	openReq := fswire.OpenFileReq{Path: path}
 	raw, err := pipe.CallData(ctxN, "OpenFile", &openReq)
 	if err != nil {
 		return DirStream{}, fmt.Errorf("readdir open: %w", err)
@@ -472,7 +473,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 		fs:       fs,
 		path:     path,
 		handleId: handleId,
-		lastResp: types.ReadDirEntries{},
+		lastResp: fswire.ReadDirEntries{},
 		cborDec:  defaultDec,
 	}, nil
 }
@@ -512,4 +513,14 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 	log.Debug("context canceled",
 		"backupID", fs.Backup.ID)
 
+}
+
+type ARPCFS struct {
+	*vfs.VFSBase
+
+	agentManager *arpc.AgentsManager
+	sessionId    string
+	Hostname     string
+	backupMode   string
+	loggedPaths  sync.Map
 }

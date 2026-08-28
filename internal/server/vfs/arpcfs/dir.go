@@ -16,7 +16,7 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -63,7 +63,7 @@ func (s *DirStream) HasNext() bool {
 
 		"handleId", s.handleId, "path", s.path)
 
-	req := types.ReadDirReq{HandleID: s.handleId}
+	req := fswire.ReadDirReq{HandleID: s.handleId}
 	readBuf := bufPool.Get().([]byte)
 	defer bufPool.Put(readBuf)
 
@@ -203,7 +203,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	attrKey := s.fs.GetCacheKey(attrPrefix, fullPath)
 	xattrKey := s.fs.GetCacheKey(xattrPrefix, fullPath)
 
-	currAttr := types.AgentFileInfo{
+	currAttr := fswire.AgentFileInfo{
 		Name:    curr.Name,
 		Size:    curr.Size,
 		Mode:    curr.Mode,
@@ -234,7 +234,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 
 	}
 
-	currXAttr := types.AgentFileInfo{
+	currXAttr := fswire.AgentFileInfo{
 		CreationTime:   curr.CreationTime,
 		LastAccessTime: curr.LastAccessTime,
 		LastWriteTime:  curr.LastWriteTime,
@@ -286,7 +286,7 @@ func (s *DirStream) Close() {
 	ctxN, cancelN := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancelN()
 
-	closeReq := types.CloseReq{HandleID: s.handleId}
+	closeReq := fswire.CloseReq{HandleID: s.handleId}
 	pipe, err := s.fs.getPipe(s.fs.Ctx)
 	if err != nil {
 		log.Error(err,
@@ -308,4 +308,17 @@ func (s *DirStream) Close() {
 			"totalEntriesReturned", atomic.LoadUint64(&s.totalReturned), "handleId", s.handleId, "path", s.path)
 
 	}
+}
+
+type DirStream struct {
+	fs            *ARPCFS
+	path          string
+	handleId      fswire.FileHandleID
+	closed        int32
+	maxedOut      int32
+	mu            sync.Mutex
+	lastResp      fswire.ReadDirEntries
+	curIdx        uint64
+	totalReturned uint64
+	cborDec       cbor.DecMode
 }

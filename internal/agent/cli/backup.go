@@ -46,7 +46,7 @@ type backupSession struct {
 	cancel   context.CancelFunc
 	store    *agent.BackupStore
 	snapshot snapshots.Snapshot
-	fs       *agentfs.AgentFSServer
+	fs       *agentfs.Server
 	once     sync.Once
 }
 
@@ -196,7 +196,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 				currentReadMode = backupMode
 			}
 
-			fs := agentfs.NewAgentFSServer(*backupID, currentReadMode, *currentSnap)
+			fs := agentfs.NewServer(*backupID, currentReadMode, *currentSnap)
 			router := session.GetRouter()
 			if router == nil {
 				session.SetRouter(arpc.NewRouter())

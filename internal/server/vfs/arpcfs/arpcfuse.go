@@ -15,7 +15,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 )
@@ -290,7 +290,7 @@ func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (ui
 		}
 	case pxar.XAttrACLs:
 		if fi.PosixACLs == nil {
-			fi.PosixACLs = make([]types.PosixACL, 0)
+			fi.PosixACLs = make([]fswire.PosixACL, 0)
 		}
 
 		data, err = json.Marshal(fi.PosixACLs)
@@ -331,7 +331,7 @@ func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscal
 	}
 
 	if fi.PosixACLs == nil {
-		fi.PosixACLs = make([]types.PosixACL, 0)
+		fi.PosixACLs = make([]fswire.PosixACL, 0)
 	}
 
 	if fi.PosixACLs != nil || fi.WinACLs != nil {

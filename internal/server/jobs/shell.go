@@ -5,10 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func RunShellScript(

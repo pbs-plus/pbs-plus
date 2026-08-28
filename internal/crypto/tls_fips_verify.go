@@ -5,7 +5,6 @@ import (
 	"fmt"
 )
 
-
 func VerifyCertSignatureFIPS(cert *x509.Certificate) error {
 	switch cert.SignatureAlgorithm {
 	case x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA,

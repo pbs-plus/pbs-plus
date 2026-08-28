@@ -33,6 +33,30 @@ type VerifyStartReq struct {
 	VerifyID string `cbor:"verify_id"`
 }
 
+// VerifyChunkFileHandler is the ARPC handler that runs on the agent.
+// It computes a whole-file SHA-256 hash and returns it to the server.
+func VerifyChunkFileHandler(req *arpc.Request) (arpc.Response, error) {
+	var reqData VerifyFileReq
+	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
+		return arpc.Response{}, err
+	}
+
+	digest, size, err := HashFile(reqData.FilePath)
+	resp := VerifyFileResp{}
+	if err != nil {
+		resp.Error = err.Error()
+	} else {
+		resp.SHA256 = digest
+		resp.Size = size
+	}
+
+	encoded, err := cbor.Marshal(resp)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	return arpc.Response{Status: 200, Data: encoded}, nil
+}
 func HashFile(filePath string) ([32]byte, int64, error) {
 	// Fast existence check  -  avoids opening a file handle on a
 	info, err := os.Stat(filePath)
@@ -65,29 +89,4 @@ func HashFile(filePath string) ([32]byte, int64, error) {
 	copy(digest[:], h.Sum(nil))
 
 	return digest, size, nil
-}
-
-// VerifyChunkFileHandler is the ARPC handler that runs on the agent.
-// It computes a whole-file SHA-256 hash and returns it to the server.
-func VerifyChunkFileHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData VerifyFileReq
-	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
-		return arpc.Response{}, err
-	}
-
-	digest, size, err := HashFile(reqData.FilePath)
-	resp := VerifyFileResp{}
-	if err != nil {
-		resp.Error = err.Error()
-	} else {
-		resp.SHA256 = digest
-		resp.Size = size
-	}
-
-	encoded, err := cbor.Marshal(resp)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	return arpc.Response{Status: 200, Data: encoded}, nil
 }

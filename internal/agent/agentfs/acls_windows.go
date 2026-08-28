@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"golang.org/x/sys/windows"
 )
 
@@ -29,7 +29,7 @@ type aclHeader struct {
 	Sbz2        uint16
 }
 
-func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []types.WinACL, err error) {
+func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []fswire.WinACL, err error) {
 	if h == windows.InvalidHandle || h == 0 {
 		return "", "", nil, fmt.Errorf("invalid handle")
 	}
@@ -60,34 +60,34 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 	pDacl, _, err := sd.DACL()
 	if err != nil {
 		if errors.Is(err, windows.ERROR_OBJECT_NOT_FOUND) {
-			return owner, group, []types.WinACL{}, nil
+			return owner, group, []fswire.WinACL{}, nil
 		}
 		return owner, group, nil, fmt.Errorf("SECURITY_DESCRIPTOR.DACL: %w", err)
 	}
 	if pDacl == nil {
 		// NULL DACL => no explicit entries
-		return owner, group, []types.WinACL{}, nil
+		return owner, group, []fswire.WinACL{}, nil
 	}
 
 	if !isValidACL(pDacl) {
-		return owner, group, []types.WinACL{}, fmt.Errorf("ACL structure validation failed")
+		return owner, group, []fswire.WinACL{}, fmt.Errorf("ACL structure validation failed")
 	}
 
 	entriesPtr, entriesCount, err := GetExplicitEntriesFromACL(pDacl)
 	if err != nil {
-		return owner, group, []types.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL: %w", err)
+		return owner, group, []fswire.WinACL{}, fmt.Errorf("GetExplicitEntriesFromACL: %w", err)
 	}
 	if entriesPtr == 0 || entriesCount == 0 {
-		return owner, group, []types.WinACL{}, nil
+		return owner, group, []fswire.WinACL{}, nil
 	}
 	defer FreeExplicitEntries(entriesPtr)
 
 	entries, err := safeEntriesToSlice(entriesPtr, entriesCount)
 	if err != nil {
-		return owner, group, []types.WinACL{}, fmt.Errorf("failed to parse ACL entries: %w", err)
+		return owner, group, []fswire.WinACL{}, fmt.Errorf("failed to parse ACL entries: %w", err)
 	}
 
-	result := make([]types.WinACL, 0, len(entries))
+	result := make([]fswire.WinACL, 0, len(entries))
 	for i := range entries {
 		e := &entries[i]
 
@@ -119,7 +119,7 @@ func GetWinACLsHandle(h windows.Handle) (owner string, group string, acls []type
 			continue
 		}
 
-		result = append(result, types.WinACL{
+		result = append(result, fswire.WinACL{
 			SID:        sidStr,
 			AccessMask: uint32(e.AccessPermissions),
 			Type:       uint8(e.AccessMode),

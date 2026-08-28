@@ -20,7 +20,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent"
 	"github.com/pbs-plus/pbs-plus/internal/agent/registry"
-	agentverification "github.com/pbs-plus/pbs-plus/internal/agent/verification"
+	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
@@ -28,6 +28,97 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
+func cmdVerify(verifyID *string) {
+	if *verifyID == "" {
+		fmt.Fprintln(os.Stderr, "Error: verifyID is required")
+		os.Exit(1)
+	}
+
+	if err := validate.ValidateJobId(*verifyID); err != nil {
+		os.Exit(1)
+	}
+
+	log.L = log.WithScope(log.Scope{VerifyID: *verifyID})
+
+	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
+	if err != nil {
+		log.Error(err, "verify: failed to get server URL")
+		os.Exit(1)
+	}
+	uri, err := agent.ParseURI(serverUrl.Value)
+	if err != nil {
+		log.Error(err, "verify: failed to parse URI")
+		os.Exit(1)
+	}
+	tlsConfig, err := agent.GetTLSConfig()
+	if err != nil {
+		log.Error(err, "verify: failed to get TLS config")
+		os.Exit(1)
+	}
+
+	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), conf.ARPCServerPort)
+	headers := http.Header{}
+	headers.Add("X-PBS-Plus-VerifyID", *verifyID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
+	winquit.SimulateSigTermOnQuit(done)
+
+	var wg sync.WaitGroup
+
+	wg.Go(func() {
+		defer log.Info("verify: arpc session handler shutting down")
+		log.Info("verify: attempting connection")
+
+		session, err := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
+		if err != nil {
+			if strings.Contains(err.Error(), "(code 403)") {
+				log.Error(err, "verify: authorization failed, shutting down")
+			} else {
+				log.Error(err, "verify: connection failed")
+			}
+			cancel()
+			return
+		}
+		defer session.Close()
+
+		router := arpc.NewRouter()
+		router.Handle("verify_chunk_file", verification.VerifyChunkFileHandler)
+		session.SetRouter(router)
+		log.Info("verify: session ready, serving")
+		if err := session.Serve(); err != nil {
+			log.Warn("verify: ARPC session ended", "error", err.Error())
+		}
+	})
+
+	go func() {
+		sig := <-done
+		log.Info(fmt.Sprintf("verify: received signal %v", sig))
+		cancel()
+	}()
+
+	wg.Wait()
+	log.Info("verify: finished")
+	os.Exit(0)
+}
+
+// VerifyStartHandler is the ARPC handler that forks a verification worker
+func VerifyStartHandler(req *arpc.Request) (arpc.Response, error) {
+	var reqData verification.VerifyStartReq
+	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
+		return arpc.Response{}, err
+	}
+
+	pid, err := ExecVerification(reqData.VerifyID)
+	if err != nil {
+		return arpc.Response{}, err
+	}
+
+	return arpc.Response{Status: 200, Message: fmt.Sprintf("%d", pid)}, nil
+}
 func ExecVerification(verifyID string) (int, error) {
 	log.Info("verify: exec begin")
 	if err := validate.ValidateJobId(verifyID); err != nil {
@@ -98,96 +189,4 @@ func ExecVerification(verifyID string) (int, error) {
 	log.Info("verify: returning to parent", "pid", cmd.Process.Pid)
 
 	return cmd.Process.Pid, nil
-}
-
-func cmdVerify(verifyID *string) {
-	if *verifyID == "" {
-		fmt.Fprintln(os.Stderr, "Error: verifyID is required")
-		os.Exit(1)
-	}
-
-	if err := validate.ValidateJobId(*verifyID); err != nil {
-		os.Exit(1)
-	}
-
-	log.L = log.WithScope(log.Scope{VerifyID: *verifyID})
-
-	serverUrl, err := registry.GetEntry(registry.CONFIG, "ServerURL", false)
-	if err != nil {
-		log.Error(err, "verify: failed to get server URL")
-		os.Exit(1)
-	}
-	uri, err := agent.ParseURI(serverUrl.Value)
-	if err != nil {
-		log.Error(err, "verify: failed to parse URI")
-		os.Exit(1)
-	}
-	tlsConfig, err := agent.GetTLSConfig()
-	if err != nil {
-		log.Error(err, "verify: failed to get TLS config")
-		os.Exit(1)
-	}
-
-	address := fmt.Sprintf("%s%s", strings.TrimSuffix(uri.Hostname(), ":"), conf.ARPCServerPort)
-	headers := http.Header{}
-	headers.Add("X-PBS-Plus-VerifyID", *verifyID)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, syscall.SIGINT, syscall.SIGTERM)
-	winquit.SimulateSigTermOnQuit(done)
-
-	var wg sync.WaitGroup
-
-	wg.Go(func() {
-		defer log.Info("verify: arpc session handler shutting down")
-		log.Info("verify: attempting connection")
-
-		session, err := arpc.ConnectToServer(ctx, address, headers, tlsConfig)
-		if err != nil {
-			if strings.Contains(err.Error(), "(code 403)") {
-				log.Error(err, "verify: authorization failed, shutting down")
-			} else {
-				log.Error(err, "verify: connection failed")
-			}
-			cancel()
-			return
-		}
-		defer session.Close()
-
-		router := arpc.NewRouter()
-		router.Handle("verify_chunk_file", agentverification.VerifyChunkFileHandler)
-		session.SetRouter(router)
-		log.Info("verify: session ready, serving")
-		if err := session.Serve(); err != nil {
-			log.Warn("verify: ARPC session ended", "error", err.Error())
-		}
-	})
-
-	go func() {
-		sig := <-done
-		log.Info(fmt.Sprintf("verify: received signal %v", sig))
-		cancel()
-	}()
-
-	wg.Wait()
-	log.Info("verify: finished")
-	os.Exit(0)
-}
-
-// VerifyStartHandler is the ARPC handler that forks a verification worker
-func VerifyStartHandler(req *arpc.Request) (arpc.Response, error) {
-	var reqData agentverification.VerifyStartReq
-	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
-		return arpc.Response{}, err
-	}
-
-	pid, err := ExecVerification(reqData.VerifyID)
-	if err != nil {
-		return arpc.Response{}, err
-	}
-
-	return arpc.Response{Status: 200, Message: fmt.Sprintf("%d", pid)}, nil
 }

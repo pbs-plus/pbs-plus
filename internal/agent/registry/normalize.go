@@ -58,7 +58,6 @@ func unwrapBase64Layers(val string, key string) (string, error) {
 
 	return val, fmt.Errorf("unwrapBase64Layers: exhausted base64 decode attempts, value is not PEM or DER")
 }
-
 func pemEncodeDER(der []byte, key string) string {
 	var blockType string
 	switch strings.ToLower(key) {

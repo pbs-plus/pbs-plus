@@ -3,9 +3,10 @@
 package arpcfs
 
 import (
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"os"
 	"os/exec"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 func MountARPC(f *ARPCFS, mountpoint string) error {

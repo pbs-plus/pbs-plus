@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 )
 
 func formatBytes(b int64) string {
-	return types.HumanizeBytes(uint64(b))
+	return fswire.HumanizeBytes(uint64(b))
 }
 
 func formatDuration(d time.Duration) string {
@@ -28,5 +28,5 @@ func formatDuration(d time.Duration) string {
 }
 
 func formatSpeed(bytesPerSec float64) string {
-	return fmt.Sprintf("%s/s", types.HumanizeBytes(uint64(bytesPerSec)))
+	return fmt.Sprintf("%s/s", fswire.HumanizeBytes(uint64(bytesPerSec)))
 }

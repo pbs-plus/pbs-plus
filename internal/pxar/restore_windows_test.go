@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	pxar "github.com/pbs-plus/pxar"
 	"golang.org/x/sys/windows"
 )
@@ -127,7 +127,7 @@ func TestBuildDACLFromACEsNilSlice(t *testing.T) {
 
 // TestBuildDACLFromACEsEmptySlice verifies empty slice returns cleanly.
 func TestBuildDACLFromACEsEmptySlice(t *testing.T) {
-	acl, sids, err := buildDACLFromACEs([]types.WinACL{})
+	acl, sids, err := buildDACLFromACEs([]fswire.WinACL{})
 	if acl != nil || sids != nil || err != nil {
 		t.Fatalf("empty slice: got acl=%v sids=%d err=%v, want nil,nil,nil", acl, len(sids), err)
 	}
@@ -136,7 +136,7 @@ func TestBuildDACLFromACEsEmptySlice(t *testing.T) {
 // TestBuildDACLFromACEsAllInvalidSIDs verifies that when every ACE carries
 // a non-parsable SID, the function returns nil ACL with no error.
 func TestBuildDACLFromACEsAllInvalidSIDs(t *testing.T) {
-	entries := []types.WinACL{
+	entries := []fswire.WinACL{
 		{SID: "", AccessMask: 0x1F01FF, Type: windows.GRANT_ACCESS},
 		{SID: "not-a-sid", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},
 		{SID: "S-1-5-", AccessMask: 0x100000, Type: windows.DENY_ACCESS},
@@ -154,7 +154,7 @@ func TestBuildDACLFromACEsAllInvalidSIDs(t *testing.T) {
 // at least one valid SID exists). SetEntriesInAclW integration is tested
 // on CI (windows-2025); this test exercises only the parsing/filtering path.
 func TestBuildDACLFromACEsMixedSIDs(t *testing.T) {
-	entries := []types.WinACL{
+	entries := []fswire.WinACL{
 		{SID: "bogus-sid", AccessMask: 0x100000, Type: windows.GRANT_ACCESS}, // invalid, skipped
 		{SID: "S-1-5-", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS},    // malformed, skipped
 		{SID: "", AccessMask: 0, Type: windows.DENY_ACCESS},                  // empty, skipped
@@ -170,7 +170,7 @@ func TestBuildDACLFromACEsMixedSIDs(t *testing.T) {
 // unparsable SIDs are skipped without leaking. SetEntriesInAclW integration
 // is tested on CI (windows-2025).
 func TestBuildDACLFromACEsAccessDeniedACE(t *testing.T) {
-	entries := []types.WinACL{
+	entries := []fswire.WinACL{
 		{SID: "not-admin", AccessMask: 0x1F01FF, Type: windows.GRANT_ACCESS},
 		{SID: "not-everyone", AccessMask: 0x100000, Type: windows.DENY_ACCESS},
 	}
@@ -185,7 +185,7 @@ func TestBuildDACLFromACEsAccessDeniedACE(t *testing.T) {
 // (0xFFFFFFFF, 0) on entries with unparsable SIDs are handled without panic.
 // SetEntriesInAclW integration is tested on CI (windows-2025).
 func TestBuildDACLFromACEsLargeAccessMask(t *testing.T) {
-	entries := []types.WinACL{
+	entries := []fswire.WinACL{
 		{SID: "bad-1", AccessMask: 0xFFFFFFFF, Type: windows.GRANT_ACCESS},
 		{SID: "bad-2", AccessMask: 0, Type: windows.GRANT_ACCESS},
 	}
@@ -916,7 +916,7 @@ func TestApplyMetaFullMetadata(t *testing.T) {
 	f.Close()
 
 	// Build a valid Windows ACL payload.
-	winACLs, err := cbor.Marshal([]types.WinACL{
+	winACLs, err := cbor.Marshal([]fswire.WinACL{
 		{SID: "S-1-1-0", AccessMask: 0x1200A9, Type: windows.GRANT_ACCESS}, // Everyone
 	})
 	if err != nil {

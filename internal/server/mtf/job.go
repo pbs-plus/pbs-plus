@@ -11,11 +11,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tape"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/token"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	mtfdb "github.com/pbs-plus/pbs-plus/internal/server/mtf/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
 	"github.com/pbs-plus/pbs-plus/internal/tapeio"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -34,7 +34,7 @@ type mtfJob struct {
 	cancel context.CancelFunc
 
 	job         mtfdb.MTFJob
-	store       *store.Store
+	store       *application.Runtime
 	mapper      *mtfdb.Mapper
 	task        *Task
 	logger      *log.Logger
@@ -43,20 +43,20 @@ type mtfJob struct {
 }
 
 // newMigrationJob loads the MTF job definition for a workflow run.
-func newMigrationJob(jobID string, st *store.Store) (*mtfJob, error) {
-	ctx := st.Ctx
+func newMigrationJob(jobID string, app *application.Runtime) (*mtfJob, error) {
+	ctx := app.Ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	jobRec, err := st.MtfStore.GetMtfJob(ctx, jobID)
+	jobRec, err := app.MtfDB.GetMtfJob(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
 
 	return &mtfJob{
 		job:    jobRec,
-		store:  st,
-		mapper: st.MtfMapper,
+		store:  app,
+		mapper: app.MtfMapper,
 		logger: log.WithScope(log.Scope{JobID: jobRec.ID}),
 	}, nil
 }
@@ -87,7 +87,7 @@ func (j *mtfJob) execute(ctx context.Context) error {
 	}
 
 	j.logger.Info("mtf job started", "job_id", j.job.ID, "source", j.job.SourceLabel, "datastore", j.job.Datastore, "upid", task.UPID())
-	if err := j.persistHistory(task.Task, database.JobStatusUnknown, true); err != nil {
+	if err := j.persistHistory(task.Task, coredb.JobStatusUnknown, true); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history (started)")
 	}
 
@@ -217,7 +217,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 
 	switch job.SourceKind {
 	case "cartridge":
-		cart, err := j.store.MtfStore.GetCartridge(ctx, job.SourceRef)
+		cart, err := j.store.MtfDB.GetCartridge(ctx, job.SourceRef)
 		if err != nil {
 			return cfg, fmt.Errorf("get cartridge: %w", err)
 		}
@@ -236,7 +236,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 		}
 	case "family":
 		famID := mtfdb.ToInt64(job.SourceRef)
-		carts, err := j.store.MtfStore.ListCartridgesByFamily(ctx, famID)
+		carts, err := j.store.MtfDB.ListCartridgesByFamily(ctx, famID)
 		if err != nil {
 			return cfg, fmt.Errorf("list cartridges: %w", err)
 		}
@@ -267,7 +267,7 @@ func (j *mtfJob) buildConfig(ctx context.Context) (tapeio.Config, error) {
 			cfg.DriveIndex = idx
 		}
 	case "dataset":
-		ds, err := j.store.MtfStore.GetDataSet(ctx, mtfdb.ToInt64(job.SourceRef))
+		ds, err := j.store.MtfDB.GetDataSet(ctx, mtfdb.ToInt64(job.SourceRef))
 		if err != nil {
 			return cfg, fmt.Errorf("get data set: %w", err)
 		}
@@ -329,10 +329,10 @@ func (j *mtfJob) finalizeSuccess() {
 	if start == 0 {
 		start = end
 	}
-	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
+	if err := j.store.MtfDB.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:           task.UPID(),
-			LastRunStatus:         database.JobStatusSuccess,
+			LastRunStatus:         coredb.JobStatusSuccess,
 			LastRunStarttime:      start,
 			LastRunEndtime:        end,
 			Duration:              end - start,
@@ -358,8 +358,8 @@ func (j *mtfJob) finalizeFailure(runErr error) {
 			if start == 0 {
 				start = end
 			}
-			if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
-				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: database.JobStatusCanceled, LastRunStarttime: start, LastRunEndtime: end, Duration: end - start}, ""); err != nil {
+			if err := j.store.MtfDB.UpdateMtfJobHistory(context.Background(), job.ID,
+				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: coredb.JobStatusCanceled, LastRunStarttime: start, LastRunEndtime: end, Duration: end - start}, ""); err != nil {
 				j.logger.Error(err, "failed to update MTF job history on cancellation")
 			}
 		}
@@ -374,10 +374,10 @@ func (j *mtfJob) finalizeFailure(runErr error) {
 	if start == 0 {
 		start = end
 	}
-	if err := j.store.MtfStore.UpdateMtfJobHistory(context.Background(), job.ID,
+	if err := j.store.MtfDB.UpdateMtfJobHistory(context.Background(), job.ID,
 		mtfdb.JobHistory{
 			LastRunUpid:      task.UPID(),
-			LastRunStatus:    database.JobStatusFailed,
+			LastRunStatus:    coredb.JobStatusFailed,
 			LastRunStarttime: start,
 			LastRunEndtime:   end,
 			Duration:         end - start,
@@ -411,7 +411,7 @@ func (j *mtfJob) notify(err error) {
 	)
 }
 
-func (j *mtfJob) persistHistory(task proxmox.Task, status database.JobStatus, running bool) error {
+func (j *mtfJob) persistHistory(task proxmox.Task, status coredb.JobStatus, running bool) error {
 	start := task.StartTime
 	if start == 0 {
 		start = time.Now().Unix()
@@ -424,7 +424,7 @@ func (j *mtfJob) persistHistory(task proxmox.Task, status database.JobStatus, ru
 	if !running {
 		h.LastRunEndtime = time.Now().Unix()
 	}
-	return j.store.MtfStore.UpdateMtfJobHistory(context.Background(), j.job.ID, h, "")
+	return j.store.MtfDB.UpdateMtfJobHistory(context.Background(), j.job.ID, h, "")
 }
 
 func (j *mtfJob) cleanup() {

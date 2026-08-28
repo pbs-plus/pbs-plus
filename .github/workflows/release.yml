@@ -274,7 +274,7 @@ jobs:
             go build \
             -ldflags "-X 'main.Version=$TAG'" \
             -o dist-bins/pbs-plus \
-            ./cmd/pbs_plus
+            ./cmd/pbs-plus
           echo "Server binary size: $(stat -c%s dist-bins/pbs-plus) bytes"
 
       - name: Download bkf2pxar from release

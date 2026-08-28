@@ -117,13 +117,6 @@ func unixNanoFromWin(wt int64) int64 {
 	}).UnixNano()
 }
 
-func unixFromWin(wt int64) int64 {
-	return filetimeToUnix(windows.Filetime{
-		LowDateTime:  uint32(uint64(wt) & 0xFFFFFFFF),
-		HighDateTime: uint32(uint64(wt) >> 32),
-	})
-}
-
 func boolToInt(b bool) uint32 {
 	if b {
 		return 1

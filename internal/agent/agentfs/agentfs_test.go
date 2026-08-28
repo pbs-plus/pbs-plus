@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	mathRand "math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -24,7 +23,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/types"
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/agent/snapshots"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/stretchr/testify/assert"
@@ -191,26 +190,6 @@ func newTestClientTLS(t *testing.T) *tls.Config {
 	}
 }
 
-type latencyConn struct {
-	net.Conn
-	delay time.Duration
-}
-
-func (l *latencyConn) randomDelay() {
-	jitter := time.Duration(mathRand.Int63n(int64(l.delay)))
-	time.Sleep(l.delay + jitter)
-}
-
-func (l *latencyConn) Read(b []byte) (n int, err error) {
-	l.randomDelay()
-	return l.Conn.Read(b)
-}
-
-func (l *latencyConn) Write(b []byte) (n int, err error) {
-	l.randomDelay()
-	return l.Conn.Write(b)
-}
-
 func createLargeTestFile(t *testing.T, path string, size int) {
 	t.Helper()
 
@@ -272,7 +251,7 @@ func createSparseFileWithFsutil(filePath string) error {
 	return nil
 }
 
-func dumpHandleMap(server *AgentFSServer) string {
+func dumpHandleMap(server *Server) string {
 	if server == nil || server.handles == nil {
 		return "Server or handles map is nil"
 	}
@@ -319,7 +298,7 @@ func TestAgentFSServer(t *testing.T) {
 	defer cancel()
 
 	serverRouter := arpc.NewRouter()
-	agentFsServer := NewAgentFSServer("agentFs", "standard", snapshots.Snapshot{Path: testDir, SourcePath: ""})
+	agentFsServer := NewServer("agentFs", "standard", snapshots.Snapshot{Path: testDir, SourcePath: ""})
 	agentFsServer.RegisterHandlers(&serverRouter)
 
 	addr, shutdownServer, _ := newTestARPCServer(t, serverRouter)
@@ -331,8 +310,8 @@ func TestAgentFSServer(t *testing.T) {
 	defer clientPipe.Close()
 
 	t.Run("Stat", func(t *testing.T) {
-		payload := types.StatReq{Path: "test1.txt"}
-		var result types.AgentFileInfo
+		payload := fswire.StatReq{Path: "test1.txt"}
+		var result fswire.AgentFileInfo
 		err := clientPipe.Call(ctx, "Attr", &payload, &result)
 		assert.NoError(t, err)
 		t.Logf("Result: %v", result)
@@ -345,8 +324,8 @@ func TestAgentFSServer(t *testing.T) {
 		err := os.WriteFile(testFilePath, []byte("test content for xattr"), 0644)
 		require.NoError(t, err, "Failed to create test file for xattr")
 
-		payload := types.StatReq{Path: "xattr_test_file.txt"}
-		var result types.AgentFileInfo
+		payload := fswire.StatReq{Path: "xattr_test_file.txt"}
+		var result fswire.AgentFileInfo
 		err = clientPipe.Call(ctx, "Xattr", &payload, &result)
 		require.NoError(t, err, "Failed to call xattr handler")
 
@@ -370,13 +349,13 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("ReadDir", func(t *testing.T) {
-		openPayload := types.OpenFileReq{Path: "/"}
-		var openResult types.FileHandleID
+		openPayload := fswire.OpenFileReq{Path: "/"}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &openPayload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
-		payload := types.ReadDirReq{HandleID: openResult}
-		var result types.ReadDirEntries
+		payload := fswire.ReadDirReq{HandleID: openResult}
+		var result fswire.ReadDirEntries
 
 		n := 0
 		buf := make([]byte, 64*1024)
@@ -411,7 +390,7 @@ func TestAgentFSServer(t *testing.T) {
 		assert.True(t, foundTest1, "test1.txt should be found in directory listing")
 		assert.True(t, foundSubdir, "subdir should be found in directory listing")
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		if err != nil {
 			t.Logf("Close error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
@@ -421,12 +400,12 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("OpenFile_ReadAt_Close", func(t *testing.T) {
-		payload := types.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
-		readAtPayload := types.ReadAtReq{
+		readAtPayload := fswire.ReadAtReq{
 			HandleID: openResult,
 			Offset:   10,
 			Length:   25,
@@ -450,7 +429,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		assert.Equal(t, "2 content with more data", readAtBytes.String())
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		assert.NoError(t, err)
 	})
@@ -458,14 +437,14 @@ func TestAgentFSServer(t *testing.T) {
 	t.Run("MultipleFiles_HandleManagement", func(t *testing.T) {
 		t.Log("Initial handle map:", dumpHandleMap(agentFsServer))
 
-		handles := make([]types.FileHandleID, 0, 5)
+		handles := make([]fswire.FileHandleID, 0, 5)
 
 		files := []string{"test1.txt", "test2.txt", "large_file.bin", "medium_file.bin", "subdir/subfile.txt"}
 		for i, fileName := range files {
 			t.Logf("Opening file %d: %s", i, fileName)
 
-			payload := types.OpenFileReq{Path: fileName, Flag: 0, Perm: 0644}
-			var openResult types.FileHandleID
+			payload := fswire.OpenFileReq{Path: fileName, Flag: 0, Perm: 0644}
+			var openResult fswire.FileHandleID
 			err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 			require.NoError(t, err, "OpenFile should succeed for %s", fileName)
 
@@ -479,7 +458,7 @@ func TestAgentFSServer(t *testing.T) {
 			t.Logf("Reading from file %d with handle: %d", i, uint64(handle))
 
 			readSize := 10
-			readAtPayload := types.ReadAtReq{
+			readAtPayload := fswire.ReadAtReq{
 				HandleID: handle,
 				Offset:   0,
 				Length:   readSize,
@@ -501,7 +480,7 @@ func TestAgentFSServer(t *testing.T) {
 		for i, handle := range handles {
 			t.Logf("Closing file %d with handle: %d", i, uint64(handle))
 
-			closePayload := types.CloseReq{HandleID: handle}
+			closePayload := fswire.CloseReq{HandleID: handle}
 
 			t.Log("Before Close:", dumpHandleMap(agentFsServer))
 			err = clientPipe.Call(ctx, "Close", &closePayload, nil)
@@ -516,13 +495,13 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("LargeFile_Read", func(t *testing.T) {
-		payload := types.OpenFileReq{Path: "large_file.bin", Flag: 0, Perm: 0644}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "large_file.bin", Flag: 0, Perm: 0644}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 		assert.NoError(t, err)
 
 		readSize := 256 * 1024
-		readAtPayload := types.ReadAtReq{
+		readAtPayload := fswire.ReadAtReq{
 			HandleID: openResult,
 			Offset:   1024,
 			Length:   readSize,
@@ -557,7 +536,7 @@ func TestAgentFSServer(t *testing.T) {
 
 		assert.Equal(t, compareBuffer, receivedLargeFileBytes.Bytes()[:1024], "First 1KB of read data should match original file")
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		if err != nil {
 			t.Logf("Large file Close error: %v - Current handle map: %s", err, dumpHandleMap(agentFsServer))
@@ -567,7 +546,7 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("InvalidHandle_Operations", func(t *testing.T) {
-		readAtPayload := types.ReadAtReq{
+		readAtPayload := fswire.ReadAtReq{
 			HandleID: 33123,
 			Offset:   0,
 			Length:   100,
@@ -577,7 +556,7 @@ func TestAgentFSServer(t *testing.T) {
 		err := clientPipe.Call(ctx, "ReadAt", &readAtPayload, arpc.RawStreamHandler(func(st arpc.ARPCStream) error { st.Close(); return nil }))
 		assert.Error(t, err, "ReadAt with invalid handle should return an error")
 
-		closePayload := types.CloseReq{HandleID: 33123}
+		closePayload := fswire.CloseReq{HandleID: 33123}
 
 		t.Log("Current handle map before invalid Close:", dumpHandleMap(agentFsServer))
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
@@ -585,15 +564,15 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("DoubleClose", func(t *testing.T) {
-		payload := types.OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 		require.NoError(t, err)
 
 		t.Logf("File opened with handle ID: %d", uint64(openResult))
 		t.Log(dumpHandleMap(agentFsServer))
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		assert.NoError(t, err)
 
@@ -606,8 +585,8 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("Lseek", func(t *testing.T) {
-		payload := types.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
@@ -615,13 +594,13 @@ func TestAgentFSServer(t *testing.T) {
 		t.Log(dumpHandleMap(agentFsServer))
 
 		t.Run("SeekStart", func(t *testing.T) {
-			lseekPayload := types.LseekReq{
+			lseekPayload := fswire.LseekReq{
 				HandleID: openResult,
 				Offset:   0,
 				Whence:   io.SeekStart,
 			}
 
-			var lseekResp types.LseekResp
+			var lseekResp fswire.LseekResp
 			err := clientPipe.Call(ctx, "Lseek", &lseekPayload, &lseekResp)
 			require.NoError(t, err, "Lseek should succeed")
 
@@ -629,13 +608,13 @@ func TestAgentFSServer(t *testing.T) {
 		})
 
 		t.Run("SeekMiddle", func(t *testing.T) {
-			lseekPayload := types.LseekReq{
+			lseekPayload := fswire.LseekReq{
 				HandleID: openResult,
 				Offset:   10,
 				Whence:   io.SeekStart,
 			}
 
-			var lseekResp types.LseekResp
+			var lseekResp fswire.LseekResp
 			err := clientPipe.Call(ctx, "Lseek", &lseekPayload, &lseekResp)
 			require.NoError(t, err, "Lseek should succeed")
 
@@ -643,13 +622,13 @@ func TestAgentFSServer(t *testing.T) {
 		})
 
 		t.Run("SeekCurrent", func(t *testing.T) {
-			lseekPayload := types.LseekReq{
+			lseekPayload := fswire.LseekReq{
 				HandleID: openResult,
 				Offset:   5,
 				Whence:   io.SeekCurrent,
 			}
 
-			var lseekResp types.LseekResp
+			var lseekResp fswire.LseekResp
 			err := clientPipe.Call(ctx, "Lseek", &lseekPayload, &lseekResp)
 			require.NoError(t, err, "Lseek should succeed")
 
@@ -657,13 +636,13 @@ func TestAgentFSServer(t *testing.T) {
 		})
 
 		t.Run("SeekEnd", func(t *testing.T) {
-			lseekPayload := types.LseekReq{
+			lseekPayload := fswire.LseekReq{
 				HandleID: openResult,
 				Offset:   -5,
 				Whence:   io.SeekEnd,
 			}
 
-			var lseekResp types.LseekResp
+			var lseekResp fswire.LseekResp
 			err := clientPipe.Call(ctx, "Lseek", &lseekPayload, &lseekResp)
 			require.NoError(t, err, "Lseek should succeed")
 
@@ -675,7 +654,7 @@ func TestAgentFSServer(t *testing.T) {
 		})
 
 		t.Run("SeekBeyondEOF", func(t *testing.T) {
-			lseekPayload := types.LseekReq{
+			lseekPayload := fswire.LseekReq{
 				HandleID: openResult,
 				Offset:   100,
 				Whence:   io.SeekStart,
@@ -691,8 +670,8 @@ func TestAgentFSServer(t *testing.T) {
 				err := createSparseFileWithFsutil(sparseFilePath)
 				require.NoError(t, err, "Failed to create sparse file with fsutil")
 
-				payload := types.OpenFileReq{Path: "sparse_file.bin", Flag: 0, Perm: 0644}
-				var openResult types.FileHandleID
+				payload := fswire.OpenFileReq{Path: "sparse_file.bin", Flag: 0, Perm: 0644}
+				var openResult fswire.FileHandleID
 				err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 				require.NoError(t, err, "OpenFile should succeed for sparse file")
 
@@ -700,13 +679,13 @@ func TestAgentFSServer(t *testing.T) {
 				t.Log(dumpHandleMap(agentFsServer))
 
 				t.Run("SeekData", func(t *testing.T) {
-					lseekPayload := types.LseekReq{
+					lseekPayload := fswire.LseekReq{
 						HandleID: openResult,
 						Offset:   0,
 						Whence:   SeekData,
 					}
 
-					var lseekResp types.LseekResp
+					var lseekResp fswire.LseekResp
 					err := clientPipe.Call(ctx, "Lseek", &lseekPayload, &lseekResp)
 					require.NoError(t, err, "SeekData should succeed")
 
@@ -722,13 +701,13 @@ func TestAgentFSServer(t *testing.T) {
 				})
 
 				t.Run("SeekHole", func(t *testing.T) {
-					lseekPayload := types.LseekReq{
+					lseekPayload := fswire.LseekReq{
 						HandleID: openResult,
 						Offset:   0,
 						Whence:   SeekHole,
 					}
 
-					var lseekResp types.LseekResp
+					var lseekResp fswire.LseekResp
 					err := clientPipe.Call(ctx, "Lseek", &lseekPayload, &lseekResp)
 					require.NoError(t, err, "SeekHole should succeed")
 
@@ -743,20 +722,20 @@ func TestAgentFSServer(t *testing.T) {
 					assert.Equal(t, int64(1114112), lseekResp.NewOffset, "SeekHole should return the start of the second hole region")
 				})
 
-				closePayload := types.CloseReq{HandleID: openResult}
+				closePayload := fswire.CloseReq{HandleID: openResult}
 				err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 				assert.NoError(t, err, "Close should succeed")
 			})
 		}
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		assert.NoError(t, err, "Close should succeed")
 	})
 
 	t.Run("ConcurrentReadAt", func(t *testing.T) {
-		payload := types.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
@@ -775,7 +754,7 @@ func TestAgentFSServer(t *testing.T) {
 				defer wg.Done()
 
 				offset := int64(goroutineID * readSize)
-				readAtPayload := types.ReadAtReq{
+				readAtPayload := fswire.ReadAtReq{
 					HandleID: openResult,
 					Offset:   offset,
 					Length:   readSize,
@@ -822,7 +801,7 @@ func TestAgentFSServer(t *testing.T) {
 			assert.Equal(t, expected, result, "Goroutine %d read incorrect data", i)
 		}
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		assert.NoError(t, err, "Close should succeed")
 	})
@@ -843,12 +822,12 @@ func TestAgentFSServer(t *testing.T) {
 			for i := range numFiles {
 				filePath := fmt.Sprintf("stress_test_file_%d.txt", i)
 
-				payload := types.OpenFileReq{Path: filePath, Flag: 0, Perm: 0644}
-				var openResult types.FileHandleID
+				payload := fswire.OpenFileReq{Path: filePath, Flag: 0, Perm: 0644}
+				var openResult fswire.FileHandleID
 				err := clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 				require.NoError(t, err, "OpenFile should succeed for %s", filePath)
 
-				closePayload := types.CloseReq{HandleID: openResult}
+				closePayload := fswire.CloseReq{HandleID: openResult}
 				err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 				assert.NoError(t, err, "Close should succeed for %s", filePath)
 			}
@@ -860,12 +839,12 @@ func TestAgentFSServer(t *testing.T) {
 	t.Run("ResourceLeakTest", func(t *testing.T) {
 		initialHandleCount := agentFsServer.handles.Len()
 
-		payload := types.OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "test1.txt", Flag: 0, Perm: 0644}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		assert.NoError(t, err, "Close should succeed")
 
@@ -874,17 +853,17 @@ func TestAgentFSServer(t *testing.T) {
 	})
 
 	t.Run("FilePointerIsolation", func(t *testing.T) {
-		payload := types.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "test2.txt", Flag: 0, Perm: 0644}
+		var openResult fswire.FileHandleID
 		err = clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 		require.NoError(t, err, "OpenFile should succeed")
 
-		readAtPayload1 := types.ReadAtReq{
+		readAtPayload1 := fswire.ReadAtReq{
 			HandleID: openResult,
 			Offset:   0,
 			Length:   10,
 		}
-		readAtPayload2 := types.ReadAtReq{
+		readAtPayload2 := fswire.ReadAtReq{
 			HandleID: openResult,
 			Offset:   20,
 			Length:   10,
@@ -921,7 +900,7 @@ func TestAgentFSServer(t *testing.T) {
 		assert.Equal(t, "test file ", buffer1.String(), "First ReadAt returned incorrect data")
 		assert.Equal(t, "with more ", buffer2.String(), "Second ReadAt returned incorrect data")
 
-		closePayload := types.CloseReq{HandleID: openResult}
+		closePayload := fswire.CloseReq{HandleID: openResult}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		assert.NoError(t, err, "Close should succeed")
 	})
@@ -930,10 +909,10 @@ func TestAgentFSServer(t *testing.T) {
 		initialCount := agentFsServer.handles.Len()
 
 		const numFiles = 5
-		handles := make([]types.FileHandleID, numFiles)
+		handles := make([]fswire.FileHandleID, numFiles)
 		for i := range numFiles {
-			payload := types.OpenFileReq{Path: "test1.txt"}
-			var openResult types.FileHandleID
+			payload := fswire.OpenFileReq{Path: "test1.txt"}
+			var openResult fswire.FileHandleID
 			err := clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 			require.NoError(t, err)
 			handles[i] = openResult
@@ -942,7 +921,7 @@ func TestAgentFSServer(t *testing.T) {
 		assert.Equal(t, initialCount+numFiles, agentFsServer.handles.Len(), "Handles should be registered in the map")
 
 		for _, h := range handles {
-			closePayload := types.CloseReq{HandleID: h}
+			closePayload := fswire.CloseReq{HandleID: h}
 			err := clientPipe.Call(ctx, "Close", &closePayload, nil)
 			assert.NoError(t, err)
 		}
@@ -953,8 +932,8 @@ func TestAgentFSServer(t *testing.T) {
 	t.Run("FileHandleLeak_InvalidPath", func(t *testing.T) {
 		initialCount := agentFsServer.handles.Len()
 
-		payload := types.OpenFileReq{Path: "non_existent_file.txt"}
-		var openResult types.FileHandleID
+		payload := fswire.OpenFileReq{Path: "non_existent_file.txt"}
+		var openResult fswire.FileHandleID
 		err := clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 
 		assert.Error(t, err, "Opening non-existent file should fail")
@@ -964,15 +943,15 @@ func TestAgentFSServer(t *testing.T) {
 	t.Run("ReadDir_HandleLeak", func(t *testing.T) {
 		initialHandleCount := agentFsServer.handles.Len()
 
-		openPayload := types.OpenFileReq{Path: "/"}
-		var dirHandle types.FileHandleID
+		openPayload := fswire.OpenFileReq{Path: "/"}
+		var dirHandle fswire.FileHandleID
 		err := clientPipe.Call(ctx, "OpenFile", &openPayload, &dirHandle)
 		require.NoError(t, err)
 
 		assert.Equal(t, initialHandleCount+1, agentFsServer.handles.Len())
 
-		readDirPayload := types.ReadDirReq{HandleID: dirHandle}
-		var entries types.ReadDirEntries
+		readDirPayload := fswire.ReadDirReq{HandleID: dirHandle}
+		var entries fswire.ReadDirEntries
 
 		readDirHandler := arpc.RawStreamHandler(func(st arpc.ARPCStream) error {
 			buf := make([]byte, 64*1024)
@@ -990,7 +969,7 @@ func TestAgentFSServer(t *testing.T) {
 		assert.NoError(t, err)
 		assert.NotEmpty(t, entries)
 
-		closePayload := types.CloseReq{HandleID: dirHandle}
+		closePayload := fswire.CloseReq{HandleID: dirHandle}
 		err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 		assert.NoError(t, err)
 
@@ -1002,9 +981,9 @@ func TestAgentFSServer(t *testing.T) {
 		initialHandleCount := agentFsServer.handles.Len()
 
 		for range 10 {
-			var h types.FileHandleID
-			require.NoError(t, clientPipe.Call(ctx, "OpenFile", &types.OpenFileReq{Path: "subdir"}, &h))
-			require.NoError(t, clientPipe.Call(ctx, "Close", &types.CloseReq{HandleID: h}, nil))
+			var h fswire.FileHandleID
+			require.NoError(t, clientPipe.Call(ctx, "OpenFile", &fswire.OpenFileReq{Path: "subdir"}, &h))
+			require.NoError(t, clientPipe.Call(ctx, "Close", &fswire.CloseReq{HandleID: h}, nil))
 		}
 
 		assert.Equal(t, initialHandleCount, agentFsServer.handles.Len(), "Incremental directory opens leaked handles")
@@ -1019,12 +998,12 @@ func TestAgentFSServer(t *testing.T) {
 		const readSize = 64 * 1024
 
 		for range iterations {
-			payload := types.OpenFileReq{Path: "medium_file.bin", Flag: 0, Perm: 0644}
-			var openResult types.FileHandleID
+			payload := fswire.OpenFileReq{Path: "medium_file.bin", Flag: 0, Perm: 0644}
+			var openResult fswire.FileHandleID
 			err := clientPipe.Call(ctx, "OpenFile", &payload, &openResult)
 			require.NoError(t, err, "OpenFile should succeed")
 
-			readAtPayload := types.ReadAtReq{
+			readAtPayload := fswire.ReadAtReq{
 				HandleID: openResult,
 				Offset:   0,
 				Length:   readSize,
@@ -1042,7 +1021,7 @@ func TestAgentFSServer(t *testing.T) {
 			err = clientPipe.Call(ctx, "ReadAt", &readAtPayload, readAtHandler)
 			require.NoError(t, err, "ReadAt should succeed")
 
-			closePayload := types.CloseReq{HandleID: openResult}
+			closePayload := fswire.CloseReq{HandleID: openResult}
 			err = clientPipe.Call(ctx, "Close", &closePayload, nil)
 			require.NoError(t, err, "Close should succeed")
 		}

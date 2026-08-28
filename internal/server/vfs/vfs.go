@@ -8,7 +8,7 @@ import (
 
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
@@ -17,7 +17,7 @@ var keyPool = NewMemcachedKeyPool()
 type VFSBase struct {
 	Ctx      context.Context
 	Cancel   context.CancelFunc
-	Backup   database.Backup
+	Backup   coredb.Backup
 	Fuse     *fuse.Server
 	BasePath string
 

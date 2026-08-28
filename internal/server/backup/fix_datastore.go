@@ -12,8 +12,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
-	"github.com/pbs-plus/pbs-plus/internal/server/database"
-	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 type NamespaceReq struct {
@@ -29,8 +29,8 @@ type PBSStoreGroupsResponse struct {
 	Data PBSStoreGroups `json:"data"`
 }
 
-func CreateNamespace(namespace string, backup database.Backup, storeInstance *store.Store) error {
-	if storeInstance == nil {
+func CreateNamespace(namespace string, backup coredb.Backup, app *application.Runtime) error {
+	if app == nil {
 		return fmt.Errorf("CreateNamespace: store is required")
 	}
 
@@ -39,7 +39,7 @@ func CreateNamespace(namespace string, backup database.Backup, storeInstance *st
 	}
 
 	backup.Namespace = namespace
-	err := storeInstance.Database.UpdateBackup(nil, backup)
+	err := app.CoreDB.UpdateBackup(nil, backup)
 	if err != nil {
 		return fmt.Errorf("CreateNamespace: error updating backup to namespace -> %w", err)
 	}
@@ -47,8 +47,8 @@ func CreateNamespace(namespace string, backup database.Backup, storeInstance *st
 	return nil
 }
 
-func GetOwnerFilePath(backup database.Backup, storeInstance *store.Store) (string, error) {
-	if storeInstance == nil {
+func GetOwnerFilePath(backup coredb.Backup, app *application.Runtime) (string, error) {
+	if app == nil {
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
 
@@ -76,8 +76,8 @@ func GetOwnerFilePath(backup database.Backup, storeInstance *store.Store) (strin
 	return ownerFilePath, nil
 }
 
-func GetCurrentOwner(backup database.Backup, storeInstance *store.Store) (string, error) {
-	filePath, err := GetOwnerFilePath(backup, storeInstance)
+func GetCurrentOwner(backup coredb.Backup, app *application.Runtime) (string, error) {
+	filePath, err := GetOwnerFilePath(backup, app)
 	if err != nil {
 		return "", err
 	}
@@ -90,8 +90,8 @@ func GetCurrentOwner(backup database.Backup, storeInstance *store.Store) (string
 	return strings.TrimSpace(string(owner)), nil
 }
 
-func SetDatastoreOwner(backup database.Backup, storeInstance *store.Store, owner string) error {
-	filePath, err := GetOwnerFilePath(backup, storeInstance)
+func SetDatastoreOwner(backup coredb.Backup, app *application.Runtime, owner string) error {
+	filePath, err := GetOwnerFilePath(backup, app)
 	if err != nil {
 		return err
 	}
@@ -120,8 +120,8 @@ func SetDatastoreOwner(backup database.Backup, storeInstance *store.Store, owner
 	return nil
 }
 
-func FixDatastore(backup database.Backup, storeInstance *store.Store) error {
-	return SetDatastoreOwner(backup, storeInstance, proxmox.AuthID)
+func FixDatastore(backup coredb.Backup, app *application.Runtime) error {
+	return SetDatastoreOwner(backup, app, proxmox.AuthID)
 }
 
 func parseSnapshotTimestamp(input string) (time.Time, error) {
@@ -132,7 +132,7 @@ func parseSnapshotTimestamp(input string) (time.Time, error) {
 	return parsedTime, nil
 }
 
-func CleanUnfinishedSnapshot(backup database.Backup, backupID string) error {
+func CleanUnfinishedSnapshot(backup coredb.Backup, backupID string) error {
 	if backupID == "" {
 		return fmt.Errorf("CleanUnfinishedSnapshot: backupID is required")
 	}

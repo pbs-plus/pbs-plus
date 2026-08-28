@@ -1,0 +1,531 @@
+//go:build linux
+
+package coredb
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb/corequery"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
+)
+
+func (db *Store) CreateTarget(tx *Transaction, target Target) (err error) {
+	var commitNeeded bool = false
+	q := db.queries
+
+	if tx == nil {
+		tx, err = db.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("CreateTarget: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				if err := tx.Rollback(); err != nil {
+					log.Error(err, "")
+				}
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("CreateTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("CreateTarget: failed to commit transaction: %w", cErr)
+					log.Error(err, "")
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("CreateTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			}
+		}()
+	}
+	q = db.queries.WithTx(tx.Tx)
+
+	if target.Path == "" && target.AgentHost.Name == "" {
+		return fmt.Errorf("target path empty and no agent host specified")
+	}
+
+	_, s3Err := ParseS3Url(target.Path)
+	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
+		return fmt.Errorf("invalid target path: %s", target.Path)
+	}
+
+	err = q.CreateTarget(db.ctx, corequery.CreateTargetParams{
+		Name:             target.Name,
+		Path:             target.Path,
+		AgentHost:        toNullString(target.AgentHost.Name),
+		VolumeID:         toNullString(target.VolumeID),
+		VolumeType:       toNullString(target.VolumeType),
+		VolumeName:       toNullString(target.VolumeName),
+		VolumeFs:         toNullString(target.VolumeFS),
+		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
+		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
+		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
+		VolumeTotal:      toNullString(target.VolumeTotal),
+		VolumeUsed:       toNullString(target.VolumeUsed),
+		VolumeFree:       toNullString(target.VolumeFree),
+		MountScript:      target.MountScript,
+	})
+
+	if err != nil {
+		return fmt.Errorf("CreateTarget: error inserting target: %w", err)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+func (db *Store) UpdateTarget(tx *Transaction, target Target) (err error) {
+	var commitNeeded bool = false
+	q := db.queries
+
+	if tx == nil {
+		tx, err = db.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("UpdateTarget: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				if err := tx.Rollback(); err != nil {
+					log.Error(err, "")
+				}
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("UpdateTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("UpdateTarget: failed to commit transaction: %w", cErr)
+					log.Error(err, "")
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("UpdateTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			}
+		}()
+	}
+	q = db.queries.WithTx(tx.Tx)
+
+	if target.Path == "" && target.AgentHost.Name == "" {
+		return fmt.Errorf("target path empty and no agent host specified")
+	}
+
+	_, s3Err := ParseS3Url(target.Path)
+	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
+		return fmt.Errorf("invalid target path: %s", target.Path)
+	}
+
+	err = q.UpdateTarget(db.ctx, corequery.UpdateTargetParams{
+		Path:             target.Path,
+		AgentHost:        toNullString(target.AgentHost.Name),
+		VolumeID:         toNullString(target.VolumeID),
+		VolumeType:       toNullString(target.VolumeType),
+		VolumeName:       toNullString(target.VolumeName),
+		VolumeFs:         toNullString(target.VolumeFS),
+		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
+		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
+		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
+		VolumeTotal:      toNullString(target.VolumeTotal),
+		VolumeUsed:       toNullString(target.VolumeUsed),
+		VolumeFree:       toNullString(target.VolumeFree),
+		MountScript:      target.MountScript,
+		Name:             target.Name,
+	})
+
+	if err != nil {
+		return fmt.Errorf("UpdateTarget: error updating target: %w", err)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+func (db *Store) UpsertTarget(tx *Transaction, target Target) (err error) {
+	var commitNeeded bool = false
+	q := db.queries
+
+	if tx == nil {
+		tx, err = db.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("UpsertTarget: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				if err := tx.Rollback(); err != nil {
+					log.Error(err, "")
+				}
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("UpsertTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("UpsertTarget: failed to commit transaction: %w", cErr)
+					log.Error(err, "")
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("UpsertTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			}
+		}()
+	}
+	q = db.queries.WithTx(tx.Tx)
+
+	if target.Path == "" && target.AgentHost.Name == "" {
+		return fmt.Errorf("target path empty and no agent host specified")
+	}
+
+	_, s3Err := ParseS3Url(target.Path)
+	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
+		return fmt.Errorf("invalid target path: %s", target.Path)
+	}
+
+	err = q.UpsertTarget(db.ctx, corequery.UpsertTargetParams{
+		Name:             target.Name,
+		Path:             target.Path,
+		AgentHost:        toNullString(target.AgentHost.Name),
+		VolumeID:         toNullString(target.VolumeID),
+		VolumeType:       toNullString(target.VolumeType),
+		VolumeName:       toNullString(target.VolumeName),
+		VolumeFs:         toNullString(target.VolumeFS),
+		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
+		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
+		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
+		VolumeTotal:      toNullString(target.VolumeTotal),
+		VolumeUsed:       toNullString(target.VolumeUsed),
+		VolumeFree:       toNullString(target.VolumeFree),
+		MountScript:      target.MountScript,
+	})
+
+	if err != nil {
+		return fmt.Errorf("UpsertTarget: error upserting target: %w", err)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+func (db *Store) AddS3Secret(tx *Transaction, targetName string, secret string) (err error) {
+	var commitNeeded bool = false
+	q := db.queries
+
+	if tx == nil {
+		tx, err = db.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("AddS3Secret: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				if err := tx.Rollback(); err != nil {
+					log.Error(err, "")
+				}
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("AddS3Secret: failed to rollback transaction: %w", rbErr), "")
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("AddS3Secret: failed to commit transaction: %w", cErr)
+					log.Error(err, "")
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("AddS3Secret: failed to rollback transaction: %w", rbErr), "")
+				}
+			}
+		}()
+	}
+	q = db.queries.WithTx(tx.Tx)
+
+	encrypted, err := Encrypt(secret)
+	if err != nil {
+		return fmt.Errorf("AddS3Secret: error encrypting secret: %w", err)
+	}
+
+	err = q.UpdateTargetS3Secret(db.ctx, corequery.UpdateTargetS3SecretParams{
+		SecretS3: encrypted,
+		Name:     targetName,
+	})
+	if err != nil {
+		return fmt.Errorf("AddS3Secret: error adding secret to target: %w", err)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+func (db *Store) DeleteTarget(tx *Transaction, name string) (err error) {
+	var commitNeeded bool = false
+	q := db.queries
+
+	if tx == nil {
+		tx, err = db.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("DeleteTarget: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				if err := tx.Rollback(); err != nil {
+					log.Error(err, "")
+				}
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("DeleteTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("DeleteTarget: failed to commit transaction: %w", cErr)
+					log.Error(err, "")
+				}
+			} else {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("DeleteTarget: failed to rollback transaction: %w", rbErr), "")
+				}
+			}
+		}()
+	}
+	q = db.queries.WithTx(tx.Tx)
+
+	rowsAffected, err := q.DeleteTarget(db.ctx, name)
+	if err != nil {
+		return fmt.Errorf("DeleteTarget: error deleting target: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrTargetNotFound
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+func (db *Store) GetTarget(name string) (Target, error) {
+	row, err := db.readQueries.GetTarget(db.ctx, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Target{}, ErrTargetNotFound
+	}
+	if err != nil {
+		return Target{}, fmt.Errorf("GetTarget: error fetching target: %w", err)
+	}
+
+	target := Target{
+		Name: row.Name,
+		Path: row.Path,
+		AgentHost: AgentHost{
+			Name:            row.AgentName.String,
+			IP:              row.AgentIp.String,
+			Auth:            row.AgentAuth.String,
+			TokenUsed:       row.AgentTokenUsed.String,
+			OperatingSystem: row.AgentOs.String,
+		},
+		VolumeID:         fromNullString(row.VolumeID),
+		VolumeType:       fromNullString(row.VolumeType),
+		VolumeName:       fromNullString(row.VolumeName),
+		VolumeFS:         fromNullString(row.VolumeFs),
+		VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
+		VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
+		VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
+		VolumeTotal:      fromNullString(row.VolumeTotal),
+		VolumeUsed:       fromNullString(row.VolumeUsed),
+		VolumeFree:       fromNullString(row.VolumeFree),
+		MountScript:      row.MountScript,
+		JobCount:         int(row.JobCount),
+	}
+
+	target.populateInfo()
+
+	return target, nil
+}
+
+func (db *Store) GetS3Secret(name string) (string, error) {
+	encrypted, err := db.readQueries.GetTargetS3Secret(db.ctx, name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrSecretNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("GetS3Secret: error fetching target: %w", err)
+	}
+
+	if encrypted == "" {
+		return "", ErrSecretNotFound
+	}
+
+	decrypted, err := Decrypt(encrypted)
+	if err != nil {
+		return "", fmt.Errorf("GetS3Secret: failed to decrypt secret: %w", err)
+	}
+
+	return decrypted, nil
+}
+
+func (db *Store) GetAllTargets() ([]Target, error) {
+	rows, err := db.readQueries.ListAllTargets(db.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("GetAllTargets: error querying targets: %w", err)
+	}
+
+	targets := make([]Target, 0, len(rows))
+	for _, row := range rows {
+		target := Target{
+			Name: row.Name,
+			Path: row.Path,
+			AgentHost: AgentHost{
+				Name:            row.AgentName.String,
+				IP:              row.AgentIp.String,
+				Auth:            row.AgentAuth.String,
+				TokenUsed:       row.AgentTokenUsed.String,
+				OperatingSystem: row.AgentOs.String,
+			},
+			VolumeID:         fromNullString(row.VolumeID),
+			VolumeType:       fromNullString(row.VolumeType),
+			VolumeName:       fromNullString(row.VolumeName),
+			VolumeFS:         fromNullString(row.VolumeFs),
+			VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
+			VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
+			VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
+			VolumeTotal:      fromNullString(row.VolumeTotal),
+			VolumeUsed:       fromNullString(row.VolumeUsed),
+			VolumeFree:       fromNullString(row.VolumeFree),
+			MountScript:      row.MountScript,
+			JobCount:         int(row.JobCount),
+		}
+
+		target.populateInfo()
+		targets = append(targets, target)
+	}
+
+	return targets, nil
+}
+
+func (db *Store) GetAllTargetsByAgentHost(hostname string) ([]Target, error) {
+	rows, err := db.readQueries.ListTargetsByAgentHost(db.ctx, toNullString(hostname))
+	if err != nil {
+		return nil, fmt.Errorf("GetAllTargetsByAgentHost: error querying targets: %w", err)
+	}
+
+	targets := make([]Target, 0, len(rows))
+	for _, row := range rows {
+		target := Target{
+			Name: row.Name,
+			Path: row.Path,
+			AgentHost: AgentHost{
+				Name:            row.AgentName.String,
+				IP:              row.AgentIp.String,
+				Auth:            row.AgentAuth.String,
+				TokenUsed:       row.AgentTokenUsed.String,
+				OperatingSystem: row.AgentOs.String,
+			},
+			VolumeID:         fromNullString(row.VolumeID),
+			VolumeType:       fromNullString(row.VolumeType),
+			VolumeName:       fromNullString(row.VolumeName),
+			VolumeFS:         fromNullString(row.VolumeFs),
+			VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
+			VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
+			VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
+			VolumeTotal:      fromNullString(row.VolumeTotal),
+			VolumeUsed:       fromNullString(row.VolumeUsed),
+			VolumeFree:       fromNullString(row.VolumeFree),
+			MountScript:      row.MountScript,
+		}
+
+		target.populateInfo()
+		targets = append(targets, target)
+	}
+
+	return targets, nil
+}
+
+func (t *Target) populateInfo() {
+	if t.Path != "" {
+		if strings.Contains(t.Path, "://") {
+			if s3, err := ParseS3Url(t.Path); err == nil {
+				t.S3Info = s3
+				t.Type = TargetTypeS3
+			}
+		} else if validate.IsValid(t.Path) {
+			t.Type = TargetTypeLocal
+		}
+	} else if t.AgentHost.Name != "" {
+		t.Type = TargetTypeAgent
+	}
+}
+
+func (t *Target) GetAgentHostPath() string {
+	hostPath := ""
+	if t.AgentHost.Name != "" {
+		res := strings.ToLower(t.VolumeID)
+		switch {
+		case res == "root":
+			hostPath = "/"
+		case t.AgentHost.OperatingSystem == "windows":
+			hostPath = res + ":\\"
+		default:
+			hostPath = res
+		}
+	}
+
+	return hostPath
+}
+
+func (t *Target) GetHostname() string {
+	if t.AgentHost.Name != "" {
+		return t.AgentHost.Name
+	}
+
+	return t.Name
+}
+
+func (t *Target) IsAgent() bool {
+	return t.Type == TargetTypeAgent
+}
+
+func (t *Target) IsS3() bool {
+	return t.Type == TargetTypeS3
+}
+
+func (t *Target) IsLocal() bool {
+	return t.Type == TargetTypeLocal
+}
+
+type Target struct {
+	Name             string     `json:"name"`
+	Type             TargetType `json:"target_type"`
+	Path             string     `json:"path"`
+	AgentHost        AgentHost  `json:"agent_host"`
+	VolumeID         string     `json:"volume_id,omitempty"`
+	MountScript      string     `json:"mount_script"`
+	AgentVersion     string     `json:"agent_version"`
+	ConnectionStatus bool       `json:"connection_status"`
+	JobCount         int        `json:"job_count"`
+	VolumeType       string     `json:"volume_type"`
+	VolumeName       string     `json:"volume_name"`
+	VolumeFS         string     `json:"volume_fs"`
+	VolumeTotalBytes int        `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes  int        `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes  int        `json:"volume_free_bytes,omitempty"`
+	VolumeTotal      string     `json:"volume_total"`
+	VolumeUsed       string     `json:"volume_used"`
+	VolumeFree       string     `json:"volume_free"`
+	S3Info           *S3Url     `json:"s3_info"`
+}
+
+type AgentHost struct {
+	Name            string `json:"name"`
+	IP              string `json:"ip"`
+	Auth            string `json:"-"`
+	TokenUsed       string `json:"-"`
+	OperatingSystem string `json:"os"`
+}
+
+type TargetType string
