@@ -197,7 +197,7 @@ func ExtJsMountProfileMountHandler(app *application.Runtime) http.HandlerFunc {
 			MountPath:  p.MountPath,
 			UPID:       upidTask(task),
 			Web:        true,
-		})
+		}, time.Minute)
 		if !ok2 {
 			task.CloseErr(fmt.Errorf("workflow submit failed"))
 			return

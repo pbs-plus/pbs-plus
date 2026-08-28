@@ -96,8 +96,8 @@ func newTask(workerType, datastore, key string) (*tasklog.WorkerTask, error) {
 	return tasklog.NewWorkerTask("pbsplus", workerType, wid)
 }
 
-func submitSnapshotWorkflow(w http.ResponseWriter, r *http.Request, app *application.Runtime, kind, key, lockKey string, payload any) (string, bool) {
-	request, err := jobs.NewWorkflowSubmit(kind, key, "manual", "", payload, []string{lockKey}, 1, time.Minute)
+func submitSnapshotWorkflow(w http.ResponseWriter, r *http.Request, app *application.Runtime, kind, key, lockKey string, payload any, timeout time.Duration) (string, bool) {
+	request, err := jobs.NewWorkflowSubmit(kind, key, "manual", "", payload, []string{lockKey}, 1, timeout)
 	if err != nil {
 		respond.WriteErrorResponse(w, err)
 		return "", false
@@ -159,7 +159,7 @@ func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 			MountPath:  f.MountPath,
 			UPID:       upidTask(task),
 			Web:        true,
-		})
+		}, time.Minute)
 		if !ok {
 			task.CloseErr(fmt.Errorf("workflow submit failed"))
 			return
@@ -211,7 +211,7 @@ func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
 		}
 		in.UPID = upidTask(task)
 
-		upid, ok := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotInit, key, "snapshot-mount:"+key, in)
+		upid, ok := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotInit, key, "snapshot-mount:"+key, in, time.Minute)
 		if !ok {
 			task.CloseErr(fmt.Errorf("workflow submit failed"))
 			return
@@ -276,7 +276,7 @@ func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 			Force:      f.Force,
 			UPID:       upidTask(task),
 			Web:        true,
-		})
+		}, time.Minute)
 		if !ok {
 			task.CloseErr(fmt.Errorf("workflow submit failed"))
 			return
@@ -329,7 +329,7 @@ func ExtJsCommitHandler(app *application.Runtime) http.HandlerFunc {
 			MountPath: session.MountPoint,
 			UPID:      upidTask(task),
 			Web:       true,
-		})
+		}, 10*time.Minute)
 		if !ok {
 			task.CloseErr(fmt.Errorf("workflow submit failed"))
 			return
