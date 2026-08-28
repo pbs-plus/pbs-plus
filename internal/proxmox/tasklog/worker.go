@@ -137,6 +137,9 @@ func ReopenWorkerTask(upid string) (*WorkerTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tasklog: parse upid: %w", err)
 	}
+	if existing, ok := lookupWorker(parsed.TaskId); ok && existing.UPID() == upid && !existing.closed.Load() {
+		return existing, nil
+	}
 
 	path, err := UPIDLogPath(upid)
 	if err != nil {

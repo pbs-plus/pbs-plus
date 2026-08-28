@@ -476,6 +476,13 @@ func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	} else if ok {
 		t.Fatal("second execution claimed while its resource was locked")
 	}
+	waiting, err := db.GetExecution(ctx, second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting.Attempt != 0 {
+		t.Fatalf("waiting execution attempts = %d, want 0", waiting.Attempt)
+	}
 	if err := db.Finish(ctx, first.ID, "worker-a", claimed.Attempt, jobdb.StateSucceeded, now, ""); err != nil {
 		t.Fatal(err)
 	}

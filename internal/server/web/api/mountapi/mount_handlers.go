@@ -93,7 +93,11 @@ func (f mountForm) safeTime() (string, error) {
 
 func newTask(workerType, datastore, key string) (*tasklog.WorkerTask, error) {
 	wid := tasklog.FormatWorkerID(datastore, workerType+"-", key)
-	return tasklog.NewWorkerTask("pbsplus", workerType, wid)
+	task, err := tasklog.NewWorkerTask("pbsplus", workerType, wid)
+	if err == nil {
+		task.LogString("queued " + workerType + " workflow")
+	}
+	return task, err
 }
 
 func submitSnapshotWorkflow(w http.ResponseWriter, r *http.Request, app *application.Runtime, kind, key, lockKey string, payload any, timeout time.Duration) (string, bool) {

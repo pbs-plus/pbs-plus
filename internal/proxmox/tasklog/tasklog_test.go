@@ -84,6 +84,24 @@ func TestWorkerTask_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestReopenWorkerTaskReusesRegisteredTask(t *testing.T) {
+	setupTaskDirs(t)
+
+	created, err := NewWorkerTask("pbsplus", "compose", "queued")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := ReopenWorkerTask(created.UPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened != created {
+		t.Fatal("reopened task did not reuse registered worker")
+	}
+	reopened.LogString("started")
+	reopened.CloseOK()
+}
+
 func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {
 	setupTaskDirs(t)
 
