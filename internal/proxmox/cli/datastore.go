@@ -15,6 +15,7 @@ type DatastoreInfo struct {
 	Path             string `json:"path"`
 	Comment          string `json:"comment"`
 	NotificationMode string `json:"notification-mode"`
+	MaintenanceMode  string `json:"maintenance-mode"`
 	Tuning           string `json:"tuning"`
 }
 
