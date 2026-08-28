@@ -107,7 +107,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	}
 	lastCommitTime = backupTime
 
-	if err := ensureNamespaceDir(mfs.pbsStore, namespace); err != nil {
+	if err := ensureNamespaceDir(mfs.pbsStore, namespace, backupType); err != nil {
 		return fmt.Errorf("ensure namespace dir: %w", err)
 	}
 
@@ -300,23 +300,12 @@ func mergeMetaWithPxar(journalMeta pxar.Metadata, pxarEntry *pxar.Entry) pxar.Me
 	return out
 }
 
-func ensureNamespaceDir(pbsStore, namespace string) error {
-	if pbsStore == "" || namespace == "" {
+func ensureNamespaceDir(pbsStore, namespace, backupType string) error {
+	if pbsStore == "" {
 		return nil
 	}
-	parts := strings.Split(namespace, "/")
-	cur := pbsStore
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		cur = filepath.Join(cur, "ns", p)
-		if err := os.MkdirAll(cur, 0o755); err != nil {
-			return err
-		}
-		if err := proxmox.ChownBackupUser(cur); err != nil {
-			log.Error(err, "")
-		}
+	if err := proxmox.EnsureGroupPath(pbsStore, namespace, backupType, ""); err != nil {
+		return err
 	}
 	return nil
 }

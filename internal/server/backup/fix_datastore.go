@@ -96,24 +96,26 @@ func SetDatastoreOwner(backup coredb.Backup, app *application.Runtime, owner str
 		return err
 	}
 
-	dirPath := filepath.Dir(filePath)
-
-	if err := os.MkdirAll(dirPath, os.FileMode(0755)); err != nil {
-		log.Error(err, "")
+	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
+	if err != nil {
+		return fmt.Errorf("SetDatastoreOwner: failed to get datastore; %w", err)
 	}
 
-	err = os.WriteFile(filePath, []byte(owner), os.FileMode(0644))
+	backupID, err := getBackupId(backup.Target)
 	if err != nil {
+		return fmt.Errorf("SetDatastoreOwner: failed to get backup ID: %w", err)
+	}
+	backupID = proxmox.NormalizeHostname(backupID)
+
+	if err := proxmox.EnsureGroupPath(datastoreInfo.Path, backup.Namespace, "host", backupID); err != nil {
+		return fmt.Errorf("SetDatastoreOwner: ensure group path: %w", err)
+	}
+
+	if err := os.WriteFile(filePath, []byte(owner), os.FileMode(0644)); err != nil {
 		return fmt.Errorf("SetDatastoreOwner: failed to write owner file -> %w", err)
 	}
 
-	err = proxmox.ChownBackupUser(dirPath)
-	if err != nil {
-		return fmt.Errorf("SetDatastoreOwner: error changing filesystem owner -> %w", err)
-	}
-
-	err = proxmox.ChownBackupUser(filePath)
-	if err != nil {
+	if err := proxmox.ChownBackupUser(filePath); err != nil {
 		return fmt.Errorf("SetDatastoreOwner: error changing filesystem owner -> %w", err)
 	}
 
