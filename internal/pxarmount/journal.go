@@ -27,6 +27,14 @@ type GraphNode struct {
 	SymlinkTgt string
 	RedirectTo string
 	Opaque     bool
+	SparseData bool
+	LowerSize  uint64
+	DataExtents []dataExtent
+}
+
+type dataExtent struct {
+	Start uint64
+	End   uint64
 }
 
 type GraphEdge struct {

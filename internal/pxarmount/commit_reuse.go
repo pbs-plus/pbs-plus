@@ -3,7 +3,6 @@ package pxarmount
 import (
 	"fmt"
 	"io"
-	"os"
 	"sort"
 
 	"github.com/zeebo/xxh3"
@@ -308,8 +307,7 @@ func (ow *commitWalkState) emitPxarReencode(e *commitEntry) error {
 }
 
 func (ow *commitWalkState) writeBackedFile(name, childPath string, meta pxar.Metadata) error {
-	abs := ow.mfs.mutablePath(childPath)
-	f, err := os.Open(abs)
+	f, fileSize, err := ow.mfs.openBackedFile(childPath, nil)
 	if err != nil {
 		return fmt.Errorf("open backed file %q: %w", childPath, err)
 	}
@@ -319,16 +317,11 @@ func (ow *commitWalkState) writeBackedFile(name, childPath string, meta pxar.Met
 		}
 	}()
 
-	fi, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("stat backed file %q: %w", childPath, err)
-	}
-
 	entry := ow.allocEntry()
 	entry.Path = name
 	entry.Kind = pxar.KindFile
 	entry.Metadata = meta
-	entry.FileSize = uint64(fi.Size())
+	entry.FileSize = uint64(fileSize)
 
 	h := xxh3.New()
 	tee := io.TeeReader(f, h)
@@ -337,7 +330,7 @@ func (ow *commitWalkState) writeBackedFile(name, childPath string, meta pxar.Met
 		ow.prog.SetMsg(childPath)
 	}
 
-	if err := ow.writer.WriteEntryReader(entry, tee, uint64(fi.Size())); err != nil {
+	if err := ow.writer.WriteEntryReader(entry, tee, uint64(fileSize)); err != nil {
 		return fmt.Errorf("write backed file %q: %w", name, err)
 	}
 
@@ -345,7 +338,7 @@ func (ow *commitWalkState) writeBackedFile(name, childPath string, meta pxar.Met
 	ow.mutableFiles++
 
 	if ow.prog != nil {
-		ow.prog.AddFile(fi.Size())
+		ow.prog.AddFile(fileSize)
 	}
 	return nil
 }

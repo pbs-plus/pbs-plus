@@ -12,7 +12,7 @@ import (
 func encodeNode(n *GraphNode) []byte {
 	stLen := len(n.SymlinkTgt)
 	rrLen := len(n.RedirectTo)
-	total := 1 + 4 + 4 + 4 + 8 + 8 + 8 + 1 + 1 + 4 + stLen + 4 + rrLen
+	total := 1 + 4 + 4 + 4 + 8 + 8 + 8 + 1 + 1 + 4 + stLen + 4 + rrLen + 1 + 8 + 4 + len(n.DataExtents)*16
 	b := make([]byte, total)
 	off := 0
 	b[off] = n.Kind
@@ -44,6 +44,20 @@ func encodeNode(n *GraphNode) []byte {
 	binary.LittleEndian.PutUint32(b[off:], uint32(rrLen))
 	off += 4
 	copy(b[off:], n.RedirectTo)
+	off += rrLen
+	if n.SparseData {
+		b[off] = 1
+	}
+	off++
+	binary.LittleEndian.PutUint64(b[off:], n.LowerSize)
+	off += 8
+	binary.LittleEndian.PutUint32(b[off:], uint32(len(n.DataExtents)))
+	off += 4
+	for _, extent := range n.DataExtents {
+		binary.LittleEndian.PutUint64(b[off:], extent.Start)
+		binary.LittleEndian.PutUint64(b[off+8:], extent.End)
+		off += 16
+	}
 	return b
 }
 
@@ -106,6 +120,28 @@ func decodeNode(data []byte, id int64) *GraphNode {
 	rrLen := binary.LittleEndian.Uint32(data[off:])
 	off += 4
 	n.RedirectTo = string(data[off : off+int(rrLen)])
+	off += int(rrLen)
+	if len(data)-off < 13 {
+		return n
+	}
+	n.SparseData = data[off] != 0
+	off++
+	n.LowerSize = binary.LittleEndian.Uint64(data[off:])
+	off += 8
+	extentCount := int(binary.LittleEndian.Uint32(data[off:]))
+	off += 4
+	if extentCount > (len(data)-off)/16 {
+		n.SparseData = false
+		return n
+	}
+	n.DataExtents = make([]dataExtent, extentCount)
+	for i := range n.DataExtents {
+		n.DataExtents[i] = dataExtent{
+			Start: binary.LittleEndian.Uint64(data[off:]),
+			End:   binary.LittleEndian.Uint64(data[off+8:]),
+		}
+		off += 16
+	}
 	return n
 }
 

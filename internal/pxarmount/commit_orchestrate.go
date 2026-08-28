@@ -54,6 +54,9 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	mfs.mutationMu.Lock()
 	defer mfs.mutationMu.Unlock()
 
+	if err := mfs.flushAllDirtyMeta(); err != nil {
+		return fmt.Errorf("flush pending file metadata before commit: %w", err)
+	}
 	if err := mfs.journal.Sync(); err != nil {
 		return fmt.Errorf("sync journal before commit: %w", err)
 	}
@@ -521,8 +524,7 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 				return
 			}
 
-			abs := mfs.mutablePath(it.relPath)
-			f, err := os.Open(abs)
+			f, _, err := mfs.openBackedFile(it.relPath, nil)
 			if err != nil {
 				recordError(fmt.Errorf("open backed file %q for verification: %w", it.relPath, err))
 				return

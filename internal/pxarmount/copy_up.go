@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -15,7 +16,9 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 	inoMu.Lock()
 	defer inoMu.Unlock()
 
-	if re.DataIsMut {
+	current, status := fs.resolve(re.Path)
+	if status == fuse.OK && current.DataIsMut {
+		*re = *current
 		return nil
 	}
 
@@ -47,7 +50,13 @@ func (fs *MutableFS) copyUp(re *ResolvedEntry) error {
 		}
 	}
 
-	if err := fs.journal.SetHasData(re.Node.ID); err != nil {
+	re.Node.HasData = true
+	if re.PxarNode != nil && re.PxarNode.isReg {
+		re.Node.SparseData = true
+		re.Node.LowerSize = re.PxarNode.fileSize
+		re.Node.DataExtents = nil
+	}
+	if err := fs.journal.UpdateNode(re.Node); err != nil {
 		return fmt.Errorf("journal set has_data: %w", err)
 	}
 	re.DataIsMut = true
@@ -74,19 +83,7 @@ func (fs *MutableFS) copyUpRegularFile(path string, n *node) error {
 		return err
 	}
 
-	rc, err := fs.pxar.Reader().ReadFileContentReader(entry)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := rc.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	bufp := copyBufPool.Get().(*[]byte)
-	defer copyBufPool.Put(bufp)
-	if _, err := io.CopyBuffer(f, rc, *bufp); err != nil {
+	if err := f.Truncate(int64(n.fileSize)); err != nil {
 		return err
 	}
 
