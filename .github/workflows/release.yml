@@ -262,8 +262,8 @@ jobs:
           GITHUB_REPOSITORY="${{ github.repository }}" \
             ./build/scripts/generate-embedded-checksums.sh "$TAG"
           echo "=== checksums.txt (first 20 lines) ==="
-          head -20 internal/server/web/api/agentbin/checksums.txt
-          ENTRIES=$(grep -c '=' internal/server/web/api/agentbin/checksums.txt || true)
+          head -20 internal/server/web/api/agentdist/agentbin/checksums.txt
+          ENTRIES=$(grep -c '=' internal/server/web/api/agentdist/agentbin/checksums.txt || true)
           echo "Total checksum entries: $ENTRIES"
 
       - name: Build server binary
