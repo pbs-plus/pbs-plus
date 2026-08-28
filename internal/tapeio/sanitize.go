@@ -21,8 +21,8 @@ func lastNameSegment(relPath string) (name string, depth int) {
 func sanitizeName(name string) string {
 	name = filepath.Base(name)
 	name = strings.ReplaceAll(name, "\\", "/")
-	if idx := strings.LastIndex(name, "/"); idx >= 0 {
-		name = name[idx+1:]
+	if _, tail, ok := strings.CutLast(name, "/"); ok {
+		name = tail
 	}
 	if name == "" || name == "." || name == ".." {
 		name = "_"

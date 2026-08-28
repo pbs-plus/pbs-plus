@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"uuid"
 )
 
 type contextKey int

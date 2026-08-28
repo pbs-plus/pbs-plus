@@ -34,7 +34,7 @@ graph TD
 
 ### Prerequisites
 
-- Go 1.26+
+- Go 1.27+
 - For server: Linux (Debian/Proxmox)
 - For Windows agent: cross-compilation from any OS
 

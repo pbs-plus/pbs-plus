@@ -78,10 +78,7 @@ func (s *Server) platformStat(path string) (fswire.AgentFileInfo, error) {
 	if bs == 0 {
 		bs = 4096
 	}
-	alloc := nfo.AllocationSize
-	if alloc < 0 {
-		alloc = 0
-	}
+	alloc := max(nfo.AllocationSize, 0)
 	return fswire.AgentFileInfo{
 		Name: filepath.Base(filepath.Clean(path)),
 		Size: nfo.EndOfFile,

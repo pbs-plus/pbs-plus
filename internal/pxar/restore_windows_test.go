@@ -477,7 +477,7 @@ func TestOpenReparsePointLongPath(t *testing.T) {
 	dir := t.TempDir()
 	// Build a path near 260 chars (MAX_PATH on Windows).
 	name := ""
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		name += "a"
 	}
 	p := filepath.Join(dir, name)
@@ -869,7 +869,7 @@ func TestWriteAlternateDataStreamsConcurrent(t *testing.T) {
 	dir := t.TempDir()
 	st := newTestState(filesystemCapabilities{supportsXAttrs: true})
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		f := filepath.Join(dir, "ads-conc-"+strconv.Itoa(i))
 		if err := os.WriteFile(f, nil, 0o644); err != nil {
 			t.Fatal(err)
@@ -885,7 +885,7 @@ func TestWriteAlternateDataStreamsConcurrent(t *testing.T) {
 	wg.Wait()
 
 	// Each file should have its own :goroutine stream with the correct value.
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		f := filepath.Join(dir, "ads-conc-"+strconv.Itoa(i))
 		got, err := os.ReadFile(f + ":goroutine")
 		if err != nil {

@@ -142,7 +142,7 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 
 	switch whence {
 	case SeekData:
-		for i := 0; i < count; i++ {
+		for i := range count {
 			r := out[i]
 			if start < r.FileOffset {
 				return r.FileOffset, nil
@@ -158,7 +158,7 @@ func sparseSeekAllocatedRanges(h windows.Handle, start int64, whence int, fileSi
 			return start, nil
 		}
 		// If inside a range, hole begins at end of that range
-		for i := 0; i < count; i++ {
+		for i := range count {
 			r := out[i]
 			if start >= r.FileOffset && start < r.FileOffset+r.Length {
 				return r.FileOffset + r.Length, nil

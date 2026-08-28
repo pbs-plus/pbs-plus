@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,9 +100,9 @@ func reregisterVSSWriters() error {
 		}
 	}
 
-	for i := len(services) - 1; i >= 0; i-- {
-		if err := exec.Command("net", "start", services[i]).Run(); err != nil {
-			return fmt.Errorf("failed to start service %s: %w", services[i], err)
+	for _, service := range slices.Backward(services) {
+		if err := exec.Command("net", "start", service).Run(); err != nil {
+			return fmt.Errorf("failed to start service %s: %w", service, err)
 		}
 	}
 
@@ -112,7 +113,7 @@ func createSnapshotWithRetry(ctx context.Context, snapshotPath, volName string) 
 	const retryInterval = time.Second
 	var lastError error
 
-	for attempts := 0; attempts < 2; attempts++ {
+	for attempts := range 2 {
 		for {
 			if err := vss.CreateLink(snapshotPath, volName); err == nil {
 				return nil

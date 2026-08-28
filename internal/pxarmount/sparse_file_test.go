@@ -59,20 +59,20 @@ func TestSparseCopyUpDefersSourceReadAndFeedsCommit(t *testing.T) {
 	}
 	fh := mfs.registerFh(path, fd)
 	written, status := mfs.Write(nil, &fuse.WriteIn{
-		InHeader: fuse.InHeader{NodeId: resolved.Inode},
-		Fh:       fh,
-		Offset:   5,
+		NodeId: resolved.Inode,
+		Fh:     fh,
+		Offset: 5,
 	}, []byte("PATCH"))
 	if status != fuse.OK || written != 5 {
 		t.Fatalf("write = %d, %s", written, status)
 	}
-	if status := mfs.Flush(nil, &fuse.FlushIn{InHeader: fuse.InHeader{NodeId: resolved.Inode}, Fh: fh}); status != fuse.OK {
+	if status := mfs.Flush(nil, &fuse.FlushIn{NodeId: resolved.Inode, Fh: fh}); status != fuse.OK {
 		t.Fatalf("flush: %s", status)
 	}
 	readBuffer := make([]byte, len(raw))
 	readResult, status := mfs.Read(nil, &fuse.ReadIn{
-		InHeader: fuse.InHeader{NodeId: resolved.Inode},
-		Fh:       fh,
+		NodeId: resolved.Inode,
+		Fh:     fh,
 	}, readBuffer)
 	if status != fuse.OK {
 		t.Fatalf("read: %s", status)
@@ -148,11 +148,10 @@ func TestSparseTruncateRegrowDoesNotRevealLowerTail(t *testing.T) {
 	}
 	setSize := func(size uint64) {
 		t.Helper()
-		status := mfs.SetAttr(nil, &fuse.SetAttrIn{SetAttrInCommon: fuse.SetAttrInCommon{
-			InHeader: fuse.InHeader{NodeId: resolved.Inode},
-			Valid:    fuse.FATTR_SIZE,
-			Size:     size,
-		}}, &fuse.AttrOut{})
+		status := mfs.SetAttr(nil, &fuse.SetAttrIn{
+			NodeId: resolved.Inode,
+			Valid:  fuse.FATTR_SIZE,
+			Size:   size}, &fuse.AttrOut{})
 		if status != fuse.OK {
 			t.Fatalf("truncate to %d: %s", size, status)
 		}

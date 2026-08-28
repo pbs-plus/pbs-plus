@@ -513,7 +513,7 @@ func TestEnsureNodeTimesIdempotent(t *testing.T) {
 	// GetAttr on a node with no reader should fall back to Stat.Mtime.
 	// Since reader is nil, readEntryForNode will fail for non-root inodes.
 	out := &fuse.AttrOut{}
-	status := fs.GetAttr(nil, &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: 42}}, out)
+	status := fs.GetAttr(nil, &fuse.GetAttrIn{NodeId: 42}, out)
 	if status != fuse.OK {
 		t.Fatalf("GetAttr returned %v, want OK", status)
 	}
@@ -647,7 +647,7 @@ func TestReadDirPlusLargeDirNotQuadratic(t *testing.T) {
 
 	singleStart := time.Now()
 	single := fuse.NewDirEntryList(make([]byte, 1<<16), 0)
-	if status := fs.ReadDirPlus(nil, &fuse.ReadIn{InHeader: fuse.InHeader{NodeId: RootInode}}, single); status != fuse.OK {
+	if status := fs.ReadDirPlus(nil, &fuse.ReadIn{NodeId: RootInode}, single); status != fuse.OK {
 		t.Fatalf("ReadDirPlus single: %v", status)
 	}
 	singleDur := time.Since(singleStart)
@@ -656,7 +656,7 @@ func TestReadDirPlusLargeDirNotQuadratic(t *testing.T) {
 	pageStart := time.Now()
 	for off := range uint64(n + 4) {
 		dl := fuse.NewDirEntryList(make([]byte, pageBuf), off)
-		fs.ReadDirPlus(nil, &fuse.ReadIn{InHeader: fuse.InHeader{NodeId: RootInode}, Offset: off}, dl)
+		fs.ReadDirPlus(nil, &fuse.ReadIn{NodeId: RootInode, Offset: off}, dl)
 	}
 	pageDur := time.Since(pageStart)
 

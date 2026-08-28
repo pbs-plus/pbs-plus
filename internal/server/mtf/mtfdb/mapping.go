@@ -222,8 +222,8 @@ func volumeTokens(vol DataSetVolume) map[string]string {
 
 func driveLetter(device string) string {
 	trimmed := strings.Trim(device, "\\/")
-	if idx := strings.LastIndexByte(trimmed, '\\'); idx >= 0 {
-		trimmed = trimmed[idx+1:]
+	if _, tail, ok := strings.CutLast(trimmed, "\\"); ok {
+		trimmed = tail
 	}
 	trimmed = strings.TrimSuffix(trimmed, ":")
 	trimmed = strings.TrimSuffix(trimmed, "$")

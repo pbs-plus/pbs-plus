@@ -536,8 +536,8 @@ func mtfqueryHasCatalog(f mtflib.MediaFamily) sql.NullInt64 {
 
 func bkfBarcode(path string) string {
 	base := path
-	if idx := strings.LastIndexByte(base, '/'); idx >= 0 {
-		base = base[idx+1:]
+	if _, tail, ok := strings.CutLast(path, "/"); ok {
+		base = tail
 	}
 	base = strings.TrimSuffix(base, ".bkf")
 	base = strings.TrimSuffix(base, ".BKF")

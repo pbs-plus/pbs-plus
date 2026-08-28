@@ -33,18 +33,16 @@ func MountFuse(
 	timeout := 2 * time.Second
 
 	options := &fs.Options{
-		MountOptions: fuse.MountOptions{
-			Debug:              false,
-			FsName:             fsName,
-			Name:               "pbsagent",
-			AllowOther:         true,
-			DisableXAttrs:      true,
-			DisableReadDirPlus: true,
-			Options: []string{
-				"ro",
-				"allow_other",
-				"noatime",
-			},
+		Debug:              false,
+		FsName:             fsName,
+		Name:               "pbsagent",
+		AllowOther:         true,
+		DisableXAttrs:      true,
+		DisableReadDirPlus: true,
+		Options: []string{
+			"ro",
+			"allow_other",
+			"noatime",
 		},
 		EntryTimeout: &timeout,
 		AttrTimeout:  &timeout,

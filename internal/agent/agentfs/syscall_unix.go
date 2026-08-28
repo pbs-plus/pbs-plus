@@ -10,8 +10,8 @@ import (
 )
 
 func lastPathElem(p string) string {
-	if i := strings.LastIndexByte(p, '/'); i >= 0 {
-		return p[i+1:]
+	if _, tail, ok := strings.CutLast(p, "/"); ok {
+		return tail
 	}
 	return p
 }

@@ -367,8 +367,8 @@ func (fs *S3FS) logOnce(path string, err error, op string) {
 // suppressed  -  these are files probed by proxmox-backup-client on every
 func isIgnoredS3Path(p string) bool {
 	base := p
-	if idx := strings.LastIndexAny(p, "/"); idx >= 0 {
-		base = p[idx+1:]
+	if _, tail, ok := strings.CutLast(p, "/"); ok {
+		base = tail
 	}
 	switch base {
 	case ".pxarexclude", ".pxarexclude-cli":

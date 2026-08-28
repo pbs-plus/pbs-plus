@@ -71,7 +71,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, er
 					break
 				}
 
-				namePtr := unsafe.Pointer(uintptr(unsafe.Pointer(entry)) + unsafe.Offsetof(entry.FileName))
+				namePtr := unsafe.Add(unsafe.Pointer(entry), unsafe.Offsetof(entry.FileName))
 				name := windows.UTF16ToString(unsafe.Slice((*uint16)(namePtr), nameLen))
 
 				if name != "." && name != ".." {
@@ -90,10 +90,7 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, er
 					}
 
 					if !isDir && blockSize > 0 {
-						alloc := entry.AllocationSize
-						if alloc < 0 {
-							alloc = 0
-						}
+						alloc := max(entry.AllocationSize, 0)
 						info.Blocks = uint64((alloc + int64(blockSize) - 1) / int64(blockSize))
 					}
 					out = append(out, info)

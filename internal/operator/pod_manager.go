@@ -99,25 +99,21 @@ func (pm *PodManager) CleanupForPVC(ctx context.Context, pvc *corev1.PersistentV
 func (pm *PodManager) buildPodSpec(podName, namespace string, pvcToMount, originalPVC *corev1.PersistentVolumeClaim, useSnapshot bool) *corev1.Pod {
 	readOnlyFalse := false
 	pod := &corev1.Pod{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Pod",
+		APIVersion: "v1",
+		Kind:       "Pod",
+		Name:       podName,
+		Namespace:  namespace,
+		Labels: map[string]string{
+			"app.kubernetes.io/name":      "pbs-plus-backup-agent",
+			"app.kubernetes.io/component": "backup-agent",
+			ManagedByLabel:                ManagedByValue,
+			"pbs-plus.io/original-pvc":    originalPVC.Name,
 		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":      "pbs-plus-backup-agent",
-				"app.kubernetes.io/component": "backup-agent",
-				ManagedByLabel:                ManagedByValue,
-				"pbs-plus.io/original-pvc":    originalPVC.Name,
-			},
-			Annotations: map[string]string{
-				"pbs-plus.io/original-pvc-name": originalPVC.Name,
-				"pbs-plus.io/original-pvc-uid":  string(originalPVC.UID),
-				"pbs-plus.io/use-snapshot":      fmt.Sprintf("%v", useSnapshot),
-				"pbs-plus.io/pvc-ref":           namespace + "/" + originalPVC.Name,
-			},
+		Annotations: map[string]string{
+			"pbs-plus.io/original-pvc-name": originalPVC.Name,
+			"pbs-plus.io/original-pvc-uid":  string(originalPVC.UID),
+			"pbs-plus.io/use-snapshot":      fmt.Sprintf("%v", useSnapshot),
+			"pbs-plus.io/pvc-ref":           namespace + "/" + originalPVC.Name,
 		},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -138,10 +134,8 @@ func (pm *PodManager) buildPodSpec(podName, namespace string, pvcToMount, origin
 							Name: "PBS_PLUS_INIT_SERVER_URL",
 							ValueFrom: &corev1.EnvVarSource{
 								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: pm.bootstrapTokenSecret,
-									},
-									Key: "server-url",
+									Name: pm.bootstrapTokenSecret,
+									Key:  "server-url",
 								},
 							},
 						},
@@ -149,10 +143,8 @@ func (pm *PodManager) buildPodSpec(podName, namespace string, pvcToMount, origin
 							Name: "PBS_PLUS_INIT_BOOTSTRAP_TOKEN",
 							ValueFrom: &corev1.EnvVarSource{
 								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: pm.bootstrapTokenSecret,
-									},
-									Key: "bootstrap-token",
+									Name: pm.bootstrapTokenSecret,
+									Key:  "bootstrap-token",
 								},
 							},
 						},
@@ -160,10 +152,8 @@ func (pm *PodManager) buildPodSpec(podName, namespace string, pvcToMount, origin
 							Name: "PBS_PLUS_INIT_SERVER_CA_FINGERPRINT",
 							ValueFrom: &corev1.EnvVarSource{
 								SecretKeyRef: &corev1.SecretKeySelector{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: pm.bootstrapTokenSecret,
-									},
-									Key: "ca-fingerprint",
+									Name: pm.bootstrapTokenSecret,
+									Key:  "ca-fingerprint",
 								},
 							},
 						},
@@ -226,29 +216,21 @@ func (pm *PodManager) buildPodSpec(podName, namespace string, pvcToMount, origin
 			Volumes: []corev1.Volume{
 				{
 					Name: "pvc-backup",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: pvcToMount.Name,
-						},
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: pvcToMount.Name,
 					},
 				},
 				{
-					Name: "registry-config",
-					VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
-					},
+					Name:     "registry-config",
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 				{
-					Name: "registry-state",
-					VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
-					},
+					Name:     "registry-state",
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 				{
-					Name: "registry-logs",
-					VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
-					},
+					Name:     "registry-logs",
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 			},
 			RestartPolicy: corev1.RestartPolicyAlways,

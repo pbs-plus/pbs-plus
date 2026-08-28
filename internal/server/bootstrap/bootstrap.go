@@ -28,7 +28,7 @@ import (
 
 // and cleanup of stale mount points and queued backups
 func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Scheduler, *jobs.Engine, error) {
-	setMemLimit()
+	setMemLimit(mainCtx)
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {

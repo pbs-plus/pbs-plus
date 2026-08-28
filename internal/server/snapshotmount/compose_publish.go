@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -146,8 +147,8 @@ func (p *composePublication) Close() error {
 		_ = os.Remove(filepath.Join(p.groupDir, "owner"))
 		_ = os.Remove(p.groupDir)
 	}
-	for i := len(p.locks) - 1; i >= 0; i-- {
-		closeErr = errors.Join(closeErr, p.locks[i].Close())
+	for _, v := range slices.Backward(p.locks) {
+		closeErr = errors.Join(closeErr, v.Close())
 	}
 	p.locks = nil
 	if p.releaseActive != nil {
