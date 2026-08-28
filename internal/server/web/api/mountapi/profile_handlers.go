@@ -3,11 +3,13 @@
 package mountapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
@@ -57,6 +59,19 @@ func profileFormValues(r *http.Request) snapshotmount.Profile {
 	}
 }
 
+func writeProfileInvalid(w http.ResponseWriter, err error) {
+	log.Error(err, "")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	if encErr := json.NewEncoder(w).Encode(&respond.ErrorResponse{
+		Message: err.Error(),
+		Status:  http.StatusBadRequest,
+		Success: false,
+	}); encErr != nil {
+		log.Error(encErr, "")
+	}
+}
+
 func ExtJsMountProfilesHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -82,7 +97,7 @@ func ExtJsMountProfilesHandler(app *application.Runtime) http.HandlerFunc {
 		}
 		p := profileFormValues(r)
 		if err := snapshotmount.ValidateProfile(p); err != nil {
-			respond.WriteErrorResponse(w, err)
+			writeProfileInvalid(w, err)
 			return
 		}
 		if _, exists, err := snapshotmount.LoadProfile(p.ID()); err != nil {
@@ -134,7 +149,7 @@ func ExtJsMountProfileSingleHandler(app *application.Runtime) http.HandlerFunc {
 				p.BackupID = existing.BackupID
 			}
 			if err := snapshotmount.ValidateProfile(p); err != nil {
-				respond.WriteErrorResponse(w, err)
+				writeProfileInvalid(w, err)
 				return
 			}
 			p.CreatedAt = existing.CreatedAt
