@@ -9,6 +9,9 @@ import (
 )
 
 func SnapshotRefForInit(namespace string) snapshotRef {
+	if namespace == "-" {
+		namespace = ""
+	}
 	return snapshotRef{
 		Namespace:  namespace,
 		BackupType: "host",
