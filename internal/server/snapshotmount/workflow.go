@@ -239,6 +239,9 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	if mode != ModeRO && mode != ModeRW {
 		return Session{}, fmt.Errorf("invalid mode %q", mode)
 	}
+	if existing, lerr := LoadSession(key); lerr == nil && existing.Mode == ModeRW && mode == ModeRO {
+		return Session{}, fmt.Errorf("read-write mount state exists for this snapshot (%s); remount it read-write to restore changes, or unmount with force to discard them", existing.MountPoint)
+	}
 	if err := ValidateMountPath(in.MountPath); err != nil {
 		return Session{}, err
 	}
@@ -433,10 +436,6 @@ func resolveSession(in jobs.SnapshotUnmountInput) (Session, string, error) {
 }
 
 func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
-	if session.Mode == ModeRW && !in.Force {
-		return fmt.Errorf("read-write mount %s may have uncommitted changes; retry with force to discard them", session.MountPoint)
-	}
-
 	task.LogString("unmounting " + session.MountPoint)
 
 	if session.ServiceKey != "" {
@@ -453,9 +452,16 @@ func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Sessi
 		log.Error(err, "")
 	}
 	RemoveEmptyDirsToBase(filepath.Dir(session.MountPoint), filepath.Join(conf.RestoreMountBasePath, session.Datastore))
-	if session.ServiceKey != "" {
-		cleanupSessionFiles(session)
+	if session.ServiceKey == "" {
+		return nil
 	}
+	if session.Mode == ModeRW && !in.Force {
+		removeSessionSockets(session)
+		task.LogString("uncommitted changes preserved in " + session.OverlayDir)
+		task.LogString("remount read-write to restore them, or unmount with force to discard")
+		return nil
+	}
+	cleanupSessionFiles(session)
 	return nil
 }
 

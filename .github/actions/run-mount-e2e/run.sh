@@ -73,7 +73,9 @@ wait_for() {
 }
 
 session_mounted() { [ "$(sessions_field --arg mp "$1" '.data[]? | select(.["mount-point"]==$mp) | .mounted' | head -1)" = "true" ]; }
+session_offline() { [ "$(sessions_field --arg mp "$1" '.data[]? | select(.["mount-point"]==$mp) | .mounted' | head -1)" = "false" ]; }
 session_gone()    { [ -z "$(sessions_field --arg mp "$1" '.data[]? | select(.["mount-point"]==$mp) | .["mount-point"]' | head -1)" ]; }
+overlay_journal_dirs() { find /var/lib/pbs-plus/mount-overlays -maxdepth 2 -name .pxar-journal -type d 2>/dev/null | wc -l; }
 
 latest_snapshot() {
 	ls -1 "$1" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1
@@ -166,6 +168,26 @@ mkdir -p "$INIT_MP/nested" && echo nested-e2e > "$INIT_MP/nested/file.txt"
 	&& ok "wrote and read hello.txt through mount" || fail "write/read through init mount failed"
 
 BEFORE=$(latest_snapshot "$INIT_GROUP_DIR")
+
+RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$INIT_MP")
+if submit_ok "$RESP"; then
+	ok "keep-unmount request accepted"
+	wait_for "init session offline but preserved" 120 session_offline "$INIT_MP" || fail "rw unmount did not preserve session"
+	[ "$(overlay_journal_dirs)" -ge 1 ] \
+		&& ok "uncommitted changes preserved in overlay journal" || fail "no overlay journal after keep-unmount"
+else
+	fail "keep-unmount rejected: $(body_of "$RESP")"
+fi
+
+RESP=$(api_post "/api2/extjs/config/d2d-init/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init")
+if submit_ok "$RESP"; then
+	wait_for "init session remounted at $INIT_MP" 240 session_mounted "$INIT_MP" || true
+	[ "$(cat "$INIT_MP/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
+		&& ok "uncommitted changes restored after remount" || fail "changes lost across keep-unmount/remount"
+else
+	fail "re-init rejected: $(body_of "$RESP")"
+fi
 RESP=$(api_post "/api2/extjs/config/d2d-commit/$ENC_DS" -d "mount-path=$INIT_MP")
 if submit_ok "$RESP"; then
 	ok "commit request accepted"
@@ -196,6 +218,35 @@ if submit_ok "$RESP"; then
 	wait_for "init session unmounted" 120 session_gone "$INIT_MP" || true
 else
 	fail "init unmount rejected: $(body_of "$RESP")"
+fi
+
+section "PHASE 2b: Discard uncommitted rw changes via force unmount"
+
+RESP=$(api_post "/api2/extjs/config/d2d-init/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init")
+if submit_ok "$RESP"; then
+	wait_for "discard-init session mounted at $INIT_MP" 240 session_mounted "$INIT_MP" || true
+	[ "$(overlay_journal_dirs)" -ge 1 ] && ok "overlay journal live" || true
+else
+	fail "discard-init rejected: $(body_of "$RESP")"
+fi
+echo discard-me > "$INIT_MP/discard-me.txt" || fail "cannot write discard-me.txt"
+
+RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$INIT_MP")
+if submit_ok "$RESP"; then
+	wait_for "discard-init session offline but preserved" 120 session_offline "$INIT_MP" || fail "keep-unmount did not preserve session"
+else
+	fail "discard keep-unmount rejected: $(body_of "$RESP")"
+fi
+[ "$(overlay_journal_dirs)" -ge 1 ] && ok "changes awaiting discard" || fail "overlay journal missing before discard"
+
+RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$INIT_MP" -d "force=1")
+if submit_ok "$RESP"; then
+	wait_for "discard-init session gone" 120 session_gone "$INIT_MP" || fail "force unmount did not remove session"
+	[ "$(overlay_journal_dirs)" = 0 ] \
+		&& ok "uncommitted changes discarded" || fail "overlay journal survived force unmount"
+else
+	fail "discard unmount rejected: $(body_of "$RESP")"
 fi
 
 section "PHASE 3: Remount committed snapshot, verify data"

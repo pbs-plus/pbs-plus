@@ -139,7 +139,30 @@ var activeMountsPanel = js.Panel{
 			let me = this;
 			Ext.Msg.confirm(
 				gettext("Confirm"),
-				Ext.String.format(gettext("Unmount '{0}'? Uncommitted changes of read-write mounts are lost."), d["mount-point"]),
+				Ext.String.format(gettext("Unmount '{0}'? Uncommitted changes of read-write mounts are kept and restored on the next read-write mount of this snapshot."), d["mount-point"]),
+				(btn) => {
+					if (btn !== "yes") return;
+					PBS.PlusUtils.API2Request({
+						url: "/api2/extjs/config/d2d-unmount/" + encodeURIComponent(encodePathValue(d.datastore)),
+						method: "POST",
+						params: { "mount-path": d["mount-point"] },
+						waitMsgTarget: view,
+						failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+						success: (resp) => {
+							Ext.create("PBS.plusWindow.TaskViewer", {
+								upid: resp.result.data,
+								taskDone: () => view.getStore().rstore.load(),
+							}).show();
+						},
+					});
+				},
+			);
+		`),
+		"discard": js.Func("view, rowIdx, colIdx, item, e, rec", `
+			let d = rec.data;
+			Ext.Msg.confirm(
+				gettext("Confirm"),
+				Ext.String.format(gettext("Delete the uncommitted changes of '{0}'? This cannot be undone."), d["mount-point"]),
 				(btn) => {
 					if (btn !== "yes") return;
 					PBS.PlusUtils.API2Request({
@@ -181,7 +204,7 @@ var activeMountsPanel = js.Panel{
 			return v ? '<i class="fa fa-check-circle"></i> ' + gettext("Mounted")
 				: '<i class="fa fa-warning"></i> ' + gettext("Offline");
 		`)},
-		{XType: js.XActionColumn, Text: "Actions", DataIndex: "mount-point", Width: 80, Items: js.Arr{
+		{XType: js.XActionColumn, Text: "Actions", DataIndex: "mount-point", Width: 110, Items: js.Arr{
 			js.Obj{
 				"handler": "commit",
 				"tooltip": js.T("Commit changes to a new snapshot"),
@@ -197,6 +220,13 @@ var activeMountsPanel = js.Panel{
 				"tooltip": js.T("Unmount"),
 				"getClass": js.Func("v, meta, rec", `
 					return "fa fa-fw fa-eject" + (rec.get("mounted") ? "" : " pmx-opacity-50");
+				`),
+			},
+			js.Obj{
+				"handler": "discard",
+				"tooltip": js.T("Discard uncommitted changes"),
+				"getClass": js.Func("v, meta, rec", `
+					return rec.get("mode") === "rw" ? "fa fa-fw fa-trash" : "pmx-hidden";
 				`),
 			},
 		}},

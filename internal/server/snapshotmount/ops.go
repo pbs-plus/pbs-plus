@@ -94,19 +94,24 @@ func RemoveEmptyDirsToBase(path, basePath string) {
 	}
 }
 
+func removeSessionSockets(s Session) {
+	if s.SocketPath == "" {
+		return
+	}
+	for _, suffix := range []string{"", ".monitor", ".log"} {
+		if err := os.Remove(s.SocketPath + suffix); err != nil && !os.IsNotExist(err) {
+			log.Error(err, "", "socket", s.SocketPath+suffix)
+		}
+	}
+}
+
 func cleanupSessionFiles(s Session) {
 	if s.OverlayDir != "" {
 		if err := os.RemoveAll(s.OverlayDir); err != nil {
 			log.Error(err, "", "overlay", s.OverlayDir)
 		}
 	}
-	if s.SocketPath != "" {
-		for _, suffix := range []string{"", ".monitor", ".log"} {
-			if err := os.Remove(s.SocketPath + suffix); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "", "socket", s.SocketPath+suffix)
-			}
-		}
-	}
+	removeSessionSockets(s)
 	if err := DeleteSession(s.ServiceKey); err != nil {
 		log.Error(err, "")
 	}
