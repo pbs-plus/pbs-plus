@@ -516,9 +516,6 @@ func (fs *PxarFS) readDirRawLocked(inode uint64) ([]dirEntrySlim, error) {
 }
 
 func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fuse.ReadResult, fuse.Status) {
-	fs.readerMu.RLock()
-	defer fs.readerMu.RUnlock()
-
 	fs.mu.RLock()
 	n, ok := fs.nodes[ino]
 	fs.mu.RUnlock()
@@ -528,10 +525,6 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 	if n.isDir {
 		return nil, fuse.EISDIR
 	}
-	if fs.readerAt == nil {
-		return nil, fuse.EIO
-	}
-
 	fileSize := int64(n.fileSize)
 	if off >= fileSize {
 		return fuse.ReadResultData(nil), fuse.OK
@@ -544,8 +537,7 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 		size = int64(len(dest))
 	}
 
-	start := int64(n.contentOffset) + 16 + off
-	nr, err := fs.readerAt.ReadAt(dest[:size], start)
+	nr, err := fs.readFileAt(&n, off, dest[:size])
 	if err != nil && err != io.EOF {
 		return nil, fuse.EIO
 	}
@@ -553,6 +545,21 @@ func (fs *PxarFS) readFileContent(ino uint64, off, size int64, dest []byte) (fus
 		return fuse.ReadResultData(nil), fuse.OK
 	}
 	return fuse.ReadResultData(dest[:nr]), fuse.OK
+}
+
+func (fs *PxarFS) readFileAt(n *node, off int64, dest []byte) (int, error) {
+	fs.readerMu.RLock()
+	defer fs.readerMu.RUnlock()
+	if fs.readerAt == nil {
+		return 0, io.ErrClosedPipe
+	}
+	if off >= int64(n.fileSize) {
+		return 0, io.EOF
+	}
+	if remaining := int64(n.fileSize) - off; int64(len(dest)) > remaining {
+		dest = dest[:remaining]
+	}
+	return fs.readerAt.ReadAt(dest, int64(n.contentOffset)+16+off)
 }
 
 func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) node {

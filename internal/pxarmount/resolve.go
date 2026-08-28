@@ -129,7 +129,7 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 	re.Mode = ensureModeType(re.Mode, n.Kind)
 
 	// If the node has a redirect, check pxar for data.
-	if n.RedirectTo != "" && !n.HasData {
+	if n.RedirectTo != "" && (!n.HasData || n.SparseData) {
 		pxarNode := fs.findPxarNode(n.RedirectTo)
 		re.PxarNode = pxarNode
 		// Use pxar metadata if node fields are zero.

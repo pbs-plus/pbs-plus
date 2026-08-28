@@ -79,8 +79,20 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 			fs.debugf("Read: EBADF fh=%d", input.Fh)
 			return nil, fuse.EBADF
 		}
-		n, err := syscall.Pread(fh.fd, buf, int64(input.Offset))
+		var n int
+		var err error
+		if re.Node != nil && re.Node.SparseData {
+			inoMu := fs.getInoLock(input.NodeId)
+			inoMu.Lock()
+			n, err = fs.readSparseAt(fh.fd, input.NodeId, re.Node, re.PxarNode, buf, int64(input.Offset))
+			inoMu.Unlock()
+		} else {
+			n, err = syscall.Pread(fh.fd, buf, int64(input.Offset))
+		}
 		if err != nil {
+			if err == io.EOF {
+				return fuse.ReadResultData(nil), fuse.OK
+			}
 			fs.debugf("Read: pread err: %v", err)
 			return nil, fuse.ToStatus(err)
 		}
@@ -120,6 +132,13 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 			return 0, fuse.ToStatus(err)
 		}
 	}
+	inoMu := fs.getInoLock(input.NodeId)
+	inoMu.Lock()
+	defer inoMu.Unlock()
+	re, status = fs.resolve(path)
+	if status != fuse.OK {
+		return 0, status
+	}
 
 	fh := fs.getFh(input.Fh)
 	// already released), open an anonymous fd and close it after the
@@ -141,20 +160,22 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 			log.Error(err, "")
 		}
 	}
-	if err != nil {
+	if err != nil && n == 0 {
 		return 0, fuse.ToStatus(err)
 	}
 
-	// Track pending metadata for deferred journal sync in Flush.
-	// Avoids an fsync per 128 KB FUSE write chunk which kills throughput.
-	newSize := uint64(int64(input.Offset) + int64(n))
+	newSize := uint64(input.Offset) + uint64(n)
 	now := time.Now().UnixNano()
 	fs.dirtyMeta.Compute(input.NodeId, func(old pendingMeta, exists bool) (pendingMeta, xsync.ComputeOp) {
 		s := newSize
 		if exists && old.size > s {
 			s = old.size
 		}
-		return pendingMeta{size: s, mtimeNs: now, ctimeNs: now}, xsync.UpdateOp
+		extents := old.dataExtents
+		if re.Node.SparseData {
+			extents = append(extents, dataExtent{Start: uint64(input.Offset), End: newSize})
+		}
+		return pendingMeta{size: s, mtimeNs: now, ctimeNs: now, dataExtents: extents}, xsync.UpdateOp
 	})
 
 	return uint32(n), fuse.OK
@@ -169,11 +190,19 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		return fuse.ENOENT
 	}
 
+	re, status := fs.resolve(path)
+	if status != fuse.OK {
+		return status
+	}
+	if _, sizeChanged := input.GetSize(); sizeChanged && !re.DataIsMut && re.PxarNode != nil && re.PxarNode.isReg {
+		if err := fs.copyUp(re); err != nil {
+			return fuse.ToStatus(err)
+		}
+	}
 	inoMu := fs.getInoLock(input.NodeId)
 	inoMu.Lock()
 	defer inoMu.Unlock()
-
-	re, status := fs.resolve(path)
+	re, status = fs.resolve(path)
 	if status != fuse.OK {
 		return status
 	}
@@ -193,7 +222,7 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		sizeChanged = true
 		if re.DataIsMut {
 			if err := os.Truncate(fs.mutablePath(path), int64(v)); err != nil {
-				fs.logNonFatal("truncate", path, err)
+				return fuse.ToStatus(err)
 			}
 		}
 	}
@@ -238,8 +267,7 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		}
 	}
 
-	// Consume pending write metadata to prevent Flush from overwriting
-	// our journal write with stale Write data.
+	var pendingExtents []dataExtent
 	if meta, ok := fs.dirtyMeta.LoadAndDelete(input.NodeId); ok {
 		if !sizeChanged && meta.size > re.Size {
 			re.Size = meta.size
@@ -247,6 +275,7 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		if !mtimeSet {
 			re.MtimeNs = meta.mtimeNs
 		}
+		pendingExtents = meta.dataExtents
 	}
 
 	fs.ensureNode(re)
@@ -258,6 +287,15 @@ func (fs *MutableFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out 
 		re.Node.MtimeNs = re.MtimeNs
 		re.Node.CtimeNs = re.CtimeNs
 		re.Node.HasData = re.DataIsMut
+		if re.Node.SparseData {
+			if pendingExtents != nil {
+				re.Node.DataExtents = mergeDataExtents(re.Node.DataExtents, pendingExtents)
+			}
+			if sizeChanged {
+				re.Node.DataExtents = trimDataExtents(re.Node.DataExtents, re.Size)
+				re.Node.LowerSize = min(re.Node.LowerSize, re.Size)
+			}
+		}
 		if err := fs.journal.UpdateNode(re.Node); err != nil {
 			return fuse.EIO
 		}
@@ -334,41 +372,33 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 	fs.beginMutation()
 	defer fs.endMutation()
 
-	inoMu := fs.getInoLock(input.NodeId)
-	inoMu.Lock()
-	if meta, ok := fs.dirtyMeta.LoadAndDelete(input.NodeId); ok {
-		path := fs.inodeToPath(input.NodeId)
-		if path != "" {
-			if re, status := fs.resolve(path); status == fuse.OK && re.Node != nil {
-				if meta.size > re.Node.Size {
-					re.Node.Size = meta.size
-				}
-				re.Node.MtimeNs = meta.mtimeNs
-				re.Node.CtimeNs = meta.ctimeNs
-				if err := fs.journal.UpdateNode(re.Node); err != nil {
-					log.Error(err, "")
-				}
-			}
+	if input.Fh != 0 {
+		if status := fs.fsyncInternal(input.NodeId, input.Fh); status != fuse.OK {
+			return status
 		}
 	}
-	inoMu.Unlock()
-	if input.Fh == 0 {
-		return fuse.OK // pxar passthrough, no fd to sync
+	if err := fs.flushDirtyMeta(input.NodeId); err != nil {
+		log.Error(err, "")
 	}
-	return fs.fsyncInternal(input.NodeId, input.Fh)
+	return fuse.OK
 }
 
 func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Status {
 	fs.beginMutation()
 	defer fs.endMutation()
 
+	if input.Fh != 0 {
+		if status := fs.fsyncInternal(input.NodeId, input.Fh); status != fuse.OK {
+			return status
+		}
+	}
+	if err := fs.flushDirtyMeta(input.NodeId); err != nil {
+		log.Error(err, "")
+	}
 	if err := fs.journal.Sync(); err != nil {
 		log.Error(err, "")
 	}
-	if input.Fh == 0 {
-		return fuse.OK
-	}
-	return fs.fsyncInternal(input.NodeId, input.Fh)
+	return fuse.OK
 }
 
 func (fs *MutableFS) fsyncInternal(_, fhID uint64) fuse.Status {

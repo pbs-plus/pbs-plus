@@ -17,9 +17,10 @@ import (
 // Applied to the journal in Flush (file close) or SetAttr
 // (whichever runs first), serialized by per-inode lock.
 type pendingMeta struct {
-	size    uint64
-	mtimeNs int64
-	ctimeNs int64
+	size        uint64
+	mtimeNs     int64
+	ctimeNs     int64
+	dataExtents []dataExtent
 }
 
 //   - PxarFS provides the immutable lower layer

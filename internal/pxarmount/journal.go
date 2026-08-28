@@ -15,18 +15,26 @@ const (
 )
 
 type GraphNode struct {
-	ID         int64
-	Kind       uint8
-	Mode       uint32
-	UID        uint32
-	GID        uint32
-	Size       uint64
-	MtimeNs    int64
-	CtimeNs    int64
-	HasData    bool
-	SymlinkTgt string
-	RedirectTo string
-	Opaque     bool
+	ID          int64
+	Kind        uint8
+	Mode        uint32
+	UID         uint32
+	GID         uint32
+	Size        uint64
+	MtimeNs     int64
+	CtimeNs     int64
+	HasData     bool
+	SymlinkTgt  string
+	RedirectTo  string
+	Opaque      bool
+	SparseData  bool
+	LowerSize   uint64
+	DataExtents []dataExtent
+}
+
+type dataExtent struct {
+	Start uint64
+	End   uint64
 }
 
 type GraphEdge struct {
