@@ -21,6 +21,7 @@ const (
 	WorkflowSnapshotUnmount = "snapshot.unmount"
 	WorkflowSnapshotCommit  = "snapshot.commit"
 	WorkflowSnapshotInit    = "snapshot.init"
+	WorkflowSnapshotCompose = "snapshot.compose"
 )
 
 type BackupInput struct {
@@ -88,6 +89,21 @@ type SnapshotInitInput struct {
 	MountPath  string `json:"mount_path"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`
+}
+
+type SnapshotComposeInput struct {
+	Datastore  string   `json:"datastore"`
+	SourceNS   string   `json:"source_ns"`
+	SourceType string   `json:"source_type"`
+	SourceID   string   `json:"source_id"`
+	SourceTime string   `json:"source_time"`
+	SourceFile string   `json:"source_file"`
+	TargetNS   string   `json:"target_ns"`
+	TargetType string   `json:"target_type"`
+	TargetID   string   `json:"target_id"`
+	Paths      []string `json:"paths"`
+	UPID       string   `json:"upid"`
+	Web        bool     `json:"web"`
 }
 
 func NewWorkflowSubmit(kind, definitionID, trigger, dedupeKey string, payload any, resources []string, maxAttempts int, retryDelay time.Duration) (jobdb.SubmitRequest, error) {

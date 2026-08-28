@@ -594,6 +594,27 @@ var mountPanel = js.Panel{
 					archive: rec.data.filename,
 				}).show();
 			`),
+			"composeSnapshot": js.Func("tv, rI, cI, item, e, rec", `
+				let me = this;
+				let view = me.getView();
+				if (!rec || rec.data.ty !== "file") {
+					return;
+				}
+				let snapshot = rec.parentNode.data;
+				let isoTime = snapshot["backup-time"];
+				if (isoTime instanceof Date) {
+					isoTime = isoTime.toISOString().replace(/\.\d{3}Z$/, "Z");
+				}
+				Ext.create("PBS.D2DSnapshotMount.ComposeWindow", {
+					datastore: view.datastore,
+					namespace: view.namespace || "",
+					backupId: snapshot["backup-id"],
+					backupType: snapshot["backup-type"],
+					backupTime: isoTime,
+					archive: rec.data.filename,
+					autoShow: true,
+				});
+			`),
 			"filter": js.Func("item, value", `
 				if (item.data.text.indexOf(value) !== -1) {
 					return true;
@@ -748,6 +769,12 @@ var mountPanel = js.Panel{
 						(data.filename.endsWith(".pxar.didx") || data.filename.endsWith(".mpxar.didx")) &&
 						data["crypt-mode"] < 3) && data.ty !== "ns";
 				`),
+			},
+			js.Obj{
+				"handler":          "composeSnapshot",
+				"getTip":           js.Func("v, m, rec", `return Ext.String.format(gettext("Compose new snapshot from '{0}'"), v);`),
+				"getClass":         archiveActionIcon("fa fa-files-o"),
+				"isActionDisabled": archiveActionDisabled,
 			},
 		}},
 		{XType: js.XDateColumn, Text: "Backup Time", DataIndex: "backup-time", Format: "Y-m-d H:i:s", Width: 150, Sortable: new(true)},

@@ -78,6 +78,17 @@ func Register(engine *jobs.Engine) error {
 	}); err != nil {
 		return fmt.Errorf("registering snapshot init workflow: %w", err)
 	}
+	if err := engine.RegisterVersion(jobs.WorkflowSnapshotCompose, "1", func(w *jobs.WorkflowContext) error {
+		var in jobs.SnapshotComposeInput
+		if err := json.Unmarshal(w.Execution.Payload, &in); err != nil {
+			return jobs.NonRetryable(fmt.Errorf("decoding compose workflow input: %w", err))
+		}
+		return w.Step("compose", func(ctx context.Context) error {
+			return runCompose(ctx, in)
+		})
+	}); err != nil {
+		return fmt.Errorf("registering snapshot compose workflow: %w", err)
+	}
 	return nil
 }
 
