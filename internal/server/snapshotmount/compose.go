@@ -187,12 +187,32 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 		return fmt.Errorf("open local datastore publisher: %w", err)
 	}
 
+	lastProgressLog := time.Now()
+	lastProcessedBytes := uint64(0)
+	var payloadProgress backupproxy.UploadProgress
+	onPayloadProgress := func(progress backupproxy.UploadProgress) {
+		payloadProgress = progress
+		now := time.Now()
+		elapsed := now.Sub(lastProgressLog)
+		if elapsed < 5*time.Second {
+			return
+		}
+		rate := float64(progress.ProcessedBytes-lastProcessedBytes) / elapsed.Seconds() / (1 << 20)
+		task.LogString(fmt.Sprintf(
+			"payload progress: processed %.1f GiB in %d chunks; stored %.1f MiB in %d new chunks (%.1f MiB/s)",
+			float64(progress.ProcessedBytes)/(1<<30), progress.ProcessedChunks,
+			float64(progress.UploadedBytes)/(1<<20), progress.UploadedChunks, rate))
+		lastProgressLog = now
+		lastProcessedBytes = progress.ProcessedBytes
+	}
+
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
-		BackupType: bt,
-		BackupID:   in.TargetID,
-		BackupTime: backupTime,
-		Namespace:  in.TargetNS,
-		CryptMode:  datastore.CryptModeNone,
+		BackupType:       bt,
+		BackupID:         in.TargetID,
+		BackupTime:       backupTime,
+		Namespace:        in.TargetNS,
+		CryptMode:        datastore.CryptModeNone,
+		OnUploadProgress: onPayloadProgress,
 	})
 	if err != nil {
 		return fmt.Errorf("start PBS session: %w", err)
@@ -238,6 +258,10 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	if err := writer.Finish(); err != nil {
 		return fmt.Errorf("finish writer: %w", err)
 	}
+	task.LogString(fmt.Sprintf(
+		"payload complete: processed %.1f GiB in %d chunks; stored %.1f MiB in %d new chunks",
+		float64(payloadProgress.ProcessedBytes)/(1<<30), payloadProgress.ProcessedChunks,
+		float64(payloadProgress.UploadedBytes)/(1<<20), payloadProgress.UploadedChunks))
 	for _, name := range []string{in.TargetID + ".mpxar.didx", in.TargetID + ".ppxar.didx"} {
 		if err := verifyPublishedIndex(filepath.Join(publication.snapshotDir, name)); err != nil {
 			return err
