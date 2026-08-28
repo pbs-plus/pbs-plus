@@ -34,12 +34,17 @@ var activeMountsPanel = js.Panel{
 		"initNew": js.Func("view", `
 			let me = this;
 			Ext.create("Ext.window.Window", {
-				title: gettext("Initialize New Archive"),
+				title: gettext("Create New Snapshot"),
 				modal: true,
 				layout: "anchor",
 				bodyPadding: 10,
 				width: 480,
 				items: [{
+					xtype: "component",
+					cls: "pmx-hint",
+					html: gettext("Creates an empty, writable mount for a new snapshot. Add files at the mount path, then use Commit from Active Mounts to save the snapshot. Existing snapshots are unchanged."),
+					margin: "0 0 10 0",
+				}, {
 					xtype: "form",
 					anchor: "100%",
 					border: false,
@@ -156,7 +161,7 @@ var activeMountsPanel = js.Panel{
 	}},
 	Tbar: []js.Tool{
 		{XType: js.XButton, Text: "Reload", IconCls: "fa fa-refresh", Handler: "reload"},
-		{XType: js.XButton, Text: "New Archive", IconCls: "fa fa-plus", Handler: "initNew"},
+		{XType: js.XButton, Text: "New Snapshot", IconCls: "fa fa-plus", Handler: "initNew"},
 	},
 	Columns: []js.Column{
 		{Text: "Datastore", DataIndex: "datastore", Width: 120},
