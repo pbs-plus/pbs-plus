@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 )
@@ -85,7 +84,7 @@ func (b *backupJob) finalizeFailure(err error) {
 	}
 }
 
-func (b *backupJob) finalizeSuccess() {
+func (b *backupJob) finalizeSuccess(succeeded bool, warningsNum int) {
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
@@ -98,8 +97,6 @@ func (b *backupJob) finalizeSuccess() {
 	}
 
 	b.waitGroup.Wait()
-
-	succeeded, warningsNum := b.processPBSLogs(nil, b.upid)
 
 	if currOwner != "" {
 		b.logger.Info("setting owner to datastore owner")
@@ -142,7 +139,6 @@ func (b *backupJob) cleanup() {
 		agentMount := b.agentMount
 		s3Mount := b.s3Mount
 		logger := b.logger
-		qt := b.queueTask
 		cancel := b.cancel
 		b.mu.Unlock()
 
@@ -160,9 +156,6 @@ func (b *backupJob) cleanup() {
 		}
 		if logger != nil {
 			logger.Close()
-		}
-		if qt != nil {
-			qt.Close()
 		}
 	})
 }
@@ -187,18 +180,6 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	b.logger.Info("updating job status", "succeeded", succeeded, "cancelled", cancelled, "warnings", warningsNum)
-
-	startTime := logger.JobStartTime()
-
-	if newUpid, err := tasklog.ChangeUPIDStartTime(upid, startTime); err == nil {
-		upid = newUpid
-		b.mu.Lock()
-		if b.Task.UPID != "" {
-			b.Task.UPID = newUpid
-		}
-		b.mu.Unlock()
-	}
-
 	b.mu.RLock()
 	currentJob := b.job
 	taskCopy := proxmox.Task{UPID: upid}

@@ -55,10 +55,6 @@ func (m *mockBackupRepo) DeleteBackup(tx *coredb.Transaction, id string) error {
 	return nil
 }
 
-func (m *mockBackupRepo) GetAllQueuedBackups() ([]coredb.Backup, error) {
-	return m.GetAllBackups()
-}
-
 func TestBackupService_GetBackup_NotFound(t *testing.T) {
 	svc := &BackupService{db: nil} // not used when testing with repo interface
 	_ = svc

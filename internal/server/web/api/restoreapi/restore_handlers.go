@@ -131,7 +131,7 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 					Web:       true,
 				}
 				var reply jobrpc.QueueReply
-				if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
+				if err := rpcClient.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
 					log.Error(err, "", "restoreID", restoreID)
 					continue
 				}

@@ -6,13 +6,16 @@ package jobquery
 
 import (
 	"context"
+	"database/sql"
 )
 
 type Querier interface {
+	CancelExpiredExecution(ctx context.Context, arg CancelExpiredExecutionParams) (int64, error)
 	CancelPendingExecution(ctx context.Context, arg CancelPendingExecutionParams) (int64, error)
 	CheckpointActivity(ctx context.Context, arg CheckpointActivityParams) (int64, error)
 	ClaimExecution(ctx context.Context, arg ClaimExecutionParams) (int64, error)
 	CompleteActivity(ctx context.Context, arg CompleteActivityParams) (int64, error)
+	CountActivitiesAfterPosition(ctx context.Context, arg CountActivitiesAfterPositionParams) (int64, error)
 	CreateActivity(ctx context.Context, arg CreateActivityParams) (int64, error)
 	CreateExecution(ctx context.Context, arg CreateExecutionParams) error
 	CreateExecutionEvent(ctx context.Context, arg CreateExecutionEventParams) error
@@ -25,17 +28,20 @@ type Querier interface {
 	FinishExecution(ctx context.Context, arg FinishExecutionParams) (int64, error)
 	GetActiveExecutionByDefinition(ctx context.Context, arg GetActiveExecutionByDefinitionParams) (JobExecution, error)
 	GetActivity(ctx context.Context, arg GetActivityParams) (JobExecutionActivity, error)
+	GetActivityAtPosition(ctx context.Context, arg GetActivityAtPositionParams) (JobExecutionActivity, error)
 	GetExecution(ctx context.Context, id string) (JobExecution, error)
 	GetExecutionByDedupeKey(ctx context.Context, dedupeKey string) (JobExecution, error)
 	InvalidateActivity(ctx context.Context, arg InvalidateActivityParams) (int64, error)
 	ListClaimableExecutionIDs(ctx context.Context, runAt int64) ([]string, error)
 	ListExecutionEvents(ctx context.Context, executionID string) ([]JobExecutionEvent, error)
 	ListExecutionResources(ctx context.Context, executionID string) ([]string, error)
+	ListExpiredCanceledExecutionIDs(ctx context.Context, leaseUntil sql.NullInt64) ([]string, error)
 	ReleaseExecutionClaim(ctx context.Context, arg ReleaseExecutionClaimParams) error
 	RenewExecutionLease(ctx context.Context, arg RenewExecutionLeaseParams) (int64, error)
 	RenewResourceLocks(ctx context.Context, arg RenewResourceLocksParams) error
 	RequestExecutionCancellation(ctx context.Context, id string) (int64, error)
-	RequeueExpiredExecutions(ctx context.Context, arg RequeueExpiredExecutionsParams) error
+	RequeueExpiredExecutions(ctx context.Context, arg RequeueExpiredExecutionsParams) ([]string, error)
+	ResetRunningActivities(ctx context.Context, executionID string) error
 	StartActivity(ctx context.Context, arg StartActivityParams) (int64, error)
 }
 

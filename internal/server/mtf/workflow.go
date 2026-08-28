@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
@@ -23,7 +22,7 @@ type taskResult struct {
 // run, finalize. Task creation is exactly-once; the tape run reattaches
 // to the task log by UPID across retries.
 func RegisterMigration(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowMtfMigration, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowMtfMigration, "1", func(w *jobs.WorkflowContext) error {
 		j, err := newMigrationJob(w.Execution.DefinitionID, app)
 		if err != nil {
 			return jobs.NonRetryable(err)
@@ -34,6 +33,11 @@ func RegisterMigration(engine *jobs.Engine, app *application.Runtime) error {
 
 func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	defer j.cleanup()
+	queued, err := tasklog.NewQueuedTask(mtfWorkerType, tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID), w.Execution.Trigger == "manual")
+	if err != nil {
+		return fmt.Errorf("creating queued MTF migration task: %w", err)
+	}
+	defer queued.Close()
 
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		task, err := startTask(j.job)
@@ -52,8 +56,15 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	if err := json.Unmarshal(startResRaw, &startRes); err != nil {
 		return jobs.NonRetryable(fmt.Errorf("decoding mtf start result: %w", err))
 	}
+	queued.Close()
 
-	_, err = w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	_, err = w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
+		if len(info.ResumeCheckpoint) != 0 {
+			return nil, jobs.NonRetryable(errors.New("MTF migration interrupted after tape I/O started; submit a new execution to retry"))
+		}
+		if err := info.Checkpoint(ctx, json.RawMessage(`{"started":true}`)); err != nil {
+			return nil, err
+		}
 		if j.task == nil {
 			if err := j.reattach(startRes.UPID); err != nil {
 				return nil, err
@@ -68,16 +79,15 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 		return j.finalizeFailed(w, startRes.UPID, err)
 	}
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		if j.task == nil {
 			if err := j.reattach(startRes.UPID); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		j.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 func (j *mtfJob) finalizeFailed(w *jobs.WorkflowContext, upid string, runErr error) error {
@@ -85,13 +95,12 @@ func (j *mtfJob) finalizeFailed(w *jobs.WorkflowContext, upid string, runErr err
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		if j.task == nil && upid != "" {
 			_ = j.reattach(upid)
 		}
 		j.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		j.logger.Error(err, "failed to run mtf failure finalizer")
@@ -102,7 +111,7 @@ func (j *mtfJob) finalizeFailed(w *jobs.WorkflowContext, upid string, runErr err
 // RegisterScan registers the MTF inventory scan workflow: start-task,
 // scan, finalize, under the global mtf-scan resource lock.
 func RegisterScan(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowMtfScan, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowMtfScan, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.MtfScanInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding mtf scan workflow input: %w", err))
@@ -123,56 +132,99 @@ func RegisterScan(engine *jobs.Engine, app *application.Runtime) error {
 }
 
 func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) error {
+	var task *ScanTask
+	queued, err := tasklog.NewQueuedTask("mtfscan", scanWID(opts), w.Execution.Trigger == "manual")
+	if err != nil {
+		return fmt.Errorf("creating queued MTF scan task: %w", err)
+	}
+	defer queued.Close()
+
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-		st, err := NewScanTask(opts)
+		var err error
+		task, err = NewScanTask(opts)
 		if err != nil {
 			return nil, fmt.Errorf("create scan task: %w", err)
 		}
-		return json.Marshal(struct {
-			UPID string `json:"upid"`
-		}{UPID: st.UPID()})
+		return json.Marshal(taskResult{UPID: task.UPID()})
 	})
 	if err != nil {
-		return err
+		return finalizeScanFailed(w, task, "", err)
 	}
 	var startRes taskResult
 	if err := json.Unmarshal(startResRaw, &startRes); err != nil {
 		return jobs.NonRetryable(fmt.Errorf("decoding mtf scan start result: %w", err))
 	}
+	queued.Close()
 
-	scanErr := func() error {
-		_, err := w.Activity("scan", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	scanResRaw, err := w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+		if task == nil {
 			wt, err := tasklog.ReopenWorkerTask(startRes.UPID)
 			if err != nil {
 				return nil, err
 			}
-			st := &ScanTask{WorkerTask: wt}
-			st.LogString("MTF inventory scan started")
-			defer func() {
-				if r := recover(); r != nil {
-					st.LogString(fmt.Sprintf("panic: %v", r))
-					st.CloseErr(fmt.Errorf("scan panic: %v", r))
-				}
-			}()
-			scanner := NewScanner(app.MtfDB)
-			res, scanErr := scanner.ScanWithLog(ctx, opts, log.WithScope(log.Scope{Task: st.WorkerTask}))
-			if scanErr != nil {
-				st.LogString(scanErr.Error())
-				st.CloseErr(scanErr)
-				return nil, scanErr
-			}
-			st.CloseOK(res)
-			return json.RawMessage(`{}`), nil
-		})
-		return err
-	}()
-	if scanErr != nil {
-		if errors.Is(scanErr, context.Canceled) || jobs.IsFinalAttempt(w.Execution) {
-			return scanErr
+			task = &ScanTask{WorkerTask: wt}
 		}
-		return scanErr
+		return runScanActivity(ctx, app, opts, task)
+	})
+	if err != nil {
+		return finalizeScanFailed(w, task, startRes.UPID, err)
 	}
-	return nil
+	var scanRes Result
+	if err := json.Unmarshal(scanResRaw, &scanRes); err != nil {
+		return jobs.NonRetryable(fmt.Errorf("decoding mtf scan result: %w", err))
+	}
+
+	return w.Step("finalize", func(context.Context) error {
+		if task == nil {
+			wt, err := tasklog.ReopenWorkerTask(startRes.UPID)
+			if err != nil {
+				return err
+			}
+			task = &ScanTask{WorkerTask: wt}
+		}
+		task.CloseOK(&scanRes)
+		return nil
+	})
 }
 
-var _ = time.Second
+func runScanActivity(ctx context.Context, app *application.Runtime, opts Options, st *ScanTask) (result json.RawMessage, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("scan panic: %v", r)
+			st.LogString(err.Error())
+		}
+	}()
+
+	st.LogString("MTF inventory scan started")
+	res, err := NewScanner(app.MtfDB).ScanWithLog(ctx, opts, log.WithScope(log.Scope{Task: st.WorkerTask}))
+	if err != nil {
+		st.LogString(err.Error())
+		return nil, err
+	}
+	return json.Marshal(res)
+}
+
+func finalizeScanFailed(w *jobs.WorkflowContext, task *ScanTask, upid string, runErr error) error {
+	if !errors.Is(runErr, context.Canceled) && !jobs.IsFinalAttempt(w.Execution) {
+		return runErr
+	}
+	if upid == "" {
+		return runErr
+	}
+
+	err := w.Finalize(func(context.Context) error {
+		if task == nil {
+			wt, err := tasklog.ReopenWorkerTask(upid)
+			if err != nil {
+				return err
+			}
+			task = &ScanTask{WorkerTask: wt}
+		}
+		task.CloseErr(runErr)
+		return nil
+	})
+	if err != nil {
+		log.Error(err, "failed to run MTF scan failure finalizer", "upid", upid)
+	}
+	return runErr
+}

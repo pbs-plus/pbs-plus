@@ -30,7 +30,8 @@ type VerifyFileResp struct {
 }
 
 type VerifyStartReq struct {
-	VerifyID string `cbor:"verify_id"`
+	VerifyID       string `cbor:"verify_id"`
+	IdempotencyKey string `cbor:"idempotency_key,omitempty"`
 }
 
 // VerifyChunkFileHandler is the ARPC handler that runs on the agent.

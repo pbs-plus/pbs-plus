@@ -11,6 +11,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/verification"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -30,11 +32,11 @@ type verifyResult struct {
 	SkippedFiles int `json:"skippedFiles"`
 }
 
-// Register registers the verification workflow: queue, select,
+// Register registers the verification workflow: select,
 // start-task, verify, finalize. Candidate order is pinned by the
 // select activity; verify checkpoints its position across retries.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowVerification, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowVerification, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.VerificationInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding verification workflow input: %w", err))
@@ -51,24 +53,14 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 	v := &verificationJob{
 		job:    job,
 		app:    app,
-		web:    input.Web,
 		logger: log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer v.cleanup()
-
-	stage := func(name string, body func(context.Context) error) error {
-		_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-			if err := body(ctx); err != nil {
-				return nil, err
-			}
-			return json.RawMessage(`{}`), nil
-		})
-		return err
+	queued, err := tasklog.NewQueuedTask("verification", proxmox.EncodeToHexEscapes(job.ID), input.Web)
+	if err != nil {
+		return fmt.Errorf("creating queued verification task: %w", err)
 	}
-
-	if err := stage("queue", v.enqueue); err != nil {
-		return v.finalizeFailed(w, err)
-	}
+	defer queued.Close()
 
 	selectResRaw, err := w.Activity("select", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		backups := v.selectCandidates(ctx)
@@ -100,9 +92,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 		v.mu.Lock()
 		v.task = vTask
 		v.mu.Unlock()
-		if v.queueTask != nil {
-			v.queueTask.Close()
-		}
 		if err := v.updateJobStatus(false, vTask.Task); err != nil {
 			v.logger.Error(err, "failed to update job with task UPID")
 		}
@@ -116,6 +105,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 		return jobs.NonRetryable(fmt.Errorf("decoding verification start result: %w", err))
 	}
 	v.upid = startRes.UPID
+	queued.Close()
 
 	verifyResRaw, err := w.Activity("verify", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
 		if v.task == nil {
@@ -175,7 +165,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 	v.skippedFiles = verifyRes.SkippedFiles
 	v.mu.Unlock()
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		if v.task == nil {
 			if vTask, err := ReopenVerificationTask(job, v.upid); err == nil {
 				v.mu.Lock()
@@ -184,9 +174,8 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 			}
 		}
 		v.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 // verifyCandidates walks the pinned candidate list from `start`,
@@ -243,7 +232,10 @@ func (v *verificationJob) verifyCandidates(ctx context.Context, backups []coredb
 
 		v.app.Agents.Expect(streamID)
 
-		verifyReq := verification.VerifyStartReq{VerifyID: v.job.ID}
+		verifyReq := verification.VerifyStartReq{
+			VerifyID:       v.job.ID,
+			IdempotencyKey: info.IdempotencyKey,
+		}
 		forkCtx, forkCancel := context.WithTimeout(ctx, 30*time.Second)
 		_, forkErr := controlSess.CallMessage(forkCtx, "verify_start", &verifyReq)
 		forkCancel()
@@ -307,8 +299,7 @@ func (v *verificationJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) 
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		if v.task == nil && v.upid != "" {
 			if vTask, terr := ReopenVerificationTask(v.job, v.upid); terr == nil {
 				v.mu.Lock()
@@ -317,7 +308,7 @@ func (v *verificationJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) 
 			}
 		}
 		v.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		v.logger.Error(err, "failed to run verification failure finalizer")

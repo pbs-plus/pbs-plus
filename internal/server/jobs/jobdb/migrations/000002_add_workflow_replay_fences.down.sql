@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS job_execution_activities_position_idx;

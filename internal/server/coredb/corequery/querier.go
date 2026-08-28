@@ -76,8 +76,6 @@ type Querier interface {
 	ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusionsRow, error)
 	ListNonRevokedTokens(ctx context.Context) ([]Token, error)
 	ListNotificationBatches(ctx context.Context) ([]NotificationBatch, error)
-	ListQueuedBackups(ctx context.Context) ([]ListQueuedBackupsRow, error)
-	ListQueuedRestores(ctx context.Context) ([]ListQueuedRestoresRow, error)
 	ListTargetsByAgentHost(ctx context.Context, agentHost sql.NullString) ([]ListTargetsByAgentHostRow, error)
 	MarkVerificationResultStatus(ctx context.Context, arg MarkVerificationResultStatusParams) error
 	RemoveJobFromAllBatches(ctx context.Context, arg RemoveJobFromAllBatchesParams) error

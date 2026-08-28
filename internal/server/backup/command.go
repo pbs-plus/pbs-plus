@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -77,6 +78,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		"--repository", backupStore,
 		detectionMode,
 		"--entries-max", fmt.Sprintf("%d", backup.MaxDirEntries+1024),
+		"--backup-type", "host",
 		"--backup-id", backupID,
 		"--crypt-mode=none",
 	}...)
@@ -116,6 +118,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/prlimit", cmdArgs...)
 	cmd.Env = env
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 
 	if err := CleanUnfinishedSnapshot(backup, backupID); err != nil {
 		logger.Error(err, "")

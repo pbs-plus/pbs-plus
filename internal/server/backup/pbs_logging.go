@@ -187,6 +187,7 @@ func mergePBSLogs(
 
 		if _, has := containsAny(line, pbsCompletionMarkers); has {
 			incomplete = false
+			skip = strings.Contains(line, ": TASK OK") || strings.Contains(line, ": TASK WARNINGS")
 		} else if _, has := containsAny(line, pbsTaskErrorMarkers); has {
 			hasError = true
 			if _, spurious := containsAny(line, pbsSpuriousErrorPatterns); !spurious {
@@ -231,48 +232,48 @@ func mergePBSLogs(
 		if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
 			logger.Error(err, "")
 		}
+	}
 
-		clientScanner := bufio.NewScanner(clientFile)
-		clientScanner.Buffer(buf, maxCapacity)
+	clientScanner := bufio.NewScanner(clientFile)
+	clientScanner.Buffer(buf, maxCapacity)
 
-		for clientScanner.Scan() {
-			line := clientScanner.Text()
-			skip := false
+	for clientScanner.Scan() {
+		line := clientScanner.Text()
+		skip := false
 
-			if _, has := containsAny(line, pbsWarningMarkers); has {
-				pbsWarningRawCount++
-			}
-
-			if _, has := containsAny(line, pbsClientCompletionMarkers); has {
-				clientCompleted = true
-			}
-
-			if _, has := containsAny(line, pbsUploadErrorMarkers); has {
-				line = "WARNING [proxmox-backup-client error]:" + line
-				pbsWarningRawCount++
-			} else if markerFound, has := containsAny(line, pbsTaskErrorMarkers); has {
-				line = strings.Replace(line, markerFound, "WARNING [proxmox-backup-client error]:", 1)
-				pbsWarningRawCount++
-			} else if _, has := containsAny(line, pbsCompletionMarkers); has {
-				incomplete = false
-				skip = true
-			}
-
-			if skip {
-				continue
-			}
-
-			if _, err := tmpWriter.WriteString(strings.TrimSpace(line)); err != nil {
-				logger.Error(err, "")
-			}
-			if err := tmpWriter.WriteByte('\n'); err != nil {
-				logger.Error(err, "")
-			}
+		if _, has := containsAny(line, pbsWarningMarkers); has {
+			pbsWarningRawCount++
 		}
 
-		if err := clientScanner.Err(); err != nil {
-			return false, false, 0, fmt.Errorf("scanning client log file: %w", err)
+		if _, has := containsAny(line, pbsClientCompletionMarkers); has {
+			clientCompleted = true
 		}
+
+		if _, has := containsAny(line, pbsUploadErrorMarkers); has {
+			line = "WARNING [proxmox-backup-client error]:" + line
+			pbsWarningRawCount++
+		} else if markerFound, has := containsAny(line, pbsTaskErrorMarkers); has {
+			line = strings.Replace(line, markerFound, "WARNING [proxmox-backup-client error]:", 1)
+			pbsWarningRawCount++
+		} else if _, has := containsAny(line, pbsCompletionMarkers); has {
+			incomplete = false
+			skip = true
+		}
+
+		if alreadyHasClientLogs || skip {
+			continue
+		}
+
+		if _, err := tmpWriter.WriteString(strings.TrimSpace(line)); err != nil {
+			logger.Error(err, "")
+		}
+		if err := tmpWriter.WriteByte('\n'); err != nil {
+			logger.Error(err, "")
+		}
+	}
+
+	if err := clientScanner.Err(); err != nil {
+		return false, false, 0, fmt.Errorf("scanning client log file: %w", err)
 	}
 
 	succeeded := false

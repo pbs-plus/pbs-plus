@@ -28,6 +28,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
+var (
+	verificationStarts sync.Mutex
+	verificationRuns   = make(map[string]*exec.Cmd)
+)
+
 func cmdVerify(verifyID *string) {
 	if *verifyID == "" {
 		fmt.Fprintln(os.Stderr, "Error: verifyID is required")
@@ -112,28 +117,48 @@ func VerifyStartHandler(req *arpc.Request) (arpc.Response, error) {
 		return arpc.Response{}, err
 	}
 
-	pid, err := ExecVerification(reqData.VerifyID)
+	key := reqData.IdempotencyKey
+	if key == "" {
+		key = reqData.VerifyID
+	}
+
+	verificationStarts.Lock()
+	defer verificationStarts.Unlock()
+	if cmd := verificationRuns[key]; cmd != nil {
+		return arpc.Response{Status: 200, Message: fmt.Sprintf("%d", cmd.Process.Pid)}, nil
+	}
+
+	cmd, err := ExecVerification(reqData.VerifyID)
 	if err != nil {
 		return arpc.Response{}, err
 	}
+	verificationRuns[key] = cmd
+	go func() {
+		_ = cmd.Wait()
+		verificationStarts.Lock()
+		if verificationRuns[key] == cmd {
+			delete(verificationRuns, key)
+		}
+		verificationStarts.Unlock()
+	}()
 
-	return arpc.Response{Status: 200, Message: fmt.Sprintf("%d", pid)}, nil
+	return arpc.Response{Status: 200, Message: fmt.Sprintf("%d", cmd.Process.Pid)}, nil
 }
-func ExecVerification(verifyID string) (int, error) {
+func ExecVerification(verifyID string) (*exec.Cmd, error) {
 	log.Info("verify: exec begin")
 	if err := validate.ValidateJobId(verifyID); err != nil {
-		return -1, fmt.Errorf("invalid verifyID: %w", err)
+		return nil, fmt.Errorf("invalid verifyID: %w", err)
 	}
 
 	tokenBytes, err := crypto.SecureRandomBytes(32)
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 	token := base64.StdEncoding.EncodeToString(tokenBytes)
 
 	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-verify-%s", verifyID))
 	if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
-		return -1, err
+		return nil, err
 	}
 
 	defer func() {
@@ -145,7 +170,7 @@ func ExecVerification(verifyID string) (int, error) {
 
 	execCmd, err := os.Executable()
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 
 	args := []string{
@@ -160,16 +185,16 @@ func ExecVerification(verifyID string) (int, error) {
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 
 	if err := cmd.Start(); err != nil {
-		return -1, err
+		return nil, err
 	}
 	log.Info("verify: child process started", "args", strings.Join(args, " "), "pid", cmd.Process.Pid)
 
@@ -188,5 +213,5 @@ func ExecVerification(verifyID string) (int, error) {
 	}()
 	log.Info("verify: returning to parent", "pid", cmd.Process.Pid)
 
-	return cmd.Process.Pid, nil
+	return cmd, nil
 }

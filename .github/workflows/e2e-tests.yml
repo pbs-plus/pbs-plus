@@ -50,15 +50,43 @@ jobs:
         with:
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
+      - name: Verify backup task log
+        uses: ./.github/actions/verify-task-log
+        with:
+          endpoint: json/d2d/backup
+          job-id: test-backup-job
+          append-job-id: false
+          worker-type: backup
+
+      - name: Run concurrent backup correlation test
+        uses: ./.github/actions/run-concurrent-backups
+        with:
+          timeout-seconds: 240
+
       - name: Run restore test
         uses: ./.github/actions/run-restore
         with:
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
+      - name: Verify restore task log
+        uses: ./.github/actions/verify-task-log
+        with:
+          endpoint: extjs/config/disk-restore
+          job-id: test-restore
+          worker-type: reader
+          allow-warnings: true
+
       - name: Run verification test
         uses: ./.github/actions/run-verification
         with:
           timeout-seconds: 120
+
+      - name: Verify verification task log
+        uses: ./.github/actions/verify-task-log
+        with:
+          endpoint: extjs/config/d2d-verification
+          job-id: test-verify-basic
+          worker-type: verification
 
       - name: Run pxar-mount e2e tests
         uses: ./.github/actions/run-pxar-e2e

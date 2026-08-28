@@ -21,14 +21,16 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 	engine, db := newTestEngine(t, ctx)
 	var firstRuns atomic.Int32
 	var secondRuns atomic.Int32
+	idempotencyKeys := make(chan string, 2)
 	if err := engine.Register("test.replay", func(workflow *WorkflowContext) error {
-		if _, err := workflow.Activity("first", json.RawMessage(`{"value":1}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+		if err := workflow.Step("first", func(context.Context) error {
 			firstRuns.Add(1)
-			return json.RawMessage(`{"done":true}`), nil
+			return nil
 		}); err != nil {
 			return err
 		}
-		_, err := workflow.Activity("second", json.RawMessage(`{"value":2}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+		_, err := workflow.Activity("second", json.RawMessage(`{"value":2}`), func(_ context.Context, info ActivityInfo) (json.RawMessage, error) {
+			idempotencyKeys <- info.IdempotencyKey
 			if secondRuns.Add(1) == 1 {
 				return nil, &RetryableError{Err: errors.New("temporary failure"), Delay: time.Second}
 			}
@@ -61,6 +63,10 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 	if execution.Attempt != 2 {
 		t.Fatalf("execution attempts = %d, want 2", execution.Attempt)
 	}
+	firstKey, secondKey := <-idempotencyKeys, <-idempotencyKeys
+	if firstKey != execution.ID+":second" || secondKey != firstKey {
+		t.Fatalf("activity idempotency keys = %q, %q", firstKey, secondKey)
+	}
 	events, err := engine.Events(ctx, execution.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +78,95 @@ func TestEngine_ReplaysCompletedActivities(t *testing.T) {
 		t.Fatalf("first event = %q, want workflow.submitted", events[0].Type)
 	}
 	_ = db
+}
+
+func TestEngine_ReplaysWorkflowVersion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	engine, db := newTestEngine(t, ctx)
+	var v1Runs atomic.Int32
+	var v2Runs atomic.Int32
+	if err := engine.RegisterVersion("test.version", "1", func(*WorkflowContext) error {
+		v1Runs.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.RegisterVersion("test.version", "2", func(*WorkflowContext) error {
+		v2Runs.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	oldRequest := testWorkflowSubmit("test.version", "version-old")
+	oldRequest.WorkflowVersion = "1"
+	oldExecution, _, err := db.Submit(ctx, oldRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+
+	currentExecution, _, err := engine.Submit(ctx, testWorkflowSubmit("test.version", "version-current"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForWorkflowState(t, ctx, engine, oldExecution.ID, jobdb.StateSucceeded)
+	currentExecution = waitForWorkflowState(t, ctx, engine, currentExecution.ID, jobdb.StateSucceeded)
+	if v1Runs.Load() != 1 || v2Runs.Load() != 1 {
+		t.Fatalf("workflow versions ran v1=%d v2=%d, want 1 each", v1Runs.Load(), v2Runs.Load())
+	}
+	if currentExecution.WorkflowVersion != "2" {
+		t.Fatalf("current workflow version = %q, want 2", currentExecution.WorkflowVersion)
+	}
+}
+
+func TestEngine_RejectsNonDeterministicReplay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	engine, db := newTestEngine(t, ctx)
+	if err := engine.Register("test.determinism", func(workflow *WorkflowContext) error {
+		_, err := workflow.Activity("changed", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+			return json.RawMessage(`{}`), nil
+		})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	request := testWorkflowSubmit("test.determinism", "determinism")
+	execution, _, err := db.Submit(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	claimed, ok, err := db.Claim(ctx, "test-worker", now, now.Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("claiming execution = %t, %v", ok, err)
+	}
+	if _, completed, err := db.StartActivity(ctx, claimed.ID, claimed.LeaseOwner, claimed.Attempt, 1, "recorded", "input", now); err != nil || completed {
+		t.Fatalf("recording activity = completed:%t, error:%v", completed, err)
+	}
+	if err := db.CompleteActivity(ctx, claimed.ID, claimed.LeaseOwner, claimed.Attempt, "recorded", []byte(`{}`), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Finish(ctx, claimed.ID, claimed.LeaseOwner, claimed.Attempt, jobdb.StatePending, now, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+
+	execution = waitForWorkflowState(t, ctx, engine, execution.ID, jobdb.StateFailed)
+	if execution.LastError == "" {
+		t.Fatal("non-deterministic replay did not record an error")
+	}
 }
 
 func TestEngine_CancelRunningWorkflow(t *testing.T) {
@@ -162,7 +257,7 @@ func TestEngine_InvalidateReRunsActivity(t *testing.T) {
 	}
 }
 
-func TestEngine_DetachedFinalizerRunsOnCancel(t *testing.T) {
+func TestEngine_FinalizerRunsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -176,12 +271,11 @@ func TestEngine_DetachedFinalizerRunsOnCancel(t *testing.T) {
 			return nil, ctx.Err()
 		})
 		if err != nil {
-			_, ferr := workflow.ActivityCtx(workflow.Detached(), "finalize", json.RawMessage(`{}`), func(context.Context, ActivityInfo) (json.RawMessage, error) {
+			if ferr := workflow.Finalize(func(context.Context) error {
 				finalized <- struct{}{}
-				return json.RawMessage(`{}`), nil
-			})
-			if ferr != nil {
-				t.Errorf("detached finalizer failed: %v", ferr)
+				return nil
+			}); ferr != nil {
+				t.Errorf("finalizer failed: %v", ferr)
 			}
 		}
 		return err
@@ -260,6 +354,102 @@ func TestEngine_CheckpointResumesActivity(t *testing.T) {
 	}
 }
 
+func TestDatabase_CancelsExpiredWorkflow(t *testing.T) {
+	ctx := context.Background()
+	_, db := newTestEngine(t, ctx)
+	execution, _, err := db.Submit(ctx, testWorkflowSubmit("test.cancel-expired", "cancel-expired"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	if _, ok, err := db.Claim(ctx, "worker-a", now, now.Add(time.Second)); err != nil || !ok {
+		t.Fatalf("claiming execution = %t, %v", ok, err)
+	}
+	if _, err := db.Cancel(ctx, execution.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := db.Claim(ctx, "worker-b", now.Add(2*time.Second), now.Add(3*time.Second)); err != nil || ok {
+		t.Fatalf("recovering canceled execution = %t, %v", ok, err)
+	}
+
+	execution, err = db.GetExecution(ctx, execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execution.State != jobdb.StateCanceled {
+		t.Fatalf("execution state = %q, want %q", execution.State, jobdb.StateCanceled)
+	}
+}
+
+func TestDatabase_FencesStaleActivityOwner(t *testing.T) {
+	ctx := context.Background()
+	_, db := newTestEngine(t, ctx)
+	_, _, err := db.Submit(ctx, testWorkflowSubmit("test.activity-fence", "activity-fence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now()
+	claimed, ok, err := db.Claim(ctx, "worker-a", now, now.Add(time.Second))
+	if err != nil || !ok {
+		t.Fatalf("claiming execution = %t, %v", ok, err)
+	}
+	if _, completed, err := db.StartActivity(ctx, claimed.ID, "worker-a", claimed.Attempt, 1, "work", "input", now); err != nil || completed {
+		t.Fatalf("starting activity = completed:%t, error:%v", completed, err)
+	}
+
+	claimed, ok, err = db.Claim(ctx, "worker-b", now.Add(2*time.Second), now.Add(3*time.Second))
+	if err != nil || !ok {
+		t.Fatalf("recovering execution = %t, %v", ok, err)
+	}
+	activity, completed, err := db.StartActivity(ctx, claimed.ID, "worker-b", claimed.Attempt, 1, "work", "input", now.Add(2*time.Second))
+	if err != nil || completed {
+		t.Fatalf("restarting activity = completed:%t, error:%v", completed, err)
+	}
+	if activity.Attempt != 2 {
+		t.Fatalf("activity attempts = %d, want 2", activity.Attempt)
+	}
+	if err := db.CompleteActivity(ctx, claimed.ID, "worker-a", 1, "work", []byte(`{}`), now.Add(2*time.Second)); !errors.Is(err, jobdb.ErrNotFound) {
+		t.Fatalf("stale owner completion error = %v, want %v", err, jobdb.ErrNotFound)
+	}
+	if err := db.CompleteActivity(ctx, claimed.ID, "worker-b", claimed.Attempt, "work", []byte(`{}`), now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDatabase_DoesNotRenewExpiredLease(t *testing.T) {
+	ctx := context.Background()
+	_, db := newTestEngine(t, ctx)
+	now := time.Now().Add(-2 * time.Second)
+	request := testWorkflowSubmit("test.lease-expired", "lease-expired")
+	request.RunAt = now
+	if _, _, err := db.Submit(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, ok, err := db.Claim(ctx, "worker-a", now, now.Add(time.Second))
+	if err != nil || !ok {
+		t.Fatalf("claiming execution = %t, %v", ok, err)
+	}
+	if err := db.RenewLease(ctx, claimed.ID, "worker-a", claimed.Attempt, time.Now().Add(time.Minute)); !errors.Is(err, jobdb.ErrNotFound) {
+		t.Fatalf("renewing expired lease error = %v, want %v", err, jobdb.ErrNotFound)
+	}
+	if err := db.Finish(ctx, claimed.ID, "worker-a", claimed.Attempt, jobdb.StateSucceeded, time.Now(), ""); !errors.Is(err, jobdb.ErrNotFound) {
+		t.Fatalf("finishing expired lease error = %v, want %v", err, jobdb.ErrNotFound)
+	}
+	if _, _, err := db.StartActivity(ctx, claimed.ID, "worker-a", claimed.Attempt, 1, "work", "input", time.Now()); !errors.Is(err, jobdb.ErrNotFound) {
+		t.Fatalf("starting activity with expired lease error = %v, want %v", err, jobdb.ErrNotFound)
+	}
+	reclaimed, ok, err := db.Claim(ctx, "worker-b", time.Now(), time.Now().Add(time.Minute))
+	if err != nil || !ok {
+		t.Fatalf("reclaiming execution = %t, %v", ok, err)
+	}
+	if _, completed, err := db.StartActivity(ctx, reclaimed.ID, "worker-b", reclaimed.Attempt, 1, "work", "input", time.Now()); err != nil || completed {
+		t.Fatalf("starting reclaimed activity = completed:%t, error:%v", completed, err)
+	}
+}
+
 func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	ctx := context.Background()
 	_, db := newTestEngine(t, ctx)
@@ -286,7 +476,7 @@ func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	} else if ok {
 		t.Fatal("second execution claimed while its resource was locked")
 	}
-	if err := db.Finish(ctx, first.ID, "worker-a", jobdb.StateSucceeded, now, ""); err != nil {
+	if err := db.Finish(ctx, first.ID, "worker-a", claimed.Attempt, jobdb.StateSucceeded, now, ""); err != nil {
 		t.Fatal(err)
 	}
 	claimed, ok, err = db.Claim(ctx, "worker-b", now.Add(time.Second), now.Add(4*time.Second))

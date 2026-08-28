@@ -57,23 +57,25 @@ func ListTasks(activeOnly bool) ([]TaskListInfo, error) {
 	return results, nil
 }
 
-// GetTaskByUPID resolves a UPID's current state: running when the worker
-// is still alive (registry or /proc), otherwise the finished state read
-// from the log tail.
 func GetTaskByUPID(upid string) (proxmox.Task, error) {
 	parsed, err := proxmox.ParseUPID(upid)
 	if err != nil {
 		return proxmox.Task{}, fmt.Errorf("tasklog: parse upid: %w", err)
 	}
 
-	parsed.Status = "stopped"
-	if workerIsActiveLocal(parsed) {
+	active, err := workerIsActive(parsed)
+	if err != nil {
+		return proxmox.Task{}, err
+	}
+	if active {
 		parsed.Status = "running"
 		return parsed, nil
 	}
 
-	state, err := ReadStatusFromLog(upid)
-	if err != nil {
+	parsed.Status = "stopped"
+	state, statusErr := ReadStatusFromLog(upid)
+
+	if statusErr != nil {
 		parsed.ExitStatus = "unknown"
 	} else {
 		parsed.ExitStatus = state.String()
@@ -152,49 +154,44 @@ func ReadStatusFromLog(upid string) (TaskState, error) {
 	return TaskState{Status: StatusUnknown, EndTime: parsed.StartTime}, nil
 }
 
-// FindRunningTask searches the active list and archive for a task of
-// workerType whose UPID contains searchString and whose starttime is at
-// least the threshold, under a shared task-list lock.
-func FindRunningTask(workerType string, searchString string, startTimeThreshold int64) (proxmox.Task, bool) {
-	lock, err := lockTaskList(false)
+func SnapshotWorkerUPIDs(workerType, wid string) (map[string]struct{}, error) {
+	tasks, err := ListTasks(false)
 	if err != nil {
-		return proxmox.Task{}, false
+		return nil, err
 	}
-	defer lock.Close()
 
-	if task, found := findTaskInFile(activeTasks, workerType, searchString, startTimeThreshold); found {
-		return task, true
+	upidSet := make(map[string]struct{})
+	for _, task := range tasks {
+		if task.Task.WorkerType == workerType && task.Task.WID == wid {
+			upidSet[task.UPID] = struct{}{}
+		}
 	}
-	task, found := findTaskInFile(archivePath, workerType, searchString, startTimeThreshold)
-	return task, found
+	return upidSet, nil
 }
 
-func findTaskInFile(path string, workerType string, searchString string, threshold int64) (proxmox.Task, bool) {
-	f, err := os.Open(path)
+func FindNewWorkerTask(workerType, wid string, before map[string]struct{}) (proxmox.Task, bool, error) {
+	tasks, err := ListTasks(false)
 	if err != nil {
-		return proxmox.Task{}, false
+		return proxmox.Task{}, false, err
 	}
-	defer func() {
-		if cerr := f.Close(); cerr != nil {
-			slog.Error(cerr.Error())
-		}
-	}()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || !strings.Contains(line, searchString) {
+	var candidate proxmox.Task
+	for _, task := range tasks {
+		if task.Task.WorkerType != workerType || task.Task.WID != wid || IsQueuedUPID(task.UPID) {
 			continue
 		}
-		fields := strings.Fields(line)
-		if task, parseErr := proxmox.ParseUPID(fields[0]); parseErr == nil {
-			if task.StartTime >= (threshold-1) && task.WorkerType == workerType {
-				return task, true
-			}
+		if _, found := before[task.UPID]; found || task.UPID == candidate.UPID {
+			continue
 		}
+		if candidate.UPID != "" {
+			return proxmox.Task{}, false, fmt.Errorf("tasklog: multiple new %s tasks for %q", workerType, wid)
+		}
+		candidate = task.Task
 	}
-	return proxmox.Task{}, false
+	if candidate.UPID == "" {
+		return proxmox.Task{}, false, nil
+	}
+	return candidate, true, nil
 }
 
 // archiveFiles returns the archive plus its rotated variants, newest

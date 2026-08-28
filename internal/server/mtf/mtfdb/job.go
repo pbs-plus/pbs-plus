@@ -92,18 +92,6 @@ func (d *Store) ListMtfJobs(ctx context.Context) ([]MTFJob, error) {
 	return out, nil
 }
 
-func (d *Store) ListQueuedMtfJobs(ctx context.Context) ([]MTFJob, error) {
-	rows, err := d.readQueries.ListQueuedMtfJobs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]MTFJob, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, mtfJobFromRow(r))
-	}
-	return out, nil
-}
-
 func (d *Store) DeleteMtfJob(ctx context.Context, id string) error {
 	_, err := d.queries.DeleteMtfJob(ctx, id)
 	return err

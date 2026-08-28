@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -83,6 +84,55 @@ func TestWorkerTask_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {
+	setupTaskDirs(t)
+
+	queued, err := NewQueuedTask("backup", "abc", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upid := queued.UPID()
+
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].UPID != upid || active[0].State != nil {
+		t.Fatalf("active = %#v, want single running %s", active, upid)
+	}
+	listed, err := ListTasks(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].UPID != upid || listed[0].State != nil {
+		t.Fatalf("ListTasks(true) = %#v, want single running %s", listed, upid)
+	}
+
+	queued.Close()
+
+	active, err = readTaskFile(activeTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("active after close = %#v, want empty", active)
+	}
+	archive, err := readTaskFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archive) != 0 {
+		t.Fatalf("archive after close = %#v, want empty", archive)
+	}
+	path, err := UPIDLogPath(upid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("queued task log still exists: %v", err)
+	}
+}
+
 func TestReconcile_FoldsDeadWorkers(t *testing.T) {
 	setupTaskDirs(t)
 
@@ -121,6 +171,103 @@ func TestReconcile_FoldsDeadWorkers(t *testing.T) {
 	}
 	if len(arch) != 1 || arch[0].State == nil || arch[0].State.Status != StatusOK {
 		t.Fatalf("archive = %#v, want folded OK entry", arch)
+	}
+}
+
+func TestReconcileKeepsLiveForeignWorker(t *testing.T) {
+	setupTaskDirs(t)
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTasklogHelperProcess$")
+	cmd.Env = append(os.Environ(), "GO_WANT_TASKLOG_HELPER_PROCESS=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := bufio.NewReader(stdout).ReadString('\n')
+	if err != nil || ready != "ready\n" {
+		t.Fatalf("foreign worker ready = %q, %v", ready, err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	pstart, err := processStartTime(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := NewTask("pbs", "backup", "foreign")
+	task.PID = cmd.Process.Pid
+	task.PStart = pstart
+	upid := task.GenerateUPID()
+
+	path, err := UPIDLogPath(upid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(time.Now().Format(time.RFC3339)+": TASK OK\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(activeTasks, []byte(upid+"\n"), 0660); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Reconcile(""); err != nil {
+		t.Fatal(err)
+	}
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].UPID != upid {
+		t.Fatalf("active = %#v, want live foreign task %s retained", active, upid)
+	}
+	archive, err := readTaskFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archive) != 0 {
+		t.Fatalf("archive = %#v, want empty: the owning process archives its own task", archive)
+	}
+
+	resolved, err := GetTaskByUPID(upid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Status != "stopped" || resolved.ExitStatus != "OK" {
+		t.Fatalf("GetTaskByUPID = %#v, want stopped/OK", resolved)
+	}
+}
+
+func TestTasklogHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_TASKLOG_HELPER_PROCESS") != "1" {
+		return
+	}
+	ln, err := net.Listen("unix", controlSocketPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	if _, err := fmt.Fprintln(os.Stdout, "ready"); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := bufio.NewReader(conn).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprint(conn, "OK: false\n"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -355,6 +502,26 @@ func TestReadStatusFromLogPBSFindMapSemantics(t *testing.T) {
 	if state.Status != StatusError || state.Message != "real failure" {
 		t.Fatalf("ReadStatusFromLog = %+v, want error 'real failure'", state)
 	}
+
+	unregisterWorker(wt.Task.TaskId)
+	task, err := GetTaskByUPID(wt.UPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "stopped" || task.ExitStatus != "real failure" {
+		t.Fatalf("GetTaskByUPID = %+v, want stopped/real failure", task)
+	}
+
+	if err := Reconcile(""); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(archive), wt.UPID()+" ") {
+		t.Fatalf("archive = %q, want %q", archive, wt.UPID())
+	}
 }
 
 func TestControlSocketPBSProtocol(t *testing.T) {
@@ -406,5 +573,73 @@ func TestControlSocketPBSProtocol(t *testing.T) {
 	reply = send(`{"command":"worker-task-status","args":{"upid":"` + foreign.GenerateUPID() + `"}}`)
 	if !strings.HasPrefix(reply, "ERROR:") {
 		t.Fatalf("foreign upid reply = %q, want ERROR", reply)
+	}
+}
+
+func TestFindNewWorkerTask(t *testing.T) {
+	setupTaskDirs(t)
+
+	workerID := FormatWorkerID("store", "host-", "node")
+	existing, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer existing.CloseOK()
+
+	before, err := SnapshotWorkerUPIDs("backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	other, err := NewWorkerTask("pbsplus", "backup", FormatWorkerID("store", "host-", "other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.CloseOK()
+
+	queued, err := NewQueuedTask("backup", workerID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer queued.Close()
+
+	created, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer created.CloseOK()
+
+	task, found, err := FindNewWorkerTask("backup", workerID, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || task.UPID != created.UPID() {
+		t.Fatalf("FindNewWorkerTask = (%#v, %t), want %q", task, found, created.UPID())
+	}
+}
+
+func TestFindNewWorkerTaskRejectsAmbiguity(t *testing.T) {
+	setupTaskDirs(t)
+
+	workerID := FormatWorkerID("store", "host-", "node")
+	before, err := SnapshotWorkerUPIDs("backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.CloseOK()
+
+	second, err := NewWorkerTask("pbsplus", "backup", workerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.CloseOK()
+
+	if _, _, err := FindNewWorkerTask("backup", workerID, before); err == nil {
+		t.Fatal("FindNewWorkerTask accepted ambiguous tasks")
 	}
 }

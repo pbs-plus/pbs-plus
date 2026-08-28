@@ -143,7 +143,7 @@ func ExtJsMtfScanHandler(app *application.Runtime) http.HandlerFunc {
 			"manual",
 			"",
 			input,
-			[]string{"mtf-scan"},
+			[]string{"mtf-scan", "mtf-tape"},
 			1,
 			time.Minute,
 		)

@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -25,16 +26,22 @@ type startResult struct {
 	Owner string `json:"owner"`
 }
 
+type startCheckpoint struct {
+	WorkerID string   `json:"worker_id"`
+	Owner    string   `json:"owner"`
+	Before   []string `json:"before"`
+}
+
 type waitResult struct {
 	Succeeded bool `json:"succeeded"`
 	Warnings  int  `json:"warnings"`
 }
 
-// Register registers the backup workflow: queue, pre-script, validate,
+// Register registers the backup workflow: pre-script, validate,
 // mount-script, start, wait, finalize. Each stage is a durable
 // activity; completed stages are skipped on replay after a crash.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowBackup, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowBackup, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.BackupInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding backup workflow input: %w", err))
@@ -52,33 +59,28 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		job:             job,
 		app:             app,
 		skipCheck:       input.SkipCheck,
-		web:             input.Web,
 		logger:          log.WithScope(log.Scope{JobID: job.ID}),
 		extraExclusions: input.ExtraExclusions,
 		waitGroup:       &sync.WaitGroup{},
 	}
 	defer b.cleanup()
+	workerID, err := backupWorkerID(job, job.Target)
+	if err != nil {
+		return jobs.NonRetryable(fmt.Errorf("determining backup worker identity: %w", err))
+	}
+	queued, err := tasklog.NewQueuedTask("backup", workerID, input.Web)
+	if err != nil {
+		return fmt.Errorf("creating queued backup task: %w", err)
+	}
+	defer queued.Close()
 
-	stage := func(name string, body func(context.Context) error) error {
-		_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-			if err := body(ctx); err != nil {
-				return nil, err
-			}
-			return json.RawMessage(`{}`), nil
-		})
-		return err
-	}
-
-	if err := stage("queue", b.enqueue); err != nil {
+	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
-	if err := stage("pre-script", b.runPreScript); err != nil {
+	if err := w.Step("validate", b.validateTargetConnection); err != nil {
 		return b.finalizeFailed(w, err)
 	}
-	if err := stage("validate", b.validateTargetConnection); err != nil {
-		return b.finalizeFailed(w, err)
-	}
-	if err := stage("mount-script", func(ctx context.Context) error {
+	if err := w.Step("mount-script", func(ctx context.Context) error {
 		return b.runTargetMountScript(ctx, job.Target)
 	}); err != nil {
 		return b.finalizeFailed(w, err)
@@ -95,6 +97,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		return jobs.NonRetryable(fmt.Errorf("decoding backup start result: %w", err))
 	}
 	b.upid = startRes.UPID
+	queued.Close()
 
 	waitResRaw, err := w.Activity("wait", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		if err := b.waitForCompletion(ctx, b.cmd, startRes.UPID); err != nil {
@@ -119,22 +122,15 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		return jobs.NonRetryable(fmt.Errorf("decoding backup wait result: %w", err))
 	}
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-		b.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+	return w.Step("finalize", func(context.Context) error {
+		b.finalizeSuccess(waitRes.Succeeded, waitRes.Warnings)
+		return nil
 	})
-	return err
 }
 
 // start mounts the source and launches proxmox-backup-client, returning
 // the durable task identity for the wait activity.
 func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
-	if qt := b.queueTask; qt != nil {
-		if err := qt.UpdateDescription("operation ready, waiting for queue to free up"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
-	}
-
 	srcPath, agentMount, s3Mount, err := b.mountSource(ctx, b.job.Target)
 	if err != nil {
 		return nil, err
@@ -146,7 +142,7 @@ func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.Raw
 	b.s3Mount = s3Mount
 	b.mu.Unlock()
 
-	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, b.job.Target)
+	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, b.job.Target, info)
 	if err != nil {
 		return nil, err
 	}
@@ -168,13 +164,6 @@ func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.Raw
 	b.started.Store(true)
 	b.logger.Info("backup task started", "upid", task.UPID)
 
-	if cmd.Process != nil {
-		checkpoint, err := json.Marshal(map[string]int{"pid": cmd.Process.Pid})
-		if err == nil {
-			_ = info.Checkpoint(ctx, checkpoint)
-		}
-	}
-
 	return json.Marshal(startResult{UPID: task.UPID, Owner: currOwner})
 }
 
@@ -192,10 +181,9 @@ func (b *backupJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error 
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		b.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		b.logger.Error(err, "failed to run backup failure finalizer")

@@ -204,38 +204,38 @@ func cmdRestore(restoreID *string, srcPath *string, destPath *string, restoreMod
 	os.Exit(0)
 }
 
-func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
+func ExecRestore(id, srcPath, destPath string, mode int) (*exec.Cmd, error) {
 	log.Info("restore: exec begin")
 	if err := validate.ValidateJobId(id); err != nil {
 		log.Error(err, "restore: restore id validation failed")
-		return -1, fmt.Errorf("invalid restoreID: %w", err)
+		return nil, fmt.Errorf("invalid restoreID: %w", err)
 	}
 
 	if err := validate.ValidateRestorePath("srcPath", srcPath); err != nil {
 		log.Error(err, "restore: src path validation failed")
-		return -1, fmt.Errorf("invalid srcPath: %w", err)
+		return nil, fmt.Errorf("invalid srcPath: %w", err)
 	}
 
 	if err := validate.ValidateRestorePath("destPath", destPath); err != nil {
 		log.Error(err, "restore: dest path validation failed")
-		return -1, fmt.Errorf("invalid destPath: %w", err)
+		return nil, fmt.Errorf("invalid destPath: %w", err)
 	}
 
 	execCmd, err := os.Executable()
 	if err != nil {
 		log.Error(err, "ExecRestore: os.Executable failed")
-		return -1, err
+		return nil, err
 	}
 
 	tokenBytes, err := crypto.SecureRandomBytes(32)
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 	token := base64.StdEncoding.EncodeToString(tokenBytes)
 
 	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-restore-%s", id))
 	if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
-		return -1, err
+		return nil, err
 	}
 
 	defer func() {
@@ -262,18 +262,18 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		log.Error(err, "ExecRestore: StdoutPipe failed")
-		return -1, err
+		return nil, err
 	}
 
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		log.Error(err, "ExecRestore: StderrPipe failed")
-		return -1, err
+		return nil, err
 	}
 
 	if err := cmd.Start(); err != nil {
 		log.Error(err, "ExecRestore: cmd.Start failed")
-		return -1, err
+		return nil, err
 	}
 	log.Info("restore: child process started",
 
@@ -305,7 +305,7 @@ func ExecRestore(id, srcPath, destPath string, mode int) (int, error) {
 	log.Info("restore: returning to parent",
 		"pid", cmd.Process.Pid)
 
-	return cmd.Process.Pid, nil
+	return cmd, nil
 }
 
 func Restore(rpcSess *arpc.StreamPipe, restoreID, source, dest string, mode pxar.RestoreMode) error {

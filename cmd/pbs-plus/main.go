@@ -185,7 +185,7 @@ func runOneShotJobs(app *application.Runtime, backupsRun, restoresRun, extExclus
 			ExtraExclusions: extExclusions,
 		}
 		var reply jobrpc.QueueReply
-		if err := rpcClient.Call("JobRPCService.BackupQueue", args, &reply); err != nil {
+		if err := rpcClient.Call(jobrpc.ServiceName+".BackupQueue", args, &reply); err != nil {
 			log.Error(err, "", "backupID", backupRun)
 			continue
 		}
@@ -208,7 +208,7 @@ func runOneShotJobs(app *application.Runtime, backupsRun, restoresRun, extExclus
 			Web:       webRun,
 		}
 		var reply jobrpc.QueueReply
-		if err := rpcClient.Call("JobRPCService.RestoreQueue", args, &reply); err != nil {
+		if err := rpcClient.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
 			log.Error(err, "", "restoreID", restoreRun)
 			continue
 		}

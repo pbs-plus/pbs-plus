@@ -19,9 +19,6 @@ SELECT * FROM mtf_jobs WHERE id = ? LIMIT 1;
 -- name: ListAllMtfJobs :many
 SELECT * FROM mtf_jobs ORDER BY id;
 
--- name: ListQueuedMtfJobs :many
-SELECT * FROM mtf_jobs WHERE last_run_upid LIKE '%pbsplusgen-queue%' ORDER BY id;
-
 -- name: UpdateMtfJob :exec
 UPDATE mtf_jobs
 SET source_kind = ?, source_ref = ?, datastore = ?, namespace = ?,

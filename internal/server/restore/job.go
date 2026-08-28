@@ -19,7 +19,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -35,7 +34,6 @@ type restoreJob struct {
 	logger       *log.Logger
 	task         *RestoreTask
 	upid         string
-	queueTask    *tasklog.QueuedTask
 	waitGroup    *sync.WaitGroup
 	err          error
 	errChClosed  atomic.Bool
@@ -49,24 +47,9 @@ type restoreJob struct {
 	agentPipe    *arpc.StreamPipe
 	app          *application.Runtime
 	skipCheck    bool
-	web          bool
 }
 
-func (b *restoreJob) enqueue(ctx context.Context) error {
-	wid := tasklog.FormatWorkerID(b.job.Store, "host-", b.job.DestTarget.GetHostname())
-	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "reader", wid, b.web)
-	if err != nil {
-		b.logger.Error(err, "failed to create queue task, not fatal")
-	} else {
-		if err := updateRestoreStatus(false, 0, b.job, queueTask.Task, b.app); err != nil {
-			b.logger.Error(err, "failed to set queue task, not fatal")
-		}
-	}
-	b.queueTask = queueTask
-	return nil
-}
-
-func (b *restoreJob) execute(ctx context.Context) error {
+func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	b.cancel = cancel
 
@@ -75,7 +58,7 @@ func (b *restoreJob) execute(ctx context.Context) error {
 
 	switch b.job.DestTarget.Type {
 	case coredb.TargetTypeAgent:
-		return b.agentExecute(ctx)
+		return b.agentExecute(ctx, idempotencyKey)
 	case coredb.TargetTypeLocal:
 		return b.localExecute(ctx)
 	case coredb.TargetTypeS3:
@@ -165,10 +148,6 @@ func (b *restoreJob) finalizeSuccess() {
 }
 
 func (b *restoreJob) cleanup() {
-	if b.queueTask != nil {
-		b.queueTask.Close()
-	}
-
 	childKey := b.job.GetStreamID()
 
 	agentRPC, ok := b.app.Agents.GetStreamPipe(childKey)
@@ -227,9 +206,6 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	default:
 	}
 
-	if err := b.queueTask.UpdateDescription("running pre-restore script"); err != nil {
-		b.logger.Error(err, "failed to update queue task description")
-	}
 	b.task.WriteString(fmt.Sprintf("running pre-restore script %s", b.job.PreScript))
 
 	envVars, err := jobs.StructToEnvVars(b.job)
@@ -259,7 +235,7 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	return nil
 }
 
-func (b *restoreJob) agentExecute(ctx context.Context) error {
+func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) error {
 	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
@@ -319,10 +295,11 @@ func (b *restoreJob) agentExecute(ctx context.Context) error {
 	}
 
 	restoreReq := fswire.RestoreReq{
-		RestoreID: b.job.ID,
-		SrcPath:   srcPath,
-		DestPath:  destPath,
-		Mode:      b.job.Mode,
+		RestoreID:      b.job.ID,
+		SrcPath:        srcPath,
+		DestPath:       destPath,
+		Mode:           b.job.Mode,
+		IdempotencyKey: idempotencyKey,
 	}
 
 	b.app.Agents.Expect(b.job.GetStreamID())
@@ -541,12 +518,6 @@ func (b *restoreJob) runPostScript() {
 
 	if job.PostScript == "" {
 		return
-	}
-
-	if b.queueTask != nil {
-		if err := b.queueTask.UpdateDescription("running post-restore script"); err != nil {
-			b.logger.Error(err, "failed to update queue task description")
-		}
 	}
 
 	b.task.WriteString(fmt.Sprintf("running post-restore script %s", b.job.PostScript))

@@ -34,9 +34,9 @@ type Engine struct {
 	wake          chan struct{}
 
 	runnersMu sync.RWMutex
-	runners   map[string]Workflow
+	runners   map[string]map[string]Workflow
+	current   map[string]string
 	running   sync.Map
-	startupMu sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -50,6 +50,7 @@ type Activity func(context.Context, ActivityInfo) (json.RawMessage, error)
 type ActivityInfo struct {
 	Execution        jobdb.Execution
 	Name             string
+	IdempotencyKey   string
 	ResumeCheckpoint json.RawMessage
 	checkpoint       func(context.Context, json.RawMessage) error
 }
@@ -58,6 +59,7 @@ type WorkflowContext struct {
 	Context   context.Context
 	Execution jobdb.Execution
 	db        *jobdb.Store
+	position  int
 }
 
 type RetryableError struct {
@@ -122,23 +124,32 @@ func NewEngine(db *jobdb.Store, config EngineConfig) (*Engine, error) {
 		pollInterval:  config.PollInterval,
 		slots:         make(chan struct{}, config.MaxConcurrent),
 		wake:          make(chan struct{}, 1),
-		runners:       make(map[string]Workflow),
+		runners:       make(map[string]map[string]Workflow),
+		current:       make(map[string]string),
 	}, nil
 }
 
 func (e *Engine) Register(kind string, workflow Workflow) error {
-	if kind == "" || workflow == nil {
-		return errors.New("workflow kind and runner are required")
+	return e.RegisterVersion(kind, "1", workflow)
+}
+
+func (e *Engine) RegisterVersion(kind, version string, workflow Workflow) error {
+	if kind == "" || version == "" || workflow == nil {
+		return errors.New("workflow kind, version, and runner are required")
 	}
 	e.runnersMu.Lock()
 	defer e.runnersMu.Unlock()
 	if e.ctx != nil {
 		return errors.New("cannot register a workflow after the engine starts")
 	}
-	if _, exists := e.runners[kind]; exists {
-		return fmt.Errorf("workflow %q is already registered", kind)
+	if e.runners[kind] == nil {
+		e.runners[kind] = make(map[string]Workflow)
 	}
-	e.runners[kind] = workflow
+	if _, exists := e.runners[kind][version]; exists {
+		return fmt.Errorf("workflow %q version %q is already registered", kind, version)
+	}
+	e.runners[kind][version] = workflow
+	e.current[kind] = version
 	return nil
 }
 
@@ -166,6 +177,12 @@ func (e *Engine) Close() {
 }
 
 func (e *Engine) Submit(ctx context.Context, request jobdb.SubmitRequest) (jobdb.Execution, bool, error) {
+	e.runnersMu.RLock()
+	version, registered := e.current[request.Kind]
+	e.runnersMu.RUnlock()
+	if !registered {
+		return jobdb.Execution{}, false, fmt.Errorf("workflow %q is not registered", request.Kind)
+	}
 	if request.ID == "" {
 		id, err := NewExecutionID()
 		if err != nil {
@@ -176,6 +193,7 @@ func (e *Engine) Submit(ctx context.Context, request jobdb.SubmitRequest) (jobdb
 	if request.RunAt.IsZero() {
 		request.RunAt = time.Now()
 	}
+	request.WorkflowVersion = version
 	execution, created, err := e.db.Submit(ctx, request)
 	if err != nil {
 		return jobdb.Execution{}, false, err
@@ -214,17 +232,38 @@ func (e *Engine) Events(ctx context.Context, id string) ([]jobdb.Event, error) {
 	return e.db.ListEvents(ctx, id)
 }
 
-func (e *Engine) StartupMu() *sync.Mutex {
-	return &e.startupMu
-}
-
 func (w *WorkflowContext) Activity(name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {
-	return w.ActivityCtx(w.Context, name, input, activity)
+	return w.activity(w.Context, name, input, activity)
 }
 
-// ActivityCtx runs an activity under an explicit context; finalizers
-// use Detached so exactly-once completion work survives cancellation.
-func (w *WorkflowContext) ActivityCtx(ctx context.Context, name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {
+func (w *WorkflowContext) Step(name string, step func(context.Context) error) error {
+	if step == nil {
+		return errors.New("workflow step is required")
+	}
+	_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ ActivityInfo) (json.RawMessage, error) {
+		if err := step(ctx); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	return err
+}
+
+// Finalize runs the durable finalizer after cancellation.
+func (w *WorkflowContext) Finalize(finalizer func(context.Context) error) error {
+	if finalizer == nil {
+		return errors.New("workflow finalizer is required")
+	}
+	_, err := w.activity(context.WithoutCancel(w.Context), "finalize", json.RawMessage(`{}`), func(ctx context.Context, _ ActivityInfo) (json.RawMessage, error) {
+		if err := finalizer(ctx); err != nil {
+			return nil, err
+		}
+		return json.RawMessage(`{}`), nil
+	})
+	return err
+}
+
+func (w *WorkflowContext) activity(ctx context.Context, name string, input json.RawMessage, activity Activity) (json.RawMessage, error) {
 	if activity == nil {
 		return nil, errors.New("workflow activity is required")
 	}
@@ -233,7 +272,8 @@ func (w *WorkflowContext) ActivityCtx(ctx context.Context, name string, input js
 		return nil, err
 	}
 	hash := sha256.Sum256(canonicalInput)
-	record, completed, err := w.db.StartActivity(ctx, w.Execution.ID, name, hex.EncodeToString(hash[:]), time.Now())
+	w.position++
+	record, completed, err := w.db.StartActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, w.position, name, hex.EncodeToString(hash[:]), time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -243,28 +283,23 @@ func (w *WorkflowContext) ActivityCtx(ctx context.Context, name string, input js
 	info := ActivityInfo{
 		Execution:        w.Execution,
 		Name:             name,
+		IdempotencyKey:   w.Execution.ID + ":" + name,
 		ResumeCheckpoint: record.Checkpoint,
 		checkpoint: func(ctx context.Context, value json.RawMessage) error {
-			return w.db.CheckpointActivity(ctx, w.Execution.ID, name, value)
+			return w.db.CheckpointActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name, value)
 		},
 	}
 	result, err := activity(ctx, info)
 	if err != nil {
-		if retryErr := w.db.FailActivity(ctx, w.Execution.ID, name, err.Error()); retryErr != nil {
+		if retryErr := w.db.FailActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name, err.Error()); retryErr != nil {
 			return nil, fmt.Errorf("recording workflow activity failure: %w", retryErr)
 		}
 		return nil, err
 	}
-	if err := w.db.CompleteActivity(ctx, w.Execution.ID, name, result, time.Now()); err != nil {
+	if err := w.db.CompleteActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name, result, time.Now()); err != nil {
 		return nil, err
 	}
 	return result, nil
-}
-
-// Detached returns a context that outlives workflow cancellation, for
-// finalization that must complete exactly once.
-func (w *WorkflowContext) Detached() context.Context {
-	return context.WithoutCancel(w.Context)
 }
 
 func (i ActivityInfo) Checkpoint(ctx context.Context, value json.RawMessage) error {
@@ -277,7 +312,7 @@ func (i ActivityInfo) Checkpoint(ctx context.Context, value json.RawMessage) err
 // Invalidate un-completes a completed activity so the next attempt
 // re-runs it instead of replaying its result.
 func (w *WorkflowContext) Invalidate(name string) error {
-	return w.db.InvalidateActivity(w.Context, w.Execution.ID, name)
+	return w.db.InvalidateActivity(w.Context, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name)
 }
 
 // IsFinalAttempt reports whether the running attempt is the
@@ -331,10 +366,10 @@ func (e *Engine) dispatch() bool {
 
 func (e *Engine) runExecution(execution jobdb.Execution) {
 	e.runnersMu.RLock()
-	workflow := e.runners[execution.Kind]
+	workflow := e.runners[execution.Kind][execution.WorkflowVersion]
 	e.runnersMu.RUnlock()
 	if workflow == nil {
-		e.finish(execution, NonRetryable(fmt.Errorf("workflow %q is not registered", execution.Kind)))
+		e.finish(execution, NonRetryable(fmt.Errorf("workflow %q version %q is not registered", execution.Kind, execution.WorkflowVersion)))
 		return
 	}
 
@@ -345,9 +380,10 @@ func (e *Engine) runExecution(execution jobdb.Execution) {
 		cancel()
 	}()
 
+	workflowContext := &WorkflowContext{Context: ctx, Execution: execution, db: e.db}
 	done := make(chan error, 1)
 	go func() {
-		done <- workflow(&WorkflowContext{Context: ctx, Execution: execution, db: e.db})
+		done <- workflow(workflowContext)
 	}()
 
 	heartbeat := time.NewTicker(e.leaseDuration / 3)
@@ -355,10 +391,15 @@ func (e *Engine) runExecution(execution jobdb.Execution) {
 	for {
 		select {
 		case err := <-done:
+			if err == nil {
+				if replayErr := e.db.EnsureReplayComplete(e.ctx, execution.ID, e.owner, execution.Attempt, workflowContext.position); replayErr != nil {
+					err = NonRetryable(fmt.Errorf("validating workflow replay: %w", replayErr))
+				}
+			}
 			e.finish(execution, err)
 			return
 		case <-heartbeat.C:
-			if err := e.db.RenewLease(e.ctx, execution.ID, e.owner, time.Now().Add(e.leaseDuration)); err != nil {
+			if err := e.db.RenewLease(e.ctx, execution.ID, e.owner, execution.Attempt, time.Now().Add(e.leaseDuration)); err != nil {
 				cancel()
 				log.Error(err, "workflow engine lease renewal failed", "executionID", execution.ID)
 			}
@@ -387,7 +428,7 @@ func (e *Engine) finish(execution jobdb.Execution, runErr error) {
 		if execution.CancelRequested {
 			state = jobdb.StateCanceled
 		}
-		if err := e.db.Finish(e.ctx, execution.ID, e.owner, state, time.Now(), ""); err != nil {
+		if err := e.db.Finish(e.ctx, execution.ID, e.owner, execution.Attempt, state, time.Now(), ""); err != nil {
 			log.Error(err, "workflow engine completion failed", "executionID", execution.ID)
 		}
 		return
@@ -395,14 +436,14 @@ func (e *Engine) finish(execution jobdb.Execution, runErr error) {
 
 	var nonRetryable nonRetryableError
 	if errors.As(runErr, &nonRetryable) || execution.Attempt >= execution.MaxAttempts {
-		if err := e.db.Finish(e.ctx, execution.ID, e.owner, jobdb.StateFailed, time.Now(), runErr.Error()); err != nil {
+		if err := e.db.Finish(e.ctx, execution.ID, e.owner, execution.Attempt, jobdb.StateFailed, time.Now(), runErr.Error()); err != nil {
 			log.Error(err, "workflow engine failure completion failed", "executionID", execution.ID)
 		}
 		return
 	}
 
 	delay := retryDelay(execution, runErr)
-	if err := e.db.Finish(e.ctx, execution.ID, e.owner, jobdb.StatePending, time.Now().Add(delay), runErr.Error()); err != nil {
+	if err := e.db.Finish(e.ctx, execution.ID, e.owner, execution.Attempt, jobdb.StatePending, time.Now().Add(delay), runErr.Error()); err != nil {
 		log.Error(err, "workflow engine retry scheduling failed", "executionID", execution.ID)
 		return
 	}

@@ -29,6 +29,7 @@ type JobExecution struct {
 	CreatedAt           int64          `json:"created_at"`
 	StartedAt           sql.NullInt64  `json:"started_at"`
 	FinishedAt          sql.NullInt64  `json:"finished_at"`
+	WorkflowVersion     string         `json:"workflow_version"`
 }
 
 type JobExecutionActivity struct {
@@ -43,6 +44,7 @@ type JobExecutionActivity struct {
 	CreatedAt   int64          `json:"created_at"`
 	StartedAt   sql.NullInt64  `json:"started_at"`
 	CompletedAt sql.NullInt64  `json:"completed_at"`
+	Position    int64          `json:"position"`
 }
 
 type JobExecutionEvent struct {

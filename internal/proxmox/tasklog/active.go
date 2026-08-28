@@ -214,20 +214,23 @@ func Reconcile(newUPID string) error {
 	var finished []TaskListInfo
 	kept := activeList[:0]
 	for _, info := range activeList {
-		switch {
-		case info.State != nil:
+		if info.State != nil {
 			finished = append(finished, info)
-		case !workerIsActiveLocal(info.Task):
-			now := time.Now().Unix()
-			state, serr := ReadStatusFromLog(info.UPID)
-			if serr != nil {
-				state = TaskState{Status: StatusUnknown, EndTime: now}
-			}
-			info.State = &state
-			finished = append(finished, info)
-		default:
-			kept = append(kept, info)
+			continue
 		}
+
+		if workerIsActiveLocal(info.Task) {
+			kept = append(kept, info)
+			continue
+		}
+
+		now := time.Now().Unix()
+		state, serr := ReadStatusFromLog(info.UPID)
+		if serr != nil {
+			state = TaskState{Status: StatusUnknown, EndTime: now}
+		}
+		info.State = &state
+		finished = append(finished, info)
 	}
 
 	if newUPID != "" {

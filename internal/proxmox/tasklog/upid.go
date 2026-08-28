@@ -11,6 +11,18 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
+func FormatWorkerID(store, prefix, identifier string) string {
+	return proxmox.EncodeToHexEscapes(store) +
+		proxmox.EncodeToHexEscapes(":") +
+		prefix +
+		proxmox.EncodeToHexEscapes(identifier)
+}
+
+func IsQueuedUPID(upid string) bool {
+	task, err := proxmox.ParseUPID(upid)
+	return err == nil && task.Node == "pbsplusgen-queue"
+}
+
 func NewTask(node, workerType, wid string) proxmox.Task {
 	task := proxmox.Task{
 		Node:       node,

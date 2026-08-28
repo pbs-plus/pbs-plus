@@ -46,6 +46,10 @@ func UpdateJobHistory(
 	history.LastRunUpid = taskFound.UPID
 	history.LastRunState = taskFound.ExitStatus
 	history.LastRunEndtime = taskFound.EndTime
+	if taskFound.Status == "running" {
+		history.LastRunStatus = coredb.JobStatusUnknown
+		return updateHistory(history, currentPID)
+	}
 
 	// Determine the typed status and update retry count
 	if warningsNum > 0 && succeeded {

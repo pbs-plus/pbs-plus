@@ -110,7 +110,7 @@ func AgentFSMount(ctx context.Context, app *application.Runtime, backup coredb.B
 	}
 	var reply BackupReply
 
-	if err := callMountRPC(ctx, "Service.Backup", args, &reply); err != nil {
+	if err := callMountRPC(ctx, ServiceName+".Backup", args, &reply); err != nil {
 		errCleanup()
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func (a *AgentMount) IsConnected() bool {
 			log.Error(err, "")
 		}
 	}()
-	if err := rpcClient.Call("Service.Status", args, &reply); err != nil {
+	if err := rpcClient.Call(ServiceName+".Status", args, &reply); err != nil {
 		return false
 	}
 	return reply.Connected
@@ -177,7 +177,7 @@ func (a *AgentMount) CloseMount() {
 		}
 	}()
 
-	if err := rpcClient.Call("Service.ARPCCleanup", args, &reply); err != nil {
+	if err := rpcClient.Call(ServiceName+".ARPCCleanup", args, &reply); err != nil {
 		log.Error(err, reply.Message)
 	}
 	log.Info(reply.Message)
@@ -235,7 +235,7 @@ func S3FSMount(ctx context.Context, app *application.Runtime, backup coredb.Back
 	}
 	var reply BackupReply
 
-	if err := callMountRPC(ctx, "Service.S3Backup", args, &reply); err != nil {
+	if err := callMountRPC(ctx, ServiceName+".S3Backup", args, &reply); err != nil {
 		errCleanup()
 		return nil, err
 	}

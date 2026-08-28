@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
@@ -23,10 +24,10 @@ type runResult struct {
 	ErrCount int32 `json:"errCount"`
 }
 
-// Register registers the restore workflow: queue, pre-script,
+// Register registers the restore workflow: pre-script,
 // start-task, run, finalize. Each stage is a durable activity.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.Register(jobs.WorkflowRestore, func(w *jobs.WorkflowContext) error {
+	return engine.RegisterVersion(jobs.WorkflowRestore, "1", func(w *jobs.WorkflowContext) error {
 		var input jobs.RestoreInput
 		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
 			return jobs.NonRetryable(fmt.Errorf("decoding restore workflow input: %w", err))
@@ -44,26 +45,17 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		job:       job,
 		app:       app,
 		skipCheck: input.SkipCheck,
-		web:       input.Web,
 		waitGroup: &sync.WaitGroup{},
 		logger:    log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer b.cleanup()
-
-	stage := func(name string, body func(context.Context) error) error {
-		_, err := w.Activity(name, json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-			if err := body(ctx); err != nil {
-				return nil, err
-			}
-			return json.RawMessage(`{}`), nil
-		})
-		return err
+	queued, err := tasklog.NewQueuedTask("reader", tasklog.FormatWorkerID(job.Store, "host-", job.DestTarget.GetHostname()), input.Web)
+	if err != nil {
+		return fmt.Errorf("creating queued restore task: %w", err)
 	}
+	defer queued.Close()
 
-	if err := stage("queue", b.enqueue); err != nil {
-		return b.finalizeFailed(w, err)
-	}
-	if err := stage("pre-script", b.runPreScript); err != nil {
+	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
 
@@ -85,8 +77,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		return jobs.NonRetryable(fmt.Errorf("decoding restore start result: %w", err))
 	}
 	b.upid = startRes.UPID
+	queued.Close()
 
-	runResRaw, err := w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	runResRaw, err := w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
 		if b.task == nil {
 			task, err := ReopenRestoreTask(job, b.upid)
 			if err != nil {
@@ -96,7 +89,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 			b.task = task
 			b.mu.Unlock()
 		}
-		if err := b.execute(ctx); err != nil {
+		if err := b.execute(ctx, info.IdempotencyKey); err != nil {
 			return nil, err
 		}
 		return json.Marshal(runResult{ErrCount: b.errCount.Load()})
@@ -110,7 +103,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	}
 	b.errCount.Store(runRes.ErrCount)
 
-	_, err = w.Activity("finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	return w.Step("finalize", func(context.Context) error {
 		if b.task == nil {
 			task, err := ReopenRestoreTask(job, b.upid)
 			if err == nil {
@@ -120,9 +113,8 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 			}
 		}
 		b.finalizeSuccess()
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
-	return err
 }
 
 func (b *restoreJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error {
@@ -137,8 +129,7 @@ func (b *restoreJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error
 		return runErr
 	}
 
-	ctx := w.Detached()
-	_, err := w.ActivityCtx(ctx, "finalize", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
+	err := w.Finalize(func(context.Context) error {
 		if b.task == nil && b.upid != "" {
 			if task, err := ReopenRestoreTask(b.job, b.upid); err == nil {
 				b.mu.Lock()
@@ -147,7 +138,7 @@ func (b *restoreJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error
 			}
 		}
 		b.finalizeFailure(runErr)
-		return json.RawMessage(`{}`), nil
+		return nil
 	})
 	if err != nil {
 		b.logger.Error(err, "failed to run restore failure finalizer")

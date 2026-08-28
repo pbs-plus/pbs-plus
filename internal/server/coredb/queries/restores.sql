@@ -39,17 +39,6 @@ LEFT JOIN targets t ON j.dest_target = t.name
 LEFT JOIN agent_hosts ah ON t.agent_host = ah.name
 ORDER BY j.id;
 
--- name: ListQueuedRestores :many
-SELECT
-    j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target,
-    j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
-    j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
-    j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode
-FROM restores j
-LEFT JOIN targets t ON j.dest_target = t.name
-WHERE j.last_run_upid LIKE '%pbsplusgen-queue%'
-ORDER BY j.id;
-
 -- name: UpdateRestore :exec
 UPDATE restores
 SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?,

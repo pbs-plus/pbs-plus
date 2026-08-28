@@ -5,19 +5,12 @@ package tasklog
 import (
 	"fmt"
 	"os"
-	"sync"
-	"sync/atomic"
-	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"log/slog"
 )
 
-func FormatWorkerID(store, prefix, identifier string) string {
-	return proxmox.EncodeToHexEscapes(store) +
-		proxmox.EncodeToHexEscapes(":") +
-		prefix +
-		proxmox.EncodeToHexEscapes(identifier)
+type QueuedTask struct {
+	*WorkerTask
 }
 
 func SourceString(web bool) string {
@@ -27,62 +20,60 @@ func SourceString(web bool) string {
 	return "schedule"
 }
 
-type QueuedTask struct {
-	Task   proxmox.Task
-	mu     sync.Mutex
-	closed atomic.Bool
-	path   string
-}
-
-func (t *QueuedTask) UpdateDescription(desc string) error {
-	if t.closed.Load() {
-		return nil
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	file, err := os.OpenFile(t.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0660)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil {
-			slog.Error(cerr.Error())
-		}
-	}()
-
-	if _, err := fmt.Fprintf(file, "%s\n", proxmox.FormatLogLine(time.Now(), "TASK QUEUED: "+desc)); err != nil {
-		return fmt.Errorf("failed to write status line: %w", err)
-	}
-	return nil
-}
-
-func (t *QueuedTask) Close() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if err := os.Remove(t.path); err != nil && !os.IsNotExist(err) {
-		slog.Error(err.Error())
-	}
-	t.closed.Store(true)
-}
-
-func WriteQueuedLog(node, workerType, wid string, web bool) (*QueuedTask, error) {
-	task := NewTask(node, workerType, wid)
-	task.Status = "running"
-
-	file, path, err := CreateTaskLogFile(task.UPID)
+// NewQueuedTask creates a transient active PBS task while work is waiting to start.
+func NewQueuedTask(workerType, wid string, web bool) (*QueuedTask, error) {
+	worker, err := NewWorkerTask("pbsplusgen-queue", workerType, wid)
 	if err != nil {
 		return nil, err
 	}
+	worker.LogString(fmt.Sprintf("TASK QUEUED: job started from %s", SourceString(web)))
+	return &QueuedTask{WorkerTask: worker}, nil
+}
 
-	desc := fmt.Sprintf("job started from %s", SourceString(web))
-	wt := &WorkerTask{Task: task, file: file}
-	wt.LogString("TASK QUEUED: " + desc)
-	if err := file.Close(); err != nil {
-		slog.Error(err.Error())
+// Close removes a queued task without archiving it as job history.
+func (t *QueuedTask) Close() {
+	if t == nil {
+		return
 	}
-	wt.closed.Store(true)
 
-	return &QueuedTask{Task: task, path: path}, nil
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed.Load() {
+		return
+	}
+
+	lock, err := lockTaskList(true)
+	if err != nil {
+		slog.Error("tasklog: lock queued task removal", "error", err, "upid", t.UPID())
+		return
+	}
+	defer lock.Close()
+
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		slog.Error("tasklog: read active tasks for queued task removal", "error", err, "upid", t.UPID())
+		return
+	}
+	kept := active[:0]
+	for _, info := range active {
+		if info.UPID != t.UPID() {
+			kept = append(kept, info)
+		}
+	}
+	if err := replaceFile(activeTasks, renderTaskList(kept), 0660); err != nil {
+		slog.Error("tasklog: remove queued task from active tasks", "error", err, "upid", t.UPID())
+		return
+	}
+
+	unregisterWorker(t.Task.TaskId)
+	t.close()
+
+	path, err := UPIDLogPath(t.UPID())
+	if err != nil {
+		slog.Error("tasklog: resolve queued task log", "error", err, "upid", t.UPID())
+		return
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Error("tasklog: remove queued task log", "error", err, "upid", t.UPID())
+	}
 }

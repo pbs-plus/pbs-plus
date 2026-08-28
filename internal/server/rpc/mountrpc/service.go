@@ -6,9 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/rpc"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,10 +15,13 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/rpcserver"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
+
+const ServiceName = "MountRPCService"
 
 type BackupArgs struct {
 	BackupID       string
@@ -314,62 +314,10 @@ func (s *Service) Status(args *StatusArgs, reply *StatusReply) error {
 	return nil
 }
 
-func StartServer(watcher chan<- struct{}, ctx context.Context, socketPath string, app *application.Runtime) error {
-	if err := os.RemoveAll(socketPath); err != nil && !os.IsNotExist(err) {
-		log.Error(err, "")
-	}
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", socketPath, err)
-	}
-
-	service := &Service{
+func RunServer(ctx context.Context, socketPath string, app *application.Runtime) error {
+	return rpcserver.Run(ctx, socketPath, ServiceName, &Service{
 		ctx:           ctx,
 		Store:         app,
 		jobCtxCancels: safemap.New[string, context.CancelFunc](),
-	}
-
-	if err := rpc.Register(service); err != nil {
-		return fmt.Errorf("failed to register rpc service: %w", err)
-	}
-
-	ready := make(chan struct{})
-
-	go func() {
-		if watcher != nil {
-			defer close(watcher)
-		}
-		close(ready)
-		rpc.Accept(listener)
-	}()
-	log.Info("rPC server listening",
-		"socket", socketPath)
-
-	<-ready
-
-	return nil
-}
-
-func RunServer(ctx context.Context, socketPath string, app *application.Runtime) error {
-	watcher := make(chan struct{}, 1)
-	err := StartServer(watcher, ctx, socketPath, app)
-	if err != nil {
-		return err
-	}
-
-	select {
-	case <-ctx.Done():
-		log.Info("rpc mount server shutting down due to context cancellation",
-			"socket", socketPath)
-
-		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
-		}
-	case <-watcher:
-		log.Info("rpc mount server shut down unexpectedly",
-			"socket", socketPath)
-
-	}
-
-	return nil
+	})
 }

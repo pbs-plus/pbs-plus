@@ -10,6 +10,26 @@ import (
 	"database/sql"
 )
 
+const cancelExpiredExecution = `-- name: CancelExpiredExecution :execrows
+UPDATE job_executions
+SET state = 'canceled', lease_owner = NULL, lease_until = NULL, finished_at = ?
+WHERE id = ? AND state = 'running' AND cancel_requested = 1 AND lease_until < ?
+`
+
+type CancelExpiredExecutionParams struct {
+	FinishedAt sql.NullInt64 `json:"finished_at"`
+	ID         string        `json:"id"`
+	LeaseUntil sql.NullInt64 `json:"lease_until"`
+}
+
+func (q *Queries) CancelExpiredExecution(ctx context.Context, arg CancelExpiredExecutionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelExpiredExecution, arg.FinishedAt, arg.ID, arg.LeaseUntil)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const cancelPendingExecution = `-- name: CancelPendingExecution :execrows
 UPDATE job_executions
 SET state = 'canceled', finished_at = ?, lease_owner = NULL, lease_until = NULL
@@ -33,16 +53,33 @@ const checkpointActivity = `-- name: CheckpointActivity :execrows
 UPDATE job_execution_activities
 SET checkpoint = ?
 WHERE execution_id = ? AND name = ? AND state = 'running'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
+  )
 `
 
 type CheckpointActivityParams struct {
 	Checkpoint  sql.NullString `json:"checkpoint"`
 	ExecutionID string         `json:"execution_id"`
 	Name        string         `json:"name"`
+	LeaseOwner  sql.NullString `json:"lease_owner"`
+	Attempt     int64          `json:"attempt"`
 }
 
 func (q *Queries) CheckpointActivity(ctx context.Context, arg CheckpointActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, checkpointActivity, arg.Checkpoint, arg.ExecutionID, arg.Name)
+	result, err := q.db.ExecContext(ctx, checkpointActivity,
+		arg.Checkpoint,
+		arg.ExecutionID,
+		arg.Name,
+		arg.LeaseOwner,
+		arg.Attempt,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -82,6 +119,15 @@ const completeActivity = `-- name: CompleteActivity :execrows
 UPDATE job_execution_activities
 SET state = 'completed', result = ?, completed_at = ?
 WHERE execution_id = ? AND name = ? AND state = 'running'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
+  )
 `
 
 type CompleteActivityParams struct {
@@ -89,6 +135,8 @@ type CompleteActivityParams struct {
 	CompletedAt sql.NullInt64  `json:"completed_at"`
 	ExecutionID string         `json:"execution_id"`
 	Name        string         `json:"name"`
+	LeaseOwner  sql.NullString `json:"lease_owner"`
+	Attempt     int64          `json:"attempt"`
 }
 
 func (q *Queries) CompleteActivity(ctx context.Context, arg CompleteActivityParams) (int64, error) {
@@ -97,6 +145,8 @@ func (q *Queries) CompleteActivity(ctx context.Context, arg CompleteActivityPara
 		arg.CompletedAt,
 		arg.ExecutionID,
 		arg.Name,
+		arg.LeaseOwner,
+		arg.Attempt,
 	)
 	if err != nil {
 		return 0, err
@@ -104,10 +154,28 @@ func (q *Queries) CompleteActivity(ctx context.Context, arg CompleteActivityPara
 	return result.RowsAffected()
 }
 
+const countActivitiesAfterPosition = `-- name: CountActivitiesAfterPosition :one
+SELECT COUNT(*)
+FROM job_execution_activities
+WHERE execution_id = ? AND position > ?
+`
+
+type CountActivitiesAfterPositionParams struct {
+	ExecutionID string `json:"execution_id"`
+	Position    int64  `json:"position"`
+}
+
+func (q *Queries) CountActivitiesAfterPosition(ctx context.Context, arg CountActivitiesAfterPositionParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActivitiesAfterPosition, arg.ExecutionID, arg.Position)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createActivity = `-- name: CreateActivity :execrows
 INSERT INTO job_execution_activities (
-    execution_id, name, input_hash, state, created_at
-) VALUES (?, ?, ?, 'pending', ?)
+    execution_id, name, input_hash, state, created_at, position
+) VALUES (?, ?, ?, 'pending', ?, ?)
 ON CONFLICT(execution_id, name) DO NOTHING
 `
 
@@ -116,6 +184,7 @@ type CreateActivityParams struct {
 	Name        string `json:"name"`
 	InputHash   string `json:"input_hash"`
 	CreatedAt   int64  `json:"created_at"`
+	Position    int64  `json:"position"`
 }
 
 func (q *Queries) CreateActivity(ctx context.Context, arg CreateActivityParams) (int64, error) {
@@ -124,6 +193,7 @@ func (q *Queries) CreateActivity(ctx context.Context, arg CreateActivityParams) 
 		arg.Name,
 		arg.InputHash,
 		arg.CreatedAt,
+		arg.Position,
 	)
 	if err != nil {
 		return 0, err
@@ -135,8 +205,8 @@ const createExecution = `-- name: CreateExecution :exec
 INSERT INTO job_executions (
     id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, created_at,
-    parent_execution_id
-) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?)
+    parent_execution_id, workflow_version
+) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateExecutionParams struct {
@@ -152,6 +222,7 @@ type CreateExecutionParams struct {
 	RunAt               int64          `json:"run_at"`
 	CreatedAt           int64          `json:"created_at"`
 	ParentExecutionID   sql.NullString `json:"parent_execution_id"`
+	WorkflowVersion     string         `json:"workflow_version"`
 }
 
 func (q *Queries) CreateExecution(ctx context.Context, arg CreateExecutionParams) error {
@@ -168,6 +239,7 @@ func (q *Queries) CreateExecution(ctx context.Context, arg CreateExecutionParams
 		arg.RunAt,
 		arg.CreatedAt,
 		arg.ParentExecutionID,
+		arg.WorkflowVersion,
 	)
 	return err
 }
@@ -267,16 +339,33 @@ const failActivity = `-- name: FailActivity :execrows
 UPDATE job_execution_activities
 SET state = 'pending', last_error = ?
 WHERE execution_id = ? AND name = ? AND state = 'running'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
+  )
 `
 
 type FailActivityParams struct {
 	LastError   sql.NullString `json:"last_error"`
 	ExecutionID string         `json:"execution_id"`
 	Name        string         `json:"name"`
+	LeaseOwner  sql.NullString `json:"lease_owner"`
+	Attempt     int64          `json:"attempt"`
 }
 
 func (q *Queries) FailActivity(ctx context.Context, arg FailActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, failActivity, arg.LastError, arg.ExecutionID, arg.Name)
+	result, err := q.db.ExecContext(ctx, failActivity,
+		arg.LastError,
+		arg.ExecutionID,
+		arg.Name,
+		arg.LeaseOwner,
+		arg.Attempt,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -287,7 +376,8 @@ const finishExecution = `-- name: FinishExecution :execrows
 UPDATE job_executions
 SET state = ?, run_at = ?, lease_owner = NULL, lease_until = NULL,
     last_error = ?, finished_at = ?
-WHERE id = ? AND state = 'running' AND lease_owner = ?
+WHERE id = ? AND state = 'running' AND lease_owner = ? AND attempt = ?
+  AND lease_until >= unixepoch()
 `
 
 type FinishExecutionParams struct {
@@ -297,6 +387,7 @@ type FinishExecutionParams struct {
 	FinishedAt sql.NullInt64  `json:"finished_at"`
 	ID         string         `json:"id"`
 	LeaseOwner sql.NullString `json:"lease_owner"`
+	Attempt    int64          `json:"attempt"`
 }
 
 func (q *Queries) FinishExecution(ctx context.Context, arg FinishExecutionParams) (int64, error) {
@@ -307,6 +398,7 @@ func (q *Queries) FinishExecution(ctx context.Context, arg FinishExecutionParams
 		arg.FinishedAt,
 		arg.ID,
 		arg.LeaseOwner,
+		arg.Attempt,
 	)
 	if err != nil {
 		return 0, err
@@ -318,7 +410,7 @@ const getActiveExecutionByDefinition = `-- name: GetActiveExecutionByDefinition 
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
-    started_at, finished_at
+    started_at, finished_at, workflow_version
 FROM job_executions
 WHERE kind = ? AND definition_id = ? AND state IN ('pending', 'running')
 ORDER BY created_at DESC
@@ -354,13 +446,14 @@ func (q *Queries) GetActiveExecutionByDefinition(ctx context.Context, arg GetAct
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.WorkflowVersion,
 	)
 	return i, err
 }
 
 const getActivity = `-- name: GetActivity :one
 SELECT execution_id, name, input_hash, state, attempt, result, checkpoint,
-    last_error, created_at, started_at, completed_at
+    last_error, created_at, started_at, completed_at, position
 FROM job_execution_activities
 WHERE execution_id = ? AND name = ?
 `
@@ -385,6 +478,39 @@ func (q *Queries) GetActivity(ctx context.Context, arg GetActivityParams) (JobEx
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.Position,
+	)
+	return i, err
+}
+
+const getActivityAtPosition = `-- name: GetActivityAtPosition :one
+SELECT execution_id, name, input_hash, state, attempt, result, checkpoint,
+    last_error, created_at, started_at, completed_at, position
+FROM job_execution_activities
+WHERE execution_id = ? AND position = ?
+`
+
+type GetActivityAtPositionParams struct {
+	ExecutionID string `json:"execution_id"`
+	Position    int64  `json:"position"`
+}
+
+func (q *Queries) GetActivityAtPosition(ctx context.Context, arg GetActivityAtPositionParams) (JobExecutionActivity, error) {
+	row := q.db.QueryRowContext(ctx, getActivityAtPosition, arg.ExecutionID, arg.Position)
+	var i JobExecutionActivity
+	err := row.Scan(
+		&i.ExecutionID,
+		&i.Name,
+		&i.InputHash,
+		&i.State,
+		&i.Attempt,
+		&i.Result,
+		&i.Checkpoint,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Position,
 	)
 	return i, err
 }
@@ -393,7 +519,7 @@ const getExecution = `-- name: GetExecution :one
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
-    started_at, finished_at
+    started_at, finished_at, workflow_version
 FROM job_executions
 WHERE id = ?
 `
@@ -422,6 +548,7 @@ func (q *Queries) GetExecution(ctx context.Context, id string) (JobExecution, er
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.WorkflowVersion,
 	)
 	return i, err
 }
@@ -430,7 +557,7 @@ const getExecutionByDedupeKey = `-- name: GetExecutionByDedupeKey :one
 SELECT id, kind, definition_id, trigger, dedupe_key, payload, state, attempt,
     max_attempts, retry_initial_seconds, retry_max_seconds, run_at, lease_owner,
     lease_until, cancel_requested, last_error, parent_execution_id, created_at,
-    started_at, finished_at
+    started_at, finished_at, workflow_version
 FROM job_executions
 WHERE dedupe_key = ?
 `
@@ -459,6 +586,7 @@ func (q *Queries) GetExecutionByDedupeKey(ctx context.Context, dedupeKey string)
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
+		&i.WorkflowVersion,
 	)
 	return i, err
 }
@@ -467,15 +595,31 @@ const invalidateActivity = `-- name: InvalidateActivity :execrows
 UPDATE job_execution_activities
 SET state = 'pending', result = NULL, checkpoint = NULL, completed_at = NULL
 WHERE execution_id = ? AND name = ? AND state = 'completed'
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
+  )
 `
 
 type InvalidateActivityParams struct {
-	ExecutionID string `json:"execution_id"`
-	Name        string `json:"name"`
+	ExecutionID string         `json:"execution_id"`
+	Name        string         `json:"name"`
+	LeaseOwner  sql.NullString `json:"lease_owner"`
+	Attempt     int64          `json:"attempt"`
 }
 
 func (q *Queries) InvalidateActivity(ctx context.Context, arg InvalidateActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, invalidateActivity, arg.ExecutionID, arg.Name)
+	result, err := q.db.ExecContext(ctx, invalidateActivity,
+		arg.ExecutionID,
+		arg.Name,
+		arg.LeaseOwner,
+		arg.Attempt,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -576,6 +720,36 @@ func (q *Queries) ListExecutionResources(ctx context.Context, executionID string
 	return items, nil
 }
 
+const listExpiredCanceledExecutionIDs = `-- name: ListExpiredCanceledExecutionIDs :many
+SELECT id
+FROM job_executions
+WHERE state = 'running' AND cancel_requested = 1 AND lease_until < ?
+ORDER BY lease_until
+`
+
+func (q *Queries) ListExpiredCanceledExecutionIDs(ctx context.Context, leaseUntil sql.NullInt64) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listExpiredCanceledExecutionIDs, leaseUntil)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const releaseExecutionClaim = `-- name: ReleaseExecutionClaim :exec
 UPDATE job_executions
 SET state = 'pending', lease_owner = NULL, lease_until = NULL, run_at = ?
@@ -595,17 +769,24 @@ func (q *Queries) ReleaseExecutionClaim(ctx context.Context, arg ReleaseExecutio
 
 const renewExecutionLease = `-- name: RenewExecutionLease :execrows
 UPDATE job_executions SET lease_until = ?
-WHERE id = ? AND state = 'running' AND lease_owner = ?
+WHERE id = ? AND state = 'running' AND lease_owner = ? AND attempt = ?
+  AND lease_until >= unixepoch()
 `
 
 type RenewExecutionLeaseParams struct {
 	LeaseUntil sql.NullInt64  `json:"lease_until"`
 	ID         string         `json:"id"`
 	LeaseOwner sql.NullString `json:"lease_owner"`
+	Attempt    int64          `json:"attempt"`
 }
 
 func (q *Queries) RenewExecutionLease(ctx context.Context, arg RenewExecutionLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, renewExecutionLease, arg.LeaseUntil, arg.ID, arg.LeaseOwner)
+	result, err := q.db.ExecContext(ctx, renewExecutionLease,
+		arg.LeaseUntil,
+		arg.ID,
+		arg.LeaseOwner,
+		arg.Attempt,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -639,10 +820,11 @@ func (q *Queries) RequestExecutionCancellation(ctx context.Context, id string) (
 	return result.RowsAffected()
 }
 
-const requeueExpiredExecutions = `-- name: RequeueExpiredExecutions :exec
+const requeueExpiredExecutions = `-- name: RequeueExpiredExecutions :many
 UPDATE job_executions
 SET state = 'pending', lease_owner = NULL, lease_until = NULL, run_at = ?
 WHERE state = 'running' AND lease_until < ? AND cancel_requested = 0
+RETURNING id
 `
 
 type RequeueExpiredExecutionsParams struct {
@@ -650,8 +832,37 @@ type RequeueExpiredExecutionsParams struct {
 	LeaseUntil sql.NullInt64 `json:"lease_until"`
 }
 
-func (q *Queries) RequeueExpiredExecutions(ctx context.Context, arg RequeueExpiredExecutionsParams) error {
-	_, err := q.db.ExecContext(ctx, requeueExpiredExecutions, arg.RunAt, arg.LeaseUntil)
+func (q *Queries) RequeueExpiredExecutions(ctx context.Context, arg RequeueExpiredExecutionsParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, requeueExpiredExecutions, arg.RunAt, arg.LeaseUntil)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resetRunningActivities = `-- name: ResetRunningActivities :exec
+UPDATE job_execution_activities
+SET state = 'pending'
+WHERE execution_id = ? AND state = 'running'
+`
+
+func (q *Queries) ResetRunningActivities(ctx context.Context, executionID string) error {
+	_, err := q.db.ExecContext(ctx, resetRunningActivities, executionID)
 	return err
 }
 
@@ -659,16 +870,33 @@ const startActivity = `-- name: StartActivity :execrows
 UPDATE job_execution_activities
 SET state = 'running', attempt = attempt + 1, started_at = ?, last_error = NULL
 WHERE execution_id = ? AND name = ? AND state IN ('pending', 'running')
+  AND EXISTS (
+    SELECT 1
+    FROM job_executions
+    WHERE id = job_execution_activities.execution_id
+      AND state = 'running'
+      AND lease_owner = ?
+      AND job_executions.attempt = ?
+      AND lease_until >= unixepoch()
+  )
 `
 
 type StartActivityParams struct {
-	StartedAt   sql.NullInt64 `json:"started_at"`
-	ExecutionID string        `json:"execution_id"`
-	Name        string        `json:"name"`
+	StartedAt   sql.NullInt64  `json:"started_at"`
+	ExecutionID string         `json:"execution_id"`
+	Name        string         `json:"name"`
+	LeaseOwner  sql.NullString `json:"lease_owner"`
+	Attempt     int64          `json:"attempt"`
 }
 
 func (q *Queries) StartActivity(ctx context.Context, arg StartActivityParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, startActivity, arg.StartedAt, arg.ExecutionID, arg.Name)
+	result, err := q.db.ExecContext(ctx, startActivity,
+		arg.StartedAt,
+		arg.ExecutionID,
+		arg.Name,
+		arg.LeaseOwner,
+		arg.Attempt,
+	)
 	if err != nil {
 		return 0, err
 	}
