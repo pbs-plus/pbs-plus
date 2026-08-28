@@ -26,11 +26,21 @@ import (
 
 const mountSettleAttempts = 30
 
-func openTask(upid, workerType, wid string) (*tasklog.WorkerTask, error) {
+func openTask(ctx context.Context, upid, workerType, wid string) (*tasklog.WorkerTask, error) {
+	var (
+		task *tasklog.WorkerTask
+		err  error
+	)
 	if upid != "" {
-		return tasklog.ReopenWorkerTask(upid)
+		task, err = tasklog.ReopenWorkerTask(upid)
+	} else {
+		task, err = tasklog.NewWorkerTask("pbsplus", workerType, wid)
 	}
-	return tasklog.NewWorkerTask("pbsplus", workerType, wid)
+	if err != nil {
+		return nil, err
+	}
+	jobs.BindTask(ctx, task)
+	return task, nil
 }
 
 func Register(engine *jobs.Engine) error {
@@ -95,7 +105,7 @@ func Register(engine *jobs.Engine) error {
 func runInit(ctx context.Context, in jobs.SnapshotInitInput) error {
 	key := Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, "init")
 
-	task, err := openTask(in.UPID, "init", tasklog.FormatWorkerID(in.Datastore, "init-", key))
+	task, err := openTask(ctx, in.UPID, "init", tasklog.FormatWorkerID(in.Datastore, "init-", key))
 	if err != nil {
 		return jobs.NonRetryable(err)
 	}
@@ -207,7 +217,7 @@ func runMount(ctx context.Context, in jobs.SnapshotMountInput) error {
 	safeTime := DirTime(parsedTime)
 	key := Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, safeTime)
 
-	task, err := openTask(in.UPID, "mount", tasklog.FormatWorkerID(in.Datastore, "mount-", key))
+	task, err := openTask(ctx, in.UPID, "mount", tasklog.FormatWorkerID(in.Datastore, "mount-", key))
 	if err != nil {
 		return jobs.NonRetryable(err)
 	}
@@ -380,7 +390,7 @@ func runUnmount(ctx context.Context, in jobs.SnapshotUnmountInput) error {
 		return jobs.NonRetryable(err)
 	}
 
-	task, err := openTask(in.UPID, "unmount", tasklog.FormatWorkerID(in.Datastore, "unmount-", key))
+	task, err := openTask(ctx, in.UPID, "unmount", tasklog.FormatWorkerID(in.Datastore, "unmount-", key))
 	if err != nil {
 		return jobs.NonRetryable(err)
 	}
@@ -477,7 +487,7 @@ func runCommit(ctx context.Context, in jobs.SnapshotCommitInput) error {
 		return jobs.NonRetryable(fmt.Errorf("mount at %s is not commit-capable (read-only or offline)", in.MountPath))
 	}
 
-	task, err := openTask(in.UPID, "commit", tasklog.FormatWorkerID(session.Datastore, "commit-", session.ServiceKey))
+	task, err := openTask(ctx, in.UPID, "commit", tasklog.FormatWorkerID(session.Datastore, "commit-", session.ServiceKey))
 	if err != nil {
 		return jobs.NonRetryable(err)
 	}

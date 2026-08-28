@@ -59,6 +59,7 @@ type WorkflowContext struct {
 	Context   context.Context
 	Execution jobdb.Execution
 	db        *jobdb.Store
+	engine    *Engine
 	position  int
 }
 
@@ -228,6 +229,10 @@ func (e *Engine) Get(ctx context.Context, id string) (jobdb.Execution, error) {
 	return e.db.GetExecution(ctx, id)
 }
 
+func (e *Engine) ActiveExecution(ctx context.Context, kind, definitionID string) (jobdb.Execution, error) {
+	return e.db.GetActiveExecution(ctx, kind, definitionID)
+}
+
 func (e *Engine) Events(ctx context.Context, id string) ([]jobdb.Event, error) {
 	return e.db.ListEvents(ctx, id)
 }
@@ -374,13 +379,14 @@ func (e *Engine) runExecution(execution jobdb.Execution) {
 	}
 
 	ctx, cancel := context.WithCancel(e.ctx)
+	ctx = e.withAbortBinder(ctx, execution.ID)
 	e.running.Store(execution.ID, cancel)
 	defer func() {
 		e.running.Delete(execution.ID)
 		cancel()
 	}()
 
-	workflowContext := &WorkflowContext{Context: ctx, Execution: execution, db: e.db}
+	workflowContext := &WorkflowContext{Context: ctx, Execution: execution, db: e.db, engine: e}
 	done := make(chan error, 1)
 	go func() {
 		done <- workflow(workflowContext)

@@ -61,6 +61,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 		return fmt.Errorf("creating queued verification task: %w", err)
 	}
 	defer queued.Close()
+	w.BindTask(queued)
 
 	if err := v.updateJobStatus(false, proxmox.Task{UPID: queued.UPID()}); err != nil {
 		v.logger.Error(err, "failed to assign queued task to verification job")
@@ -96,6 +97,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 		v.mu.Lock()
 		v.task = vTask
 		v.mu.Unlock()
+		w.BindTask(vTask)
 		if err := v.updateJobStatus(false, vTask.Task); err != nil {
 			v.logger.Error(err, "failed to update job with task UPID")
 		}
@@ -123,6 +125,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 			v.mu.Lock()
 			v.task = vTask
 			v.mu.Unlock()
+			w.BindTask(vTask)
 		}
 
 		backups := make([]coredb.Backup, len(selectRes.BackupJobIDs))

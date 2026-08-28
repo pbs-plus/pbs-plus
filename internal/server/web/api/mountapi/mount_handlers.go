@@ -3,6 +3,7 @@
 package mountapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -91,6 +92,20 @@ func (f mountForm) safeTime() (string, error) {
 	return snapshotmount.DirTime(parsedTime), nil
 }
 
+func activeWorkflowUPID(ctx context.Context, app *application.Runtime, kind, key string) (string, bool) {
+	execution, err := app.Engine.ActiveExecution(ctx, kind, key)
+	if err != nil {
+		return "", false
+	}
+	var input struct {
+		UPID string `json:"upid"`
+	}
+	if err := json.Unmarshal(execution.Payload, &input); err != nil || input.UPID == "" {
+		return "", false
+	}
+	return input.UPID, true
+}
+
 func newTask(workerType, datastore, key string) (*tasklog.WorkerTask, error) {
 	wid := tasklog.FormatWorkerID(datastore, workerType+"-", key)
 	task, err := tasklog.NewWorkerTask("pbsplus", workerType, wid)
@@ -106,6 +121,7 @@ func submitSnapshotWorkflow(w http.ResponseWriter, r *http.Request, app *applica
 		respond.WriteErrorResponse(w, err)
 		return "", false
 	}
+	blocker, blocked := activeWorkflowUPID(r.Context(), app, kind, key)
 	execution, _, err := app.Engine.Submit(r.Context(), request)
 	if err != nil {
 		respond.WriteErrorResponse(w, err)
@@ -117,6 +133,12 @@ func submitSnapshotWorkflow(w http.ResponseWriter, r *http.Request, app *applica
 	}
 	if err := json.Unmarshal(execution.Payload, &input); err == nil {
 		upid = input.UPID
+	}
+	if task, ok := tasklog.LookupTask(upid); ok {
+		app.Engine.BindTaskAbort(execution.ID, task)
+		if blocked {
+			task.LogString("waiting for " + kind + " task " + blocker + " to finish")
+		}
 	}
 	return upid, true
 }

@@ -55,6 +55,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		return fmt.Errorf("creating queued restore task: %w", err)
 	}
 	defer queued.Close()
+	w.BindTask(queued)
 
 	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: queued.UPID()}, app); err != nil {
 		b.logger.Error(err, "failed to assign queued task to restore job")
@@ -72,6 +73,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		b.mu.Lock()
 		b.task = task
 		b.mu.Unlock()
+		w.BindTask(task)
 		return json.Marshal(startResult{UPID: task.UPID()})
 	})
 	if err != nil {
@@ -96,6 +98,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 			b.mu.Lock()
 			b.task = task
 			b.mu.Unlock()
+			w.BindTask(task)
 		}
 		if err := b.execute(ctx, info.IdempotencyKey); err != nil {
 			return nil, err
