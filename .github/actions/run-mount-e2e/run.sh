@@ -331,6 +331,64 @@ else
 	fail "composed unmount rejected: $(body_of "$RESP")"
 fi
 
+section "PHASE 6: Flattened compose of a directory"
+
+FLAT_GROUP_DIR="/mnt/test/ns/test/host/e2e-flatten"
+
+FLAT_SEL=$(printf /nested | base64 -w0)
+RESP=$(api_post "/api2/extjs/config/d2d-compose/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
+	-d "backup-time=$NEW_SNAP" -d "file-name=$DIDX3" \
+	-d "target-ns=$NAMESPACE" -d "target-type=host" -d "target-id=e2e-flatten" \
+	-d "paths=$FLAT_SEL" -d "strip-root=1")
+if submit_ok "$RESP"; then
+	ok "flatten compose request accepted"
+	FLAT_DEADLINE=$((SECONDS + 420))
+	FLAT_OK=0
+	while [ $SECONDS -lt $FLAT_DEADLINE ]; do
+		if [ -n "$(latest_snapshot "$FLAT_GROUP_DIR")" ]; then FLAT_OK=1; break; fi
+		if ERRF=$(compose_errored); then
+			echo "flatten compose task failed (see log below)"
+			tail -20 "$ERRF"
+			break
+		fi
+		sleep 2
+	done
+	[ $FLAT_OK = 1 ] && ok "flatten compose produced target snapshot" || { fail "flatten compose produced no snapshot (after $((SECONDS))s)"; dump_logs; }
+else
+	fail "flatten compose rejected: $(body_of "$RESP")"
+fi
+
+FLAT_SNAP=$(latest_snapshot "$FLAT_GROUP_DIR")
+FLAT_DIDX=$(didx_in "$FLAT_GROUP_DIR/$FLAT_SNAP")
+[ -n "$FLAT_DIDX" ] && ok "flattened didx: $FLAT_DIDX" || die "no didx in flattened snapshot"
+
+FLAT_MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-e2e-flatten/$FLAT_SNAP"
+RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-flatten" \
+	-d "backup-time=$FLAT_SNAP" -d "file-name=$FLAT_DIDX" -d "mode=ro")
+if submit_ok "$RESP"; then
+	ok "flattened mount request accepted"
+	wait_for "flattened snapshot mounted" 240 session_mounted "$FLAT_MP" || true
+else
+	fail "flattened mount rejected: $(body_of "$RESP")"
+fi
+
+[ "$(cat "$FLAT_MP/file.txt" 2>/dev/null)" = "nested-e2e" ] \
+	&& ok "directory contents at snapshot root" || fail "flattened file.txt wrong or missing"
+[ ! -e "$FLAT_MP/nested" ] \
+	&& ok "selected directory itself excluded" || fail "selected directory leaked into flattened snapshot"
+[ ! -e "$FLAT_MP/hello.txt" ] \
+	&& ok "unselected sibling excluded" || fail "unselected sibling leaked into flattened snapshot"
+
+RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$FLAT_MP")
+if submit_ok "$RESP"; then
+	ok "flattened unmount accepted"
+	wait_for "flattened session unmounted" 120 session_gone "$FLAT_MP" || true
+else
+	fail "flattened unmount rejected: $(body_of "$RESP")"
+fi
+
 section "RESULTS"
 
 TOTAL=$((PASS + FAIL + SKIP))

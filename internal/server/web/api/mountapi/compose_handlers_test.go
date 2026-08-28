@@ -121,6 +121,31 @@ func TestParseComposeFormDedupesPaths(t *testing.T) {
 	}
 }
 
+func TestParseComposeFormStripRoot(t *testing.T) {
+	values := validComposeValues()
+	values.Set("strip-root", "1")
+	r := composeRequest("ds1", values)
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseComposeForm(r); err == nil {
+		t.Error("strip-root with two paths succeeded, want error")
+	}
+
+	values.Set("paths", base64.StdEncoding.EncodeToString([]byte("/etc")))
+	r = composeRequest("ds1", values)
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := parseComposeForm(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.StripRoot {
+		t.Error("strip-root not parsed")
+	}
+}
+
 func TestComposeHandlerRejectsBadInput(t *testing.T) {
 	values := validComposeValues()
 	values.Set("file-name", "root.ppxar.didx")

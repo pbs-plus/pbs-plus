@@ -32,6 +32,7 @@ type composeForm struct {
 	TargetType string
 	TargetID   string
 	Paths      []string
+	StripRoot  bool
 }
 
 func parseComposeForm(r *http.Request) (composeForm, error) {
@@ -84,6 +85,10 @@ func parseComposeForm(r *http.Request) (composeForm, error) {
 		return f, err
 	}
 	f.Paths = paths
+	f.StripRoot = r.FormValue("strip-root") == "1"
+	if f.StripRoot && len(f.Paths) != 1 {
+		return f, fmt.Errorf("directory flatten requires exactly one selected directory")
+	}
 	return f, nil
 }
 
@@ -161,6 +166,7 @@ func ExtJsComposeHandler(app *application.Runtime) http.HandlerFunc {
 			TargetType: f.TargetType,
 			TargetID:   f.TargetID,
 			Paths:      f.Paths,
+			StripRoot:  f.StripRoot,
 			UPID:       upidTask(task),
 			Web:        true,
 		}, 10*time.Minute)

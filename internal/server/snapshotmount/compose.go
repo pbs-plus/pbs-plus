@@ -78,6 +78,9 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	if len(in.Paths) == 0 {
 		return errors.New("no paths selected")
 	}
+	if in.StripRoot && len(in.Paths) != 1 {
+		return errors.New("directory flatten requires exactly one selected directory")
+	}
 
 	task.LogString(fmt.Sprintf("composing %s/%s/%s (%s) into %s/%s/%s",
 		in.SourceNS, in.SourceType, in.SourceID, in.SourceFile,
@@ -130,6 +133,15 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	rootEntry, err := src.ReadRoot()
 	if err != nil {
 		return fmt.Errorf("read source root: %w", err)
+	}
+	if in.StripRoot {
+		entry, err := src.Lookup(in.Paths[0])
+		if err != nil {
+			return fmt.Errorf("lookup %q in source: %w", in.Paths[0], err)
+		}
+		if !entry.IsDir() {
+			return fmt.Errorf("%q is not a directory; directory flatten requires one directory", in.Paths[0])
+		}
 	}
 
 	targetDir := groupParentDir(dsInfo.Path, in.TargetNS, in.TargetType, in.TargetID)
@@ -185,7 +197,11 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 
 	mappings := make([]transfer.PathMapping, 0, len(in.Paths))
 	for _, p := range in.Paths {
-		mappings = append(mappings, transfer.PathMapping{Src: p, Dst: p})
+		dst := p
+		if in.StripRoot {
+			dst = "/"
+		}
+		mappings = append(mappings, transfer.PathMapping{Src: p, Dst: dst})
 	}
 
 	task.LogString(fmt.Sprintf("copying %d selected path(s)", len(mappings)))

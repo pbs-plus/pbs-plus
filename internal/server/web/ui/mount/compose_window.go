@@ -37,6 +37,16 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 			let form = me.lookup("form");
 			if (!form.isValid()) return;
 			let vals = form.getValues();
+			if (vals["strip-root"] === "1") {
+				if (sel.length !== 1) {
+					Ext.Msg.alert(gettext("Error"), gettext("Flatten mode requires exactly one selected directory."));
+					return;
+				}
+				if (sel[0].data.leaf) {
+					Ext.Msg.alert(gettext("Error"), gettext("Flatten mode requires a directory, not a file."));
+					return;
+				}
+			}
 			let params = {
 				ns: view.namespace || "",
 				"backup-type": view.backupType,
@@ -56,6 +66,7 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 					})
 					.join(","),
 			};
+			if (vals["strip-root"] === "1") params["strip-root"] = "1";
 			PBS.PlusUtils.API2Request({
 				url: "/api2/extjs/config/d2d-compose/" + encodeURIComponent(encodePathValue(view.datastore)),
 				method: "POST",
@@ -115,6 +126,11 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 				js.Obj{
 					"xtype": "displayfield",
 					"value": "Select files or directories (Ctrl-click for multiple) to compose into a new snapshot. Existing chunks are reused; nothing is modified in the source.",
+				},
+				js.Obj{
+					"xtype": "proxmoxcheckbox", "name": "strip-root", "fieldLabel": "Flatten",
+					"boxLabel":       "Use contents of a single selected directory as snapshot root",
+					"uncheckedValue": "0", "inputValue": "1", "margin": "0 0 5 0",
 				},
 				js.Obj{
 					"xtype":  "fieldcontainer",

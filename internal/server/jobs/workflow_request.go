@@ -102,6 +102,7 @@ type SnapshotComposeInput struct {
 	TargetType string   `json:"target_type"`
 	TargetID   string   `json:"target_id"`
 	Paths      []string `json:"paths"`
+	StripRoot  bool     `json:"strip_root"`
 	UPID       string   `json:"upid"`
 	Web        bool     `json:"web"`
 }
