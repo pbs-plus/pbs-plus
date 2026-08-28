@@ -14,11 +14,12 @@ import (
 )
 
 type WorkerTask struct {
-	Task   proxmox.Task
-	mu     sync.Mutex
-	closed atomic.Bool
-	file   *os.File
-	abort  atomic.Bool
+	Task       proxmox.Task
+	mu         sync.Mutex
+	closed     atomic.Bool
+	file       *os.File
+	abort      atomic.Bool
+	abortHooks []func()
 }
 
 // NewWorkerTask is PBS's WorkerTask::new: allocate a UPID, create its log
@@ -109,8 +110,47 @@ func (w *WorkerTask) CloseWarn(count uint64) {
 	w.CloseWithStatus(TaskState{Status: StatusWarning, EndTime: time.Now().Unix(), WarnCount: count})
 }
 
+// RequestAbort runs the OnAbort hooks once, so PBS stop requests reach the work.
 func (w *WorkerTask) RequestAbort() {
-	w.abort.Store(true)
+	if w.abort.Swap(true) {
+		return
+	}
+	w.mu.Lock()
+	hooks := w.abortHooks
+	w.abortHooks = nil
+	if !w.closed.Load() {
+		w.writeLogLine("%s", "abort requested")
+		if err := w.file.Sync(); err != nil {
+			slog.Error(err.Error())
+		}
+	}
+	w.mu.Unlock()
+	for _, hook := range hooks {
+		go hook()
+	}
+}
+
+// OnAbort registers a stop handler, running it now if the task already aborted.
+func (w *WorkerTask) OnAbort(hook func()) {
+	if hook == nil {
+		return
+	}
+	w.mu.Lock()
+	if w.abort.Load() {
+		w.mu.Unlock()
+		go hook()
+		return
+	}
+	w.abortHooks = append(w.abortHooks, hook)
+	w.mu.Unlock()
+}
+
+func LookupTask(upid string) (*WorkerTask, bool) {
+	parsed, err := proxmox.ParseUPID(upid)
+	if err != nil {
+		return nil, false
+	}
+	return lookupWorker(parsed.TaskId)
 }
 
 func (w *WorkerTask) AbortRequested() bool {

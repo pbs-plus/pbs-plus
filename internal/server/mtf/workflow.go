@@ -40,6 +40,7 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 		return fmt.Errorf("creating queued MTF migration task: %w", err)
 	}
 	defer queued.Close()
+	w.BindTask(queued)
 
 	if err := j.persistHistory(proxmox.Task{UPID: queued.UPID()}, coredb.JobStatusUnknown, true); err != nil {
 		j.logger.Error(err, "failed to assign queued task to MTF job")
@@ -53,6 +54,7 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 		j.mu.Lock()
 		j.task = task
 		j.mu.Unlock()
+		w.BindTask(task)
 		return json.Marshal(taskResult{UPID: task.UPID()})
 	})
 	if err != nil {
@@ -75,6 +77,7 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 			if err := j.reattach(startRes.UPID); err != nil {
 				return nil, err
 			}
+			w.BindTask(j.task)
 		}
 		if err := j.execute(ctx); err != nil {
 			return nil, err
@@ -144,6 +147,7 @@ func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) er
 		return fmt.Errorf("creating queued MTF scan task: %w", err)
 	}
 	defer queued.Close()
+	w.BindTask(queued)
 
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		var err error
@@ -151,6 +155,7 @@ func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) er
 		if err != nil {
 			return nil, fmt.Errorf("create scan task: %w", err)
 		}
+		w.BindTask(task)
 		return json.Marshal(taskResult{UPID: task.UPID()})
 	})
 	if err != nil {
@@ -169,6 +174,7 @@ func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) er
 				return nil, err
 			}
 			task = &ScanTask{WorkerTask: wt}
+			w.BindTask(task)
 		}
 		return runScanActivity(ctx, app, opts, task)
 	})

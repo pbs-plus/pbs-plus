@@ -74,6 +74,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		return fmt.Errorf("creating queued backup task: %w", err)
 	}
 	defer queued.Close()
+	w.BindTask(queued)
 
 	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, b.app); err != nil {
 		b.logger.Error(err, "failed to assign queued task to backup job")

@@ -29,7 +29,7 @@ import (
 func runCompose(ctx context.Context, in jobs.SnapshotComposeInput) error {
 	key := Key(in.Datastore, in.TargetNS, in.TargetType, in.TargetID, "compose")
 
-	task, err := openTask(in.UPID, "compose", tasklog.FormatWorkerID(in.Datastore, "compose-", key))
+	task, err := openTask(ctx, in.UPID, "compose", tasklog.FormatWorkerID(in.Datastore, "compose-", key))
 	if err != nil {
 		return jobs.NonRetryable(err)
 	}

@@ -4,6 +4,7 @@ package tasklog
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -100,6 +101,40 @@ func TestReopenWorkerTaskReusesRegisteredTask(t *testing.T) {
 	}
 	reopened.LogString("started")
 	reopened.CloseOK()
+}
+
+func TestRequestAbortRunsHooks(t *testing.T) {
+	setupTaskDirs(t)
+
+	task, err := NewWorkerTask("pbsplus", "compose", "abort")
+	if err != nil {
+		t.Fatal(err)
+	}
+	early := make(chan struct{}, 1)
+	task.OnAbort(func() { early <- struct{}{} })
+	task.RequestAbort()
+	select {
+	case <-early:
+	case <-time.After(3 * time.Second):
+		t.Fatal("registered abort hook did not run")
+	}
+
+	late := make(chan struct{}, 1)
+	task.OnAbort(func() { late <- struct{}{} })
+	select {
+	case <-late:
+	case <-time.After(3 * time.Second):
+		t.Fatal("hook registered after abort did not run")
+	}
+	if !task.AbortRequested() {
+		t.Fatal("abort was not recorded")
+	}
+
+	found, ok := LookupTask(task.UPID())
+	if !ok || found != task {
+		t.Fatal("LookupTask did not return the live task")
+	}
+	task.CloseErr(errors.New("aborted"))
 }
 
 func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {

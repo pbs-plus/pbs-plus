@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -203,6 +204,96 @@ func TestEngine_CancelRunningWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForWorkflowState(t, ctx, engine, execution.ID, jobdb.StateCanceled)
+}
+
+type fakeAbortTask struct {
+	mu      sync.Mutex
+	aborted bool
+	hooks   []func()
+}
+
+func (f *fakeAbortTask) OnAbort(hook func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hooks = append(f.hooks, hook)
+}
+
+func (f *fakeAbortTask) abort() {
+	f.mu.Lock()
+	hooks := f.hooks
+	f.hooks = nil
+	f.aborted = true
+	f.mu.Unlock()
+	for _, hook := range hooks {
+		hook()
+	}
+}
+
+func TestEngine_BoundTaskAbortCancelsWorkflow(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	engine, _ := newTestEngine(t, ctx)
+	task := &fakeAbortTask{}
+	started := make(chan struct{})
+	if err := engine.Register("test.abort", func(workflow *WorkflowContext) error {
+		_, err := workflow.Activity("wait", json.RawMessage(`{}`), func(ctx context.Context, _ ActivityInfo) (json.RawMessage, error) {
+			workflow.BindTask(task)
+			BindTask(ctx, task)
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(engine.Close)
+
+	execution, _, err := engine.Submit(ctx, testWorkflowSubmit("test.abort", "abort"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("workflow did not start")
+	}
+	task.abort()
+	waitForWorkflowState(t, ctx, engine, execution.ID, jobdb.StateCanceled)
+}
+
+func TestEngine_BoundTaskAbortCancelsQueuedExecution(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	engine, _ := newTestEngine(t, ctx)
+	if err := engine.Register("test.abort.queued", func(workflow *WorkflowContext) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	request := testWorkflowSubmit("test.abort.queued", "queued")
+	request.RunAt = time.Now().Add(time.Hour)
+	execution, _, err := engine.Submit(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := &fakeAbortTask{}
+	engine.BindTaskAbort(execution.ID, task)
+	task.abort()
+
+	current, err := engine.Get(ctx, execution.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.State != jobdb.StateCanceled {
+		t.Fatalf("queued execution state = %q, want %q", current.State, jobdb.StateCanceled)
+	}
 }
 
 func TestEngine_InvalidateReRunsActivity(t *testing.T) {
