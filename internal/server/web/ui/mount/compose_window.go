@@ -71,6 +71,8 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 
 		init: function(view) {
 			let me = this;
+			let idField = me.lookup("form").getForm().findField("target-id");
+			if (idField && !idField.getValue()) idField.setValue(view.backupId);
 			let tree = me.lookup("tree");
 			let store = tree.getStore();
 			let proxy = store.getProxy();
