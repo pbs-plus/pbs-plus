@@ -98,6 +98,11 @@ jobs:
         with:
           timeout-seconds: 300
 
+      - name: Run mount API e2e tests
+        uses: ./.github/actions/run-mount-e2e
+        with:
+          timeout-seconds: 300
+
       - name: Show logs
         if: always()
         uses: ./.github/actions/show-logs

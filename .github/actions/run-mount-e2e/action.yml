@@ -1,0 +1,23 @@
+name: Run Mount API E2E
+description: Run server-managed snapshot mount workflow end-to-end tests inside the PBS container
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "300"
+    description: Timeout for the e2e test script
+
+runs:
+  using: composite
+  steps:
+    - name: Copy e2e script into container
+      shell: bash
+      run: |
+        docker cp .github/actions/run-mount-e2e/run.sh pbs-plus-test:/tmp/e2e-mount-api.sh
+        docker exec pbs-plus-test chmod +x /tmp/e2e-mount-api.sh
+
+    - name: Run mount API e2e tests
+      shell: bash
+      run: |
+        echo "Running mount API e2e tests..."
+        timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-mount-api.sh
