@@ -580,7 +580,12 @@ func ExtJsBackupUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = backup.GetAllUPIDs()
+			tasks := backup.GetAllUPIDs()
+			data := make([]extjs.TasksWithStatus, len(tasks))
+			for i, t := range tasks {
+				data[i] = extjs.TasksWithStatus{Tasks: t, StatusParsed: extjs.ParseTaskStatus(t.Status)}
+			}
+			response.Data = data
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -599,11 +604,11 @@ type BackupConfigResponse struct {
 }
 
 type BackupUPIDsResponse struct {
-	Errors  map[string]string `json:"errors"`
-	Message string            `json:"message"`
-	Data    []coredb.Tasks    `json:"data"`
-	Status  int               `json:"status"`
-	Success bool              `json:"success"`
+	Errors  map[string]string       `json:"errors"`
+	Message string                  `json:"message"`
+	Data    []extjs.TasksWithStatus `json:"data"`
+	Status  int                     `json:"status"`
+	Success bool                    `json:"success"`
 }
 
 type BackupRunResponse struct {

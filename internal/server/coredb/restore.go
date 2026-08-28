@@ -213,6 +213,8 @@ func (db *Store) populateRestoreExtras(restore *Restore) {
 			if task.Status == "stopped" {
 				restore.History.LastRunState = task.ExitStatus
 				restore.History.Duration = task.EndTime - task.StartTime
+			} else if qs := tasklog.QueuedState(task.UPID); qs != "" {
+				restore.History.LastRunState = qs
 			} else if task.StartTime > 0 {
 				restore.History.Duration = time.Now().Unix() - task.StartTime
 			}

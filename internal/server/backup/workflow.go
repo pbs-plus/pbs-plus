@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -74,6 +75,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 	defer queued.Close()
 
+	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, b.app); err != nil {
+		b.logger.Error(err, "failed to assign queued task to backup job")
+	}
+
 	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
@@ -98,6 +103,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 	b.upid = startRes.UPID
 	queued.Close()
+	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: startRes.UPID}, b.app); err != nil {
+		b.logger.Error(err, "failed to assign backup task to job", "upid", startRes.UPID)
+	}
 
 	waitResRaw, err := w.Activity("wait", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		if err := b.waitForCompletion(ctx, b.cmd, startRes.UPID); err != nil {

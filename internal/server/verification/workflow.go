@@ -62,6 +62,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 	}
 	defer queued.Close()
 
+	if err := v.updateJobStatus(false, proxmox.Task{UPID: queued.UPID()}); err != nil {
+		v.logger.Error(err, "failed to assign queued task to verification job")
+	}
+
 	selectResRaw, err := w.Activity("select", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		backups := v.selectCandidates(ctx)
 		if len(backups) == 0 {
@@ -106,6 +110,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 	}
 	v.upid = startRes.UPID
 	queued.Close()
+	if err := v.updateJobStatus(false, proxmox.Task{UPID: startRes.UPID}); err != nil {
+		v.logger.Error(err, "failed to assign verification task to job", "upid", startRes.UPID)
+	}
 
 	verifyResRaw, err := w.Activity("verify", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
 		if v.task == nil {

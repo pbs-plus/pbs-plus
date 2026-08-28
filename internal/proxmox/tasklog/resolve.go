@@ -30,6 +30,8 @@ func ResolveHistoryFields(upid string) (ResolvedHistory, bool) {
 	}
 	if task.Status == "stopped" {
 		r.State = task.ExitStatus
+	} else {
+		r.State = QueuedState(upid)
 	}
 	return r, true
 }

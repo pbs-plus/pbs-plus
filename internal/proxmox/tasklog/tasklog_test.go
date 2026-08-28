@@ -93,6 +93,15 @@ func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {
 	}
 	upid := queued.UPID()
 
+	if got := QueuedState(upid); got != "QUEUED: job started from web UI" {
+		t.Fatalf("QueuedState = %q, want queued message", got)
+	}
+
+	r, ok := ResolveHistoryFields(upid)
+	if !ok || r.State != "QUEUED: job started from web UI" {
+		t.Fatalf("ResolveHistoryFields = %+v, %v; want queued state", r, ok)
+	}
+
 	active, err := readTaskFile(activeTasks)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +139,9 @@ func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("queued task log still exists: %v", err)
+	}
+	if got := QueuedState(upid); got != "" {
+		t.Fatalf("QueuedState after close = %q, want empty", got)
 	}
 }
 

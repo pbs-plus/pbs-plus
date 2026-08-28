@@ -18,10 +18,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/web/ui"
 )
-
-//go:embed all:views/custom
-var customJsFS embed.FS
 
 //go:embed all:views/pre
 var preJsFS embed.FS
@@ -129,7 +127,7 @@ func writeJSFiles(jsDir string) error {
 
 	}
 
-	customJS := compileJS(&customJsFS)
+	customJS := ui.Render()
 	if len(customJS) > 0 {
 		customJSPath := filepath.Join(jsDir, "pbs-plus-custom.js")
 		if err := os.WriteFile(customJSPath, customJS, 0644); err != nil {

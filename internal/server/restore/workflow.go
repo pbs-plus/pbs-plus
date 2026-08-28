@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -55,6 +56,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	}
 	defer queued.Close()
 
+	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: queued.UPID()}, app); err != nil {
+		b.logger.Error(err, "failed to assign queued task to restore job")
+	}
+
 	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
@@ -78,6 +83,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	}
 	b.upid = startRes.UPID
 	queued.Close()
+	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: startRes.UPID}, app); err != nil {
+		b.logger.Error(err, "failed to assign restore task to job", "upid", startRes.UPID)
+	}
 
 	runResRaw, err := w.Activity("run", json.RawMessage(`{}`), func(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
 		if b.task == nil {

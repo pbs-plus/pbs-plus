@@ -9,8 +9,10 @@ import (
 	"fmt"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
@@ -38,6 +40,10 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 		return fmt.Errorf("creating queued MTF migration task: %w", err)
 	}
 	defer queued.Close()
+
+	if err := j.persistHistory(proxmox.Task{UPID: queued.UPID()}, coredb.JobStatusUnknown, true); err != nil {
+		j.logger.Error(err, "failed to assign queued task to MTF job")
+	}
 
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		task, err := startTask(j.job)
