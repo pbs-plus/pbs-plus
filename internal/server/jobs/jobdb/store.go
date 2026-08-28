@@ -270,20 +270,6 @@ func (d *Store) Claim(ctx context.Context, owner string, now, leaseUntil time.Ti
 			return fmt.Errorf("listing claimable executions: %w", err)
 		}
 		for _, id := range ids {
-			updated, err := q.ClaimExecution(ctx, jobquery.ClaimExecutionParams{
-				LeaseOwner: nullString(owner),
-				LeaseUntil: nullInt64(leaseUntil.Unix()),
-				StartedAt:  nullInt64(now.Unix()),
-				ID:         id,
-				RunAt:      now.Unix(),
-			})
-			if err != nil {
-				return fmt.Errorf("claiming execution: %w", err)
-			}
-			if updated == 0 {
-				continue
-			}
-
 			resources, err := q.ListExecutionResources(ctx, id)
 			if err != nil {
 				return fmt.Errorf("listing execution resources: %w", err)
@@ -307,12 +293,24 @@ func (d *Store) Claim(ctx context.Context, owner string, now, leaseUntil time.Ti
 				if err := q.DeleteResourceLocks(ctx, id); err != nil {
 					return fmt.Errorf("releasing execution resources: %w", err)
 				}
-				if err := q.ReleaseExecutionClaim(ctx, jobquery.ReleaseExecutionClaimParams{
-					RunAt:      now.Add(time.Second).Unix(),
-					ID:         id,
-					LeaseOwner: nullString(owner),
-				}); err != nil {
-					return fmt.Errorf("releasing execution claim: %w", err)
+				if err := q.DelayExecution(ctx, jobquery.DelayExecutionParams{RunAt: now.Add(time.Second).Unix(), ID: id}); err != nil {
+					return fmt.Errorf("delaying locked execution: %w", err)
+				}
+				continue
+			}
+			updated, err := q.ClaimExecution(ctx, jobquery.ClaimExecutionParams{
+				LeaseOwner: nullString(owner),
+				LeaseUntil: nullInt64(leaseUntil.Unix()),
+				StartedAt:  nullInt64(now.Unix()),
+				ID:         id,
+				RunAt:      now.Unix(),
+			})
+			if err != nil {
+				return fmt.Errorf("claiming execution: %w", err)
+			}
+			if updated == 0 {
+				if err := q.DeleteResourceLocks(ctx, id); err != nil {
+					return fmt.Errorf("releasing execution resources: %w", err)
 				}
 				continue
 			}
