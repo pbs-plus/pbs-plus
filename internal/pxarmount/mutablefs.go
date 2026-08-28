@@ -70,10 +70,7 @@ type MutableFS struct {
 	// the journal. Keyed by FUSE inode (input.NodeId).
 	dirtyMeta *xsync.Map[uint64, pendingMeta]
 
-	// Freeze mechanism: blocks FUSE mutations during commit.
-	freezeMu   sync.Mutex
-	freezeCond *sync.Cond
-	frozen     bool
+	mutationMu sync.RWMutex
 
 	// Inode ↔ path bidirectional mapping.
 	// Per-instance to prevent cross-mount corruption  -  analogous to
@@ -104,7 +101,6 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		nextIno:     atomic.Uint64{},
 	}
 	fs.nextIno.Store(1)
-	fs.freezeCond = sync.NewCond(&fs.freezeMu)
 	return fs
 }
 
@@ -253,18 +249,9 @@ func (fs *MutableFS) String() string { return "pxar-mutable" }
 
 func (fs *MutableFS) SetDebug(dbg bool) {}
 
-// waitIfFrozen blocks until the filesystem is no longer frozen for commit.
-// All mutation FUSE ops must call this first to ensure consistency.
+func (fs *MutableFS) beginMutation() { fs.mutationMu.RLock() }
 
-// waitIfFrozen blocks until the filesystem is no longer frozen for commit.
-// All mutation FUSE ops must call this first to ensure consistency.
-func (fs *MutableFS) waitIfFrozen() {
-	fs.freezeMu.Lock()
-	for fs.frozen {
-		fs.freezeCond.Wait()
-	}
-	fs.freezeMu.Unlock()
-}
+func (fs *MutableFS) endMutation() { fs.mutationMu.RUnlock() }
 
 // resetAfterCommit clears in-memory state that became stale after a
 // successful commit (journal cleared, pxar reader swapped).

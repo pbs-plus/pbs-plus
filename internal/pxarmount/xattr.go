@@ -158,7 +158,9 @@ func (fs *MutableFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, de
 }
 
 func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr string, data []byte) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	path := fs.inodeToPath(input.NodeId)
 	if path == "" {
 		return fuse.ENOENT
@@ -195,7 +197,9 @@ func (fs *MutableFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, at
 }
 
 func (fs *MutableFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr string) fuse.Status {
-	fs.waitIfFrozen()
+	fs.beginMutation()
+	defer fs.endMutation()
+
 	path := fs.inodeToPath(header.NodeId)
 	if path == "" {
 		return fuse.ENOENT

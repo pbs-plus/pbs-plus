@@ -2,6 +2,7 @@ package pxarmount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -50,24 +51,12 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	commitMu.Lock()
 	defer commitMu.Unlock()
 
-	mfs.freezeMu.Lock()
-	mfs.frozen = true
-	mfs.freezeMu.Unlock()
+	mfs.mutationMu.Lock()
+	defer mfs.mutationMu.Unlock()
 
 	if err := mfs.journal.Sync(); err != nil {
-		mfs.freezeMu.Lock()
-		mfs.frozen = false
-		mfs.freezeMu.Unlock()
-		mfs.freezeCond.Broadcast()
 		return fmt.Errorf("sync journal before commit: %w", err)
 	}
-
-	defer func() {
-		mfs.freezeMu.Lock()
-		mfs.frozen = false
-		mfs.freezeMu.Unlock()
-		mfs.freezeCond.Broadcast()
-	}()
 
 	prog.SetPhase(PhasePrepare)
 	prog.SetMsg("Resolving PBS connection")
@@ -109,12 +98,14 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	if archiveName == "" {
 		archiveName = backupID
 	}
-	now := time.Now().Unix()
-	if now <= lastCommitTime {
-		now = lastCommitTime + 1
+	backupTime, err := nextBackupTime(
+		snapshotGroupDir(mfs.pbsStore, backupType, backupID, namespace),
+		max(time.Now().Unix(), lastCommitTime+1, mfs.origSnapshot.BackupTime+1),
+	)
+	if err != nil {
+		return err
 	}
-	lastCommitTime = now
-	backupTime := now
+	lastCommitTime = backupTime
 
 	if err := ensureNamespaceDir(mfs.pbsStore, namespace); err != nil {
 		return fmt.Errorf("ensure namespace dir: %w", err)
@@ -125,15 +116,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 		return fmt.Errorf("invalid backup type %q: %w", backupType, err)
 	}
 
-	var prev *backupproxy.PreviousBackupRef
-	if mfs.origSnapshot.BackupID != "" && mfs.origSnapshot.BackupTime > 0 {
-		prev = &backupproxy.PreviousBackupRef{
-			BackupType: bt,
-			BackupID:   mfs.origSnapshot.BackupID,
-			BackupTime: mfs.origSnapshot.BackupTime,
-			Namespace:  mfs.origSnapshot.Namespace,
-		}
-	}
+	prev := previousBackupRef(mfs.origSnapshot, backupType, backupID, namespace, bt)
 
 	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
 		BaseURL:       pbsURL,
@@ -167,7 +150,7 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 	payloadName := archiveName + ".ppxar.didx"
 
 	var origPayloadIdx []byte
-	if mfs.origPpxarDidx != "" {
+	if prev != nil && mfs.origPpxarDidx != "" {
 		idx, err := os.ReadFile(mfs.origPpxarDidx)
 		if err != nil {
 			log.Error(err, "")
@@ -222,13 +205,12 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 		}
 	}
 
-	ow.mfs.pxar.readerMu.RLock()
-
 	if err := ow.commitWalk(1, RootInode, "/"); err != nil {
-		ow.mfs.pxar.readerMu.RUnlock()
 		return fmt.Errorf("walk overlay: %w", err)
 	}
-	ow.mfs.pxar.readerMu.RUnlock()
+	if err := ow.flushPendingRefs(false); err != nil {
+		return fmt.Errorf("flush payload refs: %w", err)
+	}
 
 	prog.SetPhase(PhaseUpload)
 	prog.SetMsg(fmt.Sprintf("Flushing upload (%d new/modified files)", ow.mutableFiles))
@@ -263,6 +245,19 @@ func CommitSnapshotWithContext(ctx context.Context, mfs *MutableFS, req *CommitR
 
 	prog.Done(fmt.Sprintf("committed %s/%s (%d new files)", namespace, backupID, ow.mutableFiles))
 	return nil
+}
+
+func previousBackupRef(orig snapshotRef, backupType, backupID, namespace string, bt datastore.BackupType) *backupproxy.PreviousBackupRef {
+	if orig.BackupID == "" || orig.BackupTime <= 0 ||
+		orig.BackupType != backupType || orig.BackupID != backupID || orig.Namespace != namespace {
+		return nil
+	}
+	return &backupproxy.PreviousBackupRef{
+		BackupType: bt,
+		BackupID:   orig.BackupID,
+		BackupTime: orig.BackupTime,
+		Namespace:  orig.Namespace,
+	}
 }
 
 func nodeToMetadata(n *GraphNode, xattrs []format.XAttr) pxar.Metadata {
@@ -328,13 +323,7 @@ func ensureNamespaceDir(pbsStore, namespace string) error {
 
 func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName string, backupTime int64) error {
 	log.Info("postCommit: resolve groupDir")
-	var groupDir string
-	if mfs.origPpxarDidx != "" {
-		origDir := filepath.Dir(mfs.origPpxarDidx)
-		groupDir = filepath.Dir(origDir)
-	} else {
-		groupDir = snapshotGroupDir(mfs.pbsStore, backupType, backupID, namespace)
-	}
+	groupDir := snapshotGroupDir(mfs.pbsStore, backupType, backupID, namespace)
 
 	newTimeISO := time.Unix(backupTime, 0).UTC().Format("2006-01-02T15:04:05Z")
 	snapDir := filepath.Join(groupDir, newTimeISO)
@@ -376,22 +365,15 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		}
 		return fmt.Errorf("create new reader: %w", err)
 	}
-	log.Info("postCommit: clear+sync journal")
-	if err := mfs.journal.Clear(); err != nil {
-		return fmt.Errorf("clear journal: %w", err)
-	}
-	if err := mfs.journal.Sync(); err != nil {
-		return fmt.Errorf("sync journal after clear: %w", err)
-	}
+	log.Info("postCommit: hotSwap reader")
+	mfs.pxar.HotSwap(newReader)
+	log.Info("postCommit: hotSwap done")
 	log.Info("postCommit: munmap old data")
 	for _, d := range mfs.mmapData {
 		if err := munmap(d); err != nil {
 			log.Error(err, "")
 		}
 	}
-	log.Info("postCommit: hotSwap reader")
-	mfs.pxar.HotSwap(newReader)
-	log.Info("postCommit: hotSwap done")
 	mfs.mmapData = nil
 	if len(metaData) > 0 {
 		mfs.mmapData = append(mfs.mmapData, metaData)
@@ -424,7 +406,29 @@ func postCommit(mfs *MutableFS, backupID, backupType, namespace, archiveName str
 		}
 	}
 
+	log.Info("postCommit: clear+sync journal")
+	if err := mfs.journal.Clear(); err != nil {
+		return fmt.Errorf("clear journal: %w", err)
+	}
+	if err := mfs.journal.Sync(); err != nil {
+		return fmt.Errorf("sync journal after clear: %w", err)
+	}
+
 	return nil
+}
+
+func nextBackupTime(groupDir string, candidate int64) (int64, error) {
+	for {
+		name := time.Unix(candidate, 0).UTC().Format("2006-01-02T15:04:05Z")
+		_, err := os.Stat(filepath.Join(groupDir, name))
+		if errors.Is(err, os.ErrNotExist) {
+			return candidate, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("check backup timestamp %d: %w", candidate, err)
+		}
+		candidate++
+	}
 }
 
 func snapshotGroupDir(pbsStore, backupType, backupID, namespace string) string {
@@ -497,12 +501,20 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 	total := len(items)
 
 	var (
-		idx      atomic.Int64
-		verified atomic.Int64
-		firstErr error
-		errOnce  sync.Once
+		idx        atomic.Int64
+		verified   atomic.Int64
+		failed     atomic.Bool
+		firstErr   error
+		errOnce    sync.Once
+		progressMu sync.Mutex
 	)
 
+	recordError := func(err error) {
+		errOnce.Do(func() {
+			firstErr = err
+			failed.Store(true)
+		})
+	}
 	lastProgress := time.Now()
 
 	hasher := func() {
@@ -516,14 +528,14 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 			}
 			it := &items[i]
 
-			if firstErr != nil {
+			if failed.Load() {
 				return
 			}
 
 			abs := mfs.mutablePath(it.relPath)
 			f, err := os.Open(abs)
 			if err != nil {
-				errOnce.Do(func() { firstErr = fmt.Errorf("open backed file %q for verification: %w", it.relPath, err) })
+				recordError(fmt.Errorf("open backed file %q for verification: %w", it.relPath, err))
 				return
 			}
 			h.Reset()
@@ -532,20 +544,22 @@ func verifyBackedFileHashes(mfs *MutableFS, hashes map[string]uint64, prog Commi
 				log.Error(err, "")
 			}
 			if err != nil {
-				errOnce.Do(func() { firstErr = fmt.Errorf("hash backed file %q: %w", it.relPath, err) })
+				recordError(fmt.Errorf("hash backed file %q: %w", it.relPath, err))
 				return
 			}
 			if h.Sum64() != it.expected {
-				errOnce.Do(func() { firstErr = fmt.Errorf("backed file %q content hash differs", it.relPath) })
+				recordError(fmt.Errorf("backed file %q content hash differs", it.relPath))
 				return
 			}
 
 			done := verified.Add(1)
+			progressMu.Lock()
 			if time.Since(lastProgress) >= 200*time.Millisecond || int(done) == total {
 				pct := int(done) * 100 / total
 				prog.SetMsg(fmt.Sprintf("%s (%d/%d, %d%%)", it.relPath, int(done), total, pct))
 				lastProgress = time.Now()
 			}
+			progressMu.Unlock()
 		}
 	}
 

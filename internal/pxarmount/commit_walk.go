@@ -161,12 +161,12 @@ func (ow *commitWalkState) commitWalk(journalParentID int64, pxarInode uint64, r
 		}
 	}
 
-	if err := ow.flushPendingRefs(false); err != nil {
+	if err := ow.flushPendingRefs(true); err != nil {
 		return err
 	}
 
 	pxarEntries = nil
-	_ = pxarEntries
+	clear(ow.entryCache)
 
 	for i := range deferredDirs {
 		if err := ow.processDeferredDir(&deferredDirs[i], relPath); err != nil {
@@ -446,15 +446,10 @@ func (ow *commitWalkState) resolvePxarEntryUncached(relPath string) (*pxar.Entry
 	return full, nil
 }
 
-func (ow *commitWalkState) writeRefOrReencode(entry *pxar.Entry, pxarEntry *pxar.Entry, name string, refOffset uint64) error {
-	if ow.hasPrevRef && refOffset <= ow.prevRefOffset {
-		ow.mfs.debugf("ref %q offset=%d <= prevRef=%d, re-encoding", name, refOffset, ow.prevRefOffset)
-		return ow.writeReencoded(pxarEntry, entry, name)
-	}
-
+// writeRef must not re-encode: a mid-batch payload write invalidates the batch.
+func (ow *commitWalkState) writeRef(entry *pxar.Entry, name string, refOffset uint64) error {
 	if err := ow.writer.WriteEntryRef(entry, refOffset); err != nil {
-		ow.mfs.debugf("ref %q offset=%d writer rejected: %v, re-encoding", name, refOffset, err)
-		return ow.writeReencoded(pxarEntry, entry, name)
+		return fmt.Errorf("payload ref %q at offset %d rejected: %w", name, refOffset, err)
 	}
 
 	ow.prevRefOffset = refOffset

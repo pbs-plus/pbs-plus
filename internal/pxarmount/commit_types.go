@@ -11,8 +11,6 @@ import (
 
 const maxPendingRefs = 512
 
-const chunkPaddingThreshold = 0.1
-
 type commitEntry struct {
 	name        string
 	node        *GraphNode
@@ -38,17 +36,6 @@ type deferredDir struct {
 	pxarIno    uint64
 }
 
-type reusableChunk struct {
-	size      uint64
-	padding   uint64
-	digest    [32]byte
-	endOffset uint64
-}
-
-func (c *reusableChunk) sameIndexedChunkAs(other *reusableChunk) bool {
-	return c.digest == other.digest && c.endOffset == other.endOffset
-}
-
 type commitWalkState struct {
 	mfs          *MutableFS
 	writer       transfer.ArchiveWriter
@@ -64,10 +51,9 @@ type commitWalkState struct {
 	pendingRefs    []commitEntry
 	entryCache     map[uint64]*pxar.Entry
 	origChunkIndex *datastore.DynamicIndexReader
+	reusePlanner   *datastore.ChunkReusePlanner
 
 	batchRangeEnd uint64
-	savedChunk    reusableChunk
-	hasSavedChunk bool
 
 	entryBuf pxar.Entry
 }

@@ -719,33 +719,6 @@ func BenchmarkB10_VerifyHashOverhead(b *testing.B) {
 
 var _ io.Reader = (*mockFileReader)(nil)
 
-func BenchmarkB11_PaddingRatio(b *testing.B) {
-	const chunkSize = 4 << 20
-	const numChunks = 256
-	idx := buildSyntheticDIDX(b, numChunks, chunkSize)
-
-	const numFiles = 100
-	refs := make([]commitEntry, numFiles)
-	for i := range refs {
-		refs[i] = commitEntry{
-			name:    fmt.Sprintf("f_%06d", i),
-			sortKey: uint64(i * 4096),
-			pxarSlim: &dirEntrySlim{
-				fileSize: 4096,
-			},
-		}
-	}
-
-	b.Run("lookupDynamicEntries", func(b *testing.B) {
-		b.ReportAllocs()
-		rangeStart := refs[0].sortKey
-		rangeEnd := refs[numFiles-1].sortKey + refs[numFiles-1].pxarSlim.fileSize
-		for i := 0; i < b.N; i++ {
-			lookupDynamicEntries(idx, rangeStart, rangeEnd)
-		}
-	})
-}
-
 func buildSyntheticDIDX(tb testing.TB, numChunks int, chunkSize uint64) *datastore.DynamicIndexReader {
 	tb.Helper()
 	w := datastore.NewDynamicIndexWriter(time.Now().Unix())
@@ -766,45 +739,6 @@ func buildSyntheticDIDX(tb testing.TB, numChunks int, chunkSize uint64) *datasto
 		tb.Fatal(err)
 	}
 	return idx
-}
-
-func TestLookupDynamicEntries(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 5, 100)
-
-	tests := []struct {
-		name         string
-		rangeStart   uint64
-		rangeEnd     uint64
-		wantChunks   int
-		wantStartPad uint64
-		wantEndPad   uint64
-	}{
-		{"full_range", 0, 500, 5, 0, 0},
-		{"aligned_first_chunk", 0, 100, 2, 0, 100},
-		{"aligned_last_chunk", 400, 500, 1, 0, 0},
-		{"middle_two_chunks", 100, 300, 3, 0, 100},
-		{"misaligned_start", 50, 300, 4, 50, 100},
-		{"misaligned_end", 100, 350, 3, 0, 50},
-		{"misaligned_both", 50, 350, 4, 50, 50},
-		{"tiny_range_in_first", 10, 20, 1, 10, 80},
-		{"empty_range", 100, 100, 0, 0, 0},
-		{"past_end", 600, 700, 0, 0, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			chunks, startPad, endPad := lookupDynamicEntries(idx, tt.rangeStart, tt.rangeEnd)
-			if len(chunks) != tt.wantChunks {
-				t.Errorf("got %d chunks, want %d", len(chunks), tt.wantChunks)
-			}
-			if startPad != tt.wantStartPad {
-				t.Errorf("got startPad=%d, want %d", startPad, tt.wantStartPad)
-			}
-			if endPad != tt.wantEndPad {
-				t.Errorf("got endPad=%d, want %d", endPad, tt.wantEndPad)
-			}
-		})
-	}
 }
 
 func TestRangeHoleDetection(t *testing.T) {
@@ -849,71 +783,11 @@ func TestRangeHoleDetection(t *testing.T) {
 	}
 }
 
-func TestSameIndexedChunkAs(t *testing.T) {
-	a := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 1000}
-	b := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 1000}
-	if !a.sameIndexedChunkAs(&b) {
-		t.Error("identical chunks should match")
-	}
-
-	c := reusableChunk{digest: [32]byte{1, 2, 3}, endOffset: 2000}
-	if a.sameIndexedChunkAs(&c) {
-		t.Error("same digest different endOffset should not match (dedup collision)")
-	}
-
-	d := reusableChunk{digest: [32]byte{4, 5, 6}, endOffset: 1000}
-	if a.sameIndexedChunkAs(&d) {
-		t.Error("different digest same endOffset should not match")
-	}
-}
-
-func TestLookupDynamicEntriesChunkPadding(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 5, 100)
-
-	chunks, startPad, endPad := lookupDynamicEntries(idx, 50, 350)
-	if len(chunks) != 4 {
-		t.Fatalf("got %d chunks, want 4", len(chunks))
-	}
-	if startPad != 50 {
-		t.Errorf("startPad=%d, want 50", startPad)
-	}
-	if endPad != 50 {
-		t.Errorf("endPad=%d, want 50", endPad)
-	}
-
-	wantPadding := []uint64{50, 0, 0, 50}
-	for i, c := range chunks {
-		if c.padding != wantPadding[i] {
-			t.Errorf("chunk[%d].padding=%d, want %d", i, c.padding, wantPadding[i])
-		}
-	}
-
-	chunks1, _, endPad1 := lookupDynamicEntries(idx, 0, 99)
-	if len(chunks1) != 1 {
-		t.Fatalf("single chunk: got %d, want 1", len(chunks1))
-	}
-	if chunks1[0].padding != 1 {
-		t.Errorf("single aligned chunk padding=%d, want 1", chunks1[0].padding)
-	}
-
-	chunks2, startPad2, _ := lookupDynamicEntries(idx, 50, 99)
-	if len(chunks2) != 1 {
-		t.Fatalf("single misaligned start: got %d, want 1", len(chunks2))
-	}
-	if startPad2 != 50 {
-		t.Errorf("startPad=%d, want 50", startPad2)
-	}
-	if chunks2[0].padding != 51 {
-		t.Errorf("single misaligned chunk padding=%d, want 51", chunks2[0].padding)
-	}
-
-	_ = endPad1
-}
-
 type offsetTrackingWriter struct {
 	noopWriter
 	refOffsets    []uint64
 	injectedSizes []uint64
+	reencoded     int
 }
 
 func (w *offsetTrackingWriter) WriteEntryRef(_ *pxar.Entry, offset uint64) error {
@@ -933,12 +807,14 @@ func (w *offsetTrackingWriter) Encoder() *encoder.Encoder {
 }
 
 func (w *offsetTrackingWriter) WriteEntryReader(entry *pxar.Entry, r io.Reader, size uint64) error {
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return err
+	}
+	w.reencoded++
 	return nil
 }
 
 func TestFlushPendingRefsOffsetCorrectness(t *testing.T) {
-	idx := buildSyntheticDIDX(t, 5, 1000)
-
 	makeEntry := func(name string, payloadOffset, fileSize uint64) commitEntry {
 		return commitEntry{
 			name:     name,
@@ -966,51 +842,50 @@ func TestFlushPendingRefsOffsetCorrectness(t *testing.T) {
 		}
 	})
 
-	t.Run("keepLastChunk injects n-1 chunks", func(t *testing.T) {
-		chunks, _, _ := lookupDynamicEntries(idx, 100, 1700)
-		if len(chunks) < 2 {
-			t.Fatalf("need at least 2 chunks, got %d", len(chunks))
+	t.Run("no origIndex reencodes", func(t *testing.T) {
+		storeDir, metaPath, payloadPath := createTestArchive(t)
+		pxarFS := openTestArchive(t, storeDir, metaPath, payloadPath)
+		entries, err := pxarFS.ReadDirFull(RootInode, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var slim *dirEntrySlim
+		for i := range entries {
+			if entries[i].isReg {
+				slim = &entries[i]
+				break
+			}
+		}
+		if slim == nil {
+			t.Fatal("test archive has no regular file")
+		}
+		pxarEntry, err := pxarFS.Reader().ReadEntryAt(int64(slim.entryStart))
+		if err != nil {
+			t.Fatal(err)
 		}
 
-		lastChunk := chunks[len(chunks)-1]
-		injected := chunks[:len(chunks)-1]
-
-		var injectSum, totalSum uint64
-		for _, c := range injected {
-			injectSum += c.size
-		}
-		for _, c := range chunks {
-			totalSum += c.size
-		}
-		if injectSum+lastChunk.size != totalSum {
-			t.Errorf("injectSum(%d) + last(%d) != total(%d)", injectSum, lastChunk.size, totalSum)
-		}
-	})
-
-	t.Run("no origIndex writes absolute offsets", func(t *testing.T) {
 		w := &offsetTrackingWriter{}
 		ow := &commitWalkState{
-			mfs:           &MutableFS{verbose: false},
+			mfs:           NewMutableFS(pxarFS, nil, t.TempDir()),
 			writer:        w,
 			xattrCache:    make(map[int64][]format.XAttr),
 			redirectCache: make(map[string]*pxar.Entry),
-			pendingRefs: []commitEntry{
-				{name: "a", sortKey: 100, pxarSlim: &dirEntrySlim{payloadOffset: 100, fileSize: 50}, cachedEntry: &pxar.Entry{Path: "a", Kind: pxar.KindFile, FileSize: 50, PayloadOffset: 100}},
-				{name: "b", sortKey: 300, pxarSlim: &dirEntrySlim{payloadOffset: 300, fileSize: 50}, cachedEntry: &pxar.Entry{Path: "b", Kind: pxar.KindFile, FileSize: 50, PayloadOffset: 300}},
-			},
+			pendingRefs: []commitEntry{{
+				name:        slim.name,
+				sortKey:     slim.payloadOffset,
+				pxarSlim:    slim,
+				cachedEntry: pxarEntry,
+			}},
 		}
 
 		if err := ow.flushPendingRefs(false); err != nil {
 			t.Fatal(err)
 		}
-		if len(w.refOffsets) != 2 {
-			t.Fatalf("expected 2 refs, got %d", len(w.refOffsets))
+		if len(w.refOffsets) != 0 {
+			t.Fatalf("emitted %d unbacked refs", len(w.refOffsets))
 		}
-		if w.refOffsets[0] != 100 {
-			t.Errorf("ref[0]=%d want 100", w.refOffsets[0])
-		}
-		if w.refOffsets[1] != 300 {
-			t.Errorf("ref[1]=%d want 300", w.refOffsets[1])
+		if w.reencoded != 1 {
+			t.Fatalf("reencoded %d entries, want 1", w.reencoded)
 		}
 	})
 }
