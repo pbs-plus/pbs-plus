@@ -14,10 +14,10 @@ section() { echo ""; echo "═════════════════�
 die() { echo "FATAL: $1"; dump_logs; exit 1; }
 
 dump_logs() {
-	echo "--- server log (last 30 lines) ---"
-	docker logs --tail 30 pbs-plus-test 2>&1 || true
 	echo "--- mount process logs ---"
-	docker exec pbs-plus-test sh -c 'cat /var/run/pbs-plus-mounts/*.log 2>/dev/null | tail -40' || true
+	tail -40 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
+	echo "--- task logs ---"
+	ls -lt /var/log/proxmox-backup/tasks/ 2>/dev/null | head -5 || true
 	echo "--- end logs ---"
 }
 
@@ -29,7 +29,7 @@ INIT_GROUP_DIR="/mnt/test/ns/test/host/e2e-init"
 ENC_DS=$(printf %s "$DATASTORE" | base64 -w0)
 MOUNT_BASE="/mnt/pbs-plus-restores"
 
-req() { docker exec pbs-plus-test curl -k -s "$@" -w "\nHTTP_CODE:%{http_code}"; }
+req() { curl -k -s "$@" -w "\nHTTP_CODE:%{http_code}"; }
 
 code_of() { tail -1 <<<"$1" | sed 's/^HTTP_CODE://'; }
 body_of() { sed '$d' <<<"$1"; }
@@ -41,7 +41,7 @@ api_post() {
 api_get() { req "$PBS_API$1"; }
 
 sessions_field() {
-	docker exec pbs-plus-test curl -k -s "$PBS_API/api2/extjs/config/d2d-mounts" | jq -r "$@" 2>/dev/null
+	curl -k -s "$PBS_API/api2/extjs/config/d2d-mounts" | jq -r "$@" 2>/dev/null
 }
 
 wait_for() {
@@ -63,7 +63,13 @@ session_mounted() { [ "$(sessions_field --arg mp "$1" '.data[]? | select(.["moun
 session_gone()    { [ -z "$(sessions_field --arg mp "$1" '.data[]? | select(.["mount-point"]==$mp) | .["mount-point"]' | head -1)" ]; }
 
 latest_snapshot() {
-	docker exec pbs-plus-test sh -c "ls -1 '$1' 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1"
+	ls -1 "$1" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1
+}
+
+group_newer_than() {
+	local new
+	new=$(latest_snapshot "$1")
+	[ -n "$new" ] && [ "$new" != "$2" ]
 }
 
 submit_ok() {
@@ -86,8 +92,8 @@ submit_ok "$RESP" && ok "mount request accepted" || fail "mount request rejected
 
 wait_for "ro session mounted at $MP" 90 session_mounted "$MP" || true
 
-docker exec pbs-plus-test mountpoint -q "$MP" && ok "mountpoint active" || fail "mountpoint not active"
-FILES=$(docker exec pbs-plus-test ls "$MP" 2>/dev/null | head -3)
+mountpoint -q "$MP" && ok "mountpoint active" || fail "mountpoint not active"
+FILES=$(ls "$MP" 2>/dev/null | head -3)
 [ -n "$FILES" ] && ok "archive content listed" || fail "archive empty"
 
 MODE=$(sessions_field --arg mp "$MP" '.data[]? | select(.["mount-point"]==$mp) | .mode' | head -1)
@@ -97,7 +103,7 @@ RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$MP")
 submit_ok "$RESP" && ok "unmount request accepted" || fail "unmount rejected: $(body_of "$RESP")"
 
 wait_for "ro session unmounted" 60 session_gone "$MP" || true
-docker exec pbs-plus-test test ! -e "$MP" && ok "mountpoint cleaned up" || fail "mountpoint still exists"
+[ ! -e "$MP" ] && ok "mountpoint cleaned up" || fail "mountpoint still exists"
 
 section "PHASE 2: Init new archive, write, commit via API"
 
@@ -112,21 +118,20 @@ wait_for "init session mounted at $INIT_MP" 90 session_mounted "$INIT_MP" || tru
 CAP=$(sessions_field --arg mp "$INIT_MP" '.data[]? | select(.["mount-point"]==$mp) | .["commit-capable"]' | head -1)
 [ "$CAP" = "true" ] && ok "init session commit-capable" || fail "init session not commit-capable (${CAP:-missing})"
 
-docker exec pbs-plus-test sh -c "echo hello-e2e > '$INIT_MP/hello.txt'"
-docker exec pbs-plus-test sh -c "mkdir -p '$INIT_MP/nested' && echo nested-e2e > '$INIT_MP/nested/file.txt'"
-[ "$(docker exec pbs-plus-test cat "$INIT_MP/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
+echo hello-e2e > "$INIT_MP/hello.txt"
+mkdir -p "$INIT_MP/nested" && echo nested-e2e > "$INIT_MP/nested/file.txt"
+[ "$(cat "$INIT_MP/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
 	&& ok "wrote and read hello.txt through mount" || fail "write/read through init mount failed"
 
 BEFORE=$(latest_snapshot "$INIT_GROUP_DIR")
 RESP=$(api_post "/api2/extjs/config/d2d-commit/$ENC_DS" -d "mount-path=$INIT_MP")
 submit_ok "$RESP" && ok "commit request accepted" || fail "commit rejected: $(body_of "$RESP")"
 
-wait_for "commit produced new snapshot dir" 180 bash -c "
-	[ \"\$(docker exec pbs-plus-test sh -c \"ls -1 '$INIT_GROUP_DIR' 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1\")\" != '$BEFORE' ]" || true
+wait_for "commit produced new snapshot dir" 180 group_newer_than "$INIT_GROUP_DIR" "$BEFORE" || true
 
 NEW_SNAP=$(latest_snapshot "$INIT_GROUP_DIR")
 [ -n "$NEW_SNAP" ] && [ "$NEW_SNAP" != "$BEFORE" ] && ok "new snapshot: $NEW_SNAP" || die "no new snapshot after commit"
-docker exec pbs-plus-test sh -c "ls '$INIT_GROUP_DIR/$NEW_SNAP'/*.didx >/dev/null 2>&1" \
+ls "$INIT_GROUP_DIR/$NEW_SNAP"/*.didx >/dev/null 2>&1 \
 	&& ok "didx present in new snapshot" || fail "no didx in new snapshot"
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$INIT_MP" -d "force=1")
@@ -142,9 +147,9 @@ RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
 submit_ok "$RESP" && ok "remount request accepted" || fail "remount rejected: $(body_of "$RESP")"
 
 wait_for "committed snapshot mounted" 90 session_mounted "$MP3" || true
-[ "$(docker exec pbs-plus-test cat "$MP3/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
+[ "$(cat "$MP3/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
 	&& ok "committed hello.txt readable" || fail "committed hello.txt wrong or missing"
-[ "$(docker exec pbs-plus-test cat "$MP3/nested/file.txt" 2>/dev/null)" = "nested-e2e" ] \
+[ "$(cat "$MP3/nested/file.txt" 2>/dev/null)" = "nested-e2e" ] \
 	&& ok "committed nested file readable" || fail "committed nested file wrong or missing"
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$MP3")
@@ -164,12 +169,13 @@ RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles" \
 	-d "mode=ro" -d "auto-mount=0" -d "schedule=02:00")
 submit_ok "$RESP" && ok "profile created" || fail "profile create rejected: $(body_of "$RESP")"
 
-PROFILE_ID=$(docker exec pbs-plus-test curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles" \
+PROFILE_ID=$(curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles" \
 	| jq -r --arg id "$DATASTORE" '.data[]? | select(.datastore==$id) | .id' | head -1)
 [ -n "$PROFILE_ID" ] && ok "profile listed: $PROFILE_ID" || die "profile not listed"
 
-RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID" \
-	-X PUT -d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-host" \
+RESP=$(req -X PUT "$PBS_API/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID" \
+	-H "Content-Type: application/x-www-form-urlencoded" \
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-host" \
 	-d "mode=ro" -d "auto-mount=0" -d "schedule=*:00/30")
 submit_ok "$RESP" && ok "profile updated" || fail "profile update rejected: $(body_of "$RESP")"
 
@@ -187,7 +193,7 @@ wait_for "profile session unmounted" 60 session_gone "$PROFILE_MP" || true
 RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID")
 CODE=$(code_of "$RESP")
 [ "$CODE" = "200" ] && ok "profile deleted" || fail "profile delete rejected (HTTP $CODE)"
-LEFT=$(docker exec pbs-plus-test curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles" \
+LEFT=$(curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles" \
 	| jq -r --arg id "$PROFILE_ID" '.data[]? | select(.id==$id) | .id' | head -1)
 [ -z "$LEFT" ] && ok "profile gone from list" || fail "profile still listed"
 
