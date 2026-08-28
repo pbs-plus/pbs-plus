@@ -97,3 +97,14 @@ func TestCommitHandlerNoSession(t *testing.T) {
 		t.Fatalf("body = %s", w.Body.String())
 	}
 }
+
+func TestInitHandlerRequiresBackupParams(t *testing.T) {
+	req := formRequest("ds1", url.Values{"backup-type": {"host"}})
+	rec := httptest.NewRecorder()
+
+	ExtJsInitHandler(nil)(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing backup-id, got %d: %s", rec.Code, rec.Body.String())
+	}
+}

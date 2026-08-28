@@ -80,6 +80,7 @@ func NewServer(app *application.Runtime, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount/{datastore}", ServerOnly(app, mountapi.ExtJsUnmountHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-unmount-all/{datastore}", ServerOnly(app, mountapi.ExtJsUnmountAllHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-commit/{datastore}", ServerOnly(app, mountapi.ExtJsCommitHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-init/{datastore}", ServerOnly(app, mountapi.ExtJsInitHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles", ServerOnly(app, mountapi.ExtJsMountProfilesHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles/{id}", ServerOnly(app, mountapi.ExtJsMountProfileSingleHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles/{id}/mount", ServerOnly(app, mountapi.ExtJsMountProfileMountHandler(app)))

@@ -175,6 +175,51 @@ func upidTask(task *tasklog.WorkerTask) string {
 	return task.UPID()
 }
 
+func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		datastore := validate.DecodePath(r.PathValue("datastore"))
+		if datastore == "" {
+			http.Error(w, "Missing datastore", http.StatusBadRequest)
+			return
+		}
+		in := jobs.SnapshotInitInput{
+			Datastore:  datastore,
+			Namespace:  strings.TrimSpace(r.FormValue("ns")),
+			BackupType: strings.TrimSpace(r.FormValue("backup-type")),
+			BackupID:   strings.TrimSpace(r.FormValue("backup-id")),
+			MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
+			Web:        true,
+		}
+		if in.BackupType == "" || in.BackupID == "" {
+			http.Error(w, "Missing backup parameters", http.StatusBadRequest)
+			return
+		}
+
+		key := snapshotmount.Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, "init")
+		task, err := newTask("init", in.Datastore, key)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		in.UPID = upidTask(task)
+
+		upid, ok := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotInit, key, "snapshot-mount:"+key, in)
+		if !ok {
+			task.CloseErr(fmt.Errorf("workflow submit failed"))
+			return
+		}
+		writeRunResponse(w, upid)
+	}
+}
+
 func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

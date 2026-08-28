@@ -31,6 +31,88 @@ var activeMountsPanel = js.Panel{
 		"reload": js.Func("", `
 			this.getView().getStore().rstore.load();
 		`),
+		"initNew": js.Func("view", `
+			let me = this;
+			Ext.create("Ext.window.Window", {
+				title: gettext("Initialize New Archive"),
+				modal: true,
+				layout: "anchor",
+				bodyPadding: 10,
+				width: 480,
+				items: [{
+					xtype: "form",
+					anchor: "100%",
+					border: false,
+					defaults: { anchor: "100%", labelWidth: 120 },
+					items: [
+					{
+						xtype: "combobox",
+						name: "datastore",
+						fieldLabel: gettext("Datastore"),
+						store: "pbs-datastore-list",
+						displayField: "store",
+						valueField: "store",
+						allowBlank: false,
+					},
+					{
+						xtype: "proxmoxtextfield",
+						name: "ns",
+						fieldLabel: gettext("Namespace"),
+						emptyText: gettext("root"),
+					},
+					{
+						xtype: "combobox",
+						name: "backup-type",
+						fieldLabel: gettext("Backup Type"),
+						store: [["host", "host"], ["vm", "vm"], ["ct", "ct"]],
+						allowBlank: false,
+						value: "host",
+					},
+					{
+						xtype: "proxmoxtextfield",
+						name: "backup-id",
+						fieldLabel: gettext("Backup ID"),
+						allowBlank: false,
+					},
+					{
+						xtype: "proxmoxtextfield",
+						name: "mount-path",
+						fieldLabel: gettext("Mount Path"),
+						emptyText: gettext("Automatic (under /mnt/pbs-plus-restores)"),
+					},
+					],
+				}],
+				buttons: [{
+					text: gettext("Initialize"),
+					handler: function (btn) {
+						let win = btn.up("window");
+						let form = win.down("form");
+						if (!form.isValid()) return;
+						let vals = form.getValues();
+						PBS.PlusUtils.API2Request({
+							url: "/api2/extjs/config/d2d-init/" + encodeURIComponent(encodePathValue(vals.datastore)),
+							method: "POST",
+							params: {
+								"ns": vals.ns || "",
+								"backup-type": vals["backup-type"],
+								"backup-id": vals["backup-id"],
+								"mount-path": vals["mount-path"] || "",
+							},
+							waitMsgTarget: win,
+							failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+							success: (resp) => {
+								win.close();
+								me.reload();
+								Ext.create("PBS.plusWindow.TaskViewer", {
+									upid: resp.result.data,
+									taskDone: () => view.getStore().rstore.load(),
+								}).show();
+							},
+						});
+					},
+				}],
+			}).show();
+		`),
 		"commit": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			let d = rec.data;
 			PBS.PlusUtils.API2Request({
@@ -74,6 +156,7 @@ var activeMountsPanel = js.Panel{
 	}},
 	Tbar: []js.Tool{
 		{XType: js.XButton, Text: "Reload", IconCls: "fa fa-refresh", Handler: "reload"},
+		{XType: js.XButton, Text: "New Archive", IconCls: "fa fa-plus", Handler: "initNew"},
 	},
 	Columns: []js.Column{
 		{Text: "Datastore", DataIndex: "datastore", Width: 120},

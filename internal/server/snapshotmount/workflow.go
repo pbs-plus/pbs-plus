@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 const mountSettleAttempts = 30
@@ -66,7 +67,125 @@ func Register(engine *jobs.Engine) error {
 	}); err != nil {
 		return fmt.Errorf("registering snapshot commit workflow: %w", err)
 	}
+	if err := engine.RegisterVersion(jobs.WorkflowSnapshotInit, "1", func(w *jobs.WorkflowContext) error {
+		var in jobs.SnapshotInitInput
+		if err := json.Unmarshal(w.Execution.Payload, &in); err != nil {
+			return jobs.NonRetryable(fmt.Errorf("decoding init workflow input: %w", err))
+		}
+		return w.Step("init", func(ctx context.Context) error {
+			return runInit(ctx, in)
+		})
+	}); err != nil {
+		return fmt.Errorf("registering snapshot init workflow: %w", err)
+	}
 	return nil
+}
+
+func runInit(ctx context.Context, in jobs.SnapshotInitInput) error {
+	key := Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, "init")
+
+	task, err := openTask(in.UPID, "init", tasklog.FormatWorkerID(in.Datastore, "init-", key))
+	if err != nil {
+		return jobs.NonRetryable(err)
+	}
+
+	runErr := func() error {
+		session, err := initSession(ctx, task, in, key)
+		if err != nil {
+			return err
+		}
+		task.LogString(fmt.Sprintf("initialized %s/%s at %s (rw)", in.BackupType, in.BackupID, session.MountPoint))
+		return nil
+	}()
+	if runErr != nil {
+		task.CloseErr(runErr)
+		if errors.Is(runErr, context.Canceled) {
+			return runErr
+		}
+		return jobs.NonRetryable(runErr)
+	}
+	task.CloseOK()
+	return nil
+}
+
+func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotInitInput, key string) (Session, error) {
+	if err := validate.ValidateDatastore(in.Datastore); err != nil {
+		return Session{}, fmt.Errorf("invalid datastore: %w", err)
+	}
+	if err := validate.ValidateNamespace(in.Namespace); err != nil {
+		return Session{}, err
+	}
+	if err := validate.ValidateBackupType(in.BackupType); err != nil {
+		return Session{}, err
+	}
+	if err := validate.ValidateBackupID(in.BackupID); err != nil {
+		return Session{}, err
+	}
+	if err := ValidateMountPath(in.MountPath); err != nil {
+		return Session{}, err
+	}
+
+	if existing, err := LoadSession(key); err == nil && IsMounted(existing.MountPoint) {
+		return Session{}, fmt.Errorf("group %s/%s already has an active init mount at %s", in.BackupType, in.BackupID, existing.MountPoint)
+	}
+
+	dsInfo, err := cli.GetDatastoreInfo(in.Datastore)
+	if err != nil {
+		return Session{}, err
+	}
+	pbsStoreRoot := dsInfo.Path
+	if pbsStoreRoot == "" {
+		return Session{}, errors.New("invalid datastore configuration")
+	}
+
+	mountPoint := in.MountPath
+	managed := false
+	if mountPoint == "" {
+		mountPoint = DefaultMountPoint(in.Datastore, in.Namespace, in.BackupType, in.BackupID, time.Time{})
+		managed = true
+		if err := validatePath(mountPoint, conf.RestoreMountBasePath); err != nil {
+			return Session{}, err
+		}
+	} else if entries, err := os.ReadDir(mountPoint); err == nil && len(entries) > 0 {
+		return Session{}, fmt.Errorf("mount path %s exists and is not empty", mountPoint)
+	}
+
+	session := Session{
+		Datastore:  in.Datastore,
+		Namespace:  in.Namespace,
+		BackupType: in.BackupType,
+		BackupID:   in.BackupID,
+		Mode:       ModeRW,
+		MountPoint: mountPoint,
+		OverlayDir: OverlayDir(key),
+		SocketPath: SocketPath(key),
+		ServiceKey: key,
+		CreatedAt:  time.Now().Unix(),
+	}
+
+	task.LogString(fmt.Sprintf("initializing %s/%s/%s at %s", in.Datastore, in.Namespace, in.BackupID, mountPoint))
+
+	if err := os.MkdirAll(session.OverlayDir, 0o700); err != nil {
+		return Session{}, fmt.Errorf("create overlay dir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(session.SocketPath), 0o755); err != nil {
+		return Session{}, fmt.Errorf("create socket dir: %w", err)
+	}
+
+	ns := in.Namespace
+	if ns == "" {
+		ns = "-"
+	}
+	args := []string{
+		"init",
+		"--pbs-store", pbsStoreRoot,
+		"--passthrough", session.OverlayDir,
+		"--socket", session.SocketPath,
+		"--namespace", ns,
+		"--options", "rw,allow_other,default_permissions",
+		mountPoint,
+	}
+	return startSession(ctx, session, mountPoint, managed, args)
 }
 
 func runMount(ctx context.Context, in jobs.SnapshotMountInput) error {
@@ -179,6 +298,10 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	}
 	args = append(args, mountPoint)
 
+	return startSession(ctx, session, mountPoint, managed, args)
+}
+
+func startSession(ctx context.Context, session Session, mountPoint string, managed bool, args []string) (Session, error) {
 	serviceName := session.ServiceName()
 	if err := systemd.StopMountService(ctx, serviceName); err != nil {
 		log.Error(err, "")

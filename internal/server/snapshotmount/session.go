@@ -136,8 +136,15 @@ func DefaultMountPoint(datastore, ns, backupType, backupID string, parsedTime ti
 		datastore,
 		ns,
 		fmt.Sprintf("%s-%s", backupType, backupID),
-		parsedTime.Format("2006-01-02_15-04-05"),
+		defaultMountPointLeaf(parsedTime),
 	))
+}
+
+func defaultMountPointLeaf(parsedTime time.Time) string {
+	if parsedTime.IsZero() {
+		return "init"
+	}
+	return parsedTime.Format("2006-01-02_15-04-05")
 }
 
 func ValidateMountPath(path string) error {
