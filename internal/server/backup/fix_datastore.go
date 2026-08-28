@@ -107,12 +107,12 @@ func SetDatastoreOwner(backup database.Backup, storeInstance *store.Store, owner
 		return fmt.Errorf("SetDatastoreOwner: failed to write owner file -> %w", err)
 	}
 
-	err = os.Chown(dirPath, 34, 34)
+	err = proxmox.ChownBackupUser(dirPath)
 	if err != nil {
 		return fmt.Errorf("SetDatastoreOwner: error changing filesystem owner -> %w", err)
 	}
 
-	err = os.Chown(filePath, 34, 34)
+	err = proxmox.ChownBackupUser(filePath)
 	if err != nil {
 		return fmt.Errorf("SetDatastoreOwner: error changing filesystem owner -> %w", err)
 	}

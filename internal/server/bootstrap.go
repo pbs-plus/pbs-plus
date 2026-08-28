@@ -14,23 +14,19 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	jobsstore "github.com/pbs-plus/pbs-plus/internal/server/jobs/store"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
-	job "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	rpcmount "github.com/pbs-plus/pbs-plus/internal/server/rpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/scheduler"
 	"github.com/pbs-plus/pbs-plus/internal/server/store"
+	"github.com/pbs-plus/pbs-plus/internal/server/verification"
 )
 
 // and cleanup of stale mount points and queued backups
-func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.Scheduler, *jobs.Manager, error) {
-	if err := cleanupQueuedBackups(storeInstance); err != nil {
-		log.Error(err, "failed to cleanup queued backups")
-	}
-
+func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.Scheduler, *jobs.Engine, error) {
 	secKeyPath := "/etc/proxmox-backup/pbs-plus/.key"
 
 	if _, err := os.Lstat(secKeyPath); err != nil {
@@ -92,15 +88,22 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		}
 	}()
 
-	manager := jobs.NewManager(mainCtx, conf.MaxConcurrentClients, func() int {
-		n, err := storeInstance.Database.JobCount(mainCtx)
-		if err != nil || n < 1 {
-			return 100
-		}
-		return n
-	})
-	storeInstance.Manager = manager
-	s := scheduler.NewScheduler(mainCtx, storeInstance, manager)
+	engineDB, err := jobsstore.Open("")
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening workflow engine database: %w", err)
+	}
+	engine, err := jobs.NewEngine(engineDB, jobs.EngineConfig{MaxConcurrent: conf.MaxConcurrentClients})
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating workflow engine: %w", err)
+	}
+	if err := registerWorkflows(engine, storeInstance); err != nil {
+		return nil, nil, fmt.Errorf("registering workflow runners: %w", err)
+	}
+	if err := engine.Start(mainCtx); err != nil {
+		return nil, nil, fmt.Errorf("starting workflow engine: %w", err)
+	}
+	storeInstance.Engine = engine
+	s := scheduler.NewScheduler(mainCtx, storeInstance)
 	s.Start()
 	storeInstance.OnBackupComplete = s.TriggerPendingVerifications
 
@@ -113,10 +116,7 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 				log.Error(mainCtx.Err(), "backup rpc server cancelled")
 				return
 			default:
-				job.BackupJobFactory = backup.NewBackupJob
-				job.RestoreJobFactory = restore.NewRestoreJob
-				job.MtfJobFactory = mtf.NewJob
-				if err := job.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, manager, storeInstance); err != nil {
+				if err := rpcmount.RunJobRPCServer(mainCtx, conf.JobMutateSocketPath, engine, storeInstance); err != nil {
 					log.Error(err, "backup rpc server failed, restarting")
 					time.Sleep(backoff)
 					backoff *= 2
@@ -130,42 +130,24 @@ func Bootstrap(mainCtx context.Context, storeInstance *store.Store) (*scheduler.
 		}
 	}()
 
-	return s, manager, nil
+	return s, engine, nil
 }
 
-func cleanupQueuedBackups(storeInstance *store.Store) error {
-	queuedBackups, err := storeInstance.Database.GetAllQueuedBackups()
-	if err != nil {
-		return fmt.Errorf("failed to get all queued backups: %w", err)
+func registerWorkflows(engine *jobs.Engine, storeInstance *store.Store) error {
+	if err := backup.Register(engine, storeInstance); err != nil {
+		return fmt.Errorf("registering backup workflow: %w", err)
 	}
-
-	tx, err := storeInstance.Database.NewTransaction()
-	if err != nil {
-		return fmt.Errorf("failed to create transaction: %w", err)
+	if err := restore.Register(engine, storeInstance); err != nil {
+		return fmt.Errorf("registering restore workflow: %w", err)
 	}
-
-	for _, queuedBackup := range queuedBackups {
-		task, err := backup.GenerateBackupTaskErrorFile(queuedBackup, fmt.Errorf("server was restarted before backup started during queue"), nil)
-		if err != nil {
-			continue
-		}
-
-		queueTaskPath, err := tasklog.UPIDLogPath(queuedBackup.History.LastRunUpid)
-		if err == nil {
-			if err := os.Remove(queueTaskPath); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "")
-			}
-		}
-
-		queuedBackup.History.LastRunUpid = task.UPID
-		err = storeInstance.Database.UpdateBackup(tx, queuedBackup)
-		if err != nil {
-			continue
-		}
+	if err := verification.Register(engine, storeInstance); err != nil {
+		return fmt.Errorf("registering verification workflow: %w", err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		log.Error(err, "")
+	if err := mtf.RegisterMigration(engine, storeInstance); err != nil {
+		return fmt.Errorf("registering mtf migration workflow: %w", err)
+	}
+	if err := mtf.RegisterScan(engine, storeInstance); err != nil {
+		return fmt.Errorf("registering mtf scan workflow: %w", err)
 	}
 	return nil
 }

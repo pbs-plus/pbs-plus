@@ -148,42 +148,7 @@ var (
 			return &buf
 		},
 	}
-
-	activeJobs = struct {
-		sync.RWMutex
-		m map[string]context.CancelFunc
-	}{m: make(map[string]context.CancelFunc)}
 )
-
-func RegisterJob(jobID string, cancel context.CancelFunc) {
-	activeJobs.Lock()
-	activeJobs.m[jobID] = cancel
-	activeJobs.Unlock()
-}
-
-func UnregisterJob(jobID string) {
-	activeJobs.Lock()
-	delete(activeJobs.m, jobID)
-	activeJobs.Unlock()
-}
-
-func StopJob(jobID string) bool {
-	activeJobs.RLock()
-	cancel, ok := activeJobs.m[jobID]
-	activeJobs.RUnlock()
-	if !ok {
-		return false
-	}
-	cancel()
-	return true
-}
-
-func IsJobRunning(jobID string) bool {
-	activeJobs.RLock()
-	_, ok := activeJobs.m[jobID]
-	activeJobs.RUnlock()
-	return ok
-}
 
 type readerFunc func([]byte) (int, error)
 
@@ -213,6 +178,7 @@ type verificationJob struct {
 
 	logger        *log.Logger
 	task          *VerificationTask
+	upid          string
 	queueTask     *tasklog.QueuedTask
 	job           database.VerificationJob
 	backupJobs    []database.Backup
@@ -227,39 +193,39 @@ type verificationJob struct {
 	totalPopulation int
 }
 
-func NewVerificationJob(
-	job database.VerificationJob,
-	storeInstance *store.Store,
-	web bool,
-) (*jobs.Job, error) {
-	v := &verificationJob{
-		job:           job,
-		storeInstance: storeInstance,
-		web:           web,
-		logger:        log.WithScope(log.Scope{JobID: job.ID}),
+func (v *verificationJob) enqueue(ctx context.Context) error {
+	source := "schedule"
+	if v.web {
+		source = "web UI"
 	}
+	wid := tasklog.FormatWorkerID(v.job.Store, "host-", v.job.ID)
+	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "verification", wid, v.web)
+	if err != nil {
+		v.logger.Error(err, "failed to create queue task, not fatal")
+	} else {
+		v.mu.Lock()
+		v.queueTask = queueTask
+		v.mu.Unlock()
 
-	return &jobs.Job{
-		ID:        job.ID,
-		PreExec:   v.preExecute,
-		Execute:   v.execute,
-		OnSuccess: v.onSuccess,
-		OnError:   v.onError,
-		Cleanup:   v.cleanup,
-	}, nil
+		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
+			v.logger.Error(err, "failed to set queue task, not fatal")
+		}
+	}
+	v.logger.Info("verification starting", "target", v.job.TargetMode, "mode", v.job.Mode, "source", source)
+	return nil
 }
 
-func (v *verificationJob) preExecute(ctx context.Context) error {
-	v.mu.RLock()
+// selectCandidates picks the backup jobs to verify, in verification
+// order. The weighted shuffle lives here so the durable activity
+// result pins a stable order for the checkpointed verify stage.
+func (v *verificationJob) selectCandidates(ctx context.Context) []database.Backup {
 	job := v.job
-	v.mu.RUnlock()
-
 	var backups []database.Backup
 
 	if job.TargetMode == "namespace" {
 		allBackups, err := v.storeInstance.Database.GetAllBackups()
 		if err != nil {
-			return fmt.Errorf("failed to list backup jobs: %w", err)
+			return nil
 		}
 		for _, b := range allBackups {
 			if b.Store != job.Store {
@@ -279,158 +245,21 @@ func (v *verificationJob) preExecute(ctx context.Context) error {
 				}
 			}
 		}
-		if len(backups) == 0 {
-			return fmt.Errorf("no agent backup jobs found in namespace '%s'", job.Namespace)
-		}
+		backups = weightedShuffleBackups(backups, v.storeInstance.Database, job.ID)
 	} else {
 		backup, err := v.storeInstance.Database.GetBackup(job.BackupJobID)
 		if err != nil {
-			return fmt.Errorf("failed to get backup job %s: %w", job.BackupJobID, err)
+			return nil
 		}
-		if !backup.Target.IsAgent() {
-			return ErrNotAgentTarget
+		if backup.Target.IsAgent() {
+			backups = []database.Backup{backup}
 		}
-		backups = []database.Backup{backup}
 	}
 
 	v.mu.Lock()
 	v.backupJobs = backups
 	v.mu.Unlock()
-
-	source := "schedule"
-	if v.web {
-		source = "web UI"
-	}
-	wid := tasklog.FormatWorkerID(job.Store, "host-", job.ID)
-	queueTask, err := tasklog.WriteQueuedLog("pbsplusgen-queue", "verification", wid, v.web)
-	if err != nil {
-		v.logger.Error(err, "failed to create queue task, not fatal")
-	} else {
-		v.mu.Lock()
-		v.queueTask = queueTask
-		v.mu.Unlock()
-
-		if err := v.updateJobStatus(false, queueTask.Task); err != nil {
-			v.logger.Error(err, "failed to set queue task, not fatal")
-		}
-	}
-	v.logger.Info("verification starting", "target", v.job.TargetMode, "mode", v.job.Mode, "source", source)
-
-	return nil
-}
-
-func (v *verificationJob) execute(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
-	v.cancel = cancel
-
-	v.mu.RLock()
-	job := v.job
-	backups := v.backupJobs
-	v.mu.RUnlock()
-
-	vTask, err := NewVerificationTask(job)
-	if err != nil {
-		return fmt.Errorf("failed to create verification task: %w", err)
-	}
-	v.mu.Lock()
-	v.task = vTask
-	v.mu.Unlock()
-	if v.queueTask != nil {
-		v.queueTask.Close()
-	}
-
-	if err := v.updateJobStatus(false, vTask.Task); err != nil {
-		v.logger.Error(err, "failed to update job with task UPID")
-	}
-
-	if job.TargetMode == "namespace" {
-		vTask.WriteString(fmt.Sprintf("starting verification job '%s' targeting namespace '%s' (%d backup jobs)", job.ID, job.Namespace, len(backups)))
-		// Jobs never verified get the highest weight; recently verified ones
-		backups = weightedShuffleBackups(backups, v.storeInstance.Database, job.ID)
-	} else {
-		vTask.WriteString(fmt.Sprintf("starting verification job '%s' for backup job '%s'", job.ID, job.BackupJobID))
-	}
-
-	var lastStartupErr error
-	for _, backup := range backups {
-		snapshot, snapErr := v.selectSnapshot(ctx, job, backup)
-		if snapErr != nil {
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to select snapshot: %v", backup.ID, snapErr))
-			lastStartupErr = snapErr
-			continue
-		}
-
-		hostname := backup.Target.GetHostname()
-		streamID := hostname + "|" + job.ID + "|verify"
-
-		type caller interface {
-			CallMessage(ctx context.Context, method string, payload any) (string, error)
-		}
-		var controlSess caller
-		if sess, ok := v.storeInstance.ARPCAgentsManager.GetQuicPipe(hostname); ok {
-			controlSess = sess
-		} else if sess, ok := v.storeInstance.ARPCAgentsManager.GetStreamPipe(hostname); ok {
-			controlSess = sess
-		} else {
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': agent '%s' not connected", backup.ID, hostname))
-			lastStartupErr = ErrAgentNotConnected
-			continue
-		}
-
-		v.storeInstance.ARPCAgentsManager.Expect(streamID)
-
-		verifyReq := verification.VerifyStartReq{VerifyID: job.ID}
-		forkCtx, forkCancel := context.WithTimeout(ctx, 30*time.Second)
-		_, forkErr := controlSess.CallMessage(forkCtx, "verify_start", &verifyReq)
-		forkCancel()
-		if forkErr != nil {
-			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': failed to fork verification worker: %v", backup.ID, forkErr))
-			lastStartupErr = forkErr
-			continue
-		}
-
-		pipeCtx, pipeCancel := context.WithTimeout(ctx, 30*time.Second)
-		agentTCP, waitErr := v.storeInstance.ARPCAgentsManager.WaitStreamPipe(pipeCtx, streamID)
-		pipeCancel()
-		if waitErr != nil {
-			v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': verification worker did not connect: %v", backup.ID, waitErr))
-			lastStartupErr = waitErr
-			continue
-		}
-		v.storeInstance.ARPCAgentsManager.NotExpect(streamID)
-
-		vTask.WriteString(fmt.Sprintf("verification worker connected via TCP for job '%s'", backup.ID))
-
-		vs, archiveErr := v.openArchive(backup, snapshot)
-		if archiveErr != nil {
-			agentTCP.Close()
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s' snapshot '%s': failed to open archive: %v", backup.ID, snapshot.Snapshot, archiveErr))
-			lastStartupErr = archiveErr
-			continue
-		}
-
-		vTask.WriteString(fmt.Sprintf("selected backup job '%s', snapshot: %s", backup.ID, snapshot.Snapshot))
-
-		err := v.executeVerification(ctx, vTask, job, backup, snapshot, vs, agentTCP)
-		if err == nil {
-			return nil
-		}
-
-		if errors.Is(err, ErrNoFilesToVerify) && job.TargetMode == "namespace" {
-			vTask.WriteString(fmt.Sprintf("skipping backup job '%s': no eligible files found, trying next candidate", backup.ID))
-			lastStartupErr = err
-			continue
-		}
-		return err
-	}
-
-	if lastStartupErr != nil {
-		vTask.WriteString(fmt.Sprintf("all candidates exhausted, last error: %v", lastStartupErr))
-		return lastStartupErr
-	}
-	return fmt.Errorf("no eligible backup jobs found")
+	return backups
 }
 
 func (v *verificationJob) executeVerification(
@@ -598,7 +427,7 @@ func (v *verificationJob) executeVerification(
 	return nil
 }
 
-func (v *verificationJob) onError(err error) {
+func (v *verificationJob) finalizeFailure(err error) {
 	v.logger.Error(err, "verification failed")
 
 	v.mu.RLock()
@@ -637,7 +466,7 @@ func (v *verificationJob) onError(err error) {
 	}
 }
 
-func (v *verificationJob) onSuccess() {
+func (v *verificationJob) finalizeSuccess() {
 	v.logger.Info("verification completed", "total_files", v.totalFiles, "failed_files", v.failedFiles, "skipped_files", v.skippedFiles)
 
 	v.mu.RLock()

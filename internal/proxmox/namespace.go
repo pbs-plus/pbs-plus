@@ -20,7 +20,7 @@ func EnsureNamespacePath(datastorePath, namespace string) error {
 		if err := os.MkdirAll(fullPath, 0o755); err != nil {
 			return fmt.Errorf("create namespace dir %q: %w", fullPath, err)
 		}
-		if err := os.Chown(fullPath, 34, 34); err != nil {
+		if err := ChownBackupUser(fullPath); err != nil {
 			return fmt.Errorf("chown namespace dir %q: %w", fullPath, err)
 		}
 	}

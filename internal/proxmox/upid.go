@@ -10,10 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
-
-	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"log/slog"
 )
 
 func NormalizeHostname(hostname string) string {
@@ -96,61 +92,41 @@ func GetPStart() uint64 {
 		return uint64(pstart.Add(1))
 	}
 
-	fields := strings.Fields(string(data))
-	if len(fields) < 22 {
+	stat := string(data)
+	cmdend := strings.LastIndexByte(stat, ')')
+	if cmdend < 0 || cmdend+1 >= len(stat) {
+		return uint64(pstart.Add(1))
+	}
+	fields := strings.Fields(stat[cmdend+1:])
+	if len(fields) < 20 {
 		return uint64(pstart.Add(1))
 	}
 
-	pstartA, err := strconv.ParseUint(fields[21], 10, 64)
+	pstartA, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
 		return uint64(pstart.Add(1))
 	}
 	return pstartA
 }
 
-func ChangeUPIDStartTime(upid string, startTime time.Time) (string, error) {
-	if !strings.HasPrefix(upid, "UPID:") || !strings.HasSuffix(upid, ":") {
-		return "", fmt.Errorf("invalid UPID format: must start with 'UPID:' and end with ':'")
-	}
-
-	parsedTask, err := ParseUPID(upid)
-	if err != nil {
-		return "", err
-	}
-
-	logFolder := fmt.Sprintf("%02X", parsedTask.PStart&0xFF)
-	path := filepath.Join(conf.TaskLogsBasePath, logFolder, upid)
-
-	parsedTask.StartTime = startTime.Unix()
-
-	newUpid := parsedTask.GenerateUPID()
-
-	newLogFolder := fmt.Sprintf("%02X", parsedTask.PStart&0xFF)
-	newPath := filepath.Join(conf.TaskLogsBasePath, newLogFolder, newUpid)
-
-	err = os.Rename(path, newPath)
-	if err != nil {
-		return "", err
-	}
-	slog.Info("updated UPID start time")
-
-	if err := os.Symlink(newPath, path); err != nil {
-		slog.Error(err.Error())
-	}
-
-	return newUpid, nil
-}
-
+// '/' becomes '-', a leading '.' is escaped, [A-Za-z0-9_.] stay literal,
+// everything else becomes lowercase \xNN. Used inside UPID worker IDs so
+// pbs-plus UPIDs round-trip with the real daemon's parser.
 func EncodeToHexEscapes(input string) string {
 	var encoded strings.Builder
-	for _, char := range input {
-		if char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' {
-			encoded.WriteRune(char)
-		} else {
-			encoded.WriteString(fmt.Sprintf(`\x%02x`, char))
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+		switch {
+		case c == '/':
+			encoded.WriteByte('-')
+		case i == 0 && c == '.':
+			fmt.Fprintf(&encoded, `\x%02x`, c)
+		case c == '_' || c == '.' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+			encoded.WriteByte(c)
+		default:
+			fmt.Fprintf(&encoded, `\x%02x`, c)
 		}
 	}
-
 	return encoded.String()
 }
 

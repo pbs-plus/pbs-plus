@@ -137,9 +137,10 @@ func main() {
 }
 
 func validateEnvironment() error {
-	// Best-effort cleanup; the tasks/active directory may not exist in test
-	// environments or Docker containers. Ignore errors from this step.
-	if err := tasklog.CleanupActiveTasks(); err != nil {
+	// PBS-style startup reconciliation: fold dead workers out of the
+	// active list into the archive. Best effort; the tasks directory may
+	// not exist in test environments or Docker containers.
+	if err := tasklog.Reconcile(""); err != nil {
 		log.Error(err, "")
 	}
 
@@ -219,7 +220,7 @@ func runOneShotJobs(storeInstance *store.Store, backupsRun, restoresRun, extExcl
 
 func runCleanTaskLogs() {
 	fmt.Println("WARNING: You are about to remove all junk logs recursively from:")
-	fmt.Println("         /var/log/proxmox-backup/tasks")
+	fmt.Println("         " + conf.TaskLogsBasePath)
 	fmt.Println()
 	fmt.Println("All log entries with the following substrings will be removed if found in any log file:")
 	for _, substr := range backup.JunkSubstrings {
@@ -250,7 +251,7 @@ func runCleanTaskLogs() {
 	}
 
 	fmt.Println("Proceeding with log cleanup...")
-	removed, err := backup.RemoveJunkLogsRecursively("/var/log/proxmox-backup/tasks")
+	removed, err := backup.RemoveJunkLogsRecursively(conf.TaskLogsBasePath)
 	if err != nil {
 		stdlog.Fatal(err)
 	}

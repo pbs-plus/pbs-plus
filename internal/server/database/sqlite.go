@@ -5,76 +5,54 @@ package database
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sync"
 
-	_ "modernc.org/sqlite"
-
-	"github.com/golang-migrate/migrate/v4"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/mtls"
 	"github.com/pbs-plus/pbs-plus/internal/server/database/sqlc"
+	"github.com/pbs-plus/pbs-plus/internal/sqldb"
 )
+
+//go:embed migrations/*.sql
+var migrations embed.FS
 
 const maxAttempts = 100
 
 type Database struct {
-	ctx          context.Context
-	readDb       *sql.DB
-	writeDb      *sql.DB
+	*sqldb.DB
 	queries      *sqlc.Queries
 	readQueries  *sqlc.Queries
-	writeMu      sync.Mutex
-	dbPath       string
+	ctx          context.Context
 	TokenManager *mtls.TokenManager
 }
+
+// Transaction releases the writer lock on commit or rollback.
+type Transaction = sqldb.Tx
 
 func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	if dbPath == "" {
 		dbPath = "/etc/proxmox-backup/pbs-plus/plus.db"
 	}
 
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		log.Error(err, "")
-	}
-
 	initialized := false
-	_, err := os.Stat(dbPath)
-	if err == nil {
+	if _, err := os.Stat(dbPath); err == nil {
 		initialized = true
 	}
 
-	readDb, err := sql.Open("sqlite", dbPath+"?mode=ro&_pragma=busy_timeout%3d5000")
+	db, err := sqldb.Open(dbPath, migrations, "migrations")
 	if err != nil {
-		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
-	}
-
-	writeDb, err := sql.Open("sqlite", dbPath+"?mode=rw&_txlock=immediate&_pragma=busy_timeout%3d5000")
-	if err != nil {
-		return nil, fmt.Errorf("Initialize: error opening DB: %w", err)
-	}
-	writeDb.SetMaxOpenConns(1)
-
-	_, err = writeDb.Exec("PRAGMA journal_mode=WAL;PRAGMA foreign_keys=ON;")
-	if err != nil {
-		return nil, fmt.Errorf("Initialize: error DB: %w", err)
+		return nil, fmt.Errorf("Initialize: %w", err)
 	}
 
 	database := &Database{
+		DB:          db,
+		queries:     sqlc.New(db.Writer()),
+		readQueries: sqlc.New(db.Reader()),
 		ctx:         ctx,
-		dbPath:      dbPath,
-		readDb:      readDb,
-		writeDb:     writeDb,
-		queries:     sqlc.New(writeDb),
-		readQueries: sqlc.New(readDb),
-	}
-
-	if err := database.Migrate(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-		return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
 	}
 
 	if err := database.MigrateSecrets(); err != nil {
@@ -82,83 +60,34 @@ func Initialize(ctx context.Context, dbPath string) (*Database, error) {
 	}
 
 	if !initialized {
-		tx, err := writeDb.Begin()
-		if err != nil {
-			return nil, fmt.Errorf("Initialize: error migrating tables: %w", err)
-		}
-
-		qtx := database.queries.WithTx(tx)
-		for _, exclusion := range conf.DefaultExclusions {
-			err = qtx.CreateExclusion(ctx, sqlc.CreateExclusionParams{
-				JobID:   "",
-				Path:    exclusion,
-				Comment: sql.NullString{String: "Generated exclusion from default list", Valid: true},
-			})
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				log.Error(err, "", "path", exclusion)
+		if err := database.RunInTransaction(ctx, func(_ *Transaction, q *sqlc.Queries) error {
+			for _, exclusion := range conf.DefaultExclusions {
+				err := q.CreateExclusion(ctx, sqlc.CreateExclusionParams{
+					JobID:   "",
+					Path:    exclusion,
+					Comment: sql.NullString{String: "Generated exclusion from default list", Valid: true},
+				})
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					log.Error(err, "", "path", exclusion)
+				}
 			}
-		}
-
-		if err := tx.Commit(); err != nil {
+			return nil
+		}); err != nil {
 			log.Error(err, "")
 		}
 	}
 	return database, nil
 }
 
-type Transaction struct {
-	*sql.Tx
-	database *Database
-	released bool
-}
-
-func (t *Transaction) Commit() error {
-	err := t.Tx.Commit()
-	t.release()
-	return err
-}
-
-func (t *Transaction) Rollback() error {
-	err := t.Tx.Rollback()
-	t.release()
-	return err
-}
-
-func (t *Transaction) release() {
-	if !t.released {
-		t.database.writeMu.Unlock()
-		t.released = true
-	}
-}
-
-func (d *Database) Close() error {
-	var firstErr error
-	if err := d.writeDb.Close(); err != nil && firstErr == nil {
-		firstErr = err
-	}
-	if err := d.readDb.Close(); err != nil && firstErr == nil {
-		firstErr = err
-	}
-	return firstErr
-}
-
 func (d *Database) NewTransaction() (*Transaction, error) {
-	d.writeMu.Lock()
-
-	tx, err := d.writeDb.BeginTx(d.ctx, nil)
-	if err != nil {
-		d.writeMu.Unlock()
-		return nil, err
-	}
-
-	return &Transaction{Tx: tx, database: d}, nil
+	return d.DB.Begin(d.ctx)
 }
 
 func (d *Database) Ping(ctx context.Context) error {
-	return d.readDb.PingContext(ctx)
+	return d.DB.Ping(ctx)
 }
 
-// Returns at least 1 so the queue never has a zero-size buffer.
+// JobCount returns at least 1 so the queue never has a zero-size buffer.
 func (d *Database) JobCount(ctx context.Context) (int, error) {
 	backupCount, err := d.readQueries.CountBackups(ctx)
 	if err != nil {
@@ -168,36 +97,13 @@ func (d *Database) JobCount(ctx context.Context) (int, error) {
 	if err != nil {
 		return 1, fmt.Errorf("JobCount: count restores: %w", err)
 	}
-	n := max(int(backupCount+restoreCount), 1)
-	return n, nil
+	return max(int(backupCount+restoreCount), 1), nil
 }
 
-// If fn panics, the panic is re-thrown after rollback.
+// RunInTransaction runs fn in a write transaction; error rolls back,
+// panic rolls back and re-panics.
 func (d *Database) RunInTransaction(ctx context.Context, fn func(tx *Transaction, q *sqlc.Queries) error) error {
-	tx, err := d.NewTransaction()
-	if err != nil {
-		return fmt.Errorf("RunInTransaction: %w", err)
-	}
-	defer func() {
-		if p := recover(); p != nil {
-			if err := tx.Rollback(); err != nil {
-				log.Error(err, "")
-			}
-			panic(p)
-		}
-	}()
-
-	q := d.queries.WithTx(tx.Tx)
-	if err := fn(tx, q); err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
-			log.Error(fmt.Errorf("RunInTransaction: rollback error: %w", rbErr), "")
-		}
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("RunInTransaction: commit error: %w", err)
-	}
-
-	return nil
+	return d.DB.RunInTransaction(ctx, func(tx *Transaction) error {
+		return fn(tx, d.queries.WithTx(tx.Tx))
+	})
 }

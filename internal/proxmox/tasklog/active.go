@@ -6,25 +6,88 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"log/slog"
 )
 
-func AddActive(upid string) error {
-	return modifyActiveFile(upid, true)
-}
+// Path overrides, initialized from conf; tests point them at temp dirs.
+var (
+	taskDir     = conf.TaskLogsBasePath
+	activeTasks = conf.ActiveLogsPath
+	archivePath = conf.ArchivedLogsPath
+	lockPath    = conf.TaskLogsBasePath + "/.active.lock"
+)
 
-func RemoveActive(upid string) error {
-	return modifyActiveFile(upid, false)
-}
+const lockTimeout = 15 * time.Second
 
-func IsActive(upid string) bool {
-	f, err := os.Open(conf.ActiveLogsPath)
+// taskListLock is PBS's TaskListLockGuard: an flock on tasks/.active.lock
+// held for the duration of a task-list read or update.
+type taskListLock struct{ f *os.File }
+
+func lockTaskList(exclusive bool) (*taskListLock, error) {
+	// PBS's init_worker_tasks creates the task dir before anyone touches
+	// the lock; do the same so a first run can take the lock at all.
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		return nil, fmt.Errorf("tasklog: create task dir: %w", err)
+	}
+	if err := proxmox.ChownBackupUser(taskDir); err != nil {
+		return nil, err
+	}
+
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0660)
 	if err != nil {
-		return false
+		return nil, fmt.Errorf("tasklog: open task list lock: %w", err)
+	}
+	if err := proxmox.ChownBackupUser(lockPath); err != nil {
+		if cerr := f.Close(); cerr != nil {
+			slog.Error(cerr.Error())
+		}
+		return nil, err
+	}
+
+	how := syscall.LOCK_SH
+	if exclusive {
+		how = syscall.LOCK_EX
+	}
+	deadline := time.Now().Add(lockTimeout)
+	for {
+		err = syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
+		if err == nil {
+			return &taskListLock{f: f}, nil
+		}
+		if time.Now().After(deadline) {
+			if cerr := f.Close(); cerr != nil {
+				slog.Error(cerr.Error())
+			}
+			return nil, fmt.Errorf("tasklog: acquire task list lock: %w", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (l *taskListLock) Close() {
+	if err := syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN); err != nil {
+		slog.Error("tasklog: release task list lock", "error", err)
+	}
+	if err := l.f.Close(); err != nil {
+		slog.Error("tasklog: close task list lock", "error", err)
+	}
+}
+
+func readTaskFile(path string) ([]TaskListInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("tasklog: open task list %s: %w", path, err)
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil {
@@ -32,133 +95,155 @@ func IsActive(upid string) bool {
 		}
 	}()
 
+	var list []TaskListInfo
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
-		parts := strings.Fields(line)
-		if parts[0] == upid {
-			return true
-		}
-	}
-	return false
-}
-
-func CleanupActiveTasks() error {
-	targetNode := "pbsplus"
-
-	f, err := os.OpenFile(conf.ActiveLogsPath, os.O_RDWR|os.O_CREATE, 0660)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("tasklog: open active tasks: %w", err)
-	}
-	defer func() {
-		if cerr := f.Close(); cerr != nil {
-			slog.Error(cerr.Error())
-		}
-	}()
-
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("tasklog: lock active tasks: %w", err)
-	}
-	defer func() {
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
-			slog.Error(err.Error())
-		}
-	}()
-
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 4)
-		if len(parts) >= 2 && parts[1] == targetNode {
+		upidStr, state, err := ParseStatusLine(line)
+		if err != nil {
+			slog.Warn("tasklog: skipping unparsable task list line", "error", err, "line", line)
 			continue
 		}
-		lines = append(lines, line)
-	}
-
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return err
-	}
-
-	w := bufio.NewWriter(f)
-	for _, line := range lines {
-		if _, err := w.WriteString(line + "\n"); err != nil {
-			return err
+		task, err := proxmox.ParseUPID(upidStr)
+		if err != nil {
+			slog.Warn("tasklog: skipping invalid UPID in task list", "error", err, "line", line)
+			continue
 		}
+		list = append(list, TaskListInfo{UPID: upidStr, Task: task, State: state})
 	}
-	if err := w.Flush(); err != nil {
-		return err
-	}
-	return f.Sync()
+	return list, scanner.Err()
 }
 
-func modifyActiveFile(target string, add bool) error {
-	f, err := os.OpenFile(conf.ActiveLogsPath, os.O_RDWR|os.O_CREATE, 0660)
-	if err != nil {
-		if !add && os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("tasklog: open active tasks: %w", err)
+func renderTaskList(list []TaskListInfo) string {
+	var sb strings.Builder
+	for _, info := range list {
+		sb.WriteString(RenderStatusLine(info.UPID, info.State))
 	}
+	return sb.String()
+}
+
+// replaceFile atomically rewrites path via temp file + rename, matching
+// PBS's replace_file.
+func replaceFile(path, content string, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp*")
+	if err != nil {
+		return fmt.Errorf("tasklog: create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
 	defer func() {
-		if cerr := f.Close(); cerr != nil {
+		if cerr := os.Remove(tmpName); cerr != nil && !os.IsNotExist(cerr) {
 			slog.Error(cerr.Error())
 		}
 	}()
 
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		return fmt.Errorf("tasklog: lock active tasks: %w", err)
-	}
-	defer func() {
-		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
-			slog.Error(err.Error())
+	if _, err := tmp.WriteString(content); err != nil {
+		if cerr := tmp.Close(); cerr != nil {
+			slog.Error(cerr.Error())
 		}
-	}()
+		return fmt.Errorf("tasklog: write temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		if cerr := tmp.Close(); cerr != nil {
+			slog.Error(cerr.Error())
+		}
+		return fmt.Errorf("tasklog: sync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("tasklog: close temp file: %w", err)
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return fmt.Errorf("tasklog: chmod temp file: %w", err)
+	}
+	if err := proxmox.ChownBackupUser(tmpName); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
 
-	var lines []string
-	found := false
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		fields := strings.Fields(line)
-		if len(fields) > 0 && fields[0] == target {
-			found = true
-			if !add {
-				continue
-			}
-		}
-		lines = append(lines, line)
-	}
-	if add && !found {
-		lines = append(lines, target)
-	}
-	if !add && !found {
+func appendArchiveLines(finished []TaskListInfo) error {
+	if len(finished) == 0 {
 		return nil
 	}
 
-	if err := f.Truncate(0); err != nil {
+	archive, err := os.OpenFile(archivePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0660)
+	if err != nil {
+		return fmt.Errorf("tasklog: open archive: %w", err)
+	}
+	if err := proxmox.ChownBackupUser(archivePath); err != nil {
+		if cerr := archive.Close(); cerr != nil {
+			slog.Error(cerr.Error())
+		}
 		return err
 	}
-	if _, err := f.Seek(0, 0); err != nil {
-		return err
-	}
-	w := bufio.NewWriter(f)
-	for _, line := range lines {
-		if _, err := w.WriteString(line + "\n"); err != nil {
-			return err
+	defer func() {
+		if cerr := archive.Close(); cerr != nil {
+			slog.Error(cerr.Error())
+		}
+	}()
+
+	for _, info := range finished {
+		if _, err := archive.WriteString(RenderStatusLine(info.UPID, info.State)); err != nil {
+			return fmt.Errorf("tasklog: write archive: %w", err)
 		}
 	}
-	if err := w.Flush(); err != nil {
+	return nil
+}
+
+// Reconcile is PBS's update_active_workers: under the exclusive task-list
+// lock, move finished and dead workers from the active list into the
+// archive, optionally adding newUPID as newly running. It is the single
+// write path for tasks/active and the archive, which is what makes
+// concurrent access safe against proxmox-backup doing the same dance on
+// its side: both sides serialize on tasks/.active.lock.
+func Reconcile(newUPID string) error {
+	lock, err := lockTaskList(true)
+	if err != nil {
 		return err
 	}
-	return f.Sync()
+	defer lock.Close()
+
+	activeList, err := readTaskFile(activeTasks)
+	if err != nil {
+		return err
+	}
+
+	var finished []TaskListInfo
+	kept := activeList[:0]
+	for _, info := range activeList {
+		switch {
+		case info.State != nil:
+			finished = append(finished, info)
+		case !workerIsActiveLocal(info.Task):
+			now := time.Now().Unix()
+			state, serr := ReadStatusFromLog(info.UPID)
+			if serr != nil {
+				state = TaskState{Status: StatusUnknown, EndTime: now}
+			}
+			info.State = &state
+			finished = append(finished, info)
+		default:
+			kept = append(kept, info)
+		}
+	}
+
+	if newUPID != "" {
+		task, err := proxmox.ParseUPID(newUPID)
+		if err != nil {
+			return fmt.Errorf("tasklog: parse upid: %w", err)
+		}
+		kept = append(kept, TaskListInfo{UPID: newUPID, Task: task, State: nil})
+	}
+
+	if err := replaceFile(activeTasks, renderTaskList(kept), 0660); err != nil {
+		return err
+	}
+
+	sort.SliceStable(finished, func(i, j int) bool {
+		return finished[i].State.EndTime < finished[j].State.EndTime
+	})
+	return appendArchiveLines(finished)
 }

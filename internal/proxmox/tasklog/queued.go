@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"log/slog"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"log/slog"
 )
 
 func FormatWorkerID(store, prefix, identifier string) string {
@@ -56,8 +56,7 @@ func (t *QueuedTask) UpdateDescription(desc string) error {
 		}
 	}()
 
-	timestamp := time.Now().Format(time.RFC3339)
-	if _, err := fmt.Fprintf(file, "%s: TASK QUEUED: %s\n", timestamp, desc); err != nil {
+	if _, err := fmt.Fprintf(file, "%s\n", proxmox.FormatLogLine(time.Now(), "TASK QUEUED: "+desc)); err != nil {
 		return fmt.Errorf("failed to write status line: %w", err)
 	}
 	return nil

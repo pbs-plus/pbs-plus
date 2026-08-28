@@ -42,52 +42,36 @@ type mtfJob struct {
 	cleanupOnce sync.Once
 }
 
-func newJob(job mtfdb.MTFJob, st *store.Store, mapper *mtfdb.Mapper) *jobs.Job {
-	j := &mtfJob{
-		job:    job,
-		store:  st,
-		mapper: mapper,
-		logger: log.WithScope(log.Scope{JobID: job.ID}),
-	}
-	return &jobs.Job{
-		ID:        job.ID,
-		Execute:   j.execute,
-		OnSuccess: j.onSuccess,
-		OnError:   j.onError,
-		Cleanup:   j.cleanup,
-	}
-}
-
-func NewJob(jobID string, st *store.Store) (*jobs.Job, string, error) {
+// newMigrationJob loads the MTF job definition for a workflow run.
+func newMigrationJob(jobID string, st *store.Store) (*mtfJob, error) {
 	ctx := st.Ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	jobRec, err := st.MtfStore.GetMtfJob(ctx, jobID)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
-	task, err := startTask(jobRec)
-	if err != nil {
-		return nil, "", fmt.Errorf("start task: %w", err)
-	}
-
-	mj := &mtfJob{
+	return &mtfJob{
 		job:    jobRec,
 		store:  st,
 		mapper: st.MtfMapper,
 		logger: log.WithScope(log.Scope{JobID: jobRec.ID}),
-		task:   task,
-	}
+	}, nil
+}
 
-	return &jobs.Job{
-		ID:        jobRec.ID,
-		Execute:   mj.execute,
-		OnSuccess: mj.onSuccess,
-		OnError:   mj.onError,
-		Cleanup:   mj.cleanup,
-	}, task.UPID(), nil
+// reattach reopens the task log when the live handle is gone (replay
+// after a crash or retry).
+func (j *mtfJob) reattach(upid string) error {
+	wt, err := tasklog.ReopenWorkerTask(upid)
+	if err != nil {
+		return err
+	}
+	j.mu.Lock()
+	j.task = &Task{WorkerTask: wt, job: j.job}
+	j.mu.Unlock()
+	return nil
 }
 
 func (j *mtfJob) execute(ctx context.Context) error {
@@ -330,7 +314,7 @@ func (j *mtfJob) resolveDrivePaths(tapeCfg *tape.Config) (tapeDev, changerDev st
 	return tapeDev, changerDev, driveIdx, nil
 }
 
-func (j *mtfJob) onSuccess() {
+func (j *mtfJob) finalizeSuccess() {
 	j.mu.RLock()
 	j.logger.Info("mtf job completed successfully")
 	task := j.task
@@ -360,7 +344,7 @@ func (j *mtfJob) onSuccess() {
 	j.notify(nil)
 }
 
-func (j *mtfJob) onError(runErr error) {
+func (j *mtfJob) finalizeFailure(runErr error) {
 	j.mu.RLock()
 	j.logger.Error(runErr, "mtf job failed")
 	task := j.task
@@ -464,7 +448,7 @@ func (j *mtfJob) cleanup() {
 }
 
 func startTask(job mtfdb.MTFJob) (*Task, error) {
-	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("pbsplus", mtfWorkerType, tasklog.FormatWorkerID(job.Datastore, "mtf-", job.ID))
 	if err != nil {
 		return nil, err
 	}
@@ -484,7 +468,7 @@ func (t *Task) CloseErr(taskErr error) {
 }
 
 func errorTask(job mtfdb.MTFJob, runErr error) *Task {
-	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, mtfWID(job))
+	wt, err := tasklog.NewWorkerTask("pbsplusgen-error", mtfWorkerType, tasklog.FormatWorkerID(job.Datastore, "mtf-", job.ID))
 	if err != nil {
 		return nil
 	}
@@ -496,10 +480,4 @@ func errorTask(job mtfdb.MTFJob, runErr error) *Task {
 		WorkerTask: wt,
 		job:        job,
 	}
-}
-
-func mtfWID(job mtfdb.MTFJob) string {
-	return proxmox.EncodeToHexEscapes(job.Datastore) +
-		proxmox.EncodeToHexEscapes(":") +
-		"mtf-" + proxmox.EncodeToHexEscapes(job.ID)
 }

@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
@@ -277,7 +278,6 @@ func mergePBSLogs(
 	succeeded := false
 	cancelled := false
 	warningsNum := pbsWarningRawCount
-	timestamp := time.Now().In(systemLocation()).Format(time.RFC3339)
 
 	if hasError && hasOnlySpuriousError && clientCompleted {
 		hasError = false
@@ -285,50 +285,30 @@ func mergePBSLogs(
 		isGraceful = true
 	}
 
+	var state tasklog.TaskState
 	switch {
 	case hasError, incomplete:
-		if _, err := tmpWriter.WriteString(timestamp); err != nil {
-			logger.Error(err, "")
-		}
-		if _, err := tmpWriter.WriteString(": TASK ERROR: "); err != nil {
-			logger.Error(err, "")
-		}
-		if customErr != nil {
-			if _, err := tmpWriter.WriteString(customErrStr); err != nil {
-				logger.Error(err, "")
-			}
-		} else {
-			if _, err := tmpWriter.WriteString(jobs.ErrUnexpected.Error()); err != nil {
-				logger.Error(err, "")
-			}
-		}
 		cancelled = true
-
-	default:
-		if _, err := tmpWriter.WriteString(timestamp); err != nil {
-			logger.Error(err, "")
+		msg := jobs.ErrUnexpected.Error()
+		if customErr != nil {
+			msg = customErrStr
 		}
+		state = tasklog.TaskState{Status: tasklog.StatusError, Message: msg}
+	default:
 		succeeded = true
-		if warningsNum > 0 {
-			if _, err := tmpWriter.WriteString(": TASK WARNINGS: "); err != nil {
-				logger.Error(err, "")
-			}
-			if _, err := tmpWriter.WriteString(strconv.Itoa(warningsNum)); err != nil {
-				logger.Error(err, "")
-			}
-		} else if isGraceful {
-			if _, err := tmpWriter.WriteString(": TASK OK"); err != nil {
-				logger.Error(err, "")
-			}
-		} else {
+		switch {
+		case warningsNum > 0:
+			state = tasklog.TaskState{Status: tasklog.StatusWarning, WarnCount: uint64(warningsNum)}
+		case isGraceful:
+			state = tasklog.TaskState{Status: tasklog.StatusOK}
+		default:
 			succeeded = false
-			if _, err := tmpWriter.WriteString(": TASK ERROR: Agent crashed unexpectedly"); err != nil {
-				logger.Error(err, "")
-			}
+			state = tasklog.TaskState{Status: tasklog.StatusError, Message: "Agent crashed unexpectedly"}
 		}
 	}
 
-	if err := tmpWriter.WriteByte('\n'); err != nil {
+	finalLine := proxmox.FormatLogLine(time.Now().In(systemLocation()), state.ResultText()) + "\n"
+	if _, err := tmpWriter.WriteString(finalLine); err != nil {
 		logger.Error(err, "")
 	}
 
