@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 )
 
 type Abortable interface {
@@ -41,8 +42,15 @@ func (e *Engine) BindTaskAbort(executionID string, task Abortable) {
 		return
 	}
 	task.OnAbort(func() {
-		if _, err := e.Cancel(context.Background(), executionID); err != nil {
+		execution, err := e.Cancel(context.Background(), executionID)
+		if err != nil {
 			log.Error(err, "workflow engine task abort failed", "executionID", executionID)
+			return
+		}
+		if execution.State == jobdb.StateCanceled {
+			if closer, ok := task.(interface{ CloseErr(error) }); ok {
+				closer.CloseErr(context.Canceled)
+			}
 		}
 	})
 }
