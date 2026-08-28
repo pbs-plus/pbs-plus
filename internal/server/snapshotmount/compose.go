@@ -133,7 +133,7 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	}
 
 	targetDir := groupParentDir(dsInfo.Path, in.TargetNS, in.TargetType, in.TargetID)
-	if err := proxmox.EnsureGroupPath(dsInfo.Path, in.TargetNS, in.TargetType, in.TargetID); err != nil {
+	if err := proxmox.EnsureGroupPath(dsInfo.Path, in.TargetNS, in.TargetType, ""); err != nil {
 		return fmt.Errorf("ensure target group dir: %w", err)
 	}
 	backupTime := uniqueSnapshotTime(targetDir)

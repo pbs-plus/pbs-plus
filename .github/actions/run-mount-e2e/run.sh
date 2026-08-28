@@ -26,7 +26,7 @@ dump_logs() {
 		tail -40 "$f" 2>/dev/null || true
 	done
 	echo "--- workflow task logs ---"
-	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(init|commit|mount|unmount):' | while read -r f; do
+	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(init|commit|compose|mount|unmount):' | while read -r f; do
 		echo "== $f =="
 		tail -60 "$f" 2>/dev/null || true
 	done
@@ -91,6 +91,13 @@ group_newer_than() {
 
 commit_errored() {
 	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':commit:' | while read -r f; do
+		grep -q "TASK ERROR" "$f" 2>/dev/null && { echo "$f"; return 0; }
+	done
+	return 1
+}
+
+compose_errored() {
+	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':compose:' | while read -r f; do
 		grep -q "TASK ERROR" "$f" 2>/dev/null && { echo "$f"; return 0; }
 	done
 	return 1
@@ -259,6 +266,70 @@ CODE=$(code_of "$RESP")
 LEFT=$(curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles" \
 	| jq -r --arg id "$PROFILE_ID" '.data[]? | select(.id==$id) | .id' | head -1)
 [ -z "$LEFT" ] && ok "profile gone from list" || fail "profile still listed"
+
+section "PHASE 5: Compose new snapshot from selection"
+
+COMPOSE_GROUP_DIR="/mnt/test/ns/test/host/e2e-compose"
+
+RESP=$(api_post "/api2/extjs/config/d2d-compose/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
+	-d "backup-time=$NEW_SNAP" -d "file-name=$DIDX3" \
+	-d "target-ns=$NAMESPACE" -d "target-type=host" -d "target-id=e2e-compose")
+CODE=$(code_of "$RESP")
+[ "$CODE" = "400" ] && ok "compose without paths rejected" || fail "compose without paths accepted (HTTP $CODE)"
+
+SEL=$(printf /hello.txt | base64 -w0)
+RESP=$(api_post "/api2/extjs/config/d2d-compose/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
+	-d "backup-time=$NEW_SNAP" -d "file-name=$DIDX3" \
+	-d "target-ns=$NAMESPACE" -d "target-type=host" -d "target-id=e2e-compose" \
+	-d "paths=$SEL")
+if submit_ok "$RESP"; then
+	ok "compose request accepted"
+	COMPOSE_DEADLINE=$((SECONDS + 420))
+	COMPOSE_OK=0
+	while [ $SECONDS -lt $COMPOSE_DEADLINE ]; do
+		if [ -n "$(latest_snapshot "$COMPOSE_GROUP_DIR")" ]; then COMPOSE_OK=1; break; fi
+		if ERRF=$(compose_errored); then
+			echo "compose task failed (see log below)"
+			tail -20 "$ERRF"
+			break
+		fi
+		sleep 2
+	done
+	[ $COMPOSE_OK = 1 ] && ok "compose produced target snapshot" || { fail "compose produced no snapshot (after $((SECONDS))s)"; dump_logs; }
+else
+	fail "compose rejected: $(body_of "$RESP")"
+fi
+
+COMPOSE_SNAP=$(latest_snapshot "$COMPOSE_GROUP_DIR")
+[ -n "$COMPOSE_SNAP" ] && ok "composed snapshot: $COMPOSE_SNAP" || die "no composed snapshot"
+COMPOSE_DIDX=$(didx_in "$COMPOSE_GROUP_DIR/$COMPOSE_SNAP")
+[ -n "$COMPOSE_DIDX" ] && ok "composed didx: $COMPOSE_DIDX" || die "no didx in composed snapshot"
+
+COMPOSE_MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-e2e-compose/$COMPOSE_SNAP"
+RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-compose" \
+	-d "backup-time=$COMPOSE_SNAP" -d "file-name=$COMPOSE_DIDX" -d "mode=ro")
+if submit_ok "$RESP"; then
+	ok "composed mount request accepted"
+	wait_for "composed snapshot mounted" 240 session_mounted "$COMPOSE_MP" || true
+else
+	fail "composed mount rejected: $(body_of "$RESP")"
+fi
+
+[ "$(cat "$COMPOSE_MP/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
+	&& ok "selected hello.txt present in composed snapshot" || fail "composed hello.txt wrong or missing"
+[ ! -e "$COMPOSE_MP/nested" ] \
+	&& ok "unselected nested/ excluded from composed snapshot" || fail "unselected nested/ leaked into composed snapshot"
+
+RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$COMPOSE_MP")
+if submit_ok "$RESP"; then
+	ok "composed unmount accepted"
+	wait_for "composed session unmounted" 120 session_gone "$COMPOSE_MP" || true
+else
+	fail "composed unmount rejected: $(body_of "$RESP")"
+fi
 
 section "RESULTS"
 
