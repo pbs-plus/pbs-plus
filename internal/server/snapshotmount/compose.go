@@ -106,25 +106,14 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	}
 	chunkSource := datastore.NewChunkStoreSource(chunkStore)
 
-	metaIdx, err := os.ReadFile(mpxarPath)
-	if err != nil {
-		return fmt.Errorf("read source metadata index: %w", err)
-	}
 	var src transfer.ArchiveReader
 	if isSplit {
-		payloadIdx, err := os.ReadFile(ppxarPath)
-		if err != nil {
-			return fmt.Errorf("read source payload index: %w", err)
-		}
-		src, err = transfer.NewSplitReader(metaIdx, payloadIdx, chunkSource)
-		if err != nil {
-			return fmt.Errorf("open source archive: %w", err)
-		}
+		src, err = transfer.OpenSplitReader(mpxarPath, ppxarPath, chunkSource)
 	} else {
-		src, err = transfer.NewChunkedReader(metaIdx, chunkSource)
-		if err != nil {
-			return fmt.Errorf("open source archive: %w", err)
-		}
+		src, err = transfer.OpenChunkedReader(mpxarPath, chunkSource)
+	}
+	if err != nil {
+		return fmt.Errorf("open source archive: %w", err)
 	}
 	defer func() {
 		_ = src.Close()
