@@ -46,7 +46,7 @@ func runCompose(ctx context.Context, in jobs.SnapshotComposeInput) error {
 	return nil
 }
 
-func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotComposeInput) error {
+func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotComposeInput) (err error) {
 	if err := validate.ValidateDatastore(in.Datastore); err != nil {
 		return fmt.Errorf("invalid datastore: %w", err)
 	}
@@ -93,11 +93,48 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	if dsInfo.Path == "" {
 		return fmt.Errorf("datastore %s has no path", in.Datastore)
 	}
+	if dsInfo.MaintenanceMode != "" {
+		return fmt.Errorf("datastore %s is in maintenance mode", in.Datastore)
+	}
 
 	mpxarPath, ppxarPath, isSplit, err := proxmox.BuildPxarPaths(
 		dsInfo.Path, in.SourceNS, in.SourceType, in.SourceID, DirTime(srcTime.UTC()), in.SourceFile)
 	if err != nil {
 		return fmt.Errorf("resolve source archive: %w", err)
+	}
+	bt, err := datastore.ParseBackupType(in.TargetType)
+	if err != nil {
+		return fmt.Errorf("invalid backup type %q: %w", in.TargetType, err)
+	}
+	authToken := token.ReadLocal()
+	authID, _, ok := strings.Cut(authToken, ":")
+	if !ok {
+		return errors.New("local PBS API token is unavailable")
+	}
+	publication, err := beginComposePublication(
+		ctx,
+		in.Datastore,
+		dsInfo.Path,
+		in.SourceNS,
+		in.SourceType,
+		in.SourceID,
+		srcTime,
+		in.TargetNS,
+		in.TargetType,
+		in.TargetID,
+		authID,
+	)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, publication.Close()) }()
+
+	indexPaths := []string{mpxarPath}
+	if isSplit {
+		indexPaths = append(indexPaths, ppxarPath)
+	}
+	if err := verifyComposeSource(filepath.Dir(mpxarPath), in.SourceType, in.SourceID, srcTime.Unix(), indexPaths...); err != nil {
+		return fmt.Errorf("verify source snapshot: %w", err)
 	}
 
 	chunkStore, err := datastore.NewChunkStore(dsInfo.Path)
@@ -133,59 +170,29 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 		}
 	}
 
-	targetDir := groupParentDir(dsInfo.Path, in.TargetNS, in.TargetType, in.TargetID)
-	if err := proxmox.EnsureGroupPath(dsInfo.Path, in.TargetNS, in.TargetType, ""); err != nil {
-		return fmt.Errorf("ensure target group dir: %w", err)
-	}
-	backupTime := uniqueSnapshotTime(targetDir)
-
-	bt, err := datastore.ParseBackupType(in.TargetType)
-	if err != nil {
-		return fmt.Errorf("invalid backup type %q: %w", in.TargetType, err)
-	}
-
-	task.LogString("starting PBS session")
-	store := backupproxy.NewPBSStore(backupproxy.PBSConfig{
-		BaseURL:       token.DefaultAPIURL,
-		Datastore:     in.Datastore,
-		AuthToken:     token.ReadLocal(),
-		Namespace:     in.TargetNS,
-		SkipTLSVerify: true,
-	}, func() buzhash.Config {
+	backupTime := publication.BackupTime()
+	task.LogString("starting local datastore publication")
+	store, err := backupproxy.NewDatastoreStore(dsInfo.Path, publication.snapshotDir, func() buzhash.Config {
 		cfg, cfgErr := buzhash.NewConfig(4 << 20)
 		if cfgErr != nil {
 			log.Error(cfgErr, "")
 		}
 		return cfg
-	}(), false)
-
-	lastUploadLog := time.Now()
-	lastUploadedBytes := uint64(0)
-	var uploadProgress backupproxy.UploadProgress
-	onUploadProgress := func(progress backupproxy.UploadProgress) {
-		uploadProgress = progress
-		now := time.Now()
-		elapsed := now.Sub(lastUploadLog)
-		if elapsed < 5*time.Second {
-			return
-		}
-		rate := float64(progress.UploadedBytes-lastUploadedBytes) / elapsed.Seconds() / (1 << 20)
-		task.LogString(fmt.Sprintf(
-			"payload progress: processed %.1f GiB in %d chunks; uploaded %.1f GiB in %d chunks (%.1f MiB/s)",
-			float64(progress.ProcessedBytes)/(1<<30), progress.ProcessedChunks,
-			float64(progress.UploadedBytes)/(1<<30), progress.UploadedChunks, rate))
-		lastUploadLog = now
-		lastUploadedBytes = progress.UploadedBytes
+	}(), backupproxy.DatastoreStoreOptions{
+		UID:      proxmox.BackupUID,
+		GID:      proxmox.BackupGID,
+		Compress: false,
+	})
+	if err != nil {
+		return fmt.Errorf("open local datastore publisher: %w", err)
 	}
 
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
-		BackupType:       bt,
-		BackupID:         in.TargetID,
-		BackupTime:       backupTime,
-		Namespace:        in.TargetNS,
-		PreviousBackup:   previousComposeRef(dsInfo.Path, in, bt, backupTime),
-		CryptMode:        datastore.CryptModeNone,
-		OnUploadProgress: onUploadProgress,
+		BackupType: bt,
+		BackupID:   in.TargetID,
+		BackupTime: backupTime,
+		Namespace:  in.TargetNS,
+		CryptMode:  datastore.CryptModeNone,
 	})
 	if err != nil {
 		return fmt.Errorf("start PBS session: %w", err)
@@ -227,19 +234,21 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 		_ = writer.Close()
 		return fmt.Errorf("copy selection: %w", err)
 	}
-	task.LogString(fmt.Sprintf("copy complete (%d entries); flushing payload uploads", copied))
+	task.LogString(fmt.Sprintf("copy complete (%d entries); writing local indexes", copied))
 	if err := writer.Finish(); err != nil {
 		return fmt.Errorf("finish writer: %w", err)
 	}
-	task.LogString(fmt.Sprintf(
-		"payload upload complete: processed %.1f GiB in %d chunks; uploaded %.1f GiB in %d chunks",
-		float64(uploadProgress.ProcessedBytes)/(1<<30), uploadProgress.ProcessedChunks,
-		float64(uploadProgress.UploadedBytes)/(1<<30), uploadProgress.UploadedChunks))
+	for _, name := range []string{in.TargetID + ".mpxar.didx", in.TargetID + ".ppxar.didx"} {
+		if err := verifyPublishedIndex(filepath.Join(publication.snapshotDir, name)); err != nil {
+			return err
+		}
+	}
 
-	task.LogString("finalizing PBS snapshot")
+	task.LogString("publishing snapshot manifest")
 	if _, err := session.Finish(ctx); err != nil {
 		return fmt.Errorf("finish session: %w", err)
 	}
+	publication.Commit()
 	task.LogString(fmt.Sprintf("composed %s/%s/%s snapshot %s (%d entries)",
 		in.TargetNS, in.TargetType, in.TargetID, DirTime(time.Unix(backupTime, 0).UTC()), copied))
 	return nil
@@ -253,22 +262,5 @@ func uniqueSnapshotTime(groupDir string) int64 {
 			return candidate
 		}
 		candidate++
-	}
-}
-
-func previousComposeRef(storeRoot string, in jobs.SnapshotComposeInput, bt datastore.BackupType, backupTime int64) *backupproxy.PreviousBackupRef {
-	when, _, err := LatestSnapshotIn(storeRoot, in.TargetNS, in.TargetType, in.TargetID)
-	if err != nil {
-		return nil
-	}
-	t, err := time.Parse(time.RFC3339, when)
-	if err != nil || t.Unix() >= backupTime {
-		return nil
-	}
-	return &backupproxy.PreviousBackupRef{
-		BackupType: bt,
-		BackupID:   in.TargetID,
-		BackupTime: t.Unix(),
-		Namespace:  in.TargetNS,
 	}
 }
