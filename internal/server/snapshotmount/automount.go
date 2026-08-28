@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
@@ -23,6 +24,33 @@ const (
 
 func groupKeyOf(datastore, ns, backupType, backupID string) string {
 	return datastore + "\x00" + ns + "\x00" + backupType + "\x00" + backupID
+}
+
+type followGate struct {
+	lastRun map[string]time.Time
+}
+
+func (g *followGate) due(p Profile, now time.Time) bool {
+	if p.Schedule == "" {
+		return true
+	}
+	ev, err := calendar.Parse(p.Schedule)
+	if err != nil {
+		return true
+	}
+	ref, ok := g.lastRun[p.ID()]
+	if !ok {
+		ref = now.Add(-followLatestInterval)
+	}
+	next, err := calendar.ComputeNextEvent(ev, ref, time.Local)
+	if err != nil || next.After(now) {
+		return false
+	}
+	if g.lastRun == nil {
+		g.lastRun = make(map[string]time.Time)
+	}
+	g.lastRun[p.ID()] = next
+	return true
 }
 
 func decideRemount(p Profile, mountedOfGroup []Session, latest time.Time) (remountAction, Session) {
@@ -66,6 +94,7 @@ func decideRemount(p Profile, mountedOfGroup []Session, latest time.Time) (remou
 
 func FollowLatestProfiles(ctx context.Context, engine *jobs.Engine) {
 	AutoMountProfiles(ctx, engine)
+	gate := &followGate{}
 	ticker := time.NewTicker(followLatestInterval)
 	defer ticker.Stop()
 	for {
@@ -73,12 +102,32 @@ func FollowLatestProfiles(ctx context.Context, engine *jobs.Engine) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			AutoMountProfiles(ctx, engine)
+			autoMountProfilesGated(ctx, engine, gate)
 		}
 	}
 }
 
+func autoMountProfilesGated(ctx context.Context, engine *jobs.Engine, gate *followGate) {
+	now := time.Now()
+	profiles, err := ListProfiles()
+	if err != nil {
+		log.Error(err, "auto-mount: listing profiles")
+		return
+	}
+	var due []Profile
+	for _, p := range profiles {
+		if p.AutoMount && gate.due(p, now) {
+			due = append(due, p)
+		}
+	}
+	autoMountProfiles(ctx, engine, due)
+}
+
 func AutoMountProfiles(ctx context.Context, engine *jobs.Engine) {
+	autoMountProfiles(ctx, engine, nil)
+}
+
+func autoMountProfiles(ctx context.Context, engine *jobs.Engine, only []Profile) {
 	profiles, err := ListProfiles()
 	if err != nil {
 		log.Error(err, "auto-mount: listing profiles")
@@ -97,10 +146,11 @@ func AutoMountProfiles(ctx context.Context, engine *jobs.Engine) {
 		key := groupKeyOf(s.Datastore, s.Namespace, s.BackupType, s.BackupID)
 		mounted[key] = append(mounted[key], s)
 	}
-	for _, p := range profiles {
-		if !p.AutoMount {
-			continue
-		}
+	iterate := profiles
+	if only != nil {
+		iterate = only
+	}
+	for _, p := range iterate {
 		group := groupKeyOf(p.Datastore, p.Namespace, p.BackupType, p.BackupID)
 		backupTime, fileName, err := LatestSnapshot(p)
 		if err != nil {

@@ -53,7 +53,7 @@ func TestProfileCRUD(t *testing.T) {
 
 	create := url.Values{
 		"datastore": {"ds1"}, "ns": {"a"}, "backup-type": {"host"}, "backup-id": {"id1"},
-		"mode": {"rw"}, "mount-path": {"/mnt/p"}, "auto-mount": {"1"},
+		"mode": {"rw"}, "mount-path": {"/mnt/p"}, "schedule": {"02:00"}, "auto-mount": {"1"},
 	}
 	r, w := profileRequest(http.MethodPost, "/api2/extjs/config/d2d-mount-profiles", create)
 	ExtJsMountProfilesHandler(app).ServeHTTP(w, r)
@@ -66,7 +66,7 @@ func TestProfileCRUD(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create: %v body=%s", err, w.Body.String())
 	}
-	if created.Data["mode"] != "rw" || created.Data["auto-mount"] != true {
+	if created.Data["mode"] != "rw" || created.Data["schedule"] != "02:00" || created.Data["auto-mount"] != true {
 		t.Fatalf("create data = %v", created.Data)
 	}
 	id, _ := created.Data["id"].(string)
@@ -88,7 +88,7 @@ func TestProfileCRUD(t *testing.T) {
 
 	update := url.Values{
 		"datastore": {"ds1"}, "ns": {"a"}, "backup-type": {"host"}, "backup-id": {"id1"},
-		"mode": {"ro"}, "mount-path": {""}, "auto-mount": {"0"},
+		"mode": {"ro"}, "mount-path": {""}, "schedule": {""}, "auto-mount": {"0"},
 	}
 	r, w = profileRequestID(http.MethodPut, id, update)
 	ExtJsMountProfileSingleHandler(app).ServeHTTP(w, r)
@@ -99,7 +99,7 @@ func TestProfileCRUD(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("load ok=%v err=%v", ok, err)
 	}
-	if p.Mode != "ro" || p.AutoMount || p.MountPath != "" || p.CreatedAt == 0 {
+	if p.Mode != "ro" || p.AutoMount || p.MountPath != "" || p.Schedule != "" || p.CreatedAt == 0 {
 		t.Fatalf("updated profile = %+v", p)
 	}
 

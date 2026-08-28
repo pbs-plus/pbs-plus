@@ -6,7 +6,7 @@ import (
 
 var mountProfilesModel = js.Model{
 	Name:       "pbs-model-mount-profiles",
-	Fields:     js.Fields("id", "datastore", "namespace", "backup-type", "backup-id", "mode", "mount-path", "auto-mount"),
+	Fields:     js.Fields("id", "datastore", "namespace", "backup-type", "backup-id", "mode", "mount-path", "schedule", "auto-mount"),
 	IDProperty: "id",
 }
 
@@ -83,6 +83,13 @@ var mountProfilesPanel = js.Panel{
 						value: values["mount-path"],
 					},
 					{
+						xtype: "proxmoxtextfield",
+						name: "schedule",
+						fieldLabel: gettext("Check Schedule"),
+						emptyText: gettext("Always (checked every 5 minutes)"),
+						value: values.schedule,
+					},
+					{
 						xtype: "proxmoxcheckbox",
 						name: "auto-mount",
 						fieldLabel: gettext("Auto-mount at startup"),
@@ -112,6 +119,7 @@ var mountProfilesPanel = js.Panel{
 								"backup-id": vals["backup-id"],
 								mode: vals.mode,
 								"mount-path": vals["mount-path"] || "",
+								"schedule": vals.schedule || "",
 								"auto-mount": vals["auto-mount"] === "1" ? 1 : 0,
 							};
 							let url = "/api2/extjs/config/d2d-mount-profiles";
@@ -196,6 +204,9 @@ var mountProfilesPanel = js.Panel{
 		`)},
 		{Text: "Mount Path", DataIndex: "mount-path", Flex: 1, Renderer: js.Func("v", `
 			return v ? Ext.String.htmlEncode(v) : gettext("Automatic");
+		`)},
+		{Text: "Schedule", DataIndex: "schedule", Width: 140, Renderer: js.Func("v", `
+			return v ? Ext.String.htmlEncode(v) : gettext("Always");
 		`)},
 		{Text: "Auto-mount", DataIndex: "auto-mount", Width: 90, Renderer: js.Func("v", `
 			return v ? '<i class="fa fa-check-circle"></i> ' + gettext("Yes") : gettext("No");

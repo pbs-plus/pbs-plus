@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -23,6 +24,7 @@ type Profile struct {
 	BackupID   string `json:"backup_id"`
 	Mode       string `json:"mode"`
 	MountPath  string `json:"mount_path"`
+	Schedule   string `json:"schedule"`
 	AutoMount  bool   `json:"auto_mount"`
 	CreatedAt  int64  `json:"created_at"`
 	UpdatedAt  int64  `json:"updated_at"`
@@ -52,6 +54,11 @@ func ValidateProfile(p Profile) error {
 	}
 	if p.Mode != ModeRO && p.Mode != ModeRW {
 		return fmt.Errorf("invalid mode %q", p.Mode)
+	}
+	if p.Schedule != "" {
+		if _, err := calendar.Parse(p.Schedule); err != nil {
+			return fmt.Errorf("invalid schedule %q: %w", p.Schedule, err)
+		}
 	}
 	return ValidateMountPath(p.MountPath)
 }

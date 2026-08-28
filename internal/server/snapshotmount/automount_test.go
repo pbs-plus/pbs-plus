@@ -109,3 +109,39 @@ func TestGroupKeyOfCollidesOnlyOnSameGroup(t *testing.T) {
 		}
 	}
 }
+
+func TestFollowGateDue(t *testing.T) {
+	loc := time.FixedZone("test", 0)
+	oldLocal := time.Local
+	time.Local = loc
+	t.Cleanup(func() { time.Local = oldLocal })
+
+	tick := time.Date(2026, 3, 1, 2, 5, 0, 0, loc)
+	gate := &followGate{}
+
+	if !gate.due(Profile{Schedule: ""}, tick) {
+		t.Fatal("empty schedule must always be due")
+	}
+	if !gate.due(Profile{Schedule: "total nonsense ;;;"}, tick) {
+		t.Fatal("unparseable schedule falls back to always due")
+	}
+
+	p := Profile{Datastore: "ds1", BackupType: "host", BackupID: "id1", Schedule: "02:00"}
+	if gate.due(p, tick) {
+		t.Fatal("first tick before any event since ref should not be due")
+	}
+	if gate.lastRun[p.ID()] != (time.Time{}) {
+		t.Fatal("non-due check must not consume the event")
+	}
+
+	next := time.Date(2026, 3, 2, 2, 0, 0, 0, loc)
+	if !gate.due(p, next.Add(time.Minute)) {
+		t.Fatal("tick after the scheduled event must be due")
+	}
+	if gate.due(p, next.Add(6*time.Minute)) {
+		t.Fatal("same event must not fire twice")
+	}
+	if !gate.due(p, next.Add(25*time.Hour)) {
+		t.Fatal("next day event must fire")
+	}
+}
