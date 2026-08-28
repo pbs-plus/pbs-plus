@@ -159,13 +159,33 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 		return cfg
 	}(), false)
 
+	lastUploadLog := time.Now()
+	lastUploadedBytes := uint64(0)
+	var uploadProgress backupproxy.UploadProgress
+	onUploadProgress := func(progress backupproxy.UploadProgress) {
+		uploadProgress = progress
+		now := time.Now()
+		elapsed := now.Sub(lastUploadLog)
+		if elapsed < 5*time.Second {
+			return
+		}
+		rate := float64(progress.UploadedBytes-lastUploadedBytes) / elapsed.Seconds() / (1 << 20)
+		task.LogString(fmt.Sprintf(
+			"payload progress: processed %.1f GiB in %d chunks; uploaded %.1f GiB in %d chunks (%.1f MiB/s)",
+			float64(progress.ProcessedBytes)/(1<<30), progress.ProcessedChunks,
+			float64(progress.UploadedBytes)/(1<<30), progress.UploadedChunks, rate))
+		lastUploadLog = now
+		lastUploadedBytes = progress.UploadedBytes
+	}
+
 	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
-		BackupType:     bt,
-		BackupID:       in.TargetID,
-		BackupTime:     backupTime,
-		Namespace:      in.TargetNS,
-		PreviousBackup: previousComposeRef(dsInfo.Path, in, bt, backupTime),
-		CryptMode:      datastore.CryptModeNone,
+		BackupType:       bt,
+		BackupID:         in.TargetID,
+		BackupTime:       backupTime,
+		Namespace:        in.TargetNS,
+		PreviousBackup:   previousComposeRef(dsInfo.Path, in, bt, backupTime),
+		CryptMode:        datastore.CryptModeNone,
+		OnUploadProgress: onUploadProgress,
 	})
 	if err != nil {
 		return fmt.Errorf("start PBS session: %w", err)
@@ -207,11 +227,16 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 		_ = writer.Close()
 		return fmt.Errorf("copy selection: %w", err)
 	}
+	task.LogString(fmt.Sprintf("copy complete (%d entries); flushing payload uploads", copied))
 	if err := writer.Finish(); err != nil {
 		return fmt.Errorf("finish writer: %w", err)
 	}
+	task.LogString(fmt.Sprintf(
+		"payload upload complete: processed %.1f GiB in %d chunks; uploaded %.1f GiB in %d chunks",
+		float64(uploadProgress.ProcessedBytes)/(1<<30), uploadProgress.ProcessedChunks,
+		float64(uploadProgress.UploadedBytes)/(1<<30), uploadProgress.UploadedChunks))
 
-	task.LogString("finishing PBS session")
+	task.LogString("finalizing PBS snapshot")
 	if _, err := session.Finish(ctx); err != nil {
 		return fmt.Errorf("finish session: %w", err)
 	}
