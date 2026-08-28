@@ -75,7 +75,7 @@ wait_for() {
 session_mounted() { [ "$(sessions_field --arg mp "$1" '.data[]? | select(.["mount-point"]==$mp) | .mounted' | head -1)" = "true" ]; }
 session_offline() { [ "$(sessions_field --arg mp "$1" '.data[]? | select(.["mount-point"]==$mp) | .mounted' | head -1)" = "false" ]; }
 session_gone()    { [ -z "$(sessions_field --arg mp "$1" '.data[]? | select(.["mount-point"]==$mp) | .["mount-point"]' | head -1)" ]; }
-overlay_journal_dirs() { find /var/lib/pbs-plus/mount-overlays -maxdepth 2 -name .pxar-journal -type d 2>/dev/null | wc -l; }
+overlay_journal_dirs() { find /mnt/test/.pbs-plus/mount-overlays -maxdepth 2 -name .pxar-journal -type d 2>/dev/null | wc -l; }
 
 latest_snapshot() {
 	ls -1 "$1" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1

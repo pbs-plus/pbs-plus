@@ -39,8 +39,9 @@ type Session struct {
 
 func sessionsDir() string { return filepath.Join(conf.StatePrefix, "mount-sessions") }
 
-func OverlayDir(key string) string {
-	return filepath.Join(conf.StatePrefix, "mount-overlays", key)
+// OverlayDir stores rw overlays in a hidden dir in the datastore: PBS group scans skip dot-entries.
+func OverlayDir(storeRoot, key string) string {
+	return filepath.Join(storeRoot, ".pbs-plus", "mount-overlays", key)
 }
 
 func SocketPath(key string) string {

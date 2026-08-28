@@ -168,7 +168,7 @@ func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapshot
 		BackupID:   in.BackupID,
 		Mode:       ModeRW,
 		MountPoint: mountPoint,
-		OverlayDir: OverlayDir(key),
+		OverlayDir: OverlayDir(pbsStoreRoot, key),
 		SocketPath: SocketPath(key),
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -296,7 +296,7 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 		args = append(args, "--ppxar-didx", ppxarPath)
 	}
 	if mode == ModeRW {
-		session.OverlayDir = OverlayDir(key)
+		session.OverlayDir = OverlayDir(pbsStoreRoot, key)
 		session.SocketPath = SocketPath(key)
 		if err := os.MkdirAll(session.OverlayDir, 0o700); err != nil {
 			return Session{}, fmt.Errorf("create overlay dir: %w", err)
