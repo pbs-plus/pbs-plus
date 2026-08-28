@@ -22,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/scheduler"
+	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
 )
 
@@ -104,6 +105,7 @@ func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Schedule
 		return nil, nil, fmt.Errorf("starting workflow engine: %w", err)
 	}
 	app.Engine = engine
+	go snapshotmount.FollowLatestProfiles(mainCtx, engine)
 	s := scheduler.NewScheduler(mainCtx, app)
 	s.Start()
 	app.OnBackupComplete = s.TriggerPendingVerifications
@@ -149,6 +151,9 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 	}
 	if err := mtf.RegisterScan(engine, app); err != nil {
 		return fmt.Errorf("registering mtf scan workflow: %w", err)
+	}
+	if err := snapshotmount.Register(engine); err != nil {
+		return fmt.Errorf("registering snapshot mount workflows: %w", err)
 	}
 	return nil
 }

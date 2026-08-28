@@ -461,14 +461,58 @@ var mountPanel = js.Panel{
 				if (view.namespace && view.namespace !== "") {
 					params.ns = view.namespace;
 				}
-				PBS.PlusUtils.API2Request({
-					url: "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(view.datastore)),
-					method: "POST",
-					params,
-					waitMsgTarget: view,
-					failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-					success: (resp) => Ext.toast(gettext("Backup mounted to /mnt/pbs-plus-restores")),
-				});
+				Ext.create("Ext.window.Window", {
+					title: Ext.String.format(gettext("Mount '{0}'"), file),
+					width: 460,
+					modal: true,
+					layout: "anchor",
+					bodyPadding: 10,
+					defaults: { anchor: "100%", labelWidth: 110 },
+					items: [
+						{
+							xtype: "radiogroup",
+							fieldLabel: gettext("Mode"),
+							items: [
+								{ boxLabel: gettext("Read-only"), name: "mode", inputValue: "ro", checked: true },
+								{ boxLabel: gettext("Read-write (commit-capable)"), name: "mode", inputValue: "rw" },
+							],
+						},
+						{
+							xtype: "textfield",
+							name: "mount-path",
+							fieldLabel: gettext("Mount Path"),
+							emptyText: gettext("Automatic (under /mnt/pbs-plus-restores)"),
+						},
+						{
+							xtype: "displayfield",
+							value: gettext("Custom paths must be empty directories under /mnt."),
+						},
+					],
+					buttons: [
+						{
+							text: gettext("Mount"),
+							 handler: function (btn) {
+								let win = btn.up("window");
+								let values = win.down("radiogroup").getValue();
+								params.mode = values.mode;
+								params["mount-path"] = win.down("textfield[name=mount-path]").getValue();
+								PBS.PlusUtils.API2Request({
+									url: "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(view.datastore)),
+									method: "POST",
+									params,
+									waitMsgTarget: view,
+									failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+									success: (resp) => {
+										win.close();
+										Ext.create("PBS.plusWindow.TaskViewer", {
+											upid: resp.result.data,
+										}).show();
+									},
+									});
+								},
+							},
+					],
+				}).show();
 			`),
 			"unmountBackup": js.Func("tV, rI, cI, item, e, rec", `
 				let me = this;
@@ -489,18 +533,30 @@ var mountPanel = js.Panel{
 					"backup-type": snapshot["backup-type"],
 					"backup-time": isoTime,
 					"file-name": fileRec.filename,
+					force: 1,
 				};
 				if (view.namespace && view.namespace !== "") {
 					params.ns = view.namespace;
 				}
-				PBS.PlusUtils.API2Request({
-					url: "/api2/extjs/config/d2d-unmount/" + encodeURIComponent(encodePathValue(view.datastore)),
-					method: "POST",
-					params,
-					waitMsgTarget: view,
-					failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-					success: (resp) => Ext.toast(gettext("Unmount request sent")),
-				});
+				Ext.Msg.confirm(
+					gettext("Confirm"),
+					Ext.String.format(gettext("Unmount '{0}'? Uncommitted changes of read-write mounts are lost."), fileRec.filename),
+					(btn) => {
+						if (btn !== "yes") return;
+						PBS.PlusUtils.API2Request({
+							url: "/api2/extjs/config/d2d-unmount/" + encodeURIComponent(encodePathValue(view.datastore)),
+							method: "POST",
+							params,
+							waitMsgTarget: view,
+							failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+							success: (resp) => {
+								Ext.create("PBS.plusWindow.TaskViewer", {
+									upid: resp.result.data,
+								}).show();
+							},
+						});
+					},
+				);
 			`),
 			"openBrowser": js.Func("tv, rI, Ci, item, e, rec", `
 				let me = this;

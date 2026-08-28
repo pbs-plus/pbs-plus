@@ -38,6 +38,8 @@ var coreViews = []js.Value{
 				store.load({ callback: function (records, operation, success) {
 					if (success && records && records.length) {
 						var tabs = [];
+						tabs.push({ xtype: "pbsPlusActiveMountsPanel", title: "Active Mounts", itemId: "d2d-mounts-active", iconCls: "fa fa-hdd-o" });
+						tabs.push({ xtype: "pbsPlusMountProfilesPanel", title: "Mount Profiles", itemId: "d2d-mounts-profiles", iconCls: "fa fa-cogs" });
 						Ext.Array.forEach(records, function (rec) {
 							var name = rec.get("store");
 							tabs.push({ xtype: "pbsPlusSnapshotMountDatastorePanel", title: name, itemId: "d2d-mount-" + name, iconCls: "fa fa-archive", datastore: name });
