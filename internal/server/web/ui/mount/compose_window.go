@@ -46,7 +46,15 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 				"target-ns": vals["target-ns"] || "",
 				"target-type": vals["target-type"] || "host",
 				"target-id": vals["target-id"],
-				paths: sel.map((rec) => rec.data.filepath).join(","),
+				"paths": sel
+					.map((rec) => rec.data.filepath)
+					.filter((fp) => !!fp)
+					.map((fp) => {
+						let p = atob(fp);
+						if (!p.startsWith("/")) p = "/" + p;
+						return btoa(p);
+					})
+					.join(","),
 			};
 			PBS.PlusUtils.API2Request({
 				url: "/api2/extjs/config/d2d-compose/" + encodeURIComponent(encodePathValue(view.datastore)),
@@ -69,7 +77,7 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 			let extraParams = {
 				"backup-id": view.backupId,
 				"backup-type": view.backupType,
-				"backup-time": view.backupTime,
+				"backup-time": (Date.parse(view.backupTime) / 1000).toFixed(0),
 			};
 			if (view.archive) {
 				extraParams["archive-name"] = view.archive;
@@ -78,6 +86,7 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 				extraParams.ns = view.namespace;
 			}
 			proxy.setUrl("/api2/json/admin/datastore/" + view.datastore + "/catalog");
+			proxy.setTimeout(60 * 1000);
 			proxy.setExtraParams(extraParams);
 			store.load(() => {
 				let root = store.getRoot();
