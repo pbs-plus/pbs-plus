@@ -14,6 +14,11 @@ section() { echo ""; echo "═════════════════�
 die() { echo "FATAL: $1"; dump_logs; exit 1; }
 
 dump_logs() {
+	echo "--- d2d-mounts raw response ---"
+	curl -k -s "$PBS_API/api2/extjs/config/d2d-mounts" || true
+	echo ""
+	echo "--- session files ---"
+	ls -la /var/lib/pbs-plus/mount-sessions 2>/dev/null || true
 	echo "--- mount process logs ---"
 	tail -40 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
 	echo "--- newest task logs ---"

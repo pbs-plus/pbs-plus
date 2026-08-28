@@ -31,7 +31,7 @@ func startMountProcess(serviceName string, args []string) error {
 	if err != nil {
 		return fmt.Errorf("open mount process log: %w", err)
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	cmd := exec.Command("/usr/bin/pxar-mount", args...)
 	cmd.Stdout = logFile
@@ -49,7 +49,7 @@ func startMountProcess(serviceName string, args []string) error {
 		}
 	}()
 
-	if err := os.WriteFile(mountPidFile(serviceName), []byte(fmt.Sprintf("%d", pid)), 0o644); err != nil {
+	if err := os.WriteFile(mountPidFile(serviceName), fmt.Appendf(nil, "%d", pid), 0o644); err != nil {
 		_ = syscall.Kill(-pid, syscall.SIGKILL)
 		return fmt.Errorf("write mount pidfile: %w", err)
 	}
@@ -163,6 +163,12 @@ func CreateMountService(ctx context.Context, serviceName, mountPoint string, arg
 			Name:  "CollectMode",
 			Value: godbus.MakeVariant("inactive"),
 		},
+	}
+	if gd := os.Getenv("GODEBUG"); gd != "" {
+		props = append(props, dbus.Property{
+			Name:  "Environment",
+			Value: godbus.MakeVariant([]string{"GODEBUG=" + gd}),
+		})
 	}
 
 	_, err = conn.StartTransientUnitContext(ctx, serviceName, "replace", props, nil)
