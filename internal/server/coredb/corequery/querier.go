@@ -32,6 +32,7 @@ type Querier interface {
 	DeleteAlertSetting(ctx context.Context, name string) error
 	DeleteBackup(ctx context.Context, id string) (int64, error)
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
+	DeleteBatchResults(ctx context.Context, batchName string) error
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
 	DeleteNotificationBatch(ctx context.Context, name string) error
 	DeleteRestore(ctx context.Context, id string) (int64, error)
@@ -50,6 +51,7 @@ type Querier interface {
 	GetBatchForJob(ctx context.Context, arg GetBatchForJobParams) (NotificationBatch, error)
 	GetBatchJobsByBatch(ctx context.Context, batchName string) ([]NotificationBatchJob, error)
 	GetBatchJobsByJobType(ctx context.Context, jobType string) ([]NotificationBatchJob, error)
+	GetBatchResults(ctx context.Context, batchName string) ([]NotificationBatchResult, error)
 	GetExclusion(ctx context.Context, arg GetExclusionParams) (Exclusion, error)
 	GetLatestVerificationResult(ctx context.Context, verificationJobID string) (VerificationResult, error)
 	GetNotificationBatch(ctx context.Context, name string) (NotificationBatch, error)
@@ -73,6 +75,7 @@ type Querier interface {
 	ListAllTokensWithDetails(ctx context.Context) ([]ListAllTokensWithDetailsRow, error)
 	ListAllVerificationJobs(ctx context.Context) ([]VerificationJob, error)
 	ListBatchJobs(ctx context.Context) ([]NotificationBatchJob, error)
+	ListBatchesWithResults(ctx context.Context) ([]string, error)
 	ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusionsRow, error)
 	ListNonRevokedTokens(ctx context.Context) ([]Token, error)
 	ListNotificationBatches(ctx context.Context) ([]NotificationBatch, error)
@@ -97,6 +100,7 @@ type Querier interface {
 	UpdateVerificationJob(ctx context.Context, arg UpdateVerificationJobParams) error
 	UpdateVerificationResult(ctx context.Context, arg UpdateVerificationResultParams) error
 	UpsertAlertSetting(ctx context.Context, arg UpsertAlertSettingParams) error
+	UpsertBatchResult(ctx context.Context, arg UpsertBatchResultParams) error
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
 	VerificationJobExists(ctx context.Context, id string) (int64, error)
 }

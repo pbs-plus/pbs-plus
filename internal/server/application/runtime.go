@@ -106,7 +106,7 @@ func New(ctx context.Context, paths map[string]string) (*Runtime, error) {
 	}
 
 	store.BatchTracker = notification.NewBatchTracker(db)
-	go store.BatchTracker.StartCleanup(ctx, 10*time.Minute)
+	go store.BatchTracker.Run(ctx, 30*time.Second)
 
 	notification.InstallTemplates()
 

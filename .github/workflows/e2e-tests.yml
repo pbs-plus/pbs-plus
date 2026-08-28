@@ -63,6 +63,11 @@ jobs:
         with:
           timeout-seconds: 240
 
+      - name: Run notification batch test
+        uses: ./.github/actions/run-notification-batch
+        with:
+          timeout-seconds: 240
+
       - name: Run restore test
         uses: ./.github/actions/run-restore
         with:

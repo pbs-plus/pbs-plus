@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -16,26 +17,26 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
+// DefaultBatchWaitSecs applies when a batch has no configured wait timeout.
+const DefaultBatchWaitSecs = 300
+
 type batchDB interface {
 	GetBatchForJob(jobType, jobID string) (coredb.NotificationBatch, error)
+	GetNotificationBatch(name string) (coredb.NotificationBatch, error)
 	GetBatchJobs(batchName string) ([]coredb.NotificationBatchJob, error)
+	RecordBatchResult(batchName string, r coredb.NotificationBatchResult) error
+	GetBatchResults(batchName string) ([]coredb.NotificationBatchResult, error)
+	TakeBatchResults(batchName string) ([]coredb.NotificationBatchResult, error)
+	ListBatchesWithResults() ([]string, error)
 }
 
+// BatchTracker collects job results into one notification; results are persisted so a restart resumes them.
 type BatchTracker struct {
 	db batchDB
 
 	send func(batch coredb.NotificationBatch, results []JobResult, isTimeout bool)
 
-	mu sync.Mutex
-
-	pending map[string]*batchState
-
-	timers map[string]*time.Timer
-}
-
-type batchState struct {
-	results []JobResult
-	batch   coredb.NotificationBatch
+	flushMu sync.Mutex
 }
 
 type JobResult struct {
@@ -48,11 +49,7 @@ type JobResult struct {
 }
 
 func NewBatchTracker(db *coredb.Store) *BatchTracker {
-	bt := &BatchTracker{
-		db:      db,
-		pending: make(map[string]*batchState),
-		timers:  make(map[string]*time.Timer),
-	}
+	bt := &BatchTracker{db: db}
 	bt.send = bt.sendBatchNotification
 	return bt
 }
@@ -60,10 +57,7 @@ func NewBatchTracker(db *coredb.Store) *BatchTracker {
 func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, datastore string, jobErr error, details map[string]string) {
 	batch, err := bt.db.GetBatchForJob(string(jobType), jobID)
 	if err != nil {
-		log.Error(err,
-
-			"failed to lookup batch for job, sending immediate notification", "jobID", jobID)
-
+		log.Error(err, "failed to lookup batch for job, sending immediate notification", "jobID", jobID)
 		Send(mode, jobType, jobID, datastore, jobErr, details)
 		return
 	}
@@ -73,129 +67,171 @@ func (bt *BatchTracker) RecordJobResult(mode string, jobType JobType, jobID, dat
 		return
 	}
 
-	// Determine severity for this individual result.
-	severity := "info"
+	result := coredb.NotificationBatchResult{
+		JobType:    string(jobType),
+		JobID:      jobID,
+		Datastore:  datastore,
+		Error:      errStr(jobErr),
+		Severity:   resultSeverity(jobErr, details),
+		RecordedAt: time.Now().Unix(),
+	}
+
+	if err := bt.db.RecordBatchResult(batch.Name, result); err != nil {
+		log.Error(err, "failed to persist batch result, sending immediate notification",
+			"batch", batch.Name, "jobID", jobID)
+		Send(mode, jobType, jobID, datastore, jobErr, details)
+		return
+	}
+
+	bt.evaluate(batch)
+}
+
+func resultSeverity(jobErr error, details map[string]string) string {
 	if jobErr != nil {
-		severity = "error"
-	} else if details != nil {
-		if warningsStr, ok := details["warnings"]; ok {
-			if n, err := strconv.Atoi(warningsStr); err != nil {
-				log.Error(err, "")
-			} else if n > 0 {
-				severity = "notice"
-			}
+		return "error"
+	}
+	for _, key := range []string{"warnings", "errors", "failed"} {
+		v, ok := details[key]
+		if !ok {
+			continue
 		}
-		if errorsStr, ok := details["errors"]; ok {
-			if n, err := strconv.Atoi(errorsStr); err != nil {
-				log.Error(err, "")
-			} else if n > 0 {
-				severity = "notice"
-			}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			log.Error(err, "unparsable job detail count", "key", key, "value", v)
+			continue
 		}
-		if failedStr, ok := details["failed"]; ok {
-			if n, err := strconv.Atoi(failedStr); err != nil {
-				log.Error(err, "")
-			} else if n > 0 {
-				severity = "notice"
-			}
+		if n > 0 {
+			return "notice"
 		}
 	}
+	return "info"
+}
 
-	result := JobResult{
-		JobType:   string(jobType),
-		JobID:     jobID,
-		Datastore: datastore,
-		Error:     errStr(jobErr),
-		Severity:  severity,
-		Timestamp: time.Now().Unix(),
-	}
+// Run flushes ready batches on a ticker and recovers batches left pending by a restart.
+func (bt *BatchTracker) Run(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-	bt.mu.Lock()
-	defer bt.mu.Unlock()
-
-	state, exists := bt.pending[batch.Name]
-	if !exists {
-		state = &batchState{batch: batch}
-		bt.pending[batch.Name] = state
-
-		timeout := time.Duration(batch.WaitTimeoutSecs) * time.Second
-		if timeout <= 0 {
-			timeout = 5 * time.Minute
+	bt.evaluateAll()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			bt.evaluateAll()
 		}
-		timer := time.AfterFunc(timeout, func() {
-			bt.flushBatch(batch.Name, true)
-		})
-		bt.timers[batch.Name] = timer
-
-		slog.Info("notification batch started collecting",
-			"batch", batch.Name, "timeout", timeout)
-	}
-
-	state.results = appendOrReplaceResult(state.results, result)
-
-	if bt.allJobsReported(batch.Name, state) {
-		if timer, ok := bt.timers[batch.Name]; ok {
-			timer.Stop()
-			delete(bt.timers, batch.Name)
-		}
-		go bt.flushBatch(batch.Name, false)
 	}
 }
 
-func (bt *BatchTracker) allJobsReported(batchName string, state *batchState) bool {
-	jobs, err := bt.db.GetBatchJobs(batchName)
+func (bt *BatchTracker) evaluateAll() {
+	names, err := bt.db.ListBatchesWithResults()
 	if err != nil {
-		return false
+		log.Error(err, "failed to list pending notification batches")
+		return
 	}
-	if len(jobs) == 0 {
-		return false
+	for _, name := range names {
+		batch, err := bt.db.GetNotificationBatch(name)
+		if err != nil {
+			log.Error(err, "failed to load notification batch", "batch", name)
+			continue
+		}
+		bt.evaluate(batch)
+	}
+}
+
+// evaluate flushes once every job reported, or once the wait timeout elapsed with send-on-timeout set.
+func (bt *BatchTracker) evaluate(batch coredb.NotificationBatch) {
+	bt.flushMu.Lock()
+	defer bt.flushMu.Unlock()
+
+	results, err := bt.db.GetBatchResults(batch.Name)
+	if err != nil {
+		log.Error(err, "failed to read batch results", "batch", batch.Name)
+		return
+	}
+	if len(results) == 0 {
+		return
 	}
 
-	reported := make(map[string]bool, len(state.results))
-	for _, r := range state.results {
+	complete, err := bt.allJobsReported(batch.Name, results)
+	if err != nil {
+		log.Error(err, "failed to check batch completion", "batch", batch.Name)
+		return
+	}
+
+	if !complete {
+		if !batch.SendOnTimeout || !batchTimedOut(batch, results) {
+			return
+		}
+		bt.flush(batch, results, true)
+		return
+	}
+	bt.flush(batch, results, false)
+}
+
+func batchTimedOut(batch coredb.NotificationBatch, results []coredb.NotificationBatchResult) bool {
+	waitSecs := int64(batch.WaitTimeoutSecs)
+	if waitSecs <= 0 {
+		waitSecs = DefaultBatchWaitSecs
+	}
+	oldest := results[0].RecordedAt
+	for _, r := range results[1:] {
+		if r.RecordedAt < oldest {
+			oldest = r.RecordedAt
+		}
+	}
+	return time.Now().Unix()-oldest >= waitSecs
+}
+
+// flush must be called with flushMu held.
+func (bt *BatchTracker) flush(batch coredb.NotificationBatch, expected []coredb.NotificationBatchResult, isTimeout bool) {
+	taken, err := bt.db.TakeBatchResults(batch.Name)
+	if err != nil {
+		log.Error(err, "failed to claim batch results, will retry on next tick", "batch", batch.Name)
+		return
+	}
+	if len(taken) == 0 {
+		return
+	}
+	if len(taken) != len(expected) {
+		slog.Info("notification batch grew while flushing", "batch", batch.Name,
+			"expected", len(expected), "sent", len(taken))
+	}
+
+	out := make([]JobResult, len(taken))
+	for i, r := range taken {
+		out[i] = JobResult{
+			JobType:   r.JobType,
+			JobID:     r.JobID,
+			Datastore: r.Datastore,
+			Error:     r.Error,
+			Severity:  r.Severity,
+			Timestamp: r.RecordedAt,
+		}
+	}
+	bt.send(batch, out, isTimeout)
+}
+
+func (bt *BatchTracker) allJobsReported(batchName string, results []coredb.NotificationBatchResult) (bool, error) {
+	jobs, err := bt.db.GetBatchJobs(batchName)
+	if err != nil {
+		return false, err
+	}
+	if len(jobs) == 0 {
+		return false, nil
+	}
+
+	reported := make(map[string]bool, len(results))
+	for _, r := range results {
 		reported[r.JobType+":"+r.JobID] = true
 	}
 
 	for _, j := range jobs {
 		if !reported[j.JobType+":"+j.JobID] {
-			return false
+			return false, nil
 		}
 	}
-	return true
-}
-
-func appendOrReplaceResult(results []JobResult, r JobResult) []JobResult {
-	for i := range results {
-		if results[i].JobType == r.JobType && results[i].JobID == r.JobID {
-			results[i] = r
-			return results
-		}
-	}
-	return append(results, r)
-}
-
-// flushBatch sends a consolidated notification for the batch.
-func (bt *BatchTracker) flushBatch(batchName string, isTimeout bool) {
-	bt.mu.Lock()
-	state, exists := bt.pending[batchName]
-	if !exists {
-		bt.mu.Unlock()
-		return
-	}
-
-	if isTimeout && !state.batch.SendOnTimeout {
-		delete(bt.timers, batchName)
-		slog.Info("notification batch timeout reached but send-on-timeout is disabled, keeping collected results",
-			"batch", batchName, "collected", len(state.results))
-		bt.mu.Unlock()
-		return
-	}
-
-	delete(bt.pending, batchName)
-	delete(bt.timers, batchName)
-	bt.mu.Unlock()
-
-	bt.send(state.batch, state.results, isTimeout)
+	return true, nil
 }
 
 func (bt *BatchTracker) sendBatchNotification(batch coredb.NotificationBatch, results []JobResult, isTimeout bool) {
@@ -203,8 +239,6 @@ func (bt *BatchTracker) sendBatchNotification(batch coredb.NotificationBatch, re
 		return
 	}
 
-	// Determine overall severity.
-	// Otherwise: info.
 	severity := "info"
 	hasErrors := 0
 	hasWarnings := 0
@@ -229,12 +263,13 @@ func (bt *BatchTracker) sendBatchNotification(batch coredb.NotificationBatch, re
 	for ds := range datastores {
 		dsList = append(dsList, ds)
 	}
+	sort.Strings(dsList)
 
 	fields := map[string]string{
 		"hostname":  getHostname(),
 		"type":      "d2d-batch",
 		"batch":     batch.Name,
-		"datastore": dsList[0], // primary datastore for matcher compatibility
+		"datastore": dsList[0],
 	}
 
 	templateName := "d2d-batch-ok"
@@ -252,7 +287,8 @@ func (bt *BatchTracker) sendBatchNotification(batch coredb.NotificationBatch, re
 		"datastores": dsList,
 	})
 	if err != nil {
-		log.Error(err, "")
+		log.Error(err, "failed to marshal batch template data")
+		return
 	}
 
 	tc := templateContent{
@@ -285,11 +321,10 @@ func (bt *BatchTracker) sendBatchNotification(batch coredb.NotificationBatch, re
 
 	mode := batch.NotificationMode
 	if mode == "" {
-		mode = "notification-system"
+		mode = string(ModeNotificationSystem)
 	}
 
-	nm := NotificationMode(mode)
-	switch nm {
+	switch NotificationMode(mode) {
 	case ModeLegacySendmail:
 		title := fmt.Sprintf("Batch '%s': %d/%d jobs succeeded", batch.Name, len(results)-hasErrors, len(results))
 		if hasErrors > 0 {
@@ -307,46 +342,21 @@ func (bt *BatchTracker) sendBatchNotification(batch coredb.NotificationBatch, re
 		"timeout", isTimeout)
 }
 
-// StartCleanup starts a periodic goroutine that removes stale batch state.
-func (bt *BatchTracker) StartCleanup(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			bt.mu.Lock()
-			for name, state := range bt.pending {
-				if len(state.results) > 0 {
-					oldest := state.results[0].Timestamp
-					timeout := int64(state.batch.WaitTimeoutSecs) * 2
-					if timeout <= 0 {
-						timeout = 600
-					}
-					if time.Now().Unix()-oldest > timeout {
-						delete(bt.pending, name)
-						if timer, ok := bt.timers[name]; ok {
-							timer.Stop()
-							delete(bt.timers, name)
-						}
-						slog.Warn("cleaned up stale notification batch", "batch", name)
-					}
-				}
-			}
-			bt.mu.Unlock()
-		}
-	}
-}
-
 func (bt *BatchTracker) PendingBatches() map[string]int {
-	bt.mu.Lock()
-	defer bt.mu.Unlock()
+	names, err := bt.db.ListBatchesWithResults()
+	if err != nil {
+		log.Error(err, "failed to list pending notification batches")
+		return map[string]int{}
+	}
 
-	out := make(map[string]int, len(bt.pending))
-	for name, state := range bt.pending {
-		out[name] = len(state.results)
+	out := make(map[string]int, len(names))
+	for _, name := range names {
+		results, err := bt.db.GetBatchResults(name)
+		if err != nil {
+			log.Error(err, "failed to read batch results", "batch", name)
+			continue
+		}
+		out[name] = len(results)
 	}
 	return out
 }
