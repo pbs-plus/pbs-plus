@@ -180,7 +180,7 @@ func ExtJsMountProfileMountHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-		key := snapshotmount.Key(p.Datastore, p.Namespace, p.BackupType, p.BackupID, parsed.Format("2006-01-02_15-04-05"))
+		key := snapshotmount.Key(p.Datastore, p.Namespace, p.BackupType, p.BackupID, snapshotmount.DirTime(parsed))
 		task, err := newTask("mount", p.Datastore, key)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)

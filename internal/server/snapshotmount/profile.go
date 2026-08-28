@@ -148,7 +148,7 @@ func LatestSnapshotIn(storeRoot, ns, backupType, backupID string) (string, strin
 		if !e.IsDir() {
 			continue
 		}
-		t, err := time.Parse("2006-01-02_15-04-05", e.Name())
+		t, err := time.Parse(dirTimeLayout, e.Name())
 		if err != nil {
 			continue
 		}
@@ -156,7 +156,7 @@ func LatestSnapshotIn(storeRoot, ns, backupType, backupID string) (string, strin
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i].After(times[j]) })
 	for _, t := range times {
-		dirTime := t.Format("2006-01-02_15-04-05")
+		dirTime := DirTime(t)
 		snapDir := filepath.Join(groupDir, dirTime)
 		files, err := os.ReadDir(snapDir)
 		if err != nil {

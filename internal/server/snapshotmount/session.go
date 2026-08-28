@@ -18,6 +18,8 @@ import (
 const (
 	ModeRO = "ro"
 	ModeRW = "rw"
+
+	dirTimeLayout = "2006-01-02T15:04:05Z"
 )
 
 type Session struct {
@@ -47,6 +49,10 @@ func SocketPath(key string) string {
 
 func Key(datastore, ns, backupType, backupID, safeTime string) string {
 	return systemd.MountServiceKey(datastore, ns, backupType, backupID, safeTime)
+}
+
+func DirTime(t time.Time) string {
+	return t.UTC().Format(dirTimeLayout)
 }
 
 func (s Session) ServiceName() string {
@@ -144,7 +150,7 @@ func defaultMountPointLeaf(parsedTime time.Time) string {
 	if parsedTime.IsZero() {
 		return "init"
 	}
-	return parsedTime.Format("2006-01-02_15-04-05")
+	return parsedTime.Format(dirTimeLayout)
 }
 
 func ValidateMountPath(path string) error {

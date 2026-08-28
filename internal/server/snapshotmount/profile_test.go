@@ -111,9 +111,9 @@ func TestLatestSnapshotIn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("2026-01-01_00-00-00", "root.pxar.didx")
-	write("2026-02-01_00-00-00", "notes.txt")
-	write("2026-03-01_00-00-00", "root.mpxar.didx")
+	write("2026-01-01T00:00:00Z", "root.pxar.didx")
+	write("2026-02-01T00:00:00Z", "notes.txt")
+	write("2026-03-01T00:00:00Z", "root.mpxar.didx")
 	if err := os.MkdirAll(filepath.Join(group, "not-a-time"), 0o755); err != nil {
 		t.Fatal(err)
 	}

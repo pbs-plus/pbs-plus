@@ -193,7 +193,7 @@ func runMount(ctx context.Context, in jobs.SnapshotMountInput) error {
 	if err != nil {
 		return jobs.NonRetryable(fmt.Errorf("invalid backup-time format: %w", err))
 	}
-	safeTime := parsedTime.Format("2006-01-02_15-04-05")
+	safeTime := DirTime(parsedTime)
 	key := Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, safeTime)
 
 	task, err := openTask(in.UPID, "mount", tasklog.FormatWorkerID(in.Datastore, "mount-", key))
@@ -269,7 +269,7 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	task.LogString(fmt.Sprintf("mounting %s/%s/%s %s (%s) at %s",
 		in.Datastore, in.Namespace, in.BackupType, in.BackupID, in.FileName, mountPoint))
 
-	dirTime := parsedTime.Format("2006-01-02_15-04-05")
+	dirTime := DirTime(parsedTime)
 	mpxarPath, ppxarPath, isMetadataSplit, err := proxmox.BuildPxarPaths(pbsStoreRoot, in.Namespace, in.BackupType, in.BackupID, dirTime, in.FileName)
 	if err != nil {
 		return Session{}, err
@@ -400,7 +400,7 @@ func resolveSession(in jobs.SnapshotUnmountInput) (Session, string, error) {
 	if err != nil {
 		return Session{}, "", fmt.Errorf("invalid backup-time format: %w", err)
 	}
-	key := Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, parsedTime.Format("2006-01-02_15-04-05"))
+	key := Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, DirTime(parsedTime))
 	session, err := LoadSession(key)
 	if err != nil {
 		if os.IsNotExist(err) {

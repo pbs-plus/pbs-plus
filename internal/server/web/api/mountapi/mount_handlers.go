@@ -88,7 +88,7 @@ func (f mountForm) safeTime() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return parsedTime.Format("2006-01-02_15-04-05"), nil
+	return snapshotmount.DirTime(parsedTime), nil
 }
 
 func newTask(workerType, datastore, key string) (*tasklog.WorkerTask, error) {
