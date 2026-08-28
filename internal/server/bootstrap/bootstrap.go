@@ -105,6 +105,7 @@ func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Schedule
 		return nil, nil, fmt.Errorf("starting workflow engine: %w", err)
 	}
 	app.Engine = engine
+	go snapshotmount.AutoMountProfiles(mainCtx, engine)
 	s := scheduler.NewScheduler(mainCtx, app)
 	s.Start()
 	app.OnBackupComplete = s.TriggerPendingVerifications

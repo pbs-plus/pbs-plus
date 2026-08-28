@@ -150,7 +150,8 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	task.LogString(fmt.Sprintf("mounting %s/%s/%s %s (%s) at %s",
 		in.Datastore, in.Namespace, in.BackupType, in.BackupID, in.FileName, mountPoint))
 
-	mpxarPath, ppxarPath, isMetadataSplit, err := proxmox.BuildPxarPaths(pbsStoreRoot, in.Namespace, in.BackupType, in.BackupID, in.BackupTime, in.FileName)
+	dirTime := parsedTime.Format("2006-01-02_15-04-05")
+	mpxarPath, ppxarPath, isMetadataSplit, err := proxmox.BuildPxarPaths(pbsStoreRoot, in.Namespace, in.BackupType, in.BackupID, dirTime, in.FileName)
 	if err != nil {
 		return Session{}, err
 	}

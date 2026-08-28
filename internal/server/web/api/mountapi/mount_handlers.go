@@ -341,7 +341,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 			}
 			return views[i].MountPoint < views[j].MountPoint
 		})
-		writeJSON(w, views)
+		writeExtJS(w, views)
 	}
 }
 
@@ -479,4 +479,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Error(err, "")
 	}
+}
+
+func writeExtJS(w http.ResponseWriter, data any) {
+	writeJSON(w, struct {
+		Status  int  `json:"status"`
+		Success bool `json:"success"`
+		Data    any  `json:"data"`
+	}{Status: http.StatusOK, Success: true, Data: data})
 }
