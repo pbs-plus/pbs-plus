@@ -20,12 +20,18 @@ dump_logs() {
 	echo "--- session files ---"
 	ls -la /var/lib/pbs-plus/mount-sessions 2>/dev/null || true
 	echo "--- mount process logs ---"
-	tail -40 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
-	echo "--- newest task logs ---"
-	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | while read -r f; do
+	for f in /var/run/pbs-plus-mounts/*.log; do
+		[ -e "$f" ] || continue
 		echo "== $f =="
-		tail -25 "$f" 2>/dev/null || true
-	done | tail -120
+		tail -40 "$f" 2>/dev/null || true
+	done
+	echo "--- workflow task logs ---"
+	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(init|commit|mount|unmount):' | while read -r f; do
+		echo "== $f =="
+		tail -60 "$f" 2>/dev/null || true
+	done
+	echo "--- recent task files ---"
+	find /var/log/proxmox-backup/tasks -type f -mmin -15 2>/dev/null | head -20
 	echo "--- end logs ---"
 }
 
@@ -81,6 +87,13 @@ group_newer_than() {
 	local new
 	new=$(latest_snapshot "$1")
 	[ -n "$new" ] && [ "$new" != "$2" ]
+}
+
+commit_errored() {
+	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':commit:' | while read -r f; do
+		grep -q "TASK ERROR" "$f" 2>/dev/null && { echo "$f"; return 0; }
+	done
+	return 1
 }
 
 submit_ok() {
@@ -149,7 +162,18 @@ BEFORE=$(latest_snapshot "$INIT_GROUP_DIR")
 RESP=$(api_post "/api2/extjs/config/d2d-commit/$ENC_DS" -d "mount-path=$INIT_MP")
 if submit_ok "$RESP"; then
 	ok "commit request accepted"
-	wait_for "commit produced new snapshot dir" 420 group_newer_than "$INIT_GROUP_DIR" "$BEFORE" || true
+	COMMIT_DEADLINE=$((SECONDS + 420))
+	COMMIT_OK=0
+	while [ $SECONDS -lt $COMMIT_DEADLINE ]; do
+		if group_newer_than "$INIT_GROUP_DIR" "$BEFORE" 2>/dev/null; then COMMIT_OK=1; break; fi
+		if ERRF=$(commit_errored); then
+			echo "commit task failed (see log below)"
+			tail -20 "$ERRF"
+			break
+		fi
+		sleep 2
+	done
+	[ $COMMIT_OK = 1 ] && ok "commit produced new snapshot dir" || { fail "commit did not produce snapshot (after $((SECONDS))s)"; dump_logs; }
 else
 	fail "commit rejected: $(body_of "$RESP")"
 fi
