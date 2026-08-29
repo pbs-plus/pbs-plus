@@ -207,9 +207,10 @@ func TestEngine_CancelRunningWorkflow(t *testing.T) {
 }
 
 type fakeAbortTask struct {
-	mu      sync.Mutex
-	aborted bool
-	hooks   []func()
+	mu        sync.Mutex
+	aborted   bool
+	closedErr error
+	hooks     []func()
 }
 
 func (f *fakeAbortTask) OnAbort(hook func()) {
@@ -227,6 +228,12 @@ func (f *fakeAbortTask) abort() {
 	for _, hook := range hooks {
 		hook()
 	}
+}
+
+func (f *fakeAbortTask) CloseErr(err error) {
+	f.mu.Lock()
+	f.closedErr = err
+	f.mu.Unlock()
 }
 
 func TestEngine_BoundTaskAbortCancelsWorkflow(t *testing.T) {
@@ -293,6 +300,12 @@ func TestEngine_BoundTaskAbortCancelsQueuedExecution(t *testing.T) {
 	}
 	if current.State != jobdb.StateCanceled {
 		t.Fatalf("queued execution state = %q, want %q", current.State, jobdb.StateCanceled)
+	}
+	task.mu.Lock()
+	closedErr := task.closedErr
+	task.mu.Unlock()
+	if !errors.Is(closedErr, context.Canceled) {
+		t.Fatalf("queued task close error = %v, want context canceled", closedErr)
 	}
 }
 

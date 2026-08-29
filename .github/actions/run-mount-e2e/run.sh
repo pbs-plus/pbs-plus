@@ -440,6 +440,78 @@ else
 	fail "flattened unmount rejected: $(body_of "$RESP")"
 fi
 
+section "PHASE 7: Stop a queued compose through PBS task control"
+
+JOBS_DB="/etc/proxmox-backup/pbs-plus/jobs.db"
+STOP_TARGET="e2e-stop"
+STOP_GROUP_DIR="/mnt/test/ns/test/host/$STOP_TARGET"
+STOP_KEY_RAW="$DATASTORE|$NAMESPACE|host|$STOP_TARGET|compose"
+STOP_KEY="$DATASTORE-$(printf %s "$STOP_KEY_RAW" | sha256sum | cut -c1-16)"
+STOP_LOCK="snapshot-compose:$STOP_KEY"
+STOP_BLOCKER="e2e-stop-blocker-$$"
+NOW=$(date +%s)
+
+sqlite3 -cmd '.timeout 5000' "$JOBS_DB" "
+INSERT INTO job_executions (
+	id, kind, workflow_version, definition_id, trigger, dedupe_key, payload, state,
+	attempt, max_attempts, retry_initial_seconds, retry_max_seconds, run_at,
+	lease_owner, lease_until, cancel_requested, created_at, started_at
+) VALUES (
+	'$STOP_BLOCKER', 'e2e.blocker', '1', '$STOP_KEY', 'e2e', '$STOP_BLOCKER', '{}', 'running',
+	1, 1, 1, 1, $NOW, 'e2e', $((NOW + 600)), 0, $NOW, $NOW
+);
+INSERT INTO job_resource_locks (resource_key, execution_id, lease_until)
+VALUES ('$STOP_LOCK', '$STOP_BLOCKER', $((NOW + 600)));
+" || die "cannot create compose resource blocker"
+
+RESP=$(api_post "/api2/extjs/config/d2d-compose/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
+	-d "backup-time=$NEW_SNAP" -d "file-name=$DIDX3" \
+	-d "target-ns=$NAMESPACE" -d "target-type=host" -d "target-id=$STOP_TARGET" \
+	-d "paths=$SEL")
+STOP_UPID=$(body_of "$RESP" | jq -r '.data // empty')
+if submit_ok "$RESP" && [ -n "$STOP_UPID" ]; then
+	ok "queued compose request accepted"
+	sleep 2
+	STOP_STATE=$(sqlite3 -cmd '.timeout 5000' "$JOBS_DB" \
+		"SELECT state || ':' || attempt FROM job_executions WHERE kind = 'snapshot.compose' AND definition_id = '$STOP_KEY' ORDER BY created_at DESC LIMIT 1;")
+	[ "$STOP_STATE" = "pending:0" ] \
+		&& ok "resource-blocked compose stayed queued without spending an attempt" \
+		|| fail "queued compose state was ${STOP_STATE:-missing}, expected pending:0"
+
+	if proxmox-backup-manager task stop "$STOP_UPID"; then
+		ok "PBS task stop accepted"
+	else
+		fail "PBS task stop rejected"
+	fi
+
+	STOP_DEADLINE=$((SECONDS + 30))
+	STOP_CANCELED=0
+	while [ $SECONDS -lt $STOP_DEADLINE ]; do
+		STOP_STATE=$(sqlite3 -cmd '.timeout 5000' "$JOBS_DB" \
+			"SELECT state FROM job_executions WHERE kind = 'snapshot.compose' AND definition_id = '$STOP_KEY' ORDER BY created_at DESC LIMIT 1;")
+		if [ "$STOP_STATE" = "canceled" ]; then STOP_CANCELED=1; break; fi
+		sleep 1
+	done
+	[ $STOP_CANCELED = 1 ] && ok "queued compose execution canceled" || fail "queued compose state = ${STOP_STATE:-missing}"
+
+	STOP_LOG=$(proxmox-backup-manager task log "$STOP_UPID" 2>&1 || true)
+	grep -q "abort requested" <<<"$STOP_LOG" \
+		&& ok "task log recorded abort request" || fail "task log missing abort request"
+	grep -q "TASK ERROR: context canceled" <<<"$STOP_LOG" \
+		&& ok "stopped queued task reached terminal state" || fail "stopped queued task remained active"
+else
+	fail "queued compose rejected: $(body_of "$RESP")"
+fi
+
+sqlite3 -cmd '.timeout 5000' "$JOBS_DB" "
+DELETE FROM job_resource_locks WHERE execution_id = '$STOP_BLOCKER';
+DELETE FROM job_executions WHERE id = '$STOP_BLOCKER';
+"
+sleep 2
+[ -z "$(latest_snapshot "$STOP_GROUP_DIR")" ] \
+	&& ok "canceled compose published no snapshot" || fail "canceled compose published a snapshot"
+
 section "RESULTS"
 
 TOTAL=$((PASS + FAIL + SKIP))

@@ -13,7 +13,7 @@ RUN GOFIPS140=latest go build -o pbs-plus ./cmd/pbs-plus && \
 FROM ghcr.io/pbs-plus/proxmox-backup-docker:latest
 
 RUN rm -f /etc/apt/sources.list.d/*enterprise*.list /etc/apt/sources.list.d/*enterprise*.sources && \
-    apt-get update && apt-get install -y --no-install-recommends jq && rm -rf /var/lib/apt/lists/*
+    apt-get update && apt-get install -y --no-install-recommends jq sqlite3 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/pbs-plus /usr/bin/pbs-plus
 COPY --from=builder /build/pxar-mount /usr/bin/pxar-mount
