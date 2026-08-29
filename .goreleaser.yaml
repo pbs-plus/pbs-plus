@@ -133,6 +133,7 @@ binary_signs:
     args:
       - sign-blob
       - "--key=/tmp/cosign.key"
+      - "--new-bundle-format=false"
       - "--output-signature=${signature}"
       - "${artifact}"
       - "--yes"
