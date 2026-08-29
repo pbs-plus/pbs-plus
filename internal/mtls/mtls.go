@@ -24,7 +24,7 @@ import (
 
 var currentTLSCert = atomic.Pointer[tls.Certificate]{}
 var currentTLSCAs = atomic.Pointer[x509.CertPool]{}
-var lastTLSTimestamp int64
+var lastTLSTimestamp atomic.Int64
 
 func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile string) error {
 	if err := mustExist(serverCertFile, serverKeyFile, caFile); err != nil {
@@ -71,7 +71,7 @@ func updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile 
 }
 
 func getCurrentServerTLSCerts(serverCertFile, serverKeyFile, caFile, prevCaFile string) (*tls.Certificate, *x509.CertPool) {
-	lastTLSTime := time.Unix(atomic.LoadInt64(&lastTLSTimestamp), 0)
+	lastTLSTime := time.Unix(lastTLSTimestamp.Load(), 0)
 	if time.Since(lastTLSTime) > 12*time.Hour {
 		if err := updateServerCurrentCerts(serverCertFile, serverKeyFile, caFile, prevCaFile); err != nil {
 			log.Error(err, "mtls: failed to update server TLS certs")

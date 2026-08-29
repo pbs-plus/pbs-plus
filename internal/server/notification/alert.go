@@ -6,8 +6,8 @@ import (
 	"maps"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"uuid"
 )
 
 type AlertType string

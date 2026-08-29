@@ -34,18 +34,16 @@ func MountFuse(mountpoint string, fsName string, afs *ARPCFS) (*fuse.Server, err
 	timeout := 2 * time.Second
 
 	options := &fs.Options{
-		MountOptions: fuse.MountOptions{
-			Debug:              false,
-			FsName:             fsName,
-			Name:               "pbsagent",
-			AllowOther:         true,
-			DisableXAttrs:      false,
-			DisableReadDirPlus: true,
-			Options: []string{
-				"ro",
-				"allow_other",
-				"noatime",
-			},
+		Debug:              false,
+		FsName:             fsName,
+		Name:               "pbsagent",
+		AllowOther:         true,
+		DisableXAttrs:      false,
+		DisableReadDirPlus: true,
+		Options: []string{
+			"ro",
+			"allow_other",
+			"noatime",
 		},
 		EntryTimeout: &timeout,
 		AttrTimeout:  &timeout,

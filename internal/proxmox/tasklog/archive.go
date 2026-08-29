@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,8 +121,8 @@ func ReadStatusFromLog(upid string) (TaskState, error) {
 	}
 
 	lines := strings.Split(string(data), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimRight(lines[i], "\r")
+	for _, line := range slices.Backward(lines) {
+		line := strings.TrimRight(line, "\r")
 		if line == "" {
 			continue
 		}

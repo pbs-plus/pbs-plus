@@ -164,8 +164,7 @@ func TestIntegrationRestoreFileFullPipeline(t *testing.T) {
 		client: xattrClient.asPxarClient(),
 		fsCap:  getFilesystemCapabilities(dir),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	xattrClient.drainErrCh(ctx)
 
 	writeAlternateDataStreams(ctx, xattrSt, dest, map[string][]byte{
@@ -217,11 +216,9 @@ func TestIntegrationAtomicSwapRaceCondition(t *testing.T) {
 	// through to the copy-fallback path.
 	var swapErr error
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		swapErr = atomicSwap(tmp, dest)
-	}()
+	})
 
 	// Give the goroutine time to attempt the rename.
 	time.Sleep(50 * time.Millisecond)
@@ -347,24 +344,18 @@ func TestIntegrationHardlinkDeferredResolution(t *testing.T) {
 // calling processJob, and tracking completion via WaitGroup.
 func TestIntegrationConcurrentWorkers(t *testing.T) {
 	dir := t.TempDir()
-	numWorkers := runtime.NumCPU()
-	if numWorkers > 8 {
-		numWorkers = 8
-	}
+	numWorkers := min(runtime.NumCPU(), 8)
 
 	jobs := make(chan restoreJob, 16)
 	var wg sync.WaitGroup
 	var completed atomic.Int64
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Start workers.
 	var workersWg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
-		workersWg.Add(1)
-		go func() {
-			defer workersWg.Done()
+		workersWg.Go(func() {
 			for job := range jobs {
 				func() {
 					defer wg.Done()
@@ -376,11 +367,11 @@ func TestIntegrationConcurrentWorkers(t *testing.T) {
 					completed.Add(1)
 				}()
 			}
-		}()
+		})
 	}
 
 	// Enqueue 200 jobs.
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		wg.Add(1)
 		select {
 		case jobs <- restoreJob{
@@ -555,8 +546,7 @@ func TestIntegrationRestoreSymlinkEndToEnd(t *testing.T) {
 		client: mc.asPxarClient(),
 		fsCap:  getFilesystemCapabilities(dir),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	mc.drainErrCh(ctx)
 
 	info := pxar.FileInfo{
@@ -677,8 +667,7 @@ func TestIntegrationRunJobRecovered(t *testing.T) {
 	dir := t.TempDir()
 	mc := newMockClient()
 	client := mc.asPxarClient()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	mc.drainErrCh(ctx)
 
 	st := &restoreState{
@@ -844,12 +833,11 @@ func TestIntegrationWriteADSConcurrent(t *testing.T) {
 		client: mc.asPxarClient(),
 		fsCap:  getFilesystemCapabilities(dir),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	mc.drainErrCh(ctx)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		f := filepath.Join(dir, "ads-conc-"+string(rune('0'+i%10))+"-"+string(rune('0'+i/10)))
 		if err := os.WriteFile(f, nil, 0o644); err != nil {
 			t.Fatal(err)
@@ -865,7 +853,7 @@ func TestIntegrationWriteADSConcurrent(t *testing.T) {
 	wg.Wait()
 
 	// Every file should have its own :goroutine ADS with unique content.
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		f := filepath.Join(dir, "ads-conc-"+string(rune('0'+i%10))+"-"+string(rune('0'+i/10)))
 		got, err := os.ReadFile(f + ":goroutine")
 		if err != nil {
@@ -948,8 +936,7 @@ func TestIntegrationApplyMetaWithWindowsXattrs(t *testing.T) {
 		client: mc.asPxarClient(),
 		fsCap:  getFilesystemCapabilities(dir),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	mc.drainErrCh(ctx)
 
 	// Apply times + attributes via SetFileTime.
@@ -1161,8 +1148,7 @@ func TestIntegrationRestoreSymlinkOverwrite(t *testing.T) {
 		fsCap:  getFilesystemCapabilities(dir),
 		noAttr: true,
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	mc.drainErrCh(ctx)
 
 	job := restoreJob{

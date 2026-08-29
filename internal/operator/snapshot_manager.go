@@ -89,17 +89,13 @@ func (sm *SnapshotManager) createVolumeSnapshot(ctx context.Context, namespace, 
 	snapshotClass := sm.getSnapshotClass(sourcePVC)
 
 	snapshot := &VolumeSnapshot{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: VolumeSnapshotGroupVersion,
-			Kind:       "VolumeSnapshot",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				ManagedByLabel:           ManagedByValue,
-				SnapshotOriginalPVCLabel: sourcePVC.Name,
-			},
+		APIVersion: VolumeSnapshotGroupVersion,
+		Kind:       "VolumeSnapshot",
+		Name:       name,
+		Namespace:  namespace,
+		Labels: map[string]string{
+			ManagedByLabel:           ManagedByValue,
+			SnapshotOriginalPVCLabel: sourcePVC.Name,
 		},
 		Spec: VolumeSnapshotSpec{
 			Source: VolumeSnapshotSource{
@@ -126,22 +122,18 @@ func (sm *SnapshotManager) createRestoredPVC(ctx context.Context, namespace, nam
 	storageRequest := originalPVC.Spec.Resources.Requests[corev1.ResourceStorage]
 
 	pvc := &corev1.PersistentVolumeClaim{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "PersistentVolumeClaim",
+		APIVersion: "v1",
+		Kind:       "PersistentVolumeClaim",
+		Name:       name,
+		Namespace:  namespace,
+		Labels: map[string]string{
+			ManagedByLabel:         ManagedByValue,
+			SnapshotPVCLabel:       "true",
+			SnapshotTimestampLabel: fmt.Sprintf("%d", time.Now().Unix()),
 		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-			Labels: map[string]string{
-				ManagedByLabel:         ManagedByValue,
-				SnapshotPVCLabel:       "true",
-				SnapshotTimestampLabel: fmt.Sprintf("%d", time.Now().Unix()),
-			},
-			Annotations: map[string]string{
-				"pbs-plus.io/original-snapshot": snapshotName,
-				"pbs-plus.io/original-pvc":      originalPVC.Name,
-			},
+		Annotations: map[string]string{
+			"pbs-plus.io/original-snapshot": snapshotName,
+			"pbs-plus.io/original-pvc":      originalPVC.Name,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},

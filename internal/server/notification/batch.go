@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"uuid"
 )
 
 // DefaultBatchWaitSecs applies when a batch has no configured wait timeout.

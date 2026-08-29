@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -164,8 +165,8 @@ func CleanUnfinishedSnapshot(backup coredb.Backup, backupID string) error {
 	}
 
 	var latestSnapshot string
-	for i := len(existingSnapshots) - 1; i >= 0; i-- {
-		name := existingSnapshots[i].Name()
+	for _, existingSnapshot := range slices.Backward(existingSnapshots) {
+		name := existingSnapshot.Name()
 		if name == "owner" {
 			continue
 		}

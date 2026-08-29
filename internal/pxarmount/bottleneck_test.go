@@ -311,9 +311,9 @@ func BenchmarkMutableFS_WritePath(b *testing.B) {
 					ino := mfs.pathToIno(fmt.Sprintf("/write_%d.txt", fileIdx), false)
 					data := fmt.Appendf(nil, "data_%d", i)
 					input := &fuse.WriteIn{
-						InHeader: fuse.InHeader{NodeId: ino},
-						Offset:   uint64(i) * 64,
-						Size:     uint32(len(data)),
+						NodeId: ino,
+						Offset: uint64(i) * 64,
+						Size:   uint32(len(data)),
 					}
 					_, status := mfs.Write(nil, input, data)
 					if status != fuse.OK {
