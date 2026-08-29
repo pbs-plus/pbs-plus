@@ -42,7 +42,7 @@ jobs:
         run: git fetch --tags --prune --force
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Write ECDSA signing key
         env:
