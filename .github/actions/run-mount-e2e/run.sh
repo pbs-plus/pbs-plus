@@ -382,6 +382,43 @@ else
 	fail "composed unmount rejected: $(body_of "$RESP")"
 fi
 
+section "PHASE 5B: Clone a complete snapshot without rebuilding indexes"
+
+CLONE_GROUP_DIR="/mnt/test/ns/test/host/e2e-clone"
+ROOT_SEL=$(printf / | base64 -w0)
+RESP=$(api_post "/api2/extjs/config/d2d-compose/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
+	-d "backup-time=$NEW_SNAP" -d "file-name=$DIDX3" \
+	-d "target-ns=$NAMESPACE" -d "target-type=host" -d "target-id=e2e-clone" \
+	-d "paths=$ROOT_SEL")
+if submit_ok "$RESP"; then
+	ok "whole-root clone request accepted"
+	CLONE_DEADLINE=$((SECONDS + 420))
+	CLONE_OK=0
+	while [ $SECONDS -lt $CLONE_DEADLINE ]; do
+		if [ -n "$(latest_snapshot "$CLONE_GROUP_DIR")" ]; then CLONE_OK=1; break; fi
+		if ERRF=$(compose_errored); then
+			echo "whole-root clone task failed (see log below)"
+			tail -20 "$ERRF"
+			break
+		fi
+		sleep 2
+	done
+	[ $CLONE_OK = 1 ] && ok "whole-root clone produced target snapshot" || { fail "whole-root clone produced no snapshot"; dump_logs; }
+else
+	fail "whole-root clone rejected: $(body_of "$RESP")"
+fi
+
+CLONE_SNAP=$(latest_snapshot "$CLONE_GROUP_DIR")
+SOURCE_META="$INIT_GROUP_DIR/$NEW_SNAP/$DIDX3"
+SOURCE_PAYLOAD="${SOURCE_META%.mpxar.didx}.ppxar.didx"
+TARGET_META="$CLONE_GROUP_DIR/$CLONE_SNAP/e2e-clone.mpxar.didx"
+TARGET_PAYLOAD="$CLONE_GROUP_DIR/$CLONE_SNAP/e2e-clone.ppxar.didx"
+cmp -s "$SOURCE_META" "$TARGET_META" \
+	&& ok "whole-root metadata index cloned byte-for-byte" || fail "whole-root metadata index was rebuilt"
+cmp -s "$SOURCE_PAYLOAD" "$TARGET_PAYLOAD" \
+	&& ok "whole-root payload index cloned byte-for-byte" || fail "whole-root payload index was rebuilt"
+
 section "PHASE 6: Flattened compose of a directory"
 
 FLAT_GROUP_DIR="/mnt/test/ns/test/host/e2e-flatten"
