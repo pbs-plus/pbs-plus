@@ -81,6 +81,7 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	if in.StripRoot && len(in.Paths) != 1 {
 		return errors.New("directory flatten requires exactly one selected directory")
 	}
+	wholeRoot := isWholeRootSelection(in.Paths, in.StripRoot)
 
 	task.LogString(fmt.Sprintf("composing %s/%s/%s (%s) into %s/%s/%s",
 		in.SourceNS, in.SourceType, in.SourceID, in.SourceFile,
@@ -221,6 +222,46 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 		_ = session.Close()
 	}()
 
+	if wholeRoot {
+		publisher, ok := session.(backupproxy.DynamicIndexPublisher)
+		if !ok {
+			return errors.New("local datastore publisher cannot clone dynamic indexes")
+		}
+		indexes := []struct {
+			source string
+			target string
+		}{{source: mpxarPath, target: in.TargetID + ".pxar.didx"}}
+		if isSplit {
+			indexes = []struct {
+				source string
+				target string
+			}{
+				{source: mpxarPath, target: in.TargetID + ".mpxar.didx"},
+				{source: ppxarPath, target: in.TargetID + ".ppxar.didx"},
+			}
+		}
+		task.LogString(fmt.Sprintf("cloning %d complete source index(es)", len(indexes)))
+		for _, index := range indexes {
+			if _, err := publisher.PublishDynamicIndex(ctx, index.target, index.source); err != nil {
+				return fmt.Errorf("clone %s: %w", filepath.Base(index.source), err)
+			}
+			if err := verifyPublishedIndex(filepath.Join(publication.snapshotDir, index.target)); err != nil {
+				return err
+			}
+		}
+		task.LogString(fmt.Sprintf(
+			"index clone complete: validated %.1f GiB in %d chunks",
+			float64(payloadProgress.ProcessedBytes)/(1<<30), payloadProgress.ProcessedChunks))
+		task.LogString("publishing snapshot manifest")
+		if _, err := session.Finish(ctx); err != nil {
+			return fmt.Errorf("finish session: %w", err)
+		}
+		publication.Commit()
+		task.LogString(fmt.Sprintf("cloned complete %s/%s/%s snapshot %s",
+			in.TargetNS, in.TargetType, in.TargetID, DirTime(time.Unix(backupTime, 0).UTC())))
+		return nil
+	}
+
 	writer, err := transfer.NewRemoteDedupWriter(ctx, session, in.TargetID+".mpxar.didx", in.TargetID+".ppxar.didx")
 	if err != nil {
 		return fmt.Errorf("create writer: %w", err)
@@ -276,6 +317,10 @@ func composeSnapshot(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snap
 	task.LogString(fmt.Sprintf("composed %s/%s/%s snapshot %s (%d entries)",
 		in.TargetNS, in.TargetType, in.TargetID, DirTime(time.Unix(backupTime, 0).UTC()), copied))
 	return nil
+}
+
+func isWholeRootSelection(paths []string, stripRoot bool) bool {
+	return !stripRoot && len(paths) == 1 && paths[0] == "/"
 }
 
 func uniqueSnapshotTime(groupDir string) int64 {
