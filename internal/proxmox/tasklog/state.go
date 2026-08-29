@@ -33,15 +33,23 @@ func (s TaskState) String() string {
 	case StatusWarning:
 		return fmt.Sprintf("WARNINGS: %d", s.WarnCount)
 	case StatusError:
-		return s.Message
+		return s.SafeMessage()
 	default:
 		return "unknown"
 	}
 }
 
+func (s TaskState) SafeMessage() string {
+	msg := SanitizeMessage(s.Message)
+	if msg == "" {
+		msg = "error"
+	}
+	return msg
+}
+
 func (s TaskState) ResultText() string {
 	if s.Status == StatusError {
-		return fmt.Sprintf("TASK ERROR: %s", s.Message)
+		return fmt.Sprintf("TASK ERROR: %s", s.SafeMessage())
 	}
 	return fmt.Sprintf("TASK %s", s)
 }

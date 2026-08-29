@@ -218,7 +218,7 @@ func dirName(path string) string {
 }
 
 func (w *WorkerTask) writeLogLine(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+	msg := SanitizeMessage(fmt.Sprintf(format, args...))
 	if _, err := w.file.WriteString(proxmox.FormatLogLine(time.Now(), msg) + "\n"); err != nil {
 		slog.Error(err.Error())
 	}

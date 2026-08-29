@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
@@ -706,5 +707,109 @@ func TestFindNewWorkerTaskRejectsAmbiguity(t *testing.T) {
 
 	if _, _, err := FindNewWorkerTask("backup", workerID, before); err == nil {
 		t.Fatal("FindNewWorkerTask accepted ambiguous tasks")
+	}
+}
+
+func TestSanitizeMessage(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{name: "passthrough", in: "all good", want: "all good"},
+		{name: "utf8 preserved", in: "gr\u00f6\u00dfe 100 \u20ac", want: "gr\u00f6\u00dfe 100 \u20ac"},
+		{name: "tab preserved", in: "a\tb", want: "a\tb"},
+		{name: "invalid bytes escaped", in: "type=\xdc\xbd\xaf\xca", want: "type=\u073d\\xaf\\xca"},
+		{name: "newline escaped", in: "line one\nline two", want: "line one\\x0aline two"},
+		{name: "carriage return escaped", in: "a\rb", want: "a\\x0db"},
+		{name: "nul escaped", in: "a\x00b", want: "a\\x00b"},
+		{name: "del escaped", in: "a\x7fb", want: "a\\x7fb"},
+		{name: "empty", in: "", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizeMessage(tc.in)
+			if got != tc.want {
+				t.Fatalf("SanitizeMessage(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	long := strings.Repeat("x", maxMessageLen+100)
+	got := SanitizeMessage(long)
+	if !utf8.ValidString(got) || len(got) > maxMessageLen+len("...[truncated]") {
+		t.Fatalf("truncation failed: len=%d valid=%t", len(got), utf8.ValidString(got))
+	}
+	if !strings.HasSuffix(got, "...[truncated]") {
+		t.Fatalf("missing truncation marker: %q", got[len(got)-40:])
+	}
+	longUTF8 := strings.Repeat("\u00e9", maxMessageLen)
+	if got := SanitizeMessage(longUTF8); !utf8.ValidString(got) {
+		t.Fatal("rune-boundary truncation produced invalid UTF-8")
+	}
+}
+
+func TestTaskWriteGuardrails(t *testing.T) {
+	setupTaskDirs(t)
+
+	badErr := fmt.Errorf("read TAPE descriptor: mtf: corrupt block header (type=%s): boom\nsecond line", string([]byte{0xdc, 0xbd, 0xaf, 0xca}))
+
+	wt, err := NewWorkerTask("pbsplus", "test", "guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt.LogString("progress " + string([]byte{0xff, 0xfe}))
+	wt.CloseErr(badErr)
+
+	logPath, err := UPIDLogPath(wt.UPID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.Valid(logData) {
+		t.Fatal("task log contains invalid UTF-8")
+	}
+	for i, line := range strings.Split(string(logData), "\n") {
+		if strings.Contains(line, "\r") {
+			t.Fatalf("task log line %d contains bare CR", i)
+		}
+	}
+
+	arch, err := readTaskFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arch) != 1 || arch[0].State == nil || arch[0].State.Status != StatusError {
+		t.Fatalf("archive = %#v, want one error entry", arch)
+	}
+	msg := arch[0].State.Message
+	if !utf8.ValidString(msg) || strings.ContainsAny(msg, "\n\r") {
+		t.Fatalf("archived message unsafe: %q", msg)
+	}
+	if !strings.Contains(msg, "\\xaf\\xca") {
+		t.Fatalf("archived message lost escaped bytes: %q", msg)
+	}
+	if !strings.Contains(msg, "\\x0asecond line") {
+		t.Fatalf("archived message lost escaped newline: %q", msg)
+	}
+
+	line := RenderStatusLine(arch[0].UPID, arch[0].State)
+	upidStr, state, err := ParseStatusLine(strings.TrimRight(line, "\n"))
+	if err != nil {
+		t.Fatalf("round-trip parse failed: %v (line %q)", err, line)
+	}
+	if upidStr != arch[0].UPID || state == nil || state.Status != StatusError || state.Message != msg {
+		t.Fatalf("round trip = %q, %#v", upidStr, state)
+	}
+
+	wt2, err := NewWorkerTask("pbsplus", "test", "guard2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt2.CloseErr(fmt.Errorf(""))
+	line = RenderStatusLine(wt2.UPID(), &TaskState{Status: StatusError, Message: ""})
+	if _, state, err := ParseStatusLine(strings.TrimRight(line, "\n")); err != nil || state == nil || state.Message == "" {
+		t.Fatalf("empty-message guard failed: line %q err %v state %#v", line, err, state)
 	}
 }
