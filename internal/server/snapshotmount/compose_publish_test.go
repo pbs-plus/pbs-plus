@@ -177,11 +177,11 @@ func TestVerifyComposeSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blob, err := datastore.EncodeBlob(manifestJSON)
+	blob, err := datastore.EncodeBlob(nil, manifestJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "index.json.blob"), blob.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "index.json.blob"), blob, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyComposeSource(dir, "host", "source", 1787936400, path); err != nil {

@@ -458,7 +458,7 @@ func verifyComposeSource(sourceDir string, inSourceType, inSourceID string, sour
 	if err != nil {
 		return fmt.Errorf("read source manifest: %w", err)
 	}
-	data, err := datastore.DecodeBlob(raw)
+	data, err := datastore.DecodeBlob(nil, raw)
 	if err != nil {
 		return fmt.Errorf("decode source manifest: %w", err)
 	}
