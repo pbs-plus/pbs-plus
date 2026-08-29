@@ -43,6 +43,8 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: "v2.6.1"
 
       - name: Write ECDSA signing key
         env:
