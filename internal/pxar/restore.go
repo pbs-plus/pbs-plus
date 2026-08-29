@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/fxamacker/cbor/v2"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	pxar "github.com/pbs-plus/pxar"
@@ -78,6 +81,81 @@ type restoreState struct {
 type dirMeta struct {
 	dest string
 	info pxar.FileInfo
+}
+
+const unixSecsMax = 32503680000
+
+const (
+	XAttrOwner          = "user.owner"
+	XAttrGroup          = "user.group"
+	XAttrACLs           = "user.acls"
+	XAttrFileAttributes = "user.fileattributes"
+	XAttrCreationTime   = "user.creationtime"
+	XAttrLastAccessTime = "user.lastaccesstime"
+	XAttrLastWriteTime  = "user.lastwritetime"
+)
+
+func IsCanonicalXAttr(name string) bool {
+	switch name {
+	case XAttrOwner, XAttrGroup, XAttrACLs, XAttrFileAttributes,
+		XAttrCreationTime, XAttrLastAccessTime, XAttrLastWriteTime:
+		return true
+	}
+	return false
+}
+
+func ParseXattrUnixSecs(data []byte) (secs int64, ok bool) {
+	if len(data) == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(string(data), 10, 64)
+	if err != nil || v < 0 || v > unixSecsMax {
+		return 0, false
+	}
+	return v, true
+}
+
+// aclFlavor discriminates POSIX vs Windows encoding of a user.acls payload
+// so a cross-platform restore never applies a foreign ACL type.
+type aclFlavor int
+
+const (
+	aclNone aclFlavor = iota
+	aclPosix
+	aclWindows
+)
+
+// detectACLFlavor probes the field discriminator ("sid" vs "tag") in a
+// user.acls blob to report POSIX, Windows, or neither. cbor ignores unknown
+// fields, so a foreign payload leaves its discriminator empty.
+func detectACLFlavor(data []byte) aclFlavor {
+	if len(data) == 0 {
+		return aclNone
+	}
+	var probe []struct {
+		SID string `cbor:"sid"`
+		Tag string `cbor:"tag"`
+	}
+	if cbor.Unmarshal(data, &probe) != nil {
+		return aclNone
+	}
+	var hasPosix, hasWindows bool
+	for _, p := range probe {
+		if p.SID != "" {
+			hasWindows = true
+		}
+		if p.Tag != "" {
+			hasPosix = true
+		}
+	}
+	switch {
+	case hasPosix && !hasWindows:
+		return aclPosix
+	case hasWindows && !hasPosix:
+		return aclWindows
+	default:
+		return aclNone
+	}
 }
 
 func RestoreWithOptions(ctx context.Context, client *Client, sources []string, opts RestoreOptions) error {

@@ -26,7 +26,7 @@ require (
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/pbs-plus/go-mtf v0.27.4
 	github.com/pbs-plus/go-tapedrive v0.5.4
-	github.com/pbs-plus/pxar v0.42.0
+	github.com/pbs-plus/pxar v0.43.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
 	github.com/quic-go/quic-go v0.61.0

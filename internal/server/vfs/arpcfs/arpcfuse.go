@@ -17,7 +17,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	pxar "github.com/pbs-plus/pxar"
+	"github.com/pbs-plus/pbs-plus/internal/pxar"
 )
 
 func newRoot(fs *ARPCFS) fs.InodeEmbedder {

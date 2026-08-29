@@ -17,6 +17,7 @@ import (
 	"github.com/pbs-plus/pxar/format"
 	"github.com/pbs-plus/pxar/transfer"
 
+	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 )
 
@@ -292,12 +293,12 @@ func resolvePxarTimes(entry *upstreampxar.Entry) (atimeNs, mtimeNs int64) {
 	for _, xa := range entry.Metadata.XAttrs {
 		name := xa.Name()
 		switch string(name) {
-		case upstreampxar.XAttrLastAccessTime:
-			if secs, ok := upstreampxar.ParseXattrUnixSecs(xa.Value()); ok {
+		case pxar.XAttrLastAccessTime:
+			if secs, ok := pxar.ParseXattrUnixSecs(xa.Value()); ok {
 				atimeNs = secs * 1_000_000_000
 			}
-		case upstreampxar.XAttrLastWriteTime:
-			if secs, ok := upstreampxar.ParseXattrUnixSecs(xa.Value()); ok {
+		case pxar.XAttrLastWriteTime:
+			if secs, ok := pxar.ParseXattrUnixSecs(xa.Value()); ok {
 				mtimeNs = secs * 1_000_000_000
 			}
 		}
