@@ -56,19 +56,19 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	var hasCreation bool
 
 	if xattrs != nil {
-		if d, ok := xattrs[XAttrCreationTime]; ok {
-			if ts, ok := ParseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[pxar.XAttrCreationTime]; ok {
+			if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 				c = unixToFiletime(ts)
 				hasCreation = true
 			}
 		}
-		if d, ok := xattrs[XAttrLastWriteTime]; ok {
-			if ts, ok := ParseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[pxar.XAttrLastWriteTime]; ok {
+			if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 				w = unixToFiletime(ts)
 			}
 		}
-		if d, ok := xattrs[XAttrLastAccessTime]; ok {
-			if ts, ok := ParseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[pxar.XAttrLastAccessTime]; ok {
+			if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 				a = unixToFiletime(ts)
 			}
 		}
@@ -77,7 +77,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	var attrs uint32
 	var hasAttrs bool
 	if xattrs != nil && st.fsCap.supportsXAttrs {
-		if d, ok := xattrs[XAttrFileAttributes]; ok {
+		if d, ok := xattrs[pxar.XAttrFileAttributes]; ok {
 			var fa map[string]bool
 			if cbor.Unmarshal(d, &fa) == nil {
 				if attr := buildFileAttributes(fa); attr != 0 {
@@ -172,7 +172,7 @@ func restoreWindowsACLsFromHandle(ctx context.Context, st *restoreState, h windo
 
 	var dacl *windows.ACL
 	if d, ok := xattrs["user.acls"]; ok {
-		if detectACLFlavor(d) == aclWindows {
+		if pxar.DetectACLFlavor(d) == pxar.ACLFlavorWindows {
 			var winACLs []fswire.WinACL
 			if uerr := cbor.Unmarshal(d, &winACLs); uerr != nil {
 				st.reportErr(ctx, "decode acls", path, uerr)
@@ -225,19 +225,19 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, linkPath string, e 
 	a := baseFt
 	w := baseFt
 	var cp *windows.Filetime
-	if d, ok := xattrs[XAttrCreationTime]; ok {
-		if ts, ok := ParseXattrUnixSecs(d); ok {
+	if d, ok := xattrs[pxar.XAttrCreationTime]; ok {
+		if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 			ft := unixToFiletime(ts)
 			cp = &ft
 		}
 	}
-	if d, ok := xattrs[XAttrLastWriteTime]; ok {
-		if ts, ok := ParseXattrUnixSecs(d); ok {
+	if d, ok := xattrs[pxar.XAttrLastWriteTime]; ok {
+		if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 			w = unixToFiletime(ts)
 		}
 	}
-	if d, ok := xattrs[XAttrLastAccessTime]; ok {
-		if ts, ok := ParseXattrUnixSecs(d); ok {
+	if d, ok := xattrs[pxar.XAttrLastAccessTime]; ok {
+		if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 			a = unixToFiletime(ts)
 		}
 	}
@@ -270,7 +270,7 @@ func writeAlternateDataStreams(ctx context.Context, st *restoreState, name strin
 		if !strings.HasPrefix(k, "user.") {
 			continue
 		}
-		if IsCanonicalXAttr(k) {
+		if pxar.IsCanonicalXAttr(k) {
 			continue
 		}
 		stream := strings.TrimPrefix(k, "user.")

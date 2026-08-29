@@ -57,35 +57,35 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 	st.reportErr(ctx, "chmod", path, unix.Fchmod(fd, uint32(e.RawMode&0777)))
 
 	if lerr == nil && len(xattrs) > 0 {
-		if d, ok := xattrs[XAttrOwner]; ok {
+		if d, ok := xattrs[pxar.XAttrOwner]; ok {
 			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				uid = id
 			}
-			delete(xattrs, XAttrOwner)
+			delete(xattrs, pxar.XAttrOwner)
 		}
-		if d, ok := xattrs[XAttrGroup]; ok {
+		if d, ok := xattrs[pxar.XAttrGroup]; ok {
 			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				gid = id
 			}
-			delete(xattrs, XAttrGroup)
+			delete(xattrs, pxar.XAttrGroup)
 		}
 
-		if d, ok := xattrs[XAttrLastAccessTime]; ok {
-			if ts, ok := ParseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[pxar.XAttrLastAccessTime]; ok {
+			if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 				atime = time.Unix(ts, 0)
 			}
-			delete(xattrs, XAttrLastAccessTime)
+			delete(xattrs, pxar.XAttrLastAccessTime)
 		}
-		if d, ok := xattrs[XAttrLastWriteTime]; ok {
-			if ts, ok := ParseXattrUnixSecs(d); ok {
+		if d, ok := xattrs[pxar.XAttrLastWriteTime]; ok {
+			if ts, ok := pxar.ParseXattrUnixSecs(d); ok {
 				mtime = time.Unix(ts, 0)
 			}
-			delete(xattrs, XAttrLastWriteTime)
+			delete(xattrs, pxar.XAttrLastWriteTime)
 		}
 
 		if st.fsCap.supportsACLs {
-			if d, ok := xattrs[XAttrACLs]; ok {
-				if detectACLFlavor(d) == aclPosix {
+			if d, ok := xattrs[pxar.XAttrACLs]; ok {
+				if pxar.DetectACLFlavor(d) == pxar.ACLFlavorPosix {
 					var entries []fswire.PosixACL
 					if uerr := cbor.Unmarshal(d, &entries); uerr != nil {
 						st.reportErr(ctx, "decode acls", path, uerr)
@@ -93,10 +93,10 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 						applyUnixACLsFd(ctx, st, fd, path, entries)
 					}
 				}
-				delete(xattrs, XAttrACLs)
+				delete(xattrs, pxar.XAttrACLs)
 			}
 		} else {
-			delete(xattrs, XAttrACLs)
+			delete(xattrs, pxar.XAttrACLs)
 		}
 
 		// Re-apply ownership if the xattrs overrode uid/gid; chmod may have
@@ -108,7 +108,7 @@ func applyMeta(ctx context.Context, st *restoreState, file *os.File, e pxar.File
 
 		if st.fsCap.supportsXAttrs {
 			for name, val := range xattrs {
-				if name == XAttrCreationTime || name == XAttrFileAttributes {
+				if name == pxar.XAttrCreationTime || name == pxar.XAttrFileAttributes {
 					continue
 				}
 				st.reportErr(ctx, "setxattr "+name, path, unix.Fsetxattr(fd, name, val, 0))
@@ -175,12 +175,12 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, path string, e pxar
 	}
 
 	if lerr == nil && len(xattrs) > 0 {
-		if d, ok := xattrs[XAttrOwner]; ok {
+		if d, ok := xattrs[pxar.XAttrOwner]; ok {
 			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				uid = id
 			}
 		}
-		if d, ok := xattrs[XAttrGroup]; ok {
+		if d, ok := xattrs[pxar.XAttrGroup]; ok {
 			if id, perr := strconv.Atoi(string(d)); perr == nil {
 				gid = id
 			}
@@ -193,7 +193,7 @@ func applyMetaSymlink(ctx context.Context, st *restoreState, path string, e pxar
 
 	if lerr == nil && st.fsCap.supportsXAttrs {
 		for name, val := range xattrs {
-			if IsCanonicalXAttr(name) {
+			if pxar.IsCanonicalXAttr(name) {
 				continue
 			}
 			st.reportErr(ctx, "lsetxattr "+name, path, unix.Lsetxattr(path, name, val, 0))
