@@ -15,6 +15,8 @@ import (
 
 	"github.com/pbs-plus/pxar/datastore"
 	"golang.org/x/sys/unix"
+
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 func TestBackupLockPathMatchesPBS(t *testing.T) {
@@ -38,6 +40,47 @@ func TestBackupLockPathMatchesPBS(t *testing.T) {
 		if got := backupLockPath("store", test.namespace, test.path); got != test.want {
 			t.Fatalf("backupLockPath(%q, %q) = %q, want %q", test.namespace, test.path, got, test.want)
 		}
+	}
+}
+
+func TestEnsureBackupLockDir(t *testing.T) {
+	original := datastoreLocksDir
+	datastoreLocksDir = t.TempDir()
+	defer func() { datastoreLocksDir = original }()
+
+	lockDir := filepath.Join(datastoreLocksDir, "store", "namespace", "hashed")
+	if err := ensureBackupLockDir(lockDir); err != nil {
+		t.Fatal(err)
+	}
+	dirs := []string{
+		datastoreLocksDir,
+		filepath.Join(datastoreLocksDir, "store"),
+		filepath.Join(datastoreLocksDir, "store", "namespace"),
+		lockDir,
+	}
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("stat %q: %v", dir, err)
+		}
+	}
+	if os.Geteuid() == 0 {
+		for _, dir := range dirs {
+			var stat unix.Stat_t
+			if err := unix.Stat(dir, &stat); err != nil {
+				t.Fatalf("stat ownership of %q: %v", dir, err)
+			}
+			if stat.Uid != uint32(proxmox.BackupUID) || stat.Gid != uint32(proxmox.BackupGID) {
+				t.Fatalf("owner of %q = %d:%d, want %d:%d", dir, stat.Uid, stat.Gid, proxmox.BackupUID, proxmox.BackupGID)
+			}
+		}
+	}
+
+	outside := filepath.Join(filepath.Dir(datastoreLocksDir), "outside")
+	if err := ensureBackupLockDir(outside); err == nil {
+		t.Fatal("expected outside lock directory to be rejected")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside lock directory was created: %v", err)
 	}
 }
 

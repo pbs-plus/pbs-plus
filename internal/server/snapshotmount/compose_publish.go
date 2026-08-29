@@ -208,10 +208,31 @@ func acquireBackupLock(storeName, namespace, relativePath, legacyPath string, sh
 		return flockPath(legacyPath, shared, true)
 	}
 	path := backupLockPath(storeName, namespace, relativePath)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := ensureBackupLockDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	return flockPath(path, shared, directory)
+}
+
+func ensureBackupLockDir(path string) error {
+	rel, err := filepath.Rel(datastoreLocksDir, path)
+	if err != nil {
+		return fmt.Errorf("resolve lock directory %q: %w", path, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("lock directory %q is outside %q", path, datastoreLocksDir)
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return err
+	}
+	for dir := path; ; dir = filepath.Dir(dir) {
+		if err := proxmox.ChownBackupUser(dir); err != nil {
+			return fmt.Errorf("chown lock directory %q: %w", dir, err)
+		}
+		if dir == datastoreLocksDir {
+			return nil
+		}
+	}
 }
 
 func flockPath(path string, shared, directory bool) (*heldFileLock, error) {
