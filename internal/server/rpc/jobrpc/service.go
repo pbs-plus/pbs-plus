@@ -49,10 +49,13 @@ type Service struct {
 	Engine *jobs.Engine
 }
 
-// blockedReason reports why a user-triggered run cannot start now, or "" when it can; same-target runs are refused rather than queued because they share one PBS worker ID.
+// blockedReason reports why a user-triggered run cannot start now, or "" when it can; resourceKey is empty for backups because concurrent reads of one target are safe, while restores pass their destination because they write it.
 func (s *Service) blockedReason(kind, definitionID, resourceKey string) string {
 	if _, err := s.Engine.ActiveExecution(s.ctx, kind, definitionID); err == nil {
 		return "this job is already queued or running"
+	}
+	if resourceKey == "" {
+		return ""
 	}
 	holder, err := s.Engine.ResourceHolder(s.ctx, resourceKey)
 	if err != nil || holder.DefinitionID == definitionID {
@@ -72,7 +75,7 @@ func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 		return nil
 	}
 
-	if reason := s.blockedReason(jobs.WorkflowBackup, args.Job.ID, "target:"+args.Job.Target.Name); reason != "" {
+	if reason := s.blockedReason(jobs.WorkflowBackup, args.Job.ID, ""); reason != "" {
 		reply.Status = 409
 		reply.Message = fmt.Sprintf("%s (%s)", jobs.ErrOneInstance, reason)
 		return nil
@@ -84,7 +87,7 @@ func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 		"manual",
 		"",
 		jobs.BackupInput{SkipCheck: args.SkipCheck, Web: args.Web, ExtraExclusions: args.ExtraExclusions},
-		[]string{"backup:" + args.Job.ID, "target:" + args.Job.Target.Name},
+		[]string{"backup:" + args.Job.ID},
 		args.Job.Retry+1,
 		time.Duration(max(args.Job.RetryInterval, 1))*time.Minute,
 	)

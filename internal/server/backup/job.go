@@ -149,7 +149,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	workerID, err := backupWorkerID(job, target)
+	workerID, err := backupWorkerID(job)
 	if err != nil {
 		return nil, proxmox.Task{}, "", fmt.Errorf("determining backup worker identity: %w", err)
 	}

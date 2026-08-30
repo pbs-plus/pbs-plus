@@ -12,8 +12,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
-func backupWorkerID(job coredb.Backup, target coredb.Target) (string, error) {
-	backupID, err := getBackupId(target)
+func backupWorkerID(job coredb.Backup) (string, error) {
+	backupID, err := getBackupId(job)
 	if err != nil {
 		return "", err
 	}
@@ -42,7 +42,7 @@ func GetBackupTask(ctx context.Context, workerID string, before map[string]struc
 }
 
 func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalData []string) (proxmox.Task, error) {
-	wid, err := backupWorkerID(job, job.Target)
+	wid, err := backupWorkerID(job)
 	if err != nil {
 		return proxmox.Task{}, err
 	}
@@ -64,7 +64,7 @@ func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalDa
 }
 
 func GenerateBackupTaskOKFile(job coredb.Backup, additionalData []string) (proxmox.Task, error) {
-	wid, err := backupWorkerID(job, job.Target)
+	wid, err := backupWorkerID(job)
 	if err != nil {
 		return proxmox.Task{}, err
 	}

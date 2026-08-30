@@ -18,26 +18,12 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
-func getBackupId(target coredb.Target) (string, error) {
-	if target.IsAgent() {
-		if target.Name == "" {
-			return "", fmt.Errorf("target name is required for agent backup")
-		}
-		return target.GetHostname(), nil
+// getBackupId returns the PBS backup ID for a job; it is per-job rather than per-target so concurrent backups of one target land in separate snapshot groups with distinct PBS worker IDs.
+func getBackupId(backup coredb.Backup) (string, error) {
+	if backup.ID == "" {
+		return "", fmt.Errorf("job id is required to derive the backup ID")
 	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostnameBytes, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			log.Error(err, "")
-		}
-		hostname = strings.TrimSpace(string(hostnameBytes))
-		if hostname == "" {
-			hostname = "localhost"
-		}
-	}
-	return hostname, nil
+	return backup.ID, nil
 }
 
 func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
@@ -45,7 +31,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
 
-	backupID, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}

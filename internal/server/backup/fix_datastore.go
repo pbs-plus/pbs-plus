@@ -53,7 +53,7 @@ func GetOwnerFilePath(backup coredb.Backup, app *application.Runtime) (string, e
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
 
-	backupID, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get backup ID: %w", err)
 	}
@@ -102,7 +102,7 @@ func SetDatastoreOwner(backup coredb.Backup, app *application.Runtime, owner str
 		return fmt.Errorf("SetDatastoreOwner: failed to get datastore; %w", err)
 	}
 
-	backupID, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup)
 	if err != nil {
 		return fmt.Errorf("SetDatastoreOwner: failed to get backup ID: %w", err)
 	}

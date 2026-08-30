@@ -71,7 +71,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		waitGroup:       &sync.WaitGroup{},
 	}
 	defer b.cleanup()
-	workerID, err := backupWorkerID(job, job.Target)
+	workerID, err := backupWorkerID(job)
 	if err != nil {
 		return jobs.NonRetryable(fmt.Errorf("determining backup worker identity: %w", err))
 	}
