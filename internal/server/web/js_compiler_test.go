@@ -73,3 +73,19 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestTargetEditWindowRendersKindSpecificFields(t *testing.T) {
+	source := ui.Render()
+
+	for _, expected := range [][]byte{
+		[]byte(`name: "kind"`),
+		[]byte(`name: "access"`),
+		[]byte(`itemId: "filesystemTargetFields"`),
+		[]byte(`itemId: "s3TargetFields"`),
+		[]byte(`group.setDisabled(!active)`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("target editor is missing %q", expected)
+		}
+	}
+}

@@ -30,7 +30,26 @@ var windows = []js.Value{
 		CBindData: js.PathKeyedURL("/api2/extjs/config/d2d-target"),
 		Items: js.Items(
 			js.Field{XType: js.XDisplayEditField, Label: "Name", Name: "name", Renderer: "Ext.htmlEncode", AllowBlank: new(false), EditableWhenCreate: true},
-			js.Field{XType: js.XDisplayEditField, Label: "Path", Name: "path", Renderer: "Ext.htmlEncode", AllowBlank: new(false), EditableWhenCreate: true},
+			js.Field{XType: js.XKVComboBox, Label: "Type", Name: "kind", Value: "filesystem", AllowBlank: new(false),
+				ComboItems: js.Arr{js.Arr{"filesystem", js.T("Filesystem")}, js.Arr{"s3", js.T("S3")}},
+				CBind:      js.Obj{"disabled": "{!isCreate}"}, ChangeFn: js.Func("field, kind", `
+					let window = field.up("window");
+					["filesystem", "s3"].forEach(function (candidate) {
+						let group = window.down("#" + candidate + "TargetFields");
+						let active = candidate === kind;
+						group.setHidden(!active);
+						group.setDisabled(!active);
+					});
+				`)},
+			js.Field{XType: js.XFieldContainer, ItemID: "filesystemTargetFields", Layout: "anchor", Items: js.Items(
+				js.Field{XType: js.XDisplayField, Label: "Access", Name: "access", Value: "local", SubmitValue: true},
+				js.Field{XType: js.XDisplayEditField, Label: "Path", Name: "path", Renderer: "Ext.htmlEncode", AllowBlank: new(false), EditableWhenCreate: true,
+					EmptyText: "/mnt/backup"},
+			)},
+			js.Field{XType: js.XFieldContainer, ItemID: "s3TargetFields", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
+				js.Field{XType: js.XDisplayEditField, Label: "S3 URL", Name: "path", Renderer: "Ext.htmlEncode", AllowBlank: new(false), EditableWhenCreate: true,
+					EmptyText: "https://access-key@endpoint/bucket"},
+			)},
 			js.Field{XType: "pbsD2DScriptSelector", Label: "Mount Script", Name: "mount_script"},
 		),
 	},
