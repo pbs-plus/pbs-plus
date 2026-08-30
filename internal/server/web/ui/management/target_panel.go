@@ -53,6 +53,7 @@ var targetPanelController = js.ControllerClass{
 		"onAdd": js.Func("", `
 			let me = this;
 			Ext.create("PBS.D2DManagement.TargetEditWindow", {
+				targetKind: me.getView().targetKind || "filesystem",
 				listeners: { destroy: () => me.reload() },
 			}).show();
 		`),
@@ -282,6 +283,24 @@ var targetPanelController = js.ControllerClass{
 			view.setRootNode({ text: "Root", expanded: true, children: rootChildren });
 		`),
 		"reload": js.Func("", `this.loadData();`),
+		"filterTargetKind": js.Func("nodes", `
+			let me = this;
+			let targetKind = me.getView().targetKind;
+			return nodes.reduce(function (filtered, node) {
+				if (node.isGroup) {
+					node.children = me.filterTargetKind(node.children || []);
+					if (node.children.length > 0) {
+						filtered.push(node);
+					}
+					return filtered;
+				}
+				let nodeKind = node.kind || (node.target_type === "s3" ? "s3" : "filesystem");
+				if (!targetKind || nodeKind === targetKind) {
+					filtered.push(node);
+				}
+				return filtered;
+			}, []);
+		`),
 		"loadData": js.Func("", `
 			let me = this;
 			let view = me.getView();
@@ -296,6 +315,7 @@ var targetPanelController = js.ControllerClass{
 					let rootChildren = treeNodes.map(function (node) {
 						return me.convertTreeNode(node);
 					});
+					rootChildren = me.filterTargetKind(rootChildren);
 					view.setRootNode({
 						text: "Root",
 						expanded: true,
@@ -372,16 +392,13 @@ var targetPanelController = js.ControllerClass{
 					if (!statuses || Object.keys(statuses).length === 0) {
 						return;
 					}
-					let store = view.getStore();
-					store.each(function (node) {
-						node.eachChild(function (child) {
-							let name = child.get("name");
-							if (name && statuses[name]) {
-								let st = statuses[name];
-								child.set("agent_version", st.AgentVersion || "");
-								child.set("connection_status", st.ConnectionStatus);
-							}
-						});
+					view.getRootNode().cascadeBy(function (node) {
+						let name = node.get("name");
+						if (name && statuses[name]) {
+							let st = statuses[name];
+							node.set("agent_version", st.AgentVersion || "");
+							node.set("connection_status", st.ConnectionStatus);
+						}
 					});
 				},
 			});
@@ -419,7 +436,21 @@ var targetPanelController = js.ControllerClass{
 			});
 		`),
 		"init": js.Func("", `
+			let view = this.getView();
 			this.searchValue = "";
+			view.down("#setS3SecretButton").setHidden(view.targetKind !== "s3");
+			view.down("#pushUpdateButton").setHidden(view.targetKind !== "filesystem");
+			if (view.targetKind === "s3") {
+				let filesystemColumns = ["volume_type", "volume_name", "volume_fs", "volume_used", "volume_total", "agent_version"];
+				view.getColumns().forEach(function (column) {
+					if (column.dataIndex === "path") {
+						column.setText("S3 URL");
+					}
+					if (filesystemColumns.includes(column.dataIndex)) {
+						column.setHidden(true);
+					}
+				});
+			}
 			if (!document.getElementById("pbs-target-panel-styles")) {
 				const style = document.createElement("style");
 				style.id = "pbs-target-panel-styles";
@@ -445,8 +476,8 @@ var targetPanel = js.Panel{
 		{Text: "Add", Handler: "onAdd", SelModel: new(false)},
 		{Text: "Create Job", Handler: "addJob", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")}, js.Sep(),
 		{Text: "Edit", Handler: "onEdit", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")},
-		{Text: "Set S3 Secret Key", Handler: "setS3Secret", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && rec.data.target_type === "s3"`)},
-		{Text: "Update Agent", Handler: "pushUpdate", Disabled: true, EnableFn: js.Func("rec", `
+		{Text: "Set S3 Secret Key", ItemID: "setS3SecretButton", Handler: "setS3Secret", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && rec.data.target_type === "s3"`)},
+		{Text: "Update Agent", ItemID: "pushUpdateButton", Handler: "pushUpdate", Disabled: true, EnableFn: js.Func("rec", `
 			if (!rec) {
 				return false;
 			}

@@ -27,13 +27,26 @@ var windows = []js.Value{
 	js.EditWindow{
 		Name: "PBS.D2DManagement.TargetEditWindow", XType: "pbsTargetEditWindow",
 		Subject: "Disk Backup Target", IsCreate: true, IsAdd: true,
-		CBindData: js.PathKeyedURL("/api2/extjs/config/d2d-target"),
+		CBindData: js.Func("initialConfig", `
+			let contentid = initialConfig.contentid;
+			this.isCreate = !contentid;
+			this.url = contentid
+				? "/api2/extjs/config/d2d-target/" + encodeURIComponent(encodePathValue(contentid))
+				: "/api2/extjs/config/d2d-target";
+			this.method = contentid ? "PUT" : "POST";
+			return { targetKind: initialConfig.targetKind || "filesystem" };
+		`),
 		Items: js.Items(
 			js.Field{XType: js.XDisplayEditField, Label: "Name", Name: "name", Renderer: "Ext.htmlEncode", AllowBlank: new(false), EditableWhenCreate: true},
-			js.Field{XType: js.XKVComboBox, Label: "Type", Name: "kind", Value: "filesystem", AllowBlank: new(false),
-				ComboItems: js.Arr{js.Arr{"filesystem", js.T("Filesystem")}, js.Arr{"s3", js.T("S3")}},
-				CBind:      js.Obj{"disabled": "{!isCreate}"}, ChangeFn: js.Func("field, kind", `
+			js.Field{XType: js.XDisplayField, Label: "Type", Name: "kind", SubmitValue: true,
+				Renderer: js.Func("kind", `
+					return { filesystem: "Filesystem", s3: "S3" }[kind] || kind;
+				`),
+				CBind: js.Obj{"value": "{targetKind}"}, ChangeFn: js.Func("field, kind", `
 					let window = field.up("window");
+					if (!window) {
+						return;
+					}
 					["filesystem", "s3"].forEach(function (candidate) {
 						let group = window.down("#" + candidate + "TargetFields");
 						let active = candidate === kind;

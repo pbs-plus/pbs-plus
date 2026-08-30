@@ -67,9 +67,30 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.form.D2DScriptSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ScriptPanel"`),
+		[]byte(`Ext.define("PBS.D2DTargets"`),
 	} {
 		if got := bytes.Count(source, name); got != 1 {
 			t.Errorf("%s is defined %d times, want 1", name, got)
+		}
+	}
+}
+
+func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
+	source := ui.Render()
+	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 2 {
+		t.Fatalf("rendered %d target panels, want 2", got)
+	}
+
+	for _, expected := range [][]byte{
+		[]byte(`path: "pbsD2DTargets"`),
+		[]byte(`itemId: "filesystem-targets"`),
+		[]byte(`targetKind: "filesystem"`),
+		[]byte(`itemId: "s3-targets"`),
+		[]byte(`targetKind: "s3"`),
+		[]byte(`column.setText("S3 URL")`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("target view is missing %q", expected)
 		}
 	}
 }
