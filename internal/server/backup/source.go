@@ -115,6 +115,9 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		b.stagedDump = stagedDump
 		b.mu.Unlock()
 		srcPath = stagedDump.ArchiveDir
+		if len(stagedDump.Manifest.Failed) > 0 {
+			b.logger.Warn("database dump skipped failed databases", "databases", stagedDump.Manifest.Failed)
+		}
 	} else if target.IsAgent() {
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()

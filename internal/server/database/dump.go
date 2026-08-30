@@ -22,9 +22,11 @@ import (
 )
 
 const (
-	ManifestVersion = 1
-	manifestName    = "manifest.json"
-	dumpName        = "dump.sql"
+	ManifestVersionV1 = 1
+	ManifestVersionV2 = 2
+	manifestName      = "manifest.json"
+	dumpName          = "dump.sql"
+	databasesDirName  = "databases"
 )
 
 type DumpOptions struct {
@@ -33,15 +35,25 @@ type DumpOptions struct {
 }
 
 type Manifest struct {
-	Version       int       `json:"version"`
-	Engine        string    `json:"engine"`
-	Scope         string    `json:"scope"`
-	Database      string    `json:"database,omitempty"`
-	DumpFile      string    `json:"dump_file"`
-	DumpSHA256    string    `json:"dump_sha256"`
-	ClientFamily  string    `json:"client_family"`
-	ClientVersion string    `json:"client_version"`
-	CreatedAt     time.Time `json:"created_at"`
+	Version       int            `json:"version"`
+	Engine        string         `json:"engine"`
+	Scope         string         `json:"scope"`
+	Database      string         `json:"database,omitempty"`
+	DumpFile      string         `json:"dump_file,omitempty"`
+	DumpSHA256    string         `json:"dump_sha256,omitempty"`
+	Databases     []ManifestFile `json:"databases,omitempty"`
+	Globals       []ManifestFile `json:"globals,omitempty"`
+	Failed        []string       `json:"failed,omitempty"`
+	ClientFamily  string         `json:"client_family"`
+	ClientVersion string         `json:"client_version"`
+	CreatedAt     time.Time      `json:"created_at"`
+}
+
+// ManifestFile is one dump file in a v2 archive; File is relative to the archive directory.
+type ManifestFile struct {
+	Name   string `json:"name"`
+	File   string `json:"file"`
+	SHA256 string `json:"sha256"`
 }
 
 type StagedDump struct {
@@ -85,46 +97,18 @@ func StageDump(ctx context.Context, parent string, target coredb.Target, passwor
 		}
 	}
 
-	cmd, err := dumpCommand(ctx, target, password, options, bundle, secretsDir)
+	var manifest Manifest
+	if options.Scope == "server" {
+		manifest, err = stageServerDump(ctx, archiveDir, target, password, bundle, secretsDir)
+	} else {
+		manifest, err = stageDatabaseDump(ctx, archiveDir, target, password, options, bundle, secretsDir)
+	}
 	if err != nil {
 		return nil, err
 	}
-	dumpPath := filepath.Join(archiveDir, dumpName)
-	dump, err := os.OpenFile(dumpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, fmt.Errorf("create database dump: %w", err)
-	}
-	var stderr bytes.Buffer
-	cmd.Stdout = dump
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
-	closeErr := dump.Close()
-	if runErr != nil {
-		message := stderr.String()
-		if password != "" {
-			message = strings.ReplaceAll(message, password, "[redacted]")
-		}
-		return nil, fmt.Errorf("database dump failed: %w: %s", runErr, limitedText(message, 4096))
-	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("close database dump: %w", closeErr)
-	}
-
-	digest, err := fileSHA256(dumpPath)
-	if err != nil {
-		return nil, err
-	}
-	manifest := Manifest{
-		Version:       ManifestVersion,
-		Engine:        string(target.Type),
-		Scope:         options.Scope,
-		Database:      options.Database,
-		DumpFile:      dumpName,
-		DumpSHA256:    digest,
-		ClientFamily:  bundle.Family,
-		ClientVersion: bundle.Version,
-		CreatedAt:     time.Now().UTC(),
-	}
+	manifest.ClientFamily = bundle.Family
+	manifest.ClientVersion = bundle.Version
+	manifest.CreatedAt = time.Now().UTC()
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode database dump manifest: %w", err)
@@ -136,6 +120,68 @@ func StageDump(ctx context.Context, parent string, target coredb.Target, passwor
 	return &StagedDump{ArchiveDir: archiveDir, Manifest: manifest, root: root}, nil
 }
 
+// stageDatabaseDump keeps the single-file v1 layout for database scope.
+func stageDatabaseDump(ctx context.Context, archiveDir string, target coredb.Target, password string, options DumpOptions, bundle ClientBundle, secretsDir string) (Manifest, error) {
+	cmd, err := dumpCommand(ctx, target, password, options, bundle, secretsDir)
+	if err != nil {
+		return Manifest{}, err
+	}
+	dumpPath := filepath.Join(archiveDir, dumpName)
+	if err := runDumpToFile(cmd, dumpPath, password); err != nil {
+		return Manifest{}, err
+	}
+	digest, err := fileSHA256(dumpPath)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return Manifest{
+		Version:    ManifestVersionV1,
+		Engine:     string(target.Type),
+		Scope:      options.Scope,
+		Database:   options.Database,
+		DumpFile:   dumpName,
+		DumpSHA256: digest,
+	}, nil
+}
+
+// stageServerDump writes one dump file per database plus engine companions, skipping and recording databases that fail.
+func stageServerDump(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string) (Manifest, error) {
+	build := func(database string) (*exec.Cmd, error) {
+		return dumpCommand(ctx, target, password, DumpOptions{Scope: "database", Database: database}, bundle, secretsDir)
+	}
+	if target.Type != coredb.TargetTypePostgreSQL {
+		databases, err := listMySQLDatabases(ctx, target, password, bundle, secretsDir)
+		if err != nil {
+			return Manifest{}, err
+		}
+		grants, err := dumpMySQLGrants(ctx, archiveDir, target, password, bundle, secretsDir)
+		if err != nil {
+			return Manifest{}, err
+		}
+		manifest := Manifest{Version: ManifestVersionV2, Engine: string(target.Type), Scope: "server", Globals: []ManifestFile{grants}}
+		manifest.Databases, manifest.Failed, err = dumpDatabases(ctx, archiveDir, databases, password, build)
+		if err != nil {
+			return Manifest{}, err
+		}
+		return manifest, nil
+	}
+
+	databases, err := listPostgreSQLDatabases(ctx, target, password, bundle, secretsDir)
+	if err != nil {
+		return Manifest{}, err
+	}
+	globals, err := dumpPostgreSQLGlobals(ctx, archiveDir, target, password, bundle, secretsDir)
+	if err != nil {
+		return Manifest{}, err
+	}
+	manifest := Manifest{Version: ManifestVersionV2, Engine: string(target.Type), Scope: "server", Globals: globals}
+	manifest.Databases, manifest.Failed, err = dumpDatabases(ctx, archiveDir, databases, password, build)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
 func LoadManifest(archiveDir string) (Manifest, error) {
 	data, err := os.ReadFile(filepath.Join(archiveDir, manifestName))
 	if err != nil {
@@ -145,32 +191,89 @@ func LoadManifest(archiveDir string) (Manifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode database dump manifest: %w", err)
 	}
-	if manifest.Version != ManifestVersion {
+	switch manifest.Version {
+	case ManifestVersionV1:
+		if err := validateSingleFileManifest(archiveDir, &manifest); err != nil {
+			return Manifest{}, err
+		}
+	case ManifestVersionV2:
+		if err := validatePerDatabaseManifest(archiveDir, &manifest); err != nil {
+			return Manifest{}, err
+		}
+	default:
 		return Manifest{}, fmt.Errorf("unsupported database dump manifest version %d", manifest.Version)
 	}
+	return manifest, nil
+}
+
+func validateSingleFileManifest(archiveDir string, manifest *Manifest) error {
 	if manifest.Engine != EnginePostgreSQL && manifest.Engine != EngineMySQL {
-		return Manifest{}, fmt.Errorf("unsupported database dump engine %q", manifest.Engine)
+		return fmt.Errorf("unsupported database dump engine %q", manifest.Engine)
 	}
 	if manifest.Scope != "database" && manifest.Scope != "server" {
-		return Manifest{}, fmt.Errorf("unsupported database dump scope %q", manifest.Scope)
+		return fmt.Errorf("unsupported database dump scope %q", manifest.Scope)
 	}
 	if manifest.Scope == "database" && manifest.Database == "" {
-		return Manifest{}, errors.New("database dump manifest is missing database name")
+		return errors.New("database dump manifest is missing database name")
 	}
 	if manifest.DumpFile != dumpName {
-		return Manifest{}, errors.New("database dump manifest has invalid dump file")
+		return errors.New("database dump manifest has invalid dump file")
 	}
-	if _, err := hex.DecodeString(manifest.DumpSHA256); err != nil || len(manifest.DumpSHA256) != sha256.Size*2 {
-		return Manifest{}, errors.New("database dump manifest has invalid checksum")
+	return verifyDumpChecksum(filepath.Join(archiveDir, dumpName), manifest.DumpSHA256)
+}
+
+// validatePerDatabaseManifest rejects files escaping the archive directory or failing checksum verification.
+func validatePerDatabaseManifest(archiveDir string, manifest *Manifest) error {
+	if manifest.Engine != EnginePostgreSQL && manifest.Engine != EngineMySQL {
+		return fmt.Errorf("unsupported database dump engine %q", manifest.Engine)
 	}
-	digest, err := fileSHA256(filepath.Join(archiveDir, dumpName))
+	if manifest.Scope != "server" {
+		return errors.New("per-database dump manifests require server scope")
+	}
+	if manifest.Database != "" || manifest.DumpFile != "" || manifest.DumpSHA256 != "" {
+		return errors.New("per-database dump manifest mixes incompatible layouts")
+	}
+	if len(manifest.Databases) == 0 && len(manifest.Globals) == 0 && len(manifest.Failed) == 0 {
+		return errors.New("per-database dump manifest lists no files")
+	}
+	for _, group := range [][]ManifestFile{manifest.Globals, manifest.Databases} {
+		for _, entry := range group {
+			path, err := manifestFilePath(archiveDir, entry.File)
+			if err != nil {
+				return err
+			}
+			if err := verifyDumpChecksum(path, entry.SHA256); err != nil {
+				return fmt.Errorf("database dump %q: %w", entry.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// manifestFilePath resolves a manifest file path, rejecting escapes from the archive directory.
+func manifestFilePath(archiveDir, file string) (string, error) {
+	if file == "" || filepath.IsAbs(file) || strings.Contains(file, "\x00") {
+		return "", errors.New("database dump manifest has invalid file path")
+	}
+	path := filepath.Join(archiveDir, filepath.FromSlash(file))
+	if !strings.HasPrefix(path, filepath.Clean(archiveDir)+string(filepath.Separator)) {
+		return "", errors.New("database dump manifest has invalid file path")
+	}
+	return path, nil
+}
+
+func verifyDumpChecksum(path, digest string) error {
+	if _, err := hex.DecodeString(digest); err != nil || len(digest) != sha256.Size*2 {
+		return errors.New("database dump manifest has invalid checksum")
+	}
+	actual, err := fileSHA256(path)
 	if err != nil {
-		return Manifest{}, err
+		return err
 	}
-	if !strings.EqualFold(digest, manifest.DumpSHA256) {
-		return Manifest{}, errors.New("database dump checksum mismatch")
+	if !strings.EqualFold(actual, digest) {
+		return errors.New("database dump checksum mismatch")
 	}
-	return manifest, nil
+	return nil
 }
 
 func validateDumpRequest(target coredb.Target, options DumpOptions, bundle ClientBundle) error {
@@ -205,21 +308,27 @@ func dumpCommand(ctx context.Context, target coredb.Target, password string, opt
 	return mySQLDumpCommand(ctx, target, password, options, bundle, secretsDir)
 }
 
+func postgreSQLBaseArgs(target coredb.Target) []string {
+	return []string{"--host", target.DatabaseHost, "--port", strconv.Itoa(target.DatabasePort), "--username", target.DatabaseUsername, "--no-password"}
+}
+
+func mySQLBaseArgs(target coredb.Target, defaultsFile string) []string {
+	return []string{
+		"--defaults-extra-file=" + defaultsFile,
+		"--host=" + target.DatabaseHost,
+		"--port=" + strconv.Itoa(target.DatabasePort),
+		"--user=" + target.DatabaseUsername,
+	}
+}
+
 func postgreSQLDumpCommand(ctx context.Context, target coredb.Target, password string, options DumpOptions, bundle ClientBundle, secretsDir string) (*exec.Cmd, error) {
 	passfile, err := writePostgreSQLPassfile(secretsDir, target, password)
 	if err != nil {
 		return nil, err
 	}
 
-	program := bundle.DumpProgram
-	args := []string{"--host", target.DatabaseHost, "--port", strconv.Itoa(target.DatabasePort), "--username", target.DatabaseUsername, "--no-password"}
-	if options.Scope == "database" {
-		args = append(args, "--format=p", options.Database)
-	} else {
-		program = bundle.ServerDumpProgram
-		args = append(args, "--lock-wait-timeout=30s")
-	}
-	cmd := exec.CommandContext(ctx, program, args...)
+	args := append(postgreSQLBaseArgs(target), "--format=p", options.Database)
+	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
 	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
 	if target.DatabaseCACertificate != "" {
 		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
@@ -233,24 +342,209 @@ func mySQLDumpCommand(ctx context.Context, target coredb.Target, password string
 		return nil, err
 	}
 
-	args := []string{
-		"--defaults-extra-file=" + defaultsFile,
-		"--host=" + target.DatabaseHost,
-		"--port=" + strconv.Itoa(target.DatabasePort),
-		"--user=" + target.DatabaseUsername,
-		"--single-transaction",
-		"--routines",
-		"--events",
-		"--triggers",
-		"--hex-blob",
-	}
+	args := append(mySQLBaseArgs(target, defaultsFile), "--single-transaction", "--routines", "--events", "--triggers", "--hex-blob")
 	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
-	if options.Scope == "database" {
-		args = append(args, options.Database)
-	} else {
-		args = append(args, "--all-databases")
-	}
+	args = append(args, options.Database)
 	return exec.CommandContext(ctx, bundle.DumpProgram, args...), nil
+}
+
+// runDumpToFile captures a dump in a fresh 0600 file, redacting the password from failures.
+func runDumpToFile(cmd *exec.Cmd, path, password string) error {
+	dump, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create database dump: %w", err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stdout = dump
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	closeErr := dump.Close()
+	if runErr != nil {
+		_ = os.Remove(path)
+		message := stderr.String()
+		if password != "" {
+			message = strings.ReplaceAll(message, password, "[redacted]")
+		}
+		return fmt.Errorf("database dump failed: %w: %s", runErr, limitedText(message, 4096))
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close database dump: %w", closeErr)
+	}
+	return nil
+}
+
+// dumpDatabases isolates per-database failures into the failed list instead of failing the backup.
+func dumpDatabases(ctx context.Context, archiveDir string, databases []string, password string, build func(database string) (*exec.Cmd, error)) (entries []ManifestFile, failed []string, err error) {
+	if err := os.Mkdir(filepath.Join(archiveDir, databasesDirName), 0o700); err != nil {
+		return nil, nil, fmt.Errorf("create database dump directory: %w", err)
+	}
+	for index, database := range databases {
+		cmd, err := build(database)
+		if err != nil {
+			return nil, nil, err
+		}
+		file := fmt.Sprintf("%s/%04d-%s.sql", databasesDirName, index+1, dumpFileLabel(database))
+		path := filepath.Join(archiveDir, file)
+		if err := runDumpToFile(cmd, path, password); err != nil {
+			failed = append(failed, database)
+			continue
+		}
+		digest, err := fileSHA256(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		entries = append(entries, ManifestFile{Name: database, File: file, SHA256: digest})
+	}
+	if len(entries) == 0 && len(databases) > 0 {
+		return nil, nil, fmt.Errorf("all %d databases failed to dump", len(databases))
+	}
+	return entries, failed, nil
+}
+
+// dumpFileLabel keeps filenames safe while the manifest records the real database name.
+func dumpFileLabel(name string) string {
+	var label strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			label.WriteRune(r)
+		default:
+			label.WriteByte('_')
+		}
+	}
+	text := label.String()
+	if len(text) > 120 {
+		text = text[:120]
+	}
+	if text == "" || text == "." || text == ".." {
+		return "database"
+	}
+	return text
+}
+
+func dumpPostgreSQLGlobals(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string) ([]ManifestFile, error) {
+	globals := make([]ManifestFile, 0, 2)
+	for _, companion := range []struct {
+		name string
+		flag string
+		file string
+	}{
+		{name: "roles", flag: "--roles-only", file: "roles.sql"},
+		{name: "globals", flag: "--globals-only", file: "globals.sql"},
+	} {
+		cmd, err := postgreSQLGlobalsDumpCommand(ctx, target, password, bundle, secretsDir, companion.flag)
+		if err != nil {
+			return nil, err
+		}
+		path := filepath.Join(archiveDir, companion.file)
+		if err := runDumpToFile(cmd, path, password); err != nil {
+			return nil, fmt.Errorf("dump PostgreSQL %s: %w", companion.name, err)
+		}
+		digest, err := fileSHA256(path)
+		if err != nil {
+			return nil, err
+		}
+		globals = append(globals, ManifestFile{Name: companion.name, File: companion.file, SHA256: digest})
+	}
+	return globals, nil
+}
+
+func postgreSQLGlobalsDumpCommand(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir, flag string) (*exec.Cmd, error) {
+	passfile, err := writePostgreSQLPassfile(secretsDir, target, password)
+	if err != nil {
+		return nil, err
+	}
+	args := append(postgreSQLBaseArgs(target), flag, "--lock-wait-timeout=30s")
+	cmd := exec.CommandContext(ctx, bundle.ServerDumpProgram, args...)
+	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
+	if target.DatabaseCACertificate != "" {
+		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
+	}
+	return cmd, nil
+}
+
+// mySQLGrantTables carry users and privileges in a whole-server backup.
+var mySQLGrantTables = []string{
+	"user", "db", "tables_priv", "columns_priv",
+	"procs_priv", "proxies_priv", "role_edges", "default_roles",
+}
+
+func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string) (ManifestFile, error) {
+	defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)
+	if err != nil {
+		return ManifestFile{}, err
+	}
+	args := append(mySQLBaseArgs(target, defaultsFile), "--single-transaction", "--hex-blob")
+	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
+	args = append(args, append([]string{"mysql"}, mySQLGrantTables...)...)
+	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
+	path := filepath.Join(archiveDir, "grants.sql")
+	if err := runDumpToFile(cmd, path, password); err != nil {
+		return ManifestFile{}, fmt.Errorf("dump MySQL grants: %w", err)
+	}
+	digest, err := fileSHA256(path)
+	if err != nil {
+		return ManifestFile{}, err
+	}
+	return ManifestFile{Name: "grants", File: "grants.sql", SHA256: digest}, nil
+}
+
+func listPostgreSQLDatabases(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string) ([]string, error) {
+	passfile, err := writePostgreSQLPassfile(secretsDir, target, password)
+	if err != nil {
+		return nil, err
+	}
+	args := append(postgreSQLBaseArgs(target), "--dbname=template1", "--tuples-only", "--no-align",
+		"--command=SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate")
+	cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
+	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
+	if target.DatabaseCACertificate != "" {
+		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
+	}
+	return readDatabaseNames(cmd, password)
+}
+
+// listMySQLDatabases lists user databases, excluding system schemas covered by the grants companion.
+func listMySQLDatabases(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string) ([]string, error) {
+	defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)
+	if err != nil {
+		return nil, err
+	}
+	args := append(mySQLBaseArgs(target, defaultsFile), "--batch", "--skip-column-names", "--execute=SHOW DATABASES")
+	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
+	cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
+	names, err := readDatabaseNames(cmd, password)
+	if err != nil {
+		return nil, err
+	}
+	databases := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, system := mySQLSystemDatabases[name]; !system {
+			databases = append(databases, name)
+		}
+	}
+	return databases, nil
+}
+
+var mySQLSystemDatabases = map[string]struct{}{
+	"information_schema": {},
+	"performance_schema": {},
+	"mysql":              {},
+	"sys":                {},
+}
+
+func readDatabaseNames(cmd *exec.Cmd, password string) ([]string, error) {
+	out, err := runClientCommand(cmd, password)
+	if err != nil {
+		return nil, fmt.Errorf("list databases: %w", err)
+	}
+	names := make([]string, 0, 8)
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 func mySQLTLSArgs(mode, caCertificate, family string) []string {

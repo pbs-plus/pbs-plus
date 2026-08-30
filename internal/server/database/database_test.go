@@ -5,6 +5,9 @@ package database
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -41,7 +44,7 @@ func TestDumpCommandsDoNotLockTarget(t *testing.T) {
 	postgres := coredb.Target{Type: coredb.TargetTypePostgreSQL, DatabaseHost: "postgres.example", DatabasePort: 5432, DatabaseUsername: "backup", DatabaseTLSMode: "require"}
 	bundle := ClientBundle{Engine: EnginePostgreSQL, Family: FamilyPostgreSQL, DumpProgram: "/usr/bin/pg_dump", ServerDumpProgram: "/usr/bin/pg_dumpall"}
 	secrets := t.TempDir()
-	cmd, err := postgreSQLDumpCommand(context.Background(), postgres, "secret", DumpOptions{Scope: "server"}, bundle, secrets)
+	cmd, err := postgreSQLGlobalsDumpCommand(context.Background(), postgres, "secret", bundle, secrets, "--roles-only")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,14 +132,22 @@ func TestMySQLPasswordUsesPrivateOptionFile(t *testing.T) {
 		DatabaseTLSMode:       "verify-identity",
 		DatabaseCACertificate: "/etc/ssl/mysql-ca.pem",
 	}
-	cmd, err := mySQLDumpCommand(context.Background(), target, "line one\nline two", DumpOptions{Scope: "server"}, bundle, secretsDir)
+	cmd, err := mySQLDumpCommand(context.Background(), target, "line one\nline two", DumpOptions{Scope: "database", Database: "inventory"}, bundle, secretsDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.Join(cmd.Args, " "), "line one") {
 		t.Fatal("database password appears in command arguments")
 	}
-	optionFile := strings.TrimPrefix(cmd.Args[1], "--defaults-extra-file=")
+	optionFile := ""
+	for _, arg := range cmd.Args {
+		if after, ok := strings.CutPrefix(arg, "--defaults-extra-file="); ok {
+			optionFile = after
+		}
+	}
+	if optionFile == "" {
+		t.Fatal("mysql dump does not use a private option file")
+	}
 	info, err := os.Stat(optionFile)
 	if err != nil {
 		t.Fatal(err)
@@ -302,9 +313,308 @@ func TestRestoreDumpRejectsEngineMismatch(t *testing.T) {
 	}
 }
 
-func TestRestoreMySQLRenamesDatabaseFromServerDump(t *testing.T) {
+func TestStagePostgreSQLServerDump(t *testing.T) {
 	dir := t.TempDir()
-	writeTestProgram(t, dir, "mysqldump", "#!/bin/sh\nprintf -- '-- Current Database: `test`\\nCREATE DATABASE `test`;\\nUSE `test`;\\nCREATE TABLE kept (id integer);\\n-- Current Database: `other`\\nCREATE TABLE dropped (id integer);\\n'\n")
+	writeTestProgram(t, dir, "pg_dump", `#!/bin/sh
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+  broken) echo 'pg_dump: broken' >&2; exit 1 ;;
+  *) printf 'CREATE TABLE [%s] (id integer);\n' "$last" ;;
+esac
+`)
+	writeTestProgram(t, dir, "pg_dumpall", `#!/bin/sh
+case "$*" in
+  *--roles-only*) printf 'CREATE ROLE app;\n' ;;
+  *) printf 'CREATE TABLESPACE fast;\n' ;;
+esac
+`)
+	writeTestProgram(t, dir, "psql", `#!/bin/sh
+case "$*" in
+  *"SELECT datname"*) printf 'payroll\nbroken\ninv entory\n' ;;
+  *) printf 'ignored\n' ;;
+esac
+`)
+	bundles := discoverClientBundles(context.Background(), []string{dir}, []string{dir})
+	bundle, err := FindClientBundle(bundles, EnginePostgreSQL, FamilyPostgreSQL, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := coredb.Target{
+		Type:             coredb.TargetTypePostgreSQL,
+		DatabaseHost:     "postgres.example",
+		DatabasePort:     5432,
+		DatabaseUsername: "backup",
+		DatabaseTLSMode:  "require",
+	}
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "server"}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Cleanup()
+
+	manifest, err := LoadManifest(staged.ArchiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != ManifestVersionV2 {
+		t.Errorf("manifest version = %d", manifest.Version)
+	}
+	if len(manifest.Databases) != 2 || manifest.Databases[0].Name != "payroll" || manifest.Databases[1].Name != "inv entory" {
+		t.Errorf("manifest databases = %#v", manifest.Databases)
+	}
+	if manifest.Databases[1].File != "databases/0003-inv_entory.sql" {
+		t.Errorf("database file name = %q", manifest.Databases[1].File)
+	}
+	if len(manifest.Failed) != 1 || manifest.Failed[0] != "broken" {
+		t.Errorf("manifest failed = %#v", manifest.Failed)
+	}
+	if len(manifest.Globals) != 2 || manifest.Globals[0].File != "roles.sql" || manifest.Globals[1].File != "globals.sql" {
+		t.Errorf("manifest globals = %#v", manifest.Globals)
+	}
+	for file, want := range map[string]string{
+		"roles.sql":                  "CREATE ROLE app;",
+		"globals.sql":                "CREATE TABLESPACE fast;",
+		"databases/0001-payroll.sql": "CREATE TABLE [payroll]",
+	} {
+		data, err := os.ReadFile(filepath.Join(staged.ArchiveDir, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), want) {
+			t.Errorf("%s = %q, want %q", file, data, want)
+		}
+	}
+	assertNoFileContainsPassword(t, staged.ArchiveDir, "super-secret")
+}
+
+func TestStageMySQLServerDump(t *testing.T) {
+	dir := t.TempDir()
+	writeTestProgram(t, dir, "mysqldump", `#!/bin/sh
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+  default_roles) printf 'INSERT INTO user VALUES (1);\n' ;;
+  test) printf 'CREATE TABLE kept (id integer);\n' ;;
+  other) printf 'CREATE TABLE dropped (id integer);\n' ;;
+esac
+`)
+	writeTestProgram(t, dir, "mysql", `#!/bin/sh
+case "$*" in
+  *"SHOW DATABASES"*) printf 'information_schema\nmysql\nother\nperformance_schema\nsys\ntest\n' ;;
+  *) printf 'ignored\n' ;;
+esac
+`)
+	bundle := discoverClientBundles(context.Background(), []string{dir}, []string{dir})[0]
+	target := coredb.Target{
+		Type:             coredb.TargetTypeMySQL,
+		DatabaseHost:     "mysql.example",
+		DatabasePort:     3306,
+		DatabaseUsername: "backup",
+		DatabaseTLSMode:  "disabled",
+	}
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "server"}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Cleanup()
+
+	manifest, err := LoadManifest(staged.ArchiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Version != ManifestVersionV2 {
+		t.Errorf("manifest version = %d", manifest.Version)
+	}
+	if len(manifest.Databases) != 2 || manifest.Databases[0].Name != "other" || manifest.Databases[1].Name != "test" {
+		t.Errorf("manifest databases = %#v, want system schemas excluded", manifest.Databases)
+	}
+	if len(manifest.Failed) != 0 {
+		t.Errorf("manifest failed = %#v", manifest.Failed)
+	}
+	if len(manifest.Globals) != 1 || manifest.Globals[0].Name != "grants" || manifest.Globals[0].File != "grants.sql" {
+		t.Errorf("manifest globals = %#v", manifest.Globals)
+	}
+	grants, err := os.ReadFile(filepath.Join(staged.ArchiveDir, "grants.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(grants), "INSERT INTO user") {
+		t.Errorf("grants.sql = %q", grants)
+	}
+	assertNoFileContainsPassword(t, staged.ArchiveDir, "super-secret")
+}
+
+func TestRestorePostgreSQLRenamesDatabaseFromV2ServerDump(t *testing.T) {
+	dir := t.TempDir()
+	writeTestProgram(t, dir, "pg_dump", `#!/bin/sh
+last=""
+for a in "$@"; do last="$a"; done
+printf 'CREATE TABLE [%s] (id integer);\n' "$last"
+`)
+	writeTestProgram(t, dir, "pg_dumpall", `#!/bin/sh
+printf 'CREATE ROLE app;\n'
+`)
+	writeTestProgram(t, dir, "psql", `#!/bin/sh
+case "$*" in
+  *"SELECT datname"*) printf 'payroll\ninv entory\n' ;;
+  *"SELECT 1 FROM pg_database"*) printf '1\n' ;;
+  *"--command="*) printf '%s\n' "$*" >> "$DATABASE_TEST_LOG" ;;
+  *) printf '%s\n' "$*" >> "$DATABASE_TEST_LOG"
+     cat > "$DATABASE_RESTORE_INPUT" ;;
+esac
+`)
+	logPath := filepath.Join(dir, "restore.log")
+	inputPath := filepath.Join(dir, "restore.sql")
+	t.Setenv("DATABASE_TEST_LOG", logPath)
+	t.Setenv("DATABASE_RESTORE_INPUT", inputPath)
+
+	bundles := discoverClientBundles(context.Background(), []string{dir}, []string{dir})
+	bundle, err := FindClientBundle(bundles, EnginePostgreSQL, FamilyPostgreSQL, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := coredb.Target{
+		Type:             coredb.TargetTypePostgreSQL,
+		DatabaseHost:     "postgres.example",
+		DatabasePort:     5432,
+		DatabaseUsername: "backup",
+		DatabaseTLSMode:  "require",
+	}
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "secret", DumpOptions{Scope: "server"}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Cleanup()
+
+	options := RestoreOptions{SourceDatabase: "inv entory", DestinationDatabase: "database2", ReplaceExisting: true}
+	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", options, bundle); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logData)
+	for _, command := range []string{`DROP DATABASE "database2"`, `CREATE DATABASE "database2"`, `--dbname=database2`} {
+		if !strings.Contains(logText, command) {
+			t.Errorf("restore command log does not contain %q: %s", command, logText)
+		}
+	}
+	input, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(input), "CREATE TABLE [inv entory]") || strings.Contains(string(input), "CREATE TABLE [payroll]") {
+		t.Fatalf("restore input = %q", input)
+	}
+}
+
+func TestRestoreMySQLWholeServerFromV2Dump(t *testing.T) {
+	dir := t.TempDir()
+	writeTestProgram(t, dir, "mysqldump", `#!/bin/sh
+last=""
+for a in "$@"; do last="$a"; done
+case "$last" in
+  default_roles) printf '%s\n' '-- grants' ;;
+  test) printf 'CREATE TABLE kept (id integer);\n' ;;
+  other) printf 'CREATE TABLE dropped (id integer);\n' ;;
+esac
+`)
+	writeTestProgram(t, dir, "mysql", `#!/bin/sh
+case "$*" in
+  *"SHOW DATABASES"*) printf 'other\ntest\n' ;;
+  *"INFORMATION_SCHEMA.SCHEMATA"*) printf '1\n' ;;
+  *"--execute="*) printf '%s\n' "$*" >> "$DATABASE_TEST_LOG" ;;
+  *) printf '%s\n' "$*" >> "$DATABASE_TEST_LOG"
+     cat >> "$DATABASE_RESTORE_INPUT" ;;
+esac
+`)
+	logPath := filepath.Join(dir, "restore.log")
+	inputPath := filepath.Join(dir, "restore.sql")
+	t.Setenv("DATABASE_TEST_LOG", logPath)
+	t.Setenv("DATABASE_RESTORE_INPUT", inputPath)
+
+	bundle := discoverClientBundles(context.Background(), []string{dir}, []string{dir})[0]
+	target := coredb.Target{
+		Type:             coredb.TargetTypeMySQL,
+		DatabaseHost:     "mysql.example",
+		DatabasePort:     3306,
+		DatabaseUsername: "backup",
+		DatabaseTLSMode:  "disabled",
+	}
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "secret", DumpOptions{Scope: "server"}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Cleanup()
+
+	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{ReplaceExisting: true}, bundle); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logText := string(logData)
+	for _, command := range []string{"DROP DATABASE `test`", "CREATE DATABASE `test`", "DROP DATABASE `other`", "CREATE DATABASE `other`", "--database=test", "--database=other"} {
+		if !strings.Contains(logText, command) {
+			t.Errorf("restore command log does not contain %q: %s", command, logText)
+		}
+	}
+	input, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputText := string(input)
+	lastOrder := -1
+	for _, marker := range []string{"-- grants", "CREATE TABLE dropped", "CREATE TABLE kept"} {
+		index := strings.Index(inputText, marker)
+		if index < 0 {
+			t.Errorf("restore input is missing %q: %q", marker, inputText)
+			continue
+		}
+		if index < lastOrder {
+			t.Errorf("restore input has %q before earlier content: %q", marker, inputText)
+		}
+		lastOrder = index
+	}
+}
+
+func TestRestoreV1ServerDumpStillRenames(t *testing.T) {
+	dir := t.TempDir()
+	dump := strings.Join([]string{
+		"-- Current Database: `test`",
+		"CREATE DATABASE `test`;",
+		"USE `test`;",
+		"CREATE TABLE kept (id integer);",
+		"-- Current Database: `other`",
+		"CREATE TABLE dropped (id integer);",
+		"",
+	}, "\n")
+	archiveDir := filepath.Join(dir, "archive")
+	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, dumpName), []byte(dump), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(dump))
+	manifest := Manifest{
+		Version:    ManifestVersionV1,
+		Engine:     EngineMySQL,
+		Scope:      "server",
+		DumpFile:   dumpName,
+		DumpSHA256: hex.EncodeToString(digest[:]),
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, manifestName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	writeTestProgram(t, dir, "mysql", `#!/bin/sh
 printf '%s\n' "$*" >> "$DATABASE_TEST_LOG"
 case "$*" in
@@ -331,13 +641,8 @@ esac
 		ServerDumpProgram: filepath.Join(dir, "mysqldump"),
 		RestoreProgram:    filepath.Join(dir, "mysql"),
 	}
-	staged, err := StageDump(context.Background(), t.TempDir(), target, "secret", DumpOptions{Scope: "server"}, bundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer staged.Cleanup()
-	options := RestoreOptions{SourceDatabase: "test", DestinationDatabase: "database2", ReplaceExisting: true}
-	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", options, bundle); err != nil {
+	options := RestoreOptions{SourceDatabase: "test", DestinationDatabase: "database2"}
+	if err := RestoreDump(context.Background(), archiveDir, target, "secret", options, bundle); err != nil {
 		t.Fatal(err)
 	}
 	logData, err := os.ReadFile(logPath)
@@ -353,6 +658,69 @@ esac
 	}
 	if !strings.Contains(string(input), "CREATE TABLE kept") || strings.Contains(string(input), "CREATE TABLE dropped") {
 		t.Fatalf("restore input = %s", input)
+	}
+}
+
+func TestLoadManifestRejectsV2LayoutAbuses(t *testing.T) {
+	archiveDir := t.TempDir()
+	dump := []byte("-- dump\n")
+	if err := os.WriteFile(filepath.Join(archiveDir, dumpName), dump, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(dump)
+	base := Manifest{
+		Version:   ManifestVersionV2,
+		Engine:    EngineMySQL,
+		Scope:     "server",
+		Databases: []ManifestFile{{Name: "evil", File: "../../" + dumpName, SHA256: hex.EncodeToString(digest[:])}},
+	}
+	data, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, manifestName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadManifest(archiveDir); err == nil {
+		t.Fatal("accepted a manifest file path escaping the archive directory")
+	} else if !strings.Contains(err.Error(), "invalid file path") {
+		t.Fatalf("escape error = %v", err)
+	}
+
+	base.Databases = []ManifestFile{{Name: "ok", File: "databases/0001-ok.sql", SHA256: hex.EncodeToString(digest[:])}}
+	base.Scope = "database"
+	base.Database = "ok"
+	data, err = json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, manifestName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadManifest(archiveDir); err == nil {
+		t.Fatal("accepted a v2 manifest outside server scope")
+	} else if !strings.Contains(err.Error(), "require server scope") {
+		t.Fatalf("scope error = %v", err)
+	}
+}
+
+func assertNoFileContainsPassword(t *testing.T, root, password string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() {
+			return walkErr
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), password) {
+			t.Errorf("%s contains the database password", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

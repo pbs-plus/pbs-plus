@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -64,6 +65,9 @@ func RestoreDump(ctx context.Context, archiveDir string, target coredb.Target, p
 		return fmt.Errorf("secure database restore secrets directory: %w", err)
 	}
 
+	if manifest.Version >= ManifestVersionV2 {
+		return restorePerDatabaseDump(ctx, archiveDir, target, password, options, manifest, bundle, secretsDir)
+	}
 	dumpPath := filepath.Join(archiveDir, manifest.DumpFile)
 	if target.Type == coredb.TargetTypePostgreSQL {
 		return restorePostgreSQL(ctx, dumpPath, target, password, options, manifest.Scope, bundle, secretsDir)
@@ -71,10 +75,129 @@ func RestoreDump(ctx context.Context, archiveDir string, target coredb.Target, p
 	return restoreMySQL(ctx, dumpPath, target, password, options, manifest.Scope, bundle, secretsDir)
 }
 
-func restorePostgreSQL(ctx context.Context, dumpPath string, target coredb.Target, password string, options RestoreOptions, scope string, bundle ClientBundle, secretsDir string) error {
-	passfile, err := writePostgreSQLPassfile(secretsDir, target, password)
+// restorePerDatabaseDump restores v2 archives: one database from its own
+// file, or the whole server by replaying companions then every file.
+func restorePerDatabaseDump(ctx context.Context, archiveDir string, target coredb.Target, password string, options RestoreOptions, manifest Manifest, bundle ClientBundle, secretsDir string) error {
+	source, destination := options.names()
+	if destination != "" {
+		entry, err := manifest.findDatabase(source)
+		if err != nil {
+			return err
+		}
+		dumpPath, err := manifestFilePath(archiveDir, entry.File)
+		if err != nil {
+			return err
+		}
+		if target.Type == coredb.TargetTypePostgreSQL {
+			return restorePostgreSQL(ctx, dumpPath, target, password, options, "database", bundle, secretsDir)
+		}
+		return restoreMySQL(ctx, dumpPath, target, password, options, "database", bundle, secretsDir)
+	}
+	if target.Type == coredb.TargetTypePostgreSQL {
+		return restorePostgreSQLServer(ctx, archiveDir, target, password, options, manifest, bundle, secretsDir)
+	}
+	return restoreMySQLServer(ctx, archiveDir, target, password, options, manifest, bundle, secretsDir)
+}
+
+// findDatabase locates one database's dump file or explains its absence.
+func (m Manifest) findDatabase(name string) (ManifestFile, error) {
+	for _, entry := range m.Databases {
+		if entry.Name == name {
+			return entry, nil
+		}
+	}
+	if slices.Contains(m.Failed, name) {
+		return ManifestFile{}, fmt.Errorf("database %q failed to dump and is not part of the snapshot", name)
+	}
+	return ManifestFile{}, fmt.Errorf("database %q is not present in the dump", name)
+}
+
+// restoreManifestFiles pipes each listed file through the restore callback in manifest order.
+func restoreManifestFiles(archiveDir string, entries []ManifestFile, restore func(io.Reader) error) error {
+	for _, entry := range entries {
+		path, err := manifestFilePath(archiveDir, entry.File)
+		if err != nil {
+			return err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("open database dump %q: %w", entry.Name, err)
+		}
+		restoreErr := restore(file)
+		closeErr := file.Close()
+		if restoreErr != nil {
+			return fmt.Errorf("restore %s: %w", entry.Name, restoreErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close database dump %q: %w", entry.Name, closeErr)
+		}
+	}
+	return nil
+}
+
+// restoreManifestDatabase restores one database file into a database of the same name.
+func restoreManifestDatabase(ctx context.Context, archiveDir string, entry ManifestFile, target coredb.Target, password string, options RestoreOptions, bundle ClientBundle, secretsDir string) error {
+	dumpPath, err := manifestFilePath(archiveDir, entry.File)
 	if err != nil {
 		return err
+	}
+	databaseOptions := RestoreOptions{SourceDatabase: entry.Name, DestinationDatabase: entry.Name, ReplaceExisting: options.ReplaceExisting}
+	if target.Type == coredb.TargetTypePostgreSQL {
+		if err := restorePostgreSQL(ctx, dumpPath, target, password, databaseOptions, "database", bundle, secretsDir); err != nil {
+			return fmt.Errorf("restore database %q: %w", entry.Name, err)
+		}
+		return nil
+	}
+	if err := restoreMySQL(ctx, dumpPath, target, password, databaseOptions, "database", bundle, secretsDir); err != nil {
+		return fmt.Errorf("restore database %q: %w", entry.Name, err)
+	}
+	return nil
+}
+
+// restorePostgreSQLServer replays roles and tablespaces, then every database file.
+func restorePostgreSQLServer(ctx context.Context, archiveDir string, target coredb.Target, password string, options RestoreOptions, manifest Manifest, bundle ClientBundle, secretsDir string) error {
+	run, err := newPostgreSQLRunner(ctx, target, password, bundle, secretsDir)
+	if err != nil {
+		return err
+	}
+	if err := restoreManifestFiles(archiveDir, manifest.Globals, func(r io.Reader) error {
+		_, err := run(r, "--dbname=template1")
+		return err
+	}); err != nil {
+		return err
+	}
+	for _, entry := range manifest.Databases {
+		if err := restoreManifestDatabase(ctx, archiveDir, entry, target, password, options, bundle, secretsDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// restoreMySQLServer replays the grants companion, then every database file.
+func restoreMySQLServer(ctx context.Context, archiveDir string, target coredb.Target, password string, options RestoreOptions, manifest Manifest, bundle ClientBundle, secretsDir string) error {
+	run, err := newMySQLRunner(ctx, target, password, bundle, secretsDir)
+	if err != nil {
+		return err
+	}
+	if err := restoreManifestFiles(archiveDir, manifest.Globals, func(r io.Reader) error {
+		_, err := run(r)
+		return err
+	}); err != nil {
+		return err
+	}
+	for _, entry := range manifest.Databases {
+		if err := restoreManifestDatabase(ctx, archiveDir, entry, target, password, options, bundle, secretsDir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newPostgreSQLRunner(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string) (func(io.Reader, ...string) ([]byte, error), error) {
+	passfile, err := writePostgreSQLPassfile(secretsDir, target, password)
+	if err != nil {
+		return nil, err
 	}
 	baseArgs := []string{
 		"--host", target.DatabaseHost,
@@ -87,11 +210,31 @@ func restorePostgreSQL(ctx context.Context, dumpPath string, target coredb.Targe
 	if target.DatabaseCACertificate != "" {
 		env = append(env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
 	}
-	run := func(stdin io.Reader, args ...string) ([]byte, error) {
+	return func(stdin io.Reader, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, bundle.RestoreProgram, append(baseArgs, args...)...)
 		cmd.Env = env
 		cmd.Stdin = stdin
-		return runRestoreCommand(cmd, password)
+		return runClientCommand(cmd, password)
+	}, nil
+}
+
+func newMySQLRunner(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string) (func(io.Reader, ...string) ([]byte, error), error) {
+	defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)
+	if err != nil {
+		return nil, err
+	}
+	baseArgs := append(mySQLBaseArgs(target, defaultsFile), mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
+	return func(stdin io.Reader, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, bundle.RestoreProgram, append(baseArgs, args...)...)
+		cmd.Stdin = stdin
+		return runClientCommand(cmd, password)
+	}, nil
+}
+
+func restorePostgreSQL(ctx context.Context, dumpPath string, target coredb.Target, password string, options RestoreOptions, scope string, bundle ClientBundle, secretsDir string) error {
+	run, err := newPostgreSQLRunner(ctx, target, password, bundle, secretsDir)
+	if err != nil {
+		return err
 	}
 
 	source, database := options.names()
@@ -135,21 +278,9 @@ func restorePostgreSQL(ctx context.Context, dumpPath string, target coredb.Targe
 }
 
 func restoreMySQL(ctx context.Context, dumpPath string, target coredb.Target, password string, options RestoreOptions, scope string, bundle ClientBundle, secretsDir string) error {
-	defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)
+	run, err := newMySQLRunner(ctx, target, password, bundle, secretsDir)
 	if err != nil {
 		return err
-	}
-	baseArgs := []string{
-		"--defaults-extra-file=" + defaultsFile,
-		"--host=" + target.DatabaseHost,
-		"--port=" + strconv.Itoa(target.DatabasePort),
-		"--user=" + target.DatabaseUsername,
-	}
-	baseArgs = append(baseArgs, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
-	run := func(stdin io.Reader, args ...string) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, bundle.RestoreProgram, append(baseArgs, args...)...)
-		cmd.Stdin = stdin
-		return runRestoreCommand(cmd, password)
 	}
 
 	source, database := options.names()
@@ -273,7 +404,8 @@ func unquoteIdentifier(value string, quote byte) string {
 	return strings.ReplaceAll(value[1:len(value)-1], doubled, string(quote))
 }
 
-func runRestoreCommand(cmd *exec.Cmd, password string) ([]byte, error) {
+// runClientCommand runs a database client, redacting the password from failures.
+func runClientCommand(cmd *exec.Cmd, password string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
