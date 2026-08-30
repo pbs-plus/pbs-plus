@@ -157,8 +157,10 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		SrcPath:          row.SrcPath,
 		NotificationMode: fromNullString(row.NotificationMode),
 		DestTarget: Target{
-			Name: row.DestTarget,
-			Path: row.Path.String,
+			Name:   row.DestTarget,
+			Type:   TargetType(fromNullString(row.TargetType)),
+			Access: FilesystemAccess(row.FilesystemAccess),
+			Path:   row.Path,
 			AgentHost: AgentHost{
 				Name:            row.AgentName.String,
 				IP:              row.AgentIp.String,
@@ -376,8 +378,10 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 			Mode:             int(row.RestoreMode),
 			NotificationMode: fromNullString(row.NotificationMode),
 			DestTarget: Target{
-				Name: row.DestTarget,
-				Path: row.Path.String,
+				Name:   row.DestTarget,
+				Type:   TargetType(fromNullString(row.TargetType)),
+				Access: FilesystemAccess(row.FilesystemAccess),
+				Path:   row.Path,
 				AgentHost: AgentHost{
 					Name:            row.AgentName.String,
 					IP:              row.AgentIp.String,
@@ -518,7 +522,7 @@ func (r *Restore) GetAllUPIDs() []Tasks {
 }
 
 func (r *Restore) GetStreamID() string {
-	if r.DestTarget.Type == TargetTypeLocal {
+	if r.DestTarget.IsLocal() {
 		return ""
 	}
 

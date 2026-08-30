@@ -27,12 +27,12 @@ func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 		return nil, err
 	}
 	for i, b := range backups {
-		switch b.Target.Type {
-		case coredb.TargetTypeAgent:
+		switch {
+		case b.Target.IsAgent():
 			if sess := sessions.GetSessionARPCFS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}
-		case coredb.TargetTypeS3:
+		case b.Target.IsS3():
 			if sess := sessions.GetSessionS3FS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}

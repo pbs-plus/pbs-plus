@@ -31,7 +31,13 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 	b.mu.RUnlock()
 
 	switch job.Target.Type {
-	case coredb.TargetTypeAgent:
+	case coredb.TargetTypeFilesystem:
+		if job.Target.IsLocal() {
+			if _, err := os.Stat(job.Target.Path); err != nil {
+				return fmt.Errorf("%w: %s (%v)", jobs.ErrTargetUnreachable, job.Target.Name, err)
+			}
+			break
+		}
 		qSess, qExists := b.app.Agents.GetQuicPipe(job.Target.GetHostname())
 		tSess, tExists := b.app.Agents.GetStreamPipe(job.Target.GetHostname())
 		if !qExists && !tExists {
@@ -58,11 +64,6 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 		}
 		if err != nil || !isReachable(respMsg) {
 			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
-		}
-
-	case coredb.TargetTypeLocal:
-		if _, err := os.Stat(job.Target.Path); err != nil {
-			return fmt.Errorf("%w: %s (%v)", jobs.ErrTargetUnreachable, job.Target.Name, err)
 		}
 
 	case coredb.TargetTypeS3:

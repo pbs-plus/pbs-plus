@@ -289,7 +289,9 @@ func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 			Text:             t.Name,
 			Name:             t.Name,
 			Path:             t.Path,
-			TargetType:       string(t.Type),
+			TargetType:       t.LegacyType(),
+			Kind:             string(t.Type),
+			Access:           string(t.Access),
 			MountScript:      t.MountScript,
 			VolumeID:         t.VolumeID,
 			JobCount:         t.JobCount,
@@ -308,8 +310,8 @@ func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 			IsGroup:          false,
 		}
 
-		switch t.Type {
-		case coredb.TargetTypeAgent:
+		switch {
+		case t.IsAgent():
 			hostname := t.AgentHost.Name
 			node.AgentHostname = hostname
 			node.OS = t.AgentHost.OperatingSystem
@@ -334,7 +336,7 @@ func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 				localTargets = append(localTargets, node)
 			}
 
-		case coredb.TargetTypeS3:
+		case t.IsS3():
 			node.IconCls = "fa fa-cloud"
 			s3Targets = append(s3Targets, node)
 
@@ -634,6 +636,8 @@ type TargetTreeNode struct {
 	Name             string `json:"name,omitempty"`
 	Path             string `json:"path,omitempty"`
 	TargetType       string `json:"target_type,omitempty"`
+	Kind             string `json:"kind,omitempty"`
+	Access           string `json:"access,omitempty"`
 	MountScript      string `json:"mount_script,omitempty"`
 	VolumeID         string `json:"volume_id,omitempty"`
 	JobCount         int    `json:"job_count,omitempty"`

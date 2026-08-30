@@ -13,6 +13,110 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
+func normalizeTarget(target *Target) error {
+	if target.Name == "" {
+		return errors.New("target name is required")
+	}
+
+	switch target.Type {
+	case "local":
+		target.Type = TargetTypeFilesystem
+		target.Access = FilesystemAccessLocal
+	case "agent":
+		target.Type = TargetTypeFilesystem
+		target.Access = FilesystemAccessAgent
+	}
+
+	if target.Type == "" {
+		if target.AgentHost.Name != "" {
+			target.Type = TargetTypeFilesystem
+			target.Access = FilesystemAccessAgent
+		} else if _, err := ParseS3Url(target.Path); err == nil {
+			target.Type = TargetTypeS3
+		} else {
+			target.Type = TargetTypeFilesystem
+			target.Access = FilesystemAccessLocal
+		}
+	}
+
+	switch target.Type {
+	case TargetTypeFilesystem:
+		if target.Access == "" {
+			if target.AgentHost.Name != "" {
+				target.Access = FilesystemAccessAgent
+			} else {
+				target.Access = FilesystemAccessLocal
+			}
+		}
+
+		switch target.Access {
+		case FilesystemAccessLocal:
+			if target.AgentHost.Name != "" {
+				return errors.New("local filesystem target cannot have an agent host")
+			}
+			if target.Path == "" {
+				return errors.New("target path empty and no agent host specified")
+			}
+			if !validate.ValidateTargetPath(target.Path) {
+				return fmt.Errorf("invalid target path: %s", target.Path)
+			}
+		case FilesystemAccessAgent:
+			if target.AgentHost.Name == "" {
+				return errors.New("agent filesystem target requires an agent host")
+			}
+		default:
+			return fmt.Errorf("unsupported filesystem access %q", target.Access)
+		}
+	case TargetTypeS3:
+		if target.AgentHost.Name != "" {
+			return errors.New("S3 target cannot have an agent host")
+		}
+		if _, err := ParseS3Url(target.Path); err != nil {
+			return fmt.Errorf("invalid S3 target URL: %w", err)
+		}
+		target.Access = ""
+	default:
+		return fmt.Errorf("unsupported target type %q", target.Type)
+	}
+
+	return nil
+}
+
+func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
+	switch target.Type {
+	case TargetTypeFilesystem:
+		if err := q.DeleteTargetS3(db.ctx, target.Name); err != nil {
+			return err
+		}
+		return q.UpsertTargetFilesystem(db.ctx, corequery.UpsertTargetFilesystemParams{
+			TargetName:       target.Name,
+			Access:           string(target.Access),
+			Path:             target.Path,
+			AgentHost:        toNullString(target.AgentHost.Name),
+			VolumeID:         toNullString(target.VolumeID),
+			VolumeType:       toNullString(target.VolumeType),
+			VolumeName:       toNullString(target.VolumeName),
+			VolumeFs:         toNullString(target.VolumeFS),
+			VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
+			VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
+			VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
+			VolumeTotal:      toNullString(target.VolumeTotal),
+			VolumeUsed:       toNullString(target.VolumeUsed),
+			VolumeFree:       toNullString(target.VolumeFree),
+		})
+	case TargetTypeS3:
+		if err := q.DeleteTargetFilesystem(db.ctx, target.Name); err != nil {
+			return err
+		}
+		return q.UpsertTargetS3(db.ctx, corequery.UpsertTargetS3Params{
+			TargetName: target.Name,
+			Url:        target.Path,
+		})
+	default:
+		return fmt.Errorf("unsupported target type %q", target.Type)
+	}
+}
+
 func (db *Store) CreateTarget(tx *Transaction, target Target) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
@@ -46,34 +150,20 @@ func (db *Store) CreateTarget(tx *Transaction, target Target) (err error) {
 	}
 	q = db.queries.WithTx(tx.Tx)
 
-	if target.Path == "" && target.AgentHost.Name == "" {
-		return fmt.Errorf("target path empty and no agent host specified")
-	}
-
-	_, s3Err := ParseS3Url(target.Path)
-	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
-		return fmt.Errorf("invalid target path: %s", target.Path)
+	if err := normalizeTarget(&target); err != nil {
+		return fmt.Errorf("CreateTarget: %w", err)
 	}
 
 	err = q.CreateTarget(db.ctx, corequery.CreateTargetParams{
-		Name:             target.Name,
-		Path:             target.Path,
-		AgentHost:        toNullString(target.AgentHost.Name),
-		VolumeID:         toNullString(target.VolumeID),
-		VolumeType:       toNullString(target.VolumeType),
-		VolumeName:       toNullString(target.VolumeName),
-		VolumeFs:         toNullString(target.VolumeFS),
-		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
-		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
-		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
-		VolumeTotal:      toNullString(target.VolumeTotal),
-		VolumeUsed:       toNullString(target.VolumeUsed),
-		VolumeFree:       toNullString(target.VolumeFree),
-		MountScript:      target.MountScript,
+		Name:        target.Name,
+		TargetType:  string(target.Type),
+		MountScript: target.MountScript,
 	})
-
 	if err != nil {
 		return fmt.Errorf("CreateTarget: error inserting target: %w", err)
+	}
+	if err = db.storeTargetDetails(q, target); err != nil {
+		return fmt.Errorf("CreateTarget: error storing target details: %w", err)
 	}
 
 	commitNeeded = true
@@ -113,34 +203,20 @@ func (db *Store) UpdateTarget(tx *Transaction, target Target) (err error) {
 	}
 	q = db.queries.WithTx(tx.Tx)
 
-	if target.Path == "" && target.AgentHost.Name == "" {
-		return fmt.Errorf("target path empty and no agent host specified")
-	}
-
-	_, s3Err := ParseS3Url(target.Path)
-	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
-		return fmt.Errorf("invalid target path: %s", target.Path)
+	if err := normalizeTarget(&target); err != nil {
+		return fmt.Errorf("UpdateTarget: %w", err)
 	}
 
 	err = q.UpdateTarget(db.ctx, corequery.UpdateTargetParams{
-		Path:             target.Path,
-		AgentHost:        toNullString(target.AgentHost.Name),
-		VolumeID:         toNullString(target.VolumeID),
-		VolumeType:       toNullString(target.VolumeType),
-		VolumeName:       toNullString(target.VolumeName),
-		VolumeFs:         toNullString(target.VolumeFS),
-		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
-		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
-		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
-		VolumeTotal:      toNullString(target.VolumeTotal),
-		VolumeUsed:       toNullString(target.VolumeUsed),
-		VolumeFree:       toNullString(target.VolumeFree),
-		MountScript:      target.MountScript,
-		Name:             target.Name,
+		TargetType:  string(target.Type),
+		MountScript: target.MountScript,
+		Name:        target.Name,
 	})
-
 	if err != nil {
 		return fmt.Errorf("UpdateTarget: error updating target: %w", err)
+	}
+	if err = db.storeTargetDetails(q, target); err != nil {
+		return fmt.Errorf("UpdateTarget: error storing target details: %w", err)
 	}
 
 	commitNeeded = true
@@ -180,34 +256,20 @@ func (db *Store) UpsertTarget(tx *Transaction, target Target) (err error) {
 	}
 	q = db.queries.WithTx(tx.Tx)
 
-	if target.Path == "" && target.AgentHost.Name == "" {
-		return fmt.Errorf("target path empty and no agent host specified")
-	}
-
-	_, s3Err := ParseS3Url(target.Path)
-	if target.Path != "" && !validate.ValidateTargetPath(target.Path) && s3Err != nil {
-		return fmt.Errorf("invalid target path: %s", target.Path)
+	if err := normalizeTarget(&target); err != nil {
+		return fmt.Errorf("UpsertTarget: %w", err)
 	}
 
 	err = q.UpsertTarget(db.ctx, corequery.UpsertTargetParams{
-		Name:             target.Name,
-		Path:             target.Path,
-		AgentHost:        toNullString(target.AgentHost.Name),
-		VolumeID:         toNullString(target.VolumeID),
-		VolumeType:       toNullString(target.VolumeType),
-		VolumeName:       toNullString(target.VolumeName),
-		VolumeFs:         toNullString(target.VolumeFS),
-		VolumeTotalBytes: toNullInt64(target.VolumeTotalBytes),
-		VolumeUsedBytes:  toNullInt64(target.VolumeUsedBytes),
-		VolumeFreeBytes:  toNullInt64(target.VolumeFreeBytes),
-		VolumeTotal:      toNullString(target.VolumeTotal),
-		VolumeUsed:       toNullString(target.VolumeUsed),
-		VolumeFree:       toNullString(target.VolumeFree),
-		MountScript:      target.MountScript,
+		Name:        target.Name,
+		TargetType:  string(target.Type),
+		MountScript: target.MountScript,
 	})
-
 	if err != nil {
 		return fmt.Errorf("UpsertTarget: error upserting target: %w", err)
+	}
+	if err = db.storeTargetDetails(q, target); err != nil {
+		return fmt.Errorf("UpsertTarget: error storing target details: %w", err)
 	}
 
 	commitNeeded = true
@@ -252,12 +314,15 @@ func (db *Store) AddS3Secret(tx *Transaction, targetName string, secret string) 
 		return fmt.Errorf("AddS3Secret: error encrypting secret: %w", err)
 	}
 
-	err = q.UpdateTargetS3Secret(db.ctx, corequery.UpdateTargetS3SecretParams{
-		SecretS3: encrypted,
-		Name:     targetName,
+	rows, err := q.UpdateTargetS3Secret(db.ctx, corequery.UpdateTargetS3SecretParams{
+		Secret:     encrypted,
+		TargetName: targetName,
 	})
 	if err != nil {
 		return fmt.Errorf("AddS3Secret: error adding secret to target: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("AddS3Secret: target %q is not an S3 target", targetName)
 	}
 
 	commitNeeded = true
@@ -320,8 +385,10 @@ func (db *Store) GetTarget(name string) (Target, error) {
 	}
 
 	target := Target{
-		Name: row.Name,
-		Path: row.Path,
+		Name:   row.Name,
+		Type:   TargetType(row.TargetType),
+		Access: FilesystemAccess(row.FilesystemAccess),
+		Path:   row.Path,
 		AgentHost: AgentHost{
 			Name:            row.AgentName.String,
 			IP:              row.AgentIp.String,
@@ -378,8 +445,10 @@ func (db *Store) GetAllTargets() ([]Target, error) {
 	targets := make([]Target, 0, len(rows))
 	for _, row := range rows {
 		target := Target{
-			Name: row.Name,
-			Path: row.Path,
+			Name:   row.Name,
+			Type:   TargetType(row.TargetType),
+			Access: FilesystemAccess(row.FilesystemAccess),
+			Path:   row.Path,
 			AgentHost: AgentHost{
 				Name:            row.AgentName.String,
 				IP:              row.AgentIp.String,
@@ -417,8 +486,10 @@ func (db *Store) GetAllTargetsByAgentHost(hostname string) ([]Target, error) {
 	targets := make([]Target, 0, len(rows))
 	for _, row := range rows {
 		target := Target{
-			Name: row.Name,
-			Path: row.Path,
+			Name:   row.Name,
+			Type:   TargetType(row.TargetType),
+			Access: FilesystemAccess(row.FilesystemAccess),
+			Path:   row.Path,
 			AgentHost: AgentHost{
 				Name:            row.AgentName.String,
 				IP:              row.AgentIp.String,
@@ -447,17 +518,13 @@ func (db *Store) GetAllTargetsByAgentHost(hostname string) ([]Target, error) {
 }
 
 func (t *Target) populateInfo() {
-	if t.Path != "" {
-		if strings.Contains(t.Path, "://") {
-			if s3, err := ParseS3Url(t.Path); err == nil {
-				t.S3Info = s3
-				t.Type = TargetTypeS3
-			}
-		} else if validate.IsValid(t.Path) {
-			t.Type = TargetTypeLocal
-		}
-	} else if t.AgentHost.Name != "" {
-		t.Type = TargetTypeAgent
+	if !t.IsS3() {
+		t.S3Info = nil
+		return
+	}
+
+	if s3Info, err := ParseS3Url(t.Path); err == nil {
+		t.S3Info = s3Info
 	}
 }
 
@@ -486,8 +553,22 @@ func (t *Target) GetHostname() string {
 	return t.Name
 }
 
+func (t *Target) LegacyType() string {
+	if t.IsAgent() {
+		return "agent"
+	}
+	if t.IsLocal() {
+		return "local"
+	}
+	return string(t.Type)
+}
+
+func (t *Target) IsFilesystem() bool {
+	return t.Type == TargetTypeFilesystem
+}
+
 func (t *Target) IsAgent() bool {
-	return t.Type == TargetTypeAgent
+	return t.IsFilesystem() && t.Access == FilesystemAccessAgent
 }
 
 func (t *Target) IsS3() bool {
@@ -495,29 +576,30 @@ func (t *Target) IsS3() bool {
 }
 
 func (t *Target) IsLocal() bool {
-	return t.Type == TargetTypeLocal
+	return t.IsFilesystem() && t.Access == FilesystemAccessLocal
 }
 
 type Target struct {
-	Name             string     `json:"name"`
-	Type             TargetType `json:"target_type"`
-	Path             string     `json:"path"`
-	AgentHost        AgentHost  `json:"agent_host"`
-	VolumeID         string     `json:"volume_id,omitempty"`
-	MountScript      string     `json:"mount_script"`
-	AgentVersion     string     `json:"agent_version"`
-	ConnectionStatus bool       `json:"connection_status"`
-	JobCount         int        `json:"job_count"`
-	VolumeType       string     `json:"volume_type"`
-	VolumeName       string     `json:"volume_name"`
-	VolumeFS         string     `json:"volume_fs"`
-	VolumeTotalBytes int        `json:"volume_total_bytes,omitempty"`
-	VolumeUsedBytes  int        `json:"volume_used_bytes,omitempty"`
-	VolumeFreeBytes  int        `json:"volume_free_bytes,omitempty"`
-	VolumeTotal      string     `json:"volume_total"`
-	VolumeUsed       string     `json:"volume_used"`
-	VolumeFree       string     `json:"volume_free"`
-	S3Info           *S3Url     `json:"s3_info"`
+	Name             string           `json:"name"`
+	Type             TargetType       `json:"target_type"`
+	Access           FilesystemAccess `json:"access,omitempty"`
+	Path             string           `json:"path"`
+	AgentHost        AgentHost        `json:"agent_host"`
+	VolumeID         string           `json:"volume_id,omitempty"`
+	MountScript      string           `json:"mount_script"`
+	AgentVersion     string           `json:"agent_version"`
+	ConnectionStatus bool             `json:"connection_status"`
+	JobCount         int              `json:"job_count"`
+	VolumeType       string           `json:"volume_type"`
+	VolumeName       string           `json:"volume_name"`
+	VolumeFS         string           `json:"volume_fs"`
+	VolumeTotalBytes int              `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes  int              `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes  int              `json:"volume_free_bytes,omitempty"`
+	VolumeTotal      string           `json:"volume_total"`
+	VolumeUsed       string           `json:"volume_used"`
+	VolumeFree       string           `json:"volume_free"`
+	S3Info           *S3Url           `json:"s3_info"`
 }
 
 type AgentHost struct {

@@ -38,6 +38,8 @@ type Querier interface {
 	DeleteRestore(ctx context.Context, id string) (int64, error)
 	DeleteScript(ctx context.Context, path string) (int64, error)
 	DeleteTarget(ctx context.Context, name string) (int64, error)
+	DeleteTargetFilesystem(ctx context.Context, targetName string) error
+	DeleteTargetS3(ctx context.Context, targetName string) error
 	DeleteToken(ctx context.Context, token string) error
 	DeleteVerificationJob(ctx context.Context, id string) (int64, error)
 	DeleteVerificationResults(ctx context.Context, verificationJobID string) (int64, error)
@@ -58,7 +60,7 @@ type Querier interface {
 	GetRestore(ctx context.Context, id string) (GetRestoreRow, error)
 	GetScript(ctx context.Context, path string) (GetScriptRow, error)
 	GetTarget(ctx context.Context, name string) (GetTargetRow, error)
-	GetTargetS3Secret(ctx context.Context, name string) (string, error)
+	GetTargetS3Secret(ctx context.Context, targetName string) (string, error)
 	GetToken(ctx context.Context, token string) (Token, error)
 	GetVerificationJob(ctx context.Context, id string) (VerificationJob, error)
 	GetVerificationResults(ctx context.Context, verificationJobID string) ([]VerificationResult, error)
@@ -96,12 +98,14 @@ type Querier interface {
 	UpdateRestore(ctx context.Context, arg UpdateRestoreParams) error
 	UpdateScript(ctx context.Context, arg UpdateScriptParams) error
 	UpdateTarget(ctx context.Context, arg UpdateTargetParams) error
-	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) error
+	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) (int64, error)
 	UpdateVerificationJob(ctx context.Context, arg UpdateVerificationJobParams) error
 	UpdateVerificationResult(ctx context.Context, arg UpdateVerificationResultParams) error
 	UpsertAlertSetting(ctx context.Context, arg UpsertAlertSettingParams) error
 	UpsertBatchResult(ctx context.Context, arg UpsertBatchResultParams) error
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
+	UpsertTargetFilesystem(ctx context.Context, arg UpsertTargetFilesystemParams) error
+	UpsertTargetS3(ctx context.Context, arg UpsertTargetS3Params) error
 	VerificationJobExists(ctx context.Context, id string) (int64, error)
 }
 

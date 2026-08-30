@@ -171,6 +171,8 @@ func AgentBootstrapHandler(app *application.Runtime) http.HandlerFunc {
 			log.Info("bootstrapping drive")
 
 			newTarget := coredb.Target{
+				Type:             coredb.TargetTypeFilesystem,
+				Access:           coredb.FilesystemAccessAgent,
 				AgentHost:        coredb.AgentHost{Name: reqParsed.Hostname},
 				VolumeID:         drive.Letter,
 				VolumeType:       drive.Type,
@@ -182,9 +184,8 @@ func AgentBootstrapHandler(app *application.Runtime) http.HandlerFunc {
 				VolumeUsed:       drive.Used,
 				VolumeTotal:      drive.Total,
 				VolumeName:       drive.VolumeName,
+				Name:             coredb.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem),
 			}
-
-			newTarget.Name = coredb.GetAgentTargetName(reqParsed.Hostname, drive.Letter, reqParsed.OperatingSystem)
 
 			existingTarget, err := app.Target.GetTarget(newTarget.Name)
 			if err == nil {
@@ -359,6 +360,8 @@ func AgentRenewHandler(app *application.Runtime) http.HandlerFunc {
 
 			updatedTarget := coredb.Target{
 				Name:             targetName,
+				Type:             coredb.TargetTypeFilesystem,
+				Access:           coredb.FilesystemAccessAgent,
 				AgentHost:        coredb.AgentHost{Name: reqParsed.Hostname},
 				VolumeID:         drive.Letter,
 				VolumeType:       drive.Type,

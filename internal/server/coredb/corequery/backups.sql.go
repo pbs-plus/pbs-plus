@@ -128,14 +128,19 @@ SELECT
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
-    t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
-    t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
-    t.volume_total, t.volume_used, t.volume_free, t.mount_script,
+    t.name, t.target_type, t.mount_script,
+    COALESCE(f.access, '') AS filesystem_access,
+    COALESCE(f.path, s.url, '') AS path,
+    f.agent_host, f.volume_id, f.volume_type, f.volume_name,
+    f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
+    f.volume_total, f.volume_used, f.volume_free,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
 LEFT JOIN targets t ON j.target = t.name
-LEFT JOIN agent_hosts ah ON t.agent_host = ah.name
+LEFT JOIN target_filesystems f ON f.target_name = t.name
+LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 WHERE j.id = ?
 LIMIT 1
 `
@@ -170,7 +175,10 @@ type GetBackupRow struct {
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
 	Duration              sql.NullInt64  `json:"duration"`
 	Name                  sql.NullString `json:"name"`
-	Path                  sql.NullString `json:"path"`
+	TargetType            sql.NullString `json:"target_type"`
+	MountScript           sql.NullString `json:"mount_script"`
+	FilesystemAccess      string         `json:"filesystem_access"`
+	Path                  string         `json:"path"`
 	AgentHost             sql.NullString `json:"agent_host"`
 	VolumeID              sql.NullString `json:"volume_id"`
 	VolumeType            sql.NullString `json:"volume_type"`
@@ -182,7 +190,6 @@ type GetBackupRow struct {
 	VolumeTotal           sql.NullString `json:"volume_total"`
 	VolumeUsed            sql.NullString `json:"volume_used"`
 	VolumeFree            sql.NullString `json:"volume_free"`
-	MountScript           sql.NullString `json:"mount_script"`
 	AgentName             sql.NullString `json:"agent_name"`
 	AgentIp               sql.NullString `json:"agent_ip"`
 	AgentAuth             sql.NullString `json:"agent_auth"`
@@ -223,6 +230,9 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.LastSuccessfulEndtime,
 		&i.Duration,
 		&i.Name,
+		&i.TargetType,
+		&i.MountScript,
+		&i.FilesystemAccess,
 		&i.Path,
 		&i.AgentHost,
 		&i.VolumeID,
@@ -235,7 +245,6 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.VolumeTotal,
 		&i.VolumeUsed,
 		&i.VolumeFree,
-		&i.MountScript,
 		&i.AgentName,
 		&i.AgentIp,
 		&i.AgentAuth,
@@ -254,14 +263,19 @@ SELECT
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
-    t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
-    t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
-    t.volume_total, t.volume_used, t.volume_free, t.mount_script,
+    t.name, t.target_type, t.mount_script,
+    COALESCE(f.access, '') AS filesystem_access,
+    COALESCE(f.path, s.url, '') AS path,
+    f.agent_host, f.volume_id, f.volume_type, f.volume_name,
+    f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
+    f.volume_total, f.volume_used, f.volume_free,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
 LEFT JOIN targets t ON j.target = t.name
-LEFT JOIN agent_hosts ah ON t.agent_host = ah.name
+LEFT JOIN target_filesystems f ON f.target_name = t.name
+LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 ORDER BY j.id
 `
 
@@ -295,7 +309,10 @@ type ListAllBackupsRow struct {
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
 	Duration              sql.NullInt64  `json:"duration"`
 	Name                  sql.NullString `json:"name"`
-	Path                  sql.NullString `json:"path"`
+	TargetType            sql.NullString `json:"target_type"`
+	MountScript           sql.NullString `json:"mount_script"`
+	FilesystemAccess      string         `json:"filesystem_access"`
+	Path                  string         `json:"path"`
 	AgentHost             sql.NullString `json:"agent_host"`
 	VolumeID              sql.NullString `json:"volume_id"`
 	VolumeType            sql.NullString `json:"volume_type"`
@@ -307,7 +324,6 @@ type ListAllBackupsRow struct {
 	VolumeTotal           sql.NullString `json:"volume_total"`
 	VolumeUsed            sql.NullString `json:"volume_used"`
 	VolumeFree            sql.NullString `json:"volume_free"`
-	MountScript           sql.NullString `json:"mount_script"`
 	AgentName             sql.NullString `json:"agent_name"`
 	AgentIp               sql.NullString `json:"agent_ip"`
 	AgentAuth             sql.NullString `json:"agent_auth"`
@@ -354,6 +370,9 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.LastSuccessfulEndtime,
 			&i.Duration,
 			&i.Name,
+			&i.TargetType,
+			&i.MountScript,
+			&i.FilesystemAccess,
 			&i.Path,
 			&i.AgentHost,
 			&i.VolumeID,
@@ -366,7 +385,6 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.VolumeTotal,
 			&i.VolumeUsed,
 			&i.VolumeFree,
-			&i.MountScript,
 			&i.AgentName,
 			&i.AgentIp,
 			&i.AgentAuth,

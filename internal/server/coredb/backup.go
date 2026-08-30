@@ -184,8 +184,10 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 		SourceMode: interfaceToString(row.SourceMode),
 		ReadMode:   interfaceToString(row.ReadMode),
 		Target: Target{
-			Name: row.Target,
-			Path: row.Path.String,
+			Name:   row.Target,
+			Type:   TargetType(fromNullString(row.TargetType)),
+			Access: FilesystemAccess(row.FilesystemAccess),
+			Path:   row.Path,
 			AgentHost: AgentHost{
 				Name:            row.AgentName.String,
 				IP:              row.AgentIp.String,
@@ -463,8 +465,10 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			SourceMode: interfaceToString(row.SourceMode),
 			ReadMode:   interfaceToString(row.ReadMode),
 			Target: Target{
-				Name: row.Target,
-				Path: row.Path.String,
+				Name:   row.Target,
+				Type:   TargetType(fromNullString(row.TargetType)),
+				Access: FilesystemAccess(row.FilesystemAccess),
+				Path:   row.Path,
 				AgentHost: AgentHost{
 					Name:            row.AgentName.String,
 					IP:              row.AgentIp.String,
@@ -503,9 +507,8 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			PostScript:    row.PostScript,
 			IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
 			LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
-		}
 
-		backup.Exclusions = exclusionsByJob[row.ID]
+			Exclusions: exclusionsByJob[row.ID]}
 		if backup.Exclusions == nil {
 			backup.Exclusions = make([]Exclusion, 0)
 		}
@@ -587,7 +590,7 @@ func (db *Store) DeleteBackup(tx *Transaction, id string) (err error) {
 }
 
 func (b *Backup) GetStreamID() string {
-	if b.Target.Type == TargetTypeLocal {
+	if b.Target.IsLocal() {
 		return ""
 	}
 

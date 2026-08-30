@@ -101,8 +101,12 @@ func (js *JobStatus) Scan(value any) error {
 // JobStatusFromString parses a legacy string status into a typed JobStatus.
 // This is used for backward compatibility when reading old records.
 
+type FilesystemAccess string
+
 const (
-	TargetTypeLocal TargetType = "local"
-	TargetTypeAgent TargetType = "agent"
-	TargetTypeS3    TargetType = "s3"
+	TargetTypeFilesystem TargetType = "filesystem"
+	TargetTypeS3         TargetType = "s3"
+
+	FilesystemAccessLocal FilesystemAccess = "local"
+	FilesystemAccessAgent FilesystemAccess = "agent"
 )

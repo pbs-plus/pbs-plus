@@ -56,12 +56,12 @@ func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	b.updateRestoreWithTask(b.task.Task)
 	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
-	switch b.job.DestTarget.Type {
-	case coredb.TargetTypeAgent:
+	switch {
+	case b.job.DestTarget.IsAgent():
 		return b.agentExecute(ctx, idempotencyKey)
-	case coredb.TargetTypeLocal:
+	case b.job.DestTarget.IsLocal():
 		return b.localExecute(ctx)
-	case coredb.TargetTypeS3:
+	case b.job.DestTarget.IsS3():
 		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
 	default:
 		return jobs.ErrTargetNotFound

@@ -42,15 +42,15 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		for i := range all {
-			if all[i].IsS3() {
+			switch {
+			case all[i].IsS3():
 				all[i].ConnectionStatus = true
 				all[i].AgentVersion = "N/A (S3 target)"
-			} else if !all[i].IsAgent() {
+			case all[i].IsLocal():
 				all[i].AgentVersion = "N/A (local target)"
 				_, err := os.Stat(all[i].Path)
 				all[i].ConnectionStatus = err == nil && validate.IsValid(all[i].Path)
-			} else {
-				// Instant: check if session exists (map lookup, no RPC)
+			case all[i].IsAgent():
 				if qSess, ok := app.Agents.GetQuicPipe(all[i].GetHostname()); ok {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = qSess.GetVersion()
@@ -58,6 +58,8 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = tSess.GetVersion()
 				}
+			default:
+				all[i].AgentVersion = "N/A"
 			}
 		}
 
@@ -67,8 +69,13 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
+		data := make([]targetResponse, len(all))
+		for i := range all {
+			data[i] = newTargetResponse(all[i])
+		}
+
 		toReturn := TargetsResponse{
-			Data:    all,
+			Data:    data,
 			Digest:  digest,
 			Success: true,
 		}
@@ -167,6 +174,8 @@ func D2DTargetAgentHandler(app *application.Runtime) http.HandlerFunc {
 
 			targetData := coredb.Target{
 				Name:             targetName,
+				Type:             coredb.TargetTypeFilesystem,
+				Access:           coredb.FilesystemAccessAgent,
 				AgentHost:        coredb.AgentHost{Name: reqParsed.Hostname},
 				VolumeID:         parsedDrive.Letter,
 				VolumeType:       parsedDrive.Type,
@@ -225,6 +234,8 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 
 		newTarget := coredb.Target{
 			Name:        r.FormValue("name"),
+			Type:        targetTypeFromRequest(r),
+			Access:      coredb.FilesystemAccess(r.FormValue("access")),
 			Path:        r.FormValue("path"),
 			MountScript: r.FormValue("mount_script"),
 		}
@@ -281,6 +292,12 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 			if path != "" {
 				target.Path = path
 			}
+			if targetType := targetTypeFromRequest(r); targetType != "" {
+				target.Type = targetType
+			}
+			if access := r.FormValue("access"); access != "" {
+				target.Access = coredb.FilesystemAccess(access)
+			}
 
 			target.MountScript = r.FormValue("mount_script")
 
@@ -319,7 +336,8 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 
-			if target.IsAgent() {
+			switch {
+			case target.IsAgent():
 				arpcSess, ok := app.Agents.GetStreamPipe(target.GetHostname())
 				if ok {
 					target.AgentVersion = arpcSess.GetVersion()
@@ -340,23 +358,20 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 						}
 					}
 				}
-			} else if target.IsS3() {
+			case target.IsS3():
 				target.ConnectionStatus = true
 				target.AgentVersion = "N/A (S3 target)"
-			} else {
+			case target.IsLocal():
 				target.AgentVersion = "N/A (local target)"
-
 				_, err := os.Stat(target.Path)
-				if err != nil {
-					target.ConnectionStatus = false
-				} else {
-					target.ConnectionStatus = validate.IsValid(target.Path)
-				}
+				target.ConnectionStatus = err == nil && validate.IsValid(target.Path)
+			default:
+				target.AgentVersion = "N/A"
 			}
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = target
+			response.Data = newTargetResponse(target)
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -423,15 +438,36 @@ func ExtJsTargetS3SecretHandler(app *application.Runtime) http.HandlerFunc {
 }
 
 type TargetsResponse struct {
-	Data    []coredb.Target `json:"data"`
-	Digest  string          `json:"digest"`
-	Success bool            `json:"success"`
+	Data    []targetResponse `json:"data"`
+	Digest  string           `json:"digest"`
+	Success bool             `json:"success"`
 }
 
 type TargetConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    coredb.Target     `json:"data"`
+	Data    targetResponse    `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
+}
+
+type targetResponse struct {
+	coredb.Target
+	TargetType string `json:"target_type"`
+	Kind       string `json:"kind"`
+}
+
+func newTargetResponse(target coredb.Target) targetResponse {
+	return targetResponse{
+		Target:     target,
+		TargetType: target.LegacyType(),
+		Kind:       string(target.Type),
+	}
+}
+
+func targetTypeFromRequest(r *http.Request) coredb.TargetType {
+	if kind := r.FormValue("kind"); kind != "" {
+		return coredb.TargetType(kind)
+	}
+	return coredb.TargetType(r.FormValue("target_type"))
 }

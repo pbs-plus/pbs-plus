@@ -36,7 +36,7 @@ var models = []js.Value{
 		Name:   "pbs-model-targets",
 		Extend: "Ext.data.TreeModel",
 		Fields: js.Fields(
-			"name", "path", "target_type", "mount_script", "volume_id", "job_count", "agent_version",
+			"name", "path", "target_type", "kind", "access", "mount_script", "volume_id", "job_count", "agent_version",
 			"connection_status", "volume_type", "volume_name", "volume_fs", "volume_total_bytes",
 			"volume_used_bytes", "volume_free_bytes", "volume_total", "volume_used", "volume_free",
 			"agent_hostname", "os", "agent_ip", "text", "isGroup", "groupType", "iconCls",

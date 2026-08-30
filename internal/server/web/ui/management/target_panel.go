@@ -329,6 +329,8 @@ var targetPanelController = js.ControllerClass{
 					name: node.name,
 					path: node.path,
 					target_type: node.target_type,
+					kind: node.kind,
+					access: node.access,
 					mount_script: node.mount_script,
 					volume_id: node.volume_id,
 					job_count: node.job_count,

@@ -134,7 +134,14 @@ type Script struct {
 }
 
 type Target struct {
-	Name             string         `json:"name"`
+	Name        string `json:"name"`
+	TargetType  string `json:"target_type"`
+	MountScript string `json:"mount_script"`
+}
+
+type TargetFilesystem struct {
+	TargetName       string         `json:"target_name"`
+	Access           string         `json:"access"`
 	Path             string         `json:"path"`
 	AgentHost        sql.NullString `json:"agent_host"`
 	VolumeID         sql.NullString `json:"volume_id"`
@@ -147,8 +154,12 @@ type Target struct {
 	VolumeTotal      sql.NullString `json:"volume_total"`
 	VolumeUsed       sql.NullString `json:"volume_used"`
 	VolumeFree       sql.NullString `json:"volume_free"`
-	MountScript      string         `json:"mount_script"`
-	SecretS3         string         `json:"secret_s3"`
+}
+
+type TargetS3 struct {
+	TargetName string `json:"target_name"`
+	Url        string `json:"url"`
+	Secret     string `json:"secret"`
 }
 
 type Token struct {
