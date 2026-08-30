@@ -18,8 +18,7 @@ section() { echo ""; echo "═════════════════�
 ###############################################################################
 PBS_STORE="${PBS_STORE:-/mnt/test}"
 NAMESPACE="${NAMESPACE:-test}"
-BACKUP_ID="${BACKUP_ID:-test-host}"
-BACKUP_DISK="${BACKUP_DISK:-Root}"
+BACKUP_ID="${BACKUP_ID:-test-backup-job}"
 PXAR_MOUNT_BIN="${PXAR_MOUNT_BIN:-/usr/bin/pxar-mount}"
 
 ###############################################################################
@@ -33,8 +32,23 @@ PASS_DIR="/tmp/passthrough/e2e-pass"
 INIT_PASS_DIR="/tmp/passthrough/init-test"
 
 HOST_DIR="${PBS_STORE}/ns/${NAMESPACE}/host/${BACKUP_ID}"
-MPXAR_PATTERN="${BACKUP_ID}---${BACKUP_DISK}.mpxar.didx"
-PPXAR_PATTERN="${BACKUP_ID}---${BACKUP_DISK}.ppxar.didx"
+
+find_archives() {
+	local snap_dir=$1
+	local mpxar_name ppxar_name
+	mpxar_name=$(ls -1 "$snap_dir" 2>/dev/null | grep -E '\.mpxar\.didx$' | head -1)
+	if [ -z "$mpxar_name" ]; then
+		echo "ERROR: no .mpxar.didx found in $snap_dir" >&2
+		return 1
+	fi
+	ppxar_name="${mpxar_name%.mpxar.didx}.ppxar.didx"
+	if [ ! -f "$snap_dir/$ppxar_name" ]; then
+		echo "ERROR: missing $ppxar_name in $snap_dir" >&2
+		return 1
+	fi
+	FOUND_MPXAR="$snap_dir/$mpxar_name"
+	FOUND_PPXAR="$snap_dir/$ppxar_name"
+}
 
 unmount() {
 	fusermount -u "$1" 2>/dev/null || true
@@ -132,8 +146,9 @@ if [ -z "$ORIG_SNAP" ]; then
 	echo "ERROR: No existing snapshots found at $HOST_DIR for mount mode tests"
 	exit 1
 fi
-MPXAR="${HOST_DIR}/${ORIG_SNAP}/${MPXAR_PATTERN}"
-PPXAR="${HOST_DIR}/${ORIG_SNAP}/${PPXAR_PATTERN}"
+find_archives "${HOST_DIR}/${ORIG_SNAP}" || exit 1
+MPXAR="$FOUND_MPXAR"
+PPXAR="$FOUND_PPXAR"
 echo "Using snapshot: $ORIG_SNAP"
 echo "MPXAR: $MPXAR"
 echo "PPXAR: $PPXAR"
@@ -203,24 +218,23 @@ ok "post-commit delete file2.txt"
 
 sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
-	ok "init mode commit
+	ok "init mode commit #2"
 else
-	fail "init mode commit
+	fail "init mode commit #2: ${RESULT:0:200}"
 	echo "--- pxar-mount daemon log (last 40 lines) ---"
 	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
 	echo "--- end daemon log ---"
 fi
 
-# 1m. Verify post-2nd-commit state
 [ "$(cat $INIT_MOUNT/file1.txt)" = "hello world" ] && ok "post-2nd read file1.txt" || fail "post-2nd read file1.txt"
 [ "$(cat $INIT_MOUNT/post1.txt)" = "after commit 1" ] && ok "post-2nd read post1.txt" || fail "post-2nd read post1.txt"
 [ ! -f "$INIT_MOUNT/file2.txt" ] && ok "post-2nd file2.txt is gone" || fail "post-2nd file2.txt should not exist"
 
 sleep 1; RESULT=$(do_commit "$INIT_SOCKET" "E2E-INIT")
 if echo "$RESULT" | grep -q "✓"; then
-	ok "init mode commit
+	ok "init mode commit #3"
 else
-	fail "init mode commit
+	fail "init mode commit #3: ${RESULT:0:200}"
 	echo "--- pxar-mount daemon log (last 40 lines) ---"
 	tail -40 /tmp/pxar-mount-test.log 2>/dev/null || true
 	echo "--- end daemon log ---"
@@ -321,8 +335,9 @@ section "PHASE 3: MOUNT LATEST SNAPSHOT — Verify committed data persists"
 ###############################################################################
 
 LATEST=$(latest_snapshot "$HOST_DIR")
-MPXAR2="${HOST_DIR}/${LATEST}/${MPXAR_PATTERN}"
-PPXAR2="${HOST_DIR}/${LATEST}/${PPXAR_PATTERN}"
+find_archives "${HOST_DIR}/${LATEST}" || exit 1
+MPXAR2="$FOUND_MPXAR"
+PPXAR2="$FOUND_PPXAR"
 
 mount_archive "$MPXAR2" "$PPXAR2" "$SOCKET" "$MOUNT" "$PASS_DIR"
 

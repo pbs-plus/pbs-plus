@@ -38,34 +38,40 @@ type waitResult struct {
 	Warnings  int  `json:"warnings"`
 }
 
-// Register registers the backup workflow: pre-script, validate,
-// mount-script, start, wait, finalize. Each stage is a durable
-// activity; completed stages are skipped on replay after a crash.
+// Register keeps workflow version 1 available for existing executions and
+// registers database-aware version 2 for new executions.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.RegisterVersion(jobs.WorkflowBackup, "1", func(w *jobs.WorkflowContext) error {
-		var input jobs.BackupInput
-		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
-			return jobs.NonRetryable(fmt.Errorf("decoding backup workflow input: %w", err))
-		}
-		job, err := app.CoreDB.GetBackup(w.Execution.DefinitionID)
-		if err != nil {
-			return jobs.NonRetryable(fmt.Errorf("getting backup workflow definition: %w", err))
-		}
-		return runWorkflow(w, app, job, input)
-	})
+	register := func(version string, databaseAware bool) error {
+		return engine.RegisterVersion(jobs.WorkflowBackup, version, func(w *jobs.WorkflowContext) error {
+			var input jobs.BackupInput
+			if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
+				return jobs.NonRetryable(fmt.Errorf("decoding backup workflow input: %w", err))
+			}
+			job, err := app.CoreDB.GetBackup(w.Execution.DefinitionID)
+			if err != nil {
+				return jobs.NonRetryable(fmt.Errorf("getting backup workflow definition: %w", err))
+			}
+			return runWorkflow(w, app, job, input, databaseAware)
+		})
+	}
+	if err := register("1", false); err != nil {
+		return err
+	}
+	return register("2", true)
 }
 
-func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Backup, input jobs.BackupInput) error {
+func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Backup, input jobs.BackupInput, databaseAware bool) error {
 	b := &backupJob{
 		job:             job,
 		app:             app,
 		skipCheck:       input.SkipCheck,
 		logger:          log.WithScope(log.Scope{JobID: job.ID}),
 		extraExclusions: input.ExtraExclusions,
+		databaseAware:   databaseAware,
 		waitGroup:       &sync.WaitGroup{},
 	}
 	defer b.cleanup()
-	workerID, err := backupWorkerID(job, job.Target)
+	workerID, err := backupWorkerID(job)
 	if err != nil {
 		return jobs.NonRetryable(fmt.Errorf("determining backup worker identity: %w", err))
 	}
@@ -75,6 +81,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 	defer queued.Close()
 	w.BindTask(queued)
+	b.mu.Lock()
+	b.workerID = workerID
+	b.scriptTask = queued
+	b.mu.Unlock()
 
 	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, b.app); err != nil {
 		b.logger.Error(err, "failed to assign queued task to backup job")
@@ -83,6 +93,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
+	queued.SetState("RUNNING: preparing backup")
 	if err := w.Step("validate", b.validateTargetConnection); err != nil {
 		return b.finalizeFailed(w, err)
 	}
@@ -104,6 +115,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 	b.upid = startRes.UPID
 	queued.Close()
+	b.mu.Lock()
+	b.scriptTask = nil
+	b.mu.Unlock()
 	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: startRes.UPID}, b.app); err != nil {
 		b.logger.Error(err, "failed to assign backup task to job", "upid", startRes.UPID)
 	}

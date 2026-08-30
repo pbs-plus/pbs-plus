@@ -36,7 +36,7 @@ func (d *Store) MigrateSecrets() error {
 	}
 	log.Info("database: migrating secrets from nacl-box to aes-256-gcm")
 
-	rows, err := d.Reader().QueryContext(d.ctx, "SELECT name, secret_s3 FROM targets WHERE secret_s3 != '' AND secret_s3 IS NOT NULL")
+	rows, err := d.Reader().QueryContext(d.ctx, "SELECT target_name, secret FROM target_s3 WHERE secret != ''")
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (d *Store) MigrateSecrets() error {
 			continue
 		}
 
-		_, err = d.Writer().ExecContext(d.ctx, "UPDATE targets SET secret_s3 = ? WHERE name = ?", reencrypted, name)
+		_, err = d.Writer().ExecContext(d.ctx, "UPDATE target_s3 SET secret = ? WHERE target_name = ?", reencrypted, name)
 		if err != nil {
 			continue
 		}

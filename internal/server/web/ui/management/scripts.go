@@ -91,16 +91,16 @@ var scriptEditWindow = js.EditWindow{
 		"getValues": js.Func("", `
 			let values = this.callParent();
 			let editor = this.down("#scriptEditor");
-			if (editor && editor.codeMirror) {
-				values.script = editor.codeMirror.getValue();
+			if (editor && editor.getValue) {
+				values.script = editor.getValue();
 			}
 			return values;
 		`),
 		"setValues": js.Func("values", `
 			this.callParent([values]);
 			let editor = this.down("#scriptEditor");
-			if (editor && editor.codeMirror && values.script) {
-				editor.codeMirror.setValue(values.script);
+			if (editor && editor.setValue && values.script) {
+				editor.setValue(values.script);
 			}
 		`),
 	},

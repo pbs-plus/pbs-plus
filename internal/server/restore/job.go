@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -41,12 +42,14 @@ type restoreJob struct {
 	errCount     atomic.Int32
 	receivedDone atomic.Bool
 
-	job          coredb.Restore
-	remoteServer *pxar.RemoteServer
-	localClient  *pxar.Client
-	agentPipe    *arpc.StreamPipe
-	app          *application.Runtime
-	skipCheck    bool
+	job                coredb.Restore
+	remoteServer       *pxar.RemoteServer
+	localClient        *pxar.Client
+	agentPipe          *arpc.StreamPipe
+	app                *application.Runtime
+	skipCheck          bool
+	databaseAware      bool
+	databaseStagingDir string
 }
 
 func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
@@ -56,12 +59,14 @@ func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	b.updateRestoreWithTask(b.task.Task)
 	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
-	switch b.job.DestTarget.Type {
-	case coredb.TargetTypeAgent:
+	switch {
+	case b.job.DestTarget.IsDatabase() && b.databaseAware:
+		return b.databaseExecute(ctx)
+	case b.job.DestTarget.IsAgent():
 		return b.agentExecute(ctx, idempotencyKey)
-	case coredb.TargetTypeLocal:
+	case b.job.DestTarget.IsLocal():
 		return b.localExecute(ctx)
-	case coredb.TargetTypeS3:
+	case b.job.DestTarget.IsS3():
 		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
 	default:
 		return jobs.ErrTargetNotFound
@@ -174,6 +179,11 @@ func (b *restoreJob) cleanup() {
 	}
 
 	sessions.DisconnectSession(childKey)
+	if b.databaseStagingDir != "" {
+		if err := os.RemoveAll(b.databaseStagingDir); err != nil {
+			b.logger.Error(err, "failed to remove database restore staging data")
+		}
+	}
 }
 
 func (b *restoreJob) writeStatsSummary() {
@@ -400,6 +410,13 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 		srcPath = "/"
 	}
 
+	if err := b.startLocalRestore(ctx, destPath, []string{srcPath}, pxar.RestoreMode(b.job.Mode)); err != nil {
+		return err
+	}
+	return b.waitForCompletion(ctx)
+}
+
+func (b *restoreJob) startLocalRestore(ctx context.Context, destPath string, sources []string, mode pxar.RestoreMode) error {
 	childKey := b.job.GetStreamID()
 	socketPath := filepath.Join(
 		conf.RestoreSocketPath,
@@ -424,9 +441,9 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 	b.task.WriteString("starting local restore")
 
 	b.waitGroup.Go(func() {
-		if err := pxar.RestoreWithOptions(ctx, b.localClient, []string{srcPath}, pxar.RestoreOptions{
+		if err := pxar.RestoreWithOptions(ctx, b.localClient, sources, pxar.RestoreOptions{
 			DestDir: destPath,
-			Mode:    pxar.RestoreMode(b.job.Mode),
+			Mode:    mode,
 		}); err != nil && b.err == nil {
 			b.err = err
 		}
@@ -451,11 +468,20 @@ func (b *restoreJob) localExecute(ctx context.Context) error {
 	})
 
 	sessions.NewPxarReader(childKey, reader)
-
-	return b.waitForCompletion(ctx)
+	return nil
 }
 
 func (b *restoreJob) waitForCompletion(ctx context.Context) error {
+	if err := b.waitForTransfer(ctx); err != nil {
+		return err
+	}
+	if ctx.Err() == nil {
+		b.runPostScript()
+	}
+	return ctx.Err()
+}
+
+func (b *restoreJob) waitForTransfer(ctx context.Context) error {
 	if b.remoteServer != nil {
 		var pipeCloseCh <-chan struct{}
 		if b.agentPipe != nil {
@@ -498,10 +524,6 @@ func (b *restoreJob) waitForCompletion(ctx context.Context) error {
 
 	if b.waitGroup != nil {
 		b.waitGroup.Wait()
-	}
-
-	if ctx.Err() == nil {
-		b.runPostScript()
 	}
 
 	if b.err != nil {

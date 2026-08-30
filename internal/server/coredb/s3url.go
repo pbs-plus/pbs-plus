@@ -5,6 +5,7 @@ package coredb
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -48,12 +49,21 @@ func ParseS3Url(raw string) (*S3Url, error) {
 		s3.AccessKey = u.User.Username()
 	}
 
+	var pathStyleOverride *bool
+	if rawPathStyle := u.Query().Get("path-style"); rawPathStyle != "" {
+		pathStyle, err := strconv.ParseBool(rawPathStyle)
+		if err != nil {
+			return nil, fmt.Errorf("invalid S3 path style %q", rawPathStyle)
+		}
+		pathStyleOverride = &pathStyle
+	}
+
 	pathParts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
 
 	isVirtualHost := false
 	var bucketFromHost string
 
-	if dotIndex := strings.Index(u.Host, "."); dotIndex > 0 {
+	if dotIndex := strings.Index(u.Host, "."); (pathStyleOverride == nil || !*pathStyleOverride) && dotIndex > 0 {
 		potentialBucket := u.Host[:dotIndex]
 		remainingHost := u.Host[dotIndex+1:]
 
@@ -105,6 +115,12 @@ func ParseS3Url(raw string) (*S3Url, error) {
 	}
 
 	s3.IsPathStyle = !isVirtualHost
+	if pathStyleOverride != nil {
+		s3.IsPathStyle = *pathStyleOverride
+	}
+	if region := u.Query().Get("region"); region != "" {
+		s3.Region = region
+	}
 
 	return s3, nil
 }

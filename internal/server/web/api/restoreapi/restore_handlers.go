@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/digest"
@@ -103,47 +104,58 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		stop := r.Method == http.MethodDelete
+		response.Errors = map[string]string{}
+		var messages []string
 
-		go func() {
-			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
-			if err != nil {
-				log.Error(err, "", "restores", decodedRestoreIDs)
-				return
-			}
-			rpcClient := rpc.NewClient(conn)
-			defer func() {
-				if err := rpcClient.Close(); err != nil {
-					log.Error(err, "")
-				}
-			}()
-
-			for _, restoreID := range decodedRestoreIDs {
-				restoreTask, err := app.CoreDB.GetRestore(restoreID)
-				if err != nil {
-					log.Error(err, "", "restoreID", restoreID)
-					continue
-				}
-
-				args := &jobrpc.RestoreQueueArgs{
-					Job:       restoreTask,
-					SkipCheck: true,
-					Stop:      stop,
-					Web:       true,
-				}
-				var reply jobrpc.QueueReply
-				if err := rpcClient.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
-					log.Error(err, "", "restoreID", restoreID)
-					continue
-				}
-				if reply.Status != 200 {
-					log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", restoreID)
-				}
+		conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 10*time.Second)
+		if err != nil {
+			log.Error(err, "", "restores", decodedRestoreIDs)
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		rpcClient := rpc.NewClient(conn)
+		defer func() {
+			if err := rpcClient.Close(); err != nil {
+				log.Error(err, "")
 			}
 		}()
 
+		for _, restoreID := range decodedRestoreIDs {
+			restoreTask, err := app.CoreDB.GetRestore(restoreID)
+			if err != nil {
+				log.Error(err, "", "restoreID", restoreID)
+				response.Errors[restoreID] = err.Error()
+				messages = append(messages, restoreID+": "+err.Error())
+				continue
+			}
+
+			args := &jobrpc.RestoreQueueArgs{
+				Job:       restoreTask,
+				SkipCheck: true,
+				Stop:      stop,
+				Web:       true,
+			}
+			var reply jobrpc.QueueReply
+			if err := rpcClient.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
+				log.Error(err, "", "restoreID", restoreID)
+				response.Errors[restoreID] = err.Error()
+				messages = append(messages, restoreID+": "+err.Error())
+				continue
+			}
+			if reply.Status != 200 {
+				log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", restoreID)
+				response.Errors[restoreID] = reply.Message
+				messages = append(messages, restoreID+": "+reply.Message)
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
-		response.Success = true
+		response.Success = len(response.Errors) == 0
+		if !response.Success {
+			response.Status = http.StatusConflict
+			response.Message = strings.Join(messages, "; ")
+		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Error(err, "")
 		}
@@ -245,20 +257,27 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		newRestore := coredb.Restore{
-			ID:               id,
-			Store:            store,
-			Namespace:        namespace,
-			Snapshot:         snapshot,
-			SrcPath:          srcPath,
-			Mode:             mode,
-			DestTarget:       coredb.Target{Name: r.FormValue("dest-target")},
-			DestSubpath:      destSubpath,
-			PreScript:        preScript,
-			PostScript:       postScript,
-			Comment:          r.FormValue("comment"),
-			NotificationMode: r.FormValue("notification-mode"),
-			Retry:            retry,
-			RetryInterval:    retryInterval,
+			ID:                   id,
+			Store:                store,
+			Namespace:            namespace,
+			Snapshot:             snapshot,
+			SrcPath:              srcPath,
+			Mode:                 mode,
+			DestTarget:           coredb.Target{Name: r.FormValue("dest-target")},
+			DestSubpath:          destSubpath,
+			PreScript:            preScript,
+			PostScript:           postScript,
+			Comment:              r.FormValue("comment"),
+			NotificationMode:     r.FormValue("notification-mode"),
+			Retry:                retry,
+			RetryInterval:        retryInterval,
+			SourceDatabase:       r.FormValue("source_database"),
+			DestinationDatabase:  r.FormValue("destination_database"),
+			DatabaseClientFamily: r.FormValue("database_client_family"),
+			DatabaseClientDir:    r.FormValue("database_client_dir"),
+		}
+		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
+			newRestore.ReplaceExisting = replaceExisting
 		}
 
 		err = app.Restore.CreateRestore(newRestore)
@@ -350,6 +369,26 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 			if r.FormValue("notification-mode") != "" {
 				restore.NotificationMode = r.FormValue("notification-mode")
 			}
+			if r.Form.Has("source_database") {
+				restore.SourceDatabase = r.FormValue("source_database")
+			}
+			if r.Form.Has("destination_database") {
+				restore.DestinationDatabase = r.FormValue("destination_database")
+			}
+			if r.Form.Has("replace_existing") {
+				replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing"))
+				if parseErr != nil {
+					respond.WriteErrorResponse(w, parseErr)
+					return
+				}
+				restore.ReplaceExisting = replaceExisting
+			}
+			if r.Form.Has("database_client_family") {
+				restore.DatabaseClientFamily = r.FormValue("database_client_family")
+			}
+			if r.Form.Has("database_client_dir") {
+				restore.DatabaseClientDir = r.FormValue("database_client_dir")
+			}
 
 			preScript := r.FormValue("pre_script")
 			if err := validate.ValidateScriptPath("pre_script", preScript); err != nil {
@@ -414,6 +453,16 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.Retry = 0
 					case "retry-interval":
 						restore.RetryInterval = 1
+					case "source_database":
+						restore.SourceDatabase = ""
+					case "destination_database":
+						restore.DestinationDatabase = ""
+					case "replace_existing":
+						restore.ReplaceExisting = false
+					case "database_client_family":
+						restore.DatabaseClientFamily = ""
+					case "database_client_dir":
+						restore.DatabaseClientDir = ""
 					}
 				}
 			}

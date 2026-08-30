@@ -1,0 +1,5 @@
+CREATE TABLE backup_group_migrations (
+	backup_id TEXT PRIMARY KEY NOT NULL,
+	completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (backup_id) REFERENCES backups(id) ON DELETE CASCADE
+);

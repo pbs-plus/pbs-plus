@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
@@ -21,6 +23,14 @@ func (b *backupJob) runPreScript(ctx context.Context) error {
 		return nil
 	}
 
+	b.mu.RLock()
+	task := b.scriptTask
+	b.mu.RUnlock()
+	if task != nil {
+		task.SetState("RUNNING: pre-backup script")
+	}
+	b.logger.Info("running pre-backup script", "script", job.PreScript)
+
 	select {
 	case <-ctx.Done():
 		return jobs.ErrCanceled
@@ -32,8 +42,9 @@ func (b *backupJob) runPreScript(ctx context.Context) error {
 		envVars = []string{}
 	}
 
-	scriptOut, modEnvVars, err := jobs.RunShellScript(ctx, job.PreScript, envVars)
-	b.logger.Info(scriptOut, "script", job.PreScript)
+	_, modEnvVars, err := jobs.RunShellScriptWithOutput(ctx, job.PreScript, envVars, func(line string) {
+		b.logScriptLine(job.PreScript, line)
+	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			b.logger.Info("pre-backup script canceled")
@@ -93,17 +104,33 @@ func (b *backupJob) runTargetMountScript(ctx context.Context, target coredb.Targ
 func (b *backupJob) runPostScript(success bool, warningsNum int) {
 	b.mu.RLock()
 	job := b.job
+	workerID := b.workerID
 	b.mu.RUnlock()
 
 	if job.PostScript == "" {
 		return
 	}
 
-	b.mu.RLock()
-	job = b.job
-	b.mu.RUnlock()
-	b.logger.Info("running post-backup script",
-		"script", job.PostScript)
+	task, taskErr := tasklog.NewQueuedTask("backup", workerID, false)
+	if taskErr != nil {
+		b.logger.Error(taskErr, "failed to create post-backup script task")
+	} else {
+		task.SetState("RUNNING: post-backup script")
+		b.mu.Lock()
+		b.scriptTask = task
+		b.mu.Unlock()
+		if err := updateBackupStatus(false, 0, job, proxmox.Task{UPID: task.UPID()}, b.app); err != nil {
+			b.logger.Error(err, "failed to assign post-backup script task to backup job")
+		}
+		defer func() {
+			task.Close()
+			b.mu.Lock()
+			b.scriptTask = nil
+			b.mu.Unlock()
+		}()
+	}
+
+	b.logger.Info("running post-backup script", "script", job.PostScript)
 
 	envVars, err := jobs.StructToEnvVars(job)
 	if err != nil {
@@ -116,13 +143,20 @@ func (b *backupJob) runPostScript(success bool, warningsNum int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	scriptOut, _, err := jobs.RunShellScript(ctx, job.PostScript, envVars)
+	_, _, err = jobs.RunShellScriptWithOutput(ctx, job.PostScript, envVars, func(line string) {
+		b.logScriptLine(job.PostScript, line)
+	})
 	if err != nil {
-		b.logger.Error(err,
-			"error encountered while running job post-backup script")
-
+		b.logger.Error(err, "error encountered while running job post-backup script")
 	}
-	b.logger.Info(scriptOut,
-		"script", job.PostScript)
+}
 
+func (b *backupJob) logScriptLine(script, line string) {
+	b.logger.Info(line, "script", script)
+	b.mu.RLock()
+	task := b.scriptTask
+	b.mu.RUnlock()
+	if task != nil {
+		task.LogString(line)
+	}
 }

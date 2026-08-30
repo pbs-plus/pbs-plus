@@ -38,7 +38,7 @@ dump_logs() {
 PBS_API="https://localhost:8017"
 DATASTORE="test"
 NAMESPACE="test"
-HOST_DIR="/mnt/test/ns/test/host/test-host"
+HOST_DIR="/mnt/test/ns/test/host/test-backup-job"
 INIT_GROUP_DIR="/mnt/test/ns/test/host/e2e-init"
 ENC_DS=$(printf %s "$DATASTORE" | base64 -w0)
 MOUNT_BASE="/mnt/pbs-plus-restores"
@@ -118,10 +118,10 @@ SNAP=$(latest_snapshot "$HOST_DIR")
 DIDX=$(didx_in "$HOST_DIR/$SNAP")
 [ -n "$DIDX" ] || die "no pxar didx found under $HOST_DIR/$SNAP"
 echo "Using snapshot: $SNAP (archive: $DIDX)"
-MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-test-host/$SNAP"
+MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-test-backup-job/$SNAP"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
-	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-host" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-backup-job" \
 	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro")
 if submit_ok "$RESP"; then
 	ok "mount request accepted"
@@ -280,13 +280,13 @@ fi
 section "PHASE 4: Mount profiles"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles" \
-	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-host" \
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-backup-job" \
 	-d "mode=ro" -d "auto-mount=0" -d "schedule=not a schedule")
 CODE=$(code_of "$RESP")
 [ "$CODE" = "400" ] && ok "invalid schedule rejected" || fail "invalid schedule accepted (HTTP $CODE)"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles" \
-	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-host" \
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-backup-job" \
 	-d "mode=ro" -d "auto-mount=0" -d "schedule=02:00")
 submit_ok "$RESP" && ok "profile created" || fail "profile create rejected: $(body_of "$RESP")"
 
@@ -296,7 +296,7 @@ PROFILE_ID=$(curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles" \
 
 RESP=$(req -X PUT "$PBS_API/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID" \
 	-H "Content-Type: application/x-www-form-urlencoded" \
-	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-host" \
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-backup-job" \
 	-d "mode=ro" -d "auto-mount=0" -d "schedule=*:00/30")
 submit_ok "$RESP" && ok "profile updated" || fail "profile update rejected: $(body_of "$RESP")"
 
@@ -304,7 +304,7 @@ RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID/mount")
 submit_ok "$RESP" && ok "mount-now accepted" || fail "mount-now rejected: $(body_of "$RESP")"
 
 LATEST=$(latest_snapshot "$HOST_DIR")
-PROFILE_MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-test-host/$LATEST"
+PROFILE_MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-test-backup-job/$LATEST"
 wait_for "profile auto-mounted latest snapshot" 240 session_mounted "$PROFILE_MP" || true
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$PROFILE_MP" -d "force=1")

@@ -19,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
@@ -71,15 +72,19 @@ type backupJob struct {
 	app             *application.Runtime
 	skipCheck       bool
 	extraExclusions []string
+	databaseAware   bool
 
 	cleanupOnce sync.Once
 	started     atomic.Bool
 
 	agentMount *mountrpc.AgentMount
 	s3Mount    *mountrpc.S3Mount
+	stagedDump *database.StagedDump
 	srcPath    string
 	cmd        *exec.Cmd
 	upid       string
+	workerID   string
+	scriptTask *tasklog.QueuedTask
 }
 
 func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid string) error {
@@ -144,7 +149,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	extraExclusions := b.extraExclusions
 	b.mu.RUnlock()
 
-	workerID, err := backupWorkerID(job, target)
+	workerID, err := backupWorkerID(job)
 	if err != nil {
 		return nil, proxmox.Task{}, "", fmt.Errorf("determining backup worker identity: %w", err)
 	}

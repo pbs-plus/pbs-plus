@@ -69,6 +69,19 @@ type Backup struct {
 	Duration              sql.NullInt64  `json:"duration"`
 }
 
+type BackupDatabaseOption struct {
+	BackupID     string `json:"backup_id"`
+	Scope        string `json:"scope"`
+	DatabaseName string `json:"database_name"`
+	ClientFamily string `json:"client_family"`
+	ClientDir    string `json:"client_dir"`
+}
+
+type BackupGroupMigration struct {
+	BackupID    string `json:"backup_id"`
+	CompletedAt string `json:"completed_at"`
+}
+
 type Exclusion struct {
 	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`
@@ -128,13 +141,29 @@ type Restore struct {
 	Duration              sql.NullInt64  `json:"duration"`
 }
 
+type RestoreDatabaseOption struct {
+	RestoreID           string `json:"restore_id"`
+	DestinationDatabase string `json:"destination_database"`
+	ReplaceExisting     int64  `json:"replace_existing"`
+	ClientFamily        string `json:"client_family"`
+	ClientDir           string `json:"client_dir"`
+	SourceDatabase      string `json:"source_database"`
+}
+
 type Script struct {
 	Path        string         `json:"path"`
 	Description sql.NullString `json:"description"`
 }
 
 type Target struct {
-	Name             string         `json:"name"`
+	Name        string `json:"name"`
+	TargetType  string `json:"target_type"`
+	MountScript string `json:"mount_script"`
+}
+
+type TargetFilesystem struct {
+	TargetName       string         `json:"target_name"`
+	Access           string         `json:"access"`
 	Path             string         `json:"path"`
 	AgentHost        sql.NullString `json:"agent_host"`
 	VolumeID         sql.NullString `json:"volume_id"`
@@ -147,8 +176,36 @@ type Target struct {
 	VolumeTotal      sql.NullString `json:"volume_total"`
 	VolumeUsed       sql.NullString `json:"volume_used"`
 	VolumeFree       sql.NullString `json:"volume_free"`
-	MountScript      string         `json:"mount_script"`
-	SecretS3         string         `json:"secret_s3"`
+}
+
+type TargetMysql struct {
+	TargetName          string `json:"target_name"`
+	Variant             string `json:"variant"`
+	Host                string `json:"host"`
+	Port                int64  `json:"port"`
+	Username            string `json:"username"`
+	Password            string `json:"password"`
+	TlsMode             string `json:"tls_mode"`
+	CaCertificate       string `json:"ca_certificate"`
+	DefaultClientFamily string `json:"default_client_family"`
+	DefaultClientDir    string `json:"default_client_dir"`
+}
+
+type TargetPostgresql struct {
+	TargetName       string `json:"target_name"`
+	Host             string `json:"host"`
+	Port             int64  `json:"port"`
+	Username         string `json:"username"`
+	Password         string `json:"password"`
+	SslMode          string `json:"ssl_mode"`
+	CaCertificate    string `json:"ca_certificate"`
+	DefaultClientDir string `json:"default_client_dir"`
+}
+
+type TargetS3 struct {
+	TargetName string `json:"target_name"`
+	Url        string `json:"url"`
+	Secret     string `json:"secret"`
 }
 
 type Token struct {

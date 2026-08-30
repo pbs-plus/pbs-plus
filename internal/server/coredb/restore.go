@@ -136,6 +136,9 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
 	}
+	if err = db.storeRestoreDatabaseOptions(q, restore); err != nil {
+		return fmt.Errorf("CreateRestore: %w", err)
+	}
 
 	commitNeeded = true
 	return nil
@@ -157,8 +160,10 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		SrcPath:          row.SrcPath,
 		NotificationMode: fromNullString(row.NotificationMode),
 		DestTarget: Target{
-			Name: row.DestTarget,
-			Path: row.Path.String,
+			Name:   row.DestTarget,
+			Type:   TargetType(fromNullString(row.TargetType)),
+			Access: FilesystemAccess(row.FilesystemAccess),
+			Path:   row.Path,
 			AgentHost: AgentHost{
 				Name:            row.AgentName.String,
 				IP:              row.AgentIp.String,
@@ -187,12 +192,25 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:         fromNullInt64(row.Retry),
-		RetryInterval: fromNullInt64(row.RetryInterval),
-		Mode:          int(row.RestoreMode),
-		PreScript:     row.PreScript,
-		PostScript:    row.PostScript,
+		Retry:                fromNullInt64(row.Retry),
+		RetryInterval:        fromNullInt64(row.RetryInterval),
+		Mode:                 int(row.RestoreMode),
+		PreScript:            row.PreScript,
+		PostScript:           row.PostScript,
+		SourceDatabase:       row.SourceDatabase,
+		DestinationDatabase:  row.DestinationDatabase,
+		ReplaceExisting:      row.ReplaceExisting != 0,
+		DatabaseClientFamily: row.DatabaseClientFamily,
+		DatabaseClientDir:    row.DatabaseClientDir,
 	}
+	restore.DestTarget.DatabaseHost = row.DatabaseHost
+	restore.DestTarget.DatabasePort = int(row.DatabasePort)
+	restore.DestTarget.DatabaseUsername = row.DatabaseUsername
+	restore.DestTarget.DatabaseTLSMode = row.DatabaseTlsMode
+	restore.DestTarget.DatabaseCACertificate = row.DatabaseCaCertificate
+	restore.DestTarget.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
+	restore.DestTarget.DatabaseVariant = row.DatabaseVariant
+	restore.DestTarget.DatabaseClientFamily = row.DatabaseDefaultClientFamily
 
 	restore.DestTarget.populateInfo()
 
@@ -312,6 +330,9 @@ func (db *Store) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 	if err != nil {
 		return fmt.Errorf("UpdateRestore: error updating restore: %w", err)
 	}
+	if err = db.storeRestoreDatabaseOptions(q, restore); err != nil {
+		return fmt.Errorf("UpdateRestore: %w", err)
+	}
 
 	if restore.History.LastRunUpid != "" {
 		go db.linkRestoreLog(restore.ID, restore.History.LastRunUpid)
@@ -376,8 +397,10 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 			Mode:             int(row.RestoreMode),
 			NotificationMode: fromNullString(row.NotificationMode),
 			DestTarget: Target{
-				Name: row.DestTarget,
-				Path: row.Path.String,
+				Name:   row.DestTarget,
+				Type:   TargetType(fromNullString(row.TargetType)),
+				Access: FilesystemAccess(row.FilesystemAccess),
+				Path:   row.Path,
 				AgentHost: AgentHost{
 					Name:            row.AgentName.String,
 					IP:              row.AgentIp.String,
@@ -406,11 +429,24 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 				RetryCount:         fromNullInt64(row.RetryCount),
 			},
-			Retry:         fromNullInt64(row.Retry),
-			RetryInterval: fromNullInt64(row.RetryInterval),
-			PreScript:     row.PreScript,
-			PostScript:    row.PostScript,
+			Retry:                fromNullInt64(row.Retry),
+			RetryInterval:        fromNullInt64(row.RetryInterval),
+			PreScript:            row.PreScript,
+			PostScript:           row.PostScript,
+			SourceDatabase:       row.SourceDatabase,
+			DestinationDatabase:  row.DestinationDatabase,
+			ReplaceExisting:      row.ReplaceExisting != 0,
+			DatabaseClientFamily: row.DatabaseClientFamily,
+			DatabaseClientDir:    row.DatabaseClientDir,
 		}
+		restore.DestTarget.DatabaseHost = row.DatabaseHost
+		restore.DestTarget.DatabasePort = int(row.DatabasePort)
+		restore.DestTarget.DatabaseUsername = row.DatabaseUsername
+		restore.DestTarget.DatabaseTLSMode = row.DatabaseTlsMode
+		restore.DestTarget.DatabaseCACertificate = row.DatabaseCaCertificate
+		restore.DestTarget.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
+		restore.DestTarget.DatabaseVariant = row.DatabaseVariant
+		restore.DestTarget.DatabaseClientFamily = row.DatabaseDefaultClientFamily
 
 		if row.Namespace.Valid {
 			restore.Namespace = row.Namespace.String
@@ -518,7 +554,7 @@ func (r *Restore) GetAllUPIDs() []Tasks {
 }
 
 func (r *Restore) GetStreamID() string {
-	if r.DestTarget.Type == TargetTypeLocal {
+	if r.DestTarget.IsLocal() {
 		return ""
 	}
 
@@ -530,23 +566,57 @@ func (r *Restore) GetStreamID() string {
 }
 
 type Restore struct {
-	ID               string     `json:"id"`
-	Store            string     `json:"store"`
-	Snapshot         string     `json:"snapshot"`
-	Namespace        string     `json:"ns"`
-	Mode             int        `json:"mode"`
-	SrcPath          string     `json:"src-path"`
-	DestTarget       Target     `json:"dest-target"`
-	DestSubpath      string     `json:"dest-subpath"`
-	PreScript        string     `json:"pre_script"`
-	PostScript       string     `json:"post_script"`
-	Comment          string     `json:"comment"`
-	NotificationMode string     `json:"notification-mode"`
-	Retry            int        `json:"retry"`
-	RetryInterval    int        `json:"retry-interval"`
-	CurrentPID       int        `json:"current_pid"`
-	ExpectedSize     int        `json:"expected_size,omitempty"`
-	UPIDs            []string   `json:"upids"`
-	CurrentStats     JobStats   `json:"current-stats"`
-	History          JobHistory `json:"history"`
+	ID                   string     `json:"id"`
+	Store                string     `json:"store"`
+	Snapshot             string     `json:"snapshot"`
+	Namespace            string     `json:"ns"`
+	Mode                 int        `json:"mode"`
+	SrcPath              string     `json:"src-path"`
+	DestTarget           Target     `json:"dest-target"`
+	DestSubpath          string     `json:"dest-subpath"`
+	PreScript            string     `json:"pre_script"`
+	PostScript           string     `json:"post_script"`
+	Comment              string     `json:"comment"`
+	NotificationMode     string     `json:"notification-mode"`
+	Retry                int        `json:"retry"`
+	RetryInterval        int        `json:"retry-interval"`
+	CurrentPID           int        `json:"current_pid"`
+	ExpectedSize         int        `json:"expected_size,omitempty"`
+	UPIDs                []string   `json:"upids"`
+	CurrentStats         JobStats   `json:"current-stats"`
+	History              JobHistory `json:"history"`
+	SourceDatabase       string     `json:"source_database,omitempty"`
+	DestinationDatabase  string     `json:"destination_database,omitempty"`
+	ReplaceExisting      bool       `json:"replace_existing,omitempty"`
+	DatabaseClientFamily string     `json:"database_client_family,omitempty"`
+	DatabaseClientDir    string     `json:"database_client_dir,omitempty"`
+}
+
+func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {
+	if restore.SourceDatabase == "" && restore.DestinationDatabase == "" && !restore.ReplaceExisting && restore.DatabaseClientFamily == "" && restore.DatabaseClientDir == "" {
+		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
+	}
+
+	target, err := q.GetTarget(db.ctx, restore.DestTarget.Name)
+	if err != nil {
+		return fmt.Errorf("error fetching destination target: %w", err)
+	}
+	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
+		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
+	}
+	if restore.DatabaseClientDir != "" && !filepath.IsAbs(restore.DatabaseClientDir) {
+		return errors.New("database client directory must be absolute")
+	}
+	if restore.DatabaseClientFamily != "" && restore.DatabaseClientFamily != "mysql" && restore.DatabaseClientFamily != "mariadb" {
+		return fmt.Errorf("unsupported database client family %q", restore.DatabaseClientFamily)
+	}
+
+	return q.UpsertRestoreDatabaseOptions(db.ctx, corequery.UpsertRestoreDatabaseOptionsParams{
+		RestoreID:           restore.ID,
+		SourceDatabase:      restore.SourceDatabase,
+		DestinationDatabase: restore.DestinationDatabase,
+		ReplaceExisting:     boolToNullInt64(restore.ReplaceExisting).Int64,
+		ClientFamily:        restore.DatabaseClientFamily,
+		ClientDir:           restore.DatabaseClientDir,
+	})
 }

@@ -233,6 +233,10 @@ func (e *Engine) ActiveExecution(ctx context.Context, kind, definitionID string)
 	return e.db.GetActiveExecution(ctx, kind, definitionID)
 }
 
+func (e *Engine) ResourceHolder(ctx context.Context, resourceKey string) (jobdb.Execution, error) {
+	return e.db.ResourceLockHolder(ctx, resourceKey)
+}
+
 func (e *Engine) Events(ctx context.Context, id string) ([]jobdb.Event, error) {
 	return e.db.ListEvents(ctx, id)
 }

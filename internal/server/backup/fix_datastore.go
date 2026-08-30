@@ -53,12 +53,10 @@ func GetOwnerFilePath(backup coredb.Backup, app *application.Runtime) (string, e
 		return "", fmt.Errorf("GetCurrentOwner: store is required")
 	}
 
-	backupID, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get backup ID: %w", err)
 	}
-	backupID = proxmox.NormalizeHostname(backupID)
-
 	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
 		return "", fmt.Errorf("GetCurrentOwner: failed to get datastore; %w", err)
@@ -102,12 +100,10 @@ func SetDatastoreOwner(backup coredb.Backup, app *application.Runtime, owner str
 		return fmt.Errorf("SetDatastoreOwner: failed to get datastore; %w", err)
 	}
 
-	backupID, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup)
 	if err != nil {
 		return fmt.Errorf("SetDatastoreOwner: failed to get backup ID: %w", err)
 	}
-	backupID = proxmox.NormalizeHostname(backupID)
-
 	if err := proxmox.EnsureGroupPath(datastoreInfo.Path, backup.Namespace, "host", backupID); err != nil {
 		return fmt.Errorf("SetDatastoreOwner: ensure group path: %w", err)
 	}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
@@ -34,9 +33,9 @@ func weightedShuffleBackups(backups []coredb.Backup, db *coredb.Store, verificat
 			}
 			parts := strings.SplitN(r.Snapshot, "/", 3)
 			if len(parts) >= 2 {
-				hostname := proxmox.NormalizeHostname(parts[1])
-				if r.CompletedAt > lastVerified[hostname] {
-					lastVerified[hostname] = r.CompletedAt
+				jobID := parts[1]
+				if r.CompletedAt > lastVerified[jobID] {
+					lastVerified[jobID] = r.CompletedAt
 				}
 			}
 		}
@@ -48,8 +47,7 @@ func weightedShuffleBackups(backups []coredb.Backup, db *coredb.Store, verificat
 	// Never-verified jobs get a very large weight.
 	weights := make([]float64, len(backups))
 	for i, b := range backups {
-		hostname := proxmox.NormalizeHostname(b.Target.GetHostname())
-		last := lastVerified[hostname]
+		last := lastVerified[b.ID]
 		if last == 0 {
 			// Never verified  -  maximum weight
 			weights[i] = float64(now)

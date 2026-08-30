@@ -77,7 +77,7 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	}
 	writeLines(t, realClientPath, clientLines, 0666)
 
-	for range 2 {
+	for attempt := range 2 {
 		succeeded, cancelled, warnings, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil)
 		if err != nil {
 			t.Fatalf("mergePBSLogs: %v", err)
@@ -90,6 +90,10 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 		}
 		if warnings != 1 {
 			t.Errorf("warnings = %d, want 1", warnings)
+		}
+		if attempt == 0 {
+			clientLines = append(clientLines, "post-backup script: done")
+			writeLines(t, realClientPath, clientLines, 0666)
 		}
 	}
 
@@ -112,6 +116,18 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	}
 	if !contains(mergedProxy, "client: starting") {
 		t.Errorf("proxy log missing merged client content; got:\n%s", strings.Join(mergedProxy, "\n"))
+	}
+	if !contains(mergedProxy, "post-backup script: done") {
+		t.Errorf("proxy log missing client content added after the first merge; got:\n%s", strings.Join(mergedProxy, "\n"))
+	}
+	separatorCount := 0
+	for _, line := range mergedProxy {
+		if line == "--- proxmox-backup-client log starts here ---" {
+			separatorCount++
+		}
+	}
+	if separatorCount != 1 {
+		t.Errorf("proxy log separators = %d, want one", separatorCount)
 	}
 	if !contains(mergedProxy, "starting backup") {
 		t.Errorf("proxy log lost original proxy content; got:\n%s", strings.Join(mergedProxy, "\n"))

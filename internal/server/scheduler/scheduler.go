@@ -61,7 +61,7 @@ func (s *Scheduler) submitBackup(b coredb.Backup, trigger string, occurrence tim
 		trigger,
 		fmt.Sprintf("backup:%s:%s:%d", b.ID, trigger, occurrence.Unix()),
 		jobs.BackupInput{},
-		[]string{"backup:" + b.ID, "target:" + b.Target.Name},
+		[]string{"backup:" + b.ID},
 		b.Retry+1,
 		time.Duration(max(b.RetryInterval, 1))*time.Minute,
 	)

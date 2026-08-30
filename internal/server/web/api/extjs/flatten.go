@@ -282,34 +282,46 @@ func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 	var localTargets []TargetTreeNode
 	agentGroups := map[string]*TargetTreeNode{}
 	var s3Targets []TargetTreeNode
+	var postgreSQLTargets []TargetTreeNode
+	var mysqlTargets []TargetTreeNode
 
 	for i := range targets {
 		t := targets[i]
 		node := TargetTreeNode{
-			Text:             t.Name,
-			Name:             t.Name,
-			Path:             t.Path,
-			TargetType:       string(t.Type),
-			MountScript:      t.MountScript,
-			VolumeID:         t.VolumeID,
-			JobCount:         t.JobCount,
-			AgentVersion:     t.AgentVersion,
-			ConnectionStatus: t.ConnectionStatus,
-			VolumeType:       t.VolumeType,
-			VolumeName:       t.VolumeName,
-			VolumeFS:         t.VolumeFS,
-			VolumeTotalBytes: t.VolumeTotalBytes,
-			VolumeUsedBytes:  t.VolumeUsedBytes,
-			VolumeFreeBytes:  t.VolumeFreeBytes,
-			VolumeTotalHuman: t.VolumeTotal,
-			VolumeUsedHuman:  t.VolumeUsed,
-			VolumeFreeHuman:  t.VolumeFree,
-			Leaf:             true,
-			IsGroup:          false,
+			Text:                     t.Name,
+			Name:                     t.Name,
+			Path:                     t.Path,
+			TargetType:               t.LegacyType(),
+			Kind:                     string(t.Type),
+			Access:                   string(t.Access),
+			MountScript:              t.MountScript,
+			VolumeID:                 t.VolumeID,
+			JobCount:                 t.JobCount,
+			AgentVersion:             t.AgentVersion,
+			ConnectionStatus:         t.ConnectionStatus,
+			VolumeType:               t.VolumeType,
+			VolumeName:               t.VolumeName,
+			VolumeFS:                 t.VolumeFS,
+			VolumeTotalBytes:         t.VolumeTotalBytes,
+			VolumeUsedBytes:          t.VolumeUsedBytes,
+			VolumeFreeBytes:          t.VolumeFreeBytes,
+			VolumeTotalHuman:         t.VolumeTotal,
+			VolumeUsedHuman:          t.VolumeUsed,
+			VolumeFreeHuman:          t.VolumeFree,
+			DatabaseHost:             t.DatabaseHost,
+			DatabasePort:             t.DatabasePort,
+			DatabaseUsername:         t.DatabaseUsername,
+			DatabaseTLSMode:          t.DatabaseTLSMode,
+			DatabaseCACertificate:    t.DatabaseCACertificate,
+			DatabaseDefaultClientDir: t.DatabaseDefaultClientDir,
+			DatabaseVariant:          t.DatabaseVariant,
+			DatabaseClientFamily:     t.DatabaseClientFamily,
+			Leaf:                     true,
+			IsGroup:                  false,
 		}
 
-		switch t.Type {
-		case coredb.TargetTypeAgent:
+		switch {
+		case t.IsAgent():
 			hostname := t.AgentHost.Name
 			node.AgentHostname = hostname
 			node.OS = t.AgentHost.OperatingSystem
@@ -334,9 +346,15 @@ func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 				localTargets = append(localTargets, node)
 			}
 
-		case coredb.TargetTypeS3:
+		case t.IsS3():
 			node.IconCls = "fa fa-cloud"
 			s3Targets = append(s3Targets, node)
+		case t.Type == coredb.TargetTypePostgreSQL:
+			node.IconCls = "fa fa-database"
+			postgreSQLTargets = append(postgreSQLTargets, node)
+		case t.Type == coredb.TargetTypeMySQL:
+			node.IconCls = "fa fa-database"
+			mysqlTargets = append(mysqlTargets, node)
 
 		default:
 			node.IconCls = "fa fa-folder"
@@ -388,6 +406,20 @@ func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 		})
 	}
 
+	if len(postgreSQLTargets) > 0 {
+		rootChildren = append(rootChildren, TargetTreeNode{
+			Text: "PostgreSQL Targets", IconCls: "fa fa-database", IsGroup: true,
+			GroupType: "postgresql", Expanded: true, Children: postgreSQLTargets,
+		})
+	}
+
+	if len(mysqlTargets) > 0 {
+		rootChildren = append(rootChildren, TargetTreeNode{
+			Text: "MySQL / MariaDB Targets", IconCls: "fa fa-database", IsGroup: true,
+			GroupType: "mysql", Expanded: true, Children: mysqlTargets,
+		})
+	}
+
 	return rootChildren
 }
 
@@ -410,46 +442,55 @@ func renderFileStatusHuman(status string) string {
 
 func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 	return map[string]any{
-		"id":                 b.ID,
-		"store":              b.Store,
-		"mode":               b.Mode,
-		"sourcemode":         b.SourceMode,
-		"readmode":           b.ReadMode,
-		"target":             b.Target.Name,
-		"subpath":            b.Subpath,
-		"ns":                 b.Namespace,
-		"schedule":           b.Schedule,
-		"comment":            b.Comment,
-		"notification-mode":  b.NotificationMode,
-		"notification-batch": "",
-		"pre_script":         b.PreScript,
-		"post_script":        b.PostScript,
-		"retry":              b.Retry,
-		"retry-interval":     b.RetryInterval,
-		"max-dir-entries":    b.MaxDirEntries,
-		"rawexclusions":      b.RawExclusions,
-		"include-xattr":      b.IncludeXattr,
-		"legacy-xattr":       b.LegacyXattr,
+		"id":                     b.ID,
+		"store":                  b.Store,
+		"mode":                   b.Mode,
+		"sourcemode":             b.SourceMode,
+		"readmode":               b.ReadMode,
+		"target":                 b.Target.Name,
+		"subpath":                b.Subpath,
+		"ns":                     b.Namespace,
+		"schedule":               b.Schedule,
+		"comment":                b.Comment,
+		"notification-mode":      b.NotificationMode,
+		"notification-batch":     "",
+		"pre_script":             b.PreScript,
+		"post_script":            b.PostScript,
+		"retry":                  b.Retry,
+		"retry-interval":         b.RetryInterval,
+		"max-dir-entries":        b.MaxDirEntries,
+		"rawexclusions":          b.RawExclusions,
+		"include-xattr":          b.IncludeXattr,
+		"legacy-xattr":           b.LegacyXattr,
+		"database_scope":         b.DatabaseScope,
+		"database_name":          b.DatabaseName,
+		"database_client_family": b.DatabaseClientFamily,
+		"database_client_dir":    b.DatabaseClientDir,
 	}
 }
 
 func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 	return map[string]any{
-		"id":                 r.ID,
-		"store":              r.Store,
-		"ns":                 r.Namespace,
-		"snapshot":           r.Snapshot,
-		"src-path":           r.SrcPath,
-		"dest-target":        r.DestTarget.Name,
-		"dest-subpath":       r.DestSubpath,
-		"mode":               r.Mode,
-		"comment":            r.Comment,
-		"notification-mode":  r.NotificationMode,
-		"notification-batch": "",
-		"pre_script":         r.PreScript,
-		"post_script":        r.PostScript,
-		"retry":              r.Retry,
-		"retry-interval":     r.RetryInterval,
+		"id":                     r.ID,
+		"store":                  r.Store,
+		"ns":                     r.Namespace,
+		"snapshot":               r.Snapshot,
+		"src-path":               r.SrcPath,
+		"dest-target":            r.DestTarget.Name,
+		"dest-subpath":           r.DestSubpath,
+		"mode":                   r.Mode,
+		"comment":                r.Comment,
+		"notification-mode":      r.NotificationMode,
+		"notification-batch":     "",
+		"pre_script":             r.PreScript,
+		"post_script":            r.PostScript,
+		"retry":                  r.Retry,
+		"retry-interval":         r.RetryInterval,
+		"source_database":        r.SourceDatabase,
+		"destination_database":   r.DestinationDatabase,
+		"replace_existing":       r.ReplaceExisting,
+		"database_client_family": r.DatabaseClientFamily,
+		"database_client_dir":    r.DatabaseClientDir,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
 			"last-run-upid":           r.History.LastRunUpid,
@@ -461,25 +502,29 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 }
 
 type FlatBackup struct {
-	ID               string `json:"id"`
-	Store            string `json:"store"`
-	Mode             string `json:"mode"`
-	SourceMode       string `json:"sourcemode"`
-	ReadMode         string `json:"readmode"`
-	Subpath          string `json:"subpath"`
-	Namespace        string `json:"ns"`
-	Schedule         string `json:"schedule"`
-	Comment          string `json:"comment"`
-	NotificationMode string `json:"notification-mode"`
-	PreScript        string `json:"pre_script"`
-	PostScript       string `json:"post_script"`
-	NextRun          int64  `json:"next-run"`
-	Retry            int    `json:"retry"`
-	RetryInterval    int    `json:"retry-interval"`
-	MaxDirEntries    int    `json:"max-dir-entries"`
-	RawExclusions    string `json:"rawexclusions"`
-	IncludeXattr     bool   `json:"include-xattr"`
-	LegacyXattr      bool   `json:"legacy-xattr"`
+	ID                   string `json:"id"`
+	Store                string `json:"store"`
+	Mode                 string `json:"mode"`
+	SourceMode           string `json:"sourcemode"`
+	ReadMode             string `json:"readmode"`
+	Subpath              string `json:"subpath"`
+	Namespace            string `json:"ns"`
+	Schedule             string `json:"schedule"`
+	Comment              string `json:"comment"`
+	NotificationMode     string `json:"notification-mode"`
+	PreScript            string `json:"pre_script"`
+	PostScript           string `json:"post_script"`
+	NextRun              int64  `json:"next-run"`
+	Retry                int    `json:"retry"`
+	RetryInterval        int    `json:"retry-interval"`
+	MaxDirEntries        int    `json:"max-dir-entries"`
+	RawExclusions        string `json:"rawexclusions"`
+	IncludeXattr         bool   `json:"include-xattr"`
+	LegacyXattr          bool   `json:"legacy-xattr"`
+	DatabaseScope        string `json:"database_scope,omitempty"`
+	DatabaseName         string `json:"database_name,omitempty"`
+	DatabaseClientFamily string `json:"database_client_family,omitempty"`
+	DatabaseClientDir    string `json:"database_client_dir,omitempty"`
 
 	Target       string `json:"target"`
 	ExpectedSize int    `json:"expected_size,omitempty"`
@@ -508,20 +553,25 @@ type FlatBackup struct {
 }
 
 type FlatRestore struct {
-	ID               string `json:"id"`
-	Store            string `json:"store"`
-	Namespace        string `json:"ns"`
-	Snapshot         string `json:"snapshot"`
-	SnapshotHuman    string `json:"snapshot_human"`
-	SrcPath          string `json:"src-path"`
-	DestSubpath      string `json:"dest-subpath"`
-	PreScript        string `json:"pre_script"`
-	PostScript       string `json:"post_script"`
-	Comment          string `json:"comment"`
-	NotificationMode string `json:"notification-mode"`
-	Retry            int    `json:"retry"`
-	RetryInterval    int    `json:"retry-interval"`
-	ExpectedSize     int    `json:"expected_size,omitempty"`
+	ID                   string `json:"id"`
+	Store                string `json:"store"`
+	Namespace            string `json:"ns"`
+	Snapshot             string `json:"snapshot"`
+	SnapshotHuman        string `json:"snapshot_human"`
+	SrcPath              string `json:"src-path"`
+	DestSubpath          string `json:"dest-subpath"`
+	PreScript            string `json:"pre_script"`
+	PostScript           string `json:"post_script"`
+	Comment              string `json:"comment"`
+	NotificationMode     string `json:"notification-mode"`
+	Retry                int    `json:"retry"`
+	RetryInterval        int    `json:"retry-interval"`
+	ExpectedSize         int    `json:"expected_size,omitempty"`
+	SourceDatabase       string `json:"source_database,omitempty"`
+	DestinationDatabase  string `json:"destination_database,omitempty"`
+	ReplaceExisting      bool   `json:"replace_existing,omitempty"`
+	DatabaseClientFamily string `json:"database_client_family,omitempty"`
+	DatabaseClientDir    string `json:"database_client_dir,omitempty"`
 
 	DestTarget string `json:"dest-target"`
 
@@ -631,24 +681,34 @@ type TargetTreeNode struct {
 	Leaf      bool             `json:"leaf"`
 	Children  []TargetTreeNode `json:"children,omitempty"`
 
-	Name             string `json:"name,omitempty"`
-	Path             string `json:"path,omitempty"`
-	TargetType       string `json:"target_type,omitempty"`
-	MountScript      string `json:"mount_script,omitempty"`
-	VolumeID         string `json:"volume_id,omitempty"`
-	JobCount         int    `json:"job_count,omitempty"`
-	AgentVersion     string `json:"agent_version,omitempty"`
-	ConnectionStatus bool   `json:"connection_status,omitempty"`
-	VolumeType       string `json:"volume_type,omitempty"`
-	VolumeName       string `json:"volume_name,omitempty"`
-	VolumeFS         string `json:"volume_fs,omitempty"`
-	VolumeTotalBytes int    `json:"volume_total_bytes,omitempty"`
-	VolumeUsedBytes  int    `json:"volume_used_bytes,omitempty"`
-	VolumeFreeBytes  int    `json:"volume_free_bytes,omitempty"`
-	VolumeTotalHuman string `json:"volume_total,omitempty"`
-	VolumeUsedHuman  string `json:"volume_used,omitempty"`
-	VolumeFreeHuman  string `json:"volume_free,omitempty"`
-	AgentHostname    string `json:"agent_hostname,omitempty"`
-	OS               string `json:"os,omitempty"`
-	IP               string `json:"ip,omitempty"`
+	Name                     string `json:"name,omitempty"`
+	Path                     string `json:"path,omitempty"`
+	TargetType               string `json:"target_type,omitempty"`
+	Kind                     string `json:"kind,omitempty"`
+	Access                   string `json:"access,omitempty"`
+	MountScript              string `json:"mount_script,omitempty"`
+	VolumeID                 string `json:"volume_id,omitempty"`
+	JobCount                 int    `json:"job_count,omitempty"`
+	AgentVersion             string `json:"agent_version,omitempty"`
+	ConnectionStatus         bool   `json:"connection_status,omitempty"`
+	VolumeType               string `json:"volume_type,omitempty"`
+	VolumeName               string `json:"volume_name,omitempty"`
+	VolumeFS                 string `json:"volume_fs,omitempty"`
+	VolumeTotalBytes         int    `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes          int    `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes          int    `json:"volume_free_bytes,omitempty"`
+	VolumeTotalHuman         string `json:"volume_total,omitempty"`
+	VolumeUsedHuman          string `json:"volume_used,omitempty"`
+	VolumeFreeHuman          string `json:"volume_free,omitempty"`
+	AgentHostname            string `json:"agent_hostname,omitempty"`
+	OS                       string `json:"os,omitempty"`
+	IP                       string `json:"ip,omitempty"`
+	DatabaseHost             string `json:"database_host,omitempty"`
+	DatabasePort             int    `json:"database_port,omitempty"`
+	DatabaseUsername         string `json:"database_username,omitempty"`
+	DatabaseTLSMode          string `json:"database_tls_mode,omitempty"`
+	DatabaseCACertificate    string `json:"database_ca_certificate,omitempty"`
+	DatabaseDefaultClientDir string `json:"database_default_client_dir,omitempty"`
+	DatabaseVariant          string `json:"database_variant,omitempty"`
+	DatabaseClientFamily     string `json:"database_default_client_family,omitempty"`
 }

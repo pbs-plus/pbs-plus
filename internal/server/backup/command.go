@@ -16,28 +16,15 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-func getBackupId(target coredb.Target) (string, error) {
-	if target.IsAgent() {
-		if target.Name == "" {
-			return "", fmt.Errorf("target name is required for agent backup")
-		}
-		return target.GetHostname(), nil
+// getBackupId returns the PBS backup ID for a job; it is per-job rather than per-target so concurrent backups of one target land in separate snapshot groups with distinct PBS worker IDs.
+func getBackupId(backup coredb.Backup) (string, error) {
+	if err := validate.ValidateJobId(backup.ID); err != nil {
+		return "", fmt.Errorf("invalid job id for backup ID: %w", err)
 	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostnameBytes, err := os.ReadFile("/etc/hostname")
-		if err != nil {
-			log.Error(err, "")
-		}
-		hostname = strings.TrimSpace(string(hostnameBytes))
-		if hostname == "" {
-			hostname = "localhost"
-		}
-	}
-	return hostname, nil
+	return backup.ID, nil
 }
 
 func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
@@ -45,24 +32,17 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
 
-	backupID, err := getBackupId(backup.Target)
+	backupID, err := getBackupId(backup)
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}
-	backupID = proxmox.NormalizeHostname(backupID)
 
 	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AuthID, backup.Store)
 	if backupStore == "@localhost:" {
 		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
 	}
 
-	detectionMode := "--change-detection-mode=metadata"
-	switch backup.Mode {
-	case "legacy":
-		detectionMode = "--change-detection-mode=legacy"
-	case "data":
-		detectionMode = "--change-detection-mode=data"
-	}
+	detectionMode, useExclusions := backupCommandPolicy(backup)
 
 	cmdArgs := []string{}
 	if nofile := conf.Env.ClientNofile; nofile != "" {
@@ -90,17 +70,19 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		cmdArgs = append(cmdArgs, "--exclude", path)
 	}
 
-	for _, exclusion := range extraExclusions {
-		addExclusion(exclusion)
-	}
+	if useExclusions {
+		for _, exclusion := range extraExclusions {
+			addExclusion(exclusion)
+		}
 
-	for _, exclusion := range backup.Exclusions {
-		addExclusion(exclusion.Path)
-	}
-
-	if globalExclusions, err := app.CoreDB.GetAllGlobalExclusions(); err == nil {
-		for _, exclusion := range globalExclusions {
+		for _, exclusion := range backup.Exclusions {
 			addExclusion(exclusion.Path)
+		}
+
+		if globalExclusions, err := app.CoreDB.GetAllGlobalExclusions(); err == nil {
+			for _, exclusion := range globalExclusions {
+				addExclusion(exclusion.Path)
+			}
 		}
 	}
 
@@ -125,4 +107,18 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	}
 
 	return cmd, nil
+}
+
+func backupCommandPolicy(backup coredb.Backup) (string, bool) {
+	if backup.Target.IsDatabase() {
+		return "--change-detection-mode=legacy", false
+	}
+	switch backup.Mode {
+	case "legacy":
+		return "--change-detection-mode=legacy", true
+	case "data":
+		return "--change-detection-mode=data", true
+	default:
+		return "--change-detection-mode=metadata", true
+	}
 }

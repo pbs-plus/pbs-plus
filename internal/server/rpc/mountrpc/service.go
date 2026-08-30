@@ -208,7 +208,7 @@ func (s *Service) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
 	backupCtx, backupCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.BackupID, backupCancel)
 
-	s3FS := s3fs.NewS3FS(backupCtx, backup, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL)
+	s3FS := s3fs.NewS3FS(backupCtx, backup, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL, args.UsePathStyle)
 	if s3FS == nil {
 		reply.Status = 500
 		reply.Message = "failed to send create S3FS"

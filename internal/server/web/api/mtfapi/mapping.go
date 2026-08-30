@@ -108,10 +108,10 @@ func ExtJsMtfMappingSingleHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
-			response := MtfMappingConfigResponse{}
-			response.Status = http.StatusOK
-			response.Success = true
-			response.Data = m
+			response := MtfMappingConfigResponse{
+				Status:  http.StatusOK,
+				Success: true,
+				Data:    m}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -171,9 +171,9 @@ func ExtJsMtfMappingSingleHandler(app *application.Runtime) http.HandlerFunc {
 				mapper.Invalidate()
 			}
 
-			response := MtfMappingConfigResponse{}
-			response.Status = http.StatusOK
-			response.Success = true
+			response := MtfMappingConfigResponse{
+				Status:  http.StatusOK,
+				Success: true}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -187,9 +187,9 @@ func ExtJsMtfMappingSingleHandler(app *application.Runtime) http.HandlerFunc {
 				mapper.Invalidate()
 			}
 
-			response := MtfMappingConfigResponse{}
-			response.Status = http.StatusOK
-			response.Success = true
+			response := MtfMappingConfigResponse{
+				Status:  http.StatusOK,
+				Success: true}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}

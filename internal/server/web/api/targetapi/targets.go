@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/digest"
@@ -42,15 +44,15 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		for i := range all {
-			if all[i].IsS3() {
+			switch {
+			case all[i].IsS3():
 				all[i].ConnectionStatus = true
 				all[i].AgentVersion = "N/A (S3 target)"
-			} else if !all[i].IsAgent() {
+			case all[i].IsLocal():
 				all[i].AgentVersion = "N/A (local target)"
 				_, err := os.Stat(all[i].Path)
 				all[i].ConnectionStatus = err == nil && validate.IsValid(all[i].Path)
-			} else {
-				// Instant: check if session exists (map lookup, no RPC)
+			case all[i].IsAgent():
 				if qSess, ok := app.Agents.GetQuicPipe(all[i].GetHostname()); ok {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = qSess.GetVersion()
@@ -58,6 +60,8 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 					all[i].ConnectionStatus = true
 					all[i].AgentVersion = tSess.GetVersion()
 				}
+			default:
+				all[i].AgentVersion = "N/A"
 			}
 		}
 
@@ -67,8 +71,13 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
+		data := make([]targetResponse, len(all))
+		for i := range all {
+			data[i] = newTargetResponse(all[i])
+		}
+
 		toReturn := TargetsResponse{
-			Data:    all,
+			Data:    data,
 			Digest:  digest,
 			Success: true,
 		}
@@ -167,6 +176,8 @@ func D2DTargetAgentHandler(app *application.Runtime) http.HandlerFunc {
 
 			targetData := coredb.Target{
 				Name:             targetName,
+				Type:             coredb.TargetTypeFilesystem,
+				Access:           coredb.FilesystemAccessAgent,
 				AgentHost:        coredb.AgentHost{Name: reqParsed.Hostname},
 				VolumeID:         parsedDrive.Letter,
 				VolumeType:       parsedDrive.Type,
@@ -223,16 +234,39 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		newTarget := coredb.Target{
-			Name:        r.FormValue("name"),
-			Path:        r.FormValue("path"),
-			MountScript: r.FormValue("mount_script"),
+		newTarget := coredb.Target{}
+		if err := applyTargetForm(&newTarget, r, true); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+
+		password := r.FormValue("database_password")
+		if newTarget.IsDatabase() && password == "" {
+			respond.WriteErrorResponse(w, errors.New("database password is required"))
+			return
+		}
+		s3Secret := r.FormValue("s3_secret_key")
+		if newTarget.IsS3() && r.Form.Has("s3_endpoint") && s3Secret == "" {
+			respond.WriteErrorResponse(w, errors.New("S3 secret key is required"))
+			return
 		}
 
 		err = app.Target.CreateTarget(nil, newTarget)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
+		}
+		if password != "" {
+			if err := app.Target.AddDatabasePassword(newTarget.Name, password); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+		}
+		if s3Secret != "" {
+			if err := app.Target.AddS3Secret(newTarget.Name, s3Secret); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
 		}
 
 		response.Status = http.StatusOK
@@ -260,29 +294,16 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 
-			path := r.FormValue("path")
-			if path != "" {
-				_, s3Err := coredb.ParseS3Url(path)
-				if !validate.IsValid(path) && s3Err != nil {
-					respond.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
-					return
-				}
-			}
-
 			target, err := app.Target.GetTarget(validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
 
-			if r.FormValue("name") != "" {
-				target.Name = r.FormValue("name")
+			if err := applyTargetForm(&target, r, false); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
 			}
-			if path != "" {
-				target.Path = path
-			}
-
-			target.MountScript = r.FormValue("mount_script")
 
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
@@ -302,6 +323,18 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
+			if password := r.FormValue("database_password"); password != "" {
+				if err := app.Target.AddDatabasePassword(target.Name, password); err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+			}
+			if secret := r.FormValue("s3_secret_key"); secret != "" {
+				if err := app.Target.AddS3Secret(target.Name, secret); err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+			}
 
 			response.Status = http.StatusOK
 			response.Success = true
@@ -319,7 +352,8 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 
-			if target.IsAgent() {
+			switch {
+			case target.IsAgent():
 				arpcSess, ok := app.Agents.GetStreamPipe(target.GetHostname())
 				if ok {
 					target.AgentVersion = arpcSess.GetVersion()
@@ -340,23 +374,20 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 						}
 					}
 				}
-			} else if target.IsS3() {
+			case target.IsS3():
 				target.ConnectionStatus = true
 				target.AgentVersion = "N/A (S3 target)"
-			} else {
+			case target.IsLocal():
 				target.AgentVersion = "N/A (local target)"
-
 				_, err := os.Stat(target.Path)
-				if err != nil {
-					target.ConnectionStatus = false
-				} else {
-					target.ConnectionStatus = validate.IsValid(target.Path)
-				}
+				target.ConnectionStatus = err == nil && validate.IsValid(target.Path)
+			default:
+				target.AgentVersion = "N/A"
 			}
 
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = target
+			response.Data = newTargetResponse(target)
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -422,16 +453,172 @@ func ExtJsTargetS3SecretHandler(app *application.Runtime) http.HandlerFunc {
 	}
 }
 
+func ExtJsTargetDatabasePasswordHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		password := r.FormValue("password")
+		if password == "" {
+			respond.WriteErrorResponse(w, errors.New("invalid empty password"))
+			return
+		}
+		targetName := validate.DecodePath(r.PathValue("target"))
+		if err := app.Target.AddDatabasePassword(targetName, password); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(TargetConfigResponse{Status: http.StatusOK, Success: true}); err != nil {
+			log.Error(err, "")
+		}
+	}
+}
+
 type TargetsResponse struct {
-	Data    []coredb.Target `json:"data"`
-	Digest  string          `json:"digest"`
-	Success bool            `json:"success"`
+	Data    []targetResponse `json:"data"`
+	Digest  string           `json:"digest"`
+	Success bool             `json:"success"`
 }
 
 type TargetConfigResponse struct {
 	Errors  map[string]string `json:"errors"`
 	Message string            `json:"message"`
-	Data    coredb.Target     `json:"data"`
+	Data    targetResponse    `json:"data"`
 	Status  int               `json:"status"`
 	Success bool              `json:"success"`
+}
+
+type targetResponse struct {
+	coredb.Target
+	TargetType  string `json:"target_type"`
+	Kind        string `json:"kind"`
+	S3Endpoint  string `json:"s3_endpoint,omitempty"`
+	S3Region    string `json:"s3_region,omitempty"`
+	S3AccessKey string `json:"s3_access_key,omitempty"`
+	S3Bucket    string `json:"s3_bucket,omitempty"`
+	S3UseSSL    bool   `json:"s3_use_ssl"`
+	S3PathStyle bool   `json:"s3_path_style"`
+}
+
+func newTargetResponse(target coredb.Target) targetResponse {
+	response := targetResponse{
+		Target:     target,
+		TargetType: target.LegacyType(),
+		Kind:       string(target.Type),
+	}
+	if target.S3Info != nil {
+		response.S3Endpoint = target.S3Info.Endpoint
+		response.S3Region = target.S3Info.Region
+		response.S3AccessKey = target.S3Info.AccessKey
+		response.S3Bucket = target.S3Info.Bucket
+		response.S3UseSSL = target.S3Info.UseSSL
+		response.S3PathStyle = target.S3Info.IsPathStyle
+	}
+	return response
+}
+
+func targetTypeFromRequest(r *http.Request) coredb.TargetType {
+	if kind := r.FormValue("kind"); kind != "" {
+		return coredb.TargetType(kind)
+	}
+	return coredb.TargetType(r.FormValue("target_type"))
+}
+
+func applyS3Form(target *coredb.Target, r *http.Request) error {
+	if !r.Form.Has("s3_endpoint") {
+		return nil
+	}
+
+	endpoint := strings.TrimSpace(r.FormValue("s3_endpoint"))
+	if endpoint == "" {
+		return errors.New("S3 endpoint is required")
+	}
+	parsedEndpoint, err := url.Parse("https://" + strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://"))
+	if err != nil || parsedEndpoint.Host == "" || parsedEndpoint.Path != "" || parsedEndpoint.RawQuery != "" {
+		return fmt.Errorf("invalid S3 endpoint %q", endpoint)
+	}
+
+	bucket := strings.TrimSpace(r.FormValue("s3_bucket"))
+	if bucket == "" || strings.ContainsAny(bucket, "/?#") {
+		return fmt.Errorf("invalid S3 bucket %q", bucket)
+	}
+
+	useSSL, err := strconv.ParseBool(r.FormValue("s3_use_ssl"))
+	if err != nil {
+		return fmt.Errorf("invalid S3 TLS setting %q", r.FormValue("s3_use_ssl"))
+	}
+	pathStyle, err := strconv.ParseBool(r.FormValue("s3_path_style"))
+	if err != nil {
+		return fmt.Errorf("invalid S3 addressing style %q", r.FormValue("s3_path_style"))
+	}
+
+	s3URL := url.URL{Scheme: "http", Host: parsedEndpoint.Host}
+	if useSSL {
+		s3URL.Scheme = "https"
+	}
+	if accessKey := strings.TrimSpace(r.FormValue("s3_access_key")); accessKey != "" {
+		s3URL.User = url.User(accessKey)
+	}
+	if pathStyle {
+		s3URL.Path = "/" + bucket
+	} else {
+		s3URL.Host = bucket + "." + parsedEndpoint.Host
+	}
+	query := s3URL.Query()
+	query.Set("path-style", strconv.FormatBool(pathStyle))
+	if region := strings.TrimSpace(r.FormValue("s3_region")); region != "" {
+		query.Set("region", region)
+	}
+	s3URL.RawQuery = query.Encode()
+	target.Path = s3URL.String()
+	return nil
+}
+
+func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error {
+	setString := func(key string, dest *string) {
+		if create || r.Form.Has(key) {
+			*dest = r.FormValue(key)
+		}
+	}
+
+	setString("name", &target.Name)
+	if create || r.Form.Has("kind") || r.Form.Has("target_type") {
+		target.Type = targetTypeFromRequest(r)
+	}
+	if create || r.Form.Has("access") {
+		target.Access = coredb.FilesystemAccess(r.FormValue("access"))
+	}
+	setString("path", &target.Path)
+	setString("mount_script", &target.MountScript)
+	setString("database_host", &target.DatabaseHost)
+	setString("database_username", &target.DatabaseUsername)
+	setString("database_tls_mode", &target.DatabaseTLSMode)
+	setString("database_ca_certificate", &target.DatabaseCACertificate)
+	setString("database_default_client_dir", &target.DatabaseDefaultClientDir)
+	setString("database_variant", &target.DatabaseVariant)
+	setString("database_default_client_family", &target.DatabaseClientFamily)
+
+	if create || r.Form.Has("database_port") {
+		port := r.FormValue("database_port")
+		if port == "" {
+			target.DatabasePort = 0
+		} else {
+			parsed, err := strconv.Atoi(port)
+			if err != nil {
+				return fmt.Errorf("invalid database port %q", port)
+			}
+			target.DatabasePort = parsed
+		}
+	}
+	if target.Type == coredb.TargetTypeS3 {
+		return applyS3Form(target, r)
+	}
+	return nil
 }

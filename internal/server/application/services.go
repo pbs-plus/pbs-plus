@@ -27,12 +27,12 @@ func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 		return nil, err
 	}
 	for i, b := range backups {
-		switch b.Target.Type {
-		case coredb.TargetTypeAgent:
+		switch {
+		case b.Target.IsAgent():
 			if sess := sessions.GetSessionARPCFS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}
-		case coredb.TargetTypeS3:
+		case b.Target.IsS3():
 			if sess := sessions.GetSessionS3FS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}
@@ -154,6 +154,9 @@ func (s *TargetService) UpsertTarget(tx *coredb.Transaction, t coredb.Target) er
 }
 func (s *TargetService) AddS3Secret(name, secret string) error {
 	return s.db.AddS3Secret(nil, name, secret)
+}
+func (s *TargetService) AddDatabasePassword(name, password string) error {
+	return s.db.AddDatabasePassword(nil, name, password)
 }
 func (s *TargetService) NewTransaction() (*coredb.Transaction, error) {
 	return s.db.NewTransaction()

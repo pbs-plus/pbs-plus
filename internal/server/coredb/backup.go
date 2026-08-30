@@ -147,6 +147,9 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	if err != nil {
 		return fmt.Errorf("CreateBackup: error inserting backup: %w", err)
 	}
+	if err = db.storeBackupDatabaseOptions(q, backup); err != nil {
+		return fmt.Errorf("CreateBackup: %w", err)
+	}
 
 	for _, exclusion := range backup.Exclusions {
 		if exclusion.JobID == "" {
@@ -184,8 +187,10 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 		SourceMode: interfaceToString(row.SourceMode),
 		ReadMode:   interfaceToString(row.ReadMode),
 		Target: Target{
-			Name: row.Target,
-			Path: row.Path.String,
+			Name:   row.Target,
+			Type:   TargetType(fromNullString(row.TargetType)),
+			Access: FilesystemAccess(row.FilesystemAccess),
+			Path:   row.Path,
 			AgentHost: AgentHost{
 				Name:            row.AgentName.String,
 				IP:              row.AgentIp.String,
@@ -217,14 +222,26 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:         fromNullInt64(row.Retry),
-		RetryInterval: fromNullInt64(row.RetryInterval),
-		MaxDirEntries: fromNullInt64(row.MaxDirEntries),
-		PreScript:     row.PreScript,
-		PostScript:    row.PostScript,
-		IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
-		LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
+		Retry:                fromNullInt64(row.Retry),
+		RetryInterval:        fromNullInt64(row.RetryInterval),
+		MaxDirEntries:        fromNullInt64(row.MaxDirEntries),
+		PreScript:            row.PreScript,
+		PostScript:           row.PostScript,
+		IncludeXattr:         fromNullInt64ToBool(row.IncludeXattr),
+		LegacyXattr:          fromNullInt64ToBool(row.LegacyXattr),
+		DatabaseScope:        row.DatabaseScope,
+		DatabaseName:         row.DatabaseName,
+		DatabaseClientFamily: row.DatabaseClientFamily,
+		DatabaseClientDir:    row.DatabaseClientDir,
 	}
+	backup.Target.DatabaseHost = row.DatabaseHost
+	backup.Target.DatabasePort = int(row.DatabasePort)
+	backup.Target.DatabaseUsername = row.DatabaseUsername
+	backup.Target.DatabaseTLSMode = row.DatabaseTlsMode
+	backup.Target.DatabaseCACertificate = row.DatabaseCaCertificate
+	backup.Target.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
+	backup.Target.DatabaseVariant = row.DatabaseVariant
+	backup.Target.DatabaseClientFamily = row.DatabaseDefaultClientFamily
 
 	exclusions, err := db.readQueries.GetBackupExclusions(db.ctx, id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -369,6 +386,9 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 	if err != nil {
 		return fmt.Errorf("UpdateBackup: error updating backup: %w", err)
 	}
+	if err = db.storeBackupDatabaseOptions(q, backup); err != nil {
+		return fmt.Errorf("UpdateBackup: %w", err)
+	}
 
 	err = q.DeleteBackupExclusions(db.ctx, backup.ID)
 	if err != nil {
@@ -463,8 +483,10 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			SourceMode: interfaceToString(row.SourceMode),
 			ReadMode:   interfaceToString(row.ReadMode),
 			Target: Target{
-				Name: row.Target,
-				Path: row.Path.String,
+				Name:   row.Target,
+				Type:   TargetType(fromNullString(row.TargetType)),
+				Access: FilesystemAccess(row.FilesystemAccess),
+				Path:   row.Path,
 				AgentHost: AgentHost{
 					Name:            row.AgentName.String,
 					IP:              row.AgentIp.String,
@@ -496,16 +518,27 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 				RetryCount:         fromNullInt64(row.RetryCount),
 			},
-			Retry:         fromNullInt64(row.Retry),
-			RetryInterval: fromNullInt64(row.RetryInterval),
-			MaxDirEntries: fromNullInt64(row.MaxDirEntries),
-			PreScript:     row.PreScript,
-			PostScript:    row.PostScript,
-			IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
-			LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
-		}
+			Retry:                fromNullInt64(row.Retry),
+			RetryInterval:        fromNullInt64(row.RetryInterval),
+			MaxDirEntries:        fromNullInt64(row.MaxDirEntries),
+			PreScript:            row.PreScript,
+			PostScript:           row.PostScript,
+			IncludeXattr:         fromNullInt64ToBool(row.IncludeXattr),
+			LegacyXattr:          fromNullInt64ToBool(row.LegacyXattr),
+			DatabaseScope:        row.DatabaseScope,
+			DatabaseName:         row.DatabaseName,
+			DatabaseClientFamily: row.DatabaseClientFamily,
+			DatabaseClientDir:    row.DatabaseClientDir,
 
-		backup.Exclusions = exclusionsByJob[row.ID]
+			Exclusions: exclusionsByJob[row.ID]}
+		backup.Target.DatabaseHost = row.DatabaseHost
+		backup.Target.DatabasePort = int(row.DatabasePort)
+		backup.Target.DatabaseUsername = row.DatabaseUsername
+		backup.Target.DatabaseTLSMode = row.DatabaseTlsMode
+		backup.Target.DatabaseCACertificate = row.DatabaseCaCertificate
+		backup.Target.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
+		backup.Target.DatabaseVariant = row.DatabaseVariant
+		backup.Target.DatabaseClientFamily = row.DatabaseDefaultClientFamily
 		if backup.Exclusions == nil {
 			backup.Exclusions = make([]Exclusion, 0)
 		}
@@ -587,7 +620,7 @@ func (db *Store) DeleteBackup(tx *Transaction, id string) (err error) {
 }
 
 func (b *Backup) GetStreamID() string {
-	if b.Target.Type == TargetTypeLocal {
+	if b.Target.IsLocal() {
 		return ""
 	}
 
@@ -637,31 +670,72 @@ func (b *Backup) GetAllUPIDs() []Tasks {
 }
 
 type Backup struct {
-	ID               string      `json:"id"`
-	Store            string      `json:"store"`
-	SourceMode       string      `json:"sourcemode"`
-	ReadMode         string      `json:"readmode"`
-	Mode             string      `json:"mode"`
-	Target           Target      `json:"target"`
-	IncludeXattr     bool        `json:"include-xattr"`
-	LegacyXattr      bool        `json:"legacy-xattr"`
-	Subpath          string      `json:"subpath"`
-	Schedule         string      `json:"schedule"`
-	Comment          string      `json:"comment"`
-	NotificationMode string      `json:"notification-mode"`
-	PreScript        string      `json:"pre_script"`
-	PostScript       string      `json:"post_script"`
-	Namespace        string      `json:"ns"`
-	NextRun          int64       `json:"next-run"`
-	Retry            int         `json:"retry"`
-	RetryInterval    int         `json:"retry-interval"`
-	MaxDirEntries    int         `json:"max-dir-entries"`
-	CurrentPID       int         `json:"current_pid"`
-	Exclusions       []Exclusion `json:"exclusions"`
-	RawExclusions    string      `json:"rawexclusions"`
-	UPIDs            []Tasks     `json:"upids"`
-	CurrentStats     JobStats    `json:"current-stats"`
-	History          JobHistory  `json:"history"`
+	ID                   string      `json:"id"`
+	Store                string      `json:"store"`
+	SourceMode           string      `json:"sourcemode"`
+	ReadMode             string      `json:"readmode"`
+	Mode                 string      `json:"mode"`
+	Target               Target      `json:"target"`
+	IncludeXattr         bool        `json:"include-xattr"`
+	LegacyXattr          bool        `json:"legacy-xattr"`
+	Subpath              string      `json:"subpath"`
+	Schedule             string      `json:"schedule"`
+	Comment              string      `json:"comment"`
+	NotificationMode     string      `json:"notification-mode"`
+	PreScript            string      `json:"pre_script"`
+	PostScript           string      `json:"post_script"`
+	Namespace            string      `json:"ns"`
+	NextRun              int64       `json:"next-run"`
+	Retry                int         `json:"retry"`
+	RetryInterval        int         `json:"retry-interval"`
+	MaxDirEntries        int         `json:"max-dir-entries"`
+	CurrentPID           int         `json:"current_pid"`
+	Exclusions           []Exclusion `json:"exclusions"`
+	RawExclusions        string      `json:"rawexclusions"`
+	UPIDs                []Tasks     `json:"upids"`
+	CurrentStats         JobStats    `json:"current-stats"`
+	History              JobHistory  `json:"history"`
+	DatabaseScope        string      `json:"database_scope,omitempty"`
+	DatabaseName         string      `json:"database_name,omitempty"`
+	DatabaseClientFamily string      `json:"database_client_family,omitempty"`
+	DatabaseClientDir    string      `json:"database_client_dir,omitempty"`
+}
+
+func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup) error {
+	if backup.DatabaseScope == "" && backup.DatabaseName == "" && backup.DatabaseClientFamily == "" && backup.DatabaseClientDir == "" {
+		return q.DeleteBackupDatabaseOptions(db.ctx, backup.ID)
+	}
+
+	target, err := q.GetTarget(db.ctx, backup.Target.Name)
+	if err != nil {
+		return fmt.Errorf("error fetching target: %w", err)
+	}
+	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
+		return q.DeleteBackupDatabaseOptions(db.ctx, backup.ID)
+	}
+	if backup.DatabaseScope != "database" && backup.DatabaseScope != "server" {
+		return errors.New("database backup scope must be database or server")
+	}
+	if backup.DatabaseScope == "database" && backup.DatabaseName == "" {
+		return errors.New("database name is required for database backup scope")
+	}
+	if backup.DatabaseScope == "server" {
+		backup.DatabaseName = ""
+	}
+	if backup.DatabaseClientDir != "" && !filepath.IsAbs(backup.DatabaseClientDir) {
+		return errors.New("database client directory must be absolute")
+	}
+	if backup.DatabaseClientFamily != "" && backup.DatabaseClientFamily != "mysql" && backup.DatabaseClientFamily != "mariadb" {
+		return fmt.Errorf("unsupported database client family %q", backup.DatabaseClientFamily)
+	}
+
+	return q.UpsertBackupDatabaseOptions(db.ctx, corequery.UpsertBackupDatabaseOptionsParams{
+		BackupID:     backup.ID,
+		Scope:        backup.DatabaseScope,
+		DatabaseName: backup.DatabaseName,
+		ClientFamily: backup.DatabaseClientFamily,
+		ClientDir:    backup.DatabaseClientDir,
+	})
 }
 
 type Tasks struct {

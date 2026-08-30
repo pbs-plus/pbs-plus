@@ -50,11 +50,33 @@ var selectors = []js.Value{
 					model: "pbs-model-d2d-snapshots", autoLoad: !!me.getDatastore(),
 					sorters: [{ property: "backup-time", direction: "DESC" }],
 					proxy: { type: "proxmox", url: me.getDatastore() ? "/api2/json/admin/datastore/" + me.getDatastore() + "/snapshots" : null, extraParams: { "backup-type": "host", ns: me.getNamespace() || null } },
-					listeners: { load: function () { let val = me.getValue(); if (val) me.setValue(val); } },
+					listeners: { load: function () { me.syncArchiveFilter(); let val = me.getValue(); if (val) me.setValue(val); } },
 				});
 				me.setDisabled(!me.getDatastore());
 				me.callParent();
 			`),
+			"syncArchiveFilter": js.Func("", `
+				let me = this;
+				let store = me.store;
+				if (!store || typeof store.clearFilter !== "function") {
+					return;
+				}
+				store.clearFilter();
+				let filter = me.getArchiveFilter();
+				if (!filter || !filter.names) {
+					return;
+				}
+				let exclude = filter.mode === "exclude";
+				store.filterBy(function (record) {
+					let files = record.get("files") || [];
+					let match = files.some((file) => filter.names.some((name) => file.filename === name + ".pxar.didx" || file.filename === name + ".mpxar.didx"));
+					return exclude ? !match : match;
+				});
+				if (me.getValue() && !store.findRecord("value", me.getValue(), 0, false, true, true)) {
+					me.setValue(null);
+				}
+			`),
+			"updateArchiveFilter": js.Func("", `this.syncArchiveFilter();`),
 			"updateDatastore": js.Func("newDatastore", `
 				let me = this;
 				if (newDatastore) { me.setDisabled(false); me.store.getProxy().setUrl("/api2/json/admin/datastore/" + newDatastore + "/snapshots"); me.store.load(); } else { me.setDisabled(true); me.store.removeAll(); }
@@ -64,7 +86,7 @@ var selectors = []js.Value{
 				if (me.getDatastore()) { me.store.getProxy().setExtraParam("ns", newNamespace || null); me.store.load(); }
 			`),
 		},
-		ConfigNames: []string{"datastore", "namespace"}, QueryMode: "local", AnyMatch: new(true),
+		ConfigNames: []string{"datastore", "namespace", "archiveFilter"}, QueryMode: "local", AnyMatch: new(true),
 		ForceSelection: new(false), AutoSelect: new(false),
 	},
 	js.Selector{
@@ -73,12 +95,42 @@ var selectors = []js.Value{
 		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 600,
 		ListColumns: []js.Column{
 			{Text: "Name", DataIndex: "name", Sortable: new(true), Flex: 2, Renderer: js.Raw("Ext.String.htmlEncode")},
-			{Text: "Type", DataIndex: "target_type", Sortable: new(true), Flex: 1, Renderer: js.Func("value", `let icons = { local: '<i class="fa fa-desktop"></i> Local', agent: '<i class="fa fa-server"></i> Agent', s3: '<i class="fa fa-cloud"></i> S3' }; return icons[value] || Ext.String.htmlEncode(value || "");`)},
-			{Text: "Path / Volume", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Func("value, metaData, record", `if (record.get("target_type") === "agent") { let volumeName = record.get("volume_name"); let volumeId = record.get("volume_id"); return Ext.String.htmlEncode(volumeName || volumeId || "-"); } return value ? Ext.String.htmlEncode(value) : "-";`)},
+			{Text: "Type", DataIndex: "target_type", Sortable: new(true), Flex: 1, Renderer: js.Func("value", `let icons = { local: '<i class="fa fa-desktop"></i> Local', agent: '<i class="fa fa-server"></i> Agent', s3: '<i class="fa fa-cloud"></i> S3', postgresql: '<i class="fa fa-database"></i> PostgreSQL', mysql: '<i class="fa fa-database"></i> MySQL / MariaDB' }; return icons[value] || Ext.String.htmlEncode(value || "");`)},
+			{Text: "Location", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Func("value, metaData, record", `if (record.get("target_type") === "agent") { return Ext.String.htmlEncode(record.get("volume_name") || record.get("volume_id") || "-"); } if (["postgresql", "mysql"].includes(record.get("kind"))) { return Ext.String.htmlEncode(record.get("database_host") + ":" + record.get("database_port")); } return value ? Ext.String.htmlEncode(value) : "-";`)},
 		},
 		Methods: map[string]js.Raw{"initComponent": js.ChangerExtraParams},
 		Value:   js.Raw("null"), Editable: new(true), ForceSelection: new(true), QueryMode: "local",
 		MinChars: 1, FilterPickList: new(true), TypeAhead: new(false),
+	},
+	js.Selector{
+		Name: "PBS.form.D2DDatabaseClientSelector", XType: "pbsD2DDatabaseClientSelector",
+		DisplayField: "directory", ValueField: "directory", APIPath: "/api2/json/d2d/database-clients", Sorters: "directory",
+		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 720, ConfigNames: []string{"engine"},
+		ListColumns: []js.Column{
+			{Text: "Family", DataIndex: "family", Width: 90},
+			{Text: "Version", DataIndex: "version", Flex: 2},
+			{Text: "Directory", DataIndex: "directory", Flex: 1, Renderer: js.Raw("Ext.String.htmlEncode")},
+		},
+		Methods: map[string]js.Raw{
+			"initComponent": js.Func("", `
+				let me = this;
+				me.callParent();
+				me.getStore().on("load", me.applyEngineFilter, me);
+			`),
+			"applyEngineFilter": js.Func("", `
+				let me = this;
+				let store = me.getStore();
+				if (!store || typeof store.clearFilter !== "function") {
+					return;
+				}
+				store.clearFilter();
+				if (me.getEngine()) {
+					store.filterBy((record) => record.get("engine") === me.getEngine());
+				}
+			`),
+			"updateEngine": js.Func("", `this.applyEngineFilter();`),
+		},
+		Editable: new(false), ForceSelection: new(true), QueryMode: "local", EmptyText: "Select an installed client version",
 	},
 	js.Selector{
 		Name: "PBS.form.D2DTokenSelector", XType: "pbsD2DTokenSelector",

@@ -34,7 +34,7 @@ func NewS3FS(
 	ctx context.Context,
 	backup coredb.Backup,
 	endpoint, accessKey, secretKey, bucket, region, prefix string,
-	useSSL bool,
+	useSSL, pathStyle bool,
 ) *S3FS {
 	log.Debug("newS3FS called",
 
@@ -53,11 +53,16 @@ func NewS3FS(
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
+	bucketLookup := minio.BucketLookupDNS
+	if pathStyle {
+		bucketLookup = minio.BucketLookupPath
+	}
 	client, err := minio.New(endpoint, &minio.Options{
-		Creds:     credentials.NewStaticV4(accessKey, secretKey, ""),
-		Secure:    useSSL,
-		Region:    region,
-		Transport: transport,
+		Creds:        credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure:       useSSL,
+		Region:       region,
+		BucketLookup: bucketLookup,
+		Transport:    transport,
 	})
 	if err != nil {
 		log.Error(err, "failed to create minio client")

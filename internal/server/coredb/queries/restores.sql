@@ -12,14 +12,35 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
-    t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
-    t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
-    t.volume_total, t.volume_used, t.volume_free, t.mount_script,
+    COALESCE(dro.source_database, '') AS source_database,
+    COALESCE(dro.destination_database, '') AS destination_database,
+    COALESCE(dro.replace_existing, 0) AS replace_existing,
+    COALESCE(dro.client_family, '') AS database_client_family,
+    COALESCE(dro.client_dir, '') AS database_client_dir,
+    t.name, t.target_type, t.mount_script,
+    COALESCE(f.access, '') AS filesystem_access,
+    COALESCE(f.path, s.url, '') AS path,
+    f.agent_host, f.volume_id, f.volume_type, f.volume_name,
+    f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
+    f.volume_total, f.volume_used, f.volume_free,
+    COALESCE(p.host, m.host, '') AS database_host,
+    COALESCE(p.port, m.port, 0) AS database_port,
+    COALESCE(p.username, m.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(m.variant, '') AS database_variant,
+    COALESCE(m.default_client_family, '') AS database_default_client_family,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
+LEFT JOIN restore_database_options dro ON dro.restore_id = j.id
 LEFT JOIN targets t ON j.dest_target = t.name
-LEFT JOIN agent_hosts ah ON t.agent_host = ah.name
+LEFT JOIN target_filesystems f ON f.target_name = t.name
+LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN target_postgresql p ON p.target_name = t.name
+LEFT JOIN target_mysql m ON m.target_name = t.name
+LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 WHERE j.id = ?
 LIMIT 1;
 
@@ -29,14 +50,35 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
-    t.name, t.path, t.agent_host, t.volume_id, t.volume_type, t.volume_name,
-    t.volume_fs, t.volume_total_bytes, t.volume_used_bytes, t.volume_free_bytes,
-    t.volume_total, t.volume_used, t.volume_free, t.mount_script,
+    COALESCE(dro.source_database, '') AS source_database,
+    COALESCE(dro.destination_database, '') AS destination_database,
+    COALESCE(dro.replace_existing, 0) AS replace_existing,
+    COALESCE(dro.client_family, '') AS database_client_family,
+    COALESCE(dro.client_dir, '') AS database_client_dir,
+    t.name, t.target_type, t.mount_script,
+    COALESCE(f.access, '') AS filesystem_access,
+    COALESCE(f.path, s.url, '') AS path,
+    f.agent_host, f.volume_id, f.volume_type, f.volume_name,
+    f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
+    f.volume_total, f.volume_used, f.volume_free,
+    COALESCE(p.host, m.host, '') AS database_host,
+    COALESCE(p.port, m.port, 0) AS database_port,
+    COALESCE(p.username, m.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(m.variant, '') AS database_variant,
+    COALESCE(m.default_client_family, '') AS database_default_client_family,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
+LEFT JOIN restore_database_options dro ON dro.restore_id = j.id
 LEFT JOIN targets t ON j.dest_target = t.name
-LEFT JOIN agent_hosts ah ON t.agent_host = ah.name
+LEFT JOIN target_filesystems f ON f.target_name = t.name
+LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN target_postgresql p ON p.target_name = t.name
+LEFT JOIN target_mysql m ON m.target_name = t.name
+LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 ORDER BY j.id;
 
 -- name: UpdateRestore :exec
@@ -47,6 +89,20 @@ SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?,
     pre_script = ?, post_script = ?, restore_mode = ?, last_run_status = ?, retry_count = ?,
     notification_mode = ?
 WHERE id = ?;
+
+-- name: UpsertRestoreDatabaseOptions :exec
+INSERT INTO restore_database_options (
+    restore_id, source_database, destination_database, replace_existing, client_family, client_dir
+) VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(restore_id) DO UPDATE SET
+    source_database = excluded.source_database,
+    destination_database = excluded.destination_database,
+    replace_existing = excluded.replace_existing,
+    client_family = excluded.client_family,
+    client_dir = excluded.client_dir;
+
+-- name: DeleteRestoreDatabaseOptions :exec
+DELETE FROM restore_database_options WHERE restore_id = ?;
 
 -- name: DeleteRestore :execrows
 DELETE FROM restores WHERE id = ?;

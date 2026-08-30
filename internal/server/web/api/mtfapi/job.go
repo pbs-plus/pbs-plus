@@ -208,9 +208,9 @@ func ExtJsMtfJobSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 
-			response := MtfJobConfigResponse{}
-			response.Status = http.StatusOK
-			response.Success = true
+			response := MtfJobConfigResponse{
+				Status:  http.StatusOK,
+				Success: true}
 			flat := flattenMtfJobForEdit(job)
 			flat["notification-batch"] = notificationapi.GetJobBatchName(app, "backup", job.ID)
 			response.Data = flat
@@ -245,9 +245,9 @@ func ExtJsMtfJobSingleHandler(app *application.Runtime) http.HandlerFunc {
 
 			notificationapi.ApplyJobBatchAssignment(app, "backup", updated.ID, r.FormValue("notification-batch"))
 
-			response := MtfJobConfigResponse{}
-			response.Status = http.StatusOK
-			response.Success = true
+			response := MtfJobConfigResponse{
+				Status:  http.StatusOK,
+				Success: true}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -260,9 +260,9 @@ func ExtJsMtfJobSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 
-			response := MtfJobConfigResponse{}
-			response.Status = http.StatusOK
-			response.Success = true
+			response := MtfJobConfigResponse{
+				Status:  http.StatusOK,
+				Success: true}
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}

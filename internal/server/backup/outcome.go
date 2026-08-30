@@ -31,6 +31,8 @@ func (b *backupJob) finalizeFailure(err error) {
 		succeeded, warningsNum := b.processPBSLogs(err, b.upid)
 		b.logger.Info("backup completed, running post-backup script")
 		b.runPostScript(succeeded, warningsNum)
+		succeeded, warningsNum = b.processPBSLogs(err, b.upid)
+		b.updatePBSStatus(succeeded, warningsNum, b.upid)
 
 		var notifyErr error
 		if !succeeded {
@@ -105,6 +107,8 @@ func (b *backupJob) finalizeSuccess(succeeded bool, warningsNum int) {
 		}
 	}
 	b.runPostScript(succeeded, warningsNum)
+	succeeded, warningsNum = b.processPBSLogs(nil, b.upid)
+	b.updatePBSStatus(succeeded, warningsNum, b.upid)
 
 	var notifyErr error
 	if !succeeded {
@@ -138,6 +142,7 @@ func (b *backupJob) cleanup() {
 		b.job.CurrentPID = 0
 		agentMount := b.agentMount
 		s3Mount := b.s3Mount
+		stagedDump := b.stagedDump
 		logger := b.logger
 		cancel := b.cancel
 		b.mu.Unlock()
@@ -153,6 +158,11 @@ func (b *backupJob) cleanup() {
 		if s3Mount != nil {
 			s3Mount.Unmount()
 			s3Mount.CloseMount()
+		}
+		if stagedDump != nil {
+			if err := stagedDump.Cleanup(); err != nil && logger != nil {
+				logger.Error(err, "failed to remove database backup staging data")
+			}
 		}
 		if logger != nil {
 			logger.Close()
@@ -179,16 +189,6 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 		b.logger.Error(err, "failed to process logs")
 	}
 
-	b.logger.Info("updating job status", "succeeded", succeeded, "cancelled", cancelled, "warnings", warningsNum)
-	b.mu.RLock()
-	currentJob := b.job
-	taskCopy := proxmox.Task{UPID: upid}
-	b.mu.RUnlock()
-
-	if err := updateBackupStatus(succeeded, warningsNum, currentJob, taskCopy, b.app); err != nil {
-		b.logger.Error(err, "failed to update job status - post cmd.Wait")
-	}
-
 	if succeeded || cancelled {
 		b.logger.Info("backup succeeded or cancelled")
 	} else {
@@ -196,6 +196,16 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	return succeeded, warningsNum
+}
+
+func (b *backupJob) updatePBSStatus(succeeded bool, warningsNum int, upid string) {
+	b.logger.Info("updating job status", "succeeded", succeeded, "warnings", warningsNum)
+	b.mu.RLock()
+	currentJob := b.job
+	b.mu.RUnlock()
+	if err := updateBackupStatus(succeeded, warningsNum, currentJob, proxmox.Task{UPID: upid}, b.app); err != nil {
+		b.logger.Error(err, "failed to update job status - post cmd.Wait")
+	}
 }
 
 func (b *backupJob) createOK(err error) {

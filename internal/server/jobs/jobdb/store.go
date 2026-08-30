@@ -198,6 +198,20 @@ func (d *Store) GetExecution(ctx context.Context, id string) (Execution, error) 
 	return executionFromRow(row), nil
 }
 
+func (d *Store) ResourceLockHolder(ctx context.Context, resourceKey string) (Execution, error) {
+	id, err := d.read.GetResourceLockHolder(ctx, jobquery.GetResourceLockHolderParams{
+		ResourceKey: resourceKey,
+		LeaseUntil:  time.Now().Unix(),
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return Execution{}, ErrNotFound
+	}
+	if err != nil {
+		return Execution{}, fmt.Errorf("getting resource lock holder: %w", err)
+	}
+	return d.GetExecution(ctx, id)
+}
+
 func (d *Store) GetActiveExecution(ctx context.Context, kind, definitionID string) (Execution, error) {
 	row, err := d.read.GetActiveExecutionByDefinition(ctx, jobquery.GetActiveExecutionByDefinitionParams{
 		Kind:         kind,

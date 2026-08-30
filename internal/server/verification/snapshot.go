@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 type snapshotInfo struct {
@@ -64,7 +64,10 @@ func (v *verificationJob) selectSnapshot(ctx context.Context, job coredb.Verific
 }
 
 func (v *verificationJob) listSnapshots(ctx context.Context, backup coredb.Backup) ([]snapshotInfo, error) {
-	backupID := proxmox.NormalizeHostname(backup.Target.GetHostname())
+	if err := validate.ValidateJobId(backup.ID); err != nil {
+		return nil, fmt.Errorf("invalid backup job id: %w", err)
+	}
+	backupID := backup.ID
 	backupType := "host"
 
 	dsInfo, err := cli.GetDatastoreInfo(backup.Store)
