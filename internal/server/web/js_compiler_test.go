@@ -123,6 +123,7 @@ func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 		[]byte(`title: gettext("TLS")`),
 		[]byte(`title: gettext("Client Tools")`),
 		[]byte(`name: "database_default_client_dir"`),
+		[]byte(`engine: "{targetKind}"`),
 		[]byte(`name: "database_password"`),
 		[]byte(`name: "database_scope"`),
 		[]byte(`name: "destination_database"`),
@@ -130,6 +131,11 @@ func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("target editor is missing %q", expected)
+		}
+	}
+	for _, invalid := range [][]byte{[]byte(`engine: "postgresql"`), []byte(`engine: "mysql"`)} {
+		if bytes.Contains(source, invalid) {
+			t.Errorf("target editor contains invalid cbind template %q", invalid)
 		}
 	}
 }
