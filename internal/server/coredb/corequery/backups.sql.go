@@ -21,6 +21,30 @@ func (q *Queries) BackupExists(ctx context.Context, id string) (int64, error) {
 	return column_1, err
 }
 
+const backupGroupMigrationCompleted = `-- name: BackupGroupMigrationCompleted :one
+SELECT EXISTS(
+	SELECT 1 FROM backup_group_migrations WHERE backup_id = ?
+)
+`
+
+func (q *Queries) BackupGroupMigrationCompleted(ctx context.Context, backupID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, backupGroupMigrationCompleted, backupID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const completeBackupGroupMigration = `-- name: CompleteBackupGroupMigration :exec
+INSERT INTO backup_group_migrations (backup_id)
+VALUES (?)
+ON CONFLICT(backup_id) DO NOTHING
+`
+
+func (q *Queries) CompleteBackupGroupMigration(ctx context.Context, backupID string) error {
+	_, err := q.db.ExecContext(ctx, completeBackupGroupMigration, backupID)
+	return err
+}
+
 const countBackups = `-- name: CountBackups :one
 SELECT COUNT(*) FROM backups
 `

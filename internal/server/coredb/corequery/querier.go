@@ -13,6 +13,8 @@ type Querier interface {
 	AddJobToBatch(ctx context.Context, arg AddJobToBatchParams) error
 	AgentHostExists(ctx context.Context, name string) (int64, error)
 	BackupExists(ctx context.Context, id string) (int64, error)
+	BackupGroupMigrationCompleted(ctx context.Context, backupID string) (int64, error)
+	CompleteBackupGroupMigration(ctx context.Context, backupID string) error
 	CountBackups(ctx context.Context) (int64, error)
 	CountRestores(ctx context.Context) (int64, error)
 	CreateAgentHost(ctx context.Context, arg CreateAgentHostParams) error

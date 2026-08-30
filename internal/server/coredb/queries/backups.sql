@@ -119,3 +119,13 @@ SELECT 1 FROM backups WHERE id = ? LIMIT 1;
 
 -- name: CountBackups :one
 SELECT COUNT(*) FROM backups;
+
+-- name: BackupGroupMigrationCompleted :one
+SELECT EXISTS(
+	SELECT 1 FROM backup_group_migrations WHERE backup_id = ?
+);
+
+-- name: CompleteBackupGroupMigration :exec
+INSERT INTO backup_group_migrations (backup_id)
+VALUES (?)
+ON CONFLICT(backup_id) DO NOTHING;

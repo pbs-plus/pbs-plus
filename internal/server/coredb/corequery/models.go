@@ -77,6 +77,11 @@ type BackupDatabaseOption struct {
 	ClientDir    string `json:"client_dir"`
 }
 
+type BackupGroupMigration struct {
+	BackupID    string `json:"backup_id"`
+	CompletedAt string `json:"completed_at"`
+}
+
 type Exclusion struct {
 	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`

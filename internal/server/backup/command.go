@@ -93,14 +93,6 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
 
-	migrated, err := migrateLegacyBackupGroup(backup, app)
-	if err != nil {
-		return nil, fmt.Errorf("RunBackup: migrate legacy backup group: %w", err)
-	}
-	if migrated {
-		logger.Info("migrated legacy backup group", "backup_id", backupID)
-	}
-
 	env := append(os.Environ(), fmt.Sprintf("PBS_PASSWORD=%s", cli.GetToken()))
 	if pbsStatus, err := cli.GetProxmoxCertInfo(); err == nil {
 		env = append(env, fmt.Sprintf("PBS_FINGERPRINT=%s", pbsStatus.FingerprintSHA256))

@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
@@ -23,6 +24,32 @@ import (
 )
 
 const datastoreLocksDir = "/run/proxmox-backup/locks"
+
+// MigrateLegacyBackupGroups migrates each backup job once before backup workers start.
+func MigrateLegacyBackupGroups(app *application.Runtime) error {
+	backups, err := app.CoreDB.GetAllBackups()
+	if err != nil {
+		return fmt.Errorf("list backups: %w", err)
+	}
+	for _, backup := range backups {
+		completed, err := app.CoreDB.BackupGroupMigrationCompleted(backup.ID)
+		if err != nil {
+			return err
+		}
+		if completed {
+			continue
+		}
+		migrated, err := migrateLegacyBackupGroup(backup, app)
+		if err != nil {
+			return fmt.Errorf("migrate backup job %q: %w", backup.ID, err)
+		}
+		if err := app.CoreDB.CompleteBackupGroupMigration(backup.ID); err != nil {
+			return err
+		}
+		log.Info("completed backup group migration", "backup_id", backup.ID, "migrated", migrated)
+	}
+	return nil
+}
 
 func migrateLegacyBackupGroup(backup coredb.Backup, app *application.Runtime) (bool, error) {
 	legacyID, err := legacyBackupID(backup.Target)
