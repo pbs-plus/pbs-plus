@@ -3,7 +3,9 @@
 package database
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,6 +269,59 @@ func TestRestoreDumpRejectsEngineMismatch(t *testing.T) {
 	target.Type = coredb.TargetTypeMySQL
 	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{DestinationDatabase: "inventory"}, bundle); err == nil {
 		t.Fatal("restored PostgreSQL dump to MySQL target")
+	}
+}
+
+func TestCopyDumpSectionExtractsOneDatabase(t *testing.T) {
+	postgres := strings.Join([]string{
+		"CREATE ROLE app;",
+		`\connect payroll`,
+		"CREATE TABLE wages (id int);",
+		`\connect "inv entory"`,
+		"CREATE TABLE parts (id int);",
+		"COPY parts (id) FROM stdin;",
+		`\\connect payroll`,
+		`\.`,
+		`\connect scratch`,
+		"CREATE TABLE junk (id int);",
+		"",
+	}, "\n")
+	mysql := strings.Join([]string{
+		"-- Current Database: `payroll`",
+		"CREATE DATABASE `payroll`;",
+		"USE `payroll`;",
+		"CREATE TABLE wages (id int);",
+		"-- Current Database: `inventory`",
+		"CREATE DATABASE /*!32312 IF NOT EXISTS*/ `inventory`;",
+		"USE `inventory`;",
+		"CREATE TABLE parts (id int);",
+		"-- Current Database: `scratch`",
+		"CREATE TABLE junk (id int);",
+		"",
+	}, "\n")
+
+	for _, testCase := range []struct{ name, engine, dump, database string }{
+		{"postgresql", EnginePostgreSQL, postgres, "inv entory"},
+		{"mysql", EngineMySQL, mysql, "inventory"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var out strings.Builder
+			if err := copyDumpSection(&out, bufio.NewReader(strings.NewReader(testCase.dump)), testCase.engine, testCase.database); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), "CREATE TABLE parts") {
+				t.Errorf("selected database is missing from the extract: %q", out.String())
+			}
+			for _, unwanted := range []string{"CREATE TABLE wages", "CREATE TABLE junk", "CREATE DATABASE", "USE `"} {
+				if strings.Contains(out.String(), unwanted) {
+					t.Errorf("extract leaked %q: %q", unwanted, out.String())
+				}
+			}
+			err := copyDumpSection(io.Discard, bufio.NewReader(strings.NewReader(testCase.dump)), testCase.engine, "absent")
+			if err == nil || !strings.Contains(err.Error(), "not present in the dump") {
+				t.Fatalf("missing database was not reported: %v", err)
+			}
+		})
 	}
 }
 

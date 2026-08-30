@@ -132,7 +132,8 @@ var restoreJobEdit = js.EditWindow{
 						js.Field{XType: "pbsD2DTargetPathSelector", Label: "Path to destination", Reference: "pathSelectorDestination", Name: "dest-subpath", OnlyDirs: true, DeleteEmptyWhenNotCreate: true},
 					)},
 					js.Field{XType: js.XFieldContainer, Reference: "databaseDestination", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
-						js.Field{XType: "proxmoxtextfield", Label: "Destination Database", Name: "destination_database", AllowBlank: new(true), EmptyText: "Use the database name from the dump"},
+						js.Field{XType: "proxmoxtextfield", Label: "Destination Database", Name: "destination_database", AllowBlank: new(true), EmptyText: "Entire server",
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Database to restore into. For an entire-server snapshot, name a single database to extract just that one, or leave empty to restore every database.")}},
 						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Drop and recreate an existing database", InputValue: "true", UncheckedValue: "false"},
 						js.Field{XType: js.XKVComboBox, Label: "Client Family", Name: "database_client_family", Reference: "databaseClientFamily", AllowBlank: new(true), ComboItems: js.Arr{
 							js.Arr{"mysql", "MySQL"}, js.Arr{"mariadb", "MariaDB"},
