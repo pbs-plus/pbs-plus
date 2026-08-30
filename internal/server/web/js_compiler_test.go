@@ -146,3 +146,18 @@ func TestDatabaseClientSelectorWaitsForStoreCreation(t *testing.T) {
 		t.Fatal("database client selector does not guard its uninitialized store")
 	}
 }
+
+func TestDatabaseJobWindowsHideFilesystemRestorePath(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`subject: "Backup Job"`),
+		[]byte(`subject: "Restore Job"`),
+		[]byte(`text: "Backup / Restore"`),
+		[]byte(`sourcePath.setHidden(database);`),
+		[]byte(`sourcePath.setDisabled(database);`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("database job editor is missing %q", expected)
+		}
+	}
+}

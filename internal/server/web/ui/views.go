@@ -102,7 +102,7 @@ var coreViews = []js.Value{
 		let notesNode = root.findChild("path", "pbsTapeManagement", false);
 		if (notesNode) {
 			let index = root.indexOf(notesNode);
-			root.insertChild(index, { text: "Disk Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", expanded: true, children: [] });
+			root.insertChild(index, { text: "Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", expanded: true, children: [] });
 			root.insertChild(index + 1, { text: "Targets", iconCls: "fa fa-bullseye", id: "d2d_targets", path: "pbsD2DTargets", leaf: true });
 			root.insertChild(index + 2, { text: "Snapshots", iconCls: "fa fa-history", id: "snapshot_mount", path: "pbsD2DSnapshotMount", expanded: true, children: [] });
 			root.insertChild(index + 3, { text: "Data Verification", iconCls: "fa fa-check-circle", id: "data_verification", path: "pbsD2DDataVerification", expanded: true, children: [] });

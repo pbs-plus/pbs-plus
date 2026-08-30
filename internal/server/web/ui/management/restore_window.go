@@ -18,7 +18,7 @@ var restoreModes = Ext.create("Ext.data.Store", {
 //go:fix inline
 var restoreJobEdit = js.EditWindow{
 	Name: "PBS.D2DManagement.RestoreJobEdit", XType: "pbsDiskRestoreJobEdit",
-	Subject: "Disk Restore Job", IsAdd: true,
+	Subject: "Restore Job", IsAdd: true,
 	FieldDefaults: js.Obj{"labelWidth": 120},
 	BodyPadding:   new(0),
 	CBindData: js.Func("initialConfig", `
@@ -75,6 +75,9 @@ var restoreJobEdit = js.EditWindow{
 				let record = field.getStore().findRecord("name", value, 0, false, true, true);
 				let kind = record ? (record.get("kind") || record.get("target_type")) : "filesystem";
 				let database = ["postgresql", "mysql"].includes(kind);
+				let sourcePath = this.lookup("pathSelector");
+				sourcePath.setHidden(database);
+				sourcePath.setDisabled(database);
 				let pathSel = this.lookup("pathSelectorDestination");
 				if (pathSel) {
 					pathSel.setTarget(value);
