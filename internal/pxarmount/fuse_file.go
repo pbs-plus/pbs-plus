@@ -61,6 +61,17 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 }
 
 func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte) (fuse.ReadResult, fuse.Status) {
+	if fh := fs.getFh(input.Fh); fh != nil && !fh.sparse {
+		n, err := syscall.Pread(fh.fd, buf, int64(input.Offset))
+		if err != nil && err != io.EOF {
+			return nil, fuse.ToStatus(err)
+		}
+		if n <= 0 {
+			return fuse.ReadResultData(nil), fuse.OK
+		}
+		return fuse.ReadResultData(buf[:n]), fuse.OK
+	}
+
 	path := fs.inodeToPath(input.NodeId)
 	fs.debugf("Read: ino=%d fh=%d path=%q off=%d sz=%d", input.NodeId, input.Fh, path, input.Offset, len(buf))
 	if path == "" {
@@ -83,9 +94,9 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 		var err error
 		if re.Node != nil && re.Node.SparseData {
 			inoMu := fs.getInoLock(input.NodeId)
-			inoMu.Lock()
+			inoMu.RLock()
 			n, err = fs.readSparseAt(fh.fd, input.NodeId, re.Node, re.PxarNode, buf, int64(input.Offset))
-			inoMu.Unlock()
+			inoMu.RUnlock()
 		} else {
 			n, err = syscall.Pread(fh.fd, buf, int64(input.Offset))
 		}
@@ -155,7 +166,8 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	defer fs.endMutation()
 
 	fh := fs.getFh(input.Fh)
-	if fh == nil {
+	fromAnon := fh == nil
+	if fromAnon {
 		anon, status := fs.openAnonFh(input.NodeId)
 		if status != fuse.OK {
 			return 0, status
@@ -172,6 +184,20 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 	inoMu.RLock()
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
 	inoMu.RUnlock()
+
+	if err == syscall.EBADF && !fromAnon {
+		anon, status := fs.openAnonFh(input.NodeId)
+		if status != fuse.OK {
+			return 0, status
+		}
+		inoMu.RLock()
+		n, err = syscall.Pwrite(anon.fd, data, int64(input.Offset))
+		inoMu.RUnlock()
+		if cerr := syscall.Close(anon.fd); cerr != nil {
+			fs.logNonFatal("close-fd", anon.path, cerr)
+		}
+		fh = anon
+	}
 
 	if n < 0 {
 		n = 0
