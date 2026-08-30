@@ -134,7 +134,7 @@ func (fs *MutableFS) resolveFromNode(path string, n *GraphNode) (*ResolvedEntry,
 		re.PxarNode = pxarNode
 		// Use pxar metadata if node fields are zero.
 		if pxarNode != nil {
-			if re.Size == 0 {
+			if re.Size == 0 && !n.HasData {
 				re.Size = pxarNode.fileSize
 			}
 			if re.UID == 0 && re.GID == 0 {

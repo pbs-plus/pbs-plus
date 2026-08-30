@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -190,14 +191,28 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 			return nil
 		}
 
-		if info.IsDir() {
-			return nil
-		}
-
 		fusePath := "/" + filepath.ToSlash(relPath)
 
 		nodeID, pxarPath, _, _, rerr := fs.journal.ResolvePath(fusePath)
 		if rerr != nil {
+			return nil
+		}
+
+		if info.IsDir() {
+			if nodeID != 0 {
+				return nil
+			}
+			if pxarPath == "" {
+				if err := os.Remove(absPath); err != nil {
+					fs.logNonFatal("reconcile-remove", fusePath, err)
+				}
+				return nil
+			}
+			if aerr := fs.adoptOrphan(fusePath, info); aerr != nil {
+				fs.logNonFatal("reconcile-adopt", fusePath, aerr)
+				return nil
+			}
+			updated = true
 			return nil
 		}
 
@@ -229,21 +244,30 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 		}
 
 		stat := info.Sys().(*syscall.Stat_t)
-		stale := uint64(stat.Size) != node.Size || stat.Mtim.Nano() != node.MtimeNs
-		if !stale {
-			return nil
-		}
-		node.Size = uint64(info.Size())
-		node.MtimeNs = info.ModTime().UnixNano()
-		node.CtimeNs = info.ModTime().UnixNano()
+		sizeStale := uint64(stat.Size) != node.Size
+
+		extentsStale := false
 		if node.SparseData {
-			extents, eerr := rebuildDataExtents(absPath, node.Size)
+			extents, eerr := rebuildDataExtents(absPath, uint64(info.Size()))
 			if eerr != nil {
 				fs.logNonFatal("reconcile-extents", fusePath, eerr)
-			} else {
-				node.DataExtents = mergeDataExtents(node.DataExtents, extents)
+			} else if merged := mergeDataExtents(node.DataExtents, extents); !slices.Equal(merged, node.DataExtents) {
+				node.DataExtents = merged
+				extentsStale = true
 			}
-			node.LowerSize = min(node.LowerSize, node.Size)
+		}
+
+		if !sizeStale && !extentsStale {
+			return nil
+		}
+		if sizeStale {
+			node.Size = uint64(info.Size())
+			node.MtimeNs = info.ModTime().UnixNano()
+			node.CtimeNs = info.ModTime().UnixNano()
+			if node.SparseData {
+				node.LowerSize = min(node.LowerSize, node.Size)
+				node.DataExtents = trimDataExtents(node.DataExtents, node.Size)
+			}
 		}
 		if err := fs.journal.UpdateNode(node); err != nil {
 			log.Error(err, "")
@@ -271,7 +295,7 @@ func (fs *MutableFS) adoptOrphan(fusePath string, info os.FileInfo) error {
 	mtime := info.ModTime().UnixNano()
 	node := &GraphNode{
 		Kind:    NodeFile,
-		Mode:    uint32(syscall.S_IFREG) | (stat.Mode & 0o7777),
+		Mode:    stat.Mode,
 		UID:     stat.Uid,
 		GID:     stat.Gid,
 		Size:    uint64(info.Size()),
@@ -279,15 +303,22 @@ func (fs *MutableFS) adoptOrphan(fusePath string, info os.FileInfo) error {
 		CtimeNs: mtime,
 		HasData: true,
 	}
-	if fs.hasPxarEntry(fusePath) {
+	if info.IsDir() {
+		node.Kind = NodeDir
+		node.Size = 0
+		node.HasData = false
+	}
+	if lower := fs.findPxarNode(fusePath); lower != nil {
 		node.RedirectTo = fusePath
-		node.SparseData = true
-		node.LowerSize = node.Size
-		extents, err := rebuildDataExtents(fs.mutablePath(fusePath), node.Size)
-		if err != nil {
-			return err
+		if node.Kind == NodeFile {
+			node.SparseData = true
+			node.LowerSize = lower.fileSize
+			extents, err := rebuildDataExtents(fs.mutablePath(fusePath), node.Size)
+			if err != nil {
+				return err
+			}
+			node.DataExtents = extents
 		}
-		node.DataExtents = extents
 	}
 	_, err := fs.journal.EnsureNodePath(fusePath, node, false)
 	return err

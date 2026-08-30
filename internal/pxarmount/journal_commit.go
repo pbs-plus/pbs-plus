@@ -143,8 +143,7 @@ func (j *Journal) drainAllLocked() {
 		j.mu.Unlock()
 	}()
 	pending := j.pending
-	j.pending = j.pending[:0]
-	j.overlay = make(map[string][]byte)
+	overlay := j.overlay
 
 	pb := j.db.NewBatch()
 	for _, op := range pending {
@@ -188,9 +187,19 @@ func (j *Journal) drainAllLocked() {
 		}
 	}
 
+	if err := pb.Set(nextNodeIDKey(), encodeInt64(j.nextNodeID.Load()), nil); err != nil {
+		log.Error(err, "")
+	}
 	err := pb.Commit(pebble.Sync)
 	if err := pb.Close(); err != nil {
 		log.Error(err, "")
 	}
 	j.commitErr = err
+	if err != nil {
+		j.pending = pending
+		j.overlay = overlay
+		return
+	}
+	j.pending = j.pending[:0]
+	j.overlay = make(map[string][]byte)
 }

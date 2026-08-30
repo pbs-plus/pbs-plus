@@ -23,7 +23,7 @@ func (w *sparseCaptureWriter) WriteEntryReader(_ *pxar.Entry, reader io.Reader, 
 	return err
 }
 
-func TestSparseCopyUpDefersSourceReadAndFeedsCommit(t *testing.T) {
+func TestSparseCopyUpMaterializesWrittenBlockAndFeedsCommit(t *testing.T) {
 	store, metaPath, payloadPath := createTestArchive(t)
 	pxarFS := openTestArchive(t, store, metaPath, payloadPath)
 	root := t.TempDir()
@@ -102,10 +102,8 @@ func TestSparseCopyUpDefersSourceReadAndFeedsCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRaw := make([]byte, len(raw))
-	copy(wantRaw[5:], "PATCH")
-	if !bytes.Equal(raw, wantRaw) {
-		t.Fatalf("overlay contains copied lower data: %q", raw)
+	if !bytes.Equal(raw, want) {
+		t.Fatalf("materialized block = %q, want %q", raw, want)
 	}
 	if err := journal.Sync(); err != nil {
 		t.Fatal(err)

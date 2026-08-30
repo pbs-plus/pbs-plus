@@ -18,6 +18,9 @@ func (fs *MutableFS) Mkdir(cancel <-chan struct{}, input *fuse.MkdirIn, name str
 	childPath := joinPath(parentPath, name)
 
 	abs := fs.mutablePath(childPath)
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return fuse.ToStatus(err)
+	}
 	if err := syscall.Mkdir(abs, input.Mode&0o777); err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -72,6 +75,9 @@ func (fs *MutableFS) Mknod(cancel <-chan struct{}, input *fuse.MknodIn, name str
 	childPath := joinPath(parentPath, name)
 
 	abs := fs.mutablePath(childPath)
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return fuse.ToStatus(err)
+	}
 	if err := syscall.Mknod(abs, input.Mode, int(input.Rdev)); err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -125,6 +131,9 @@ func (fs *MutableFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, targ
 	childPath := joinPath(parentPath, linkName)
 
 	abs := fs.mutablePath(childPath)
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return fuse.ToStatus(err)
+	}
 	if err := syscall.Symlink(target, abs); err != nil {
 		return fuse.ToStatus(err)
 	}
@@ -197,13 +206,15 @@ func (fs *MutableFS) unlink(header *fuse.InHeader, name string) fuse.Status {
 			return fuse.EIO
 		}
 	} else if re.PxarNode != nil {
-		// Pure pxar deletion: just add whiteout.
 		if err := fs.journal.AddWhiteout(parentID, name); err != nil {
 			return fuse.EIO
 		}
 	}
+	if err := fs.journal.Sync(); err != nil {
+		return fuse.EIO
+	}
 
-	if re.DataIsMut {
+	if re.DataIsMut || re.IsDir {
 		if err := os.Remove(fs.mutablePath(childPath)); err != nil {
 			fs.logNonFatal("remove", childPath, err)
 		}
@@ -374,6 +385,9 @@ func (fs *MutableFS) Rename(cancel <-chan struct{}, input *fuse.RenameIn, oldNam
 		}
 	}
 
+	if err := fs.journal.Sync(); err != nil {
+		return fuse.EIO
+	}
 	return fuse.OK
 }
 

@@ -3,7 +3,6 @@ package pxarmount
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
@@ -11,12 +10,16 @@ import (
 )
 
 func OpenJournal(dir string) (*Journal, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	return openJournal(dir, vfs.Default)
+}
+
+func openJournal(dir string, fs vfs.FS) (*Journal, error) {
+	if err := fs.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create journal dir: %w", err)
 	}
 
 	opts := &pebble.Options{
-		FS:           vfs.Default,
+		FS:           fs,
 		DisableWAL:   false,
 		MemTableSize: 4 << 20,
 	}

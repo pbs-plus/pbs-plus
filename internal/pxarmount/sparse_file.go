@@ -57,6 +57,84 @@ func insertDataExtent(extents []dataExtent, start, end uint64) []dataExtent {
 	return extents
 }
 
+func alignDown(v, blockSize uint64) uint64 { return v / blockSize * blockSize }
+func alignUp(v, blockSize uint64) uint64 {
+	if v == 0 {
+		return 0
+	}
+	return (v-1)/blockSize*blockSize + blockSize
+}
+
+// blockIsHole reports whether the block at blockStart is entirely unallocated.
+// An allocated block is already fully valid by induction, so it needs no fill.
+func blockIsHole(fd int, blockStart, blockSize uint64) (bool, error) {
+	off, err := unix.Seek(fd, int64(blockStart), unix.SEEK_DATA)
+	if err == unix.ENXIO {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return uint64(off) >= blockStart+blockSize, nil
+}
+
+// fillSparseMargins materialises the lower-layer bytes that share a block with
+// a partial write, so the block becomes wholly backed by the overlay. Without
+// it, crash recovery from the allocation map would claim never-written bytes
+// in the same block and shadow the backup content with zeroes.
+func (fs *MutableFS) fillSparseMargins(fh *passFh, off, end uint64) (uint64, error) {
+	var stat syscall.Stat_t
+	if err := syscall.Fstat(fh.fd, &stat); err != nil {
+		return 0, err
+	}
+	blockSize := uint64(stat.Blksize)
+	if blockSize == 0 {
+		return 0, syscall.EIO
+	}
+	if fh.pxarNode == nil || fh.lowerSize == 0 {
+		return blockSize, nil
+	}
+
+	margins := [2][2]uint64{
+		{alignDown(off, blockSize), off},
+		{end, alignUp(end, blockSize)},
+	}
+
+	var holes [2]bool
+	for i, m := range margins {
+		if m[0] >= min(m[1], fh.lowerSize) {
+			continue
+		}
+		hole, err := blockIsHole(fh.fd, alignDown(m[0], blockSize), blockSize)
+		if err != nil {
+			return 0, err
+		}
+		holes[i] = hole
+	}
+
+	for i, m := range margins {
+		if !holes[i] {
+			continue
+		}
+		start, stop := m[0], min(m[1], fh.lowerSize)
+		if start >= stop {
+			continue
+		}
+		buf := make([]byte, stop-start)
+		n, err := fs.pxar.readFileAt(fh.pxarNode, int64(start), buf)
+		if err != nil && err != io.EOF {
+			return 0, err
+		}
+		if n == 0 {
+			continue
+		}
+		if _, err := syscall.Pwrite(fh.fd, buf[:n], int64(start)); err != nil {
+			return 0, err
+		}
+	}
+	return blockSize, nil
+}
+
 // rebuildDataExtents recovers extents from the file's allocation map after a
 // crash; without it, written regions read back as original backup content.
 func rebuildDataExtents(absPath string, size uint64) ([]dataExtent, error) {
@@ -246,11 +324,11 @@ func (fs *MutableFS) readLowerRange(graphNode *GraphNode, lowerNode *node, dest 
 		return fmt.Errorf("sparse lower file is unavailable")
 	}
 	n, err := fs.pxar.readFileAt(lowerNode, int64(offset), dest[:length])
-	if err != nil && err != io.EOF {
-		return err
-	}
 	if uint64(n) != length {
 		return io.ErrUnexpectedEOF
+	}
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return err
 	}
 	return nil
 }

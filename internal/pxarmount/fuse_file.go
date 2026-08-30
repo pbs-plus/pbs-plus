@@ -180,19 +180,35 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 		}()
 	}
 
+	end := input.Offset + uint64(len(data))
+	if end < input.Offset {
+		return 0, fuse.Status(syscall.EFBIG)
+	}
 	inoMu := fs.getInoLock(input.NodeId)
-	inoMu.RLock()
-	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
-	inoMu.RUnlock()
+	var blockSize uint64
+	write := func(target *passFh) (int, error) {
+		if target.sparse {
+			inoMu.Lock()
+			defer inoMu.Unlock()
+			var err error
+			blockSize, err = fs.fillSparseMargins(target, input.Offset, end)
+			if err != nil {
+				return 0, err
+			}
+			return syscall.Pwrite(target.fd, data, int64(input.Offset))
+		}
+		inoMu.RLock()
+		defer inoMu.RUnlock()
+		return syscall.Pwrite(target.fd, data, int64(input.Offset))
+	}
 
+	n, err := write(fh)
 	if err == syscall.EBADF && !fromAnon {
 		anon, status := fs.openAnonFh(input.NodeId)
 		if status != fuse.OK {
 			return 0, status
 		}
-		inoMu.RLock()
-		n, err = syscall.Pwrite(anon.fd, data, int64(input.Offset))
-		inoMu.RUnlock()
+		n, err = write(anon)
 		if cerr := syscall.Close(anon.fd); cerr != nil {
 			fs.logNonFatal("close-fd", anon.path, cerr)
 		}
@@ -218,7 +234,8 @@ func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []b
 			next.writeErr = old.writeErr
 		}
 		if fh.sparse && n > 0 {
-			next.dataExtents = insertDataExtent(next.dataExtents, uint64(input.Offset), newSize)
+			next.dataExtents = insertDataExtent(next.dataExtents,
+				alignDown(uint64(input.Offset), blockSize), alignUp(newSize, blockSize))
 		}
 		if err != nil && next.writeErr == nil {
 			next.writeErr = err
