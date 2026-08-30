@@ -247,6 +247,18 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 		t.Errorf("database backup = %#v", gotBackup)
 	}
 
+	backup.DatabaseScope = "server"
+	if err := db.UpdateBackup(nil, backup); err != nil {
+		t.Fatal(err)
+	}
+	gotBackup, err = db.GetBackup(backup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBackup.DatabaseScope != "server" || gotBackup.DatabaseName != "" {
+		t.Errorf("server scope kept a database name: %#v", gotBackup)
+	}
+
 	restore := Restore{
 		ID:                   "mariadb-restore",
 		Store:                "datastore",

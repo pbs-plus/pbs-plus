@@ -719,8 +719,8 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 	if backup.DatabaseScope == "database" && backup.DatabaseName == "" {
 		return errors.New("database name is required for database backup scope")
 	}
-	if backup.DatabaseScope == "server" && backup.DatabaseName != "" {
-		return errors.New("database name must be empty for server backup scope")
+	if backup.DatabaseScope == "server" {
+		backup.DatabaseName = ""
 	}
 	if backup.DatabaseClientDir != "" && !filepath.IsAbs(backup.DatabaseClientDir) {
 		return errors.New("database client directory must be absolute")
