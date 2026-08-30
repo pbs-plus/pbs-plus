@@ -17,6 +17,7 @@ func targetWindowHandler(class string) js.Raw {
 		}
 		Ext.create(%q, {
 			contentid: selection[0].data.name,
+			targetKind: view.targetKind,
 			autoLoad: true,
 			listeners: { destroy: () => me.reload() },
 		}).show();
@@ -49,7 +50,7 @@ func recordExpr(expr string) js.Raw {
 
 var targetPanelController = js.ControllerClass{
 	Name: "PBS.D2DManagement.TargetPanelController", Alias: "pbsDiskTargetPanel",
-	Controller: js.Controller{Methods: map[string]js.Raw{
+	Methods: map[string]js.Raw{ // pi:keep
 		"onAdd": js.Func("", `
 			let me = this;
 			Ext.create("PBS.D2DManagement.TargetEditWindow", {
@@ -130,8 +131,9 @@ var targetPanelController = js.ControllerClass{
 				});
 			});
 		`),
-		"onEdit":      targetWindowHandler("PBS.D2DManagement.TargetEditWindow"),
-		"setS3Secret": targetWindowHandler("PBS.D2DManagement.TargetS3Secret"),
+		"onEdit":              targetWindowHandler("PBS.D2DManagement.TargetEditWindow"),
+		"setS3Secret":         targetWindowHandler("PBS.D2DManagement.TargetS3Secret"),
+		"setDatabasePassword": targetWindowHandler("PBS.D2DManagement.TargetDatabasePassword"),
 		"pushUpdate": js.Func("", `
 			let me = this;
 			let view = me.getView();
@@ -231,12 +233,16 @@ var targetPanelController = js.ControllerClass{
 					(d.ip && d.ip.toLowerCase().includes(searchValue)) ||
 					(d.volume_name && d.volume_name.toLowerCase().includes(searchValue)) ||
 					(d.volume_type && d.volume_type.toLowerCase().includes(searchValue)) ||
+					(d.database_host && d.database_host.toLowerCase().includes(searchValue)) ||
+					(d.database_username && d.database_username.toLowerCase().includes(searchValue)) ||
 					(d.target_type && d.target_type.toLowerCase().includes(searchValue))
 				);
 			});
 			let localTargets = [];
 			let agentGroups = {};
 			let s3Targets = [];
+			let postgresqlTargets = [];
+			let mysqlTargets = [];
 			filtered.forEach(function (node) {
 				let targetData = node.data;
 				let treeNode = Ext.apply({}, targetData);
@@ -265,6 +271,12 @@ var targetPanelController = js.ControllerClass{
 				} else if (targetData.target_type === "s3") {
 					treeNode.iconCls = "fa fa-cloud";
 					s3Targets.push(treeNode);
+				} else if (targetData.kind === "postgresql") {
+					treeNode.iconCls = "fa fa-database";
+					postgresqlTargets.push(treeNode);
+				} else if (targetData.kind === "mysql") {
+					treeNode.iconCls = "fa fa-database";
+					mysqlTargets.push(treeNode);
 				} else {
 					treeNode.iconCls = "fa fa-folder";
 					localTargets.push(treeNode);
@@ -279,6 +291,12 @@ var targetPanelController = js.ControllerClass{
 			}
 			if (s3Targets.length > 0) {
 				rootChildren.push({ text: "S3 Targets", children: s3Targets, isGroup: true, groupType: "s3", iconCls: "fa fa-cloud", expanded: true });
+			}
+			if (postgresqlTargets.length > 0) {
+				rootChildren.push({ text: "PostgreSQL Targets", children: postgresqlTargets, isGroup: true, groupType: "postgresql", iconCls: "fa fa-database", expanded: true });
+			}
+			if (mysqlTargets.length > 0) {
+				rootChildren.push({ text: "MySQL / MariaDB Targets", children: mysqlTargets, isGroup: true, groupType: "mysql", iconCls: "fa fa-database", expanded: true });
 			}
 			view.setRootNode({ text: "Root", expanded: true, children: rootChildren });
 		`),
@@ -368,6 +386,14 @@ var targetPanelController = js.ControllerClass{
 					agent_hostname: node.agent_hostname,
 					os: node.os,
 					ip: node.ip,
+					database_host: node.database_host,
+					database_port: node.database_port,
+					database_username: node.database_username,
+					database_tls_mode: node.database_tls_mode,
+					database_ca_certificate: node.database_ca_certificate,
+					database_default_client_dir: node.database_default_client_dir,
+					database_variant: node.database_variant,
+					database_default_client_family: node.database_default_client_family,
 				});
 			}
 			if (node.children && node.children.length > 0) {
@@ -409,6 +435,9 @@ var targetPanelController = js.ControllerClass{
 			if (record.data.isGroup) {
 				return "";
 			}
+			if (["postgresql", "mysql"].includes(record.data.kind)) {
+				return '<i class="fa fa-cog"></i> Configured';
+			}
 			if (value === true) {
 				return '<i class="fa fa-check good"></i> Reachable';
 			} else {
@@ -439,12 +468,24 @@ var targetPanelController = js.ControllerClass{
 			let view = this.getView();
 			this.searchValue = "";
 			view.down("#setS3SecretButton").setHidden(view.targetKind !== "s3");
+			view.down("#setDatabasePasswordButton").setHidden(!["postgresql", "mysql"].includes(view.targetKind));
 			view.down("#pushUpdateButton").setHidden(view.targetKind !== "filesystem");
 			if (view.targetKind === "s3") {
 				let filesystemColumns = ["volume_type", "volume_name", "volume_fs", "volume_used", "volume_total", "agent_version"];
 				view.getColumns().forEach(function (column) {
 					if (column.dataIndex === "path") {
 						column.setText("S3 URL");
+					}
+					if (filesystemColumns.includes(column.dataIndex)) {
+						column.setHidden(true);
+					}
+				});
+			}
+			if (["postgresql", "mysql"].includes(view.targetKind)) {
+				let filesystemColumns = ["volume_type", "volume_name", "volume_fs", "volume_used", "volume_total", "agent_version"];
+				view.getColumns().forEach(function (column) {
+					if (column.dataIndex === "path") {
+						column.setText("Host");
 					}
 					if (filesystemColumns.includes(column.dataIndex)) {
 						column.setHidden(true);
@@ -459,7 +500,7 @@ var targetPanelController = js.ControllerClass{
 			}
 			this.loadData();
 		`),
-	}},
+	},
 }
 
 var targetPanel = js.Panel{
@@ -477,6 +518,7 @@ var targetPanel = js.Panel{
 		{Text: "Create Job", Handler: "addJob", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")}, js.Sep(),
 		{Text: "Edit", Handler: "onEdit", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")},
 		{Text: "Set S3 Secret Key", ItemID: "setS3SecretButton", Handler: "setS3Secret", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && rec.data.target_type === "s3"`)},
+		{Text: "Set Password", ItemID: "setDatabasePasswordButton", Handler: "setDatabasePassword", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && ["postgresql", "mysql"].includes(rec.data.kind)`)},
 		{Text: "Update Agent", ItemID: "pushUpdateButton", Handler: "pushUpdate", Disabled: true, EnableFn: js.Func("rec", `
 			if (!rec) {
 				return false;
@@ -512,6 +554,9 @@ var targetPanel = js.Panel{
 			}
 			if (record.data.target_type === "agent") {
 				return record.data.volume_name || record.data.volume_id || "-";
+			}
+			if (["postgresql", "mysql"].includes(record.data.kind)) {
+				return Ext.String.htmlEncode(record.data.database_host + ":" + record.data.database_port);
 			}
 			return value || "-";
 		`)},

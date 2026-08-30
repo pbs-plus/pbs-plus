@@ -25,6 +25,7 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.form.D2DNamespaceSelector"`),
 		[]byte(`Ext.define("PBS.form.D2DSnapshotSelector"`),
 		[]byte(`Ext.define("PBS.form.D2DTargetSelector"`),
+		[]byte(`Ext.define("PBS.form.D2DDatabaseClientSelector"`),
 		[]byte(`Ext.define("PBS.form.D2DTokenSelector"`),
 		[]byte(`Ext.define("PBS.form.D2DCalendarEvent"`),
 		[]byte(`Ext.define("PBS.form.D2DTargetPathSelector"`),
@@ -33,6 +34,7 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.D2DManagement.TokenEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.TargetEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.TargetS3Secret"`),
+		[]byte(`Ext.define("PBS.D2DManagement.TargetDatabasePassword"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ExclusionPanel"`),
 		[]byte(`Ext.define("PBS.MtfManagement.ChangerGrid"`),
 		[]byte(`Ext.define("PBS.MtfManagement.DriveGrid"`),
@@ -77,8 +79,8 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 
 func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	source := ui.Render()
-	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 2 {
-		t.Fatalf("rendered %d target panels, want 2", got)
+	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 4 {
+		t.Fatalf("rendered %d target panels, want 4", got)
 	}
 
 	for _, expected := range [][]byte{
@@ -87,6 +89,10 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`targetKind: "filesystem"`),
 		[]byte(`itemId: "s3-targets"`),
 		[]byte(`targetKind: "s3"`),
+		[]byte(`itemId: "postgresql-targets"`),
+		[]byte(`targetKind: "postgresql"`),
+		[]byte(`itemId: "mysql-targets"`),
+		[]byte(`targetKind: "mysql"`),
 		[]byte(`column.setText("S3 URL")`),
 	} {
 		if !bytes.Contains(source, expected) {
@@ -103,6 +109,12 @@ func TestTargetEditWindowRendersKindSpecificFields(t *testing.T) {
 		[]byte(`name: "access"`),
 		[]byte(`itemId: "filesystemTargetFields"`),
 		[]byte(`itemId: "s3TargetFields"`),
+		[]byte(`itemId: "postgresqlTargetFields"`),
+		[]byte(`itemId: "mysqlTargetFields"`),
+		[]byte(`name: "database_default_client_dir"`),
+		[]byte(`name: "database_password"`),
+		[]byte(`name: "database_scope"`),
+		[]byte(`name: "destination_database"`),
 		[]byte(`group.setDisabled(!active)`),
 	} {
 		if !bytes.Contains(source, expected) {

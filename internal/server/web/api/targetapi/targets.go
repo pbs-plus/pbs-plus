@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/digest"
@@ -232,18 +233,28 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		newTarget := coredb.Target{
-			Name:        r.FormValue("name"),
-			Type:        targetTypeFromRequest(r),
-			Access:      coredb.FilesystemAccess(r.FormValue("access")),
-			Path:        r.FormValue("path"),
-			MountScript: r.FormValue("mount_script"),
+		newTarget := coredb.Target{}
+		if err := applyTargetForm(&newTarget, r, true); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+
+		password := r.FormValue("database_password")
+		if newTarget.IsDatabase() && password == "" {
+			respond.WriteErrorResponse(w, errors.New("database password is required"))
+			return
 		}
 
 		err = app.Target.CreateTarget(nil, newTarget)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
+		}
+		if password != "" {
+			if err := app.Target.AddDatabasePassword(newTarget.Name, password); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
 		}
 
 		response.Status = http.StatusOK
@@ -271,35 +282,16 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 
-			path := r.FormValue("path")
-			if path != "" {
-				_, s3Err := coredb.ParseS3Url(path)
-				if !validate.IsValid(path) && s3Err != nil {
-					respond.WriteErrorResponse(w, fmt.Errorf("invalid path '%s'", path))
-					return
-				}
-			}
-
 			target, err := app.Target.GetTarget(validate.DecodePath(r.PathValue("target")))
 			if err != nil {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
 
-			if r.FormValue("name") != "" {
-				target.Name = r.FormValue("name")
+			if err := applyTargetForm(&target, r, false); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
 			}
-			if path != "" {
-				target.Path = path
-			}
-			if targetType := targetTypeFromRequest(r); targetType != "" {
-				target.Type = targetType
-			}
-			if access := r.FormValue("access"); access != "" {
-				target.Access = coredb.FilesystemAccess(access)
-			}
-
-			target.MountScript = r.FormValue("mount_script")
 
 			if delArr, ok := r.Form["delete"]; ok {
 				for _, attr := range delArr {
@@ -318,6 +310,12 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 			if err != nil {
 				respond.WriteErrorResponse(w, err)
 				return
+			}
+			if password := r.FormValue("database_password"); password != "" {
+				if err := app.Target.AddDatabasePassword(target.Name, password); err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
 			}
 
 			response.Status = http.StatusOK
@@ -437,6 +435,34 @@ func ExtJsTargetS3SecretHandler(app *application.Runtime) http.HandlerFunc {
 	}
 }
 
+func ExtJsTargetDatabasePasswordHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		password := r.FormValue("password")
+		if password == "" {
+			respond.WriteErrorResponse(w, errors.New("invalid empty password"))
+			return
+		}
+		targetName := validate.DecodePath(r.PathValue("target"))
+		if err := app.Target.AddDatabasePassword(targetName, password); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(TargetConfigResponse{Status: http.StatusOK, Success: true}); err != nil {
+			log.Error(err, "")
+		}
+	}
+}
+
 type TargetsResponse struct {
 	Data    []targetResponse `json:"data"`
 	Digest  string           `json:"digest"`
@@ -470,4 +496,43 @@ func targetTypeFromRequest(r *http.Request) coredb.TargetType {
 		return coredb.TargetType(kind)
 	}
 	return coredb.TargetType(r.FormValue("target_type"))
+}
+
+func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error {
+	setString := func(key string, dest *string) {
+		if create || r.Form.Has(key) {
+			*dest = r.FormValue(key)
+		}
+	}
+
+	setString("name", &target.Name)
+	if create || r.Form.Has("kind") || r.Form.Has("target_type") {
+		target.Type = targetTypeFromRequest(r)
+	}
+	if create || r.Form.Has("access") {
+		target.Access = coredb.FilesystemAccess(r.FormValue("access"))
+	}
+	setString("path", &target.Path)
+	setString("mount_script", &target.MountScript)
+	setString("database_host", &target.DatabaseHost)
+	setString("database_username", &target.DatabaseUsername)
+	setString("database_tls_mode", &target.DatabaseTLSMode)
+	setString("database_ca_certificate", &target.DatabaseCACertificate)
+	setString("database_default_client_dir", &target.DatabaseDefaultClientDir)
+	setString("database_variant", &target.DatabaseVariant)
+	setString("database_default_client_family", &target.DatabaseClientFamily)
+
+	if create || r.Form.Has("database_port") {
+		port := r.FormValue("database_port")
+		if port == "" {
+			target.DatabasePort = 0
+		} else {
+			parsed, err := strconv.Atoi(port)
+			if err != nil {
+				return fmt.Errorf("invalid database port %q", port)
+			}
+			target.DatabasePort = parsed
+		}
+	}
+	return nil
 }

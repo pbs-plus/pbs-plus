@@ -28,6 +28,8 @@ var coreViews = []js.Value{
 		Items: js.Items(
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("Filesystem"), "itemId": "filesystem-targets", "iconCls": "fa fa-folder", "targetKind": "filesystem", "stateId": "grid-filesystem-targets-v1"},
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("S3"), "itemId": "s3-targets", "iconCls": "fa fa-cloud", "targetKind": "s3", "stateId": "grid-s3-targets-v1"},
+			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("PostgreSQL"), "itemId": "postgresql-targets", "iconCls": "fa fa-database", "targetKind": "postgresql", "stateId": "grid-postgresql-targets-v1"},
+			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("MySQL / MariaDB"), "itemId": "mysql-targets", "iconCls": "fa fa-database", "targetKind": "mysql", "stateId": "grid-mysql-targets-v1"},
 		),
 	},
 	js.Panel{

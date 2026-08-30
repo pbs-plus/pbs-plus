@@ -73,12 +73,39 @@ var selectors = []js.Value{
 		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 600,
 		ListColumns: []js.Column{
 			{Text: "Name", DataIndex: "name", Sortable: new(true), Flex: 2, Renderer: js.Raw("Ext.String.htmlEncode")},
-			{Text: "Type", DataIndex: "target_type", Sortable: new(true), Flex: 1, Renderer: js.Func("value", `let icons = { local: '<i class="fa fa-desktop"></i> Local', agent: '<i class="fa fa-server"></i> Agent', s3: '<i class="fa fa-cloud"></i> S3' }; return icons[value] || Ext.String.htmlEncode(value || "");`)},
-			{Text: "Path / Volume", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Func("value, metaData, record", `if (record.get("target_type") === "agent") { let volumeName = record.get("volume_name"); let volumeId = record.get("volume_id"); return Ext.String.htmlEncode(volumeName || volumeId || "-"); } return value ? Ext.String.htmlEncode(value) : "-";`)},
+			{Text: "Type", DataIndex: "target_type", Sortable: new(true), Flex: 1, Renderer: js.Func("value", `let icons = { local: '<i class="fa fa-desktop"></i> Local', agent: '<i class="fa fa-server"></i> Agent', s3: '<i class="fa fa-cloud"></i> S3', postgresql: '<i class="fa fa-database"></i> PostgreSQL', mysql: '<i class="fa fa-database"></i> MySQL / MariaDB' }; return icons[value] || Ext.String.htmlEncode(value || "");`)},
+			{Text: "Location", DataIndex: "path", Sortable: new(true), Flex: 3, Renderer: js.Func("value, metaData, record", `if (record.get("target_type") === "agent") { return Ext.String.htmlEncode(record.get("volume_name") || record.get("volume_id") || "-"); } if (["postgresql", "mysql"].includes(record.get("kind"))) { return Ext.String.htmlEncode(record.get("database_host") + ":" + record.get("database_port")); } return value ? Ext.String.htmlEncode(value) : "-";`)},
 		},
 		Methods: map[string]js.Raw{"initComponent": js.ChangerExtraParams},
 		Value:   js.Raw("null"), Editable: new(true), ForceSelection: new(true), QueryMode: "local",
 		MinChars: 1, FilterPickList: new(true), TypeAhead: new(false),
+	},
+	js.Selector{
+		Name: "PBS.form.D2DDatabaseClientSelector", XType: "pbsD2DDatabaseClientSelector",
+		DisplayField: "directory", ValueField: "directory", APIPath: "/api2/json/d2d/database-clients", Sorters: "directory",
+		AllowBlank: new(false), AutoSelect: new(false), ListWidth: 720, ConfigNames: []string{"engine"},
+		ListColumns: []js.Column{
+			{Text: "Family", DataIndex: "family", Width: 90},
+			{Text: "Version", DataIndex: "version", Flex: 2},
+			{Text: "Directory", DataIndex: "directory", Flex: 1, Renderer: js.Raw("Ext.String.htmlEncode")},
+		},
+		Methods: map[string]js.Raw{
+			"initComponent": js.Func("", `
+				let me = this;
+				me.callParent();
+				me.getStore().on("load", me.applyEngineFilter, me);
+			`),
+			"applyEngineFilter": js.Func("", `
+				let me = this;
+				let store = me.getStore();
+				store.clearFilter();
+				if (me.getEngine()) {
+					store.filterBy((record) => record.get("engine") === me.getEngine());
+				}
+			`),
+			"updateEngine": js.Func("", `this.applyEngineFilter();`),
+		},
+		Editable: new(false), ForceSelection: new(true), QueryMode: "local", EmptyText: "Select an installed client version",
 	},
 	js.Selector{
 		Name: "PBS.form.D2DTokenSelector", XType: "pbsD2DTokenSelector",

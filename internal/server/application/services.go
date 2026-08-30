@@ -155,6 +155,9 @@ func (s *TargetService) UpsertTarget(tx *coredb.Transaction, t coredb.Target) er
 func (s *TargetService) AddS3Secret(name, secret string) error {
 	return s.db.AddS3Secret(nil, name, secret)
 }
+func (s *TargetService) AddDatabasePassword(name, password string) error {
+	return s.db.AddDatabasePassword(nil, name, password)
+}
 func (s *TargetService) NewTransaction() (*coredb.Transaction, error) {
 	return s.db.NewTransaction()
 }

@@ -72,10 +72,27 @@ var restoreJobEdit = js.EditWindow{
 				}
 			`),
 			"targetChange": js.Func("field, value", `
+				let record = field.getStore().findRecord("name", value, 0, false, true, true);
+				let kind = record ? (record.get("kind") || record.get("target_type")) : "filesystem";
+				let database = ["postgresql", "mysql"].includes(kind);
 				let pathSel = this.lookup("pathSelectorDestination");
 				if (pathSel) {
 					pathSel.setTarget(value);
 				}
+				let filesystemDestination = this.lookup("filesystemDestination");
+				filesystemDestination.setHidden(database);
+				filesystemDestination.setDisabled(database);
+				let databaseDestination = this.lookup("databaseDestination");
+				databaseDestination.setHidden(!database);
+				databaseDestination.setDisabled(!database);
+				let restoreMode = this.lookup("filesystemRestoreMode");
+				restoreMode.setHidden(database);
+				restoreMode.setDisabled(database);
+				let client = this.lookup("databaseClient");
+				client.setEngine(database ? kind : null);
+				let family = this.lookup("databaseClientFamily");
+				family.setDisabled(kind !== "mysql");
+				if (kind !== "mysql") family.setValue("");
 			`),
 		},
 	},
@@ -89,7 +106,7 @@ var restoreJobEdit = js.EditWindow{
 				Methods: map[string]js.Raw{"onGetValues": js.DropDeleteOnCreate},
 				Column1: js.Items(
 					js.Field{XType: js.XDisplayEditField, Name: "id", Label: "Job ID", Renderer: "Ext.htmlEncode", AllowBlank: new(true), EditableWhenCreate: true},
-					js.Field{XType: js.XCombo, Label: "Restore Mode", Name: "mode", QueryMode: "local", Store: js.Raw("restoreModes"),
+					js.Field{XType: js.XCombo, Label: "Restore Mode", Name: "mode", Reference: "filesystemRestoreMode", QueryMode: "local", Store: js.Raw("restoreModes"),
 						DisplayField: "display", ValueField: "value", Editable: new(false), AnyMatch: true, ForceSelection: true,
 						AllowBlank: new(true), CBind: js.Obj{"value": "{restoreModeValue}"}},
 					js.Field{XType: js.XDataStoreSelector, Label: "Local Datastore", Name: "store"},
@@ -99,7 +116,17 @@ var restoreJobEdit = js.EditWindow{
 				),
 				Column2: js.Items(
 					js.Field{XType: "pbsD2DTargetSelector", Label: "Target restore destination", Name: "dest-target", Reference: "dest-target"},
-					js.Field{XType: "pbsD2DTargetPathSelector", Label: "Path to destination", Reference: "pathSelectorDestination", Name: "dest-subpath", OnlyDirs: true, DeleteEmptyWhenNotCreate: true},
+					js.Field{XType: js.XFieldContainer, Reference: "filesystemDestination", Layout: "anchor", Items: js.Items(
+						js.Field{XType: "pbsD2DTargetPathSelector", Label: "Path to destination", Reference: "pathSelectorDestination", Name: "dest-subpath", OnlyDirs: true, DeleteEmptyWhenNotCreate: true},
+					)},
+					js.Field{XType: js.XFieldContainer, Reference: "databaseDestination", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
+						js.Field{XType: "proxmoxtextfield", Label: "Destination Database", Name: "destination_database", AllowBlank: new(true), EmptyText: "Use the database name from the dump"},
+						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Drop and recreate an existing database", InputValue: "true", UncheckedValue: "false"},
+						js.Field{XType: js.XKVComboBox, Label: "Client Family", Name: "database_client_family", Reference: "databaseClientFamily", AllowBlank: new(true), ComboItems: js.Arr{
+							js.Arr{"mysql", "MySQL"}, js.Arr{"mariadb", "MariaDB"},
+						}},
+						js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_client_dir", Reference: "databaseClient", AllowBlank: new(false)},
+					)},
 				),
 				ColumnB: js.Items(
 					js.Field{XType: "proxmoxtextfield", Label: "Comment", Name: "comment", DeleteEmptyWhenNotCreate: true},
