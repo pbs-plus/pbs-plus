@@ -106,11 +106,19 @@ func Serve(cfg MountConfig) {
 		}
 	}
 
-	server, err := fuse.NewServer(rawFS, cfg.MountPoint, &fuse.MountOptions{
+	mountOpts := &fuse.MountOptions{
 		Name:      "pxar-mount",
 		Options:   strings.Split(fuseOpts, ","),
 		EnableAcl: mfs != nil && mfs.acl.HasACLs(),
-	})
+	}
+	if mutationMode {
+		mountOpts.ExtraCapabilities = fuse.CAP_WRITEBACK_CACHE
+		mountOpts.MaxWrite = 1 << 20
+		mountOpts.MaxReadAhead = 1 << 20
+		mountOpts.MaxBackground = 64
+	}
+
+	server, err := fuse.NewServer(rawFS, cfg.MountPoint, mountOpts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  ✗ error creating FUSE server: %v\n", err)
 		os.Exit(1)

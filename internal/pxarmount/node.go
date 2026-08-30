@@ -86,8 +86,15 @@ var copyBufPool = sync.Pool{
 	},
 }
 
+// passFh caches layering state at Open so Write never walks journal or pxar.
 type passFh struct {
-	fd int
+	fd        int
+	path      string
+	ino       uint64
+	nodeID    int64
+	sparse    bool
+	lowerSize uint64
+	pxarNode  *node
 }
 
 type snapshotRef struct {

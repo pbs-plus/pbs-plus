@@ -81,45 +81,35 @@ func (j *Journal) tx(keys ...pebbleSet) error {
 }
 
 func (j *Journal) Sync() error {
-	done := make(chan struct{})
 	j.mu.Lock()
-	j.pushPendingOne(pebbleSet{})
-	j.mu.Unlock()
-
-	go func() {
-		for {
-			j.mu.Lock()
-			hasPending := len(j.pending) > 0
-			j.mu.Unlock()
-			if !hasPending {
-				close(done)
-				return
-			}
-			select {
-			case j.commitCh <- struct{}{}:
-			default:
-			}
-			time.Sleep(time.Millisecond)
+	if len(j.pending) == 0 {
+		err := j.commitErr
+		j.mu.Unlock()
+		if err != nil {
+			return err
 		}
-	}()
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		return j.persistNextNodeID()
+	}
+	wait := j.drained
+	j.mu.Unlock()
 
 	select {
 	case j.commitCh <- struct{}{}:
 	default:
 	}
 
-	<-done
-
-	j.mu.Lock()
-	err := j.commitErr
-	j.commitErr = nil
-	j.mu.Unlock()
-	if err != nil {
-		return err
+	select {
+	case <-wait:
+	case <-j.stopped:
 	}
 
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.commitErr != nil {
+		return j.commitErr
+	}
 	return j.persistNextNodeID()
 }
 
@@ -147,6 +137,11 @@ func (j *Journal) drainAllLocked() {
 		j.mu.Unlock()
 		return
 	}
+	defer func() {
+		close(j.drained)
+		j.drained = make(chan struct{})
+		j.mu.Unlock()
+	}()
 	pending := j.pending
 	j.pending = j.pending[:0]
 	j.overlay = make(map[string][]byte)
@@ -197,8 +192,5 @@ func (j *Journal) drainAllLocked() {
 	if err := pb.Close(); err != nil {
 		log.Error(err, "")
 	}
-	if err != nil {
-		j.commitErr = err
-	}
-	j.mu.Unlock()
+	j.commitErr = err
 }

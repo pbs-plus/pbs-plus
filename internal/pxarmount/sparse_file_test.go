@@ -57,7 +57,7 @@ func TestSparseCopyUpDefersSourceReadAndFeedsCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fh := mfs.registerFh(path, fd)
+	fh := mfs.registerFh(mfs.newFh(fd, path, resolved.Inode, resolved))
 	written, status := mfs.Write(nil, &fuse.WriteIn{
 		NodeId: resolved.Inode,
 		Fh:     fh,

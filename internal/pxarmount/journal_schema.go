@@ -26,7 +26,7 @@ func OpenJournal(dir string) (*Journal, error) {
 		return nil, fmt.Errorf("open journal db: %w", err)
 	}
 
-	j := &Journal{db: db, overlay: make(map[string][]byte), commitCh: make(chan struct{}, 4), stopCh: make(chan struct{}), stopped: make(chan struct{})}
+	j := &Journal{db: db, overlay: make(map[string][]byte), commitCh: make(chan struct{}, 4), stopCh: make(chan struct{}), stopped: make(chan struct{}), drained: make(chan struct{})}
 
 	if err := j.initSchema(); err != nil {
 		if err := db.Close(); err != nil {

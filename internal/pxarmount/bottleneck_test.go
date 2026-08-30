@@ -296,7 +296,7 @@ func BenchmarkMutableFS_WritePath(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				mfs.registerFh(childPath, fd2)
+				mfs.registerFh(&passFh{fd: fd2, path: childPath, nodeID: nodeID})
 			}
 
 			_ = mfs.journal.Sync()

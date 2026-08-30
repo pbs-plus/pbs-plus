@@ -1,17 +1,102 @@
 package pxarmount
 
 import (
+	"cmp"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/pbs-plus/pbs-plus/internal/log"
+	"golang.org/x/sys/unix"
 )
 
 func addDataExtent(extents []dataExtent, start, end uint64) []dataExtent {
 	return mergeDataExtents(extents, []dataExtent{{Start: start, End: end}})
+}
+
+// insertDataExtent coalesces on insert; sequential writes hit the O(1) tail case.
+func insertDataExtent(extents []dataExtent, start, end uint64) []dataExtent {
+	if start >= end {
+		return extents
+	}
+	if n := len(extents); n > 0 {
+		if last := &extents[n-1]; start >= last.Start && start <= last.End {
+			if end > last.End {
+				last.End = end
+			}
+			return extents
+		}
+	}
+	i, _ := slices.BinarySearchFunc(extents, start, func(e dataExtent, target uint64) int {
+		return cmp.Compare(e.Start, target)
+	})
+	if i > 0 && extents[i-1].End >= start {
+		i--
+		if end < extents[i].End {
+			end = extents[i].End
+		}
+		start = extents[i].Start
+	} else {
+		extents = slices.Insert(extents, i, dataExtent{})
+	}
+	j := i + 1
+	for j < len(extents) && extents[j].Start <= end {
+		if extents[j].End > end {
+			end = extents[j].End
+		}
+		j++
+	}
+	extents[i] = dataExtent{Start: start, End: end}
+	if j > i+1 {
+		extents = slices.Delete(extents, i+1, j)
+	}
+	return extents
+}
+
+// rebuildDataExtents recovers extents from the file's allocation map after a
+// crash; without it, written regions read back as original backup content.
+func rebuildDataExtents(absPath string, size uint64) ([]dataExtent, error) {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	fd := int(f.Fd())
+	var extents []dataExtent
+	var off int64
+	for uint64(off) < size {
+		dataStart, err := unix.Seek(fd, off, unix.SEEK_DATA)
+		if err != nil {
+			if err == unix.ENXIO {
+				break
+			}
+			return nil, err
+		}
+		holeStart, err := unix.Seek(fd, dataStart, unix.SEEK_HOLE)
+		if err != nil {
+			return nil, err
+		}
+		if uint64(holeStart) > size {
+			holeStart = int64(size)
+		}
+		if dataStart < holeStart {
+			extents = append(extents, dataExtent{Start: uint64(dataStart), End: uint64(holeStart)})
+		}
+		if holeStart <= off {
+			break
+		}
+		off = holeStart
+	}
+	return extents, nil
 }
 
 func mergeDataExtents(existing, pending []dataExtent) []dataExtent {
@@ -66,7 +151,7 @@ func (fs *MutableFS) flushDirtyMeta(inode uint64) error {
 	}
 	path := fs.inodeToPath(inode)
 	if path == "" {
-		return nil
+		return meta.writeErr
 	}
 	resolved, status := fs.resolve(path)
 	if status != fuse.OK || resolved.Node == nil {
@@ -80,7 +165,10 @@ func (fs *MutableFS) flushDirtyMeta(inode uint64) error {
 	if resolved.Node.SparseData && meta.dataExtents != nil {
 		resolved.Node.DataExtents = mergeDataExtents(resolved.Node.DataExtents, meta.dataExtents)
 	}
-	return fs.journal.UpdateNode(resolved.Node)
+	if err := fs.journal.UpdateNode(resolved.Node); err != nil {
+		return err
+	}
+	return meta.writeErr
 }
 
 func (fs *MutableFS) flushAllDirtyMeta() error {

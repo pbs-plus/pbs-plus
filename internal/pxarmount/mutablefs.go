@@ -21,6 +21,7 @@ type pendingMeta struct {
 	mtimeNs     int64
 	ctimeNs     int64
 	dataExtents []dataExtent
+	writeErr    error
 }
 
 //   - PxarFS provides the immutable lower layer
@@ -56,7 +57,7 @@ type MutableFS struct {
 	nextFh  atomic.Uint64
 
 	// Per-inode writer locks.
-	inoLocks *xsync.Map[uint64, *sync.Mutex]
+	inoLocks *xsync.Map[uint64, *sync.RWMutex]
 
 	mmapData [][]byte
 
@@ -94,7 +95,7 @@ func NewMutableFS(pxar *PxarFS, journal *Journal, mutableDir string) *MutableFS 
 		journal:     journal,
 		mutableDir:  mutableDir,
 		handles:     xsync.NewMap[uint64, *passFh](),
-		inoLocks:    xsync.NewMap[uint64, *sync.Mutex](),
+		inoLocks:    xsync.NewMap[uint64, *sync.RWMutex](),
 		inoLookup:   xsync.NewMap[string, uint64](),
 		pathLookup:  xsync.NewMap[uint64, string](),
 		ensureLocks: xsync.NewMap[string, *sync.Mutex](),
@@ -195,15 +196,23 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 
 		fusePath := "/" + filepath.ToSlash(relPath)
 
-		nodeID, _, _, _, rerr := fs.journal.ResolvePath(fusePath)
+		nodeID, pxarPath, _, _, rerr := fs.journal.ResolvePath(fusePath)
 		if rerr != nil {
 			return nil
 		}
 
 		if nodeID == 0 {
-			if err := os.Remove(absPath); err != nil {
-				fs.logNonFatal("reconcile-remove", fusePath, err)
+			if pxarPath == "" {
+				if err := os.Remove(absPath); err != nil {
+					fs.logNonFatal("reconcile-remove", fusePath, err)
+				}
+				return nil
 			}
+			if aerr := fs.adoptOrphan(fusePath, info); aerr != nil {
+				fs.logNonFatal("reconcile-adopt", fusePath, aerr)
+				return nil
+			}
+			updated = true
 			return nil
 		}
 
@@ -220,15 +229,26 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 		}
 
 		stat := info.Sys().(*syscall.Stat_t)
-		if uint64(stat.Size) != node.Size || stat.Mtim.Nano() != node.MtimeNs {
-			node.Size = uint64(info.Size())
-			node.MtimeNs = info.ModTime().UnixNano()
-			node.CtimeNs = info.ModTime().UnixNano()
-			if err := fs.journal.UpdateNode(node); err != nil {
-				log.Error(err, "")
-			}
-			updated = true
+		stale := uint64(stat.Size) != node.Size || stat.Mtim.Nano() != node.MtimeNs
+		if !stale {
+			return nil
 		}
+		node.Size = uint64(info.Size())
+		node.MtimeNs = info.ModTime().UnixNano()
+		node.CtimeNs = info.ModTime().UnixNano()
+		if node.SparseData {
+			extents, eerr := rebuildDataExtents(absPath, node.Size)
+			if eerr != nil {
+				fs.logNonFatal("reconcile-extents", fusePath, eerr)
+			} else {
+				node.DataExtents = mergeDataExtents(node.DataExtents, extents)
+			}
+			node.LowerSize = min(node.LowerSize, node.Size)
+		}
+		if err := fs.journal.UpdateNode(node); err != nil {
+			log.Error(err, "")
+		}
+		updated = true
 
 		return nil
 	})
@@ -239,6 +259,38 @@ func (fs *MutableFS) ReconcileMutableDir() error {
 		return fs.journal.Sync()
 	}
 	return nil
+}
+
+// adoptOrphan re-registers a backing file whose journal node was lost to an
+// unclean shutdown. Its whole extent range is backing data by construction.
+func (fs *MutableFS) adoptOrphan(fusePath string, info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("adopt %q: no stat", fusePath)
+	}
+	mtime := info.ModTime().UnixNano()
+	node := &GraphNode{
+		Kind:    NodeFile,
+		Mode:    uint32(syscall.S_IFREG) | (stat.Mode & 0o7777),
+		UID:     stat.Uid,
+		GID:     stat.Gid,
+		Size:    uint64(info.Size()),
+		MtimeNs: mtime,
+		CtimeNs: mtime,
+		HasData: true,
+	}
+	if fs.hasPxarEntry(fusePath) {
+		node.RedirectTo = fusePath
+		node.SparseData = true
+		node.LowerSize = node.Size
+		extents, err := rebuildDataExtents(fs.mutablePath(fusePath), node.Size)
+		if err != nil {
+			return err
+		}
+		node.DataExtents = extents
+	}
+	_, err := fs.journal.EnsureNodePath(fusePath, node, false)
+	return err
 }
 
 func (fs *MutableFS) Init(server *fuse.Server) {

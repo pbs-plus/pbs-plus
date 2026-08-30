@@ -57,9 +57,9 @@ func (fs *MutableFS) inodeToPath(ino uint64) string {
 	return path
 }
 
-func (fs *MutableFS) registerFh(_ string, fd int) uint64 {
+func (fs *MutableFS) registerFh(fh *passFh) uint64 {
 	id := fs.nextFh.Add(1)
-	fs.handles.Store(id, &passFh{fd: fd})
+	fs.handles.Store(id, fh)
 	return id
 }
 
@@ -68,8 +68,9 @@ func (fs *MutableFS) getFh(id uint64) *passFh {
 	return val
 }
 
-func (fs *MutableFS) getInoLock(ino uint64) *sync.Mutex {
-	val, _ := fs.inoLocks.LoadOrStore(ino, &sync.Mutex{})
+// Never evicted: deleting a held lock would let the next caller mint a fresh one.
+func (fs *MutableFS) getInoLock(ino uint64) *sync.RWMutex {
+	val, _ := fs.inoLocks.LoadOrStore(ino, &sync.RWMutex{})
 	return val
 }
 

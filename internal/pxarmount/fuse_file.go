@@ -47,7 +47,7 @@ func (fs *MutableFS) Open(cancel <-chan struct{}, input *fuse.OpenIn, out *fuse.
 			fs.debugf("Open: syscall.Open(%q) failed: %v", abs, err)
 			return fuse.ToStatus(err)
 		}
-		fhID := fs.registerFh(path, fd)
+		fhID := fs.registerFh(fs.newFh(fd, path, input.NodeId, re))
 		out.Fh = fhID
 		out.OpenFlags = fuse.FOPEN_KEEP_CACHE
 		fs.debugf("Open: mutable fh=%d", fhID)
@@ -114,68 +114,90 @@ func (fs *MutableFS) Read(cancel <-chan struct{}, input *fuse.ReadIn, buf []byte
 	return result, status
 }
 
+// newFh snapshots layering state; copy-up always precedes handle creation.
+func (fs *MutableFS) newFh(fd int, path string, ino uint64, re *ResolvedEntry) *passFh {
+	fh := &passFh{fd: fd, path: path, ino: ino}
+	if re.Node != nil {
+		fh.nodeID = re.Node.ID
+		fh.sparse = re.Node.SparseData
+		fh.lowerSize = re.Node.LowerSize
+	}
+	if fh.sparse {
+		fh.pxarNode = re.PxarNode
+	}
+	return fh
+}
+
+// openAnonFh serves writeback after Release; registering it would leak.
+func (fs *MutableFS) openAnonFh(ino uint64) (*passFh, fuse.Status) {
+	path := fs.inodeToPath(ino)
+	if path == "" {
+		return nil, fuse.ENOENT
+	}
+	re, status := fs.resolve(path)
+	if status != fuse.OK {
+		return nil, status
+	}
+	if !re.DataIsMut {
+		if err := fs.copyUp(re); err != nil {
+			return nil, fuse.ToStatus(err)
+		}
+	}
+	fd, err := syscall.Open(fs.mutablePath(path), os.O_WRONLY, 0)
+	if err != nil {
+		return nil, fuse.ToStatus(err)
+	}
+	return fs.newFh(fd, path, ino, re), fuse.OK
+}
+
 func (fs *MutableFS) Write(cancel <-chan struct{}, input *fuse.WriteIn, data []byte) (uint32, fuse.Status) {
 	fs.beginMutation()
 	defer fs.endMutation()
 
-	path := fs.inodeToPath(input.NodeId)
-	if path == "" {
-		return 0, fuse.ENOENT
-	}
-
-	re, status := fs.resolve(path)
-	if status != fuse.OK {
-		return 0, status
-	}
-	if !re.DataIsMut {
-		if err := fs.copyUp(re); err != nil {
-			return 0, fuse.ToStatus(err)
-		}
-	}
-	inoMu := fs.getInoLock(input.NodeId)
-	inoMu.Lock()
-	defer inoMu.Unlock()
-	re, status = fs.resolve(path)
-	if status != fuse.OK {
-		return 0, status
-	}
-
 	fh := fs.getFh(input.Fh)
-	// already released), open an anonymous fd and close it after the
-	// write. Registering it would leak since the kernel won't send
-	closeAfterWrite := false
 	if fh == nil {
-		abs := fs.mutablePath(path)
-		fd, err := syscall.Open(abs, os.O_WRONLY, 0)
-		if err != nil {
-			return 0, fuse.ToStatus(err)
+		anon, status := fs.openAnonFh(input.NodeId)
+		if status != fuse.OK {
+			return 0, status
 		}
-		fh = &passFh{fd: fd}
-		closeAfterWrite = true
+		fh = anon
+		defer func() {
+			if err := syscall.Close(anon.fd); err != nil {
+				fs.logNonFatal("close-fd", anon.path, err)
+			}
+		}()
 	}
 
+	inoMu := fs.getInoLock(input.NodeId)
+	inoMu.RLock()
 	n, err := syscall.Pwrite(fh.fd, data, int64(input.Offset))
-	if closeAfterWrite {
-		if err := syscall.Close(fh.fd); err != nil {
-			log.Error(err, "")
-		}
+	inoMu.RUnlock()
+
+	if n < 0 {
+		n = 0
 	}
-	if err != nil && n == 0 {
+	if n == 0 && err != nil {
 		return 0, fuse.ToStatus(err)
 	}
 
 	newSize := uint64(input.Offset) + uint64(n)
 	now := time.Now().UnixNano()
 	fs.dirtyMeta.Compute(input.NodeId, func(old pendingMeta, exists bool) (pendingMeta, xsync.ComputeOp) {
-		s := newSize
-		if exists && old.size > s {
-			s = old.size
+		next := pendingMeta{size: newSize, mtimeNs: now, ctimeNs: now}
+		if exists {
+			if old.size > next.size {
+				next.size = old.size
+			}
+			next.dataExtents = old.dataExtents
+			next.writeErr = old.writeErr
 		}
-		extents := old.dataExtents
-		if re.Node.SparseData {
-			extents = append(extents, dataExtent{Start: uint64(input.Offset), End: newSize})
+		if fh.sparse && n > 0 {
+			next.dataExtents = insertDataExtent(next.dataExtents, uint64(input.Offset), newSize)
 		}
-		return pendingMeta{size: s, mtimeNs: now, ctimeNs: now, dataExtents: extents}, xsync.UpdateOp
+		if err != nil && next.writeErr == nil {
+			next.writeErr = err
+		}
+		return next, xsync.UpdateOp
 	})
 
 	return uint32(n), fuse.OK
@@ -355,7 +377,7 @@ func (fs *MutableFS) Create(cancel <-chan struct{}, input *fuse.CreateIn, name s
 
 	fs.applyACLOwnership(abs)
 
-	fhID := fs.registerFh(childPath, fd)
+	fhID := fs.registerFh(&passFh{fd: fd, path: childPath, ino: ino, nodeID: nodeID})
 
 	out.NodeId = ino
 	out.Generation = 1
@@ -378,7 +400,7 @@ func (fs *MutableFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Sta
 		}
 	}
 	if err := fs.flushDirtyMeta(input.NodeId); err != nil {
-		log.Error(err, "")
+		return fuse.ToStatus(err)
 	}
 	return fuse.OK
 }
@@ -393,10 +415,11 @@ func (fs *MutableFS) Fsync(cancel <-chan struct{}, input *fuse.FsyncIn) fuse.Sta
 		}
 	}
 	if err := fs.flushDirtyMeta(input.NodeId); err != nil {
-		log.Error(err, "")
+		return fuse.ToStatus(err)
 	}
 	if err := fs.journal.Sync(); err != nil {
-		log.Error(err, "")
+		log.Error(err, "journal sync")
+		return fuse.EIO
 	}
 	return fuse.OK
 }
@@ -416,16 +439,17 @@ func (fs *MutableFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {
 	fs.beginMutation()
 	defer fs.endMutation()
 
+	if err := fs.flushDirtyMeta(input.NodeId); err != nil {
+		log.Error(err, "release: flush dirty meta")
+	}
 	if input.Fh == 0 {
-		return // pxar passthrough, no fd to close
+		return
 	}
 	if fh, ok := fs.handles.LoadAndDelete(input.Fh); ok {
 		if err := syscall.Close(fh.fd); err != nil {
-			fs.logNonFatal("close-fd", "fd", err)
+			fs.logNonFatal("close-fd", fh.path, err)
 		}
 	}
-	// Clean up per-inode lock  -  operations that need it will
-	fs.inoLocks.Delete(input.NodeId)
 }
 
 // Forget is called by the FUSE kernel when it evicts an inode from its
@@ -445,15 +469,92 @@ func (fs *MutableFS) Forget(nodeID, nlookup uint64) {
 	fs.beginMutation()
 	defer fs.endMutation()
 
-	fs.inoLocks.Delete(nodeID)
+	if err := fs.flushDirtyMeta(nodeID); err != nil {
+		log.Error(err, "forget: flush dirty meta")
+	}
 	if path, ok := fs.pathLookup.Load(nodeID); ok {
 		fs.ensureLocks.Delete(path)
 	}
-	fs.dirtyMeta.Delete(nodeID)
 }
 
 func (fs *MutableFS) CopyFileRange(cancel <-chan struct{}, input *fuse.CopyFileRangeIn) (uint32, fuse.Status) {
-	return 0, fuse.ENOSYS
+	fs.beginMutation()
+	defer fs.endMutation()
+
+	src := fs.getFh(input.FhIn)
+	dst := fs.getFh(input.FhOut)
+	if src == nil || dst == nil {
+		return 0, fuse.EBADF
+	}
+	if src.sparse {
+		return 0, fuse.ENOSYS
+	}
+
+	offIn := int64(input.OffIn)
+	offOut := int64(input.OffOut)
+	inoMu := fs.getInoLock(input.NodeIdOut)
+	inoMu.RLock()
+	n, err := unix.CopyFileRange(src.fd, &offIn, dst.fd, &offOut, int(input.Len), 0)
+	inoMu.RUnlock()
+	if err != nil {
+		return 0, fuse.ToStatus(err)
+	}
+
+	newSize := input.OffOut + uint64(n)
+	now := time.Now().UnixNano()
+	fs.dirtyMeta.Compute(input.NodeIdOut, func(old pendingMeta, exists bool) (pendingMeta, xsync.ComputeOp) {
+		next := pendingMeta{size: newSize, mtimeNs: now, ctimeNs: now}
+		if exists {
+			if old.size > next.size {
+				next.size = old.size
+			}
+			next.dataExtents = old.dataExtents
+			next.writeErr = old.writeErr
+		}
+		if dst.sparse && n > 0 {
+			next.dataExtents = insertDataExtent(next.dataExtents, input.OffOut, newSize)
+		}
+		return next, xsync.UpdateOp
+	})
+	return uint32(n), fuse.OK
+}
+
+func (fs *MutableFS) Fallocate(cancel <-chan struct{}, input *fuse.FallocateIn) fuse.Status {
+	fs.beginMutation()
+	defer fs.endMutation()
+
+	fh := fs.getFh(input.Fh)
+	if fh == nil {
+		return fuse.EBADF
+	}
+
+	inoMu := fs.getInoLock(input.NodeId)
+	inoMu.Lock()
+	defer inoMu.Unlock()
+	if err := unix.Fallocate(fh.fd, input.Mode, int64(input.Offset), int64(input.Length)); err != nil {
+		return fuse.ToStatus(err)
+	}
+
+	end := input.Offset + input.Length
+	now := time.Now().UnixNano()
+	punched := input.Mode&unix.FALLOC_FL_PUNCH_HOLE != 0
+	grows := input.Mode&unix.FALLOC_FL_KEEP_SIZE == 0
+	fs.dirtyMeta.Compute(input.NodeId, func(old pendingMeta, exists bool) (pendingMeta, xsync.ComputeOp) {
+		next := pendingMeta{mtimeNs: now, ctimeNs: now}
+		if exists {
+			next.size = old.size
+			next.dataExtents = old.dataExtents
+			next.writeErr = old.writeErr
+		}
+		if grows && end > next.size {
+			next.size = end
+		}
+		if fh.sparse && punched {
+			next.dataExtents = insertDataExtent(next.dataExtents, input.Offset, end)
+		}
+		return next, xsync.UpdateOp
+	})
+	return fuse.OK
 }
 
 func (fs *MutableFS) Ioctl(cancel <-chan struct{}, input *fuse.IoctlIn, inbuf []byte, output *fuse.IoctlOut, outbuf []byte) fuse.Status {
@@ -506,7 +607,39 @@ func (fs *MutableFS) Statx(cancel <-chan struct{}, input *fuse.StatxIn, out *fus
 }
 
 func (fs *MutableFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) fuse.Status {
-	return fuse.OK
+	path := fs.inodeToPath(input.NodeId)
+	if path == "" {
+		return fuse.ENOENT
+	}
+	re, status := fs.resolve(path)
+	if status != fuse.OK {
+		return status
+	}
+	if permitAccess(re, input.Uid, input.Gid, input.Mask) {
+		return fuse.OK
+	}
+	return fuse.EACCES
+}
+
+// permitAccess implements the POSIX rwx check. Supplementary groups are not
+// visible over FUSE, so mounts that need them must use default_permissions.
+func permitAccess(re *ResolvedEntry, uid, gid, mask uint32) bool {
+	if mask == 0 {
+		return true
+	}
+	if uid == 0 {
+		return mask&1 == 0 || re.IsDir || re.Mode&0o111 != 0
+	}
+	var perm uint32
+	switch {
+	case uid == re.UID:
+		perm = (re.Mode >> 6) & 7
+	case gid == re.GID:
+		perm = (re.Mode >> 3) & 7
+	default:
+		perm = re.Mode & 7
+	}
+	return mask&perm == mask
 }
 
 func munmap(data []byte) error {

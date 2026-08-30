@@ -80,4 +80,6 @@ type Journal struct {
 	commitCh chan struct{}
 	stopCh   chan struct{}
 	stopped  chan struct{}
+
+	drained chan struct{}
 }
