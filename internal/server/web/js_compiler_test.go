@@ -166,7 +166,7 @@ func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
 	source := ui.Render()
 	for _, expected := range [][]byte{
 		[]byte(`archiveFilter: null`),
-		[]byte(`applyArchiveFilter: function ()`),
+		[]byte(`syncArchiveFilter: function ()`),
 		[]byte(`updateArchiveFilter: function ()`),
 		[]byte(`name + ".pxar.didx"`),
 		[]byte(`name + ".mpxar.didx"`),
@@ -176,5 +176,8 @@ func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("snapshot selector is missing %q", expected)
 		}
+	}
+	if bytes.Contains(source, []byte(`applyArchiveFilter`)) {
+		t.Error("snapshot selector shadows the ExtJS archiveFilter config applier")
 	}
 }

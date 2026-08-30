@@ -50,12 +50,12 @@ var selectors = []js.Value{
 					model: "pbs-model-d2d-snapshots", autoLoad: !!me.getDatastore(),
 					sorters: [{ property: "backup-time", direction: "DESC" }],
 					proxy: { type: "proxmox", url: me.getDatastore() ? "/api2/json/admin/datastore/" + me.getDatastore() + "/snapshots" : null, extraParams: { "backup-type": "host", ns: me.getNamespace() || null } },
-					listeners: { load: function () { me.applyArchiveFilter(); let val = me.getValue(); if (val) me.setValue(val); } },
+					listeners: { load: function () { me.syncArchiveFilter(); let val = me.getValue(); if (val) me.setValue(val); } },
 				});
 				me.setDisabled(!me.getDatastore());
 				me.callParent();
 			`),
-			"applyArchiveFilter": js.Func("", `
+			"syncArchiveFilter": js.Func("", `
 				let me = this;
 				let store = me.store;
 				if (!store || typeof store.clearFilter !== "function") {
@@ -76,7 +76,7 @@ var selectors = []js.Value{
 					me.setValue(null);
 				}
 			`),
-			"updateArchiveFilter": js.Func("", `this.applyArchiveFilter();`),
+			"updateArchiveFilter": js.Func("", `this.syncArchiveFilter();`),
 			"updateDatastore": js.Func("newDatastore", `
 				let me = this;
 				if (newDatastore) { me.setDisabled(false); me.store.getProxy().setUrl("/api2/json/admin/datastore/" + newDatastore + "/snapshots"); me.store.load(); } else { me.setDisabled(true); me.store.removeAll(); }
