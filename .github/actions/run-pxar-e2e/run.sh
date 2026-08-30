@@ -18,7 +18,7 @@ section() { echo ""; echo "═════════════════�
 ###############################################################################
 PBS_STORE="${PBS_STORE:-/mnt/test}"
 NAMESPACE="${NAMESPACE:-test}"
-BACKUP_ID="${BACKUP_ID:-test-host}"
+BACKUP_ID="${BACKUP_ID:-test-backup-job}"
 BACKUP_DISK="${BACKUP_DISK:-Root}"
 PXAR_MOUNT_BIN="${PXAR_MOUNT_BIN:-/usr/bin/pxar-mount}"
 
