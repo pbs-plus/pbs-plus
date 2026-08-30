@@ -122,3 +122,10 @@ func TestTargetEditWindowRendersKindSpecificFields(t *testing.T) {
 		}
 	}
 }
+
+func TestDatabaseClientSelectorWaitsForStoreCreation(t *testing.T) {
+	source := ui.Render()
+	if !bytes.Contains(source, []byte(`typeof store.clearFilter !== "function"`)) {
+		t.Fatal("database client selector does not guard its uninitialized store")
+	}
+}

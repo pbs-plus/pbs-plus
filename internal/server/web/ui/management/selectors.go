@@ -98,6 +98,9 @@ var selectors = []js.Value{
 			"applyEngineFilter": js.Func("", `
 				let me = this;
 				let store = me.getStore();
+				if (!store || typeof store.clearFilter !== "function") {
+					return;
+				}
 				store.clearFilter();
 				if (me.getEngine()) {
 					store.filterBy((record) => record.get("engine") === me.getEngine());
