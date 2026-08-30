@@ -278,8 +278,6 @@ func PathKeyedURL(baseURL string) Raw {
 	`, baseURL, baseURL))
 }
 
-// codeMirrorField builds the CodeMirror-backed editor component, wired to the
-// ExtJS field contract so the parent form can read and write its value.
 func CodeMirrorField(name, mode string, height int) Field {
 	return Field{
 		XType:  XComponent,
@@ -289,6 +287,15 @@ func CodeMirrorField(name, mode string, height int) Field {
 		Anchor: "100%",
 		HTML:   `<div style="height: 100%;"></div>`,
 		AfterRender: Func("component", fmt.Sprintf(`
+			let pendingValue = "";
+			component.setValue = (val) => {
+				pendingValue = val || "";
+				if (component.codeMirror) component.codeMirror.setValue(pendingValue);
+			};
+			component.getValue = () =>
+				component.codeMirror ? component.codeMirror.getValue() : pendingValue;
+			component.isValid = () => true;
+			component.validate = () => true;
 			PBS.PlusUtils.LoadCodeMirror(function () {
 				let isDark =
 					window.matchMedia &&
@@ -309,10 +316,7 @@ func CodeMirrorField(name, mode string, height int) Field {
 					theme: isDark ? "material-darker" : "default",
 				});
 				component.codeMirror = editor;
-				component.setValue = (val) => editor.setValue(val || "");
-				component.getValue = () => editor.getValue();
-				component.isValid = () => true;
-				component.validate = () => true;
+				editor.setValue(pendingValue);
 				setTimeout(() => editor.refresh(), 1);
 			});
 		`, mode)),

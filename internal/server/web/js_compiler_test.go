@@ -80,6 +80,23 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 	}
 }
 
+func TestCodeMirrorFieldBuffersValuesUntilEditorLoads(t *testing.T) {
+	source := ui.Render()
+	for _, marker := range []string{
+		"let pendingValue = \"\";",
+		"editor.setValue(pendingValue);",
+		"values.script = editor.getValue();",
+		"editor.setValue(values.script);",
+	} {
+		if !bytes.Contains(source, []byte(marker)) {
+			t.Errorf("rendered JS lost the buffered code mirror wiring: %s", marker)
+		}
+	}
+	if bytes.Contains(source, []byte("editor.codeMirror")) {
+		t.Error("rendered JS reads editor.codeMirror directly instead of the buffered field contract")
+	}
+}
+
 func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	source := ui.Render()
 	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 4 {
