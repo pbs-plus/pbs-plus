@@ -11,6 +11,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
@@ -94,7 +95,42 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	job := b.job
 	b.mu.RUnlock()
 
-	if target.IsAgent() {
+	if target.IsDatabase() && b.databaseAware {
+		family := job.DatabaseClientFamily
+		if family == "" {
+			family = target.DatabaseClientFamily
+			if target.Type == coredb.TargetTypePostgreSQL {
+				family = database.FamilyPostgreSQL
+			}
+		}
+		directory := job.DatabaseClientDir
+		if directory == "" {
+			directory = target.DatabaseDefaultClientDir
+		}
+		bundles, err := database.DiscoverClientBundles(ctx)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("discover database clients: %w", err)
+		}
+		bundle, err := database.FindClientBundle(bundles, string(target.Type), family, directory)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		password, err := b.app.CoreDB.GetDatabasePassword(target.Name)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("get database password: %w", err)
+		}
+		stagedDump, err := database.StageDump(ctx, "", target, password, database.DumpOptions{
+			Scope:    job.DatabaseScope,
+			Database: job.DatabaseName,
+		}, bundle)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		b.mu.Lock()
+		b.stagedDump = stagedDump
+		b.mu.Unlock()
+		srcPath = stagedDump.ArchiveDir
+	} else if target.IsAgent() {
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
@@ -152,7 +188,9 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		}
 	}
 
-	srcPath = filepath.Join(srcPath, job.Subpath)
+	if !target.IsDatabase() {
+		srcPath = filepath.Join(srcPath, job.Subpath)
+	}
 
 	if job.Subpath != "" && !target.IsS3() {
 		info, err := os.Stat(srcPath)

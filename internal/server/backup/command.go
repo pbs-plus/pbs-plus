@@ -56,13 +56,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
 	}
 
-	detectionMode := "--change-detection-mode=metadata"
-	switch backup.Mode {
-	case "legacy":
-		detectionMode = "--change-detection-mode=legacy"
-	case "data":
-		detectionMode = "--change-detection-mode=data"
-	}
+	detectionMode, useExclusions := backupCommandPolicy(backup)
 
 	cmdArgs := []string{}
 	if nofile := conf.Env.ClientNofile; nofile != "" {
@@ -90,17 +84,19 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		cmdArgs = append(cmdArgs, "--exclude", path)
 	}
 
-	for _, exclusion := range extraExclusions {
-		addExclusion(exclusion)
-	}
+	if useExclusions {
+		for _, exclusion := range extraExclusions {
+			addExclusion(exclusion)
+		}
 
-	for _, exclusion := range backup.Exclusions {
-		addExclusion(exclusion.Path)
-	}
-
-	if globalExclusions, err := app.CoreDB.GetAllGlobalExclusions(); err == nil {
-		for _, exclusion := range globalExclusions {
+		for _, exclusion := range backup.Exclusions {
 			addExclusion(exclusion.Path)
+		}
+
+		if globalExclusions, err := app.CoreDB.GetAllGlobalExclusions(); err == nil {
+			for _, exclusion := range globalExclusions {
+				addExclusion(exclusion.Path)
+			}
 		}
 	}
 
@@ -125,4 +121,18 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	}
 
 	return cmd, nil
+}
+
+func backupCommandPolicy(backup coredb.Backup) (string, bool) {
+	if backup.Target.IsDatabase() {
+		return "--change-detection-mode=legacy", false
+	}
+	switch backup.Mode {
+	case "legacy":
+		return "--change-detection-mode=legacy", true
+	case "data":
+		return "--change-detection-mode=data", true
+	default:
+		return "--change-detection-mode=metadata", true
+	}
 }

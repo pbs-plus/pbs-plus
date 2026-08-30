@@ -142,6 +142,7 @@ func (b *backupJob) cleanup() {
 		b.job.CurrentPID = 0
 		agentMount := b.agentMount
 		s3Mount := b.s3Mount
+		stagedDump := b.stagedDump
 		logger := b.logger
 		cancel := b.cancel
 		b.mu.Unlock()
@@ -157,6 +158,11 @@ func (b *backupJob) cleanup() {
 		if s3Mount != nil {
 			s3Mount.Unmount()
 			s3Mount.CloseMount()
+		}
+		if stagedDump != nil {
+			if err := stagedDump.Cleanup(); err != nil && logger != nil {
+				logger.Error(err, "failed to remove database backup staging data")
+			}
 		}
 		if logger != nil {
 			logger.Close()

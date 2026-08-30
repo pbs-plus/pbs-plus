@@ -19,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
@@ -71,12 +72,14 @@ type backupJob struct {
 	app             *application.Runtime
 	skipCheck       bool
 	extraExclusions []string
+	databaseAware   bool
 
 	cleanupOnce sync.Once
 	started     atomic.Bool
 
 	agentMount *mountrpc.AgentMount
 	s3Mount    *mountrpc.S3Mount
+	stagedDump *database.StagedDump
 	srcPath    string
 	cmd        *exec.Cmd
 	upid       string
