@@ -388,20 +388,24 @@ esac
 	assertNoFileContainsPassword(t, staged.ArchiveDir, "super-secret")
 }
 
-func TestStageMySQLServerDump(t *testing.T) {
+func TestStageMariaDBServerDump(t *testing.T) {
 	dir := t.TempDir()
-	writeTestProgram(t, dir, "mysqldump", `#!/bin/sh
+	writeTestProgram(t, dir, "mariadb-dump", `#!/bin/sh
+case " $* " in
+  *" role_edges "*|*" default_roles "*) printf '%s\n' 'mariadb-dump: Couldn'"'"'t find table: "role_edges"' >&2; exit 6 ;;
+esac
 last=""
 for a in "$@"; do last="$a"; done
 case "$last" in
-  default_roles) printf 'INSERT INTO user VALUES (1);\n' ;;
+  roles_mapping) printf 'INSERT INTO user VALUES (1);\n' ;;
   test) printf 'CREATE TABLE kept (id integer);\n' ;;
   other) printf 'CREATE TABLE dropped (id integer);\n' ;;
 esac
 `)
-	writeTestProgram(t, dir, "mysql", `#!/bin/sh
+	writeTestProgram(t, dir, "mariadb", `#!/bin/sh
 case "$*" in
   *"SHOW DATABASES"*) printf 'information_schema\nmysql\nother\nperformance_schema\nsys\ntest\n' ;;
+  *"SHOW TABLES FROM mysql"*) printf 'columns_priv\ndb\nglobal_priv\nprocs_priv\nproxies_priv\nroles_mapping\ntables_priv\nuser\n' ;;
   *) printf 'ignored\n' ;;
 esac
 `)
@@ -524,6 +528,7 @@ esac
 	writeTestProgram(t, dir, "mysql", `#!/bin/sh
 case "$*" in
   *"SHOW DATABASES"*) printf 'other\ntest\n' ;;
+  *"SHOW TABLES FROM mysql"*) printf 'columns_priv\ndb\ndefault_roles\nprocs_priv\nproxies_priv\nrole_edges\ntables_priv\nuser\n' ;;
   *"INFORMATION_SCHEMA.SCHEMATA"*) printf '1\n' ;;
   *"--execute="*) printf '%s\n' "$*" >> "$DATABASE_TEST_LOG" ;;
   *) printf '%s\n' "$*" >> "$DATABASE_TEST_LOG"

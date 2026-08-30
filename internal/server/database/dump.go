@@ -463,10 +463,10 @@ func postgreSQLGlobalsDumpCommand(ctx context.Context, target coredb.Target, pas
 	return cmd, nil
 }
 
-// mySQLGrantTables carry users and privileges in a whole-server backup.
-var mySQLGrantTables = []string{
-	"user", "db", "tables_priv", "columns_priv",
-	"procs_priv", "proxies_priv", "role_edges", "default_roles",
+// mySQLGrantTableCandidates carry users and privileges across MySQL and MariaDB versions.
+var mySQLGrantTableCandidates = []string{
+	"user", "db", "tables_priv", "columns_priv", "procs_priv", "proxies_priv",
+	"global_priv", "role_edges", "default_roles", "roles_mapping",
 }
 
 func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string) (ManifestFile, error) {
@@ -474,9 +474,14 @@ func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Targe
 	if err != nil {
 		return ManifestFile{}, err
 	}
+	tables, err := listMySQLGrantTables(ctx, target, password, bundle, defaultsFile)
+	if err != nil {
+		return ManifestFile{}, err
+	}
 	args := append(mySQLBaseArgs(target, defaultsFile), "--single-transaction", "--hex-blob")
 	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
-	args = append(args, append([]string{"mysql"}, mySQLGrantTables...)...)
+	args = append(args, "mysql")
+	args = append(args, tables...)
 	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
 	path := filepath.Join(archiveDir, "grants.sql")
 	if err := runDumpToFile(cmd, path, password); err != nil {
@@ -487,6 +492,29 @@ func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Targe
 		return ManifestFile{}, err
 	}
 	return ManifestFile{Name: "grants", File: "grants.sql", SHA256: digest}, nil
+}
+
+func listMySQLGrantTables(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, defaultsFile string) ([]string, error) {
+	args := append(mySQLBaseArgs(target, defaultsFile), "--batch", "--skip-column-names", "--execute=SHOW TABLES FROM mysql")
+	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
+	names, err := readDatabaseNames(exec.CommandContext(ctx, bundle.RestoreProgram, args...), password)
+	if err != nil {
+		return nil, fmt.Errorf("list MySQL grant tables: %w", err)
+	}
+	available := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		available[name] = struct{}{}
+	}
+	tables := make([]string, 0, len(mySQLGrantTableCandidates))
+	for _, table := range mySQLGrantTableCandidates {
+		if _, ok := available[table]; ok {
+			tables = append(tables, table)
+		}
+	}
+	if len(tables) == 0 {
+		return nil, errors.New("no MySQL grant tables found")
+	}
+	return tables, nil
 }
 
 func listPostgreSQLDatabases(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string) ([]string, error) {
