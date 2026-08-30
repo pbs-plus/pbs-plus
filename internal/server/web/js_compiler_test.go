@@ -161,3 +161,20 @@ func TestDatabaseJobWindowsHideFilesystemRestorePath(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`archiveFilter: null`),
+		[]byte(`applyArchiveFilter: function ()`),
+		[]byte(`updateArchiveFilter: function ()`),
+		[]byte(`name + ".pxar.didx"`),
+		[]byte(`name + ".mpxar.didx"`),
+		[]byte(`return exclude ? !match : match;`),
+		[]byte(`mode: database ? "include" : "exclude"`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("snapshot selector is missing %q", expected)
+		}
+	}
+}

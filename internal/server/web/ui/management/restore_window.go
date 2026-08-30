@@ -78,6 +78,15 @@ var restoreJobEdit = js.EditWindow{
 				let sourcePath = this.lookup("pathSelector");
 				sourcePath.setHidden(database);
 				sourcePath.setDisabled(database);
+				let names = [];
+				field.getStore().each(function (entry) {
+					let entryKind = entry.get("kind") || entry.get("target_type");
+					let keep = database ? entryKind === kind : ["postgresql", "mysql"].includes(entryKind);
+					if (keep) {
+						names.push(String(entry.get("name") || "").replace(/[. ]/g, "-"));
+					}
+				});
+				this.lookup("snapshot").setArchiveFilter({ names: names, mode: database ? "include" : "exclude" });
 				let pathSel = this.lookup("pathSelectorDestination");
 				if (pathSel) {
 					pathSel.setTarget(value);
