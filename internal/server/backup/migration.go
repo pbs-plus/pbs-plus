@@ -115,14 +115,6 @@ func migrateLegacyBackupGroupAt(backup coredb.Backup, datastorePath, lockRoot, l
 	if err != nil || !sourceExists {
 		return false, err
 	}
-	targetExists, err := pathExists(target)
-	if err != nil {
-		return false, err
-	}
-	if targetExists {
-		return false, fmt.Errorf("legacy group %q and per-job group %q both exist", source, target)
-	}
-
 	groupLocks, err := lockPBSPaths([]string{
 		pbsLockPath(lockRoot, backup.Store, backup.Namespace, "host", legacyID),
 		pbsLockPath(lockRoot, backup.Store, backup.Namespace, "host", backupID),
@@ -135,15 +127,32 @@ func migrateLegacyBackupGroupAt(backup coredb.Backup, datastorePath, lockRoot, l
 	if exists, err := pathExists(source); err != nil || !exists {
 		return false, err
 	}
-	if exists, err := pathExists(target); err != nil {
-		return false, err
-	} else if exists {
-		return false, fmt.Errorf("per-job group %q appeared during migration", target)
-	}
-
-	indices, snapshots, err := inspectLegacyGroup(source, target, proxmox.NormalizeHostname(backup.Target.Name))
+	targetExists, err := pathExists(target)
 	if err != nil {
 		return false, err
+	}
+
+	archiveBase := proxmox.NormalizeHostname(backup.Target.Name)
+	indices, snapshots, err := inspectLegacyGroup(source, target, archiveBase)
+	if err != nil {
+		return false, err
+	}
+	if targetExists {
+		if recovered, err := removeEmptyOwnerlessGroup(source, snapshots); err != nil {
+			return false, err
+		} else if recovered {
+			if err := syncDir(filepath.Dir(source)); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		_, targetSnapshots, err := inspectLegacyGroup(target, target, archiveBase)
+		if err != nil {
+			return false, err
+		}
+		if err := validateGroupMerge(source, target, snapshots, targetSnapshots); err != nil {
+			return false, err
+		}
 	}
 	snapshotLockPaths := make([]string, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -159,15 +168,123 @@ func migrateLegacyBackupGroupAt(backup coredb.Backup, datastorePath, lockRoot, l
 	if err := appendMoveJournal(filepath.Join(lockRoot, backup.Store, "move-journal"), indices); err != nil {
 		return false, err
 	}
-	if err := unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, target, unix.RENAME_NOREPLACE); err != nil {
+	if targetExists {
+		if err := mergeBackupGroups(source, target, snapshots); err != nil {
+			return false, err
+		}
+	} else if err := unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, target, unix.RENAME_NOREPLACE); err != nil {
 		return false, fmt.Errorf("rename legacy backup group: %w", err)
 	}
-	if dir, err := os.Open(filepath.Dir(target)); err == nil {
-		_ = dir.Sync()
-		_ = dir.Close()
+	if err := syncDir(target); err != nil {
+		return false, fmt.Errorf("sync migrated backup group: %w", err)
+	}
+	if err := syncDir(filepath.Dir(target)); err != nil {
+		return false, fmt.Errorf("sync backup group directory: %w", err)
 	}
 
 	return true, nil
+}
+
+func removeEmptyOwnerlessGroup(source string, snapshots []string) (bool, error) {
+	if len(snapshots) != 0 {
+		return false, nil
+	}
+	if _, err := os.Stat(filepath.Join(source, "owner")); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	entries, err := os.ReadDir(source)
+	if err != nil {
+		return false, err
+	}
+	if len(entries) != 0 {
+		return false, nil
+	}
+	if err := os.Remove(source); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func validateGroupMerge(source, target string, sourceSnapshots, targetSnapshots []string) error {
+	sourceOwner, err := os.ReadFile(filepath.Join(source, "owner"))
+	if err != nil {
+		return fmt.Errorf("read legacy group owner: %w", err)
+	}
+	targetOwner, err := os.ReadFile(filepath.Join(target, "owner"))
+	if err != nil {
+		return fmt.Errorf("read per-job group owner: %w", err)
+	}
+	if strings.TrimSpace(string(sourceOwner)) == "" || strings.TrimSpace(string(sourceOwner)) != strings.TrimSpace(string(targetOwner)) {
+		return fmt.Errorf("legacy and per-job group owners do not match")
+	}
+	targetTimes := make(map[string]struct{}, len(targetSnapshots))
+	for _, snapshot := range targetSnapshots {
+		targetTimes[snapshot] = struct{}{}
+	}
+	for _, snapshot := range sourceSnapshots {
+		if _, exists := targetTimes[snapshot]; exists {
+			return fmt.Errorf("legacy and per-job groups both contain snapshot %q", snapshot)
+		}
+	}
+	return nil
+}
+
+func mergeBackupGroups(source, target string, snapshots []string) error {
+	for _, snapshot := range snapshots {
+		if err := unix.Renameat2(unix.AT_FDCWD, filepath.Join(source, snapshot), unix.AT_FDCWD, filepath.Join(target, snapshot), unix.RENAME_NOREPLACE); err != nil {
+			return fmt.Errorf("move legacy snapshot %q: %w", snapshot, err)
+		}
+	}
+	if err := mergeGroupNotes(source, target); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(source, "owner")); err != nil {
+		return fmt.Errorf("remove legacy group owner: %w", err)
+	}
+	if err := os.Remove(source); err != nil {
+		return fmt.Errorf("remove empty legacy group: %w", err)
+	}
+	return nil
+}
+
+func mergeGroupNotes(source, target string) error {
+	sourcePath := filepath.Join(source, "notes")
+	sourceNotes, err := os.ReadFile(sourcePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read legacy group notes: %w", err)
+	}
+	targetPath := filepath.Join(target, "notes")
+	targetNotes, err := os.ReadFile(targetPath)
+	if os.IsNotExist(err) {
+		if err := unix.Renameat2(unix.AT_FDCWD, sourcePath, unix.AT_FDCWD, targetPath, unix.RENAME_NOREPLACE); err != nil {
+			return fmt.Errorf("move legacy group notes: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read per-job group notes: %w", err)
+	}
+	if string(sourceNotes) != string(targetNotes) {
+		return fmt.Errorf("legacy and per-job group notes differ")
+	}
+	if err := os.Remove(sourcePath); err != nil {
+		return fmt.Errorf("remove duplicate legacy group notes: %w", err)
+	}
+	return nil
+}
+
+func syncDir(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func backupNamespacePath(datastorePath, namespace string) string {
@@ -194,7 +311,10 @@ func inspectLegacyGroup(source, target, archiveBase string) ([]string, []string,
 	var snapshots []string
 	for _, entry := range entries {
 		if !entry.IsDir() {
-			continue
+			if entry.Name() == "owner" || entry.Name() == "notes" {
+				continue
+			}
+			return nil, nil, fmt.Errorf("backup group contains unexpected file %q", entry.Name())
 		}
 		if _, err := time.Parse(time.RFC3339, entry.Name()); err != nil {
 			continue

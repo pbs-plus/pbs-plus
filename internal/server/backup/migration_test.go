@@ -88,19 +88,74 @@ func TestMigrateLegacyBackupGroupRejectsMixedArchives(t *testing.T) {
 	}
 }
 
-func TestMigrateLegacyBackupGroupRejectsCollision(t *testing.T) {
+func TestMigrateLegacyBackupGroupMergesExistingPerJobGroup(t *testing.T) {
 	root := t.TempDir()
 	store := filepath.Join(root, "store")
 	backup := migrationTestBackup()
-	for _, id := range []string{"IT-D002", backup.ID} {
-		if err := os.MkdirAll(filepath.Join(store, "ns", "IT", "host", id), 0o755); err != nil {
+	source := filepath.Join(store, "ns", "IT", "host", "IT-D002")
+	target := filepath.Join(store, "ns", "IT", "host", backup.ID)
+	oldSnapshot := "2026-08-27T16:31:30Z"
+	newSnapshot := "2026-08-30T20:54:46Z"
+	for _, group := range []string{source, target} {
+		if err := os.MkdirAll(group, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(group, "owner"), []byte("plus-user@pbs!server\n"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(source, "notes"), []byte("legacy notes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	for group, snapshot := range map[string]string{source: oldSnapshot, target: newSnapshot} {
+		dir := filepath.Join(group, snapshot)
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "IT-D002---D.mpxar.didx"), nil, 0o640); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	migrated, err := migrateLegacyBackupGroupAt(backup, store, filepath.Join(root, "locks"), "IT-D002")
-	if err == nil || migrated || !strings.Contains(err.Error(), "both exist") {
-		t.Fatalf("migration = %v, %v; want collision error", migrated, err)
+	if err != nil || !migrated {
+		t.Fatalf("migration = %v, %v; want true, nil", migrated, err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("legacy group still exists: %v", err)
+	}
+	for _, snapshot := range []string{oldSnapshot, newSnapshot} {
+		if _, err := os.Stat(filepath.Join(target, snapshot)); err != nil {
+			t.Fatalf("merged snapshot %q: %v", snapshot, err)
+		}
+	}
+	notes, err := os.ReadFile(filepath.Join(target, "notes"))
+	if err != nil || string(notes) != "legacy notes" {
+		t.Fatalf("merged notes = %q, %v", notes, err)
+	}
+}
+
+func TestMigrateLegacyBackupGroupRejectsOverlappingSnapshots(t *testing.T) {
+	root := t.TempDir()
+	store := filepath.Join(root, "store")
+	backup := migrationTestBackup()
+	for _, id := range []string{"IT-D002", backup.ID} {
+		group := filepath.Join(store, "ns", "IT", "host", id)
+		snapshot := filepath.Join(group, "2026-08-27T16:31:30Z")
+		if err := os.MkdirAll(snapshot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(group, "owner"), []byte("owner"), 0o640); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(snapshot, "IT-D002---D.mpxar.didx"), nil, 0o640); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	migrated, err := migrateLegacyBackupGroupAt(backup, store, filepath.Join(root, "locks"), "IT-D002")
+	if err == nil || migrated || !strings.Contains(err.Error(), "both contain snapshot") {
+		t.Fatalf("migration = %v, %v; want overlap error", migrated, err)
 	}
 }
 
