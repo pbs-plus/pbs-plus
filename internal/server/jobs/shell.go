@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
@@ -16,6 +17,24 @@ func RunShellScript(
 	ctx context.Context,
 	scriptFilePath string,
 	envVars []string,
+) (string, map[string]string, error) {
+	return runShellScript(ctx, scriptFilePath, envVars, nil)
+}
+
+func RunShellScriptWithOutput(
+	ctx context.Context,
+	scriptFilePath string,
+	envVars []string,
+	onLine func(string),
+) (string, map[string]string, error) {
+	return runShellScript(ctx, scriptFilePath, envVars, onLine)
+}
+
+func runShellScript(
+	ctx context.Context,
+	scriptFilePath string,
+	envVars []string,
+	onLine func(string),
 ) (string, map[string]string, error) {
 	if err := os.Chmod(scriptFilePath, 0755); err != nil {
 		return "", nil, fmt.Errorf(
@@ -52,9 +71,9 @@ func RunShellScript(
 	cmd := exec.CommandContext(ctx, interpreter, scriptFilePath, envFilePath)
 	cmd.Env = append(os.Environ(), envVars...)
 
-	var outBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &outBuf
+	output := &scriptOutput{onLine: onLine}
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	if err := cmd.Start(); err != nil {
 		return "", nil, fmt.Errorf("failed to start script: %w", err)
@@ -77,6 +96,7 @@ func RunShellScript(
 		runErr = ctx.Err()
 	case runErr = <-done:
 	}
+	output.Flush()
 
 	envContent, readErr := os.ReadFile(envFilePath)
 	if readErr != nil {
@@ -101,14 +121,59 @@ func RunShellScript(
 
 	if runErr != nil {
 		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
-			return outBuf.String(), resultEnvs, runErr
+			return output.String(), resultEnvs, runErr
 		}
-		return outBuf.String(), resultEnvs, fmt.Errorf(
+		return output.String(), resultEnvs, fmt.Errorf(
 			"script failed: %w; output=\n%s",
-			runErr, outBuf.String(),
+			runErr, output.String(),
 		)
 	}
-	return outBuf.String(), resultEnvs, nil
+	return output.String(), resultEnvs, nil
+}
+
+type scriptOutput struct {
+	mu      sync.Mutex
+	output  bytes.Buffer
+	pending []byte
+	onLine  func(string)
+}
+
+func (w *scriptOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	_, _ = w.output.Write(p)
+	w.pending = append(w.pending, p...)
+	for {
+		end := bytes.IndexByte(w.pending, '\n')
+		if end < 0 {
+			break
+		}
+		w.logLine(w.pending[:end])
+		w.pending = w.pending[end+1:]
+	}
+	return len(p), nil
+}
+
+func (w *scriptOutput) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) > 0 {
+		w.logLine(w.pending)
+		w.pending = nil
+	}
+}
+
+func (w *scriptOutput) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.output.String()
+}
+
+func (w *scriptOutput) logLine(line []byte) {
+	if w.onLine != nil {
+		w.onLine(string(bytes.TrimSuffix(line, []byte{'\r'})))
+	}
 }
 
 func getInterpreterFromShebang(scriptFilePath string) (string, error) {

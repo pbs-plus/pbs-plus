@@ -80,6 +80,8 @@ type backupJob struct {
 	srcPath    string
 	cmd        *exec.Cmd
 	upid       string
+	workerID   string
+	scriptTask *tasklog.QueuedTask
 }
 
 func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid string) error {

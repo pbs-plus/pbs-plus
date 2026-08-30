@@ -171,13 +171,17 @@ func mergePBSLogs(
 	hasError := false
 	hasOnlySpuriousError := true
 	incomplete := true
-	alreadyHasClientLogs := false
+	inClientLogs := false
 
 	scanner := bufio.NewScanner(inFile)
 	scanner.Buffer(buf, maxCapacity)
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if line == "--- proxmox-backup-client log starts here ---" {
+			inClientLogs = true
+			continue
+		}
 
 		if IsJunkLog(line) {
 			continue
@@ -196,11 +200,7 @@ func mergePBSLogs(
 			skip = true
 		}
 
-		if line == "--- proxmox-backup-client log starts here ---" {
-			alreadyHasClientLogs = true
-		}
-
-		if skip {
+		if inClientLogs || skip {
 			continue
 		}
 
@@ -228,10 +228,8 @@ func mergePBSLogs(
 		}
 	}()
 
-	if !alreadyHasClientLogs {
-		if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
-			logger.Error(err, "")
-		}
+	if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
+		logger.Error(err, "")
 	}
 
 	clientScanner := bufio.NewScanner(clientFile)
@@ -260,7 +258,7 @@ func mergePBSLogs(
 			skip = true
 		}
 
-		if alreadyHasClientLogs || skip {
+		if skip {
 			continue
 		}
 

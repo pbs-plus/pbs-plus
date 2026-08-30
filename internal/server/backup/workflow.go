@@ -75,6 +75,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 	defer queued.Close()
 	w.BindTask(queued)
+	b.mu.Lock()
+	b.workerID = workerID
+	b.scriptTask = queued
+	b.mu.Unlock()
 
 	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, b.app); err != nil {
 		b.logger.Error(err, "failed to assign queued task to backup job")
@@ -83,6 +87,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
+	queued.SetState("RUNNING: preparing backup")
 	if err := w.Step("validate", b.validateTargetConnection); err != nil {
 		return b.finalizeFailed(w, err)
 	}
@@ -104,6 +109,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	}
 	b.upid = startRes.UPID
 	queued.Close()
+	b.mu.Lock()
+	b.scriptTask = nil
+	b.mu.Unlock()
 	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: startRes.UPID}, b.app); err != nil {
 		b.logger.Error(err, "failed to assign backup task to job", "upid", startRes.UPID)
 	}

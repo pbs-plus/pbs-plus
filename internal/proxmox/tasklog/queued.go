@@ -42,7 +42,23 @@ func NewQueuedTask(workerType, wid string, web bool) (*QueuedTask, error) {
 	return &QueuedTask{WorkerTask: worker}, nil
 }
 
-// Close removes a queued task without archiving it as job history.
+// SetState updates the live state shown for a transient task and records it in the task log.
+func (t *QueuedTask) SetState(state string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed.Load() {
+		return
+	}
+	t.writeLogLine("%s", state)
+	if err := t.file.Sync(); err != nil {
+		slog.Error(err.Error())
+	}
+	queuedStates.Store(t.UPID(), state)
+}
+
 func (t *QueuedTask) Close() {
 	if t == nil {
 		return
