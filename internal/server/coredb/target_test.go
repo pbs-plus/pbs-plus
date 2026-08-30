@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	internalcrypto "github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 )
 
 func TestSplitTargetTypesMigration(t *testing.T) {
@@ -169,8 +169,8 @@ func TestTargetTypePersistence(t *testing.T) {
 }
 
 func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
-	internalcrypto.SetSealKeyPath(filepath.Join(t.TempDir(), "seal.key"))
-	t.Cleanup(func() { internalcrypto.SetSealKeyPath("") })
+	crypto.SetSealKeyPath(filepath.Join(t.TempDir(), "seal.key"))
+	t.Cleanup(func() { crypto.SetSealKeyPath("") })
 
 	db, err := Initialize(context.Background(), filepath.Join(t.TempDir(), "database-targets.db"))
 	if err != nil {

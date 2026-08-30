@@ -49,12 +49,12 @@ func Register(engine *jobs.Engine, app *application.Runtime) error {
 
 func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Restore, input jobs.RestoreInput, databaseAware bool) error {
 	b := &restoreJob{
-		job:       job,
-		app:       app,
-		skipCheck: input.SkipCheck,
+		job:           job,
+		app:           app,
+		skipCheck:     input.SkipCheck,
 		databaseAware: databaseAware,
-		waitGroup: &sync.WaitGroup{},
-		logger:    log.WithScope(log.Scope{JobID: job.ID}),
+		waitGroup:     &sync.WaitGroup{},
+		logger:        log.WithScope(log.Scope{JobID: job.ID}),
 	}
 	defer b.cleanup()
 	queued, err := tasklog.NewQueuedTask("reader", tasklog.FormatWorkerID(job.Store, "host-", job.DestTarget.GetHostname()), input.Web)

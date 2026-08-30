@@ -112,8 +112,8 @@ var backupJobEdit = js.EditWindow{
 					js.Field{XType: js.XFieldContainer, Reference: "databaseOptions", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
 						js.Field{XType: js.XKVComboBox, Label: "Backup Scope", Name: "database_scope", Value: "database", AllowBlank: new(false),
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Online dump: queries and writes on the database continue normally while it runs.")}, ComboItems: js.Arr{
-							js.Arr{"database", "Single database"}, js.Arr{"server", "Entire server"},
-						}},
+								js.Arr{"database", "Single database"}, js.Arr{"server", "Entire server"},
+							}},
 						js.Field{XType: "proxmoxtextfield", Label: "Database", Name: "database_name", Reference: "databaseName", AllowBlank: new(false)},
 						js.Field{XType: js.XKVComboBox, Label: "Client Family", Name: "database_client_family", Reference: "databaseClientFamily", AllowBlank: new(true), ComboItems: js.Arr{
 							js.Arr{"mysql", "MySQL"}, js.Arr{"mariadb", "MariaDB"},

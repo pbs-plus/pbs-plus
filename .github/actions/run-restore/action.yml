@@ -14,15 +14,15 @@ runs:
       id: get-snapshot
       shell: bash
       run: |
-        SNAP_TIME=$(docker exec pbs-plus-test ls /mnt/test/ns/test/host/test-host/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1)
+        SNAP_TIME=$(docker exec pbs-plus-test ls /mnt/test/ns/test/host/test-backup-job/ | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1)
 
         if [ -z "$SNAP_TIME" ]; then
-          echo "✗ No snapshot found in /mnt/test/ns/test/host/test-host/"
+          echo "✗ No snapshot found in /mnt/test/ns/test/host/test-backup-job/"
           exit 1
         fi
 
         SNAP_TS=$(docker exec pbs-plus-test date -d "${SNAP_TIME}" +%s)
-        SNAPSHOT="host/test-host/${SNAP_TS}"
+        SNAPSHOT="host/test-backup-job/${SNAP_TS}"
 
         echo "snapshot=${SNAPSHOT}" >> "$GITHUB_OUTPUT"
         echo "✓ Found snapshot: ${SNAPSHOT}"
