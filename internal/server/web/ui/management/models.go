@@ -29,7 +29,7 @@ var models = []js.Value{
 			"last-successful-upid", "duration", "current_file_count", "current_folder_count",
 			"current_files_speed", "current_bytes_speed", "current_bytes_total", "target_size_human",
 			"read_speed_human", "read_total_human", "processing_speed_human", "status_parsed",
-			"destination_database", "replace_existing", "database_client_family", "database_client_dir",
+			"source_database", "destination_database", "replace_existing", "database_client_family", "database_client_dir",
 		),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/restore",

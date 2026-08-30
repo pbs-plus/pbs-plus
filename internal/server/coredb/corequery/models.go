@@ -142,6 +142,7 @@ type RestoreDatabaseOption struct {
 	ReplaceExisting     int64  `json:"replace_existing"`
 	ClientFamily        string `json:"client_family"`
 	ClientDir           string `json:"client_dir"`
+	SourceDatabase      string `json:"source_database"`
 }
 
 type Script struct {

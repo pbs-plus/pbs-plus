@@ -259,6 +259,7 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 			NotificationMode:     r.FormValue("notification-mode"),
 			Retry:                retry,
 			RetryInterval:        retryInterval,
+			SourceDatabase:       r.FormValue("source_database"),
 			DestinationDatabase:  r.FormValue("destination_database"),
 			DatabaseClientFamily: r.FormValue("database_client_family"),
 			DatabaseClientDir:    r.FormValue("database_client_dir"),
@@ -356,6 +357,9 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 			if r.FormValue("notification-mode") != "" {
 				restore.NotificationMode = r.FormValue("notification-mode")
 			}
+			if r.Form.Has("source_database") {
+				restore.SourceDatabase = r.FormValue("source_database")
+			}
 			if r.Form.Has("destination_database") {
 				restore.DestinationDatabase = r.FormValue("destination_database")
 			}
@@ -437,6 +441,8 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.Retry = 0
 					case "retry-interval":
 						restore.RetryInterval = 1
+					case "source_database":
+						restore.SourceDatabase = ""
 					case "destination_database":
 						restore.DestinationDatabase = ""
 					case "replace_existing":

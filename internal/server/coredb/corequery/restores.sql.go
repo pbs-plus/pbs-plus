@@ -104,6 +104,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
     COALESCE(dro.client_family, '') AS database_client_family,
@@ -156,6 +157,7 @@ type GetRestoreRow struct {
 	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
 	RetryCount                  sql.NullInt64  `json:"retry_count"`
 	NotificationMode            sql.NullString `json:"notification_mode"`
+	SourceDatabase              string         `json:"source_database"`
 	DestinationDatabase         string         `json:"destination_database"`
 	ReplaceExisting             int64          `json:"replace_existing"`
 	DatabaseClientFamily        string         `json:"database_client_family"`
@@ -214,6 +216,7 @@ func (q *Queries) GetRestore(ctx context.Context, id string) (GetRestoreRow, err
 		&i.LastRunStatus,
 		&i.RetryCount,
 		&i.NotificationMode,
+		&i.SourceDatabase,
 		&i.DestinationDatabase,
 		&i.ReplaceExisting,
 		&i.DatabaseClientFamily,
@@ -257,6 +260,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
     COALESCE(dro.client_family, '') AS database_client_family,
@@ -308,6 +312,7 @@ type ListAllRestoresRow struct {
 	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
 	RetryCount                  sql.NullInt64  `json:"retry_count"`
 	NotificationMode            sql.NullString `json:"notification_mode"`
+	SourceDatabase              string         `json:"source_database"`
 	DestinationDatabase         string         `json:"destination_database"`
 	ReplaceExisting             int64          `json:"replace_existing"`
 	DatabaseClientFamily        string         `json:"database_client_family"`
@@ -372,6 +377,7 @@ func (q *Queries) ListAllRestores(ctx context.Context) ([]ListAllRestoresRow, er
 			&i.LastRunStatus,
 			&i.RetryCount,
 			&i.NotificationMode,
+			&i.SourceDatabase,
 			&i.DestinationDatabase,
 			&i.ReplaceExisting,
 			&i.DatabaseClientFamily,
@@ -489,9 +495,10 @@ func (q *Queries) UpdateRestore(ctx context.Context, arg UpdateRestoreParams) er
 
 const upsertRestoreDatabaseOptions = `-- name: UpsertRestoreDatabaseOptions :exec
 INSERT INTO restore_database_options (
-    restore_id, destination_database, replace_existing, client_family, client_dir
-) VALUES (?, ?, ?, ?, ?)
+    restore_id, source_database, destination_database, replace_existing, client_family, client_dir
+) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(restore_id) DO UPDATE SET
+    source_database = excluded.source_database,
     destination_database = excluded.destination_database,
     replace_existing = excluded.replace_existing,
     client_family = excluded.client_family,
@@ -500,6 +507,7 @@ ON CONFLICT(restore_id) DO UPDATE SET
 
 type UpsertRestoreDatabaseOptionsParams struct {
 	RestoreID           string `json:"restore_id"`
+	SourceDatabase      string `json:"source_database"`
 	DestinationDatabase string `json:"destination_database"`
 	ReplaceExisting     int64  `json:"replace_existing"`
 	ClientFamily        string `json:"client_family"`
@@ -509,6 +517,7 @@ type UpsertRestoreDatabaseOptionsParams struct {
 func (q *Queries) UpsertRestoreDatabaseOptions(ctx context.Context, arg UpsertRestoreDatabaseOptionsParams) error {
 	_, err := q.db.ExecContext(ctx, upsertRestoreDatabaseOptions,
 		arg.RestoreID,
+		arg.SourceDatabase,
 		arg.DestinationDatabase,
 		arg.ReplaceExisting,
 		arg.ClientFamily,

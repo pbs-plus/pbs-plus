@@ -12,6 +12,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
     COALESCE(dro.client_family, '') AS database_client_family,
@@ -49,6 +50,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
     COALESCE(dro.client_family, '') AS database_client_family,
@@ -90,9 +92,10 @@ WHERE id = ?;
 
 -- name: UpsertRestoreDatabaseOptions :exec
 INSERT INTO restore_database_options (
-    restore_id, destination_database, replace_existing, client_family, client_dir
-) VALUES (?, ?, ?, ?, ?)
+    restore_id, source_database, destination_database, replace_existing, client_family, client_dir
+) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(restore_id) DO UPDATE SET
+    source_database = excluded.source_database,
     destination_database = excluded.destination_database,
     replace_existing = excluded.replace_existing,
     client_family = excluded.client_family,
