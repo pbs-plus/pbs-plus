@@ -102,48 +102,59 @@ func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		stop := r.Method == http.MethodDelete
+		response.Errors = map[string]string{}
+		var messages []string
 
-		go func() {
-			conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 5*time.Minute)
-			if err != nil {
-				log.Error(err, "", "backups", decodedBackupIDs)
-				return
-			}
-			rpcClient := rpc.NewClient(conn)
-			defer func() {
-				if err := rpcClient.Close(); err != nil {
-					log.Error(err, "")
-				}
-			}()
-
-			for _, backupID := range decodedBackupIDs {
-				backupTask, err := app.CoreDB.GetBackup(backupID)
-				if err != nil {
-					log.Error(err, "", "backupID", backupID)
-					continue
-				}
-
-				args := &jobrpc.BackupQueueArgs{
-					Job:             backupTask,
-					SkipCheck:       true,
-					Stop:            stop,
-					Web:             true,
-					ExtraExclusions: nil,
-				}
-				var reply jobrpc.QueueReply
-				if err := rpcClient.Call(jobrpc.ServiceName+".BackupQueue", args, &reply); err != nil {
-					log.Error(err, "", "backupID", backupID)
-					continue
-				}
-				if reply.Status != 200 {
-					log.Error(fmt.Errorf("%s", reply.Message), "", "backupID", backupID)
-				}
+		conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 10*time.Second)
+		if err != nil {
+			log.Error(err, "", "backups", decodedBackupIDs)
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		rpcClient := rpc.NewClient(conn)
+		defer func() {
+			if err := rpcClient.Close(); err != nil {
+				log.Error(err, "")
 			}
 		}()
 
+		for _, backupID := range decodedBackupIDs {
+			backupTask, err := app.CoreDB.GetBackup(backupID)
+			if err != nil {
+				log.Error(err, "", "backupID", backupID)
+				response.Errors[backupID] = err.Error()
+				messages = append(messages, backupID+": "+err.Error())
+				continue
+			}
+
+			args := &jobrpc.BackupQueueArgs{
+				Job:             backupTask,
+				SkipCheck:       true,
+				Stop:            stop,
+				Web:             true,
+				ExtraExclusions: nil,
+			}
+			var reply jobrpc.QueueReply
+			if err := rpcClient.Call(jobrpc.ServiceName+".BackupQueue", args, &reply); err != nil {
+				log.Error(err, "", "backupID", backupID)
+				response.Errors[backupID] = err.Error()
+				messages = append(messages, backupID+": "+err.Error())
+				continue
+			}
+			if reply.Status != 200 {
+				log.Error(fmt.Errorf("%s", reply.Message), "", "backupID", backupID)
+				response.Errors[backupID] = reply.Message
+				messages = append(messages, backupID+": "+reply.Message)
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		response.Status = http.StatusOK
-		response.Success = true
+		response.Success = len(response.Errors) == 0
+		if !response.Success {
+			response.Status = http.StatusConflict
+			response.Message = strings.Join(messages, "; ")
+		}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Error(err, "")
 		}

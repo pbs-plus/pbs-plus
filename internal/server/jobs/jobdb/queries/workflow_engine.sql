@@ -86,6 +86,11 @@ DELETE FROM job_resource_locks WHERE execution_id = ?;
 -- name: RenewResourceLocks :exec
 UPDATE job_resource_locks SET lease_until = ? WHERE execution_id = ?;
 
+-- name: GetResourceLockHolder :one
+SELECT execution_id FROM job_resource_locks
+WHERE resource_key = ? AND lease_until >= ?
+LIMIT 1;
+
 -- name: ListExecutionResources :many
 SELECT resource_key FROM job_execution_resources WHERE execution_id = ? ORDER BY resource_key;
 

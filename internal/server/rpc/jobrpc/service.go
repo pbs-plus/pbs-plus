@@ -4,6 +4,7 @@ package jobrpc
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
@@ -48,6 +49,18 @@ type Service struct {
 	Engine *jobs.Engine
 }
 
+// blockedReason reports why a user-triggered run cannot start now, or "" when it can; same-target runs are refused rather than queued because they share one PBS worker ID.
+func (s *Service) blockedReason(kind, definitionID, resourceKey string) string {
+	if _, err := s.Engine.ActiveExecution(s.ctx, kind, definitionID); err == nil {
+		return "this job is already queued or running"
+	}
+	holder, err := s.Engine.ResourceHolder(s.ctx, resourceKey)
+	if err != nil || holder.DefinitionID == definitionID {
+		return ""
+	}
+	return fmt.Sprintf("%q is in use by %s job %q", resourceKey, holder.Kind, holder.DefinitionID)
+}
+
 func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 	if args.Stop {
 		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowBackup, args.Job.ID); err != nil {
@@ -56,6 +69,12 @@ func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 			return nil
 		}
 		reply.Status = 200
+		return nil
+	}
+
+	if reason := s.blockedReason(jobs.WorkflowBackup, args.Job.ID, "target:"+args.Job.Target.Name); reason != "" {
+		reply.Status = 409
+		reply.Message = fmt.Sprintf("%s (%s)", jobs.ErrOneInstance, reason)
 		return nil
 	}
 
@@ -93,6 +112,12 @@ func (s *Service) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error 
 			return nil
 		}
 		reply.Status = 200
+		return nil
+	}
+
+	if reason := s.blockedReason(jobs.WorkflowRestore, args.Job.ID, "target:"+args.Job.DestTarget.Name); reason != "" {
+		reply.Status = 409
+		reply.Message = fmt.Sprintf("%s (%s)", jobs.ErrOneInstance, reason)
 		return nil
 	}
 

@@ -591,6 +591,24 @@ func (q *Queries) GetExecutionByDedupeKey(ctx context.Context, dedupeKey string)
 	return i, err
 }
 
+const getResourceLockHolder = `-- name: GetResourceLockHolder :one
+SELECT execution_id FROM job_resource_locks
+WHERE resource_key = ? AND lease_until >= ?
+LIMIT 1
+`
+
+type GetResourceLockHolderParams struct {
+	ResourceKey string `json:"resource_key"`
+	LeaseUntil  int64  `json:"lease_until"`
+}
+
+func (q *Queries) GetResourceLockHolder(ctx context.Context, arg GetResourceLockHolderParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getResourceLockHolder, arg.ResourceKey, arg.LeaseUntil)
+	var execution_id string
+	err := row.Scan(&execution_id)
+	return execution_id, err
+}
+
 const invalidateActivity = `-- name: InvalidateActivity :execrows
 UPDATE job_execution_activities
 SET state = 'pending', result = NULL, checkpoint = NULL, completed_at = NULL

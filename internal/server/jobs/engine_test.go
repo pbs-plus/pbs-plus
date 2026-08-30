@@ -599,6 +599,35 @@ func TestDatabase_ClaimsResourceOnce(t *testing.T) {
 	}
 }
 
+func TestDatabase_ResourceLockHolderNamesBlocker(t *testing.T) {
+	ctx := context.Background()
+	_, db := newTestEngine(t, ctx)
+	first := testWorkflowSubmit("test.lock", "first")
+	first.Resources = []string{"target:test"}
+	if _, _, err := db.Submit(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ResourceLockHolder(ctx, "target:test"); !errors.Is(err, jobdb.ErrNotFound) {
+		t.Fatalf("holder before claim = %v, want ErrNotFound", err)
+	}
+	now := time.Now()
+	if _, ok, err := db.Claim(ctx, "worker-a", now, now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	} else if !ok {
+		t.Fatal("first execution was not claimed")
+	}
+	holder, err := db.ResourceLockHolder(ctx, "target:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if holder.ID != first.ID || holder.DefinitionID != first.DefinitionID {
+		t.Fatalf("holder = %q/%q, want %q/%q", holder.ID, holder.DefinitionID, first.ID, first.DefinitionID)
+	}
+	if _, err := db.ResourceLockHolder(ctx, "target:other"); !errors.Is(err, jobdb.ErrNotFound) {
+		t.Fatalf("unrelated resource holder = %v, want ErrNotFound", err)
+	}
+}
+
 func newTestEngine(t *testing.T, ctx context.Context) (*Engine, *jobdb.Store) {
 	t.Helper()
 	db, err := jobdb.Open(filepath.Join(t.TempDir(), "jobs.db"))
