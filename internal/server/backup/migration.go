@@ -199,7 +199,7 @@ func migrateLegacyBackupGroupAt(backup coredb.Backup, datastorePath, lockRoot, l
 		if err := mergeBackupGroups(source, target, snapshots); err != nil {
 			return false, err
 		}
-	} else if err := unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, target, unix.RENAME_NOREPLACE); err != nil {
+	} else if err := renameNoreplace(source, target); err != nil {
 		return false, fmt.Errorf("rename legacy backup group: %w", err)
 	}
 	if err := syncDir(target); err != nil {
@@ -260,7 +260,7 @@ func validateGroupMerge(source, target string, sourceSnapshots, targetSnapshots 
 
 func mergeBackupGroups(source, target string, snapshots []string) error {
 	for _, snapshot := range snapshots {
-		if err := unix.Renameat2(unix.AT_FDCWD, filepath.Join(source, snapshot), unix.AT_FDCWD, filepath.Join(target, snapshot), unix.RENAME_NOREPLACE); err != nil {
+		if err := renameNoreplace(filepath.Join(source, snapshot), filepath.Join(target, snapshot)); err != nil {
 			return fmt.Errorf("move legacy snapshot %q: %w", snapshot, err)
 		}
 	}
@@ -288,7 +288,7 @@ func mergeGroupNotes(source, target string) error {
 	targetPath := filepath.Join(target, "notes")
 	targetNotes, err := os.ReadFile(targetPath)
 	if os.IsNotExist(err) {
-		if err := unix.Renameat2(unix.AT_FDCWD, sourcePath, unix.AT_FDCWD, targetPath, unix.RENAME_NOREPLACE); err != nil {
+		if err := renameNoreplace(sourcePath, targetPath); err != nil {
 			return fmt.Errorf("move legacy group notes: %w", err)
 		}
 		return nil
@@ -303,6 +303,24 @@ func mergeGroupNotes(source, target string) error {
 		return fmt.Errorf("remove duplicate legacy group notes: %w", err)
 	}
 	return nil
+}
+
+func renameNoreplace(oldpath, newpath string) error {
+	err := unix.Renameat2(unix.AT_FDCWD, oldpath, unix.AT_FDCWD, newpath, unix.RENAME_NOREPLACE)
+	if err == nil {
+		return nil
+	}
+	switch err {
+	case unix.EINVAL, unix.ENOSYS, unix.EOPNOTSUPP:
+		if _, statErr := os.Lstat(newpath); statErr == nil {
+			return os.ErrExist
+		} else if !os.IsNotExist(statErr) {
+			return statErr
+		}
+		return os.Rename(oldpath, newpath)
+	default:
+		return err
+	}
 }
 
 func syncDir(path string) error {
