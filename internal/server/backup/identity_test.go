@@ -45,6 +45,21 @@ func TestBackupIdentityIsPerJobNotPerTarget(t *testing.T) {
 	if firstWID == secondWID {
 		t.Fatalf("two jobs on one target share worker ID %q; task discovery would be ambiguous", firstWID)
 	}
+	dotted := first
+	dotted.ID = "IT.D002"
+	dashed := first
+	dashed.ID = "IT-D002"
+	dottedWID, err := backupWorkerID(dotted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashedWID, err := backupWorkerID(dashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dottedWID == dashedWID {
+		t.Fatalf("distinct job IDs %q and %q share worker ID %q", dotted.ID, dashed.ID, dottedWID)
+	}
 
 	if _, err := getBackupId(coredb.Backup{Store: "test-datastore", Target: target}); err == nil {
 		t.Fatal("getBackupId accepted a job with no ID")

@@ -17,7 +17,7 @@ func backupWorkerID(job coredb.Backup) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return tasklog.FormatWorkerID(job.Store, "host-", proxmox.NormalizeHostname(backupID)), nil
+	return tasklog.FormatWorkerID(job.Store, "host-", backupID), nil
 }
 
 func GetBackupTask(ctx context.Context, workerID string, before map[string]struct{}) (proxmox.Task, error) {

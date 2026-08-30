@@ -16,12 +16,13 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 // getBackupId returns the PBS backup ID for a job; it is per-job rather than per-target so concurrent backups of one target land in separate snapshot groups with distinct PBS worker IDs.
 func getBackupId(backup coredb.Backup) (string, error) {
-	if backup.ID == "" {
-		return "", fmt.Errorf("job id is required to derive the backup ID")
+	if err := validate.ValidateJobId(backup.ID); err != nil {
+		return "", fmt.Errorf("invalid job id for backup ID: %w", err)
 	}
 	return backup.ID, nil
 }
@@ -35,7 +36,6 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	if err != nil {
 		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
 	}
-	backupID = proxmox.NormalizeHostname(backupID)
 
 	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AuthID, backup.Store)
 	if backupStore == "@localhost:" {
@@ -91,6 +91,14 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 			logger.Error(err, "")
 		}
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
+	}
+
+	migrated, err := migrateLegacyBackupGroup(backup, app)
+	if err != nil {
+		return nil, fmt.Errorf("RunBackup: migrate legacy backup group: %w", err)
+	}
+	if migrated {
+		logger.Info("migrated legacy backup group", "backup_id", backupID)
 	}
 
 	env := append(os.Environ(), fmt.Sprintf("PBS_PASSWORD=%s", cli.GetToken()))
