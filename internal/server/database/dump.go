@@ -206,21 +206,9 @@ func dumpCommand(ctx context.Context, target coredb.Target, password string, opt
 }
 
 func postgreSQLDumpCommand(ctx context.Context, target coredb.Target, password string, options DumpOptions, bundle ClientBundle, secretsDir string) (*exec.Cmd, error) {
-	for _, value := range []string{target.DatabaseHost, target.DatabaseUsername, password} {
-		if strings.ContainsAny(value, "\r\n") {
-			return nil, errors.New("PostgreSQL credentials cannot contain line breaks")
-		}
-	}
-	passfile := filepath.Join(secretsDir, "pgpass")
-	line := strings.Join([]string{
-		pgpassEscape(target.DatabaseHost),
-		strconv.Itoa(target.DatabasePort),
-		"*",
-		pgpassEscape(target.DatabaseUsername),
-		pgpassEscape(password),
-	}, ":") + "\n"
-	if err := os.WriteFile(passfile, []byte(line), 0o600); err != nil {
-		return nil, fmt.Errorf("write PostgreSQL password file: %w", err)
+	passfile, err := writePostgreSQLPassfile(secretsDir, target, password)
+	if err != nil {
+		return nil, err
 	}
 
 	program := bundle.DumpProgram
@@ -239,14 +227,9 @@ func postgreSQLDumpCommand(ctx context.Context, target coredb.Target, password s
 }
 
 func mySQLDumpCommand(ctx context.Context, target coredb.Target, password string, options DumpOptions, bundle ClientBundle, secretsDir string) (*exec.Cmd, error) {
-	defaultsFile := filepath.Join(secretsDir, "client.cnf")
-	contents := strings.Join([]string{
-		"[client]",
-		"password=" + strconv.Quote(password),
-		"",
-	}, "\n")
-	if err := os.WriteFile(defaultsFile, []byte(contents), 0o600); err != nil {
-		return nil, fmt.Errorf("write MySQL password file: %w", err)
+	defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)
+	if err != nil {
+		return nil, err
 	}
 
 	args := []string{
@@ -296,6 +279,39 @@ func mySQLTLSArgs(mode, caCertificate, family string) []string {
 func pgpassEscape(value string) string {
 	value = strings.ReplaceAll(value, "\\", "\\\\")
 	return strings.ReplaceAll(value, ":", "\\:")
+}
+
+func writePostgreSQLPassfile(dir string, target coredb.Target, password string) (string, error) {
+	for _, value := range []string{target.DatabaseHost, target.DatabaseUsername, password} {
+		if strings.ContainsAny(value, "\r\n") {
+			return "", errors.New("PostgreSQL credentials cannot contain line breaks")
+		}
+	}
+	path := filepath.Join(dir, "pgpass")
+	line := strings.Join([]string{
+		pgpassEscape(target.DatabaseHost),
+		strconv.Itoa(target.DatabasePort),
+		"*",
+		pgpassEscape(target.DatabaseUsername),
+		pgpassEscape(password),
+	}, ":") + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o600); err != nil {
+		return "", fmt.Errorf("write PostgreSQL password file: %w", err)
+	}
+	return path, nil
+}
+
+func writeMySQLDefaultsFile(dir, password string) (string, error) {
+	path := filepath.Join(dir, "client.cnf")
+	contents := strings.Join([]string{
+		"[client]",
+		"password=" + strconv.Quote(password),
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		return "", fmt.Errorf("write MySQL password file: %w", err)
+	}
+	return path, nil
 }
 
 func fileSHA256(path string) (string, error) {

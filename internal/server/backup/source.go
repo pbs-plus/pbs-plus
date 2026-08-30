@@ -96,22 +96,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	b.mu.RUnlock()
 
 	if target.IsDatabase() && b.databaseAware {
-		family := job.DatabaseClientFamily
-		if family == "" {
-			family = target.DatabaseClientFamily
-			if target.Type == coredb.TargetTypePostgreSQL {
-				family = database.FamilyPostgreSQL
-			}
-		}
-		directory := job.DatabaseClientDir
-		if directory == "" {
-			directory = target.DatabaseDefaultClientDir
-		}
-		bundles, err := database.DiscoverClientBundles(ctx)
-		if err != nil {
-			return "", nil, nil, fmt.Errorf("discover database clients: %w", err)
-		}
-		bundle, err := database.FindClientBundle(bundles, string(target.Type), family, directory)
+		bundle, err := database.ResolveClientBundle(ctx, target, job.DatabaseClientFamily, job.DatabaseClientDir)
 		if err != nil {
 			return "", nil, nil, err
 		}

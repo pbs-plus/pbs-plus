@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 const (
@@ -48,6 +50,23 @@ func FindClientBundle(bundles []ClientBundle, engine, family, directory string) 
 		}
 	}
 	return ClientBundle{}, errors.New("database client bundle is unavailable")
+}
+
+func ResolveClientBundle(ctx context.Context, target coredb.Target, family, directory string) (ClientBundle, error) {
+	if family == "" {
+		family = target.DatabaseClientFamily
+		if target.Type == coredb.TargetTypePostgreSQL {
+			family = FamilyPostgreSQL
+		}
+	}
+	if directory == "" {
+		directory = target.DatabaseDefaultClientDir
+	}
+	bundles, err := DiscoverClientBundles(ctx)
+	if err != nil {
+		return ClientBundle{}, err
+	}
+	return FindClientBundle(bundles, string(target.Type), family, directory)
 }
 
 func candidateDirectories() ([]string, error) {

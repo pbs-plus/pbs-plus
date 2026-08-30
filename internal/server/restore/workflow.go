@@ -25,27 +25,34 @@ type runResult struct {
 	ErrCount int32 `json:"errCount"`
 }
 
-// Register registers the restore workflow: pre-script,
-// start-task, run, finalize. Each stage is a durable activity.
+// Register keeps workflow version 1 available for existing executions and
+// registers database-aware version 2 for new executions.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	return engine.RegisterVersion(jobs.WorkflowRestore, "1", func(w *jobs.WorkflowContext) error {
-		var input jobs.RestoreInput
-		if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
-			return jobs.NonRetryable(fmt.Errorf("decoding restore workflow input: %w", err))
-		}
-		job, err := app.CoreDB.GetRestore(w.Execution.DefinitionID)
-		if err != nil {
-			return jobs.NonRetryable(fmt.Errorf("getting restore workflow definition: %w", err))
-		}
-		return runWorkflow(w, app, job, input)
-	})
+	register := func(version string, databaseAware bool) error {
+		return engine.RegisterVersion(jobs.WorkflowRestore, version, func(w *jobs.WorkflowContext) error {
+			var input jobs.RestoreInput
+			if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
+				return jobs.NonRetryable(fmt.Errorf("decoding restore workflow input: %w", err))
+			}
+			job, err := app.CoreDB.GetRestore(w.Execution.DefinitionID)
+			if err != nil {
+				return jobs.NonRetryable(fmt.Errorf("getting restore workflow definition: %w", err))
+			}
+			return runWorkflow(w, app, job, input, databaseAware)
+		})
+	}
+	if err := register("1", false); err != nil {
+		return err
+	}
+	return register("2", true)
 }
 
-func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Restore, input jobs.RestoreInput) error {
+func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Restore, input jobs.RestoreInput, databaseAware bool) error {
 	b := &restoreJob{
 		job:       job,
 		app:       app,
 		skipCheck: input.SkipCheck,
+		databaseAware: databaseAware,
 		waitGroup: &sync.WaitGroup{},
 		logger:    log.WithScope(log.Scope{JobID: job.ID}),
 	}
