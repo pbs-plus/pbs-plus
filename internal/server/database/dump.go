@@ -217,6 +217,7 @@ func postgreSQLDumpCommand(ctx context.Context, target coredb.Target, password s
 		args = append(args, "--format=p", options.Database)
 	} else {
 		program = bundle.ServerDumpProgram
+		args = append(args, "--lock-wait-timeout=30s")
 	}
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)

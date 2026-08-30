@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -33,6 +34,35 @@ func TestDiscoverClientBundles(t *testing.T) {
 	}
 	if _, err := FindClientBundle(bundles, EngineMySQL, FamilyMySQL, dir); err == nil {
 		t.Fatal("found unavailable MySQL bundle")
+	}
+}
+
+func TestDumpCommandsDoNotLockTarget(t *testing.T) {
+	postgres := coredb.Target{Type: coredb.TargetTypePostgreSQL, DatabaseHost: "postgres.example", DatabasePort: 5432, DatabaseUsername: "backup", DatabaseTLSMode: "require"}
+	bundle := ClientBundle{Engine: EnginePostgreSQL, Family: FamilyPostgreSQL, DumpProgram: "/usr/bin/pg_dump", ServerDumpProgram: "/usr/bin/pg_dumpall"}
+	secrets := t.TempDir()
+	cmd, err := postgreSQLDumpCommand(context.Background(), postgres, "secret", DumpOptions{Scope: "server"}, bundle, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(cmd.Path) != "pg_dumpall" {
+		t.Errorf("server dump program = %s", cmd.Path)
+	}
+	if !slices.Contains(cmd.Args, "--lock-wait-timeout=30s") {
+		t.Errorf("server dump does not bound its lock wait: %v", cmd.Args)
+	}
+
+	mysql := coredb.Target{Type: coredb.TargetTypeMySQL, DatabaseHost: "mysql.example", DatabasePort: 3306, DatabaseUsername: "backup", DatabaseTLSMode: "disabled"}
+	mysqlBundle := ClientBundle{Engine: EngineMySQL, Family: FamilyMySQL, DumpProgram: "/usr/bin/mysqldump", ServerDumpProgram: "/usr/bin/mysqldump", RestoreProgram: "/usr/bin/mysql"}
+	cmd, err = mySQLDumpCommand(context.Background(), mysql, "secret", DumpOptions{Scope: "database", Database: "inventory"}, mysqlBundle, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(cmd.Args, "--single-transaction") {
+		t.Errorf("mysql dump does not use a consistent snapshot: %v", cmd.Args)
+	}
+	if slices.Contains(cmd.Args, "--lock-all-tables") {
+		t.Errorf("mysql dump locks all tables: %v", cmd.Args)
 	}
 }
 
