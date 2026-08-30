@@ -53,8 +53,14 @@ var targetPanelController = js.ControllerClass{
 	Methods: map[string]js.Raw{ // pi:keep
 		"onAdd": js.Func("", `
 			let me = this;
-			Ext.create("PBS.D2DManagement.TargetEditWindow", {
-				targetKind: me.getView().targetKind || "filesystem",
+			let kind = me.getView().targetKind || "filesystem";
+			let windows = {
+				filesystem: "PBS.D2DManagement.TargetFilesystemEditWindow",
+				s3: "PBS.D2DManagement.TargetS3EditWindow",
+				postgresql: "PBS.D2DManagement.TargetPostgreSQLEditWindow",
+				mysql: "PBS.D2DManagement.TargetMySQLEditWindow",
+			};
+			Ext.create(windows[kind], {
 				listeners: { destroy: () => me.reload() },
 			}).show();
 		`),
@@ -131,7 +137,25 @@ var targetPanelController = js.ControllerClass{
 				});
 			});
 		`),
-		"onEdit":              targetWindowHandler("PBS.D2DManagement.TargetEditWindow"),
+		"onEdit": js.Func("", `
+			let me = this;
+			let view = me.getView();
+			let selection = view.getSelection();
+			if (!selection || selection.length < 1 || selection[0].data.isGroup) {
+				return;
+			}
+			let windows = {
+				filesystem: "PBS.D2DManagement.TargetFilesystemEditWindow",
+				s3: "PBS.D2DManagement.TargetS3EditWindow",
+				postgresql: "PBS.D2DManagement.TargetPostgreSQLEditWindow",
+				mysql: "PBS.D2DManagement.TargetMySQLEditWindow",
+			};
+			Ext.create(windows[view.targetKind || "filesystem"], {
+				contentid: selection[0].data.name,
+				autoLoad: true,
+				listeners: { destroy: () => me.reload() },
+			}).show();
+		`),
 		"setS3Secret":         targetWindowHandler("PBS.D2DManagement.TargetS3Secret"),
 		"setDatabasePassword": targetWindowHandler("PBS.D2DManagement.TargetDatabasePassword"),
 		"pushUpdate": js.Func("", `
@@ -467,6 +491,12 @@ var targetPanelController = js.ControllerClass{
 		"init": js.Func("", `
 			let view = this.getView();
 			this.searchValue = "";
+			view.down("#addTargetButton").setText({
+				filesystem: "Add Filesystem Target",
+				s3: "Add S3 Target",
+				postgresql: "Add PostgreSQL Target",
+				mysql: "Add MySQL / MariaDB Target",
+			}[view.targetKind] || "Add Target");
 			view.down("#setS3SecretButton").setHidden(view.targetKind !== "s3");
 			view.down("#setDatabasePasswordButton").setHidden(!["postgresql", "mysql"].includes(view.targetKind));
 			view.down("#pushUpdateButton").setHidden(view.targetKind !== "filesystem");
@@ -514,7 +544,7 @@ var targetPanel = js.Panel{
 		ItemDblClick: "onItemDblClick", SelectionChange: "onSelectionChange",
 	},
 	Tbar: []js.Tool{
-		{Text: "Add", Handler: "onAdd", SelModel: new(false)},
+		{Text: "Add Target", ItemID: "addTargetButton", Handler: "onAdd", SelModel: new(false)},
 		{Text: "Create Job", Handler: "addJob", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")}, js.Sep(),
 		{Text: "Edit", Handler: "onEdit", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")},
 		{Text: "Set S3 Secret Key", ItemID: "setS3SecretButton", Handler: "setS3Secret", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && rec.data.target_type === "s3"`)},

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -244,6 +245,11 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, errors.New("database password is required"))
 			return
 		}
+		s3Secret := r.FormValue("s3_secret_key")
+		if newTarget.IsS3() && r.Form.Has("s3_endpoint") && s3Secret == "" {
+			respond.WriteErrorResponse(w, errors.New("S3 secret key is required"))
+			return
+		}
 
 		err = app.Target.CreateTarget(nil, newTarget)
 		if err != nil {
@@ -252,6 +258,12 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 		}
 		if password != "" {
 			if err := app.Target.AddDatabasePassword(newTarget.Name, password); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+		}
+		if s3Secret != "" {
+			if err := app.Target.AddS3Secret(newTarget.Name, s3Secret); err != nil {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
@@ -313,6 +325,12 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 			}
 			if password := r.FormValue("database_password"); password != "" {
 				if err := app.Target.AddDatabasePassword(target.Name, password); err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+			}
+			if secret := r.FormValue("s3_secret_key"); secret != "" {
+				if err := app.Target.AddS3Secret(target.Name, secret); err != nil {
 					respond.WriteErrorResponse(w, err)
 					return
 				}
@@ -479,16 +497,31 @@ type TargetConfigResponse struct {
 
 type targetResponse struct {
 	coredb.Target
-	TargetType string `json:"target_type"`
-	Kind       string `json:"kind"`
+	TargetType  string `json:"target_type"`
+	Kind        string `json:"kind"`
+	S3Endpoint  string `json:"s3_endpoint,omitempty"`
+	S3Region    string `json:"s3_region,omitempty"`
+	S3AccessKey string `json:"s3_access_key,omitempty"`
+	S3Bucket    string `json:"s3_bucket,omitempty"`
+	S3UseSSL    bool   `json:"s3_use_ssl"`
+	S3PathStyle bool   `json:"s3_path_style"`
 }
 
 func newTargetResponse(target coredb.Target) targetResponse {
-	return targetResponse{
+	response := targetResponse{
 		Target:     target,
 		TargetType: target.LegacyType(),
 		Kind:       string(target.Type),
 	}
+	if target.S3Info != nil {
+		response.S3Endpoint = target.S3Info.Endpoint
+		response.S3Region = target.S3Info.Region
+		response.S3AccessKey = target.S3Info.AccessKey
+		response.S3Bucket = target.S3Info.Bucket
+		response.S3UseSSL = target.S3Info.UseSSL
+		response.S3PathStyle = target.S3Info.IsPathStyle
+	}
+	return response
 }
 
 func targetTypeFromRequest(r *http.Request) coredb.TargetType {
@@ -496,6 +529,56 @@ func targetTypeFromRequest(r *http.Request) coredb.TargetType {
 		return coredb.TargetType(kind)
 	}
 	return coredb.TargetType(r.FormValue("target_type"))
+}
+
+func applyS3Form(target *coredb.Target, r *http.Request) error {
+	if !r.Form.Has("s3_endpoint") {
+		return nil
+	}
+
+	endpoint := strings.TrimSpace(r.FormValue("s3_endpoint"))
+	if endpoint == "" {
+		return errors.New("S3 endpoint is required")
+	}
+	parsedEndpoint, err := url.Parse("https://" + strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://"))
+	if err != nil || parsedEndpoint.Host == "" || parsedEndpoint.Path != "" || parsedEndpoint.RawQuery != "" {
+		return fmt.Errorf("invalid S3 endpoint %q", endpoint)
+	}
+
+	bucket := strings.TrimSpace(r.FormValue("s3_bucket"))
+	if bucket == "" || strings.ContainsAny(bucket, "/?#") {
+		return fmt.Errorf("invalid S3 bucket %q", bucket)
+	}
+
+	useSSL, err := strconv.ParseBool(r.FormValue("s3_use_ssl"))
+	if err != nil {
+		return fmt.Errorf("invalid S3 TLS setting %q", r.FormValue("s3_use_ssl"))
+	}
+	pathStyle, err := strconv.ParseBool(r.FormValue("s3_path_style"))
+	if err != nil {
+		return fmt.Errorf("invalid S3 addressing style %q", r.FormValue("s3_path_style"))
+	}
+
+	s3URL := url.URL{Scheme: "http", Host: parsedEndpoint.Host}
+	if useSSL {
+		s3URL.Scheme = "https"
+	}
+	if accessKey := strings.TrimSpace(r.FormValue("s3_access_key")); accessKey != "" {
+		s3URL.User = url.User(accessKey)
+	}
+	if pathStyle {
+		s3URL.Path = "/" + bucket
+	} else {
+		s3URL.Host = bucket + "." + parsedEndpoint.Host
+	}
+	query := s3URL.Query()
+	query.Set("path-style", strconv.FormatBool(pathStyle))
+	if region := strings.TrimSpace(r.FormValue("s3_region")); region != "" {
+		query.Set("region", region)
+	}
+	s3URL.RawQuery = query.Encode()
+	target.Path = s3URL.String()
+	return nil
 }
 
 func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error {
@@ -533,6 +616,9 @@ func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error 
 			}
 			target.DatabasePort = parsed
 		}
+	}
+	if target.Type == coredb.TargetTypeS3 {
+		return applyS3Form(target, r)
 	}
 	return nil
 }

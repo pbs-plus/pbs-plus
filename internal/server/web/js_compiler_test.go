@@ -32,7 +32,10 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 		[]byte(`Ext.define("PBS.form.D2DSnapshotPathSelector"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ExclusionEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.TokenEditWindow"`),
-		[]byte(`Ext.define("PBS.D2DManagement.TargetEditWindow"`),
+		[]byte(`Ext.define("PBS.D2DManagement.TargetFilesystemEditWindow"`),
+		[]byte(`Ext.define("PBS.D2DManagement.TargetS3EditWindow"`),
+		[]byte(`Ext.define("PBS.D2DManagement.TargetPostgreSQLEditWindow"`),
+		[]byte(`Ext.define("PBS.D2DManagement.TargetMySQLEditWindow"`),
 		[]byte(`Ext.define("PBS.D2DManagement.TargetS3Secret"`),
 		[]byte(`Ext.define("PBS.D2DManagement.TargetDatabasePassword"`),
 		[]byte(`Ext.define("PBS.D2DManagement.ExclusionPanel"`),
@@ -101,21 +104,29 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	}
 }
 
-func TestTargetEditWindowRendersKindSpecificFields(t *testing.T) {
+func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 	source := ui.Render()
 
 	for _, expected := range [][]byte{
-		[]byte(`name: "kind"`),
-		[]byte(`name: "access"`),
-		[]byte(`itemId: "filesystemTargetFields"`),
-		[]byte(`itemId: "s3TargetFields"`),
-		[]byte(`itemId: "postgresqlTargetFields"`),
-		[]byte(`itemId: "mysqlTargetFields"`),
+		[]byte(`subject: "Filesystem Target"`),
+		[]byte(`subject: "S3 Target"`),
+		[]byte(`subject: "PostgreSQL Target"`),
+		[]byte(`subject: "MySQL / MariaDB Target"`),
+		[]byte(`name: "s3_endpoint"`),
+		[]byte(`name: "s3_bucket"`),
+		[]byte(`name: "s3_region"`),
+		[]byte(`name: "s3_access_key"`),
+		[]byte(`name: "s3_secret_key"`),
+		[]byte(`name: "s3_use_ssl"`),
+		[]byte(`name: "s3_path_style"`),
+		[]byte(`title: gettext("Connection")`),
+		[]byte(`title: gettext("TLS")`),
+		[]byte(`title: gettext("Client Tools")`),
 		[]byte(`name: "database_default_client_dir"`),
 		[]byte(`name: "database_password"`),
 		[]byte(`name: "database_scope"`),
 		[]byte(`name: "destination_database"`),
-		[]byte(`group.setDisabled(!active)`),
+		[]byte(`mysql: "Add MySQL / MariaDB Target"`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("target editor is missing %q", expected)
