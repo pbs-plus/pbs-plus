@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	internalcrypto "github.com/pbs-plus/pbs-plus/internal/crypto"
 )
 
 func TestSplitTargetTypesMigration(t *testing.T) {
@@ -97,6 +99,7 @@ func TestTargetTypePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer db.Close()
 
 	host := AgentHost{Name: "agent.example", IP: "192.0.2.1", OperatingSystem: "linux"}
@@ -162,5 +165,106 @@ func TestTargetTypePersistence(t *testing.T) {
 	}
 	if filesystemRows != 0 {
 		t.Errorf("converted target retained %d filesystem detail rows", filesystemRows)
+	}
+}
+
+func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
+	internalcrypto.SetSealKeyPath(filepath.Join(t.TempDir(), "seal.key"))
+	t.Cleanup(func() { internalcrypto.SetSealKeyPath("") })
+
+	db, err := Initialize(context.Background(), filepath.Join(t.TempDir(), "database-targets.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	postgres := Target{
+		Name:                     "postgres",
+		Type:                     TargetTypePostgreSQL,
+		DatabaseHost:             "postgres.example",
+		DatabaseUsername:         "backup",
+		DatabaseTLSMode:          "verify-full",
+		DatabaseCACertificate:    "/etc/ssl/postgres-ca.pem",
+		DatabaseDefaultClientDir: "/usr/lib/postgresql/17/bin",
+	}
+	mysql := Target{
+		Name:                     "mariadb",
+		Type:                     TargetTypeMySQL,
+		DatabaseVariant:          "mariadb",
+		DatabaseHost:             "mariadb.example",
+		DatabaseUsername:         "backup",
+		DatabaseTLSMode:          "verify-identity",
+		DatabaseDefaultClientDir: "/usr/bin",
+	}
+	for _, target := range []Target{postgres, mysql} {
+		if err := db.CreateTarget(nil, target); err != nil {
+			t.Fatalf("CreateTarget(%q): %v", target.Name, err)
+		}
+	}
+
+	gotPostgres, err := db.GetTarget(postgres.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPostgres.DatabasePort != 5432 || gotPostgres.DatabaseHost != postgres.DatabaseHost || !gotPostgres.IsDatabase() {
+		t.Errorf("PostgreSQL target = %#v", gotPostgres)
+	}
+	gotMySQL, err := db.GetTarget(mysql.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMySQL.DatabasePort != 3306 || gotMySQL.DatabaseClientFamily != "mariadb" || gotMySQL.DatabaseVariant != "mariadb" {
+		t.Errorf("MySQL target = %#v", gotMySQL)
+	}
+
+	if err := db.AddDatabasePassword(nil, postgres.Name, "secret"); err != nil {
+		t.Fatal(err)
+	}
+	password, err := db.GetDatabasePassword(postgres.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if password != "secret" {
+		t.Errorf("database password = %q", password)
+	}
+
+	backup := Backup{
+		ID:                "postgres-backup",
+		Store:             "datastore",
+		Target:            Target{Name: postgres.Name},
+		DatabaseScope:     "database",
+		DatabaseName:      "inventory",
+		DatabaseClientDir: "/usr/lib/postgresql/16/bin",
+	}
+	if err := db.CreateBackup(nil, backup); err != nil {
+		t.Fatal(err)
+	}
+	gotBackup, err := db.GetBackup(backup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBackup.DatabaseScope != "database" || gotBackup.DatabaseName != "inventory" || gotBackup.Target.Type != TargetTypePostgreSQL {
+		t.Errorf("database backup = %#v", gotBackup)
+	}
+
+	restore := Restore{
+		ID:                   "mariadb-restore",
+		Store:                "datastore",
+		Snapshot:             "host/snapshot/1",
+		DestTarget:           Target{Name: mysql.Name},
+		DestinationDatabase:  "inventory_copy",
+		ReplaceExisting:      true,
+		DatabaseClientFamily: "mysql",
+		DatabaseClientDir:    "/opt/mysql/bin",
+	}
+	if err := db.CreateRestore(nil, restore); err != nil {
+		t.Fatal(err)
+	}
+	gotRestore, err := db.GetRestore(restore.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRestore.DestinationDatabase != "inventory_copy" || !gotRestore.ReplaceExisting || gotRestore.DestTarget.Type != TargetTypeMySQL {
+		t.Errorf("database restore = %#v", gotRestore)
 	}
 }

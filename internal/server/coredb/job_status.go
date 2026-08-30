@@ -106,6 +106,8 @@ type FilesystemAccess string
 const (
 	TargetTypeFilesystem TargetType = "filesystem"
 	TargetTypeS3         TargetType = "s3"
+	TargetTypePostgreSQL TargetType = "postgresql"
+	TargetTypeMySQL      TargetType = "mysql"
 
 	FilesystemAccessLocal FilesystemAccess = "local"
 	FilesystemAccessAgent FilesystemAccess = "agent"

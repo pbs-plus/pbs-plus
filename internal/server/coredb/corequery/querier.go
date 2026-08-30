@@ -31,14 +31,18 @@ type Querier interface {
 	DeleteAlertExclusionsByType(ctx context.Context, alertType string) error
 	DeleteAlertSetting(ctx context.Context, name string) error
 	DeleteBackup(ctx context.Context, id string) (int64, error)
+	DeleteBackupDatabaseOptions(ctx context.Context, backupID string) error
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
 	DeleteBatchResults(ctx context.Context, batchName string) error
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
 	DeleteNotificationBatch(ctx context.Context, name string) error
 	DeleteRestore(ctx context.Context, id string) (int64, error)
+	DeleteRestoreDatabaseOptions(ctx context.Context, restoreID string) error
 	DeleteScript(ctx context.Context, path string) (int64, error)
 	DeleteTarget(ctx context.Context, name string) (int64, error)
 	DeleteTargetFilesystem(ctx context.Context, targetName string) error
+	DeleteTargetMySQL(ctx context.Context, targetName string) error
+	DeleteTargetPostgreSQL(ctx context.Context, targetName string) error
 	DeleteTargetS3(ctx context.Context, targetName string) error
 	DeleteToken(ctx context.Context, token string) error
 	DeleteVerificationJob(ctx context.Context, id string) (int64, error)
@@ -60,6 +64,8 @@ type Querier interface {
 	GetRestore(ctx context.Context, id string) (GetRestoreRow, error)
 	GetScript(ctx context.Context, path string) (GetScriptRow, error)
 	GetTarget(ctx context.Context, name string) (GetTargetRow, error)
+	GetTargetMySQLPassword(ctx context.Context, targetName string) (string, error)
+	GetTargetPostgreSQLPassword(ctx context.Context, targetName string) (string, error)
 	GetTargetS3Secret(ctx context.Context, targetName string) (string, error)
 	GetToken(ctx context.Context, token string) (Token, error)
 	GetVerificationJob(ctx context.Context, id string) (VerificationJob, error)
@@ -98,13 +104,19 @@ type Querier interface {
 	UpdateRestore(ctx context.Context, arg UpdateRestoreParams) error
 	UpdateScript(ctx context.Context, arg UpdateScriptParams) error
 	UpdateTarget(ctx context.Context, arg UpdateTargetParams) error
+	UpdateTargetMySQLPassword(ctx context.Context, arg UpdateTargetMySQLPasswordParams) (int64, error)
+	UpdateTargetPostgreSQLPassword(ctx context.Context, arg UpdateTargetPostgreSQLPasswordParams) (int64, error)
 	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) (int64, error)
 	UpdateVerificationJob(ctx context.Context, arg UpdateVerificationJobParams) error
 	UpdateVerificationResult(ctx context.Context, arg UpdateVerificationResultParams) error
 	UpsertAlertSetting(ctx context.Context, arg UpsertAlertSettingParams) error
+	UpsertBackupDatabaseOptions(ctx context.Context, arg UpsertBackupDatabaseOptionsParams) error
 	UpsertBatchResult(ctx context.Context, arg UpsertBatchResultParams) error
+	UpsertRestoreDatabaseOptions(ctx context.Context, arg UpsertRestoreDatabaseOptionsParams) error
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
 	UpsertTargetFilesystem(ctx context.Context, arg UpsertTargetFilesystemParams) error
+	UpsertTargetMySQL(ctx context.Context, arg UpsertTargetMySQLParams) error
+	UpsertTargetPostgreSQL(ctx context.Context, arg UpsertTargetPostgreSQLParams) error
 	UpsertTargetS3(ctx context.Context, arg UpsertTargetS3Params) error
 	VerificationJobExists(ctx context.Context, id string) (int64, error)
 }

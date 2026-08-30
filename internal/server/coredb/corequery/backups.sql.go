@@ -119,6 +119,15 @@ func (q *Queries) DeleteBackup(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const deleteBackupDatabaseOptions = `-- name: DeleteBackupDatabaseOptions :exec
+DELETE FROM backup_database_options WHERE backup_id = ?
+`
+
+func (q *Queries) DeleteBackupDatabaseOptions(ctx context.Context, backupID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBackupDatabaseOptions, backupID)
+	return err
+}
+
 const getBackup = `-- name: GetBackup :one
 SELECT
     j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath,
@@ -128,73 +137,100 @@ SELECT
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
+    COALESCE(dbo.scope, '') AS database_scope,
+    COALESCE(dbo.database_name, '') AS database_name,
+    COALESCE(dbo.client_family, '') AS database_client_family,
+    COALESCE(dbo.client_dir, '') AS database_client_dir,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
     COALESCE(f.path, s.url, '') AS path,
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
+    COALESCE(p.host, m.host, '') AS database_host,
+    COALESCE(p.port, m.port, 0) AS database_port,
+    COALESCE(p.username, m.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(m.variant, '') AS database_variant,
+    COALESCE(m.default_client_family, '') AS database_default_client_family,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
+LEFT JOIN backup_database_options dbo ON dbo.backup_id = j.id
 LEFT JOIN targets t ON j.target = t.name
 LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN target_postgresql p ON p.target_name = t.name
+LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 WHERE j.id = ?
 LIMIT 1
 `
 
 type GetBackupRow struct {
-	ID                    string         `json:"id"`
-	Store                 string         `json:"store"`
-	Mode                  interface{}    `json:"mode"`
-	SourceMode            interface{}    `json:"source_mode"`
-	ReadMode              interface{}    `json:"read_mode"`
-	Target                string         `json:"target"`
-	Subpath               sql.NullString `json:"subpath"`
-	Schedule              sql.NullString `json:"schedule"`
-	Comment               sql.NullString `json:"comment"`
-	NotificationMode      sql.NullString `json:"notification_mode"`
-	Namespace             sql.NullString `json:"namespace"`
-	CurrentPid            sql.NullString `json:"current_pid"`
-	LastRunUpid           sql.NullString `json:"last_run_upid"`
-	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
-	Retry                 sql.NullInt64  `json:"retry"`
-	RetryInterval         sql.NullInt64  `json:"retry_interval"`
-	MaxDirEntries         sql.NullInt64  `json:"max_dir_entries"`
-	PreScript             string         `json:"pre_script"`
-	PostScript            string         `json:"post_script"`
-	IncludeXattr          sql.NullInt64  `json:"include_xattr"`
-	LegacyXattr           sql.NullInt64  `json:"legacy_xattr"`
-	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
-	RetryCount            sql.NullInt64  `json:"retry_count"`
-	LastRunState          sql.NullString `json:"last_run_state"`
-	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
-	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
-	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
-	Duration              sql.NullInt64  `json:"duration"`
-	Name                  sql.NullString `json:"name"`
-	TargetType            sql.NullString `json:"target_type"`
-	MountScript           sql.NullString `json:"mount_script"`
-	FilesystemAccess      string         `json:"filesystem_access"`
-	Path                  string         `json:"path"`
-	AgentHost             sql.NullString `json:"agent_host"`
-	VolumeID              sql.NullString `json:"volume_id"`
-	VolumeType            sql.NullString `json:"volume_type"`
-	VolumeName            sql.NullString `json:"volume_name"`
-	VolumeFs              sql.NullString `json:"volume_fs"`
-	VolumeTotalBytes      sql.NullInt64  `json:"volume_total_bytes"`
-	VolumeUsedBytes       sql.NullInt64  `json:"volume_used_bytes"`
-	VolumeFreeBytes       sql.NullInt64  `json:"volume_free_bytes"`
-	VolumeTotal           sql.NullString `json:"volume_total"`
-	VolumeUsed            sql.NullString `json:"volume_used"`
-	VolumeFree            sql.NullString `json:"volume_free"`
-	AgentName             sql.NullString `json:"agent_name"`
-	AgentIp               sql.NullString `json:"agent_ip"`
-	AgentAuth             sql.NullString `json:"agent_auth"`
-	AgentTokenUsed        sql.NullString `json:"agent_token_used"`
-	AgentOs               sql.NullString `json:"agent_os"`
+	ID                          string         `json:"id"`
+	Store                       string         `json:"store"`
+	Mode                        interface{}    `json:"mode"`
+	SourceMode                  interface{}    `json:"source_mode"`
+	ReadMode                    interface{}    `json:"read_mode"`
+	Target                      string         `json:"target"`
+	Subpath                     sql.NullString `json:"subpath"`
+	Schedule                    sql.NullString `json:"schedule"`
+	Comment                     sql.NullString `json:"comment"`
+	NotificationMode            sql.NullString `json:"notification_mode"`
+	Namespace                   sql.NullString `json:"namespace"`
+	CurrentPid                  sql.NullString `json:"current_pid"`
+	LastRunUpid                 sql.NullString `json:"last_run_upid"`
+	LastSuccessfulUpid          sql.NullString `json:"last_successful_upid"`
+	Retry                       sql.NullInt64  `json:"retry"`
+	RetryInterval               sql.NullInt64  `json:"retry_interval"`
+	MaxDirEntries               sql.NullInt64  `json:"max_dir_entries"`
+	PreScript                   string         `json:"pre_script"`
+	PostScript                  string         `json:"post_script"`
+	IncludeXattr                sql.NullInt64  `json:"include_xattr"`
+	LegacyXattr                 sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
+	RetryCount                  sql.NullInt64  `json:"retry_count"`
+	LastRunState                sql.NullString `json:"last_run_state"`
+	LastRunStarttime            sql.NullInt64  `json:"last_run_starttime"`
+	LastRunEndtime              sql.NullInt64  `json:"last_run_endtime"`
+	LastSuccessfulEndtime       sql.NullInt64  `json:"last_successful_endtime"`
+	Duration                    sql.NullInt64  `json:"duration"`
+	DatabaseScope               string         `json:"database_scope"`
+	DatabaseName                string         `json:"database_name"`
+	DatabaseClientFamily        string         `json:"database_client_family"`
+	DatabaseClientDir           string         `json:"database_client_dir"`
+	Name                        sql.NullString `json:"name"`
+	TargetType                  sql.NullString `json:"target_type"`
+	MountScript                 sql.NullString `json:"mount_script"`
+	FilesystemAccess            string         `json:"filesystem_access"`
+	Path                        string         `json:"path"`
+	AgentHost                   sql.NullString `json:"agent_host"`
+	VolumeID                    sql.NullString `json:"volume_id"`
+	VolumeType                  sql.NullString `json:"volume_type"`
+	VolumeName                  sql.NullString `json:"volume_name"`
+	VolumeFs                    sql.NullString `json:"volume_fs"`
+	VolumeTotalBytes            sql.NullInt64  `json:"volume_total_bytes"`
+	VolumeUsedBytes             sql.NullInt64  `json:"volume_used_bytes"`
+	VolumeFreeBytes             sql.NullInt64  `json:"volume_free_bytes"`
+	VolumeTotal                 sql.NullString `json:"volume_total"`
+	VolumeUsed                  sql.NullString `json:"volume_used"`
+	VolumeFree                  sql.NullString `json:"volume_free"`
+	DatabaseHost                string         `json:"database_host"`
+	DatabasePort                int64          `json:"database_port"`
+	DatabaseUsername            string         `json:"database_username"`
+	DatabaseTlsMode             string         `json:"database_tls_mode"`
+	DatabaseCaCertificate       string         `json:"database_ca_certificate"`
+	DatabaseDefaultClientDir    string         `json:"database_default_client_dir"`
+	DatabaseVariant             string         `json:"database_variant"`
+	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
+	AgentName                   sql.NullString `json:"agent_name"`
+	AgentIp                     sql.NullString `json:"agent_ip"`
+	AgentAuth                   sql.NullString `json:"agent_auth"`
+	AgentTokenUsed              sql.NullString `json:"agent_token_used"`
+	AgentOs                     sql.NullString `json:"agent_os"`
 }
 
 func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error) {
@@ -229,6 +265,10 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.LastRunEndtime,
 		&i.LastSuccessfulEndtime,
 		&i.Duration,
+		&i.DatabaseScope,
+		&i.DatabaseName,
+		&i.DatabaseClientFamily,
+		&i.DatabaseClientDir,
 		&i.Name,
 		&i.TargetType,
 		&i.MountScript,
@@ -245,6 +285,14 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.VolumeTotal,
 		&i.VolumeUsed,
 		&i.VolumeFree,
+		&i.DatabaseHost,
+		&i.DatabasePort,
+		&i.DatabaseUsername,
+		&i.DatabaseTlsMode,
+		&i.DatabaseCaCertificate,
+		&i.DatabaseDefaultClientDir,
+		&i.DatabaseVariant,
+		&i.DatabaseDefaultClientFamily,
 		&i.AgentName,
 		&i.AgentIp,
 		&i.AgentAuth,
@@ -263,72 +311,99 @@ SELECT
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
+    COALESCE(dbo.scope, '') AS database_scope,
+    COALESCE(dbo.database_name, '') AS database_name,
+    COALESCE(dbo.client_family, '') AS database_client_family,
+    COALESCE(dbo.client_dir, '') AS database_client_dir,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
     COALESCE(f.path, s.url, '') AS path,
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
+    COALESCE(p.host, m.host, '') AS database_host,
+    COALESCE(p.port, m.port, 0) AS database_port,
+    COALESCE(p.username, m.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(m.variant, '') AS database_variant,
+    COALESCE(m.default_client_family, '') AS database_default_client_family,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
+LEFT JOIN backup_database_options dbo ON dbo.backup_id = j.id
 LEFT JOIN targets t ON j.target = t.name
 LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN target_postgresql p ON p.target_name = t.name
+LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 ORDER BY j.id
 `
 
 type ListAllBackupsRow struct {
-	ID                    string         `json:"id"`
-	Store                 string         `json:"store"`
-	Mode                  interface{}    `json:"mode"`
-	SourceMode            interface{}    `json:"source_mode"`
-	ReadMode              interface{}    `json:"read_mode"`
-	Target                string         `json:"target"`
-	Subpath               sql.NullString `json:"subpath"`
-	Schedule              sql.NullString `json:"schedule"`
-	Comment               sql.NullString `json:"comment"`
-	NotificationMode      sql.NullString `json:"notification_mode"`
-	Namespace             sql.NullString `json:"namespace"`
-	CurrentPid            sql.NullString `json:"current_pid"`
-	LastRunUpid           sql.NullString `json:"last_run_upid"`
-	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
-	Retry                 sql.NullInt64  `json:"retry"`
-	RetryInterval         sql.NullInt64  `json:"retry_interval"`
-	MaxDirEntries         sql.NullInt64  `json:"max_dir_entries"`
-	PreScript             string         `json:"pre_script"`
-	PostScript            string         `json:"post_script"`
-	IncludeXattr          sql.NullInt64  `json:"include_xattr"`
-	LegacyXattr           sql.NullInt64  `json:"legacy_xattr"`
-	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
-	RetryCount            sql.NullInt64  `json:"retry_count"`
-	LastRunState          sql.NullString `json:"last_run_state"`
-	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
-	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
-	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
-	Duration              sql.NullInt64  `json:"duration"`
-	Name                  sql.NullString `json:"name"`
-	TargetType            sql.NullString `json:"target_type"`
-	MountScript           sql.NullString `json:"mount_script"`
-	FilesystemAccess      string         `json:"filesystem_access"`
-	Path                  string         `json:"path"`
-	AgentHost             sql.NullString `json:"agent_host"`
-	VolumeID              sql.NullString `json:"volume_id"`
-	VolumeType            sql.NullString `json:"volume_type"`
-	VolumeName            sql.NullString `json:"volume_name"`
-	VolumeFs              sql.NullString `json:"volume_fs"`
-	VolumeTotalBytes      sql.NullInt64  `json:"volume_total_bytes"`
-	VolumeUsedBytes       sql.NullInt64  `json:"volume_used_bytes"`
-	VolumeFreeBytes       sql.NullInt64  `json:"volume_free_bytes"`
-	VolumeTotal           sql.NullString `json:"volume_total"`
-	VolumeUsed            sql.NullString `json:"volume_used"`
-	VolumeFree            sql.NullString `json:"volume_free"`
-	AgentName             sql.NullString `json:"agent_name"`
-	AgentIp               sql.NullString `json:"agent_ip"`
-	AgentAuth             sql.NullString `json:"agent_auth"`
-	AgentTokenUsed        sql.NullString `json:"agent_token_used"`
-	AgentOs               sql.NullString `json:"agent_os"`
+	ID                          string         `json:"id"`
+	Store                       string         `json:"store"`
+	Mode                        interface{}    `json:"mode"`
+	SourceMode                  interface{}    `json:"source_mode"`
+	ReadMode                    interface{}    `json:"read_mode"`
+	Target                      string         `json:"target"`
+	Subpath                     sql.NullString `json:"subpath"`
+	Schedule                    sql.NullString `json:"schedule"`
+	Comment                     sql.NullString `json:"comment"`
+	NotificationMode            sql.NullString `json:"notification_mode"`
+	Namespace                   sql.NullString `json:"namespace"`
+	CurrentPid                  sql.NullString `json:"current_pid"`
+	LastRunUpid                 sql.NullString `json:"last_run_upid"`
+	LastSuccessfulUpid          sql.NullString `json:"last_successful_upid"`
+	Retry                       sql.NullInt64  `json:"retry"`
+	RetryInterval               sql.NullInt64  `json:"retry_interval"`
+	MaxDirEntries               sql.NullInt64  `json:"max_dir_entries"`
+	PreScript                   string         `json:"pre_script"`
+	PostScript                  string         `json:"post_script"`
+	IncludeXattr                sql.NullInt64  `json:"include_xattr"`
+	LegacyXattr                 sql.NullInt64  `json:"legacy_xattr"`
+	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
+	RetryCount                  sql.NullInt64  `json:"retry_count"`
+	LastRunState                sql.NullString `json:"last_run_state"`
+	LastRunStarttime            sql.NullInt64  `json:"last_run_starttime"`
+	LastRunEndtime              sql.NullInt64  `json:"last_run_endtime"`
+	LastSuccessfulEndtime       sql.NullInt64  `json:"last_successful_endtime"`
+	Duration                    sql.NullInt64  `json:"duration"`
+	DatabaseScope               string         `json:"database_scope"`
+	DatabaseName                string         `json:"database_name"`
+	DatabaseClientFamily        string         `json:"database_client_family"`
+	DatabaseClientDir           string         `json:"database_client_dir"`
+	Name                        sql.NullString `json:"name"`
+	TargetType                  sql.NullString `json:"target_type"`
+	MountScript                 sql.NullString `json:"mount_script"`
+	FilesystemAccess            string         `json:"filesystem_access"`
+	Path                        string         `json:"path"`
+	AgentHost                   sql.NullString `json:"agent_host"`
+	VolumeID                    sql.NullString `json:"volume_id"`
+	VolumeType                  sql.NullString `json:"volume_type"`
+	VolumeName                  sql.NullString `json:"volume_name"`
+	VolumeFs                    sql.NullString `json:"volume_fs"`
+	VolumeTotalBytes            sql.NullInt64  `json:"volume_total_bytes"`
+	VolumeUsedBytes             sql.NullInt64  `json:"volume_used_bytes"`
+	VolumeFreeBytes             sql.NullInt64  `json:"volume_free_bytes"`
+	VolumeTotal                 sql.NullString `json:"volume_total"`
+	VolumeUsed                  sql.NullString `json:"volume_used"`
+	VolumeFree                  sql.NullString `json:"volume_free"`
+	DatabaseHost                string         `json:"database_host"`
+	DatabasePort                int64          `json:"database_port"`
+	DatabaseUsername            string         `json:"database_username"`
+	DatabaseTlsMode             string         `json:"database_tls_mode"`
+	DatabaseCaCertificate       string         `json:"database_ca_certificate"`
+	DatabaseDefaultClientDir    string         `json:"database_default_client_dir"`
+	DatabaseVariant             string         `json:"database_variant"`
+	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
+	AgentName                   sql.NullString `json:"agent_name"`
+	AgentIp                     sql.NullString `json:"agent_ip"`
+	AgentAuth                   sql.NullString `json:"agent_auth"`
+	AgentTokenUsed              sql.NullString `json:"agent_token_used"`
+	AgentOs                     sql.NullString `json:"agent_os"`
 }
 
 func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, error) {
@@ -369,6 +444,10 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.LastRunEndtime,
 			&i.LastSuccessfulEndtime,
 			&i.Duration,
+			&i.DatabaseScope,
+			&i.DatabaseName,
+			&i.DatabaseClientFamily,
+			&i.DatabaseClientDir,
 			&i.Name,
 			&i.TargetType,
 			&i.MountScript,
@@ -385,6 +464,14 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.VolumeTotal,
 			&i.VolumeUsed,
 			&i.VolumeFree,
+			&i.DatabaseHost,
+			&i.DatabasePort,
+			&i.DatabaseUsername,
+			&i.DatabaseTlsMode,
+			&i.DatabaseCaCertificate,
+			&i.DatabaseDefaultClientDir,
+			&i.DatabaseVariant,
+			&i.DatabaseDefaultClientFamily,
 			&i.AgentName,
 			&i.AgentIp,
 			&i.AgentAuth,
@@ -478,6 +565,36 @@ func (q *Queries) UpdateBackup(ctx context.Context, arg UpdateBackupParams) erro
 		arg.LastSuccessfulEndtime,
 		arg.Duration,
 		arg.ID,
+	)
+	return err
+}
+
+const upsertBackupDatabaseOptions = `-- name: UpsertBackupDatabaseOptions :exec
+INSERT INTO backup_database_options (
+    backup_id, scope, database_name, client_family, client_dir
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(backup_id) DO UPDATE SET
+    scope = excluded.scope,
+    database_name = excluded.database_name,
+    client_family = excluded.client_family,
+    client_dir = excluded.client_dir
+`
+
+type UpsertBackupDatabaseOptionsParams struct {
+	BackupID     string `json:"backup_id"`
+	Scope        string `json:"scope"`
+	DatabaseName string `json:"database_name"`
+	ClientFamily string `json:"client_family"`
+	ClientDir    string `json:"client_dir"`
+}
+
+func (q *Queries) UpsertBackupDatabaseOptions(ctx context.Context, arg UpsertBackupDatabaseOptionsParams) error {
+	_, err := q.db.ExecContext(ctx, upsertBackupDatabaseOptions,
+		arg.BackupID,
+		arg.Scope,
+		arg.DatabaseName,
+		arg.ClientFamily,
+		arg.ClientDir,
 	)
 	return err
 }

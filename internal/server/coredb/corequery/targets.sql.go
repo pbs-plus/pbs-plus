@@ -47,6 +47,24 @@ func (q *Queries) DeleteTargetFilesystem(ctx context.Context, targetName string)
 	return err
 }
 
+const deleteTargetMySQL = `-- name: DeleteTargetMySQL :exec
+DELETE FROM target_mysql WHERE target_name = ?
+`
+
+func (q *Queries) DeleteTargetMySQL(ctx context.Context, targetName string) error {
+	_, err := q.db.ExecContext(ctx, deleteTargetMySQL, targetName)
+	return err
+}
+
+const deleteTargetPostgreSQL = `-- name: DeleteTargetPostgreSQL :exec
+DELETE FROM target_postgresql WHERE target_name = ?
+`
+
+func (q *Queries) DeleteTargetPostgreSQL(ctx context.Context, targetName string) error {
+	_, err := q.db.ExecContext(ctx, deleteTargetPostgreSQL, targetName)
+	return err
+}
+
 const deleteTargetS3 = `-- name: DeleteTargetS3 :exec
 DELETE FROM target_s3 WHERE target_name = ?
 `
@@ -64,12 +82,22 @@ SELECT
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
+    COALESCE(p.host, m.host, '') AS database_host,
+    COALESCE(p.port, m.port, 0) AS database_port,
+    COALESCE(p.username, m.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(m.variant, '') AS database_variant,
+    COALESCE(m.default_client_family, '') AS database_default_client_family,
     COUNT(j.id) AS job_count,
     ah.name AS agent_name, ah.ip AS agent_ip, ah.auth AS agent_auth,
     ah.token_used AS agent_token_used, ah.os AS agent_os
 FROM targets t
 LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN target_postgresql p ON p.target_name = t.name
+LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN backups j ON t.name = j.target
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 WHERE t.name = ?
@@ -77,28 +105,36 @@ GROUP BY t.name
 `
 
 type GetTargetRow struct {
-	Name             string         `json:"name"`
-	TargetType       string         `json:"target_type"`
-	MountScript      string         `json:"mount_script"`
-	FilesystemAccess string         `json:"filesystem_access"`
-	Path             string         `json:"path"`
-	AgentHost        sql.NullString `json:"agent_host"`
-	VolumeID         sql.NullString `json:"volume_id"`
-	VolumeType       sql.NullString `json:"volume_type"`
-	VolumeName       sql.NullString `json:"volume_name"`
-	VolumeFs         sql.NullString `json:"volume_fs"`
-	VolumeTotalBytes sql.NullInt64  `json:"volume_total_bytes"`
-	VolumeUsedBytes  sql.NullInt64  `json:"volume_used_bytes"`
-	VolumeFreeBytes  sql.NullInt64  `json:"volume_free_bytes"`
-	VolumeTotal      sql.NullString `json:"volume_total"`
-	VolumeUsed       sql.NullString `json:"volume_used"`
-	VolumeFree       sql.NullString `json:"volume_free"`
-	JobCount         int64          `json:"job_count"`
-	AgentName        sql.NullString `json:"agent_name"`
-	AgentIp          sql.NullString `json:"agent_ip"`
-	AgentAuth        sql.NullString `json:"agent_auth"`
-	AgentTokenUsed   sql.NullString `json:"agent_token_used"`
-	AgentOs          sql.NullString `json:"agent_os"`
+	Name                        string         `json:"name"`
+	TargetType                  string         `json:"target_type"`
+	MountScript                 string         `json:"mount_script"`
+	FilesystemAccess            string         `json:"filesystem_access"`
+	Path                        string         `json:"path"`
+	AgentHost                   sql.NullString `json:"agent_host"`
+	VolumeID                    sql.NullString `json:"volume_id"`
+	VolumeType                  sql.NullString `json:"volume_type"`
+	VolumeName                  sql.NullString `json:"volume_name"`
+	VolumeFs                    sql.NullString `json:"volume_fs"`
+	VolumeTotalBytes            sql.NullInt64  `json:"volume_total_bytes"`
+	VolumeUsedBytes             sql.NullInt64  `json:"volume_used_bytes"`
+	VolumeFreeBytes             sql.NullInt64  `json:"volume_free_bytes"`
+	VolumeTotal                 sql.NullString `json:"volume_total"`
+	VolumeUsed                  sql.NullString `json:"volume_used"`
+	VolumeFree                  sql.NullString `json:"volume_free"`
+	DatabaseHost                string         `json:"database_host"`
+	DatabasePort                int64          `json:"database_port"`
+	DatabaseUsername            string         `json:"database_username"`
+	DatabaseTlsMode             string         `json:"database_tls_mode"`
+	DatabaseCaCertificate       string         `json:"database_ca_certificate"`
+	DatabaseDefaultClientDir    string         `json:"database_default_client_dir"`
+	DatabaseVariant             string         `json:"database_variant"`
+	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
+	JobCount                    int64          `json:"job_count"`
+	AgentName                   sql.NullString `json:"agent_name"`
+	AgentIp                     sql.NullString `json:"agent_ip"`
+	AgentAuth                   sql.NullString `json:"agent_auth"`
+	AgentTokenUsed              sql.NullString `json:"agent_token_used"`
+	AgentOs                     sql.NullString `json:"agent_os"`
 }
 
 func (q *Queries) GetTarget(ctx context.Context, name string) (GetTargetRow, error) {
@@ -121,6 +157,14 @@ func (q *Queries) GetTarget(ctx context.Context, name string) (GetTargetRow, err
 		&i.VolumeTotal,
 		&i.VolumeUsed,
 		&i.VolumeFree,
+		&i.DatabaseHost,
+		&i.DatabasePort,
+		&i.DatabaseUsername,
+		&i.DatabaseTlsMode,
+		&i.DatabaseCaCertificate,
+		&i.DatabaseDefaultClientDir,
+		&i.DatabaseVariant,
+		&i.DatabaseDefaultClientFamily,
 		&i.JobCount,
 		&i.AgentName,
 		&i.AgentIp,
@@ -129,6 +173,28 @@ func (q *Queries) GetTarget(ctx context.Context, name string) (GetTargetRow, err
 		&i.AgentOs,
 	)
 	return i, err
+}
+
+const getTargetMySQLPassword = `-- name: GetTargetMySQLPassword :one
+SELECT password FROM target_mysql WHERE target_name = ?
+`
+
+func (q *Queries) GetTargetMySQLPassword(ctx context.Context, targetName string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getTargetMySQLPassword, targetName)
+	var password string
+	err := row.Scan(&password)
+	return password, err
+}
+
+const getTargetPostgreSQLPassword = `-- name: GetTargetPostgreSQLPassword :one
+SELECT password FROM target_postgresql WHERE target_name = ?
+`
+
+func (q *Queries) GetTargetPostgreSQLPassword(ctx context.Context, targetName string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getTargetPostgreSQLPassword, targetName)
+	var password string
+	err := row.Scan(&password)
+	return password, err
 }
 
 const getTargetS3Secret = `-- name: GetTargetS3Secret :one
@@ -150,45 +216,67 @@ SELECT
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
+    COALESCE(p.host, m.host, '') AS database_host,
+    COALESCE(p.port, m.port, 0) AS database_port,
+    COALESCE(p.username, m.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(m.variant, '') AS database_variant,
+    COALESCE(m.default_client_family, '') AS database_default_client_family,
     COUNT(j.id) AS job_count,
     ah.name AS agent_name, ah.ip AS agent_ip, ah.auth AS agent_auth,
     ah.token_used AS agent_token_used, ah.os AS agent_os
 FROM targets t
 LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
+LEFT JOIN target_postgresql p ON p.target_name = t.name
+LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN backups j ON t.name = j.target
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 GROUP BY t.name, t.target_type, t.mount_script, f.access, f.path, s.url,
          f.agent_host, f.volume_id, f.volume_type, f.volume_name, f.volume_fs,
          f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
          f.volume_total, f.volume_used, f.volume_free,
+         p.host, m.host, p.port, m.port, p.username, m.username,
+         p.ssl_mode, m.tls_mode, p.ca_certificate, m.ca_certificate,
+         p.default_client_dir, m.default_client_dir, m.variant,
+         m.default_client_family,
          ah.name, ah.ip, ah.auth, ah.token_used, ah.os
 ORDER BY t.name
 `
 
 type ListAllTargetsRow struct {
-	Name             string         `json:"name"`
-	TargetType       string         `json:"target_type"`
-	MountScript      string         `json:"mount_script"`
-	FilesystemAccess string         `json:"filesystem_access"`
-	Path             string         `json:"path"`
-	AgentHost        sql.NullString `json:"agent_host"`
-	VolumeID         sql.NullString `json:"volume_id"`
-	VolumeType       sql.NullString `json:"volume_type"`
-	VolumeName       sql.NullString `json:"volume_name"`
-	VolumeFs         sql.NullString `json:"volume_fs"`
-	VolumeTotalBytes sql.NullInt64  `json:"volume_total_bytes"`
-	VolumeUsedBytes  sql.NullInt64  `json:"volume_used_bytes"`
-	VolumeFreeBytes  sql.NullInt64  `json:"volume_free_bytes"`
-	VolumeTotal      sql.NullString `json:"volume_total"`
-	VolumeUsed       sql.NullString `json:"volume_used"`
-	VolumeFree       sql.NullString `json:"volume_free"`
-	JobCount         int64          `json:"job_count"`
-	AgentName        sql.NullString `json:"agent_name"`
-	AgentIp          sql.NullString `json:"agent_ip"`
-	AgentAuth        sql.NullString `json:"agent_auth"`
-	AgentTokenUsed   sql.NullString `json:"agent_token_used"`
-	AgentOs          sql.NullString `json:"agent_os"`
+	Name                        string         `json:"name"`
+	TargetType                  string         `json:"target_type"`
+	MountScript                 string         `json:"mount_script"`
+	FilesystemAccess            string         `json:"filesystem_access"`
+	Path                        string         `json:"path"`
+	AgentHost                   sql.NullString `json:"agent_host"`
+	VolumeID                    sql.NullString `json:"volume_id"`
+	VolumeType                  sql.NullString `json:"volume_type"`
+	VolumeName                  sql.NullString `json:"volume_name"`
+	VolumeFs                    sql.NullString `json:"volume_fs"`
+	VolumeTotalBytes            sql.NullInt64  `json:"volume_total_bytes"`
+	VolumeUsedBytes             sql.NullInt64  `json:"volume_used_bytes"`
+	VolumeFreeBytes             sql.NullInt64  `json:"volume_free_bytes"`
+	VolumeTotal                 sql.NullString `json:"volume_total"`
+	VolumeUsed                  sql.NullString `json:"volume_used"`
+	VolumeFree                  sql.NullString `json:"volume_free"`
+	DatabaseHost                string         `json:"database_host"`
+	DatabasePort                int64          `json:"database_port"`
+	DatabaseUsername            string         `json:"database_username"`
+	DatabaseTlsMode             string         `json:"database_tls_mode"`
+	DatabaseCaCertificate       string         `json:"database_ca_certificate"`
+	DatabaseDefaultClientDir    string         `json:"database_default_client_dir"`
+	DatabaseVariant             string         `json:"database_variant"`
+	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
+	JobCount                    int64          `json:"job_count"`
+	AgentName                   sql.NullString `json:"agent_name"`
+	AgentIp                     sql.NullString `json:"agent_ip"`
+	AgentAuth                   sql.NullString `json:"agent_auth"`
+	AgentTokenUsed              sql.NullString `json:"agent_token_used"`
+	AgentOs                     sql.NullString `json:"agent_os"`
 }
 
 func (q *Queries) ListAllTargets(ctx context.Context) ([]ListAllTargetsRow, error) {
@@ -217,6 +305,14 @@ func (q *Queries) ListAllTargets(ctx context.Context) ([]ListAllTargetsRow, erro
 			&i.VolumeTotal,
 			&i.VolumeUsed,
 			&i.VolumeFree,
+			&i.DatabaseHost,
+			&i.DatabasePort,
+			&i.DatabaseUsername,
+			&i.DatabaseTlsMode,
+			&i.DatabaseCaCertificate,
+			&i.DatabaseDefaultClientDir,
+			&i.DatabaseVariant,
+			&i.DatabaseDefaultClientFamily,
 			&i.JobCount,
 			&i.AgentName,
 			&i.AgentIp,
@@ -350,6 +446,40 @@ func (q *Queries) UpdateTarget(ctx context.Context, arg UpdateTargetParams) erro
 	return err
 }
 
+const updateTargetMySQLPassword = `-- name: UpdateTargetMySQLPassword :execrows
+UPDATE target_mysql SET password = ? WHERE target_name = ?
+`
+
+type UpdateTargetMySQLPasswordParams struct {
+	Password   string `json:"password"`
+	TargetName string `json:"target_name"`
+}
+
+func (q *Queries) UpdateTargetMySQLPassword(ctx context.Context, arg UpdateTargetMySQLPasswordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateTargetMySQLPassword, arg.Password, arg.TargetName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateTargetPostgreSQLPassword = `-- name: UpdateTargetPostgreSQLPassword :execrows
+UPDATE target_postgresql SET password = ? WHERE target_name = ?
+`
+
+type UpdateTargetPostgreSQLPasswordParams struct {
+	Password   string `json:"password"`
+	TargetName string `json:"target_name"`
+}
+
+func (q *Queries) UpdateTargetPostgreSQLPassword(ctx context.Context, arg UpdateTargetPostgreSQLPasswordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateTargetPostgreSQLPassword, arg.Password, arg.TargetName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateTargetS3Secret = `-- name: UpdateTargetS3Secret :execrows
 UPDATE target_s3 SET secret = ? WHERE target_name = ?
 `
@@ -441,6 +571,85 @@ func (q *Queries) UpsertTargetFilesystem(ctx context.Context, arg UpsertTargetFi
 		arg.VolumeTotal,
 		arg.VolumeUsed,
 		arg.VolumeFree,
+	)
+	return err
+}
+
+const upsertTargetMySQL = `-- name: UpsertTargetMySQL :exec
+INSERT INTO target_mysql (
+    target_name, variant, host, port, username, tls_mode, ca_certificate,
+    default_client_family, default_client_dir
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(target_name) DO UPDATE SET
+    variant = excluded.variant,
+    host = excluded.host,
+    port = excluded.port,
+    username = excluded.username,
+    tls_mode = excluded.tls_mode,
+    ca_certificate = excluded.ca_certificate,
+    default_client_family = excluded.default_client_family,
+    default_client_dir = excluded.default_client_dir
+`
+
+type UpsertTargetMySQLParams struct {
+	TargetName          string `json:"target_name"`
+	Variant             string `json:"variant"`
+	Host                string `json:"host"`
+	Port                int64  `json:"port"`
+	Username            string `json:"username"`
+	TlsMode             string `json:"tls_mode"`
+	CaCertificate       string `json:"ca_certificate"`
+	DefaultClientFamily string `json:"default_client_family"`
+	DefaultClientDir    string `json:"default_client_dir"`
+}
+
+func (q *Queries) UpsertTargetMySQL(ctx context.Context, arg UpsertTargetMySQLParams) error {
+	_, err := q.db.ExecContext(ctx, upsertTargetMySQL,
+		arg.TargetName,
+		arg.Variant,
+		arg.Host,
+		arg.Port,
+		arg.Username,
+		arg.TlsMode,
+		arg.CaCertificate,
+		arg.DefaultClientFamily,
+		arg.DefaultClientDir,
+	)
+	return err
+}
+
+const upsertTargetPostgreSQL = `-- name: UpsertTargetPostgreSQL :exec
+INSERT INTO target_postgresql (
+    target_name, host, port, username, ssl_mode, ca_certificate, default_client_dir
+) VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(target_name) DO UPDATE SET
+    host = excluded.host,
+    port = excluded.port,
+    username = excluded.username,
+    ssl_mode = excluded.ssl_mode,
+    ca_certificate = excluded.ca_certificate,
+    default_client_dir = excluded.default_client_dir
+`
+
+type UpsertTargetPostgreSQLParams struct {
+	TargetName       string `json:"target_name"`
+	Host             string `json:"host"`
+	Port             int64  `json:"port"`
+	Username         string `json:"username"`
+	SslMode          string `json:"ssl_mode"`
+	CaCertificate    string `json:"ca_certificate"`
+	DefaultClientDir string `json:"default_client_dir"`
+}
+
+func (q *Queries) UpsertTargetPostgreSQL(ctx context.Context, arg UpsertTargetPostgreSQLParams) error {
+	_, err := q.db.ExecContext(ctx, upsertTargetPostgreSQL,
+		arg.TargetName,
+		arg.Host,
+		arg.Port,
+		arg.Username,
+		arg.SslMode,
+		arg.CaCertificate,
+		arg.DefaultClientDir,
 	)
 	return err
 }

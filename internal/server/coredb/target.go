@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -75,6 +76,32 @@ func normalizeTarget(target *Target) error {
 			return fmt.Errorf("invalid S3 target URL: %w", err)
 		}
 		target.Access = ""
+	case TargetTypePostgreSQL:
+		if err := normalizeDatabaseTarget(target, 5432); err != nil {
+			return err
+		}
+		if target.DatabaseTLSMode == "" {
+			target.DatabaseTLSMode = "prefer"
+		}
+	case TargetTypeMySQL:
+		if err := normalizeDatabaseTarget(target, 3306); err != nil {
+			return err
+		}
+		if target.DatabaseVariant == "" {
+			target.DatabaseVariant = "mysql"
+		}
+		if target.DatabaseVariant != "mysql" && target.DatabaseVariant != "mariadb" {
+			return fmt.Errorf("unsupported MySQL variant %q", target.DatabaseVariant)
+		}
+		if target.DatabaseClientFamily == "" {
+			target.DatabaseClientFamily = target.DatabaseVariant
+		}
+		if target.DatabaseClientFamily != "mysql" && target.DatabaseClientFamily != "mariadb" {
+			return fmt.Errorf("unsupported MySQL client family %q", target.DatabaseClientFamily)
+		}
+		if target.DatabaseTLSMode == "" {
+			target.DatabaseTLSMode = "preferred"
+		}
 	default:
 		return fmt.Errorf("unsupported target type %q", target.Type)
 	}
@@ -82,10 +109,44 @@ func normalizeTarget(target *Target) error {
 	return nil
 }
 
+func normalizeDatabaseTarget(target *Target, defaultPort int) error {
+	if target.AgentHost.Name != "" {
+		return errors.New("database target cannot have an agent host")
+	}
+	if target.DatabaseHost == "" {
+		return errors.New("database target host is required")
+	}
+	if target.DatabaseUsername == "" {
+		return errors.New("database target username is required")
+	}
+	if target.DatabasePort == 0 {
+		target.DatabasePort = defaultPort
+	}
+	if target.DatabasePort < 1 || target.DatabasePort > 65535 {
+		return fmt.Errorf("invalid database target port %d", target.DatabasePort)
+	}
+	if !filepath.IsAbs(target.DatabaseDefaultClientDir) {
+		return errors.New("database target client directory must be absolute")
+	}
+	if target.DatabaseCACertificate != "" && !filepath.IsAbs(target.DatabaseCACertificate) {
+		return errors.New("database target CA certificate path must be absolute")
+	}
+
+	target.Access = ""
+	target.Path = ""
+	return nil
+}
+
 func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 	switch target.Type {
 	case TargetTypeFilesystem:
 		if err := q.DeleteTargetS3(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetPostgreSQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
 			return err
 		}
 		return q.UpsertTargetFilesystem(db.ctx, corequery.UpsertTargetFilesystemParams{
@@ -108,9 +169,55 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 		if err := q.DeleteTargetFilesystem(db.ctx, target.Name); err != nil {
 			return err
 		}
+		if err := q.DeleteTargetPostgreSQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
+			return err
+		}
 		return q.UpsertTargetS3(db.ctx, corequery.UpsertTargetS3Params{
 			TargetName: target.Name,
 			Url:        target.Path,
+		})
+	case TargetTypePostgreSQL:
+		if err := q.DeleteTargetFilesystem(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetS3(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		return q.UpsertTargetPostgreSQL(db.ctx, corequery.UpsertTargetPostgreSQLParams{
+			TargetName:       target.Name,
+			Host:             target.DatabaseHost,
+			Port:             int64(target.DatabasePort),
+			Username:         target.DatabaseUsername,
+			SslMode:          target.DatabaseTLSMode,
+			CaCertificate:    target.DatabaseCACertificate,
+			DefaultClientDir: target.DatabaseDefaultClientDir,
+		})
+	case TargetTypeMySQL:
+		if err := q.DeleteTargetFilesystem(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetS3(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetPostgreSQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		return q.UpsertTargetMySQL(db.ctx, corequery.UpsertTargetMySQLParams{
+			TargetName:          target.Name,
+			Variant:             target.DatabaseVariant,
+			Host:                target.DatabaseHost,
+			Port:                int64(target.DatabasePort),
+			Username:            target.DatabaseUsername,
+			TlsMode:             target.DatabaseTLSMode,
+			CaCertificate:       target.DatabaseCACertificate,
+			DefaultClientFamily: target.DatabaseClientFamily,
+			DefaultClientDir:    target.DatabaseDefaultClientDir,
 		})
 	default:
 		return fmt.Errorf("unsupported target type %q", target.Type)
@@ -396,18 +503,26 @@ func (db *Store) GetTarget(name string) (Target, error) {
 			TokenUsed:       row.AgentTokenUsed.String,
 			OperatingSystem: row.AgentOs.String,
 		},
-		VolumeID:         fromNullString(row.VolumeID),
-		VolumeType:       fromNullString(row.VolumeType),
-		VolumeName:       fromNullString(row.VolumeName),
-		VolumeFS:         fromNullString(row.VolumeFs),
-		VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
-		VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
-		VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
-		VolumeTotal:      fromNullString(row.VolumeTotal),
-		VolumeUsed:       fromNullString(row.VolumeUsed),
-		VolumeFree:       fromNullString(row.VolumeFree),
-		MountScript:      row.MountScript,
-		JobCount:         int(row.JobCount),
+		VolumeID:                 fromNullString(row.VolumeID),
+		VolumeType:               fromNullString(row.VolumeType),
+		VolumeName:               fromNullString(row.VolumeName),
+		VolumeFS:                 fromNullString(row.VolumeFs),
+		VolumeTotalBytes:         fromNullInt64(row.VolumeTotalBytes),
+		VolumeUsedBytes:          fromNullInt64(row.VolumeUsedBytes),
+		VolumeFreeBytes:          fromNullInt64(row.VolumeFreeBytes),
+		VolumeTotal:              fromNullString(row.VolumeTotal),
+		VolumeUsed:               fromNullString(row.VolumeUsed),
+		VolumeFree:               fromNullString(row.VolumeFree),
+		MountScript:              row.MountScript,
+		JobCount:                 int(row.JobCount),
+		DatabaseHost:             row.DatabaseHost,
+		DatabasePort:             int(row.DatabasePort),
+		DatabaseUsername:         row.DatabaseUsername,
+		DatabaseTLSMode:          row.DatabaseTlsMode,
+		DatabaseCACertificate:    row.DatabaseCaCertificate,
+		DatabaseDefaultClientDir: row.DatabaseDefaultClientDir,
+		DatabaseVariant:          row.DatabaseVariant,
+		DatabaseClientFamily:     row.DatabaseDefaultClientFamily,
 	}
 
 	target.populateInfo()
@@ -436,6 +551,98 @@ func (db *Store) GetS3Secret(name string) (string, error) {
 	return decrypted, nil
 }
 
+func (db *Store) AddDatabasePassword(tx *Transaction, targetName string, password string) (err error) {
+	var commitNeeded bool
+	q := db.queries
+
+	if tx == nil {
+		tx, err = db.NewTransaction()
+		if err != nil {
+			return fmt.Errorf("AddDatabasePassword: failed to begin transaction: %w", err)
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				if err := tx.Rollback(); err != nil {
+					log.Error(err, "")
+				}
+				panic(p)
+			} else if err != nil {
+				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+					log.Error(fmt.Errorf("AddDatabasePassword: failed to rollback transaction: %w", rbErr), "")
+				}
+			} else if commitNeeded {
+				if cErr := tx.Commit(); cErr != nil {
+					err = fmt.Errorf("AddDatabasePassword: failed to commit transaction: %w", cErr)
+					log.Error(err, "")
+				}
+			} else if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				log.Error(fmt.Errorf("AddDatabasePassword: failed to rollback transaction: %w", rbErr), "")
+			}
+		}()
+	}
+	q = db.queries.WithTx(tx.Tx)
+
+	encrypted, err := Encrypt(password)
+	if err != nil {
+		return fmt.Errorf("AddDatabasePassword: error encrypting password: %w", err)
+	}
+
+	rows, err := q.UpdateTargetPostgreSQLPassword(db.ctx, corequery.UpdateTargetPostgreSQLPasswordParams{
+		Password:   encrypted,
+		TargetName: targetName,
+	})
+	if err != nil {
+		return fmt.Errorf("AddDatabasePassword: error updating PostgreSQL target: %w", err)
+	}
+	if rows == 0 {
+		rows, err = q.UpdateTargetMySQLPassword(db.ctx, corequery.UpdateTargetMySQLPasswordParams{
+			Password:   encrypted,
+			TargetName: targetName,
+		})
+		if err != nil {
+			return fmt.Errorf("AddDatabasePassword: error updating MySQL target: %w", err)
+		}
+	}
+	if rows == 0 {
+		return fmt.Errorf("AddDatabasePassword: target %q is not a database target", targetName)
+	}
+
+	commitNeeded = true
+	return nil
+}
+
+func (db *Store) GetDatabasePassword(name string) (string, error) {
+	target, err := db.GetTarget(name)
+	if err != nil {
+		return "", err
+	}
+
+	var encrypted string
+	switch target.Type {
+	case TargetTypePostgreSQL:
+		encrypted, err = db.readQueries.GetTargetPostgreSQLPassword(db.ctx, name)
+	case TargetTypeMySQL:
+		encrypted, err = db.readQueries.GetTargetMySQLPassword(db.ctx, name)
+	default:
+		return "", fmt.Errorf("GetDatabasePassword: target %q is not a database target", name)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrSecretNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("GetDatabasePassword: error fetching target: %w", err)
+	}
+	if encrypted == "" {
+		return "", ErrSecretNotFound
+	}
+
+	decrypted, err := Decrypt(encrypted)
+	if err != nil {
+		return "", fmt.Errorf("GetDatabasePassword: failed to decrypt password: %w", err)
+	}
+	return decrypted, nil
+}
+
 func (db *Store) GetAllTargets() ([]Target, error) {
 	rows, err := db.readQueries.ListAllTargets(db.ctx)
 	if err != nil {
@@ -456,18 +663,26 @@ func (db *Store) GetAllTargets() ([]Target, error) {
 				TokenUsed:       row.AgentTokenUsed.String,
 				OperatingSystem: row.AgentOs.String,
 			},
-			VolumeID:         fromNullString(row.VolumeID),
-			VolumeType:       fromNullString(row.VolumeType),
-			VolumeName:       fromNullString(row.VolumeName),
-			VolumeFS:         fromNullString(row.VolumeFs),
-			VolumeTotalBytes: fromNullInt64(row.VolumeTotalBytes),
-			VolumeUsedBytes:  fromNullInt64(row.VolumeUsedBytes),
-			VolumeFreeBytes:  fromNullInt64(row.VolumeFreeBytes),
-			VolumeTotal:      fromNullString(row.VolumeTotal),
-			VolumeUsed:       fromNullString(row.VolumeUsed),
-			VolumeFree:       fromNullString(row.VolumeFree),
-			MountScript:      row.MountScript,
-			JobCount:         int(row.JobCount),
+			VolumeID:                 fromNullString(row.VolumeID),
+			VolumeType:               fromNullString(row.VolumeType),
+			VolumeName:               fromNullString(row.VolumeName),
+			VolumeFS:                 fromNullString(row.VolumeFs),
+			VolumeTotalBytes:         fromNullInt64(row.VolumeTotalBytes),
+			VolumeUsedBytes:          fromNullInt64(row.VolumeUsedBytes),
+			VolumeFreeBytes:          fromNullInt64(row.VolumeFreeBytes),
+			VolumeTotal:              fromNullString(row.VolumeTotal),
+			VolumeUsed:               fromNullString(row.VolumeUsed),
+			VolumeFree:               fromNullString(row.VolumeFree),
+			MountScript:              row.MountScript,
+			JobCount:                 int(row.JobCount),
+			DatabaseHost:             row.DatabaseHost,
+			DatabasePort:             int(row.DatabasePort),
+			DatabaseUsername:         row.DatabaseUsername,
+			DatabaseTLSMode:          row.DatabaseTlsMode,
+			DatabaseCACertificate:    row.DatabaseCaCertificate,
+			DatabaseDefaultClientDir: row.DatabaseDefaultClientDir,
+			DatabaseVariant:          row.DatabaseVariant,
+			DatabaseClientFamily:     row.DatabaseDefaultClientFamily,
 		}
 
 		target.populateInfo()
@@ -579,27 +794,39 @@ func (t *Target) IsLocal() bool {
 	return t.IsFilesystem() && t.Access == FilesystemAccessLocal
 }
 
+func (t *Target) IsDatabase() bool {
+	return t.Type == TargetTypePostgreSQL || t.Type == TargetTypeMySQL
+}
+
 type Target struct {
-	Name             string           `json:"name"`
-	Type             TargetType       `json:"target_type"`
-	Access           FilesystemAccess `json:"access,omitempty"`
-	Path             string           `json:"path"`
-	AgentHost        AgentHost        `json:"agent_host"`
-	VolumeID         string           `json:"volume_id,omitempty"`
-	MountScript      string           `json:"mount_script"`
-	AgentVersion     string           `json:"agent_version"`
-	ConnectionStatus bool             `json:"connection_status"`
-	JobCount         int              `json:"job_count"`
-	VolumeType       string           `json:"volume_type"`
-	VolumeName       string           `json:"volume_name"`
-	VolumeFS         string           `json:"volume_fs"`
-	VolumeTotalBytes int              `json:"volume_total_bytes,omitempty"`
-	VolumeUsedBytes  int              `json:"volume_used_bytes,omitempty"`
-	VolumeFreeBytes  int              `json:"volume_free_bytes,omitempty"`
-	VolumeTotal      string           `json:"volume_total"`
-	VolumeUsed       string           `json:"volume_used"`
-	VolumeFree       string           `json:"volume_free"`
-	S3Info           *S3Url           `json:"s3_info"`
+	Name                     string           `json:"name"`
+	Type                     TargetType       `json:"target_type"`
+	Access                   FilesystemAccess `json:"access,omitempty"`
+	Path                     string           `json:"path"`
+	AgentHost                AgentHost        `json:"agent_host"`
+	VolumeID                 string           `json:"volume_id,omitempty"`
+	MountScript              string           `json:"mount_script"`
+	AgentVersion             string           `json:"agent_version"`
+	ConnectionStatus         bool             `json:"connection_status"`
+	JobCount                 int              `json:"job_count"`
+	VolumeType               string           `json:"volume_type"`
+	VolumeName               string           `json:"volume_name"`
+	VolumeFS                 string           `json:"volume_fs"`
+	VolumeTotalBytes         int              `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes          int              `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes          int              `json:"volume_free_bytes,omitempty"`
+	VolumeTotal              string           `json:"volume_total"`
+	VolumeUsed               string           `json:"volume_used"`
+	VolumeFree               string           `json:"volume_free"`
+	S3Info                   *S3Url           `json:"s3_info"`
+	DatabaseHost             string           `json:"database_host,omitempty"`
+	DatabasePort             int              `json:"database_port,omitempty"`
+	DatabaseUsername         string           `json:"database_username,omitempty"`
+	DatabaseTLSMode          string           `json:"database_tls_mode,omitempty"`
+	DatabaseCACertificate    string           `json:"database_ca_certificate,omitempty"`
+	DatabaseDefaultClientDir string           `json:"database_default_client_dir,omitempty"`
+	DatabaseVariant          string           `json:"database_variant,omitempty"`
+	DatabaseClientFamily     string           `json:"database_default_client_family,omitempty"`
 }
 
 type AgentHost struct {
