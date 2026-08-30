@@ -272,6 +272,60 @@ func TestRestoreDumpRejectsEngineMismatch(t *testing.T) {
 	}
 }
 
+func TestRestoreMySQLRenamesDatabaseFromServerDump(t *testing.T) {
+	dir := t.TempDir()
+	writeTestProgram(t, dir, "mysqldump", "#!/bin/sh\nprintf -- '-- Current Database: `test`\\nCREATE DATABASE `test`;\\nUSE `test`;\\nCREATE TABLE kept (id integer);\\n-- Current Database: `other`\\nCREATE TABLE dropped (id integer);\\n'\n")
+	writeTestProgram(t, dir, "mysql", `#!/bin/sh
+printf '%s\n' "$*" >> "$DATABASE_TEST_LOG"
+case "$*" in
+  *"INFORMATION_SCHEMA.SCHEMATA"*) ;;
+  *"--execute="*) ;;
+  *) cat > "$DATABASE_RESTORE_INPUT" ;;
+esac
+`)
+	logPath := filepath.Join(dir, "restore.log")
+	inputPath := filepath.Join(dir, "restore.sql")
+	t.Setenv("DATABASE_TEST_LOG", logPath)
+	t.Setenv("DATABASE_RESTORE_INPUT", inputPath)
+	target := coredb.Target{
+		Type:             coredb.TargetTypeMySQL,
+		DatabaseHost:     "mysql.example",
+		DatabasePort:     3306,
+		DatabaseUsername: "backup",
+		DatabaseTLSMode:  "disabled",
+	}
+	bundle := ClientBundle{
+		Engine:            EngineMySQL,
+		Family:            FamilyMySQL,
+		DumpProgram:       filepath.Join(dir, "mysqldump"),
+		ServerDumpProgram: filepath.Join(dir, "mysqldump"),
+		RestoreProgram:    filepath.Join(dir, "mysql"),
+	}
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "secret", DumpOptions{Scope: "server"}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Cleanup()
+	options := RestoreOptions{SourceDatabase: "test", DestinationDatabase: "database2", ReplaceExisting: true}
+	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", options, bundle); err != nil {
+		t.Fatal(err)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), "CREATE DATABASE `database2`") || !strings.Contains(string(logData), "--database=database2") {
+		t.Fatalf("restore did not target the renamed database: %s", logData)
+	}
+	input, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(input), "CREATE TABLE kept") || strings.Contains(string(input), "CREATE TABLE dropped") {
+		t.Fatalf("restore input = %s", input)
+	}
+}
+
 func TestCopyDumpSectionExtractsOneDatabase(t *testing.T) {
 	postgres := strings.Join([]string{
 		"CREATE ROLE app;",

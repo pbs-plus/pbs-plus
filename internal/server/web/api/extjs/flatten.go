@@ -486,6 +486,7 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 		"post_script":            r.PostScript,
 		"retry":                  r.Retry,
 		"retry-interval":         r.RetryInterval,
+		"source_database":        r.SourceDatabase,
 		"destination_database":   r.DestinationDatabase,
 		"replace_existing":       r.ReplaceExisting,
 		"database_client_family": r.DatabaseClientFamily,
@@ -566,6 +567,7 @@ type FlatRestore struct {
 	Retry                int    `json:"retry"`
 	RetryInterval        int    `json:"retry-interval"`
 	ExpectedSize         int    `json:"expected_size,omitempty"`
+	SourceDatabase       string `json:"source_database,omitempty"`
 	DestinationDatabase  string `json:"destination_database,omitempty"`
 	ReplaceExisting      bool   `json:"replace_existing,omitempty"`
 	DatabaseClientFamily string `json:"database_client_family,omitempty"`

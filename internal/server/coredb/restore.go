@@ -197,6 +197,7 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		Mode:                 int(row.RestoreMode),
 		PreScript:            row.PreScript,
 		PostScript:           row.PostScript,
+		SourceDatabase:       row.SourceDatabase,
 		DestinationDatabase:  row.DestinationDatabase,
 		ReplaceExisting:      row.ReplaceExisting != 0,
 		DatabaseClientFamily: row.DatabaseClientFamily,
@@ -432,6 +433,7 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 			RetryInterval:        fromNullInt64(row.RetryInterval),
 			PreScript:            row.PreScript,
 			PostScript:           row.PostScript,
+			SourceDatabase:       row.SourceDatabase,
 			DestinationDatabase:  row.DestinationDatabase,
 			ReplaceExisting:      row.ReplaceExisting != 0,
 			DatabaseClientFamily: row.DatabaseClientFamily,
@@ -583,6 +585,7 @@ type Restore struct {
 	UPIDs                []string   `json:"upids"`
 	CurrentStats         JobStats   `json:"current-stats"`
 	History              JobHistory `json:"history"`
+	SourceDatabase       string     `json:"source_database,omitempty"`
 	DestinationDatabase  string     `json:"destination_database,omitempty"`
 	ReplaceExisting      bool       `json:"replace_existing,omitempty"`
 	DatabaseClientFamily string     `json:"database_client_family,omitempty"`
@@ -590,7 +593,7 @@ type Restore struct {
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {
-	if restore.DestinationDatabase == "" && !restore.ReplaceExisting && restore.DatabaseClientFamily == "" && restore.DatabaseClientDir == "" {
+	if restore.SourceDatabase == "" && restore.DestinationDatabase == "" && !restore.ReplaceExisting && restore.DatabaseClientFamily == "" && restore.DatabaseClientDir == "" {
 		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
 	}
 
@@ -610,6 +613,7 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 
 	return q.UpsertRestoreDatabaseOptions(db.ctx, corequery.UpsertRestoreDatabaseOptionsParams{
 		RestoreID:           restore.ID,
+		SourceDatabase:      restore.SourceDatabase,
 		DestinationDatabase: restore.DestinationDatabase,
 		ReplaceExisting:     boolToNullInt64(restore.ReplaceExisting).Int64,
 		ClientFamily:        restore.DatabaseClientFamily,

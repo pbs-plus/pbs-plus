@@ -38,6 +38,7 @@ func (b *restoreJob) databaseExecute(ctx context.Context) error {
 		return fmt.Errorf("get database password: %w", err)
 	}
 	if err := database.RestoreDump(ctx, stagingDir, b.job.DestTarget, password, database.RestoreOptions{
+		SourceDatabase:      b.job.SourceDatabase,
 		DestinationDatabase: b.job.DestinationDatabase,
 		ReplaceExisting:     b.job.ReplaceExisting,
 	}, bundle); err != nil {

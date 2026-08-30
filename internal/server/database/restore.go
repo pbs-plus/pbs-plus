@@ -20,8 +20,20 @@ import (
 )
 
 type RestoreOptions struct {
+	SourceDatabase      string
 	DestinationDatabase string
 	ReplaceExisting     bool
+}
+
+func (o RestoreOptions) names() (source, destination string) {
+	source, destination = o.SourceDatabase, o.DestinationDatabase
+	if source == "" {
+		source = destination
+	}
+	if destination == "" {
+		destination = source
+	}
+	return source, destination
 }
 
 func RestoreDump(ctx context.Context, archiveDir string, target coredb.Target, password string, options RestoreOptions, bundle ClientBundle) error {
@@ -35,10 +47,11 @@ func RestoreDump(ctx context.Context, archiveDir string, target coredb.Target, p
 	if bundle.Engine != manifest.Engine || bundle.RestoreProgram == "" {
 		return errors.New("database restore client does not match dump engine")
 	}
-	if manifest.Scope == "database" && options.DestinationDatabase == "" {
+	source, destination := options.names()
+	if manifest.Scope == "database" && destination == "" {
 		return errors.New("destination database is required")
 	}
-	if manifest.Scope == "server" && options.DestinationDatabase == "" && !options.ReplaceExisting {
+	if manifest.Scope == "server" && source == "" && !options.ReplaceExisting {
 		return errors.New("whole-server restore requires explicit replacement confirmation")
 	}
 
@@ -81,7 +94,7 @@ func restorePostgreSQL(ctx context.Context, dumpPath string, target coredb.Targe
 		return runRestoreCommand(cmd, password)
 	}
 
-	database := options.DestinationDatabase
+	source, database := options.names()
 	if database != "" {
 		query := "SELECT 1 FROM pg_database WHERE datname = " + postgreSQLLiteral(database)
 		out, err := run(nil, "--dbname=template1", "--tuples-only", "--no-align", "--command="+query)
@@ -102,7 +115,7 @@ func restorePostgreSQL(ctx context.Context, dumpPath string, target coredb.Targe
 		}
 	}
 
-	dump, wait, err := openDumpStream(dumpPath, scope, EnginePostgreSQL, database)
+	dump, wait, err := openDumpStream(dumpPath, scope, EnginePostgreSQL, source)
 	if err != nil {
 		return err
 	}
@@ -139,7 +152,7 @@ func restoreMySQL(ctx context.Context, dumpPath string, target coredb.Target, pa
 		return runRestoreCommand(cmd, password)
 	}
 
-	database := options.DestinationDatabase
+	source, database := options.names()
 	if database != "" {
 		encodedName := hex.EncodeToString([]byte(database))
 		query := "SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = CONVERT(0x" + encodedName + " USING utf8mb4)"
@@ -161,7 +174,7 @@ func restoreMySQL(ctx context.Context, dumpPath string, target coredb.Target, pa
 		}
 	}
 
-	dump, wait, err := openDumpStream(dumpPath, scope, EngineMySQL, database)
+	dump, wait, err := openDumpStream(dumpPath, scope, EngineMySQL, source)
 	if err != nil {
 		return err
 	}
