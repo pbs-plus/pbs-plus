@@ -9,7 +9,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
-func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, task proxmox.Task, app *application.Runtime) error {
+func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, task proxmox.Task, workflowStart, workflowEnd int64, app *application.Runtime) error {
 	return jobs.UpdateJobHistory(
 		backup.ID,
 		backup.CurrentPID,
@@ -21,6 +21,7 @@ func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, t
 			return b.History, b.CurrentPID, err
 		},
 		func(history coredb.JobHistory, currentPID int) error {
+			applyWorkflowBounds(&history, workflowStart, workflowEnd, succeeded)
 			b, err := app.CoreDB.GetBackup(backup.ID)
 			if err != nil {
 				return err
@@ -30,4 +31,16 @@ func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, t
 			return app.CoreDB.UpdateBackup(nil, b)
 		},
 	)
+}
+
+func applyWorkflowBounds(history *coredb.JobHistory, start, end int64, succeeded bool) {
+	if start <= 0 {
+		return
+	}
+	history.LastRunStarttime = start
+	history.LastRunEndtime = end
+	history.Duration = max(end-start, 0)
+	if succeeded && end > 0 {
+		history.LastSuccessfulEndtime = end
+	}
 }

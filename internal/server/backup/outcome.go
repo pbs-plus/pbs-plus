@@ -5,6 +5,7 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -217,8 +218,9 @@ func (b *backupJob) updatePBSStatus(succeeded bool, warningsNum int, upid string
 	b.logger.Info("updating job status", "succeeded", succeeded, "warnings", warningsNum)
 	b.mu.RLock()
 	currentJob := b.job
+	workflowStart := b.workflowStart
 	b.mu.RUnlock()
-	if err := updateBackupStatus(succeeded, warningsNum, currentJob, proxmox.Task{UPID: upid}, b.app); err != nil {
+	if err := updateBackupStatus(succeeded, warningsNum, currentJob, proxmox.Task{UPID: upid}, workflowStart, time.Now().Unix(), b.app); err != nil {
 		b.logger.Error(err, "failed to update job status - post cmd.Wait")
 	}
 }
@@ -241,6 +243,7 @@ func (b *backupJob) createOK(err error) {
 		return
 	}
 
+	workflowStart, workflowEnd := b.workflowTimes()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -251,8 +254,11 @@ func (b *backupJob) createOK(err error) {
 
 	latest.History.LastRunUpid = task.UPID
 	latest.History.LastRunState = task.Status
-	latest.History.LastRunEndtime = task.EndTime
-	latest.History.LastSuccessfulEndtime = task.EndTime
+	latest.History.LastRunStatus = coredb.JobStatusSuccess
+	latest.History.LastRunStarttime = workflowStart
+	latest.History.LastRunEndtime = workflowEnd
+	latest.History.Duration = latest.History.LastRunEndtime - latest.History.LastRunStarttime
+	latest.History.LastSuccessfulEndtime = latest.History.LastRunEndtime
 	latest.History.LastSuccessfulUpid = task.UPID
 
 	b.job = latest
@@ -262,6 +268,7 @@ func (b *backupJob) createOK(err error) {
 }
 
 func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
+	workflowStart, workflowEnd := b.workflowTimes()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -272,11 +279,25 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 
 	latest.History.LastRunUpid = task.UPID
 	latest.History.LastRunState = task.Status
-	latest.History.LastRunEndtime = task.EndTime
+	latest.History.LastRunStatus = coredb.JobStatusFailed
+	latest.History.LastRunStarttime = workflowStart
+	latest.History.LastRunEndtime = workflowEnd
+	latest.History.Duration = latest.History.LastRunEndtime - latest.History.LastRunStarttime
 
 	b.job = latest
 	if uerr := b.app.CoreDB.UpdateBackup(nil, latest); uerr != nil {
 		b.logger.Error(uerr, "", "upid", task.UPID)
 
 	}
+}
+
+func (b *backupJob) workflowTimes() (int64, int64) {
+	b.mu.RLock()
+	start := b.workflowStart
+	b.mu.RUnlock()
+	end := time.Now().Unix()
+	if start <= 0 {
+		start = end
+	}
+	return start, end
 }
