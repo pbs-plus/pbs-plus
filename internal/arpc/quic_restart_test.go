@@ -87,6 +87,23 @@ func TestQuicIdleTimeoutBoundsAgentRecovery(t *testing.T) {
 	}
 }
 
+func TestQuicConfigBoundsControlPlaneResources(t *testing.T) {
+	cfg := quicConfig()
+
+	if cfg.MaxIncomingStreams <= 0 || cfg.MaxIncomingStreams > 64 {
+		t.Fatalf("MaxIncomingStreams = %d, want 1..64", cfg.MaxIncomingStreams)
+	}
+	if cfg.MaxStreamReceiveWindow > 1*1024*1024 {
+		t.Fatalf("MaxStreamReceiveWindow = %d, want at most 1 MiB", cfg.MaxStreamReceiveWindow)
+	}
+	if cfg.MaxConnectionReceiveWindow > 4*1024*1024 {
+		t.Fatalf("MaxConnectionReceiveWindow = %d, want at most 4 MiB", cfg.MaxConnectionReceiveWindow)
+	}
+	if cfg.MaxConnectionReceiveWindow < cfg.MaxStreamReceiveWindow {
+		t.Fatal("connection receive window is smaller than stream receive window")
+	}
+}
+
 func newQuicServerTLS(t *testing.T) *tls.Config {
 	t.Helper()
 	ensureGlobalCAs(t)

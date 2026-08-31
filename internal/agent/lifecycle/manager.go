@@ -197,6 +197,7 @@ func ConnectARPC(
 		factor := 2.0
 		jitter := 0.2
 		backoff := base
+		connectionFailureLogged := false
 		var session arpc.Session
 
 		for {
@@ -210,10 +211,13 @@ func ConnectARPC(
 			}
 
 			var connErr error
+			var quicErr error
+			transport := "QUIC"
 			session, connErr = arpc.DialQuic(
 				ctx, address, tlsConfig, headers,
 			)
 			if connErr != nil {
+				quicErr = connErr
 				if isCertError(connErr) {
 					log.Error(connErr,
 						"certificate error on connect, requesting re-bootstrap")
@@ -229,14 +233,11 @@ func ConnectARPC(
 					signalCertError(ErrHostNotExpected)
 					return
 				}
-				log.Warn("qUIC connection failed, falling back to TCP/mTLS", "error", connErr.Error())
-
 				var tcpPipe *arpc.StreamPipe
 				tcpPipe, connErr = arpc.ConnectToServer(ctx, address, headers, tlsConfig)
 				if connErr == nil {
 					session = tcpPipe
-					log.Info("tCP/mTLS fallback connection established")
-
+					transport = "TCP/mTLS"
 				}
 			}
 
@@ -255,6 +256,14 @@ func ConnectARPC(
 
 					signalCertError(ErrHostNotExpected)
 					return
+				}
+				if !connectionFailureLogged {
+					attrs := []any{"error", connErr.Error()}
+					if quicErr != nil {
+						attrs = append(attrs, "quic_error", quicErr.Error())
+					}
+					log.Warn("server connection unavailable; retrying", attrs...)
+					connectionFailureLogged = true
 				}
 
 				sleep := min(
@@ -327,8 +336,15 @@ func ConnectARPC(
 			})
 			session.SetRouter(router)
 			backoff = base
+			if connectionFailureLogged {
+				log.Info("server connection restored", "transport", transport)
+				connectionFailureLogged = false
+			} else if quicErr != nil {
+				log.Info("connected using TCP/mTLS fallback", "quic_error", quicErr.Error())
+			}
 
 			updater.MarkHealthy()
+			updater.CheckOnReconnect()
 
 			serveErr := session.Serve()
 			session.Close()
@@ -356,6 +372,11 @@ func ConnectARPC(
 				}
 				if tcpPipe != nil {
 					tcpPipe.Close()
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(1 * time.Second):
 				}
 			}
 		}
