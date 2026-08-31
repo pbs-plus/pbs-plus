@@ -137,3 +137,33 @@ func TestStoreStatusResultsTimeoutKeepsLastVerdict(t *testing.T) {
 		t.Fatalf("explicit error should overwrite: %#v", e)
 	}
 }
+
+func TestStoreStatusResultsKeepsMetadataOnFailure(t *testing.T) {
+	service := NewTargetService(nil, arpc.NewAgentsManager())
+	targets := []coredb.Target{{Name: "t1"}}
+
+	service.statusCache.Set("t1", StatusEntry{
+		ConnectionStatus: new(true),
+		AgentVersion:     "9.9",
+		VolumeTotalBytes: 100, VolumeUsedBytes: 40, VolumeFreeBytes: 60,
+		CheckedAt: time.Now().Add(-time.Minute),
+	})
+	service.storeStatusResults(targets, []TargetStatusResult{
+		{Index: 0, AgentVersion: "N/A", Error: errors.New("connection refused")},
+	})
+	e, _ := service.statusCache.Get("t1")
+	if e.ConnectionStatus == nil || *e.ConnectionStatus {
+		t.Fatalf("explicit error should downgrade reachability: %#v", e)
+	}
+	if e.AgentVersion != "9.9" || e.VolumeTotalBytes != 100 || e.VolumeUsedBytes != 40 || e.VolumeFreeBytes != 60 {
+		t.Fatalf("metadata should survive a failed probe: %#v", e)
+	}
+
+	service.storeStatusResults(targets, []TargetStatusResult{
+		{Index: 0, AgentVersion: "10.0", ConnectionStatus: true, VolumeTotalBytes: 200},
+	})
+	e, _ = service.statusCache.Get("t1")
+	if e.AgentVersion != "10.0" || e.VolumeTotalBytes != 200 || e.ConnectionStatus == nil || !*e.ConnectionStatus {
+		t.Fatalf("fresh probe data should overwrite: %#v", e)
+	}
+}

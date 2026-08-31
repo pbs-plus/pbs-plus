@@ -367,6 +367,16 @@ func (s *TargetService) storeStatusResults(targets []coredb.Target, results []Ta
 		if result.Error != nil {
 			entry.LastError = result.Error.Error()
 		}
+		// A failed probe carries no fresh metadata: keep the last known
+		// version and sizes instead of clobbering them with N/A and zeros.
+		if prior, ok := s.statusCache.Get(name); ok {
+			if entry.AgentVersion == "" || entry.AgentVersion == "N/A" {
+				entry.AgentVersion = prior.AgentVersion
+			}
+			if entry.VolumeTotalBytes == 0 && entry.VolumeUsedBytes == 0 && entry.VolumeFreeBytes == 0 {
+				entry.TargetSizeResult = prior.TargetSizeResult
+			}
+		}
 		s.statusCache.Set(name, entry)
 	}
 }
