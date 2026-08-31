@@ -319,6 +319,7 @@ func ConnectARPC(
 				},
 			)
 			router.Handle("target_status", sync.StatusHandler)
+			router.Handle("target_status_batch", sync.StatusBatchHandler)
 			router.Handle("cleanup", sync.BackupCloseHandler)
 			router.Handle("cleanup_restore", sync.RestoreCloseHandler)
 			router.Handle("verify_start", cli.VerifyStartHandler)

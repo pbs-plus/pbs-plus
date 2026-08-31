@@ -139,6 +139,7 @@ type TargetService struct {
 	statusCache  *safemap.Map[string, StatusEntry]
 	statusSem    chan struct{}
 	statusFlight singleflight.Group
+	agentFlight  singleflight.Group
 }
 
 func NewTargetService(db *coredb.Store, agentsMgr *arpc.AgentsManager) *TargetService {
@@ -263,23 +264,12 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 
 			switch {
 			case tgt.IsAgent():
-				var sess targetStatusSession
-				if quic, ok := s.agentsMgr.GetQuicPipe(tgt.GetHostname()); ok {
-					sess = quic
-				} else if stream, ok := s.agentsMgr.GetStreamPipe(tgt.GetHostname()); ok {
-					sess = stream
-				} else {
+				sess, ok := s.agentSession(tgt.GetHostname())
+				if !ok {
 					break
 				}
-				result.AgentVersion = sess.GetVersion()
-				respMsg, err := sess.CallMessage(timeoutCtx, "target_status", &fswire.TargetStatusReq{Drive: tgt.VolumeID})
-				result.Error = err
-				if err == nil && strings.HasPrefix(respMsg, "reachable") {
-					result.ConnectionStatus = true
-					if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
-						result.AgentVersion = parts[1]
-					}
-				}
+				result = probeAgentTarget(timeoutCtx, sess, tgt, idx)
+				result.TargetSizeResult = size
 			case tgt.IsLocal():
 				result.Error = sizeErr
 				result.ConnectionStatus = sizeErr == nil
@@ -335,6 +325,106 @@ func (s *TargetService) revalidate(name string) {
 		s.storeStatusResults(targets, s.CheckStatus(ctx, targets, true, statusProbeTimeout, 1))
 		return nil, nil
 	})
+}
+
+// revalidateAgent probes every stale target behind one agent in a single
+// request-response; the agent checks drives concurrently on its side.
+func (s *TargetService) revalidateAgent(hostname string, targets []coredb.Target) {
+	if s.db == nil {
+		return
+	}
+	_, _, _ = s.agentFlight.Do(hostname, func() (any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
+		defer cancel()
+		select {
+		case s.statusSem <- struct{}{}:
+			defer func() { <-s.statusSem }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+
+		sess, ok := s.agentSession(hostname)
+		if !ok {
+			results := make([]TargetStatusResult, len(targets))
+			for i := range targets {
+				results[i] = TargetStatusResult{Index: i, AgentVersion: "N/A"}
+			}
+			s.storeStatusResults(targets, results)
+			return nil, nil
+		}
+
+		drives := make([]fswire.TargetStatusReq, len(targets))
+		for i, tgt := range targets {
+			drives[i] = fswire.TargetStatusReq{Drive: tgt.VolumeID}
+		}
+		var resp fswire.TargetStatusBatchResp
+		err := sess.Call(ctx, "target_status_batch", &fswire.TargetStatusBatchReq{Drives: drives}, &resp)
+		switch {
+		case err == nil:
+			s.storeStatusResults(targets, agentBatchResults(targets, resp, sess.GetVersion()))
+		case isTimeoutErr(err):
+			// wedged agent: no verdict for any drive, last known stands
+			results := make([]TargetStatusResult, len(targets))
+			for i := range targets {
+				results[i] = TargetStatusResult{Index: i, AgentVersion: sess.GetVersion(), Error: err}
+			}
+			s.storeStatusResults(targets, results)
+		default:
+			// older agent without batch support: one request per drive
+			results := make([]TargetStatusResult, len(targets))
+			for i, tgt := range targets {
+				results[i] = probeAgentTarget(ctx, sess, tgt, i)
+			}
+			s.storeStatusResults(targets, results)
+		}
+		return nil, nil
+	})
+}
+
+// agentBatchResults maps one batch response onto per-target results; nil
+// Reachable (or a missing drive) is a non-verdict, false is an explicit
+// failure, true is reachable.
+func agentBatchResults(targets []coredb.Target, resp fswire.TargetStatusBatchResp, version string) []TargetStatusResult {
+	results := make([]TargetStatusResult, len(targets))
+	for i, tgt := range targets {
+		size, _ := ResolveTargetSize(tgt)
+		r := TargetStatusResult{Index: i, TargetSizeResult: size, AgentVersion: version}
+		st, ok := resp.Drives[tgt.VolumeID]
+		switch {
+		case !ok || st.Reachable == nil:
+			r.Error = fmt.Errorf("drive check gave no verdict: %w", os.ErrDeadlineExceeded)
+		case !*st.Reachable:
+			r.Error = errors.New(st.Message)
+		default:
+			r.ConnectionStatus = true
+		}
+		results[i] = r
+	}
+	return results
+}
+
+// probeAgentTarget is the single-drive wire protocol (legacy fallback).
+func probeAgentTarget(ctx context.Context, sess targetStatusSession, tgt coredb.Target, idx int) TargetStatusResult {
+	result := TargetStatusResult{Index: idx, AgentVersion: sess.GetVersion()}
+	respMsg, err := sess.CallMessage(ctx, "target_status", &fswire.TargetStatusReq{Drive: tgt.VolumeID})
+	result.Error = err
+	if err == nil && strings.HasPrefix(respMsg, "reachable") {
+		result.ConnectionStatus = true
+		if v, ok := strings.CutPrefix(respMsg, "reachable|"); ok {
+			result.AgentVersion = v
+		}
+	}
+	return result
+}
+
+func (s *TargetService) agentSession(hostname string) (targetStatusSession, bool) {
+	if quic, ok := s.agentsMgr.GetQuicPipe(hostname); ok {
+		return quic, true
+	}
+	if stream, ok := s.agentsMgr.GetStreamPipe(hostname); ok {
+		return stream, true
+	}
+	return nil, false
 }
 
 func (s *TargetService) storeStatusResults(targets []coredb.Target, results []TargetStatusResult) {
@@ -395,20 +485,29 @@ func isTimeoutErr(err error) bool {
 // the stale value is returned (stale-while-revalidate / ISR semantics).
 func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]StatusEntry {
 	entries := make(map[string]StatusEntry, len(targets))
-	stale := make([]string, 0, len(targets))
+	staleOthers := make([]string, 0, len(targets))
+	staleAgents := make(map[string][]coredb.Target)
+	probe := func(tgt coredb.Target) {
+		if tgt.IsAgent() {
+			host := tgt.GetHostname()
+			staleAgents[host] = append(staleAgents[host], tgt)
+		} else {
+			staleOthers = append(staleOthers, tgt.Name)
+		}
+	}
 	for _, tgt := range targets {
 		if entry, ok := s.statusCache.Get(tgt.Name); ok {
 			entries[tgt.Name] = entry
 			if time.Since(entry.CheckedAt) >= statusRevalidateAfter {
-				stale = append(stale, tgt.Name)
+				probe(tgt)
 			} else if tgt.IsAgent() && entry.ConnectionStatus != nil &&
 				*entry.ConnectionStatus != s.agentsMgr.IsOnline(tgt.GetHostname()) {
 				// cached verdict disagrees with the live session map: reprobe now
-				stale = append(stale, tgt.Name)
+				probe(tgt)
 			}
 			continue
 		}
-		stale = append(stale, tgt.Name)
+		probe(tgt)
 		entry := StatusEntry{AgentVersion: "N/A"}
 		if tgt.IsAgent() {
 			if s.agentsMgr.IsOnline(tgt.GetHostname()) {
@@ -426,7 +525,10 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 		}
 		entries[tgt.Name] = entry
 	}
-	for _, name := range stale {
+	for host, tgts := range staleAgents {
+		go s.revalidateAgent(host, tgts)
+	}
+	for _, name := range staleOthers {
 		go s.revalidate(name)
 	}
 	s.evictOrphans(targets)
@@ -506,6 +608,7 @@ func probeTCP(ctx context.Context, address string) error {
 
 type targetStatusSession interface {
 	callSession
+	Call(ctx context.Context, method string, payload any, out any) error
 	GetVersion() string
 }
 

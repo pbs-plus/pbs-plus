@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -165,5 +166,36 @@ func TestStoreStatusResultsKeepsMetadataOnFailure(t *testing.T) {
 	e, _ = service.statusCache.Get("t1")
 	if e.AgentVersion != "10.0" || e.VolumeTotalBytes != 200 || e.ConnectionStatus == nil || !*e.ConnectionStatus {
 		t.Fatalf("fresh probe data should overwrite: %#v", e)
+	}
+}
+
+func TestAgentBatchResults(t *testing.T) {
+	targets := []coredb.Target{
+		{Name: "a", VolumeID: "C:"},
+		{Name: "b", VolumeID: "D:"},
+		{Name: "c", VolumeID: "E:"},
+		{Name: "d", VolumeID: "Z:"},
+	}
+	resp := fswire.TargetStatusBatchResp{
+		Version: "1.2.3",
+		Drives: map[string]fswire.TargetDriveStatus{
+			"C:": {Reachable: new(true)},
+			"D:": {Reachable: new(false), Message: "not assigned"},
+			"E:": {Message: "drive check timed out"},
+		},
+	}
+
+	rs := agentBatchResults(targets, resp, "1.2.3")
+	if rs[0].AgentVersion != "1.2.3" || !rs[0].ConnectionStatus || rs[0].Error != nil {
+		t.Fatalf("reachable drive: %#v", rs[0])
+	}
+	if rs[1].Error == nil || rs[1].Error.Error() != "not assigned" || isTimeoutErr(rs[1].Error) {
+		t.Fatalf("unreachable drive should be an explicit error: %#v", rs[1])
+	}
+	if !isTimeoutErr(rs[2].Error) || rs[2].ConnectionStatus {
+		t.Fatalf("no-verdict drive should be timeout-class: %#v", rs[2])
+	}
+	if !isTimeoutErr(rs[3].Error) || rs[3].ConnectionStatus {
+		t.Fatalf("missing drive should be timeout-class: %#v", rs[3])
 	}
 }

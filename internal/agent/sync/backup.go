@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	stdsync "sync"
 	"syscall"
 	"time"
 
@@ -138,4 +139,58 @@ func StatusHandler(req *arpc.Request) (arpc.Response, error) {
 		Status:  200,
 		Message: fmt.Sprintf("reachable|%s", conf.Version),
 	}, nil
+}
+
+// driveStatusDeadline stays below the server probe timeout so a batch always answers in time.
+const driveStatusDeadline = 3 * time.Second
+
+// StatusBatchHandler answers all drives in one response; checks run concurrently so a hung drive reports no verdict without delaying siblings.
+func StatusBatchHandler(req *arpc.Request) (arpc.Response, error) {
+	var reqData fswire.TargetStatusBatchReq
+	if err := cbor.Unmarshal(req.Payload, &reqData); err != nil {
+		log.Error(err, "status batch handler unmarshal error")
+		return arpc.Response{}, err
+	}
+
+	results := make(map[string]fswire.TargetDriveStatus, len(reqData.Drives))
+	var mu stdsync.Mutex
+	var wg stdsync.WaitGroup
+	for _, d := range reqData.Drives {
+		wg.Add(1)
+		go func(drive, subpath string) {
+			defer wg.Done()
+			st := checkDriveStatusBounded(drive, subpath)
+			mu.Lock()
+			results[drive] = st
+			mu.Unlock()
+		}(d.Drive, d.Subpath)
+	}
+	wg.Wait()
+
+	data, err := cbor.Marshal(fswire.TargetStatusBatchResp{Version: conf.Version, Drives: results})
+	if err != nil {
+		return arpc.Response{}, err
+	}
+	return arpc.Response{Status: 200, Data: data}, nil
+}
+
+func checkDriveStatusBounded(drive, subpath string) fswire.TargetDriveStatus {
+	done := make(chan fswire.TargetDriveStatus, 1)
+	go func() {
+		res, err := CheckDriveStatus(drive, subpath)
+		switch {
+		case err != nil:
+			done <- fswire.TargetDriveStatus{Reachable: new(false), Message: err.Error()}
+		case res.IsLocked || !res.IsReachable:
+			done <- fswire.TargetDriveStatus{Reachable: new(false), Message: res.Message}
+		default:
+			done <- fswire.TargetDriveStatus{Reachable: new(true), Message: res.Message}
+		}
+	}()
+	select {
+	case st := <-done:
+		return st
+	case <-time.After(driveStatusDeadline):
+		return fswire.TargetDriveStatus{Message: "drive check timed out"}
+	}
 }

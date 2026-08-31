@@ -94,6 +94,20 @@ type (
 		Subpath string `cbor:"subpath,omitempty"`
 	}
 
+	TargetStatusBatchReq struct {
+		Drives []TargetStatusReq `cbor:"drives"`
+	}
+
+	TargetStatusBatchResp struct {
+		Version string                       `cbor:"version"`
+		Drives  map[string]TargetDriveStatus `cbor:"drives"`
+	}
+
+	TargetDriveStatus struct {
+		Reachable *bool  `cbor:"reachable,omitempty"`
+		Message   string `cbor:"message,omitempty"`
+	}
+
 	LseekResp struct {
 		NewOffset int64 `cbor:"new_offset"`
 	}
