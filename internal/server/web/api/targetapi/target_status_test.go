@@ -47,7 +47,7 @@ func TestD2DTargetStatusHandlerResolvesRequestedKind(t *testing.T) {
 	}
 
 	var statuses map[string]struct {
-		ConnectionStatus bool
+		ConnectionStatus *bool
 		VolumeTotalBytes int
 		VolumeUsedBytes  int
 		VolumeFreeBytes  int
@@ -56,7 +56,7 @@ func TestD2DTargetStatusHandlerResolvesRequestedKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	local := statuses["local"]
-	if len(statuses) != 1 || !local.ConnectionStatus {
+	if len(statuses) != 1 || local.ConnectionStatus == nil || !*local.ConnectionStatus {
 		t.Fatalf("statuses = %#v", statuses)
 	}
 	if local.VolumeTotalBytes <= 0 || local.VolumeUsedBytes+local.VolumeFreeBytes != local.VolumeTotalBytes {
