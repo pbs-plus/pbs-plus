@@ -142,13 +142,28 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 
 func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 	source := ui.Render()
+	configurationStart := bytes.Index(source, []byte(`Ext.define("PBS.PlusConfiguration",`))
 	managementStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DManagement",`))
 	targetsStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DTargets",`))
 	snapshotsStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DSnapshotMount",`))
-	if managementStart < 0 || targetsStart < 0 || snapshotsStart < 0 {
+	if configurationStart < 0 || managementStart < 0 || targetsStart < 0 || snapshotsStart < 0 {
 		t.Fatal("rendered UI is missing a core PBS Plus view")
 	}
 
+	configuration := source[configurationStart:managementStart]
+	for _, xtype := range [][]byte{
+		[]byte(`xtype: "pbsDiskExclusionPanel"`),
+		[]byte(`xtype: "pbsDiskScriptPanel"`),
+		[]byte(`xtype: "pbsNotificationBatchView"`),
+		[]byte(`xtype: "pbsD2DAlertSettings"`),
+	} {
+		if !bytes.Contains(configuration, xtype) {
+			t.Errorf("PBS Plus configuration is missing %q", xtype)
+		}
+		if bytes.Contains(source[managementStart:targetsStart], xtype) {
+			t.Errorf("Backup / Restore still contains %q", xtype)
+		}
+	}
 	if bytes.Contains(source[managementStart:targetsStart], []byte(`xtype: "pbsDiskTokenPanel"`)) {
 		t.Error("agent bootstrap remains under Backup / Restore")
 	}
@@ -160,7 +175,14 @@ func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 	}
 	for _, expected := range [][]byte{
 		[]byte(`text: "PBS Plus"`),
+		[]byte(`title: gettext("PBS Plus Configuration")`),
+		[]byte(`title: gettext("Backup / Restore")`),
+		[]byte(`title: gettext("Targets")`),
+		[]byte(`title: gettext("Snapshots")`),
+		[]byte(`title: gettext("Data Verification")`),
+		[]byte(`title: gettext("MTF Migration")`),
 		[]byte(`id: "pbs_plus"`),
+		[]byte(`path: "pbsPlusConfiguration"`),
 		[]byte(`id: "backup_targets"`),
 		[]byte(`id: "d2d_targets"`),
 		[]byte(`id: "snapshot_mount"`),
