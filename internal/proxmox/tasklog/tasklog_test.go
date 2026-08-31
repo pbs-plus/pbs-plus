@@ -156,6 +156,15 @@ func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {
 		t.Fatalf("ResolveHistoryFields = %+v, %v; want queued state", r, ok)
 	}
 
+	queued.LogString("pre-start output")
+	if got := QueuedState(upid); got != "RUNNING: task output" {
+		t.Fatalf("QueuedState after output = %q, want running state", got)
+	}
+	r, ok = ResolveHistoryFields(upid)
+	if !ok || r.State != "RUNNING: task output" {
+		t.Fatalf("ResolveHistoryFields after output = %+v, %v; want running state", r, ok)
+	}
+
 	queued.SetState("RUNNING: post-backup script")
 	if got := QueuedState(upid); got != "RUNNING: post-backup script" {
 		t.Fatalf("QueuedState = %q, want running post-script state", got)

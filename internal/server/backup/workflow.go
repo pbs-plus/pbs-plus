@@ -93,7 +93,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}
-	queued.SetState("RUNNING: preparing backup")
 	if err := w.Step("validate", b.validateTargetConnection); err != nil {
 		return b.finalizeFailed(w, err)
 	}

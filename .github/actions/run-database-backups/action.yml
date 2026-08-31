@@ -1,0 +1,402 @@
+name: Run Database Backup Tests
+description: Verify real PostgreSQL and MariaDB dump output reaches PBS task logs
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "300"
+    description: Timeout for each database job
+
+runs:
+  using: composite
+  steps:
+    - name: Run database backups
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        password='e2e-database-password'
+        timeout='${{ inputs.timeout-seconds }}'
+
+        docker run -d --name pbs-plus-postgres \
+          --network pbs-plus-test \
+          -e POSTGRES_PASSWORD="$password" \
+          -e POSTGRES_DB=inventory \
+          postgres:17
+        docker run -d --name pbs-plus-mariadb \
+          --network pbs-plus-test \
+          -e MARIADB_ROOT_PASSWORD="$password" \
+          -e MARIADB_DATABASE=inventory \
+          mariadb:11.4
+
+        deadline=$((SECONDS + timeout))
+        until docker exec pbs-plus-postgres pg_isready -U postgres -d inventory >/dev/null 2>&1; do
+          if ((SECONDS >= deadline)); then
+            echo "PostgreSQL did not become ready"
+            exit 1
+          fi
+          sleep 2
+        done
+
+        deadline=$((SECONDS + timeout))
+        until docker exec pbs-plus-mariadb mariadb-admin ping -h 127.0.0.1 -uroot -p"$password" --silent >/dev/null 2>&1; do
+          if ((SECONDS >= deadline)); then
+            echo "MariaDB did not become ready"
+            exit 1
+          fi
+          sleep 2
+        done
+
+        docker exec -e PGPASSWORD="$password" pbs-plus-postgres \
+          psql -U postgres -d inventory -v ON_ERROR_STOP=1 \
+          -c 'CREATE TABLE dump_log_probe (id integer primary key, value text);' \
+          -c "INSERT INTO dump_log_probe VALUES (1, 'postgresql');"
+        docker exec pbs-plus-mariadb \
+          mariadb -uroot -p"$password" inventory \
+          -e "CREATE TABLE dump_log_probe (id integer primary key, value text); INSERT INTO dump_log_probe VALUES (1, 'mariadb');"
+
+        api_get() {
+          docker exec pbs-plus-test curl -k -fsS "https://localhost:8017$1" -H 'Accept: application/json'
+        }
+        api_post() {
+          local path=$1
+          shift
+          docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017$path" \
+            -H 'Content-Type: application/x-www-form-urlencoded' "$@"
+        }
+
+        create_target() {
+          local response
+          response=$(api_post '/api2/extjs/config/d2d-target' "$@")
+          jq -e '.success == true' <<<"$response" >/dev/null || {
+            echo "Target creation failed: $response"
+            return 1
+          }
+        }
+
+        create_target \
+          --data-urlencode 'name=e2e-postgresql' \
+          --data-urlencode 'target_type=postgresql' \
+          --data-urlencode 'database_host=pbs-plus-postgres' \
+          --data-urlencode 'database_port=5432' \
+          --data-urlencode 'database_username=postgres' \
+          --data-urlencode "database_password=$password" \
+          --data-urlencode 'database_tls_mode=disable' \
+          --data-urlencode 'database_default_client_family=postgresql'
+
+        create_target \
+          --data-urlencode 'name=e2e-mariadb' \
+          --data-urlencode 'target_type=mysql' \
+          --data-urlencode 'database_host=pbs-plus-mariadb' \
+          --data-urlencode 'database_port=3306' \
+          --data-urlencode 'database_username=root' \
+          --data-urlencode "database_password=$password" \
+          --data-urlencode 'database_tls_mode=disabled' \
+          --data-urlencode 'database_variant=mariadb' \
+          --data-urlencode 'database_default_client_family=mariadb'
+
+        create_backup() {
+          local response
+          response=$(api_post '/api2/extjs/config/disk-backup' "$@")
+          jq -e '.success == true' <<<"$response" >/dev/null || {
+            echo "Backup creation failed: $response"
+            return 1
+          }
+        }
+
+        create_backup \
+          --data-urlencode 'id=e2e-postgresql-backup' \
+          --data-urlencode 'target=e2e-postgresql' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=database-e2e' \
+          --data-urlencode 'database_scope=server' \
+          --data-urlencode 'schedule=' \
+          --data-urlencode 'retry=' \
+          --data-urlencode 'retry-interval=' \
+          --data-urlencode 'max-dir-entries=' \
+          --data-urlencode 'mode=' \
+          --data-urlencode 'sourcemode=' \
+          --data-urlencode 'readmode=' \
+          --data-urlencode 'include-xattr=' \
+          --data-urlencode 'comment=' \
+          --data-urlencode 'rawexclusions=' \
+          --data-urlencode 'pre_script=' \
+          --data-urlencode 'post_script='
+        create_backup \
+          --data-urlencode 'id=e2e-mariadb-backup' \
+          --data-urlencode 'target=e2e-mariadb' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=database-e2e' \
+          --data-urlencode 'database_scope=server' \
+          --data-urlencode 'schedule=' \
+          --data-urlencode 'retry=' \
+          --data-urlencode 'retry-interval=' \
+          --data-urlencode 'max-dir-entries=' \
+          --data-urlencode 'mode=' \
+          --data-urlencode 'sourcemode=' \
+          --data-urlencode 'readmode=' \
+          --data-urlencode 'include-xattr=' \
+          --data-urlencode 'comment=' \
+          --data-urlencode 'rawexclusions=' \
+          --data-urlencode 'pre_script=' \
+          --data-urlencode 'post_script='
+
+        start_job() {
+          local job_id=$1 encoded response
+          encoded=$(printf '%s' "$job_id" | base64 -w0)
+          echo "Starting $job_id..."
+          response=$(api_post "/api2/extjs/d2d/backup?job=$encoded")
+          jq -e '.success == true' <<<"$response" >/dev/null || {
+            echo "Backup start failed: $response"
+            return 1
+          }
+          echo "Backup API accepted $job_id"
+        }
+
+        wait_for_backup() {
+          local job_id=$1 server_logs status_lines
+          local deadline=$((SECONDS + timeout))
+          while ((SECONDS < deadline)); do
+            server_logs=$(docker logs pbs-plus-test 2>&1)
+
+            status_lines=$(grep -F "\"jobID\":\"$job_id\"" <<<"$server_logs" | grep -F '"msg":"updating job status"' || true)
+            if grep -qF '"succeeded":true' <<<"$status_lines"; then
+              echo "Backup job $job_id succeeded"
+              return 0
+            fi
+
+            if grep -qF '"succeeded":false' <<<"$status_lines"; then
+              echo "Backup job $job_id failed"
+              docker logs --tail=100 pbs-plus-test 2>&1
+              return 1
+            fi
+
+            if (( SECONDS % 30 == 0 )); then
+              echo "Waiting for $job_id... (${SECONDS}s elapsed)"
+            fi
+
+            sleep 5
+          done
+
+          echo "Backup job $job_id timed out after ${timeout}s"
+          docker logs --tail=100 pbs-plus-test 2>&1
+          return 1
+        }
+
+        start_job 'e2e-postgresql-backup'
+        wait_for_backup 'e2e-postgresql-backup'
+        start_job 'e2e-mariadb-backup'
+        wait_for_backup 'e2e-mariadb-backup'
+
+    - name: Verify database backup task logs
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        api_get() {
+          docker exec pbs-plus-test curl -k -fsS "https://localhost:8017$1" -H 'Accept: application/json'
+        }
+
+        task_log() {
+          docker exec -e UPID="$1" pbs-plus-test sh -ec \
+            'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); cat "/var/log/proxmox-backup/tasks/$bucket/$UPID"'
+        }
+
+        verify_backup_task() {
+          local job_id=$1 label=$2 response item upid state endtime log marker section
+          job_id=$1
+          response=$(api_get '/api2/json/d2d/backup')
+          item=$(jq -cer --arg job_id "$job_id" '.data[] | select(.id == $job_id)' <<<"$response")
+          upid=$(jq -er '."last-run-upid"' <<<"$item")
+          state=$(jq -er '."last-run-state"' <<<"$item")
+          endtime=$(jq -er '."last-run-endtime"' <<<"$item")
+
+          echo "Task history: $upid $state $endtime"
+
+          upid_pattern='^UPID:[^[:space:]:]+:[[:xdigit:]]{8}:[[:xdigit:]]{8,9}:[[:xdigit:]]{8,16}:[[:xdigit:]]{8}:[^[:space:]:]+:[^[:space:]:]*:[^[:space:]:]+:$'
+          if ! [[ "$upid" =~ $upid_pattern ]]; then
+            echo "Invalid PBS UPID: $upid"
+            exit 1
+          fi
+          if [[ "$upid" != *':backup:'* ]]; then
+            echo "Unexpected worker type in UPID: $upid"
+            exit 1
+          fi
+          if ! [[ "$endtime" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Invalid task end time: $endtime"
+            exit 1
+          fi
+          if [[ "$state" != 'OK' ]]; then
+            echo "Task failed: $state"
+            exit 1
+          fi
+
+          log=$(task_log "$upid")
+          terminal=$(printf '%s\n' "$log" | tail -n 1)
+          terminal_pattern='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(Z|[+-][0-9]{2}:[0-9]{2}): TASK (OK|WARNINGS: [1-9][0-9]*)$'
+          if ! [[ "$terminal" =~ $terminal_pattern ]]; then
+            echo "Invalid PBS task-log terminal line: $terminal"
+            exit 1
+          fi
+          if [[ "${terminal#*: TASK }" != "$state" ]]; then
+            echo "Task-log status does not match history: $terminal / $state"
+            exit 1
+          fi
+
+          marker="--- $label log starts here ---"
+          if ! grep -Fqx -- "$marker" <<<"$log"; then
+            echo "$label marker missing from task log"
+            printf '%s\n' "$log"
+            exit 1
+          fi
+          section=$(awk -v marker="$marker" '
+            $0 == marker { capture = 1; next }
+            capture && /pbs-plus: \[info\]: starting backup job/ { exit }
+            capture { print }
+          ' <<<"$log")
+          if ! grep -q '[^[:space:]]' <<<"$section"; then
+            echo "$label dump section is empty"
+            printf '%s\n' "$log"
+            exit 1
+          fi
+          if ! grep -Eq 'using [a-z]+ client [0-9]+\.[0-9]+ from .* for server ' <<<"$section"; then
+            echo "$label dump section is missing the client selection line"
+            printf '%s\n' "$log"
+            exit 1
+          fi
+          if grep -q 'warning: client major' <<<"$section"; then
+            echo "$label selected a client that does not match the server version"
+            printf '%s\n' "$log"
+            exit 1
+          fi
+
+          printf '%s dump section:\n%s\n' "$label" "$section"
+          printf '%s\n' "Task log:"
+          printf '%s\n' "$log"
+        }
+
+        verify_backup_task 'e2e-postgresql-backup' 'PostgreSQL'
+        verify_backup_task 'e2e-mariadb-backup' 'MariaDB'
+
+    - name: Run database restore tests
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        password='e2e-database-password'
+        timeout='${{ inputs.timeout-seconds }}'
+
+        api_get() {
+          docker exec pbs-plus-test curl -k -fsS "https://localhost:8017$1" -H 'Accept: application/json'
+        }
+        api_post() {
+          local path=$1
+          shift
+          docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017$path" \
+            -H 'Content-Type: application/x-www-form-urlencoded' "$@"
+        }
+
+        latest_snapshot() {
+          local job_id=$1 snap_time snap_ts
+          snap_time=$(docker exec -e JOB_ID="$job_id" pbs-plus-test sh -ec \
+            'ls "/mnt/test/ns/database-e2e/host/$JOB_ID/" | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" | sort | tail -1')
+          if [[ -z "$snap_time" ]]; then
+            echo "No snapshot found for $job_id" >&2
+            return 1
+          fi
+          snap_ts=$(docker exec -e SNAP_TIME="$snap_time" pbs-plus-test date -d "$snap_time" +%s)
+          printf 'host/%s/%s' "$job_id" "$snap_ts"
+        }
+
+        create_restore() {
+          local response
+          response=$(api_post '/api2/extjs/config/disk-restore' "$@")
+          jq -e '.success == true' <<<"$response" >/dev/null || {
+            echo "Restore creation failed: $response"
+            return 1
+          }
+        }
+
+        start_restore() {
+          local job_id=$1 encoded response
+          encoded=$(printf '%s' "$job_id" | base64 -w0)
+          echo "Starting $job_id..."
+          response=$(api_post "/api2/extjs/d2d/restore?job=$encoded")
+          jq -e '.success == true' <<<"$response" >/dev/null || {
+            echo "Restore start failed: $response"
+            return 1
+          }
+        }
+
+        wait_for_restore() {
+          local job_id=$1 encoded task_status
+          encoded=$(printf '%s' "$job_id" | base64 -w0)
+          local deadline=$((SECONDS + timeout))
+          while ((SECONDS < deadline)); do
+            task_status=$(api_get "/api2/extjs/config/disk-restore/$encoded" | jq -r '.data.history."last-run-state"')
+            echo "  Task status: $task_status (${SECONDS}s elapsed)"
+            if [[ "$task_status" == 'OK' ]]; then
+              echo "Restore job $job_id succeeded"
+              return 0
+            fi
+            if [[ "$task_status" == 'WARNINGS: '* ]]; then
+              echo "Restore job $job_id completed with warnings: $task_status"
+              return 0
+            fi
+            sleep 5
+          done
+          echo "Restore job $job_id timed out after ${timeout}s"
+          return 1
+        }
+
+        postgres_snapshot=$(latest_snapshot 'e2e-postgresql-backup')
+        create_restore \
+          --data-urlencode 'id=e2e-postgresql-restore' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=database-e2e' \
+          --data-urlencode "snapshot=$postgres_snapshot" \
+          --data-urlencode 'src-path=/' \
+          --data-urlencode 'dest-target=e2e-postgresql' \
+          --data-urlencode 'dest-subpath=' \
+          --data-urlencode 'mode=0' \
+          --data-urlencode 'retry=0' \
+          --data-urlencode 'retry-interval=1' \
+          --data-urlencode 'source_database=inventory' \
+          --data-urlencode 'destination_database=inventory_restored' \
+          --data-urlencode 'replace_existing=false'
+        start_restore 'e2e-postgresql-restore'
+        wait_for_restore 'e2e-postgresql-restore'
+
+        postgres_value=$(docker exec -e PGPASSWORD="$password" pbs-plus-postgres \
+          psql -At -U postgres -d inventory_restored -c 'SELECT value FROM dump_log_probe WHERE id = 1;')
+        [[ "$postgres_value" == 'postgresql' ]] || {
+          echo "PostgreSQL restore returned unexpected value: $postgres_value"
+          exit 1
+        }
+        echo "PostgreSQL restored value: $postgres_value"
+
+        mariadb_snapshot=$(latest_snapshot 'e2e-mariadb-backup')
+        create_restore \
+          --data-urlencode 'id=e2e-mariadb-restore' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=database-e2e' \
+          --data-urlencode "snapshot=$mariadb_snapshot" \
+          --data-urlencode 'src-path=/' \
+          --data-urlencode 'dest-target=e2e-mariadb' \
+          --data-urlencode 'dest-subpath=' \
+          --data-urlencode 'mode=0' \
+          --data-urlencode 'retry=0' \
+          --data-urlencode 'retry-interval=1' \
+          --data-urlencode 'source_database=inventory' \
+          --data-urlencode 'destination_database=inventory_restored' \
+          --data-urlencode 'replace_existing=false'
+        start_restore 'e2e-mariadb-restore'
+        wait_for_restore 'e2e-mariadb-restore'
+
+        mariadb_value=$(docker exec pbs-plus-mariadb \
+          mariadb -uroot -p"$password" inventory_restored -N -e 'SELECT value FROM dump_log_probe WHERE id = 1;')
+        [[ "$mariadb_value" == 'mariadb' ]] || {
+          echo "MariaDB restore returned unexpected value: $mariadb_value"
+          exit 1
+        }
+        echo "MariaDB restored value: $mariadb_value"

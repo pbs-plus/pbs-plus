@@ -192,16 +192,14 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:                fromNullInt64(row.Retry),
-		RetryInterval:        fromNullInt64(row.RetryInterval),
-		Mode:                 int(row.RestoreMode),
-		PreScript:            row.PreScript,
-		PostScript:           row.PostScript,
-		SourceDatabase:       row.SourceDatabase,
-		DestinationDatabase:  row.DestinationDatabase,
-		ReplaceExisting:      row.ReplaceExisting != 0,
-		DatabaseClientFamily: row.DatabaseClientFamily,
-		DatabaseClientDir:    row.DatabaseClientDir,
+		Retry:               fromNullInt64(row.Retry),
+		RetryInterval:       fromNullInt64(row.RetryInterval),
+		Mode:                int(row.RestoreMode),
+		PreScript:           row.PreScript,
+		PostScript:          row.PostScript,
+		SourceDatabase:      row.SourceDatabase,
+		DestinationDatabase: row.DestinationDatabase,
+		ReplaceExisting:     row.ReplaceExisting != 0,
 	}
 	restore.DestTarget.DatabaseHost = row.DatabaseHost
 	restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -429,15 +427,13 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 				RetryCount:         fromNullInt64(row.RetryCount),
 			},
-			Retry:                fromNullInt64(row.Retry),
-			RetryInterval:        fromNullInt64(row.RetryInterval),
-			PreScript:            row.PreScript,
-			PostScript:           row.PostScript,
-			SourceDatabase:       row.SourceDatabase,
-			DestinationDatabase:  row.DestinationDatabase,
-			ReplaceExisting:      row.ReplaceExisting != 0,
-			DatabaseClientFamily: row.DatabaseClientFamily,
-			DatabaseClientDir:    row.DatabaseClientDir,
+			Retry:               fromNullInt64(row.Retry),
+			RetryInterval:       fromNullInt64(row.RetryInterval),
+			PreScript:           row.PreScript,
+			PostScript:          row.PostScript,
+			SourceDatabase:      row.SourceDatabase,
+			DestinationDatabase: row.DestinationDatabase,
+			ReplaceExisting:     row.ReplaceExisting != 0,
 		}
 		restore.DestTarget.DatabaseHost = row.DatabaseHost
 		restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -566,34 +562,32 @@ func (r *Restore) GetStreamID() string {
 }
 
 type Restore struct {
-	ID                   string     `json:"id"`
-	Store                string     `json:"store"`
-	Snapshot             string     `json:"snapshot"`
-	Namespace            string     `json:"ns"`
-	Mode                 int        `json:"mode"`
-	SrcPath              string     `json:"src-path"`
-	DestTarget           Target     `json:"dest-target"`
-	DestSubpath          string     `json:"dest-subpath"`
-	PreScript            string     `json:"pre_script"`
-	PostScript           string     `json:"post_script"`
-	Comment              string     `json:"comment"`
-	NotificationMode     string     `json:"notification-mode"`
-	Retry                int        `json:"retry"`
-	RetryInterval        int        `json:"retry-interval"`
-	CurrentPID           int        `json:"current_pid"`
-	ExpectedSize         int        `json:"expected_size,omitempty"`
-	UPIDs                []string   `json:"upids"`
-	CurrentStats         JobStats   `json:"current-stats"`
-	History              JobHistory `json:"history"`
-	SourceDatabase       string     `json:"source_database,omitempty"`
-	DestinationDatabase  string     `json:"destination_database,omitempty"`
-	ReplaceExisting      bool       `json:"replace_existing,omitempty"`
-	DatabaseClientFamily string     `json:"database_client_family,omitempty"`
-	DatabaseClientDir    string     `json:"database_client_dir,omitempty"`
+	ID                  string     `json:"id"`
+	Store               string     `json:"store"`
+	Snapshot            string     `json:"snapshot"`
+	Namespace           string     `json:"ns"`
+	Mode                int        `json:"mode"`
+	SrcPath             string     `json:"src-path"`
+	DestTarget          Target     `json:"dest-target"`
+	DestSubpath         string     `json:"dest-subpath"`
+	PreScript           string     `json:"pre_script"`
+	PostScript          string     `json:"post_script"`
+	Comment             string     `json:"comment"`
+	NotificationMode    string     `json:"notification-mode"`
+	Retry               int        `json:"retry"`
+	RetryInterval       int        `json:"retry-interval"`
+	CurrentPID          int        `json:"current_pid"`
+	ExpectedSize        int        `json:"expected_size,omitempty"`
+	UPIDs               []string   `json:"upids"`
+	CurrentStats        JobStats   `json:"current-stats"`
+	History             JobHistory `json:"history"`
+	SourceDatabase      string     `json:"source_database,omitempty"`
+	DestinationDatabase string     `json:"destination_database,omitempty"`
+	ReplaceExisting     bool       `json:"replace_existing,omitempty"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {
-	if restore.SourceDatabase == "" && restore.DestinationDatabase == "" && !restore.ReplaceExisting && restore.DatabaseClientFamily == "" && restore.DatabaseClientDir == "" {
+	if restore.SourceDatabase == "" && restore.DestinationDatabase == "" && !restore.ReplaceExisting {
 		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
 	}
 
@@ -604,19 +598,10 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
 		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
 	}
-	if restore.DatabaseClientDir != "" && !filepath.IsAbs(restore.DatabaseClientDir) {
-		return errors.New("database client directory must be absolute")
-	}
-	if restore.DatabaseClientFamily != "" && restore.DatabaseClientFamily != "mysql" && restore.DatabaseClientFamily != "mariadb" {
-		return fmt.Errorf("unsupported database client family %q", restore.DatabaseClientFamily)
-	}
-
 	return q.UpsertRestoreDatabaseOptions(db.ctx, corequery.UpsertRestoreDatabaseOptionsParams{
 		RestoreID:           restore.ID,
 		SourceDatabase:      restore.SourceDatabase,
 		DestinationDatabase: restore.DestinationDatabase,
 		ReplaceExisting:     boolToNullInt64(restore.ReplaceExisting).Int64,
-		ClientFamily:        restore.DatabaseClientFamily,
-		ClientDir:           restore.DatabaseClientDir,
 	})
 }

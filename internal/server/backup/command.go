@@ -111,7 +111,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 
 func backupCommandPolicy(backup coredb.Backup) (string, bool) {
 	if backup.Target.IsDatabase() {
-		return "--change-detection-mode=legacy", false
+		return "--change-detection-mode=metadata", false
 	}
 	switch backup.Mode {
 	case "legacy":

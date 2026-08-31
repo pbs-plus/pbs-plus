@@ -9,4 +9,6 @@ runs:
       run: |
         docker rm -f pbs-plus-test || true
         docker rm -f pbs-plus-agent || true
+        docker rm -f pbs-plus-postgres || true
+        docker rm -f pbs-plus-mariadb || true
         docker network rm pbs-plus-test || true

@@ -257,24 +257,22 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		newRestore := coredb.Restore{
-			ID:                   id,
-			Store:                store,
-			Namespace:            namespace,
-			Snapshot:             snapshot,
-			SrcPath:              srcPath,
-			Mode:                 mode,
-			DestTarget:           coredb.Target{Name: r.FormValue("dest-target")},
-			DestSubpath:          destSubpath,
-			PreScript:            preScript,
-			PostScript:           postScript,
-			Comment:              r.FormValue("comment"),
-			NotificationMode:     r.FormValue("notification-mode"),
-			Retry:                retry,
-			RetryInterval:        retryInterval,
-			SourceDatabase:       r.FormValue("source_database"),
-			DestinationDatabase:  r.FormValue("destination_database"),
-			DatabaseClientFamily: r.FormValue("database_client_family"),
-			DatabaseClientDir:    r.FormValue("database_client_dir"),
+			ID:                  id,
+			Store:               store,
+			Namespace:           namespace,
+			Snapshot:            snapshot,
+			SrcPath:             srcPath,
+			Mode:                mode,
+			DestTarget:          coredb.Target{Name: r.FormValue("dest-target")},
+			DestSubpath:         destSubpath,
+			PreScript:           preScript,
+			PostScript:          postScript,
+			Comment:             r.FormValue("comment"),
+			NotificationMode:    r.FormValue("notification-mode"),
+			Retry:               retry,
+			RetryInterval:       retryInterval,
+			SourceDatabase:      r.FormValue("source_database"),
+			DestinationDatabase: r.FormValue("destination_database"),
 		}
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
@@ -383,12 +381,6 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 				restore.ReplaceExisting = replaceExisting
 			}
-			if r.Form.Has("database_client_family") {
-				restore.DatabaseClientFamily = r.FormValue("database_client_family")
-			}
-			if r.Form.Has("database_client_dir") {
-				restore.DatabaseClientDir = r.FormValue("database_client_dir")
-			}
 
 			preScript := r.FormValue("pre_script")
 			if err := validate.ValidateScriptPath("pre_script", preScript); err != nil {
@@ -459,10 +451,6 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.DestinationDatabase = ""
 					case "replace_existing":
 						restore.ReplaceExisting = false
-					case "database_client_family":
-						restore.DatabaseClientFamily = ""
-					case "database_client_dir":
-						restore.DatabaseClientDir = ""
 					}
 				}
 			}

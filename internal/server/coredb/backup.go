@@ -222,17 +222,15 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:                fromNullInt64(row.Retry),
-		RetryInterval:        fromNullInt64(row.RetryInterval),
-		MaxDirEntries:        fromNullInt64(row.MaxDirEntries),
-		PreScript:            row.PreScript,
-		PostScript:           row.PostScript,
-		IncludeXattr:         fromNullInt64ToBool(row.IncludeXattr),
-		LegacyXattr:          fromNullInt64ToBool(row.LegacyXattr),
-		DatabaseScope:        row.DatabaseScope,
-		DatabaseName:         row.DatabaseName,
-		DatabaseClientFamily: row.DatabaseClientFamily,
-		DatabaseClientDir:    row.DatabaseClientDir,
+		Retry:         fromNullInt64(row.Retry),
+		RetryInterval: fromNullInt64(row.RetryInterval),
+		MaxDirEntries: fromNullInt64(row.MaxDirEntries),
+		PreScript:     row.PreScript,
+		PostScript:    row.PostScript,
+		IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
+		LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
+		DatabaseScope: row.DatabaseScope,
+		DatabaseName:  row.DatabaseName,
 	}
 	backup.Target.DatabaseHost = row.DatabaseHost
 	backup.Target.DatabasePort = int(row.DatabasePort)
@@ -518,17 +516,15 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 				RetryCount:         fromNullInt64(row.RetryCount),
 			},
-			Retry:                fromNullInt64(row.Retry),
-			RetryInterval:        fromNullInt64(row.RetryInterval),
-			MaxDirEntries:        fromNullInt64(row.MaxDirEntries),
-			PreScript:            row.PreScript,
-			PostScript:           row.PostScript,
-			IncludeXattr:         fromNullInt64ToBool(row.IncludeXattr),
-			LegacyXattr:          fromNullInt64ToBool(row.LegacyXattr),
-			DatabaseScope:        row.DatabaseScope,
-			DatabaseName:         row.DatabaseName,
-			DatabaseClientFamily: row.DatabaseClientFamily,
-			DatabaseClientDir:    row.DatabaseClientDir,
+			Retry:         fromNullInt64(row.Retry),
+			RetryInterval: fromNullInt64(row.RetryInterval),
+			MaxDirEntries: fromNullInt64(row.MaxDirEntries),
+			PreScript:     row.PreScript,
+			PostScript:    row.PostScript,
+			IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
+			LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
+			DatabaseScope: row.DatabaseScope,
+			DatabaseName:  row.DatabaseName,
 
 			Exclusions: exclusionsByJob[row.ID]}
 		backup.Target.DatabaseHost = row.DatabaseHost
@@ -670,39 +666,37 @@ func (b *Backup) GetAllUPIDs() []Tasks {
 }
 
 type Backup struct {
-	ID                   string      `json:"id"`
-	Store                string      `json:"store"`
-	SourceMode           string      `json:"sourcemode"`
-	ReadMode             string      `json:"readmode"`
-	Mode                 string      `json:"mode"`
-	Target               Target      `json:"target"`
-	IncludeXattr         bool        `json:"include-xattr"`
-	LegacyXattr          bool        `json:"legacy-xattr"`
-	Subpath              string      `json:"subpath"`
-	Schedule             string      `json:"schedule"`
-	Comment              string      `json:"comment"`
-	NotificationMode     string      `json:"notification-mode"`
-	PreScript            string      `json:"pre_script"`
-	PostScript           string      `json:"post_script"`
-	Namespace            string      `json:"ns"`
-	NextRun              int64       `json:"next-run"`
-	Retry                int         `json:"retry"`
-	RetryInterval        int         `json:"retry-interval"`
-	MaxDirEntries        int         `json:"max-dir-entries"`
-	CurrentPID           int         `json:"current_pid"`
-	Exclusions           []Exclusion `json:"exclusions"`
-	RawExclusions        string      `json:"rawexclusions"`
-	UPIDs                []Tasks     `json:"upids"`
-	CurrentStats         JobStats    `json:"current-stats"`
-	History              JobHistory  `json:"history"`
-	DatabaseScope        string      `json:"database_scope,omitempty"`
-	DatabaseName         string      `json:"database_name,omitempty"`
-	DatabaseClientFamily string      `json:"database_client_family,omitempty"`
-	DatabaseClientDir    string      `json:"database_client_dir,omitempty"`
+	ID               string      `json:"id"`
+	Store            string      `json:"store"`
+	SourceMode       string      `json:"sourcemode"`
+	ReadMode         string      `json:"readmode"`
+	Mode             string      `json:"mode"`
+	Target           Target      `json:"target"`
+	IncludeXattr     bool        `json:"include-xattr"`
+	LegacyXattr      bool        `json:"legacy-xattr"`
+	Subpath          string      `json:"subpath"`
+	Schedule         string      `json:"schedule"`
+	Comment          string      `json:"comment"`
+	NotificationMode string      `json:"notification-mode"`
+	PreScript        string      `json:"pre_script"`
+	PostScript       string      `json:"post_script"`
+	Namespace        string      `json:"ns"`
+	NextRun          int64       `json:"next-run"`
+	Retry            int         `json:"retry"`
+	RetryInterval    int         `json:"retry-interval"`
+	MaxDirEntries    int         `json:"max-dir-entries"`
+	CurrentPID       int         `json:"current_pid"`
+	Exclusions       []Exclusion `json:"exclusions"`
+	RawExclusions    string      `json:"rawexclusions"`
+	UPIDs            []Tasks     `json:"upids"`
+	CurrentStats     JobStats    `json:"current-stats"`
+	History          JobHistory  `json:"history"`
+	DatabaseScope    string      `json:"database_scope,omitempty"`
+	DatabaseName     string      `json:"database_name,omitempty"`
 }
 
 func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup) error {
-	if backup.DatabaseScope == "" && backup.DatabaseName == "" && backup.DatabaseClientFamily == "" && backup.DatabaseClientDir == "" {
+	if backup.DatabaseScope == "" && backup.DatabaseName == "" {
 		return q.DeleteBackupDatabaseOptions(db.ctx, backup.ID)
 	}
 
@@ -722,19 +716,10 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 	if backup.DatabaseScope == "server" {
 		backup.DatabaseName = ""
 	}
-	if backup.DatabaseClientDir != "" && !filepath.IsAbs(backup.DatabaseClientDir) {
-		return errors.New("database client directory must be absolute")
-	}
-	if backup.DatabaseClientFamily != "" && backup.DatabaseClientFamily != "mysql" && backup.DatabaseClientFamily != "mariadb" {
-		return fmt.Errorf("unsupported database client family %q", backup.DatabaseClientFamily)
-	}
-
 	return q.UpsertBackupDatabaseOptions(db.ctx, corequery.UpsertBackupDatabaseOptionsParams{
 		BackupID:     backup.ID,
 		Scope:        backup.DatabaseScope,
 		DatabaseName: backup.DatabaseName,
-		ClientFamily: backup.DatabaseClientFamily,
-		ClientDir:    backup.DatabaseClientDir,
 	})
 }
 

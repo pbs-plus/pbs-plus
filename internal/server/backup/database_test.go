@@ -41,12 +41,12 @@ func TestTaskLogWriterMirrorsDatabaseOutput(t *testing.T) {
 
 func TestDatabaseBackupCommandPolicy(t *testing.T) {
 	mode, useExclusions := backupCommandPolicy(coredb.Backup{
-		Mode: "data",
+		Mode: "legacy",
 		Target: coredb.Target{
 			Type: coredb.TargetTypePostgreSQL,
 		},
 	})
-	if mode != "--change-detection-mode=legacy" {
+	if mode != "--change-detection-mode=metadata" {
 		t.Fatalf("database change detection mode = %q", mode)
 	}
 	if useExclusions {

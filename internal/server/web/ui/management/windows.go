@@ -119,8 +119,8 @@ var windows = []js.Value{
 			)},
 			js.Field{XType: js.XFieldSet, Title: "Client Tools", Layout: "anchor", Items: js.Items(
 				js.Field{XType: js.XHiddenField, Name: "database_default_client_family", Value: "postgresql"},
-				js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_default_client_dir", AllowBlank: new(false), CBind: js.Obj{"engine": "{targetKind}"}},
-				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Only pg_dump and psql installations discovered on this PBS server are listed.")},
+				js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_default_client_dir", AllowBlank: new(true), EmptyText: "Automatic", DeleteEmptyWhenNotCreate: true, CBind: js.Obj{"engine": "{targetKind}"}},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Leave empty to match the client to the server version automatically. Only pg_dump and psql installations discovered on this PBS server are listed.")},
 			)},
 		),
 	),
@@ -154,8 +154,8 @@ var windows = []js.Value{
 				js.Field{XType: js.XKVComboBox, Label: "Client Family", Name: "database_default_client_family", Value: "mysql", AllowBlank: new(false), ComboItems: js.Arr{
 					js.Arr{"mysql", "MySQL"}, js.Arr{"mariadb", "MariaDB"},
 				}},
-				js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_default_client_dir", AllowBlank: new(false), CBind: js.Obj{"engine": "{targetKind}"}},
-				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Choose the installed mysqldump/mysql or mariadb-dump/mariadb toolchain used for backup and restore.")},
+				js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_default_client_dir", AllowBlank: new(true), EmptyText: "Automatic", DeleteEmptyWhenNotCreate: true, CBind: js.Obj{"engine": "{targetKind}"}},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Leave empty to match the client to the server version automatically. Only mysqldump/mysql and mariadb-dump/mariadb installations discovered on this PBS server are listed.")},
 			)},
 		),
 	),

@@ -229,12 +229,11 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 	}
 
 	backup := Backup{
-		ID:                "postgres-backup",
-		Store:             "datastore",
-		Target:            Target{Name: postgres.Name},
-		DatabaseScope:     "database",
-		DatabaseName:      "inventory",
-		DatabaseClientDir: "/usr/lib/postgresql/16/bin",
+		ID:            "postgres-backup",
+		Store:         "datastore",
+		Target:        Target{Name: postgres.Name},
+		DatabaseScope: "database",
+		DatabaseName:  "inventory",
 	}
 	if err := db.CreateBackup(nil, backup); err != nil {
 		t.Fatal(err)
@@ -260,14 +259,12 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 	}
 
 	restore := Restore{
-		ID:                   "mariadb-restore",
-		Store:                "datastore",
-		Snapshot:             "host/snapshot/1",
-		DestTarget:           Target{Name: mysql.Name},
-		DestinationDatabase:  "inventory_copy",
-		ReplaceExisting:      true,
-		DatabaseClientFamily: "mysql",
-		DatabaseClientDir:    "/opt/mysql/bin",
+		ID:                  "mariadb-restore",
+		Store:               "datastore",
+		Snapshot:            "host/snapshot/1",
+		DestTarget:          Target{Name: mysql.Name},
+		DestinationDatabase: "inventory_copy",
+		ReplaceExisting:     true,
 	}
 	if err := db.CreateRestore(nil, restore); err != nil {
 		t.Fatal(err)
