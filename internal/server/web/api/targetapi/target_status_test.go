@@ -48,11 +48,18 @@ func TestD2DTargetStatusHandlerResolvesRequestedKind(t *testing.T) {
 
 	var statuses map[string]struct {
 		ConnectionStatus bool
+		VolumeTotalBytes int
+		VolumeUsedBytes  int
+		VolumeFreeBytes  int
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&statuses); err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 1 || !statuses["local"].ConnectionStatus {
+	local := statuses["local"]
+	if len(statuses) != 1 || !local.ConnectionStatus {
 		t.Fatalf("statuses = %#v", statuses)
+	}
+	if local.VolumeTotalBytes <= 0 || local.VolumeUsedBytes+local.VolumeFreeBytes != local.VolumeTotalBytes {
+		t.Fatalf("local target size = %#v", local)
 	}
 }

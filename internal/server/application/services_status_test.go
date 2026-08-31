@@ -50,7 +50,7 @@ func TestTargetServiceCheckStatusByType(t *testing.T) {
 		{Name: "postgresql", Type: coredb.TargetTypePostgreSQL, DatabaseHost: host, DatabasePort: port},
 		{Name: "mysql", Type: coredb.TargetTypeMySQL, DatabaseHost: host, DatabasePort: port},
 		{Name: "missing-local", Type: coredb.TargetTypeFilesystem, Access: coredb.FilesystemAccessLocal, Path: localPath + "/missing"},
-		{Name: "disconnected-agent", Type: coredb.TargetTypeFilesystem, Access: coredb.FilesystemAccessAgent, AgentHost: coredb.AgentHost{Name: "offline"}},
+		{Name: "disconnected-agent", Type: coredb.TargetTypeFilesystem, Access: coredb.FilesystemAccessAgent, AgentHost: coredb.AgentHost{Name: "offline"}, VolumeTotalBytes: 100, VolumeUsedBytes: 60, VolumeFreeBytes: 40},
 	}
 
 	service := NewTargetService(nil, arpc.NewAgentsManager())
@@ -59,6 +59,17 @@ func TestTargetServiceCheckStatusByType(t *testing.T) {
 		if results[i].ConnectionStatus != want {
 			t.Errorf("target %q status = %v, want %v (error: %v)", targets[i].Name, results[i].ConnectionStatus, want, results[i].Error)
 		}
+	}
+	if results[0].VolumeTotalBytes <= 0 || results[0].VolumeUsedBytes+results[0].VolumeFreeBytes != results[0].VolumeTotalBytes {
+		t.Errorf("local target size = %#v", results[0].TargetSizeResult)
+	}
+	for _, i := range []int{1, 2, 3} {
+		if results[i].VolumeTotalBytes != 0 || results[i].VolumeUsedBytes != 0 || results[i].VolumeFreeBytes != 0 {
+			t.Errorf("remote target %q resolved content size: %#v", targets[i].Name, results[i].TargetSizeResult)
+		}
+	}
+	if results[5].TargetSizeResult != (TargetSizeResult{VolumeTotalBytes: 100, VolumeUsedBytes: 60, VolumeFreeBytes: 40}) {
+		t.Errorf("agent target size = %#v", results[5].TargetSizeResult)
 	}
 
 	for range 3 {

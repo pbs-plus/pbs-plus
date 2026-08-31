@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +17,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
+	"golang.org/x/sys/unix"
 )
 
 type BackupService struct{ db *coredb.Store }
@@ -30,6 +30,11 @@ func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 		return nil, err
 	}
 	for i, b := range backups {
+		if size, err := ResolveTargetSize(b.Target); err == nil {
+			backups[i].Target.VolumeTotalBytes = size.VolumeTotalBytes
+			backups[i].Target.VolumeUsedBytes = size.VolumeUsedBytes
+			backups[i].Target.VolumeFreeBytes = size.VolumeFreeBytes
+		}
 		switch {
 		case b.Target.IsAgent():
 			if sess := sessions.GetSessionARPCFS(b.GetStreamID()); sess != nil {
@@ -157,7 +162,36 @@ func (s *TargetService) NewTransaction() (*coredb.Transaction, error) {
 	return s.db.NewTransaction()
 }
 
+type TargetSizeResult struct {
+	VolumeTotalBytes int
+	VolumeUsedBytes  int
+	VolumeFreeBytes  int
+}
+
+// ResolveTargetSize returns stored remote metadata or local filesystem capacity without scanning target contents.
+func ResolveTargetSize(target coredb.Target) (TargetSizeResult, error) {
+	result := TargetSizeResult{
+		VolumeTotalBytes: target.VolumeTotalBytes,
+		VolumeUsedBytes:  target.VolumeUsedBytes,
+		VolumeFreeBytes:  target.VolumeFreeBytes,
+	}
+	if !target.IsLocal() {
+		return result, nil
+	}
+
+	var stat unix.Statfs_t
+	if err := unix.Statfs(target.Path, &stat); err != nil {
+		return result, err
+	}
+	blockSize := uint64(stat.Bsize)
+	result.VolumeTotalBytes = int(stat.Blocks * blockSize)
+	result.VolumeUsedBytes = int((stat.Blocks - stat.Bfree) * blockSize)
+	result.VolumeFreeBytes = int(stat.Bfree * blockSize)
+	return result, nil
+}
+
 type TargetStatusResult struct {
+	TargetSizeResult
 	Index            int
 	AgentVersion     string
 	ConnectionStatus bool
@@ -187,7 +221,8 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 				return
 			}
 
-			result := TargetStatusResult{Index: idx, AgentVersion: "N/A"}
+			size, sizeErr := ResolveTargetSize(tgt)
+			result := TargetStatusResult{TargetSizeResult: size, Index: idx, AgentVersion: "N/A"}
 			if !checkStatus {
 				results[idx] = result
 				return
@@ -216,8 +251,8 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 					}
 				}
 			case tgt.IsLocal():
-				_, result.Error = os.Stat(tgt.Path)
-				result.ConnectionStatus = result.Error == nil
+				result.Error = sizeErr
+				result.ConnectionStatus = sizeErr == nil
 			case tgt.IsS3():
 				result.Error = probeS3Target(timeoutCtx, tgt)
 				result.ConnectionStatus = result.Error == nil

@@ -41,6 +41,12 @@ func D2DRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		for i, restore := range allRestores {
+			if size, err := application.ResolveTargetSize(restore.DestTarget); err == nil {
+				allRestores[i].DestTarget.VolumeTotalBytes = size.VolumeTotalBytes
+				allRestores[i].DestTarget.VolumeUsedBytes = size.VolumeUsedBytes
+				allRestores[i].DestTarget.VolumeFreeBytes = size.VolumeFreeBytes
+			}
+
 			var stats pxar.PxarReaderStats
 			session := sessions.GetSessionPxarReader(restore.GetStreamID())
 			if session == nil {

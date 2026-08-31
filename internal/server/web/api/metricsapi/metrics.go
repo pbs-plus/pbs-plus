@@ -495,6 +495,11 @@ func updateMetrics(m *metrics, app *application.Runtime, now int64) {
 	var agentCount, s3Count, localCount int
 
 	for _, target := range targets {
+		if size, err := application.ResolveTargetSize(target); err == nil {
+			target.VolumeTotalBytes = size.VolumeTotalBytes
+			target.VolumeUsedBytes = size.VolumeUsedBytes
+			target.VolumeFreeBytes = size.VolumeFreeBytes
+		}
 		driveLabels := prometheus.Labels{
 			"target_name": target.Name,
 			"volume_name": target.VolumeName,

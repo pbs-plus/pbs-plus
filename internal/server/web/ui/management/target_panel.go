@@ -435,6 +435,14 @@ var targetPanelController = js.ControllerClass{
 							let st = statuses[name];
 							node.set("agent_version", st.AgentVersion || "");
 							node.set("connection_status", st.ConnectionStatus);
+							if (st.VolumeTotalBytes > 0 || st.VolumeUsedBytes > 0) {
+								node.set("volume_total_bytes", st.VolumeTotalBytes);
+								node.set("volume_used_bytes", st.VolumeUsedBytes);
+								node.set("volume_free_bytes", st.VolumeFreeBytes);
+								node.set("volume_total", Proxmox.Utils.format_size(st.VolumeTotalBytes));
+								node.set("volume_used", Proxmox.Utils.format_size(st.VolumeUsedBytes));
+								node.set("volume_free", Proxmox.Utils.format_size(st.VolumeFreeBytes));
+							}
 						}
 					});
 				},
