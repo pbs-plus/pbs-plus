@@ -94,7 +94,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 	if err != nil {
 		return nil, fmt.Errorf("QUIC dial failed (%s): %w", serverAddr, err)
 	}
-	log.Debug("quic: connection established", "quic_version", conn.ConnectionState().Version)
+	log.Info("quic: connection established", "quic_version", conn.ConnectionState().Version)
 
 	// Copy headers to avoid mutating the caller's map (agent reuses it across
 	// reconnects, so Add would accumulate duplicate values).
