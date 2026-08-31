@@ -96,17 +96,18 @@ func D2DTargetStatusHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		agentTargets := make([]coredb.Target, 0, len(targets))
+		kind := targetTypeFromRequest(r)
+		statusTargets := make([]coredb.Target, 0, len(targets))
 		for _, target := range targets {
-			if target.IsAgent() {
-				agentTargets = append(agentTargets, target)
+			if kind == "" || target.Type == kind {
+				statusTargets = append(statusTargets, target)
 			}
 		}
 
-		results := app.Target.CheckStatus(r.Context(), agentTargets, true, 5*time.Second)
+		results := app.Target.CheckStatus(r.Context(), statusTargets, true, 5*time.Second)
 		statuses := make(map[string]application.TargetStatusResult, len(results))
 		for _, result := range results {
-			statuses[agentTargets[result.Index].Name] = result
+			statuses[statusTargets[result.Index].Name] = result
 		}
 
 		w.Header().Set("Content-Type", "application/json")

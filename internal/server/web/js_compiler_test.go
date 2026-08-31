@@ -115,6 +115,8 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`targetKind: "mysql"`),
 		[]byte(`column.setText("S3 URL")`),
 		[]byte(`target/tree?kind=" + encodeURIComponent(view.targetKind || "")`),
+		[]byte(`target-status?kind=" + encodeURIComponent(view.targetKind || "")`),
+		[]byte(`connection_status: null`),
 		[]byte(`if (!this.loaded) {`),
 		[]byte(`view.setLoading(true);`),
 		[]byte(`fa fa-spinner fa-pulse`),
@@ -126,6 +128,15 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	}
 	if bytes.Contains(source, []byte("filterTargetKind")) {
 		t.Error("target view still filters the complete target tree in the browser")
+	}
+	for _, stale := range [][]byte{
+		[]byte(`if (view.targetKind === "filesystem")`),
+		[]byte(`node.target_type === "agent" ? null : node.connection_status`),
+		[]byte(`fa fa-cog"></i> Configured`),
+	} {
+		if bytes.Contains(source, stale) {
+			t.Errorf("target status view still contains %q", stale)
+		}
 	}
 }
 

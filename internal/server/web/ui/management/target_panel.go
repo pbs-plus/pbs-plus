@@ -358,9 +358,7 @@ var targetPanelController = js.ControllerClass{
 					me.loaded = true;
 					me.loading = false;
 					view.setLoading(false);
-					if (view.targetKind === "filesystem") {
-						me.loadStatuses();
-					}
+					me.loadStatuses();
 				},
 				failure: function () {
 					me.loading = false;
@@ -389,7 +387,7 @@ var targetPanelController = js.ControllerClass{
 					volume_id: node.volume_id,
 					job_count: node.job_count,
 					agent_version: node.agent_version,
-					connection_status: node.target_type === "agent" ? null : node.connection_status,
+					connection_status: null,
 					volume_type: node.volume_type,
 					volume_name: node.volume_name,
 					volume_fs: node.volume_fs,
@@ -425,7 +423,7 @@ var targetPanelController = js.ControllerClass{
 			let me = this;
 			let view = me.getView();
 			Ext.Ajax.request({
-				url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target-status",
+				url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target-status?kind=" + encodeURIComponent(view.targetKind || ""),
 				method: "GET",
 				withCredentials: true,
 				headers: { Accept: "application/json" },
@@ -442,7 +440,7 @@ var targetPanelController = js.ControllerClass{
 				},
 				failure: function () {
 					view.getRootNode().cascadeBy(function (node) {
-						if (node.get("target_type") === "agent") {
+						if (!node.get("isGroup")) {
 							node.set("connection_status", "error");
 						}
 					});
@@ -459,10 +457,7 @@ var targetPanelController = js.ControllerClass{
 			if (record.data.isGroup) {
 				return "";
 			}
-			if (["postgresql", "mysql"].includes(record.data.kind)) {
-				return '<i class="fa fa-cog"></i> Configured';
-			}
-			if (record.data.target_type === "agent" && value == null) {
+			if (value == null) {
 				return '<i class="fa fa-spinner fa-pulse"></i> Checking...';
 			}
 			if (value === "error") {

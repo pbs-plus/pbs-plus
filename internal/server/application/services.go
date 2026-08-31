@@ -4,7 +4,11 @@ package application
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -171,77 +175,115 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					results[idx] = TargetStatusResult{
-						Index:            idx,
-						ConnectionStatus: false,
-					}
+					results[idx] = TargetStatusResult{Index: idx, Error: fmt.Errorf("status probe panic: %v", r)}
 				}
 			}()
 
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results[idx] = TargetStatusResult{Index: idx, Error: ctx.Err()}
+				return
+			}
 
-			result := TargetStatusResult{Index: idx}
-			if !tgt.IsAgent() {
+			result := TargetStatusResult{Index: idx, AgentVersion: "N/A"}
+			if !checkStatus {
 				results[idx] = result
 				return
 			}
-			arpcSess, ok := s.agentsMgr.GetQuicPipe(tgt.GetHostname())
-			if !ok {
-				arpcSessTcp, tcpOk := s.agentsMgr.GetStreamPipe(tgt.GetHostname())
-				if !tcpOk {
-					results[idx] = result
-					return
+
+			timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+
+			switch {
+			case tgt.IsAgent():
+				var sess targetStatusSession
+				if quic, ok := s.agentsMgr.GetQuicPipe(tgt.GetHostname()); ok {
+					sess = quic
+				} else if stream, ok := s.agentsMgr.GetStreamPipe(tgt.GetHostname()); ok {
+					sess = stream
+				} else {
+					break
 				}
-				result.AgentVersion = arpcSessTcp.GetVersion()
-				if checkStatus {
-					timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-					defer cancel()
-					respMsg, err := arpcSessTcp.CallMessage(timeoutCtx, "target_status",
-						&fswire.TargetStatusReq{Drive: tgt.VolumeID})
-					if err == nil && strings.HasPrefix(respMsg, "reachable") {
-						result.ConnectionStatus = true
-						if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
-							result.AgentVersion = parts[1]
-						}
-					} else if err != nil {
-						result.Error = err
-					}
-				}
-				results[idx] = result
-				return
-			}
-			result.AgentVersion = arpcSess.GetVersion()
-			if checkStatus {
-				timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-				defer cancel()
-				respMsg, err := arpcSess.CallMessage(timeoutCtx, "target_status",
-					&fswire.TargetStatusReq{Drive: tgt.VolumeID})
+				result.AgentVersion = sess.GetVersion()
+				respMsg, err := sess.CallMessage(timeoutCtx, "target_status", &fswire.TargetStatusReq{Drive: tgt.VolumeID})
+				result.Error = err
 				if err == nil && strings.HasPrefix(respMsg, "reachable") {
 					result.ConnectionStatus = true
 					if parts := strings.Split(respMsg, "|"); len(parts) > 1 {
 						result.AgentVersion = parts[1]
 					}
-				} else if err != nil {
-					result.Error = err
 				}
+			case tgt.IsLocal():
+				_, result.Error = os.Stat(tgt.Path)
+				result.ConnectionStatus = result.Error == nil
+			case tgt.IsS3():
+				result.Error = probeS3Target(timeoutCtx, tgt)
+				result.ConnectionStatus = result.Error == nil
+			case tgt.IsDatabase():
+				result.Error = probeTCP(timeoutCtx, net.JoinHostPort(tgt.DatabaseHost, strconv.Itoa(tgt.DatabasePort)))
+				result.ConnectionStatus = result.Error == nil
+			default:
+				result.Error = fmt.Errorf("unsupported target type %q", tgt.Type)
 			}
 			results[idx] = result
 		}(i, target)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
+	wg.Wait()
+	return results
+}
 
-	select {
-	case <-ctx.Done():
-		return results
-	case <-done:
-		return results
+func probeS3Target(ctx context.Context, target coredb.Target) error {
+	info := target.S3Info
+	if info == nil {
+		var err error
+		info, err = coredb.ParseS3Url(target.Path)
+		if err != nil {
+			return err
+		}
 	}
+
+	port := "80"
+	if info.UseSSL {
+		port = "443"
+	}
+	address := info.Endpoint
+	serverName := strings.Trim(address, "[]")
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		serverName = host
+	} else {
+		address = net.JoinHostPort(serverName, port)
+	}
+
+	if !info.UseSSL {
+		return probeTCP(ctx, address)
+	}
+	dialer := tls.Dialer{
+		NetDialer: &net.Dialer{},
+		Config:    &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
+}
+
+func probeTCP(ctx context.Context, address string) error {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return err
+	}
+	_ = conn.Close()
+	return nil
+}
+
+type targetStatusSession interface {
+	callSession
+	GetVersion() string
 }
 
 type callSession interface {
