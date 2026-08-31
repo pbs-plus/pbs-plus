@@ -6,18 +6,28 @@ import (
 
 var coreViews = []js.Value{
 	js.Panel{
+		Name:   "PBS.PlusConfiguration",
+		XType:  "pbsPlusConfiguration",
+		Title:  "PBS Plus Configuration",
+		Extend: js.ExtTabPanel,
+		Border: true,
+		Items: js.Items(
+			js.Field{XType: "pbsDiskExclusionPanel", Title: "Global Exclusions", ItemID: "exclusions", IconCls: "fa fa-ban"},
+			js.Field{XType: "pbsDiskScriptPanel", Title: "Scripts", ItemID: "scripts", IconCls: "fa fa-file-code-o"},
+			js.Field{XType: "pbsNotificationBatchView", Title: "Notification Batches", ItemID: "notification-batches", IconCls: "fa fa-bell-o"},
+			js.Field{XType: "pbsD2DAlertSettings", Title: "Alert Settings", ItemID: "alert-settings", IconCls: "fa fa-exclamation-triangle"},
+		),
+		PanelDefaults: true,
+	},
+	js.Panel{
 		Name:   "PBS.D2DManagement",
 		XType:  "pbsD2DManagement",
-		Title:  "Disk Backup",
+		Title:  "Backup / Restore",
 		Extend: js.ExtTabPanel,
 		Border: true,
 		Items: js.Items(
 			js.Field{XType: "pbsDiskBackupJobView", Title: "Backup Jobs", ItemID: "d2d-backup-jobs", IconCls: "fa fa-floppy-o"},
 			js.Field{XType: "pbsDiskRestoreJobView", Title: "Restore Jobs", ItemID: "d2d-restore-jobs", IconCls: "fa fa-download"},
-			js.Field{XType: "pbsDiskExclusionPanel", Title: "Global Exclusions", ItemID: "exclusions", IconCls: "fa fa-ban"},
-			js.Field{XType: "pbsDiskScriptPanel", Title: "Scripts", ItemID: "scripts", IconCls: "fa fa-file-code-o"},
-			js.Field{XType: "pbsNotificationBatchView", Title: "Notification Batches", ItemID: "notification-batches", IconCls: "fa fa-bell-o"},
-			js.Field{XType: "pbsD2DAlertSettings", Title: "Alert Settings", ItemID: "alert-settings", IconCls: "fa fa-exclamation-triangle"},
 		),
 		PanelDefaults: true,
 	},
@@ -84,7 +94,7 @@ var coreViews = []js.Value{
 		Name:   "PBS.MtfManagement",
 		XType:  "pbsMtfManagement",
 		Extend: js.ExtTabPanel,
-		Title:  "MTF Tape Backup",
+		Title:  "MTF Migration",
 		Border: true,
 		Items: js.Items(
 			js.Field{XType: "pbsMtfInventoryPanel", Title: "Inventory", ItemID: "mtf-inventory", IconCls: "fa fa-book"},
@@ -106,7 +116,7 @@ var coreViews = []js.Value{
 				text: "PBS Plus",
 				iconCls: "fa fa-plus-square",
 				id: "pbs_plus",
-				path: "pbsD2DManagement",
+				path: "pbsPlusConfiguration",
 				expanded: true,
 				children: [
 					{ text: "Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", leaf: true },
