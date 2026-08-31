@@ -281,8 +281,6 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			LegacyXattr:          legacyXattr,
 			DatabaseScope:        r.FormValue("database_scope"),
 			DatabaseName:         r.FormValue("database_name"),
-			DatabaseClientFamily: r.FormValue("database_client_family"),
-			DatabaseClientDir:    r.FormValue("database_client_dir"),
 		}
 
 		rawExclusions := r.FormValue("rawexclusions")
@@ -383,12 +381,6 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 			}
 			if r.Form.Has("database_name") {
 				backup.DatabaseName = r.FormValue("database_name")
-			}
-			if r.Form.Has("database_client_family") {
-				backup.DatabaseClientFamily = r.FormValue("database_client_family")
-			}
-			if r.Form.Has("database_client_dir") {
-				backup.DatabaseClientDir = r.FormValue("database_client_dir")
 			}
 
 			if r.FormValue("include-xattr") != "" {
@@ -517,10 +509,6 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 						backup.DatabaseScope = ""
 					case "database_name":
 						backup.DatabaseName = ""
-					case "database_client_family":
-						backup.DatabaseClientFamily = ""
-					case "database_client_dir":
-						backup.DatabaseClientDir = ""
 					}
 				}
 			}

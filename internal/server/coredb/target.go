@@ -125,7 +125,7 @@ func normalizeDatabaseTarget(target *Target, defaultPort int) error {
 	if target.DatabasePort < 1 || target.DatabasePort > 65535 {
 		return fmt.Errorf("invalid database target port %d", target.DatabasePort)
 	}
-	if !filepath.IsAbs(target.DatabaseDefaultClientDir) {
+	if target.DatabaseDefaultClientDir != "" && !filepath.IsAbs(target.DatabaseDefaultClientDir) {
 		return errors.New("database target client directory must be absolute")
 	}
 	if target.DatabaseCACertificate != "" && !filepath.IsAbs(target.DatabaseCACertificate) {

@@ -273,8 +273,6 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 			RetryInterval:        retryInterval,
 			SourceDatabase:       r.FormValue("source_database"),
 			DestinationDatabase:  r.FormValue("destination_database"),
-			DatabaseClientFamily: r.FormValue("database_client_family"),
-			DatabaseClientDir:    r.FormValue("database_client_dir"),
 		}
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
@@ -383,12 +381,6 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 				restore.ReplaceExisting = replaceExisting
 			}
-			if r.Form.Has("database_client_family") {
-				restore.DatabaseClientFamily = r.FormValue("database_client_family")
-			}
-			if r.Form.Has("database_client_dir") {
-				restore.DatabaseClientDir = r.FormValue("database_client_dir")
-			}
 
 			preScript := r.FormValue("pre_script")
 			if err := validate.ValidateScriptPath("pre_script", preScript); err != nil {
@@ -459,10 +451,6 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.DestinationDatabase = ""
 					case "replace_existing":
 						restore.ReplaceExisting = false
-					case "database_client_family":
-						restore.DatabaseClientFamily = ""
-					case "database_client_dir":
-						restore.DatabaseClientDir = ""
 					}
 				}
 			}

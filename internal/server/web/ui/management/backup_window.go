@@ -115,10 +115,6 @@ var backupJobEdit = js.EditWindow{
 								js.Arr{"database", "Single database"}, js.Arr{"server", "Entire server"},
 							}},
 						js.Field{XType: "proxmoxtextfield", Label: "Database", Name: "database_name", Reference: "databaseName", AllowBlank: new(false)},
-						js.Field{XType: js.XKVComboBox, Label: "Client Family", Name: "database_client_family", Reference: "databaseClientFamily", AllowBlank: new(true), ComboItems: js.Arr{
-							js.Arr{"mysql", "MySQL"}, js.Arr{"mariadb", "MariaDB"},
-						}},
-						js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_client_dir", Reference: "databaseClient", AllowBlank: new(false)},
 					)},
 					js.Field{XType: js.XDataStoreSelector, Label: "Local Datastore", Name: "store"},
 					js.Field{XType: "pbsD2DNamespaceSelector", Label: "Namespace", EmptyText: "Root", Name: "ns", Reference: "namespace", DeleteEmptyWhenNotCreate: true},

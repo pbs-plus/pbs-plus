@@ -231,8 +231,6 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 		LegacyXattr:          fromNullInt64ToBool(row.LegacyXattr),
 		DatabaseScope:        row.DatabaseScope,
 		DatabaseName:         row.DatabaseName,
-		DatabaseClientFamily: row.DatabaseClientFamily,
-		DatabaseClientDir:    row.DatabaseClientDir,
 	}
 	backup.Target.DatabaseHost = row.DatabaseHost
 	backup.Target.DatabasePort = int(row.DatabasePort)
@@ -527,8 +525,6 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			LegacyXattr:          fromNullInt64ToBool(row.LegacyXattr),
 			DatabaseScope:        row.DatabaseScope,
 			DatabaseName:         row.DatabaseName,
-			DatabaseClientFamily: row.DatabaseClientFamily,
-			DatabaseClientDir:    row.DatabaseClientDir,
 
 			Exclusions: exclusionsByJob[row.ID]}
 		backup.Target.DatabaseHost = row.DatabaseHost
@@ -697,12 +693,10 @@ type Backup struct {
 	History              JobHistory  `json:"history"`
 	DatabaseScope        string      `json:"database_scope,omitempty"`
 	DatabaseName         string      `json:"database_name,omitempty"`
-	DatabaseClientFamily string      `json:"database_client_family,omitempty"`
-	DatabaseClientDir    string      `json:"database_client_dir,omitempty"`
 }
 
 func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup) error {
-	if backup.DatabaseScope == "" && backup.DatabaseName == "" && backup.DatabaseClientFamily == "" && backup.DatabaseClientDir == "" {
+	if backup.DatabaseScope == "" && backup.DatabaseName == "" {
 		return q.DeleteBackupDatabaseOptions(db.ctx, backup.ID)
 	}
 
@@ -722,19 +716,10 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 	if backup.DatabaseScope == "server" {
 		backup.DatabaseName = ""
 	}
-	if backup.DatabaseClientDir != "" && !filepath.IsAbs(backup.DatabaseClientDir) {
-		return errors.New("database client directory must be absolute")
-	}
-	if backup.DatabaseClientFamily != "" && backup.DatabaseClientFamily != "mysql" && backup.DatabaseClientFamily != "mariadb" {
-		return fmt.Errorf("unsupported database client family %q", backup.DatabaseClientFamily)
-	}
-
 	return q.UpsertBackupDatabaseOptions(db.ctx, corequery.UpsertBackupDatabaseOptionsParams{
 		BackupID:     backup.ID,
 		Scope:        backup.DatabaseScope,
 		DatabaseName: backup.DatabaseName,
-		ClientFamily: backup.DatabaseClientFamily,
-		ClientDir:    backup.DatabaseClientDir,
 	})
 }
 

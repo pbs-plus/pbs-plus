@@ -467,8 +467,6 @@ func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 		"legacy-xattr":           b.LegacyXattr,
 		"database_scope":         b.DatabaseScope,
 		"database_name":          b.DatabaseName,
-		"database_client_family": b.DatabaseClientFamily,
-		"database_client_dir":    b.DatabaseClientDir,
 	}
 }
 
@@ -492,8 +490,6 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 		"source_database":        r.SourceDatabase,
 		"destination_database":   r.DestinationDatabase,
 		"replace_existing":       r.ReplaceExisting,
-		"database_client_family": r.DatabaseClientFamily,
-		"database_client_dir":    r.DatabaseClientDir,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
 			"last-run-upid":           r.History.LastRunUpid,
@@ -526,8 +522,6 @@ type FlatBackup struct {
 	LegacyXattr          bool   `json:"legacy-xattr"`
 	DatabaseScope        string `json:"database_scope,omitempty"`
 	DatabaseName         string `json:"database_name,omitempty"`
-	DatabaseClientFamily string `json:"database_client_family,omitempty"`
-	DatabaseClientDir    string `json:"database_client_dir,omitempty"`
 
 	Target       string `json:"target"`
 	ExpectedSize int    `json:"expected_size,omitempty"`
@@ -573,8 +567,6 @@ type FlatRestore struct {
 	SourceDatabase       string `json:"source_database,omitempty"`
 	DestinationDatabase  string `json:"destination_database,omitempty"`
 	ReplaceExisting      bool   `json:"replace_existing,omitempty"`
-	DatabaseClientFamily string `json:"database_client_family,omitempty"`
-	DatabaseClientDir    string `json:"database_client_dir,omitempty"`
 
 	DestTarget string `json:"dest-target"`
 

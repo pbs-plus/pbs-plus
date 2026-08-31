@@ -137,10 +137,6 @@ var restoreJobEdit = js.EditWindow{
 						js.Field{XType: "proxmoxtextfield", Label: "Destination Database", Name: "destination_database", AllowBlank: new(true), EmptyText: "Same as source", DeleteEmptyWhenNotCreate: true,
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Name to restore the database under. Leave empty to keep the name it had in the snapshot.")}},
 						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Drop and recreate an existing database", InputValue: "true", UncheckedValue: "false"},
-						js.Field{XType: js.XKVComboBox, Label: "Client Family", Name: "database_client_family", Reference: "databaseClientFamily", AllowBlank: new(true), ComboItems: js.Arr{
-							js.Arr{"mysql", "MySQL"}, js.Arr{"mariadb", "MariaDB"},
-						}},
-						js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_client_dir", Reference: "databaseClient", AllowBlank: new(false)},
 					)},
 				),
 				ColumnB: js.Items(

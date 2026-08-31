@@ -200,8 +200,6 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		SourceDatabase:       row.SourceDatabase,
 		DestinationDatabase:  row.DestinationDatabase,
 		ReplaceExisting:      row.ReplaceExisting != 0,
-		DatabaseClientFamily: row.DatabaseClientFamily,
-		DatabaseClientDir:    row.DatabaseClientDir,
 	}
 	restore.DestTarget.DatabaseHost = row.DatabaseHost
 	restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -436,8 +434,6 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 			SourceDatabase:       row.SourceDatabase,
 			DestinationDatabase:  row.DestinationDatabase,
 			ReplaceExisting:      row.ReplaceExisting != 0,
-			DatabaseClientFamily: row.DatabaseClientFamily,
-			DatabaseClientDir:    row.DatabaseClientDir,
 		}
 		restore.DestTarget.DatabaseHost = row.DatabaseHost
 		restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -588,12 +584,10 @@ type Restore struct {
 	SourceDatabase       string     `json:"source_database,omitempty"`
 	DestinationDatabase  string     `json:"destination_database,omitempty"`
 	ReplaceExisting      bool       `json:"replace_existing,omitempty"`
-	DatabaseClientFamily string     `json:"database_client_family,omitempty"`
-	DatabaseClientDir    string     `json:"database_client_dir,omitempty"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {
-	if restore.SourceDatabase == "" && restore.DestinationDatabase == "" && !restore.ReplaceExisting && restore.DatabaseClientFamily == "" && restore.DatabaseClientDir == "" {
+	if restore.SourceDatabase == "" && restore.DestinationDatabase == "" && !restore.ReplaceExisting {
 		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
 	}
 
@@ -604,19 +598,10 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
 		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
 	}
-	if restore.DatabaseClientDir != "" && !filepath.IsAbs(restore.DatabaseClientDir) {
-		return errors.New("database client directory must be absolute")
-	}
-	if restore.DatabaseClientFamily != "" && restore.DatabaseClientFamily != "mysql" && restore.DatabaseClientFamily != "mariadb" {
-		return fmt.Errorf("unsupported database client family %q", restore.DatabaseClientFamily)
-	}
-
 	return q.UpsertRestoreDatabaseOptions(db.ctx, corequery.UpsertRestoreDatabaseOptionsParams{
 		RestoreID:           restore.ID,
 		SourceDatabase:      restore.SourceDatabase,
 		DestinationDatabase: restore.DestinationDatabase,
 		ReplaceExisting:     boolToNullInt64(restore.ReplaceExisting).Int64,
-		ClientFamily:        restore.DatabaseClientFamily,
-		ClientDir:           restore.DatabaseClientDir,
 	})
 }
