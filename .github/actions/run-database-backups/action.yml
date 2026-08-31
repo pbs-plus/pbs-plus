@@ -22,7 +22,7 @@ runs:
           --network pbs-plus-test \
           -e POSTGRES_PASSWORD="$password" \
           -e POSTGRES_DB=inventory \
-          postgres:15
+          postgres:17
         docker run -d --name pbs-plus-mariadb \
           --network pbs-plus-test \
           -e MARIADB_ROOT_PASSWORD="$password" \
