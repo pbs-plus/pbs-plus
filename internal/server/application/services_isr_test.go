@@ -81,12 +81,13 @@ func TestGetStatusEntriesRevalidatesStaleAndEvicts(t *testing.T) {
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		e, ok := service.statusCache.Get("local-ok")
-		if ok && e.ConnectionStatus && time.Since(e.CheckedAt) < statusRevalidateAfter {
+		okEntry, okFound := service.statusCache.Get("local-ok")
+		_, missingFound := service.statusCache.Get("local-missing")
+		if okFound && missingFound && okEntry.ConnectionStatus && time.Since(okEntry.CheckedAt) < statusRevalidateAfter {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("stale entry not revalidated: %#v", e)
+			t.Fatalf("stale entries not revalidated: local-ok=%#v local-missing-cached=%v", okEntry, missingFound)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

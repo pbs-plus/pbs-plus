@@ -381,12 +381,9 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 	return entries
 }
 
-// evictOrphans drops cache entries for targets no longer in the database;
-// the length guard keeps the common case a single integer compare.
+// evictOrphans drops cache entries for targets no longer in the database.
+// No length shortcut: an under-populated cache can still hold orphans.
 func (s *TargetService) evictOrphans(targets []coredb.Target) {
-	if s.statusCache.Len() <= len(targets) {
-		return
-	}
 	live := make(map[string]struct{}, len(targets))
 	for _, t := range targets {
 		live[t.Name] = struct{}{}
