@@ -1,31 +1,28 @@
 # Proxmox Backup Server (PBS) Plus
 
-Advanced backup features for [Proxmox Backup Server](https://pbs.proxmox.com/) — file-level backup/restore, FUSE archive mounting with journal overlays, and a Kubernetes operator.
-
-> [!WARNING]
-> Pre-1.0. Expect breaking changes on every release.
+Advanced backup features for [Proxmox Backup Server](https://pbs.proxmox.com/): file-level backup/restore, native PostgreSQL and MySQL/MariaDB backups, read/write FUSE mounting of archives, data verification, MTF/LTO tape migration, and a Kubernetes operator.
 
 ## Quick Links
 
-| Topic | Document |
-|---|---|
-| How it works, architecture, ports | [Architecture](docs/architecture.md) |
-| Server, agent, container, operator install | [Installation](docs/installation.md) |
-| Backup/restore jobs, S3 targets, hook scripts, database dumps | [Usage](docs/usage.md) |
-| Read/write FUSE mount for PBS archives | [pxar-mount](docs/pxar-mount.md) |
-| K8s operator for annotated PVCs | [Kubernetes Operator](docs/kubernetes-operator.md) |
-| CI workflows and E2E testing | [Development](docs/development.md) |
+| Topic                                                                                                     | Document                                           |
+| --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| How it works, architecture, ports                                                                         | [Architecture](docs/architecture.md)               |
+| Server, agent, container, operator install                                                                | [Installation](docs/installation.md)               |
+| Backup/restore jobs, S3 and database targets, hook scripts, snapshot mounts, verification, tape migration | [Usage](docs/usage.md)                             |
+| Read/write FUSE mount for PBS archives                                                                    | [pxar-mount](docs/pxar-mount.md)                   |
+| K8s operator for annotated PVCs                                                                           | [Kubernetes Operator](docs/kubernetes-operator.md) |
+| CI workflows and E2E testing                                                                              | [Development](docs/development.md)                 |
 
 ## Installation
 
-**Server** — install the `.deb` on your PBS machine, then:
+**Server**: install the `.deb` on your PBS machine, then:
 
 ```bash
 echo "PBS_PLUS_HOSTNAME=$(hostname -f)" >> /etc/proxmox-backup/pbs-plus/pbs-plus.env
 systemctl restart pbs-plus
 ```
 
-**Agent (Linux)** — install the package, set env vars, restart:
+**Agent (Linux)**: install the package, set env vars, restart:
 
 ```bash
 echo "PBS_PLUS_INIT_SERVER_URL=https://<pbs>:8008" >> /etc/pbs-plus-agent/registry.toml
