@@ -328,7 +328,7 @@ func postgreSQLDumpCommand(ctx context.Context, target coredb.Target, password s
 		return nil, err
 	}
 
-	args := append(postgreSQLBaseArgs(target), "--format=p", options.Database)
+	args := append(postgreSQLBaseArgs(target), "--verbose", "--format=p", options.Database)
 	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
 	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
 	if target.DatabaseCACertificate != "" {
@@ -343,7 +343,7 @@ func mySQLDumpCommand(ctx context.Context, target coredb.Target, password string
 		return nil, err
 	}
 
-	args := append(mySQLBaseArgs(target, defaultsFile), "--single-transaction", "--routines", "--events", "--triggers", "--hex-blob")
+	args := append(mySQLBaseArgs(target, defaultsFile), "--verbose", "--single-transaction", "--routines", "--events", "--triggers", "--hex-blob")
 	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
 	args = append(args, options.Database)
 	return exec.CommandContext(ctx, bundle.DumpProgram, args...), nil
@@ -461,7 +461,7 @@ func postgreSQLGlobalsDumpCommand(ctx context.Context, target coredb.Target, pas
 	if err != nil {
 		return nil, err
 	}
-	args := append(postgreSQLBaseArgs(target), flag, "--lock-wait-timeout=30s")
+	args := append(postgreSQLBaseArgs(target), "--verbose", flag, "--lock-wait-timeout=30s")
 	cmd := exec.CommandContext(ctx, bundle.ServerDumpProgram, args...)
 	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
 	if target.DatabaseCACertificate != "" {
@@ -485,7 +485,7 @@ func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Targe
 	if err != nil {
 		return ManifestFile{}, err
 	}
-	args := append(mySQLBaseArgs(target, defaultsFile), "--single-transaction", "--hex-blob")
+	args := append(mySQLBaseArgs(target, defaultsFile), "--verbose", "--single-transaction", "--hex-blob")
 	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
 	args = append(args, "mysql")
 	args = append(args, tables...)

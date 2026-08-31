@@ -73,7 +73,7 @@ func TestDumpCommandsDoNotLockTarget(t *testing.T) {
 func TestStagePostgreSQLDump(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"pg_dump", "pg_dumpall", "psql"} {
-		writeTestProgram(t, dir, name, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'PostgreSQL 17.2'; exit 0; fi\nprintf 'PostgreSQL dump log\\n' >&2\nprintf 'CREATE TABLE inventory (id integer);\\n'\n")
+		writeTestProgram(t, dir, name, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'PostgreSQL 17.2'; exit 0; fi\ncase \" $* \" in *\" --verbose \"*) printf 'PostgreSQL dump log\\n' >&2 ;; esac\nprintf 'CREATE TABLE inventory (id integer);\\n'\n")
 	}
 	bundles := discoverClientBundles(context.Background(), []string{dir}, []string{dir})
 	bundle, err := FindClientBundle(bundles, EnginePostgreSQL, FamilyPostgreSQL, dir)
@@ -321,6 +321,7 @@ func TestRestoreDumpRejectsEngineMismatch(t *testing.T) {
 func TestStagePostgreSQLServerDump(t *testing.T) {
 	dir := t.TempDir()
 	writeTestProgram(t, dir, "pg_dump", `#!/bin/sh
+case " $* " in *" --verbose "*) printf 'pg_dump verbose log\n' >&2 ;; esac
 last=""
 for a in "$@"; do last="$a"; done
 case "$last" in
@@ -329,6 +330,7 @@ case "$last" in
 esac
 `)
 	writeTestProgram(t, dir, "pg_dumpall", `#!/bin/sh
+case " $* " in *" --verbose "*) printf 'pg_dumpall verbose log\n' >&2 ;; esac
 case "$*" in
   *--roles-only*) printf 'CREATE ROLE app;\n' ;;
   *) printf 'CREATE TABLESPACE fast;\n' ;;
@@ -352,11 +354,15 @@ esac
 		DatabaseUsername: "backup",
 		DatabaseTLSMode:  "require",
 	}
-	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "server"}, bundle)
+	var databaseLog bytes.Buffer
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "server", LogWriter: &databaseLog}, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer staged.Cleanup()
+	if got := databaseLog.String(); !strings.Contains(got, "pg_dump verbose log") || !strings.Contains(got, "pg_dumpall verbose log") {
+		t.Fatalf("PostgreSQL server log = %q", got)
+	}
 
 	manifest, err := LoadManifest(staged.ArchiveDir)
 	if err != nil {
@@ -398,8 +404,8 @@ func TestStageMariaDBServerDump(t *testing.T) {
 	writeTestProgram(t, dir, "mariadb-dump", `#!/bin/sh
 case " $* " in
   *" role_edges "*|*" default_roles "*) printf '%s\n' 'mariadb-dump: Couldn'"'"'t find table: "role_edges"' >&2; exit 6 ;;
+  *" --verbose "*) printf 'MariaDB dump log\n' >&2 ;;
 esac
-printf 'MariaDB dump log\n' >&2
 last=""
 for a in "$@"; do last="$a"; done
 case "$last" in
