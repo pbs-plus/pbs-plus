@@ -148,18 +148,23 @@ runs:
           }
 
           local deadline=$((SECONDS + timeout))
+          local last_reported=0
           while ((SECONDS < deadline)); do
             item=$(api_get '/api2/json/d2d/backup' | jq -cer --arg job_id "$job_id" '.data[] | select(.id == $job_id)')
-            upid=$(jq -r '.history["last-run-upid"] // empty' <<<"$item")
-            state=$(jq -r '.history["last-run-state"] // empty' <<<"$item")
-            endtime=$(jq -r '.history["last-run-endtime"] // empty' <<<"$item")
-            if [[ -n "$upid" && -n "$endtime" ]]; then
+            upid=$(jq -r '.["last-run-upid"] // empty' <<<"$item")
+            state=$(jq -r '.["last-run-state"] // empty' <<<"$item")
+            endtime=$(jq -r '.["last-run-endtime"] // 0' <<<"$item")
+            if [[ -n "$upid" && "$endtime" -gt 0 ]]; then
               if [[ "$state" != 'OK' ]]; then
                 echo "$job_id failed: $state"
                 return 1
               fi
               printf '%s' "$upid"
               return
+            fi
+            if (( SECONDS - last_reported >= 15 )); then
+              echo "waiting for $job_id (${state:-starting})..."
+              last_reported=$SECONDS
             fi
             sleep 2
           done
@@ -241,6 +246,7 @@ runs:
         run_restore() {
           local job_id=$1
           local encoded response item upid state endtime
+          local last_reported=0
           encoded=$(printf '%s' "$job_id" | base64 -w0)
           response=$(api_post "/api2/extjs/d2d/restore?job=$encoded")
           jq -e '.success == true' <<<"$response" >/dev/null || {
@@ -253,14 +259,18 @@ runs:
             item=$(api_get "/api2/extjs/config/disk-restore/$encoded")
             upid=$(jq -r '.data.history["last-run-upid"] // empty' <<<"$item")
             state=$(jq -r '.data.history["last-run-state"] // empty' <<<"$item")
-            endtime=$(jq -r '.data.history["last-run-endtime"] // empty' <<<"$item")
-            if [[ -n "$upid" && -n "$endtime" ]]; then
+            endtime=$(jq -r '.data.history["last-run-endtime"] // 0' <<<"$item")
+            if [[ -n "$upid" && "$endtime" -gt 0 ]]; then
               if [[ "$state" != 'OK' ]]; then
                 echo "$job_id failed: $state"
                 return 1
               fi
               printf '%s' "$upid"
               return
+            fi
+            if (( SECONDS - last_reported >= 15 )); then
+              echo "waiting for $job_id (${state:-starting})..." >&2
+              last_reported=$SECONDS
             fi
             sleep 2
           done
