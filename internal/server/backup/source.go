@@ -129,10 +129,6 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	b.mu.RUnlock()
 
 	if target.IsDatabase() && b.databaseAware {
-		bundle, err := database.ResolveClientBundle(ctx, target, job.DatabaseClientFamily, job.DatabaseClientDir)
-		if err != nil {
-			return "", nil, nil, err
-		}
 		password, err := b.app.CoreDB.GetDatabasePassword(target.Name)
 		if err != nil {
 			return "", nil, nil, fmt.Errorf("get database password: %w", err)
@@ -143,6 +139,10 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		}
 		if _, err := fmt.Fprintf(databaseLog, "--- %s log starts here ---\n", databaseLogLabel(target)); err != nil {
 			return "", nil, nil, fmt.Errorf("write database log marker: %w", err)
+		}
+		bundle, err := database.SelectClientBundle(ctx, target, password, databaseLog)
+		if err != nil {
+			return "", nil, nil, err
 		}
 		stagedDump, err := database.StageDump(ctx, "", target, password, database.DumpOptions{
 			Scope:     job.DatabaseScope,

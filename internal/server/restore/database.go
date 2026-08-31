@@ -6,10 +6,25 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 )
+
+type taskLineWriter struct {
+	task *RestoreTask
+}
+
+func (w taskLineWriter) Write(data []byte) (int, error) {
+	text := strings.TrimSuffix(string(data), "\n")
+	if text != "" && w.task != nil {
+		for line := range strings.SplitSeq(text, "\n") {
+			w.task.WriteString(line)
+		}
+	}
+	return len(data), nil
+}
 
 func (b *restoreJob) databaseExecute(ctx context.Context) error {
 	stagingDir, err := os.MkdirTemp("", ".pbs-plus-database-restore-")
@@ -29,13 +44,13 @@ func (b *restoreJob) databaseExecute(ctx context.Context) error {
 		return err
 	}
 
-	bundle, err := database.ResolveClientBundle(ctx, b.job.DestTarget, b.job.DatabaseClientFamily, b.job.DatabaseClientDir)
-	if err != nil {
-		return err
-	}
 	password, err := b.app.CoreDB.GetDatabasePassword(b.job.DestTarget.Name)
 	if err != nil {
 		return fmt.Errorf("get database password: %w", err)
+	}
+	bundle, err := database.SelectClientBundle(ctx, b.job.DestTarget, password, taskLineWriter{task: b.task})
+	if err != nil {
+		return err
 	}
 	if err := database.RestoreDump(ctx, stagingDir, b.job.DestTarget, password, database.RestoreOptions{
 		SourceDatabase:      b.job.SourceDatabase,
