@@ -187,6 +187,18 @@ func TestDatabaseJobWindowsHideFilesystemRestorePath(t *testing.T) {
 	}
 }
 
+func TestDatabaseJobWindowsDoNotReferenceRemovedClientOverrides(t *testing.T) {
+	source := ui.Render()
+	for _, stale := range [][]byte{
+		[]byte(`lookup("databaseClient")`),
+		[]byte(`lookup("databaseClientFamily")`),
+	} {
+		if bytes.Contains(source, stale) {
+			t.Errorf("database job editor still references removed client override %q", stale)
+		}
+	}
+}
+
 func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
 	source := ui.Render()
 	for _, expected := range [][]byte{

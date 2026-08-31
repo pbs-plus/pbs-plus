@@ -100,11 +100,6 @@ var restoreJobEdit = js.EditWindow{
 				let restoreMode = this.lookup("filesystemRestoreMode");
 				restoreMode.setHidden(database);
 				restoreMode.setDisabled(database);
-				let client = this.lookup("databaseClient");
-				client.setEngine(database ? kind : null);
-				let family = this.lookup("databaseClientFamily");
-				family.setDisabled(kind !== "mysql");
-				if (kind !== "mysql") family.setValue("");
 			`),
 		},
 	},

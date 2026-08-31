@@ -81,11 +81,6 @@ var backupJobEdit = js.EditWindow{
 				let databaseOptions = this.lookup("databaseOptions");
 				databaseOptions.setHidden(!database);
 				databaseOptions.setDisabled(!database);
-				let client = this.lookup("databaseClient");
-				client.setEngine(database ? kind : null);
-				let family = this.lookup("databaseClientFamily");
-				family.setDisabled(kind !== "mysql");
-				if (kind !== "mysql") family.setValue("");
 			`),
 			"databaseScopeChange": js.Func("field, value", `
 				let databaseName = this.lookup("databaseName");
