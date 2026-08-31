@@ -14,7 +14,6 @@ var coreViews = []js.Value{
 		Items: js.Items(
 			js.Field{XType: "pbsDiskBackupJobView", Title: "Backup Jobs", ItemID: "d2d-backup-jobs", IconCls: "fa fa-floppy-o"},
 			js.Field{XType: "pbsDiskRestoreJobView", Title: "Restore Jobs", ItemID: "d2d-restore-jobs", IconCls: "fa fa-download"},
-			js.Field{XType: "pbsDiskTokenPanel", Title: "Agent Bootstrap", ItemID: "tokens", IconCls: "fa fa-handshake-o"},
 			js.Field{XType: "pbsDiskExclusionPanel", Title: "Global Exclusions", ItemID: "exclusions", IconCls: "fa fa-ban"},
 			js.Field{XType: "pbsDiskScriptPanel", Title: "Scripts", ItemID: "scripts", IconCls: "fa fa-file-code-o"},
 			js.Field{XType: "pbsNotificationBatchView", Title: "Notification Batches", ItemID: "notification-batches", IconCls: "fa fa-bell-o"},
@@ -30,6 +29,7 @@ var coreViews = []js.Value{
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("S3"), "itemId": "s3-targets", "iconCls": "fa fa-cloud", "targetKind": "s3", "stateId": "grid-s3-targets-v1"},
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("PostgreSQL"), "itemId": "postgresql-targets", "iconCls": "fa fa-database", "targetKind": "postgresql", "stateId": "grid-postgresql-targets-v1"},
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("MySQL / MariaDB"), "itemId": "mysql-targets", "iconCls": "fa fa-database", "targetKind": "mysql", "stateId": "grid-mysql-targets-v1"},
+			js.Field{XType: "pbsDiskTokenPanel", Title: "Agent Bootstrap", ItemID: "tokens", IconCls: "fa fa-handshake-o"},
 		),
 	},
 	js.Panel{
@@ -102,11 +102,20 @@ var coreViews = []js.Value{
 		let notesNode = root.findChild("path", "pbsTapeManagement", false);
 		if (notesNode) {
 			let index = root.indexOf(notesNode);
-			root.insertChild(index, { text: "Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", expanded: true, children: [] });
-			root.insertChild(index + 1, { text: "Targets", iconCls: "fa fa-bullseye", id: "d2d_targets", path: "pbsD2DTargets", leaf: true });
-			root.insertChild(index + 2, { text: "Snapshots", iconCls: "fa fa-history", id: "snapshot_mount", path: "pbsD2DSnapshotMount", expanded: true, children: [] });
-			root.insertChild(index + 3, { text: "Data Verification", iconCls: "fa fa-check-circle", id: "data_verification", path: "pbsD2DDataVerification", expanded: true, children: [] });
-			root.insertChild(index + 4, { text: "MTF Migration", iconCls: "fa fa-archive", id: "mtf_tapes", path: "pbsMtfManagement", leaf: true });
+			root.insertChild(index, {
+				text: "PBS Plus",
+				iconCls: "fa fa-plus-square",
+				id: "pbs_plus",
+				path: "pbsD2DManagement",
+				expanded: true,
+				children: [
+					{ text: "Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", leaf: true },
+					{ text: "Targets", iconCls: "fa fa-bullseye", id: "d2d_targets", path: "pbsD2DTargets", leaf: true },
+					{ text: "Snapshots", iconCls: "fa fa-history", id: "snapshot_mount", path: "pbsD2DSnapshotMount", leaf: true },
+					{ text: "Data Verification", iconCls: "fa fa-check-circle", id: "data_verification", path: "pbsD2DDataVerification", leaf: true },
+					{ text: "MTF Migration", iconCls: "fa fa-archive", id: "mtf_tapes", path: "pbsMtfManagement", leaf: true },
+				],
+			});
 		}
 	}
 })`),

@@ -129,6 +129,39 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	}
 }
 
+func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
+	source := ui.Render()
+	managementStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DManagement",`))
+	targetsStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DTargets",`))
+	snapshotsStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DSnapshotMount",`))
+	if managementStart < 0 || targetsStart < 0 || snapshotsStart < 0 {
+		t.Fatal("rendered UI is missing a core PBS Plus view")
+	}
+
+	if bytes.Contains(source[managementStart:targetsStart], []byte(`xtype: "pbsDiskTokenPanel"`)) {
+		t.Error("agent bootstrap remains under Backup / Restore")
+	}
+	if !bytes.Contains(source[targetsStart:snapshotsStart], []byte(`xtype: "pbsDiskTokenPanel"`)) {
+		t.Error("agent bootstrap is missing from Targets")
+	}
+	if got := bytes.Count(source, []byte("root.insertChild(")); got != 1 {
+		t.Fatalf("rendered %d top-level PBS Plus navigation insertions, want 1", got)
+	}
+	for _, expected := range [][]byte{
+		[]byte(`text: "PBS Plus"`),
+		[]byte(`id: "pbs_plus"`),
+		[]byte(`id: "backup_targets"`),
+		[]byte(`id: "d2d_targets"`),
+		[]byte(`id: "snapshot_mount"`),
+		[]byte(`id: "data_verification"`),
+		[]byte(`id: "mtf_tapes"`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("PBS Plus navigation is missing %q", expected)
+		}
+	}
+}
+
 func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 	source := ui.Render()
 
