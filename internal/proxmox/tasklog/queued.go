@@ -13,9 +13,11 @@ import (
 
 type QueuedTask struct {
 	*WorkerTask
+	key string
 }
 
 var queuedStates sync.Map
+var queuedTasks sync.Map
 
 // QueuedState returns the job status text for a live queued task UPID.
 func QueuedState(upid string) string {
@@ -32,15 +34,27 @@ func SourceString(web bool) string {
 	return "schedule"
 }
 
-// NewQueuedTask creates a transient active PBS task while work is waiting to start.
+// NewQueuedTask creates a transient active PBS task while work is waiting to
+// start, or returns the already-live task for the same worker so engine
+// retries reuse one task and log across attempts instead of orphaning the
+// UPID recorded in job history.
 func NewQueuedTask(workerType, wid string, web bool) (*QueuedTask, error) {
+	key := workerType + "\t" + wid
+	if v, ok := queuedTasks.Load(key); ok {
+		if q := v.(*QueuedTask); !q.closed.Load() {
+			return q, nil
+		}
+		queuedTasks.Delete(key)
+	}
 	worker, err := NewWorkerTask("pbsplusgen-queue", workerType, wid)
 	if err != nil {
 		return nil, err
 	}
+	t := &QueuedTask{WorkerTask: worker, key: key}
 	worker.LogString(fmt.Sprintf("TASK QUEUED: job started from %s", SourceString(web)))
 	queuedStates.Store(worker.UPID(), fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
-	return &QueuedTask{WorkerTask: worker}, nil
+	queuedTasks.Store(key, t)
+	return t, nil
 }
 
 // LogString records task output and marks an untouched queued task as running.
@@ -107,6 +121,7 @@ func (t *QueuedTask) Close() {
 
 	unregisterWorker(t.Task.TaskId)
 	t.close()
+	queuedTasks.Delete(t.key)
 	queuedStates.Delete(t.UPID())
 
 	path, err := UPIDLogPath(t.UPID())

@@ -61,7 +61,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	if err != nil {
 		return fmt.Errorf("creating queued restore task: %w", err)
 	}
-	defer queued.Close()
 	w.BindTask(queued)
 
 	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: queued.UPID()}, app); err != nil {

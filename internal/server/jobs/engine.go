@@ -41,6 +41,11 @@ type Engine struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// boundTasks tracks the latest task bound to each execution so the
+	// engine can manage its lifetime: retries keep it alive (the UPID is
+	// recorded in job history), terminal outcomes close it.
+	boundTasks sync.Map
 }
 
 type Workflow func(*WorkflowContext) error
@@ -441,6 +446,7 @@ func (e *Engine) finish(execution jobdb.Execution, runErr error) {
 		if err := e.db.Finish(e.ctx, execution.ID, e.owner, execution.Attempt, state, time.Now(), ""); err != nil {
 			log.Error(err, "workflow engine completion failed", "executionID", execution.ID)
 		}
+		e.closeBoundTask(execution.ID)
 		return
 	}
 
@@ -449,6 +455,7 @@ func (e *Engine) finish(execution jobdb.Execution, runErr error) {
 		if err := e.db.Finish(e.ctx, execution.ID, e.owner, execution.Attempt, jobdb.StateFailed, time.Now(), runErr.Error()); err != nil {
 			log.Error(err, "workflow engine failure completion failed", "executionID", execution.ID)
 		}
+		e.closeBoundTask(execution.ID)
 		return
 	}
 
@@ -457,7 +464,39 @@ func (e *Engine) finish(execution jobdb.Execution, runErr error) {
 		log.Error(err, "workflow engine retry scheduling failed", "executionID", execution.ID)
 		return
 	}
+	e.noteRetry(execution, delay, runErr)
 	e.signal()
+}
+
+// closeBoundTask closes the execution's bound task (queued placeholder)
+// once the execution reaches a terminal state. Real worker tasks do not
+// implement Close and are left to their own lifecycle.
+func (e *Engine) closeBoundTask(executionID string) {
+	v, ok := e.boundTasks.LoadAndDelete(executionID)
+	if !ok {
+		return
+	}
+	if closer, ok := v.(interface{ Close() }); ok {
+		closer.Close()
+	}
+}
+
+// noteRetry records the failed attempt on the execution's bound queued task
+// so the task log and live state show why the job is waiting to retry.
+func (e *Engine) noteRetry(execution jobdb.Execution, delay time.Duration, runErr error) {
+	v, ok := e.boundTasks.Load(execution.ID)
+	if !ok {
+		return
+	}
+	setter, ok := v.(interface{ SetState(string) })
+	if !ok {
+		return
+	}
+	msg := runErr.Error()
+	if len(msg) > 300 {
+		msg = msg[:300] + "..."
+	}
+	setter.SetState(fmt.Sprintf("RETRYING: attempt %d/%d failed: %s; retrying in %s", execution.Attempt, execution.MaxAttempts, msg, delay.Round(time.Second)))
 }
 
 func retryDelay(execution jobdb.Execution, err error) time.Duration {

@@ -41,6 +41,12 @@ func (e *Engine) BindTaskAbort(executionID string, task Abortable) {
 	if executionID == "" || task == nil {
 		return
 	}
+	if prev, loaded := e.boundTasks.LoadOrStore(executionID, task); loaded {
+		if prev == task {
+			return
+		}
+		e.boundTasks.Store(executionID, task)
+	}
 	task.OnAbort(func() {
 		execution, err := e.Cancel(context.Background(), executionID)
 		if err != nil {
