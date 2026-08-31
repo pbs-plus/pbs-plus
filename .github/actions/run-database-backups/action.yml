@@ -163,17 +163,18 @@ runs:
         }
 
         wait_for_backup() {
-          local job_id=$1 server_logs
+          local job_id=$1 server_logs status_lines
           local deadline=$((SECONDS + timeout))
           while ((SECONDS < deadline)); do
             server_logs=$(docker logs pbs-plus-test 2>&1)
 
-            if grep -qF "\"jobID\":\"$job_id\",\"succeeded\":true" <<<"$server_logs"; then
+            status_lines=$(grep -F "\"jobID\":\"$job_id\"" <<<"$server_logs" | grep -F '"msg":"updating job status"' || true)
+            if grep -qF '"succeeded":true' <<<"$status_lines"; then
               echo "Backup job $job_id succeeded"
               return 0
             fi
 
-            if grep -qF "\"jobID\":\"$job_id\",\"succeeded\":false" <<<"$server_logs"; then
+            if grep -qF '"succeeded":false' <<<"$status_lines"; then
               echo "Backup job $job_id failed"
               docker logs --tail=100 pbs-plus-test 2>&1
               return 1
