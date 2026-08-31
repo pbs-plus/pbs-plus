@@ -79,7 +79,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	if err != nil {
 		return fmt.Errorf("creating queued backup task: %w", err)
 	}
-	defer queued.Close()
 	w.BindTask(queued)
 	b.mu.Lock()
 	b.workerID = workerID

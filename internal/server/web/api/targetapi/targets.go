@@ -3,7 +3,6 @@
 package targetapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/digest"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
@@ -110,13 +108,7 @@ func D2DTargetStatusHandler(app *application.Runtime) http.HandlerFunc {
 			}
 		}
 
-		statusCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
-		results := app.Target.CheckStatus(statusCtx, statusTargets, true, 5*time.Second)
-		statuses := make(map[string]application.TargetStatusResult, len(results))
-		for _, result := range results {
-			statuses[statusTargets[result.Index].Name] = result
-		}
+		statuses := app.Target.GetStatusEntries(statusTargets)
 
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(statuses); err != nil {

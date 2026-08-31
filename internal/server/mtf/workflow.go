@@ -39,7 +39,6 @@ func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	if err != nil {
 		return fmt.Errorf("creating queued MTF migration task: %w", err)
 	}
-	defer queued.Close()
 	w.BindTask(queued)
 
 	if err := j.persistHistory(proxmox.Task{UPID: queued.UPID()}, coredb.JobStatusUnknown, true); err != nil {
@@ -146,7 +145,6 @@ func runScan(w *jobs.WorkflowContext, app *application.Runtime, opts Options) er
 	if err != nil {
 		return fmt.Errorf("creating queued MTF scan task: %w", err)
 	}
-	defer queued.Close()
 	w.BindTask(queued)
 
 	startResRaw, err := w.Activity("start-task", json.RawMessage(`{}`), func(_ context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {

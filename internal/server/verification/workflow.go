@@ -60,7 +60,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.V
 	if err != nil {
 		return fmt.Errorf("creating queued verification task: %w", err)
 	}
-	defer queued.Close()
 	w.BindTask(queued)
 
 	if err := v.updateJobStatus(false, proxmox.Task{UPID: queued.UPID()}); err != nil {

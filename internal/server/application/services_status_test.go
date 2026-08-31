@@ -54,7 +54,7 @@ func TestTargetServiceCheckStatusByType(t *testing.T) {
 	}
 
 	service := NewTargetService(nil, arpc.NewAgentsManager())
-	results := service.CheckStatus(t.Context(), targets, true, time.Second)
+	results := service.CheckStatus(t.Context(), targets, true, time.Second, len(targets))
 	for i, want := range []bool{true, true, true, true, false, false} {
 		if results[i].ConnectionStatus != want {
 			t.Errorf("target %q status = %v, want %v (error: %v)", targets[i].Name, results[i].ConnectionStatus, want, results[i].Error)

@@ -9,13 +9,17 @@ import (
 	"sync"
 
 	"log/slog"
+
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 type QueuedTask struct {
 	*WorkerTask
+	key string
 }
 
 var queuedStates sync.Map
+var queuedTasks sync.Map
 
 // QueuedState returns the job status text for a live queued task UPID.
 func QueuedState(upid string) string {
@@ -32,15 +36,63 @@ func SourceString(web bool) string {
 	return "schedule"
 }
 
-// NewQueuedTask creates a transient active PBS task while work is waiting to start.
+// NewQueuedTask creates a transient active PBS task while work is waiting to
+// start, or returns the already-live task for the same worker so engine
+// retries reuse one task and log across attempts instead of orphaning the
+// UPID recorded in job history.
 func NewQueuedTask(workerType, wid string, web bool) (*QueuedTask, error) {
+	key := workerType + "\t" + wid
+	if v, ok := queuedTasks.Load(key); ok {
+		if q := v.(*QueuedTask); !q.closed.Load() {
+			return q, nil
+		}
+		queuedTasks.Delete(key)
+	}
 	worker, err := NewWorkerTask("pbsplusgen-queue", workerType, wid)
 	if err != nil {
 		return nil, err
 	}
-	worker.LogString(fmt.Sprintf("TASK QUEUED: job started from %s", SourceString(web)))
+	t := &QueuedTask{WorkerTask: worker, key: key}
+	worker.LogString(fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
+	if upid, ok := previousQueuedOrphan(workerType, wid); ok {
+		worker.LogString(fmt.Sprintf("RESUMED: continuing after server restart (previous queue task: %s)", upid))
+	}
 	queuedStates.Store(worker.UPID(), fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
-	return &QueuedTask{WorkerTask: worker}, nil
+	queuedTasks.Store(key, t)
+	return t, nil
+}
+
+// previousQueuedOrphan returns the newest dead queued placeholder for the
+// worker, whether still listed active after a crash or already archived as
+// unknown. Dead-pid UPIDs are terminal in proxmox-backup's eyes, so the
+// orphan is never resurrected: it stays archived with its log, and the
+// caller's fresh task just references it for continuity.
+func previousQueuedOrphan(workerType, wid string) (string, bool) {
+	lists := [][]TaskListInfo{}
+	if active, err := readTaskFile(activeTasks); err == nil {
+		lists = append(lists, active)
+	}
+	if archived, err := readTaskFileAny(archivePath); err == nil {
+		lists = append(lists, archived)
+	}
+	var found proxmox.Task
+	for _, list := range lists {
+		for _, info := range list {
+			if !IsQueuedUPID(info.UPID) || info.Task.WorkerType != workerType || info.Task.WID != wid {
+				continue
+			}
+			if info.State != nil && info.State.Status != StatusUnknown {
+				continue
+			}
+			if active, err := workerIsActive(info.Task); err != nil || active {
+				continue
+			}
+			if found.UPID == "" || info.Task.StartTime > found.StartTime {
+				found = info.Task
+			}
+		}
+	}
+	return found.UPID, found.UPID != ""
 }
 
 // LogString records task output and marks an untouched queued task as running.
@@ -107,6 +159,7 @@ func (t *QueuedTask) Close() {
 
 	unregisterWorker(t.Task.TaskId)
 	t.close()
+	queuedTasks.Delete(t.key)
 	queuedStates.Delete(t.UPID())
 
 	path, err := UPIDLogPath(t.UPID())

@@ -14,9 +14,11 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/sys/unix"
 )
 
@@ -130,12 +132,20 @@ func (s *ScriptService) UpdateScript(sc coredb.Script) error          { return s
 func (s *ScriptService) DeleteScript(path string) error               { return s.db.DeleteScript(nil, path) }
 
 type TargetService struct {
-	db        *coredb.Store
-	agentsMgr *arpc.AgentsManager
+	db           *coredb.Store
+	agentsMgr    *arpc.AgentsManager
+	statusCache  *safemap.Map[string, StatusEntry]
+	statusSem    chan struct{}
+	statusFlight singleflight.Group
 }
 
 func NewTargetService(db *coredb.Store, agentsMgr *arpc.AgentsManager) *TargetService {
-	return &TargetService{db: db, agentsMgr: agentsMgr}
+	return &TargetService{
+		db:          db,
+		agentsMgr:   agentsMgr,
+		statusCache: safemap.New[string, StatusEntry](),
+		statusSem:   make(chan struct{}, statusProbeConcurrency),
+	}
 }
 
 func (s *TargetService) GetAllTargets() ([]coredb.Target, error)      { return s.db.GetAllTargets() }
@@ -198,9 +208,21 @@ type TargetStatusResult struct {
 	Error            error
 }
 
-func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target, checkStatus bool, timeout time.Duration) []TargetStatusResult {
+// StatusEntry is a cached target status snapshot served to API clients.
+type StatusEntry struct {
+	ConnectionStatus bool   `json:"ConnectionStatus"`
+	AgentVersion     string `json:"AgentVersion"`
+	TargetSizeResult
+	LastError string    `json:"LastError"`
+	CheckedAt time.Time `json:"CheckedAt"`
+}
+
+func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target, checkStatus bool, timeout time.Duration, concurrency int) []TargetStatusResult {
 	results := make([]TargetStatusResult, len(targets))
-	sem := make(chan struct{}, 20)
+	if concurrency < 1 {
+		concurrency = 20
+	}
+	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
 	for i, target := range targets {
@@ -268,6 +290,120 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 
 	wg.Wait()
 	return results
+}
+
+const (
+	// statusRevalidateAfter is the cache TTL: entries older than this are
+	// served stale while a coalesced background probe refreshes them
+	// (stale-while-revalidate / ISR semantics).
+	statusRevalidateAfter  = 10 * time.Second
+	statusProbeTimeout     = 5 * time.Second
+	statusProbeConcurrency = 64
+)
+
+// revalidate probes one target and refreshes its cache entry. singleflight
+// coalesces concurrent refreshes of the same target so overlapping requests
+// share one probe; statusSem bounds in-flight probes across all targets.
+func (s *TargetService) revalidate(name string) {
+	if s.db == nil {
+		return
+	}
+	_, _, _ = s.statusFlight.Do(name, func() (any, error) {
+		s.statusSem <- struct{}{}
+		defer func() { <-s.statusSem }()
+		tgt, err := s.GetTarget(name)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
+		defer cancel()
+		targets := []coredb.Target{tgt}
+		s.storeStatusResults(targets, s.CheckStatus(ctx, targets, true, statusProbeTimeout, 1))
+		return nil, nil
+	})
+}
+
+func (s *TargetService) storeStatusResults(targets []coredb.Target, results []TargetStatusResult) {
+	now := time.Now()
+	for _, result := range results {
+		if result.Index < 0 || result.Index >= len(targets) {
+			continue
+		}
+		entry := StatusEntry{
+			ConnectionStatus: result.ConnectionStatus,
+			AgentVersion:     result.AgentVersion,
+			TargetSizeResult: result.TargetSizeResult,
+			CheckedAt:        now,
+		}
+		if result.Error != nil {
+			entry.LastError = result.Error.Error()
+		}
+		s.statusCache.Set(targets[result.Index].Name, entry)
+	}
+}
+
+// GetStatusEntries serves cached statuses immediately; entries missing or
+// older than statusRevalidateAfter get a coalesced background probe while
+// the stale value is returned (stale-while-revalidate / ISR semantics).
+func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]StatusEntry {
+	entries := make(map[string]StatusEntry, len(targets))
+	stale := make([]string, 0, len(targets))
+	for _, tgt := range targets {
+		if entry, ok := s.statusCache.Get(tgt.Name); ok {
+			entries[tgt.Name] = entry
+			if time.Since(entry.CheckedAt) >= statusRevalidateAfter {
+				stale = append(stale, tgt.Name)
+			}
+			continue
+		}
+		stale = append(stale, tgt.Name)
+		entry := StatusEntry{AgentVersion: "N/A"}
+		if tgt.IsAgent() {
+			if s.agentsMgr.IsOnline(tgt.GetHostname()) {
+				entry.ConnectionStatus = true
+				entry.AgentVersion = s.agentSessionVersion(tgt.GetHostname())
+			}
+		} else if tgt.IsLocal() {
+			size, err := ResolveTargetSize(tgt)
+			entry.TargetSizeResult = size
+			entry.ConnectionStatus = err == nil
+			if err != nil {
+				entry.LastError = err.Error()
+			}
+			entry.CheckedAt = time.Now()
+		}
+		entries[tgt.Name] = entry
+	}
+	for _, name := range stale {
+		go s.revalidate(name)
+	}
+	s.evictOrphans(targets)
+	return entries
+}
+
+// evictOrphans drops cache entries for targets no longer in the database.
+// No length shortcut: an under-populated cache can still hold orphans.
+func (s *TargetService) evictOrphans(targets []coredb.Target) {
+	live := make(map[string]struct{}, len(targets))
+	for _, t := range targets {
+		live[t.Name] = struct{}{}
+	}
+	s.statusCache.ForEach(func(name string, _ StatusEntry) bool {
+		if _, ok := live[name]; !ok {
+			s.statusCache.Del(name)
+		}
+		return true
+	})
+}
+
+func (s *TargetService) agentSessionVersion(hostname string) string {
+	if q, ok := s.agentsMgr.GetQuicPipe(hostname); ok {
+		return q.GetVersion()
+	}
+	if sp, ok := s.agentsMgr.GetStreamPipe(hostname); ok {
+		return sp.GetVersion()
+	}
+	return "N/A"
 }
 
 func probeS3Target(ctx context.Context, target coredb.Target) error {
