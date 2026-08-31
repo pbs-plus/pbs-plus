@@ -5,8 +5,10 @@ package application
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -341,6 +343,21 @@ func (s *TargetService) storeStatusResults(targets []coredb.Target, results []Ta
 		if result.Index < 0 || result.Index >= len(targets) {
 			continue
 		}
+		name := targets[result.Index].Name
+		if isTimeoutErr(result.Error) {
+			// A timed-out probe produced no verdict: keep the last known
+			// status (stays stale, so the next poll re-probes) instead of
+			// flipping a reachable target to unreachable.
+			if _, ok := s.statusCache.Get(name); ok {
+				continue
+			}
+			entry := StatusEntry{AgentVersion: result.AgentVersion, CheckedAt: now}
+			if result.Error != nil {
+				entry.LastError = result.Error.Error()
+			}
+			s.statusCache.Set(name, entry)
+			continue
+		}
 		entry := StatusEntry{
 			ConnectionStatus: new(result.ConnectionStatus),
 			AgentVersion:     result.AgentVersion,
@@ -350,8 +367,17 @@ func (s *TargetService) storeStatusResults(targets []coredb.Target, results []Ta
 		if result.Error != nil {
 			entry.LastError = result.Error.Error()
 		}
-		s.statusCache.Set(targets[result.Index].Name, entry)
+		s.statusCache.Set(name, entry)
 	}
+}
+
+// isTimeoutErr reports whether err is deadline-class: a timed-out probe
+// carries no verdict, so the previous status must stand.
+func isTimeoutErr(err error) bool {
+	return err != nil &&
+		(errors.Is(err, context.DeadlineExceeded) ||
+			errors.Is(err, os.ErrDeadlineExceeded) ||
+			os.IsTimeout(err))
 }
 
 // GetStatusEntries serves cached statuses immediately; entries missing or

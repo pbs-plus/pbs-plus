@@ -3,6 +3,8 @@
 package application
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -106,5 +108,32 @@ func TestGetStatusEntriesRevalidatesStaleAndEvicts(t *testing.T) {
 	}
 	if _, found := service.statusCache.Get("local-missing"); !found {
 		t.Error("live target wrongly evicted")
+	}
+}
+
+func TestStoreStatusResultsTimeoutKeepsLastVerdict(t *testing.T) {
+	service := NewTargetService(nil, arpc.NewAgentsManager())
+	targets := []coredb.Target{{Name: "t1"}}
+
+	reachableAt := time.Now().Add(-time.Minute)
+	service.statusCache.Set("t1", StatusEntry{ConnectionStatus: new(true), CheckedAt: reachableAt})
+	service.storeStatusResults(targets, []TargetStatusResult{{Index: 0, Error: context.DeadlineExceeded}})
+	e, _ := service.statusCache.Get("t1")
+	if e.ConnectionStatus == nil || !*e.ConnectionStatus || !e.CheckedAt.Equal(reachableAt) {
+		t.Fatalf("timeout overwrote last verdict: %#v", e)
+	}
+
+	service.statusCache.Del("t1")
+	service.storeStatusResults(targets, []TargetStatusResult{{Index: 0, Error: context.DeadlineExceeded}})
+	e, _ = service.statusCache.Get("t1")
+	if e.ConnectionStatus != nil {
+		t.Fatalf("timeout with no prior verdict = %#v", e)
+	}
+
+	service.statusCache.Set("t1", StatusEntry{ConnectionStatus: new(true), CheckedAt: time.Now()})
+	service.storeStatusResults(targets, []TargetStatusResult{{Index: 0, Error: errors.New("connection refused")}})
+	e, _ = service.statusCache.Get("t1")
+	if e.ConnectionStatus == nil || *e.ConnectionStatus {
+		t.Fatalf("explicit error should overwrite: %#v", e)
 	}
 }
