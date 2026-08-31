@@ -445,51 +445,51 @@ func renderFileStatusHuman(status string) string {
 
 func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 	return map[string]any{
-		"id":                     b.ID,
-		"store":                  b.Store,
-		"mode":                   b.Mode,
-		"sourcemode":             b.SourceMode,
-		"readmode":               b.ReadMode,
-		"target":                 b.Target.Name,
-		"subpath":                b.Subpath,
-		"ns":                     b.Namespace,
-		"schedule":               b.Schedule,
-		"comment":                b.Comment,
-		"notification-mode":      b.NotificationMode,
-		"notification-batch":     "",
-		"pre_script":             b.PreScript,
-		"post_script":            b.PostScript,
-		"retry":                  b.Retry,
-		"retry-interval":         b.RetryInterval,
-		"max-dir-entries":        b.MaxDirEntries,
-		"rawexclusions":          b.RawExclusions,
-		"include-xattr":          b.IncludeXattr,
-		"legacy-xattr":           b.LegacyXattr,
-		"database_scope":         b.DatabaseScope,
-		"database_name":          b.DatabaseName,
+		"id":                 b.ID,
+		"store":              b.Store,
+		"mode":               b.Mode,
+		"sourcemode":         b.SourceMode,
+		"readmode":           b.ReadMode,
+		"target":             b.Target.Name,
+		"subpath":            b.Subpath,
+		"ns":                 b.Namespace,
+		"schedule":           b.Schedule,
+		"comment":            b.Comment,
+		"notification-mode":  b.NotificationMode,
+		"notification-batch": "",
+		"pre_script":         b.PreScript,
+		"post_script":        b.PostScript,
+		"retry":              b.Retry,
+		"retry-interval":     b.RetryInterval,
+		"max-dir-entries":    b.MaxDirEntries,
+		"rawexclusions":      b.RawExclusions,
+		"include-xattr":      b.IncludeXattr,
+		"legacy-xattr":       b.LegacyXattr,
+		"database_scope":     b.DatabaseScope,
+		"database_name":      b.DatabaseName,
 	}
 }
 
 func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 	return map[string]any{
-		"id":                     r.ID,
-		"store":                  r.Store,
-		"ns":                     r.Namespace,
-		"snapshot":               r.Snapshot,
-		"src-path":               r.SrcPath,
-		"dest-target":            r.DestTarget.Name,
-		"dest-subpath":           r.DestSubpath,
-		"mode":                   r.Mode,
-		"comment":                r.Comment,
-		"notification-mode":      r.NotificationMode,
-		"notification-batch":     "",
-		"pre_script":             r.PreScript,
-		"post_script":            r.PostScript,
-		"retry":                  r.Retry,
-		"retry-interval":         r.RetryInterval,
-		"source_database":        r.SourceDatabase,
-		"destination_database":   r.DestinationDatabase,
-		"replace_existing":       r.ReplaceExisting,
+		"id":                   r.ID,
+		"store":                r.Store,
+		"ns":                   r.Namespace,
+		"snapshot":             r.Snapshot,
+		"src-path":             r.SrcPath,
+		"dest-target":          r.DestTarget.Name,
+		"dest-subpath":         r.DestSubpath,
+		"mode":                 r.Mode,
+		"comment":              r.Comment,
+		"notification-mode":    r.NotificationMode,
+		"notification-batch":   "",
+		"pre_script":           r.PreScript,
+		"post_script":          r.PostScript,
+		"retry":                r.Retry,
+		"retry-interval":       r.RetryInterval,
+		"source_database":      r.SourceDatabase,
+		"destination_database": r.DestinationDatabase,
+		"replace_existing":     r.ReplaceExisting,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
 			"last-run-upid":           r.History.LastRunUpid,
@@ -501,27 +501,27 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 }
 
 type FlatBackup struct {
-	ID                   string `json:"id"`
-	Store                string `json:"store"`
-	Mode                 string `json:"mode"`
-	SourceMode           string `json:"sourcemode"`
-	ReadMode             string `json:"readmode"`
-	Subpath              string `json:"subpath"`
-	Namespace            string `json:"ns"`
-	Schedule             string `json:"schedule"`
-	Comment              string `json:"comment"`
-	NotificationMode     string `json:"notification-mode"`
-	PreScript            string `json:"pre_script"`
-	PostScript           string `json:"post_script"`
-	NextRun              int64  `json:"next-run"`
-	Retry                int    `json:"retry"`
-	RetryInterval        int    `json:"retry-interval"`
-	MaxDirEntries        int    `json:"max-dir-entries"`
-	RawExclusions        string `json:"rawexclusions"`
-	IncludeXattr         bool   `json:"include-xattr"`
-	LegacyXattr          bool   `json:"legacy-xattr"`
-	DatabaseScope        string `json:"database_scope,omitempty"`
-	DatabaseName         string `json:"database_name,omitempty"`
+	ID               string `json:"id"`
+	Store            string `json:"store"`
+	Mode             string `json:"mode"`
+	SourceMode       string `json:"sourcemode"`
+	ReadMode         string `json:"readmode"`
+	Subpath          string `json:"subpath"`
+	Namespace        string `json:"ns"`
+	Schedule         string `json:"schedule"`
+	Comment          string `json:"comment"`
+	NotificationMode string `json:"notification-mode"`
+	PreScript        string `json:"pre_script"`
+	PostScript       string `json:"post_script"`
+	NextRun          int64  `json:"next-run"`
+	Retry            int    `json:"retry"`
+	RetryInterval    int    `json:"retry-interval"`
+	MaxDirEntries    int    `json:"max-dir-entries"`
+	RawExclusions    string `json:"rawexclusions"`
+	IncludeXattr     bool   `json:"include-xattr"`
+	LegacyXattr      bool   `json:"legacy-xattr"`
+	DatabaseScope    string `json:"database_scope,omitempty"`
+	DatabaseName     string `json:"database_name,omitempty"`
 
 	Target       string `json:"target"`
 	ExpectedSize int    `json:"expected_size,omitempty"`
@@ -550,23 +550,23 @@ type FlatBackup struct {
 }
 
 type FlatRestore struct {
-	ID                   string `json:"id"`
-	Store                string `json:"store"`
-	Namespace            string `json:"ns"`
-	Snapshot             string `json:"snapshot"`
-	SnapshotHuman        string `json:"snapshot_human"`
-	SrcPath              string `json:"src-path"`
-	DestSubpath          string `json:"dest-subpath"`
-	PreScript            string `json:"pre_script"`
-	PostScript           string `json:"post_script"`
-	Comment              string `json:"comment"`
-	NotificationMode     string `json:"notification-mode"`
-	Retry                int    `json:"retry"`
-	RetryInterval        int    `json:"retry-interval"`
-	ExpectedSize         int    `json:"expected_size,omitempty"`
-	SourceDatabase       string `json:"source_database,omitempty"`
-	DestinationDatabase  string `json:"destination_database,omitempty"`
-	ReplaceExisting      bool   `json:"replace_existing,omitempty"`
+	ID                  string `json:"id"`
+	Store               string `json:"store"`
+	Namespace           string `json:"ns"`
+	Snapshot            string `json:"snapshot"`
+	SnapshotHuman       string `json:"snapshot_human"`
+	SrcPath             string `json:"src-path"`
+	DestSubpath         string `json:"dest-subpath"`
+	PreScript           string `json:"pre_script"`
+	PostScript          string `json:"post_script"`
+	Comment             string `json:"comment"`
+	NotificationMode    string `json:"notification-mode"`
+	Retry               int    `json:"retry"`
+	RetryInterval       int    `json:"retry-interval"`
+	ExpectedSize        int    `json:"expected_size,omitempty"`
+	SourceDatabase      string `json:"source_database,omitempty"`
+	DestinationDatabase string `json:"destination_database,omitempty"`
+	ReplaceExisting     bool   `json:"replace_existing,omitempty"`
 
 	DestTarget string `json:"dest-target"`
 
