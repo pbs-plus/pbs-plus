@@ -65,10 +65,6 @@ runs:
             -H 'Content-Type: application/x-www-form-urlencoded' "$@"
         }
 
-        clients=$(api_get '/api2/json/d2d/database-clients')
-        postgres_dir=$(jq -er '([.data[] | select(.engine == "postgresql" and .family == "postgresql")]) as $clients | (($clients | map(select(.directory | startswith("/usr/lib/postgresql/"))))[0] // $clients[0]).directory' <<<"$clients")
-        mariadb_dir=$(jq -er '[.data[] | select(.engine == "mysql" and .family == "mariadb")][0].directory' <<<"$clients")
-
         create_target() {
           local response
           response=$(api_post '/api2/extjs/config/d2d-target' "$@")
@@ -86,8 +82,7 @@ runs:
           --data-urlencode 'database_username=postgres' \
           --data-urlencode "database_password=$password" \
           --data-urlencode 'database_tls_mode=disable' \
-          --data-urlencode 'database_default_client_family=postgresql' \
-          --data-urlencode "database_default_client_dir=$postgres_dir"
+          --data-urlencode 'database_default_client_family=postgresql'
 
         create_target \
           --data-urlencode 'name=e2e-mariadb' \
@@ -98,8 +93,7 @@ runs:
           --data-urlencode "database_password=$password" \
           --data-urlencode 'database_tls_mode=disabled' \
           --data-urlencode 'database_variant=mariadb' \
-          --data-urlencode 'database_default_client_family=mariadb' \
-          --data-urlencode "database_default_client_dir=$mariadb_dir"
+          --data-urlencode 'database_default_client_family=mariadb'
 
         create_backup() {
           local response
@@ -116,7 +110,6 @@ runs:
           --data-urlencode 'store=test' \
           --data-urlencode 'ns=database-e2e' \
           --data-urlencode 'database_scope=server' \
-          --data-urlencode "database_client_dir=$postgres_dir" \
           --data-urlencode 'schedule=' \
           --data-urlencode 'retry=' \
           --data-urlencode 'retry-interval=' \
@@ -135,8 +128,6 @@ runs:
           --data-urlencode 'store=test' \
           --data-urlencode 'ns=database-e2e' \
           --data-urlencode 'database_scope=server' \
-          --data-urlencode 'database_client_family=mariadb' \
-          --data-urlencode "database_client_dir=$mariadb_dir" \
           --data-urlencode 'schedule=' \
           --data-urlencode 'retry=' \
           --data-urlencode 'retry-interval=' \
@@ -268,6 +259,16 @@ runs:
             printf '%s\n' "$log"
             exit 1
           fi
+          if ! grep -Eq 'using [a-z]+ client [0-9]+\.[0-9]+ from .* for server ' <<<"$section"; then
+            echo "$label dump section is missing the client selection line"
+            printf '%s\n' "$log"
+            exit 1
+          fi
+          if grep -q 'warning: client major' <<<"$section"; then
+            echo "$label selected a client that does not match the server version"
+            printf '%s\n' "$log"
+            exit 1
+          fi
 
           printf '%s dump section:\n%s\n' "$label" "$section"
           printf '%s\n' "Task log:"
@@ -294,10 +295,6 @@ runs:
           docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017$path" \
             -H 'Content-Type: application/x-www-form-urlencoded' "$@"
         }
-
-        clients=$(api_get '/api2/json/d2d/database-clients')
-        postgres_dir=$(jq -er '([.data[] | select(.engine == "postgresql" and .family == "postgresql")]) as $clients | (($clients | map(select(.directory | startswith("/usr/lib/postgresql/"))))[0] // $clients[0]).directory' <<<"$clients")
-        mariadb_dir=$(jq -er '[.data[] | select(.engine == "mysql" and .family == "mariadb")][0].directory' <<<"$clients")
 
         latest_snapshot() {
           local job_id=$1 snap_time snap_ts
@@ -366,8 +363,7 @@ runs:
           --data-urlencode 'retry-interval=1' \
           --data-urlencode 'source_database=inventory' \
           --data-urlencode 'destination_database=inventory_restored' \
-          --data-urlencode 'replace_existing=false' \
-          --data-urlencode "database_client_dir=$postgres_dir"
+          --data-urlencode 'replace_existing=false'
         start_restore 'e2e-postgresql-restore'
         wait_for_restore 'e2e-postgresql-restore'
 
@@ -393,9 +389,7 @@ runs:
           --data-urlencode 'retry-interval=1' \
           --data-urlencode 'source_database=inventory' \
           --data-urlencode 'destination_database=inventory_restored' \
-          --data-urlencode 'replace_existing=false' \
-          --data-urlencode 'database_client_family=mariadb' \
-          --data-urlencode "database_client_dir=$mariadb_dir"
+          --data-urlencode 'replace_existing=false'
         start_restore 'e2e-mariadb-restore'
         wait_for_restore 'e2e-mariadb-restore'
 
