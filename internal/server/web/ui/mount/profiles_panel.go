@@ -136,7 +136,8 @@ var mountProfilesPanel = js.Panel{
 								failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
 								success: () => {
 									w.close();
-									me.getView().getStore().load();
+									const panel = me.getView();
+									if (panel) panel.getStore().load();
 								},
 							});
 						},
@@ -167,7 +168,10 @@ var mountProfilesPanel = js.Panel{
 						method: "DELETE",
 						waitMsgTarget: view,
 						failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-						success: () => me.getView().getStore().load(),
+						success: () => {
+							const panel = me.getView();
+							if (panel) panel.getStore().load();
+						},
 					});
 				},
 			);
@@ -182,7 +186,10 @@ var mountProfilesPanel = js.Panel{
 				success: (resp) => {
 					Ext.create("PBS.plusWindow.TaskViewer", {
 						upid: resp.result.data,
-						taskDone: () => me.getView().getStore().load(),
+						taskDone: () => {
+							const panel = me.getView();
+							if (panel) panel.getStore().load();
+						},
 					}).show();
 				},
 			});

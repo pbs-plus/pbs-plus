@@ -199,6 +199,19 @@ func TestDatabaseJobWindowsDoNotReferenceRemovedClientOverrides(t *testing.T) {
 	}
 }
 
+func TestAsyncCallbacksDoNotDereferenceDestroyedViews(t *testing.T) {
+	source := ui.Render()
+	for _, stale := range [][]byte{
+		[]byte(`const bar = me.getView().down("[reference=aggregateBar]");`),
+		[]byte(`me.getView().getStore().load();`),
+		[]byte(`taskDone: () => me.getView().getStore().load(),`),
+	} {
+		if bytes.Contains(source, stale) {
+			t.Errorf("async callback dereferences a potentially destroyed view: %q", stale)
+		}
+	}
+}
+
 func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
 	source := ui.Render()
 	for _, expected := range [][]byte{

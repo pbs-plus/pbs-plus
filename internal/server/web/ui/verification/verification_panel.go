@@ -273,7 +273,9 @@ var verificationPanel = js.Panel{
 				success: (response) => {
 					const data = response.result.data;
 					if (!data) return;
-					const bar = me.getView().down("[reference=aggregateBar]");
+					const view = me.getView();
+					if (!view) return;
+					const bar = view.down("[reference=aggregateBar]");
 					if (!bar) return;
 					const totalRuns = data.total_runs || 0;
 					const totalFiles = data.total_files || 0;
