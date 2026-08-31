@@ -61,11 +61,7 @@ func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Schedule
 		return nil, nil, fmt.Errorf("failed to initialize token manager: %w", err)
 	}
 	app.CoreDB.TokenManager = tokenManager
-	if err := backup.MigrateLegacyBackupGroups(app); err != nil {
-		return nil, nil, fmt.Errorf("migrating legacy backup groups: %w", err)
-	}
 
-	// Stale mount cleanup - unmount and remove all stale mount points
 	if err := cleanupStaleMounts(); err != nil {
 		log.Error(err, "failed to cleanup stale mounts")
 	}
