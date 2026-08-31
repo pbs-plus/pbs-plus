@@ -132,10 +132,30 @@ func (u *Updater) poll(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := u.CheckNow(); err != nil && !errors.Is(err, ErrAlreadyLatest) {
-				log.Error(err, "scheduled update check failed")
+				log.Debug("scheduled update check failed", "error", err.Error())
 			}
 		}
 	}
+}
+
+func CheckOnReconnect() {
+	defaultMu.Lock()
+	up := defaultUpdater
+	defaultMu.Unlock()
+
+	if up == nil || (up.cfg.PollInterval <= 0 && !up.cfg.FetchOnStart) {
+		return
+	}
+	if !up.mu.TryLock() {
+		return
+	}
+
+	go func() {
+		defer up.mu.Unlock()
+		if err := up.checkNow(); err != nil && !errors.Is(err, ErrAlreadyLatest) {
+			log.Debug("reconnect update check failed", "error", err.Error())
+		}
+	}()
 }
 
 // TriggerUpdate performs a single, on-demand update check using the default
@@ -174,7 +194,10 @@ type ecdsaSig struct {
 func (u *Updater) CheckNow() error {
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	return u.checkNow()
+}
 
+func (u *Updater) checkNow() error {
 	if mgr, err := binswap.NewFromExecutable(); err == nil {
 		if mgr.HasPending() {
 			return fmt.Errorf("updater: update to %s still pending health confirmation", mgr.PendingVersion())

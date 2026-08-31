@@ -32,9 +32,9 @@ func quicConfig() *quic.Config {
 		MaxIdleTimeout:             quicMaxIdleTimeout,
 		KeepAlivePeriod:            quicKeepAlivePeriod,
 		HandshakeIdleTimeout:       10 * time.Second,
-		MaxIncomingStreams:         1 << 16,
-		MaxStreamReceiveWindow:     10 * 1024 * 1024,
-		MaxConnectionReceiveWindow: 15 * 1024 * 1024,
+		MaxIncomingStreams:         64,
+		MaxStreamReceiveWindow:     1 * 1024 * 1024,
+		MaxConnectionReceiveWindow: 4 * 1024 * 1024,
 	}
 }
 
@@ -92,7 +92,6 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 
 	conn, err := quic.DialAddr(ctx, serverAddr, quicTLS, quicConfig())
 	if err != nil {
-		log.Error(err, "", "serverAddr", serverAddr)
 		return nil, fmt.Errorf("QUIC dial failed (%s): %w", serverAddr, err)
 	}
 	log.Info("quic: connection established", "quic_version", conn.ConnectionState().Version)
