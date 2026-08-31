@@ -21,6 +21,12 @@ func QueuedState(upid string) string {
 	if v, ok := queuedStates.Load(upid); ok {
 		return v.(string)
 	}
+	if IsQueuedUPID(upid) {
+		task, err := GetTaskByUPID(upid)
+		if err == nil && task.Status != "stopped" {
+			return "QUEUED: waiting to start"
+		}
+	}
 	return ""
 }
 

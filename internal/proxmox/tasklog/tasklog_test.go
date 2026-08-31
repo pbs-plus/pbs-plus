@@ -156,6 +156,15 @@ func TestQueuedTask_CloseRemovesTaskWithoutArchiving(t *testing.T) {
 		t.Fatalf("ResolveHistoryFields = %+v, %v; want queued state", r, ok)
 	}
 
+	queuedStates.Delete(upid)
+	if got := QueuedState(upid); got != "QUEUED: waiting to start" {
+		t.Fatalf("QueuedState without in-memory state = %q, want queued fallback", got)
+	}
+	r, ok = ResolveHistoryFields(upid)
+	if !ok || r.State != "QUEUED: waiting to start" {
+		t.Fatalf("ResolveHistoryFields without in-memory state = %+v, %v; want queued fallback", r, ok)
+	}
+
 	queued.SetState("RUNNING: post-backup script")
 	if got := QueuedState(upid); got != "RUNNING: post-backup script" {
 		t.Fatalf("QueuedState = %q, want running post-script state", got)
