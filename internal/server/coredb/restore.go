@@ -192,14 +192,14 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:                fromNullInt64(row.Retry),
-		RetryInterval:        fromNullInt64(row.RetryInterval),
-		Mode:                 int(row.RestoreMode),
-		PreScript:            row.PreScript,
-		PostScript:           row.PostScript,
-		SourceDatabase:       row.SourceDatabase,
-		DestinationDatabase:  row.DestinationDatabase,
-		ReplaceExisting:      row.ReplaceExisting != 0,
+		Retry:               fromNullInt64(row.Retry),
+		RetryInterval:       fromNullInt64(row.RetryInterval),
+		Mode:                int(row.RestoreMode),
+		PreScript:           row.PreScript,
+		PostScript:          row.PostScript,
+		SourceDatabase:      row.SourceDatabase,
+		DestinationDatabase: row.DestinationDatabase,
+		ReplaceExisting:     row.ReplaceExisting != 0,
 	}
 	restore.DestTarget.DatabaseHost = row.DatabaseHost
 	restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -427,13 +427,13 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 				RetryCount:         fromNullInt64(row.RetryCount),
 			},
-			Retry:                fromNullInt64(row.Retry),
-			RetryInterval:        fromNullInt64(row.RetryInterval),
-			PreScript:            row.PreScript,
-			PostScript:           row.PostScript,
-			SourceDatabase:       row.SourceDatabase,
-			DestinationDatabase:  row.DestinationDatabase,
-			ReplaceExisting:      row.ReplaceExisting != 0,
+			Retry:               fromNullInt64(row.Retry),
+			RetryInterval:       fromNullInt64(row.RetryInterval),
+			PreScript:           row.PreScript,
+			PostScript:          row.PostScript,
+			SourceDatabase:      row.SourceDatabase,
+			DestinationDatabase: row.DestinationDatabase,
+			ReplaceExisting:     row.ReplaceExisting != 0,
 		}
 		restore.DestTarget.DatabaseHost = row.DatabaseHost
 		restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -562,28 +562,28 @@ func (r *Restore) GetStreamID() string {
 }
 
 type Restore struct {
-	ID                   string     `json:"id"`
-	Store                string     `json:"store"`
-	Snapshot             string     `json:"snapshot"`
-	Namespace            string     `json:"ns"`
-	Mode                 int        `json:"mode"`
-	SrcPath              string     `json:"src-path"`
-	DestTarget           Target     `json:"dest-target"`
-	DestSubpath          string     `json:"dest-subpath"`
-	PreScript            string     `json:"pre_script"`
-	PostScript           string     `json:"post_script"`
-	Comment              string     `json:"comment"`
-	NotificationMode     string     `json:"notification-mode"`
-	Retry                int        `json:"retry"`
-	RetryInterval        int        `json:"retry-interval"`
-	CurrentPID           int        `json:"current_pid"`
-	ExpectedSize         int        `json:"expected_size,omitempty"`
-	UPIDs                []string   `json:"upids"`
-	CurrentStats         JobStats   `json:"current-stats"`
-	History              JobHistory `json:"history"`
-	SourceDatabase       string     `json:"source_database,omitempty"`
-	DestinationDatabase  string     `json:"destination_database,omitempty"`
-	ReplaceExisting      bool       `json:"replace_existing,omitempty"`
+	ID                  string     `json:"id"`
+	Store               string     `json:"store"`
+	Snapshot            string     `json:"snapshot"`
+	Namespace           string     `json:"ns"`
+	Mode                int        `json:"mode"`
+	SrcPath             string     `json:"src-path"`
+	DestTarget          Target     `json:"dest-target"`
+	DestSubpath         string     `json:"dest-subpath"`
+	PreScript           string     `json:"pre_script"`
+	PostScript          string     `json:"post_script"`
+	Comment             string     `json:"comment"`
+	NotificationMode    string     `json:"notification-mode"`
+	Retry               int        `json:"retry"`
+	RetryInterval       int        `json:"retry-interval"`
+	CurrentPID          int        `json:"current_pid"`
+	ExpectedSize        int        `json:"expected_size,omitempty"`
+	UPIDs               []string   `json:"upids"`
+	CurrentStats        JobStats   `json:"current-stats"`
+	History             JobHistory `json:"history"`
+	SourceDatabase      string     `json:"source_database,omitempty"`
+	DestinationDatabase string     `json:"destination_database,omitempty"`
+	ReplaceExisting     bool       `json:"replace_existing,omitempty"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {

@@ -257,22 +257,22 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		newRestore := coredb.Restore{
-			ID:                   id,
-			Store:                store,
-			Namespace:            namespace,
-			Snapshot:             snapshot,
-			SrcPath:              srcPath,
-			Mode:                 mode,
-			DestTarget:           coredb.Target{Name: r.FormValue("dest-target")},
-			DestSubpath:          destSubpath,
-			PreScript:            preScript,
-			PostScript:           postScript,
-			Comment:              r.FormValue("comment"),
-			NotificationMode:     r.FormValue("notification-mode"),
-			Retry:                retry,
-			RetryInterval:        retryInterval,
-			SourceDatabase:       r.FormValue("source_database"),
-			DestinationDatabase:  r.FormValue("destination_database"),
+			ID:                  id,
+			Store:               store,
+			Namespace:           namespace,
+			Snapshot:            snapshot,
+			SrcPath:             srcPath,
+			Mode:                mode,
+			DestTarget:          coredb.Target{Name: r.FormValue("dest-target")},
+			DestSubpath:         destSubpath,
+			PreScript:           preScript,
+			PostScript:          postScript,
+			Comment:             r.FormValue("comment"),
+			NotificationMode:    r.FormValue("notification-mode"),
+			Retry:               retry,
+			RetryInterval:       retryInterval,
+			SourceDatabase:      r.FormValue("source_database"),
+			DestinationDatabase: r.FormValue("destination_database"),
 		}
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
