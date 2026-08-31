@@ -1,29 +1,42 @@
 # Usage
 
+All PBS Plus features are managed through the **PBS Plus** navigation node in the PBS Web UI: PBS Plus Configuration, Backup / Restore, Targets, Snapshots, Data Verification, and MTF Migration.
+
 ## Disk Backup
 
-All file-level backup features are managed through the **Disk Backup** page in the PBS Web UI.
+File-level backup features are managed through the **Backup / Restore** page.
 
 ### Targets
 
-A **target** is a registered agent host. Targets appear automatically once an agent bootstraps with the server. Each target reports:
-- Hostname, OS, IP address
-- Connection status (Reachable / Unreachable)
-- Available volumes (drives on Windows, root filesystem on Linux)
+A **target** is a backup source, managed on the tabbed **Targets** page. Each tab holds one kind:
+
+- **Filesystem**: a registered agent host, or a local path on the PBS server. Agent targets appear automatically once an agent bootstraps with the server. Each reports hostname, OS, IP address, connection status (Reachable / Unreachable), available volumes (drives on Windows, root filesystem on Linux), and volume size (total, used, free).
+- **S3**: an S3-compatible bucket (see below).
+- **PostgreSQL** and **MySQL / MariaDB**: database servers (see Database Backup below).
+
+Target size metadata is resolved without scanning target contents: local targets use `statfs`, agent targets use volume metadata reported by the agent.
 
 ### Backup Jobs
 
 A backup job defines:
-- **Target** — which agent to back up
-- **Datastore** — which PBS datastore receives the snapshot
-- **Namespace** — PBS namespace within the datastore
-- **Schedule** — cron-like expression (or empty for manual-only)
-- **Exclusions** — file patterns to skip
-- **Source mode** — how files are enumerated
-- **Pre/Post scripts** — hook scripts run on the server before/after backup
-- **Mount script** — script to run when the target filesystem is mounted
-- **Max directory entries** — limit directory traversal depth
-- **Retry policy** — retry count and interval
+
+- **Target** - which target to back up
+- **Datastore** - which PBS datastore receives the snapshot
+- **Namespace** - PBS namespace within the datastore
+- **Schedule** - cron-like expression (or empty for manual-only)
+- **Exclusions** - file patterns to skip
+- **Source mode** - how files are enumerated
+- **Pre/Post scripts** - hook scripts run on the server before/after backup
+- **Mount script** - script to run when the target filesystem is mounted
+- **Max directory entries** - limit directory traversal depth
+- **Retry policy** - retry count and interval
+
+For database targets, the job also defines:
+
+- **Scope** - `server` (every database on the server, each dumped to its own file, plus PostgreSQL globals) or `database` (a single named database)
+- **Database** - the database name, required for `database` scope
+
+Job edits made while a job is running are preserved: the running task is not disturbed and the next run picks up the changes.
 
 ### Scheduling
 
@@ -31,11 +44,11 @@ Schedules use a custom calendar expression format (parsed by `internal/calendar/
 
 ### Exclusions
 
-Exclusion rules filter files during backup. Rules are stored in the SQLite database and referenced by job ID.
+Exclusion rules filter files during backup. Rules are stored in the SQLite database and referenced by job ID. Global exclusions (shared across jobs) are managed on the PBS Plus Configuration page.
 
 ## Restore
 
-Restore jobs copy files from a PBS snapshot back to an agent:
+Filesystem restores copy files from a PBS snapshot back to an agent:
 
 1. Select a snapshot from the datastore
 2. Choose source path within the snapshot
@@ -43,6 +56,13 @@ Restore jobs copy files from a PBS snapshot back to an agent:
 4. Select restore mode (overwrite, etc.)
 
 The agent forks a restore subprocess that pulls data over the aRPC data plane and writes to the destination.
+
+Database restores load a dump archive back into a database server:
+
+- Select a dump snapshot; the snapshot list is filtered by target engine so only compatible snapshots are offered
+- Restore the whole server dump, or pick a single **source database** from it
+- Optionally set a **destination database** name to restore under a new name
+- Optionally replace existing databases
 
 ## S3-Compatible Backup Target
 
@@ -56,7 +76,7 @@ Example: `s3://AKIAIOSFODNN7EXAMPLE@minio.local:9000/backups`
 
 ## Hook Scripts
 
-Hook scripts run on the PBS server, not on the agent.
+Hook scripts run on the PBS server, not on the agent. Script output is included in the task log.
 
 ### PreScript
 
@@ -69,11 +89,11 @@ All job fields are exposed as env vars (`PBS_PLUS__<FIELD_NAME>`):
 - `PBS_PLUS__NAMESPACE`
 - `PBS_PLUS__STORE`
 - `PBS_PLUS__COMMENT`
-- …and more
+- and more
 
 Output overrides via stdout as `KEY=VALUE` lines:
 
-- `PBS_PLUS__NAMESPACE` — updates the job's namespace
+- `PBS_PLUS__NAMESPACE` - updates the job's namespace
 
 Send human-readable output to stderr, not stdout.
 
@@ -81,8 +101,8 @@ Send human-readable output to stderr, not stdout.
 
 Runs after backup (success or failure). Cannot change the result. Additional env vars:
 
-- `PBS_PLUS__JOB_SUCCESS` — `"true"` or `"false"`
-- `PBS_PLUS__JOB_WARNINGS` — count of warnings
+- `PBS_PLUS__JOB_SUCCESS` - `"true"` or `"false"`
+- `PBS_PLUS__JOB_WARNINGS` - count of warnings
 
 ### Example: Time-gated backup with namespace override
 
@@ -90,7 +110,7 @@ Runs after backup (success or failure). Cannot change the result. Additional env
 #!/usr/bin/env bash
 HOUR="$(date +%H)"
 if [ "$HOUR" -lt 22 ] && [ "$HOUR" -gt 5 ]; then
-  echo "Backups allowed only 22:00–05:59" >&2
+  echo "Backups allowed only 22:00-05:59" >&2
   exit 1
 fi
 SAFE_TGT="${PBS_PLUS__TARGET// /_}"
@@ -109,47 +129,25 @@ JOB="${PBS_PLUS__JOB_ID:-unknown}"
 logger -t pbs-plus "Job ${JOB}: success=${STATUS}, warnings=${WARN}"
 ```
 
-## Database / Service Backup
+## Database Backup
 
-PBS Plus can back up databases and directory services using hook scripts. Since the agent's filesystem is mounted on the PBS server via FUSE, a PreScript or Mount Script can trigger a data dump to a local path before backup begins.
+PostgreSQL and MySQL/MariaDB servers are backed up natively, without agents or hook scripts.
 
-### Flow
+1. Add a **PostgreSQL** or **MySQL / MariaDB** target on the Targets page: host, port, username, password, TLS mode (and CA certificate if verifying), plus for MySQL the server variant (`mysql` or `mariadb`).
+2. Create a backup job with scope `server` (all databases) or `database` (one named database).
+3. The server selects the installed dump client (`pg_dump`, `mysqldump`, or `mariadb-dump`) whose version matches the live database server. To force a specific client, set a **default client directory** on the target; otherwise the matching client is picked automatically on every run. There are no per-job client overrides.
+4. The dump is staged with a sha256 manifest and written to the datastore as a standard PBS snapshot of split pxar archives. Restore via the normal restore flow (see Restore above).
 
-1. **PreScript** runs on the PBS server
-2. Script connects to the database and exports data to a directory
-3. PBS Plus backs up that directory as part of the job
-4. **PostScript** can clean up dump files after successful backup
+Notes:
 
-### PostgreSQL
+- Server-wide dumps write each database to its own dump file, so a single database can be restored on its own. PostgreSQL server dumps also include separate roles and globals dumps.
+- Dump client output is mirrored into the PBS task log.
 
-```bash
-#!/bin/bash
-HOST="localhost" PORT="5432" USER="postgres"
-export PGPASSWORD="your_password"
-DUMP_DIR="/mnt/backups/postgres"
-mkdir -p "$DUMP_DIR"
-DATABASES=$(psql -h "$HOST" -p "$PORT" -U "$USER" -Atc \
-  "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres';")
-for DB in $DATABASES; do
-  pg_dump -h "$HOST" -p "$PORT" -U "$USER" -F c -b -v -f "$DUMP_DIR/${DB}.dump" "$DB"
-done
-exit 0
-```
+### Service Backup via Hook Scripts
 
-### MySQL / MariaDB
+Other services (for example OpenLDAP) can still be dumped through hook scripts: the agent's filesystem is mounted on the PBS server via FUSE, so a PreScript or Mount Script can trigger a data dump to a local path before backup begins, and a PostScript can clean up dump files after a successful backup.
 
-```bash
-#!/bin/bash
-HOST="localhost" USER="root" PASS="your_password"
-DUMP_DIR="/mnt/backups/mysql"
-mkdir -p "$DUMP_DIR"
-mysqldump --host="$HOST" --user="$USER" --password="$PASS" \
-  --all-databases --single-transaction --quick --lock-tables=false \
-  --routines --triggers > "$DUMP_DIR/full_backup.sql"
-exit 0
-```
-
-### LDAP (OpenLDAP)
+Example OpenLDAP dump script:
 
 ```bash
 #!/bin/bash
@@ -160,7 +158,32 @@ slapcat -l "$DUMP_DIR/data.ldif" -n 1
 exit 0
 ```
 
-### Tips
+Exit non-zero to abort the backup if the dump fails.
 
-- **Cleanup**: Use a PostScript to delete dump files after successful backup.
-- **Error handling**: Exit non-zero to abort the backup if the dump fails.
+## Snapshot Mounts
+
+The **Snapshots** page manages read/write FUSE mounts of PBS archives on the server (powered by `pxar-mount`, see [pxar-mount](pxar-mount.md) for the full commit workflow):
+
+- **Active Mounts**: running mount sessions, with unmount (keeping or discarding read/write changes) and remount actions for offline sessions
+- **Mount Profiles**: persistent mount definitions that remount the latest snapshot of a group, optionally on a schedule. Profiles with **auto-mount** enabled follow the newest snapshot: when a newer snapshot appears, read-only mounts are remounted onto it. Read/write mounts are never auto-remounted. Each profile can define its own calendar-format check schedule; without one, checks run every 5 minutes.
+- **Datastore tabs**: browse snapshots per datastore, mount them, or **compose** a new snapshot from selected paths of an existing archive (with optional single-directory flattening)
+
+Read/write overlay data is stored inside the datastore under `.pbs-plus/mount-overlays/`, a hidden directory PBS group scans skip.
+
+## Data Verification
+
+The **Data Verification** page defines verification jobs that check backed-up file contents against the live files on agent targets (sha256 comparison, with file filters to narrow the selection). Verification runs as a normal PBS task and requires the target agent to be connected.
+
+## MTF Migration
+
+The **MTF Migration** page migrates Windows Backup (BKF) / MTF-format LTO tape contents into PBS snapshots:
+
+- **Inventory** and **Drives**: inspect tape drives and media
+- **Changers**: manage SCSI media changers
+- **Namespace Mappings**: map tape sets to PBS namespaces
+- **Migration Jobs**: run the tape-to-pxar conversion as a scheduled or manual job
+
+## Notifications
+
+- **Notification Batches** (PBS Plus Configuration page): collect results from multiple jobs into a single notification. Results are persisted, so a batch survives a server restart mid-flush. Default wait window is 300 seconds.
+- **Alert Settings** (PBS Plus Configuration page): alerts for unconfigured targets, stale backups, and offline targets.

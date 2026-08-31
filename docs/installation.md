@@ -23,7 +23,7 @@ PBS_PLUS_HOSTNAME=pbs.example.com
 systemctl restart pbs-plus
 ```
 
-`pxar-mount` is bundled with the server binary — no separate install needed.
+The server package bundles `bkf2pxar` (BKF/MTF tape conversion). For the **Snapshots** page (server-managed mounts, mount profiles, compose), also install the `pxar-mount` package: the server launches it at `/usr/bin/pxar-mount` for every mount session.
 
 ### What it does
 
@@ -46,17 +46,17 @@ systemctl start pbs-plus
 
 ## Windows Agent
 
-1. Open the PBS Plus Web UI → **Disk Backup** → **Agent Bootstrap**.
+1. Open the PBS Plus Web UI: **Targets** page, **Agent Bootstrap** tab.
 2. Generate a new token or select an existing one.
-3. Click **Show Fingerprint** to view the server CA certificate fingerprint — note this for Linux/container/K8s deployments.
-4. Click **Deploy With Token** — this gives you a PowerShell command that includes the CA fingerprint automatically.
+3. Click **Show Fingerprint** to view the server CA certificate fingerprint. Note this for Linux/container/K8s deployments.
+4. Click **Deploy With Token**. This gives you a PowerShell command that includes the CA fingerprint automatically.
 5. Run the command in an elevated PowerShell.
 
 Windows agents store config in the Windows Registry and encrypt secrets with DPAPI. The only required env var is:
 
-- `PBS_PLUS_HOSTNAME` — unique hostname/FQDN for mTLS (set before first start).
+- `PBS_PLUS_HOSTNAME`: unique hostname/FQDN for mTLS (set before first start).
 
-After install, the agent should appear as **Reachable** in the Targets tab.
+After install, the agent should appear as **Reachable** on the Targets page (Filesystem tab).
 
 ---
 
@@ -83,15 +83,16 @@ systemctl restart pbs-plus-agent
 ```
 
 On first start, the agent:
+
 - Persists config to `/etc/pbs-plus-agent/registry.toml`
 - Bootstraps mTLS with the server
-- Should appear as **Reachable** in the Targets tab
+- Should appear as **Reachable** on the Targets page (Filesystem tab)
 
 ### Registry
 
 Linux agents store all config in `/etc/pbs-plus-agent/registry.toml`. Secrets are encrypted at rest with AES-GCM using a key stored at `/etc/pbs-plus-agent/.registry.key`.
 
-Initial env vars (`PBS_PLUS_INIT_SERVER_URL`, `PBS_PLUS_INIT_BOOTSTRAP_TOKEN`, `PBS_PLUS_INIT_SERVER_CA_FINGERPRINT`) are consumed on first start only — after that, config is read from the TOML file.
+Initial env vars (`PBS_PLUS_INIT_SERVER_URL`, `PBS_PLUS_INIT_BOOTSTRAP_TOKEN`, `PBS_PLUS_INIT_SERVER_CA_FINGERPRINT`) are consumed on first start only. After that, config is read from the TOML file.
 
 To obtain the CA fingerprint, click **Show Fingerprint** in the Agent Bootstrap panel, or run:
 
@@ -118,28 +119,28 @@ docker run -d --name pbs-plus-agent \
 
 ### Volumes
 
-| Path | Purpose |
-|---|---|
+| Path                      | Purpose                          |
+| ------------------------- | -------------------------------- |
 | `/var/lib/pbs-plus-agent` | State (mTLS certs, runtime data) |
-| `/var/log/pbs-plus-agent` | Logs |
-| `/etc/pbs-plus-agent` | Registry/config |
+| `/var/log/pbs-plus-agent` | Logs                             |
+| `/etc/pbs-plus-agent`     | Registry/config                  |
 
 ### Capabilities
 
-- `DAC_READ_SEARCH` — may be required for read access to the host filesystem.
-- `SYS_ADMIN` + `/dev/fuse` — required if you need FUSE support inside the container.
+- `DAC_READ_SEARCH`: may be required for read access to the host filesystem.
+- `SYS_ADMIN` + `/dev/fuse`: required if you need FUSE support inside the container.
 
 ### Environment Variables
 
-| Variable | Required | Description |
-|---|---|---|
-| `PBS_PLUS_INIT_SERVER_URL` | Yes | Server URL, e.g. `https://pbs:8008` |
-| `PBS_PLUS_INIT_BOOTSTRAP_TOKEN` | Yes | Bootstrap token from the UI |
-| `PBS_PLUS_INIT_SERVER_CA_FINGERPRINT` | No | SHA-256 fingerprint of the server CA (hex). Pins the server certificate during bootstrap, preventing MITM attacks. If unset, bootstrap falls back to insecure TLS (not recommended). |
-| `PBS_PLUS_HOSTNAME` | Yes | Unique hostname for this agent |
-| `PBS_PLUS_DISABLE_AUTO_UPDATE` | No | Set to `true` in containers |
-| `PBS_PLUS__I_AM_INSIDE_CONTAINER` | No | Set to `true` in containers (auto-set in official image) |
-| `PUID` / `PGID` | No | Run agent as specific UID/GID |
+| Variable                              | Required | Description                                                                                                                                                                          |
+| ------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PBS_PLUS_INIT_SERVER_URL`            | Yes      | Server URL, e.g. `https://pbs:8008`                                                                                                                                                  |
+| `PBS_PLUS_INIT_BOOTSTRAP_TOKEN`       | Yes      | Bootstrap token from the UI                                                                                                                                                          |
+| `PBS_PLUS_INIT_SERVER_CA_FINGERPRINT` | No       | SHA-256 fingerprint of the server CA (hex). Pins the server certificate during bootstrap, preventing MITM attacks. If unset, bootstrap falls back to insecure TLS (not recommended). |
+| `PBS_PLUS_HOSTNAME`                   | Yes      | Unique hostname for this agent                                                                                                                                                       |
+| `PBS_PLUS_DISABLE_AUTO_UPDATE`        | No       | Set to `true` in containers                                                                                                                                                          |
+| `PBS_PLUS__I_AM_INSIDE_CONTAINER`     | No       | Set to `true` in containers (auto-set in official image)                                                                                                                             |
+| `PUID` / `PGID`                       | No       | Run agent as specific UID/GID                                                                                                                                                        |
 
 ---
 

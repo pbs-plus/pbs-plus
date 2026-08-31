@@ -47,6 +47,7 @@ The operator creates a backup agent pod that mounts the PVC and connects to PBS 
 ### Snapshot Mode
 
 For **ReadWriteOnce (RWO)** volumes, the operator automatically:
+
 1. Creates a VolumeSnapshot
 2. Restores it to a temporary PVC
 3. Mounts the temporary PVC to the backup agent
@@ -60,6 +61,7 @@ kubectl annotate pvc my-rwx-pvc pbs-plus.io/backup=true pbs-plus.io/snapshot=tru
 ### Cleanup
 
 When a PVC's backup annotation is removed, the operator automatically:
+
 1. Deletes the backup agent pod
 2. Cleans up VolumeSnapshots and restored PVCs
 
@@ -67,27 +69,28 @@ When a PVC's backup annotation is removed, the operator automatically:
 
 ### PVC Annotations
 
-| Annotation | Description |
-|---|---|
-| `pbs-plus.io/backup=true` | Required — enables backup for this PVC |
-| `pbs-plus.io/snapshot=true` | Optional — force snapshot mode (default for RWO, optional for RWX) |
+| Annotation                  | Description                                                       |
+| --------------------------- | ----------------------------------------------------------------- |
+| `pbs-plus.io/backup=true`   | Required: enables backup for this PVC                             |
+| `pbs-plus.io/snapshot=true` | Optional: force snapshot mode (default for RWO, optional for RWX) |
 
 ### Secret Keys
 
-| Key | Description |
-|---|---|
-| `server-url` | PBS Plus server URL (e.g. `https://pbs.example.com:8008`) |
-| `bootstrap-token` | Bootstrap token from PBS Plus server |
-| `ca-fingerprint` | SHA-256 fingerprint of server CA (hex). Pins the server certificate during bootstrap. If unset, bootstrap uses insecure TLS. |
+| Key               | Description                                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `server-url`      | PBS Plus server URL (e.g. `https://pbs.example.com:8008`)                                                                    |
+| `bootstrap-token` | Bootstrap token from PBS Plus server                                                                                         |
+| `ca-fingerprint`  | SHA-256 fingerprint of server CA (hex). Pins the server certificate during bootstrap. If unset, bootstrap uses insecure TLS. |
 
 ### Operator Flags
 
-| Flag | Default | Description |
-|---|---|---|
-| `--server-url` | *(required)* | PBS Plus server URL |
-| `--bootstrap-token-secret` | `pbs-plus-bootstrap` | Secret containing bootstrap credentials |
-| `--namespace` | `""` (all) | Namespace to watch (empty for all namespaces) |
-| `--agent-image` | `ghcr.io/pbs-plus/pbs-plus-agent:latest` | Agent container image |
-| `--snapshot-class` | `""` (auto) | Default VolumeSnapshotClass |
-| `--metrics-addr` | `:8080` | Metrics endpoint bind address |
-| `--enable-leader-election` | `false` | Enable leader election for HA |
+| Flag                          | Default                                  | Description                                   |
+| ----------------------------- | ---------------------------------------- | --------------------------------------------- |
+| `--server-url`                | _(required)_                             | PBS Plus server URL                           |
+| `--bootstrap-token-secret`    | `pbs-plus-bootstrap`                     | Secret containing bootstrap credentials       |
+| `--namespace`                 | `""` (all)                               | Namespace to watch (empty for all namespaces) |
+| `--agent-image`               | `ghcr.io/pbs-plus/pbs-plus-agent:latest` | Agent container image                         |
+| `--snapshot-class`            | `""` (auto)                              | Default VolumeSnapshotClass                   |
+| `--metrics-addr`              | `:8080`                                  | Metrics endpoint bind address                 |
+| `--enable-leader-election`    | `false`                                  | Enable leader election for HA                 |
+| `--leader-election-namespace` | `""`                                     | Namespace for leader election                 |
