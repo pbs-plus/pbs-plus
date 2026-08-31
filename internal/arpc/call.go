@@ -92,9 +92,7 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 		}
 	}
 
-	headers := s.headers
-
-	req := Request{Method: method, Payload: payloadBytes, Headers: headers}
+	req := Request{Method: method, Payload: payloadBytes}
 	if err := enc.Encode(req); err != nil {
 		return stream, nil, fmt.Errorf("write request: %w", err)
 	}

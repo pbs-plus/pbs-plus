@@ -235,7 +235,9 @@ func (q *QuicPipe) call(ctx context.Context, method string, payload any) (ARPCSt
 		}
 	}
 
-	req := Request{Method: method, Payload: payloadBytes, Headers: q.headers}
+	// headers travel once on the connection header frame; nothing reads
+	// Request.Headers, so per-request encoding is dead wire weight
+	req := Request{Method: method, Payload: payloadBytes}
 	if err := enc.Encode(req); err != nil {
 		return stream, nil, fmt.Errorf("write request: %w", err)
 	}
