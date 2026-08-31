@@ -45,7 +45,7 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 		CurrentBytesTotal:  b.CurrentStats.CurrentBytesTotal,
 	}
 
-	if b.Target.Name != "" {
+	if b.Target.Name != "" && (b.Target.VolumeTotalBytes > 0 || b.Target.VolumeUsedBytes > 0) {
 		fb.ExpectedSize = b.Target.VolumeUsedBytes
 		fb.TargetSizeHuman = HumanReadableBytes(b.Target.VolumeUsedBytes)
 	}
@@ -128,7 +128,7 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 		CurrentBytesTotal:  r.CurrentStats.CurrentBytesTotal,
 	}
 
-	if r.DestTarget.Name != "" {
+	if r.DestTarget.Name != "" && (r.DestTarget.VolumeTotalBytes > 0 || r.DestTarget.VolumeUsedBytes > 0) {
 		fr.ExpectedSize = r.DestTarget.VolumeUsedBytes
 		fr.TargetSizeHuman = HumanReadableBytes(r.DestTarget.VolumeUsedBytes)
 	}

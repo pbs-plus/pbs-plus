@@ -38,6 +38,11 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		for i := range all {
+			if size, err := application.ResolveTargetSize(all[i]); err == nil {
+				all[i].VolumeTotalBytes = size.VolumeTotalBytes
+				all[i].VolumeUsedBytes = size.VolumeUsedBytes
+				all[i].VolumeFreeBytes = size.VolumeFreeBytes
+			}
 			switch {
 			case all[i].IsS3():
 				all[i].ConnectionStatus = true
