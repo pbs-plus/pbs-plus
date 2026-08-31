@@ -27,6 +27,16 @@ var (
 
 const lockTimeout = 15 * time.Second
 
+// UseTaskDir redirects all task-log paths to dir and returns a restore func
+// for tests outside this package (the path vars are package-private).
+func UseTaskDir(dir string) func() {
+	origTaskDir, origActive, origArchive, origLock := taskDir, activeTasks, archivePath, lockPath
+	taskDir, activeTasks, archivePath, lockPath = dir, filepath.Join(dir, "active"), filepath.Join(dir, "archive"), filepath.Join(dir, ".active.lock")
+	return func() {
+		taskDir, activeTasks, archivePath, lockPath = origTaskDir, origActive, origArchive, origLock
+	}
+}
+
 // taskListLock is PBS's TaskListLockGuard: an flock on tasks/.active.lock
 // held for the duration of a task-list read or update.
 type taskListLock struct{ f *os.File }
