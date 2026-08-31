@@ -45,7 +45,6 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	dir := t.TempDir()
 	proxyLog := filepath.Join(dir, "proxy.log")
 	clientLog := filepath.Join(dir, "client.log")
-	databaseLog := filepath.Join(dir, "database.log")
 
 	proxyLines := []string{
 		"2026-06-25T20:00:00-04:00: starting backup",
@@ -56,13 +55,14 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	writeLines(t, proxyLog, proxyLines, 0660)
 
 	clientLines := []string{
+		"--- MariaDB log starts here ---",
+		"mariadb-dump: dumping grants",
 		"client: starting",
 		"pbs-plus: WARNING: owner metadata was unavailable",
 		"Duration: 1.00s",
 		"End Time: 2026-06-25T20:01:00-04:00",
 	}
 	writeLines(t, clientLog, clientLines, 0660)
-	writeLines(t, databaseLog, []string{"mariadb-dump: dumping grants"}, 0600)
 
 	jobID := "pbsplus-test-" + strings.ReplaceAll(t.Name(), "/", "-")
 	defer func() {
@@ -80,7 +80,7 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	writeLines(t, realClientPath, clientLines, 0666)
 
 	for attempt := range 2 {
-		succeeded, cancelled, warnings, err := mergePBSLogsWithDatabase(proxyLog, realClientPath, databaseLog, "MariaDB", logger, true, nil)
+		succeeded, cancelled, warnings, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil)
 		if err != nil {
 			t.Fatalf("mergePBSLogs: %v", err)
 		}

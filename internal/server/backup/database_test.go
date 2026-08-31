@@ -3,6 +3,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -15,6 +16,28 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 )
+
+func TestTaskLogWriterMirrorsDatabaseOutput(t *testing.T) {
+	var destination bytes.Buffer
+	var queued []string
+	writer := taskLogWriter{
+		destination: &destination,
+		logLine: func(line string) {
+			queued = append(queued, line)
+		},
+	}
+	input := []byte("first line\nsecond line\n")
+	written, err := writer.Write(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written != len(input) || destination.String() != string(input) {
+		t.Fatalf("destination = %q, bytes = %d", destination.String(), written)
+	}
+	if len(queued) != 2 || queued[0] != "first line" || queued[1] != "second line" {
+		t.Fatalf("queued lines = %#v", queued)
+	}
+}
 
 func TestDatabaseBackupCommandPolicy(t *testing.T) {
 	mode, useExclusions := backupCommandPolicy(coredb.Backup{

@@ -86,8 +86,6 @@ func processPBSProxyLogs(
 	isGraceful bool,
 	upid string,
 	clientLogFile *log.Logger,
-	databaseLogPath string,
-	databaseLogLabel string,
 	customErr error,
 ) (bool, bool, int, error) {
 	proxyLogPath := getTaskLogPath(upid)
@@ -98,24 +96,12 @@ func processPBSProxyLogs(
 	if clientLogPath == "" {
 		return false, false, 0, fmt.Errorf("client job log path is empty for upid %q", upid)
 	}
-	return mergePBSLogsWithDatabase(proxyLogPath, clientLogPath, databaseLogPath, databaseLogLabel, clientLogFile, isGraceful, customErr)
+	return mergePBSLogs(proxyLogPath, clientLogPath, clientLogFile, isGraceful, customErr)
 }
 
 func mergePBSLogs(
 	proxyLogPath string,
 	clientLogPath string,
-	logger *log.Logger,
-	isGraceful bool,
-	customErr error,
-) (bool, bool, int, error) {
-	return mergePBSLogsWithDatabase(proxyLogPath, clientLogPath, "", "", logger, isGraceful, customErr)
-}
-
-func mergePBSLogsWithDatabase(
-	proxyLogPath string,
-	clientLogPath string,
-	databaseLogPath string,
-	databaseLogLabel string,
 	logger *log.Logger,
 	isGraceful bool,
 	customErr error,
@@ -286,27 +272,6 @@ func mergePBSLogsWithDatabase(
 
 	if err := clientScanner.Err(); err != nil {
 		return false, false, 0, fmt.Errorf("scanning client log file: %w", err)
-	}
-
-	if databaseLogPath != "" {
-		databaseFile, err := os.Open(databaseLogPath)
-		if err != nil {
-			return false, false, 0, fmt.Errorf("opening database log file: %w", err)
-		}
-		defer databaseFile.Close()
-		if _, err := tmpWriter.WriteString("--- " + databaseLogLabel + " log starts here ---\n"); err != nil {
-			return false, false, 0, fmt.Errorf("writing database log marker: %w", err)
-		}
-		databaseScanner := bufio.NewScanner(databaseFile)
-		databaseScanner.Buffer(buf, maxCapacity)
-		for databaseScanner.Scan() {
-			if _, err := tmpWriter.WriteString(databaseScanner.Text() + "\n"); err != nil {
-				return false, false, 0, fmt.Errorf("writing database log: %w", err)
-			}
-		}
-		if err := databaseScanner.Err(); err != nil {
-			return false, false, 0, fmt.Errorf("scanning database log file: %w", err)
-		}
 	}
 
 	succeeded := false

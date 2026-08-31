@@ -5,8 +5,10 @@ package backup
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
@@ -15,6 +17,37 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
+
+type taskLogWriter struct {
+	destination io.Writer
+	logLine     func(string)
+}
+
+func (w taskLogWriter) Write(data []byte) (int, error) {
+	text := strings.TrimSuffix(string(data), "\n")
+	if text != "" && w.logLine != nil {
+		for line := range strings.SplitSeq(text, "\n") {
+			w.logLine(line)
+		}
+	}
+	if w.destination == nil {
+		return len(data), nil
+	}
+	written, err := w.destination.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+	return written, err
+}
+
+func (b *backupJob) logQueuedLine(line string) {
+	b.mu.RLock()
+	task := b.scriptTask
+	b.mu.RUnlock()
+	if task != nil {
+		task.LogString(line)
+	}
+}
 
 func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 	select {
@@ -104,30 +137,20 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if err != nil {
 			return "", nil, nil, fmt.Errorf("get database password: %w", err)
 		}
-		databaseLog, err := os.CreateTemp("", ".pbs-plus-database-log-")
-		if err != nil {
-			return "", nil, nil, fmt.Errorf("create database client log: %w", err)
+		databaseLog := taskLogWriter{
+			destination: b.logger.JobStdoutWriter(),
+			logLine:     b.logQueuedLine,
 		}
-		b.mu.Lock()
-		oldDatabaseLogPath := b.databaseLogPath
-		b.databaseLogPath = databaseLog.Name()
-		b.databaseLogLabel = databaseLogLabel(target)
-		b.mu.Unlock()
-		if oldDatabaseLogPath != "" {
-			_ = os.Remove(oldDatabaseLogPath)
+		if _, err := fmt.Fprintf(databaseLog, "--- %s log starts here ---\n", databaseLogLabel(target)); err != nil {
+			return "", nil, nil, fmt.Errorf("write database log marker: %w", err)
 		}
-		stagedDump, dumpErr := database.StageDump(ctx, "", target, password, database.DumpOptions{
+		stagedDump, err := database.StageDump(ctx, "", target, password, database.DumpOptions{
 			Scope:     job.DatabaseScope,
 			Database:  job.DatabaseName,
 			LogWriter: databaseLog,
 		}, bundle)
-		closeErr := databaseLog.Close()
-		if dumpErr != nil {
-			return "", nil, nil, dumpErr
-		}
-		if closeErr != nil {
-			_ = stagedDump.Cleanup()
-			return "", nil, nil, fmt.Errorf("close database client log: %w", closeErr)
+		if err != nil {
+			return "", nil, nil, err
 		}
 		b.mu.Lock()
 		b.stagedDump = stagedDump

@@ -43,7 +43,7 @@ func GetBackupTask(ctx context.Context, workerID string, before map[string]struc
 	}
 }
 
-func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalData []string, databaseLogPath, databaseLogLabel string) (proxmox.Task, error) {
+func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalData []string, jobLogPath string) (proxmox.Task, error) {
 	wid, err := backupWorkerID(job)
 	if err != nil {
 		return proxmox.Task{}, err
@@ -59,31 +59,31 @@ func GenerateBackupTaskErrorFile(job coredb.Backup, pbsError error, additionalDa
 	}
 
 	wt.LogString(pbsError.Error())
-	appendDatabaseLog(wt, databaseLogPath, databaseLogLabel)
+	appendBackupJobLog(wt, jobLogPath)
 
 	wt.CloseWithStatus(tasklog.CreateState(pbsError, 0))
 
 	return wt.Task, nil
 }
 
-func appendDatabaseLog(task *tasklog.WorkerTask, path, label string) {
+func appendBackupJobLog(task *tasklog.WorkerTask, path string) {
 	if path == "" {
 		return
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		task.LogString("failed to open database log: " + err.Error())
+		task.LogString("failed to open backup job log: " + err.Error())
 		return
 	}
 	defer file.Close()
-	task.LogString("--- " + label + " log starts here ---")
+	task.LogString("--- proxmox-backup-client log starts here ---")
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		task.LogString(scanner.Text())
 	}
 	if err := scanner.Err(); err != nil {
-		task.LogString("failed to read database log: " + err.Error())
+		task.LogString("failed to read backup job log: " + err.Error())
 	}
 }
 

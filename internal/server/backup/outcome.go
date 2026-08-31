@@ -5,7 +5,6 @@ package backup
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -16,8 +15,6 @@ import (
 func (b *backupJob) finalizeFailure(err error) {
 	b.mu.RLock()
 	job := b.job
-	databaseLogPath := b.databaseLogPath
-	databaseLogLabel := b.databaseLogLabel
 	b.mu.RUnlock()
 	b.logger.Error(err, "backup job failed")
 
@@ -59,6 +56,9 @@ func (b *backupJob) finalizeFailure(err error) {
 		return
 	}
 
+	if flushErr := b.logger.FlushJobLog(); flushErr != nil {
+		b.logger.Error(flushErr, "failed to flush backup job log")
+	}
 	task, terr := GenerateBackupTaskErrorFile(
 		b.job,
 		err,
@@ -67,8 +67,7 @@ func (b *backupJob) finalizeFailure(err error) {
 			"Backup ID: " + job.ID,
 			"Source Mode: " + job.SourceMode,
 		},
-		databaseLogPath,
-		databaseLogLabel,
+		b.logger.JobLogPath(),
 	)
 	if terr != nil {
 		b.logger.Error(terr, "failed to generate backup task error file")
@@ -149,7 +148,6 @@ func (b *backupJob) cleanup() {
 		agentMount := b.agentMount
 		s3Mount := b.s3Mount
 		stagedDump := b.stagedDump
-		databaseLogPath := b.databaseLogPath
 		logger := b.logger
 		cancel := b.cancel
 		b.mu.Unlock()
@@ -171,11 +169,6 @@ func (b *backupJob) cleanup() {
 				logger.Error(err, "failed to remove database backup staging data")
 			}
 		}
-		if databaseLogPath != "" {
-			if err := os.Remove(databaseLogPath); err != nil && !os.IsNotExist(err) && logger != nil {
-				logger.Error(err, "failed to remove database client log")
-			}
-		}
 		if logger != nil {
 			logger.Close()
 		}
@@ -186,8 +179,6 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	b.mu.RLock()
 	agentMount := b.agentMount
 	logger := b.logger
-	databaseLogPath := b.databaseLogPath
-	databaseLogLabel := b.databaseLogLabel
 	b.mu.RUnlock()
 	gracefulEnd := agentMount == nil || agentMount.IsConnected()
 
@@ -195,7 +186,7 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 		b.logger.Error(err, "failed to flush job log")
 	}
 
-	succeeded, cancelled, warningsNum, err := processPBSProxyLogs(gracefulEnd, upid, logger, databaseLogPath, databaseLogLabel, logErr)
+	succeeded, cancelled, warningsNum, err := processPBSProxyLogs(gracefulEnd, upid, logger, logErr)
 	if err != nil {
 		b.logger.Error(err, "failed to process logs")
 	}
