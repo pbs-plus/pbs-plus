@@ -77,15 +77,15 @@ type backupJob struct {
 	cleanupOnce sync.Once
 	started     atomic.Bool
 
-	agentMount *mountrpc.AgentMount
-	s3Mount    *mountrpc.S3Mount
-	stagedDump *database.StagedDump
-	srcPath    string
-	cmd        *exec.Cmd
-	upid       string
-	workerID   string
+	agentMount    *mountrpc.AgentMount
+	s3Mount       *mountrpc.S3Mount
+	stagedDump    *database.StagedDump
+	srcPath       string
+	cmd           *exec.Cmd
+	upid          string
+	workerID      string
 	workflowStart int64
-	scriptTask *tasklog.QueuedTask
+	scriptTask    *tasklog.QueuedTask
 }
 
 func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid string) error {
