@@ -38,6 +38,11 @@ jobs:
         uses: ./.github/actions/init-pbs
         id: init-pbs
 
+      - name: Run database backup tests
+        uses: ./.github/actions/run-database-backups
+        with:
+          timeout-seconds: 300
+
       - name: Setup and run agent
         uses: ./.github/actions/setup-agent
         with:
