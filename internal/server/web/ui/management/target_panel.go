@@ -435,6 +435,7 @@ var targetPanelController = js.ControllerClass{
 							let st = statuses[name];
 							node.set("agent_version", st.AgentVersion || "");
 							node.set("connection_status", st.ConnectionStatus);
+							node.set("last_checked", st.CheckedAt && st.CheckedAt.indexOf("0001") !== 0 ? st.CheckedAt : "");
 							if (st.VolumeTotalBytes > 0 || st.VolumeUsedBytes > 0) {
 								node.set("volume_total_bytes", st.VolumeTotalBytes);
 								node.set("volume_used_bytes", st.VolumeUsedBytes);
@@ -455,10 +456,21 @@ var targetPanelController = js.ControllerClass{
 				},
 			});
 		`),
-		"stopStore": js.Func("", ``),
+		"stopStore": js.Func("", `
+			if (this.statusTask) {
+				Ext.TaskManager.stop(this.statusTask);
+				this.statusTask = null;
+			}
+		`),
 		"startStore": js.Func("", `
 			if (!this.loaded) {
 				this.loadData();
+			}
+			if (!this.statusTask) {
+				this.statusTask = Ext.TaskManager.start({
+					run: () => this.loadStatuses(),
+					interval: 15000,
+				});
 			}
 		`),
 		"render_status": js.Func("value, metaData, record", `
@@ -473,6 +485,9 @@ var targetPanelController = js.ControllerClass{
 			}
 			if (value === true) {
 				return '<i class="fa fa-check good"></i> Reachable';
+			}
+			if (record.data.last_checked) {
+				metaData.tdAttr = 'data-qtip="Last checked: ' + record.data.last_checked + '"';
 			}
 			return '<i class="fa fa-times critical"></i> Unreachable';
 		`),
