@@ -4,6 +4,7 @@ package arpcfs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -265,7 +266,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 
 	if !isLookup {
 		if !fi.IsDir {
-			if err := fs.Memcache.Delete(cacheKey); err != nil {
+			if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
 				log.Error(err, "")
 			}
 			log.Debug("attr counted file and cleared cache",
@@ -450,7 +451,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 		return DirStream{}, fmt.Errorf("readdir decode: %w", err)
 	}
 
-	if err := fs.Memcache.Delete(cacheKey); err != nil {
+	if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
 		log.Error(err, "")
 	}
 	log.Debug("readDir opened directory",

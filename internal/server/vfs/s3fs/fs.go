@@ -4,6 +4,7 @@ package s3fs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -221,7 +222,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (fswire.A
 
 	if !isLookup {
 		if !fi.IsDir {
-			if err := fs.Memcache.Delete(cacheKey); err != nil {
+			if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
 				log.Error(err, "")
 			}
 			fs.FileCount.Add(1)
@@ -287,7 +288,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 		}
 	}
 
-	if err := fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix)); err != nil {
+	if err := fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix)); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
 		log.Error(err, "")
 	}
 
