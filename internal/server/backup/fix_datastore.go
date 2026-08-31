@@ -39,12 +39,6 @@ func CreateNamespace(namespace string, backup coredb.Backup, app *application.Ru
 		return fmt.Errorf("CreateNamespace: %w", err)
 	}
 
-	backup.Namespace = namespace
-	err := app.CoreDB.UpdateBackup(nil, backup)
-	if err != nil {
-		return fmt.Errorf("CreateNamespace: error updating backup to namespace -> %w", err)
-	}
-
 	return nil
 }
 

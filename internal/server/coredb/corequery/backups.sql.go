@@ -593,6 +593,60 @@ func (q *Queries) UpdateBackup(ctx context.Context, arg UpdateBackupParams) erro
 	return err
 }
 
+const updateBackupHistory = `-- name: UpdateBackupHistory :exec
+UPDATE backups
+SET current_pid = ?, last_run_upid = ?, last_successful_upid = ?,
+    last_run_status = ?, retry_count = ?, last_run_state = ?,
+    last_run_starttime = ?, last_run_endtime = ?,
+    last_successful_endtime = ?, duration = ?
+WHERE id = ?
+`
+
+type UpdateBackupHistoryParams struct {
+	CurrentPid            sql.NullString `json:"current_pid"`
+	LastRunUpid           sql.NullString `json:"last_run_upid"`
+	LastSuccessfulUpid    sql.NullString `json:"last_successful_upid"`
+	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
+	RetryCount            sql.NullInt64  `json:"retry_count"`
+	LastRunState          sql.NullString `json:"last_run_state"`
+	LastRunStarttime      sql.NullInt64  `json:"last_run_starttime"`
+	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
+	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
+	Duration              sql.NullInt64  `json:"duration"`
+	ID                    string         `json:"id"`
+}
+
+func (q *Queries) UpdateBackupHistory(ctx context.Context, arg UpdateBackupHistoryParams) error {
+	_, err := q.db.ExecContext(ctx, updateBackupHistory,
+		arg.CurrentPid,
+		arg.LastRunUpid,
+		arg.LastSuccessfulUpid,
+		arg.LastRunStatus,
+		arg.RetryCount,
+		arg.LastRunState,
+		arg.LastRunStarttime,
+		arg.LastRunEndtime,
+		arg.LastSuccessfulEndtime,
+		arg.Duration,
+		arg.ID,
+	)
+	return err
+}
+
+const updateBackupNamespace = `-- name: UpdateBackupNamespace :exec
+UPDATE backups SET namespace = ? WHERE id = ?
+`
+
+type UpdateBackupNamespaceParams struct {
+	Namespace sql.NullString `json:"namespace"`
+	ID        string         `json:"id"`
+}
+
+func (q *Queries) UpdateBackupNamespace(ctx context.Context, arg UpdateBackupNamespaceParams) error {
+	_, err := q.db.ExecContext(ctx, updateBackupNamespace, arg.Namespace, arg.ID)
+	return err
+}
+
 const upsertBackupDatabaseOptions = `-- name: UpsertBackupDatabaseOptions :exec
 INSERT INTO backup_database_options (
     backup_id, scope, database_name, client_family, client_dir

@@ -262,7 +262,7 @@ func (b *backupJob) createOK(err error) {
 	latest.History.LastSuccessfulUpid = task.UPID
 
 	b.job = latest
-	if err := b.app.CoreDB.UpdateBackup(nil, latest); err != nil {
+	if err := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); err != nil {
 		b.logger.Error(err, "failed to persist backup OK state")
 	}
 }
@@ -285,7 +285,7 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 	latest.History.Duration = latest.History.LastRunEndtime - latest.History.LastRunStarttime
 
 	b.job = latest
-	if uerr := b.app.CoreDB.UpdateBackup(nil, latest); uerr != nil {
+	if uerr := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); uerr != nil {
 		b.logger.Error(uerr, "", "upid", task.UPID)
 
 	}

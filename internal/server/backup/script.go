@@ -59,15 +59,12 @@ func (b *backupJob) runPreScript(ctx context.Context) error {
 
 	if newNs, ok := modEnvVars["PBS_PLUS__NAMESPACE"]; ok {
 		b.mu.Lock()
-		latestBackup, err := b.app.CoreDB.GetBackup(b.job.ID)
-		if err == nil {
-			b.job = latestBackup
-		}
 		b.job.Namespace = newNs
-		if err := b.app.CoreDB.UpdateBackup(nil, b.job); err != nil {
+		jobID := b.job.ID
+		b.mu.Unlock()
+		if err := b.app.CoreDB.UpdateBackupNamespace(jobID, newNs); err != nil {
 			b.logger.Error(err, "failed to update backup namespace from pre-script")
 		}
-		b.mu.Unlock()
 	}
 
 	return nil

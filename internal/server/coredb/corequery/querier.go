@@ -101,6 +101,8 @@ type Querier interface {
 	UpdateAgentHost(ctx context.Context, arg UpdateAgentHostParams) error
 	UpdateAlertLastSent(ctx context.Context, arg UpdateAlertLastSentParams) error
 	UpdateBackup(ctx context.Context, arg UpdateBackupParams) error
+	UpdateBackupHistory(ctx context.Context, arg UpdateBackupHistoryParams) error
+	UpdateBackupNamespace(ctx context.Context, arg UpdateBackupNamespaceParams) error
 	UpdateExclusion(ctx context.Context, arg UpdateExclusionParams) (int64, error)
 	UpdateNotificationBatch(ctx context.Context, arg UpdateNotificationBatchParams) error
 	UpdateRestore(ctx context.Context, arg UpdateRestoreParams) error

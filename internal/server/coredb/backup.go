@@ -301,6 +301,47 @@ func applyBackupTaskHistory(history *JobHistory, resolved tasklog.ResolvedHistor
 	}
 }
 
+func (db *Store) UpdateBackupHistory(id string, history JobHistory, currentPID int) error {
+	if !validate.IsValidID(id) {
+		return fmt.Errorf("UpdateBackupHistory: invalid id string -> %s", id)
+	}
+	if err := db.queries.UpdateBackupHistory(db.ctx, corequery.UpdateBackupHistoryParams{
+		CurrentPid:            intToNullString(currentPID),
+		LastRunUpid:           toNullString(history.LastRunUpid),
+		LastSuccessfulUpid:    toNullString(history.LastSuccessfulUpid),
+		LastRunStatus:         toNullInt64(int(history.LastRunStatus)),
+		RetryCount:            toNullInt64(history.RetryCount),
+		LastRunState:          toNullString(history.LastRunState),
+		LastRunStarttime:      toNullInt64(int(history.LastRunStarttime)),
+		LastRunEndtime:        toNullInt64(int(history.LastRunEndtime)),
+		LastSuccessfulEndtime: toNullInt64(int(history.LastSuccessfulEndtime)),
+		Duration:              toNullInt64(int(history.Duration)),
+		ID:                    id,
+	}); err != nil {
+		return fmt.Errorf("UpdateBackupHistory: %w", err)
+	}
+	if history.LastRunUpid != "" {
+		go db.linkBackupLog(id, history.LastRunUpid)
+	}
+	return nil
+}
+
+func (db *Store) UpdateBackupNamespace(id, namespace string) error {
+	if !validate.IsValidID(id) {
+		return fmt.Errorf("UpdateBackupNamespace: invalid id string -> %s", id)
+	}
+	if !validate.IsValidNamespace(namespace) && namespace != "" {
+		return fmt.Errorf("UpdateBackupNamespace: invalid namespace string -> %s", namespace)
+	}
+	if err := db.queries.UpdateBackupNamespace(db.ctx, corequery.UpdateBackupNamespaceParams{
+		Namespace: toNullString(namespace),
+		ID:        id,
+	}); err != nil {
+		return fmt.Errorf("UpdateBackupNamespace: %w", err)
+	}
+	return nil
+}
+
 func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 	var commitNeeded bool = false
 	q := db.queries

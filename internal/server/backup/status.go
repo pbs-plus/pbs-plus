@@ -22,13 +22,7 @@ func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, t
 		},
 		func(history coredb.JobHistory, currentPID int) error {
 			applyWorkflowBounds(&history, workflowStart, workflowEnd, succeeded)
-			b, err := app.CoreDB.GetBackup(backup.ID)
-			if err != nil {
-				return err
-			}
-			b.CurrentPID = currentPID
-			b.History = history
-			return app.CoreDB.UpdateBackup(nil, b)
+			return app.CoreDB.UpdateBackupHistory(backup.ID, history, currentPID)
 		},
 	)
 }

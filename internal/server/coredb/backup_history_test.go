@@ -1,10 +1,62 @@
 package coredb
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 )
+
+func TestUpdateBackupHistoryPreservesConcurrentConfiguration(t *testing.T) {
+	db, err := Initialize(context.Background(), filepath.Join(t.TempDir(), "backup-history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	target := Target{
+		Name:   "local",
+		Type:   TargetTypeFilesystem,
+		Access: FilesystemAccessLocal,
+		Path:   t.TempDir(),
+	}
+	if err := db.CreateTarget(nil, target); err != nil {
+		t.Fatal(err)
+	}
+	running := Backup{ID: "job", Store: "store", Target: target, Comment: "original"}
+	if err := db.CreateBackup(nil, running); err != nil {
+		t.Fatal(err)
+	}
+
+	edited := running
+	edited.Comment = "edited while running"
+	if err := db.UpdateBackup(nil, edited); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.UpdateBackupNamespace(running.ID, "runtime"); err != nil {
+		t.Fatal(err)
+	}
+	running.History = JobHistory{LastRunStatus: JobStatusSuccess, RetryCount: 2, LastRunEndtime: 200, Duration: 100}
+	if err := db.UpdateBackupHistory(running.ID, running.History, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := db.GetBackup(running.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Comment != edited.Comment {
+		t.Fatalf("comment = %q, want %q", got.Comment, edited.Comment)
+	}
+	if got.Namespace != "runtime" {
+		t.Fatalf("namespace = %q, want runtime", got.Namespace)
+	}
+	if got.History.LastRunStatus != JobStatusSuccess || got.History.RetryCount != 2 {
+		t.Fatalf("history = %#v", got.History)
+	}
+}
 
 func TestApplyBackupTaskHistoryUsesWorkflowBounds(t *testing.T) {
 	tests := []struct {
