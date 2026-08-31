@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -267,29 +268,78 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 func (db *Store) populateBackupExtras(backup *Backup) {
 	if backup.History.LastRunUpid != "" {
 		if r, ok := tasklog.ResolveHistoryFields(backup.History.LastRunUpid); ok {
-			if r.Starttime > 0 {
-				backup.History.LastRunStarttime = r.Starttime
-			}
-			if r.Endtime > 0 {
-				backup.History.LastRunEndtime = r.Endtime
-				backup.History.Duration = r.Duration
-			} else if r.Starttime > 0 {
-				backup.History.Duration = r.Duration
-			}
-			if r.State != "" {
-				backup.History.LastRunState = r.State
-			}
+			applyBackupTaskHistory(&backup.History, r, time.Now().Unix())
 		}
 	}
 	if backup.History.LastSuccessfulUpid != "" {
 		if successTask, err := tasklog.GetTaskByUPID(backup.History.LastSuccessfulUpid); err == nil {
-			backup.History.LastSuccessfulEndtime = successTask.EndTime
+			backup.History.LastSuccessfulEndtime = max(backup.History.LastSuccessfulEndtime, successTask.EndTime)
 		}
 	}
 
 	if nextSchedule, err := backup.getNextSchedule(db.ctx); err == nil && nextSchedule != nil {
 		backup.NextRun = nextSchedule.Unix()
 	}
+}
+
+func applyBackupTaskHistory(history *JobHistory, resolved tasklog.ResolvedHistory, now int64) {
+	start := resolved.Starttime
+	if history.LastRunStarttime > 0 && (start == 0 || history.LastRunStarttime < start) {
+		start = history.LastRunStarttime
+	}
+	history.LastRunStarttime = start
+
+	if resolved.Endtime == 0 && history.LastRunEndtime == 0 {
+		history.Duration = max(now-start, 0)
+	} else {
+		history.LastRunEndtime = max(history.LastRunEndtime, resolved.Endtime)
+		history.Duration = max(history.LastRunEndtime-start, 0)
+	}
+
+	if resolved.State != "" {
+		history.LastRunState = resolved.State
+	}
+}
+
+func (db *Store) UpdateBackupHistory(id string, history JobHistory, currentPID int) error {
+	if !validate.IsValidID(id) {
+		return fmt.Errorf("UpdateBackupHistory: invalid id string -> %s", id)
+	}
+	if err := db.queries.UpdateBackupHistory(db.ctx, corequery.UpdateBackupHistoryParams{
+		CurrentPid:            intToNullString(currentPID),
+		LastRunUpid:           toNullString(history.LastRunUpid),
+		LastSuccessfulUpid:    toNullString(history.LastSuccessfulUpid),
+		LastRunStatus:         toNullInt64(int(history.LastRunStatus)),
+		RetryCount:            toNullInt64(history.RetryCount),
+		LastRunState:          toNullString(history.LastRunState),
+		LastRunStarttime:      toNullInt64(int(history.LastRunStarttime)),
+		LastRunEndtime:        toNullInt64(int(history.LastRunEndtime)),
+		LastSuccessfulEndtime: toNullInt64(int(history.LastSuccessfulEndtime)),
+		Duration:              toNullInt64(int(history.Duration)),
+		ID:                    id,
+	}); err != nil {
+		return fmt.Errorf("UpdateBackupHistory: %w", err)
+	}
+	if history.LastRunUpid != "" {
+		go db.linkBackupLog(id, history.LastRunUpid)
+	}
+	return nil
+}
+
+func (db *Store) UpdateBackupNamespace(id, namespace string) error {
+	if !validate.IsValidID(id) {
+		return fmt.Errorf("UpdateBackupNamespace: invalid id string -> %s", id)
+	}
+	if !validate.IsValidNamespace(namespace) && namespace != "" {
+		return fmt.Errorf("UpdateBackupNamespace: invalid namespace string -> %s", namespace)
+	}
+	if err := db.queries.UpdateBackupNamespace(db.ctx, corequery.UpdateBackupNamespaceParams{
+		Namespace: toNullString(namespace),
+		ID:        id,
+	}); err != nil {
+		return fmt.Errorf("UpdateBackupNamespace: %w", err)
+	}
+	return nil
 }
 
 func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {

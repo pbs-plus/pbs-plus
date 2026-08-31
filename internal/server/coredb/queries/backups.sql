@@ -98,6 +98,17 @@ SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
     last_successful_endtime = ?, duration = ?
 WHERE id = ?;
 
+-- name: UpdateBackupHistory :exec
+UPDATE backups
+SET current_pid = ?, last_run_upid = ?, last_successful_upid = ?,
+    last_run_status = ?, retry_count = ?, last_run_state = ?,
+    last_run_starttime = ?, last_run_endtime = ?,
+    last_successful_endtime = ?, duration = ?
+WHERE id = ?;
+
+-- name: UpdateBackupNamespace :exec
+UPDATE backups SET namespace = ? WHERE id = ?;
+
 -- name: UpsertBackupDatabaseOptions :exec
 INSERT INTO backup_database_options (
     backup_id, scope, database_name, client_family, client_dir

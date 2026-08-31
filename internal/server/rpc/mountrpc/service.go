@@ -154,8 +154,8 @@ func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
 		backup.Namespace = backupRespSplit[1]
-		if err := s.Store.CoreDB.UpdateBackup(nil, backup); err != nil {
-			log.Error(err, "", "namespace", backupRespSplit[1])
+		if err := s.Store.CoreDB.UpdateBackupNamespace(backup.ID, backup.Namespace); err != nil {
+			log.Error(err, "", "namespace", backup.Namespace)
 		}
 	}
 
