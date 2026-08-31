@@ -3,6 +3,7 @@
 package targetapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,7 +110,9 @@ func D2DTargetStatusHandler(app *application.Runtime) http.HandlerFunc {
 			}
 		}
 
-		results := app.Target.CheckStatus(r.Context(), statusTargets, true, 5*time.Second)
+		statusCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		results := app.Target.CheckStatus(statusCtx, statusTargets, true, 5*time.Second)
 		statuses := make(map[string]application.TargetStatusResult, len(results))
 		for _, result := range results {
 			statuses[statusTargets[result.Index].Name] = result

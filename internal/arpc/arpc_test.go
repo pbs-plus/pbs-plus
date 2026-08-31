@@ -1069,6 +1069,43 @@ func TestLeak_CancelledContexts(t *testing.T) {
 	waitForGoroutines(t, baseline, 5, 5*time.Second)
 }
 
+func TestStreamPipeOpenStreamCtxDone(t *testing.T) {
+	router := NewRouter()
+	router.Handle("quick", func(req *Request) (Response, error) {
+		var ok string = "ok"
+		b, _ := cbor.Marshal(ok)
+		return Response{Status: http.StatusOK, Data: b}, nil
+	})
+
+	addr, shutdown, _, _ := newTestARPCServer(t, router)
+	defer shutdown()
+
+	clientTLS := newTestClientTLS(t)
+	pipe, err := ConnectToServer(t.Context(), addr, nil, clientTLS)
+	if err != nil {
+		t.Fatalf("ConnectToServer: %v", err)
+	}
+	defer pipe.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := pipe.openStream(ctx)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("openStream blocked past ctx cancellation")
+	}
+}
+
 func TestLeak_ServerServeLoop(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req *Request) (Response, error) {

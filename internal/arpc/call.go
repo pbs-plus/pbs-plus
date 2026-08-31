@@ -65,7 +65,7 @@ func performHandshake(stream ARPCStream) error {
 }
 
 func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPCStream, *Response, error) {
-	stream, err := s.OpenStream()
+	stream, err := s.openStream(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

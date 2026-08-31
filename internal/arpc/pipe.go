@@ -186,6 +186,29 @@ func (s *StreamPipe) OpenStream() (*smux.Stream, error) {
 	return s.tun.OpenStream()
 }
 
+func (s *StreamPipe) openStream(ctx context.Context) (*smux.Stream, error) {
+	type openResult struct {
+		stream *smux.Stream
+		err    error
+	}
+	resCh := make(chan openResult, 1)
+	go func() {
+		st, err := s.OpenStream()
+		resCh <- openResult{st, err}
+	}()
+	select {
+	case res := <-resCh:
+		return res.stream, res.err
+	case <-ctx.Done():
+		go func() {
+			if res := <-resCh; res.stream != nil {
+				_ = res.stream.Close()
+			}
+		}()
+		return nil, ctx.Err()
+	}
+}
+
 func (s *StreamPipe) Serve() error {
 	if s.tun == nil {
 		return fmt.Errorf("nil smux tunnel")

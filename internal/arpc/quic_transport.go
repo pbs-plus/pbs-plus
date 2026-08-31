@@ -208,7 +208,7 @@ func (q *QuicPipe) Serve() error {
 }
 
 func (q *QuicPipe) call(ctx context.Context, method string, payload any) (ARPCStream, *Response, error) {
-	stream, err := q.OpenStream()
+	stream, err := q.conn.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
