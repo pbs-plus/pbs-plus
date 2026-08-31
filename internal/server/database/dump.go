@@ -30,8 +30,9 @@ const (
 )
 
 type DumpOptions struct {
-	Scope    string
-	Database string
+	Scope     string
+	Database  string
+	LogWriter io.Writer
 }
 
 type Manifest struct {
@@ -99,7 +100,7 @@ func StageDump(ctx context.Context, parent string, target coredb.Target, passwor
 
 	var manifest Manifest
 	if options.Scope == "server" {
-		manifest, err = stageServerDump(ctx, archiveDir, target, password, bundle, secretsDir)
+		manifest, err = stageServerDump(ctx, archiveDir, target, password, bundle, secretsDir, options.LogWriter)
 	} else {
 		manifest, err = stageDatabaseDump(ctx, archiveDir, target, password, options, bundle, secretsDir)
 	}
@@ -127,7 +128,7 @@ func stageDatabaseDump(ctx context.Context, archiveDir string, target coredb.Tar
 		return Manifest{}, err
 	}
 	dumpPath := filepath.Join(archiveDir, dumpName)
-	if err := runDumpToFile(cmd, dumpPath, password); err != nil {
+	if err := runDumpToFile(cmd, dumpPath, password, options.LogWriter); err != nil {
 		return Manifest{}, err
 	}
 	digest, err := fileSHA256(dumpPath)
@@ -145,37 +146,37 @@ func stageDatabaseDump(ctx context.Context, archiveDir string, target coredb.Tar
 }
 
 // stageServerDump writes one dump file per database plus engine companions, skipping and recording databases that fail.
-func stageServerDump(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string) (Manifest, error) {
+func stageServerDump(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string, logWriter io.Writer) (Manifest, error) {
 	build := func(database string) (*exec.Cmd, error) {
 		return dumpCommand(ctx, target, password, DumpOptions{Scope: "database", Database: database}, bundle, secretsDir)
 	}
 	if target.Type != coredb.TargetTypePostgreSQL {
-		databases, err := listMySQLDatabases(ctx, target, password, bundle, secretsDir)
+		databases, err := listMySQLDatabases(ctx, target, password, bundle, secretsDir, logWriter)
 		if err != nil {
 			return Manifest{}, err
 		}
-		grants, err := dumpMySQLGrants(ctx, archiveDir, target, password, bundle, secretsDir)
+		grants, err := dumpMySQLGrants(ctx, archiveDir, target, password, bundle, secretsDir, logWriter)
 		if err != nil {
 			return Manifest{}, err
 		}
 		manifest := Manifest{Version: ManifestVersionV2, Engine: string(target.Type), Scope: "server", Globals: []ManifestFile{grants}}
-		manifest.Databases, manifest.Failed, err = dumpDatabases(ctx, archiveDir, databases, password, build)
+		manifest.Databases, manifest.Failed, err = dumpDatabases(ctx, archiveDir, databases, password, build, logWriter)
 		if err != nil {
 			return Manifest{}, err
 		}
 		return manifest, nil
 	}
 
-	databases, err := listPostgreSQLDatabases(ctx, target, password, bundle, secretsDir)
+	databases, err := listPostgreSQLDatabases(ctx, target, password, bundle, secretsDir, logWriter)
 	if err != nil {
 		return Manifest{}, err
 	}
-	globals, err := dumpPostgreSQLGlobals(ctx, archiveDir, target, password, bundle, secretsDir)
+	globals, err := dumpPostgreSQLGlobals(ctx, archiveDir, target, password, bundle, secretsDir, logWriter)
 	if err != nil {
 		return Manifest{}, err
 	}
 	manifest := Manifest{Version: ManifestVersionV2, Engine: string(target.Type), Scope: "server", Globals: globals}
-	manifest.Databases, manifest.Failed, err = dumpDatabases(ctx, archiveDir, databases, password, build)
+	manifest.Databases, manifest.Failed, err = dumpDatabases(ctx, archiveDir, databases, password, build, logWriter)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -349,7 +350,7 @@ func mySQLDumpCommand(ctx context.Context, target coredb.Target, password string
 }
 
 // runDumpToFile captures a dump in a fresh 0600 file, redacting the password from failures.
-func runDumpToFile(cmd *exec.Cmd, path, password string) error {
+func runDumpToFile(cmd *exec.Cmd, path, password string, logWriter io.Writer) error {
 	dump, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create database dump: %w", err)
@@ -359,12 +360,18 @@ func runDumpToFile(cmd *exec.Cmd, path, password string) error {
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 	closeErr := dump.Close()
+	message := stderr.String()
+	if password != "" {
+		message = strings.ReplaceAll(message, password, "[redacted]")
+	}
+	if message != "" && logWriter != nil {
+		if _, err := io.WriteString(logWriter, message); err != nil && runErr == nil {
+			_ = os.Remove(path)
+			return fmt.Errorf("write database client log: %w", err)
+		}
+	}
 	if runErr != nil {
 		_ = os.Remove(path)
-		message := stderr.String()
-		if password != "" {
-			message = strings.ReplaceAll(message, password, "[redacted]")
-		}
 		return fmt.Errorf("database dump failed: %w: %s", runErr, limitedText(message, 4096))
 	}
 	if closeErr != nil {
@@ -374,7 +381,7 @@ func runDumpToFile(cmd *exec.Cmd, path, password string) error {
 }
 
 // dumpDatabases isolates per-database failures into the failed list instead of failing the backup.
-func dumpDatabases(ctx context.Context, archiveDir string, databases []string, password string, build func(database string) (*exec.Cmd, error)) (entries []ManifestFile, failed []string, err error) {
+func dumpDatabases(ctx context.Context, archiveDir string, databases []string, password string, build func(database string) (*exec.Cmd, error), logWriter io.Writer) (entries []ManifestFile, failed []string, err error) {
 	if err := os.Mkdir(filepath.Join(archiveDir, databasesDirName), 0o700); err != nil {
 		return nil, nil, fmt.Errorf("create database dump directory: %w", err)
 	}
@@ -385,7 +392,7 @@ func dumpDatabases(ctx context.Context, archiveDir string, databases []string, p
 		}
 		file := fmt.Sprintf("%s/%04d-%s.sql", databasesDirName, index+1, dumpFileLabel(database))
 		path := filepath.Join(archiveDir, file)
-		if err := runDumpToFile(cmd, path, password); err != nil {
+		if err := runDumpToFile(cmd, path, password, logWriter); err != nil {
 			failed = append(failed, database)
 			continue
 		}
@@ -422,7 +429,7 @@ func dumpFileLabel(name string) string {
 	return text
 }
 
-func dumpPostgreSQLGlobals(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string) ([]ManifestFile, error) {
+func dumpPostgreSQLGlobals(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string, logWriter io.Writer) ([]ManifestFile, error) {
 	globals := make([]ManifestFile, 0, 2)
 	for _, companion := range []struct {
 		name string
@@ -437,7 +444,7 @@ func dumpPostgreSQLGlobals(ctx context.Context, archiveDir string, target coredb
 			return nil, err
 		}
 		path := filepath.Join(archiveDir, companion.file)
-		if err := runDumpToFile(cmd, path, password); err != nil {
+		if err := runDumpToFile(cmd, path, password, logWriter); err != nil {
 			return nil, fmt.Errorf("dump PostgreSQL %s: %w", companion.name, err)
 		}
 		digest, err := fileSHA256(path)
@@ -469,12 +476,12 @@ var mySQLGrantTableCandidates = []string{
 	"global_priv", "role_edges", "default_roles", "roles_mapping",
 }
 
-func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string) (ManifestFile, error) {
+func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Target, password string, bundle ClientBundle, secretsDir string, logWriter io.Writer) (ManifestFile, error) {
 	defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)
 	if err != nil {
 		return ManifestFile{}, err
 	}
-	tables, err := listMySQLGrantTables(ctx, target, password, bundle, defaultsFile)
+	tables, err := listMySQLGrantTables(ctx, target, password, bundle, defaultsFile, logWriter)
 	if err != nil {
 		return ManifestFile{}, err
 	}
@@ -484,7 +491,7 @@ func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Targe
 	args = append(args, tables...)
 	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
 	path := filepath.Join(archiveDir, "grants.sql")
-	if err := runDumpToFile(cmd, path, password); err != nil {
+	if err := runDumpToFile(cmd, path, password, logWriter); err != nil {
 		return ManifestFile{}, fmt.Errorf("dump MySQL grants: %w", err)
 	}
 	digest, err := fileSHA256(path)
@@ -494,10 +501,10 @@ func dumpMySQLGrants(ctx context.Context, archiveDir string, target coredb.Targe
 	return ManifestFile{Name: "grants", File: "grants.sql", SHA256: digest}, nil
 }
 
-func listMySQLGrantTables(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, defaultsFile string) ([]string, error) {
+func listMySQLGrantTables(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, defaultsFile string, logWriter io.Writer) ([]string, error) {
 	args := append(mySQLBaseArgs(target, defaultsFile), "--batch", "--skip-column-names", "--execute=SHOW TABLES FROM mysql")
 	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
-	names, err := readDatabaseNames(exec.CommandContext(ctx, bundle.RestoreProgram, args...), password)
+	names, err := readDatabaseNames(exec.CommandContext(ctx, bundle.RestoreProgram, args...), password, logWriter)
 	if err != nil {
 		return nil, fmt.Errorf("list MySQL grant tables: %w", err)
 	}
@@ -517,7 +524,7 @@ func listMySQLGrantTables(ctx context.Context, target coredb.Target, password st
 	return tables, nil
 }
 
-func listPostgreSQLDatabases(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string) ([]string, error) {
+func listPostgreSQLDatabases(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string, logWriter io.Writer) ([]string, error) {
 	passfile, err := writePostgreSQLPassfile(secretsDir, target, password)
 	if err != nil {
 		return nil, err
@@ -529,11 +536,10 @@ func listPostgreSQLDatabases(ctx context.Context, target coredb.Target, password
 	if target.DatabaseCACertificate != "" {
 		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
 	}
-	return readDatabaseNames(cmd, password)
+	return readDatabaseNames(cmd, password, logWriter)
 }
 
-// listMySQLDatabases lists user databases, excluding system schemas covered by the grants companion.
-func listMySQLDatabases(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string) ([]string, error) {
+func listMySQLDatabases(ctx context.Context, target coredb.Target, password string, bundle ClientBundle, secretsDir string, logWriter io.Writer) ([]string, error) {
 	defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)
 	if err != nil {
 		return nil, err
@@ -541,7 +547,7 @@ func listMySQLDatabases(ctx context.Context, target coredb.Target, password stri
 	args := append(mySQLBaseArgs(target, defaultsFile), "--batch", "--skip-column-names", "--execute=SHOW DATABASES")
 	args = append(args, mySQLTLSArgs(target.DatabaseTLSMode, target.DatabaseCACertificate, bundle.Family)...)
 	cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
-	names, err := readDatabaseNames(cmd, password)
+	names, err := readDatabaseNames(cmd, password, logWriter)
 	if err != nil {
 		return nil, err
 	}
@@ -561,8 +567,8 @@ var mySQLSystemDatabases = map[string]struct{}{
 	"sys":                {},
 }
 
-func readDatabaseNames(cmd *exec.Cmd, password string) ([]string, error) {
-	out, err := runClientCommand(cmd, password)
+func readDatabaseNames(cmd *exec.Cmd, password string, logWriter io.Writer) ([]string, error) {
+	out, err := runClientCommandWithLog(cmd, password, logWriter)
 	if err != nil {
 		return nil, fmt.Errorf("list databases: %w", err)
 	}

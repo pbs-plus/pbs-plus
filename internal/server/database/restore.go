@@ -406,15 +406,25 @@ func unquoteIdentifier(value string, quote byte) string {
 
 // runClientCommand runs a database client, redacting the password from failures.
 func runClientCommand(cmd *exec.Cmd, password string) ([]byte, error) {
+	return runClientCommandWithLog(cmd, password, nil)
+}
+
+func runClientCommandWithLog(cmd *exec.Cmd, password string, logWriter io.Writer) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		message := stderr.String()
-		if password != "" {
-			message = strings.ReplaceAll(message, password, "[redacted]")
+	runErr := cmd.Run()
+	message := stderr.String()
+	if password != "" {
+		message = strings.ReplaceAll(message, password, "[redacted]")
+	}
+	if message != "" && logWriter != nil {
+		if _, err := io.WriteString(logWriter, message); err != nil && runErr == nil {
+			return nil, fmt.Errorf("write database client log: %w", err)
 		}
-		return nil, fmt.Errorf("%w: %s", err, limitedText(message, 4096))
+	}
+	if runErr != nil {
+		return nil, fmt.Errorf("%w: %s", runErr, limitedText(message, 4096))
 	}
 	return stdout.Bytes(), nil
 }

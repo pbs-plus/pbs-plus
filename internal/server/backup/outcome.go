@@ -5,8 +5,10 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 )
@@ -14,6 +16,8 @@ import (
 func (b *backupJob) finalizeFailure(err error) {
 	b.mu.RLock()
 	job := b.job
+	databaseLogPath := b.databaseLogPath
+	databaseLogLabel := b.databaseLogLabel
 	b.mu.RUnlock()
 	b.logger.Error(err, "backup job failed")
 
@@ -63,6 +67,8 @@ func (b *backupJob) finalizeFailure(err error) {
 			"Backup ID: " + job.ID,
 			"Source Mode: " + job.SourceMode,
 		},
+		databaseLogPath,
+		databaseLogLabel,
 	)
 	if terr != nil {
 		b.logger.Error(terr, "failed to generate backup task error file")
@@ -143,6 +149,7 @@ func (b *backupJob) cleanup() {
 		agentMount := b.agentMount
 		s3Mount := b.s3Mount
 		stagedDump := b.stagedDump
+		databaseLogPath := b.databaseLogPath
 		logger := b.logger
 		cancel := b.cancel
 		b.mu.Unlock()
@@ -164,6 +171,11 @@ func (b *backupJob) cleanup() {
 				logger.Error(err, "failed to remove database backup staging data")
 			}
 		}
+		if databaseLogPath != "" {
+			if err := os.Remove(databaseLogPath); err != nil && !os.IsNotExist(err) && logger != nil {
+				logger.Error(err, "failed to remove database client log")
+			}
+		}
 		if logger != nil {
 			logger.Close()
 		}
@@ -173,18 +185,17 @@ func (b *backupJob) cleanup() {
 func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	b.mu.RLock()
 	agentMount := b.agentMount
+	logger := b.logger
+	databaseLogPath := b.databaseLogPath
+	databaseLogLabel := b.databaseLogLabel
 	b.mu.RUnlock()
 	gracefulEnd := agentMount == nil || agentMount.IsConnected()
-
-	b.mu.RLock()
-	logger := b.logger
-	b.mu.RUnlock()
 
 	if err := logger.FlushJobLog(); err != nil {
 		b.logger.Error(err, "failed to flush job log")
 	}
 
-	succeeded, cancelled, warningsNum, err := processPBSProxyLogs(gracefulEnd, upid, logger, logErr)
+	succeeded, cancelled, warningsNum, err := processPBSProxyLogs(gracefulEnd, upid, logger, databaseLogPath, databaseLogLabel, logErr)
 	if err != nil {
 		b.logger.Error(err, "failed to process logs")
 	}
@@ -196,6 +207,19 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	return succeeded, warningsNum
+}
+
+func databaseLogLabel(target coredb.Target) string {
+	if !target.IsDatabase() {
+		return ""
+	}
+	if target.Type == coredb.TargetTypePostgreSQL {
+		return "PostgreSQL"
+	}
+	if target.DatabaseVariant == "mariadb" {
+		return "MariaDB"
+	}
+	return "MySQL"
 }
 
 func (b *backupJob) updatePBSStatus(succeeded bool, warningsNum int, upid string) {

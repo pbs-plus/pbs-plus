@@ -4,6 +4,7 @@ package database
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -72,7 +73,7 @@ func TestDumpCommandsDoNotLockTarget(t *testing.T) {
 func TestStagePostgreSQLDump(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"pg_dump", "pg_dumpall", "psql"} {
-		writeTestProgram(t, dir, name, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'PostgreSQL 17.2'; exit 0; fi\nprintf 'CREATE TABLE inventory (id integer);\\n'\n")
+		writeTestProgram(t, dir, name, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'PostgreSQL 17.2'; exit 0; fi\nprintf 'PostgreSQL dump log\\n' >&2\nprintf 'CREATE TABLE inventory (id integer);\\n'\n")
 	}
 	bundles := discoverClientBundles(context.Background(), []string{dir}, []string{dir})
 	bundle, err := FindClientBundle(bundles, EnginePostgreSQL, FamilyPostgreSQL, dir)
@@ -86,11 +87,15 @@ func TestStagePostgreSQLDump(t *testing.T) {
 		DatabaseUsername: "backup",
 		DatabaseTLSMode:  "require",
 	}
-	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "database", Database: "inventory"}, bundle)
+	var databaseLog bytes.Buffer
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "database", Database: "inventory", LogWriter: &databaseLog}, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer staged.Cleanup()
+	if got := databaseLog.String(); !strings.Contains(got, "PostgreSQL dump log") || strings.Contains(got, "CREATE TABLE") {
+		t.Fatalf("PostgreSQL log = %q", got)
+	}
 
 	manifest, err := LoadManifest(staged.ArchiveDir)
 	if err != nil {
@@ -394,6 +399,7 @@ func TestStageMariaDBServerDump(t *testing.T) {
 case " $* " in
   *" role_edges "*|*" default_roles "*) printf '%s\n' 'mariadb-dump: Couldn'"'"'t find table: "role_edges"' >&2; exit 6 ;;
 esac
+printf 'MariaDB dump log\n' >&2
 last=""
 for a in "$@"; do last="$a"; done
 case "$last" in
@@ -417,11 +423,15 @@ esac
 		DatabaseUsername: "backup",
 		DatabaseTLSMode:  "disabled",
 	}
-	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "server"}, bundle)
+	var databaseLog bytes.Buffer
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "super-secret", DumpOptions{Scope: "server", LogWriter: &databaseLog}, bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer staged.Cleanup()
+	if got := databaseLog.String(); !strings.Contains(got, "MariaDB dump log") || strings.Contains(got, "CREATE TABLE") {
+		t.Fatalf("MariaDB log = %q", got)
+	}
 
 	manifest, err := LoadManifest(staged.ArchiveDir)
 	if err != nil {

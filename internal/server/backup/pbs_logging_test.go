@@ -45,6 +45,7 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	dir := t.TempDir()
 	proxyLog := filepath.Join(dir, "proxy.log")
 	clientLog := filepath.Join(dir, "client.log")
+	databaseLog := filepath.Join(dir, "database.log")
 
 	proxyLines := []string{
 		"2026-06-25T20:00:00-04:00: starting backup",
@@ -61,6 +62,7 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 		"End Time: 2026-06-25T20:01:00-04:00",
 	}
 	writeLines(t, clientLog, clientLines, 0660)
+	writeLines(t, databaseLog, []string{"mariadb-dump: dumping grants"}, 0600)
 
 	jobID := "pbsplus-test-" + strings.ReplaceAll(t.Name(), "/", "-")
 	defer func() {
@@ -78,7 +80,7 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	writeLines(t, realClientPath, clientLines, 0666)
 
 	for attempt := range 2 {
-		succeeded, cancelled, warnings, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil)
+		succeeded, cancelled, warnings, err := mergePBSLogsWithDatabase(proxyLog, realClientPath, databaseLog, "MariaDB", logger, true, nil)
 		if err != nil {
 			t.Fatalf("mergePBSLogs: %v", err)
 		}
@@ -120,14 +122,31 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	if !contains(mergedProxy, "post-backup script: done") {
 		t.Errorf("proxy log missing client content added after the first merge; got:\n%s", strings.Join(mergedProxy, "\n"))
 	}
+	if !contains(mergedProxy, "--- MariaDB log starts here ---") || !contains(mergedProxy, "mariadb-dump: dumping grants") {
+		t.Errorf("proxy log missing MariaDB content; got:\n%s", strings.Join(mergedProxy, "\n"))
+	}
 	separatorCount := 0
-	for _, line := range mergedProxy {
+	databaseSeparatorCount := 0
+	clientSeparatorIndex := -1
+	databaseSeparatorIndex := -1
+	for index, line := range mergedProxy {
 		if line == "--- proxmox-backup-client log starts here ---" {
 			separatorCount++
+			clientSeparatorIndex = index
+		}
+		if line == "--- MariaDB log starts here ---" {
+			databaseSeparatorCount++
+			databaseSeparatorIndex = index
 		}
 	}
 	if separatorCount != 1 {
 		t.Errorf("proxy log separators = %d, want one", separatorCount)
+	}
+	if databaseSeparatorCount != 1 {
+		t.Errorf("database log separators = %d, want one", databaseSeparatorCount)
+	}
+	if databaseSeparatorIndex <= clientSeparatorIndex {
+		t.Errorf("database log index = %d, want after client log index %d", databaseSeparatorIndex, clientSeparatorIndex)
 	}
 	if !contains(mergedProxy, "starting backup") {
 		t.Errorf("proxy log lost original proxy content; got:\n%s", strings.Join(mergedProxy, "\n"))

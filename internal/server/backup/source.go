@@ -104,12 +104,30 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if err != nil {
 			return "", nil, nil, fmt.Errorf("get database password: %w", err)
 		}
-		stagedDump, err := database.StageDump(ctx, "", target, password, database.DumpOptions{
-			Scope:    job.DatabaseScope,
-			Database: job.DatabaseName,
-		}, bundle)
+		databaseLog, err := os.CreateTemp("", ".pbs-plus-database-log-")
 		if err != nil {
-			return "", nil, nil, err
+			return "", nil, nil, fmt.Errorf("create database client log: %w", err)
+		}
+		b.mu.Lock()
+		oldDatabaseLogPath := b.databaseLogPath
+		b.databaseLogPath = databaseLog.Name()
+		b.databaseLogLabel = databaseLogLabel(target)
+		b.mu.Unlock()
+		if oldDatabaseLogPath != "" {
+			_ = os.Remove(oldDatabaseLogPath)
+		}
+		stagedDump, dumpErr := database.StageDump(ctx, "", target, password, database.DumpOptions{
+			Scope:     job.DatabaseScope,
+			Database:  job.DatabaseName,
+			LogWriter: databaseLog,
+		}, bundle)
+		closeErr := databaseLog.Close()
+		if dumpErr != nil {
+			return "", nil, nil, dumpErr
+		}
+		if closeErr != nil {
+			_ = stagedDump.Cleanup()
+			return "", nil, nil, fmt.Errorf("close database client log: %w", closeErr)
 		}
 		b.mu.Lock()
 		b.stagedDump = stagedDump
