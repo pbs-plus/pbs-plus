@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/digest"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
@@ -22,13 +23,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
-
-type TargetStatusResult struct {
-	Index            int
-	AgentVersion     string
-	ConnectionStatus bool
-	Error            error
-}
 
 func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -96,15 +90,27 @@ func D2DTargetStatusHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		// Trigger async refresh if requested
-		if strings.ToLower(r.FormValue("refresh")) == "true" {
-			app.Target.RefreshStatuses()
+		targets, err := app.Target.GetAllTargets()
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
 
-		cached := app.Target.GetCachedStatuses()
+		agentTargets := make([]coredb.Target, 0, len(targets))
+		for _, target := range targets {
+			if target.IsAgent() {
+				agentTargets = append(agentTargets, target)
+			}
+		}
+
+		results := app.Target.CheckStatus(r.Context(), agentTargets, true, 5*time.Second)
+		statuses := make(map[string]application.TargetStatusResult, len(results))
+		for _, result := range results {
+			statuses[agentTargets[result.Index].Name] = result
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(cached); err != nil {
+		if err := json.NewEncoder(w).Encode(statuses); err != nil {
 			log.Error(err, "")
 		}
 	}

@@ -114,10 +114,18 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`itemId: "mysql-targets"`),
 		[]byte(`targetKind: "mysql"`),
 		[]byte(`column.setText("S3 URL")`),
+		[]byte(`target/tree?kind=" + encodeURIComponent(view.targetKind || "")`),
+		[]byte(`if (!this.loaded) {`),
+		[]byte(`view.setLoading(true);`),
+		[]byte(`fa fa-spinner fa-pulse`),
+		[]byte(`Status unavailable`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("target view is missing %q", expected)
 		}
+	}
+	if bytes.Contains(source, []byte("filterTargetKind")) {
+		t.Error("target view still filters the complete target tree in the browser")
 	}
 }
 

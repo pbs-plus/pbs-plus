@@ -278,7 +278,7 @@ func formatSnapshotLabel(snapshot, namespace string) string {
 	return namespace + ": " + snapshot
 }
 
-func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
+func BuildTargetTree(targets []coredb.Target, kind coredb.TargetType) []TargetTreeNode {
 	var localTargets []TargetTreeNode
 	agentGroups := map[string]*TargetTreeNode{}
 	var s3Targets []TargetTreeNode
@@ -287,6 +287,9 @@ func BuildTargetTree(targets []coredb.Target) []TargetTreeNode {
 
 	for i := range targets {
 		t := targets[i]
+		if kind != "" && t.Type != kind {
+			continue
+		}
 		node := TargetTreeNode{
 			Text:                     t.Name,
 			Name:                     t.Name,

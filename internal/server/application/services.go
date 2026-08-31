@@ -5,7 +5,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -122,20 +121,12 @@ func (s *ScriptService) UpdateScript(sc coredb.Script) error          { return s
 func (s *ScriptService) DeleteScript(path string) error               { return s.db.DeleteScript(nil, path) }
 
 type TargetService struct {
-	db          *coredb.Store
-	agentsMgr   *arpc.AgentsManager
-	statusCache map[string]TargetStatusResult
-	statusMu    sync.RWMutex
-	refreshing  bool
-	refreshMu   sync.Mutex
+	db        *coredb.Store
+	agentsMgr *arpc.AgentsManager
 }
 
 func NewTargetService(db *coredb.Store, agentsMgr *arpc.AgentsManager) *TargetService {
-	return &TargetService{
-		db:          db,
-		agentsMgr:   agentsMgr,
-		statusCache: make(map[string]TargetStatusResult),
-	}
+	return &TargetService{db: db, agentsMgr: agentsMgr}
 }
 
 func (s *TargetService) GetAllTargets() ([]coredb.Target, error)      { return s.db.GetAllTargets() }
@@ -251,57 +242,6 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 	case <-done:
 		return results
 	}
-}
-
-func (s *TargetService) GetCachedStatuses() map[string]TargetStatusResult {
-	s.statusMu.RLock()
-	defer s.statusMu.RUnlock()
-	out := make(map[string]TargetStatusResult, len(s.statusCache))
-	maps.Copy(out, s.statusCache)
-	return out
-}
-
-func (s *TargetService) RefreshStatuses() {
-	s.refreshMu.Lock()
-	if s.refreshing {
-		s.refreshMu.Unlock()
-		return
-	}
-	s.refreshing = true
-	s.refreshMu.Unlock()
-
-	go func() {
-		defer func() {
-			s.refreshMu.Lock()
-			s.refreshing = false
-			s.refreshMu.Unlock()
-		}()
-
-		targets, err := s.db.GetAllTargets()
-		if err != nil {
-			return
-		}
-
-		agentTargets := make([]coredb.Target, 0)
-		for _, t := range targets {
-			if t.IsAgent() {
-				agentTargets = append(agentTargets, t)
-			}
-		}
-
-		if len(agentTargets) == 0 {
-			return
-		}
-
-		results := s.CheckStatus(context.Background(), agentTargets, true, 5*time.Second)
-
-		s.statusMu.Lock()
-		for _, r := range results {
-			key := agentTargets[r.Index].Name
-			s.statusCache[key] = r
-		}
-		s.statusMu.Unlock()
-	}()
 }
 
 type callSession interface {

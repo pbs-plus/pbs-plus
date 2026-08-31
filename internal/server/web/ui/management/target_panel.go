@@ -325,29 +325,16 @@ var targetPanelController = js.ControllerClass{
 			view.setRootNode({ text: "Root", expanded: true, children: rootChildren });
 		`),
 		"reload": js.Func("", `this.loadData();`),
-		"filterTargetKind": js.Func("nodes", `
-			let me = this;
-			let targetKind = me.getView().targetKind;
-			return nodes.reduce(function (filtered, node) {
-				if (node.isGroup) {
-					node.children = me.filterTargetKind(node.children || []);
-					if (node.children.length > 0) {
-						filtered.push(node);
-					}
-					return filtered;
-				}
-				let nodeKind = node.kind || (node.target_type === "s3" ? "s3" : "filesystem");
-				if (!targetKind || nodeKind === targetKind) {
-					filtered.push(node);
-				}
-				return filtered;
-			}, []);
-		`),
 		"loadData": js.Func("", `
 			let me = this;
 			let view = me.getView();
+			if (me.loading) {
+				return;
+			}
+			me.loading = true;
+			view.setLoading(true);
 			Ext.Ajax.request({
-				url: pbsPlusBaseUrl + "/api2/json/d2d/target/tree",
+				url: pbsPlusBaseUrl + "/api2/json/d2d/target/tree?kind=" + encodeURIComponent(view.targetKind || ""),
 				method: "GET",
 				withCredentials: true,
 				headers: { Accept: "application/json" },
@@ -357,22 +344,27 @@ var targetPanelController = js.ControllerClass{
 					let rootChildren = treeNodes.map(function (node) {
 						return me.convertTreeNode(node);
 					});
-					rootChildren = me.filterTargetKind(rootChildren);
 					view.setRootNode({
 						text: "Root",
 						expanded: true,
 						children: rootChildren,
 					});
-					// Store all targets for filtering
 					me.allTargetsData = [];
 					view.getRootNode().cascadeBy(function (node) {
 						if (!node.data.isGroup) {
 							me.allTargetsData.push(node);
 						}
 					});
-					me.loadStatuses();
+					me.loaded = true;
+					me.loading = false;
+					view.setLoading(false);
+					if (view.targetKind === "filesystem") {
+						me.loadStatuses();
+					}
 				},
-				failure: function (response) {
+				failure: function () {
+					me.loading = false;
+					view.setLoading(false);
 					Ext.Msg.alert(gettext("Error"), gettext("Failed to load targets"));
 				},
 			});
@@ -397,7 +389,7 @@ var targetPanelController = js.ControllerClass{
 					volume_id: node.volume_id,
 					job_count: node.job_count,
 					agent_version: node.agent_version,
-					connection_status: node.connection_status,
+					connection_status: node.target_type === "agent" ? null : node.connection_status,
 					volume_type: node.volume_type,
 					volume_name: node.volume_name,
 					volume_fs: node.volume_fs,
@@ -433,15 +425,12 @@ var targetPanelController = js.ControllerClass{
 			let me = this;
 			let view = me.getView();
 			Ext.Ajax.request({
-				url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target-status?refresh=true",
+				url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target-status",
 				method: "GET",
 				withCredentials: true,
 				headers: { Accept: "application/json" },
 				success: function (response) {
-					let statuses = Ext.decode(response.responseText);
-					if (!statuses || Object.keys(statuses).length === 0) {
-						return;
-					}
+					let statuses = Ext.decode(response.responseText) || {};
 					view.getRootNode().cascadeBy(function (node) {
 						let name = node.get("name");
 						if (name && statuses[name]) {
@@ -451,10 +440,21 @@ var targetPanelController = js.ControllerClass{
 						}
 					});
 				},
+				failure: function () {
+					view.getRootNode().cascadeBy(function (node) {
+						if (node.get("target_type") === "agent") {
+							node.set("connection_status", "error");
+						}
+					});
+				},
 			});
 		`),
-		"stopStore":  js.Func("", ``),
-		"startStore": js.Func("", `this.loadData();`),
+		"stopStore": js.Func("", ``),
+		"startStore": js.Func("", `
+			if (!this.loaded) {
+				this.loadData();
+			}
+		`),
 		"render_status": js.Func("value, metaData, record", `
 			if (record.data.isGroup) {
 				return "";
@@ -462,11 +462,16 @@ var targetPanelController = js.ControllerClass{
 			if (["postgresql", "mysql"].includes(record.data.kind)) {
 				return '<i class="fa fa-cog"></i> Configured';
 			}
+			if (record.data.target_type === "agent" && value == null) {
+				return '<i class="fa fa-spinner fa-pulse"></i> Checking...';
+			}
+			if (value === "error") {
+				return '<i class="fa fa-question-circle"></i> Status unavailable';
+			}
 			if (value === true) {
 				return '<i class="fa fa-check good"></i> Reachable';
-			} else {
-				return '<i class="fa fa-times critical"></i> Unreachable';
 			}
+			return '<i class="fa fa-times critical"></i> Unreachable';
 		`),
 		"render_path":  renderNonGroupField,
 		"render_field": renderNonGroupField,
@@ -491,6 +496,8 @@ var targetPanelController = js.ControllerClass{
 		"init": js.Func("", `
 			let view = this.getView();
 			this.searchValue = "";
+			this.loaded = false;
+			this.loading = false;
 			view.down("#addTargetButton").setText({
 				filesystem: "Add Filesystem Target",
 				s3: "Add S3 Target",
@@ -528,7 +535,6 @@ var targetPanelController = js.ControllerClass{
 				style.innerHTML = `+"`"+string(targetRowStyles)+"`"+`;
 				document.head.appendChild(style);
 			}
-			this.loadData();
 		`),
 	},
 }

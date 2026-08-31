@@ -14,6 +14,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 func ExtJsBackupCSVExportHandler(app *application.Runtime) http.HandlerFunc {
@@ -111,7 +112,7 @@ func D2DTargetTreeHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		tree := extjs.BuildTargetTree(all)
+		tree := extjs.BuildTargetTree(all, coredb.TargetType(r.URL.Query().Get("kind")))
 
 		digest, err := digest.Calculate(tree)
 		if err != nil {
