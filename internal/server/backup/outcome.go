@@ -260,6 +260,7 @@ func (b *backupJob) createOK(err error) {
 	latest.History.Duration = latest.History.LastRunEndtime - latest.History.LastRunStarttime
 	latest.History.LastSuccessfulEndtime = latest.History.LastRunEndtime
 	latest.History.LastSuccessfulUpid = task.UPID
+	latest.History.RetryCount = 0
 
 	b.job = latest
 	if err := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); err != nil {
@@ -283,6 +284,7 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 	latest.History.LastRunStarttime = workflowStart
 	latest.History.LastRunEndtime = workflowEnd
 	latest.History.Duration = latest.History.LastRunEndtime - latest.History.LastRunStarttime
+	latest.History.RetryCount++
 
 	b.job = latest
 	if uerr := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); uerr != nil {
