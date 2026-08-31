@@ -15,6 +15,8 @@ func TestClientVersionReadsReportedVersions(t *testing.T) {
 		{version: "mysqldump  Ver 8.0.35 for Linux on x86_64 (MySQL Community Server - GPL)", major: 8, minor: 0},
 		{version: "mysqldump  Ver 10.13 Distrib 5.7.44, for Linux (x86_64)", major: 5, minor: 7},
 		{version: "mariadb-dump  Ver 10.19 Distrib 11.4.4-MariaDB, for debian-linux-gnu (x86_64)", major: 11, minor: 4},
+		{version: "mariadb-dump from 11.4.13-MariaDB, client 10.19 for debian-linux-gnu (x86_64)", major: 11, minor: 4},
+		{version: "mariadb from 11.8.2-MariaDB, client 15.2 for Linux (x86_64) using readline 5.2", major: 11, minor: 8},
 	} {
 		major, minor, ok := clientVersion(ClientBundle{Version: testCase.version})
 		if !ok || major != testCase.major || minor != testCase.minor {

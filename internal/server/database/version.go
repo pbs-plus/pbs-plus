@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -202,17 +201,22 @@ func compareVersions(a, b ClientBundle) int {
 	return majorKey(aMajor, aMinor) - majorKey(bMajor, bMinor)
 }
 
-// clientVersion prefers the Distrib field because MariaDB reports its tool protocol version first.
 func clientVersion(bundle ClientBundle) (int, int, bool) {
 	fields := strings.Fields(bundle.Version)
 	for index, field := range fields {
-		if strings.EqualFold(field, "Distrib") && index+1 < len(fields) {
+		if !strings.EqualFold(field, "Distrib") && !strings.EqualFold(field, "from") {
+			continue
+		}
+		if index+1 < len(fields) {
 			if major, minor, ok := versionNumbers(fields[index+1]); ok {
 				return major, minor, true
 			}
 		}
 	}
-	for _, field := range slices.Backward(fields) {
+	for index, field := range fields {
+		if index > 0 && strings.EqualFold(fields[index-1], "client") {
+			continue
+		}
 		if major, minor, ok := versionNumbers(field); ok {
 			return major, minor, true
 		}
