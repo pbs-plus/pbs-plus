@@ -134,7 +134,7 @@ runs:
           }
         }
 
-        create_backup 'e2e-postgresql-backup' 'e2e-postgresql' 'postgresql' "$postgres_dir"
+        create_backup 'e2e-postgresql-backup' 'e2e-postgresql' '' "$postgres_dir"
         create_backup 'e2e-mariadb-backup' 'e2e-mariadb' 'mariadb' "$mariadb_dir"
 
         run_backup() {
@@ -271,7 +271,7 @@ runs:
         postgres_upid=$(run_backup 'e2e-postgresql-backup')
         verify_dump_section "$postgres_upid" 'PostgreSQL'
         postgres_snapshot=$(latest_snapshot 'e2e-postgresql-backup')
-        create_restore 'e2e-postgresql-restore' 'e2e-postgresql' "$postgres_snapshot" 'postgresql' "$postgres_dir"
+        create_restore 'e2e-postgresql-restore' 'e2e-postgresql' "$postgres_snapshot" '' "$postgres_dir"
         run_restore 'e2e-postgresql-restore' >/dev/null
         postgres_value=$(docker exec -e PGPASSWORD="$password" pbs-plus-postgres \
           psql -At -U postgres -d inventory_restored -c 'SELECT value FROM dump_log_probe WHERE id = 1;')
