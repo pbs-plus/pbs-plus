@@ -5,6 +5,7 @@ package tasklog
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"log/slog"
@@ -20,12 +21,6 @@ var queuedStates sync.Map
 func QueuedState(upid string) string {
 	if v, ok := queuedStates.Load(upid); ok {
 		return v.(string)
-	}
-	if IsQueuedUPID(upid) {
-		task, err := GetTaskByUPID(upid)
-		if err == nil && task.Status != "stopped" {
-			return "QUEUED: waiting to start"
-		}
 	}
 	return ""
 }
@@ -46,6 +41,17 @@ func NewQueuedTask(workerType, wid string, web bool) (*QueuedTask, error) {
 	worker.LogString(fmt.Sprintf("TASK QUEUED: job started from %s", SourceString(web)))
 	queuedStates.Store(worker.UPID(), fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
 	return &QueuedTask{WorkerTask: worker}, nil
+}
+
+// LogString records task output and marks an untouched queued task as running.
+func (t *QueuedTask) LogString(data string) {
+	if t == nil {
+		return
+	}
+	t.WorkerTask.LogString(data)
+	if state, ok := queuedStates.Load(t.UPID()); ok && strings.HasPrefix(state.(string), "QUEUED:") {
+		queuedStates.CompareAndSwap(t.UPID(), state, "RUNNING: task output")
+	}
 }
 
 // SetState updates the live state shown for a transient task and records it in the task log.
