@@ -271,6 +271,15 @@ func (sm *AgentsManager) GetQuicPipe(clientID string) (*QuicPipe, bool) {
 	return sm.quicSessions.Get(clientID)
 }
 
+// IsOnline reports whether the agent currently holds a live session (QUIC or stream).
+func (sm *AgentsManager) IsOnline(clientID string) bool {
+	if _, ok := sm.GetQuicPipe(clientID); ok {
+		return true
+	}
+	_, ok := sm.GetStreamPipe(clientID)
+	return ok
+}
+
 func (sm *AgentsManager) unregisterQuicPipe(clientID string) {
 	_, exists := sm.quicSessions.GetAndDel(clientID)
 	if exists {

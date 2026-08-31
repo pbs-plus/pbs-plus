@@ -14,6 +14,8 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
@@ -130,12 +132,13 @@ func (s *ScriptService) UpdateScript(sc coredb.Script) error          { return s
 func (s *ScriptService) DeleteScript(path string) error               { return s.db.DeleteScript(nil, path) }
 
 type TargetService struct {
-	db        *coredb.Store
-	agentsMgr *arpc.AgentsManager
+	db          *coredb.Store
+	agentsMgr   *arpc.AgentsManager
+	statusCache *safemap.Map[string, StatusEntry]
 }
 
 func NewTargetService(db *coredb.Store, agentsMgr *arpc.AgentsManager) *TargetService {
-	return &TargetService{db: db, agentsMgr: agentsMgr}
+	return &TargetService{db: db, agentsMgr: agentsMgr, statusCache: safemap.New[string, StatusEntry]()}
 }
 
 func (s *TargetService) GetAllTargets() ([]coredb.Target, error)      { return s.db.GetAllTargets() }
@@ -198,9 +201,21 @@ type TargetStatusResult struct {
 	Error            error
 }
 
-func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target, checkStatus bool, timeout time.Duration) []TargetStatusResult {
+// StatusEntry is a cached target status snapshot served to API clients.
+type StatusEntry struct {
+	ConnectionStatus bool   `json:"ConnectionStatus"`
+	AgentVersion     string `json:"AgentVersion"`
+	TargetSizeResult
+	LastError string    `json:"LastError"`
+	CheckedAt time.Time `json:"CheckedAt"`
+}
+
+func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target, checkStatus bool, timeout time.Duration, concurrency int) []TargetStatusResult {
 	results := make([]TargetStatusResult, len(targets))
-	sem := make(chan struct{}, 20)
+	if concurrency < 1 {
+		concurrency = 20
+	}
+	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
 	for i, target := range targets {
@@ -268,6 +283,139 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 
 	wg.Wait()
 	return results
+}
+
+const (
+	statusSweepCycle   = 15 * time.Second
+	statusSweepTimeout = 5 * time.Second
+)
+
+func (s *TargetService) RunStatusSweeper(ctx context.Context) {
+	if s.db == nil {
+		return
+	}
+	s.sweepStatuses(ctx, 64)
+	shardsPerCycle := int(statusSweepCycle / time.Second)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	pos := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			targets, err := s.GetAllTargets()
+			if err != nil {
+				log.Error(err, "status sweep: GetAllTargets")
+				continue
+			}
+			if len(targets) == 0 {
+				pos = 0
+				continue
+			}
+			shard := (len(targets) + shardsPerCycle - 1) / shardsPerCycle
+			batch := statusShard(targets, pos, shard)
+			pos = (pos + shard) % len(targets)
+			if pos < shard {
+				s.evictMissingTargets(targets)
+			}
+			sweepCtx, cancel := context.WithTimeout(ctx, statusSweepTimeout)
+			results := s.CheckStatus(sweepCtx, batch, true, statusSweepTimeout, len(batch))
+			cancel()
+			s.storeStatusResults(batch, results)
+		}
+	}
+}
+
+func (s *TargetService) sweepStatuses(ctx context.Context, concurrency int) {
+	targets, err := s.GetAllTargets()
+	if err != nil {
+		log.Error(err, "status sweep: GetAllTargets")
+		return
+	}
+	results := s.CheckStatus(ctx, targets, true, statusSweepTimeout, concurrency)
+	s.storeStatusResults(targets, results)
+}
+
+func statusShard(targets []coredb.Target, pos, shard int) []coredb.Target {
+	n := len(targets)
+	if shard >= n {
+		return targets
+	}
+	batch := make([]coredb.Target, 0, shard)
+	for i := range shard {
+		batch = append(batch, targets[(pos+i)%n])
+	}
+	return batch
+}
+
+func (s *TargetService) storeStatusResults(targets []coredb.Target, results []TargetStatusResult) {
+	now := time.Now()
+	for _, result := range results {
+		if result.Index < 0 || result.Index >= len(targets) {
+			continue
+		}
+		entry := StatusEntry{
+			ConnectionStatus: result.ConnectionStatus,
+			AgentVersion:     result.AgentVersion,
+			TargetSizeResult: result.TargetSizeResult,
+			CheckedAt:        now,
+		}
+		if result.Error != nil {
+			entry.LastError = result.Error.Error()
+		}
+		s.statusCache.Set(targets[result.Index].Name, entry)
+	}
+}
+
+func (s *TargetService) evictMissingTargets(current []coredb.Target) {
+	live := make(map[string]struct{}, len(current))
+	for _, t := range current {
+		live[t.Name] = struct{}{}
+	}
+	s.statusCache.ForEach(func(name string, _ StatusEntry) bool {
+		if _, ok := live[name]; !ok {
+			s.statusCache.Del(name)
+		}
+		return true
+	})
+}
+
+func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]StatusEntry {
+	entries := make(map[string]StatusEntry, len(targets))
+	for _, tgt := range targets {
+		if entry, ok := s.statusCache.Get(tgt.Name); ok {
+			entries[tgt.Name] = entry
+			continue
+		}
+		entry := StatusEntry{AgentVersion: "N/A"}
+		if tgt.IsAgent() {
+			if s.agentsMgr.IsOnline(tgt.GetHostname()) {
+				entry.ConnectionStatus = true
+				entry.AgentVersion = s.agentSessionVersion(tgt.GetHostname())
+			}
+		} else if tgt.IsLocal() {
+			size, err := ResolveTargetSize(tgt)
+			entry.TargetSizeResult = size
+			entry.ConnectionStatus = err == nil
+			if err != nil {
+				entry.LastError = err.Error()
+			}
+			entry.CheckedAt = time.Now()
+		}
+		entries[tgt.Name] = entry
+	}
+	return entries
+}
+
+func (s *TargetService) agentSessionVersion(hostname string) string {
+	if q, ok := s.agentsMgr.GetQuicPipe(hostname); ok {
+		return q.GetVersion()
+	}
+	if sp, ok := s.agentsMgr.GetStreamPipe(hostname); ok {
+		return sp.GetVersion()
+	}
+	return "N/A"
 }
 
 func probeS3Target(ctx context.Context, target coredb.Target) error {

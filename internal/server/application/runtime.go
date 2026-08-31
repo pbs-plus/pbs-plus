@@ -113,6 +113,8 @@ func New(ctx context.Context, paths map[string]string) (*Runtime, error) {
 	store.AlertScanner = notification.NewAlertScanner(db)
 	go store.AlertScanner.Start(ctx, 1*time.Hour)
 
+	go targetSvc.RunStatusSweeper(ctx)
+
 	return store, nil
 }
 
