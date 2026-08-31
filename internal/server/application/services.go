@@ -14,11 +14,11 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	sessions "github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/sys/unix"
 )
 
@@ -132,13 +132,20 @@ func (s *ScriptService) UpdateScript(sc coredb.Script) error          { return s
 func (s *ScriptService) DeleteScript(path string) error               { return s.db.DeleteScript(nil, path) }
 
 type TargetService struct {
-	db          *coredb.Store
-	agentsMgr   *arpc.AgentsManager
-	statusCache *safemap.Map[string, StatusEntry]
+	db           *coredb.Store
+	agentsMgr    *arpc.AgentsManager
+	statusCache  *safemap.Map[string, StatusEntry]
+	statusSem    chan struct{}
+	statusFlight singleflight.Group
 }
 
 func NewTargetService(db *coredb.Store, agentsMgr *arpc.AgentsManager) *TargetService {
-	return &TargetService{db: db, agentsMgr: agentsMgr, statusCache: safemap.New[string, StatusEntry]()}
+	return &TargetService{
+		db:          db,
+		agentsMgr:   agentsMgr,
+		statusCache: safemap.New[string, StatusEntry](),
+		statusSem:   make(chan struct{}, statusProbeConcurrency),
+	}
 }
 
 func (s *TargetService) GetAllTargets() ([]coredb.Target, error)      { return s.db.GetAllTargets() }
@@ -286,67 +293,34 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 }
 
 const (
-	statusSweepCycle   = 15 * time.Second
-	statusSweepTimeout = 5 * time.Second
+	// statusRevalidateAfter is the cache TTL: entries older than this are
+	// served stale while a coalesced background probe refreshes them
+	// (stale-while-revalidate / ISR semantics).
+	statusRevalidateAfter  = 10 * time.Second
+	statusProbeTimeout     = 5 * time.Second
+	statusProbeConcurrency = 64
 )
 
-func (s *TargetService) RunStatusSweeper(ctx context.Context) {
+// revalidate probes one target and refreshes its cache entry. singleflight
+// coalesces concurrent refreshes of the same target so overlapping requests
+// share one probe; statusSem bounds in-flight probes across all targets.
+func (s *TargetService) revalidate(name string) {
 	if s.db == nil {
 		return
 	}
-	s.sweepStatuses(ctx, 64)
-	shardsPerCycle := int(statusSweepCycle / time.Second)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	pos := 0
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			targets, err := s.GetAllTargets()
-			if err != nil {
-				log.Error(err, "status sweep: GetAllTargets")
-				continue
-			}
-			if len(targets) == 0 {
-				pos = 0
-				continue
-			}
-			shard := (len(targets) + shardsPerCycle - 1) / shardsPerCycle
-			batch := statusShard(targets, pos, shard)
-			pos = (pos + shard) % len(targets)
-			if pos < shard {
-				s.evictMissingTargets(targets)
-			}
-			sweepCtx, cancel := context.WithTimeout(ctx, statusSweepTimeout)
-			results := s.CheckStatus(sweepCtx, batch, true, statusSweepTimeout, len(batch))
-			cancel()
-			s.storeStatusResults(batch, results)
+	_, _, _ = s.statusFlight.Do(name, func() (any, error) {
+		s.statusSem <- struct{}{}
+		defer func() { <-s.statusSem }()
+		tgt, err := s.GetTarget(name)
+		if err != nil {
+			return nil, err
 		}
-	}
-}
-
-func (s *TargetService) sweepStatuses(ctx context.Context, concurrency int) {
-	targets, err := s.GetAllTargets()
-	if err != nil {
-		log.Error(err, "status sweep: GetAllTargets")
-		return
-	}
-	results := s.CheckStatus(ctx, targets, true, statusSweepTimeout, concurrency)
-	s.storeStatusResults(targets, results)
-}
-
-func statusShard(targets []coredb.Target, pos, shard int) []coredb.Target {
-	n := len(targets)
-	if shard >= n {
-		return targets
-	}
-	batch := make([]coredb.Target, 0, shard)
-	for i := range shard {
-		batch = append(batch, targets[(pos+i)%n])
-	}
-	return batch
+		ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
+		defer cancel()
+		targets := []coredb.Target{tgt}
+		s.storeStatusResults(targets, s.CheckStatus(ctx, targets, true, statusProbeTimeout, 1))
+		return nil, nil
+	})
 }
 
 func (s *TargetService) storeStatusResults(targets []coredb.Target, results []TargetStatusResult) {
@@ -368,26 +342,21 @@ func (s *TargetService) storeStatusResults(targets []coredb.Target, results []Ta
 	}
 }
 
-func (s *TargetService) evictMissingTargets(current []coredb.Target) {
-	live := make(map[string]struct{}, len(current))
-	for _, t := range current {
-		live[t.Name] = struct{}{}
-	}
-	s.statusCache.ForEach(func(name string, _ StatusEntry) bool {
-		if _, ok := live[name]; !ok {
-			s.statusCache.Del(name)
-		}
-		return true
-	})
-}
-
+// GetStatusEntries serves cached statuses immediately; entries missing or
+// older than statusRevalidateAfter get a coalesced background probe while
+// the stale value is returned (stale-while-revalidate / ISR semantics).
 func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]StatusEntry {
 	entries := make(map[string]StatusEntry, len(targets))
+	stale := make([]string, 0, len(targets))
 	for _, tgt := range targets {
 		if entry, ok := s.statusCache.Get(tgt.Name); ok {
 			entries[tgt.Name] = entry
+			if time.Since(entry.CheckedAt) >= statusRevalidateAfter {
+				stale = append(stale, tgt.Name)
+			}
 			continue
 		}
+		stale = append(stale, tgt.Name)
 		entry := StatusEntry{AgentVersion: "N/A"}
 		if tgt.IsAgent() {
 			if s.agentsMgr.IsOnline(tgt.GetHostname()) {
@@ -405,7 +374,29 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 		}
 		entries[tgt.Name] = entry
 	}
+	for _, name := range stale {
+		go s.revalidate(name)
+	}
+	s.evictOrphans(targets)
 	return entries
+}
+
+// evictOrphans drops cache entries for targets no longer in the database;
+// the length guard keeps the common case a single integer compare.
+func (s *TargetService) evictOrphans(targets []coredb.Target) {
+	if s.statusCache.Len() <= len(targets) {
+		return
+	}
+	live := make(map[string]struct{}, len(targets))
+	for _, t := range targets {
+		live[t.Name] = struct{}{}
+	}
+	s.statusCache.ForEach(func(name string, _ StatusEntry) bool {
+		if _, ok := live[name]; !ok {
+			s.statusCache.Del(name)
+		}
+		return true
+	})
 }
 
 func (s *TargetService) agentSessionVersion(hostname string) string {
