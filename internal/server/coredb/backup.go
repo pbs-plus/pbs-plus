@@ -289,7 +289,7 @@ func applyBackupTaskHistory(history *JobHistory, resolved tasklog.ResolvedHistor
 	}
 	history.LastRunStarttime = start
 
-	if history.LastRunStatus == JobStatusUnknown && history.LastRunEndtime == 0 {
+	if resolved.Endtime == 0 && history.LastRunEndtime == 0 {
 		history.Duration = max(now-start, 0)
 	} else {
 		history.LastRunEndtime = max(history.LastRunEndtime, resolved.Endtime)

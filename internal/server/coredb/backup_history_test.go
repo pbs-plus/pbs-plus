@@ -34,6 +34,15 @@ func TestApplyBackupTaskHistoryUsesWorkflowBounds(t *testing.T) {
 			duration: 90,
 		},
 		{
+			name:     "generated error uses terminal task time",
+			history:  JobHistory{LastRunStatus: JobStatusUnknown},
+			resolved: tasklog.ResolvedHistory{Starttime: 130, Endtime: 170, Duration: 40, State: "TASK ERROR"},
+			now:      200,
+			start:    130,
+			end:      170,
+			duration: 40,
+		},
+		{
 			name:     "legacy backup uses native task bounds",
 			history:  JobHistory{LastRunStatus: JobStatusSuccess},
 			resolved: tasklog.ResolvedHistory{Starttime: 130, Endtime: 170, Duration: 40},
