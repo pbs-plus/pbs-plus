@@ -434,7 +434,7 @@ var targetPanelController = js.ControllerClass{
 						if (name && statuses[name]) {
 							let st = statuses[name];
 							node.set("agent_version", st.AgentVersion || "");
-							node.set("connection_status", st.ConnectionStatus);
+							node.set("connection_status", st.ConnectionStatus ?? null);
 							node.set("last_checked", st.CheckedAt && st.CheckedAt.indexOf("0001") !== 0 ? st.CheckedAt : "");
 							if (st.VolumeTotalBytes > 0 || st.VolumeUsedBytes > 0) {
 								node.set("volume_total_bytes", st.VolumeTotalBytes);

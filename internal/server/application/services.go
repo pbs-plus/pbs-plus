@@ -208,9 +208,15 @@ type TargetStatusResult struct {
 	Error            error
 }
 
+// boolPtr gives StatusEntry a tri-state wire contract: nil means never
+// probed (the UI shows "Checking..."), non-nil is the probe verdict.
+//
+//go:fix inline
+func boolPtr(b bool) *bool { return new(b) }
+
 // StatusEntry is a cached target status snapshot served to API clients.
 type StatusEntry struct {
-	ConnectionStatus bool   `json:"ConnectionStatus"`
+	ConnectionStatus *bool  `json:"ConnectionStatus,omitempty"`
 	AgentVersion     string `json:"AgentVersion"`
 	TargetSizeResult
 	LastError string    `json:"LastError"`
@@ -303,20 +309,26 @@ const (
 
 // revalidate probes one target and refreshes its cache entry. singleflight
 // coalesces concurrent refreshes of the same target so overlapping requests
-// share one probe; statusSem bounds in-flight probes across all targets.
+// share one probe. The timeout budget covers the semaphore wait as well as
+// the probe: when the fleet is busy the revalidate defers to the next poll
+// instead of queueing behind slow targets.
 func (s *TargetService) revalidate(name string) {
 	if s.db == nil {
 		return
 	}
 	_, _, _ = s.statusFlight.Do(name, func() (any, error) {
-		s.statusSem <- struct{}{}
-		defer func() { <-s.statusSem }()
+		ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
+		defer cancel()
+		select {
+		case s.statusSem <- struct{}{}:
+			defer func() { <-s.statusSem }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 		tgt, err := s.GetTarget(name)
 		if err != nil {
 			return nil, err
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
-		defer cancel()
 		targets := []coredb.Target{tgt}
 		s.storeStatusResults(targets, s.CheckStatus(ctx, targets, true, statusProbeTimeout, 1))
 		return nil, nil
@@ -330,7 +342,7 @@ func (s *TargetService) storeStatusResults(targets []coredb.Target, results []Ta
 			continue
 		}
 		entry := StatusEntry{
-			ConnectionStatus: result.ConnectionStatus,
+			ConnectionStatus: new(result.ConnectionStatus),
 			AgentVersion:     result.AgentVersion,
 			TargetSizeResult: result.TargetSizeResult,
 			CheckedAt:        now,
@@ -353,6 +365,10 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 			entries[tgt.Name] = entry
 			if time.Since(entry.CheckedAt) >= statusRevalidateAfter {
 				stale = append(stale, tgt.Name)
+			} else if tgt.IsAgent() && entry.ConnectionStatus != nil &&
+				*entry.ConnectionStatus != s.agentsMgr.IsOnline(tgt.GetHostname()) {
+				// cached verdict disagrees with the live session map: reprobe now
+				stale = append(stale, tgt.Name)
 			}
 			continue
 		}
@@ -360,13 +376,13 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 		entry := StatusEntry{AgentVersion: "N/A"}
 		if tgt.IsAgent() {
 			if s.agentsMgr.IsOnline(tgt.GetHostname()) {
-				entry.ConnectionStatus = true
+				entry.ConnectionStatus = new(true)
 				entry.AgentVersion = s.agentSessionVersion(tgt.GetHostname())
 			}
 		} else if tgt.IsLocal() {
 			size, err := ResolveTargetSize(tgt)
 			entry.TargetSizeResult = size
-			entry.ConnectionStatus = err == nil
+			entry.ConnectionStatus = new(err == nil)
 			if err != nil {
 				entry.LastError = err.Error()
 			}

@@ -22,23 +22,23 @@ func TestGetStatusEntriesMerge(t *testing.T) {
 		{Name: "local-missing", Type: coredb.TargetTypeFilesystem, Access: coredb.FilesystemAccessLocal, Path: localPath + "/missing"},
 		{Name: "s3-no-cache", Type: coredb.TargetTypeS3, S3Info: &coredb.S3Url{Endpoint: "127.0.0.1:1"}},
 	}
-	service.statusCache.Set("cached", StatusEntry{ConnectionStatus: true, AgentVersion: "9.9", CheckedAt: time.Now()})
+	service.statusCache.Set("cached", StatusEntry{ConnectionStatus: new(true), AgentVersion: "9.9", CheckedAt: time.Now()})
 
 	entries := service.GetStatusEntries(targets)
 
-	if e := entries["cached"]; !e.ConnectionStatus || e.AgentVersion != "9.9" {
+	if e := entries["cached"]; e.ConnectionStatus == nil || !*e.ConnectionStatus || e.AgentVersion != "9.9" {
 		t.Errorf("cached entry = %#v", e)
 	}
-	if e := entries["agent-no-session"]; e.ConnectionStatus || !e.CheckedAt.IsZero() || e.AgentVersion != "N/A" {
+	if e := entries["agent-no-session"]; e.ConnectionStatus != nil || !e.CheckedAt.IsZero() || e.AgentVersion != "N/A" {
 		t.Errorf("agent without session or cache = %#v", e)
 	}
-	if e := entries["local-ok"]; !e.ConnectionStatus || e.VolumeTotalBytes <= 0 || e.CheckedAt.IsZero() {
+	if e := entries["local-ok"]; e.ConnectionStatus == nil || !*e.ConnectionStatus || e.VolumeTotalBytes <= 0 || e.CheckedAt.IsZero() {
 		t.Errorf("local ok entry = %#v", e)
 	}
-	if e := entries["local-missing"]; e.ConnectionStatus || e.LastError == "" {
+	if e := entries["local-missing"]; e.ConnectionStatus == nil || *e.ConnectionStatus || e.LastError == "" {
 		t.Errorf("local missing entry = %#v", e)
 	}
-	if e := entries["s3-no-cache"]; e.ConnectionStatus || !e.CheckedAt.IsZero() {
+	if e := entries["s3-no-cache"]; e.ConnectionStatus != nil || !e.CheckedAt.IsZero() {
 		t.Errorf("never-probed s3 entry = %#v", e)
 	}
 }
@@ -70,20 +70,20 @@ func TestGetStatusEntriesRevalidatesStaleAndEvicts(t *testing.T) {
 	}
 
 	// Stale entry is served as-is, then refreshed by the background probe.
-	service.statusCache.Set("local-ok", StatusEntry{ConnectionStatus: false, CheckedAt: time.Now().Add(-time.Minute)})
+	service.statusCache.Set("local-ok", StatusEntry{ConnectionStatus: new(false), CheckedAt: time.Now().Add(-time.Minute)})
 	targets, err := service.GetAllTargets()
 	if err != nil {
 		t.Fatal(err)
 	}
 	entries := service.GetStatusEntries(targets)
-	if entries["local-ok"].ConnectionStatus {
+	if entries["local-ok"].ConnectionStatus == nil || *entries["local-ok"].ConnectionStatus {
 		t.Fatal("stale entry should be served unchanged")
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		okEntry, okFound := service.statusCache.Get("local-ok")
 		_, missingFound := service.statusCache.Get("local-missing")
-		if okFound && missingFound && okEntry.ConnectionStatus && time.Since(okEntry.CheckedAt) < statusRevalidateAfter {
+		if okFound && missingFound && okEntry.ConnectionStatus != nil && *okEntry.ConnectionStatus && time.Since(okEntry.CheckedAt) < statusRevalidateAfter {
 			break
 		}
 		if time.Now().After(deadline) {
