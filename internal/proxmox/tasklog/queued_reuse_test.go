@@ -2,7 +2,10 @@
 
 package tasklog
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // NewQueuedTask must hand back the live task for the same worker so retries
 // keep one UPID and log, and mint a fresh task only after Close.
@@ -39,6 +42,29 @@ func TestNewQueuedTaskReusesLiveTask(t *testing.T) {
 	}
 	if got := QueuedState(first.UPID()); got != "" {
 		t.Fatalf("state after close = %q, want cleared", got)
+	}
+	fresh.Close()
+}
+
+func TestNewQueuedTaskFreshAfterCancelClose(t *testing.T) {
+	setupTaskDirs(t)
+
+	minted, err := NewQueuedTask("backup", "job-9", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upid := minted.UPID()
+	minted.CloseErr(errors.New("operation canceled"))
+
+	fresh, err := NewQueuedTask("backup", "job-9", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh == minted {
+		t.Fatal("canceled-closed task reused")
+	}
+	if fresh.UPID() == upid {
+		t.Fatalf("fresh task kept canceled UPID %q", upid)
 	}
 	fresh.Close()
 }
