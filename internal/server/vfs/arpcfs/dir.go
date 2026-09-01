@@ -63,22 +63,10 @@ func (s *DirStream) HasNext() bool {
 
 		"handleId", s.handleId, "path", s.path)
 
-	req := fswire.ReadDirReq{HandleID: s.handleId}
-	readBuf := bufPool.Get().([]byte)
-	defer bufPool.Put(readBuf)
-
-	pipe, err := s.fs.getPipe(s.fs.Ctx)
-	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return false
-	}
-
-	bytesRead, err := pipe.CallBinary(s.fs.Ctx, "ReadDir", &req, readBuf)
+	entries, err := s.fetchBatch(s.fs.Ctx)
 	log.Debug("hasNext RPC completed",
 
-		"path", s.path, "error", err, "bytesRead", bytesRead)
+		"path", s.path, "error", err)
 
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
@@ -96,29 +84,11 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if bytesRead == 0 {
-		log.Debug("hasNext: no bytes read, end of directory reached",
-
-			"totalEntriesReturned", s.totalReturned.Load(), "path", s.path)
-
-		return false
-	}
-
 	oldLen := len(s.lastResp)
-	s.lastResp = nil
+	s.lastResp = entries
 	log.Debug("hasNext: decoding new batch",
 
-		"oldBatchLen", oldLen, "bytesRead", bytesRead, "path", s.path)
-
-	err = s.cborDec.Unmarshal(readBuf[:bytesRead], &s.lastResp)
-	if err != nil {
-		log.Error(err,
-			"HasNext: decode failed, closing dirstream",
-
-			"entriesReturned", s.totalReturned.Load(), "bytesRead", bytesRead, "path", s.path)
-
-		return false
-	}
+		"oldBatchLen", oldLen, "path", s.path)
 
 	newBatchLen := len(s.lastResp)
 	log.Debug("hasNext decoded batch",
@@ -152,6 +122,35 @@ func (s *DirStream) HasNext() bool {
 		"curIdx", s.curIdx.Load(), "batchSize", newBatchLen, "path", s.path)
 
 	return newBatchLen > 0
+}
+
+func (s *DirStream) fetchBatch(ctx context.Context) (fswire.ReadDirEntries, error) {
+	if s.fetch != nil {
+		return s.fetch(ctx)
+	}
+
+	req := fswire.ReadDirReq{HandleID: s.handleId}
+	readBuf := bufPool.Get().([]byte)
+	defer bufPool.Put(readBuf)
+
+	pipe, err := s.fs.getPipe(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bytesRead, err := pipe.CallBinary(ctx, "ReadDir", &req, readBuf)
+	if err != nil {
+		return nil, err
+	}
+	if bytesRead == 0 {
+		return nil, os.ErrProcessDone
+	}
+
+	var entries fswire.ReadDirEntries
+	if err := s.cborDec.Unmarshal(readBuf[:bytesRead], &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
@@ -321,4 +320,5 @@ type DirStream struct {
 	curIdx        atomic.Uint64
 	totalReturned atomic.Uint64
 	cborDec       cbor.DecMode
+	fetch         func(context.Context) (fswire.ReadDirEntries, error)
 }
