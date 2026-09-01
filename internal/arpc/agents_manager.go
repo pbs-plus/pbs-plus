@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/quic-go/quic-go"
@@ -27,6 +26,8 @@ type AgentsManager struct {
 
 	mu                sync.Mutex
 	customExpectCheck func(string, []*x509.Certificate) bool
+
+	regMu sync.Mutex
 }
 
 func NewAgentsManager() *AgentsManager {
@@ -149,13 +150,6 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		return nil, "", err
 	}
 
-	if existingSession, exists := sm.sessions.Get(clientID); exists {
-		existingSession.Close()
-	}
-	if existingQuic, exists := sm.quicSessions.Get(clientID); exists {
-		existingQuic.Close()
-	}
-
 	if !sm.isExpected(clientID, state.PeerCertificates) {
 		return nil, "", errors.New("connection is not expected by server")
 	}
@@ -165,40 +159,32 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 		return nil, "", err
 	}
 
+	sm.regMu.Lock()
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
-		log.Error(err, "agent reconnecting, creating a new pipe", "hostname", clientID)
 	}
-
-	router := NewRouter()
-	router.Handle("echo", func(req *Request) (Response, error) {
-		var msg string
-		if err := cbor.Unmarshal(req.Payload, &msg); err != nil {
-			return Response{}, WrapError(err)
-		}
-		data, err := cbor.Marshal(msg)
-		if err != nil {
-			return Response{}, WrapError(err)
-		}
-		return Response{Status: 200, Data: data}, nil
-	})
-	pipe.SetRouter(router)
-
+	if existingQuic, exists := sm.quicSessions.Get(clientID); exists {
+		existingQuic.Close()
+	}
 	sm.sessions.Set(clientID, pipe)
+	sm.regMu.Unlock()
 	log.Info("agent successfully connected", "hostname", clientID)
 
 	return pipe, clientID, nil
 }
 
 func (sm *AgentsManager) GetStreamPipe(clientID string) (*StreamPipe, bool) {
-	return sm.sessions.Get(clientID)
+	pipe, ok := sm.sessions.Get(clientID)
+	if !ok {
+		return nil, false
+	}
+	if pipe.GetState() != StateConnected {
+		return nil, false
+	}
+	return pipe, true
 }
 
 func (sm *AgentsManager) WaitStreamPipe(ctx context.Context, clientID string) (*StreamPipe, error) {
-	if pipe, ok := sm.sessions.Get(clientID); ok {
-		return pipe, nil
-	}
-
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -207,68 +193,65 @@ func (sm *AgentsManager) WaitStreamPipe(ctx context.Context, clientID string) (*
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
-			if pipe, ok := sm.sessions.Get(clientID); ok {
+			if pipe, ok := sm.GetStreamPipe(clientID); ok {
 				return pipe, nil
 			}
 		}
 	}
 }
 
-func (sm *AgentsManager) unregisterStreamPipe(clientID string) {
-	_, exists := sm.sessions.GetAndDel(clientID)
-	if exists {
+// unregisterStreamIfCurrent drops the registration only when the map still holds this exact pipe (reconnect-safe).
+func (sm *AgentsManager) unregisterStreamIfCurrent(clientID string, pipe *StreamPipe) {
+	sm.regMu.Lock()
+	defer sm.regMu.Unlock()
+	if cur, ok := sm.sessions.Get(clientID); ok && cur == pipe {
+		sm.sessions.Del(clientID)
 		log.Info("agent disconnected", "hostname", clientID)
+		sm.rateLimiters.Del(clientID)
 	}
-	sm.rateLimiters.Del(clientID)
 }
 
-func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, tlsState *tls.ConnectionState, headers http.Header) (string, error) {
+func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, tlsState *tls.ConnectionState, headers http.Header) (*QuicPipe, string, error) {
 	if err := sm.validateTLSState(tlsState); err != nil {
-		return "", err
+		return nil, "", err
 	}
 
 	state := *tlsState
 	clientID := sm.getClientId(state, headers)
 
 	if err := sm.checkRateLimit(clientID); err != nil {
-		return "", err
+		return nil, "", err
 	}
 
+	if !sm.isExpected(clientID, state.PeerCertificates) {
+		return nil, "", errors.New("connection is not expected by server")
+	}
+
+	qPipe := NewQuicServerPipe(ctx, conn)
+
+	sm.regMu.Lock()
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
 		existingSession.Close()
 	}
 	if existingQuic, exists := sm.quicSessions.Get(clientID); exists {
 		existingQuic.Close()
 	}
-
-	if !sm.isExpected(clientID, state.PeerCertificates) {
-		return "", errors.New("connection is not expected by server")
-	}
-
-	qPipe := NewQuicServerPipe(ctx, conn)
-
-	router := NewRouter()
-	router.Handle("echo", func(req *Request) (Response, error) {
-		var msg string
-		if err := cbor.Unmarshal(req.Payload, &msg); err != nil {
-			return Response{}, WrapError(err)
-		}
-		data, err := cbor.Marshal(msg)
-		if err != nil {
-			return Response{}, WrapError(err)
-		}
-		return Response{Status: 200, Data: data}, nil
-	})
-	qPipe.SetRouter(router)
-
 	sm.quicSessions.Set(clientID, qPipe)
+	sm.regMu.Unlock()
 	log.Info("agent connected via QUIC", "hostname", clientID)
 
-	return clientID, nil
+	return qPipe, clientID, nil
 }
 
 func (sm *AgentsManager) GetQuicPipe(clientID string) (*QuicPipe, bool) {
-	return sm.quicSessions.Get(clientID)
+	pipe, ok := sm.quicSessions.Get(clientID)
+	if !ok {
+		return nil, false
+	}
+	if pipe.GetState() != StateConnected {
+		return nil, false
+	}
+	return pipe, true
 }
 
 // IsOnline reports whether the agent currently holds a live session (QUIC or stream).
@@ -280,12 +263,15 @@ func (sm *AgentsManager) IsOnline(clientID string) bool {
 	return ok
 }
 
-func (sm *AgentsManager) unregisterQuicPipe(clientID string) {
-	_, exists := sm.quicSessions.GetAndDel(clientID)
-	if exists {
+// unregisterQuicIfCurrent drops the registration only when the map still holds this exact pipe (reconnect-safe).
+func (sm *AgentsManager) unregisterQuicIfCurrent(clientID string, pipe *QuicPipe) {
+	sm.regMu.Lock()
+	defer sm.regMu.Unlock()
+	if cur, ok := sm.quicSessions.Get(clientID); ok && cur == pipe {
+		sm.quicSessions.Del(clientID)
 		log.Info("agent QUIC disconnected", "hostname", clientID)
+		sm.rateLimiters.Del(clientID)
 	}
-	sm.rateLimiters.Del(clientID)
 }
 
 func (sm *AgentsManager) validateTLSState(state *tls.ConnectionState) error {

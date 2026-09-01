@@ -479,7 +479,7 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 			pCtx, pCan := context.WithCancel(ctx)
 			defer pCan()
 
-			sessionID, err := agentsManager.registerQuicPipe(pCtx, c, &tlsState, reqHeaders)
+			qPipe, sessionID, err := agentsManager.registerQuicPipe(pCtx, c, &tlsState, reqHeaders)
 			if err != nil {
 				log.Error(err,
 					"QUIC: registration failed")
@@ -487,10 +487,9 @@ func ServeQuic(ctx context.Context, agentsManager *AgentsManager, listener *quic
 				return
 			}
 
-			qPipe := NewQuicServerPipe(pCtx, c)
 			defer func() {
 				qPipe.Close()
-				agentsManager.unregisterQuicPipe(sessionID)
+				agentsManager.unregisterQuicIfCurrent(sessionID, qPipe)
 			}()
 
 			qPipe.SetRouter(router)

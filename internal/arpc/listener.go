@@ -154,14 +154,14 @@ func Serve(ctx context.Context, agentsManager *AgentsManager, listener net.Liste
 				log.Debug("failed to send success marker")
 				_ = stream.Close()
 				pipe.Close()
-				agentsManager.unregisterStreamPipe(id)
+				agentsManager.unregisterStreamIfCurrent(id, pipe)
 				return
 			}
 			_ = stream.Close()
 
 			defer func() {
 				pipe.Close()
-				agentsManager.unregisterStreamPipe(id)
+				agentsManager.unregisterStreamIfCurrent(id, pipe)
 			}()
 
 			pipe.SetRouter(router)

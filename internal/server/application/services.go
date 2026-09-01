@@ -504,10 +504,6 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 			entries[tgt.Name] = entry
 			if time.Since(entry.CheckedAt) >= statusRevalidateAfter {
 				probe(tgt)
-			} else if tgt.IsAgent() && entry.ConnectionStatus != nil &&
-				*entry.ConnectionStatus != s.agentsMgr.IsOnline(tgt.GetHostname()) {
-				// cached verdict disagrees with the live session map: reprobe now
-				probe(tgt)
 			}
 			continue
 		}
