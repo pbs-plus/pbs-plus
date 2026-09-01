@@ -1,0 +1,345 @@
+//go:build linux
+
+package arpcfs
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"hash/crc32"
+	"io"
+	"math/rand"
+	"syscall"
+	"testing"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
+	"github.com/puzpuzpuz/xsync/v4"
+)
+
+func readAtBytes(b []byte) func(ctx context.Context, p []byte, off int64) (int, error) {
+	r := bytes.NewReader(b)
+	return func(ctx context.Context, p []byte, off int64) (int, error) {
+		return r.ReadAt(p, off)
+	}
+}
+
+func buildTestZip(t *testing.T, files map[string]int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, size := range files {
+		hdr := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		if len(name) > 5 && name[:5] == "store" {
+			hdr.Method = zip.Store
+		}
+		w, err := zw.CreateHeader(hdr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prng := rand.New(rand.NewSource(int64(crc32.ChecksumIEEE([]byte(name)))))
+		if _, err := io.CopyN(w, prng, int64(size)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func testOverlay(t *testing.T, data []byte) *zipOverlay {
+	t.Helper()
+	ov, err := parseZipOverlay(readAtBytes(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("parseZipOverlay: %v", err)
+	}
+	ov.zipPath = "/data/test.zip"
+	return ov
+}
+
+func testFS(ovs ...*zipOverlay) *ARPCFS {
+	fs := &ARPCFS{
+		VFSBase: &vfs.VFSBase{
+			FileCount:     xsync.NewCounter(),
+			FolderCount:   xsync.NewCounter(),
+			TotalBytes:    xsync.NewCounter(),
+			StatCacheHits: xsync.NewCounter(),
+		},
+		expandArchives: true,
+		zipOverlays:    map[string]*zipOverlay{},
+		zipAnchors:     map[string][]*zipOverlay{},
+		zipSkipped:     map[string]struct{}{},
+	}
+	for _, ov := range ovs {
+		fs.zipOverlays[ov.zipPath] = ov
+		anchor := "/"
+		if i := len(ov.zipPath) - 1; i >= 0 {
+			for j := i - 1; j >= 0; j-- {
+				if ov.zipPath[j] == '/' {
+					anchor = ov.zipPath[:j]
+					if anchor == "" {
+						anchor = "/"
+					}
+					break
+				}
+			}
+		}
+		fs.zipAnchors[anchor] = append(fs.zipAnchors[anchor], ov)
+	}
+	return fs
+}
+
+func TestZipParseAndResolve(t *testing.T) {
+	data := buildTestZip(t, map[string]int{
+		"store.txt":     4096,
+		"big.bin":       3 << 20,
+		"dir/nested.tx": 1000,
+	})
+	ov := testOverlay(t, data)
+
+	for _, name := range []string{"store.txt", "big.bin", "dir/nested.tx"} {
+		if _, ok := ov.byName[name]; !ok {
+			t.Errorf("byName missing %s", name)
+		}
+	}
+	if _, ok := ov.byName["dir"]; ok {
+		t.Error("dir path registered as file")
+	}
+	if ov.dirs[""] == nil || ov.dirs["dir"] == nil {
+		t.Fatal("missing virtual dirs")
+	}
+	var rootNames []string
+	for _, c := range ov.dirs[""].children {
+		rootNames = append(rootNames, c.name)
+	}
+	if len(rootNames) != 3 {
+		t.Errorf("root children = %v", rootNames)
+	}
+
+	fs := testFS(ov)
+	if fi, errno, ok := fs.zipAttr("/data/test.zip"); !ok || !errors.Is(errno, syscall.ENOENT) {
+		t.Errorf("hidden zip: ok=%v errno=%v fi=%+v", ok, errno, fi)
+	}
+	if fi, errno, ok := fs.zipAttr("/data/store.txt"); !ok || errno != nil || fi.Size != 4096 || fi.IsDir {
+		t.Errorf("file attr: ok=%v errno=%v fi=%+v", ok, errno, fi)
+	}
+	if fi, errno, ok := fs.zipAttr("/data/dir"); !ok || errno != nil || !fi.IsDir {
+		t.Errorf("dir attr: ok=%v errno=%v fi=%+v", ok, errno, fi)
+	}
+	if fi, errno, ok := fs.zipAttr("/data/dir/nested.tx"); !ok || errno != nil || fi.Size != 1000 {
+		t.Errorf("nested attr: ok=%v errno=%v fi=%+v", ok, errno, fi)
+	}
+	if _, _, ok := fs.zipAttr("/data/nope"); ok {
+		t.Error("unknown path handled; must fall through to agent")
+	}
+}
+
+func TestZipReadStore(t *testing.T) {
+	data := buildTestZip(t, map[string]int{"store.txt": 1 << 16})
+	ov := testOverlay(t, data)
+	idx := ov.byName["store.txt"]
+	zs := &zipFileState{ov: ov, ent: &ov.entries[idx], uncomp: ov.entries[idx].uncompSize}
+
+	want := contentOf(t, data, "store.txt")
+	var dest []byte
+	for _, off := range []int64{0, 7, 30000, 65535} {
+		dest = make([]byte, 512)
+		n, err := zs.ReadAt(context.Background(), dest, off)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read@%d: %v", off, err)
+		}
+		if got := string(dest[:n]); got != string(want[off:off+int64(n)]) {
+			t.Errorf("read@%d mismatch", off)
+		}
+	}
+	n, err := zs.ReadAt(context.Background(), dest, 1<<16)
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Errorf("past EOF: n=%d err=%v", n, err)
+	}
+}
+
+func TestZipReadDeflate(t *testing.T) {
+	data := buildTestZip(t, map[string]int{"big.bin": 3 << 20})
+	ov := testOverlay(t, data)
+	idx := ov.byName["big.bin"]
+	e := &ov.entries[idx]
+	if e.method != 8 {
+		t.Fatalf("method = %d, want deflate", e.method)
+	}
+	zs := &zipFileState{ov: ov, ent: e, uncomp: e.uncompSize}
+	want := contentOf(t, data, "big.bin")
+
+	dest := make([]byte, 128<<10)
+	var off int64
+	for off < int64(len(want)) {
+		n, err := zs.ReadAt(context.Background(), dest, off)
+		if n > 0 && string(dest[:n]) != string(want[off:off+int64(n)]) {
+			t.Fatalf("sequential mismatch at %d", off)
+		}
+		off += int64(n)
+		if err != nil {
+			break
+		}
+	}
+	if off != int64(len(want)) {
+		t.Errorf("sequential read got %d bytes, want %d", off, len(want))
+	}
+
+	zs2 := &zipFileState{ov: ov, ent: e, uncomp: e.uncompSize}
+	buf := make([]byte, 4096)
+	n, err := zs2.ReadAt(context.Background(), buf, int64(len(want))-100)
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("tail read: %v", err)
+	}
+	if string(buf[:n]) != string(want[len(want)-100:]) {
+		t.Error("tail mismatch")
+	}
+	n, err = zs2.ReadAt(context.Background(), buf, 5)
+	if err != nil {
+		t.Fatalf("backward read: %v", err)
+	}
+	if string(buf[:n]) != string(want[5:5+n]) {
+		t.Error("backward (restart) mismatch")
+	}
+
+	zs3 := &zipFileState{ov: ov, ent: e, uncomp: e.uncompSize}
+	n, err = zs3.ReadAt(context.Background(), buf, (2<<20)+37)
+	if err != nil {
+		t.Fatalf("forward jump: %v", err)
+	}
+	if string(buf[:n]) != string(want[(2<<20)+37:])[:n] {
+		t.Error("forward jump mismatch")
+	}
+	if zs3.Lseek(0, 4) != uint64(len(want)) {
+		t.Error("SEEK_HOLE not dense-EOF")
+	}
+	if zs3.Lseek(10, 3) != 10 {
+		t.Error("SEEK_DATA not identity")
+	}
+}
+
+func TestZipMergeStream(t *testing.T) {
+	data := buildTestZip(t, map[string]int{
+		"alpha.txt": 10,
+		"sub/beta":  20,
+		"gamma.txt": 30,
+	})
+	ov := testOverlay(t, data)
+	fs := testFS(ov)
+
+	s := &zipMergeStream{fs: fs, path: "/data"}
+	got := map[string]bool{}
+	for s.HasNext() {
+		e, errno := s.Next()
+		if errno != 0 {
+			t.Fatalf("Next: %d", errno)
+		}
+		got[e.Name] = true
+	}
+	s.Close()
+	for _, want := range []string{"alpha.txt", "sub", "gamma.txt"} {
+		if !got[want] {
+			t.Errorf("missing %s in merged listing: %v", want, got)
+		}
+	}
+	if fs.FileCount.Value() != 2 || fs.FolderCount.Value() != 1 {
+		t.Errorf("counters: files=%d dirs=%d", fs.FileCount.Value(), fs.FolderCount.Value())
+	}
+}
+
+type rawEntry struct {
+	name   string
+	method uint16
+	uncomp uint32
+	comp   uint32
+}
+
+func buildRawZip(entries []rawEntry) []byte {
+	var buf bytes.Buffer
+	for range entries {
+		buf.Write([]byte("PK\x03\x04"))
+		buf.Write(make([]byte, 26))
+	}
+	cdStart := buf.Len()
+	for _, e := range entries {
+		var h [46]byte
+		binary.LittleEndian.PutUint32(h[0:], 0x02014b50)
+		binary.LittleEndian.PutUint16(h[10:], e.method)
+		binary.LittleEndian.PutUint32(h[20:], e.comp)
+		binary.LittleEndian.PutUint32(h[24:], e.uncomp)
+		binary.LittleEndian.PutUint16(h[28:], uint16(len(e.name)))
+		buf.Write(h[:])
+		buf.WriteString(e.name)
+	}
+	cdSize := buf.Len() - cdStart
+	var eocd [22]byte
+	binary.LittleEndian.PutUint32(eocd[0:], 0x06054b50)
+	binary.LittleEndian.PutUint16(eocd[8:], uint16(len(entries)))
+	binary.LittleEndian.PutUint16(eocd[10:], uint16(len(entries)))
+	binary.LittleEndian.PutUint32(eocd[12:], uint32(cdSize))
+	binary.LittleEndian.PutUint32(eocd[16:], uint32(cdStart))
+	buf.Write(eocd[:])
+	return buf.Bytes()
+}
+
+func TestZipGatesAndNames(t *testing.T) {
+	bomb := buildRawZip([]rawEntry{{name: "huge.bin", method: 0, uncomp: 300 << 20, comp: 4}})
+	if _, err := parseZipOverlay(readAtBytes(bomb), int64(len(bomb))); !errors.Is(err, errZipBomb) {
+		t.Errorf("bomb: err=%v", err)
+	}
+
+	big := buildRawZip([]rawEntry{{name: "a", method: 0, uncomp: 1, comp: 1}})
+	eocdOff := len(big) - 22
+	binary.LittleEndian.PutUint16(big[eocdOff+10:], zipMaxEntries+1)
+	if _, err := parseZipOverlay(readAtBytes(big), int64(len(big))); !errors.Is(err, errZipTooMany) {
+		t.Errorf("too many: err=%v", err)
+	}
+
+	trav := buildRawZip([]rawEntry{
+		{name: "../../evil", method: 0, uncomp: 1, comp: 1},
+		{name: "ok.txt", method: 0, uncomp: 1, comp: 1},
+	})
+	ov, err := parseZipOverlay(readAtBytes(trav), int64(len(trav)))
+	if err != nil {
+		t.Fatalf("traversal parse: %v", err)
+	}
+	if _, ok := ov.byName["../../evil"]; ok {
+		t.Error("traversal name exposed")
+	}
+	if _, ok := ov.byName["ok.txt"]; !ok {
+		t.Error("valid sibling dropped")
+	}
+
+	enc := buildRawZip([]rawEntry{{name: "x", method: 8, uncomp: 1, comp: 1}})
+	binary.LittleEndian.PutUint16(enc[30+8:], 1)
+	if _, err := parseZipOverlay(readAtBytes(enc), int64(len(enc))); !errors.Is(err, errZipUnsupported) {
+		t.Errorf("encrypted: err=%v", err)
+	}
+}
+
+func contentOf(t *testing.T, data []byte, name string) []byte {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range zr.File {
+		if f.Name != name {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rc.Close()
+		b, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	t.Fatalf("entry %s not found", name)
+	return nil
+}
