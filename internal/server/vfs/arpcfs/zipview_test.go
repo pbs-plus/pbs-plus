@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"math/rand"
@@ -52,7 +53,7 @@ func buildTestZip(t *testing.T, files map[string]int) []byte {
 
 func testOverlay(t *testing.T, data []byte) *zipOverlay {
 	t.Helper()
-	ov, err := parseZipOverlay(readAtBytes(data), int64(len(data)))
+	ov, err := parseZipOverlay(readAtBytes(data), int64(len(data)), zipMaxEntries)
 	if err != nil {
 		t.Fatalf("parseZipOverlay: %v", err)
 	}
@@ -328,22 +329,42 @@ func buildRawZip(entries []rawEntry) []byte {
 
 func TestZipGatesAndNames(t *testing.T) {
 	bomb := buildRawZip([]rawEntry{{name: "huge.bin", method: 0, uncomp: 300 << 20, comp: 4}})
-	if _, err := parseZipOverlay(readAtBytes(bomb), int64(len(bomb))); !errors.Is(err, errZipBomb) {
+	if _, err := parseZipOverlay(readAtBytes(bomb), int64(len(bomb)), zipMaxEntries); !errors.Is(err, errZipBomb) {
 		t.Errorf("bomb: err=%v", err)
 	}
 
 	big := buildRawZip([]rawEntry{{name: "a", method: 0, uncomp: 1, comp: 1}})
 	eocdOff := len(big) - 22
 	binary.LittleEndian.PutUint16(big[eocdOff+10:], zipMaxEntries+1)
-	if _, err := parseZipOverlay(readAtBytes(big), int64(len(big))); !errors.Is(err, errZipTooMany) {
+	if _, err := parseZipOverlay(readAtBytes(big), int64(len(big)), zipMaxEntries); !errors.Is(err, errZipTooMany) {
 		t.Errorf("too many: err=%v", err)
+	}
+
+	var manyBuf bytes.Buffer
+	mzw := zip.NewWriter(&manyBuf)
+	for i := 0; i <= zipMaxEntries; i++ {
+		w, err := mzw.CreateHeader(&zip.FileHeader{Name: fmt.Sprintf("f%06d", i), Method: zip.Store})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte("x"))
+	}
+	if err := mzw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	many := manyBuf.Bytes()
+	if _, err := parseZipOverlay(readAtBytes(many), int64(len(many)), zipMaxEntries); !errors.Is(err, errZipTooMany) {
+		t.Errorf("real many: err=%v", err)
+	}
+	if _, err := parseZipOverlay(readAtBytes(many), int64(len(many)), zipMaxEntries+1); err != nil {
+		t.Errorf("entry limit override rejected: %v", err)
 	}
 
 	trav := buildRawZip([]rawEntry{
 		{name: "../../evil", method: 0, uncomp: 1, comp: 1},
 		{name: "ok.txt", method: 0, uncomp: 1, comp: 1},
 	})
-	ov, err := parseZipOverlay(readAtBytes(trav), int64(len(trav)))
+	ov, err := parseZipOverlay(readAtBytes(trav), int64(len(trav)), zipMaxEntries)
 	if err != nil {
 		t.Fatalf("traversal parse: %v", err)
 	}
@@ -356,7 +377,7 @@ func TestZipGatesAndNames(t *testing.T) {
 
 	enc := buildRawZip([]rawEntry{{name: "x", method: 8, uncomp: 1, comp: 1}})
 	binary.LittleEndian.PutUint16(enc[30+8:], 1)
-	if _, err := parseZipOverlay(readAtBytes(enc), int64(len(enc))); !errors.Is(err, errZipUnsupported) {
+	if _, err := parseZipOverlay(readAtBytes(enc), int64(len(enc)), zipMaxEntries); !errors.Is(err, errZipUnsupported) {
 		t.Errorf("encrypted: err=%v", err)
 	}
 }

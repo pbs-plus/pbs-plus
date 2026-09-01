@@ -153,6 +153,9 @@ var backupJobEdit = js.EditWindow{
 							InputValue: "true", UncheckedValue: "false",
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Presents zip files to the backup as their extracted contents, merged into the folder holding the archive. " +
 								"Improves deduplication for changed files inside zips. The archive itself is not stored separately.")}},
+						js.Field{XType: "proxmoxtextfield", Label: "Max archive entries to expand", EmptyText: "10000", Name: "expand-max-entries",
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Overrides the entry limit when expanding archives. Empty uses the default of 10000. " +
+								"Raise this for jobs whose large archives should expand instead of backing up whole.")}},
 					)},
 				),
 				ColumnB: js.Items(

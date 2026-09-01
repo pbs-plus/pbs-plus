@@ -173,7 +173,7 @@ func zipMode(versionMadeBy uint16, extAttrs uint32) (perm uint32, isDir bool, is
 }
 
 // parseZipOverlay applies gates then parses the whole central dir in one read.
-func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size int64) (*zipOverlay, error) {
+func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size, maxEntries int64) (*zipOverlay, error) {
 	tailLen := min(size, int64(zipTailMax))
 	tail := make([]byte, tailLen)
 	if _, err := readAt(context.Background(), tail, size-tailLen); err != nil && !errors.Is(err, io.EOF) {
@@ -213,8 +213,8 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		cdOffset = int64(binary.LittleEndian.Uint64(z64[48:]))
 	}
 
-	if totalEntries > zipMaxEntries {
-		return nil, fmt.Errorf("%w: %d entries exceeds %d", errZipTooMany, totalEntries, zipMaxEntries)
+	if int64(totalEntries) > maxEntries {
+		return nil, fmt.Errorf("%w: %d entries exceeds %d", errZipTooMany, totalEntries, maxEntries)
 	}
 	if cdSize <= 0 || cdOffset < 0 || cdOffset+cdSize > size {
 		return nil, errZipCorrupt
@@ -532,10 +532,7 @@ func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int
 				return total, err
 			}
 		}
-		chunk := len(zs.ring) / 2
-		if chunk > len(dest)-total {
-			chunk = len(dest) - total
-		}
+		chunk := min(len(zs.ring)/2, len(dest)-total)
 		if err := zs.fill(cur, cur+int64(chunk)); err != nil {
 			return total, err
 		}
@@ -650,7 +647,11 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 		return false
 	}
 
-	ov, err := parseArchiveOverlay(src.ReadAt, size)
+	maxEntries := int64(zipMaxEntries)
+	if fs.expandMaxEntries > 0 {
+		maxEntries = int64(fs.expandMaxEntries)
+	}
+	ov, err := parseArchiveOverlay(src.ReadAt, size, maxEntries)
 	if err != nil {
 		src.Close(ctx)
 		fs.zipMu.Lock()

@@ -18,28 +18,28 @@ const m7z uint16 = 0x8000
 var magic7z = [6]byte{'7', 'z', 0xbc, 0xaf, 0x27, 0x1c}
 
 // parseArchiveOverlay sniffs the magic and dispatches to the matching parser.
-func parseArchiveOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size int64) (*zipOverlay, error) {
+func parseArchiveOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size, maxEntries int64) (*zipOverlay, error) {
 	var magic [6]byte
 	if _, err := readAt(context.Background(), magic[:], 0); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 	if magic == magic7z {
-		return parseSevenZipOverlay(readAt, size)
+		return parseSevenZipOverlay(readAt, size, maxEntries)
 	}
-	return parseZipOverlay(readAt, size)
+	return parseZipOverlay(readAt, size, maxEntries)
 }
 
 // parseSevenZipOverlay expands a 7z into the shared overlay. Solid folders are
 // fine: readdir emits pack order and the library pools folder decoders.
 // ponytail: per-open LZMA dict is sized by archive properties; ulikunitz
 // rejects absurd dicts, which demotes via the probe.
-func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size int64) (*zipOverlay, error) {
+func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size, maxEntries int64) (*zipOverlay, error) {
 	zr, err := sevenzip.NewReader(zipSrc{readAt}, size)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errZipUnsupported, err)
 	}
-	if len(zr.File) > zipMaxEntries {
-		return nil, fmt.Errorf("%w: %d entries exceeds %d", errZipTooMany, len(zr.File), zipMaxEntries)
+	if int64(len(zr.File)) > maxEntries {
+		return nil, fmt.Errorf("%w: %d entries exceeds %d", errZipTooMany, len(zr.File), maxEntries)
 	}
 	if err := sevenProbeFirst(zr); err != nil {
 		return nil, err

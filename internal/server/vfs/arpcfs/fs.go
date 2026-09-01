@@ -85,11 +85,12 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			Backup:   backup,
 			Memcache: memcache.New(memcachePath),
 		}),
-		Hostname:       hostname,
-		backupMode:     backupMode,
-		expandArchives: backup.ExpandArchives,
-		agentManager:   agentManager,
-		sessionId:      sessionId,
+		Hostname:         hostname,
+		backupMode:       backupMode,
+		expandArchives:   backup.ExpandArchives,
+		expandMaxEntries: backup.ExpandMaxEntries,
+		agentManager:     agentManager,
+		sessionId:        sessionId,
 	}
 	log.Debug("aRPCFS initialized",
 
@@ -545,10 +546,11 @@ type ARPCFS struct {
 	backupMode   string
 	loggedPaths  sync.Map
 
-	expandArchives bool
-	zipMu          sync.RWMutex
-	zipOverlays    map[string]*zipOverlay
-	zipSkipped     map[string]struct{}
-	zipAnchors     map[string][]*zipOverlay
-	zipBytes       int64
+	expandArchives   bool
+	expandMaxEntries int
+	zipMu            sync.RWMutex
+	zipOverlays      map[string]*zipOverlay
+	zipSkipped       map[string]struct{}
+	zipAnchors       map[string][]*zipOverlay
+	zipBytes         int64
 }

@@ -222,6 +222,11 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			expandArchives = false
 		}
 
+		expandMaxEntries, err := strconv.Atoi(r.FormValue("expand-max-entries"))
+		if err != nil || expandMaxEntries < 0 {
+			expandMaxEntries = 0
+		}
+
 		id := r.FormValue("id")
 		err = validate.ValidateJobId(id)
 		if err != nil && id != "" {
@@ -285,6 +290,7 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			IncludeXattr:     includeXattr,
 			LegacyXattr:      legacyXattr,
 			ExpandArchives:   expandArchives,
+			ExpandMaxEntries: expandMaxEntries,
 			DatabaseScope:    r.FormValue("database_scope"),
 			DatabaseName:     r.FormValue("database_name"),
 		}
@@ -411,6 +417,14 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 					expandArchives = false
 				}
 				backup.ExpandArchives = expandArchives
+			}
+
+			if r.FormValue("expand-max-entries") != "" {
+				expandMaxEntries, err := strconv.Atoi(r.FormValue("expand-max-entries"))
+				if err != nil || expandMaxEntries < 0 {
+					expandMaxEntries = 0
+				}
+				backup.ExpandMaxEntries = expandMaxEntries
 			}
 
 			preScript := r.FormValue("pre_script")

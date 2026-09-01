@@ -142,6 +142,7 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 		PostScript:         backup.PostScript,
 		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
 		ExpandArchives:     boolToNullInt64(backup.ExpandArchives),
+		ExpandMaxEntries:   toNullInt64(backup.ExpandMaxEntries),
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
 		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
 		RetryCount:         toNullInt64(backup.History.RetryCount),
@@ -231,6 +232,7 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 		PostScript:     row.PostScript,
 		IncludeXattr:   fromNullInt64ToBool(row.IncludeXattr),
 		ExpandArchives: fromNullInt64ToBool(row.ExpandArchives),
+		ExpandMaxEntries: fromNullInt64(row.ExpandMaxEntries),
 		LegacyXattr:    fromNullInt64ToBool(row.LegacyXattr),
 		DatabaseScope:  row.DatabaseScope,
 		DatabaseName:   row.DatabaseName,
@@ -429,6 +431,7 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 		MaxDirEntries:      toNullInt64(backup.MaxDirEntries),
 		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
 		ExpandArchives:     boolToNullInt64(backup.ExpandArchives),
+		ExpandMaxEntries:   toNullInt64(backup.ExpandMaxEntries),
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
 		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
 		RetryCount:         toNullInt64(backup.History.RetryCount),
@@ -576,6 +579,7 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			PostScript:     row.PostScript,
 			IncludeXattr:   fromNullInt64ToBool(row.IncludeXattr),
 			ExpandArchives: fromNullInt64ToBool(row.ExpandArchives),
+			ExpandMaxEntries: fromNullInt64(row.ExpandMaxEntries),
 			LegacyXattr:    fromNullInt64ToBool(row.LegacyXattr),
 			DatabaseScope:  row.DatabaseScope,
 			DatabaseName:   row.DatabaseName,
@@ -729,6 +733,7 @@ type Backup struct {
 	IncludeXattr     bool        `json:"include-xattr"`
 	LegacyXattr      bool        `json:"legacy-xattr"`
 	ExpandArchives   bool        `json:"expand-archives"`
+	ExpandMaxEntries int         `json:"expand-max-entries"`
 	Subpath          string      `json:"subpath"`
 	Schedule         string      `json:"schedule"`
 	Comment          string      `json:"comment"`

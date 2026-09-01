@@ -26,7 +26,7 @@ func loadSevenFixture(t *testing.T, name string) (*zipOverlay, []byte) {
 			return n, io.EOF
 		}
 		return n, nil
-	}, int64(len(raw)))
+	}, int64(len(raw)), zipMaxEntries)
 	if perr != nil {
 		t.Fatalf("parse %s: %v", name, perr)
 	}
@@ -119,7 +119,7 @@ func TestSevenGates(t *testing.T) {
 			}
 			return n, nil
 		}
-		if _, err := parseArchiveOverlay(ra, int64(len(raw))); !errors.Is(err, tc.want) {
+		if _, err := parseArchiveOverlay(ra, int64(len(raw)), zipMaxEntries); !errors.Is(err, tc.want) {
 			t.Errorf("%s: err = %v", tc.fixture, err)
 		}
 	}

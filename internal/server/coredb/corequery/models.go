@@ -68,6 +68,7 @@ type Backup struct {
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
 	Duration              sql.NullInt64  `json:"duration"`
 	ExpandArchives        sql.NullInt64  `json:"expand_archives"`
+	ExpandMaxEntries      sql.NullInt64  `json:"expand_max_entries"`
 }
 
 type BackupDatabaseOption struct {
