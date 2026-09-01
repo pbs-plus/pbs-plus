@@ -377,7 +377,7 @@ func TestStatDirentsDoesNotLeakWorkers(t *testing.T) {
 
 func TestStatDirentsSkipsKnownExcludedTypes(t *testing.T) {
 	for _, fileType := range []uint8{unix.DT_SOCK, unix.DT_BLK, unix.DT_CHR, unix.DT_LNK} {
-		out, err := statDirents(nil, -1, []dirent{{name: "excluded", type_: fileType}}, 4096)
+		out, err := statDirents(nil, -1, []dirent{{name: "excluded", typ: fileType}}, 4096)
 		if err != nil {
 			t.Fatalf("type %d: %v", fileType, err)
 		}
@@ -386,7 +386,7 @@ func TestStatDirentsSkipsKnownExcludedTypes(t *testing.T) {
 		}
 	}
 
-	if _, err := statDirents(nil, -1, []dirent{{name: "regular", type_: unix.DT_REG}}, 4096); err == nil {
+	if _, err := statDirents(nil, -1, []dirent{{name: "regular", typ: unix.DT_REG}}, 4096); err == nil {
 		t.Fatal("regular entry did not reach statx")
 	}
 }
