@@ -41,7 +41,7 @@ func NewDirReader(handle *os.File, path string) (*DirReader, error) {
 		pending:      make([]fswire.AgentFileInfo, 0, defaultBatchSize),
 		path:         path,
 		winFirstCall: true,
-		encodeWriter: bytes.NewBuffer(make([]byte, 0, defaultBufSize)),
+		encodeWriter: &bytes.Buffer{},
 	}
 
 	return reader, nil
