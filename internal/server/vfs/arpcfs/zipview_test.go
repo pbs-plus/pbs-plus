@@ -11,6 +11,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math/rand"
+	"sync"
 	"syscall"
 	"testing"
 
@@ -218,6 +219,47 @@ func TestZipReadDeflate(t *testing.T) {
 	if zs3.Lseek(10, 3) != 10 {
 		t.Error("SEEK_DATA not identity")
 	}
+}
+
+func TestZipConcurrentReads(t *testing.T) {
+	data := buildTestZip(t, map[string]int{"big.bin": 3 << 20})
+	ov := testOverlay(t, data)
+	idx := ov.byName["big.bin"]
+	ent := &ov.entries[idx]
+
+	ref := make([]byte, ent.uncompSize)
+	zr := &zipFileState{ov: ov, ent: ent, uncomp: ent.uncompSize}
+	if _, err := zr.ReadAt(context.Background(), ref, 0); err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("reference read: %v", err)
+	}
+
+	zs := &zipFileState{ov: ov, ent: ent, uncomp: ent.uncompSize}
+	var wg sync.WaitGroup
+	for g := range 8 {
+		wg.Add(1)
+		go func(seed int64) {
+			defer wg.Done()
+			prng := rand.New(rand.NewSource(seed))
+			for range 200 {
+				off := prng.Int63n(ent.uncompSize)
+				n := 1 + prng.Intn(64*1024)
+				if off+int64(n) > ent.uncompSize {
+					n = int(ent.uncompSize - off)
+				}
+				buf := make([]byte, n)
+				m, err := zs.ReadAt(context.Background(), buf, off)
+				if err != nil && !errors.Is(err, io.EOF) {
+					t.Errorf("read@%d: %v", off, err)
+					return
+				}
+				if !bytes.Equal(buf[:m], ref[off:off+int64(m)]) {
+					t.Errorf("read@%d: data mismatch", off)
+					return
+				}
+			}
+		}(int64(g) + 1)
+	}
+	wg.Wait()
 }
 
 func TestZipMergeStream(t *testing.T) {

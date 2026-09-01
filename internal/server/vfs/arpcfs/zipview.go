@@ -21,6 +21,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/klauspost/compress/flate"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 const (
@@ -88,6 +89,7 @@ type zipOverlay struct {
 // with a ring, so no disk and bounded memory per open file.
 // ponytail: backward reads before ringStart restart inflation from entry start.
 type zipFileState struct {
+	mu     sync.Mutex
 	fs     *ARPCFS
 	ov     *zipOverlay
 	ent    *zipEntry
@@ -464,7 +466,7 @@ func (zs *zipFileState) restart() error {
 	return nil
 }
 
-func (zs *zipFileState) fill(end int64) error {
+func (zs *zipFileState) fill(off, end int64) error {
 	if end > zs.uncomp {
 		end = zs.uncomp
 	}
@@ -472,6 +474,9 @@ func (zs *zipFileState) fill(end int64) error {
 		pos := zs.fed - zs.ringStart
 		if int(pos) == len(zs.ring) {
 			keep := len(zs.ring) / 2
+			if zs.fed-int64(keep) > off {
+				keep = int(zs.fed - off)
+			}
 			copy(zs.ring, zs.ring[len(zs.ring)-keep:])
 			zs.ringStart = zs.fed - int64(keep)
 			pos = int64(keep)
@@ -490,6 +495,10 @@ func (zs *zipFileState) fill(end int64) error {
 }
 
 func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int, error) {
+	// FUSE readahead overlaps READs on one handle; ring and decoder state
+	// are single-consumer, so serialize or the flate stream corrupts.
+	zs.mu.Lock()
+	defer zs.mu.Unlock()
 	if off >= zs.uncomp {
 		return 0, io.EOF
 	}
@@ -510,30 +519,39 @@ func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int
 		return m, nil
 	}
 
-	if zs.ring == nil {
-		if err := zs.init(ctx); err != nil {
-			return 0, err
+	total := 0
+	for total < len(dest) {
+		if zs.ring == nil {
+			if err := zs.init(ctx); err != nil {
+				return total, err
+			}
+		}
+		cur := off + int64(total)
+		if cur < zs.ringStart {
+			if err := zs.restart(); err != nil {
+				return total, err
+			}
+		}
+		chunk := len(zs.ring) / 2
+		if chunk > len(dest)-total {
+			chunk = len(dest) - total
+		}
+		if err := zs.fill(cur, cur+int64(chunk)); err != nil {
+			return total, err
+		}
+		avail := zs.fed - cur
+		if avail <= 0 {
+			return total, io.EOF
+		}
+		n := min(int64(chunk), avail)
+		start := cur - zs.ringStart
+		copy(dest[total:total+int(n)], zs.ring[start:start+n])
+		total += int(n)
+		if cur+int64(n) >= zs.uncomp {
+			return total, io.EOF
 		}
 	}
-	if off < zs.ringStart {
-		if err := zs.restart(); err != nil {
-			return 0, err
-		}
-	}
-	if err := zs.fill(off + int64(len(dest))); err != nil {
-		return 0, err
-	}
-	avail := zs.fed - off
-	if avail <= 0 {
-		return 0, io.EOF
-	}
-	n := min(int64(len(dest)), avail)
-	start := off - zs.ringStart
-	copy(dest, zs.ring[start:start+n])
-	if off+n >= zs.uncomp {
-		return int(n), io.EOF
-	}
-	return int(n), nil
+	return total, nil
 }
 
 func (zs *zipFileState) Lseek(off uint64, whence uint32) uint64 {
@@ -598,6 +616,19 @@ func (fs *ARPCFS) zipHidden(fullPath string) bool {
 	return ok
 }
 
+// warnOnce logs a one-time archive demotion notice; demotion is the
+// expected gate outcome, not an error.
+func (fs *ARPCFS) warnOnce(path string, err error) {
+	if isIgnoredPath(path) {
+		return
+	}
+	if _, loaded := fs.loggedPaths.LoadOrStore(path, struct{}{}); loaded {
+		return
+	}
+	log.Warn("FUSE zipExpand demoted",
+		"path", path, "error", err.Error())
+}
+
 // zipProbe decides expansion once per zip; demotions are negatively cached.
 func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) bool {
 	fs.zipMu.RLock()
@@ -628,7 +659,7 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 		}
 		fs.zipSkipped[fullPath] = struct{}{}
 		fs.zipMu.Unlock()
-		fs.logOnce(fullPath, err, "zipExpand")
+		fs.warnOnce(fullPath, err)
 		return false
 	}
 
@@ -644,7 +675,7 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 	if fs.zipBytes+est > zipCentralBudget {
 		fs.zipMu.Unlock()
 		src.Close(ctx)
-		fs.logOnce(fullPath, fmt.Errorf("%w: central dir budget %d exceeded", errZipUnsupported, zipCentralBudget), "zipExpand")
+		fs.warnOnce(fullPath, fmt.Errorf("%w: central dir budget %d exceeded", errZipUnsupported, zipCentralBudget))
 		return false
 	}
 	if _, dup := fs.zipOverlays[fullPath]; dup {
@@ -791,13 +822,14 @@ func (s *zipMergeStream) HasNext() bool {
 				}
 				full := s.path + "/" + e.Name
 				if hasArchiveExt(e.Name) {
-					if s.fs.zipHidden(full) {
+					// Attr hides expanded archives itself (post-stat probe returns
+					// ENOENT), so an error here usually means hidden, not vanished.
+					fi, aerr := s.fs.Attr(s.fs.Ctx, full, true)
+					if aerr == nil && !fi.IsDir && fi.Size >= 32 && s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
 						continue
 					}
-					if fi, err := s.fs.Attr(s.fs.Ctx, full, true); err == nil && !fi.IsDir && fi.Size >= 32 {
-						if s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
-							continue
-						}
+					if aerr != nil && s.fs.zipHidden(full) {
+						continue
 					}
 					s.markEmitted(e.Name)
 					s.pending = &e
