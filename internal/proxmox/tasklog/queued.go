@@ -36,30 +36,36 @@ func SourceString(web bool) string {
 	return "schedule"
 }
 
-// NewQueuedTask creates a transient active PBS task while work is waiting to
-// start, or returns the already-live task for the same worker so engine
-// retries reuse one task and log across attempts instead of orphaning the
-// UPID recorded in job history.
 func NewQueuedTask(workerType, wid string, web bool) (*QueuedTask, error) {
 	key := workerType + "\t" + wid
-	if v, ok := queuedTasks.Load(key); ok {
-		if q := v.(*QueuedTask); !q.closed.Load() {
+	for {
+		if v, ok := queuedTasks.Load(key); ok {
+			if q := v.(*QueuedTask); !q.closed.Load() {
+				return q, nil
+			}
+			queuedTasks.CompareAndDelete(key, v)
+		}
+		worker, err := NewWorkerTask("pbsplusgen-queue", workerType, wid)
+		if err != nil {
+			return nil, err
+		}
+		t := &QueuedTask{WorkerTask: worker, key: key}
+		worker.LogString(fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
+		if upid, ok := previousQueuedOrphan(workerType, wid); ok {
+			worker.LogString(fmt.Sprintf("RESUMED: continuing after server restart (previous queue task: %s)", upid))
+		}
+		queuedStates.Store(worker.UPID(), fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
+		if actual, loaded := queuedTasks.LoadOrStore(key, t); loaded {
+			q := actual.(*QueuedTask)
+			t.Close()
+			if q.closed.Load() {
+				queuedTasks.CompareAndDelete(key, actual)
+				continue
+			}
 			return q, nil
 		}
-		queuedTasks.Delete(key)
+		return t, nil
 	}
-	worker, err := NewWorkerTask("pbsplusgen-queue", workerType, wid)
-	if err != nil {
-		return nil, err
-	}
-	t := &QueuedTask{WorkerTask: worker, key: key}
-	worker.LogString(fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
-	if upid, ok := previousQueuedOrphan(workerType, wid); ok {
-		worker.LogString(fmt.Sprintf("RESUMED: continuing after server restart (previous queue task: %s)", upid))
-	}
-	queuedStates.Store(worker.UPID(), fmt.Sprintf("QUEUED: job started from %s", SourceString(web)))
-	queuedTasks.Store(key, t)
-	return t, nil
 }
 
 // previousQueuedOrphan returns the newest dead queued placeholder for the
@@ -159,7 +165,7 @@ func (t *QueuedTask) Close() {
 
 	unregisterWorker(t.Task.TaskId)
 	t.close()
-	queuedTasks.Delete(t.key)
+	queuedTasks.CompareAndDelete(t.key, t)
 	queuedStates.Delete(t.UPID())
 
 	path, err := UPIDLogPath(t.UPID())
