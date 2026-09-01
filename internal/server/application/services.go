@@ -253,7 +253,7 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 			}
 
 			size, sizeErr := ResolveTargetSize(tgt)
-			result := TargetStatusResult{TargetSizeResult: size, Index: idx, AgentVersion: "N/A"}
+			result := TargetStatusResult{TargetSizeResult: size, Index: idx}
 			if !checkStatus {
 				results[idx] = result
 				return
@@ -347,7 +347,7 @@ func (s *TargetService) revalidateAgent(hostname string, targets []coredb.Target
 		if !ok {
 			results := make([]TargetStatusResult, len(targets))
 			for i := range targets {
-				results[i] = TargetStatusResult{Index: i, AgentVersion: "N/A"}
+				results[i] = TargetStatusResult{Index: i}
 			}
 			s.storeStatusResults(targets, results)
 			return nil, nil
@@ -433,42 +433,46 @@ func (s *TargetService) storeStatusResults(targets []coredb.Target, results []Ta
 		if result.Index < 0 || result.Index >= len(targets) {
 			continue
 		}
-		name := targets[result.Index].Name
-		if isTimeoutErr(result.Error) {
-			// A timed-out probe produced no verdict: keep the last known
-			// status (stays stale, so the next poll re-probes) instead of
-			// flipping a reachable target to unreachable.
-			if _, ok := s.statusCache.Get(name); ok {
-				continue
-			}
-			entry := StatusEntry{AgentVersion: result.AgentVersion, CheckedAt: now}
-			if result.Error != nil {
-				entry.LastError = result.Error.Error()
-			}
-			s.statusCache.Set(name, entry)
+		tgt := targets[result.Index]
+		prior, hasPrior := s.statusCache.Get(tgt.Name)
+		if isTimeoutErr(result.Error) && hasPrior {
 			continue
 		}
-		entry := StatusEntry{
-			ConnectionStatus: new(result.ConnectionStatus),
-			AgentVersion:     result.AgentVersion,
-			TargetSizeResult: result.TargetSizeResult,
-			CheckedAt:        now,
+		entry := foldStatus(tgt, result, prior)
+		entry.ConnectionStatus = new(result.ConnectionStatus)
+		if isTimeoutErr(result.Error) {
+			entry.ConnectionStatus = prior.ConnectionStatus
 		}
-		if result.Error != nil {
-			entry.LastError = result.Error.Error()
-		}
-		// A failed probe carries no fresh metadata: keep the last known
-		// version and sizes instead of clobbering them with N/A and zeros.
-		if prior, ok := s.statusCache.Get(name); ok {
-			if entry.AgentVersion == "" || entry.AgentVersion == "N/A" {
-				entry.AgentVersion = prior.AgentVersion
-			}
-			if entry.VolumeTotalBytes == 0 && entry.VolumeUsedBytes == 0 && entry.VolumeFreeBytes == 0 {
-				entry.TargetSizeResult = prior.TargetSizeResult
-			}
-		}
-		s.statusCache.Set(name, entry)
+		entry.CheckedAt = now
+		s.statusCache.Set(tgt.Name, entry)
 	}
+}
+
+func foldStatus(tgt coredb.Target, result TargetStatusResult, prior StatusEntry) StatusEntry {
+	entry := StatusEntry{
+		AgentVersion:     result.AgentVersion,
+		TargetSizeResult: result.TargetSizeResult,
+	}
+	if entry.AgentVersion == "" {
+		entry.AgentVersion = prior.AgentVersion
+	}
+	if entry.AgentVersion == "" {
+		entry.AgentVersion = tgt.AgentVersion
+	}
+	if entry.VolumeTotalBytes == 0 && entry.VolumeUsedBytes == 0 && entry.VolumeFreeBytes == 0 {
+		entry.TargetSizeResult = prior.TargetSizeResult
+	}
+	if entry.VolumeTotalBytes == 0 && entry.VolumeUsedBytes == 0 && entry.VolumeFreeBytes == 0 {
+		entry.TargetSizeResult = TargetSizeResult{
+			VolumeTotalBytes: tgt.VolumeTotalBytes,
+			VolumeUsedBytes:  tgt.VolumeUsedBytes,
+			VolumeFreeBytes:  tgt.VolumeFreeBytes,
+		}
+	}
+	if result.Error != nil {
+		entry.LastError = result.Error.Error()
+	}
+	return entry
 }
 
 // isTimeoutErr reports whether err is deadline-class: a timed-out probe
@@ -508,21 +512,24 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 			continue
 		}
 		probe(tgt)
-		entry := StatusEntry{AgentVersion: "N/A"}
+		result := TargetStatusResult{}
+		var verdict *bool
 		if tgt.IsAgent() {
 			if s.agentsMgr.IsOnline(tgt.GetHostname()) {
-				entry.ConnectionStatus = new(true)
-				entry.AgentVersion = s.agentSessionVersion(tgt.GetHostname())
+				result.ConnectionStatus = true
+				verdict = new(true)
+				result.AgentVersion = s.agentSessionVersion(tgt.GetHostname())
 			}
 		} else if tgt.IsLocal() {
 			size, err := ResolveTargetSize(tgt)
-			entry.TargetSizeResult = size
-			entry.ConnectionStatus = new(err == nil)
-			if err != nil {
-				entry.LastError = err.Error()
-			}
-			entry.CheckedAt = time.Now()
+			result.TargetSizeResult = size
+			result.ConnectionStatus = err == nil
+			verdict = new(err == nil)
+			result.Error = err
 		}
+		entry := foldStatus(tgt, result, StatusEntry{})
+		entry.ConnectionStatus = verdict
+		entry.CheckedAt = time.Now()
 		entries[tgt.Name] = entry
 	}
 	for host, tgts := range staleAgents {
@@ -542,17 +549,13 @@ func (s *TargetService) OverlayStatus(targets []coredb.Target) {
 		if !ok {
 			continue
 		}
-		if entry.AgentVersion != "" && entry.AgentVersion != "N/A" {
-			targets[i].AgentVersion = entry.AgentVersion
-		}
 		if entry.ConnectionStatus != nil {
 			targets[i].ConnectionStatus = *entry.ConnectionStatus
 		}
-		if entry.VolumeTotalBytes != 0 || entry.VolumeUsedBytes != 0 || entry.VolumeFreeBytes != 0 {
-			targets[i].VolumeTotalBytes = entry.VolumeTotalBytes
-			targets[i].VolumeUsedBytes = entry.VolumeUsedBytes
-			targets[i].VolumeFreeBytes = entry.VolumeFreeBytes
-		}
+		targets[i].AgentVersion = entry.AgentVersion
+		targets[i].VolumeTotalBytes = entry.VolumeTotalBytes
+		targets[i].VolumeUsedBytes = entry.VolumeUsedBytes
+		targets[i].VolumeFreeBytes = entry.VolumeFreeBytes
 	}
 }
 
@@ -577,7 +580,7 @@ func (s *TargetService) agentSessionVersion(hostname string) string {
 	if sp, ok := s.agentsMgr.GetStreamPipe(hostname); ok {
 		return sp.GetVersion()
 	}
-	return "N/A"
+	return ""
 }
 
 func probeS3Target(ctx context.Context, target coredb.Target) error {

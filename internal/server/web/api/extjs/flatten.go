@@ -325,14 +325,12 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 		}
 
 		if st, ok := statuses[t.Name]; ok {
-			if st.AgentVersion != "" && st.AgentVersion != "N/A" {
-				node.AgentVersion = st.AgentVersion
-			}
+			node.AgentVersion = st.AgentVersion
 			node.ConnectionStatus = st.ConnectionStatus
-			if st.VolumeTotalBytes != 0 || st.VolumeUsedBytes != 0 || st.VolumeFreeBytes != 0 {
-				node.VolumeTotalBytes = st.VolumeTotalBytes
-				node.VolumeUsedBytes = st.VolumeUsedBytes
-				node.VolumeFreeBytes = st.VolumeFreeBytes
+			node.VolumeTotalBytes = st.VolumeTotalBytes
+			node.VolumeUsedBytes = st.VolumeUsedBytes
+			node.VolumeFreeBytes = st.VolumeFreeBytes
+			if st.VolumeTotalBytes > 0 {
 				node.VolumeTotalHuman = HumanReadableBytes(st.VolumeTotalBytes)
 				node.VolumeUsedHuman = HumanReadableBytes(st.VolumeUsedBytes)
 				node.VolumeFreeHuman = HumanReadableBytes(st.VolumeFreeBytes)

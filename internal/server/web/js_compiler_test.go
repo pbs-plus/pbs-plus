@@ -122,8 +122,8 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`if (!this.loaded) {`),
 		[]byte(`view.setLoading(true);`),
 		[]byte(`fa fa-spinner fa-pulse`),
-		[]byte(`st.volume_total_bytes > 0 || st.volume_used_bytes > 0`),
-		[]byte(`node.set("volume_used", Proxmox.Utils.format_size(st.volume_used_bytes))`),
+		[]byte(`st.volume_total_bytes > 0 ? Proxmox.Utils.format_size(st.volume_total_bytes) : ""`),
+		[]byte(`node.set("volume_used", st.volume_used_bytes > 0 ? Proxmox.Utils.format_size(st.volume_used_bytes) : "")`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("target view is missing %q", expected)

@@ -340,6 +340,8 @@ var targetPanelController = js.ControllerClass{
 				headers: { Accept: "application/json" },
 				success: function (response) {
 					let data = Ext.decode(response.responseText);
+					me.loading = false;
+					view.setLoading(false);
 					let treeNodes = data.data || [];
 					let rootChildren = treeNodes.map(function (node) {
 						return me.convertTreeNode(node);
@@ -356,8 +358,6 @@ var targetPanelController = js.ControllerClass{
 						}
 					});
 					me.loaded = true;
-					me.loading = false;
-					view.setLoading(false);
 					me.loadStatuses();
 				},
 				failure: function () {
@@ -450,14 +450,12 @@ var targetPanelController = js.ControllerClass{
 			node.set("agent_version", st.agent_version || "");
 			node.set("connection_status", st.connection_status ?? null);
 			node.set("last_checked", st.checked_at && st.checked_at.indexOf("0001") !== 0 ? st.checked_at : "");
-			if (st.volume_total_bytes > 0 || st.volume_used_bytes > 0) {
-				node.set("volume_total_bytes", st.volume_total_bytes);
-				node.set("volume_used_bytes", st.volume_used_bytes);
-				node.set("volume_free_bytes", st.volume_free_bytes);
-				node.set("volume_total", Proxmox.Utils.format_size(st.volume_total_bytes));
-				node.set("volume_used", Proxmox.Utils.format_size(st.volume_used_bytes));
-				node.set("volume_free", Proxmox.Utils.format_size(st.volume_free_bytes));
-			}
+			node.set("volume_total_bytes", st.volume_total_bytes);
+			node.set("volume_used_bytes", st.volume_used_bytes);
+			node.set("volume_free_bytes", st.volume_free_bytes);
+			node.set("volume_total", st.volume_total_bytes > 0 ? Proxmox.Utils.format_size(st.volume_total_bytes) : "");
+			node.set("volume_used", st.volume_used_bytes > 0 ? Proxmox.Utils.format_size(st.volume_used_bytes) : "");
+			node.set("volume_free", st.volume_free_bytes > 0 ? Proxmox.Utils.format_size(st.volume_free_bytes) : "");
 		`),
 		"stopStore": js.Func("", `
 			if (this.statusTask) {

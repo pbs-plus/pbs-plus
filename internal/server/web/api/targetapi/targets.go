@@ -358,13 +358,10 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 			case target.IsS3():
 				target.ConnectionStatus = true
-				target.AgentVersion = "N/A (S3 target)"
 			case target.IsLocal():
-				target.AgentVersion = "N/A (local target)"
 				_, err := os.Stat(target.Path)
 				target.ConnectionStatus = err == nil && validate.IsValid(target.Path)
 			default:
-				target.AgentVersion = "N/A"
 			}
 
 			response.Status = http.StatusOK
