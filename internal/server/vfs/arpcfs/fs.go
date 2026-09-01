@@ -311,6 +311,13 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (fswire.AgentF
 		return fswire.AgentFileInfo{}, syscall.ENOTSUP
 	}
 
+	if fi, errno, virt := fs.zipAttr(filename); virt {
+		if errno != nil {
+			return fswire.AgentFileInfo{}, errno
+		}
+		return fi, nil
+	}
+
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancelN()
 

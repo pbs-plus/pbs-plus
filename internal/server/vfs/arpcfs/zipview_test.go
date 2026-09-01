@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/puzpuzpuz/xsync/v4"
 )
@@ -261,6 +262,24 @@ func TestZipConcurrentReads(t *testing.T) {
 		}(int64(g) + 1)
 	}
 	wg.Wait()
+}
+
+func TestZipXattrVirtualPath(t *testing.T) {
+	data := buildTestZip(t, map[string]int{"alpha.txt": 10})
+	fs := testFS(testOverlay(t, data))
+	fs.Backup = coredb.Backup{IncludeXattr: true}
+
+	fi, err := fs.ListXattr(context.Background(), "/data/alpha.txt")
+	if err != nil {
+		t.Fatalf("virtual xattr: %v", err)
+	}
+	if fi.Name != "alpha.txt" {
+		t.Errorf("fi.Name = %q", fi.Name)
+	}
+
+	if _, err := fs.ListXattr(context.Background(), "/data/test.zip"); !errors.Is(err, syscall.ENOENT) {
+		t.Errorf("hidden archive xattr: err = %v", err)
+	}
 }
 
 func TestZipMergeStream(t *testing.T) {
