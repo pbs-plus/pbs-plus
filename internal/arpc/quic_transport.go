@@ -121,7 +121,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 		conn:       conn,
 		serverAddr: serverAddr,
 		tlsConfig:  quicTLS,
-		version:    "2",
+		version:    headers.Get("X-PBS-Plus-Version"),
 		headers:    hdrCopy,
 		cborEnc:    enc,
 		cborDec:    dec,

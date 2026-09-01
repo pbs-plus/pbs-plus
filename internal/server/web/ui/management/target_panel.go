@@ -464,9 +464,7 @@ var targetPanelController = js.ControllerClass{
 			}
 		`),
 		"startStore": js.Func("", `
-			if (!this.loaded) {
-				this.loadData();
-			}
+			this.loadData();
 			if (!this.statusTask) {
 				this.statusTask = Ext.TaskManager.start({
 					run: () => this.loadStatuses(),
