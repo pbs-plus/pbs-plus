@@ -264,6 +264,34 @@ func TestZipConcurrentReads(t *testing.T) {
 	wg.Wait()
 }
 
+func TestZipRootAnchor(t *testing.T) {
+	data := buildTestZip(t, map[string]int{"alpha.txt": 10, "sub/beta.txt": 20})
+	ov := testOverlay(t, data)
+	ov.zipPath = "/test.zip"
+	fs := testFS(ov)
+
+	if _, err, virt := fs.zipAttr("/alpha.txt"); !virt || err != nil {
+		t.Fatalf("root child attr: virt=%v err=%v", virt, err)
+	}
+	if _, err, virt := fs.zipAttr("/sub/beta.txt"); !virt || err != nil {
+		t.Fatalf("root nested attr: virt=%v err=%v", virt, err)
+	}
+	if _, ok := fs.zipOpen(context.Background(), "/alpha.txt"); !ok {
+		t.Error("root child not openable")
+	}
+
+	seen := map[string]int{}
+	for _, vc := range fs.zipCollectChildren("/") {
+		seen[vc.child.name]++
+	}
+	if seen["alpha.txt"] != 1 || seen["sub"] != 1 {
+		t.Errorf("root children = %v", seen)
+	}
+	if n := len(fs.zipCollectChildren("/sub")); n != 1 {
+		t.Errorf("nested children = %d", n)
+	}
+}
+
 func TestZipXattrVirtualPath(t *testing.T) {
 	data := buildTestZip(t, map[string]int{"alpha.txt": 10})
 	fs := testFS(testOverlay(t, data))

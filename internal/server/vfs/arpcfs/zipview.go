@@ -117,6 +117,21 @@ func hasArchiveExt(name string) bool {
 	return ext == ".zip" || ext == ".7z"
 }
 
+// anchorKey maps the empty parent of a root-level path to the "/" anchor.
+func anchorKey(dir string) string {
+	if dir == "" {
+		return "/"
+	}
+	return dir
+}
+
+func joinPath(dir, name string) string {
+	if dir == "/" {
+		return "/" + name
+	}
+	return dir + "/" + name
+}
+
 func cleanZipName(raw string) (string, bool, bool) {
 	s := strings.ReplaceAll(raw, "\\", "/")
 	s = strings.TrimPrefix(s, "./")
@@ -580,11 +595,11 @@ func (fs *ARPCFS) zipAttr(filename string) (fswire.AgentFileInfo, error, bool) {
 		fs.zipMu.RUnlock()
 		return fswire.AgentFileInfo{}, syscall.ENOENT, true
 	}
-	for i := len(filename) - 1; i > 0; i-- {
+	for i := len(filename) - 1; i >= 0; i-- {
 		if filename[i] != '/' {
 			continue
 		}
-		ovs := fs.zipAnchors[filename[:i]]
+		ovs := fs.zipAnchors[anchorKey(filename[:i])]
 		if len(ovs) == 0 {
 			continue
 		}
@@ -694,11 +709,11 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 
 func (fs *ARPCFS) zipOpen(ctx context.Context, filename string) (*ARPCFile, bool) {
 	fs.zipMu.RLock()
-	for i := len(filename) - 1; i > 0; i-- {
+	for i := len(filename) - 1; i >= 0; i-- {
 		if filename[i] != '/' {
 			continue
 		}
-		ovs := fs.zipAnchors[filename[:i]]
+		ovs := fs.zipAnchors[anchorKey(filename[:i])]
 		if len(ovs) == 0 {
 			continue
 		}
@@ -743,12 +758,15 @@ func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
 			}
 		}
 	}
-	for i := len(dir) - 1; i > 0; i-- {
+	for i := len(dir) - 1; i >= 0; i-- {
 		if dir[i] != '/' {
 			continue
 		}
 		inner := dir[i+1:]
-		for _, ov := range fs.zipAnchors[dir[:i]] {
+		if inner == "" {
+			continue
+		}
+		for _, ov := range fs.zipAnchors[anchorKey(dir[:i])] {
 			if d := ov.dirs[inner]; d != nil {
 				for _, c := range d.children {
 					out = append(out, zipVChild{ov, c})
@@ -821,7 +839,7 @@ func (s *zipMergeStream) HasNext() bool {
 				if errno != 0 {
 					continue
 				}
-				full := s.path + "/" + e.Name
+				full := joinPath(s.path, e.Name)
 				if hasArchiveExt(e.Name) {
 					// Attr hides expanded archives itself (post-stat probe returns
 					// ENOENT), so an error here usually means hidden, not vanished.
