@@ -1,0 +1,64 @@
+name: Run Archive Expansion E2E
+description: Create zip/7z archives on the agent host and verify backup expansion end-to-end
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "900"
+    description: Timeout for the e2e test script
+
+runs:
+  using: composite
+  steps:
+    - name: Create archive test data
+      shell: bash
+      run: |
+        if ! command -v zip >/dev/null 2>&1; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq zip
+        fi
+        if ! command -v 7z >/dev/null 2>&1; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full
+        fi
+
+        ARCH_DIR="$(pwd)/test-agent/e2e-archives"
+        rm -rf "$ARCH_DIR"
+        mkdir -p "$ARCH_DIR"
+
+        STAGE=$(mktemp -d)
+        trap 'rm -rf "$STAGE"' EXIT
+
+        mkdir -p "$STAGE/docs/sub"
+        printf 'zip readme content' > "$STAGE/docs/readme.txt"
+        printf 'sub note' > "$STAGE/docs/sub/note.txt"
+        printf 'virtual loses' > "$STAGE/docs/collision.txt"
+        ( cd "$STAGE/docs" && zip -q "$ARCH_DIR/docs.zip" readme.txt sub collision.txt )
+
+        mkdir -p "$STAGE/outer"
+        printf 'deep content' > "$STAGE/outer/deep.txt"
+        ( cd "$STAGE/outer" && zip -q mid.zip deep.txt )
+        ( cd "$STAGE/outer" && zip -q "$ARCH_DIR/outer.zip" mid.zip )
+
+        mkdir -p "$STAGE/seven"
+        printf 'seven content' > "$STAGE/seven/seven.txt"
+        ( cd "$STAGE/seven" && 7z a -bd "$ARCH_DIR/data.7z" seven.txt >/dev/null )
+
+        printf 'real wins' > "$ARCH_DIR/collision.txt"
+
+        ls -la "$ARCH_DIR"
+        unzip -l "$ARCH_DIR/docs.zip"
+        7z l "$ARCH_DIR/outer.zip" | tail -6
+        7z l "$ARCH_DIR/data.7z" | tail -6
+
+    - name: Copy e2e script into container
+      shell: bash
+      run: |
+        docker cp .github/actions/run-archive-expand-e2e/run.sh pbs-plus-test:/tmp/e2e-archive-expand.sh
+        docker exec pbs-plus-test chmod +x /tmp/e2e-archive-expand.sh
+
+    - name: Run archive expansion e2e tests
+      shell: bash
+      run: |
+        echo "Running archive expansion e2e tests..."
+        timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-archive-expand.sh
