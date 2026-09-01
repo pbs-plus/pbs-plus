@@ -449,27 +449,22 @@ func BenchmarkStatDirentsOrder(b *testing.B) {
 }
 
 func BenchmarkReaddir(b *testing.B) {
-	for _, workers := range []int{1, 16} {
-		name := "parallel"
-		if workers == 1 {
-			name = "serial"
+	dir := b.TempDir()
+	payload := make([]byte, 64)
+	for i := range 10000 {
+		path := filepath.Join(dir, fmt.Sprintf("file-%05d-padded_name_to_widen_the_dirent", i))
+		if err := os.WriteFile(path, payload, 0o644); err != nil {
+			b.Fatal(err)
 		}
-		b.Run(fmt.Sprintf("%s/10000files", name), func(b *testing.B) {
-			dir := b.TempDir()
-			payload := make([]byte, 64)
-			for i := range 10000 {
-				path := filepath.Join(dir, fmt.Sprintf("file-%05d-padded_name_to_widen_the_dirent", i))
-				if err := os.WriteFile(path, payload, 0o644); err != nil {
-					b.Fatal(err)
-				}
-			}
+	}
 
+	for _, workers := range []int{1, 2, 4, 8, 16, 32} {
+		b.Run(fmt.Sprintf("workers=%d/10000files", workers), func(b *testing.B) {
 			old := statWorkerLimit
 			statWorkerLimit = workers
 			defer func() { statWorkerLimit = old }()
 
 			b.ReportAllocs()
-			b.ResetTimer()
 			for b.Loop() {
 				f, err := os.Open(dir)
 				if err != nil {
@@ -493,7 +488,9 @@ func BenchmarkReaddir(b *testing.B) {
 				if count != 10000 {
 					b.Fatalf("read %d entries, want 10000", count)
 				}
-				r.Close()
+				if err := r.Close(); err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}
