@@ -1067,6 +1067,28 @@ func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
 	return out
 }
 
+// zipIsVirtualDir reports whether dirPath names an overlay-only directory, even childless.
+func (fs *ARPCFS) zipIsVirtualDir(dirPath string) bool {
+	fs.zipMu.RLock()
+	defer fs.zipMu.RUnlock()
+
+	for i := len(dirPath) - 1; i >= 0; i-- {
+		if dirPath[i] != '/' {
+			continue
+		}
+		inner := dirPath[i+1:]
+		if inner == "" {
+			continue
+		}
+		for _, ov := range fs.zipAnchors[anchorKey(dirPath[:i])] {
+			if _, ok := ov.dirs[inner]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 	fs.zipMu.Lock()
 	ovs := fs.zipOverlays
@@ -1094,7 +1116,7 @@ func (fs *ARPCFS) zipReaddir(ctx context.Context, dirPath string) (fs.DirStream,
 	var agent *DirStream
 	if stream, err := fs.ReadDir(ctx, dirPath); err == nil {
 		agent = &stream
-	} else if len(virtual) == 0 {
+	} else if len(virtual) == 0 && !fs.zipIsVirtualDir(dirPath) {
 		return nil, false
 	}
 
