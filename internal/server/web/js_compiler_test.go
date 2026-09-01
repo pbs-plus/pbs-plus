@@ -119,7 +119,7 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`PBS.PlusUtils.API2Request({`),
 		[]byte(`resp.result && resp.result.data`),
 		[]byte(`connection_status: node.connection_status ?? null`),
-		[]byte(`if (!this.loaded) {`),
+		[]byte("this.loadData();\n    if (!this.statusTask) {"),
 		[]byte(`view.setLoading(true);`),
 		[]byte(`fa fa-spinner fa-pulse`),
 		[]byte(`st.volume_total_bytes > 0 ? Proxmox.Utils.format_size(st.volume_total_bytes) : ""`),
