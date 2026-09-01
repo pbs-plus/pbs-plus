@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -99,6 +100,25 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 		done <- cmd.Wait()
 	}()
 
+	taskStopped := make(chan string, 1)
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+			case <-done:
+			case <-ticker.C:
+				task, err := tasklog.GetTaskByUPID(upid)
+				if err != nil || task.Status == "running" {
+					continue
+				}
+				taskStopped <- task.ExitStatus
+			}
+			return
+		}
+	}()
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -119,7 +139,25 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 		b.err = jobs.ErrCanceled
 		b.mu.Unlock()
 		return jobs.ErrCanceled
+	case exitStatus := <-taskStopped:
+		if cmd.Process != nil {
+			if err := cmd.Process.Kill(); err != nil {
+				b.logger.Error(err, "failed to kill backup process after task stopped", "upid", upid)
+			}
+		}
+		<-done
+		if taskExitSucceeded(exitStatus) {
+			return nil
+		}
+		b.mu.Lock()
+		b.err = jobs.ErrCanceled
+		b.mu.Unlock()
+		return jobs.ErrCanceled
 	}
+}
+
+func taskExitSucceeded(exitStatus string) bool {
+	return strings.HasPrefix(exitStatus, "OK") || strings.HasPrefix(exitStatus, "WARNINGS:")
 }
 
 func (b *backupJob) waitTaskByUPID(ctx context.Context, upid string) error {
