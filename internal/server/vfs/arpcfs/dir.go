@@ -63,7 +63,7 @@ func (s *DirStream) HasNext() bool {
 
 		"handleId", s.handleId, "path", s.path)
 
-	entries, err := s.fetchBatch(s.fs.Ctx)
+	entries, err := s.nextBatch()
 	log.Debug("hasNext RPC completed",
 
 		"path", s.path, "error", err)
@@ -117,6 +117,9 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	s.curIdx.Store(0)
+	if currentReturned+uint64(newBatchLen) < maxEntries {
+		s.startPrefetch()
+	}
 	log.Debug("hasNext: returning true with new batch",
 
 		"curIdx", s.curIdx.Load(), "batchSize", newBatchLen, "path", s.path)
@@ -151,6 +154,51 @@ func (s *DirStream) fetchBatch(ctx context.Context) (fswire.ReadDirEntries, erro
 		return nil, err
 	}
 	return entries, nil
+}
+
+func (s *DirStream) nextBatch() (fswire.ReadDirEntries, error) {
+	s.prefetchMu.Lock()
+	resultCh := s.prefetch
+	cancel := s.prefetchCancel
+	s.prefetch = nil
+	s.prefetchCancel = nil
+	s.prefetchMu.Unlock()
+
+	if resultCh == nil {
+		return s.fetchBatch(s.fs.Ctx)
+	}
+	defer cancel()
+	result := <-resultCh
+	return result.entries, result.err
+}
+
+func (s *DirStream) startPrefetch() {
+	s.prefetchMu.Lock()
+	defer s.prefetchMu.Unlock()
+	if s.closed.Load() != 0 || s.maxedOut.Load() != 0 || s.prefetch != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(s.fs.Ctx)
+	resultCh := make(chan dirBatchResult, 1)
+	s.prefetch = resultCh
+	s.prefetchCancel = cancel
+	s.prefetchWG.Go(func() {
+		entries, err := s.fetchBatch(ctx)
+		resultCh <- dirBatchResult{entries: entries, err: err}
+		close(resultCh)
+	})
+}
+
+func (s *DirStream) stopPrefetch() {
+	s.prefetchMu.Lock()
+	if s.prefetchCancel != nil {
+		s.prefetchCancel()
+	}
+	s.prefetch = nil
+	s.prefetchCancel = nil
+	s.prefetchMu.Unlock()
+	s.prefetchWG.Wait()
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
@@ -278,6 +326,7 @@ func (s *DirStream) Close() {
 
 		return
 	}
+	s.stopPrefetch()
 	log.Debug("closing DirStream",
 
 		"totalEntriesReturned", s.totalReturned.Load(), "handleId", s.handleId, "path", s.path)
@@ -309,6 +358,11 @@ func (s *DirStream) Close() {
 	}
 }
 
+type dirBatchResult struct {
+	entries fswire.ReadDirEntries
+	err     error
+}
+
 type DirStream struct {
 	fs            *ARPCFS
 	path          string
@@ -321,4 +375,8 @@ type DirStream struct {
 	totalReturned atomic.Uint64
 	cborDec       cbor.DecMode
 	fetch         func(context.Context) (fswire.ReadDirEntries, error)
+	prefetchMu     sync.Mutex
+	prefetchWG     sync.WaitGroup
+	prefetch       <-chan dirBatchResult
+	prefetchCancel context.CancelFunc
 }

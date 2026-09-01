@@ -12,6 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
+	"go.uber.org/goleak"
 )
 
 func TestDirStreamFetchesAllBatches(t *testing.T) {
@@ -32,6 +33,25 @@ func TestDirStreamFetchesAllBatches(t *testing.T) {
 	if got := calls.Load(); got != 4 {
 		t.Fatalf("made %d fetches, want 4", got)
 	}
+}
+
+func TestDirStreamPrefetchCancellation(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	stream := newFetchDirStream(t.Context(), 100, func(ctx context.Context) (fswire.ReadDirEntries, error) {
+		close(started)
+		<-ctx.Done()
+		close(canceled)
+		return nil, ctx.Err()
+	})
+
+	stream.startPrefetch()
+	<-started
+	stream.closed.Store(1)
+	stream.stopPrefetch()
+	<-canceled
 }
 
 func TestDirStreamRespectsMaxEntries(t *testing.T) {
