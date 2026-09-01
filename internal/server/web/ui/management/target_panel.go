@@ -387,7 +387,8 @@ var targetPanelController = js.ControllerClass{
 					volume_id: node.volume_id,
 					job_count: node.job_count,
 					agent_version: node.agent_version,
-					connection_status: null,
+					connection_status: node.connection_status ?? null,
+					last_checked: node.checked_at && node.checked_at.indexOf("0001") !== 0 ? node.checked_at : "",
 					volume_type: node.volume_type,
 					volume_name: node.volume_name,
 					volume_fs: node.volume_fs,
@@ -422,39 +423,41 @@ var targetPanelController = js.ControllerClass{
 		"loadStatuses": js.Func("", `
 			let me = this;
 			let view = me.getView();
-			Ext.Ajax.request({
-				url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-target-status?kind=" + encodeURIComponent(view.targetKind || ""),
+			if (!me.loaded || me.loading) {
+				return;
+			}
+			PBS.PlusUtils.API2Request({
+				url: "/api2/extjs/config/d2d-target-status?kind=" + encodeURIComponent(view.targetKind || ""),
 				method: "GET",
-				withCredentials: true,
-				headers: { Accept: "application/json" },
-				success: function (response) {
-					let statuses = Ext.decode(response.responseText) || {};
-					view.getRootNode().cascadeBy(function (node) {
-						let name = node.get("name");
-						if (name && statuses[name]) {
-							let st = statuses[name];
-							node.set("agent_version", st.AgentVersion || "");
-							node.set("connection_status", st.ConnectionStatus ?? null);
-							node.set("last_checked", st.CheckedAt && st.CheckedAt.indexOf("0001") !== 0 ? st.CheckedAt : "");
-							if (st.VolumeTotalBytes > 0 || st.VolumeUsedBytes > 0) {
-								node.set("volume_total_bytes", st.VolumeTotalBytes);
-								node.set("volume_used_bytes", st.VolumeUsedBytes);
-								node.set("volume_free_bytes", st.VolumeFreeBytes);
-								node.set("volume_total", Proxmox.Utils.format_size(st.VolumeTotalBytes));
-								node.set("volume_used", Proxmox.Utils.format_size(st.VolumeUsedBytes));
-								node.set("volume_free", Proxmox.Utils.format_size(st.VolumeFreeBytes));
-							}
-						}
-					});
-				},
-				failure: function () {
-					view.getRootNode().cascadeBy(function (node) {
-						if (!node.get("isGroup")) {
-							node.set("connection_status", "error");
-						}
-					});
-				},
+				autoErrorAlert: false,
+				success: (resp) => me.applyStatuses((resp.result && resp.result.data) || {}),
+				failure: Ext.emptyFn,
 			});
+		`),
+		"applyStatuses": js.Func("statuses", `
+			let me = this;
+			let apply = (node) => {
+				if (node && node.get && statuses[node.get("name")]) {
+					me.applyStatusEntry(node, statuses[node.get("name")]);
+				}
+			};
+			if (me.allTargetsData) {
+				me.allTargetsData.forEach(apply);
+			}
+			me.getView().getRootNode().cascadeBy(apply);
+		`),
+		"applyStatusEntry": js.Func("node, st", `
+			node.set("agent_version", st.agent_version || "");
+			node.set("connection_status", st.connection_status ?? null);
+			node.set("last_checked", st.checked_at && st.checked_at.indexOf("0001") !== 0 ? st.checked_at : "");
+			if (st.volume_total_bytes > 0 || st.volume_used_bytes > 0) {
+				node.set("volume_total_bytes", st.volume_total_bytes);
+				node.set("volume_used_bytes", st.volume_used_bytes);
+				node.set("volume_free_bytes", st.volume_free_bytes);
+				node.set("volume_total", Proxmox.Utils.format_size(st.volume_total_bytes));
+				node.set("volume_used", Proxmox.Utils.format_size(st.volume_used_bytes));
+				node.set("volume_free", Proxmox.Utils.format_size(st.volume_free_bytes));
+			}
 		`),
 		"stopStore": js.Func("", `
 			if (this.statusTask) {
@@ -479,9 +482,6 @@ var targetPanelController = js.ControllerClass{
 			}
 			if (value == null) {
 				return '<i class="fa fa-spinner fa-pulse"></i> Checking...';
-			}
-			if (value === "error") {
-				return '<i class="fa fa-question-circle"></i> Status unavailable';
 			}
 			if (value === true) {
 				return '<i class="fa fa-check good"></i> Reachable';

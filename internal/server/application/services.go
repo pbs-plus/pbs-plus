@@ -176,9 +176,9 @@ func (s *TargetService) NewTransaction() (*coredb.Transaction, error) {
 }
 
 type TargetSizeResult struct {
-	VolumeTotalBytes int
-	VolumeUsedBytes  int
-	VolumeFreeBytes  int
+	VolumeTotalBytes int `json:"volume_total_bytes"`
+	VolumeUsedBytes  int `json:"volume_used_bytes"`
+	VolumeFreeBytes  int `json:"volume_free_bytes"`
 }
 
 // ResolveTargetSize returns stored remote metadata or local filesystem capacity without scanning target contents.
@@ -219,11 +219,11 @@ func boolPtr(b bool) *bool { return new(b) }
 
 // StatusEntry is a cached target status snapshot served to API clients.
 type StatusEntry struct {
-	ConnectionStatus *bool  `json:"ConnectionStatus,omitempty"`
-	AgentVersion     string `json:"AgentVersion"`
+	ConnectionStatus *bool  `json:"connection_status,omitempty"`
+	AgentVersion     string `json:"agent_version"`
 	TargetSizeResult
-	LastError string    `json:"LastError"`
-	CheckedAt time.Time `json:"CheckedAt"`
+	LastError string    `json:"last_error"`
+	CheckedAt time.Time `json:"checked_at"`
 }
 
 func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target, checkStatus bool, timeout time.Duration, concurrency int) []TargetStatusResult {
@@ -535,7 +535,27 @@ func (s *TargetService) GetStatusEntries(targets []coredb.Target) map[string]Sta
 	return entries
 }
 
-// evictOrphans drops cache entries for targets no longer in the database.
+func (s *TargetService) OverlayStatus(targets []coredb.Target) {
+	entries := s.GetStatusEntries(targets)
+	for i := range targets {
+		entry, ok := entries[targets[i].Name]
+		if !ok {
+			continue
+		}
+		if entry.AgentVersion != "" && entry.AgentVersion != "N/A" {
+			targets[i].AgentVersion = entry.AgentVersion
+		}
+		if entry.ConnectionStatus != nil {
+			targets[i].ConnectionStatus = *entry.ConnectionStatus
+		}
+		if entry.VolumeTotalBytes != 0 || entry.VolumeUsedBytes != 0 || entry.VolumeFreeBytes != 0 {
+			targets[i].VolumeTotalBytes = entry.VolumeTotalBytes
+			targets[i].VolumeUsedBytes = entry.VolumeUsedBytes
+			targets[i].VolumeFreeBytes = entry.VolumeFreeBytes
+		}
+	}
+}
+
 // No length shortcut: an under-populated cache can still hold orphans.
 func (s *TargetService) evictOrphans(targets []coredb.Target) {
 	live := make(map[string]struct{}, len(targets))
