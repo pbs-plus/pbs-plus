@@ -304,13 +304,15 @@ func (w *WorkflowContext) activity(ctx context.Context, name string, input json.
 		},
 	}
 	result, err := activity(ctx, info)
+	recordCtx, cancelRecord := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancelRecord()
 	if err != nil {
-		if retryErr := w.db.FailActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name, err.Error()); retryErr != nil {
+		if retryErr := w.db.FailActivity(recordCtx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name, err.Error()); retryErr != nil {
 			return nil, fmt.Errorf("recording workflow activity failure: %w", retryErr)
 		}
 		return nil, err
 	}
-	if err := w.db.CompleteActivity(ctx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name, result, time.Now()); err != nil {
+	if err := w.db.CompleteActivity(recordCtx, w.Execution.ID, w.Execution.LeaseOwner, w.Execution.Attempt, name, result, time.Now()); err != nil {
 		return nil, err
 	}
 	return result, nil

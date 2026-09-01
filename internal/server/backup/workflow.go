@@ -204,7 +204,7 @@ func (b *backupJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error 
 		}
 		return nil
 	}
-	if !errors.Is(runErr, context.Canceled) && !jobs.IsFinalAttempt(w.Execution) {
+	if !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, jobs.ErrCanceled) && !jobs.IsFinalAttempt(w.Execution) {
 		return runErr
 	}
 
