@@ -46,10 +46,11 @@ func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) 
 	}
 
 	ov := &zipOverlay{
-		size:   size,
-		readAt: readAt,
-		byName: make(map[string]int32, len(zr.File)),
-		dirs:   map[string]*zipDir{"": {}},
+		size:       size,
+		entryCount: int64(len(zr.File)),
+		readAt:     readAt,
+		byName:     make(map[string]int32, len(zr.File)),
+		dirs:       map[string]*zipDir{"": {}},
 	}
 
 	for _, f := range zr.File {
@@ -92,7 +93,7 @@ func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) 
 		parent.children = append(parent.children, zipChild{name: baseName(name), entry: idx})
 	}
 
-	if ov.uncompSum > zipBombFloor && ov.uncompSum > size*zipBombRatio {
+	if expansionTooLarge(ov.uncompSum, size) {
 		return nil, fmt.Errorf("%w: %d/%d", errZipBomb, ov.uncompSum, size)
 	}
 	return ov, nil

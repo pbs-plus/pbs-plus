@@ -151,11 +151,16 @@ var backupJobEdit = js.EditWindow{
 							CBind: js.Obj{"value": "{legacyXAttrValue}"}},
 						js.Field{XType: js.XCheckbox, Name: "expand-archives", Label: "Expand Archives", BoxLabel: "Backup archive contents as files",
 							InputValue: "true", UncheckedValue: "false",
-							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Presents zip files to the backup as their extracted contents, merged into the folder holding the archive. " +
-								"Improves deduplication for changed files inside zips. The archive itself is not stored separately.")}},
-						js.Field{XType: "proxmoxtextfield", Label: "Max archive entries to expand", EmptyText: "10000", Name: "expand-max-entries",
-							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Overrides the entry limit when expanding archives. Empty uses the default of 10000. " +
-								"Raise this for jobs whose large archives should expand instead of backing up whole.")}},
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Presents selected archives to the backup as their extracted contents, merged into the folder holding the archive. " +
+								"Real files take precedence, and the archive itself is not stored separately.")}},
+						js.Field{XType: js.XCheckboxGroup, Label: "Archive Types", Columns: 2, Items: js.Items(
+							js.Field{XType: js.XCheckbox, Name: "expand-zip", BoxLabel: "ZIP (.zip)", Checked: new(true), InputValue: "true", UncheckedValue: "false"},
+							js.Field{XType: js.XCheckbox, Name: "expand-7z", BoxLabel: "7-Zip (.7z)", Checked: new(true), InputValue: "true", UncheckedValue: "false"},
+						)},
+						js.Field{XType: js.XIntegerField, Label: "Max archive nesting depth", Value: 8, Name: "expand-max-depth", MinValue: -1,
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Caps nested archive expansion. Use -1 for unlimited nesting.")}},
+						js.Field{XType: js.XIntegerField, Label: "Max archive entries to expand", EmptyText: "10000", Name: "expand-max-entries", MinValue: -1,
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Caps entries across each expanded archive tree, including nested archives. Empty uses 10000; -1 is unlimited.")}},
 					)},
 				),
 				ColumnB: js.Items(

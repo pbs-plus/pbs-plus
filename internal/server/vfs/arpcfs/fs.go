@@ -88,6 +88,9 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 		Hostname:         hostname,
 		backupMode:       backupMode,
 		expandArchives:   backup.ExpandArchives,
+		expandZip:        backup.ExpandZip,
+		expandSevenZip:   backup.ExpandSevenZip,
+		expandMaxDepth:   backup.ExpandMaxDepth,
 		expandMaxEntries: backup.ExpandMaxEntries,
 		agentManager:     agentManager,
 		sessionId:        sessionId,
@@ -301,7 +304,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 		}
 	}
 
-	if fs.expandArchives && !fi.IsDir && hasArchiveExt(filename) && fi.Size >= 32 {
+	if fs.expandArchives && !fi.IsDir && fs.archiveEnabled(filename) && fi.Size >= 32 {
 		if fs.zipProbe(ctx, filename, fi.Size) {
 			return fswire.AgentFileInfo{}, syscall.ENOENT
 		}
@@ -566,6 +569,9 @@ type ARPCFS struct {
 	loggedPaths  sync.Map
 
 	expandArchives   bool
+	expandZip        bool
+	expandSevenZip   bool
+	expandMaxDepth   int
 	expandMaxEntries int
 	zipMu            sync.RWMutex
 	zipOverlays      map[string]*zipOverlay

@@ -73,18 +73,21 @@ type zipChild struct {
 // holding the zip. Registered overlays are never evicted, so walks never see
 // disappearing subtrees; the budget instead gates new expansions.
 type zipOverlay struct {
-	zipPath   string
-	size      int64
-	entries   []zipEntry
-	sfiles    []*sevenzip.File
-	byName    map[string]int32
-	dirs      map[string]*zipDir
-	nameBytes int
-	uncompSum int64
-	readAt    func(ctx context.Context, p []byte, off int64) (int, error)
-	src       *ARPCFile
-	mu        sync.Mutex
-	hdrBuf    [30]byte
+	zipPath       string
+	parentZipPath string
+	size          int64
+	entries       []zipEntry
+	sfiles        []*sevenzip.File
+	byName        map[string]int32
+	dirs          map[string]*zipDir
+	nameBytes     int
+	uncompSum     int64
+	entryCount    int64
+	readAt        func(ctx context.Context, p []byte, off int64) (int, error)
+	src           *ARPCFile
+	cleanup       func()
+	mu            sync.Mutex
+	hdrBuf        [30]byte
 }
 
 // zipFileState is the per-open read state of a virtual file: store entries
@@ -119,9 +122,23 @@ func (s zipSrc) ReadAt(p []byte, off int64) (int, error) {
 	return s.readAt(context.Background(), p, off)
 }
 
-func hasArchiveExt(name string) bool {
-	ext := strings.ToLower(path.Ext(name))
-	return ext == ".zip" || ext == ".7z"
+func (fs *ARPCFS) archiveEnabled(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".zip":
+		return fs.expandZip
+	case ".7z":
+		return fs.expandSevenZip
+	default:
+		return false
+	}
+}
+
+func expansionTooLarge(uncompressed, compressed int64) bool {
+	if uncompressed <= zipBombFloor {
+		return false
+	}
+	return compressed <= 0 || uncompressed/compressed > zipBombRatio ||
+		uncompressed/compressed == zipBombRatio && uncompressed%compressed != 0
 }
 
 // anchorKey maps the empty parent of a root-level path to the "/" anchor.
@@ -248,10 +265,11 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 	}
 
 	ov := &zipOverlay{
-		size:   size,
-		readAt: readAt,
-		byName: make(map[string]int32, totalEntries),
-		dirs:   map[string]*zipDir{"": {}},
+		size:       size,
+		entryCount: int64(totalEntries),
+		readAt:     readAt,
+		byName:     make(map[string]int32, totalEntries),
+		dirs:       map[string]*zipDir{"": {}},
 	}
 
 	off := 0
@@ -358,7 +376,7 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		parent.children = append(parent.children, zipChild{name: baseName(name), entry: idx})
 	}
 
-	if ov.uncompSum > zipBombFloor && ov.uncompSum > size*zipBombRatio {
+	if expansionTooLarge(ov.uncompSum, size) {
 		return nil, fmt.Errorf("%w: %d/%d", errZipBomb, ov.uncompSum, size)
 	}
 	return ov, nil
@@ -644,6 +662,59 @@ func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int
 	return total, nil
 }
 
+func (zs *zipFileState) verify(ctx context.Context) error {
+	if zs.ent.method == m7z {
+		return nil
+	}
+	zs.mu.Lock()
+	done, bad := zs.crcDone, zs.crcBad
+	zs.mu.Unlock()
+	if bad {
+		return errZipCorrupt
+	}
+	if done {
+		return nil
+	}
+	zs.close()
+	buf := make([]byte, 64<<10)
+	for off := int64(0); off < zs.uncomp; {
+		n, err := zs.ReadAt(ctx, buf, off)
+		off += int64(n)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if n == 0 {
+			return errZipCorrupt
+		}
+	}
+	zs.mu.Lock()
+	done, bad = zs.crcDone, zs.crcBad
+	zs.mu.Unlock()
+	if bad || !done {
+		return errZipCorrupt
+	}
+	return nil
+}
+
+func (zs *zipFileState) close() {
+	zs.mu.Lock()
+	if zs.fr != nil {
+		_ = zs.fr.Close()
+	}
+	zs.fr = nil
+	zs.sec = nil
+	zs.br = nil
+	zs.ring = nil
+	zs.ringStart = 0
+	zs.fed = 0
+	zs.eof = false
+	zs.crc = 0
+	zs.crcFed = 0
+	zs.crcBad = false
+	zs.crcDone = false
+	zs.mu.Unlock()
+}
+
 func (zs *zipFileState) Lseek(off uint64, whence uint32) uint64 {
 	size := uint64(zs.uncomp)
 	switch whence {
@@ -735,8 +806,81 @@ func (fs *ARPCFS) warnOnce(path string, err error) {
 		"path", path, "error", err.Error())
 }
 
+func (fs *ARPCFS) collectNestedOverlays(ctx context.Context, root *zipOverlay, maxEntries int64) []*zipOverlay {
+	type frame struct {
+		overlay *zipOverlay
+		depth   int
+		next    int
+	}
+
+	remaining := maxEntries - root.entryCount
+	visibleBytes := root.uncompSum
+	stack := []frame{{overlay: root}}
+	var nested []*zipOverlay
+	for len(stack) > 0 {
+		current := &stack[len(stack)-1]
+		if current.next >= len(current.overlay.entries) {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		entry := &current.overlay.entries[current.next]
+		parent := current.overlay
+		depth := current.depth
+		current.next++
+		if os.FileMode(entry.mode)&os.ModeSymlink != 0 || !fs.archiveEnabled(entry.name) {
+			continue
+		}
+		fullPath := joinPath(path.Dir(parent.zipPath), entry.name)
+		if fs.expandMaxDepth >= 0 && depth >= fs.expandMaxDepth {
+			fs.warnOnce(fullPath, fmt.Errorf("%w: nested archive depth exceeds %d", errZipUnsupported, fs.expandMaxDepth))
+			continue
+		}
+		if remaining <= 0 {
+			fs.warnOnce(fullPath, fmt.Errorf("%w: archive tree exceeds %d entries", errZipTooMany, maxEntries))
+			continue
+		}
+
+		state := &zipFileState{fs: fs, ov: parent, ent: entry, uncomp: entry.uncompSize}
+		child, err := parseArchiveOverlay(state.ReadAt, entry.uncompSize, remaining)
+		if err == nil {
+			err = state.verify(ctx)
+		}
+		state.close()
+		if err != nil {
+			fs.warnOnce(fullPath, err)
+			continue
+		}
+		maxInt64 := int64(^uint64(0) >> 1)
+		delta := child.uncompSum - entry.uncompSize
+		if delta > 0 && visibleBytes > maxInt64-delta {
+			fs.warnOnce(fullPath, errZipBomb)
+			continue
+		}
+		nextVisible := visibleBytes + delta
+		if expansionTooLarge(nextVisible, root.size) {
+			fs.warnOnce(fullPath, fmt.Errorf("%w: nested tree %d/%d", errZipBomb, nextVisible, root.size))
+			continue
+		}
+
+		child.zipPath = fullPath
+		child.parentZipPath = parent.zipPath
+		child.cleanup = state.close
+		remaining -= child.entryCount
+		visibleBytes = nextVisible
+		nested = append(nested, child)
+		stack = append(stack, frame{overlay: child, depth: depth + 1})
+	}
+	return nested
+}
+
 // zipProbe decides expansion once per zip; demotions are negatively cached.
 func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) bool {
+	if !fs.archiveEnabled(fullPath) {
+		return false
+	}
 	fs.zipMu.RLock()
 	_, expanded := fs.zipOverlays[fullPath]
 	_, skipped := fs.zipSkipped[fullPath]
@@ -757,7 +901,9 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 	}
 
 	maxEntries := int64(zipMaxEntries)
-	if fs.expandMaxEntries > 0 {
+	if fs.expandMaxEntries < 0 {
+		maxEntries = int64(^uint64(0) >> 1)
+	} else if fs.expandMaxEntries > 0 {
 		maxEntries = int64(fs.expandMaxEntries)
 	}
 	ov, err := parseArchiveOverlay(src.ReadAt, size, maxEntries)
@@ -775,9 +921,13 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 
 	ov.zipPath = fullPath
 	ov.src = src
+	overlays := append([]*zipOverlay{ov}, fs.collectNestedOverlays(ctx, ov, maxEntries)...)
 
+	var est int64
+	for _, overlay := range overlays {
+		est += int64(len(overlay.entries)*96 + overlay.nameBytes)
+	}
 	fs.zipMu.Lock()
-	est := int64(len(ov.entries)*96 + ov.nameBytes)
 	if fs.zipOverlays == nil {
 		fs.zipOverlays = map[string]*zipOverlay{}
 		fs.zipAnchors = map[string][]*zipOverlay{}
@@ -785,18 +935,41 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 	if fs.zipBytes+est > zipCentralBudget {
 		fs.zipMu.Unlock()
 		src.Close(ctx)
+		for _, nested := range overlays[1:] {
+			nested.cleanup()
+		}
 		fs.warnOnce(fullPath, fmt.Errorf("%w: central dir budget %d exceeded", errZipUnsupported, zipCentralBudget))
 		return false
 	}
 	if _, dup := fs.zipOverlays[fullPath]; dup {
 		fs.zipMu.Unlock()
 		src.Close(ctx)
+		for _, nested := range overlays[1:] {
+			nested.cleanup()
+		}
 		return true
 	}
-	anchor := path.Dir(fullPath)
-	fs.zipOverlays[fullPath] = ov
-	fs.zipAnchors[anchor] = append(fs.zipAnchors[anchor], ov)
-	fs.zipBytes += est
+	blocked := map[string]bool{}
+	for _, overlay := range overlays {
+		if blocked[overlay.parentZipPath] {
+			blocked[overlay.zipPath] = true
+			if overlay.cleanup != nil {
+				overlay.cleanup()
+			}
+			continue
+		}
+		if _, dup := fs.zipOverlays[overlay.zipPath]; dup {
+			blocked[overlay.zipPath] = true
+			if overlay.cleanup != nil {
+				overlay.cleanup()
+			}
+			continue
+		}
+		anchor := path.Dir(overlay.zipPath)
+		fs.zipOverlays[overlay.zipPath] = overlay
+		fs.zipAnchors[anchor] = append(fs.zipAnchors[anchor], overlay)
+		fs.zipBytes += int64(len(overlay.entries)*96 + overlay.nameBytes)
+	}
 	fs.zipMu.Unlock()
 	return true
 }
@@ -907,6 +1080,9 @@ func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 		if ov.src != nil {
 			ov.src.Close(ctx)
 		}
+		if ov.cleanup != nil {
+			ov.cleanup()
+		}
 	}
 }
 
@@ -959,7 +1135,7 @@ func (s *zipMergeStream) HasNext() bool {
 					continue
 				}
 				full := joinPath(s.path, e.Name)
-				if hasArchiveExt(e.Name) {
+				if s.fs.archiveEnabled(e.Name) {
 					// Attr hides expanded archives itself (post-stat probe returns
 					// ENOENT), so an error here usually means hidden, not vanished.
 					fi, aerr := s.fs.Attr(s.fs.Ctx, full, true)
@@ -990,6 +1166,9 @@ func (s *zipMergeStream) HasNext() bool {
 		vc := s.vqueue[s.vidx]
 		s.vidx++
 		if _, shadowed := s.emitted[vc.child.name]; shadowed {
+			continue
+		}
+		if s.fs.zipHidden(joinPath(s.path, vc.child.name)) {
 			continue
 		}
 		mode := uint32(fuse.S_IFREG)

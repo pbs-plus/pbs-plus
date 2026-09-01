@@ -61,9 +61,10 @@ INSERT INTO backups (
     id, store, mode, source_mode, read_mode, target, subpath, schedule, comment,
     notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
     retry, retry_interval, max_dir_entries, pre_script, post_script,
-    include_xattr, legacy_xattr, expand_archives, expand_max_entries, last_run_status, retry_count,
-    last_run_state, last_run_starttime, last_run_endtime, last_successful_endtime, duration
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    include_xattr, legacy_xattr, expand_archives, expand_zip, expand_7z, expand_max_depth,
+    expand_max_entries, last_run_status, retry_count, last_run_state, last_run_starttime,
+    last_run_endtime, last_successful_endtime, duration
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateBackupParams struct {
@@ -89,6 +90,9 @@ type CreateBackupParams struct {
 	IncludeXattr          sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr           sql.NullInt64  `json:"legacy_xattr"`
 	ExpandArchives        sql.NullInt64  `json:"expand_archives"`
+	ExpandZip             bool           `json:"expand_zip"`
+	Expand7z              bool           `json:"expand_7z"`
+	ExpandMaxDepth        int64          `json:"expand_max_depth"`
 	ExpandMaxEntries      sql.NullInt64  `json:"expand_max_entries"`
 	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
 	RetryCount            sql.NullInt64  `json:"retry_count"`
@@ -123,6 +127,9 @@ func (q *Queries) CreateBackup(ctx context.Context, arg CreateBackupParams) erro
 		arg.IncludeXattr,
 		arg.LegacyXattr,
 		arg.ExpandArchives,
+		arg.ExpandZip,
+		arg.Expand7z,
+		arg.ExpandMaxDepth,
 		arg.ExpandMaxEntries,
 		arg.LastRunStatus,
 		arg.RetryCount,
@@ -162,7 +169,7 @@ SELECT
     j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid,
     j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
     j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
-    j.expand_archives, j.expand_max_entries,
+    j.expand_archives, j.expand_zip, j.expand_7z, j.expand_max_depth, j.expand_max_entries,
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
@@ -221,6 +228,9 @@ type GetBackupRow struct {
 	IncludeXattr                sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr                 sql.NullInt64  `json:"legacy_xattr"`
 	ExpandArchives              sql.NullInt64  `json:"expand_archives"`
+	ExpandZip                   bool           `json:"expand_zip"`
+	Expand7z                    bool           `json:"expand_7z"`
+	ExpandMaxDepth              int64          `json:"expand_max_depth"`
 	ExpandMaxEntries            sql.NullInt64  `json:"expand_max_entries"`
 	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
 	RetryCount                  sql.NullInt64  `json:"retry_count"`
@@ -290,6 +300,9 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.IncludeXattr,
 		&i.LegacyXattr,
 		&i.ExpandArchives,
+		&i.ExpandZip,
+		&i.Expand7z,
+		&i.ExpandMaxDepth,
 		&i.ExpandMaxEntries,
 		&i.LastRunStatus,
 		&i.RetryCount,
@@ -341,7 +354,7 @@ SELECT
     j.schedule, j.comment, j.notification_mode, j.namespace, j.current_pid,
     j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
     j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
-    j.expand_archives, j.expand_max_entries,
+    j.expand_archives, j.expand_zip, j.expand_7z, j.expand_max_depth, j.expand_max_entries,
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
@@ -399,6 +412,9 @@ type ListAllBackupsRow struct {
 	IncludeXattr                sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr                 sql.NullInt64  `json:"legacy_xattr"`
 	ExpandArchives              sql.NullInt64  `json:"expand_archives"`
+	ExpandZip                   bool           `json:"expand_zip"`
+	Expand7z                    bool           `json:"expand_7z"`
+	ExpandMaxDepth              int64          `json:"expand_max_depth"`
 	ExpandMaxEntries            sql.NullInt64  `json:"expand_max_entries"`
 	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
 	RetryCount                  sql.NullInt64  `json:"retry_count"`
@@ -474,6 +490,9 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.IncludeXattr,
 			&i.LegacyXattr,
 			&i.ExpandArchives,
+			&i.ExpandZip,
+			&i.Expand7z,
+			&i.ExpandMaxDepth,
 			&i.ExpandMaxEntries,
 			&i.LastRunStatus,
 			&i.RetryCount,
@@ -536,7 +555,7 @@ SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
     namespace = ?, current_pid = ?, last_run_upid = ?, retry = ?,
     retry_interval = ?, last_successful_upid = ?, pre_script = ?,
     post_script = ?, max_dir_entries = ?, include_xattr = ?, legacy_xattr = ?,
-    expand_archives = ?, expand_max_entries = ?,
+    expand_archives = ?, expand_zip = ?, expand_7z = ?, expand_max_depth = ?, expand_max_entries = ?,
     last_run_status = ?, retry_count = ?,
     last_run_state = ?, last_run_starttime = ?, last_run_endtime = ?,
     last_successful_endtime = ?, duration = ?
@@ -565,6 +584,9 @@ type UpdateBackupParams struct {
 	IncludeXattr          sql.NullInt64  `json:"include_xattr"`
 	LegacyXattr           sql.NullInt64  `json:"legacy_xattr"`
 	ExpandArchives        sql.NullInt64  `json:"expand_archives"`
+	ExpandZip             bool           `json:"expand_zip"`
+	Expand7z              bool           `json:"expand_7z"`
+	ExpandMaxDepth        int64          `json:"expand_max_depth"`
 	ExpandMaxEntries      sql.NullInt64  `json:"expand_max_entries"`
 	LastRunStatus         sql.NullInt64  `json:"last_run_status"`
 	RetryCount            sql.NullInt64  `json:"retry_count"`
@@ -599,6 +621,9 @@ func (q *Queries) UpdateBackup(ctx context.Context, arg UpdateBackupParams) erro
 		arg.IncludeXattr,
 		arg.LegacyXattr,
 		arg.ExpandArchives,
+		arg.ExpandZip,
+		arg.Expand7z,
+		arg.ExpandMaxDepth,
 		arg.ExpandMaxEntries,
 		arg.LastRunStatus,
 		arg.RetryCount,

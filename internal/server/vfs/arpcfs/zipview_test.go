@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"path"
 	"sync"
 	"syscall"
 	"testing"
@@ -53,6 +54,25 @@ func buildTestZip(t *testing.T, files map[string]int) []byte {
 	return buf.Bytes()
 }
 
+func buildZipFiles(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 func testOverlay(t *testing.T, data []byte) *zipOverlay {
 	t.Helper()
 	ov, err := parseZipOverlay(readAtBytes(data), int64(len(data)), zipMaxEntries)
@@ -72,6 +92,9 @@ func testFS(ovs ...*zipOverlay) *ARPCFS {
 			StatCacheHits: xsync.NewCounter(),
 		},
 		expandArchives: true,
+		expandZip:      true,
+		expandSevenZip: true,
+		expandMaxDepth: 8,
 		zipOverlays:    map[string]*zipOverlay{},
 		zipAnchors:     map[string][]*zipOverlay{},
 		zipSkipped:     map[string]struct{}{},
@@ -490,6 +513,66 @@ func TestZipSymlinkReadlink(t *testing.T) {
 	entry, errno := stream.Next()
 	if errno != 0 || entry.Mode&uint32(syscall.S_IFLNK) == 0 {
 		t.Fatalf("symlink dir entry = %+v, errno %v", entry, errno)
+	}
+}
+
+func TestZipNestedArchivesExposeMergedTree(t *testing.T) {
+	inner := buildZipFiles(t, map[string][]byte{"deep.txt": []byte("nested content")})
+	root := testOverlay(t, buildZipFiles(t, map[string][]byte{"nested/inner.zip": inner}))
+	fs := testFS(root)
+	nested := fs.collectNestedOverlays(context.Background(), root, zipMaxEntries)
+	if len(nested) != 1 {
+		t.Fatalf("nested overlay count = %d, want 1", len(nested))
+	}
+	for _, overlay := range nested {
+		fs.zipOverlays[overlay.zipPath] = overlay
+		anchor := path.Dir(overlay.zipPath)
+		fs.zipAnchors[anchor] = append(fs.zipAnchors[anchor], overlay)
+	}
+
+	stream := &zipMergeStream{fs: fs, path: "/data/nested"}
+	listed := map[string]bool{}
+	for stream.HasNext() {
+		entry, errno := stream.Next()
+		if errno != 0 {
+			t.Fatalf("Next: %d", errno)
+		}
+		listed[entry.Name] = true
+	}
+	stream.Close()
+	if !listed["deep.txt"] || listed["inner.zip"] {
+		t.Fatalf("nested listing = %v", listed)
+	}
+	if _, err, ok := fs.zipAttr("/data/nested/inner.zip"); !ok || !errors.Is(err, syscall.ENOENT) {
+		t.Fatalf("nested archive attr = %v, %v; want hidden", err, ok)
+	}
+	file, ok := fs.zipOpen(context.Background(), "/data/nested/deep.txt")
+	if !ok {
+		t.Fatal("nested archive content not openable")
+	}
+	buf := make([]byte, len("nested content"))
+	n, err := file.zs.ReadAt(context.Background(), buf, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatal(err)
+	}
+	if got := string(buf[:n]); got != "nested content" {
+		t.Fatalf("nested content = %q", got)
+	}
+}
+
+func TestZipNestedArchiveSelectionAndDepth(t *testing.T) {
+	inner := buildZipFiles(t, map[string][]byte{"deep.txt": []byte("content")})
+	root := testOverlay(t, buildZipFiles(t, map[string][]byte{"inner.zip": inner}))
+	fs := testFS(root)
+
+	fs.expandZip = false
+	if got := fs.collectNestedOverlays(context.Background(), root, zipMaxEntries); len(got) != 0 {
+		t.Fatalf("disabled ZIP expansion produced %d overlays", len(got))
+	}
+	fs.expandZip = true
+	fs.expandMaxDepth = 0
+	if got := fs.collectNestedOverlays(context.Background(), root, zipMaxEntries); len(got) != 0 {
+		t.Fatalf("zero nesting depth produced %d overlays", len(got))
 	}
 }
 
