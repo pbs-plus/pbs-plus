@@ -471,6 +471,50 @@ func BenchmarkStatDirentsOrder(b *testing.B) {
 	}
 }
 
+func BenchmarkReaddirBatchSize(b *testing.B) {
+	dir := b.TempDir()
+	payload := make([]byte, 64)
+	for i := range 10000 {
+		path := filepath.Join(dir, fmt.Sprintf("file-%05d-padded_name_to_widen_the_dirent", i))
+		if err := os.WriteFile(path, payload, 0o644); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	for _, batch := range []int{512, 1024, 2048, 4096, 8192, 10000} {
+		b.Run(fmt.Sprintf("entries=%d", batch), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				f, err := os.Open(dir)
+				if err != nil {
+					b.Fatal(err)
+				}
+				r, err := NewDirReader(f, dir)
+				if err != nil {
+					b.Fatal(err)
+				}
+				count := 0
+				for {
+					got, err := r.readdir(batch, 4096)
+					if err == io.EOF || len(got) == 0 {
+						break
+					}
+					if err != nil {
+						b.Fatal(err)
+					}
+					count += len(got)
+				}
+				if count != 10000 {
+					b.Fatalf("read %d entries, want 10000", count)
+				}
+				if err := r.Close(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkReaddir(b *testing.B) {
 	dir := b.TempDir()
 	payload := make([]byte, 64)
