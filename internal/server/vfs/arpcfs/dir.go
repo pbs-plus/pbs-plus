@@ -364,17 +364,17 @@ type dirBatchResult struct {
 }
 
 type DirStream struct {
-	fs            *ARPCFS
-	path          string
-	handleId      fswire.FileHandleID
-	closed        atomic.Int32
-	maxedOut      atomic.Int32
-	mu            sync.Mutex
-	lastResp      fswire.ReadDirEntries
-	curIdx        atomic.Uint64
-	totalReturned atomic.Uint64
-	cborDec       cbor.DecMode
-	fetch         func(context.Context) (fswire.ReadDirEntries, error)
+	fs             *ARPCFS
+	path           string
+	handleId       fswire.FileHandleID
+	closed         atomic.Int32
+	maxedOut       atomic.Int32
+	mu             sync.Mutex
+	lastResp       fswire.ReadDirEntries
+	curIdx         atomic.Uint64
+	totalReturned  atomic.Uint64
+	cborDec        cbor.DecMode
+	fetch          func(context.Context) (fswire.ReadDirEntries, error)
 	prefetchMu     sync.Mutex
 	prefetchWG     sync.WaitGroup
 	prefetch       <-chan dirBatchResult
