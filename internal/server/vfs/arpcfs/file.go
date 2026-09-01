@@ -17,6 +17,10 @@ import (
 )
 
 func (f *ARPCFile) Close(ctx context.Context) error {
+	if f.zs != nil {
+		f.zs = nil
+		return nil
+	}
 	if f.isClosed.Load() {
 		log.Debug("close called on already closed file",
 
@@ -62,6 +66,9 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 }
 
 func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, error) {
+	if f.zs != nil {
+		return f.zs.Lseek(uint64(off), uint32(whence)), nil
+	}
 	log.Debug("lseek called",
 
 		"whence", whence, "offset", off, "path", f.name)
@@ -113,6 +120,9 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 }
 
 func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error) {
+	if f.zs != nil {
+		return f.zs.ReadAt(ctx, p, off)
+	}
 	if f.isClosed.Load() {
 		return 0, syscall.ENOENT
 	}
@@ -165,4 +175,5 @@ type ARPCFile struct {
 	handleID fswire.FileHandleID
 	isClosed atomic.Bool
 	backupID string
+	zs       *zipFileState
 }

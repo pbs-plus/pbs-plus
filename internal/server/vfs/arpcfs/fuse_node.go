@@ -391,6 +391,11 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 }
 
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	if n.fs.expandArchives {
+		if zs, ok := n.fs.zipReaddir(ctx, n.getPath()); ok {
+			return zs, 0
+		}
+	}
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
 		n.fs.logOnce(n.getPath(), err, "Readdir")
@@ -409,7 +414,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 
 	return &FileHandle{
 		fs:   n.fs,
-		file: &file,
+		file: file,
 	}, 0, 0
 }
 
