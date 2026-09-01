@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
+	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpcserver"
 )
 
@@ -66,7 +70,7 @@ func (s *Service) blockedReason(kind, definitionID, resourceKey string) string {
 
 func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 	if args.Stop {
-		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowBackup, args.Job.ID); err != nil {
+		if err := backup.CancelQueued(s.Store, args.Job); err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
 			return nil
@@ -96,11 +100,16 @@ func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 		reply.Message = err.Error()
 		return nil
 	}
-	execution, _, err := s.Engine.Submit(s.ctx, request)
+	execution, created, err := s.Engine.Submit(s.ctx, request)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
+	}
+	if created {
+		if err := backup.PrepareQueue(s.Store, args.Job, args.Web); err != nil {
+			log.Error(err, "jobrpc: failed to mint backup queued task", "backupID", args.Job.ID)
+		}
 	}
 	reply.Status = 200
 	reply.ExecutionID = execution.ID
@@ -109,7 +118,7 @@ func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 
 func (s *Service) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error {
 	if args.Stop {
-		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowRestore, args.Job.ID); err != nil {
+		if err := restore.CancelQueued(s.Store, args.Job); err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
 			return nil
@@ -139,11 +148,16 @@ func (s *Service) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error 
 		reply.Message = err.Error()
 		return nil
 	}
-	execution, _, err := s.Engine.Submit(s.ctx, request)
+	execution, created, err := s.Engine.Submit(s.ctx, request)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
+	}
+	if created {
+		if err := restore.PrepareQueue(s.Store, args.Job, args.Web); err != nil {
+			log.Error(err, "jobrpc: failed to mint restore queued task", "restoreID", args.Job.ID)
+		}
 	}
 	reply.Status = 200
 	reply.ExecutionID = execution.ID
@@ -152,7 +166,7 @@ func (s *Service) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error 
 
 func (s *Service) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
 	if args.Stop {
-		if _, err := s.Engine.CancelDefinition(s.ctx, jobs.WorkflowMtfMigration, args.JobID); err != nil {
+		if err := mtf.CancelQueued(s.Store, args.JobID); err != nil {
 			reply.Status = 500
 			reply.Message = err.Error()
 			return nil
@@ -176,11 +190,16 @@ func (s *Service) MtfQueue(args *MtfJobQueueArgs, reply *QueueReply) error {
 		reply.Message = err.Error()
 		return nil
 	}
-	execution, _, err := s.Engine.Submit(s.ctx, request)
+	execution, created, err := s.Engine.Submit(s.ctx, request)
 	if err != nil {
 		reply.Status = 500
 		reply.Message = err.Error()
 		return nil
+	}
+	if created {
+		if err := mtf.PrepareQueue(s.Store, args.JobID, args.Web); err != nil {
+			log.Error(err, "jobrpc: failed to mint mtf queued task", "mtfJobID", args.JobID)
+		}
 	}
 	reply.Status = 200
 	reply.ExecutionID = execution.ID

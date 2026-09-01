@@ -9,8 +9,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/backup"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/restore"
+	"github.com/pbs-plus/pbs-plus/internal/server/verification"
 )
 
 const schedulerTickInterval = 30 * time.Second
@@ -68,8 +71,16 @@ func (s *Scheduler) submitBackup(b coredb.Backup, trigger string, occurrence tim
 	if err != nil {
 		return err
 	}
-	_, _, err = s.app.Engine.Submit(s.app.Ctx, request)
-	return err
+	_, created, err := s.app.Engine.Submit(s.app.Ctx, request)
+	if err != nil {
+		return err
+	}
+	if created {
+		if err := backup.PrepareQueue(s.app, b, false); err != nil {
+			log.Error(err, "Scheduler: failed to mint backup queued task", "backupID", b.ID)
+		}
+	}
+	return nil
 }
 
 func (s *Scheduler) checkBackups() {
@@ -164,8 +175,12 @@ func (s *Scheduler) checkRestores() {
 			log.Error(err, "Scheduler: failed to build restore submit", "restoreID", r.ID)
 			continue
 		}
-		if _, _, err := s.app.Engine.Submit(s.app.Ctx, request); err != nil {
+		if _, created, err := s.app.Engine.Submit(s.app.Ctx, request); err != nil {
 			log.Error(err, "Scheduler: failed to submit restore", "restoreID", r.ID)
+		} else if created {
+			if err := restore.PrepareQueue(s.app, r, false); err != nil {
+				log.Error(err, "Scheduler: failed to mint restore queued task", "restoreID", r.ID)
+			}
 		}
 	}
 }
@@ -228,8 +243,16 @@ func (s *Scheduler) submitVerification(vJob coredb.VerificationJob, trigger stri
 	if err != nil {
 		return err
 	}
-	_, _, err = s.app.Engine.Submit(s.app.Ctx, request)
-	return err
+	_, created, err := s.app.Engine.Submit(s.app.Ctx, request)
+	if err != nil {
+		return err
+	}
+	if created {
+		if err := verification.PrepareQueue(s.app, vJob, false); err != nil {
+			log.Error(err, "Scheduler: failed to mint verification queued task", "verificationJobID", vJob.ID)
+		}
+	}
+	return nil
 }
 
 // TriggerPendingVerifications submits verification jobs that waited on backup completion.
