@@ -29,11 +29,11 @@ runs:
         STAGE=$(mktemp -d)
         trap 'rm -rf "$STAGE"' EXIT
 
-        mkdir -p "$STAGE/docs/sub"
+        mkdir -p "$STAGE/docs/sub" "$STAGE/docs/empty"
         printf 'zip readme content' > "$STAGE/docs/readme.txt"
         printf 'sub note' > "$STAGE/docs/sub/note.txt"
         printf 'virtual loses' > "$STAGE/docs/collision.txt"
-        ( cd "$STAGE/docs" && zip -q "$ARCH_DIR/docs.zip" readme.txt sub collision.txt )
+        ( cd "$STAGE/docs" && zip -q -r "$ARCH_DIR/docs.zip" readme.txt sub collision.txt empty )
 
         mkdir -p "$STAGE/outer"
         printf 'deep content' > "$STAGE/outer/deep.txt"

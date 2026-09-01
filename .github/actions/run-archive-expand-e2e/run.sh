@@ -171,6 +171,7 @@ content_is() {
 
 file_exists()  { [ -f "$1" ]; }
 file_missing() { [ ! -e "$1" ]; }
+dir_exists()   { [ -d "$1" ]; }
 
 run_and_mount() {
 	local bid=$1 group before snap
@@ -214,6 +215,7 @@ if mount_snapshot "test-backup-job" "$SNAP"; then
 	file_missing "$MP/$ARCH/readme.txt" && ok "zip contents not exposed without expansion" || fail "readme.txt leaked without expansion"
 	file_missing "$MP/$ARCH/deep.txt" && ok "nested contents not exposed without expansion" || fail "deep.txt leaked without expansion"
 	file_missing "$MP/$ARCH/seven.txt" && ok "7z contents not exposed without expansion" || fail "seven.txt leaked without expansion"
+	file_missing "$MP/$ARCH/sub/note.txt" && ok "zip subdir contents not exposed without expansion" || fail "zip subdir leaked without expansion"
 	unmount_snapshot "$MP"
 else
 	die "control snapshot mount failed"
@@ -232,6 +234,7 @@ if run_and_mount "test-expand-job"; then
 	file_missing "$MP/$ARCH/data.7z" && ok "data.7z hidden when expanded" || fail "data.7z still visible when expanded"
 	content_is "$MP" "$ARCH/readme.txt" "zip readme content" && ok "zip readme.txt expanded" || fail "zip readme.txt wrong or missing"
 	content_is "$MP" "$ARCH/sub/note.txt" "sub note" && ok "zip sub/note.txt expanded" || fail "zip sub/note.txt wrong or missing"
+	dir_exists "$MP/$ARCH/empty" && ok "childless zip dir preserved" || fail "childless zip dir missing"
 	content_is "$MP" "$ARCH/collision.txt" "real wins" && ok "real file shadows virtual collision" || fail "virtual collision beat real file"
 	content_is "$MP" "$ARCH/deep.txt" "deep content" && ok "nested zip deep.txt expanded" || fail "nested deep.txt wrong or missing"
 	content_is "$MP" "$ARCH/seven.txt" "seven content" && ok "7z seven.txt expanded" || fail "seven.txt wrong or missing"
