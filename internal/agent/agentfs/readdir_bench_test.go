@@ -82,7 +82,7 @@ func BenchmarkEncodeDirEntries(b *testing.B) {
 					b.Fatal(err)
 				}
 				for _, info := range entries {
-					ok, err := r.tryEncode(enc, info)
+					ok, err := r.tryEncode(info)
 					if err != nil {
 						b.Fatal(err)
 					}

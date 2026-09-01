@@ -77,7 +77,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 			return nil, err
 		}
 
-		ok, err := r.tryEncode(enc, r.pending[i])
+		ok, err := r.tryEncode(r.pending[i])
 		if err != nil {
 			return nil, err
 		}
@@ -124,7 +124,7 @@ func (r *DirReader) NextBatch(ctx context.Context, blockSize uint64) ([]byte, er
 				continue
 			}
 
-			ok, err := r.tryEncode(enc, info)
+			ok, err := r.tryEncode(info)
 			if err != nil {
 				return nil, err
 			}
@@ -174,7 +174,7 @@ func (r *DirReader) Close() error {
 	r.closed = true
 	return r.file.Close()
 }
-func (r *DirReader) tryEncode(enc *cbor.Encoder, info fswire.AgentFileInfo) (bool, error) {
+func (r *DirReader) tryEncode(info fswire.AgentFileInfo) (bool, error) {
 	r.scratch.Reset()
 	scratchEnc := cbor.NewEncoder(&r.scratch)
 	if err := scratchEnc.Encode(info); err != nil {
@@ -185,9 +185,6 @@ func (r *DirReader) tryEncode(enc *cbor.Encoder, info fswire.AgentFileInfo) (boo
 		return false, nil
 	}
 
-	if err := enc.Encode(info); err != nil {
-		return false, err
-	}
-
+	r.encodeWriter.Write(r.scratch.Bytes())
 	return true, nil
 }
