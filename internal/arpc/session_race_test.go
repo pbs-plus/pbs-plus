@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -104,4 +105,69 @@ func TestQuicReconnectDoesNotEvictNewSession(t *testing.T) {
 
 	_ = first
 	_ = second
+}
+
+func TestStreamPipeCarriesAgentVersion(t *testing.T) {
+	addr, _, _, agentsManager := newTestARPCServer(t, NewRouter())
+
+	headers := http.Header{}
+	headers.Set("X-PBS-Agent", "client")
+	headers.Set("X-PBS-Plus-Version", "9.9.9")
+
+	if _, err := ConnectToServer(t.Context(), addr, headers, newTestClientTLS(t)); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return agentsManager.IsOnline("client") }, "session never registered")
+
+	pipe, ok := agentsManager.GetStreamPipe("client")
+	if !ok {
+		t.Fatal("stream pipe not registered")
+	}
+	if got := pipe.GetVersion(); got != "9.9.9" {
+		t.Fatalf("server pipe version = %q, want the agent-reported X-PBS-Plus-Version", got)
+	}
+}
+
+func TestQuicPipeCarriesAgentVersion(t *testing.T) {
+	ensureGlobalCAs(t)
+	serverCert := serverCA.issueCert(t, "localhost", false, []net.IP{net.ParseIP("127.0.0.1")}, []string{"localhost"})
+	serverTLS := &tls.Config{
+		Certificates: []tls.Certificate{serverCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCA.caPool,
+		MinVersion:   tls.VersionTLS13,
+	}
+
+	transport, err := NewQuicTransport("127.0.0.1:0", nil)
+	if err != nil {
+		t.Fatalf("quic transport: %v", err)
+	}
+	defer func() { _ = CloseQuicTransport(transport) }()
+
+	listener, err := ListenQuic(transport, serverTLS)
+	if err != nil {
+		t.Fatalf("quic listen: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	agentsManager := NewAgentsManager()
+	agentsManager.SetExtraExpectFunc(func(string, []*x509.Certificate) bool { return true })
+	go func() { _ = ServeQuic(t.Context(), agentsManager, listener, NewRouter()) }()
+
+	headers := http.Header{}
+	headers.Set("X-PBS-Agent", "client")
+	headers.Set("X-PBS-Plus-Version", "9.9.9")
+
+	if _, err := DialQuic(t.Context(), listener.Addr().String(), newTestClientTLS(t), headers); err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	waitUntil(t, 2*time.Second, func() bool { return agentsManager.IsOnline("client") }, "session never registered")
+
+	qPipe, ok := agentsManager.GetQuicPipe("client")
+	if !ok {
+		t.Fatal("quic pipe not registered")
+	}
+	if got := qPipe.GetVersion(); got != "9.9.9" {
+		t.Fatalf("server pipe version = %q, want the agent-reported X-PBS-Plus-Version", got)
+	}
 }

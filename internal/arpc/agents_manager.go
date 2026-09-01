@@ -158,6 +158,7 @@ func (sm *AgentsManager) registerStreamPipe(ctx context.Context, smuxTun *smux.S
 	if err != nil {
 		return nil, "", err
 	}
+	pipe.version = headers.Get("X-PBS-Plus-Version")
 
 	sm.regMu.Lock()
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
@@ -228,6 +229,7 @@ func (sm *AgentsManager) registerQuicPipe(ctx context.Context, conn *quic.Conn, 
 	}
 
 	qPipe := NewQuicServerPipe(ctx, conn)
+	qPipe.version = headers.Get("X-PBS-Plus-Version")
 
 	sm.regMu.Lock()
 	if existingSession, exists := sm.sessions.Get(clientID); exists {
