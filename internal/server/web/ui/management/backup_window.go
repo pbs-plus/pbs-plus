@@ -149,7 +149,7 @@ var backupJobEdit = js.EditWindow{
 								"'Use broken xattr' preserves compatibility with backups made by those versions. " +
 								"'Use fixed xattr' uses the corrected format for new backups.")},
 							CBind: js.Obj{"value": "{legacyXAttrValue}"}},
-						js.Field{XType: js.XCheckbox, Name: "expand-archives", Label: "Expand Archives", BoxLabel: "Backup zip contents as files",
+						js.Field{XType: js.XCheckbox, Name: "expand-archives", Label: "Expand Archives", BoxLabel: "Backup archive contents as files",
 							InputValue: "true", UncheckedValue: "false",
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Presents zip files to the backup as their extracted contents, merged into the folder holding the archive. " +
 								"Improves deduplication for changed files inside zips. The archive itself is not stored separately.")}},

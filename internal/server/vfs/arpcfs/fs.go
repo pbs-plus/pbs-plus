@@ -85,11 +85,11 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			Backup:   backup,
 			Memcache: memcache.New(memcachePath),
 		}),
-		Hostname:        hostname,
-		backupMode:      backupMode,
-		expandArchives:  backup.ExpandArchives,
-		agentManager:    agentManager,
-		sessionId:       sessionId,
+		Hostname:       hostname,
+		backupMode:     backupMode,
+		expandArchives: backup.ExpandArchives,
+		agentManager:   agentManager,
+		sessionId:      sessionId,
 	}
 	log.Debug("aRPCFS initialized",
 
@@ -288,7 +288,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 		}
 	}
 
-	if fs.expandArchives && !fi.IsDir && hasZipExt(filename) && fi.Size >= 22 {
+	if fs.expandArchives && !fi.IsDir && hasArchiveExt(filename) && fi.Size >= 32 {
 		if fs.zipProbe(ctx, filename, fi.Size) {
 			return fswire.AgentFileInfo{}, syscall.ENOENT
 		}

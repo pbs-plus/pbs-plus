@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bodgit/sevenzip"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/klauspost/compress/flate"
@@ -33,10 +34,10 @@ const (
 )
 
 var (
-	errZipTooMany     = errors.New("zip has too many entries")
-	errZipBomb        = errors.New("zip expansion ratio exceeds limit")
-	errZipUnsupported = errors.New("zip uses unsupported feature")
-	errZipCorrupt     = errors.New("zip is corrupt")
+	errZipTooMany     = errors.New("archive has too many entries")
+	errZipBomb        = errors.New("archive expansion ratio exceeds limit")
+	errZipUnsupported = errors.New("archive uses unsupported feature")
+	errZipCorrupt     = errors.New("archive is corrupt")
 )
 
 type zipEntry struct {
@@ -46,6 +47,7 @@ type zipEntry struct {
 	uncompSize int64
 	hdrOffset  int64
 	dataOff    int64
+	sidx       int32
 	mode       uint32
 	mtime      int64
 	isDir      bool
@@ -70,6 +72,7 @@ type zipOverlay struct {
 	zipPath   string
 	size      int64
 	entries   []zipEntry
+	sfiles    []*sevenzip.File
 	byName    map[string]int32
 	dirs      map[string]*zipDir
 	nameBytes int
@@ -107,8 +110,9 @@ func (s zipSrc) ReadAt(p []byte, off int64) (int, error) {
 	return s.readAt(context.Background(), p, off)
 }
 
-func hasZipExt(name string) bool {
-	return strings.EqualFold(path.Ext(name), ".zip")
+func hasArchiveExt(name string) bool {
+	ext := strings.ToLower(path.Ext(name))
+	return ext == ".zip" || ext == ".7z"
 }
 
 func cleanZipName(raw string) (string, bool, bool) {
@@ -416,6 +420,15 @@ func (ov *zipOverlay) dataOffset(ctx context.Context, e *zipEntry) (int64, error
 }
 
 func (zs *zipFileState) init(ctx context.Context) error {
+	if zs.ent.method == m7z {
+		fr, err := zs.ov.sfiles[zs.ent.sidx].Open()
+		if err != nil {
+			return fmt.Errorf("%w: %w", errZipUnsupported, err)
+		}
+		zs.fr = fr
+		zs.ring = make([]byte, zipRingSize)
+		return nil
+	}
 	off, err := zs.ov.dataOffset(ctx, zs.ent)
 	if err != nil {
 		return err
@@ -430,15 +443,25 @@ func (zs *zipFileState) init(ctx context.Context) error {
 	return nil
 }
 
-func (zs *zipFileState) restart() {
-	zs.sec.Seek(0, io.SeekStart)
-	zs.br.Reset(zs.sec)
-	if r, ok := zs.fr.(flate.Resetter); ok {
-		r.Reset(zs.br, nil)
+func (zs *zipFileState) restart() error {
+	if zs.ent.method == m7z {
+		zs.fr.Close()
+		fr, err := zs.ov.sfiles[zs.ent.sidx].Open()
+		if err != nil {
+			return fmt.Errorf("%w: %w", errZipUnsupported, err)
+		}
+		zs.fr = fr
+	} else {
+		zs.sec.Seek(0, io.SeekStart)
+		zs.br.Reset(zs.sec)
+		if r, ok := zs.fr.(flate.Resetter); ok {
+			r.Reset(zs.br, nil)
+		}
 	}
 	zs.ringStart = 0
 	zs.fed = 0
 	zs.eof = false
+	return nil
 }
 
 func (zs *zipFileState) fill(end int64) error {
@@ -493,7 +516,9 @@ func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int
 		}
 	}
 	if off < zs.ringStart {
-		zs.restart()
+		if err := zs.restart(); err != nil {
+			return 0, err
+		}
 	}
 	if err := zs.fill(off + int64(len(dest))); err != nil {
 		return 0, err
@@ -594,7 +619,7 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 		return false
 	}
 
-	ov, err := parseZipOverlay(src.ReadAt, size)
+	ov, err := parseArchiveOverlay(src.ReadAt, size)
 	if err != nil {
 		src.Close(ctx)
 		fs.zipMu.Lock()
@@ -765,11 +790,11 @@ func (s *zipMergeStream) HasNext() bool {
 					continue
 				}
 				full := s.path + "/" + e.Name
-				if hasZipExt(e.Name) {
+				if hasArchiveExt(e.Name) {
 					if s.fs.zipHidden(full) {
 						continue
 					}
-					if fi, err := s.fs.Attr(s.fs.Ctx, full, true); err == nil && !fi.IsDir && fi.Size >= 22 {
+					if fi, err := s.fs.Attr(s.fs.Ctx, full, true); err == nil && !fi.IsDir && fi.Size >= 32 {
 						if s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
 							continue
 						}
