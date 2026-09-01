@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -206,7 +207,7 @@ func statDirent(fd int, ent dirent, blockSize uint64, info *fswire.AgentFileInfo
 	}
 
 	var sx unix.Statx_t
-	err := unix.Statx(fd, ent.name, unix.AT_SYMLINK_NOFOLLOW|unix.AT_STATX_DONT_SYNC, statxMask, &sx)
+	err := statxDirent(fd, ent.name, &sx)
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return false, nil
@@ -256,6 +257,30 @@ func shouldExcludeDirent(fileType uint8) bool {
 	default:
 		return false
 	}
+}
+
+// statxDirent bypasses unix.Statx so the pathname remains stack-backed instead of allocating per entry.
+func statxDirent(fd int, name string, sx *unix.Statx_t) error {
+	if len(name) > unix.NAME_MAX {
+		return unix.ENAMETOOLONG
+	}
+
+	var path [unix.NAME_MAX + 1]byte
+	copy(path[:], name)
+	_, _, errno := unix.Syscall6(
+		unix.SYS_STATX,
+		uintptr(fd),
+		uintptr(unsafe.Pointer(&path[0])),
+		uintptr(unix.AT_SYMLINK_NOFOLLOW|unix.AT_STATX_DONT_SYNC),
+		uintptr(statxMask),
+		uintptr(unsafe.Pointer(sx)),
+		0,
+	)
+	runtime.KeepAlive(&path)
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 func statxBirthTimeNano(sx *unix.Statx_t) int64 {

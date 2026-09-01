@@ -391,6 +391,13 @@ func TestStatDirentsSkipsKnownExcludedTypes(t *testing.T) {
 	}
 }
 
+func TestStatxDirentRejectsLongName(t *testing.T) {
+	var sx unix.Statx_t
+	if err := statxDirent(-1, string(make([]byte, unix.NAME_MAX+1)), &sx); err != unix.ENAMETOOLONG {
+		t.Fatalf("got %v, want %v", err, unix.ENAMETOOLONG)
+	}
+}
+
 func TestStatWorkers(t *testing.T) {
 	defer func(old int) { statWorkerLimit = old }(statWorkerLimit)
 	statWorkerLimit = 16
