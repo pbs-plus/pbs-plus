@@ -35,8 +35,9 @@ const (
 var statWorkerLimit = 16
 
 type dirent struct {
-	ino  uint64
-	name string
+	ino   uint64
+	name  string
+	type_ uint8
 }
 
 func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, error) {
@@ -111,6 +112,7 @@ func parseDirents(buf []byte, max int, dst []dirent) (int, []dirent) {
 		}
 
 		ino := binary.NativeEndian.Uint64(buf[0:8])
+		type_ := buf[18]
 		name := buf[direntHeaderLen:reclen]
 		if i := bytes.IndexByte(name, 0); i >= 0 {
 			name = name[:i]
@@ -126,7 +128,7 @@ func parseDirents(buf []byte, max int, dst []dirent) (int, []dirent) {
 			continue
 		}
 
-		dst = append(dst, dirent{ino: ino, name: string(name)})
+		dst = append(dst, dirent{ino: ino, name: string(name), type_: type_})
 	}
 
 	return consumed, dst
@@ -199,6 +201,10 @@ func statDirents(out []fswire.AgentFileInfo, fd int, ents []dirent, blockSize ui
 }
 
 func statDirent(fd int, ent dirent, blockSize uint64, info *fswire.AgentFileInfo) (bool, error) {
+	if shouldExcludeDirent(ent.type_) {
+		return false, nil
+	}
+
 	var sx unix.Statx_t
 	err := unix.Statx(fd, ent.name, unix.AT_SYMLINK_NOFOLLOW|unix.AT_STATX_DONT_SYNC, statxMask, &sx)
 	if err != nil {
@@ -241,6 +247,15 @@ func statDirent(fd int, ent dirent, blockSize uint64, info *fswire.AgentFileInfo
 	}
 
 	return true, nil
+}
+
+func shouldExcludeDirent(fileType uint8) bool {
+	switch fileType {
+	case unix.DT_SOCK, unix.DT_BLK, unix.DT_CHR, unix.DT_LNK:
+		return true
+	default:
+		return false
+	}
 }
 
 func statxBirthTimeNano(sx *unix.Statx_t) int64 {
