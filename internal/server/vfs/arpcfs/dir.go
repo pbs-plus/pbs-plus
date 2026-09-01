@@ -63,22 +63,10 @@ func (s *DirStream) HasNext() bool {
 
 		"handleId", s.handleId, "path", s.path)
 
-	req := fswire.ReadDirReq{HandleID: s.handleId}
-	readBuf := bufPool.Get().([]byte)
-	defer bufPool.Put(readBuf)
-
-	pipe, err := s.fs.getPipe(s.fs.Ctx)
-	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return false
-	}
-
-	bytesRead, err := pipe.CallBinary(s.fs.Ctx, "ReadDir", &req, readBuf)
+	entries, err := s.nextBatch()
 	log.Debug("hasNext RPC completed",
 
-		"path", s.path, "error", err, "bytesRead", bytesRead)
+		"path", s.path, "error", err)
 
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
@@ -96,29 +84,11 @@ func (s *DirStream) HasNext() bool {
 		return false
 	}
 
-	if bytesRead == 0 {
-		log.Debug("hasNext: no bytes read, end of directory reached",
-
-			"totalEntriesReturned", s.totalReturned.Load(), "path", s.path)
-
-		return false
-	}
-
 	oldLen := len(s.lastResp)
-	s.lastResp = nil
+	s.lastResp = entries
 	log.Debug("hasNext: decoding new batch",
 
-		"oldBatchLen", oldLen, "bytesRead", bytesRead, "path", s.path)
-
-	err = s.cborDec.Unmarshal(readBuf[:bytesRead], &s.lastResp)
-	if err != nil {
-		log.Error(err,
-			"HasNext: decode failed, closing dirstream",
-
-			"entriesReturned", s.totalReturned.Load(), "bytesRead", bytesRead, "path", s.path)
-
-		return false
-	}
+		"oldBatchLen", oldLen, "path", s.path)
 
 	newBatchLen := len(s.lastResp)
 	log.Debug("hasNext decoded batch",
@@ -147,11 +117,88 @@ func (s *DirStream) HasNext() bool {
 	}
 
 	s.curIdx.Store(0)
+	if currentReturned+uint64(newBatchLen) < maxEntries {
+		s.startPrefetch()
+	}
 	log.Debug("hasNext: returning true with new batch",
 
 		"curIdx", s.curIdx.Load(), "batchSize", newBatchLen, "path", s.path)
 
 	return newBatchLen > 0
+}
+
+func (s *DirStream) fetchBatch(ctx context.Context) (fswire.ReadDirEntries, error) {
+	if s.fetch != nil {
+		return s.fetch(ctx)
+	}
+
+	req := fswire.ReadDirReq{HandleID: s.handleId}
+	readBuf := bufPool.Get().([]byte)
+	defer bufPool.Put(readBuf)
+
+	pipe, err := s.fs.getPipe(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bytesRead, err := pipe.CallBinary(ctx, "ReadDir", &req, readBuf)
+	if err != nil {
+		return nil, err
+	}
+	if bytesRead == 0 {
+		return nil, os.ErrProcessDone
+	}
+
+	var entries fswire.ReadDirEntries
+	if err := s.cborDec.Unmarshal(readBuf[:bytesRead], &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (s *DirStream) nextBatch() (fswire.ReadDirEntries, error) {
+	s.prefetchMu.Lock()
+	resultCh := s.prefetch
+	cancel := s.prefetchCancel
+	s.prefetch = nil
+	s.prefetchCancel = nil
+	s.prefetchMu.Unlock()
+
+	if resultCh == nil {
+		return s.fetchBatch(s.fs.Ctx)
+	}
+	defer cancel()
+	result := <-resultCh
+	return result.entries, result.err
+}
+
+func (s *DirStream) startPrefetch() {
+	s.prefetchMu.Lock()
+	defer s.prefetchMu.Unlock()
+	if s.closed.Load() != 0 || s.maxedOut.Load() != 0 || s.prefetch != nil {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(s.fs.Ctx)
+	resultCh := make(chan dirBatchResult, 1)
+	s.prefetch = resultCh
+	s.prefetchCancel = cancel
+	s.prefetchWG.Go(func() {
+		entries, err := s.fetchBatch(ctx)
+		resultCh <- dirBatchResult{entries: entries, err: err}
+		close(resultCh)
+	})
+}
+
+func (s *DirStream) stopPrefetch() {
+	s.prefetchMu.Lock()
+	if s.prefetchCancel != nil {
+		s.prefetchCancel()
+	}
+	s.prefetch = nil
+	s.prefetchCancel = nil
+	s.prefetchMu.Unlock()
+	s.prefetchWG.Wait()
 }
 
 func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
@@ -279,6 +326,7 @@ func (s *DirStream) Close() {
 
 		return
 	}
+	s.stopPrefetch()
 	log.Debug("closing DirStream",
 
 		"totalEntriesReturned", s.totalReturned.Load(), "handleId", s.handleId, "path", s.path)
@@ -310,15 +358,25 @@ func (s *DirStream) Close() {
 	}
 }
 
+type dirBatchResult struct {
+	entries fswire.ReadDirEntries
+	err     error
+}
+
 type DirStream struct {
-	fs            *ARPCFS
-	path          string
-	handleId      fswire.FileHandleID
-	closed        atomic.Int32
-	maxedOut      atomic.Int32
-	mu            sync.Mutex
-	lastResp      fswire.ReadDirEntries
-	curIdx        atomic.Uint64
-	totalReturned atomic.Uint64
-	cborDec       cbor.DecMode
+	fs             *ARPCFS
+	path           string
+	handleId       fswire.FileHandleID
+	closed         atomic.Int32
+	maxedOut       atomic.Int32
+	mu             sync.Mutex
+	lastResp       fswire.ReadDirEntries
+	curIdx         atomic.Uint64
+	totalReturned  atomic.Uint64
+	cborDec        cbor.DecMode
+	fetch          func(context.Context) (fswire.ReadDirEntries, error)
+	prefetchMu     sync.Mutex
+	prefetchWG     sync.WaitGroup
+	prefetch       <-chan dirBatchResult
+	prefetchCancel context.CancelFunc
 }
