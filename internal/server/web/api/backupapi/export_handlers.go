@@ -112,7 +112,15 @@ func D2DTargetTreeHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		tree := extjs.BuildTargetTree(all, coredb.TargetType(r.URL.Query().Get("kind")))
+		kind := coredb.TargetType(r.URL.Query().Get("kind"))
+		statused := make([]coredb.Target, 0, len(all))
+		for _, t := range all {
+			if kind == "" || t.Type == kind {
+				statused = append(statused, t)
+			}
+		}
+		statuses := app.Target.GetStatusEntries(statused)
+		tree := extjs.BuildTargetTree(statused, statuses, kind)
 
 		digest, err := digest.Calculate(tree)
 		if err != nil {

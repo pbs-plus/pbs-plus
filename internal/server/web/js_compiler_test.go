@@ -116,13 +116,14 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`column.setText("S3 URL")`),
 		[]byte(`target/tree?kind=" + encodeURIComponent(view.targetKind || "")`),
 		[]byte(`target-status?kind=" + encodeURIComponent(view.targetKind || "")`),
-		[]byte(`connection_status: null`),
+		[]byte(`PBS.PlusUtils.API2Request({`),
+		[]byte(`resp.result && resp.result.data`),
+		[]byte(`connection_status: node.connection_status ?? null`),
 		[]byte(`if (!this.loaded) {`),
 		[]byte(`view.setLoading(true);`),
 		[]byte(`fa fa-spinner fa-pulse`),
-		[]byte(`Status unavailable`),
-		[]byte(`st.VolumeTotalBytes > 0 || st.VolumeUsedBytes > 0`),
-		[]byte(`node.set("volume_used", Proxmox.Utils.format_size(st.VolumeUsedBytes))`),
+		[]byte(`st.volume_total_bytes > 0 ? Proxmox.Utils.format_size(st.volume_total_bytes) : ""`),
+		[]byte(`node.set("volume_used", st.volume_used_bytes > 0 ? Proxmox.Utils.format_size(st.volume_used_bytes) : "")`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("target view is missing %q", expected)
@@ -135,6 +136,8 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`if (view.targetKind === "filesystem")`),
 		[]byte(`node.target_type === "agent" ? null : node.connection_status`),
 		[]byte(`fa fa-cog"></i> Configured`),
+		[]byte(`Status unavailable`),
+		[]byte(`node.set("connection_status", "error")`),
 	} {
 		if bytes.Contains(source, stale) {
 			t.Errorf("target status view still contains %q", stale)

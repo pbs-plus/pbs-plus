@@ -4,6 +4,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
@@ -278,7 +279,7 @@ func formatSnapshotLabel(snapshot, namespace string) string {
 	return namespace + ": " + snapshot
 }
 
-func BuildTargetTree(targets []coredb.Target, kind coredb.TargetType) []TargetTreeNode {
+func BuildTargetTree(targets []coredb.Target, statuses map[string]application.StatusEntry, kind coredb.TargetType) []TargetTreeNode {
 	var localTargets []TargetTreeNode
 	agentGroups := map[string]*TargetTreeNode{}
 	var s3Targets []TargetTreeNode
@@ -301,7 +302,7 @@ func BuildTargetTree(targets []coredb.Target, kind coredb.TargetType) []TargetTr
 			VolumeID:                 t.VolumeID,
 			JobCount:                 t.JobCount,
 			AgentVersion:             t.AgentVersion,
-			ConnectionStatus:         t.ConnectionStatus,
+			ConnectionStatus:         new(t.ConnectionStatus),
 			VolumeType:               t.VolumeType,
 			VolumeName:               t.VolumeName,
 			VolumeFS:                 t.VolumeFS,
@@ -321,6 +322,20 @@ func BuildTargetTree(targets []coredb.Target, kind coredb.TargetType) []TargetTr
 			DatabaseClientFamily:     t.DatabaseClientFamily,
 			Leaf:                     true,
 			IsGroup:                  false,
+		}
+
+		if st, ok := statuses[t.Name]; ok {
+			node.AgentVersion = st.AgentVersion
+			node.ConnectionStatus = st.ConnectionStatus
+			node.VolumeTotalBytes = st.VolumeTotalBytes
+			node.VolumeUsedBytes = st.VolumeUsedBytes
+			node.VolumeFreeBytes = st.VolumeFreeBytes
+			if st.VolumeTotalBytes > 0 {
+				node.VolumeTotalHuman = HumanReadableBytes(st.VolumeTotalBytes)
+				node.VolumeUsedHuman = HumanReadableBytes(st.VolumeUsedBytes)
+				node.VolumeFreeHuman = HumanReadableBytes(st.VolumeFreeBytes)
+			}
+			node.CheckedAt = st.CheckedAt
 		}
 
 		switch {
@@ -676,34 +691,35 @@ type TargetTreeNode struct {
 	Leaf      bool             `json:"leaf"`
 	Children  []TargetTreeNode `json:"children,omitempty"`
 
-	Name                     string `json:"name,omitempty"`
-	Path                     string `json:"path,omitempty"`
-	TargetType               string `json:"target_type,omitempty"`
-	Kind                     string `json:"kind,omitempty"`
-	Access                   string `json:"access,omitempty"`
-	MountScript              string `json:"mount_script,omitempty"`
-	VolumeID                 string `json:"volume_id,omitempty"`
-	JobCount                 int    `json:"job_count,omitempty"`
-	AgentVersion             string `json:"agent_version,omitempty"`
-	ConnectionStatus         bool   `json:"connection_status,omitempty"`
-	VolumeType               string `json:"volume_type,omitempty"`
-	VolumeName               string `json:"volume_name,omitempty"`
-	VolumeFS                 string `json:"volume_fs,omitempty"`
-	VolumeTotalBytes         int    `json:"volume_total_bytes,omitempty"`
-	VolumeUsedBytes          int    `json:"volume_used_bytes,omitempty"`
-	VolumeFreeBytes          int    `json:"volume_free_bytes,omitempty"`
-	VolumeTotalHuman         string `json:"volume_total,omitempty"`
-	VolumeUsedHuman          string `json:"volume_used,omitempty"`
-	VolumeFreeHuman          string `json:"volume_free,omitempty"`
-	AgentHostname            string `json:"agent_hostname,omitempty"`
-	OS                       string `json:"os,omitempty"`
-	IP                       string `json:"ip,omitempty"`
-	DatabaseHost             string `json:"database_host,omitempty"`
-	DatabasePort             int    `json:"database_port,omitempty"`
-	DatabaseUsername         string `json:"database_username,omitempty"`
-	DatabaseTLSMode          string `json:"database_tls_mode,omitempty"`
-	DatabaseCACertificate    string `json:"database_ca_certificate,omitempty"`
-	DatabaseDefaultClientDir string `json:"database_default_client_dir,omitempty"`
-	DatabaseVariant          string `json:"database_variant,omitempty"`
-	DatabaseClientFamily     string `json:"database_default_client_family,omitempty"`
+	Name                     string    `json:"name,omitempty"`
+	Path                     string    `json:"path,omitempty"`
+	TargetType               string    `json:"target_type,omitempty"`
+	Kind                     string    `json:"kind,omitempty"`
+	Access                   string    `json:"access,omitempty"`
+	MountScript              string    `json:"mount_script,omitempty"`
+	VolumeID                 string    `json:"volume_id,omitempty"`
+	JobCount                 int       `json:"job_count,omitempty"`
+	AgentVersion             string    `json:"agent_version,omitempty"`
+	ConnectionStatus         *bool     `json:"connection_status,omitempty"`
+	CheckedAt                time.Time `json:"checked_at"`
+	VolumeType               string    `json:"volume_type,omitempty"`
+	VolumeName               string    `json:"volume_name,omitempty"`
+	VolumeFS                 string    `json:"volume_fs,omitempty"`
+	VolumeTotalBytes         int       `json:"volume_total_bytes,omitempty"`
+	VolumeUsedBytes          int       `json:"volume_used_bytes,omitempty"`
+	VolumeFreeBytes          int       `json:"volume_free_bytes,omitempty"`
+	VolumeTotalHuman         string    `json:"volume_total,omitempty"`
+	VolumeUsedHuman          string    `json:"volume_used,omitempty"`
+	VolumeFreeHuman          string    `json:"volume_free,omitempty"`
+	AgentHostname            string    `json:"agent_hostname,omitempty"`
+	OS                       string    `json:"os,omitempty"`
+	IP                       string    `json:"ip,omitempty"`
+	DatabaseHost             string    `json:"database_host,omitempty"`
+	DatabasePort             int       `json:"database_port,omitempty"`
+	DatabaseUsername         string    `json:"database_username,omitempty"`
+	DatabaseTLSMode          string    `json:"database_tls_mode,omitempty"`
+	DatabaseCACertificate    string    `json:"database_ca_certificate,omitempty"`
+	DatabaseDefaultClientDir string    `json:"database_default_client_dir,omitempty"`
+	DatabaseVariant          string    `json:"database_variant,omitempty"`
+	DatabaseClientFamily     string    `json:"database_default_client_family,omitempty"`
 }

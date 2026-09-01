@@ -46,15 +46,18 @@ func TestD2DTargetStatusHandlerResolvesRequestedKind(t *testing.T) {
 		t.Fatalf("status code = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 
-	var statuses map[string]struct {
-		ConnectionStatus *bool
-		VolumeTotalBytes int
-		VolumeUsedBytes  int
-		VolumeFreeBytes  int
+	var resp struct {
+		Data map[string]struct {
+			ConnectionStatus *bool `json:"connection_status"`
+			VolumeTotalBytes int   `json:"volume_total_bytes"`
+			VolumeUsedBytes  int   `json:"volume_used_bytes"`
+			VolumeFreeBytes  int   `json:"volume_free_bytes"`
+		} `json:"data"`
 	}
-	if err := json.NewDecoder(recorder.Body).Decode(&statuses); err != nil {
+	if err := json.NewDecoder(recorder.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}
+	statuses := resp.Data
 	local := statuses["local"]
 	if len(statuses) != 1 || local.ConnectionStatus == nil || !*local.ConnectionStatus {
 		t.Fatalf("statuses = %#v", statuses)

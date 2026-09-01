@@ -36,32 +36,7 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		for i := range all {
-			if size, err := application.ResolveTargetSize(all[i]); err == nil {
-				all[i].VolumeTotalBytes = size.VolumeTotalBytes
-				all[i].VolumeUsedBytes = size.VolumeUsedBytes
-				all[i].VolumeFreeBytes = size.VolumeFreeBytes
-			}
-			switch {
-			case all[i].IsS3():
-				all[i].ConnectionStatus = true
-				all[i].AgentVersion = "N/A (S3 target)"
-			case all[i].IsLocal():
-				all[i].AgentVersion = "N/A (local target)"
-				_, err := os.Stat(all[i].Path)
-				all[i].ConnectionStatus = err == nil && validate.IsValid(all[i].Path)
-			case all[i].IsAgent():
-				if qSess, ok := app.Agents.GetQuicPipe(all[i].GetHostname()); ok {
-					all[i].ConnectionStatus = true
-					all[i].AgentVersion = qSess.GetVersion()
-				} else if tSess, ok := app.Agents.GetStreamPipe(all[i].GetHostname()); ok {
-					all[i].ConnectionStatus = true
-					all[i].AgentVersion = tSess.GetVersion()
-				}
-			default:
-				all[i].AgentVersion = "N/A"
-			}
-		}
+		app.Target.OverlayStatus(all)
 
 		digest, err := digest.Calculate(all)
 		if err != nil {
@@ -111,7 +86,7 @@ func D2DTargetStatusHandler(app *application.Runtime) http.HandlerFunc {
 		statuses := app.Target.GetStatusEntries(statusTargets)
 
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(statuses); err != nil {
+		if err := json.NewEncoder(w).Encode(TargetStatusResponse{Data: statuses, Success: true}); err != nil {
 			log.Error(err, "")
 		}
 	}
@@ -383,13 +358,10 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 			case target.IsS3():
 				target.ConnectionStatus = true
-				target.AgentVersion = "N/A (S3 target)"
 			case target.IsLocal():
-				target.AgentVersion = "N/A (local target)"
 				_, err := os.Stat(target.Path)
 				target.ConnectionStatus = err == nil && validate.IsValid(target.Path)
 			default:
-				target.AgentVersion = "N/A"
 			}
 
 			response.Status = http.StatusOK
@@ -492,6 +464,11 @@ type TargetsResponse struct {
 	Data    []targetResponse `json:"data"`
 	Digest  string           `json:"digest"`
 	Success bool             `json:"success"`
+}
+
+type TargetStatusResponse struct {
+	Data    map[string]application.StatusEntry `json:"data"`
+	Success bool                               `json:"success"`
 }
 
 type TargetConfigResponse struct {

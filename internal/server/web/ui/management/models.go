@@ -39,7 +39,7 @@ var models = []js.Value{
 		Extend: "Ext.data.TreeModel",
 		Fields: js.Fields(
 			"name", "path", "target_type", "kind", "access", "mount_script", "volume_id", "job_count", "agent_version",
-			"connection_status", "volume_type", "volume_name", "volume_fs", "volume_total_bytes",
+			"connection_status", "last_checked", "volume_type", "volume_name", "volume_fs", "volume_total_bytes",
 			"volume_used_bytes", "volume_free_bytes", "volume_total", "volume_used", "volume_free",
 			"agent_hostname", "os", "agent_ip", "text", "isGroup", "groupType", "iconCls",
 			"database_host", "database_port", "database_username", "database_tls_mode",
