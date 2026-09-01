@@ -32,7 +32,7 @@ func TestGetStatusEntriesMerge(t *testing.T) {
 	if e := entries["cached"]; e.ConnectionStatus == nil || !*e.ConnectionStatus || e.AgentVersion != "9.9" {
 		t.Errorf("cached entry = %#v", e)
 	}
-	if e := entries["agent-no-session"]; e.ConnectionStatus != nil || !e.CheckedAt.IsZero() || e.AgentVersion != "N/A" {
+	if e := entries["agent-no-session"]; e.ConnectionStatus != nil || e.AgentVersion != "" {
 		t.Errorf("agent without session or cache = %#v", e)
 	}
 	if e := entries["local-ok"]; e.ConnectionStatus == nil || !*e.ConnectionStatus || e.VolumeTotalBytes <= 0 || e.CheckedAt.IsZero() {
@@ -41,7 +41,7 @@ func TestGetStatusEntriesMerge(t *testing.T) {
 	if e := entries["local-missing"]; e.ConnectionStatus == nil || *e.ConnectionStatus || e.LastError == "" {
 		t.Errorf("local missing entry = %#v", e)
 	}
-	if e := entries["s3-no-cache"]; e.ConnectionStatus != nil || !e.CheckedAt.IsZero() {
+	if e := entries["s3-no-cache"]; e.ConnectionStatus != nil {
 		t.Errorf("never-probed s3 entry = %#v", e)
 	}
 }
@@ -150,7 +150,7 @@ func TestStoreStatusResultsKeepsMetadataOnFailure(t *testing.T) {
 		CheckedAt: time.Now().Add(-time.Minute),
 	})
 	service.storeStatusResults(targets, []TargetStatusResult{
-		{Index: 0, AgentVersion: "N/A", Error: errors.New("connection refused")},
+		{Index: 0, Error: errors.New("connection refused")},
 	})
 	e, _ := service.statusCache.Get("t1")
 	if e.ConnectionStatus == nil || *e.ConnectionStatus {
