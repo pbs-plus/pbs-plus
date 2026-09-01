@@ -76,6 +76,7 @@ var _ = (fs.NodeListxattrer)((*Node)(nil))
 var _ = (fs.NodeGetxattrer)((*Node)(nil))
 var _ = (fs.NodeLookuper)((*Node)(nil))
 var _ = (fs.NodeReaddirer)((*Node)(nil))
+var _ = (fs.NodeReadlinker)((*Node)(nil))
 var _ = (fs.NodeOpener)((*Node)(nil))
 var _ = (fs.NodeStatfser)((*Node)(nil))
 var _ = (fs.NodeAccesser)((*Node)(nil))
@@ -390,7 +391,24 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 	return child, 0
 }
 
+func (n *Node) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	target, ok, err := n.fs.zipReadlink(ctx, n.getPath())
+	if !ok {
+		return nil, syscall.ENOENT
+	}
+	if err != nil {
+		n.fs.logOnce(n.getPath(), err, "Readlink")
+		return nil, syscall.EIO
+	}
+	return target, 0
+}
+
 func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	if n.fs.expandArchives {
+		if zs, ok := n.fs.zipReaddir(ctx, n.getPath()); ok {
+			return zs, 0
+		}
+	}
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
 		n.fs.logOnce(n.getPath(), err, "Readdir")
@@ -409,7 +427,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 
 	return &FileHandle{
 		fs:   n.fs,
-		file: &file,
+		file: file,
 	}, 0, 0
 }
 
@@ -444,7 +462,7 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {
 		fh.fs.logOnce(fh.file.name, err, "Read")
-		return fuse.ReadResultData(nil), 0
+		return nil, syscall.EIO
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0

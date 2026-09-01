@@ -29,6 +29,11 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 		RawExclusions:    b.RawExclusions,
 		IncludeXattr:     b.IncludeXattr,
 		LegacyXattr:      b.LegacyXattr,
+		ExpandArchives:   b.ExpandArchives,
+		ExpandZip:        b.ExpandZip,
+		ExpandSevenZip:   b.ExpandSevenZip,
+		ExpandMaxDepth:   b.ExpandMaxDepth,
+		ExpandMaxEntries: b.ExpandMaxEntries,
 
 		Target: b.Target.Name,
 
@@ -480,6 +485,11 @@ func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 		"rawexclusions":      b.RawExclusions,
 		"include-xattr":      b.IncludeXattr,
 		"legacy-xattr":       b.LegacyXattr,
+		"expand-archives":    b.ExpandArchives,
+		"expand-zip":         b.ExpandZip,
+		"expand-7z":          b.ExpandSevenZip,
+		"expand-max-depth":   b.ExpandMaxDepth,
+		"expand-max-entries": b.ExpandMaxEntries,
 		"database_scope":     b.DatabaseScope,
 		"database_name":      b.DatabaseName,
 	}
@@ -535,6 +545,11 @@ type FlatBackup struct {
 	RawExclusions    string `json:"rawexclusions"`
 	IncludeXattr     bool   `json:"include-xattr"`
 	LegacyXattr      bool   `json:"legacy-xattr"`
+	ExpandArchives   bool   `json:"expand-archives"`
+	ExpandZip        bool   `json:"expand-zip"`
+	ExpandSevenZip   bool   `json:"expand-7z"`
+	ExpandMaxDepth   int    `json:"expand-max-depth"`
+	ExpandMaxEntries int    `json:"expand-max-entries"`
 	DatabaseScope    string `json:"database_scope,omitempty"`
 	DatabaseName     string `json:"database_name,omitempty"`
 

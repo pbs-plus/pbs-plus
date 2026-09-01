@@ -123,6 +123,11 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 
 	waitResRaw, err := w.Activity("wait", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
 		if err := b.waitForCompletion(ctx, b.cmd, startRes.UPID); err != nil {
+			if errors.Is(err, jobs.ErrCanceled) && ctx.Err() == nil {
+				if exec, aerr := app.Engine.ActiveExecution(ctx, jobs.WorkflowBackup, job.ID); aerr == nil {
+					_, _ = app.Engine.Cancel(context.Background(), exec.ID)
+				}
+			}
 			return nil, err
 		}
 		succeeded, warnings := b.processPBSLogs(nil, b.upid)
@@ -199,7 +204,7 @@ func (b *backupJob) finalizeFailed(w *jobs.WorkflowContext, runErr error) error 
 		}
 		return nil
 	}
-	if !errors.Is(runErr, context.Canceled) && !jobs.IsFinalAttempt(w.Execution) {
+	if !errors.Is(runErr, context.Canceled) && !errors.Is(runErr, jobs.ErrCanceled) && !jobs.IsFinalAttempt(w.Execution) {
 		return runErr
 	}
 

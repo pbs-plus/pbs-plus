@@ -59,6 +59,7 @@ var backupJobEdit = js.EditWindow{
 			"pbsDataStoreSelector[name=store]":       js.Obj{"change": "storeChange"},
 			"pbsD2DTargetSelector[name=target]":      js.Obj{"change": "targetChange"},
 			"proxmoxKVComboBox[name=database_scope]": js.Obj{"change": "databaseScopeChange"},
+			"proxmoxcheckbox[name=expand-archives]":  js.Obj{"change": "expandArchivesChange"},
 		},
 		Methods: map[string]js.Raw{
 			"storeChange": js.Func("field, value", `
@@ -87,6 +88,12 @@ var backupJobEdit = js.EditWindow{
 				databaseName.setDisabled(value !== "database");
 				databaseName.setHidden(value !== "database");
 				if (value !== "database") databaseName.setValue("");
+			`),
+			"expandArchivesChange": js.Func("field, value", `
+				let on = value === true || value === "true";
+				let expandOptions = this.lookup("expandOptions");
+				expandOptions.setHidden(!on);
+				expandOptions.setDisabled(!on);
 			`),
 		},
 	},
@@ -149,6 +156,20 @@ var backupJobEdit = js.EditWindow{
 								"'Use broken xattr' preserves compatibility with backups made by those versions. " +
 								"'Use fixed xattr' uses the corrected format for new backups.")},
 							CBind: js.Obj{"value": "{legacyXAttrValue}"}},
+						js.Field{XType: js.XCheckbox, Name: "expand-archives", Label: "Expand Archives", BoxLabel: "Backup archive contents as files",
+							InputValue: "true", UncheckedValue: "false",
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Presents selected archives to the backup as their extracted contents, merged into the folder holding the archive. " +
+								"Real files take precedence, and the archive itself is not stored separately.")}},
+						js.Field{XType: js.XFieldContainer, Reference: "expandOptions", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
+							js.Field{XType: js.XCheckboxGroup, Label: "Archive Types", Columns: 2, Items: js.Items(
+								js.Field{XType: js.XCheckbox, Name: "expand-zip", BoxLabel: "ZIP (.zip)", Checked: new(true), InputValue: "true", UncheckedValue: "false"},
+								js.Field{XType: js.XCheckbox, Name: "expand-7z", BoxLabel: "7-Zip (.7z)", Checked: new(true), InputValue: "true", UncheckedValue: "false"},
+							)},
+							js.Field{XType: js.XIntegerField, Label: "Max archive nesting depth", Value: 8, Name: "expand-max-depth", MinValue: -1,
+								AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Caps nested archive expansion. Use -1 for unlimited nesting.")}},
+							js.Field{XType: js.XIntegerField, Label: "Max archive entries to expand", EmptyText: "10000", Name: "expand-max-entries", MinValue: -1,
+								AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Caps entries across each expanded archive tree, including nested archives. Empty uses 10000; -1 is unlimited.")}},
+						)},
 					)},
 				),
 				ColumnB: js.Items(

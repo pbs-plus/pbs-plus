@@ -161,6 +161,17 @@ func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 	}
 }
 
+func parseExpandLimit(raw, name string, fallback int) (int, error) {
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < -1 {
+		return 0, fmt.Errorf("%s must be -1 or greater", name)
+	}
+	return value, nil
+}
+
 func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupConfigResponse{}
@@ -215,6 +226,30 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 		legacyXattr, err := strconv.ParseBool(r.FormValue("legacy-xattr"))
 		if err != nil {
 			legacyXattr = false
+		}
+
+		expandArchives, err := strconv.ParseBool(r.FormValue("expand-archives"))
+		if err != nil {
+			expandArchives = false
+		}
+		expandZip, err := strconv.ParseBool(r.FormValue("expand-zip"))
+		if err != nil {
+			expandZip = true
+		}
+		expandSevenZip, err := strconv.ParseBool(r.FormValue("expand-7z"))
+		if err != nil {
+			expandSevenZip = true
+		}
+
+		expandMaxDepth, err := parseExpandLimit(r.FormValue("expand-max-depth"), "expand-max-depth", 8)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		expandMaxEntries, err := parseExpandLimit(r.FormValue("expand-max-entries"), "expand-max-entries", 0)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
 
 		id := r.FormValue("id")
@@ -279,6 +314,11 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			PostScript:       postScript,
 			IncludeXattr:     includeXattr,
 			LegacyXattr:      legacyXattr,
+			ExpandArchives:   expandArchives,
+			ExpandZip:        expandZip,
+			ExpandSevenZip:   expandSevenZip,
+			ExpandMaxDepth:   expandMaxDepth,
+			ExpandMaxEntries: expandMaxEntries,
 			DatabaseScope:    r.FormValue("database_scope"),
 			DatabaseName:     r.FormValue("database_name"),
 		}
@@ -397,6 +437,48 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 					legacyXattr = false
 				}
 				backup.LegacyXattr = legacyXattr
+			}
+
+			if r.FormValue("expand-archives") != "" {
+				expandArchives, err := strconv.ParseBool(r.FormValue("expand-archives"))
+				if err != nil {
+					expandArchives = false
+				}
+				backup.ExpandArchives = expandArchives
+			}
+
+			if r.FormValue("expand-zip") != "" {
+				expandZip, err := strconv.ParseBool(r.FormValue("expand-zip"))
+				if err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+				backup.ExpandZip = expandZip
+			}
+			if r.FormValue("expand-7z") != "" {
+				expandSevenZip, err := strconv.ParseBool(r.FormValue("expand-7z"))
+				if err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+				backup.ExpandSevenZip = expandSevenZip
+			}
+
+			if r.FormValue("expand-max-depth") != "" {
+				expandMaxDepth, err := parseExpandLimit(r.FormValue("expand-max-depth"), "expand-max-depth", 8)
+				if err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+				backup.ExpandMaxDepth = expandMaxDepth
+			}
+			if r.FormValue("expand-max-entries") != "" {
+				expandMaxEntries, err := parseExpandLimit(r.FormValue("expand-max-entries"), "expand-max-entries", 0)
+				if err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+				backup.ExpandMaxEntries = expandMaxEntries
 			}
 
 			preScript := r.FormValue("pre_script")

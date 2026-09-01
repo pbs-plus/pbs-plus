@@ -85,10 +85,15 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			Backup:   backup,
 			Memcache: memcache.New(memcachePath),
 		}),
-		Hostname:     hostname,
-		backupMode:   backupMode,
-		agentManager: agentManager,
-		sessionId:    sessionId,
+		Hostname:         hostname,
+		backupMode:       backupMode,
+		expandArchives:   backup.ExpandArchives,
+		expandZip:        backup.ExpandZip,
+		expandSevenZip:   backup.ExpandSevenZip,
+		expandMaxDepth:   backup.ExpandMaxDepth,
+		expandMaxEntries: backup.ExpandMaxEntries,
+		agentManager:     agentManager,
+		sessionId:        sessionId,
 	}
 	log.Debug("aRPCFS initialized",
 
@@ -159,7 +164,7 @@ func (fs *ARPCFS) GetBackupMode() string {
 	return fs.backupMode
 }
 
-func (fs *ARPCFS) Open(ctx context.Context, filename string) (ARPCFile, error) {
+func (fs *ARPCFS) Open(ctx context.Context, filename string) (*ARPCFile, error) {
 	log.Debug("open called",
 
 		"backupID", fs.Backup.ID, "path", filename)
@@ -167,13 +172,18 @@ func (fs *ARPCFS) Open(ctx context.Context, filename string) (ARPCFile, error) {
 	return fs.OpenFile(ctx, filename, os.O_RDONLY, 0)
 }
 
-func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm os.FileMode) (ARPCFile, error) {
+func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm os.FileMode) (*ARPCFile, error) {
+	if fs.expandArchives {
+		if f, ok := fs.zipOpen(ctx, filename); ok {
+			return f, nil
+		}
+	}
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
 		log.Error(err,
 			"arpc session is nil")
 
-		return ARPCFile{}, syscall.ENOENT
+		return nil, syscall.ENOENT
 	}
 	log.Debug("openFile called",
 
@@ -191,18 +201,18 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 
 	raw, err := pipe.CallData(ctxN, "OpenFile", &req)
 	if err != nil {
-		return ARPCFile{}, fmt.Errorf("open: %w", err)
+		return nil, fmt.Errorf("open: %w", err)
 	}
 
 	err = cbor.Unmarshal(raw, &resp)
 	if err != nil {
-		return ARPCFile{}, fmt.Errorf("open decode: %w", err)
+		return nil, fmt.Errorf("open decode: %w", err)
 	}
 	log.Debug("openFile succeeded",
 
 		"backupID", fs.Backup.ID, "handleID", resp, "path", filename)
 
-	return ARPCFile{
+	return &ARPCFile{
 		fs:       fs,
 		name:     filename,
 		handleID: resp,
@@ -215,9 +225,18 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 
 		"backupID", fs.Backup.ID, "isLookup", isLookup, "path", filename)
 
+	if fs.expandArchives && fs.zipHidden(filename) {
+		return fswire.AgentFileInfo{}, syscall.ENOENT
+	}
+
 	var fi fswire.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
+		if fs.expandArchives {
+			if fi, errno, ok := fs.zipAttr(filename); ok {
+				return fi, errno
+			}
+		}
 		log.Error(err,
 			"arpc session is nil")
 
@@ -247,6 +266,11 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 
 		raw, err = pipe.CallData(ctxN, "Attr", &req)
 		if err != nil {
+			if fs.expandArchives {
+				if fi, errno, ok := fs.zipAttr(filename); ok {
+					return fi, errno
+				}
+			}
 			return fswire.AgentFileInfo{}, fmt.Errorf("stat: %w", err)
 		}
 		if isLookup {
@@ -264,6 +288,10 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 		return fswire.AgentFileInfo{}, fmt.Errorf("stat decode: %w", err)
 	}
 
+	if fs.expandArchives {
+		fs.zipMarkShadowed(filename)
+	}
+
 	if !isLookup {
 		if !fi.IsDir {
 			if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
@@ -273,6 +301,12 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 
 				"fileCount", fs.FileCount.Value(), "path", filename)
 
+		}
+	}
+
+	if fs.expandArchives && !fi.IsDir && fs.archiveEnabled(filename) && fi.Size >= 32 {
+		if fs.zipProbe(ctx, filename, fi.Size) {
+			return fswire.AgentFileInfo{}, syscall.ENOENT
 		}
 	}
 
@@ -290,6 +324,13 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (fswire.AgentF
 			"backupID", fs.Backup.ID, "path", filename)
 
 		return fswire.AgentFileInfo{}, syscall.ENOTSUP
+	}
+
+	if fi, errno, virt := fs.zipAttr(filename); virt {
+		if errno != nil {
+			return fswire.AgentFileInfo{}, errno
+		}
+		return fi, nil
 	}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
@@ -500,6 +541,8 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 
 	}
 
+	fs.zipShutdown(ctx)
+
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
 		log.Error(err, "")
@@ -524,4 +567,16 @@ type ARPCFS struct {
 	Hostname     string
 	backupMode   string
 	loggedPaths  sync.Map
+
+	expandArchives   bool
+	expandZip        bool
+	expandSevenZip   bool
+	expandMaxDepth   int
+	expandMaxEntries int
+	zipMu            sync.RWMutex
+	zipOverlays      map[string]*zipOverlay
+	zipSkipped       map[string]struct{}
+	zipShadowed      map[string]struct{}
+	zipAnchors       map[string][]*zipOverlay
+	zipBytes         int64
 }
