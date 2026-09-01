@@ -85,10 +85,11 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			Backup:   backup,
 			Memcache: memcache.New(memcachePath),
 		}),
-		Hostname:     hostname,
-		backupMode:   backupMode,
-		agentManager: agentManager,
-		sessionId:    sessionId,
+		Hostname:        hostname,
+		backupMode:      backupMode,
+		expandArchives:  backup.ExpandArchives,
+		agentManager:    agentManager,
+		sessionId:       sessionId,
 	}
 	log.Debug("aRPCFS initialized",
 

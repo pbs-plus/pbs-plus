@@ -217,6 +217,11 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			legacyXattr = false
 		}
 
+		expandArchives, err := strconv.ParseBool(r.FormValue("expand-archives"))
+		if err != nil {
+			expandArchives = false
+		}
+
 		id := r.FormValue("id")
 		err = validate.ValidateJobId(id)
 		if err != nil && id != "" {
@@ -279,6 +284,7 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			PostScript:       postScript,
 			IncludeXattr:     includeXattr,
 			LegacyXattr:      legacyXattr,
+			ExpandArchives:   expandArchives,
 			DatabaseScope:    r.FormValue("database_scope"),
 			DatabaseName:     r.FormValue("database_name"),
 		}
@@ -397,6 +403,14 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 					legacyXattr = false
 				}
 				backup.LegacyXattr = legacyXattr
+			}
+
+			if r.FormValue("expand-archives") != "" {
+				expandArchives, err := strconv.ParseBool(r.FormValue("expand-archives"))
+				if err != nil {
+					expandArchives = false
+				}
+				backup.ExpandArchives = expandArchives
 			}
 
 			preScript := r.FormValue("pre_script")

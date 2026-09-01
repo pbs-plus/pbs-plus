@@ -141,6 +141,7 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 		PreScript:          backup.PreScript,
 		PostScript:         backup.PostScript,
 		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
+		ExpandArchives:     boolToNullInt64(backup.ExpandArchives),
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
 		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
 		RetryCount:         toNullInt64(backup.History.RetryCount),
@@ -223,15 +224,16 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:         fromNullInt64(row.Retry),
-		RetryInterval: fromNullInt64(row.RetryInterval),
-		MaxDirEntries: fromNullInt64(row.MaxDirEntries),
-		PreScript:     row.PreScript,
-		PostScript:    row.PostScript,
-		IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
-		LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
-		DatabaseScope: row.DatabaseScope,
-		DatabaseName:  row.DatabaseName,
+		Retry:          fromNullInt64(row.Retry),
+		RetryInterval:  fromNullInt64(row.RetryInterval),
+		MaxDirEntries:  fromNullInt64(row.MaxDirEntries),
+		PreScript:      row.PreScript,
+		PostScript:     row.PostScript,
+		IncludeXattr:   fromNullInt64ToBool(row.IncludeXattr),
+		ExpandArchives: fromNullInt64ToBool(row.ExpandArchives),
+		LegacyXattr:    fromNullInt64ToBool(row.LegacyXattr),
+		DatabaseScope:  row.DatabaseScope,
+		DatabaseName:   row.DatabaseName,
 	}
 	backup.Target.DatabaseHost = row.DatabaseHost
 	backup.Target.DatabasePort = int(row.DatabasePort)
@@ -426,6 +428,7 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 		PostScript:         backup.PostScript,
 		MaxDirEntries:      toNullInt64(backup.MaxDirEntries),
 		IncludeXattr:       boolToNullInt64(backup.IncludeXattr),
+		ExpandArchives:     boolToNullInt64(backup.ExpandArchives),
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
 		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
 		RetryCount:         toNullInt64(backup.History.RetryCount),
@@ -566,15 +569,16 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 				RetryCount:         fromNullInt64(row.RetryCount),
 			},
-			Retry:         fromNullInt64(row.Retry),
-			RetryInterval: fromNullInt64(row.RetryInterval),
-			MaxDirEntries: fromNullInt64(row.MaxDirEntries),
-			PreScript:     row.PreScript,
-			PostScript:    row.PostScript,
-			IncludeXattr:  fromNullInt64ToBool(row.IncludeXattr),
-			LegacyXattr:   fromNullInt64ToBool(row.LegacyXattr),
-			DatabaseScope: row.DatabaseScope,
-			DatabaseName:  row.DatabaseName,
+			Retry:          fromNullInt64(row.Retry),
+			RetryInterval:  fromNullInt64(row.RetryInterval),
+			MaxDirEntries:  fromNullInt64(row.MaxDirEntries),
+			PreScript:      row.PreScript,
+			PostScript:     row.PostScript,
+			IncludeXattr:   fromNullInt64ToBool(row.IncludeXattr),
+			ExpandArchives: fromNullInt64ToBool(row.ExpandArchives),
+			LegacyXattr:    fromNullInt64ToBool(row.LegacyXattr),
+			DatabaseScope:  row.DatabaseScope,
+			DatabaseName:   row.DatabaseName,
 
 			Exclusions: exclusionsByJob[row.ID]}
 		backup.Target.DatabaseHost = row.DatabaseHost
@@ -724,6 +728,7 @@ type Backup struct {
 	Target           Target      `json:"target"`
 	IncludeXattr     bool        `json:"include-xattr"`
 	LegacyXattr      bool        `json:"legacy-xattr"`
+	ExpandArchives   bool        `json:"expand-archives"`
 	Subpath          string      `json:"subpath"`
 	Schedule         string      `json:"schedule"`
 	Comment          string      `json:"comment"`
