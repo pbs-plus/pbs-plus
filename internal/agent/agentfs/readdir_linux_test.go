@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
+	"go.uber.org/goleak"
 	"golang.org/x/sys/unix"
 )
 
@@ -271,14 +272,14 @@ func TestStatDirentsParallelMatchesSerial(t *testing.T) {
 	}
 
 	serial := withStatWorkerLimit(t, 1, func() []fswire.AgentFileInfo {
-		out, err := statDirents(fd, ents, 4096)
+		out, err := statDirents(nil, fd, ents, 4096)
 		if err != nil {
 			t.Fatalf("serial statDirents: %v", err)
 		}
 		return out
 	})
 	parallel := withStatWorkerLimit(t, 16, func() []fswire.AgentFileInfo {
-		out, err := statDirents(fd, ents, 4096)
+		out, err := statDirents(nil, fd, ents, 4096)
 		if err != nil {
 			t.Fatalf("parallel statDirents: %v", err)
 		}
@@ -313,7 +314,7 @@ func TestStatDirentsSkipsVanishedEntries(t *testing.T) {
 	ents := []dirent{{ino: 1, name: "gone"}, {ino: 2, name: "here"}}
 	for _, limit := range []int{1, 16} {
 		got := withStatWorkerLimit(t, limit, func() []fswire.AgentFileInfo {
-			out, err := statDirents(fd, ents, 4096)
+			out, err := statDirents(nil, fd, ents, 4096)
 			if err != nil {
 				t.Fatalf("statDirents (workers=%d): %v", limit, err)
 			}
@@ -322,7 +323,56 @@ func TestStatDirentsSkipsVanishedEntries(t *testing.T) {
 		if len(got) != 1 || got[0].Name != "here" {
 			t.Fatalf("workers=%d: got %+v, want only \"here\"", limit, got)
 		}
+		for i, info := range got[len(got):cap(got)] {
+			if !reflect.DeepEqual(info, fswire.AgentFileInfo{}) {
+				t.Fatalf("workers=%d: scratch entry %d retains %+v", limit, i, info)
+			}
+		}
 	}
+}
+
+func TestStatDirentsDoesNotLeakWorkers(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "here"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(fd)
+
+	ents := make([]dirent, 512)
+	for i := range ents {
+		ents[i] = dirent{ino: uint64(i + 1), name: "here"}
+	}
+
+	withStatWorkerLimit(t, 16, func() struct{} {
+		if _, err := statDirents(nil, fd, ents, 4096); err != nil {
+			t.Fatalf("successful batch: %v", err)
+		}
+
+		broken := slices.Clone(ents)
+		broken[len(broken)/2].name = "here/child"
+		out, err := statDirents(nil, fd, broken, 4096)
+		if err == nil {
+			t.Fatal("broken batch returned no error")
+		}
+		for i, info := range out[:cap(out)] {
+			if !reflect.DeepEqual(info, fswire.AgentFileInfo{}) {
+				t.Fatalf("error scratch entry %d retains %+v", i, info)
+			}
+		}
+
+		for range 100 {
+			if _, err := statDirents(nil, -1, ents, 4096); err == nil {
+				t.Fatal("bad descriptor batch returned no error")
+			}
+		}
+		return struct{}{}
+	})
 }
 
 func TestStatWorkers(t *testing.T) {
@@ -390,7 +440,7 @@ func BenchmarkStatDirentsOrder(b *testing.B) {
 	}{{"getdents_order", raw}, {"inode_order", sorted}} {
 		b.Run(tc.name, func(b *testing.B) {
 			for b.Loop() {
-				if _, err := statDirents(fd, tc.ents, 4096); err != nil {
+				if _, err := statDirents(nil, fd, tc.ents, 4096); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -418,6 +468,7 @@ func BenchmarkReaddir(b *testing.B) {
 			statWorkerLimit = workers
 			defer func() { statWorkerLimit = old }()
 
+			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
 				f, err := os.Open(dir)

@@ -87,11 +87,11 @@ func (r *DirReader) readdir(n int, blockSize uint64) ([]fswire.AgentFileInfo, er
 			return cmp.Compare(a.ino, b.ino)
 		})
 
-		infos, err := statDirents(fd, ents, blockSize)
+		var err error
+		out, err = statDirents(out, fd, ents, blockSize)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, infos...)
 	}
 
 	if len(out) == 0 && r.noMoreFiles && n > 0 {
@@ -141,18 +141,21 @@ func statWorkers(n int) int {
 }
 
 // statDirents stats ents across a worker pool, dropping vanished and excluded entries.
-func statDirents(fd int, ents []dirent, blockSize uint64) ([]fswire.AgentFileInfo, error) {
-	infos := make([]fswire.AgentFileInfo, len(ents))
-	keep := make([]bool, len(ents))
+func statDirents(out []fswire.AgentFileInfo, fd int, ents []dirent, blockSize uint64) ([]fswire.AgentFileInfo, error) {
+	start := len(out)
+	out = slices.Grow(out, len(ents))
+	out = out[:start+len(ents)]
+	infos := out[start:]
+	clear(infos)
 
 	workers := statWorkers(len(ents))
 	if workers <= 1 {
 		for i := range ents {
-			ok, err := statDirent(fd, ents[i], blockSize, &infos[i])
+			_, err := statDirent(fd, ents[i], blockSize, &infos[i])
 			if err != nil {
-				return nil, err
+				clear(infos)
+				return out[:start], err
 			}
-			keep[i] = ok
 		}
 	} else {
 		var next atomic.Int64
@@ -160,39 +163,39 @@ func statDirents(fd int, ents []dirent, blockSize uint64) ([]fswire.AgentFileInf
 		errs := make([]error, workers)
 
 		for w := range workers {
-			wg.Add(1)
-			go func(w int) {
-				defer wg.Done()
+			wg.Go(func() {
 				for {
 					i := int(next.Add(1)) - 1
 					if i >= len(ents) {
 						return
 					}
-					ok, err := statDirent(fd, ents[i], blockSize, &infos[i])
+					_, err := statDirent(fd, ents[i], blockSize, &infos[i])
 					if err != nil {
 						errs[w] = err
 						return
 					}
-					keep[i] = ok
 				}
-			}(w)
+			})
 		}
 		wg.Wait()
 
 		for _, err := range errs {
 			if err != nil {
-				return nil, err
+				clear(infos)
+				return out[:start], err
 			}
 		}
 	}
 
-	out := infos[:0]
-	for i := range infos {
-		if keep[i] {
-			out = append(out, infos[i])
+	write := start
+	for i := start; i < len(out); i++ {
+		if out[i].Name != "" {
+			out[write] = out[i]
+			write++
 		}
 	}
-	return out, nil
+	clear(out[write:])
+	return out[:write], nil
 }
 
 func statDirent(fd int, ent dirent, blockSize uint64, info *fswire.AgentFileInfo) (bool, error) {
