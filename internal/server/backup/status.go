@@ -9,9 +9,10 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
-func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, task proxmox.Task, workflowStart, workflowEnd int64, app *application.Runtime) error {
+func updateBackupStatus(succeeded bool, warningsNum int, backup coredb.Backup, task proxmox.Task, executionID string, workflowStart, workflowEnd int64, app *application.Runtime) error {
 	return jobs.UpdateJobHistory(
 		backup.ID,
+		executionID,
 		backup.CurrentPID,
 		succeeded,
 		warningsNum,

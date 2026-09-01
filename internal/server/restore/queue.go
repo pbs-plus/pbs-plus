@@ -18,13 +18,31 @@ import (
 // PrepareQueue mints the queued task at submit time so a slot-waiting job is
 // visible (log, history, stoppable); the workflow's NewQueuedTask attaches by key.
 func PrepareQueue(app *application.Runtime, job coredb.Restore, web bool) error {
+	ctx := app.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	exec, err := app.Engine.ActiveExecution(ctx, jobs.WorkflowRestore, job.ID)
+	if errors.Is(err, jobdb.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	workerID := tasklog.FormatWorkerID(job.Store, "host-", job.DestTarget.GetHostname())
 	queued, err := tasklog.NewQueuedTask("reader", workerID, web)
 	if err != nil {
 		return err
 	}
 	queued.OnAbort(func() { _ = CancelQueued(app, job) })
-	return updateRestoreStatus(false, 0, job, proxmox.Task{UPID: queued.UPID()}, app)
+	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: queued.UPID()}, exec.ID, app); err != nil {
+		if errors.Is(err, jobs.ErrRunFinalized) {
+			queued.Close()
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // CancelQueued stops a queued job: pre-claim it closes the task as canceled
@@ -55,5 +73,11 @@ func CancelQueued(app *application.Runtime, job coredb.Restore) error {
 	}
 	queued.CloseErr(jobs.ErrCanceled)
 	task := proxmox.Task{UPID: queued.UPID(), StartTime: queued.Task.StartTime, EndTime: time.Now().Unix()}
-	return updateRestoreStatus(false, 0, job, task, app)
+	if err := updateRestoreStatus(false, 0, job, task, exec.ID, app); err != nil {
+		if errors.Is(err, jobs.ErrRunFinalized) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }

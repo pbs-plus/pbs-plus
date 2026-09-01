@@ -36,12 +36,13 @@ type verificationJob struct {
 	mu     sync.RWMutex
 	cancel context.CancelFunc
 
-	logger     *log.Logger
-	task       *VerificationTask
-	upid       string
-	job        coredb.VerificationJob
-	backupJobs []coredb.Backup
-	app        *application.Runtime
+	logger      *log.Logger
+	task        *VerificationTask
+	upid        string
+	executionID string
+	job         coredb.VerificationJob
+	backupJobs  []coredb.Backup
+	app         *application.Runtime
 
 	// result counts set by execute, used by onSuccess/onError to close task
 	failedFiles     int

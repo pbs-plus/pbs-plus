@@ -35,6 +35,7 @@ type mtfJob struct {
 
 	job         mtfdb.MTFJob
 	store       *application.Runtime
+	executionID string
 	mapper      *mtfdb.Mapper
 	task        *Task
 	logger      *log.Logger
@@ -340,7 +341,9 @@ func (j *mtfJob) finalizeSuccess() {
 			LastSuccessfulEndtime: end,
 		}, ""); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history on success")
+		return
 	}
+	jobs.MarkRunFinalized(job.ID, j.executionID)
 	j.notify(nil)
 }
 
@@ -361,7 +364,9 @@ func (j *mtfJob) finalizeFailure(runErr error) {
 			if err := j.store.MtfDB.UpdateMtfJobHistory(context.Background(), job.ID,
 				mtfdb.JobHistory{LastRunUpid: task.UPID(), LastRunStatus: coredb.JobStatusCanceled, LastRunStarttime: start, LastRunEndtime: end, Duration: end - start}, ""); err != nil {
 				j.logger.Error(err, "failed to update MTF job history on cancellation")
+				return
 			}
+			jobs.MarkRunFinalized(job.ID, j.executionID)
 		}
 		return
 	}
@@ -384,7 +389,9 @@ func (j *mtfJob) finalizeFailure(runErr error) {
 			RetryCount:       job.History.RetryCount + 1,
 		}, ""); err != nil {
 		j.logger.Error(err, "failed to persist MTF job history on error")
+		return
 	}
+	jobs.MarkRunFinalized(job.ID, j.executionID)
 	j.notify(runErr)
 }
 
@@ -412,6 +419,13 @@ func (j *mtfJob) notify(err error) {
 }
 
 func (j *mtfJob) persistHistory(task proxmox.Task, status coredb.JobStatus, running bool) error {
+	j.mu.RLock()
+	executionID := j.executionID
+	jobID := j.job.ID
+	j.mu.RUnlock()
+	if executionID != "" && tasklog.IsQueuedUPID(task.UPID) && jobs.RunFinalized(jobID, executionID) {
+		return jobs.ErrRunFinalized
+	}
 	start := task.StartTime
 	if start == 0 {
 		start = time.Now().Unix()
@@ -424,7 +438,13 @@ func (j *mtfJob) persistHistory(task proxmox.Task, status coredb.JobStatus, runn
 	if !running {
 		h.LastRunEndtime = time.Now().Unix()
 	}
-	return j.store.MtfDB.UpdateMtfJobHistory(context.Background(), j.job.ID, h, "")
+	if err := j.store.MtfDB.UpdateMtfJobHistory(context.Background(), j.job.ID, h, ""); err != nil {
+		return err
+	}
+	if !running {
+		jobs.MarkRunFinalized(jobID, executionID)
+	}
+	return nil
 }
 
 func (j *mtfJob) cleanup() {

@@ -35,13 +35,14 @@ func RegisterMigration(engine *jobs.Engine, app *application.Runtime) error {
 
 func runMigration(w *jobs.WorkflowContext, j *mtfJob) error {
 	defer j.cleanup()
+	j.executionID = w.Execution.ID
 	queued, err := tasklog.NewQueuedTask(mtfWorkerType, tasklog.FormatWorkerID(j.job.Datastore, "mtf-", j.job.ID), w.Execution.Trigger == "manual")
 	if err != nil {
 		return fmt.Errorf("creating queued MTF migration task: %w", err)
 	}
 	w.BindTask(queued)
 
-	if err := j.persistHistory(proxmox.Task{UPID: queued.UPID()}, coredb.JobStatusUnknown, true); err != nil {
+	if err := j.persistHistory(proxmox.Task{UPID: queued.UPID()}, coredb.JobStatusUnknown, true); err != nil && !errors.Is(err, jobs.ErrRunFinalized) {
 		j.logger.Error(err, "failed to assign queued task to MTF job")
 	}
 

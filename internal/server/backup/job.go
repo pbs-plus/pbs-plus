@@ -86,6 +86,7 @@ type backupJob struct {
 	upid          string
 	workerID      string
 	workflowStart int64
+	executionID   string
 	scriptTask    *tasklog.QueuedTask
 }
 

@@ -3,6 +3,7 @@
 package jobs
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 
@@ -14,8 +15,44 @@ import (
 
 var statusMutexes sync.Map
 
+// finalizedRuns maps jobID to the execution that last terminal-wrote its history, so late queued placeholders for that execution get dropped.
+var finalizedRuns sync.Map
+
+// ErrRunFinalized reports a queued placeholder write dropped because its
+// execution already recorded a terminal history entry.
+var ErrRunFinalized = errors.New("job run already finalized")
+
+// RunFinalized reports whether executionID already wrote jobID's terminal
+// history entry, making a placeholder write for it a stale race.
+func RunFinalized(jobID, executionID string) bool {
+	if jobID == "" || executionID == "" {
+		return false
+	}
+	v, ok := finalizedRuns.Load(jobID)
+	return ok && v.(string) == executionID
+}
+
+// MarkRunFinalized records executionID as jobID's terminal history writer; terminal writers that bypass UpdateJobHistory must call it.
+func MarkRunFinalized(jobID, executionID string) {
+	if jobID == "" || executionID == "" {
+		return
+	}
+	value, _ := statusMutexes.LoadOrStore(jobID, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	finalizedRuns.Store(jobID, executionID)
+}
+
+func markRunFinalizedLocked(jobID, executionID string) {
+	if jobID != "" && executionID != "" {
+		finalizedRuns.Store(jobID, executionID)
+	}
+}
+
 func UpdateJobHistory(
 	jobID string,
+	executionID string,
 	currentPID int,
 	succeeded bool,
 	warningsNum int,
@@ -28,6 +65,10 @@ func UpdateJobHistory(
 
 	mu.Lock()
 	defer mu.Unlock()
+
+	if executionID != "" && tasklog.IsQueuedUPID(task.UPID) && RunFinalized(jobID, executionID) {
+		return ErrRunFinalized
+	}
 
 	taskFound, err := tasklog.GetTaskByUPID(task.UPID)
 	if err != nil {
@@ -75,5 +116,6 @@ func UpdateJobHistory(
 		return err
 	}
 
+	markRunFinalizedLocked(jobID, executionID)
 	return nil
 }

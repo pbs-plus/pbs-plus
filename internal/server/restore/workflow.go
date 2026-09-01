@@ -55,6 +55,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 		databaseAware: databaseAware,
 		waitGroup:     &sync.WaitGroup{},
 		logger:        log.WithScope(log.Scope{JobID: job.ID}),
+		executionID:   w.Execution.ID,
 	}
 	defer b.cleanup()
 	queued, err := tasklog.NewQueuedTask("reader", tasklog.FormatWorkerID(job.Store, "host-", job.DestTarget.GetHostname()), input.Web)
@@ -63,7 +64,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	}
 	w.BindTask(queued)
 
-	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: queued.UPID()}, app); err != nil {
+	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: queued.UPID()}, b.executionID, app); err != nil {
 		b.logger.Error(err, "failed to assign queued task to restore job")
 	}
 
@@ -91,7 +92,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.R
 	}
 	b.upid = startRes.UPID
 	queued.Close()
-	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: startRes.UPID}, app); err != nil {
+	if err := updateRestoreStatus(false, 0, job, proxmox.Task{UPID: startRes.UPID}, b.executionID, app); err != nil {
 		b.logger.Error(err, "failed to assign restore task to job", "upid", startRes.UPID)
 	}
 
