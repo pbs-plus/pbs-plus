@@ -12,6 +12,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math/rand"
+	"os"
 	"sync"
 	"syscall"
 	"testing"
@@ -426,6 +427,92 @@ func TestZipGatesAndNames(t *testing.T) {
 	binary.LittleEndian.PutUint16(enc[30+8:], 1)
 	if _, err := parseZipOverlay(readAtBytes(enc), int64(len(enc)), zipMaxEntries); !errors.Is(err, errZipUnsupported) {
 		t.Errorf("encrypted: err=%v", err)
+	}
+}
+
+func TestZipRejectsCRCMismatch(t *testing.T) {
+	for _, name := range []string{"store.txt", "deflate.txt"} {
+		t.Run(name, func(t *testing.T) {
+			data := buildTestZip(t, map[string]int{name: 4096})
+			central := bytes.LastIndex(data, []byte("PK\x01\x02"))
+			if central < 0 {
+				t.Fatal("central directory not found")
+			}
+			data[central+16] ^= 0xff
+
+			ov := testOverlay(t, data)
+			idx := ov.byName[name]
+			entry := &ov.entries[idx]
+			zs := &zipFileState{ov: ov, ent: entry, uncomp: entry.uncompSize}
+			buf := make([]byte, entry.uncompSize)
+			if _, err := zs.ReadAt(context.Background(), buf, 0); !errors.Is(err, errZipCorrupt) {
+				t.Fatalf("ReadAt error = %v, want %v", err, errZipCorrupt)
+			}
+		})
+	}
+}
+
+func TestZipSymlinkReadlink(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	hdr := &zip.FileHeader{Name: "link", Method: zip.Store}
+	hdr.SetMode(os.ModeSymlink | 0o777)
+	w, err := zw.CreateHeader(hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "dir/target.txt"
+	if _, err := io.WriteString(w, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ov := testOverlay(t, buf.Bytes())
+	fs := testFS(ov)
+	target, ok, err := fs.zipReadlink(context.Background(), "/data/link")
+	if err != nil || !ok || string(target) != want {
+		t.Fatalf("zipReadlink = %q, %v, %v", target, ok, err)
+	}
+
+	child := ov.dirs[""].children[0]
+	stream := &zipMergeStream{
+		fs:        fs,
+		path:      "/data",
+		agentDone: true,
+		vqueue:    []zipVChild{{ov: ov, child: child}},
+		emitted:   map[string]struct{}{},
+	}
+	if !stream.HasNext() {
+		t.Fatal("symlink missing from merged stream")
+	}
+	entry, errno := stream.Next()
+	if errno != 0 || entry.Mode&uint32(syscall.S_IFLNK) == 0 {
+		t.Fatalf("symlink dir entry = %+v, errno %v", entry, errno)
+	}
+}
+
+func TestZipMergeStreamRealEntryShadowsVirtual(t *testing.T) {
+	ov := testOverlay(t, buildTestZip(t, map[string]int{"alpha.txt": 10}))
+	fs := testFS(ov)
+	stream := &zipMergeStream{
+		fs:        fs,
+		path:      "/data",
+		agentDone: true,
+		vqueue:    []zipVChild{{ov: ov, child: ov.dirs[""].children[0]}},
+	}
+	stream.markEmitted("alpha.txt")
+	if stream.HasNext() {
+		t.Fatal("virtual entry emitted despite matching real entry")
+	}
+
+	fs.zipMarkShadowed("/data/alpha.txt")
+	if _, _, ok := fs.zipAttr("/data/alpha.txt"); ok {
+		t.Fatal("shadowed virtual attr remained visible")
+	}
+	if _, ok := fs.zipOpen(context.Background(), "/data/alpha.txt"); ok {
+		t.Fatal("shadowed virtual file remained openable")
 	}
 }
 

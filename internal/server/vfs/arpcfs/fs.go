@@ -222,15 +222,18 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 
 		"backupID", fs.Backup.ID, "isLookup", isLookup, "path", filename)
 
-	if fs.expandArchives {
-		if fi, errno, ok := fs.zipAttr(filename); ok {
-			return fi, errno
-		}
+	if fs.expandArchives && fs.zipHidden(filename) {
+		return fswire.AgentFileInfo{}, syscall.ENOENT
 	}
 
 	var fi fswire.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
+		if fs.expandArchives {
+			if fi, errno, ok := fs.zipAttr(filename); ok {
+				return fi, errno
+			}
+		}
 		log.Error(err,
 			"arpc session is nil")
 
@@ -260,6 +263,11 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 
 		raw, err = pipe.CallData(ctxN, "Attr", &req)
 		if err != nil {
+			if fs.expandArchives {
+				if fi, errno, ok := fs.zipAttr(filename); ok {
+					return fi, errno
+				}
+			}
 			return fswire.AgentFileInfo{}, fmt.Errorf("stat: %w", err)
 		}
 		if isLookup {
@@ -275,6 +283,10 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 	err = cbor.Unmarshal(raw, &fi)
 	if err != nil {
 		return fswire.AgentFileInfo{}, fmt.Errorf("stat decode: %w", err)
+	}
+
+	if fs.expandArchives {
+		fs.zipMarkShadowed(filename)
 	}
 
 	if !isLookup {
@@ -558,6 +570,7 @@ type ARPCFS struct {
 	zipMu            sync.RWMutex
 	zipOverlays      map[string]*zipOverlay
 	zipSkipped       map[string]struct{}
+	zipShadowed      map[string]struct{}
 	zipAnchors       map[string][]*zipOverlay
 	zipBytes         int64
 }

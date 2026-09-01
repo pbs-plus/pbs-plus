@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"path"
@@ -32,6 +33,7 @@ const (
 	zipSrcBufSize    = 1 << 19
 	zipTailMax       = 65557
 	zipCentralBudget = 64 << 20
+	zipSymlinkMax    = 4096
 )
 
 var (
@@ -44,6 +46,7 @@ var (
 type zipEntry struct {
 	name       string
 	method     uint16
+	crc        uint32
 	compSize   int64
 	uncompSize int64
 	hdrOffset  int64
@@ -102,6 +105,10 @@ type zipFileState struct {
 	sec       *io.SectionReader
 	br        *bufio.Reader
 	fr        io.ReadCloser
+	crc       uint32
+	crcFed    int64
+	crcBad    bool
+	crcDone   bool
 }
 
 type zipSrc struct {
@@ -256,6 +263,7 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		flags := binary.LittleEndian.Uint16(cd[off+8:])
 		method := binary.LittleEndian.Uint16(cd[off+10:])
 		mtime := dosTime(binary.LittleEndian.Uint16(cd[off+12:]), binary.LittleEndian.Uint16(cd[off+14:]))
+		crc := binary.LittleEndian.Uint32(cd[off+16:])
 		compSize := int64(binary.LittleEndian.Uint32(cd[off+20:]))
 		uncompSize := int64(binary.LittleEndian.Uint32(cd[off+24:]))
 		nameLen := int(binary.LittleEndian.Uint16(cd[off+28:]))
@@ -335,6 +343,7 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		ov.entries = append(ov.entries, zipEntry{
 			name:       name,
 			method:     method,
+			crc:        crc,
 			compSize:   compSize,
 			uncompSize: uncompSize,
 			hdrOffset:  hdrOffset,
@@ -478,7 +487,44 @@ func (zs *zipFileState) restart() error {
 	zs.ringStart = 0
 	zs.fed = 0
 	zs.eof = false
+	zs.crc = 0
+	zs.crcFed = 0
+	zs.crcBad = false
+	zs.crcDone = false
 	return nil
+}
+
+func (zs *zipFileState) checkCRC() error {
+	if zs.ent.method == m7z || zs.crcDone {
+		return nil
+	}
+	if zs.crcFed != zs.uncomp || zs.crc != zs.ent.crc {
+		return fmt.Errorf("%w: CRC mismatch for %s", errZipCorrupt, zs.ent.name)
+	}
+	zs.crcDone = true
+	return nil
+}
+
+func (zs *zipFileState) verifyStoredCRC(ctx context.Context, dataOff int64) error {
+	buf := make([]byte, zipSrcBufSize)
+	var sum uint32
+	var off int64
+	for off < zs.uncomp {
+		n := int(min(int64(len(buf)), zs.uncomp-off))
+		m, err := zs.ov.readAt(ctx, buf[:n], dataOff+off)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if m == 0 {
+			return fmt.Errorf("%w: short stored entry %s", errZipCorrupt, zs.ent.name)
+		}
+		sum = crc32.Update(sum, crc32.IEEETable, buf[:m])
+		off += int64(m)
+	}
+	zs.crc = sum
+	zs.crcFed = off
+	zs.crcBad = false
+	return zs.checkCRC()
 }
 
 func (zs *zipFileState) fill(off, end int64) error {
@@ -496,12 +542,24 @@ func (zs *zipFileState) fill(off, end int64) error {
 			zs.ringStart = zs.fed - int64(keep)
 			pos = int64(keep)
 		}
-		n, err := zs.fr.Read(zs.ring[pos:])
+		start := int(pos)
+		n, err := zs.fr.Read(zs.ring[start:])
 		zs.fed += int64(n)
+		if zs.ent.method != m7z && n > 0 {
+			zs.crc = crc32.Update(zs.crc, crc32.IEEETable, zs.ring[start:start+n])
+			zs.crcFed += int64(n)
+		}
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				zs.eof = true
-			} else {
+			if !errors.Is(err, io.EOF) {
+				return err
+			}
+			zs.eof = true
+			if zs.fed < zs.uncomp {
+				return fmt.Errorf("%w: short entry %s", errZipCorrupt, zs.ent.name)
+			}
+		}
+		if zs.fed == zs.uncomp {
+			if err := zs.checkCRC(); err != nil {
 				return err
 			}
 		}
@@ -527,6 +585,26 @@ func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int
 		m, err := zs.ov.readAt(ctx, dest[:n], dataOff+off)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return m, err
+		}
+		readEnd := off + int64(m)
+		if !zs.crcBad {
+			switch {
+			case off > zs.crcFed:
+				zs.crcBad = true
+			case readEnd > zs.crcFed:
+				start := int(zs.crcFed - off)
+				zs.crc = crc32.Update(zs.crc, crc32.IEEETable, dest[start:m])
+				zs.crcFed = readEnd
+			}
+		}
+		if readEnd >= zs.uncomp {
+			if zs.crcBad || zs.crcFed != zs.uncomp {
+				if err := zs.verifyStoredCRC(ctx, dataOff); err != nil {
+					return m, err
+				}
+			} else if err := zs.checkCRC(); err != nil {
+				return m, err
+			}
 		}
 		if m < n {
 			return m, io.EOF
@@ -591,6 +669,10 @@ func (zs *zipFileState) Lseek(off uint64, whence uint32) uint64 {
 // the agent so real files under an anchor keep working.
 func (fs *ARPCFS) zipAttr(filename string) (fswire.AgentFileInfo, error, bool) {
 	fs.zipMu.RLock()
+	if _, shadowed := fs.zipShadowed[filename]; shadowed {
+		fs.zipMu.RUnlock()
+		return fswire.AgentFileInfo{}, nil, false
+	}
 	if _, hidden := fs.zipOverlays[filename]; hidden {
 		fs.zipMu.RUnlock()
 		return fswire.AgentFileInfo{}, syscall.ENOENT, true
@@ -619,6 +701,18 @@ func (fs *ARPCFS) zipAttr(filename string) (fswire.AgentFileInfo, error, bool) {
 	}
 	fs.zipMu.RUnlock()
 	return fswire.AgentFileInfo{}, nil, false
+}
+
+func (fs *ARPCFS) zipMarkShadowed(filename string) {
+	if _, err, ok := fs.zipAttr(filename); !ok || err != nil {
+		return
+	}
+	fs.zipMu.Lock()
+	if fs.zipShadowed == nil {
+		fs.zipShadowed = map[string]struct{}{}
+	}
+	fs.zipShadowed[filename] = struct{}{}
+	fs.zipMu.Unlock()
 }
 
 func (fs *ARPCFS) zipHidden(fullPath string) bool {
@@ -709,6 +803,10 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 
 func (fs *ARPCFS) zipOpen(ctx context.Context, filename string) (*ARPCFile, bool) {
 	fs.zipMu.RLock()
+	if _, shadowed := fs.zipShadowed[filename]; shadowed {
+		fs.zipMu.RUnlock()
+		return nil, false
+	}
 	for i := len(filename) - 1; i >= 0; i-- {
 		if filename[i] != '/' {
 			continue
@@ -737,6 +835,25 @@ func (fs *ARPCFS) zipOpen(ctx context.Context, filename string) (*ARPCFile, bool
 	}
 	fs.zipMu.RUnlock()
 	return nil, false
+}
+
+func (fs *ARPCFS) zipReadlink(ctx context.Context, filename string) ([]byte, bool, error) {
+	f, ok := fs.zipOpen(ctx, filename)
+	if !ok || os.FileMode(f.zs.ent.mode)&os.ModeSymlink == 0 {
+		return nil, false, nil
+	}
+	if f.zs.uncomp > zipSymlinkMax {
+		return nil, true, fmt.Errorf("%w: symlink target exceeds %d bytes", errZipUnsupported, zipSymlinkMax)
+	}
+	target := make([]byte, f.zs.uncomp)
+	n, err := f.zs.ReadAt(ctx, target, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, true, err
+	}
+	if int64(n) != f.zs.uncomp {
+		return nil, true, fmt.Errorf("%w: short symlink target", errZipCorrupt)
+	}
+	return target, true, nil
 }
 
 type zipVChild struct {
@@ -783,6 +900,7 @@ func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 	fs.zipOverlays = nil
 	fs.zipAnchors = nil
 	fs.zipSkipped = nil
+	fs.zipShadowed = nil
 	fs.zipBytes = 0
 	fs.zipMu.Unlock()
 	for _, ov := range ovs {
@@ -805,9 +923,10 @@ func (fs *ARPCFS) zipReaddir(ctx context.Context, dirPath string) (fs.DirStream,
 	}
 
 	return &zipMergeStream{
-		fs:    fs,
-		path:  dirPath,
-		agent: agent,
+		fs:      fs,
+		path:    dirPath,
+		agent:   agent,
+		emitted: map[string]struct{}{},
 	}, true
 }
 
@@ -862,9 +981,9 @@ func (s *zipMergeStream) HasNext() bool {
 		}
 		s.agentDone = true
 		s.vqueue = s.fs.zipCollectChildren(s.path)
-		if len(s.vqueue) > 0 && s.emitted == nil {
-			s.emitted = map[string]struct{}{}
-		}
+	}
+	if s.emitted == nil {
+		s.emitted = map[string]struct{}{}
 	}
 
 	for s.vidx < len(s.vqueue) {
@@ -876,6 +995,8 @@ func (s *zipMergeStream) HasNext() bool {
 		mode := uint32(fuse.S_IFREG)
 		if vc.child.entry < 0 {
 			mode = fuse.S_IFDIR
+		} else if os.FileMode(vc.ov.entries[vc.child.entry].mode)&os.ModeSymlink != 0 {
+			mode = fuse.S_IFLNK
 		}
 		s.emitted[vc.child.name] = struct{}{}
 		entry := fuse.DirEntry{Name: vc.child.name, Mode: mode}
@@ -886,9 +1007,10 @@ func (s *zipMergeStream) HasNext() bool {
 }
 
 func (s *zipMergeStream) markEmitted(name string) {
-	if s.emitted != nil {
-		s.emitted[name] = struct{}{}
+	if s.emitted == nil {
+		s.emitted = map[string]struct{}{}
 	}
+	s.emitted[name] = struct{}{}
 }
 
 func (s *zipMergeStream) Next() (fuse.DirEntry, syscall.Errno) {
