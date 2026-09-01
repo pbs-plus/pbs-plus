@@ -95,9 +95,11 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 	}
 
 	done := make(chan error, 1)
+	waitDone := make(chan struct{})
 
 	go func() {
 		done <- cmd.Wait()
+		close(waitDone)
 	}()
 
 	taskStopped := make(chan string, 1)
@@ -107,7 +109,7 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 		for {
 			select {
 			case <-ctx.Done():
-			case <-done:
+			case <-waitDone:
 			case <-ticker.C:
 				task, err := tasklog.GetTaskByUPID(upid)
 				if err != nil || task.Status == "running" {

@@ -13,6 +13,28 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
+func TestWaitForCompletionReturnsWhenClientExits(t *testing.T) {
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	b := &backupJob{logger: log.WithScope(log.Scope{JobID: "test"})}
+	done := make(chan error, 1)
+	go func() {
+		done <- b.waitForCompletion(context.Background(), cmd, "missing-task")
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("waitForCompletion: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waitForCompletion did not return after client exited")
+	}
+}
+
 func TestWaitForCompletionKillsClientWhenTaskStops(t *testing.T) {
 	restoreTask := tasklog.UseTaskDir(t.TempDir())
 	defer restoreTask()
