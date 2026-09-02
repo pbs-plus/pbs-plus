@@ -28,7 +28,8 @@ runs:
           -e LDAP_TLS=false \
           osixia/openldap:1.5.0
         docker run -d --name pbs-plus-ldap-restore \
-          --network pbs-plus-test \\n          -e LDAP_ORGANISATION="PBS Plus E2E" \
+          --network pbs-plus-test \
+          -e LDAP_ORGANISATION="PBS Plus E2E" \
           -e LDAP_DOMAIN=example.com \
           -e LDAP_ADMIN_PASSWORD="$password" \
           -e LDAP_TLS=false \
