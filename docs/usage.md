@@ -14,6 +14,7 @@ A **target** is a backup source, managed on the tabbed **Targets** page. Each ta
 - **S3**: an S3-compatible bucket (see below).
 - **PostgreSQL** and **MySQL / MariaDB**: database servers (see Database Backup below).
 - **LDAP / Active Directory**: directory servers backed up as LDIF (see Database Backup below).
+- **Dovecot**: remote mailboxes backed up through doveadm over verified TLS (see Dovecot Mailbox Backup and Restore below).
 
 Target size metadata is resolved without scanning target contents: local targets use `statfs`, agent targets use volume metadata reported by the agent.
 
@@ -36,6 +37,8 @@ For database targets, the job also defines:
 
 - **Scope** - `server` (every database on the server, each dumped to its own file, plus PostgreSQL globals; for LDAP, the entire base DN) or `database` (a single named database; for LDAP, a single subtree DN)
 - **Database** - the database name (or subtree DN for LDAP), required for `database` scope. LDAP jobs left empty default to `server` scope.
+
+For Dovecot targets, the job defines a required source username and an optional mailbox name. Leaving the mailbox empty backs up all mailboxes for that user.
 
 Job edits made while a job is running are preserved: the running task is not disturbed and the next run picks up the changes.
 
@@ -64,6 +67,8 @@ Database restores load a dump archive back into a database server:
 - Restore the whole server dump, or pick a single **source database** from it
 - Optionally set a **destination database** name to restore under a new name
 - Optionally replace existing databases
+
+Dovecot restores select a Dovecot snapshot, source username, optional destination username, and optional mailbox. Additive mode merges the backed-up state into the destination user; **Replace Existing** mirrors the backup and removes destination-only mailbox changes within the selected scope.
 
 ## S3-Compatible Backup Target
 
@@ -155,6 +160,19 @@ LDAP targets capture the entries and readable attributes under a base DN as LDIF
 5. **Replace Existing** first verifies that the selected subtree is present in the checked snapshot, then recursively deletes that destination subtree with `ldapdelete` before replaying it. LDAP restore does not rename DNs.
 
 This is a logical directory-data backup, not an Active Directory disaster-recovery backup. LDAP cannot capture AD password secrets, NTDS.dit, SYSVOL, deleted objects, replication state, domain-wide security state, or every protected attribute. Use supported Windows Server System State/VSS backups for domain or forest recovery. OpenLDAP schema, `cn=config`, ACL configuration, and replication state also require the server's native backup tools when they are outside the selected base DN.
+
+### Dovecot Mailbox Backup and Restore
+
+Dovecot targets preserve one user's messages, folders, flags, keywords, and mailbox metadata through Dovecot's native dsync protocol. They do not require a PBS Plus agent on the mail server.
+
+1. Configure a TLS-enabled doveadm TCP listener on the Dovecot server. Set a strong `doveadm_password`, install a server certificate whose SAN matches the target hostname, and restrict the listener to the PBS Plus host with a firewall. The shared password grants mailbox-level administrative access.
+2. Add a **Dovecot** target with the listener host and port, shared doveadm password, an absolute path to the trusted CA certificate on the PBS Plus server, and optionally a pinned Dovecot client directory.
+3. Create a backup job with the source username. Leave **Mailbox** empty for every mailbox, or enter one mailbox name for selective backup.
+4. Restore to the original username or another destination username. Leave **Mailbox** empty to use the backup's scope. Additive restore uses one-way `doveadm sync`; **Replace Existing** uses `doveadm backup` to mirror the backup into the destination.
+
+The PBS Plus host requires Dovecot 2.4 or newer client tools. Remote Dovecot 2.3 and 2.4 servers are supported through the doveadm protocol. For Dovecot 2.4, a minimal listener includes `doveadm_password`, `ssl_server_cert_file`, `ssl_server_key_file`, and a `service doveadm` inet listener with `ssl = yes`. Dovecot 2.3 uses its corresponding 2.3 SSL setting names. Validate the version-specific configuration with `doveconf -n`, verify the listener with `openssl s_client`, and use the upstream [Dovecot 2.4 doveadm documentation](https://doc.dovecot.org/main/core/admin/doveadm.html) or [Dovecot 2.3 dsync TCP documentation](https://doc.dovecot.org/2.3/configuration_manual/replication/).
+
+This target covers mailbox data only. Dovecot configuration, user databases in SQL or LDAP, TLS private keys, Sieve scripts, quota/accounting systems, replication state, and full-host recovery are excluded and must be backed up separately. Additive dsync merge behavior is not a conflict-resolution system; use **Replace Existing** when the destination must match the snapshot exactly.
 
 ### Service Backup via Hook Scripts
 

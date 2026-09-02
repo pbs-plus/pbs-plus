@@ -72,6 +72,14 @@ LDAP targets (including logical Active Directory exports):
 3. Restore validates the snapshot and selected subtree before any deletion, orders entries parent-first, and runs `ldapmodify` in add mode. Replace-existing restores use `ldapdelete` only after that preflight.
 4. LDAP snapshots contain readable directory data, not server state. Active Directory System State, NTDS.dit, SYSVOL, password secrets, tombstones, and replication state are outside this target's scope.
 
+Dovecot targets:
+
+1. The server selects Dovecot 2.4 or newer `doveadm` client tools and creates an ephemeral client configuration containing the shared doveadm password, local staging storage, and a private copy of the target CA certificate.
+2. `doveadm backup --no-userdb-lookup -R` pulls one remote user's mailbox data over `tcps:` into a mode-0700 staging directory. An optional mailbox filter narrows the transfer.
+3. The password and CA copy are removed before the staged mail data and manifest enter the normal PBS snapshot pipeline. The original CA file remains on the server.
+4. Restore validates the manifest and staged mail directory, then uses one-way `doveadm sync` for additive recovery or `doveadm backup` for replace-existing mirror semantics. The destination user may differ from the source user.
+5. This path preserves mailbox data and metadata only. Dovecot configuration, user databases, TLS keys, Sieve, and host state are outside its scope.
+
 S3 targets are backed up by reading the bucket through the `s3fs` virtual filesystem instead of an agent mount.
 
 ## How Restore Works
@@ -84,7 +92,7 @@ Filesystem targets:
 4. The agent's restore subprocess pulls file data from the server and writes it to the destination path on the agent host.
 5. Integrity is verified via sha256 checksums.
 
-Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics. LDAP targets validate and order selected LDIF entries before replaying them under their original DNs; replace-existing deletes the subtree only after preflight succeeds.
+Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics. LDAP targets validate and order selected LDIF entries before replaying them under their original DNs; replace-existing deletes the subtree only after preflight succeeds. Dovecot targets restore staged mailbox data over verified `tcps:` transport, using additive sync or replace-existing mirror semantics.
 
 ## Internal Packages
 
@@ -125,6 +133,7 @@ graph TD
     server --> bootstrap["bootstrap/ - Server startup wiring"]
     server --> coredb["coredb/ - SQLite store, migrations, sqlc queries"]
     server --> database["database/ - Dump/restore client bundles"]
+    server --> dovecot["dovecot/ - Mailbox backup/restore over doveadm"]
     server --> jobs["jobs/ - Job engine and workflows (jobrpc, mountrpc)"]
     server --> mtf["mtf/ - MTF tape migration jobs (+ mtfdb)"]
     server --> notification["notification/ - Alerts, batched notifications"]
@@ -157,8 +166,10 @@ Targets use a common record plus one detail record for their kind:
 - `target_s3` stores the S3 URL and encrypted secret.
 - `target_postgresql` stores connection details: host, port, username, TLS mode, CA certificate, and an optional pinned client directory.
 - `target_mysql` stores the same plus the server variant (`mysql` or `mariadb`).
+- `target_ldap` stores connection details plus the base DN.
+- `target_dovecot` stores the doveadm listener, encrypted shared password, CA certificate path, and optional pinned client directory.
 
-The internal contract is `kind: filesystem|s3|postgresql|mysql` plus a kind-specific detail row. The target API also returns `kind` and `access`, while keeping the legacy `target_type: local|agent|s3` value for existing clients.
+The internal contract is `kind: filesystem|s3|postgresql|mysql|ldap|dovecot` plus a kind-specific detail row. The target API also returns `kind` and `access`, while keeping the legacy `target_type: local|agent|s3` value for existing clients.
 
 A new target kind adds one detail table, its sqlc persistence queries, validation in `normalizeTarget`, and its backup or restore execution path. Common target columns and existing detail tables stay unchanged.
 
