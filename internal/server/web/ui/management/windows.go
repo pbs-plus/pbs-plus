@@ -169,6 +169,7 @@ var windows = []js.Value{
 				js.Field{XType: js.XProxmoxTextField, Label: "Bind DN", Name: "database_username", AllowBlank: new(false), EmptyText: "cn=backup,dc=example,dc=com"},
 				js.Field{XType: js.XProxmoxTextField, Label: "Password", Name: "database_password", InputType: "password", AllowBlank: new(true), EmptyText: "Leave blank to keep the current password", CBind: js.Obj{"allowBlank": "{!isCreate}"}},
 				js.Field{XType: js.XProxmoxTextField, Label: "Base DN", Name: "ldap_base_dn", AllowBlank: new(false), EmptyText: "dc=example,dc=com"},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Logical directory-data backup only. Active Directory System State, password secrets, NTDS.dit, SYSVOL, deleted objects, and replication state are not included.")},
 			)},
 		),
 		js.Items(

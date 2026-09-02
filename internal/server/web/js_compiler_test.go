@@ -118,6 +118,7 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`subject: "LDAP / Active Directory Target"`),
 		[]byte(`ldap: "Add LDAP / Active Directory Target"`),
 		[]byte(`name: "ldap_base_dn"`),
+		[]byte(`Logical directory-data backup only.`),
 		[]byte(`column.setText("S3 URL")`),
 		[]byte(`target/tree?kind=" + encodeURIComponent(view.targetKind || "")`),
 		[]byte(`target-status?kind=" + encodeURIComponent(view.targetKind || "")`),

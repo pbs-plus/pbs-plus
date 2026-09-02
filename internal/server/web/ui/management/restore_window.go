@@ -142,7 +142,7 @@ var restoreJobEdit = js.EditWindow{
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Database to take out of an entire-server snapshot. Leave empty to restore every database in the snapshot.")}},
 						js.Field{XType: "proxmoxtextfield", Label: "Destination Database", Name: "destination_database", Reference: "destinationDatabase", AllowBlank: new(true), EmptyText: "Same as source", DeleteEmptyWhenNotCreate: true,
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Name to restore the database under. Leave empty to keep the name it had in the snapshot.")}},
-						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Drop and recreate an existing database", InputValue: "true", UncheckedValue: "false"},
+						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Delete and recreate the selected database or LDAP subtree", InputValue: "true", UncheckedValue: "false"},
 					)},
 				),
 				ColumnB: js.Items(

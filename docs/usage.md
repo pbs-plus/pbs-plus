@@ -144,14 +144,17 @@ Notes:
 - Server-wide dumps write each database to its own dump file, so a single database can be restored on its own. PostgreSQL server dumps also include separate roles and globals dumps.
 - Dump client output is mirrored into the PBS task log.
 
-### LDAP / Active Directory Backup
+### LDAP Logical Backup and Restore
 
-LDAP and Active Directory servers are backed up over the LDAP protocol as LDIF, without agents or hook scripts.
+LDAP targets capture the entries and readable attributes under a base DN as LDIF, without agents or hook scripts. Scheduled runs, retention, encryption, checksums, and snapshot history use the normal PBS backup pipeline.
 
-1. Add an **LDAP / Active Directory** target: host, port, bind DN, password, base DN, and TLS mode (`disabled`, `starttls`, or `ldaps`; plus CA certificate if verifying).
-2. Dumps use the installed `ldapsearch` client with paged results (required for Active Directory's size limits); restores use `ldapmodify` (additive, keeping existing entries) and `ldapdelete` (for replace-existing restores). Pin a **default client directory** to force a specific ldap-utils installation.
-3. Server-maintained operational attributes that servers reject on re-import are stripped from the dump automatically.
-4. Restores replay entries under their original DNs: a restore can target a single subtree DN out of a whole-base snapshot, and **Replace Existing** deletes that subtree first. LDAP has no destination renaming.
+1. Add an **LDAP / Active Directory** target: host, port, bind DN, password, base DN, and TLS mode (`disabled`, `starttls`, or `ldaps`). StartTLS and LDAPS require certificate verification; set a CA certificate when the system trust store does not contain the issuer.
+2. Dumps use the installed `ldapsearch` client with paged results. Pin a **default client directory** to force a specific ldap-utils installation.
+3. Readable user attributes, including binary values and generic LDAP password attributes, are preserved. Server-maintained attributes that cannot be replayed are stripped.
+4. Restores use `ldapmodify` in add mode. Existing entries are not overwritten or merged. Entries are replayed parent-first under their original DNs, and a whole-base snapshot can restore one selected subtree.
+5. **Replace Existing** first verifies that the selected subtree is present in the checked snapshot, then recursively deletes that destination subtree with `ldapdelete` before replaying it. LDAP restore does not rename DNs.
+
+This is a logical directory-data backup, not an Active Directory disaster-recovery backup. LDAP cannot capture AD password secrets, NTDS.dit, SYSVOL, deleted objects, replication state, domain-wide security state, or every protected attribute. Use supported Windows Server System State/VSS backups for domain or forest recovery. OpenLDAP schema, `cn=config`, ACL configuration, and replication state also require the server's native backup tools when they are outside the selected base DN.
 
 ### Service Backup via Hook Scripts
 
