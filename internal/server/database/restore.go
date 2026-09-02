@@ -48,6 +48,9 @@ func RestoreDump(ctx context.Context, archiveDir string, target coredb.Target, p
 	if bundle.Engine != manifest.Engine || bundle.RestoreProgram == "" {
 		return errors.New("database restore client does not match dump engine")
 	}
+	if target.Type == coredb.TargetTypeLDAP {
+		return restoreLDAP(ctx, archiveDir, target, password, options, manifest, bundle)
+	}
 	source, destination := options.names()
 	if manifest.Scope == "database" && destination == "" {
 		return errors.New("destination database is required")
@@ -431,6 +434,186 @@ func runClientCommandWithLog(cmd *exec.Cmd, password string, logWriter io.Writer
 
 func postgreSQLLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+// restoreLDAP pipes the dump into ldapmodify, optionally deleting the
+// destination subtree first; LDAP restores always use the DNs in the dump.
+func restoreLDAP(ctx context.Context, archiveDir string, target coredb.Target, password string, options RestoreOptions, manifest Manifest, bundle ClientBundle) error {
+	secretsDir, err := os.MkdirTemp("", ".pbs-plus-database-secrets-")
+	if err != nil {
+		return fmt.Errorf("create database restore secrets directory: %w", err)
+	}
+	defer os.RemoveAll(secretsDir)
+	if err := os.Chmod(secretsDir, 0o700); err != nil {
+		return fmt.Errorf("secure database restore secrets directory: %w", err)
+	}
+	passfile, err := writeLdapPasswordFile(secretsDir, password)
+	if err != nil {
+		return err
+	}
+	dn := options.SourceDatabase
+	if dn == "" {
+		dn = manifest.Database
+	}
+	if dn == "" {
+		dn = target.LdapBaseDN
+	}
+	if options.DestinationDatabase != "" && !strings.EqualFold(options.DestinationDatabase, dn) {
+		return errors.New("LDAP restores use the DNs recorded in the dump; destination must match the source DN")
+	}
+	if options.ReplaceExisting {
+		if err := ldapDeleteSubtree(ctx, target, password, dn, bundle, secretsDir); err != nil {
+			return err
+		}
+	}
+
+	dumpPath, err := manifestFilePath(archiveDir, manifest.DumpFile)
+	if err != nil {
+		return err
+	}
+	args := []string{"-x", "-H", ldapURL(target), "-D", target.DatabaseUsername, "-y", passfile, "-c"}
+	run := func(r io.Reader) error {
+		cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
+		cmd.Env = ldapTLSCommandEnv(target)
+		cmd.Stdin = r
+		_, err := runClientCommand(cmd, password)
+		return err
+	}
+	if manifest.Scope == "server" && options.SourceDatabase != "" {
+		dump, wait, err := ldapSectionStream(dumpPath, options.SourceDatabase)
+		if err != nil {
+			return err
+		}
+		runErr := run(dump)
+		dump.Close()
+		if waitErr := wait(); waitErr != nil {
+			return waitErr
+		}
+		if runErr != nil {
+			return fmt.Errorf("restore LDAP dump: %w", runErr)
+		}
+		return nil
+	}
+	dump, err := os.Open(dumpPath)
+	if err != nil {
+		return fmt.Errorf("open LDAP dump: %w", err)
+	}
+	defer dump.Close()
+	if err := run(dump); err != nil {
+		return fmt.Errorf("restore LDAP dump: %w", err)
+	}
+	return nil
+}
+
+// ldapDeleteSubtree removes the destination subtree before a replace-existing
+// restore; a missing entry is not an error.
+func ldapDeleteSubtree(ctx context.Context, target coredb.Target, password, dn string, bundle ClientBundle, secretsDir string) error {
+	if bundle.DeleteProgram == "" {
+		return errors.New("LDAP client bundle cannot delete entries (ldapdelete is unavailable)")
+	}
+	passfile, err := writeLdapPasswordFile(secretsDir, password)
+	if err != nil {
+		return err
+	}
+	args := []string{"-x", "-H", ldapURL(target), "-D", target.DatabaseUsername, "-y", passfile, "-r", dn}
+	cmd := exec.CommandContext(ctx, bundle.DeleteProgram, args...)
+	cmd.Env = ldapTLSCommandEnv(target)
+	if _, err := runClientCommand(cmd, password); err != nil {
+		if strings.Contains(err.Error(), "No such object") {
+			return nil
+		}
+		return fmt.Errorf("delete LDAP subtree %s: %w", dn, err)
+	}
+	return nil
+}
+
+// ldapSectionStream extracts entries at or under dn from a server-scope dump;
+// call wait after closing the reader.
+func ldapSectionStream(dumpPath, dn string) (io.ReadCloser, func() error, error) {
+	file, err := os.Open(dumpPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open LDAP dump: %w", err)
+	}
+	reader, writer := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		defer file.Close()
+		err := copyLdapSection(writer, bufio.NewReaderSize(file, 1<<20), dn)
+		writer.CloseWithError(err)
+		done <- err
+	}()
+	return reader, func() error { return <-done }, nil
+}
+
+func copyLdapSection(w io.Writer, reader *bufio.Reader, dn string) error {
+	var entry bytes.Buffer
+	inEntry, found := false, false
+	flush := func() error {
+		if !inEntry {
+			return nil
+		}
+		inEntry = false
+		entryDN, ok := ldapEntryDN(entry.Bytes())
+		if ok && ldapDNWithin(entryDN, dn) {
+			found = true
+			if _, err := w.Write(entry.Bytes()); err != nil {
+				return err
+			}
+		}
+		entry.Reset()
+		return nil
+	}
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			text := strings.TrimRight(string(line), "\r\n")
+			if text == "" {
+				if err := flush(); err != nil {
+					return err
+				}
+				continue
+			}
+			if !inEntry {
+				entry.Reset()
+				inEntry = true
+			}
+			entry.Write(line)
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return fmt.Errorf("read LDAP dump: %w", readErr)
+		}
+	}
+	if err := flush(); err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no entries under %q are present in the dump", dn)
+	}
+	return nil
+}
+
+func ldapEntryDN(entry []byte) (string, bool) {
+	for line := range strings.SplitSeq(string(entry), "\n") {
+		rest, ok := strings.CutPrefix(line, "dn:")
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(rest, ":") {
+			return "", false
+		}
+		return strings.TrimSpace(rest), true
+	}
+	return "", false
+}
+
+func ldapDNWithin(entryDN, base string) bool {
+	if base == "" || strings.EqualFold(entryDN, base) {
+		return true
+	}
+	return strings.HasSuffix(strings.ToLower(entryDN), ","+strings.ToLower(base))
 }
 
 func postgreSQLIdentifier(value string) string {

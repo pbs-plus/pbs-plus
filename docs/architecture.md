@@ -65,6 +65,11 @@ Database targets (PostgreSQL, MySQL/MariaDB):
 2. The dump runs on the PBS host against the database server. Server-wide scope dumps every database to its own file plus PostgreSQL globals; database scope dumps a single named database.
 3. Dump files, a checksum manifest, and the connection secrets are staged as split pxar archives (`.mpxar.didx` / `.ppxar.didx`) and written to the datastore as a normal PBS snapshot. No agent is involved.
 
+LDAP targets (LDAP, Active Directory):
+
+1. The server runs `ldapsearch` (paged results, StartTLS/LDAPS per the target TLS mode) and stages the LDIF dump with operational attributes stripped so it can be re-imported.
+2. Server scope dumps the target's base DN; database scope dumps a single subtree DN.
+
 S3 targets are backed up by reading the bucket through the `s3fs` virtual filesystem instead of an agent mount.
 
 ## How Restore Works
@@ -77,7 +82,7 @@ Filesystem targets:
 4. The agent's restore subprocess pulls file data from the server and writes it to the destination path on the agent host.
 5. Integrity is verified via sha256 checksums.
 
-Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics.
+Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics. LDAP targets replay LDIF through `ldapmodify` under the original DNs; replace-existing deletes the subtree via `ldapdelete` first.
 
 ## Internal Packages
 

@@ -779,7 +779,7 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 	if err != nil {
 		return fmt.Errorf("error fetching target: %w", err)
 	}
-	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
+	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL && TargetType(target.TargetType) != TargetTypeLDAP {
 		return q.DeleteBackupDatabaseOptions(db.ctx, backup.ID)
 	}
 	if backup.DatabaseScope != "database" && backup.DatabaseScope != "server" {

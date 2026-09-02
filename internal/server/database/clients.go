@@ -16,10 +16,12 @@ import (
 const (
 	EnginePostgreSQL = "postgresql"
 	EngineMySQL      = "mysql"
+	EngineLDAP       = "ldap"
 
 	FamilyPostgreSQL = "postgresql"
 	FamilyMySQL      = "mysql"
 	FamilyMariaDB    = "mariadb"
+	FamilyLDAP       = "ldap"
 )
 
 type ClientBundle struct {
@@ -30,6 +32,7 @@ type ClientBundle struct {
 	DumpProgram       string `json:"dump_program"`
 	ServerDumpProgram string `json:"server_dump_program,omitempty"`
 	RestoreProgram    string `json:"restore_program"`
+	DeleteProgram     string `json:"delete_program,omitempty"`
 }
 
 func DiscoverClientBundles(ctx context.Context) ([]ClientBundle, error) {
@@ -123,6 +126,23 @@ func discoverClientBundles(ctx context.Context, dirs, trustedRoots []string) []C
 				RestoreProgram:    restore,
 			}
 			bundles = appendUniqueBundle(bundles, seen, bundle)
+		}
+
+		if search := trustedProgram(canonicalDir, "ldapsearch", trustedRoots); search != "" {
+			modify := trustedProgram(canonicalDir, "ldapmodify", trustedRoots)
+			if modify != "" {
+				bundle := ClientBundle{
+					Engine:            EngineLDAP,
+					Family:            FamilyLDAP,
+					Directory:         canonicalDir,
+					Version:           programVersion(ctx, search),
+					DumpProgram:       search,
+					ServerDumpProgram: search,
+					RestoreProgram:    modify,
+					DeleteProgram:     trustedProgram(canonicalDir, "ldapdelete", trustedRoots),
+				}
+				bundles = appendUniqueBundle(bundles, seen, bundle)
+			}
 		}
 	}
 

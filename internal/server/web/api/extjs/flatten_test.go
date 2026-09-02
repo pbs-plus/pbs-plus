@@ -10,12 +10,16 @@ func TestBuildTargetTreeGroupsDatabaseTargets(t *testing.T) {
 	tree := BuildTargetTree([]coredb.Target{
 		{Name: "pg-main", Type: coredb.TargetTypePostgreSQL, DatabaseHost: "pg.internal", DatabasePort: 5432},
 		{Name: "maria-main", Type: coredb.TargetTypeMySQL, DatabaseHost: "maria.internal", DatabasePort: 3306, DatabaseVariant: "mariadb"},
+		{Name: "ad-main", Type: coredb.TargetTypeLDAP, DatabaseHost: "ad.internal", DatabasePort: 636, LdapBaseDN: "dc=example,dc=com"},
 	}, nil, "")
-	if len(tree) != 2 || tree[0].GroupType != "postgresql" || tree[1].GroupType != "mysql" {
+	if len(tree) != 3 || tree[0].GroupType != "postgresql" || tree[1].GroupType != "mysql" || tree[2].GroupType != "ldap" {
 		t.Fatalf("tree = %#v", tree)
 	}
 	if tree[0].Children[0].DatabaseHost != "pg.internal" || tree[1].Children[0].DatabaseVariant != "mariadb" {
 		t.Fatalf("database target details missing: %#v", tree)
+	}
+	if tree[2].Children[0].LdapBaseDN != "dc=example,dc=com" {
+		t.Fatalf("LDAP target details missing: %#v", tree[2].Children[0])
 	}
 }
 

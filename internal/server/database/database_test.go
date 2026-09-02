@@ -804,3 +804,130 @@ func writeTestProgram(t *testing.T, dir, name, contents string) {
 		t.Fatal(err)
 	}
 }
+
+func TestLdapDumpCommand(t *testing.T) {
+	target := coredb.Target{
+		Type:             coredb.TargetTypeLDAP,
+		DatabaseHost:     "ad.example",
+		DatabasePort:     636,
+		DatabaseUsername: "cn=backup,dc=example,dc=com",
+		DatabaseTLSMode:  "ldaps",
+		LdapBaseDN:       "dc=example,dc=com",
+	}
+	bundle := ClientBundle{Engine: EngineLDAP, Family: FamilyLDAP, DumpProgram: "/usr/bin/ldapsearch", RestoreProgram: "/usr/bin/ldapmodify"}
+	secrets := t.TempDir()
+
+	cmd, err := ldapDumpCommand(context.Background(), target, "secret", DumpOptions{Scope: "server"}, bundle, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "ldaps://ad.example:636") {
+		t.Errorf("LDAP URL missing: %s", joined)
+	}
+	if !strings.Contains(joined, "-b dc=example,dc=com") {
+		t.Errorf("base DN missing: %s", joined)
+	}
+	if strings.Contains(joined, "secret") {
+		t.Errorf("password leaked into argv: %s", joined)
+	}
+
+	target.DatabaseTLSMode = "starttls"
+	target.DatabasePort = 389
+	cmd, err = ldapDumpCommand(context.Background(), target, "secret", DumpOptions{Scope: "database", Database: "ou=people,dc=example,dc=com"}, bundle, secrets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined = strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "ldap://ad.example:389") || !slices.Contains(cmd.Args, "-ZZ") {
+		t.Errorf("StartTLS command wrong: %s", joined)
+	}
+	if !strings.Contains(joined, "-b ou=people,dc=example,dc=com") {
+		t.Errorf("subtree base missing: %s", joined)
+	}
+}
+
+const testLdapLdif = "dn: dc=example,dc=com\nobjectClass: top\ndc: example\nentryUUID: 11111111-2222-3333-4444-555555555555\nmodifyTimestamp: 20200101000000Z\n folded value\n\ndn: ou=people,dc=example,dc=com\nobjectClass: organizationalUnit\nou: people\ndescription: people tree\n\n"
+
+func TestStageAndRestoreLdapDump(t *testing.T) {
+	dir := t.TempDir()
+	writeTestProgram(t, dir, "ldapsearch", "#!/bin/sh\nprintf '%s\\n' '"+testLdapLdif+"'\n")
+	writeTestProgram(t, dir, "ldapmodify", "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$LDAP_TEST_LOG\"\ncat > \"$LDAP_RESTORE_INPUT\"\n")
+	writeTestProgram(t, dir, "ldapdelete", "#!/bin/sh\nprintf 'delete %s\\n' \"$*\" >> \"$LDAP_TEST_LOG\"\n")
+	logPath := filepath.Join(dir, "restore.log")
+	inputPath := filepath.Join(dir, "restore.ldif")
+	t.Setenv("LDAP_TEST_LOG", logPath)
+	t.Setenv("LDAP_RESTORE_INPUT", inputPath)
+
+	target := coredb.Target{
+		Type:             coredb.TargetTypeLDAP,
+		DatabaseHost:     "ldap.example",
+		DatabasePort:     389,
+		DatabaseUsername: "cn=backup,dc=example,dc=com",
+		DatabaseTLSMode:  "disabled",
+		LdapBaseDN:       "dc=example,dc=com",
+	}
+	bundle := ClientBundle{
+		Engine:            EngineLDAP,
+		Family:            FamilyLDAP,
+		DumpProgram:       filepath.Join(dir, "ldapsearch"),
+		ServerDumpProgram: filepath.Join(dir, "ldapsearch"),
+		RestoreProgram:    filepath.Join(dir, "ldapmodify"),
+		DeleteProgram:     filepath.Join(dir, "ldapdelete"),
+	}
+	staged, err := StageDump(context.Background(), t.TempDir(), target, "secret", DumpOptions{Scope: "server"}, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staged.Cleanup()
+	if staged.Manifest.Engine != EngineLDAP || staged.Manifest.DumpFile != dumpNameLdif {
+		t.Fatalf("manifest = %#v", staged.Manifest)
+	}
+	dump, err := os.ReadFile(filepath.Join(staged.ArchiveDir, dumpNameLdif))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operational := range []string{"entryUUID", "modifyTimestamp", "folded value"} {
+		if strings.Contains(string(dump), operational) {
+			t.Errorf("operational attribute %q survived the dump", operational)
+		}
+	}
+	if !strings.Contains(string(dump), "ou=people,dc=example,dc=com") {
+		t.Errorf("real entry missing from dump: %q", dump)
+	}
+
+	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{}, bundle); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(input), "dc=example,dc=com") || !strings.Contains(string(input), "ou=people") {
+		t.Errorf("whole restore input = %q", input)
+	}
+
+	_ = os.Remove(inputPath)
+	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{SourceDatabase: "ou=people,dc=example,dc=com", ReplaceExisting: true}, bundle); err != nil {
+		t.Fatal(err)
+	}
+	input, err = os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(input), "dn: dc=example,dc=com") || !strings.Contains(string(input), "ou=people,dc=example,dc=com") {
+		t.Errorf("subtree restore input = %q", input)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), "delete") || !strings.Contains(string(logData), "ou=people,dc=example,dc=com") {
+		t.Errorf("replace-existing did not delete the subtree: %s", logData)
+	}
+
+	err = RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{DestinationDatabase: "ou=other,dc=example,dc=com"}, bundle)
+	if err == nil || !strings.Contains(err.Error(), "DNs recorded in the dump") {
+		t.Fatalf("destination DN mismatch not rejected: %v", err)
+	}
+}

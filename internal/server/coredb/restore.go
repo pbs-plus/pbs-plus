@@ -595,7 +595,7 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 	if err != nil {
 		return fmt.Errorf("error fetching destination target: %w", err)
 	}
-	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
+	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL && TargetType(target.TargetType) != TargetTypeLDAP {
 		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
 	}
 	return q.UpsertRestoreDatabaseOptions(db.ctx, corequery.UpsertRestoreDatabaseOptionsParams{

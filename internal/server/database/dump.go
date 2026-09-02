@@ -3,6 +3,7 @@
 package database
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +28,7 @@ const (
 	ManifestVersionV2 = 2
 	manifestName      = "manifest.json"
 	dumpName          = "dump.sql"
+	dumpNameLdif      = "dump.ldif"
 	databasesDirName  = "databases"
 )
 
@@ -99,7 +102,9 @@ func StageDump(ctx context.Context, parent string, target coredb.Target, passwor
 	}
 
 	var manifest Manifest
-	if options.Scope == "server" {
+	if target.Type == coredb.TargetTypeLDAP {
+		manifest, err = stageLdapDump(ctx, archiveDir, target, password, options, bundle, secretsDir)
+	} else if options.Scope == "server" {
 		manifest, err = stageServerDump(ctx, archiveDir, target, password, bundle, secretsDir, options.LogWriter)
 	} else {
 		manifest, err = stageDatabaseDump(ctx, archiveDir, target, password, options, bundle, secretsDir)
@@ -208,7 +213,7 @@ func LoadManifest(archiveDir string) (Manifest, error) {
 }
 
 func validateSingleFileManifest(archiveDir string, manifest *Manifest) error {
-	if manifest.Engine != EnginePostgreSQL && manifest.Engine != EngineMySQL {
+	if manifest.Engine != EnginePostgreSQL && manifest.Engine != EngineMySQL && manifest.Engine != EngineLDAP {
 		return fmt.Errorf("unsupported database dump engine %q", manifest.Engine)
 	}
 	if manifest.Scope != "database" && manifest.Scope != "server" {
@@ -217,10 +222,14 @@ func validateSingleFileManifest(archiveDir string, manifest *Manifest) error {
 	if manifest.Scope == "database" && manifest.Database == "" {
 		return errors.New("database dump manifest is missing database name")
 	}
-	if manifest.DumpFile != dumpName {
+	expectedDumpName := dumpName
+	if manifest.Engine == EngineLDAP {
+		expectedDumpName = dumpNameLdif
+	}
+	if manifest.DumpFile != expectedDumpName {
 		return errors.New("database dump manifest has invalid dump file")
 	}
-	return verifyDumpChecksum(filepath.Join(archiveDir, dumpName), manifest.DumpSHA256)
+	return verifyDumpChecksum(filepath.Join(archiveDir, expectedDumpName), manifest.DumpSHA256)
 }
 
 // validatePerDatabaseManifest rejects files escaping the archive directory or failing checksum verification.
@@ -662,4 +671,147 @@ func limitedText(value string, limit int) string {
 		return value
 	}
 	return value[:limit]
+}
+
+func stageLdapDump(ctx context.Context, archiveDir string, target coredb.Target, password string, options DumpOptions, bundle ClientBundle, secretsDir string) (Manifest, error) {
+	cmd, err := ldapDumpCommand(ctx, target, password, options, bundle, secretsDir)
+	if err != nil {
+		return Manifest{}, err
+	}
+	rawPath := filepath.Join(archiveDir, dumpNameLdif+".raw")
+	if err := runDumpToFile(cmd, rawPath, password, options.LogWriter); err != nil {
+		return Manifest{}, err
+	}
+	dumpPath := filepath.Join(archiveDir, dumpNameLdif)
+	if err := filterLdapOperationalAttributes(rawPath, dumpPath); err != nil {
+		return Manifest{}, err
+	}
+	_ = os.Remove(rawPath)
+	digest, err := fileSHA256(dumpPath)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return Manifest{
+		Version:    ManifestVersionV1,
+		Engine:     EngineLDAP,
+		Scope:      options.Scope,
+		Database:   options.Database,
+		DumpFile:   dumpNameLdif,
+		DumpSHA256: digest,
+	}, nil
+}
+
+func ldapDumpCommand(ctx context.Context, target coredb.Target, password string, options DumpOptions, bundle ClientBundle, secretsDir string) (*exec.Cmd, error) {
+	passfile, err := writeLdapPasswordFile(secretsDir, password)
+	if err != nil {
+		return nil, err
+	}
+	base := target.LdapBaseDN
+	if options.Scope == "database" {
+		base = options.Database
+	}
+	args := []string{
+		"-x",
+		"-H", ldapURL(target),
+		"-D", target.DatabaseUsername,
+		"-y", passfile,
+		"-LLL",
+		"-o", "ldif-wrap=no",
+		"-s", "sub",
+		"-E", "pr=1000/noprompt",
+		"-b", base,
+	}
+	if target.DatabaseTLSMode == "starttls" {
+		args = append(args, "-ZZ")
+	}
+	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
+	cmd.Env = ldapTLSCommandEnv(target)
+	return cmd, nil
+}
+
+func ldapURL(target coredb.Target) string {
+	scheme := "ldap"
+	if target.DatabaseTLSMode == "ldaps" {
+		scheme = "ldaps"
+	}
+	return scheme + "://" + net.JoinHostPort(target.DatabaseHost, strconv.Itoa(target.DatabasePort))
+}
+
+func ldapTLSCommandEnv(target coredb.Target) []string {
+	env := os.Environ()
+	if target.DatabaseCACertificate != "" {
+		env = append(env, "LDAPTLS_CACERT="+target.DatabaseCACertificate, "LDAPTLS_REQCERT=hard")
+	}
+	return env
+}
+
+func writeLdapPasswordFile(dir, password string) (string, error) {
+	if strings.ContainsAny(password, "\r\n") {
+		return "", errors.New("LDAP credentials cannot contain line breaks")
+	}
+	path := filepath.Join(dir, "ldappass")
+	if err := os.WriteFile(path, []byte(password), 0o600); err != nil {
+		return "", fmt.Errorf("write LDAP password file: %w", err)
+	}
+	return path, nil
+}
+
+// ldapOperationalAttributes are server-maintained attrs ldapmodify rejects on add.
+var ldapOperationalAttributes = map[string]struct{}{
+	"structuralobjectclass": {}, "entryuuid": {}, "creatorsname": {},
+	"createtimestamp": {}, "entrycsn": {}, "contextcsn": {}, "modifiersname": {},
+	"modifytimestamp": {}, "entrydn": {}, "subschemasubentry": {},
+	"hassubordinates": {}, "subordinatecount": {},
+	"whencreated": {}, "whenchanged": {}, "usncreated": {}, "usnchanged": {},
+	"dscorepropagationdata": {},
+}
+
+// filterLdapOperationalAttributes rewrites the LDIF without operational attrs.
+func filterLdapOperationalAttributes(rawPath, outPath string) error {
+	raw, err := os.Open(rawPath)
+	if err != nil {
+		return fmt.Errorf("open LDAP dump: %w", err)
+	}
+	defer raw.Close()
+	out, err := os.OpenFile(outPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("write filtered LDAP dump: %w", err)
+	}
+	reader := bufio.NewReaderSize(raw, 1<<20)
+	skipping := false
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			skipping, err = filterLdapLine(out, line, skipping)
+			if err != nil {
+				_ = out.Close()
+				return fmt.Errorf("write filtered LDAP dump: %w", err)
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			_ = out.Close()
+			return fmt.Errorf("read LDAP dump: %w", readErr)
+		}
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close filtered LDAP dump: %w", err)
+	}
+	return nil
+}
+
+func filterLdapLine(out io.Writer, line []byte, skipping bool) (bool, error) {
+	if line[0] == ' ' {
+		return skipping, nil
+	}
+	name, _, _ := strings.Cut(string(line), ":")
+	if _, operational := ldapOperationalAttributes[strings.ToLower(strings.TrimSpace(name))]; operational {
+		return true, nil
+	}
+	if _, err := out.Write(line); err != nil {
+		return skipping, err
+	}
+	return false, nil
 }

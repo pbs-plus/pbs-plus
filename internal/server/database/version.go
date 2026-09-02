@@ -55,7 +55,15 @@ func SelectClientBundle(ctx context.Context, target coredb.Target, password stri
 		if engine == EnginePostgreSQL {
 			family = FamilyPostgreSQL
 		}
+		if engine == EngineLDAP {
+			family = FamilyLDAP
+		}
 		return FindClientBundle(bundles, engine, family, target.DatabaseDefaultClientDir)
+	}
+
+	if engine == EngineLDAP {
+		logVersionLine(logWriter, fmt.Sprintf("using LDAP client %s from %s", clientVersionText(candidates[0]), candidates[0].Directory))
+		return candidates[0], nil
 	}
 
 	server, err := detectServerVersion(ctx, target, password, candidates)

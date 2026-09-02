@@ -159,6 +159,31 @@ var windows = []js.Value{
 			)},
 		),
 	),
+	targetEditWindow(
+		"PBS.D2DManagement.TargetLdapEditWindow", "pbsLdapTargetEditWindow", "LDAP / Active Directory Target", "ldap", 800,
+		js.Items(
+			js.Field{XType: js.XFieldSet, Title: "Connection", Layout: "anchor", Items: js.Items(
+				targetNameField(), targetKindField("ldap"),
+				js.Field{XType: js.XProxmoxTextField, Label: "Host", Name: "database_host", AllowBlank: new(false), EmptyText: "ldap.example.com"},
+				js.Field{XType: js.XIntegerField, Label: "Port", Name: "database_port", Value: 389, MinValue: 1, MaxValue: 65535, AllowBlank: new(false)},
+				js.Field{XType: js.XProxmoxTextField, Label: "Bind DN", Name: "database_username", AllowBlank: new(false), EmptyText: "cn=backup,dc=example,dc=com"},
+				js.Field{XType: js.XProxmoxTextField, Label: "Password", Name: "database_password", InputType: "password", AllowBlank: new(true), EmptyText: "Leave blank to keep the current password", CBind: js.Obj{"allowBlank": "{!isCreate}"}},
+				js.Field{XType: js.XProxmoxTextField, Label: "Base DN", Name: "ldap_base_dn", AllowBlank: new(false), EmptyText: "dc=example,dc=com"},
+			)},
+		),
+		js.Items(
+			js.Field{XType: js.XFieldSet, Title: "TLS", Layout: "anchor", Items: js.Items(
+				js.Field{XType: js.XKVComboBox, Label: "TLS Mode", Name: "database_tls_mode", Value: "starttls", AllowBlank: new(false), ComboItems: js.Arr{
+					js.Arr{"disabled", "Disabled"}, js.Arr{"starttls", "StartTLS"}, js.Arr{"ldaps", "LDAPS"},
+				}},
+				js.Field{XType: js.XProxmoxTextField, Label: "CA Certificate", Name: "database_ca_certificate", EmptyText: "/etc/ssl/certs/ldap-ca.pem"},
+			)},
+			js.Field{XType: js.XFieldSet, Title: "Client Tools", Layout: "anchor", Items: js.Items(
+				js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_default_client_dir", AllowBlank: new(true), EmptyText: "Automatic", DeleteEmptyWhenNotCreate: true, CBind: js.Obj{"engine": "{targetKind}"}},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Leave empty to use the first discovered ldapsearch and ldapmodify installation. Only LDAP client tools discovered on this PBS server are listed.")},
+			)},
+		),
+	),
 	js.EditWindow{
 		Name: "PBS.D2DManagement.TargetS3Secret", XType: "pbsTargetS3Secret", Extend: "PBS.plusWindow.Create",
 		Subject: "Set Target S3 Secret Key", PixelWidth: 400, NotResizable: true, IsCreate: true, Method: "POST",

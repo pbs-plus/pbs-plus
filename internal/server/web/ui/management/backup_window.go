@@ -69,7 +69,8 @@ var backupJobEdit = js.EditWindow{
 			"targetChange": js.Func("field, value", `
 				let record = field.getStore().findRecord("name", value, 0, false, true, true);
 				let kind = record ? (record.get("kind") || record.get("target_type")) : "filesystem";
-				let database = ["postgresql", "mysql"].includes(kind);
+				let database = ["postgresql", "mysql", "ldap"].includes(kind);
+				let ldap = kind === "ldap";
 				let pathSel = this.lookup("pathSelectorSubpath");
 				if (pathSel) {
 					pathSel.setTarget(value);
@@ -82,6 +83,20 @@ var backupJobEdit = js.EditWindow{
 				let databaseOptions = this.lookup("databaseOptions");
 				databaseOptions.setHidden(!database);
 				databaseOptions.setDisabled(!database);
+				let scopeCombo = this.lookup("databaseScope");
+				let databaseName = this.lookup("databaseName");
+				if (scopeCombo && scopeCombo.setComboItems) {
+					scopeCombo.setComboItems(ldap
+						? [["database", "Single subtree"], ["server", "Entire base DN"]]
+						: [["database", "Single database"], ["server", "Entire server"]]);
+				}
+				if (databaseName) {
+					databaseName.setFieldLabel(ldap ? "Subtree DN" : "Database");
+					databaseName.setEmptyText(ldap ? "ou=people,dc=example,dc=com" : "");
+				}
+				if (ldap && scopeCombo && !scopeCombo.getValue()) {
+					scopeCombo.setValue("server");
+				}
 			`),
 			"databaseScopeChange": js.Func("field, value", `
 				let databaseName = this.lookup("databaseName");
@@ -112,7 +127,7 @@ var backupJobEdit = js.EditWindow{
 						js.Field{XType: "pbsD2DTargetPathSelector", Label: "Subpath", Reference: "pathSelectorSubpath", Name: "subpath", DeleteEmptyWhenNotCreate: true},
 					)},
 					js.Field{XType: js.XFieldContainer, Reference: "databaseOptions", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
-						js.Field{XType: js.XKVComboBox, Label: "Backup Scope", Name: "database_scope", Value: "database", AllowBlank: new(false),
+						js.Field{XType: js.XKVComboBox, Label: "Backup Scope", Name: "database_scope", Reference: "databaseScope", Value: "database", AllowBlank: new(false),
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Online dump: queries and writes on the database continue normally while it runs.")}, ComboItems: js.Arr{
 								js.Arr{"database", "Single database"}, js.Arr{"server", "Entire server"},
 							}},

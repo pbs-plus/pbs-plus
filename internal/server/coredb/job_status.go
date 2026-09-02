@@ -108,6 +108,7 @@ const (
 	TargetTypeS3         TargetType = "s3"
 	TargetTypePostgreSQL TargetType = "postgresql"
 	TargetTypeMySQL      TargetType = "mysql"
+	TargetTypeLDAP       TargetType = "ldap"
 
 	FilesystemAccessLocal FilesystemAccess = "local"
 	FilesystemAccessAgent FilesystemAccess = "agent"
