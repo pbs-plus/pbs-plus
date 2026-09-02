@@ -899,6 +899,13 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{}, bundle); err != nil {
 		t.Fatal(err)
 	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logData), " -c -a") {
+		t.Errorf("restore is not using add semantics: %s", logData)
+	}
 	input, err := os.ReadFile(inputPath)
 	if err != nil {
 		t.Fatal(err)
@@ -918,7 +925,7 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 	if strings.Contains(string(input), "dn: dc=example,dc=com") || !strings.Contains(string(input), "ou=people,dc=example,dc=com") {
 		t.Errorf("subtree restore input = %q", input)
 	}
-	logData, err := os.ReadFile(logPath)
+	logData, err = os.ReadFile(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -471,7 +471,7 @@ func restoreLDAP(ctx context.Context, archiveDir string, target coredb.Target, p
 	if err != nil {
 		return err
 	}
-	args := []string{"-x", "-H", ldapURL(target), "-D", target.DatabaseUsername, "-y", passfile, "-c"}
+	args := []string{"-x", "-H", ldapURL(target), "-D", target.DatabaseUsername, "-y", passfile, "-c", "-a"}
 	run := func(r io.Reader) error {
 		cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
 		cmd.Env = ldapTLSCommandEnv(target)
