@@ -223,8 +223,8 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		password := r.FormValue("database_password")
-		if newTarget.IsDatabase() && password == "" {
-			respond.WriteErrorResponse(w, errors.New("database password is required"))
+		if (newTarget.IsDatabase() || newTarget.IsDovecot()) && password == "" {
+			respond.WriteErrorResponse(w, errors.New("target password is required"))
 			return
 		}
 		s3Secret := r.FormValue("s3_secret_key")

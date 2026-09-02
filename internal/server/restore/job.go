@@ -42,15 +42,15 @@ type restoreJob struct {
 	errCount     atomic.Int32
 	receivedDone atomic.Bool
 
-	job                coredb.Restore
-	executionID        string
-	remoteServer       *pxar.RemoteServer
-	localClient        *pxar.Client
-	agentPipe          *arpc.StreamPipe
-	app                *application.Runtime
-	skipCheck          bool
-	databaseAware      bool
-	databaseStagingDir string
+	job           coredb.Restore
+	executionID   string
+	remoteServer  *pxar.RemoteServer
+	localClient   *pxar.Client
+	agentPipe     *arpc.StreamPipe
+	app           *application.Runtime
+	skipCheck     bool
+	databaseAware bool
+	stagingDir    string
 }
 
 func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
@@ -63,6 +63,8 @@ func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	switch {
 	case b.job.DestTarget.IsDatabase() && b.databaseAware:
 		return b.databaseExecute(ctx)
+	case b.job.DestTarget.IsDovecot() && b.databaseAware:
+		return b.dovecotExecute(ctx)
 	case b.job.DestTarget.IsAgent():
 		return b.agentExecute(ctx, idempotencyKey)
 	case b.job.DestTarget.IsLocal():
@@ -180,9 +182,9 @@ func (b *restoreJob) cleanup() {
 	}
 
 	sessions.DisconnectSession(childKey)
-	if b.databaseStagingDir != "" {
-		if err := os.RemoveAll(b.databaseStagingDir); err != nil {
-			b.logger.Error(err, "failed to remove database restore staging data")
+	if b.stagingDir != "" {
+		if err := os.RemoveAll(b.stagingDir); err != nil {
+			b.logger.Error(err, "failed to remove restore staging data")
 		}
 	}
 }

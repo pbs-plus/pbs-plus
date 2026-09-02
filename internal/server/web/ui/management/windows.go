@@ -185,6 +185,27 @@ var windows = []js.Value{
 			)},
 		),
 	),
+	targetEditWindow(
+		"PBS.D2DManagement.TargetDovecotEditWindow", "pbsDovecotTargetEditWindow", "Dovecot Target", "dovecot", 800,
+		js.Items(
+			js.Field{XType: js.XFieldSet, Title: "Connection", Layout: "anchor", Items: js.Items(
+				targetNameField(), targetKindField("dovecot"),
+				js.Field{XType: js.XProxmoxTextField, Label: "Host", Name: "database_host", AllowBlank: new(false), EmptyText: "mail.example.com"},
+				js.Field{XType: js.XIntegerField, Label: "Port", Name: "database_port", Value: 24245, MinValue: 1, MaxValue: 65535, AllowBlank: new(false)},
+				js.Field{XType: js.XProxmoxTextField, Label: "Doveadm Password", Name: "database_password", InputType: "password", AllowBlank: new(true), EmptyText: "Leave blank to keep the current password", CBind: js.Obj{"allowBlank": "{!isCreate}"}},
+			)},
+		),
+		js.Items(
+			js.Field{XType: js.XFieldSet, Title: "TLS", Layout: "anchor", Items: js.Items(
+				js.Field{XType: js.XProxmoxTextField, Label: "CA Certificate", Name: "database_ca_certificate", AllowBlank: new(false), EmptyText: "/etc/ssl/certs/dovecot-ca.pem"},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Dovecot backups always connect over TLS and verify the server certificate against this CA.")},
+			)},
+			js.Field{XType: js.XFieldSet, Title: "Client Tools", Layout: "anchor", Items: js.Items(
+				js.Field{XType: js.XProxmoxTextField, Label: "Client Directory", Name: "database_default_client_dir", AllowBlank: new(true), EmptyText: "Automatic", DeleteEmptyWhenNotCreate: true},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Leave empty to use Dovecot 2.4 or newer client tools from /usr/bin or /usr/local/bin.")},
+			)},
+		),
+	),
 	js.EditWindow{
 		Name: "PBS.D2DManagement.TargetS3Secret", XType: "pbsTargetS3Secret", Extend: "PBS.plusWindow.Create",
 		Subject: "Set Target S3 Secret Key", PixelWidth: 400, NotResizable: true, IsCreate: true, Method: "POST",

@@ -156,6 +156,9 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	if err = db.storeBackupDatabaseOptions(q, backup); err != nil {
 		return fmt.Errorf("CreateBackup: %w", err)
 	}
+	if err = db.storeBackupDovecotOptions(q, backup); err != nil {
+		return fmt.Errorf("CreateBackup: %w", err)
+	}
 
 	for _, exclusion := range backup.Exclusions {
 		if exclusion.JobID == "" {
@@ -242,6 +245,8 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 		LegacyXattr:      fromNullInt64ToBool(row.LegacyXattr),
 		DatabaseScope:    row.DatabaseScope,
 		DatabaseName:     row.DatabaseName,
+		DovecotUsername:  row.DovecotUsername,
+		DovecotMailbox:   row.DovecotMailbox,
 	}
 	backup.Target.DatabaseHost = row.DatabaseHost
 	backup.Target.DatabasePort = int(row.DatabasePort)
@@ -453,6 +458,9 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 	if err = db.storeBackupDatabaseOptions(q, backup); err != nil {
 		return fmt.Errorf("UpdateBackup: %w", err)
 	}
+	if err = db.storeBackupDovecotOptions(q, backup); err != nil {
+		return fmt.Errorf("UpdateBackup: %w", err)
+	}
 
 	err = q.DeleteBackupExclusions(db.ctx, backup.ID)
 	if err != nil {
@@ -596,6 +604,8 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			LegacyXattr:      fromNullInt64ToBool(row.LegacyXattr),
 			DatabaseScope:    row.DatabaseScope,
 			DatabaseName:     row.DatabaseName,
+			DovecotUsername:  row.DovecotUsername,
+			DovecotMailbox:   row.DovecotMailbox,
 
 			Exclusions: exclusionsByJob[row.ID]}
 		backup.Target.DatabaseHost = row.DatabaseHost
@@ -770,6 +780,8 @@ type Backup struct {
 	History          JobHistory  `json:"history"`
 	DatabaseScope    string      `json:"database_scope,omitempty"`
 	DatabaseName     string      `json:"database_name,omitempty"`
+	DovecotUsername  string      `json:"dovecot_username,omitempty"`
+	DovecotMailbox   string      `json:"dovecot_mailbox,omitempty"`
 }
 
 func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup) error {
@@ -797,6 +809,27 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 		BackupID:     backup.ID,
 		Scope:        backup.DatabaseScope,
 		DatabaseName: backup.DatabaseName,
+	})
+}
+
+func (db *Store) storeBackupDovecotOptions(q *corequery.Queries, backup Backup) error {
+	if backup.DovecotUsername == "" && backup.DovecotMailbox == "" {
+		return q.DeleteBackupDovecotOptions(db.ctx, backup.ID)
+	}
+	target, err := q.GetTarget(db.ctx, backup.Target.Name)
+	if err != nil {
+		return fmt.Errorf("error fetching target: %w", err)
+	}
+	if TargetType(target.TargetType) != TargetTypeDovecot {
+		return q.DeleteBackupDovecotOptions(db.ctx, backup.ID)
+	}
+	if backup.DovecotUsername == "" {
+		return errors.New("Dovecot username is required")
+	}
+	return q.UpsertBackupDovecotOptions(db.ctx, corequery.UpsertBackupDovecotOptionsParams{
+		BackupID: backup.ID,
+		Username: backup.DovecotUsername,
+		Mailbox:  backup.DovecotMailbox,
 	})
 }
 

@@ -11,8 +11,9 @@ func TestBuildTargetTreeGroupsDatabaseTargets(t *testing.T) {
 		{Name: "pg-main", Type: coredb.TargetTypePostgreSQL, DatabaseHost: "pg.internal", DatabasePort: 5432},
 		{Name: "maria-main", Type: coredb.TargetTypeMySQL, DatabaseHost: "maria.internal", DatabasePort: 3306, DatabaseVariant: "mariadb"},
 		{Name: "ad-main", Type: coredb.TargetTypeLDAP, DatabaseHost: "ad.internal", DatabasePort: 636, LdapBaseDN: "dc=example,dc=com"},
+		{Name: "mail-main", Type: coredb.TargetTypeDovecot, DatabaseHost: "mail.internal", DatabasePort: 24245},
 	}, nil, "")
-	if len(tree) != 3 || tree[0].GroupType != "postgresql" || tree[1].GroupType != "mysql" || tree[2].GroupType != "ldap" {
+	if len(tree) != 4 || tree[0].GroupType != "postgresql" || tree[1].GroupType != "mysql" || tree[2].GroupType != "ldap" || tree[3].GroupType != "dovecot" {
 		t.Fatalf("tree = %#v", tree)
 	}
 	if tree[0].Children[0].DatabaseHost != "pg.internal" || tree[1].Children[0].DatabaseVariant != "mariadb" {
@@ -20,6 +21,9 @@ func TestBuildTargetTreeGroupsDatabaseTargets(t *testing.T) {
 	}
 	if tree[2].Children[0].LdapBaseDN != "dc=example,dc=com" {
 		t.Fatalf("LDAP target details missing: %#v", tree[2].Children[0])
+	}
+	if tree[3].Children[0].DatabaseHost != "mail.internal" || tree[3].Children[0].DatabasePort != 24245 {
+		t.Fatalf("Dovecot target details missing: %#v", tree[3].Children[0])
 	}
 }
 

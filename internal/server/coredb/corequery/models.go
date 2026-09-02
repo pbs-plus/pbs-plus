@@ -82,6 +82,12 @@ type BackupDatabaseOption struct {
 	ClientDir    string `json:"client_dir"`
 }
 
+type BackupDovecotOption struct {
+	BackupID string `json:"backup_id"`
+	Username string `json:"username"`
+	Mailbox  string `json:"mailbox"`
+}
+
 type BackupGroupMigration struct {
 	BackupID    string `json:"backup_id"`
 	CompletedAt string `json:"completed_at"`
@@ -155,6 +161,14 @@ type RestoreDatabaseOption struct {
 	SourceDatabase      string `json:"source_database"`
 }
 
+type RestoreDovecotOption struct {
+	RestoreID           string `json:"restore_id"`
+	SourceUsername      string `json:"source_username"`
+	DestinationUsername string `json:"destination_username"`
+	Mailbox             string `json:"mailbox"`
+	ReplaceExisting     int64  `json:"replace_existing"`
+}
+
 type Script struct {
 	Path        string         `json:"path"`
 	Description sql.NullString `json:"description"`
@@ -164,6 +178,15 @@ type Target struct {
 	Name        string `json:"name"`
 	TargetType  string `json:"target_type"`
 	MountScript string `json:"mount_script"`
+}
+
+type TargetDovecot struct {
+	TargetName       string `json:"target_name"`
+	Host             string `json:"host"`
+	Port             int64  `json:"port"`
+	Password         string `json:"password"`
+	CaCertificate    string `json:"ca_certificate"`
+	DefaultClientDir string `json:"default_client_dir"`
 }
 
 type TargetFilesystem struct {

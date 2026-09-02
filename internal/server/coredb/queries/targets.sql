@@ -81,6 +81,16 @@ ON CONFLICT(target_name) DO UPDATE SET
     base_dn = excluded.base_dn,
     default_client_dir = excluded.default_client_dir;
 
+-- name: UpsertTargetDovecot :exec
+INSERT INTO target_dovecot (
+    target_name, host, port, ca_certificate, default_client_dir
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(target_name) DO UPDATE SET
+    host = excluded.host,
+    port = excluded.port,
+    ca_certificate = excluded.ca_certificate,
+    default_client_dir = excluded.default_client_dir;
+
 -- name: DeleteTargetFilesystem :exec
 DELETE FROM target_filesystems WHERE target_name = ?;
 
@@ -96,6 +106,9 @@ DELETE FROM target_mysql WHERE target_name = ?;
 -- name: DeleteTargetLdap :exec
 DELETE FROM target_ldap WHERE target_name = ?;
 
+-- name: DeleteTargetDovecot :exec
+DELETE FROM target_dovecot WHERE target_name = ?;
+
 -- name: UpdateTargetS3Secret :execrows
 UPDATE target_s3 SET secret = ? WHERE target_name = ?;
 
@@ -108,6 +121,9 @@ UPDATE target_mysql SET password = ? WHERE target_name = ?;
 -- name: UpdateTargetLdapPassword :execrows
 UPDATE target_ldap SET password = ? WHERE target_name = ?;
 
+-- name: UpdateTargetDovecotPassword :execrows
+UPDATE target_dovecot SET password = ? WHERE target_name = ?;
+
 -- name: DeleteTarget :execrows
 DELETE FROM targets WHERE name = ?;
 
@@ -119,12 +135,12 @@ SELECT
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
-    COALESCE(p.host, m.host, l.host, '') AS database_host,
-    COALESCE(p.port, m.port, l.port, 0) AS database_port,
+    COALESCE(p.host, m.host, l.host, d.host, '') AS database_host,
+    COALESCE(p.port, m.port, l.port, d.port, 0) AS database_port,
     COALESCE(p.username, m.username, l.username, '') AS database_username,
     COALESCE(p.ssl_mode, m.tls_mode, l.tls_mode, '') AS database_tls_mode,
-    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, '') AS database_ca_certificate,
-    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, d.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, d.default_client_dir, '') AS database_default_client_dir,
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
@@ -137,6 +153,7 @@ LEFT JOIN target_s3 s ON s.target_name = t.name
 LEFT JOIN target_postgresql p ON p.target_name = t.name
 LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN target_ldap l ON l.target_name = t.name
+LEFT JOIN target_dovecot d ON d.target_name = t.name
 LEFT JOIN backups j ON t.name = j.target
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 WHERE t.name = ?
@@ -154,6 +171,9 @@ SELECT password FROM target_mysql WHERE target_name = ?;
 -- name: GetTargetLdapPassword :one
 SELECT password FROM target_ldap WHERE target_name = ?;
 
+-- name: GetTargetDovecotPassword :one
+SELECT password FROM target_dovecot WHERE target_name = ?;
+
 -- name: ListAllTargets :many
 SELECT
     t.name, t.target_type, t.mount_script,
@@ -162,12 +182,12 @@ SELECT
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
-    COALESCE(p.host, m.host, l.host, '') AS database_host,
-    COALESCE(p.port, m.port, l.port, 0) AS database_port,
+    COALESCE(p.host, m.host, l.host, d.host, '') AS database_host,
+    COALESCE(p.port, m.port, l.port, d.port, 0) AS database_port,
     COALESCE(p.username, m.username, l.username, '') AS database_username,
     COALESCE(p.ssl_mode, m.tls_mode, l.tls_mode, '') AS database_tls_mode,
-    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, '') AS database_ca_certificate,
-    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, d.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, d.default_client_dir, '') AS database_default_client_dir,
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
@@ -180,17 +200,18 @@ LEFT JOIN target_s3 s ON s.target_name = t.name
 LEFT JOIN target_postgresql p ON p.target_name = t.name
 LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN target_ldap l ON l.target_name = t.name
+LEFT JOIN target_dovecot d ON d.target_name = t.name
 LEFT JOIN backups j ON t.name = j.target
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 GROUP BY t.name, t.target_type, t.mount_script, f.access, f.path, s.url,
          f.agent_host, f.volume_id, f.volume_type, f.volume_name, f.volume_fs,
          f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
          f.volume_total, f.volume_used, f.volume_free,
-         p.host, m.host, l.host, p.port, m.port, l.port,
+         p.host, m.host, l.host, d.host, p.port, m.port, l.port, d.port,
          p.username, m.username, l.username,
          p.ssl_mode, m.tls_mode, l.tls_mode,
-         p.ca_certificate, m.ca_certificate, l.ca_certificate,
-         p.default_client_dir, m.default_client_dir, l.default_client_dir,
+         p.ca_certificate, m.ca_certificate, l.ca_certificate, d.ca_certificate,
+         p.default_client_dir, m.default_client_dir, l.default_client_dir, d.default_client_dir,
          m.variant, m.default_client_family, l.base_dn,
          ah.name, ah.ip, ah.auth, ah.token_used, ah.os
 ORDER BY t.name;

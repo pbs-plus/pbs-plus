@@ -39,6 +39,30 @@ func TestApplyTargetFormDatabase(t *testing.T) {
 	}
 }
 
+func TestApplyTargetFormDovecot(t *testing.T) {
+	form := url.Values{
+		"name":                        {"mail-main"},
+		"kind":                        {"dovecot"},
+		"database_host":               {"mail.internal"},
+		"database_port":               {"24245"},
+		"database_ca_certificate":     {"/etc/pbs-plus/dovecot-ca.pem"},
+		"database_default_client_dir": {"/usr/bin"},
+	}
+	req := httptest.NewRequest("POST", "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err := req.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+
+	var target coredb.Target
+	if err := applyTargetForm(&target, req, true); err != nil {
+		t.Fatal(err)
+	}
+	if !target.IsDovecot() || target.IsDatabase() || target.DatabaseHost != "mail.internal" || target.DatabasePort != 24245 || target.DatabaseCACertificate != "/etc/pbs-plus/dovecot-ca.pem" || target.DatabaseDefaultClientDir != "/usr/bin" {
+		t.Fatalf("target = %#v", target)
+	}
+}
+
 func TestApplyTargetFormS3(t *testing.T) {
 	form := url.Values{
 		"name":          {"archive"},

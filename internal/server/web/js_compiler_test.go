@@ -99,8 +99,8 @@ func TestCodeMirrorFieldBuffersValuesUntilEditorLoads(t *testing.T) {
 
 func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	source := ui.Render()
-	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 5 {
-		t.Fatalf("rendered %d target panels, want 5", got)
+	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 6 {
+		t.Fatalf("rendered %d target panels, want 6", got)
 	}
 
 	for _, expected := range [][]byte{
@@ -115,7 +115,11 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`targetKind: "mysql"`),
 		[]byte(`itemId: "ldap-targets"`),
 		[]byte(`targetKind: "ldap"`),
+		[]byte(`itemId: "dovecot-targets"`),
+		[]byte(`targetKind: "dovecot"`),
 		[]byte(`subject: "LDAP / Active Directory Target"`),
+		[]byte(`subject: "Dovecot Target"`),
+		[]byte(`dovecot: "Add Dovecot Target"`),
 		[]byte(`ldap: "Add LDAP / Active Directory Target"`),
 		[]byte(`name: "ldap_base_dn"`),
 		[]byte(`Logical directory-data backup only.`),
@@ -215,6 +219,7 @@ func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 		[]byte(`subject: "PostgreSQL Target"`),
 		[]byte(`subject: "MySQL / MariaDB Target"`),
 		[]byte(`subject: "LDAP / Active Directory Target"`),
+		[]byte(`subject: "Dovecot Target"`),
 		[]byte(`name: "s3_endpoint"`),
 		[]byte(`name: "s3_bucket"`),
 		[]byte(`name: "s3_region"`),
@@ -232,6 +237,11 @@ func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 		[]byte(`name: "destination_database"`),
 		[]byte(`mysql: "Add MySQL / MariaDB Target"`),
 		[]byte(`ldap: "Add LDAP / Active Directory Target"`),
+		[]byte(`dovecot: "Add Dovecot Target"`),
+		[]byte(`name: "dovecot_username"`),
+		[]byte(`name: "dovecot_mailbox"`),
+		[]byte(`name: "dovecot_source_username"`),
+		[]byte(`name: "dovecot_destination_username"`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("target editor is missing %q", expected)
@@ -257,8 +267,8 @@ func TestDatabaseJobWindowsHideFilesystemRestorePath(t *testing.T) {
 		[]byte(`subject: "Backup Job"`),
 		[]byte(`subject: "Restore Job"`),
 		[]byte(`text: "Backup / Restore"`),
-		[]byte(`sourcePath.setHidden(database);`),
-		[]byte(`sourcePath.setDisabled(database);`),
+		[]byte(`sourcePath.setHidden(structured);`),
+		[]byte(`sourcePath.setDisabled(structured);`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("database job editor is missing %q", expected)
@@ -300,7 +310,7 @@ func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
 		[]byte(`name + ".pxar.didx"`),
 		[]byte(`name + ".mpxar.didx"`),
 		[]byte(`return exclude ? !match : match;`),
-		[]byte(`mode: database ? "include" : "exclude"`),
+		[]byte(`mode: structured ? "include" : "exclude"`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("snapshot selector is missing %q", expected)

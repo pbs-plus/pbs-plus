@@ -323,3 +323,102 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 		t.Errorf("LDAP backup target connection fields did not hydrate: %#v", gotLdapBackup.Target)
 	}
 }
+
+func TestDovecotTargetAndJobOptionsPersistence(t *testing.T) {
+	crypto.SetSealKeyPath(filepath.Join(t.TempDir(), "seal.key"))
+	t.Cleanup(func() { crypto.SetSealKeyPath("") })
+
+	db, err := Initialize(context.Background(), filepath.Join(t.TempDir(), "dovecot-targets.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	target := Target{
+		Name:                     "mail",
+		Type:                     TargetTypeDovecot,
+		DatabaseHost:             "mail.example.com",
+		DatabaseCACertificate:    "/etc/ssl/dovecot-ca.pem",
+		DatabaseDefaultClientDir: "/usr/bin",
+	}
+	if err := db.CreateTarget(nil, target); err != nil {
+		t.Fatal(err)
+	}
+	gotTarget, err := db.GetTarget(target.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotTarget.IsDovecot() || gotTarget.IsDatabase() || gotTarget.DatabaseHost != target.DatabaseHost || gotTarget.DatabasePort != 24245 || gotTarget.DatabaseCACertificate != target.DatabaseCACertificate || gotTarget.DatabaseDefaultClientDir != target.DatabaseDefaultClientDir {
+		t.Errorf("Dovecot target = %#v", gotTarget)
+	}
+
+	if err := db.AddDatabasePassword(nil, target.Name, "doveadm-secret"); err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := db.readQueries.GetTargetDovecotPassword(db.ctx, target.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encrypted == "doveadm-secret" {
+		t.Error("Dovecot password stored in plaintext")
+	}
+	password, err := db.GetDatabasePassword(target.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if password != "doveadm-secret" {
+		t.Errorf("Dovecot password = %q", password)
+	}
+
+	backup := Backup{
+		ID:              "dovecot-backup",
+		Store:           "datastore",
+		Target:          Target{Name: target.Name},
+		DovecotUsername: "alice@example.com",
+		DovecotMailbox:  "Archive",
+	}
+	if err := db.CreateBackup(nil, backup); err != nil {
+		t.Fatal(err)
+	}
+	gotBackup, err := db.GetBackup(backup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBackup.DovecotUsername != backup.DovecotUsername || gotBackup.DovecotMailbox != backup.DovecotMailbox || !gotBackup.Target.IsDovecot() || gotBackup.Target.DatabasePort != 24245 {
+		t.Errorf("Dovecot backup = %#v", gotBackup)
+	}
+	backups, err := db.GetAllBackups()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 1 || backups[0].DovecotUsername != backup.DovecotUsername || backups[0].DovecotMailbox != backup.DovecotMailbox {
+		t.Errorf("Dovecot backup list = %#v", backups)
+	}
+
+	restore := Restore{
+		ID:                    "dovecot-restore",
+		Store:                 "datastore",
+		Snapshot:              "host/snapshot/1",
+		DestTarget:            Target{Name: target.Name},
+		DovecotSourceUsername: "alice@example.com",
+		DovecotMailbox:        "Archive",
+		ReplaceExisting:       true,
+	}
+	if err := db.CreateRestore(nil, restore); err != nil {
+		t.Fatal(err)
+	}
+	gotRestore, err := db.GetRestore(restore.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRestore.DovecotSourceUsername != restore.DovecotSourceUsername || gotRestore.DovecotDestinationUsername != restore.DovecotSourceUsername || gotRestore.DovecotMailbox != restore.DovecotMailbox || !gotRestore.ReplaceExisting || !gotRestore.DestTarget.IsDovecot() {
+		t.Errorf("Dovecot restore = %#v", gotRestore)
+	}
+	restores, err := db.GetAllRestores()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restores) != 1 || restores[0].DovecotDestinationUsername != restore.DovecotSourceUsername || !restores[0].ReplaceExisting {
+		t.Errorf("Dovecot restore list = %#v", restores)
+	}
+}

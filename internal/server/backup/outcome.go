@@ -149,6 +149,7 @@ func (b *backupJob) cleanup() {
 		agentMount := b.agentMount
 		s3Mount := b.s3Mount
 		stagedDump := b.stagedDump
+		stagedDovecot := b.stagedDovecot
 		logger := b.logger
 		cancel := b.cancel
 		b.mu.Unlock()
@@ -168,6 +169,11 @@ func (b *backupJob) cleanup() {
 		if stagedDump != nil {
 			if err := stagedDump.Cleanup(); err != nil && logger != nil {
 				logger.Error(err, "failed to remove database backup staging data")
+			}
+		}
+		if stagedDovecot != nil {
+			if err := stagedDovecot.Cleanup(); err != nil && logger != nil {
+				logger.Error(err, "failed to remove Dovecot backup staging data")
 			}
 		}
 		if logger != nil {

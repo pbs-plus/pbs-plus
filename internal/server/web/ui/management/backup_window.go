@@ -71,18 +71,23 @@ var backupJobEdit = js.EditWindow{
 				let kind = record ? (record.get("kind") || record.get("target_type")) : "filesystem";
 				let database = ["postgresql", "mysql", "ldap"].includes(kind);
 				let ldap = kind === "ldap";
+				let dovecot = kind === "dovecot";
+				let structured = database || dovecot;
 				let pathSel = this.lookup("pathSelectorSubpath");
 				if (pathSel) {
 					pathSel.setTarget(value);
 				}
 				["filesystemSource", "filesystemOptions", "filesystemExclusions"].forEach((ref) => {
 					let group = this.lookup(ref);
-					group.setHidden(database);
-					group.setDisabled(database);
+					group.setHidden(structured);
+					group.setDisabled(structured);
 				});
 				let databaseOptions = this.lookup("databaseOptions");
 				databaseOptions.setHidden(!database);
 				databaseOptions.setDisabled(!database);
+				let dovecotOptions = this.lookup("dovecotOptions");
+				dovecotOptions.setHidden(!dovecot);
+				dovecotOptions.setDisabled(!dovecot);
 				let scopeCombo = this.lookup("databaseScope");
 				let databaseName = this.lookup("databaseName");
 				if (scopeCombo && scopeCombo.setComboItems) {
@@ -132,6 +137,10 @@ var backupJobEdit = js.EditWindow{
 								js.Arr{"database", "Single database"}, js.Arr{"server", "Entire server"},
 							}},
 						js.Field{XType: "proxmoxtextfield", Label: "Database", Name: "database_name", Reference: "databaseName", AllowBlank: new(false)},
+					)},
+					js.Field{XType: js.XFieldContainer, Reference: "dovecotOptions", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
+						js.Field{XType: "proxmoxtextfield", Label: "Username", Name: "dovecot_username", AllowBlank: new(false), EmptyText: "user@example.com"},
+						js.Field{XType: "proxmoxtextfield", Label: "Mailbox", Name: "dovecot_mailbox", AllowBlank: new(true), EmptyText: "All mailboxes", DeleteEmptyWhenNotCreate: true},
 					)},
 					js.Field{XType: js.XDataStoreSelector, Label: "Local Datastore", Name: "store"},
 					js.Field{XType: "pbsD2DNamespaceSelector", Label: "Namespace", EmptyText: "Root", Name: "ns", Reference: "namespace", DeleteEmptyWhenNotCreate: true},
