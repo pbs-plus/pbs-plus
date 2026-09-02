@@ -172,6 +172,14 @@ runs:
 
             if grep -F "\"jobID\":\"$job_id\"" <<<"$server_logs" | grep -qF '"msg":"backup job failed"'; then
               echo "Backup job $job_id failed before the PBS client started"
+              echo "--- probe: dns + bind from pbs-plus-test ---"
+              docker exec pbs-plus-test getent hosts pbs-plus-ldap || true
+              docker exec pbs-plus-test ldapwhoami -x -H ldap://pbs-plus-ldap:389 \
+                -D "$bind_dn" -w "$password" || true
+              echo "--- probe: dump-shaped search from pbs-plus-test ---"
+              docker exec pbs-plus-test sh -c "printf '%s' '$password' > /tmp/ldapprobe && chmod 600 /tmp/ldapprobe && ldapsearch -x -H ldap://pbs-plus-ldap:389 -D '$bind_dn' -y /tmp/ldapprobe -LLL -o ldif-wrap=no -s sub -E pr=1000/noprompt -b '$base_dn' dn 2>&1 | head -10; rm -f /tmp/ldapprobe" || true
+              echo "--- slapd connection log (pbs-plus-ldap) ---"
+              docker logs --tail=60 pbs-plus-ldap 2>&1 | grep -vE '^\*\*\*' | tail -40 || true
               docker logs --tail=100 pbs-plus-test 2>&1
               return 1
             fi
