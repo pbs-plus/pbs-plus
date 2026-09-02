@@ -30,6 +30,8 @@ const (
 	extraExtendedTime = 0x5455
 	extraNTFSTime     = 0x000a
 
+	zipMinSize = 22
+
 	zipMaxEntries    = 10000
 	zipBombRatio     = 1000
 	zipBombFloor     = 4 << 20
@@ -260,8 +262,11 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 	if int64(totalEntries) > maxEntries {
 		return nil, fmt.Errorf("%w: %d entries exceeds %d", errZipTooMany, totalEntries, maxEntries)
 	}
-	if cdSize <= 0 || cdOffset < 0 || cdOffset+cdSize > size {
+	if cdSize < 0 || cdOffset < 0 || cdOffset+cdSize > size {
 		return nil, errZipCorrupt
+	}
+	if totalEntries == 0 || cdSize == 0 {
+		return emptyOverlay(readAt, size), nil
 	}
 
 	cd := make([]byte, cdSize)
@@ -401,7 +406,16 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 	return ov, nil
 }
 
-// filetimeUnix converts a Windows FILETIME (100ns ticks since 1601) to seconds.
+// emptyOverlay expands to nothing, which hides the archive rather than listing it.
+func emptyOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size int64) *zipOverlay {
+	return &zipOverlay{
+		size:   size,
+		readAt: readAt,
+		byName: map[string]int32{},
+		dirs:   map[string]*zipDir{"": {}},
+	}
+}
+
 func filetimeUnix(ft uint64) int64 {
 	if ft == 0 {
 		return 0
@@ -1225,7 +1239,7 @@ func (s *zipMergeStream) HasNext() bool {
 					// Attr hides expanded archives itself (post-stat probe returns
 					// ENOENT), so an error here usually means hidden, not vanished.
 					fi, aerr := s.fs.Attr(s.fs.Ctx, full, true)
-					if aerr == nil && !fi.IsDir && fi.Size >= 32 && s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
+					if aerr == nil && !fi.IsDir && fi.Size >= zipMinSize && s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
 						continue
 					}
 					if aerr != nil && s.fs.zipHidden(full) {

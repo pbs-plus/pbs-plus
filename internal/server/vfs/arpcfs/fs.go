@@ -304,7 +304,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 		}
 	}
 
-	if fs.expandArchives && !fi.IsDir && fs.archiveEnabled(filename) && fi.Size >= 32 {
+	if fs.expandArchives && !fi.IsDir && fs.archiveEnabled(filename) && fi.Size >= zipMinSize {
 		if fs.zipProbe(ctx, filename, fi.Size) {
 			return fswire.AgentFileInfo{}, syscall.ENOENT
 		}
