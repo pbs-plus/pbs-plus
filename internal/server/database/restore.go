@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -436,8 +438,6 @@ func postgreSQLLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
-// restoreLDAP pipes the dump into ldapmodify, optionally deleting the
-// destination subtree first; LDAP restores always use the DNs in the dump.
 func restoreLDAP(ctx context.Context, archiveDir string, target coredb.Target, password string, options RestoreOptions, manifest Manifest, bundle ClientBundle) error {
 	secretsDir, err := os.MkdirTemp("", ".pbs-plus-database-secrets-")
 	if err != nil {
@@ -451,15 +451,28 @@ func restoreLDAP(ctx context.Context, archiveDir string, target coredb.Target, p
 	if err != nil {
 		return err
 	}
+	archiveBase := manifest.Database
+	if archiveBase == "" {
+		archiveBase = target.LdapBaseDN
+	}
 	dn := options.SourceDatabase
 	if dn == "" {
-		dn = manifest.Database
+		dn = archiveBase
 	}
-	if dn == "" {
-		dn = target.LdapBaseDN
+	if archiveBase != "" && !ldapDNWithin(dn, archiveBase) {
+		return fmt.Errorf("LDAP source DN %q is outside snapshot base DN %q", dn, archiveBase)
 	}
 	if options.DestinationDatabase != "" && !strings.EqualFold(options.DestinationDatabase, dn) {
 		return errors.New("LDAP restores use the DNs recorded in the dump; destination must match the source DN")
+	}
+
+	dumpPath, err := manifestFilePath(archiveDir, manifest.DumpFile)
+	if err != nil {
+		return err
+	}
+	preparedPath := filepath.Join(secretsDir, dumpNameLdif)
+	if err := prepareLdapRestore(dumpPath, preparedPath, dn); err != nil {
+		return err
 	}
 	if options.ReplaceExisting {
 		if err := ldapDeleteSubtree(ctx, target, password, dn, bundle, secretsDir); err != nil {
@@ -467,46 +480,21 @@ func restoreLDAP(ctx context.Context, archiveDir string, target coredb.Target, p
 		}
 	}
 
-	dumpPath, err := manifestFilePath(archiveDir, manifest.DumpFile)
+	dump, err := os.Open(preparedPath)
 	if err != nil {
-		return err
-	}
-	args := []string{"-x", "-H", ldapURL(target), "-D", target.DatabaseUsername, "-y", passfile, "-c", "-a"}
-	run := func(r io.Reader) error {
-		cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
-		cmd.Env = ldapTLSCommandEnv(target)
-		cmd.Stdin = r
-		_, err := runClientCommand(cmd, password)
-		return err
-	}
-	if manifest.Scope == "server" && options.SourceDatabase != "" {
-		dump, wait, err := ldapSectionStream(dumpPath, options.SourceDatabase)
-		if err != nil {
-			return err
-		}
-		runErr := run(dump)
-		dump.Close()
-		if waitErr := wait(); waitErr != nil {
-			return waitErr
-		}
-		if runErr != nil {
-			return fmt.Errorf("restore LDAP dump: %w", runErr)
-		}
-		return nil
-	}
-	dump, err := os.Open(dumpPath)
-	if err != nil {
-		return fmt.Errorf("open LDAP dump: %w", err)
+		return fmt.Errorf("open prepared LDAP dump: %w", err)
 	}
 	defer dump.Close()
-	if err := run(dump); err != nil {
+	args := append(ldapClientArgs(target, passfile), "-c", "-a")
+	cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
+	cmd.Env = ldapTLSCommandEnv(target)
+	cmd.Stdin = dump
+	if _, err := runClientCommand(cmd, password); err != nil {
 		return fmt.Errorf("restore LDAP dump: %w", err)
 	}
 	return nil
 }
 
-// ldapDeleteSubtree removes the destination subtree before a replace-existing
-// restore; a missing entry is not an error.
 func ldapDeleteSubtree(ctx context.Context, target coredb.Target, password, dn string, bundle ClientBundle, secretsDir string) error {
 	if bundle.DeleteProgram == "" {
 		return errors.New("LDAP client bundle cannot delete entries (ldapdelete is unavailable)")
@@ -515,7 +503,7 @@ func ldapDeleteSubtree(ctx context.Context, target coredb.Target, password, dn s
 	if err != nil {
 		return err
 	}
-	args := []string{"-x", "-H", ldapURL(target), "-D", target.DatabaseUsername, "-y", passfile, "-r", dn}
+	args := append(ldapClientArgs(target, passfile), "-r", dn)
 	cmd := exec.CommandContext(ctx, bundle.DeleteProgram, args...)
 	cmd.Env = ldapTLSCommandEnv(target)
 	if _, err := runClientCommand(cmd, password); err != nil {
@@ -527,89 +515,137 @@ func ldapDeleteSubtree(ctx context.Context, target coredb.Target, password, dn s
 	return nil
 }
 
-// ldapSectionStream extracts entries at or under dn from a server-scope dump;
-// call wait after closing the reader.
-func ldapSectionStream(dumpPath, dn string) (io.ReadCloser, func() error, error) {
-	file, err := os.Open(dumpPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open LDAP dump: %w", err)
-	}
-	reader, writer := io.Pipe()
-	done := make(chan error, 1)
-	go func() {
-		defer file.Close()
-		err := copyLdapSection(writer, bufio.NewReaderSize(file, 1<<20), dn)
-		writer.CloseWithError(err)
-		done <- err
-	}()
-	return reader, func() error { return <-done }, nil
+type ldapRestoreEntry struct {
+	offset int64
+	size   int64
+	depth  int
 }
 
-func copyLdapSection(w io.Writer, reader *bufio.Reader, dn string) error {
+func prepareLdapRestore(dumpPath, outPath, dn string) error {
+	dump, err := os.Open(dumpPath)
+	if err != nil {
+		return fmt.Errorf("open LDAP dump: %w", err)
+	}
+	defer dump.Close()
+	spool, err := os.CreateTemp(filepath.Dir(outPath), ".ldap-restore-")
+	if err != nil {
+		return fmt.Errorf("create LDAP restore spool: %w", err)
+	}
+	defer os.Remove(spool.Name())
+	defer spool.Close()
+
 	var entry bytes.Buffer
-	inEntry, found := false, false
+	entries := make([]ldapRestoreEntry, 0)
 	flush := func() error {
-		if !inEntry {
+		data := bytes.Trim(entry.Bytes(), "\r\n")
+		entry.Reset()
+		if len(data) == 0 {
 			return nil
 		}
-		inEntry = false
-		entryDN, ok := ldapEntryDN(entry.Bytes())
-		if ok && ldapDNWithin(entryDN, dn) {
-			found = true
-			if _, err := w.Write(bytes.TrimRight(entry.Bytes(), "\r\n")); err != nil {
-				return err
+		entryDN, ok := ldapEntryDN(data)
+		if !ok {
+			if bytes.HasPrefix(data, []byte("version:")) || bytes.HasPrefix(data, []byte("#")) {
+				return nil
 			}
-			if _, err := io.WriteString(w, "\n\n"); err != nil {
-				return err
-			}
+			return errors.New("LDAP dump contains an entry without a readable DN")
 		}
-		entry.Reset()
+		if !ldapDNWithin(entryDN, dn) {
+			return nil
+		}
+		offset, err := spool.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+		data = append(data, '\n', '\n')
+		n, err := spool.Write(data)
+		if err != nil {
+			return err
+		}
+		entries = append(entries, ldapRestoreEntry{offset: offset, size: int64(n), depth: ldapDNDepth(entryDN)})
 		return nil
 	}
+	reader := bufio.NewReaderSize(dump, 1<<20)
 	for {
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			text := strings.TrimRight(string(line), "\r\n")
-			if text == "" {
+			if len(bytes.TrimRight(line, "\r\n")) == 0 {
 				if err := flush(); err != nil {
-					return err
+					return fmt.Errorf("prepare LDAP restore: %w", err)
 				}
-				continue
+			} else {
+				entry.Write(line)
 			}
-			if !inEntry {
-				entry.Reset()
-				inEntry = true
-			}
-			entry.Write(line)
 		}
 		if readErr != nil {
-			if errors.Is(readErr, io.EOF) {
-				break
+			if !errors.Is(readErr, io.EOF) {
+				return fmt.Errorf("read LDAP dump: %w", readErr)
 			}
-			return fmt.Errorf("read LDAP dump: %w", readErr)
+			break
 		}
 	}
 	if err := flush(); err != nil {
-		return err
+		return fmt.Errorf("prepare LDAP restore: %w", err)
 	}
-	if !found {
+	if len(entries) == 0 {
 		return fmt.Errorf("no entries under %q are present in the dump", dn)
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].depth < entries[j].depth })
+	out, err := os.OpenFile(outPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create prepared LDAP dump: %w", err)
+	}
+	for _, entry := range entries {
+		if _, err := io.Copy(out, io.NewSectionReader(spool, entry.offset, entry.size)); err != nil {
+			_ = out.Close()
+			return fmt.Errorf("write prepared LDAP dump: %w", err)
+		}
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close prepared LDAP dump: %w", err)
 	}
 	return nil
 }
 
 func ldapEntryDN(entry []byte) (string, bool) {
-	for line := range strings.SplitSeq(string(entry), "\n") {
-		rest, ok := strings.CutPrefix(line, "dn:")
-		if !ok {
+	lines := strings.Split(string(entry), "\n")
+	for i, line := range lines {
+		line = strings.TrimSuffix(line, "\r")
+		name, value, ok := strings.Cut(line, ":")
+		if !ok || !strings.EqualFold(name, "dn") {
 			continue
 		}
-		if strings.HasPrefix(rest, ":") {
-			return "", false
+		encoded := strings.HasPrefix(value, ":")
+		if encoded {
+			value = strings.TrimPrefix(value, ":")
 		}
-		return strings.TrimSpace(rest), true
+		value = strings.TrimPrefix(value, " ")
+		for i++; i < len(lines) && strings.HasPrefix(lines[i], " "); i++ {
+			value += strings.TrimSuffix(strings.TrimPrefix(lines[i], " "), "\r")
+		}
+		if !encoded {
+			return value, value != ""
+		}
+		decoded, err := base64.StdEncoding.DecodeString(value)
+		return string(decoded), err == nil && len(decoded) > 0
 	}
 	return "", false
+}
+
+func ldapDNDepth(dn string) int {
+	depth := 1
+	escaped := false
+	for _, r := range dn {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+		} else if r == ',' {
+			depth++
+		}
+	}
+	return depth
 }
 
 func ldapDNWithin(entryDN, base string) bool {

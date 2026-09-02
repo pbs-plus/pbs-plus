@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -834,6 +835,8 @@ func TestLdapDumpCommand(t *testing.T) {
 
 	target.DatabaseTLSMode = "starttls"
 	target.DatabasePort = 389
+	t.Setenv("LDAPTLS_REQCERT", "never")
+	t.Setenv("LDAPTLS_CACERT", "/tmp/untrusted.pem")
 	cmd, err = ldapDumpCommand(context.Background(), target, "secret", DumpOptions{Scope: "database", Database: "ou=people,dc=example,dc=com"}, bundle, secrets)
 	if err != nil {
 		t.Fatal(err)
@@ -845,9 +848,23 @@ func TestLdapDumpCommand(t *testing.T) {
 	if !strings.Contains(joined, "-b ou=people,dc=example,dc=com") {
 		t.Errorf("subtree base missing: %s", joined)
 	}
+	if !slices.Contains(cmd.Env, "LDAPTLS_REQCERT=hard") || slices.Contains(cmd.Env, "LDAPTLS_REQCERT=never") || slices.Contains(cmd.Env, "LDAPTLS_CACERT=/tmp/untrusted.pem") {
+		t.Errorf("StartTLS environment is not fail-closed: %q", cmd.Env)
+	}
 }
 
-const testLdapLdif = "dn: dc=example,dc=com\nobjectClass: top\ndc: example\nentryUUID: 11111111-2222-3333-4444-555555555555\nmodifyTimestamp: 20200101000000Z\n folded value\n\ndn: ou=people,dc=example,dc=com\nobjectClass: organizationalUnit\nou: people\ndescription: people tree\n\ndn: uid=user,ou=people,dc=example,dc=com\nobjectClass: inetOrgPerson\ncn: User\nsn: User\nuid: user\n\n"
+func TestLdapEntryDN(t *testing.T) {
+	const want = "uid=Jöhn,ou=people,dc=example,dc=com"
+	encoded := base64.StdEncoding.EncodeToString([]byte(want))
+	middle := len(encoded) / 2
+	entry := []byte("dn:: " + encoded[:middle] + "\n " + encoded[middle:] + "\n")
+	got, ok := ldapEntryDN(entry)
+	if !ok || got != want {
+		t.Fatalf("ldapEntryDN() = %q, %t, want %q, true", got, ok, want)
+	}
+}
+
+const testLdapLdif = "dn: dc=example,dc=com\nobjectClass: top\ndc: example\nentryUUID: 11111111-2222-3333-4444-555555555555\nmodifyTimestamp: 20200101000000Z\n folded value\n\ndn: uid=user,ou=people,dc=example,dc=com\nobjectClass: inetOrgPerson\ncn: User\nsn: User\nuid: user\n\ndn: ou=people,dc=example,dc=com\nobjectClass: organizationalUnit\nou: people\ndescription: people tree\n continued value\n\n"
 
 func TestStageAndRestoreLdapDump(t *testing.T) {
 	dir := t.TempDir()
@@ -864,7 +881,7 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 		DatabaseHost:     "ldap.example",
 		DatabasePort:     389,
 		DatabaseUsername: "cn=backup,dc=example,dc=com",
-		DatabaseTLSMode:  "disabled",
+		DatabaseTLSMode:  "starttls",
 		LdapBaseDN:       "dc=example,dc=com",
 	}
 	bundle := ClientBundle{
@@ -880,7 +897,7 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer staged.Cleanup()
-	if staged.Manifest.Engine != EngineLDAP || staged.Manifest.DumpFile != dumpNameLdif {
+	if staged.Manifest.Engine != EngineLDAP || staged.Manifest.DumpFile != dumpNameLdif || staged.Manifest.Database != target.LdapBaseDN {
 		t.Fatalf("manifest = %#v", staged.Manifest)
 	}
 	dump, err := os.ReadFile(filepath.Join(staged.ArchiveDir, dumpNameLdif))
@@ -892,8 +909,8 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 			t.Errorf("operational attribute %q survived the dump", operational)
 		}
 	}
-	if !strings.Contains(string(dump), "ou=people,dc=example,dc=com") {
-		t.Errorf("real entry missing from dump: %q", dump)
+	if !strings.Contains(string(dump), "ou=people,dc=example,dc=com") || !strings.Contains(string(dump), " continued value") {
+		t.Errorf("real entry data missing from dump: %q", dump)
 	}
 
 	if err := RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{}, bundle); err != nil {
@@ -912,6 +929,9 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 	}
 	if !strings.Contains(string(input), "dc=example,dc=com") || !strings.Contains(string(input), "ou=people") {
 		t.Errorf("whole restore input = %q", input)
+	}
+	if strings.Index(string(input), "dn: ou=people") > strings.Index(string(input), "dn: uid=user") {
+		t.Errorf("LDAP restore is not parent-first: %q", input)
 	}
 
 	_ = os.Remove(inputPath)
@@ -934,6 +954,24 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 	}
 	if !strings.Contains(string(logData), "delete") || !strings.Contains(string(logData), "ou=people,dc=example,dc=com") {
 		t.Errorf("replace-existing did not delete the subtree: %s", logData)
+	}
+	for line := range strings.Lines(string(logData)) {
+		if strings.TrimSpace(line) != "" && !strings.Contains(line, "-ZZ") {
+			t.Errorf("StartTLS missing from LDAP restore command: %s", line)
+		}
+	}
+
+	before := string(logData)
+	err = RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{SourceDatabase: "ou=missing,dc=example,dc=com", ReplaceExisting: true}, bundle)
+	if err == nil || !strings.Contains(err.Error(), "no entries") {
+		t.Fatalf("missing LDAP subtree was not rejected: %v", err)
+	}
+	logData, err = os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(logData) != before {
+		t.Fatalf("missing LDAP subtree triggered a destructive command: %s", logData)
 	}
 
 	err = RestoreDump(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{DestinationDatabase: "ou=other,dc=example,dc=com"}, bundle)

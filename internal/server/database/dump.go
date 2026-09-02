@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -691,11 +692,15 @@ func stageLdapDump(ctx context.Context, archiveDir string, target coredb.Target,
 	if err != nil {
 		return Manifest{}, err
 	}
+	base := target.LdapBaseDN
+	if options.Scope == "database" {
+		base = options.Database
+	}
 	return Manifest{
 		Version:    ManifestVersionV1,
 		Engine:     EngineLDAP,
 		Scope:      options.Scope,
-		Database:   options.Database,
+		Database:   base,
 		DumpFile:   dumpNameLdif,
 		DumpSHA256: digest,
 	}, nil
@@ -710,20 +715,13 @@ func ldapDumpCommand(ctx context.Context, target coredb.Target, password string,
 	if options.Scope == "database" {
 		base = options.Database
 	}
-	args := []string{
-		"-x",
-		"-H", ldapURL(target),
-		"-D", target.DatabaseUsername,
-		"-y", passfile,
+	args := append(ldapClientArgs(target, passfile),
 		"-LLL",
 		"-o", "ldif-wrap=no",
 		"-s", "sub",
 		"-E", "pr=1000/noprompt",
 		"-b", base,
-	}
-	if target.DatabaseTLSMode == "starttls" {
-		args = append(args, "-ZZ")
-	}
+	)
 	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
 	cmd.Env = ldapTLSCommandEnv(target)
 	return cmd, nil
@@ -737,10 +735,23 @@ func ldapURL(target coredb.Target) string {
 	return scheme + "://" + net.JoinHostPort(target.DatabaseHost, strconv.Itoa(target.DatabasePort))
 }
 
+func ldapClientArgs(target coredb.Target, passfile string) []string {
+	args := []string{"-x", "-H", ldapURL(target), "-D", target.DatabaseUsername, "-y", passfile}
+	if target.DatabaseTLSMode == "starttls" {
+		args = append(args, "-ZZ")
+	}
+	return args
+}
+
 func ldapTLSCommandEnv(target coredb.Target) []string {
-	env := os.Environ()
+	env := slices.DeleteFunc(os.Environ(), func(value string) bool {
+		return strings.HasPrefix(value, "LDAPTLS_CACERT=") || strings.HasPrefix(value, "LDAPTLS_REQCERT=")
+	})
 	if target.DatabaseCACertificate != "" {
-		env = append(env, "LDAPTLS_CACERT="+target.DatabaseCACertificate, "LDAPTLS_REQCERT=hard")
+		env = append(env, "LDAPTLS_CACERT="+target.DatabaseCACertificate)
+	}
+	if target.DatabaseTLSMode != "disabled" {
+		env = append(env, "LDAPTLS_REQCERT=hard")
 	}
 	return env
 }
@@ -804,7 +815,11 @@ func filterLdapOperationalAttributes(rawPath, outPath string) error {
 
 func filterLdapLine(out io.Writer, line []byte, skipping bool) (bool, error) {
 	if line[0] == ' ' {
-		return skipping, nil
+		if skipping {
+			return true, nil
+		}
+		_, err := out.Write(line)
+		return false, err
 	}
 	name, _, _ := strings.Cut(string(line), ":")
 	if _, operational := ldapOperationalAttributes[strings.ToLower(strings.TrimSpace(name))]; operational {
