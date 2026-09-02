@@ -341,8 +341,8 @@ func postgreSQLDumpCommand(ctx context.Context, target coredb.Target, password s
 	args := append(postgreSQLBaseArgs(target), "--verbose", "--format=p", options.Database)
 	cmd := exec.CommandContext(ctx, bundle.DumpProgram, args...)
 	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
-	if target.DatabaseCACertificate != "" {
-		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
+	if ca := ResolveCACertificate(target.DatabaseCACertificate); ca != "" {
+		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+ca)
 	}
 	return cmd, nil
 }
@@ -474,8 +474,8 @@ func postgreSQLGlobalsDumpCommand(ctx context.Context, target coredb.Target, pas
 	args := append(postgreSQLBaseArgs(target), "--verbose", flag, "--lock-wait-timeout=30s")
 	cmd := exec.CommandContext(ctx, bundle.ServerDumpProgram, args...)
 	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
-	if target.DatabaseCACertificate != "" {
-		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
+	if ca := ResolveCACertificate(target.DatabaseCACertificate); ca != "" {
+		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+ca)
 	}
 	return cmd, nil
 }
@@ -543,8 +543,8 @@ func listPostgreSQLDatabases(ctx context.Context, target coredb.Target, password
 		"--command=SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate")
 	cmd := exec.CommandContext(ctx, bundle.RestoreProgram, args...)
 	cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
-	if target.DatabaseCACertificate != "" {
-		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
+	if ca := ResolveCACertificate(target.DatabaseCACertificate); ca != "" {
+		cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+ca)
 	}
 	return readDatabaseNames(cmd, password, logWriter)
 }
@@ -592,6 +592,7 @@ func readDatabaseNames(cmd *exec.Cmd, password string, logWriter io.Writer) ([]s
 }
 
 func mySQLTLSArgs(mode, caCertificate, family string) []string {
+	caCertificate = ResolveCACertificate(caCertificate)
 	if family == FamilyMySQL {
 		args := []string{"--ssl-mode=" + strings.ToUpper(mode)}
 		if caCertificate != "" {
@@ -747,8 +748,8 @@ func ldapTLSCommandEnv(target coredb.Target) []string {
 	env := slices.DeleteFunc(os.Environ(), func(value string) bool {
 		return strings.HasPrefix(value, "LDAPTLS_CACERT=") || strings.HasPrefix(value, "LDAPTLS_REQCERT=")
 	})
-	if target.DatabaseCACertificate != "" {
-		env = append(env, "LDAPTLS_CACERT="+target.DatabaseCACertificate)
+	if ca := ResolveCACertificate(target.DatabaseCACertificate); ca != "" {
+		env = append(env, "LDAPTLS_CACERT="+ca)
 	}
 	if target.DatabaseTLSMode != "disabled" {
 		env = append(env, "LDAPTLS_REQCERT=hard")

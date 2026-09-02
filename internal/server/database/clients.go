@@ -24,6 +24,26 @@ const (
 	FamilyLDAP       = "ldap"
 )
 
+// SystemCABundlePaths are the host trust stores used when a target has no CA of its own.
+var SystemCABundlePaths = []string{
+	"/etc/ssl/certs/ca-certificates.crt",
+	"/etc/pki/tls/certs/ca-bundle.crt",
+	"/etc/ssl/cert.pem",
+}
+
+// ResolveCACertificate falls back to the host trust store when no CA path is configured.
+func ResolveCACertificate(path string) string {
+	if path != "" {
+		return path
+	}
+	for _, candidate := range SystemCABundlePaths {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
 type ClientBundle struct {
 	Engine            string `json:"engine"`
 	Family            string `json:"family"`

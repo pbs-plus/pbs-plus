@@ -979,3 +979,47 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 		t.Fatalf("destination DN mismatch not rejected: %v", err)
 	}
 }
+
+func TestResolveCACertificate(t *testing.T) {
+	if got := ResolveCACertificate("/etc/ssl/custom-ca.pem"); got != "/etc/ssl/custom-ca.pem" {
+		t.Errorf("explicit CA = %q", got)
+	}
+	var systemBundle string
+	for _, candidate := range SystemCABundlePaths {
+		if _, err := os.Stat(candidate); err == nil {
+			systemBundle = candidate
+			break
+		}
+	}
+	got := ResolveCACertificate("")
+	if systemBundle != "" {
+		if got != systemBundle {
+			t.Errorf("empty CA = %q, want system bundle %q", got, systemBundle)
+		}
+	} else if got != "" {
+		t.Errorf("empty CA = %q without a system bundle", got)
+	}
+}
+
+func TestMySQLTLSArgsSystemCA(t *testing.T) {
+	var systemBundle string
+	for _, candidate := range SystemCABundlePaths {
+		if _, err := os.Stat(candidate); err == nil {
+			systemBundle = candidate
+			break
+		}
+	}
+	args := mySQLTLSArgs("verify-ca", "", FamilyMySQL)
+	joined := strings.Join(args, " ")
+	if systemBundle != "" {
+		if !strings.Contains(joined, "--ssl-ca="+systemBundle) {
+			t.Errorf("mysql TLS args = %v, want system CA %q", args, systemBundle)
+		}
+	} else if !strings.Contains(joined, "--ssl-mode=VERIFY-CA") {
+		t.Errorf("mysql TLS args = %v", args)
+	}
+	args = mySQLTLSArgs("disabled", "", FamilyMariaDB)
+	if strings.Join(args, " ") != "--skip-ssl" {
+		t.Errorf("mariadb disabled TLS args = %v", args)
+	}
+}

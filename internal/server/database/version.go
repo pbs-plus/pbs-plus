@@ -105,8 +105,8 @@ func detectServerVersion(ctx context.Context, target coredb.Target, password str
 		args := append(postgreSQLBaseArgs(target), "--dbname=template1", "--tuples-only", "--no-align", "--command=SHOW server_version")
 		cmd = exec.CommandContext(ctx, probe.RestoreProgram, args...)
 		cmd.Env = append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
-		if target.DatabaseCACertificate != "" {
-			cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
+		if ca := ResolveCACertificate(target.DatabaseCACertificate); ca != "" {
+			cmd.Env = append(cmd.Env, "PGSSLROOTCERT="+ca)
 		}
 	} else {
 		defaultsFile, err := writeMySQLDefaultsFile(secretsDir, password)

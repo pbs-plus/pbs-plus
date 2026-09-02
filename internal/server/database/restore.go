@@ -212,8 +212,8 @@ func newPostgreSQLRunner(ctx context.Context, target coredb.Target, password str
 		"--set=ON_ERROR_STOP=1",
 	}
 	env := append(os.Environ(), "PGPASSFILE="+passfile, "PGSSLMODE="+target.DatabaseTLSMode)
-	if target.DatabaseCACertificate != "" {
-		env = append(env, "PGSSLROOTCERT="+target.DatabaseCACertificate)
+	if ca := ResolveCACertificate(target.DatabaseCACertificate); ca != "" {
+		env = append(env, "PGSSLROOTCERT="+ca)
 	}
 	return func(stdin io.Reader, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, bundle.RestoreProgram, append(baseArgs, args...)...)
