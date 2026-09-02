@@ -847,7 +847,7 @@ func TestLdapDumpCommand(t *testing.T) {
 	}
 }
 
-const testLdapLdif = "dn: dc=example,dc=com\nobjectClass: top\ndc: example\nentryUUID: 11111111-2222-3333-4444-555555555555\nmodifyTimestamp: 20200101000000Z\n folded value\n\ndn: ou=people,dc=example,dc=com\nobjectClass: organizationalUnit\nou: people\ndescription: people tree\n\n"
+const testLdapLdif = "dn: dc=example,dc=com\nobjectClass: top\ndc: example\nentryUUID: 11111111-2222-3333-4444-555555555555\nmodifyTimestamp: 20200101000000Z\n folded value\n\ndn: ou=people,dc=example,dc=com\nobjectClass: organizationalUnit\nou: people\ndescription: people tree\n\ndn: uid=user,ou=people,dc=example,dc=com\nobjectClass: inetOrgPerson\ncn: User\nsn: User\nuid: user\n\n"
 
 func TestStageAndRestoreLdapDump(t *testing.T) {
 	dir := t.TempDir()
@@ -924,6 +924,9 @@ func TestStageAndRestoreLdapDump(t *testing.T) {
 	}
 	if strings.Contains(string(input), "dn: dc=example,dc=com") || !strings.Contains(string(input), "ou=people,dc=example,dc=com") {
 		t.Errorf("subtree restore input = %q", input)
+	}
+	if !strings.Contains(string(input), "\n\ndn: uid=user,ou=people,dc=example,dc=com") {
+		t.Errorf("subtree entries are not separated: %q", input)
 	}
 	logData, err = os.ReadFile(logPath)
 	if err != nil {

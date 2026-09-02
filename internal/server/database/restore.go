@@ -556,7 +556,10 @@ func copyLdapSection(w io.Writer, reader *bufio.Reader, dn string) error {
 		entryDN, ok := ldapEntryDN(entry.Bytes())
 		if ok && ldapDNWithin(entryDN, dn) {
 			found = true
-			if _, err := w.Write(entry.Bytes()); err != nil {
+			if _, err := w.Write(bytes.TrimRight(entry.Bytes(), "\r\n")); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, "\n\n"); err != nil {
 				return err
 			}
 		}
