@@ -108,19 +108,19 @@ func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool
 
 func FlattenRestore(r coredb.Restore) FlatRestore {
 	fr := FlatRestore{
-		ID:               r.ID,
-		Store:            r.Store,
-		Namespace:        r.Namespace,
-		Snapshot:         r.Snapshot,
-		SnapshotHuman:    formatSnapshotLabel(r.Snapshot, r.Namespace),
-		SrcPath:          r.SrcPath,
-		DestSubpath:      r.DestSubpath,
-		PreScript:        r.PreScript,
-		PostScript:       r.PostScript,
-		Comment:          r.Comment,
-		NotificationMode: r.NotificationMode,
-		Retry:            r.Retry,
-		RetryInterval:    r.RetryInterval,
+		ID:                         r.ID,
+		Store:                      r.Store,
+		Namespace:                  r.Namespace,
+		Snapshot:                   r.Snapshot,
+		SnapshotHuman:              formatSnapshotLabel(r.Snapshot, r.Namespace),
+		SrcPath:                    r.SrcPath,
+		DestSubpath:                r.DestSubpath,
+		PreScript:                  r.PreScript,
+		PostScript:                 r.PostScript,
+		Comment:                    r.Comment,
+		NotificationMode:           r.NotificationMode,
+		Retry:                      r.Retry,
+		RetryInterval:              r.RetryInterval,
 		SourceDatabase:             r.SourceDatabase,
 		DestinationDatabase:        r.DestinationDatabase,
 		DovecotSourceUsername:      r.DovecotSourceUsername,
@@ -532,27 +532,27 @@ func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 
 func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 	return map[string]any{
-		"id":                   r.ID,
-		"store":                r.Store,
-		"ns":                   r.Namespace,
-		"snapshot":             r.Snapshot,
-		"src-path":             r.SrcPath,
-		"dest-target":          r.DestTarget.Name,
-		"dest-subpath":         r.DestSubpath,
-		"mode":                 r.Mode,
-		"comment":              r.Comment,
-		"notification-mode":    r.NotificationMode,
-		"notification-batch":   "",
-		"pre_script":           r.PreScript,
-		"post_script":          r.PostScript,
-		"retry":                r.Retry,
-		"retry-interval":       r.RetryInterval,
-		"source_database":      r.SourceDatabase,
-		"destination_database": r.DestinationDatabase,
+		"id":                           r.ID,
+		"store":                        r.Store,
+		"ns":                           r.Namespace,
+		"snapshot":                     r.Snapshot,
+		"src-path":                     r.SrcPath,
+		"dest-target":                  r.DestTarget.Name,
+		"dest-subpath":                 r.DestSubpath,
+		"mode":                         r.Mode,
+		"comment":                      r.Comment,
+		"notification-mode":            r.NotificationMode,
+		"notification-batch":           "",
+		"pre_script":                   r.PreScript,
+		"post_script":                  r.PostScript,
+		"retry":                        r.Retry,
+		"retry-interval":               r.RetryInterval,
+		"source_database":              r.SourceDatabase,
+		"destination_database":         r.DestinationDatabase,
 		"dovecot_source_username":      r.DovecotSourceUsername,
 		"dovecot_destination_username": r.DovecotDestinationUsername,
-		"dovecot_mailbox":             r.DovecotMailbox,
-		"replace_existing":     r.ReplaceExisting,
+		"dovecot_mailbox":              r.DovecotMailbox,
+		"replace_existing":             r.ReplaceExisting,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
 			"last-run-upid":           r.History.LastRunUpid,
@@ -620,26 +620,26 @@ type FlatBackup struct {
 }
 
 type FlatRestore struct {
-	ID                  string `json:"id"`
-	Store               string `json:"store"`
-	Namespace           string `json:"ns"`
-	Snapshot            string `json:"snapshot"`
-	SnapshotHuman       string `json:"snapshot_human"`
-	SrcPath             string `json:"src-path"`
-	DestSubpath         string `json:"dest-subpath"`
-	PreScript           string `json:"pre_script"`
-	PostScript          string `json:"post_script"`
-	Comment             string `json:"comment"`
-	NotificationMode    string `json:"notification-mode"`
-	Retry               int    `json:"retry"`
-	RetryInterval       int    `json:"retry-interval"`
-	ExpectedSize        int    `json:"expected_size,omitempty"`
-	SourceDatabase      string `json:"source_database,omitempty"`
-	DestinationDatabase string `json:"destination_database,omitempty"`
+	ID                         string `json:"id"`
+	Store                      string `json:"store"`
+	Namespace                  string `json:"ns"`
+	Snapshot                   string `json:"snapshot"`
+	SnapshotHuman              string `json:"snapshot_human"`
+	SrcPath                    string `json:"src-path"`
+	DestSubpath                string `json:"dest-subpath"`
+	PreScript                  string `json:"pre_script"`
+	PostScript                 string `json:"post_script"`
+	Comment                    string `json:"comment"`
+	NotificationMode           string `json:"notification-mode"`
+	Retry                      int    `json:"retry"`
+	RetryInterval              int    `json:"retry-interval"`
+	ExpectedSize               int    `json:"expected_size,omitempty"`
+	SourceDatabase             string `json:"source_database,omitempty"`
+	DestinationDatabase        string `json:"destination_database,omitempty"`
 	DovecotSourceUsername      string `json:"dovecot_source_username,omitempty"`
 	DovecotDestinationUsername string `json:"dovecot_destination_username,omitempty"`
 	DovecotMailbox             string `json:"dovecot_mailbox,omitempty"`
-	ReplaceExisting     bool   `json:"replace_existing,omitempty"`
+	ReplaceExisting            bool   `json:"replace_existing,omitempty"`
 
 	DestTarget string `json:"dest-target"`
 
