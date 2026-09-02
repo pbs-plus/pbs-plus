@@ -60,6 +60,7 @@ var targetPanelController = js.ControllerClass{
 				postgresql: "PBS.D2DManagement.TargetPostgreSQLEditWindow",
 				mysql: "PBS.D2DManagement.TargetMySQLEditWindow",
 				ldap: "PBS.D2DManagement.TargetLdapEditWindow",
+				dovecot: "PBS.D2DManagement.TargetDovecotEditWindow",
 			};
 			Ext.create(windows[kind], {
 				listeners: { destroy: () => me.reload() },
@@ -151,6 +152,7 @@ var targetPanelController = js.ControllerClass{
 				postgresql: "PBS.D2DManagement.TargetPostgreSQLEditWindow",
 				mysql: "PBS.D2DManagement.TargetMySQLEditWindow",
 				ldap: "PBS.D2DManagement.TargetLdapEditWindow",
+				dovecot: "PBS.D2DManagement.TargetDovecotEditWindow",
 			};
 			Ext.create(windows[view.targetKind || "filesystem"], {
 				contentid: selection[0].data.name,
@@ -270,6 +272,7 @@ var targetPanelController = js.ControllerClass{
 			let postgresqlTargets = [];
 			let mysqlTargets = [];
 			let ldapTargets = [];
+			let dovecotTargets = [];
 			filtered.forEach(function (node) {
 				let targetData = node.data;
 				let treeNode = Ext.apply({}, targetData);
@@ -307,6 +310,9 @@ var targetPanelController = js.ControllerClass{
 				} else if (targetData.kind === "ldap") {
 					treeNode.iconCls = "fa fa-sitemap";
 					ldapTargets.push(treeNode);
+				} else if (targetData.kind === "dovecot") {
+					treeNode.iconCls = "fa fa-envelope";
+					dovecotTargets.push(treeNode);
 				} else {
 					treeNode.iconCls = "fa fa-folder";
 					localTargets.push(treeNode);
@@ -330,6 +336,9 @@ var targetPanelController = js.ControllerClass{
 			}
 			if (ldapTargets.length > 0) {
 				rootChildren.push({ text: "LDAP / Active Directory Targets", children: ldapTargets, isGroup: true, groupType: "ldap", iconCls: "fa fa-sitemap", expanded: true });
+			}
+			if (dovecotTargets.length > 0) {
+				rootChildren.push({ text: "Dovecot Targets", children: dovecotTargets, isGroup: true, groupType: "dovecot", iconCls: "fa fa-envelope", expanded: true });
 			}
 			view.setRootNode({ text: "Root", expanded: true, children: rootChildren });
 		`),
@@ -528,9 +537,10 @@ var targetPanelController = js.ControllerClass{
 				postgresql: "Add PostgreSQL Target",
 				mysql: "Add MySQL / MariaDB Target",
 				ldap: "Add LDAP / Active Directory Target",
+				dovecot: "Add Dovecot Target",
 			}[view.targetKind] || "Add Target");
 			view.down("#setS3SecretButton").setHidden(view.targetKind !== "s3");
-			view.down("#setDatabasePasswordButton").setHidden(!["postgresql", "mysql", "ldap"].includes(view.targetKind));
+			view.down("#setDatabasePasswordButton").setHidden(!["postgresql", "mysql", "ldap", "dovecot"].includes(view.targetKind));
 			view.down("#pushUpdateButton").setHidden(view.targetKind !== "filesystem");
 			if (view.targetKind === "s3") {
 				let filesystemColumns = ["volume_type", "volume_name", "volume_fs", "volume_used", "volume_total", "agent_version"];
@@ -543,7 +553,7 @@ var targetPanelController = js.ControllerClass{
 					}
 				});
 			}
-			if (["postgresql", "mysql", "ldap"].includes(view.targetKind)) {
+			if (["postgresql", "mysql", "ldap", "dovecot"].includes(view.targetKind)) {
 				let filesystemColumns = ["volume_type", "volume_name", "volume_fs", "volume_used", "volume_total", "agent_version"];
 				view.getColumns().forEach(function (column) {
 					if (column.dataIndex === "path") {
@@ -579,7 +589,7 @@ var targetPanel = js.Panel{
 		{Text: "Create Job", Handler: "addJob", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")}, js.Sep(),
 		{Text: "Edit", Handler: "onEdit", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")},
 		{Text: "Set S3 Secret Key", ItemID: "setS3SecretButton", Handler: "setS3Secret", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && rec.data.target_type === "s3"`)},
-		{Text: "Set Password", ItemID: "setDatabasePasswordButton", Handler: "setDatabasePassword", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && ["postgresql", "mysql", "ldap"].includes(rec.data.kind)`)},
+		{Text: "Set Password", ItemID: "setDatabasePasswordButton", Handler: "setDatabasePassword", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && ["postgresql", "mysql", "ldap", "dovecot"].includes(rec.data.kind)`)},
 		{Text: "Update Agent", ItemID: "pushUpdateButton", Handler: "pushUpdate", Disabled: true, EnableFn: js.Func("rec", `
 			if (!rec) {
 				return false;
@@ -621,6 +631,9 @@ var targetPanel = js.Panel{
 			}
 			if (record.data.kind === "ldap") {
 				return Ext.String.htmlEncode(record.data.database_host + ":" + record.data.database_port + " (" + (record.data.ldap_base_dn || "-") + ")");
+			}
+			if (record.data.kind === "dovecot") {
+				return Ext.String.htmlEncode(record.data.database_host + ":" + record.data.database_port);
 			}
 			return value || "-";
 		`)},

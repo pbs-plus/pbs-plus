@@ -321,6 +321,8 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			ExpandMaxEntries: expandMaxEntries,
 			DatabaseScope:    r.FormValue("database_scope"),
 			DatabaseName:     r.FormValue("database_name"),
+			DovecotUsername:  r.FormValue("dovecot_username"),
+			DovecotMailbox:   r.FormValue("dovecot_mailbox"),
 		}
 
 		rawExclusions := r.FormValue("rawexclusions")
@@ -421,6 +423,12 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 			}
 			if r.Form.Has("database_name") {
 				backup.DatabaseName = r.FormValue("database_name")
+			}
+			if r.Form.Has("dovecot_username") {
+				backup.DovecotUsername = r.FormValue("dovecot_username")
+			}
+			if r.Form.Has("dovecot_mailbox") {
+				backup.DovecotMailbox = r.FormValue("dovecot_mailbox")
 			}
 
 			if r.FormValue("include-xattr") != "" {
@@ -591,6 +599,10 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 						backup.DatabaseScope = ""
 					case "database_name":
 						backup.DatabaseName = ""
+					case "dovecot_username":
+						backup.DovecotUsername = ""
+					case "dovecot_mailbox":
+						backup.DovecotMailbox = ""
 					}
 				}
 			}

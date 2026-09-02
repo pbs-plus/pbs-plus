@@ -76,28 +76,33 @@ var restoreJobEdit = js.EditWindow{
 				let kind = record ? (record.get("kind") || record.get("target_type")) : "filesystem";
 				let database = ["postgresql", "mysql", "ldap"].includes(kind);
 				let ldap = kind === "ldap";
+				let dovecot = kind === "dovecot";
+				let structured = database || dovecot;
 				let sourcePath = this.lookup("pathSelector");
-				sourcePath.setHidden(database);
-				sourcePath.setDisabled(database);
+				sourcePath.setHidden(structured);
+				sourcePath.setDisabled(structured);
 				let names = [];
 				field.getStore().each(function (entry) {
 					let entryKind = entry.get("kind") || entry.get("target_type");
-					let keep = database ? entryKind === kind : ["postgresql", "mysql", "ldap"].includes(entryKind);
+					let keep = structured ? entryKind === kind : ["postgresql", "mysql", "ldap", "dovecot"].includes(entryKind);
 					if (keep) {
 						names.push(String(entry.get("name") || "").replace(/[. ]/g, "-"));
 					}
 				});
-				this.lookup("snapshot").setArchiveFilter({ names: names, mode: database ? "include" : "exclude" });
+				this.lookup("snapshot").setArchiveFilter({ names: names, mode: structured ? "include" : "exclude" });
 				let pathSel = this.lookup("pathSelectorDestination");
 				if (pathSel) {
 					pathSel.setTarget(value);
 				}
 				let filesystemDestination = this.lookup("filesystemDestination");
-				filesystemDestination.setHidden(database);
-				filesystemDestination.setDisabled(database);
+				filesystemDestination.setHidden(structured);
+				filesystemDestination.setDisabled(structured);
 				let databaseDestination = this.lookup("databaseDestination");
 				databaseDestination.setHidden(!database);
 				databaseDestination.setDisabled(!database);
+				let dovecotDestination = this.lookup("dovecotDestination");
+				dovecotDestination.setHidden(!dovecot);
+				dovecotDestination.setDisabled(!dovecot);
 				let sourceDatabase = this.lookup("sourceDatabase");
 				let destinationDatabase = this.lookup("destinationDatabase");
 				if (sourceDatabase) {
@@ -109,8 +114,8 @@ var restoreJobEdit = js.EditWindow{
 					destinationDatabase.setDisabled(ldap);
 				}
 				let restoreMode = this.lookup("filesystemRestoreMode");
-				restoreMode.setHidden(database);
-				restoreMode.setDisabled(database);
+				restoreMode.setHidden(structured);
+				restoreMode.setDisabled(structured);
 			`),
 		},
 	},
@@ -143,6 +148,12 @@ var restoreJobEdit = js.EditWindow{
 						js.Field{XType: "proxmoxtextfield", Label: "Destination Database", Name: "destination_database", Reference: "destinationDatabase", AllowBlank: new(true), EmptyText: "Same as source", DeleteEmptyWhenNotCreate: true,
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Name to restore the database under. Leave empty to keep the name it had in the snapshot.")}},
 						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Delete and recreate the selected database or LDAP subtree", InputValue: "true", UncheckedValue: "false"},
+					)},
+					js.Field{XType: js.XFieldContainer, Reference: "dovecotDestination", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
+						js.Field{XType: "proxmoxtextfield", Label: "Source Username", Name: "dovecot_source_username", AllowBlank: new(false), EmptyText: "user@example.com"},
+						js.Field{XType: "proxmoxtextfield", Label: "Destination Username", Name: "dovecot_destination_username", AllowBlank: new(true), EmptyText: "Same as source", DeleteEmptyWhenNotCreate: true},
+						js.Field{XType: "proxmoxtextfield", Label: "Mailbox", Name: "dovecot_mailbox", AllowBlank: new(true), EmptyText: "All backed-up mailboxes", DeleteEmptyWhenNotCreate: true},
+						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Mirror the backup into the destination mailbox", InputValue: "true", UncheckedValue: "false"},
 					)},
 				),
 				ColumnB: js.Items(

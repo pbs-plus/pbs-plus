@@ -34,6 +34,10 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 		ExpandSevenZip:   b.ExpandSevenZip,
 		ExpandMaxDepth:   b.ExpandMaxDepth,
 		ExpandMaxEntries: b.ExpandMaxEntries,
+		DatabaseScope:    b.DatabaseScope,
+		DatabaseName:     b.DatabaseName,
+		DovecotUsername:  b.DovecotUsername,
+		DovecotMailbox:   b.DovecotMailbox,
 
 		Target: b.Target.Name,
 
@@ -117,6 +121,12 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 		NotificationMode: r.NotificationMode,
 		Retry:            r.Retry,
 		RetryInterval:    r.RetryInterval,
+		SourceDatabase:             r.SourceDatabase,
+		DestinationDatabase:        r.DestinationDatabase,
+		DovecotSourceUsername:      r.DovecotSourceUsername,
+		DovecotDestinationUsername: r.DovecotDestinationUsername,
+		DovecotMailbox:             r.DovecotMailbox,
+		ReplaceExisting:            r.ReplaceExisting,
 
 		DestTarget: r.DestTarget.Name,
 
@@ -291,6 +301,7 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 	var postgreSQLTargets []TargetTreeNode
 	var mysqlTargets []TargetTreeNode
 	var ldapTargets []TargetTreeNode
+	var dovecotTargets []TargetTreeNode
 
 	for i := range targets {
 		t := targets[i]
@@ -383,6 +394,9 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 		case t.Type == coredb.TargetTypeLDAP:
 			node.IconCls = "fa fa-sitemap"
 			ldapTargets = append(ldapTargets, node)
+		case t.Type == coredb.TargetTypeDovecot:
+			node.IconCls = "fa fa-envelope"
+			dovecotTargets = append(dovecotTargets, node)
 
 		default:
 			node.IconCls = "fa fa-folder"
@@ -455,6 +469,13 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 		})
 	}
 
+	if len(dovecotTargets) > 0 {
+		rootChildren = append(rootChildren, TargetTreeNode{
+			Text: "Dovecot Targets", IconCls: "fa fa-envelope", IsGroup: true,
+			GroupType: "dovecot", Expanded: true, Children: dovecotTargets,
+		})
+	}
+
 	return rootChildren
 }
 
@@ -504,6 +525,8 @@ func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 		"expand-max-entries": b.ExpandMaxEntries,
 		"database_scope":     b.DatabaseScope,
 		"database_name":      b.DatabaseName,
+		"dovecot_username":   b.DovecotUsername,
+		"dovecot_mailbox":    b.DovecotMailbox,
 	}
 }
 
@@ -526,6 +549,9 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 		"retry-interval":       r.RetryInterval,
 		"source_database":      r.SourceDatabase,
 		"destination_database": r.DestinationDatabase,
+		"dovecot_source_username":      r.DovecotSourceUsername,
+		"dovecot_destination_username": r.DovecotDestinationUsername,
+		"dovecot_mailbox":             r.DovecotMailbox,
 		"replace_existing":     r.ReplaceExisting,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
@@ -564,6 +590,8 @@ type FlatBackup struct {
 	ExpandMaxEntries int    `json:"expand-max-entries"`
 	DatabaseScope    string `json:"database_scope,omitempty"`
 	DatabaseName     string `json:"database_name,omitempty"`
+	DovecotUsername  string `json:"dovecot_username,omitempty"`
+	DovecotMailbox   string `json:"dovecot_mailbox,omitempty"`
 
 	Target       string `json:"target"`
 	ExpectedSize int    `json:"expected_size,omitempty"`
@@ -608,6 +636,9 @@ type FlatRestore struct {
 	ExpectedSize        int    `json:"expected_size,omitempty"`
 	SourceDatabase      string `json:"source_database,omitempty"`
 	DestinationDatabase string `json:"destination_database,omitempty"`
+	DovecotSourceUsername      string `json:"dovecot_source_username,omitempty"`
+	DovecotDestinationUsername string `json:"dovecot_destination_username,omitempty"`
+	DovecotMailbox             string `json:"dovecot_mailbox,omitempty"`
 	ReplaceExisting     bool   `json:"replace_existing,omitempty"`
 
 	DestTarget string `json:"dest-target"`

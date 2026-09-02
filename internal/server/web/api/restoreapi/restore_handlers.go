@@ -279,6 +279,9 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 			RetryInterval:       retryInterval,
 			SourceDatabase:      r.FormValue("source_database"),
 			DestinationDatabase: r.FormValue("destination_database"),
+			DovecotSourceUsername:      r.FormValue("dovecot_source_username"),
+			DovecotDestinationUsername: r.FormValue("dovecot_destination_username"),
+			DovecotMailbox:             r.FormValue("dovecot_mailbox"),
 		}
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
@@ -379,6 +382,15 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 			if r.Form.Has("destination_database") {
 				restore.DestinationDatabase = r.FormValue("destination_database")
 			}
+			if r.Form.Has("dovecot_source_username") {
+				restore.DovecotSourceUsername = r.FormValue("dovecot_source_username")
+			}
+			if r.Form.Has("dovecot_destination_username") {
+				restore.DovecotDestinationUsername = r.FormValue("dovecot_destination_username")
+			}
+			if r.Form.Has("dovecot_mailbox") {
+				restore.DovecotMailbox = r.FormValue("dovecot_mailbox")
+			}
 			if r.Form.Has("replace_existing") {
 				replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing"))
 				if parseErr != nil {
@@ -455,6 +467,12 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.SourceDatabase = ""
 					case "destination_database":
 						restore.DestinationDatabase = ""
+					case "dovecot_source_username":
+						restore.DovecotSourceUsername = ""
+					case "dovecot_destination_username":
+						restore.DovecotDestinationUsername = ""
+					case "dovecot_mailbox":
+						restore.DovecotMailbox = ""
 					case "replace_existing":
 						restore.ReplaceExisting = false
 					}
