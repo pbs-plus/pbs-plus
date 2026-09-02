@@ -1,0 +1,290 @@
+name: Run Dovecot Mailbox Backup Tests
+description: Verify Dovecot mailbox backup and restore over TLS
+inputs:
+  timeout-seconds:
+    required: false
+    default: '300'
+    description: Timeout for each Dovecot job
+runs:
+  using: composite
+  steps:
+  - name: Run Dovecot mailbox tests
+    shell: bash
+    run: |
+      set -euo pipefail
+
+      timeout='${{ inputs.timeout-seconds }}'
+      doveadm_password='e2e-doveadm-password'
+      workdir=$(mktemp -d)
+      trap 'docker rm -f pbs-plus-dovecot-source pbs-plus-dovecot-destination >/dev/null 2>&1 || true; rm -rf "$workdir" >/dev/null 2>&1 || true' EXIT
+
+      create_server() {
+        local name=$1 hostname=$2
+        local dir="$workdir/$name"
+        mkdir -p "$dir/certs" "$dir/private" "$dir/mail"
+        openssl req -x509 -newkey rsa:2048 -nodes \
+          -keyout "$dir/private/server.key" \
+          -out "$dir/certs/server.pem" \
+          -days 1 -subj "/CN=$hostname" \
+          -addext "subjectAltName=DNS:$hostname" >/dev/null 2>&1
+        chmod 0600 "$dir/private/server.key"
+        cat > "$dir/dovecot.conf" <<EOF
+      dovecot_config_version = 2.4.0
+      dovecot_storage_version = 2.4.0
+      listen = *
+      protocols =
+      log_path = /dev/stderr
+      info_log_path = /dev/stdout
+      debug_log_path = /dev/stderr
+      auth_verbose = yes
+      auth_mechanisms = plain
+      mail_driver = maildir
+      mail_path = %{home}/Maildir
+      mail_home = /srv/mail/%{user}
+      mail_uid = 1000
+      mail_gid = 1000
+      passdb static {
+        fields {
+          nopassword = yes
+        }
+      }
+      userdb static {
+        allow_all_users = yes
+        fields {
+          uid = 1000
+          gid = 1000
+          home = /srv/mail/%{user}
+        }
+      }
+      service doveadm {
+        inet_listener doveadm {
+          port = 24245
+          ssl = yes
+        }
+      }
+      doveadm_password = $doveadm_password
+      ssl_server {
+        cert_file = /etc/dovecot/certs/server.pem
+        key_file = /etc/dovecot/private/server.key
+      }
+      EOF
+        docker run -d --name "$name" --network pbs-plus-test \
+          -v "$dir/dovecot.conf:/etc/dovecot/dovecot.conf:ro" \
+          -v "$dir/certs:/etc/dovecot/certs:ro" \
+          -v "$dir/private:/etc/dovecot/private:ro" \
+          -v "$dir/mail:/srv/mail" \
+          --entrypoint /usr/sbin/dovecot \
+          pbs-plus:test -F -c /etc/dovecot/dovecot.conf >/dev/null
+      }
+
+      create_server pbs-plus-dovecot-source pbs-plus-dovecot-source
+      create_server pbs-plus-dovecot-destination pbs-plus-dovecot-destination
+
+      copy_ca() {
+        local name=$1
+        local container="pbs-plus-dovecot-$name"
+        docker cp "$workdir/$container/certs/server.pem" "pbs-plus-test:/tmp/$name-ca.pem" >/dev/null
+      }
+      copy_ca source
+      copy_ca destination
+
+      wait_for_server() {
+        local name=$1
+        local deadline=$((SECONDS + timeout))
+        while ((SECONDS < deadline)); do
+          if docker exec pbs-plus-test sh -ec \
+            "timeout 10 openssl s_client -brief -connect $name:24245 -servername $name -CAfile /tmp/${name#pbs-plus-dovecot-}-ca.pem -verify_hostname $name -verify_return_error </dev/null" \
+            >/dev/null 2>&1; then
+            return 0
+          fi
+          sleep 2
+        done
+        echo "Dovecot server $name did not become ready"
+        docker logs "$name" 2>&1
+        return 1
+      }
+      wait_for_server pbs-plus-dovecot-source
+      wait_for_server pbs-plus-dovecot-destination
+
+      seed_mail() {
+        local name=$1 user=$2 body=$3 filename=$4
+        docker exec -e TEST_USER="$user" -e TEST_BODY="$body" -e TEST_FILE="$filename" "$name" sh -ec '
+          mail_dir="/srv/mail/$TEST_USER/Maildir"
+          mkdir -p "$mail_dir/cur" "$mail_dir/new" "$mail_dir/tmp"
+          printf "From: %s\nSubject: e2e\nDate: Tue, 02 Sep 2026 12:00:00 +0000\nMessage-ID: <%s@e2e.test>\n\n%s\n" "$TEST_USER" "$TEST_FILE" "$TEST_BODY" > "$mail_dir/new/$TEST_FILE"
+          chown -R 1000:1000 /srv/mail
+        '
+      }
+      seed_mail pbs-plus-dovecot-source alice@example.com source-message alice-source-1
+      seed_mail pbs-plus-dovecot-destination bob@example.com destination-message bob-dest-1
+
+      api_get() {
+        docker exec pbs-plus-test curl -k -fsS "https://localhost:8017$1" -H 'Accept: application/json'
+      }
+      api_post() {
+        local path=$1
+        shift
+        docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017$path" \
+          -H 'Content-Type: application/x-www-form-urlencoded' "$@"
+      }
+      create_target() {
+        local response
+        response=$(api_post '/api2/extjs/config/d2d-target' "$@")
+        jq -e '.success == true' <<<"$response" >/dev/null || {
+          echo "Target creation failed: $response"
+          return 1
+        }
+      }
+      create_target \
+        --data-urlencode 'name=e2e-dovecot-source' \
+        --data-urlencode 'target_type=dovecot' \
+        --data-urlencode 'database_host=pbs-plus-dovecot-source' \
+        --data-urlencode 'database_port=24245' \
+        --data-urlencode "database_password=$doveadm_password" \
+        --data-urlencode 'database_ca_certificate=/tmp/source-ca.pem' \
+        --data-urlencode 'database_default_client_dir=/usr/bin'
+      create_target \
+        --data-urlencode 'name=e2e-dovecot-destination' \
+        --data-urlencode 'target_type=dovecot' \
+        --data-urlencode 'database_host=pbs-plus-dovecot-destination' \
+        --data-urlencode 'database_port=24245' \
+        --data-urlencode "database_password=$doveadm_password" \
+        --data-urlencode 'database_ca_certificate=/tmp/destination-ca.pem' \
+        --data-urlencode 'database_default_client_dir=/usr/bin'
+
+      response=$(api_post '/api2/extjs/config/disk-backup' \
+        --data-urlencode 'id=e2e-dovecot-backup' \
+        --data-urlencode 'target=e2e-dovecot-source' \
+        --data-urlencode 'store=test' \
+        --data-urlencode 'ns=dovecot-e2e' \
+        --data-urlencode 'dovecot_username=alice@example.com' \
+        --data-urlencode 'dovecot_mailbox=' \
+        --data-urlencode 'schedule=' \
+        --data-urlencode 'retry=' \
+        --data-urlencode 'retry-interval=' \
+        --data-urlencode 'max-dir-entries=' \
+        --data-urlencode 'mode=' \
+        --data-urlencode 'sourcemode=' \
+        --data-urlencode 'readmode=' \
+        --data-urlencode 'include-xattr=' \
+        --data-urlencode 'comment=' \
+        --data-urlencode 'rawexclusions=' \
+        --data-urlencode 'pre_script=' \
+        --data-urlencode 'post_script=')
+      jq -e '.success == true' <<<"$response" >/dev/null
+
+      start_backup() {
+        local encoded response
+        encoded=$(printf '%s' e2e-dovecot-backup | base64 -w0)
+        response=$(api_post "/api2/extjs/d2d/backup?job=$encoded")
+        jq -e '.success == true' <<<"$response" >/dev/null
+      }
+      wait_for_backup() {
+        local deadline=$((SECONDS + timeout)) logs status_lines
+        while ((SECONDS < deadline)); do
+          logs=$(docker logs pbs-plus-test 2>&1)
+          status_lines=$(grep -F '"jobID":"e2e-dovecot-backup"' <<<"$logs" | grep -F '"msg":"updating job status"' || true)
+          if grep -qF '"succeeded":true' <<<"$status_lines"; then
+            return 0
+          fi
+          if grep -qF '"succeeded":false' <<<"$status_lines" || grep -qF '"msg":"backup job failed"' <<<"$logs"; then
+            docker logs --tail=160 pbs-plus-test 2>&1
+            docker logs --tail=160 pbs-plus-dovecot-source 2>&1
+            return 1
+          fi
+          sleep 5
+        done
+        docker logs --tail=160 pbs-plus-test 2>&1
+        return 1
+      }
+      start_backup
+      wait_for_backup
+
+      backup_log=$(api_get '/api2/json/d2d/backup' | jq -cer '.data[] | select(.id == "e2e-dovecot-backup") | ."last-run-upid"')
+      task_log() {
+        docker exec -e UPID="$1" pbs-plus-test sh -ec \
+          'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); cat "/var/log/proxmox-backup/tasks/$bucket/$UPID"'
+      }
+      log=$(task_log "$backup_log")
+      grep -Fqx -- '--- Dovecot log starts here ---' <<<"$log"
+      grep -Eq 'using Dovecot client 2\.4[0-9.]*' <<<"$log"
+
+      latest_snapshot() {
+        local snap_time snap_ts
+        snap_time=$(docker exec pbs-plus-test sh -ec \
+          'ls /mnt/test/ns/dovecot-e2e/host/e2e-dovecot-backup/ | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" | sort | tail -1')
+        snap_ts=$(docker exec -e SNAP_TIME="$snap_time" pbs-plus-test date -d "$snap_time" +%s)
+        printf 'host/e2e-dovecot-backup/%s' "$snap_ts"
+      }
+      snapshot=$(latest_snapshot)
+      response=$(api_post '/api2/extjs/config/disk-restore' \
+        --data-urlencode 'id=e2e-dovecot-restore' \
+        --data-urlencode 'store=test' \
+        --data-urlencode 'ns=dovecot-e2e' \
+        --data-urlencode "snapshot=$snapshot" \
+        --data-urlencode 'src-path=/' \
+        --data-urlencode 'dest-target=e2e-dovecot-destination' \
+        --data-urlencode 'dest-subpath=' \
+        --data-urlencode 'dovecot_source_username=alice@example.com' \
+        --data-urlencode 'dovecot_destination_username=bob@example.com' \
+        --data-urlencode 'dovecot_mailbox=' \
+        --data-urlencode 'replace_existing=false' \
+        --data-urlencode 'comment=' \
+        --data-urlencode 'pre_script=' \
+        --data-urlencode 'post_script=')
+      jq -e '.success == true' <<<"$response" >/dev/null
+      encoded=$(printf '%s' e2e-dovecot-restore | base64 -w0)
+      response=$(api_post "/api2/extjs/d2d/restore?job=$encoded")
+      jq -e '.success == true' <<<"$response" >/dev/null
+
+      deadline=$((SECONDS + timeout))
+      while ((SECONDS < deadline)); do
+        state=$(api_get "/api2/extjs/config/disk-restore/$encoded" | jq -r '.data.history."last-run-state"')
+        if [[ "$state" == 'OK' || "$state" == 'WARNINGS: '* ]]; then
+          break
+        fi
+        if [[ "$state" == 'ERROR: '* ]]; then
+          echo "Dovecot restore failed: $state"
+          exit 1
+        fi
+        sleep 5
+      done
+      [[ "$state" == 'OK' || "$state" == 'WARNINGS: '* ]]
+      docker exec pbs-plus-dovecot-destination grep -R -F 'source-message' /srv/mail/bob@example.com >/dev/null
+      docker exec pbs-plus-dovecot-destination grep -R -F 'destination-message' /srv/mail/bob@example.com >/dev/null
+
+      response=$(api_post '/api2/extjs/config/disk-restore' \
+        --data-urlencode 'id=e2e-dovecot-replace' \
+        --data-urlencode 'store=test' \
+        --data-urlencode 'ns=dovecot-e2e' \
+        --data-urlencode "snapshot=$snapshot" \
+        --data-urlencode 'src-path=/' \
+        --data-urlencode 'dest-target=e2e-dovecot-destination' \
+        --data-urlencode 'dest-subpath=' \
+        --data-urlencode 'dovecot_source_username=alice@example.com' \
+        --data-urlencode 'dovecot_destination_username=carol@example.com' \
+        --data-urlencode 'dovecot_mailbox=' \
+        --data-urlencode 'replace_existing=true' \
+        --data-urlencode 'comment=' \
+        --data-urlencode 'pre_script=' \
+        --data-urlencode 'post_script=')
+      jq -e '.success == true' <<<"$response" >/dev/null
+      encoded=$(printf '%s' e2e-dovecot-replace | base64 -w0)
+      response=$(api_post "/api2/extjs/d2d/restore?job=$encoded")
+      jq -e '.success == true' <<<"$response" >/dev/null
+
+      deadline=$((SECONDS + timeout))
+      state=''
+      while ((SECONDS < deadline)); do
+        state=$(api_get "/api2/extjs/config/disk-restore/$encoded" | jq -r '.data.history."last-run-state"')
+        if [[ "$state" == 'OK' || "$state" == 'WARNINGS: '* ]]; then
+          break
+        fi
+        if [[ "$state" == 'ERROR: '* ]]; then
+          echo "Dovecot replace restore failed: $state"
+          exit 1
+        fi
+        sleep 5
+      done
+      [[ "$state" == 'OK' || "$state" == 'WARNINGS: '* ]]
+      docker exec pbs-plus-dovecot-destination grep -R -F 'source-message' /srv/mail/carol@example.com >/dev/null

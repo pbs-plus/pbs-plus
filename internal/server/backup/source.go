@@ -173,9 +173,15 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 			destination: b.logger.JobStdoutWriter(),
 			logLine:     b.logQueuedLine,
 		}
+		if _, err := fmt.Fprintln(dovecotLog, "--- Dovecot log starts here ---"); err != nil {
+			return "", nil, nil, fmt.Errorf("write Dovecot log marker: %w", err)
+		}
 		client, err := dovecot.SelectClient(ctx, target)
 		if err != nil {
 			return "", nil, nil, err
+		}
+		if _, err := fmt.Fprintf(dovecotLog, "using Dovecot client %s from %s\n", client.Version, client.Program); err != nil {
+			return "", nil, nil, fmt.Errorf("write Dovecot client selection: %w", err)
 		}
 		stagedBackup, err := dovecot.StageBackup(ctx, "", target, password, dovecot.BackupOptions{
 			Username:  job.DovecotUsername,
