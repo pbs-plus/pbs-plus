@@ -19,20 +19,49 @@ runs:
         timeout='${{ inputs.timeout-seconds }}'
         base_dn='dc=example,dc=com'
         bind_dn="cn=admin,$base_dn"
+        tls_root=$(mktemp -d)
+
+        openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+          -subj '/CN=PBS Plus E2E LDAP CA' \
+          -keyout "$tls_root/ca.key" -out "$tls_root/ca.crt" >/dev/null 2>&1
+        create_server_cert() {
+          local server=$1 dir="$tls_root/$1"
+          mkdir -p "$dir"
+          openssl req -newkey rsa:2048 -sha256 -nodes \
+            -subj "/CN=$server" -addext "subjectAltName=DNS:$server" \
+            -keyout "$dir/ldap.key" -out "$dir/ldap.csr" >/dev/null 2>&1
+          printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n' "$server" >"$dir/ext.cnf"
+          openssl x509 -req -sha256 -days 1 -in "$dir/ldap.csr" \
+            -CA "$tls_root/ca.crt" -CAkey "$tls_root/ca.key" -CAcreateserial \
+            -extfile "$dir/ext.cnf" -out "$dir/ldap.crt" >/dev/null 2>&1
+          cp "$tls_root/ca.crt" "$dir/ca.crt"
+        }
+        create_server_cert pbs-plus-ldap
+        create_server_cert pbs-plus-ldap-restore
 
         docker run -d --name pbs-plus-ldap \
+          --hostname pbs-plus-ldap \
           --network pbs-plus-test \
+          --volume "$tls_root/pbs-plus-ldap:/container/service/slapd/assets/certs" \
           -e LDAP_ORGANISATION="PBS Plus E2E" \
           -e LDAP_DOMAIN=example.com \
           -e LDAP_ADMIN_PASSWORD="$password" \
-          -e LDAP_TLS=false \
+          -e LDAP_TLS=true \
+          -e LDAP_TLS_CRT_FILENAME=ldap.crt \
+          -e LDAP_TLS_KEY_FILENAME=ldap.key \
+          -e LDAP_TLS_CA_CRT_FILENAME=ca.crt \
           osixia/openldap:1.5.0
         docker run -d --name pbs-plus-ldap-restore \
+          --hostname pbs-plus-ldap-restore \
           --network pbs-plus-test \
+          --volume "$tls_root/pbs-plus-ldap-restore:/container/service/slapd/assets/certs" \
           -e LDAP_ORGANISATION="PBS Plus E2E" \
           -e LDAP_DOMAIN=example.com \
           -e LDAP_ADMIN_PASSWORD="$password" \
-          -e LDAP_TLS=false \
+          -e LDAP_TLS=true \
+          -e LDAP_TLS_CRT_FILENAME=ldap.crt \
+          -e LDAP_TLS_KEY_FILENAME=ldap.key \
+          -e LDAP_TLS_CA_CRT_FILENAME=ca.crt \
           osixia/openldap:1.5.0
 
         ldap_ready() {
@@ -53,6 +82,10 @@ runs:
           done
         done
 
+        for server in pbs-plus-ldap pbs-plus-ldap-restore; do
+          docker cp "$tls_root/ca.crt" "pbs-plus-test:/tmp/$server-ca.crt"
+        done
+
         docker exec -i pbs-plus-ldap ldapadd -x -H ldap://localhost \
           -D "$bind_dn" -w "$password" <<LDIF
         dn: ou=people,$base_dn
@@ -65,6 +98,15 @@ runs:
         cn: E2E User
         sn: User
         mail: e2e-user@example.com
+        description: Directory backup
+         continuation
+        jpegPhoto:: AAECAwQFBgcICQ==
+        userPassword: e2e-user-password
+
+        dn: cn=e2e-group,ou=people,$base_dn
+        objectClass: groupOfNames
+        cn: e2e-group
+        member: uid=e2e-user,ou=people,$base_dn
         LDIF
 
         api_post() {
@@ -90,7 +132,8 @@ runs:
           --data-urlencode 'database_port=389' \
           --data-urlencode "database_username=$bind_dn" \
           --data-urlencode "database_password=$password" \
-          --data-urlencode 'database_tls_mode=disabled' \
+          --data-urlencode 'database_tls_mode=starttls' \
+          --data-urlencode 'database_ca_certificate=/tmp/pbs-plus-ldap-ca.crt' \
           --data-urlencode "ldap_base_dn=$base_dn"
 
         create_target \
@@ -100,7 +143,8 @@ runs:
           --data-urlencode 'database_port=389' \
           --data-urlencode "database_username=$bind_dn" \
           --data-urlencode "database_password=$password" \
-          --data-urlencode 'database_tls_mode=disabled' \
+          --data-urlencode 'database_tls_mode=starttls' \
+          --data-urlencode 'database_ca_certificate=/tmp/pbs-plus-ldap-restore-ca.crt' \
           --data-urlencode "ldap_base_dn=$base_dn"
 
         create_backup() {
@@ -174,10 +218,10 @@ runs:
               echo "Backup job $job_id failed before the PBS client started"
               echo "--- probe: dns + bind from pbs-plus-test ---"
               docker exec pbs-plus-test getent hosts pbs-plus-ldap || true
-              docker exec pbs-plus-test ldapwhoami -x -H ldap://pbs-plus-ldap:389 \
-                -D "$bind_dn" -w "$password" || true
+              docker exec -e LDAPTLS_CACERT=/tmp/pbs-plus-ldap-ca.crt pbs-plus-test \
+                ldapwhoami -x -ZZ -H ldap://pbs-plus-ldap:389 -D "$bind_dn" -w "$password" || true
               echo "--- probe: dump-shaped search from pbs-plus-test ---"
-              docker exec pbs-plus-test sh -c "printf '%s' '$password' > /tmp/ldapprobe && chmod 600 /tmp/ldapprobe && ldapsearch -x -H ldap://pbs-plus-ldap:389 -D '$bind_dn' -y /tmp/ldapprobe -LLL -o ldif-wrap=no -s sub -E pr=1000/noprompt -b '$base_dn' dn 2>&1 | head -10; rm -f /tmp/ldapprobe" || true
+              docker exec pbs-plus-test sh -c "printf '%s' '$password' > /tmp/ldapprobe && chmod 600 /tmp/ldapprobe && LDAPTLS_CACERT=/tmp/pbs-plus-ldap-ca.crt ldapsearch -x -ZZ -H ldap://pbs-plus-ldap:389 -D '$bind_dn' -y /tmp/ldapprobe -LLL -o ldif-wrap=no -s sub -E pr=1000/noprompt -b '$base_dn' dn 2>&1 | head -10; rm -f /tmp/ldapprobe" || true
               echo "--- slapd connection log (pbs-plus-ldap) ---"
               docker logs --tail=60 pbs-plus-ldap 2>&1 | grep -vE '^\*\*\*' | tail -40 || true
               docker logs --tail=100 pbs-plus-test 2>&1
@@ -337,6 +381,30 @@ runs:
               echo "Restore job $job_id completed with warnings: $task_status"
               return 0
             fi
+            if [[ -n "$task_status" && "$task_status" != 'null' ]]; then
+              echo "Restore job $job_id failed: $task_status"
+              return 1
+            fi
+            sleep 5
+          done
+          echo "Restore job $job_id timed out after ${timeout}s"
+          return 1
+        }
+
+        wait_for_restore_preflight_failure() {
+          local job_id=$1 encoded task_status
+          encoded=$(printf '%s' "$job_id" | base64 -w0)
+          local deadline=$((SECONDS + timeout))
+          while ((SECONDS < deadline)); do
+            task_status=$(api_get "/api2/extjs/config/disk-restore/$encoded" | jq -r '.data.history."last-run-state"')
+            if [[ "$task_status" == *'no entries under'* ]]; then
+              echo "Restore job $job_id safely rejected the missing subtree"
+              return 0
+            fi
+            if [[ -n "$task_status" && "$task_status" != 'null' ]]; then
+              echo "Restore job $job_id had an unexpected result: $task_status"
+              return 1
+            fi
             sleep 5
           done
           echo "Restore job $job_id timed out after ${timeout}s"
@@ -344,16 +412,24 @@ runs:
         }
 
         verify_ldap_entry() {
-          local container=$1 result
-          result=$(docker exec "$container" ldapsearch -LLL -x -H ldap://localhost \
+          local container=$1 result group
+          result=$(docker exec -e LDAPTLS_CACERT=/container/service/slapd/assets/certs/ca.crt "$container" ldapsearch -LLL -x -ZZ -H "ldap://$container" \
             -D "cn=admin,$base_dn" -w "$password" \
-            -b "ou=people,$base_dn" '(uid=e2e-user)' mail)
+            -b "ou=people,$base_dn" '(uid=e2e-user)' mail description jpegPhoto)
           grep -q 'e2e-user@example.com' <<<"$result" || {
             echo "e2e-user entry missing from $container"
             printf '%s\n' "$result"
             exit 1
           }
-          echo "$container has the restored e2e-user entry"
+          grep -q 'Directory backupcontinuation' <<<"$result"
+          grep -q 'AAECAwQFBgcICQ==' <<<"$result"
+          group=$(docker exec -e LDAPTLS_CACERT=/container/service/slapd/assets/certs/ca.crt "$container" ldapsearch -LLL -x -ZZ -H "ldap://$container" \
+            -D "cn=admin,$base_dn" -w "$password" \
+            -b "cn=e2e-group,ou=people,$base_dn" -s base member)
+          grep -q "member: uid=e2e-user,ou=people,$base_dn" <<<"$group"
+          docker exec -e LDAPTLS_CACERT=/container/service/slapd/assets/certs/ca.crt "$container" ldapwhoami -x -ZZ -H "ldap://$container" \
+            -D "uid=e2e-user,ou=people,$base_dn" -w e2e-user-password >/dev/null
+          echo "$container has the restored LDAP entries, links, binary data, and password"
         }
 
         subtree_snapshot=$(latest_snapshot 'e2e-ldap-subtree-backup')
@@ -389,5 +465,23 @@ runs:
           --data-urlencode 'replace_existing=true'
         start_restore 'e2e-ldap-restore-replace'
         wait_for_restore 'e2e-ldap-restore-replace'
+
+        verify_ldap_entry pbs-plus-ldap-restore
+
+        create_restore \
+          --data-urlencode 'id=e2e-ldap-restore-missing' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=ldap-e2e' \
+          --data-urlencode "snapshot=$server_snapshot" \
+          --data-urlencode 'src-path=/' \
+          --data-urlencode 'dest-target=e2e-ldap-restore' \
+          --data-urlencode 'dest-subpath=' \
+          --data-urlencode 'mode=0' \
+          --data-urlencode 'retry=0' \
+          --data-urlencode 'retry-interval=1' \
+          --data-urlencode "source_database=ou=missing,$base_dn" \
+          --data-urlencode 'replace_existing=true'
+        start_restore 'e2e-ldap-restore-missing'
+        wait_for_restore_preflight_failure 'e2e-ldap-restore-missing'
 
         verify_ldap_entry pbs-plus-ldap-restore
