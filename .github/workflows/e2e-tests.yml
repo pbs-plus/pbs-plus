@@ -43,6 +43,11 @@ jobs:
         with:
           timeout-seconds: 300
 
+      - name: Run LDAP backup tests
+        uses: ./.github/actions/run-ldap-backups
+        with:
+          timeout-seconds: 300
+
       - name: Setup and run agent
         uses: ./.github/actions/setup-agent
         with:
