@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -139,10 +140,19 @@ func StageBackup(ctx context.Context, parent string, target coredb.Target, passw
 
 	archiveDir := filepath.Join(root, "archive")
 	mailDir := filepath.Join(archiveDir, mailDirName)
+	sieveDir := filepath.Join(archiveDir, "sieve")
 	secretsDir := filepath.Join(root, "secrets")
-	for _, dir := range []string{archiveDir, mailDir, secretsDir} {
-		if err = os.Mkdir(dir, 0o700); err != nil {
+	for _, dir := range []string{archiveDir, mailDir, filepath.Join(sieveDir, "scripts"), secretsDir} {
+		if err = os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create Dovecot staging subdirectory: %w", err)
+		}
+	}
+	if err = chownForMail(archiveDir); err != nil {
+		return nil, fmt.Errorf("prepare Dovecot staging permissions: %w", err)
+	}
+	if uid, gid := mailIdentity(); os.Getuid() == 0 && uid != 0 {
+		if err = os.Chown(root, uid, gid); err != nil {
+			return nil, fmt.Errorf("prepare Dovecot staging permissions: %w", err)
 		}
 	}
 	configPath, err := writeClientConfig(secretsDir, mailDir, target.DatabaseCACertificate, password)
@@ -216,6 +226,13 @@ func RestoreBackup(ctx context.Context, archiveDir string, target coredb.Target,
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("Dovecot backup mail path is not a directory")
 	}
+	sieveDir := filepath.Join(archiveDir, "sieve")
+	if err := os.MkdirAll(filepath.Join(sieveDir, "scripts"), 0o700); err != nil {
+		return fmt.Errorf("create Dovecot restore sieve directory: %w", err)
+	}
+	if err := chownForMail(archiveDir); err != nil {
+		return fmt.Errorf("prepare Dovecot restore permissions: %w", err)
+	}
 	secretsDir, err := os.MkdirTemp("", ".pbs-plus-dovecot-secrets-")
 	if err != nil {
 		return fmt.Errorf("create Dovecot restore secrets directory: %w", err)
@@ -230,16 +247,21 @@ func RestoreBackup(ctx context.Context, archiveDir string, target coredb.Target,
 	}
 	command := "sync"
 	args := []string{"-c", configPath, command, "--no-userdb-lookup", "-1"}
+	passes := 2
 	if options.ReplaceExisting {
 		command = "backup"
 		args = []string{"-c", configPath, command, "--no-userdb-lookup"}
+		passes = 1
 	}
 	if options.Mailbox != "" {
 		args = append(args, "-m", options.Mailbox)
 	}
 	args = append(args, destination(target))
-	if err := run(ctx, client.Program, args, options.DestinationUsername, options.LogWriter); err != nil {
-		return fmt.Errorf("restore Dovecot mailbox: %w", err)
+	// mailbox GUID state when the destination mailbox already exists. pi:keep
+	for pass := 0; pass < passes; pass++ {
+		if err := run(ctx, client.Program, args, options.DestinationUsername, options.LogWriter); err != nil {
+			return fmt.Errorf("restore Dovecot mailbox: %w", err)
+		}
 	}
 	return nil
 }
@@ -274,20 +296,29 @@ func writeClientConfig(dir, mailDir, caPath, password string) (string, error) {
 	if err := os.WriteFile(localCA, ca, 0o600); err != nil {
 		return "", fmt.Errorf("write Dovecot CA certificate: %w", err)
 	}
-	quotedPassword, err := quoteSetting(password)
+	setting, err := passwordSetting(password)
 	if err != nil {
 		return "", err
 	}
+	sieveDir := filepath.Join(filepath.Dir(mailDir), "sieve")
+	uid, gid := mailIdentity()
 	config := strings.Join([]string{
 		"dovecot_config_version = 2.4.0",
 		"dovecot_storage_version = 2.4.0",
-		"doveadm_password = " + quotedPassword,
+		"doveadm_password = " + setting,
 		"ssl_client_ca_file = " + localCA,
 		"ssl_client_require_valid_cert = yes",
 		"mail_driver = maildir",
 		"mail_path = " + mailDir,
-		"mail_uid = " + strconv.Itoa(os.Getuid()),
-		"mail_gid = " + strconv.Itoa(os.Getgid()),
+		"mail_uid = " + strconv.Itoa(uid),
+		"mail_gid = " + strconv.Itoa(gid),
+		"first_valid_uid = 0",
+		"first_valid_gid = 0",
+		"sieve_script personal {",
+		"	driver = file",
+		"	path = " + filepath.Join(sieveDir, "scripts"),
+		"	active_path = " + filepath.Join(sieveDir, "main.sieve"),
+		"}",
 		"",
 	}, "\n")
 	configPath := filepath.Join(dir, "dovecot.conf")
@@ -297,15 +328,45 @@ func writeClientConfig(dir, mailDir, caPath, password string) (string, error) {
 	return configPath, nil
 }
 
-func quoteSetting(value string) (string, error) {
+// passwordSetting validates the shared doveadm password and returns it in a
+// form safe for the generated client configuration. doveadm compares the
+// value literally, so quoting or escaping is not possible: reject values
+// that cannot appear verbatim in a Dovecot setting.
+func passwordSetting(value string) (string, error) {
 	if value == "" {
 		return "", errors.New("Dovecot password is required")
 	}
-	if strings.ContainsAny(value, "\r\n\x00") {
-		return "", errors.New("Dovecot password contains unsupported control characters")
+	if strings.ContainsFunc(value, func(r rune) bool {
+		return r < 0x20 || r > 0x7e || strings.ContainsRune(" \t\"\\#{};", r)
+	}) {
+		return "", errors.New("Dovecot password must contain only printable characters without spaces, quotes, or braces")
 	}
-	value = strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(value)
-	return "\"" + value + "\"", nil
+	return value, nil
+}
+
+// mailIdentity returns the uid and gid doveadm drops to when accessing
+// staged mail. Dovecot refuses mail access for root, so the root-run server
+// stages mail as nobody (65534) instead.
+func mailIdentity() (int, int) {
+	if uid := os.Getuid(); uid != 0 {
+		return uid, os.Getgid()
+	}
+	return 65534, 65534
+}
+
+// chownForMail makes staged files writable by the mail identity when the
+// server runs with enough privilege to do so.
+func chownForMail(path string) error {
+	uid, gid := mailIdentity()
+	if os.Getuid() != 0 || (uid == 0 && gid == 0) {
+		return nil
+	}
+	return filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(p, uid, gid)
+	})
 }
 
 func run(ctx context.Context, program string, args []string, username string, logWriter io.Writer) error {
@@ -339,7 +400,7 @@ func validateTarget(target coredb.Target, password string, client Client) error 
 	if target.DatabaseCACertificate == "" {
 		return errors.New("Dovecot CA certificate is required")
 	}
-	if _, err := quoteSetting(password); err != nil {
+	if _, err := passwordSetting(password); err != nil {
 		return err
 	}
 	if client.Program == "" || !supportedVersion(client.Version) {

@@ -68,7 +68,7 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 	}
 	client := Client{Program: program, Version: "2.4.1"}
 
-	staged, err := StageBackup(context.Background(), tempDir, target, `pa\ss"word`, BackupOptions{
+	staged, err := StageBackup(context.Background(), tempDir, target, "pa55word", BackupOptions{
 		Username: "alice@example.com",
 		Mailbox:  "Archive",
 	}, client)
@@ -93,9 +93,10 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`doveadm_password = "pa\\ss\"word"`,
+		"doveadm_password = pa55word",
 		"ssl_client_require_valid_cert = yes",
 		"mail_driver = maildir",
+		"sieve_script personal {",
 	} {
 		if !strings.Contains(string(config), want) {
 			t.Errorf("client config missing %q:\n%s", want, config)
@@ -114,7 +115,7 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 		"ARG=tcps:mail.example.com:24245",
 	}
 	assertDovecotTestCall(t, calls, 0, wantBackup)
-	if strings.Contains(strings.Join(calls[0], "\n"), `pa\ss"word`) {
+	if strings.Contains(strings.Join(calls[0], "\n"), "pa55word") {
 		t.Fatal("password appeared in command arguments")
 	}
 
@@ -135,6 +136,16 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 		"ARG=Archive",
 		"ARG=tcps:mail.example.com:24245",
 	})
+	assertDovecotTestCall(t, calls, 2, []string{
+		"USER=bob@example.com",
+		"ARG=-c",
+		"ARG=sync",
+		"ARG=--no-userdb-lookup",
+		"ARG=-1",
+		"ARG=-m",
+		"ARG=Archive",
+		"ARG=tcps:mail.example.com:24245",
+	})
 
 	if err := RestoreBackup(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{
 		SourceUsername:  "alice@example.com",
@@ -143,7 +154,7 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls = readDovecotTestCalls(t, logPath)
-	assertDovecotTestCall(t, calls, 2, []string{
+	assertDovecotTestCall(t, calls, 3, []string{
 		"USER=alice@example.com",
 		"ARG=-c",
 		"ARG=backup",
@@ -159,7 +170,7 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 	if err := RestoreBackup(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{SourceUsername: "alice@example.com", Mailbox: "INBOX"}, client); err == nil {
 		t.Fatal("mailbox mismatch succeeded")
 	}
-	if got := len(readDovecotTestCalls(t, logPath)); got != 3 {
+	if got := len(readDovecotTestCalls(t, logPath)); got != 4 {
 		t.Fatalf("invalid restore invoked doveadm: %d calls", got)
 	}
 
@@ -216,7 +227,7 @@ func TestWriteClientConfig(t *testing.T) {
 	if err := os.Mkdir(mailDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	configPath, err := writeClientConfig(tempDir, mailDir, caPath, `pa\ss"word`)
+	configPath, err := writeClientConfig(tempDir, mailDir, caPath, "pa55word")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,17 +246,21 @@ func TestWriteClientConfig(t *testing.T) {
 	}
 	for _, want := range []string{
 		"dovecot_config_version = 2.4.0",
-		`doveadm_password = "pa\\ss\"word"`,
+		"doveadm_password = pa55word",
 		"ssl_client_ca_file = " + filepath.Join(tempDir, "ca.pem"),
 		"ssl_client_require_valid_cert = yes",
 		"mail_path = " + mailDir,
+		"first_valid_uid = 0",
+		"sieve_script personal {",
 	} {
 		if !strings.Contains(string(config), want) {
 			t.Errorf("config missing %q:\n%s", want, config)
 		}
 	}
-	if _, err := quoteSetting("bad\npassword"); err == nil {
-		t.Fatal("password containing a newline was accepted")
+	for _, reject := range []string{"bad\npassword", "pass word", "pa\"ss", "pa#ss", "pa{ss"} {
+		if _, err := passwordSetting(reject); err == nil {
+			t.Errorf("password %q was accepted", reject)
+		}
 	}
 }
 
