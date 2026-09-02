@@ -37,16 +37,17 @@ runs:
                 -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial \
                 -extfile "$dir/ext.cnf" -out "$dir/ldap.crt" >/dev/null 2>&1
               cp /certs/ca.crt "$dir/ca.crt"
+              chmod 755 /certs "$dir"
+              chmod 644 "$dir/ca.crt" "$dir/ldap.crt" "$dir/ldap.key"
             done
-            owner=$(stat -c %u:%g /certs)
-            chown -R "$owner" /certs
           '
 
         create_ldap_server() {
           local server=$1
-          docker create --name "$server" \
+          docker run --detach --name "$server" \
             --hostname "$server" \
             --network pbs-plus-test \
+            --volume "$tls_root/$server:/container/service/slapd/assets/certs" \
             -e LDAP_ORGANISATION="PBS Plus E2E" \
             -e LDAP_DOMAIN=example.com \
             -e LDAP_ADMIN_PASSWORD="$password" \
@@ -55,8 +56,6 @@ runs:
             -e LDAP_TLS_KEY_FILENAME=ldap.key \
             -e LDAP_TLS_CA_CRT_FILENAME=ca.crt \
             osixia/openldap:1.5.0
-          docker cp "$tls_root/$server/." "$server:/container/service/slapd/assets/certs/"
-          docker start "$server"
           docker cp "$tls_root/ca.crt" "pbs-plus-test:/tmp/$server-ca.crt"
         }
         create_ldap_server pbs-plus-ldap
