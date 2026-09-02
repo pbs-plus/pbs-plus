@@ -3,6 +3,7 @@
 package dovecot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -261,6 +262,49 @@ func TestWriteClientConfig(t *testing.T) {
 		if _, err := passwordSetting(reject); err == nil {
 			t.Errorf("password %q was accepted", reject)
 		}
+	}
+}
+
+func TestWriteClientConfigSystemCA(t *testing.T) {
+	var systemBundle string
+	for _, candidate := range systemCABundlePaths {
+		if _, err := os.Stat(candidate); err == nil {
+			systemBundle = candidate
+			break
+		}
+	}
+	tempDir := t.TempDir()
+	mailDir := filepath.Join(tempDir, "mail")
+	if err := os.Mkdir(mailDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath, err := writeClientConfig(tempDir, mailDir, "", "pa55word")
+	if systemBundle == "" {
+		if err == nil {
+			t.Fatal("empty CA path was accepted without a system CA bundle")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(systemBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(tempDir, "ca.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("ca.pem does not match %s", systemBundle)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "ssl_client_require_valid_cert = yes") {
+		t.Errorf("config dropped certificate validation:\n%s", config)
 	}
 }
 

@@ -287,7 +287,25 @@ func LoadManifest(archiveDir string) (Manifest, error) {
 	return manifest, nil
 }
 
+// systemCABundlePaths are the host trust stores used when a target has no CA of its own.
+var systemCABundlePaths = []string{
+	"/etc/ssl/certs/ca-certificates.crt",
+	"/etc/pki/tls/certs/ca-bundle.crt",
+	"/etc/ssl/cert.pem",
+}
+
 func writeClientConfig(dir, mailDir, caPath, password string) (string, error) {
+	if caPath == "" {
+		for _, candidate := range systemCABundlePaths {
+			if _, err := os.Stat(candidate); err == nil {
+				caPath = candidate
+				break
+			}
+		}
+		if caPath == "" {
+			return "", errors.New("Dovecot target has no CA certificate and no system CA bundle was found")
+		}
+	}
 	ca, err := os.ReadFile(caPath)
 	if err != nil {
 		return "", fmt.Errorf("read Dovecot CA certificate: %w", err)
@@ -396,9 +414,6 @@ func validateTarget(target coredb.Target, password string, client Client) error 
 	}
 	if target.DatabaseHost == "" || target.DatabasePort < 1 || target.DatabasePort > 65535 {
 		return errors.New("Dovecot target address is invalid")
-	}
-	if target.DatabaseCACertificate == "" {
-		return errors.New("Dovecot CA certificate is required")
 	}
 	if _, err := passwordSetting(password); err != nil {
 		return err

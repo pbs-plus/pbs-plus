@@ -116,6 +116,7 @@ var windows = []js.Value{
 					js.Arr{"disable", "Disable"}, js.Arr{"allow", "Allow"}, js.Arr{"prefer", "Prefer"}, js.Arr{"require", "Require"}, js.Arr{"verify-ca", "Verify CA"}, js.Arr{"verify-full", "Verify CA and hostname"},
 				}},
 				js.Field{XType: js.XProxmoxTextField, Label: "CA Certificate", Name: "database_ca_certificate", EmptyText: "/etc/ssl/certs/database-ca.pem"},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Leave empty to verify against the host system CA certificates.")},
 			)},
 			js.Field{XType: js.XFieldSet, Title: "Client Tools", Layout: "anchor", Items: js.Items(
 				js.Field{XType: js.XHiddenField, Name: "database_default_client_family", Value: "postgresql"},
@@ -149,6 +150,7 @@ var windows = []js.Value{
 					js.Arr{"disabled", "Disabled"}, js.Arr{"preferred", "Preferred"}, js.Arr{"required", "Required"}, js.Arr{"verify-ca", "Verify CA"}, js.Arr{"verify-identity", "Verify CA and hostname"},
 				}},
 				js.Field{XType: js.XProxmoxTextField, Label: "CA Certificate", Name: "database_ca_certificate", EmptyText: "/etc/ssl/certs/database-ca.pem"},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Leave empty to verify against the host system CA certificates.")},
 			)},
 			js.Field{XType: js.XFieldSet, Title: "Client Tools", Layout: "anchor", Items: js.Items(
 				js.Field{XType: js.XKVComboBox, Label: "Client Family", Name: "database_default_client_family", Value: "mysql", AllowBlank: new(false), ComboItems: js.Arr{
@@ -178,6 +180,7 @@ var windows = []js.Value{
 					js.Arr{"disabled", "Disabled"}, js.Arr{"starttls", "StartTLS"}, js.Arr{"ldaps", "LDAPS"},
 				}},
 				js.Field{XType: js.XProxmoxTextField, Label: "CA Certificate", Name: "database_ca_certificate", EmptyText: "/etc/ssl/certs/ldap-ca.pem"},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Leave empty to verify against the host system CA certificates.")},
 			)},
 			js.Field{XType: js.XFieldSet, Title: "Client Tools", Layout: "anchor", Items: js.Items(
 				js.Field{XType: "pbsD2DDatabaseClientSelector", Label: "Client Version", Name: "database_default_client_dir", AllowBlank: new(true), EmptyText: "Automatic", DeleteEmptyWhenNotCreate: true, CBind: js.Obj{"engine": "{targetKind}"}},
@@ -197,8 +200,8 @@ var windows = []js.Value{
 		),
 		js.Items(
 			js.Field{XType: js.XFieldSet, Title: "TLS", Layout: "anchor", Items: js.Items(
-				js.Field{XType: js.XProxmoxTextField, Label: "CA Certificate", Name: "database_ca_certificate", AllowBlank: new(false), EmptyText: "/etc/ssl/certs/dovecot-ca.pem"},
-				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Dovecot backups always connect over TLS and verify the server certificate against this CA.")},
+				js.Field{XType: js.XProxmoxTextField, Label: "CA Certificate", Name: "database_ca_certificate", EmptyText: "/etc/ssl/certs/dovecot-ca.pem"},
+				js.Field{XType: js.XDisplayField, UserCls: "pmx-hint", Value: js.T("Dovecot backups always connect over TLS. Leave empty to verify against the host system CA certificates.")},
 			)},
 			js.Field{XType: js.XFieldSet, Title: "Client Tools", Layout: "anchor", Items: js.Items(
 				js.Field{XType: js.XProxmoxTextField, Label: "Client Directory", Name: "database_default_client_dir", AllowBlank: new(true), EmptyText: "Automatic", DeleteEmptyWhenNotCreate: true},
