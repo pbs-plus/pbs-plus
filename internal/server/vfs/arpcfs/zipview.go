@@ -107,6 +107,7 @@ type zipFileState struct {
 	ent    *zipEntry
 	uncomp int64
 
+	dataOff   int64
 	ring      []byte
 	ringStart int64
 	fed       int64
@@ -672,10 +673,14 @@ func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int
 		return 0, io.EOF
 	}
 	if zs.ent.method == 0 {
-		dataOff, err := zs.ov.dataOffset(ctx, zs.ent)
-		if err != nil {
-			return 0, err
+		if zs.dataOff == 0 {
+			off, err := zs.ov.dataOffset(ctx, zs.ent)
+			if err != nil {
+				return 0, err
+			}
+			zs.dataOff = off
 		}
+		dataOff := zs.dataOff
 		end := min(off+int64(len(dest)), zs.uncomp)
 		n := int(end - off)
 		m, err := zs.ov.readAt(ctx, dest[:n], dataOff+off)
@@ -817,6 +822,9 @@ func (zs *zipFileState) Lseek(off uint64, whence uint32) uint64 {
 // zipAttr answers hidden zips and virtual paths; a miss must fall through to
 // the agent so real files under an anchor keep working.
 func (fs *ARPCFS) zipAttr(filename string) (fswire.AgentFileInfo, error, bool) {
+	if !fs.zipActive.Load() {
+		return fswire.AgentFileInfo{}, nil, false
+	}
 	fs.zipMu.RLock()
 	if _, shadowed := fs.zipShadowed[filename]; shadowed {
 		fs.zipMu.RUnlock()
@@ -865,6 +873,9 @@ func (fs *ARPCFS) zipMarkShadowed(filename string) {
 }
 
 func (fs *ARPCFS) zipHidden(fullPath string) bool {
+	if !fs.zipActive.Load() {
+		return false
+	}
 	fs.zipMu.RLock()
 	_, ok := fs.zipOverlays[fullPath]
 	fs.zipMu.RUnlock()
@@ -1048,11 +1059,15 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 		fs.zipAnchors[anchor] = append(fs.zipAnchors[anchor], overlay)
 		fs.zipBytes += int64(len(overlay.entries)*96 + overlay.nameBytes)
 	}
+	fs.zipActive.Store(len(fs.zipOverlays) > 0)
 	fs.zipMu.Unlock()
 	return true
 }
 
 func (fs *ARPCFS) zipOpen(ctx context.Context, filename string) (*ARPCFile, bool) {
+	if !fs.zipActive.Load() {
+		return nil, false
+	}
 	fs.zipMu.RLock()
 	if _, shadowed := fs.zipShadowed[filename]; shadowed {
 		fs.zipMu.RUnlock()
@@ -1115,13 +1130,28 @@ type zipVChild struct {
 // zipCollectChildren merges root children of overlays anchored at dir with
 // subtree children of overlays anchored above dir.
 func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
+	if !fs.zipActive.Load() {
+		return nil
+	}
 	fs.zipMu.RLock()
 	defer fs.zipMu.RUnlock()
 
+	var hidden map[string]struct{}
+	anchored := fs.zipAnchors[dir]
+	if len(anchored) > 0 {
+		hidden = make(map[string]struct{}, len(anchored))
+		for _, ov := range anchored {
+			hidden[baseName(ov.zipPath)] = struct{}{}
+		}
+	}
+
 	var out []zipVChild
-	for _, ov := range fs.zipAnchors[dir] {
+	for _, ov := range anchored {
 		if d := ov.dirs[""]; d != nil {
 			for _, c := range d.children {
+				if _, skip := hidden[c.name]; skip {
+					continue
+				}
 				out = append(out, zipVChild{ov, c})
 			}
 		}
@@ -1137,6 +1167,9 @@ func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
 		for _, ov := range fs.zipAnchors[anchorKey(dir[:i])] {
 			if d := ov.dirs[inner]; d != nil {
 				for _, c := range d.children {
+					if _, skip := hidden[c.name]; skip {
+						continue
+					}
 					out = append(out, zipVChild{ov, c})
 				}
 			}
@@ -1147,6 +1180,9 @@ func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
 
 // zipIsVirtualDir reports whether dirPath names an overlay-only directory, even childless.
 func (fs *ARPCFS) zipIsVirtualDir(dirPath string) bool {
+	if !fs.zipActive.Load() {
+		return false
+	}
 	fs.zipMu.RLock()
 	defer fs.zipMu.RUnlock()
 
@@ -1175,6 +1211,7 @@ func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 	fs.zipSkipped = nil
 	fs.zipShadowed = nil
 	fs.zipBytes = 0
+	fs.zipActive.Store(false)
 	fs.zipMu.Unlock()
 	for _, ov := range ovs {
 		if ov.src != nil {
@@ -1266,9 +1303,6 @@ func (s *zipMergeStream) HasNext() bool {
 		vc := s.vqueue[s.vidx]
 		s.vidx++
 		if _, shadowed := s.emitted[vc.child.name]; shadowed {
-			continue
-		}
-		if s.fs.zipHidden(joinPath(s.path, vc.child.name)) {
 			continue
 		}
 		mode := uint32(fuse.S_IFREG)

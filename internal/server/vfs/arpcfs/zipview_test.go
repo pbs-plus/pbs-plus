@@ -54,7 +54,7 @@ func buildTestZip(t *testing.T, files map[string]int) []byte {
 	return buf.Bytes()
 }
 
-func buildZipFiles(t *testing.T, files map[string][]byte) []byte {
+func buildZipFiles(t testing.TB, files map[string][]byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -73,7 +73,7 @@ func buildZipFiles(t *testing.T, files map[string][]byte) []byte {
 	return buf.Bytes()
 }
 
-func testOverlay(t *testing.T, data []byte) *zipOverlay {
+func testOverlay(t testing.TB, data []byte) *zipOverlay {
 	t.Helper()
 	ov, err := parseZipOverlay(readAtBytes(data), int64(len(data)), zipMaxEntries)
 	if err != nil {
@@ -115,6 +115,7 @@ func testFS(ovs ...*zipOverlay) *ARPCFS {
 		}
 		fs.zipAnchors[anchor] = append(fs.zipAnchors[anchor], ov)
 	}
+	fs.zipActive.Store(len(fs.zipOverlays) > 0)
 	return fs
 }
 

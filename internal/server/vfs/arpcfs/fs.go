@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -573,6 +574,7 @@ type ARPCFS struct {
 	expandSevenZip   bool
 	expandMaxDepth   int
 	expandMaxEntries int
+	zipActive        atomic.Bool
 	zipMu            sync.RWMutex
 	zipOverlays      map[string]*zipOverlay
 	zipSkipped       map[string]struct{}
