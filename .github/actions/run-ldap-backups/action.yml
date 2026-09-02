@@ -39,34 +39,30 @@ runs:
         create_server_cert pbs-plus-ldap
         create_server_cert pbs-plus-ldap-restore
 
-        docker run -d --name pbs-plus-ldap \
-          --hostname pbs-plus-ldap \
-          --network pbs-plus-test \
-          --volume "$tls_root/pbs-plus-ldap:/container/service/slapd/assets/certs" \
-          -e LDAP_ORGANISATION="PBS Plus E2E" \
-          -e LDAP_DOMAIN=example.com \
-          -e LDAP_ADMIN_PASSWORD="$password" \
-          -e LDAP_TLS=true \
-          -e LDAP_TLS_CRT_FILENAME=ldap.crt \
-          -e LDAP_TLS_KEY_FILENAME=ldap.key \
-          -e LDAP_TLS_CA_CRT_FILENAME=ca.crt \
-          osixia/openldap:1.5.0
-        docker run -d --name pbs-plus-ldap-restore \
-          --hostname pbs-plus-ldap-restore \
-          --network pbs-plus-test \
-          --volume "$tls_root/pbs-plus-ldap-restore:/container/service/slapd/assets/certs" \
-          -e LDAP_ORGANISATION="PBS Plus E2E" \
-          -e LDAP_DOMAIN=example.com \
-          -e LDAP_ADMIN_PASSWORD="$password" \
-          -e LDAP_TLS=true \
-          -e LDAP_TLS_CRT_FILENAME=ldap.crt \
-          -e LDAP_TLS_KEY_FILENAME=ldap.key \
-          -e LDAP_TLS_CA_CRT_FILENAME=ca.crt \
-          osixia/openldap:1.5.0
+        create_ldap_server() {
+          local server=$1
+          docker create --name "$server" \
+            --hostname "$server" \
+            --network pbs-plus-test \
+            -e LDAP_ORGANISATION="PBS Plus E2E" \
+            -e LDAP_DOMAIN=example.com \
+            -e LDAP_ADMIN_PASSWORD="$password" \
+            -e LDAP_TLS=true \
+            -e LDAP_TLS_CRT_FILENAME=ldap.crt \
+            -e LDAP_TLS_KEY_FILENAME=ldap.key \
+            -e LDAP_TLS_CA_CRT_FILENAME=ca.crt \
+            osixia/openldap:1.5.0
+          docker cp "$tls_root/$server/." "$server:/container/service/slapd/assets/certs/"
+          docker start "$server"
+          docker cp "$tls_root/ca.crt" "pbs-plus-test:/tmp/$server-ca.crt"
+        }
+        create_ldap_server pbs-plus-ldap
+        create_ldap_server pbs-plus-ldap-restore
 
         ldap_ready() {
           docker logs "$1" 2>&1 | grep -q 'slapd starting' || return 1
-          docker exec pbs-plus-test ldapwhoami -x -H "ldap://$1" \
+          docker exec -e "LDAPTLS_CACERT=/tmp/$1-ca.crt" pbs-plus-test \
+            ldapwhoami -x -ZZ -H "ldap://$1" \
             -D "$bind_dn" -w "$password" >/dev/null 2>&1
         }
 
@@ -80,10 +76,6 @@ runs:
             fi
             sleep 2
           done
-        done
-
-        for server in pbs-plus-ldap pbs-plus-ldap-restore; do
-          docker cp "$tls_root/ca.crt" "pbs-plus-test:/tmp/$server-ca.crt"
         done
 
         docker exec -i pbs-plus-ldap ldapadd -x -H ldap://localhost \
