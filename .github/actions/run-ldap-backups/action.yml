@@ -55,6 +55,7 @@ runs:
             -e LDAP_TLS_CRT_FILENAME=ldap.crt \
             -e LDAP_TLS_KEY_FILENAME=ldap.key \
             -e LDAP_TLS_CA_CRT_FILENAME=ca.crt \
+            -e LDAP_TLS_VERIFY_CLIENT=never \
             osixia/openldap:1.5.0
           docker cp "$tls_root/ca.crt" "pbs-plus-test:/tmp/$server-ca.crt"
         }
