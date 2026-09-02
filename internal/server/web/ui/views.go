@@ -39,6 +39,7 @@ var coreViews = []js.Value{
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("S3"), "itemId": "s3-targets", "iconCls": "fa fa-cloud", "targetKind": "s3", "stateId": "grid-s3-targets-v1"},
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("PostgreSQL"), "itemId": "postgresql-targets", "iconCls": "fa fa-database", "targetKind": "postgresql", "stateId": "grid-postgresql-targets-v1"},
 			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("MySQL / MariaDB"), "itemId": "mysql-targets", "iconCls": "fa fa-database", "targetKind": "mysql", "stateId": "grid-mysql-targets-v1"},
+			js.Obj{"xtype": "pbsDiskTargetPanel", "title": js.T("LDAP / Active Directory"), "itemId": "ldap-targets", "iconCls": "fa fa-sitemap", "targetKind": "ldap", "stateId": "grid-ldap-targets-v1"},
 			js.Field{XType: "pbsDiskTokenPanel", Title: "Agent Bootstrap", ItemID: "tokens", IconCls: "fa fa-handshake-o"},
 		),
 	},

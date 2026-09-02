@@ -144,8 +144,12 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if err != nil {
 			return "", nil, nil, err
 		}
+		scope := job.DatabaseScope
+		if scope == "" && target.Type == coredb.TargetTypeLDAP {
+			scope = "server"
+		}
 		stagedDump, err := database.StageDump(ctx, "", target, password, database.DumpOptions{
-			Scope:     job.DatabaseScope,
+			Scope:     scope,
 			Database:  job.DatabaseName,
 			LogWriter: databaseLog,
 		}, bundle)

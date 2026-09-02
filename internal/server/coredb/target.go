@@ -102,6 +102,10 @@ func normalizeTarget(target *Target) error {
 		if target.DatabaseTLSMode == "" {
 			target.DatabaseTLSMode = "preferred"
 		}
+	case TargetTypeLDAP:
+		if err := normalizeLdapTarget(target); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unsupported target type %q", target.Type)
 	}
@@ -137,6 +141,23 @@ func normalizeDatabaseTarget(target *Target, defaultPort int) error {
 	return nil
 }
 
+func normalizeLdapTarget(target *Target) error {
+	if err := normalizeDatabaseTarget(target, 389); err != nil {
+		return err
+	}
+	switch target.DatabaseTLSMode {
+	case "":
+		target.DatabaseTLSMode = "starttls"
+	case "disabled", "starttls", "ldaps":
+	default:
+		return fmt.Errorf("unsupported LDAP TLS mode %q", target.DatabaseTLSMode)
+	}
+	if target.LdapBaseDN == "" {
+		return errors.New("LDAP target base DN is required")
+	}
+	return nil
+}
+
 func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 	switch target.Type {
 	case TargetTypeFilesystem:
@@ -147,6 +168,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			return err
 		}
 		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
 			return err
 		}
 		return q.UpsertTargetFilesystem(db.ctx, corequery.UpsertTargetFilesystemParams{
@@ -175,6 +199,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
 			return err
 		}
+		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
+			return err
+		}
 		return q.UpsertTargetS3(db.ctx, corequery.UpsertTargetS3Params{
 			TargetName: target.Name,
 			Url:        target.Path,
@@ -187,6 +214,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			return err
 		}
 		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
 			return err
 		}
 		return q.UpsertTargetPostgreSQL(db.ctx, corequery.UpsertTargetPostgreSQLParams{
@@ -208,6 +238,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 		if err := q.DeleteTargetPostgreSQL(db.ctx, target.Name); err != nil {
 			return err
 		}
+		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
+			return err
+		}
 		return q.UpsertTargetMySQL(db.ctx, corequery.UpsertTargetMySQLParams{
 			TargetName:          target.Name,
 			Variant:             target.DatabaseVariant,
@@ -218,6 +251,29 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			CaCertificate:       target.DatabaseCACertificate,
 			DefaultClientFamily: target.DatabaseClientFamily,
 			DefaultClientDir:    target.DatabaseDefaultClientDir,
+		})
+	case TargetTypeLDAP:
+		if err := q.DeleteTargetFilesystem(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetS3(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetPostgreSQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		return q.UpsertTargetLdap(db.ctx, corequery.UpsertTargetLdapParams{
+			TargetName:       target.Name,
+			Host:             target.DatabaseHost,
+			Port:             int64(target.DatabasePort),
+			Username:         target.DatabaseUsername,
+			TlsMode:          target.DatabaseTLSMode,
+			CaCertificate:    target.DatabaseCACertificate,
+			BaseDn:           target.LdapBaseDN,
+			DefaultClientDir: target.DatabaseDefaultClientDir,
 		})
 	default:
 		return fmt.Errorf("unsupported target type %q", target.Type)
@@ -523,6 +579,7 @@ func (db *Store) GetTarget(name string) (Target, error) {
 		DatabaseDefaultClientDir: row.DatabaseDefaultClientDir,
 		DatabaseVariant:          row.DatabaseVariant,
 		DatabaseClientFamily:     row.DatabaseDefaultClientFamily,
+		LdapBaseDN:               row.LdapBaseDn,
 	}
 
 	target.populateInfo()
@@ -604,6 +661,15 @@ func (db *Store) AddDatabasePassword(tx *Transaction, targetName string, passwor
 		}
 	}
 	if rows == 0 {
+		rows, err = q.UpdateTargetLdapPassword(db.ctx, corequery.UpdateTargetLdapPasswordParams{
+			Password:   encrypted,
+			TargetName: targetName,
+		})
+		if err != nil {
+			return fmt.Errorf("AddDatabasePassword: error updating LDAP target: %w", err)
+		}
+	}
+	if rows == 0 {
 		return fmt.Errorf("AddDatabasePassword: target %q is not a database target", targetName)
 	}
 
@@ -623,6 +689,8 @@ func (db *Store) GetDatabasePassword(name string) (string, error) {
 		encrypted, err = db.readQueries.GetTargetPostgreSQLPassword(db.ctx, name)
 	case TargetTypeMySQL:
 		encrypted, err = db.readQueries.GetTargetMySQLPassword(db.ctx, name)
+	case TargetTypeLDAP:
+		encrypted, err = db.readQueries.GetTargetLdapPassword(db.ctx, name)
 	default:
 		return "", fmt.Errorf("GetDatabasePassword: target %q is not a database target", name)
 	}
@@ -683,6 +751,7 @@ func (db *Store) GetAllTargets() ([]Target, error) {
 			DatabaseDefaultClientDir: row.DatabaseDefaultClientDir,
 			DatabaseVariant:          row.DatabaseVariant,
 			DatabaseClientFamily:     row.DatabaseDefaultClientFamily,
+			LdapBaseDN:               row.LdapBaseDn,
 		}
 
 		target.populateInfo()
@@ -795,7 +864,11 @@ func (t *Target) IsLocal() bool {
 }
 
 func (t *Target) IsDatabase() bool {
-	return t.Type == TargetTypePostgreSQL || t.Type == TargetTypeMySQL
+	return t.Type == TargetTypePostgreSQL || t.Type == TargetTypeMySQL || t.Type == TargetTypeLDAP
+}
+
+func (t *Target) IsLdap() bool {
+	return t.Type == TargetTypeLDAP
 }
 
 type Target struct {
@@ -827,6 +900,7 @@ type Target struct {
 	DatabaseDefaultClientDir string           `json:"database_default_client_dir,omitempty"`
 	DatabaseVariant          string           `json:"database_variant,omitempty"`
 	DatabaseClientFamily     string           `json:"database_default_client_family,omitempty"`
+	LdapBaseDN               string           `json:"ldap_base_dn,omitempty"`
 }
 
 type AgentHost struct {

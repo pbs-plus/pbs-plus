@@ -209,6 +209,7 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 	restore.DestTarget.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 	restore.DestTarget.DatabaseVariant = row.DatabaseVariant
 	restore.DestTarget.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+	restore.DestTarget.LdapBaseDN = row.LdapBaseDn
 
 	restore.DestTarget.populateInfo()
 
@@ -443,6 +444,7 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 		restore.DestTarget.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 		restore.DestTarget.DatabaseVariant = row.DatabaseVariant
 		restore.DestTarget.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+		restore.DestTarget.LdapBaseDN = row.LdapBaseDn
 
 		if row.Namespace.Valid {
 			restore.Namespace = row.Namespace.String
@@ -595,7 +597,7 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 	if err != nil {
 		return fmt.Errorf("error fetching destination target: %w", err)
 	}
-	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
+	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL && TargetType(target.TargetType) != TargetTypeLDAP {
 		return q.DeleteRestoreDatabaseOptions(db.ctx, restore.ID)
 	}
 	return q.UpsertRestoreDatabaseOptions(db.ctx, corequery.UpsertRestoreDatabaseOptionsParams{

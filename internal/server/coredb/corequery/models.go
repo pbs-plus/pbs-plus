@@ -183,6 +183,18 @@ type TargetFilesystem struct {
 	VolumeFree       sql.NullString `json:"volume_free"`
 }
 
+type TargetLdap struct {
+	TargetName       string `json:"target_name"`
+	Host             string `json:"host"`
+	Port             int64  `json:"port"`
+	Username         string `json:"username"`
+	Password         string `json:"password"`
+	TlsMode          string `json:"tls_mode"`
+	CaCertificate    string `json:"ca_certificate"`
+	BaseDn           string `json:"base_dn"`
+	DefaultClientDir string `json:"default_client_dir"`
+}
+
 type TargetMysql struct {
 	TargetName          string `json:"target_name"`
 	Variant             string `json:"variant"`

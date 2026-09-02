@@ -290,6 +290,7 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 	var s3Targets []TargetTreeNode
 	var postgreSQLTargets []TargetTreeNode
 	var mysqlTargets []TargetTreeNode
+	var ldapTargets []TargetTreeNode
 
 	for i := range targets {
 		t := targets[i]
@@ -325,6 +326,7 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 			DatabaseDefaultClientDir: t.DatabaseDefaultClientDir,
 			DatabaseVariant:          t.DatabaseVariant,
 			DatabaseClientFamily:     t.DatabaseClientFamily,
+			LdapBaseDN:               t.LdapBaseDN,
 			Leaf:                     true,
 			IsGroup:                  false,
 		}
@@ -378,6 +380,9 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 		case t.Type == coredb.TargetTypeMySQL:
 			node.IconCls = "fa fa-database"
 			mysqlTargets = append(mysqlTargets, node)
+		case t.Type == coredb.TargetTypeLDAP:
+			node.IconCls = "fa fa-sitemap"
+			ldapTargets = append(ldapTargets, node)
 
 		default:
 			node.IconCls = "fa fa-folder"
@@ -440,6 +445,13 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 		rootChildren = append(rootChildren, TargetTreeNode{
 			Text: "MySQL / MariaDB Targets", IconCls: "fa fa-database", IsGroup: true,
 			GroupType: "mysql", Expanded: true, Children: mysqlTargets,
+		})
+	}
+
+	if len(ldapTargets) > 0 {
+		rootChildren = append(rootChildren, TargetTreeNode{
+			Text: "LDAP / Active Directory Targets", IconCls: "fa fa-sitemap", IsGroup: true,
+			GroupType: "ldap", Expanded: true, Children: ldapTargets,
 		})
 	}
 
@@ -737,4 +749,5 @@ type TargetTreeNode struct {
 	DatabaseDefaultClientDir string    `json:"database_default_client_dir,omitempty"`
 	DatabaseVariant          string    `json:"database_variant,omitempty"`
 	DatabaseClientFamily     string    `json:"database_default_client_family,omitempty"`
+	LdapBaseDN               string    `json:"ldap_base_dn,omitempty"`
 }

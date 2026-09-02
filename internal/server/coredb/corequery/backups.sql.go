@@ -183,14 +183,15 @@ SELECT
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
-    COALESCE(p.host, m.host, '') AS database_host,
-    COALESCE(p.port, m.port, 0) AS database_port,
-    COALESCE(p.username, m.username, '') AS database_username,
-    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
-    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
-    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(p.host, m.host, l.host, '') AS database_host,
+    COALESCE(p.port, m.port, l.port, 0) AS database_port,
+    COALESCE(p.username, m.username, l.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, l.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, '') AS database_default_client_dir,
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
+    COALESCE(l.base_dn, '') AS ldap_base_dn,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
@@ -200,6 +201,7 @@ LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
 LEFT JOIN target_postgresql p ON p.target_name = t.name
 LEFT JOIN target_mysql m ON m.target_name = t.name
+LEFT JOIN target_ldap l ON l.target_name = t.name
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 WHERE j.id = ?
 LIMIT 1
@@ -267,6 +269,7 @@ type GetBackupRow struct {
 	DatabaseDefaultClientDir    string         `json:"database_default_client_dir"`
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
+	LdapBaseDn                  string         `json:"ldap_base_dn"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
 	AgentAuth                   sql.NullString `json:"agent_auth"`
@@ -339,6 +342,7 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.DatabaseDefaultClientDir,
 		&i.DatabaseVariant,
 		&i.DatabaseDefaultClientFamily,
+		&i.LdapBaseDn,
 		&i.AgentName,
 		&i.AgentIp,
 		&i.AgentAuth,
@@ -368,14 +372,15 @@ SELECT
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
-    COALESCE(p.host, m.host, '') AS database_host,
-    COALESCE(p.port, m.port, 0) AS database_port,
-    COALESCE(p.username, m.username, '') AS database_username,
-    COALESCE(p.ssl_mode, m.tls_mode, '') AS database_tls_mode,
-    COALESCE(p.ca_certificate, m.ca_certificate, '') AS database_ca_certificate,
-    COALESCE(p.default_client_dir, m.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(p.host, m.host, l.host, '') AS database_host,
+    COALESCE(p.port, m.port, l.port, 0) AS database_port,
+    COALESCE(p.username, m.username, l.username, '') AS database_username,
+    COALESCE(p.ssl_mode, m.tls_mode, l.tls_mode, '') AS database_tls_mode,
+    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, '') AS database_default_client_dir,
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
+    COALESCE(l.base_dn, '') AS ldap_base_dn,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
@@ -385,6 +390,7 @@ LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
 LEFT JOIN target_postgresql p ON p.target_name = t.name
 LEFT JOIN target_mysql m ON m.target_name = t.name
+LEFT JOIN target_ldap l ON l.target_name = t.name
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 ORDER BY j.id
 `
@@ -451,6 +457,7 @@ type ListAllBackupsRow struct {
 	DatabaseDefaultClientDir    string         `json:"database_default_client_dir"`
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
+	LdapBaseDn                  string         `json:"ldap_base_dn"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
 	AgentAuth                   sql.NullString `json:"agent_auth"`
@@ -529,6 +536,7 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.DatabaseDefaultClientDir,
 			&i.DatabaseVariant,
 			&i.DatabaseDefaultClientFamily,
+			&i.LdapBaseDn,
 			&i.AgentName,
 			&i.AgentIp,
 			&i.AgentAuth,

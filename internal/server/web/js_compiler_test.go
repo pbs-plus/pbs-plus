@@ -99,8 +99,8 @@ func TestCodeMirrorFieldBuffersValuesUntilEditorLoads(t *testing.T) {
 
 func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	source := ui.Render()
-	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 4 {
-		t.Fatalf("rendered %d target panels, want 4", got)
+	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 5 {
+		t.Fatalf("rendered %d target panels, want 5", got)
 	}
 
 	for _, expected := range [][]byte{
@@ -113,6 +113,12 @@ func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 		[]byte(`targetKind: "postgresql"`),
 		[]byte(`itemId: "mysql-targets"`),
 		[]byte(`targetKind: "mysql"`),
+		[]byte(`itemId: "ldap-targets"`),
+		[]byte(`targetKind: "ldap"`),
+		[]byte(`subject: "LDAP / Active Directory Target"`),
+		[]byte(`ldap: "Add LDAP / Active Directory Target"`),
+		[]byte(`name: "ldap_base_dn"`),
+		[]byte(`Logical directory-data backup only.`),
 		[]byte(`column.setText("S3 URL")`),
 		[]byte(`target/tree?kind=" + encodeURIComponent(view.targetKind || "")`),
 		[]byte(`target-status?kind=" + encodeURIComponent(view.targetKind || "")`),
@@ -208,6 +214,7 @@ func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 		[]byte(`subject: "S3 Target"`),
 		[]byte(`subject: "PostgreSQL Target"`),
 		[]byte(`subject: "MySQL / MariaDB Target"`),
+		[]byte(`subject: "LDAP / Active Directory Target"`),
 		[]byte(`name: "s3_endpoint"`),
 		[]byte(`name: "s3_bucket"`),
 		[]byte(`name: "s3_region"`),
@@ -224,6 +231,7 @@ func TestTargetEditWindowsRenderCompleteSchemas(t *testing.T) {
 		[]byte(`name: "database_scope"`),
 		[]byte(`name: "destination_database"`),
 		[]byte(`mysql: "Add MySQL / MariaDB Target"`),
+		[]byte(`ldap: "Add LDAP / Active Directory Target"`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("target editor is missing %q", expected)

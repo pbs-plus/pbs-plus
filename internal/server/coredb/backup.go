@@ -251,6 +251,7 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 	backup.Target.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 	backup.Target.DatabaseVariant = row.DatabaseVariant
 	backup.Target.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+	backup.Target.LdapBaseDN = row.LdapBaseDn
 
 	exclusions, err := db.readQueries.GetBackupExclusions(db.ctx, id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -605,6 +606,7 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 		backup.Target.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 		backup.Target.DatabaseVariant = row.DatabaseVariant
 		backup.Target.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+		backup.Target.LdapBaseDN = row.LdapBaseDn
 		if backup.Exclusions == nil {
 			backup.Exclusions = make([]Exclusion, 0)
 		}
@@ -779,7 +781,7 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 	if err != nil {
 		return fmt.Errorf("error fetching target: %w", err)
 	}
-	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL {
+	if TargetType(target.TargetType) != TargetTypePostgreSQL && TargetType(target.TargetType) != TargetTypeMySQL && TargetType(target.TargetType) != TargetTypeLDAP {
 		return q.DeleteBackupDatabaseOptions(db.ctx, backup.ID)
 	}
 	if backup.DatabaseScope != "database" && backup.DatabaseScope != "server" {

@@ -588,6 +588,7 @@ func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error 
 	setString("database_default_client_dir", &target.DatabaseDefaultClientDir)
 	setString("database_variant", &target.DatabaseVariant)
 	setString("database_default_client_family", &target.DatabaseClientFamily)
+	setString("ldap_base_dn", &target.LdapBaseDN)
 
 	if create || r.Form.Has("database_port") {
 		port := r.FormValue("database_port")

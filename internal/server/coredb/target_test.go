@@ -196,7 +196,16 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 		DatabaseTLSMode:          "verify-identity",
 		DatabaseDefaultClientDir: "/usr/bin",
 	}
-	for _, target := range []Target{postgres, mysql} {
+	ldap := Target{
+		Name:                     "ad",
+		Type:                     TargetTypeLDAP,
+		DatabaseHost:             "ad.example",
+		DatabaseUsername:         "cn=backup,dc=example,dc=com",
+		DatabaseTLSMode:          "ldaps",
+		LdapBaseDN:               "dc=example,dc=com",
+		DatabaseDefaultClientDir: "/usr/bin",
+	}
+	for _, target := range []Target{postgres, mysql, ldap} {
 		if err := db.CreateTarget(nil, target); err != nil {
 			t.Fatalf("CreateTarget(%q): %v", target.Name, err)
 		}
@@ -215,6 +224,24 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 	}
 	if gotMySQL.DatabasePort != 3306 || gotMySQL.DatabaseClientFamily != "mariadb" || gotMySQL.DatabaseVariant != "mariadb" {
 		t.Errorf("MySQL target = %#v", gotMySQL)
+	}
+
+	gotLdap, err := db.GetTarget(ldap.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotLdap.DatabasePort != 389 || gotLdap.LdapBaseDN != "dc=example,dc=com" || gotLdap.DatabaseTLSMode != "ldaps" || !gotLdap.IsLdap() || !gotLdap.IsDatabase() {
+		t.Errorf("LDAP target = %#v", gotLdap)
+	}
+	if err := db.AddDatabasePassword(nil, ldap.Name, "ldapsecret"); err != nil {
+		t.Fatal(err)
+	}
+	ldapPassword, err := db.GetDatabasePassword(ldap.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ldapPassword != "ldapsecret" {
+		t.Errorf("LDAP password = %q", ldapPassword)
 	}
 
 	if err := db.AddDatabasePassword(nil, postgres.Name, "secret"); err != nil {
@@ -275,5 +302,24 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 	}
 	if gotRestore.DestinationDatabase != "inventory_copy" || !gotRestore.ReplaceExisting || gotRestore.DestTarget.Type != TargetTypeMySQL {
 		t.Errorf("database restore = %#v", gotRestore)
+	}
+
+	ldapBackup := Backup{
+		ID:     "ldap-backup",
+		Store:  "datastore",
+		Target: Target{Name: ldap.Name},
+	}
+	if err := db.CreateBackup(nil, ldapBackup); err != nil {
+		t.Fatal(err)
+	}
+	gotLdapBackup, err := db.GetBackup(ldapBackup.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotLdapBackup.Target.Type != TargetTypeLDAP {
+		t.Errorf("LDAP backup target type = %q", gotLdapBackup.Target.Type)
+	}
+	if gotLdapBackup.Target.DatabaseHost != ldap.DatabaseHost || gotLdapBackup.Target.DatabasePort != 389 || gotLdapBackup.Target.LdapBaseDN != ldap.LdapBaseDN || gotLdapBackup.Target.DatabaseUsername != ldap.DatabaseUsername {
+		t.Errorf("LDAP backup target connection fields did not hydrate: %#v", gotLdapBackup.Target)
 	}
 }

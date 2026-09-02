@@ -13,6 +13,7 @@ A **target** is a backup source, managed on the tabbed **Targets** page. Each ta
 - **Filesystem**: a registered agent host, or a local path on the PBS server. Agent targets appear automatically once an agent bootstraps with the server. Each reports hostname, OS, IP address, connection status (Reachable / Unreachable), available volumes (drives on Windows, root filesystem on Linux), and volume size (total, used, free).
 - **S3**: an S3-compatible bucket (see below).
 - **PostgreSQL** and **MySQL / MariaDB**: database servers (see Database Backup below).
+- **LDAP / Active Directory**: directory servers backed up as LDIF (see Database Backup below).
 
 Target size metadata is resolved without scanning target contents: local targets use `statfs`, agent targets use volume metadata reported by the agent.
 
@@ -33,8 +34,8 @@ A backup job defines:
 
 For database targets, the job also defines:
 
-- **Scope** - `server` (every database on the server, each dumped to its own file, plus PostgreSQL globals) or `database` (a single named database)
-- **Database** - the database name, required for `database` scope
+- **Scope** - `server` (every database on the server, each dumped to its own file, plus PostgreSQL globals; for LDAP, the entire base DN) or `database` (a single named database; for LDAP, a single subtree DN)
+- **Database** - the database name (or subtree DN for LDAP), required for `database` scope. LDAP jobs left empty default to `server` scope.
 
 Job edits made while a job is running are preserved: the running task is not disturbed and the next run picks up the changes.
 
@@ -142,6 +143,18 @@ Notes:
 
 - Server-wide dumps write each database to its own dump file, so a single database can be restored on its own. PostgreSQL server dumps also include separate roles and globals dumps.
 - Dump client output is mirrored into the PBS task log.
+
+### LDAP Logical Backup and Restore
+
+LDAP targets capture the entries and readable attributes under a base DN as LDIF, without agents or hook scripts. Scheduled runs, retention, encryption, checksums, and snapshot history use the normal PBS backup pipeline.
+
+1. Add an **LDAP / Active Directory** target: host, port, bind DN, password, base DN, and TLS mode (`disabled`, `starttls`, or `ldaps`). StartTLS and LDAPS require certificate verification; set a CA certificate when the system trust store does not contain the issuer.
+2. Dumps use the installed `ldapsearch` client with paged results. Pin a **default client directory** to force a specific ldap-utils installation.
+3. Readable user attributes, including binary values and generic LDAP password attributes, are preserved. Server-maintained attributes that cannot be replayed are stripped.
+4. Restores use `ldapmodify` in add mode. Existing entries are not overwritten or merged. Entries are replayed parent-first under their original DNs, and a whole-base snapshot can restore one selected subtree.
+5. **Replace Existing** first verifies that the selected subtree is present in the checked snapshot, then recursively deletes that destination subtree with `ldapdelete` before replaying it. LDAP restore does not rename DNs.
+
+This is a logical directory-data backup, not an Active Directory disaster-recovery backup. LDAP cannot capture AD password secrets, NTDS.dit, SYSVOL, deleted objects, replication state, domain-wide security state, or every protected attribute. Use supported Windows Server System State/VSS backups for domain or forest recovery. OpenLDAP schema, `cn=config`, ACL configuration, and replication state also require the server's native backup tools when they are outside the selected base DN.
 
 ### Service Backup via Hook Scripts
 

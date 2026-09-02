@@ -65,6 +65,13 @@ Database targets (PostgreSQL, MySQL/MariaDB):
 2. The dump runs on the PBS host against the database server. Server-wide scope dumps every database to its own file plus PostgreSQL globals; database scope dumps a single named database.
 3. Dump files, a checksum manifest, and the connection secrets are staged as split pxar archives (`.mpxar.didx` / `.ppxar.didx`) and written to the datastore as a normal PBS snapshot. No agent is involved.
 
+LDAP targets (including logical Active Directory exports):
+
+1. The server runs `ldapsearch` with paged results and fail-closed StartTLS/LDAPS verification, then stages replayable LDIF with server-maintained attributes stripped.
+2. Server scope dumps the target's base DN; database scope dumps a single subtree DN. The manifest records the source base DN and SHA-256 checksum.
+3. Restore validates the snapshot and selected subtree before any deletion, orders entries parent-first, and runs `ldapmodify` in add mode. Replace-existing restores use `ldapdelete` only after that preflight.
+4. LDAP snapshots contain readable directory data, not server state. Active Directory System State, NTDS.dit, SYSVOL, password secrets, tombstones, and replication state are outside this target's scope.
+
 S3 targets are backed up by reading the bucket through the `s3fs` virtual filesystem instead of an agent mount.
 
 ## How Restore Works
@@ -77,7 +84,7 @@ Filesystem targets:
 4. The agent's restore subprocess pulls file data from the server and writes it to the destination path on the agent host.
 5. Integrity is verified via sha256 checksums.
 
-Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics.
+Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics. LDAP targets validate and order selected LDIF entries before replaying them under their original DNs; replace-existing deletes the subtree only after preflight succeeds.
 
 ## Internal Packages
 

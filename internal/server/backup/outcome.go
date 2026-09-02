@@ -205,6 +205,9 @@ func databaseLogLabel(target coredb.Target) string {
 	if !target.IsDatabase() {
 		return ""
 	}
+	if target.Type == coredb.TargetTypeLDAP {
+		return "LDAP"
+	}
 	if target.Type == coredb.TargetTypePostgreSQL {
 		return "PostgreSQL"
 	}
