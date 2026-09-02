@@ -1,6 +1,6 @@
-Ext.define('PBS.plusPanel.LogView', {
-  extend: 'Ext.panel.Panel',
-  xtype: 'proxmoxPlusLogView',
+Ext.define("PBS.plusPanel.LogView", {
+  extend: "Ext.panel.Panel",
+  xtype: "proxmoxPlusLogView",
 
   pageSize: 510,
   viewBuffer: 50,
@@ -12,40 +12,37 @@ Ext.define('PBS.plusPanel.LogView', {
   failCallback: undefined,
 
   controller: {
-    xclass: 'Ext.app.ViewController',
+    xclass: "Ext.app.ViewController",
 
     updateParams: function () {
       let me = this;
       let viewModel = me.getViewModel();
 
-      if (viewModel.get('hide_timespan') || viewModel.get('livemode')) {
+      if (viewModel.get("hide_timespan") || viewModel.get("livemode")) {
         return;
       }
 
-      let since = viewModel.get('since');
-      let until = viewModel.get('until');
+      let since = viewModel.get("since");
+      let until = viewModel.get("until");
 
       if (since > until) {
         Ext.Msg.alert(
-          'Error',
-          'Since date must be less equal than Until date.'
+          "Error",
+          "Since date must be less equal than Until date.",
         );
         return;
       }
 
-      let submitFormat = viewModel.get('submitFormat');
+      let submitFormat = viewModel.get("submitFormat");
 
-      viewModel.set(
-        'params.since',
-        Ext.Date.format(since, submitFormat)
-      );
-      if (submitFormat === 'Y-m-d') {
+      viewModel.set("params.since", Ext.Date.format(since, submitFormat));
+      if (submitFormat === "Y-m-d") {
         viewModel.set(
-          'params.until',
-          Ext.Date.format(until, submitFormat) + ' 23:59:59'
+          "params.until",
+          Ext.Date.format(until, submitFormat) + " 23:59:59",
         );
       } else {
-        viewModel.set('params.until', Ext.Date.format(until, submitFormat));
+        viewModel.set("params.until", Ext.Date.format(until, submitFormat));
       }
 
       me.getView().loadTask.delay(200);
@@ -71,8 +68,8 @@ Ext.define('PBS.plusPanel.LogView', {
       let me = this;
       let view = me.getView();
       let viewModel = me.getViewModel();
-      let content = me.lookup('content');
-      let data = viewModel.get('data');
+      let content = me.lookup("content");
+      let data = viewModel.get("data");
 
       // Avoid needless DOM updates
       if (
@@ -84,7 +81,7 @@ Ext.define('PBS.plusPanel.LogView', {
           return;
         }
       }
-      viewModel.set('data', {
+      viewModel.set("data", {
         start: startLine,
         total: total,
         fetchedLines: fetchedLines.length,
@@ -96,23 +93,21 @@ Ext.define('PBS.plusPanel.LogView', {
       // Build spacer divs to simulate the full log file height.
       let aboveHeight = startLine * view.lineHeight;
       let belowCount = total - startLine - fetchedLines.length;
-      let belowHeight =
-        belowCount > 0 ? belowCount * view.lineHeight : 0;
+      let belowHeight = belowCount > 0 ? belowCount * view.lineHeight : 0;
 
       let spacerTop = `<div style="height:${aboveHeight}px"></div>`;
       let spacerBottom = `<div style="height:${belowHeight}px"></div>`;
 
       // Only the fetched (visible) lines are joined and inserted
-      let htmlContent =
-        spacerTop + fetchedLines.join('<br>') + spacerBottom;
+      let htmlContent = spacerTop + fetchedLines.join("<br>") + spacerBottom;
       content.update(htmlContent);
 
       if (scrollToBottom) {
         let scroller = view.getScrollable();
-        scroller.suspendEvent('scroll');
+        scroller.suspendEvent("scroll");
         view.scrollTo(0, Infinity);
         me.updateStart(true);
-        scroller.resumeEvent('scroll');
+        scroller.resumeEvent("scroll");
       }
     },
 
@@ -127,8 +122,8 @@ Ext.define('PBS.plusPanel.LogView', {
       let viewModel = me.getViewModel();
       Proxmox.Utils.API2Request({
         url: view.url,
-        params: viewModel.get('params'),
-        method: 'GET',
+        params: viewModel.get("params"),
+        method: "GET",
         success: function (response) {
           if (me.isDestroyed) {
             return;
@@ -137,7 +132,7 @@ Ext.define('PBS.plusPanel.LogView', {
           let total = response.result.total;
           let fetchedLines = [];
           // Use the 'start' parameter (or 0 if undefined)
-          let startParam = viewModel.get('params.start') || 0;
+          let startParam = viewModel.get("params.start") || 0;
           // Instead of a giant array with empty gaps, we simply push
           // the fetched lines.
           Ext.Array.each(response.result.data, function (line) {
@@ -171,21 +166,19 @@ Ext.define('PBS.plusPanel.LogView', {
       let view = me.getView(),
         viewModel = me.getViewModel();
 
-      let limit = viewModel.get('params.limit');
-      let total = viewModel.get('data').total || 0;
+      let limit = viewModel.get("params.limit");
+      let total = viewModel.get("data").total || 0;
 
       // Heuristic: if scrolling up load more before, if scrolling down load more after.
       let startRatio =
-        view.lastTargetLine && view.lastTargetLine > targetLine
-          ? 2 / 3
-          : 1 / 3;
+        view.lastTargetLine && view.lastTargetLine > targetLine ? 2 / 3 : 1 / 3;
       view.lastTargetLine = targetLine;
 
       let newStart = scrolledToBottom
         ? Math.trunc(total - limit)
         : Math.trunc(targetLine - startRatio * limit + 10);
 
-      viewModel.set('params.start', Math.max(newStart, 0));
+      viewModel.set("params.start", Math.max(newStart, 0));
 
       view.loadTask.delay(200);
     },
@@ -198,13 +191,10 @@ Ext.define('PBS.plusPanel.LogView', {
       let line = view.getScrollY() / view.lineHeight;
       let viewLines = view.getHeight() / view.lineHeight;
 
-      let viewStart = Math.max(
-        Math.trunc(line - 1 - view.viewBuffer),
-        0
-      );
+      let viewStart = Math.max(Math.trunc(line - 1 - view.viewBuffer), 0);
       let viewEnd = Math.trunc(line + viewLines + 1 + view.viewBuffer);
 
-      let { start, limit } = viewModel.get('params');
+      let { start, limit } = viewModel.get("params");
       let margin = start < 20 ? 0 : 20;
 
       if (viewStart < start + margin || viewEnd > start + limit - margin) {
@@ -215,8 +205,8 @@ Ext.define('PBS.plusPanel.LogView', {
     onLiveMode: function () {
       let me = this;
       let viewModel = me.getViewModel();
-      viewModel.set('livemode', true);
-      viewModel.set('params', { start: 0, limit: 510 });
+      viewModel.set("livemode", true);
+      viewModel.set("params", { start: 0, limit: 510 });
       let view = me.getView();
       delete view.content;
       view.scrollToEnd = true;
@@ -225,7 +215,7 @@ Ext.define('PBS.plusPanel.LogView', {
 
     onTimespan: function () {
       let me = this;
-      me.getViewModel().set('livemode', false);
+      me.getViewModel().set("livemode", false);
       me.updateView([], 0, 0);
       // Directly apply currently selected values without button click.
       me.updateParams();
@@ -235,21 +225,18 @@ Ext.define('PBS.plusPanel.LogView', {
       let me = this;
 
       if (!view.url) {
-        throw 'no url specified';
+        throw "no url specified";
       }
 
       let viewModel = this.getViewModel();
       let since = new Date();
       since.setDate(since.getDate() - 3);
-      viewModel.set('until', new Date());
-      viewModel.set('since', since);
-      viewModel.set('params.limit', view.pageSize);
-      viewModel.set('hide_timespan', !view.log_select_timespan);
-      viewModel.set('submitFormat', view.submitFormat);
-      me.lookup('content').setStyle(
-        'line-height',
-        `${view.lineHeight}px`
-      );
+      viewModel.set("until", new Date());
+      viewModel.set("since", since);
+      viewModel.set("params.limit", view.pageSize);
+      viewModel.set("hide_timespan", !view.log_select_timespan);
+      viewModel.set("submitFormat", view.submitFormat);
+      me.lookup("content").setStyle("line-height", `${view.lineHeight}px`);
 
       view.loadTask = new Ext.util.DelayedTask(me.doLoad, me);
 
@@ -284,7 +271,7 @@ Ext.define('PBS.plusPanel.LogView', {
     data: {
       until: null,
       since: null,
-      submitFormat: 'Y-m-d',
+      submitFormat: "Y-m-d",
       livemode: true,
       hide_timespan: false,
       data: {
@@ -299,11 +286,11 @@ Ext.define('PBS.plusPanel.LogView', {
     },
   },
 
-  layout: 'auto',
+  layout: "auto",
   bodyPadding: 5,
   scrollable: {
-    x: 'auto',
-    y: 'auto',
+    x: "auto",
+    y: "auto",
     listeners: {
       // We hook the internal scroller’s scroll event here.
       scroll: {
@@ -320,73 +307,73 @@ Ext.define('PBS.plusPanel.LogView', {
 
   tbar: {
     bind: {
-      hidden: '{hide_timespan}',
+      hidden: "{hide_timespan}",
     },
     items: [
-      '->',
+      "->",
       {
-        xtype: 'segmentedbutton',
+        xtype: "segmentedbutton",
         items: [
           {
-            text: gettext('Live Mode'),
+            text: gettext("Live Mode"),
             bind: {
-              pressed: '{livemode}',
+              pressed: "{livemode}",
             },
-            handler: 'onLiveMode',
+            handler: "onLiveMode",
           },
           {
-            text: gettext('Select Timespan'),
+            text: gettext("Select Timespan"),
             bind: {
-              pressed: '{!livemode}',
+              pressed: "{!livemode}",
             },
-            handler: 'onTimespan',
+            handler: "onTimespan",
           },
         ],
       },
       {
-        xtype: 'box',
-        autoEl: { cn: gettext('Since') + ':' },
+        xtype: "box",
+        autoEl: { cn: gettext("Since") + ":" },
         bind: {
-          disabled: '{livemode}',
+          disabled: "{livemode}",
         },
       },
       {
-        xtype: 'proxmoxDateTimeField',
-        name: 'since_date',
-        reference: 'since',
-        format: 'Y-m-d',
+        xtype: "proxmoxDateTimeField",
+        name: "since_date",
+        reference: "since",
+        format: "Y-m-d",
         bind: {
-          disabled: '{livemode}',
-          value: '{since}',
-          maxValue: '{until}',
-          submitFormat: '{submitFormat}',
+          disabled: "{livemode}",
+          value: "{since}",
+          maxValue: "{until}",
+          submitFormat: "{submitFormat}",
         },
       },
       {
-        xtype: 'box',
-        autoEl: { cn: gettext('Until') + ':' },
+        xtype: "box",
+        autoEl: { cn: gettext("Until") + ":" },
         bind: {
-          disabled: '{livemode}',
+          disabled: "{livemode}",
         },
       },
       {
-        xtype: 'proxmoxDateTimeField',
-        name: 'until_date',
-        reference: 'until',
-        format: 'Y-m-d',
+        xtype: "proxmoxDateTimeField",
+        name: "until_date",
+        reference: "until",
+        format: "Y-m-d",
         bind: {
-          disabled: '{livemode}',
-          value: '{until}',
-          minValue: '{since}',
-          submitFormat: '{submitFormat}',
+          disabled: "{livemode}",
+          value: "{until}",
+          minValue: "{since}",
+          submitFormat: "{submitFormat}",
         },
       },
       {
-        xtype: 'button',
-        text: 'Update',
-        handler: 'updateParams',
+        xtype: "button",
+        text: "Update",
+        handler: "updateParams",
         bind: {
-          disabled: '{livemode}',
+          disabled: "{livemode}",
         },
       },
     ],
@@ -394,11 +381,11 @@ Ext.define('PBS.plusPanel.LogView', {
 
   items: [
     {
-      xtype: 'box',
-      reference: 'content',
+      xtype: "box",
+      reference: "content",
       style: {
-        font: 'normal 11px tahoma, arial, verdana, sans-serif',
-        'white-space': 'pre',
+        font: "normal 11px tahoma, arial, verdana, sans-serif",
+        "white-space": "pre",
       },
     },
   ],

@@ -23,10 +23,13 @@
   Proxmox.Utils.overrideNotificationFieldValue({
     "d2d-backup": "D2D Backup  -  disk-to-disk backup job completed",
     "d2d-restore": "D2D Restore  -  file/folder restore job completed",
-    "d2d-verification": "D2D Verification  -  spot-check verification run completed",
+    "d2d-verification":
+      "D2D Verification  -  spot-check verification run completed",
     "d2d-batch": "D2D Batch  -  consolidated notification for a job batch",
-    "d2d-alert-stale-backup": "D2D Alert: backup job has not run within threshold",
-    "d2d-alert-unconfigured-target": "D2D Alert: target has no backup job configured",
+    "d2d-alert-stale-backup":
+      "D2D Alert: backup job has not run within threshold",
+    "d2d-alert-unconfigured-target":
+      "D2D Alert: target has no backup job configured",
     "d2d-alert-target-offline": "D2D Alert: configured target is unreachable",
   });
 
@@ -37,7 +40,11 @@
     { field: "type", value: "d2d-restore", comment: "D2D Restore" },
     { field: "type", value: "d2d-verification", comment: "D2D Verification" },
     { field: "type", value: "d2d-batch", comment: "D2D Batch" },
-    { field: "type", value: "d2d-alert-stale-backup", comment: "D2D Alert: Stale Backup" },
+    {
+      field: "type",
+      value: "d2d-alert-stale-backup",
+      comment: "D2D Alert: Stale Backup",
+    },
     {
       field: "type",
       value: "d2d-alert-unconfigured-target",
@@ -80,6 +87,6 @@
       }
     },
     null,
-    { priority: 999 }
+    { priority: 999 },
   );
 })();
