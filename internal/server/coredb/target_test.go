@@ -319,4 +319,7 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 	if gotLdapBackup.Target.Type != TargetTypeLDAP {
 		t.Errorf("LDAP backup target type = %q", gotLdapBackup.Target.Type)
 	}
+	if gotLdapBackup.Target.DatabaseHost != ldap.DatabaseHost || gotLdapBackup.Target.DatabasePort != 389 || gotLdapBackup.Target.LdapBaseDN != ldap.LdapBaseDN || gotLdapBackup.Target.DatabaseUsername != ldap.DatabaseUsername {
+		t.Errorf("LDAP backup target connection fields did not hydrate: %#v", gotLdapBackup.Target)
+	}
 }

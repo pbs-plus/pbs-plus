@@ -209,6 +209,7 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 	restore.DestTarget.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 	restore.DestTarget.DatabaseVariant = row.DatabaseVariant
 	restore.DestTarget.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+	restore.DestTarget.LdapBaseDN = row.LdapBaseDn
 
 	restore.DestTarget.populateInfo()
 
@@ -443,6 +444,7 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 		restore.DestTarget.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 		restore.DestTarget.DatabaseVariant = row.DatabaseVariant
 		restore.DestTarget.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+		restore.DestTarget.LdapBaseDN = row.LdapBaseDn
 
 		if row.Namespace.Valid {
 			restore.Namespace = row.Namespace.String
