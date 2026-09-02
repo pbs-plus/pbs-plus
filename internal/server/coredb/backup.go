@@ -251,6 +251,7 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 	backup.Target.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 	backup.Target.DatabaseVariant = row.DatabaseVariant
 	backup.Target.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+	backup.Target.LdapBaseDN = row.LdapBaseDn
 
 	exclusions, err := db.readQueries.GetBackupExclusions(db.ctx, id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -605,6 +606,7 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 		backup.Target.DatabaseDefaultClientDir = row.DatabaseDefaultClientDir
 		backup.Target.DatabaseVariant = row.DatabaseVariant
 		backup.Target.DatabaseClientFamily = row.DatabaseDefaultClientFamily
+		backup.Target.LdapBaseDN = row.LdapBaseDn
 		if backup.Exclusions == nil {
 			backup.Exclusions = make([]Exclusion, 0)
 		}
