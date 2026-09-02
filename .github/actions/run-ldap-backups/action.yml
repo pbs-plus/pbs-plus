@@ -21,23 +21,26 @@ runs:
         bind_dn="cn=admin,$base_dn"
         tls_root=$(mktemp -d)
 
-        openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
-          -subj '/CN=PBS Plus E2E LDAP CA' \
-          -keyout "$tls_root/ca.key" -out "$tls_root/ca.crt" >/dev/null 2>&1
-        create_server_cert() {
-          local server=$1 dir="$tls_root/$1"
-          mkdir -p "$dir"
-          openssl req -newkey rsa:2048 -sha256 -nodes \
-            -subj "/CN=$server" -addext "subjectAltName=DNS:$server" \
-            -keyout "$dir/ldap.key" -out "$dir/ldap.csr" >/dev/null 2>&1
-          printf 'subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n' "$server" >"$dir/ext.cnf"
-          openssl x509 -req -sha256 -days 1 -in "$dir/ldap.csr" \
-            -CA "$tls_root/ca.crt" -CAkey "$tls_root/ca.key" -CAcreateserial \
-            -extfile "$dir/ext.cnf" -out "$dir/ldap.crt" >/dev/null 2>&1
-          cp "$tls_root/ca.crt" "$dir/ca.crt"
-        }
-        create_server_cert pbs-plus-ldap
-        create_server_cert pbs-plus-ldap-restore
+        docker run --rm --volume "$tls_root:/certs" \
+          --entrypoint bash osixia/openldap:1.5.0 -ceu '
+            openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+              -subj "/CN=PBS Plus E2E LDAP CA" \
+              -keyout /certs/ca.key -out /certs/ca.crt >/dev/null 2>&1
+            for server in pbs-plus-ldap pbs-plus-ldap-restore; do
+              dir="/certs/$server"
+              mkdir -p "$dir"
+              openssl req -newkey rsa:2048 -sha256 -nodes \
+                -subj "/CN=$server" \
+                -keyout "$dir/ldap.key" -out "$dir/ldap.csr" >/dev/null 2>&1
+              printf "subjectAltName=DNS:%s\nextendedKeyUsage=serverAuth\n" "$server" >"$dir/ext.cnf"
+              openssl x509 -req -sha256 -days 1 -in "$dir/ldap.csr" \
+                -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial \
+                -extfile "$dir/ext.cnf" -out "$dir/ldap.crt" >/dev/null 2>&1
+              cp /certs/ca.crt "$dir/ca.crt"
+            done
+            owner=$(stat -c %u:%g /certs)
+            chown -R "$owner" /certs
+          '
 
         create_ldap_server() {
           local server=$1
