@@ -51,9 +51,10 @@ func Register(engine *jobs.Engine, app *application.Runtime) error {
 
 func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.VerificationJob, input jobs.VerificationInput) error {
 	v := &verificationJob{
-		job:    job,
-		app:    app,
-		logger: log.WithScope(log.Scope{JobID: job.ID}),
+		job:         job,
+		app:         app,
+		logger:      log.WithScope(log.Scope{JobID: job.ID}),
+		executionID: w.Execution.ID,
 	}
 	defer v.cleanup()
 	queued, err := tasklog.NewQueuedTask("verification", proxmox.EncodeToHexEscapes(job.ID), input.Web)

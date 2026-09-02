@@ -103,6 +103,7 @@ func (b *backupJob) runPostScript(success bool, warningsNum int) {
 	job := b.job
 	workerID := b.workerID
 	workflowStart := b.workflowStart
+	executionID := b.executionID
 	b.mu.RUnlock()
 
 	if job.PostScript == "" {
@@ -117,7 +118,7 @@ func (b *backupJob) runPostScript(success bool, warningsNum int) {
 		b.mu.Lock()
 		b.scriptTask = task
 		b.mu.Unlock()
-		if err := updateBackupStatus(false, 0, job, proxmox.Task{UPID: task.UPID()}, workflowStart, 0, b.app); err != nil {
+		if err := updateBackupStatus(false, 0, job, proxmox.Task{UPID: task.UPID()}, executionID, workflowStart, 0, b.app); err != nil {
 			b.logger.Error(err, "failed to assign post-backup script task to backup job")
 		}
 		defer func() {

@@ -83,10 +83,11 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	b.mu.Lock()
 	b.workerID = workerID
 	b.workflowStart = queued.Task.StartTime
+	b.executionID = w.Execution.ID
 	b.scriptTask = queued
 	b.mu.Unlock()
 
-	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, queued.Task.StartTime, 0, b.app); err != nil {
+	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, b.executionID, queued.Task.StartTime, 0, b.app); err != nil {
 		b.logger.Error(err, "failed to assign queued task to backup job")
 	}
 
@@ -117,7 +118,7 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	b.mu.Lock()
 	b.scriptTask = nil
 	b.mu.Unlock()
-	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: startRes.UPID}, b.workflowStart, 0, b.app); err != nil {
+	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: startRes.UPID}, b.executionID, b.workflowStart, 0, b.app); err != nil {
 		b.logger.Error(err, "failed to assign backup task to job", "upid", startRes.UPID)
 	}
 
@@ -180,7 +181,7 @@ func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.Raw
 	b.cmd = cmd
 	b.mu.Unlock()
 
-	if err := updateBackupStatus(false, 0, b.job, task, b.workflowStart, 0, b.app); err != nil {
+	if err := updateBackupStatus(false, 0, b.job, task, b.executionID, b.workflowStart, 0, b.app); err != nil {
 		if currOwner != "" {
 			if err := SetDatastoreOwner(b.job, b.app, currOwner); err != nil {
 				b.logger.Error(err, "failed to update backup status after task creation")

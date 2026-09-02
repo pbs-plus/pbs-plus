@@ -22,6 +22,13 @@ func PrepareQueue(app *application.Runtime, jobID string, web bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	exec, err := app.Engine.ActiveExecution(ctx, jobs.WorkflowMtfMigration, jobID)
+	if errors.Is(err, jobdb.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	job, err := app.MtfDB.GetMtfJob(ctx, jobID)
 	if err != nil {
 		return err
@@ -31,6 +38,10 @@ func PrepareQueue(app *application.Runtime, jobID string, web bool) error {
 		return err
 	}
 	queued.OnAbort(func() { _ = CancelQueued(app, jobID) })
+	if jobs.RunFinalized(job.ID, exec.ID) {
+		queued.Close()
+		return nil
+	}
 	h := mtfdb.JobHistory{
 		LastRunUpid:      queued.UPID(),
 		LastRunStatus:    coredb.JobStatusUnknown,
@@ -78,5 +89,9 @@ func CancelQueued(app *application.Runtime, jobID string) error {
 		LastRunStarttime: queued.Task.StartTime,
 		LastRunEndtime:   time.Now().Unix(),
 	}
-	return app.MtfDB.UpdateMtfJobHistory(ctx, job.ID, h, "")
+	if err := app.MtfDB.UpdateMtfJobHistory(ctx, job.ID, h, ""); err != nil {
+		return err
+	}
+	jobs.MarkRunFinalized(job.ID, exec.ID)
+	return nil
 }

@@ -220,7 +220,7 @@ func (b *backupJob) updatePBSStatus(succeeded bool, warningsNum int, upid string
 	currentJob := b.job
 	workflowStart := b.workflowStart
 	b.mu.RUnlock()
-	if err := updateBackupStatus(succeeded, warningsNum, currentJob, proxmox.Task{UPID: upid}, workflowStart, time.Now().Unix(), b.app); err != nil {
+	if err := updateBackupStatus(succeeded, warningsNum, currentJob, proxmox.Task{UPID: upid}, b.executionID, workflowStart, time.Now().Unix(), b.app); err != nil {
 		b.logger.Error(err, "failed to update job status - post cmd.Wait")
 	}
 }
@@ -265,7 +265,9 @@ func (b *backupJob) createOK(err error) {
 	b.job = latest
 	if err := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); err != nil {
 		b.logger.Error(err, "failed to persist backup OK state")
+		return
 	}
+	jobs.MarkRunFinalized(latest.ID, b.executionID)
 }
 
 func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
@@ -289,8 +291,9 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 	b.job = latest
 	if uerr := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); uerr != nil {
 		b.logger.Error(uerr, "", "upid", task.UPID)
-
+		return
 	}
+	jobs.MarkRunFinalized(latest.ID, b.executionID)
 }
 
 func (b *backupJob) workflowTimes() (int64, int64) {

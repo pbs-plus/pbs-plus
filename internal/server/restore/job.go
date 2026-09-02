@@ -43,6 +43,7 @@ type restoreJob struct {
 	receivedDone atomic.Bool
 
 	job                coredb.Restore
+	executionID        string
 	remoteServer       *pxar.RemoteServer
 	localClient        *pxar.Client
 	agentPipe          *arpc.StreamPipe
@@ -90,7 +91,7 @@ func (b *restoreJob) finalizeFailure(err error) {
 	b.task.WriteString(fmt.Sprintf("End Time: %s", time.Now().Format("Mon Jan 2 15:04:05 2006")))
 	b.task.CloseErr(err)
 
-	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.app); err != nil {
+	if err := updateRestoreStatus(false, 0, b.job, b.task.Task, b.executionID, b.app); err != nil {
 		b.logger.Error(err, "failed to update restore status on error")
 	}
 
@@ -119,13 +120,13 @@ func (b *restoreJob) finalizeSuccess() {
 	errCount := b.errCount.Load()
 	if errCount > 0 {
 		b.task.CloseWarn(int(errCount))
-		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.app); err != nil {
+		if err := updateRestoreStatus(true, int(errCount), b.job, b.task.Task, b.executionID, b.app); err != nil {
 			b.logger.Error(err, "failed to update restore status with warnings")
 		}
 	} else {
 		b.task.CloseOK()
 		b.logger.Info("restore completed successfully")
-		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.app); err != nil {
+		if err := updateRestoreStatus(true, 0, b.job, b.task.Task, b.executionID, b.app); err != nil {
 			b.logger.Error(err, "failed to update restore status on success")
 		}
 	}
@@ -600,8 +601,9 @@ func (b *restoreJob) createOK(err error) {
 
 	if uerr := b.app.CoreDB.UpdateRestore(nil, latest); uerr != nil {
 		b.logger.Error(uerr, "failed to update restore with task", "upid", task.UPID)
-
+		return
 	}
+	jobs.MarkRunFinalized(b.job.ID, b.executionID)
 }
 
 func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
@@ -616,6 +618,7 @@ func (b *restoreJob) updateRestoreWithTask(task proxmox.Task) {
 
 	if uerr := b.app.CoreDB.UpdateRestore(nil, latest); uerr != nil {
 		b.logger.Error(uerr, "failed to update restore with task", "upid", task.UPID)
-
+		return
 	}
+	jobs.MarkRunFinalized(b.job.ID, b.executionID)
 }

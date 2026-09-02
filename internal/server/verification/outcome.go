@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
@@ -120,6 +121,12 @@ func (v *verificationJob) cleanup() {
 }
 
 func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) error {
+	v.mu.RLock()
+	executionID := v.executionID
+	v.mu.RUnlock()
+	if executionID != "" && tasklog.IsQueuedUPID(task.UPID) && jobs.RunFinalized(v.job.ID, executionID) {
+		return jobs.ErrRunFinalized
+	}
 	job, err := v.app.CoreDB.GetVerificationJob(v.job.ID)
 	if err != nil {
 		return err
@@ -131,7 +138,13 @@ func (v *verificationJob) updateJobStatus(succeeded bool, task proxmox.Task) err
 	if succeeded {
 		job.History.LastSuccessfulUpid = task.UPID
 	}
-	return v.app.CoreDB.UpdateVerificationJob(nil, job)
+	if err := v.app.CoreDB.UpdateVerificationJob(nil, job); err != nil {
+		return err
+	}
+	if task.EndTime > 0 {
+		jobs.MarkRunFinalized(v.job.ID, executionID)
+	}
+	return nil
 }
 
 // using the standard PBS task system (mirrors backup/restore pattern).
@@ -148,6 +161,7 @@ func (v *verificationJob) updateJobHistory(succeeded bool, warningsNum int) erro
 
 	return jobs.UpdateJobHistory(
 		v.job.ID,
+		v.executionID,
 		0,
 		succeeded,
 		warningsNum,
