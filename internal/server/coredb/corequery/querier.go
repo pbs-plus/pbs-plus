@@ -43,6 +43,7 @@ type Querier interface {
 	DeleteScript(ctx context.Context, path string) (int64, error)
 	DeleteTarget(ctx context.Context, name string) (int64, error)
 	DeleteTargetFilesystem(ctx context.Context, targetName string) error
+	DeleteTargetLdap(ctx context.Context, targetName string) error
 	DeleteTargetMySQL(ctx context.Context, targetName string) error
 	DeleteTargetPostgreSQL(ctx context.Context, targetName string) error
 	DeleteTargetS3(ctx context.Context, targetName string) error
@@ -66,6 +67,7 @@ type Querier interface {
 	GetRestore(ctx context.Context, id string) (GetRestoreRow, error)
 	GetScript(ctx context.Context, path string) (GetScriptRow, error)
 	GetTarget(ctx context.Context, name string) (GetTargetRow, error)
+	GetTargetLdapPassword(ctx context.Context, targetName string) (string, error)
 	GetTargetMySQLPassword(ctx context.Context, targetName string) (string, error)
 	GetTargetPostgreSQLPassword(ctx context.Context, targetName string) (string, error)
 	GetTargetS3Secret(ctx context.Context, targetName string) (string, error)
@@ -108,6 +110,7 @@ type Querier interface {
 	UpdateRestore(ctx context.Context, arg UpdateRestoreParams) error
 	UpdateScript(ctx context.Context, arg UpdateScriptParams) error
 	UpdateTarget(ctx context.Context, arg UpdateTargetParams) error
+	UpdateTargetLdapPassword(ctx context.Context, arg UpdateTargetLdapPasswordParams) (int64, error)
 	UpdateTargetMySQLPassword(ctx context.Context, arg UpdateTargetMySQLPasswordParams) (int64, error)
 	UpdateTargetPostgreSQLPassword(ctx context.Context, arg UpdateTargetPostgreSQLPasswordParams) (int64, error)
 	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) (int64, error)
@@ -119,6 +122,7 @@ type Querier interface {
 	UpsertRestoreDatabaseOptions(ctx context.Context, arg UpsertRestoreDatabaseOptionsParams) error
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
 	UpsertTargetFilesystem(ctx context.Context, arg UpsertTargetFilesystemParams) error
+	UpsertTargetLdap(ctx context.Context, arg UpsertTargetLdapParams) error
 	UpsertTargetMySQL(ctx context.Context, arg UpsertTargetMySQLParams) error
 	UpsertTargetPostgreSQL(ctx context.Context, arg UpsertTargetPostgreSQLParams) error
 	UpsertTargetS3(ctx context.Context, arg UpsertTargetS3Params) error

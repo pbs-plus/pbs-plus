@@ -59,6 +59,7 @@ var targetPanelController = js.ControllerClass{
 				s3: "PBS.D2DManagement.TargetS3EditWindow",
 				postgresql: "PBS.D2DManagement.TargetPostgreSQLEditWindow",
 				mysql: "PBS.D2DManagement.TargetMySQLEditWindow",
+				ldap: "PBS.D2DManagement.TargetLdapEditWindow",
 			};
 			Ext.create(windows[kind], {
 				listeners: { destroy: () => me.reload() },
@@ -149,6 +150,7 @@ var targetPanelController = js.ControllerClass{
 				s3: "PBS.D2DManagement.TargetS3EditWindow",
 				postgresql: "PBS.D2DManagement.TargetPostgreSQLEditWindow",
 				mysql: "PBS.D2DManagement.TargetMySQLEditWindow",
+				ldap: "PBS.D2DManagement.TargetLdapEditWindow",
 			};
 			Ext.create(windows[view.targetKind || "filesystem"], {
 				contentid: selection[0].data.name,
@@ -267,6 +269,7 @@ var targetPanelController = js.ControllerClass{
 			let s3Targets = [];
 			let postgresqlTargets = [];
 			let mysqlTargets = [];
+			let ldapTargets = [];
 			filtered.forEach(function (node) {
 				let targetData = node.data;
 				let treeNode = Ext.apply({}, targetData);
@@ -301,6 +304,9 @@ var targetPanelController = js.ControllerClass{
 				} else if (targetData.kind === "mysql") {
 					treeNode.iconCls = "fa fa-database";
 					mysqlTargets.push(treeNode);
+				} else if (targetData.kind === "ldap") {
+					treeNode.iconCls = "fa fa-sitemap";
+					ldapTargets.push(treeNode);
 				} else {
 					treeNode.iconCls = "fa fa-folder";
 					localTargets.push(treeNode);
@@ -321,6 +327,9 @@ var targetPanelController = js.ControllerClass{
 			}
 			if (mysqlTargets.length > 0) {
 				rootChildren.push({ text: "MySQL / MariaDB Targets", children: mysqlTargets, isGroup: true, groupType: "mysql", iconCls: "fa fa-database", expanded: true });
+			}
+			if (ldapTargets.length > 0) {
+				rootChildren.push({ text: "LDAP / Active Directory Targets", children: ldapTargets, isGroup: true, groupType: "ldap", iconCls: "fa fa-sitemap", expanded: true });
 			}
 			view.setRootNode({ text: "Root", expanded: true, children: rootChildren });
 		`),
@@ -409,6 +418,7 @@ var targetPanelController = js.ControllerClass{
 					database_default_client_dir: node.database_default_client_dir,
 					database_variant: node.database_variant,
 					database_default_client_family: node.database_default_client_family,
+					ldap_base_dn: node.ldap_base_dn,
 				});
 			}
 			if (node.children && node.children.length > 0) {
@@ -517,9 +527,10 @@ var targetPanelController = js.ControllerClass{
 				s3: "Add S3 Target",
 				postgresql: "Add PostgreSQL Target",
 				mysql: "Add MySQL / MariaDB Target",
+				ldap: "Add LDAP / Active Directory Target",
 			}[view.targetKind] || "Add Target");
 			view.down("#setS3SecretButton").setHidden(view.targetKind !== "s3");
-			view.down("#setDatabasePasswordButton").setHidden(!["postgresql", "mysql"].includes(view.targetKind));
+			view.down("#setDatabasePasswordButton").setHidden(!["postgresql", "mysql", "ldap"].includes(view.targetKind));
 			view.down("#pushUpdateButton").setHidden(view.targetKind !== "filesystem");
 			if (view.targetKind === "s3") {
 				let filesystemColumns = ["volume_type", "volume_name", "volume_fs", "volume_used", "volume_total", "agent_version"];
@@ -532,7 +543,7 @@ var targetPanelController = js.ControllerClass{
 					}
 				});
 			}
-			if (["postgresql", "mysql"].includes(view.targetKind)) {
+			if (["postgresql", "mysql", "ldap"].includes(view.targetKind)) {
 				let filesystemColumns = ["volume_type", "volume_name", "volume_fs", "volume_used", "volume_total", "agent_version"];
 				view.getColumns().forEach(function (column) {
 					if (column.dataIndex === "path") {
@@ -568,7 +579,7 @@ var targetPanel = js.Panel{
 		{Text: "Create Job", Handler: "addJob", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")}, js.Sep(),
 		{Text: "Edit", Handler: "onEdit", Disabled: true, EnableFn: recordExpr("!rec.data.isGroup")},
 		{Text: "Set S3 Secret Key", ItemID: "setS3SecretButton", Handler: "setS3Secret", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && rec.data.target_type === "s3"`)},
-		{Text: "Set Password", ItemID: "setDatabasePasswordButton", Handler: "setDatabasePassword", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && ["postgresql", "mysql"].includes(rec.data.kind)`)},
+		{Text: "Set Password", ItemID: "setDatabasePasswordButton", Handler: "setDatabasePassword", Disabled: true, EnableFn: recordExpr(`!rec.data.isGroup && ["postgresql", "mysql", "ldap"].includes(rec.data.kind)`)},
 		{Text: "Update Agent", ItemID: "pushUpdateButton", Handler: "pushUpdate", Disabled: true, EnableFn: js.Func("rec", `
 			if (!rec) {
 				return false;
@@ -607,6 +618,9 @@ var targetPanel = js.Panel{
 			}
 			if (["postgresql", "mysql"].includes(record.data.kind)) {
 				return Ext.String.htmlEncode(record.data.database_host + ":" + record.data.database_port);
+			}
+			if (record.data.kind === "ldap") {
+				return Ext.String.htmlEncode(record.data.database_host + ":" + record.data.database_port + " (" + (record.data.ldap_base_dn || "-") + ")");
 			}
 			return value || "-";
 		`)},
