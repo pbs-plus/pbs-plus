@@ -77,7 +77,7 @@ Dovecot targets:
 1. The server selects Dovecot 2.4 or newer `doveadm` client tools and creates an ephemeral client configuration containing the shared doveadm password, local staging storage, and a private copy of the target CA certificate.
 2. `doveadm backup --no-userdb-lookup -R` pulls one remote user's mailbox data over `tcps:` into a mode-0700 staging directory. An optional mailbox filter narrows the transfer.
 3. The password and CA copy are removed before the staged mail data and manifest enter the normal PBS snapshot pipeline. The original CA file remains on the server.
-4. Restore validates the manifest and staged mail directory, then uses one-way `doveadm sync` for additive recovery or `doveadm backup` for replace-existing mirror semantics. The destination user may differ from the source user.
+4. Restore validates the manifest and staged mail directory, then uses one-way `doveadm sync` (run twice so the first pass can reconcile mailbox GUID state) for additive recovery or `doveadm backup` for replace-existing mirror semantics. The destination user may differ from the source user. Replace requires fresh or empty destination mail storage because Dovecot never allows deleting an existing INBOX; restoring into divergent state fails the task instead of partially applying.
 5. This path preserves mailbox data and metadata only. Dovecot configuration, user databases, TLS keys, Sieve, and host state are outside its scope.
 
 S3 targets are backed up by reading the bucket through the `s3fs` virtual filesystem instead of an agent mount.
@@ -92,7 +92,7 @@ Filesystem targets:
 4. The agent's restore subprocess pulls file data from the server and writes it to the destination path on the agent host.
 5. Integrity is verified via sha256 checksums.
 
-Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics. LDAP targets validate and order selected LDIF entries before replaying them under their original DNs; replace-existing deletes the subtree only after preflight succeeds. Dovecot targets restore staged mailbox data over verified `tcps:` transport, using additive sync or replace-existing mirror semantics.
+Database targets restore a dump archive back into a running database server using the matching restore client (`pg_restore`, `mysql`, or `mariadb`). A server-wide dump can restore a single source database, optionally renamed via a destination database name, with optional replace-existing semantics. LDAP targets validate and order selected LDIF entries before replaying them under their original DNs; replace-existing deletes the subtree only after preflight succeeds. Dovecot targets restore staged mailbox data over verified `tcps:` transport, using additive sync or replace-existing mirror semantics; replace targets fresh or empty destination mail storage and fails loudly otherwise.
 
 ## Internal Packages
 

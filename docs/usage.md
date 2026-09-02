@@ -68,7 +68,7 @@ Database restores load a dump archive back into a database server:
 - Optionally set a **destination database** name to restore under a new name
 - Optionally replace existing databases
 
-Dovecot restores select a Dovecot snapshot, source username, optional destination username, and optional mailbox. Additive mode merges the backed-up state into the destination user; **Replace Existing** mirrors the backup and removes destination-only mailbox changes within the selected scope.
+Dovecot restores select a Dovecot snapshot, source username, optional destination username, and optional mailbox. Additive mode merges the backed-up state into the destination user (the underlying one-way dsync merge is not a conflict-resolution system); **Replace Existing** mirrors the backup into the destination. Replace requires the destination user's mail storage to be fresh or empty (the disaster-recovery case): Dovecot refuses to delete and recreate an existing INBOX, so replacing into a mailbox with divergent index state fails the restore instead of partially applying it. Use additive mode for populated destinations, or clear the destination user's mail storage first.
 
 ## S3-Compatible Backup Target
 
@@ -168,7 +168,7 @@ Dovecot targets preserve one user's messages, folders, flags, keywords, and mail
 1. Configure a TLS-enabled doveadm TCP listener on the Dovecot server. Set a strong `doveadm_password`, install a server certificate whose SAN matches the target hostname, and restrict the listener to the PBS Plus host with a firewall. The shared password grants mailbox-level administrative access.
 2. Add a **Dovecot** target with the listener host and port, shared doveadm password, an absolute path to the trusted CA certificate on the PBS Plus server, and optionally a pinned Dovecot client directory.
 3. Create a backup job with the source username. Leave **Mailbox** empty for every mailbox, or enter one mailbox name for selective backup.
-4. Restore to the original username or another destination username. Leave **Mailbox** empty to use the backup's scope. Additive restore uses one-way `doveadm sync`; **Replace Existing** uses `doveadm backup` to mirror the backup into the destination.
+4. Restore to the original username or another destination username. Leave **Mailbox** empty to use the backup's scope. Additive restore uses one-way `doveadm sync` and never deletes destination messages; **Replace Existing** uses `doveadm backup` to mirror the backup into the destination and requires fresh or empty destination mail storage.
 
 The PBS Plus host requires Dovecot 2.4 or newer client tools. Remote Dovecot 2.3 and 2.4 servers are supported through the doveadm protocol. For Dovecot 2.4, a minimal listener includes `doveadm_password`, `ssl_server_cert_file`, `ssl_server_key_file`, and a `service doveadm` inet listener with `ssl = yes`. Dovecot 2.3 uses its corresponding 2.3 SSL setting names. Validate the version-specific configuration with `doveconf -n`, verify the listener with `openssl s_client`, and use the upstream [Dovecot 2.4 doveadm documentation](https://doc.dovecot.org/main/core/admin/doveadm.html) or [Dovecot 2.3 dsync TCP documentation](https://doc.dovecot.org/2.3/configuration_manual/replication/).
 
