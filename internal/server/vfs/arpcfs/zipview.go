@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,6 +27,9 @@ import (
 )
 
 const (
+	extraExtendedTime = 0x5455
+	extraNTFSTime     = 0x000a
+
 	zipMaxEntries    = 10000
 	zipBombRatio     = 1000
 	zipBombFloor     = 4 << 20
@@ -173,6 +177,7 @@ func cleanZipName(raw string) (string, bool, bool) {
 	return s, isDir, true
 }
 
+// dosTime decodes the archiver's local wall clock; fallback only, 2s resolution.
 func dosTime(d, t uint16) int64 {
 	if d == 0 && t == 0 {
 		return 0
@@ -280,7 +285,7 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		versionMadeBy := binary.LittleEndian.Uint16(cd[off+4:])
 		flags := binary.LittleEndian.Uint16(cd[off+8:])
 		method := binary.LittleEndian.Uint16(cd[off+10:])
-		mtime := dosTime(binary.LittleEndian.Uint16(cd[off+12:]), binary.LittleEndian.Uint16(cd[off+14:]))
+		mtime := dosTime(binary.LittleEndian.Uint16(cd[off+14:]), binary.LittleEndian.Uint16(cd[off+12:]))
 		crc := binary.LittleEndian.Uint32(cd[off+16:])
 		compSize := int64(binary.LittleEndian.Uint32(cd[off+20:]))
 		uncompSize := int64(binary.LittleEndian.Uint32(cd[off+24:]))
@@ -297,6 +302,7 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 
 		extraOff := off + 46 + nameLen
 		extraEnd := extraOff + extraLen
+		var extMtime int64
 		for extraOff+4 <= extraEnd {
 			fieldStart := extraOff
 			fieldID := binary.LittleEndian.Uint16(cd[extraOff:])
@@ -305,22 +311,34 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 			if extraOff > extraEnd {
 				return nil, errZipCorrupt
 			}
-			if fieldID != 1 {
-				continue
-			}
 			p := fieldStart + 4
 			end := fieldStart + 4 + fieldLen
-			if uncompSize == 0xFFFFFFFF && p+8 <= end {
-				uncompSize = int64(binary.LittleEndian.Uint64(cd[p:]))
-				p += 8
+			switch fieldID {
+			case 1:
+				if uncompSize == 0xFFFFFFFF && p+8 <= end {
+					uncompSize = int64(binary.LittleEndian.Uint64(cd[p:]))
+					p += 8
+				}
+				if compSize == 0xFFFFFFFF && p+8 <= end {
+					compSize = int64(binary.LittleEndian.Uint64(cd[p:]))
+					p += 8
+				}
+				if hdrOffset == 0xFFFFFFFF && p+8 <= end {
+					hdrOffset = int64(binary.LittleEndian.Uint64(cd[p:]))
+				}
+			case extraExtendedTime:
+				if extMtime == 0 && p < end && cd[p]&1 != 0 && p+5 <= end {
+					extMtime = int64(int32(binary.LittleEndian.Uint32(cd[p+1:])))
+				}
+			case extraNTFSTime:
+				if extMtime == 0 && p+4+4+8 <= end &&
+					binary.LittleEndian.Uint16(cd[p+4:]) == 1 {
+					extMtime = filetimeUnix(binary.LittleEndian.Uint64(cd[p+8:]))
+				}
 			}
-			if compSize == 0xFFFFFFFF && p+8 <= end {
-				compSize = int64(binary.LittleEndian.Uint64(cd[p:]))
-				p += 8
-			}
-			if hdrOffset == 0xFFFFFFFF && p+8 <= end {
-				hdrOffset = int64(binary.LittleEndian.Uint64(cd[p:]))
-			}
+		}
+		if extMtime != 0 {
+			mtime = extMtime
 		}
 
 		off += 46 + nameLen + extraLen + commentLen
@@ -376,10 +394,53 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		parent.children = append(parent.children, zipChild{name: baseName(name), entry: idx})
 	}
 
+	ov.backfillDirMtimes()
 	if expansionTooLarge(ov.uncompSum, size) {
 		return nil, fmt.Errorf("%w: %d/%d", errZipBomb, ov.uncompSum, size)
 	}
 	return ov, nil
+}
+
+// filetimeUnix converts a Windows FILETIME (100ns ticks since 1601) to seconds.
+func filetimeUnix(ft uint64) int64 {
+	if ft == 0 {
+		return 0
+	}
+	return int64(ft/10000000) - 11644473600
+}
+
+// backfillDirMtimes keeps implicit parents (no archive entry) off the epoch.
+func (ov *zipOverlay) backfillDirMtimes() {
+	names := make([]string, 0, len(ov.dirs))
+	for name := range ov.dirs {
+		if ov.dirs[name].mtime == 0 {
+			names = append(names, name)
+		}
+	}
+	sort.Slice(names, func(i, j int) bool {
+		return strings.Count(names[i], "/") > strings.Count(names[j], "/")
+	})
+	for _, name := range names {
+		d := ov.dirs[name]
+		for _, c := range d.children {
+			var m int64
+			if c.entry >= 0 {
+				m = ov.entries[c.entry].mtime
+			} else if cd, ok := ov.dirs[childDirName(name, c.name)]; ok {
+				m = cd.mtime
+			}
+			if m > d.mtime {
+				d.mtime = m
+			}
+		}
+	}
+}
+
+func childDirName(dir, name string) string {
+	if dir == "" {
+		return name
+	}
+	return dir + "/" + name
 }
 
 func baseName(p string) string {
@@ -394,6 +455,8 @@ func (ov *zipOverlay) ensureDir(name string, mode uint32, mtime int64) *zipDir {
 	if d, ok := ov.dirs[name]; ok {
 		if mode != 0 {
 			d.mode = mode
+		}
+		if mtime != 0 {
 			d.mtime = mtime
 		}
 		return d
@@ -437,6 +500,7 @@ func (ov *zipOverlay) dirAttr(d *zipDir) fswire.AgentFileInfo {
 	return fswire.AgentFileInfo{
 		Mode:           d.mode,
 		IsDir:          true,
+		ModTime:        d.mtime * int64(time.Second),
 		CreationTime:   d.mtime,
 		LastAccessTime: d.mtime,
 		LastWriteTime:  d.mtime,

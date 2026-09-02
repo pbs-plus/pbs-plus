@@ -60,7 +60,10 @@ func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) 
 		}
 		m := f.Mode()
 		isDir := namedDir || m.IsDir()
-		mtime := f.Modified.Unix()
+		var mtime int64
+		if !f.Modified.IsZero() {
+			mtime = f.Modified.Unix()
+		}
 		if isDir {
 			if _, exists := ov.byName[name]; exists {
 				continue
@@ -93,6 +96,7 @@ func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) 
 		parent.children = append(parent.children, zipChild{name: baseName(name), entry: idx})
 	}
 
+	ov.backfillDirMtimes()
 	if expansionTooLarge(ov.uncompSum, size) {
 		return nil, fmt.Errorf("%w: %d/%d", errZipBomb, ov.uncompSum, size)
 	}
