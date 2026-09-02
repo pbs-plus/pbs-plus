@@ -542,6 +542,8 @@ func (ov *zipOverlay) dataOffset(ctx context.Context, e *zipEntry) (int64, error
 	return e.dataOff, nil
 }
 
+var zipRingPool = sync.Pool{New: func() any { return make([]byte, zipRingSize) }}
+
 func (zs *zipFileState) init(ctx context.Context) error {
 	if zs.ent.method == m7z {
 		fr, err := zs.ov.sfiles[zs.ent.sidx].Open()
@@ -549,7 +551,7 @@ func (zs *zipFileState) init(ctx context.Context) error {
 			return fmt.Errorf("%w: %w", errZipUnsupported, err)
 		}
 		zs.fr = fr
-		zs.ring = make([]byte, zipRingSize)
+		zs.ring = zipRingPool.Get().([]byte)
 		return nil
 	}
 	off, err := zs.ov.dataOffset(ctx, zs.ent)
@@ -562,7 +564,7 @@ func (zs *zipFileState) init(ctx context.Context) error {
 	zs.sec = io.NewSectionReader(zipSrc{zs.ov.readAt}, off, zs.ent.compSize)
 	zs.br = bufio.NewReaderSize(zs.sec, zipSrcBufSize)
 	zs.fr = flate.NewReader(zs.br)
-	zs.ring = make([]byte, zipRingSize)
+	zs.ring = zipRingPool.Get().([]byte)
 	return nil
 }
 
@@ -783,6 +785,9 @@ func (zs *zipFileState) close() {
 	zs.mu.Lock()
 	if zs.fr != nil {
 		_ = zs.fr.Close()
+	}
+	if zs.ring != nil {
+		zipRingPool.Put(zs.ring)
 	}
 	zs.fr = nil
 	zs.sec = nil
