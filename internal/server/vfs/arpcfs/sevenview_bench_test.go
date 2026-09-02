@@ -59,12 +59,11 @@ func sevenOverlay(tb testing.TB, data []byte) *zipOverlay {
 	return ov
 }
 
-func readAll(tb testing.TB, ov *zipOverlay, idx int32) {
+func readAll(tb testing.TB, ov *zipOverlay, idx int32, buf []byte) {
 	tb.Helper()
 	ent := &ov.entries[idx]
 	zs := &zipFileState{ov: ov, ent: ent, uncomp: ent.uncompSize}
 	defer zs.close()
-	buf := make([]byte, 128<<10)
 	for off := int64(0); off < ent.uncompSize; {
 		n, err := zs.ReadAt(context.Background(), buf, off)
 		off += int64(n)
@@ -82,12 +81,13 @@ func benchSeven(b *testing.B, solid, reverse bool) {
 	ov := sevenOverlay(b, data)
 	b.SetBytes(int64(len(ov.entries)) * 256 << 10)
 	b.ReportAllocs()
+	buf := make([]byte, 128<<10)
 	for b.Loop() {
 		for i := range int32(len(ov.entries)) {
 			if reverse {
 				i = int32(len(ov.entries)) - 1 - i
 			}
-			readAll(b, ov, i)
+			readAll(b, ov, i, buf)
 		}
 	}
 }
