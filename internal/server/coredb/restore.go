@@ -624,6 +624,9 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 }
 
 func (db *Store) storeRestoreDovecotOptions(q *corequery.Queries, restore Restore) error {
+	if restore.DovecotSourceUsername == "" && restore.DovecotDestinationUsername == "" && restore.DovecotMailbox == "" {
+		return q.DeleteRestoreDovecotOptions(db.ctx, restore.ID)
+	}
 	target, err := q.GetTarget(db.ctx, restore.DestTarget.Name)
 	if err != nil {
 		return fmt.Errorf("error fetching destination target: %w", err)

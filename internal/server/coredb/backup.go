@@ -813,6 +813,9 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 }
 
 func (db *Store) storeBackupDovecotOptions(q *corequery.Queries, backup Backup) error {
+	if backup.DovecotUsername == "" && backup.DovecotMailbox == "" {
+		return q.DeleteBackupDovecotOptions(db.ctx, backup.ID)
+	}
 	target, err := q.GetTarget(db.ctx, backup.Target.Name)
 	if err != nil {
 		return fmt.Errorf("error fetching target: %w", err)
