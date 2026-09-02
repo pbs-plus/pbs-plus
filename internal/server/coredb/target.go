@@ -178,7 +178,10 @@ func normalizeDovecotTarget(target *Target) error {
 	if target.DatabaseDefaultClientDir != "" && !filepath.IsAbs(target.DatabaseDefaultClientDir) {
 		return errors.New("Dovecot target client directory must be absolute")
 	}
-	if target.DatabaseCACertificate != "" && !filepath.IsAbs(target.DatabaseCACertificate) {
+	if target.DatabaseCACertificate == "" {
+		return errors.New("Dovecot target CA certificate is required")
+	}
+	if !filepath.IsAbs(target.DatabaseCACertificate) {
 		return errors.New("Dovecot target CA certificate path must be absolute")
 	}
 	target.Access = ""

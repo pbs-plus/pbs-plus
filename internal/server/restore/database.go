@@ -27,20 +27,8 @@ func (w taskLineWriter) Write(data []byte) (int, error) {
 }
 
 func (b *restoreJob) databaseExecute(ctx context.Context) error {
-	stagingDir, err := os.MkdirTemp("", ".pbs-plus-database-restore-")
+	stagingDir, err := b.restoreArchive(ctx, ".pbs-plus-database-restore-")
 	if err != nil {
-		return fmt.Errorf("create database restore staging directory: %w", err)
-	}
-	if err := os.Chmod(stagingDir, 0o700); err != nil {
-		_ = os.RemoveAll(stagingDir)
-		return fmt.Errorf("secure database restore staging directory: %w", err)
-	}
-	b.databaseStagingDir = stagingDir
-
-	if err := b.startLocalRestore(ctx, stagingDir, []string{"/"}, pxar.RestoreModeNormal); err != nil {
-		return err
-	}
-	if err := b.waitForTransfer(ctx); err != nil {
 		return err
 	}
 
@@ -61,4 +49,23 @@ func (b *restoreJob) databaseExecute(ctx context.Context) error {
 	}
 	b.runPostScript()
 	return nil
+}
+
+func (b *restoreJob) restoreArchive(ctx context.Context, pattern string) (string, error) {
+	stagingDir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		return "", fmt.Errorf("create restore staging directory: %w", err)
+	}
+	if err := os.Chmod(stagingDir, 0o700); err != nil {
+		_ = os.RemoveAll(stagingDir)
+		return "", fmt.Errorf("secure restore staging directory: %w", err)
+	}
+	b.stagingDir = stagingDir
+	if err := b.startLocalRestore(ctx, stagingDir, []string{"/"}, pxar.RestoreModeNormal); err != nil {
+		return "", err
+	}
+	if err := b.waitForTransfer(ctx); err != nil {
+		return "", err
+	}
+	return stagingDir, nil
 }

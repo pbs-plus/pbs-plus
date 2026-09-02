@@ -110,7 +110,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 }
 
 func backupCommandPolicy(backup coredb.Backup) (string, bool) {
-	if backup.Target.IsDatabase() {
+	if backup.Target.IsDatabase() || backup.Target.IsDovecot() {
 		return "--change-detection-mode=metadata", false
 	}
 	switch backup.Mode {

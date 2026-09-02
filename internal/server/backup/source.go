@@ -14,6 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
@@ -163,6 +164,31 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if len(stagedDump.Manifest.Failed) > 0 {
 			b.logger.Warn("database dump skipped failed databases", "databases", stagedDump.Manifest.Failed)
 		}
+	} else if target.IsDovecot() && b.databaseAware {
+		password, err := b.app.CoreDB.GetDatabasePassword(target.Name)
+		if err != nil {
+			return "", nil, nil, fmt.Errorf("get Dovecot password: %w", err)
+		}
+		dovecotLog := taskLogWriter{
+			destination: b.logger.JobStdoutWriter(),
+			logLine:     b.logQueuedLine,
+		}
+		client, err := dovecot.SelectClient(ctx, target)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		stagedBackup, err := dovecot.StageBackup(ctx, "", target, password, dovecot.BackupOptions{
+			Username:  job.DovecotUsername,
+			Mailbox:   job.DovecotMailbox,
+			LogWriter: dovecotLog,
+		}, client)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		b.mu.Lock()
+		b.stagedDovecot = stagedBackup
+		b.mu.Unlock()
+		srcPath = stagedBackup.ArchiveDir
 	} else if target.IsAgent() {
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
@@ -221,7 +247,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		}
 	}
 
-	if !target.IsDatabase() {
+	if !target.IsDatabase() && !target.IsDovecot() {
 		srcPath = filepath.Join(srcPath, job.Subpath)
 	}
 

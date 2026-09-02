@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
@@ -81,6 +82,7 @@ type backupJob struct {
 	agentMount    *mountrpc.AgentMount
 	s3Mount       *mountrpc.S3Mount
 	stagedDump    *database.StagedDump
+	stagedDovecot *dovecot.StagedBackup
 	srcPath       string
 	cmd           *exec.Cmd
 	upid          string
