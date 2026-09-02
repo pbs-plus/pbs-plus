@@ -139,6 +139,9 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	if err = db.storeRestoreDatabaseOptions(q, restore); err != nil {
 		return fmt.Errorf("CreateRestore: %w", err)
 	}
+	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
+		return fmt.Errorf("CreateRestore: %w", err)
+	}
 
 	commitNeeded = true
 	return nil
@@ -192,14 +195,17 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 			LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 			RetryCount:         fromNullInt64(row.RetryCount),
 		},
-		Retry:               fromNullInt64(row.Retry),
-		RetryInterval:       fromNullInt64(row.RetryInterval),
-		Mode:                int(row.RestoreMode),
-		PreScript:           row.PreScript,
-		PostScript:          row.PostScript,
-		SourceDatabase:      row.SourceDatabase,
-		DestinationDatabase: row.DestinationDatabase,
-		ReplaceExisting:     row.ReplaceExisting != 0,
+		Retry:                      fromNullInt64(row.Retry),
+		RetryInterval:              fromNullInt64(row.RetryInterval),
+		Mode:                       int(row.RestoreMode),
+		PreScript:                  row.PreScript,
+		PostScript:                 row.PostScript,
+		SourceDatabase:             row.SourceDatabase,
+		DestinationDatabase:        row.DestinationDatabase,
+		DovecotSourceUsername:      row.DovecotSourceUsername,
+		DovecotDestinationUsername: row.DovecotDestinationUsername,
+		DovecotMailbox:             row.DovecotMailbox,
+		ReplaceExisting:            row.ReplaceExisting != 0 || row.DovecotReplaceExisting != 0,
 	}
 	restore.DestTarget.DatabaseHost = row.DatabaseHost
 	restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -332,6 +338,9 @@ func (db *Store) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 	if err = db.storeRestoreDatabaseOptions(q, restore); err != nil {
 		return fmt.Errorf("UpdateRestore: %w", err)
 	}
+	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
+		return fmt.Errorf("UpdateRestore: %w", err)
+	}
 
 	if restore.History.LastRunUpid != "" {
 		go db.linkRestoreLog(restore.ID, restore.History.LastRunUpid)
@@ -428,13 +437,16 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 				LastRunStatus:      JobStatus(fromNullInt64(row.LastRunStatus)),
 				RetryCount:         fromNullInt64(row.RetryCount),
 			},
-			Retry:               fromNullInt64(row.Retry),
-			RetryInterval:       fromNullInt64(row.RetryInterval),
-			PreScript:           row.PreScript,
-			PostScript:          row.PostScript,
-			SourceDatabase:      row.SourceDatabase,
-			DestinationDatabase: row.DestinationDatabase,
-			ReplaceExisting:     row.ReplaceExisting != 0,
+			Retry:                      fromNullInt64(row.Retry),
+			RetryInterval:              fromNullInt64(row.RetryInterval),
+			PreScript:                  row.PreScript,
+			PostScript:                 row.PostScript,
+			SourceDatabase:             row.SourceDatabase,
+			DestinationDatabase:        row.DestinationDatabase,
+			DovecotSourceUsername:      row.DovecotSourceUsername,
+			DovecotDestinationUsername: row.DovecotDestinationUsername,
+			DovecotMailbox:             row.DovecotMailbox,
+			ReplaceExisting:            row.ReplaceExisting != 0 || row.DovecotReplaceExisting != 0,
 		}
 		restore.DestTarget.DatabaseHost = row.DatabaseHost
 		restore.DestTarget.DatabasePort = int(row.DatabasePort)
@@ -564,28 +576,31 @@ func (r *Restore) GetStreamID() string {
 }
 
 type Restore struct {
-	ID                  string     `json:"id"`
-	Store               string     `json:"store"`
-	Snapshot            string     `json:"snapshot"`
-	Namespace           string     `json:"ns"`
-	Mode                int        `json:"mode"`
-	SrcPath             string     `json:"src-path"`
-	DestTarget          Target     `json:"dest-target"`
-	DestSubpath         string     `json:"dest-subpath"`
-	PreScript           string     `json:"pre_script"`
-	PostScript          string     `json:"post_script"`
-	Comment             string     `json:"comment"`
-	NotificationMode    string     `json:"notification-mode"`
-	Retry               int        `json:"retry"`
-	RetryInterval       int        `json:"retry-interval"`
-	CurrentPID          int        `json:"current_pid"`
-	ExpectedSize        int        `json:"expected_size,omitempty"`
-	UPIDs               []string   `json:"upids"`
-	CurrentStats        JobStats   `json:"current-stats"`
-	History             JobHistory `json:"history"`
-	SourceDatabase      string     `json:"source_database,omitempty"`
-	DestinationDatabase string     `json:"destination_database,omitempty"`
-	ReplaceExisting     bool       `json:"replace_existing,omitempty"`
+	ID                         string     `json:"id"`
+	Store                      string     `json:"store"`
+	Snapshot                   string     `json:"snapshot"`
+	Namespace                  string     `json:"ns"`
+	Mode                       int        `json:"mode"`
+	SrcPath                    string     `json:"src-path"`
+	DestTarget                 Target     `json:"dest-target"`
+	DestSubpath                string     `json:"dest-subpath"`
+	PreScript                  string     `json:"pre_script"`
+	PostScript                 string     `json:"post_script"`
+	Comment                    string     `json:"comment"`
+	NotificationMode           string     `json:"notification-mode"`
+	Retry                      int        `json:"retry"`
+	RetryInterval              int        `json:"retry-interval"`
+	CurrentPID                 int        `json:"current_pid"`
+	ExpectedSize               int        `json:"expected_size,omitempty"`
+	UPIDs                      []string   `json:"upids"`
+	CurrentStats               JobStats   `json:"current-stats"`
+	History                    JobHistory `json:"history"`
+	SourceDatabase             string     `json:"source_database,omitempty"`
+	DestinationDatabase        string     `json:"destination_database,omitempty"`
+	DovecotSourceUsername      string     `json:"dovecot_source_username,omitempty"`
+	DovecotDestinationUsername string     `json:"dovecot_destination_username,omitempty"`
+	DovecotMailbox             string     `json:"dovecot_mailbox,omitempty"`
+	ReplaceExisting            bool       `json:"replace_existing,omitempty"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {
@@ -604,6 +619,29 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 		RestoreID:           restore.ID,
 		SourceDatabase:      restore.SourceDatabase,
 		DestinationDatabase: restore.DestinationDatabase,
+		ReplaceExisting:     boolToNullInt64(restore.ReplaceExisting).Int64,
+	})
+}
+
+func (db *Store) storeRestoreDovecotOptions(q *corequery.Queries, restore Restore) error {
+	target, err := q.GetTarget(db.ctx, restore.DestTarget.Name)
+	if err != nil {
+		return fmt.Errorf("error fetching destination target: %w", err)
+	}
+	if TargetType(target.TargetType) != TargetTypeDovecot {
+		return q.DeleteRestoreDovecotOptions(db.ctx, restore.ID)
+	}
+	if restore.DovecotSourceUsername == "" {
+		return errors.New("Dovecot source username is required")
+	}
+	if restore.DovecotDestinationUsername == "" {
+		restore.DovecotDestinationUsername = restore.DovecotSourceUsername
+	}
+	return q.UpsertRestoreDovecotOptions(db.ctx, corequery.UpsertRestoreDovecotOptionsParams{
+		RestoreID:           restore.ID,
+		SourceUsername:      restore.DovecotSourceUsername,
+		DestinationUsername: restore.DovecotDestinationUsername,
+		Mailbox:             restore.DovecotMailbox,
 		ReplaceExisting:     boolToNullInt64(restore.ReplaceExisting).Int64,
 	})
 }

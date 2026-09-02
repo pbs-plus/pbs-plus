@@ -163,6 +163,15 @@ func (q *Queries) DeleteBackupDatabaseOptions(ctx context.Context, backupID stri
 	return err
 }
 
+const deleteBackupDovecotOptions = `-- name: DeleteBackupDovecotOptions :exec
+DELETE FROM backup_dovecot_options WHERE backup_id = ?
+`
+
+func (q *Queries) DeleteBackupDovecotOptions(ctx context.Context, backupID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBackupDovecotOptions, backupID)
+	return err
+}
+
 const getBackup = `-- name: GetBackup :one
 SELECT
     j.id, j.store, j.mode, j.source_mode, j.read_mode, j.target, j.subpath,
@@ -177,18 +186,20 @@ SELECT
     COALESCE(dbo.database_name, '') AS database_name,
     COALESCE(dbo.client_family, '') AS database_client_family,
     COALESCE(dbo.client_dir, '') AS database_client_dir,
+    COALESCE(dvo.username, '') AS dovecot_username,
+    COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
     COALESCE(f.path, s.url, '') AS path,
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
-    COALESCE(p.host, m.host, l.host, '') AS database_host,
-    COALESCE(p.port, m.port, l.port, 0) AS database_port,
+    COALESCE(p.host, m.host, l.host, d.host, '') AS database_host,
+    COALESCE(p.port, m.port, l.port, d.port, 0) AS database_port,
     COALESCE(p.username, m.username, l.username, '') AS database_username,
     COALESCE(p.ssl_mode, m.tls_mode, l.tls_mode, '') AS database_tls_mode,
-    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, '') AS database_ca_certificate,
-    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, d.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, d.default_client_dir, '') AS database_default_client_dir,
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
@@ -196,12 +207,14 @@ SELECT
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
 LEFT JOIN backup_database_options dbo ON dbo.backup_id = j.id
+LEFT JOIN backup_dovecot_options dvo ON dvo.backup_id = j.id
 LEFT JOIN targets t ON j.target = t.name
 LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
 LEFT JOIN target_postgresql p ON p.target_name = t.name
 LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN target_ldap l ON l.target_name = t.name
+LEFT JOIN target_dovecot d ON d.target_name = t.name
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 WHERE j.id = ?
 LIMIT 1
@@ -245,6 +258,8 @@ type GetBackupRow struct {
 	DatabaseName                string         `json:"database_name"`
 	DatabaseClientFamily        string         `json:"database_client_family"`
 	DatabaseClientDir           string         `json:"database_client_dir"`
+	DovecotUsername             string         `json:"dovecot_username"`
+	DovecotMailbox              string         `json:"dovecot_mailbox"`
 	Name                        sql.NullString `json:"name"`
 	TargetType                  sql.NullString `json:"target_type"`
 	MountScript                 sql.NullString `json:"mount_script"`
@@ -318,6 +333,8 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.DatabaseName,
 		&i.DatabaseClientFamily,
 		&i.DatabaseClientDir,
+		&i.DovecotUsername,
+		&i.DovecotMailbox,
 		&i.Name,
 		&i.TargetType,
 		&i.MountScript,
@@ -366,18 +383,20 @@ SELECT
     COALESCE(dbo.database_name, '') AS database_name,
     COALESCE(dbo.client_family, '') AS database_client_family,
     COALESCE(dbo.client_dir, '') AS database_client_dir,
+    COALESCE(dvo.username, '') AS dovecot_username,
+    COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
     COALESCE(f.path, s.url, '') AS path,
     f.agent_host, f.volume_id, f.volume_type, f.volume_name,
     f.volume_fs, f.volume_total_bytes, f.volume_used_bytes, f.volume_free_bytes,
     f.volume_total, f.volume_used, f.volume_free,
-    COALESCE(p.host, m.host, l.host, '') AS database_host,
-    COALESCE(p.port, m.port, l.port, 0) AS database_port,
+    COALESCE(p.host, m.host, l.host, d.host, '') AS database_host,
+    COALESCE(p.port, m.port, l.port, d.port, 0) AS database_port,
     COALESCE(p.username, m.username, l.username, '') AS database_username,
     COALESCE(p.ssl_mode, m.tls_mode, l.tls_mode, '') AS database_tls_mode,
-    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, '') AS database_ca_certificate,
-    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, '') AS database_default_client_dir,
+    COALESCE(p.ca_certificate, m.ca_certificate, l.ca_certificate, d.ca_certificate, '') AS database_ca_certificate,
+    COALESCE(p.default_client_dir, m.default_client_dir, l.default_client_dir, d.default_client_dir, '') AS database_default_client_dir,
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
@@ -385,12 +404,14 @@ SELECT
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
 LEFT JOIN backup_database_options dbo ON dbo.backup_id = j.id
+LEFT JOIN backup_dovecot_options dvo ON dvo.backup_id = j.id
 LEFT JOIN targets t ON j.target = t.name
 LEFT JOIN target_filesystems f ON f.target_name = t.name
 LEFT JOIN target_s3 s ON s.target_name = t.name
 LEFT JOIN target_postgresql p ON p.target_name = t.name
 LEFT JOIN target_mysql m ON m.target_name = t.name
 LEFT JOIN target_ldap l ON l.target_name = t.name
+LEFT JOIN target_dovecot d ON d.target_name = t.name
 LEFT JOIN agent_hosts ah ON f.agent_host = ah.name
 ORDER BY j.id
 `
@@ -433,6 +454,8 @@ type ListAllBackupsRow struct {
 	DatabaseName                string         `json:"database_name"`
 	DatabaseClientFamily        string         `json:"database_client_family"`
 	DatabaseClientDir           string         `json:"database_client_dir"`
+	DovecotUsername             string         `json:"dovecot_username"`
+	DovecotMailbox              string         `json:"dovecot_mailbox"`
 	Name                        sql.NullString `json:"name"`
 	TargetType                  sql.NullString `json:"target_type"`
 	MountScript                 sql.NullString `json:"mount_script"`
@@ -512,6 +535,8 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.DatabaseName,
 			&i.DatabaseClientFamily,
 			&i.DatabaseClientDir,
+			&i.DovecotUsername,
+			&i.DovecotMailbox,
 			&i.Name,
 			&i.TargetType,
 			&i.MountScript,
@@ -726,5 +751,24 @@ func (q *Queries) UpsertBackupDatabaseOptions(ctx context.Context, arg UpsertBac
 		arg.ClientFamily,
 		arg.ClientDir,
 	)
+	return err
+}
+
+const upsertBackupDovecotOptions = `-- name: UpsertBackupDovecotOptions :exec
+INSERT INTO backup_dovecot_options (backup_id, username, mailbox)
+VALUES (?, ?, ?)
+ON CONFLICT(backup_id) DO UPDATE SET
+    username = excluded.username,
+    mailbox = excluded.mailbox
+`
+
+type UpsertBackupDovecotOptionsParams struct {
+	BackupID string `json:"backup_id"`
+	Username string `json:"username"`
+	Mailbox  string `json:"mailbox"`
+}
+
+func (q *Queries) UpsertBackupDovecotOptions(ctx context.Context, arg UpsertBackupDovecotOptionsParams) error {
+	_, err := q.db.ExecContext(ctx, upsertBackupDovecotOptions, arg.BackupID, arg.Username, arg.Mailbox)
 	return err
 }

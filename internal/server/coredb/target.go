@@ -106,6 +106,10 @@ func normalizeTarget(target *Target) error {
 		if err := normalizeLdapTarget(target); err != nil {
 			return err
 		}
+	case TargetTypeDovecot:
+		if err := normalizeDovecotTarget(target); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unsupported target type %q", target.Type)
 	}
@@ -158,6 +162,30 @@ func normalizeLdapTarget(target *Target) error {
 	return nil
 }
 
+func normalizeDovecotTarget(target *Target) error {
+	if target.AgentHost.Name != "" {
+		return errors.New("Dovecot target cannot have an agent host")
+	}
+	if target.DatabaseHost == "" {
+		return errors.New("Dovecot target host is required")
+	}
+	if target.DatabasePort == 0 {
+		target.DatabasePort = 24245
+	}
+	if target.DatabasePort < 1 || target.DatabasePort > 65535 {
+		return fmt.Errorf("invalid Dovecot target port %d", target.DatabasePort)
+	}
+	if target.DatabaseDefaultClientDir != "" && !filepath.IsAbs(target.DatabaseDefaultClientDir) {
+		return errors.New("Dovecot target client directory must be absolute")
+	}
+	if target.DatabaseCACertificate != "" && !filepath.IsAbs(target.DatabaseCACertificate) {
+		return errors.New("Dovecot target CA certificate path must be absolute")
+	}
+	target.Access = ""
+	target.Path = ""
+	return nil
+}
+
 func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 	switch target.Type {
 	case TargetTypeFilesystem:
@@ -171,6 +199,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			return err
 		}
 		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetDovecot(db.ctx, target.Name); err != nil {
 			return err
 		}
 		return q.UpsertTargetFilesystem(db.ctx, corequery.UpsertTargetFilesystemParams{
@@ -202,6 +233,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
 			return err
 		}
+		if err := q.DeleteTargetDovecot(db.ctx, target.Name); err != nil {
+			return err
+		}
 		return q.UpsertTargetS3(db.ctx, corequery.UpsertTargetS3Params{
 			TargetName: target.Name,
 			Url:        target.Path,
@@ -217,6 +251,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			return err
 		}
 		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetDovecot(db.ctx, target.Name); err != nil {
 			return err
 		}
 		return q.UpsertTargetPostgreSQL(db.ctx, corequery.UpsertTargetPostgreSQLParams{
@@ -239,6 +276,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			return err
 		}
 		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetDovecot(db.ctx, target.Name); err != nil {
 			return err
 		}
 		return q.UpsertTargetMySQL(db.ctx, corequery.UpsertTargetMySQLParams{
@@ -265,6 +305,9 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
 			return err
 		}
+		if err := q.DeleteTargetDovecot(db.ctx, target.Name); err != nil {
+			return err
+		}
 		return q.UpsertTargetLdap(db.ctx, corequery.UpsertTargetLdapParams{
 			TargetName:       target.Name,
 			Host:             target.DatabaseHost,
@@ -273,6 +316,29 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			TlsMode:          target.DatabaseTLSMode,
 			CaCertificate:    target.DatabaseCACertificate,
 			BaseDn:           target.LdapBaseDN,
+			DefaultClientDir: target.DatabaseDefaultClientDir,
+		})
+	case TargetTypeDovecot:
+		if err := q.DeleteTargetFilesystem(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetS3(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetPostgreSQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetMySQL(db.ctx, target.Name); err != nil {
+			return err
+		}
+		if err := q.DeleteTargetLdap(db.ctx, target.Name); err != nil {
+			return err
+		}
+		return q.UpsertTargetDovecot(db.ctx, corequery.UpsertTargetDovecotParams{
+			TargetName:       target.Name,
+			Host:             target.DatabaseHost,
+			Port:             int64(target.DatabasePort),
+			CaCertificate:    target.DatabaseCACertificate,
 			DefaultClientDir: target.DatabaseDefaultClientDir,
 		})
 	default:
@@ -670,7 +736,16 @@ func (db *Store) AddDatabasePassword(tx *Transaction, targetName string, passwor
 		}
 	}
 	if rows == 0 {
-		return fmt.Errorf("AddDatabasePassword: target %q is not a database target", targetName)
+		rows, err = q.UpdateTargetDovecotPassword(db.ctx, corequery.UpdateTargetDovecotPasswordParams{
+			Password:   encrypted,
+			TargetName: targetName,
+		})
+		if err != nil {
+			return fmt.Errorf("AddDatabasePassword: error updating Dovecot target: %w", err)
+		}
+	}
+	if rows == 0 {
+		return fmt.Errorf("AddDatabasePassword: target %q has no password", targetName)
 	}
 
 	commitNeeded = true
@@ -691,8 +766,10 @@ func (db *Store) GetDatabasePassword(name string) (string, error) {
 		encrypted, err = db.readQueries.GetTargetMySQLPassword(db.ctx, name)
 	case TargetTypeLDAP:
 		encrypted, err = db.readQueries.GetTargetLdapPassword(db.ctx, name)
+	case TargetTypeDovecot:
+		encrypted, err = db.readQueries.GetTargetDovecotPassword(db.ctx, name)
 	default:
-		return "", fmt.Errorf("GetDatabasePassword: target %q is not a database target", name)
+		return "", fmt.Errorf("GetDatabasePassword: target %q has no password", name)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrSecretNotFound
@@ -869,6 +946,10 @@ func (t *Target) IsDatabase() bool {
 
 func (t *Target) IsLdap() bool {
 	return t.Type == TargetTypeLDAP
+}
+
+func (t *Target) IsDovecot() bool {
+	return t.Type == TargetTypeDovecot
 }
 
 type Target struct {

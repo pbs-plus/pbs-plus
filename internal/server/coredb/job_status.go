@@ -109,6 +109,7 @@ const (
 	TargetTypePostgreSQL TargetType = "postgresql"
 	TargetTypeMySQL      TargetType = "mysql"
 	TargetTypeLDAP       TargetType = "ldap"
+	TargetTypeDovecot    TargetType = "dovecot"
 
 	FilesystemAccessLocal FilesystemAccess = "local"
 	FilesystemAccessAgent FilesystemAccess = "agent"
