@@ -36,7 +36,7 @@ runs:
           osixia/openldap:1.5.0
 
         ldap_ready() {
-          docker logs "$1" 2>&1 | grep -q 'First start is done' || return 1
+          docker logs "$1" 2>&1 | grep -q 'slapd starting' || return 1
           docker exec pbs-plus-test ldapwhoami -x -H "ldap://$1" \
             -D "$bind_dn" -w "$password" >/dev/null 2>&1
         }
