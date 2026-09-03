@@ -1,0 +1,40 @@
+#!/bin/sh
+# Shared pre-removal script: deb prerm, rpm %preun, apk .pre-deinstall.
+#
+# Argument semantics differ per package manager:
+#   deb prerm:        $1 = "remove" or "upgrade <ver>" (never "purge")
+#   rpm %preun:       $1 = 0 on erase, 1 on upgrade
+#   apk .pre-deinstall: no argument (only runs on real removal)
+#
+# On upgrades we must NOT stop the service: the new package's postinst
+# already restarted it, and rpm runs the old package's %preun afterwards.
+set -e
+
+SERVICE_NAME="pbs-plus-agent"
+BIN_PATH="/opt/pbs-plus-agent/pbs-plus-agent"
+
+is_removal() {
+  [ "$1" = "remove" ] || [ "$1" = "0" ] || [ -z "$1" ]
+}
+
+if ! is_removal "$1"; then
+  exit 0
+fi
+
+if [ -x "$BIN_PATH" ]; then
+  "$BIN_PATH" stop 2>/dev/null || true
+  "$BIN_PATH" uninstall 2>/dev/null || true
+fi
+
+# Belt and braces in case the binary could not run (e.g. broken install).
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+  systemctl daemon-reload 2>/dev/null || true
+fi
+
+rm -f "/etc/systemd/system/$SERVICE_NAME.service" \
+      "/usr/lib/systemd/system/$SERVICE_NAME.service" \
+      "/lib/systemd/system/$SERVICE_NAME.service" 2>/dev/null || true
+
+exit 0

@@ -223,15 +223,13 @@ nfpms:
         type: symlink
       - src: ./build/package/linux_agent/apparmor
         dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
-        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
+      preremove: ./build/package/linux_agent/prerm
+      postremove: ./build/package/linux_agent/postrm
     overrides:
       deb:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
-    deb:
-      scripts:
-        templates: ./build/package/linux_agent/templates
 
   - id: linux-agent-rpm
     ids:
@@ -252,9 +250,10 @@ nfpms:
         type: symlink
       - src: ./build/package/linux_agent/apparmor
         dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
-        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
+      preremove: ./build/package/linux_agent/prerm
+      postremove: ./build/package/linux_agent/postrm
     overrides:
       rpm:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"
@@ -278,9 +277,10 @@ nfpms:
         type: symlink
       - src: ./build/package/linux_agent/apparmor
         dst: /usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent
-        type: config
     scripts:
       postinstall: ./build/package/linux_agent/postinst
+      preremove: ./build/package/linux_agent/prerm
+      postremove: ./build/package/linux_agent/postrm
     overrides:
       apk:
         file_name_template: "{{ .PackageName }}-v{{ .Version }}-{{ .Arch }}"

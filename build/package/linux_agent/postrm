@@ -1,0 +1,36 @@
+#!/bin/sh
+# Shared post-removal script: deb postrm, rpm %postun, apk .post-deinstall.
+#
+#   deb postrm:         $1 = "remove", "purge", "upgrade", "failed-upgrade"
+#   rpm %postun:        $1 = 0 on erase, 1 on upgrade
+#   apk .post-deinstall: no argument
+#
+# Cleanup only happens on full removal/purge. State (/var/lib/pbs-plus-agent),
+# logs, and /etc/pbs-plus-agent are intentionally preserved: the agent's
+# certificates and registration data may still matter after a reinstall.
+set -e
+
+is_purge() {
+  [ "$1" = "purge" ] || [ "$1" = "0" ] || [ -z "$1" ]
+}
+
+if ! is_purge "$1"; then
+  exit 0
+fi
+
+PROFILE_DST="/etc/apparmor.d/opt.pbs-plus-agent.pbs-plus-agent"
+
+if [ -f "$PROFILE_DST" ] && command -v apparmor_parser >/dev/null 2>&1; then
+  apparmor_parser -R "$PROFILE_DST" 2>/dev/null || true
+fi
+rm -f "$PROFILE_DST" 2>/dev/null || true
+
+rm -f /etc/polkit-1/rules.d/10-pbs-plus-agent.rules 2>/dev/null || true
+rm -f /etc/sudoers.d/pbs-plus-agent 2>/dev/null || true
+
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl reset-failed pbs-plus-agent 2>/dev/null || true
+fi
+
+exit 0
