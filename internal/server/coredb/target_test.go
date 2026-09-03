@@ -422,3 +422,24 @@ func TestDovecotTargetAndJobOptionsPersistence(t *testing.T) {
 		t.Errorf("Dovecot restore list = %#v", restores)
 	}
 }
+
+func TestGetAgentTargetName(t *testing.T) {
+	tests := []struct {
+		name     string
+		volumeID string
+		os       string
+		want     string
+	}{
+		{name: "Linux root", volumeID: "/", os: "linux", want: "agent.example - Root"},
+		{name: "Linux mount", volumeID: "/var/lib", os: "linux", want: "agent.example - /var/lib"},
+		{name: "Windows volume", volumeID: "C:", os: "windows", want: "agent.example - C:"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := GetAgentTargetName("agent.example", test.volumeID, test.os); got != test.want {
+				t.Errorf("GetAgentTargetName() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
