@@ -87,7 +87,6 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 		os.Exit(1)
 	}
 
-
 	log.L = log.WithScope(log.Scope{BackupID: *backupID})
 
 	validSourceModes := map[string]bool{"snapshot": true, "direct": true}
