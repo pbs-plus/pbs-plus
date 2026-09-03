@@ -147,8 +147,12 @@ setup_apparmor() {
 
     if [ -f "$PROFILE_SRC" ]; then
       cp "$PROFILE_SRC" "$PROFILE_DST"
-      apparmor_parser -r "$PROFILE_DST" 2>/dev/null || true
-      aa-enforce "$PROFILE_DST" 2>/dev/null || true
+      if apparmor_parser -r "$PROFILE_DST" 2>/dev/null; then
+        aa-enforce "$PROFILE_DST" 2>/dev/null || true
+      else
+        warn "AppArmor profile failed to load, removing it and running unconfined"
+        rm -f "$PROFILE_DST"
+      fi
     fi
   fi
 }
@@ -209,6 +213,7 @@ setup_service() {
     if $is_systemd; then
       systemctl daemon-reload || true
       systemctl reset-failed "$SERVICE_NAME" || true
+      systemctl enable "$SERVICE_NAME" 2>/dev/null || true
     fi
     "$BIN_PATH" restart 2>/dev/null || "$BIN_PATH" start 2>/dev/null || true
   else
