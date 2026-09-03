@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/puzpuzpuz/xsync/v4"
@@ -361,6 +362,56 @@ func TestZipMergeStream(t *testing.T) {
 	}
 	if fs.FileCount.Value() != 2 || fs.FolderCount.Value() != 1 {
 		t.Errorf("counters: files=%d dirs=%d", fs.FileCount.Value(), fs.FolderCount.Value())
+	}
+}
+
+// fakeAgentStream counts like DirStream.Next so double counting shows up.
+type fakeAgentStream struct {
+	fs      *ARPCFS
+	entries []fuse.DirEntry
+	idx     int
+}
+
+func (f *fakeAgentStream) HasNext() bool { return f.idx < len(f.entries) }
+
+func (f *fakeAgentStream) Next() (fuse.DirEntry, syscall.Errno) {
+	e := f.entries[f.idx]
+	f.idx++
+	if e.Mode&syscall.S_IFMT == fuse.S_IFDIR {
+		f.fs.FolderCount.Add(1)
+	} else {
+		f.fs.FileCount.Add(1)
+	}
+	return e, 0
+}
+
+func (f *fakeAgentStream) Close() {}
+
+func TestZipMergeStreamCounters(t *testing.T) {
+	data := buildTestZip(t, map[string]int{"alpha.txt": 10, "sub/beta": 20})
+	fs := testFS(testOverlay(t, data))
+
+	s := &zipMergeStream{fs: fs, path: "/data", agent: &fakeAgentStream{fs: fs, entries: []fuse.DirEntry{
+		{Name: "real.txt", Mode: fuse.S_IFREG},
+		{Name: "link", Mode: fuse.S_IFLNK},
+		{Name: "test.zip", Mode: fuse.S_IFREG},
+	}}}
+
+	var got []string
+	for s.HasNext() {
+		e, errno := s.Next()
+		if errno != 0 {
+			t.Fatalf("Next: %d", errno)
+		}
+		got = append(got, e.Name)
+	}
+	s.Close()
+
+	if len(got) != 4 {
+		t.Fatalf("listing = %v", got)
+	}
+	if fs.FileCount.Value() != 3 || fs.FolderCount.Value() != 1 {
+		t.Errorf("counters: files=%d dirs=%d, want 3 and 1", fs.FileCount.Value(), fs.FolderCount.Value())
 	}
 }
 

@@ -1233,25 +1233,24 @@ func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 func (fs *ARPCFS) zipReaddir(ctx context.Context, dirPath string) (fs.DirStream, bool) {
 	virtual := fs.zipCollectChildren(dirPath)
 
-	var agent *DirStream
+	ms := &zipMergeStream{
+		fs:      fs,
+		path:    dirPath,
+		emitted: map[string]struct{}{},
+	}
 	if stream, err := fs.ReadDir(ctx, dirPath); err == nil {
-		agent = &stream
+		ms.agent = &stream
 	} else if len(virtual) == 0 && !fs.zipIsVirtualDir(dirPath) {
 		return nil, false
 	}
 
-	return &zipMergeStream{
-		fs:      fs,
-		path:    dirPath,
-		agent:   agent,
-		emitted: map[string]struct{}{},
-	}, true
+	return ms, true
 }
 
 type zipMergeStream struct {
 	fs        *ARPCFS
 	path      string
-	agent     *DirStream
+	agent     fs.DirStream
 	mu        sync.Mutex
 	agentDone bool
 	vqueue    []zipVChild
@@ -1282,9 +1281,11 @@ func (s *zipMergeStream) HasNext() bool {
 					// ENOENT), so an error here usually means hidden, not vanished.
 					fi, aerr := s.fs.Attr(s.fs.Ctx, full, true)
 					if aerr == nil && !fi.IsDir && fi.Size >= zipMinSize && s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
+						s.fs.FileCount.Add(-1)
 						continue
 					}
 					if aerr != nil && s.fs.zipHidden(full) {
+						s.fs.FileCount.Add(-1)
 						continue
 					}
 					s.markEmitted(e.Name)
@@ -1341,10 +1342,12 @@ func (s *zipMergeStream) Next() (fuse.DirEntry, syscall.Errno) {
 	e := *s.pending
 	s.pending = nil
 
-	if e.Mode&uint32(fuse.S_IFDIR) != 0 {
-		s.fs.FolderCount.Add(1)
-	} else {
-		s.fs.FileCount.Add(1)
+	if s.agentDone {
+		if e.Mode&syscall.S_IFMT == fuse.S_IFDIR {
+			s.fs.FolderCount.Add(1)
+		} else {
+			s.fs.FileCount.Add(1)
+		}
 	}
 	return e, 0
 }
