@@ -229,6 +229,12 @@ main() {
   [ "$ENABLE_LINGER" = "true" ] && is_cmd loginctl && loginctl enable-linger pbsplus 2>/dev/null || true
 
   setup_service
+  # kardianos v1.3 runs "rc-update add" without a runlevel, which modern
+  # OpenRC rejects, so the service never lands in a runlevel by itself.
+  if [ -f "/etc/init.d/$SERVICE_NAME" ] && is_cmd rc-update; then
+    rc-update add "$SERVICE_NAME" default 2>/dev/null || true
+  fi
+
   log "Installation complete. Binary: $BIN_PATH"
 }
 
