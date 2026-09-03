@@ -1,27 +1,42 @@
+abi <abi/3.0>,
+
 #include <tunables/global>
 
-/opt/pbs-plus-agent/pbs-plus-agent {
+# attach_disconnected is required because the unit sets PrivateTmp=yes, which
+# makes the journal socket a disconnected path inside the mount namespace.
+/opt/pbs-plus-agent/pbs-plus-agent flags=(attach_disconnected) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
 
   # Allow binary execution and updates
   /opt/pbs-plus-agent/pbs-plus-agent mr,
-  /opt/pbs-plus-agent/** rw,
+  /opt/pbs-plus-agent/{,**} rwk,
 
   # Allow systemd control and unit file installation
   /bin/systemctl ix,
   /usr/bin/systemctl ix,
+  /usr/bin/sudo ix,
   /etc/systemd/system/pbs-plus-agent.service rw,
-  
-  # State and config directories
-  /var/lib/pbs-plus-agent/** rw,
-  /var/log/pbs-plus-agent/** rw,
-  /etc/pbs-plus-agent/** r,
-  
-  # Network for updates
+
+  # State and config directories. The registry uses flock, so k is required.
+  /var/lib/pbs-plus-agent/{,**} rwk,
+  /var/log/pbs-plus-agent/{,**} rwk,
+  /etc/pbs-plus-agent/{,**} rwk,
+
+  # Backup sources: the agent reads arbitrary paths on the host
+  / r,
+  /** r,
+
+  # Network for updates, QUIC transport, and local resolver sockets
+  unix,
+  network unix stream,
+  network unix dgram,
   network inet stream,
   network inet6 stream,
-  
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+
   # Capabilities needed
   capability dac_override,
   capability dac_read_search,

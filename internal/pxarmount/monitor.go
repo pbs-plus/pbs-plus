@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -123,7 +124,7 @@ func (h *commitHub) broadcast(line string) {
 		}
 	}
 
-	isDone := len(line) >= 3 && (line[:3] == "OK " || line[:3] == "ERR ")
+	isDone := strings.HasPrefix(line, "OK ") || strings.HasPrefix(line, "ERR ")
 	if isDone {
 		h.ended.Store(true)
 	}

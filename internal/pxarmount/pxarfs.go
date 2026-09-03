@@ -487,7 +487,7 @@ func (fs *PxarFS) readDirRawLocked(inode uint64) ([]dirEntrySlim, error) {
 
 	entries := make([]dirEntrySlim, 0, 64)
 	t0 := time.Now()
-	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true}, func(e *upstreampxar.Entry) error {
+	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: true, FileOffsetOrder: true}, func(e *upstreampxar.Entry) error {
 		entries = append(entries, dirEntrySlim{
 			name:          e.FileName(),
 			inode:         ToInode(e),
@@ -706,7 +706,7 @@ func (fs *PxarFS) ReadDirFull(ino uint64, entryCache map[uint64]*upstreampxar.En
 
 	entries := make([]dirEntrySlim, 0, 64)
 
-	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: false}, func(e *upstreampxar.Entry) error {
+	listErr := fs.reader.ListDirectory(int64(n.contentOffset), accessor.ListOption{Minimal: false, FileOffsetOrder: true}, func(e *upstreampxar.Entry) error {
 		slim := dirEntrySlim{
 			name:          e.FileName(),
 			inode:         ToInode(e),

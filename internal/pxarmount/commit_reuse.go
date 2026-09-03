@@ -109,6 +109,12 @@ func (ow *commitWalkState) flushPendingRefs(keepLastChunk bool) error {
 		ow.batchRangeEnd = 0
 	}()
 
+	previousFiles := ow.unchangedFiles
+	ow.unchangedFiles += int64(len(ow.pendingRefs))
+	if ow.prog != nil && (previousFiles == 0 || previousFiles/4096 != ow.unchangedFiles/4096) {
+		ow.prog.SetMsg(fmt.Sprintf("Processing unchanged files (%d scanned)", ow.unchangedFiles))
+	}
+
 	insertionSortPendingRefs(ow.pendingRefs)
 	if ow.reusePlanner == nil && ow.origChunkIndex != nil {
 		ow.reusePlanner = datastore.NewChunkReusePlanner(ow.origChunkIndex)

@@ -66,20 +66,28 @@ After install, the agent should appear as **Reachable** on the Targets page (Fil
 
 1. Install the `pbs-plus-agent` package from [Releases](https://github.com/pbs-plus/pbs-plus/releases).
 
-2. Configure initial connection via env vars:
+2. Configure initial connection via `/etc/pbs-plus-agent/agent.env`, which the
+   service reads on start (`EnvironmentFile` on systemd, sourced on OpenRC):
 
 ```bash
-# /etc/default/pbs-plus-agent or your service override
+sudo tee /etc/pbs-plus-agent/agent.env >/dev/null <<EOF
 PBS_PLUS_INIT_SERVER_URL="https://pbs.example.com:8008"
 PBS_PLUS_INIT_BOOTSTRAP_TOKEN="<token>"
 PBS_PLUS_INIT_SERVER_CA_FINGERPRINT="<sha256-hex-fingerprint>"
 PBS_PLUS_HOSTNAME="$(hostname -f)"
+EOF
+sudo chown -R pbsplus:pbsplus /etc/pbs-plus-agent
+sudo chmod 0640 /etc/pbs-plus-agent/agent.env
 ```
+
+The service runs as `pbsplus`, so everything under `/etc/pbs-plus-agent` must
+be owned by that user. A root-owned `registry.lock` there causes
+`server url not found -> open /etc/pbs-plus-agent/registry.lock: permission denied`.
 
 3. Restart:
 
 ```bash
-systemctl restart pbs-plus-agent
+systemctl restart pbs-plus-agent   # or: rc-service pbs-plus-agent restart
 ```
 
 On first start, the agent:
