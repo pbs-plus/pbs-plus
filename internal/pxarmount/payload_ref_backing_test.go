@@ -29,6 +29,15 @@ type mockInjectionWriter struct {
 	refs  []refCall
 }
 
+type recordingProgress struct {
+	noopProgress
+	messages []string
+}
+
+func (p *recordingProgress) SetMsg(msg string) {
+	p.messages = append(p.messages, msg)
+}
+
 func newMockInjectionWriter(t *testing.T, startPos uint64) *mockInjectionWriter {
 	t.Helper()
 	meta := &pxar.Metadata{Stat: format.Stat{Mode: format.ModeIFDIR | 0o755}}
@@ -103,8 +112,39 @@ func assertRefsBacked(t *testing.T, w *mockInjectionWriter) {
 	}
 }
 
-// A payload ref may only name injected bytes; otherwise a restore reads
-// whatever unrelated data happened to land at that offset.
+func TestFlushPendingRefsReportsReuseProgress(t *testing.T) {
+	const chunkSize = 4000
+	progress := &recordingProgress{}
+	writer := newMockInjectionWriter(t, 10000)
+	state := &commitWalkState{
+		mfs:            &MutableFS{},
+		writer:         writer,
+		prog:           progress,
+		origChunkIndex: buildSyntheticDIDX(t, 3, chunkSize),
+		pendingRefs: []commitEntry{{
+			name:    "unchanged",
+			sortKey: 100,
+			pxarSlim: &dirEntrySlim{
+				payloadOffset: 100,
+				fileSize:      7500,
+			},
+			cachedEntry: &pxar.Entry{
+				Path:          "unchanged",
+				Kind:          pxar.KindFile,
+				FileSize:      7500,
+				PayloadOffset: 100,
+			},
+		}},
+	}
+
+	if err := state.flushPendingRefs(false); err != nil {
+		t.Fatal(err)
+	}
+	if len(progress.messages) != 1 || progress.messages[0] != "Processing unchanged files (1 scanned)" {
+		t.Fatalf("progress messages = %q, want reuse progress", progress.messages)
+	}
+}
+
 func TestPayloadRefsAlwaysBackedByInjectedChunks(t *testing.T) {
 	const chunkSize = 4000
 	idx := buildSyntheticDIDX(t, 3, chunkSize)

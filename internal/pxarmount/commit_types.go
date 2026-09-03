@@ -41,8 +41,9 @@ type commitWalkState struct {
 	writer       transfer.ArchiveWriter
 	prog         CommitProgress
 	xattrCache   map[int64][]format.XAttr
-	backedHashes map[string]uint64
-	mutableFiles int
+	backedHashes  map[string]uint64
+	mutableFiles  int
+	unchangedFiles int64
 
 	redirectCache map[string]*pxar.Entry
 	prevRefOffset uint64
