@@ -1,4 +1,10 @@
 #!/bin/sh
+# Shared post-install script for deb (postinst), rpm (%post) and apk
+# (.post-install) agent packages.
+#
+# Design rule: a package manager transaction must never fail because the
+# service manager is missing or the sandbox restricts exec/caps. Everything
+# here is best-effort except the binary itself being present.
 set -e
 
 SERVICE_NAME="pbs-plus-agent"
@@ -13,6 +19,7 @@ LEGACY_LOG_DIR="/var/log/pbs-plus"
 
 is_cmd() { command -v "$1" >/dev/null 2>&1; }
 log() { echo "--> $@"; }
+warn() { echo "--> WARNING: $@" >&2; }
 
 detect_system() {
   is_systemd=false
@@ -25,11 +32,11 @@ detect_system() {
 }
 
 create_user() {
-  if getent passwd pbsplus >/dev/null 2>&1; then 
+  if getent passwd pbsplus >/dev/null 2>&1; then
     log "User pbsplus already exists, skipping creation."
     return 0
   fi
-  
+
   for s in /sbin/nologin /usr/sbin/nologin /bin/false; do
     [ -x "$s" ] && NOLOGIN_SHELL="$s" && break
   done
@@ -49,40 +56,41 @@ create_user() {
     adduser -S -D -H -s "$NOLOGIN_SHELL" -h "$STATE_DIR" -G pbsplus pbsplus 2>/dev/null || \
     adduser --system --ingroup pbsplus --home "$STATE_DIR" --shell "$NOLOGIN_SHELL" --disabled-password pbsplus || true
   fi
+
+  getent passwd pbsplus >/dev/null 2>&1 || \
+    warn "failed to create pbsplus user; fix manually and reinstall"
 }
 
 setup_binary() {
   log "Setting up binary in $BIN_DIR..."
-  
+
   mkdir -p "$BIN_DIR"
-  chown pbsplus:pbsplus "$BIN_DIR"
+  chown pbsplus:pbsplus "$BIN_DIR" 2>/dev/null || true
   chmod 0755 "$BIN_DIR"
-  
+
   if [ ! -f "$BIN_PATH" ]; then
     log "ERROR: Binary not found at $BIN_PATH"
-    log "Available files in $BIN_DIR:"
     ls -la "$BIN_DIR" || true
     exit 1
   fi
-  
-  chown pbsplus:pbsplus "$BIN_PATH"
+
+  chown pbsplus:pbsplus "$BIN_PATH" 2>/dev/null || true
   chmod 0755 "$BIN_PATH"
-  
-  if [ ! -x "$BIN_PATH" ]; then
-    log "ERROR: Binary at $BIN_PATH is not executable"
-    exit 1
+
+  # No setcap here on purpose: the systemd unit grants
+  # AmbientCapabilities=CAP_DAC_READ_SEARCH+CAP_DAC_OVERRIDE, and executing a
+  # file-capability binary fails with EPERM inside unprivileged LXC/OCI
+  # containers, which used to abort package installation.
+
+  # Repair the symlink instead of failing when it is missing, a regular file
+  # (leftover from pre-/opt packaging), or pointing elsewhere.
+  if [ "$(readlink "$SYMLINK_PATH" 2>/dev/null)" != "$BIN_PATH" ]; then
+    rm -f "$SYMLINK_PATH"
+    ln -s "$BIN_PATH" "$SYMLINK_PATH" 2>/dev/null || \
+      warn "could not (re)create $SYMLINK_PATH"
+  else
+    log "Symlink $SYMLINK_PATH OK"
   fi
-  
-  if is_cmd setcap; then
-    setcap "cap_dac_read_search,cap_dac_override+ep" "$BIN_PATH" || true
-  fi
-  
-  if [ ! -L "$SYMLINK_PATH" ]; then
-    log "ERROR: Expected symlink not at $SYMLINK_PATH"
-    exit 1
-  fi
-  
-  log "Binary installed at $BIN_PATH with symlink at $SYMLINK_PATH"
 }
 
 setup_permissions_for_updates() {
@@ -114,112 +122,99 @@ EOF
 }
 
 setup_selinux() {
-  if is_cmd getenforce && [ "$(getenforce)" != "Disabled" ]; then
+  if is_cmd getenforce && [ "$(getenforce 2>/dev/null)" != "Disabled" ]; then
     log "Configuring SELinux file contexts..."
-    
+
     semanage fcontext -a -t bin_t "$BIN_DIR(/.*)?" 2>/dev/null || \
       chcon -R -t bin_t "$BIN_DIR" 2>/dev/null || true
-    
+
     semanage fcontext -a -t var_lib_t "$STATE_DIR(/.*)?" 2>/dev/null || \
       chcon -R -t var_lib_t "$STATE_DIR" 2>/dev/null || true
-    
+
     semanage fcontext -a -t var_log_t "$LOG_DIR(/.*)?" 2>/dev/null || \
       chcon -R -t var_log_t "$LOG_DIR" 2>/dev/null || true
-    
+
     restorecon -Rv "$BIN_DIR" "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
-    
-    log "SELinux contexts applied. If issues persist, run: setenforce Permissive"
   fi
 }
 
 setup_apparmor() {
-  if command -v aa-status >/dev/null 2>&1; then
+  if is_cmd aa-status; then
     log "Installing AppArmor profile..."
-    
+
     PROFILE_SRC="/usr/share/pbs-plus-agent/apparmor/opt.pbs-plus-agent.pbs-plus-agent"
     PROFILE_DST="/etc/apparmor.d/opt.pbs-plus-agent.pbs-plus-agent"
-    
+
     if [ -f "$PROFILE_SRC" ]; then
       cp "$PROFILE_SRC" "$PROFILE_DST"
-      
-      # Load the profile
-      apparmor_parser -r "$PROFILE_DST" || true
-      
-      # Set to enforce mode
+      apparmor_parser -r "$PROFILE_DST" 2>/dev/null || true
       aa-enforce "$PROFILE_DST" 2>/dev/null || true
     fi
   fi
 }
 
 migrate_legacy_paths() {
-  # Migration from v0.78.x and earlier which used /var/lib/pbs-plus instead of /var/lib/pbs-plus-agent
-  # This handles RPM updates where users may have existing data in old location
-  
+  # Migration from v0.78.x and earlier which used /var/lib/pbs-plus instead of
+  # /var/lib/pbs-plus-agent.
+
   if [ ! -d "$LEGACY_STATE_DIR" ]; then
-    # No legacy data to migrate
     return 0
   fi
 
   if [ -d "$LEGACY_STATE_DIR.backup.legacy" ]; then
-    # Migration already completed in a previous install
     log "Legacy data already migrated (backup exists)"
     return 0
   fi
 
   log "Migrating legacy data from $LEGACY_STATE_DIR to $STATE_DIR..."
 
-  # Check if new directory already has content
   if [ -d "$STATE_DIR" ] && [ "$(ls -A "$STATE_DIR" 2>/dev/null)" ]; then
     log "New state directory already has content, skipping migration"
     return 0
   fi
 
-  # Ensure new directories exist with proper permissions
   mkdir -p "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
-  
-  # Attempt migration
+
   if [ -d "$STATE_DIR" ] && [ -w "$STATE_DIR" ]; then
-    # Copy all content from legacy to new
     if cp -a "$LEGACY_STATE_DIR/"* "$STATE_DIR/" 2>/dev/null; then
-      # Rename legacy to backup
       if mv "$LEGACY_STATE_DIR" "$LEGACY_STATE_DIR.backup.legacy" 2>/dev/null; then
         log "Migration complete, backed up old directory to $LEGACY_STATE_DIR.backup.legacy"
       else
         log "Data migrated but failed to backup old directory (will retry on next run)"
       fi
     else
-      log "Warning: Failed to copy legacy data, agent will continue using legacy paths"
+      warn "failed to copy legacy data, agent will continue using legacy paths"
     fi
   else
-    log "Warning: Cannot create new state directory, agent will continue using legacy paths"
+    warn "cannot create new state directory, agent will continue using legacy paths"
   fi
-  
-  # Ensure permissions are correct
+
   chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" 2>/dev/null || true
 }
 
 setup_service() {
   log "Configuring directories..."
-  
-  # Migrate legacy data before setting up new directories
+
   migrate_legacy_paths
-  
+
   mkdir -p "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
-  chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" "$ETC_DIR"
-  
+  chown -R pbsplus:pbsplus "$STATE_DIR" "$LOG_DIR" "$ETC_DIR" 2>/dev/null || true
+
   [ -f "$ETC_DIR/agent.env" ] || touch "$ETC_DIR/agent.env"
-  chown pbsplus:pbsplus "$ETC_DIR/agent.env"
-  chmod 0640 "$ETC_DIR/agent.env"
+  chown pbsplus:pbsplus "$ETC_DIR/agent.env" 2>/dev/null || true
+  chmod 0640 "$ETC_DIR/agent.env" 2>/dev/null || true
 
   log "Running service installation..."
-  "$BIN_PATH" install
-  
-  if $is_systemd; then
-    systemctl daemon-reload || true
-    systemctl reset-failed "$SERVICE_NAME" || true
+  if "$BIN_PATH" install; then
+    if $is_systemd; then
+      systemctl daemon-reload || true
+      systemctl reset-failed "$SERVICE_NAME" || true
+    fi
+    "$BIN_PATH" restart 2>/dev/null || "$BIN_PATH" start 2>/dev/null || true
+  else
+    warn "service installation failed (no supported service manager or restricted environment)"
+    warn "once a service manager is available, run: $BIN_PATH install"
   fi
-
-  "$BIN_PATH" restart || "$BIN_PATH" start || true
 }
 
 main() {
@@ -229,11 +224,17 @@ main() {
   setup_selinux
   setup_apparmor
   setup_permissions_for_updates
-  
+
   # Linger allows the user to run services without being logged in
   [ "$ENABLE_LINGER" = "true" ] && is_cmd loginctl && loginctl enable-linger pbsplus 2>/dev/null || true
-  
+
   setup_service
+  # kardianos v1.3 runs "rc-update add" without a runlevel, which modern
+  # OpenRC rejects, so the service never lands in a runlevel by itself.
+  if [ -f "/etc/init.d/$SERVICE_NAME" ] && is_cmd rc-update; then
+    rc-update add "$SERVICE_NAME" default 2>/dev/null || true
+  fi
+
   log "Installation complete. Binary: $BIN_PATH"
 }
 

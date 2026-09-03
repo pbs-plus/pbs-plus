@@ -1,7 +1,7 @@
 package lifecycle
 
 const SYSTEMD_SCRIPT = `[Unit]
-Description={{.DisplayName}}
+Description={{Description}}
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300
@@ -12,7 +12,7 @@ Type=simple
 User=pbsplus
 Group=pbsplus
 WorkingDirectory=/var/lib/pbs-plus-agent
-ExecStart={{.Path}}
+ExecStart={{Path}}
 Restart=always
 RestartSec=3
 EnvironmentFile=-/etc/pbs-plus-agent/agent.env
@@ -36,10 +36,10 @@ WantedBy=multi-user.target
 `
 
 const OPENRC_SCRIPT = `#!/sbin/openrc-run
-name="{{.DisplayName}}"
-description="{{.Description}}"
+name="{{DisplayName}}"
+description="{{Description}}"
 
-command="{{.Path}}"
+command="{{Path}}"
 command_user="pbsplus:pbsplus"
 directory="/var/lib/pbs-plus-agent"
 agent_env="/etc/pbs-plus-agent/agent.env"
