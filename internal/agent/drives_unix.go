@@ -28,7 +28,7 @@ func GetLocalDrives() ([]fswire.DriveInfo, error) {
 	seen := make(map[string]struct{}, len(mounts))
 	drives := make([]fswire.DriveInfo, 0, len(mounts))
 	for _, mount := range mounts {
-		if _, skip := pseudo[mount.FSType]; skip {
+		if skipPseudoMount(mount, pseudo) {
 			continue
 		}
 		if _, dup := seen[mount.MountPoint]; dup {
@@ -79,6 +79,14 @@ func driveInfo(mountPoint string, fsType string, volumeName string) (fswire.Driv
 		Used:       fswire.HumanizeBytes(usedBytes),
 		Free:       fswire.HumanizeBytes(freeBytes),
 	}, nil
+}
+
+func skipPseudoMount(mount snapshots.MountEntry, pseudo map[string]struct{}) bool {
+	if mount.MountPoint == "/" {
+		return false
+	}
+	_, skip := pseudo[mount.FSType]
+	return skip
 }
 
 func pseudoFilesystems() (map[string]struct{}, error) {
