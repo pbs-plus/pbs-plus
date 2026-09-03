@@ -46,6 +46,7 @@ type (
 	BackupReq struct {
 		BackupID   string `cbor:"job_id"`
 		Drive      string `cbor:"drive"`
+		Subpath    string `cbor:"subpath,omitempty"`
 		SourceMode string `cbor:"source_mode,omitempty"`
 		ReadMode   string `cbor:"read_mode,omitempty"`
 		Extras     string `cbor:"extras,omitempty"`

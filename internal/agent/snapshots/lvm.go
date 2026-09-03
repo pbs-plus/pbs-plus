@@ -11,63 +11,119 @@ import (
 
 type LVMSnapshotHandler struct{}
 
+type lvmVolume struct {
+	vg     string
+	lv     string
+	layout string
+}
+
 func (l *LVMSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
-	if !l.IsSupported(sourcePath) {
-		return Snapshot{}, fmt.Errorf("source path %q is not on an LVM volume", sourcePath)
-	}
-
-	vgName, lvName, err := l.getVolumeGroupAndLogicalVolume(sourcePath)
+	mount, err := FindMount(sourcePath)
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("failed to get volume group and logical volume: %w", err)
+		return Snapshot{}, err
 	}
 
-	snapshotName := fmt.Sprintf("%s-snap-%s", lvName, jobID)
+	vol, err := l.lookupVolume(mount.Source)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("%q is not backed by an LVM logical volume: %w", sourcePath, err)
+	}
+
+	snapshotName := fmt.Sprintf("%s_snap_%s", vol.lv, sanitizeVolumeName(jobID))
+	origin := filepath.Join("/dev", vol.vg, vol.lv)
+	snapshotDev := filepath.Join("/dev", vol.vg, snapshotName)
 	timeStarted := time.Now()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "lvcreate", "--snapshot", "--name", snapshotName, "--size", "1G", fmt.Sprintf("/dev/%s/%s", vgName, lvName))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return Snapshot{}, fmt.Errorf("failed to create LVM snapshot: %s, %w", string(output), err)
+	args := []string{"--snapshot", "--name", snapshotName}
+	thin := strings.Contains(vol.layout, "thin")
+	if !thin {
+		args = append(args, "--extents", "20%ORIGIN")
+	}
+	args = append(args, origin)
+
+	if output, err := exec.CommandContext(ctx, "lvcreate", args...).CombinedOutput(); err != nil {
+		return Snapshot{}, fmt.Errorf("failed to create LVM snapshot of %s: %s: %w", origin, strings.TrimSpace(string(output)), err)
 	}
 
-	snapshotPath := filepath.Join("/dev", vgName, snapshotName)
+	if thin {
+		if output, err := exec.CommandContext(ctx, "lvchange", "--activate", "y", "--ignoreactivationskip", snapshotDev).CombinedOutput(); err != nil {
+			_ = l.remove(snapshotDev)
+			return Snapshot{}, fmt.Errorf("failed to activate thin snapshot %s: %s: %w", snapshotDev, strings.TrimSpace(string(output)), err)
+		}
+	}
+
 	return Snapshot{
-		Path:        snapshotPath,
+		Path:        mount.MountPoint,
 		TimeStarted: timeStarted,
 		SourcePath:  sourcePath,
+		MountPoint:  mount.MountPoint,
+		Device:      snapshotDev,
+		Ref:         snapshotDev,
+		FSType:      mount.FSType,
 		Handler:     l,
 	}, nil
 }
 
 func (l *LVMSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
-	cmd := exec.Command("lvremove", "-f", snapshot.Path)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to delete LVM snapshot: %s, %w", string(output), err)
+	if err := Unmaterialize(&snapshot); err != nil {
+		return fmt.Errorf("failed to unmount LVM snapshot at %s: %w", snapshot.MountPoint, err)
+	}
+	return l.remove(snapshot.Ref)
+}
+
+func (l *LVMSnapshotHandler) remove(dev string) error {
+	if dev == "" {
+		return nil
+	}
+	if output, err := exec.Command("lvremove", "--force", dev).CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete LVM snapshot %s: %s: %w", dev, strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }
 
 func (l *LVMSnapshotHandler) IsSupported(sourcePath string) bool {
-	cmd := exec.Command("lsblk", "-no", "TYPE", sourcePath)
-	output, err := cmd.Output()
+	mount, err := FindMount(sourcePath)
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(output)) == "lvm"
+	_, err = l.lookupVolume(mount.Source)
+	return err == nil
 }
-func (l *LVMSnapshotHandler) getVolumeGroupAndLogicalVolume(sourcePath string) (string, string, error) {
-	cmd := exec.Command("lvs", "--noheadings", "-o", "vg_name,lv_name", sourcePath)
+
+func (l *LVMSnapshotHandler) lookupVolume(device string) (lvmVolume, error) {
+	if device == "" {
+		return lvmVolume{}, fmt.Errorf("mount has no backing device")
+	}
+
+	cmd := exec.Command("lvs", "--noheadings", "--separator", "|", "-o", "vg_name,lv_name,lv_layout", device)
 	output, err := cmd.Output()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to get LVM details: %w", err)
+		return lvmVolume{}, fmt.Errorf("lvs failed for %s: %w", device, err)
 	}
 
-	parts := strings.Fields(string(output))
-	if len(parts) < 2 {
-		return "", "", fmt.Errorf("unexpected output from lvs command: %s", string(output))
+	fields := strings.Split(strings.TrimSpace(string(output)), "|")
+	if len(fields) < 3 {
+		return lvmVolume{}, fmt.Errorf("unexpected lvs output for %s: %q", device, string(output))
 	}
 
-	return parts[0], parts[1], nil
+	return lvmVolume{
+		vg:     strings.TrimSpace(fields[0]),
+		lv:     strings.TrimSpace(fields[1]),
+		layout: strings.TrimSpace(fields[2]),
+	}, nil
+}
+
+func sanitizeVolumeName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }

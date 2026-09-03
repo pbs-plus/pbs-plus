@@ -35,7 +35,7 @@ func BackupStartHandler(req *arpc.Request, rpcSess *arpc.StreamPipe) (arpc.Respo
 	}
 	log.Info("received backup request for job", "id", reqData.BackupID)
 	log.Info("forking process for backup job", "id", reqData.BackupID)
-	backupMode, pid, err := cli.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Drive, reqData.BackupID)
+	backupMode, pid, err := cli.ExecBackup(reqData.SourceMode, reqData.ReadMode, reqData.Drive, reqData.Subpath, reqData.BackupID)
 	if err != nil {
 		log.Error(err, "forking process for backup job", "id", reqData.BackupID)
 		if pid != -1 {

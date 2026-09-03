@@ -17,6 +17,7 @@ func Entry() {
 	readMode := flag.String("readMode", "", "File read mode (standard or mmap)")
 	restoreMode := flag.Int("restoreMode", 0, "Restore mode")
 	drive := flag.String("drive", "", "Drive or path for backup job")
+	subpath := flag.String("subpath", "", "Path within the drive that the job actually backs up")
 	id := flag.String("id", "", "Unique job identifier for the job")
 	srcPath := flag.String("srcPath", "/", "Path to be restored within snapshot")
 	destPath := flag.String("destPath", "", "Destination path of files to be restored from snapshot")
@@ -38,7 +39,7 @@ func Entry() {
 	}
 	log.Debug("cli: fork invoked",
 
-		"destPath", *destPath, "srcPath", *srcPath, "id", *id, "drive", *drive, "restoreMode", *restoreMode, "readMode", *readMode, "sourceMode", *sourceMode, "cmdMode", *cmdMode)
+		"destPath", *destPath, "srcPath", *srcPath, "id", *id, "drive", *drive, "subpath", *subpath, "restoreMode", *restoreMode, "readMode", *readMode, "sourceMode", *sourceMode, "cmdMode", *cmdMode)
 
 	tokenFile := filepath.Join(os.TempDir(), fmt.Sprintf(".pbs-plus-token-%s-%s", *cmdMode, *id))
 	expectedToken, err := os.ReadFile(tokenFile)
@@ -79,7 +80,7 @@ func Entry() {
 
 	switch *cmdMode {
 	case "backup":
-		cmdBackup(sourceMode, readMode, drive, id)
+		cmdBackup(sourceMode, readMode, drive, subpath, id)
 	case "restore":
 		cmdRestore(id, srcPath, destPath, restoreMode)
 	case "verify":

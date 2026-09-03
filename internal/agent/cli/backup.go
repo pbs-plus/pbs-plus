@@ -76,7 +76,7 @@ func (s *backupSession) Close() {
 	log.Info("session: closed")
 }
 
-func cmdBackup(sourceMode, readMode, drive, backupID *string) {
+func cmdBackup(sourceMode, readMode, drive, subpath, backupID *string) {
 	if *sourceMode == "" || *drive == "" || *backupID == "" || *readMode == "" {
 		log.Error(errors.New("missing required flags"), "backup: validation failed")
 		os.Exit(1)
@@ -84,6 +84,11 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 
 	if err := validate.ValidateJobId(*backupID); err != nil {
 		log.Error(err, "backup: backup id validation failed")
+		os.Exit(1)
+	}
+
+	if err := validate.ValidateSubpath("subpath", *subpath); err != nil {
+		log.Error(err, "backup: subpath validation failed")
 		os.Exit(1)
 	}
 
@@ -185,7 +190,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 			}
 
 			if currentSnap == nil {
-				snap, backupMode, err := Backup(session, *sourceMode, currentReadMode, *drive, *backupID)
+				snap, backupMode, err := Backup(session, *sourceMode, currentReadMode, *drive, *subpath, *backupID)
 				if err != nil {
 					log.Error(err, "backup: initiation failed")
 					cancel()
@@ -239,7 +244,7 @@ func cmdBackup(sourceMode, readMode, drive, backupID *string) {
 	os.Exit(0)
 }
 
-func ExecBackup(sourceMode string, readMode string, drive string, backupID string) (string, int, error) {
+func ExecBackup(sourceMode string, readMode string, drive string, subpath string, backupID string) (string, int, error) {
 	log.Info("backup: exec begin")
 	if err := validate.ValidateJobId(backupID); err != nil {
 		log.Error(err, "ExecBackup: backupID validation failed")
@@ -279,6 +284,7 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 		"--sourceMode=" + sourceMode,
 		"--readMode=" + readMode,
 		"--drive=" + drive,
+		"--subpath=" + subpath,
 		"--id=" + backupID,
 		"--token=" + token,
 	}
@@ -287,6 +293,9 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 	setProcAttributes(cmd)
 
 	cmd.Env = os.Environ()
+	if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+		cmd.Env = append(cmd.Env, privateMountsEnv+"=1")
+	}
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -347,7 +356,56 @@ func ExecBackup(sourceMode string, readMode string, drive string, backupID strin
 	return mode, cmd.Process.Pid, nil
 }
 
-func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, backupID string) (*snapshots.Snapshot, string, error) {
+const privateMountsEnv = "PBS_PLUS_PRIVATE_MOUNTS"
+
+func unixTargetPath(drive string, subpath string) string {
+	base := "/"
+	if strings.HasPrefix(drive, "/") {
+		base = drive
+	}
+	if subpath == "" {
+		return base
+	}
+	return filepath.Join(base, subpath)
+}
+
+// createUnixSnapshot snapshots the volume holding target and mounts it back over its own mount point,
+// so every absolute path below it keeps resolving unchanged.
+func createUnixSnapshot(backupID string, target string) (*snapshots.Snapshot, error) {
+	if os.Getenv(privateMountsEnv) != "1" {
+		return nil, errors.New("refusing to mount a snapshot outside a private mount namespace")
+	}
+
+	snapshot, err := snapshots.Manager.CreateSnapshot(backupID, target)
+	if err != nil {
+		return nil, err
+	}
+
+	cleanup := func() {
+		if snapshot.Handler == nil {
+			return
+		}
+		if err := snapshot.Handler.DeleteSnapshot(snapshot); err != nil {
+			log.Error(err, "backup: snapshot cleanup failed")
+		}
+	}
+
+	if err := snapshots.PrivateMounts(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to isolate mount namespace: %w", err)
+	}
+
+	if err := snapshots.Materialize(&snapshot); err != nil {
+		cleanup()
+		return nil, err
+	}
+
+	snapshot.Path = "/"
+	snapshot.SourcePath = snapshot.MountPoint
+	return &snapshot, nil
+}
+
+func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive string, subpath string, backupID string) (*snapshots.Snapshot, string, error) {
 	log.Info("backup: begin")
 	if err := validate.ValidateJobId(backupID); err != nil {
 		log.Error(err, "Backup: backupID validation failed")
@@ -427,13 +485,31 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 			}
 		}
 	} else {
-		snapshot = snapshots.Snapshot{
+		direct := snapshots.Snapshot{
 			Path:        "/",
 			TimeStarted: time.Now(),
 			SourcePath:  "/",
 			Direct:      true,
 		}
-		log.Info("backup: using root snapshot")
+
+		if sourceMode == "direct" {
+			snapshot = direct
+			log.Info("backup: configured direct mode", "path", "/")
+		} else {
+			target := unixTargetPath(drive, subpath)
+			snap, err := createUnixSnapshot(backupID, target)
+			if err != nil {
+				log.Error(err, "Backup: snapshot failed; switching to direct mode", "target", target)
+				backupMode = "direct"
+				snapshot = direct
+			} else {
+				snapshot = *snap
+				log.Info("backup: snapshot created",
+
+					"target", target, "mount_point", snapshot.MountPoint, "device", snapshot.Device, "ref", snapshot.Ref)
+
+			}
+		}
 	}
 
 	sessionCtx, cancel := context.WithCancel(context.Background())
