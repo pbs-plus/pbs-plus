@@ -13,6 +13,7 @@ type Snapshot struct {
 	Handler     SnapshotHandler `json:"-"`
 
 	MountPoint string `json:"mount_point,omitempty"`
+	MountDir   string `json:"mount_dir,omitempty"`
 	Device     string `json:"device,omitempty"`
 	SnapDir    string `json:"snap_dir,omitempty"`
 	Ref        string `json:"ref,omitempty"`

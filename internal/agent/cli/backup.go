@@ -400,8 +400,7 @@ func createUnixSnapshot(backupID string, target string) (*snapshots.Snapshot, er
 		return nil, err
 	}
 
-	snapshot.Path = "/"
-	snapshot.SourcePath = snapshot.MountPoint
+	snapshot.SourcePath = snapshot.Path
 	return &snapshot, nil
 }
 
@@ -506,7 +505,7 @@ func Backup(rpcSess *arpc.StreamPipe, sourceMode string, readMode string, drive 
 				snapshot = *snap
 				log.Info("backup: snapshot created",
 
-					"target", target, "mount_point", snapshot.MountPoint, "device", snapshot.Device, "ref", snapshot.Ref)
+					"target", target, "root", snapshot.Path, "mount_point", snapshot.MountPoint, "ref", snapshot.Ref)
 
 			}
 		}

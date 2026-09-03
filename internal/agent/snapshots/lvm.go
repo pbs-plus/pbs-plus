@@ -68,7 +68,7 @@ func (l *LVMSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (Sn
 
 func (l *LVMSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
 	if err := Unmaterialize(&snapshot); err != nil {
-		return fmt.Errorf("failed to unmount LVM snapshot at %s: %w", snapshot.MountPoint, err)
+		return fmt.Errorf("failed to unmount LVM snapshot at %s: %w", snapshot.MountDir, err)
 	}
 	return l.remove(snapshot.Ref)
 }

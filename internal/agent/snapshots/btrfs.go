@@ -59,7 +59,7 @@ func (b *BtrfsSnapshotHandler) CreateSnapshot(jobID string, sourcePath string) (
 
 func (b *BtrfsSnapshotHandler) DeleteSnapshot(snapshot Snapshot) error {
 	if err := Unmaterialize(&snapshot); err != nil {
-		return fmt.Errorf("failed to unmount btrfs snapshot at %s: %w", snapshot.MountPoint, err)
+		return fmt.Errorf("failed to unmount btrfs snapshot at %s: %w", snapshot.MountDir, err)
 	}
 	return b.remove(snapshot.Ref)
 }
