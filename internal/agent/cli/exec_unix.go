@@ -1,4 +1,4 @@
-//go:build unix && !linux
+//go:build unix
 
 package cli
 
@@ -11,9 +11,4 @@ func setProcAttributes(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
-}
-
-func setSnapshotProcAttributes(cmd *exec.Cmd) bool {
-	setProcAttributes(cmd)
-	return false
 }

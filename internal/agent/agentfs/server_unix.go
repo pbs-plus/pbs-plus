@@ -5,9 +5,7 @@ package agentfs
 import (
 	"io"
 	"os"
-	"path"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
@@ -16,22 +14,10 @@ import (
 )
 
 func (s *Server) abs(filename string) string {
-	mountPoint := s.snapshot.MountPoint
-	if mountPoint == "" || mountPoint == "/" {
-		if filename == "" || filename == "." || filename == "/" {
-			return s.snapshot.Path
-		}
-		return Join(s.snapshot.Path, filename)
-	}
-
-	clean := path.Clean("/" + strings.TrimPrefix(filename, "/"))
-	if clean == mountPoint {
+	if filename == "" || filename == "." || filename == "/" {
 		return s.snapshot.Path
 	}
-	if rest, ok := strings.CutPrefix(clean, mountPoint+"/"); ok {
-		return Join(s.snapshot.Path, rest)
-	}
-	return clean
+	return Join(s.snapshot.Path, filename)
 }
 
 func (s *Server) platformOpen(path string) (*FileHandle, error) {

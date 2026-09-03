@@ -104,7 +104,6 @@ func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
 	if qPipe, ok := s.Store.Agents.GetQuicPipe(args.TargetHostname); ok {
 		backupReq := fswire.BackupReq{
 			Drive:      args.Drive,
-			Subpath:    backup.Subpath,
 			BackupID:   args.BackupID,
 			SourceMode: backup.SourceMode,
 			ReadMode:   backup.ReadMode,
@@ -123,7 +122,6 @@ func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
 	} else if tcpPipe, ok := s.Store.Agents.GetStreamPipe(args.TargetHostname); ok {
 		backupReq := fswire.BackupReq{
 			Drive:      args.Drive,
-			Subpath:    backup.Subpath,
 			BackupID:   args.BackupID,
 			SourceMode: backup.SourceMode,
 			ReadMode:   backup.ReadMode,
