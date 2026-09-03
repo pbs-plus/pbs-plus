@@ -1,7 +1,6 @@
 package snapshots
 
 import (
-	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -21,13 +20,9 @@ var Manager = &SnapshotManager{
 	},
 }
 
-var blockProviders = []SnapshotHandler{
-	&LVMSnapshotHandler{},
-}
-
 func (m *SnapshotManager) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
 	if runtime.GOOS == "linux" {
-		return m.createLinux(jobID, sourcePath)
+		return Snapshot{}, fmt.Errorf("snapshots are unavailable on Linux")
 	}
 
 	fsType, err := detectFilesystem(sourcePath)
@@ -41,34 +36,4 @@ func (m *SnapshotManager) CreateSnapshot(jobID string, sourcePath string) (Snaps
 	}
 
 	return handler.CreateSnapshot(jobID, sourcePath)
-}
-
-func (m *SnapshotManager) createLinux(jobID string, sourcePath string) (Snapshot, error) {
-	mount, err := FindMount(sourcePath)
-	if err != nil {
-		return Snapshot{}, err
-	}
-
-	var failures []error
-	for _, handler := range providersFor(mount.FSType) {
-		snapshot, err := handler.CreateSnapshot(jobID, mount.MountPoint)
-		if err == nil {
-			return snapshot, nil
-		}
-		failures = append(failures, err)
-	}
-
-	return Snapshot{}, fmt.Errorf("no snapshot provider succeeded for %s (%s): %w",
-		mount.MountPoint, mount.FSType, errors.Join(failures...))
-}
-
-func providersFor(fsType string) []SnapshotHandler {
-	switch fsType {
-	case "btrfs":
-		return []SnapshotHandler{&BtrfsSnapshotHandler{}}
-	case "zfs":
-		return []SnapshotHandler{&ZFSSnapshotHandler{}}
-	default:
-		return blockProviders
-	}
 }
