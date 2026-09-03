@@ -12,3 +12,8 @@ func setProcAttributes(cmd *exec.Cmd) {
 		Setpgid: true,
 	}
 }
+
+func setSnapshotProcAttributes(cmd *exec.Cmd) bool {
+	setProcAttributes(cmd)
+	return false
+}

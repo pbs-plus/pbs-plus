@@ -290,10 +290,9 @@ func ExecBackup(sourceMode string, readMode string, drive string, subpath string
 	}
 
 	cmd := exec.Command(execCmd, args...)
-	setProcAttributes(cmd)
 
 	cmd.Env = os.Environ()
-	if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+	if setSnapshotProcAttributes(cmd) {
 		cmd.Env = append(cmd.Env, privateMountsEnv+"=1")
 	}
 
