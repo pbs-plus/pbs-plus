@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -304,7 +305,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 		}
 	}
 
-	if fs.expandArchives && !fi.IsDir && fs.archiveEnabled(filename) && fi.Size >= 32 {
+	if fs.expandArchives && !fi.IsDir && fs.archiveEnabled(filename) && fi.Size >= zipMinSize {
 		if fs.zipProbe(ctx, filename, fi.Size) {
 			return fswire.AgentFileInfo{}, syscall.ENOENT
 		}
@@ -573,6 +574,7 @@ type ARPCFS struct {
 	expandSevenZip   bool
 	expandMaxDepth   int
 	expandMaxEntries int
+	zipActive        atomic.Bool
 	zipMu            sync.RWMutex
 	zipOverlays      map[string]*zipOverlay
 	zipSkipped       map[string]struct{}

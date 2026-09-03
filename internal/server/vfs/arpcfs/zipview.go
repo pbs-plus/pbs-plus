@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,6 +27,11 @@ import (
 )
 
 const (
+	extraExtendedTime = 0x5455
+	extraNTFSTime     = 0x000a
+
+	zipMinSize = 22
+
 	zipMaxEntries    = 10000
 	zipBombRatio     = 1000
 	zipBombFloor     = 4 << 20
@@ -101,6 +107,7 @@ type zipFileState struct {
 	ent    *zipEntry
 	uncomp int64
 
+	dataOff   int64
 	ring      []byte
 	ringStart int64
 	fed       int64
@@ -173,6 +180,7 @@ func cleanZipName(raw string) (string, bool, bool) {
 	return s, isDir, true
 }
 
+// dosTime decodes the archiver's local wall clock; fallback only, 2s resolution.
 func dosTime(d, t uint16) int64 {
 	if d == 0 && t == 0 {
 		return 0
@@ -255,8 +263,11 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 	if int64(totalEntries) > maxEntries {
 		return nil, fmt.Errorf("%w: %d entries exceeds %d", errZipTooMany, totalEntries, maxEntries)
 	}
-	if cdSize <= 0 || cdOffset < 0 || cdOffset+cdSize > size {
+	if cdSize < 0 || cdOffset < 0 || cdOffset+cdSize > size {
 		return nil, errZipCorrupt
+	}
+	if totalEntries == 0 || cdSize == 0 {
+		return emptyOverlay(readAt, size), nil
 	}
 
 	cd := make([]byte, cdSize)
@@ -280,7 +291,7 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		versionMadeBy := binary.LittleEndian.Uint16(cd[off+4:])
 		flags := binary.LittleEndian.Uint16(cd[off+8:])
 		method := binary.LittleEndian.Uint16(cd[off+10:])
-		mtime := dosTime(binary.LittleEndian.Uint16(cd[off+12:]), binary.LittleEndian.Uint16(cd[off+14:]))
+		mtime := dosTime(binary.LittleEndian.Uint16(cd[off+14:]), binary.LittleEndian.Uint16(cd[off+12:]))
 		crc := binary.LittleEndian.Uint32(cd[off+16:])
 		compSize := int64(binary.LittleEndian.Uint32(cd[off+20:]))
 		uncompSize := int64(binary.LittleEndian.Uint32(cd[off+24:]))
@@ -297,6 +308,7 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 
 		extraOff := off + 46 + nameLen
 		extraEnd := extraOff + extraLen
+		var extMtime int64
 		for extraOff+4 <= extraEnd {
 			fieldStart := extraOff
 			fieldID := binary.LittleEndian.Uint16(cd[extraOff:])
@@ -305,22 +317,34 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 			if extraOff > extraEnd {
 				return nil, errZipCorrupt
 			}
-			if fieldID != 1 {
-				continue
-			}
 			p := fieldStart + 4
 			end := fieldStart + 4 + fieldLen
-			if uncompSize == 0xFFFFFFFF && p+8 <= end {
-				uncompSize = int64(binary.LittleEndian.Uint64(cd[p:]))
-				p += 8
+			switch fieldID {
+			case 1:
+				if uncompSize == 0xFFFFFFFF && p+8 <= end {
+					uncompSize = int64(binary.LittleEndian.Uint64(cd[p:]))
+					p += 8
+				}
+				if compSize == 0xFFFFFFFF && p+8 <= end {
+					compSize = int64(binary.LittleEndian.Uint64(cd[p:]))
+					p += 8
+				}
+				if hdrOffset == 0xFFFFFFFF && p+8 <= end {
+					hdrOffset = int64(binary.LittleEndian.Uint64(cd[p:]))
+				}
+			case extraExtendedTime:
+				if extMtime == 0 && p < end && cd[p]&1 != 0 && p+5 <= end {
+					extMtime = int64(int32(binary.LittleEndian.Uint32(cd[p+1:])))
+				}
+			case extraNTFSTime:
+				if extMtime == 0 && p+4+4+8 <= end &&
+					binary.LittleEndian.Uint16(cd[p+4:]) == 1 {
+					extMtime = filetimeUnix(binary.LittleEndian.Uint64(cd[p+8:]))
+				}
 			}
-			if compSize == 0xFFFFFFFF && p+8 <= end {
-				compSize = int64(binary.LittleEndian.Uint64(cd[p:]))
-				p += 8
-			}
-			if hdrOffset == 0xFFFFFFFF && p+8 <= end {
-				hdrOffset = int64(binary.LittleEndian.Uint64(cd[p:]))
-			}
+		}
+		if extMtime != 0 {
+			mtime = extMtime
 		}
 
 		off += 46 + nameLen + extraLen + commentLen
@@ -376,10 +400,62 @@ func parseZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int,
 		parent.children = append(parent.children, zipChild{name: baseName(name), entry: idx})
 	}
 
+	ov.backfillDirMtimes()
 	if expansionTooLarge(ov.uncompSum, size) {
 		return nil, fmt.Errorf("%w: %d/%d", errZipBomb, ov.uncompSum, size)
 	}
 	return ov, nil
+}
+
+// emptyOverlay expands to nothing, which hides the archive rather than listing it.
+func emptyOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size int64) *zipOverlay {
+	return &zipOverlay{
+		size:   size,
+		readAt: readAt,
+		byName: map[string]int32{},
+		dirs:   map[string]*zipDir{"": {}},
+	}
+}
+
+func filetimeUnix(ft uint64) int64 {
+	if ft == 0 {
+		return 0
+	}
+	return int64(ft/10000000) - 11644473600
+}
+
+// backfillDirMtimes keeps implicit parents (no archive entry) off the epoch.
+func (ov *zipOverlay) backfillDirMtimes() {
+	names := make([]string, 0, len(ov.dirs))
+	for name := range ov.dirs {
+		if ov.dirs[name].mtime == 0 {
+			names = append(names, name)
+		}
+	}
+	sort.Slice(names, func(i, j int) bool {
+		return strings.Count(names[i], "/") > strings.Count(names[j], "/")
+	})
+	for _, name := range names {
+		d := ov.dirs[name]
+		for _, c := range d.children {
+			var m int64
+			if c.entry >= 0 {
+				m = ov.entries[c.entry].mtime
+			} else if cd, ok := ov.dirs[childDirName(name, c.name)]; ok {
+				m = cd.mtime
+			}
+			if m > d.mtime {
+				d.mtime = m
+			}
+		}
+	}
+}
+
+func childDirName(dir, name string) string {
+	if dir == "" {
+		return name
+	}
+	return dir + "/" + name
 }
 
 func baseName(p string) string {
@@ -394,6 +470,8 @@ func (ov *zipOverlay) ensureDir(name string, mode uint32, mtime int64) *zipDir {
 	if d, ok := ov.dirs[name]; ok {
 		if mode != 0 {
 			d.mode = mode
+		}
+		if mtime != 0 {
 			d.mtime = mtime
 		}
 		return d
@@ -437,6 +515,7 @@ func (ov *zipOverlay) dirAttr(d *zipDir) fswire.AgentFileInfo {
 	return fswire.AgentFileInfo{
 		Mode:           d.mode,
 		IsDir:          true,
+		ModTime:        d.mtime * int64(time.Second),
 		CreationTime:   d.mtime,
 		LastAccessTime: d.mtime,
 		LastWriteTime:  d.mtime,
@@ -463,6 +542,8 @@ func (ov *zipOverlay) dataOffset(ctx context.Context, e *zipEntry) (int64, error
 	return e.dataOff, nil
 }
 
+var zipRingPool = sync.Pool{New: func() any { return make([]byte, zipRingSize) }}
+
 func (zs *zipFileState) init(ctx context.Context) error {
 	if zs.ent.method == m7z {
 		fr, err := zs.ov.sfiles[zs.ent.sidx].Open()
@@ -470,7 +551,7 @@ func (zs *zipFileState) init(ctx context.Context) error {
 			return fmt.Errorf("%w: %w", errZipUnsupported, err)
 		}
 		zs.fr = fr
-		zs.ring = make([]byte, zipRingSize)
+		zs.ring = zipRingPool.Get().([]byte)
 		return nil
 	}
 	off, err := zs.ov.dataOffset(ctx, zs.ent)
@@ -483,7 +564,7 @@ func (zs *zipFileState) init(ctx context.Context) error {
 	zs.sec = io.NewSectionReader(zipSrc{zs.ov.readAt}, off, zs.ent.compSize)
 	zs.br = bufio.NewReaderSize(zs.sec, zipSrcBufSize)
 	zs.fr = flate.NewReader(zs.br)
-	zs.ring = make([]byte, zipRingSize)
+	zs.ring = zipRingPool.Get().([]byte)
 	return nil
 }
 
@@ -594,10 +675,14 @@ func (zs *zipFileState) ReadAt(ctx context.Context, dest []byte, off int64) (int
 		return 0, io.EOF
 	}
 	if zs.ent.method == 0 {
-		dataOff, err := zs.ov.dataOffset(ctx, zs.ent)
-		if err != nil {
-			return 0, err
+		if zs.dataOff == 0 {
+			off, err := zs.ov.dataOffset(ctx, zs.ent)
+			if err != nil {
+				return 0, err
+			}
+			zs.dataOff = off
 		}
+		dataOff := zs.dataOff
 		end := min(off+int64(len(dest)), zs.uncomp)
 		n := int(end - off)
 		m, err := zs.ov.readAt(ctx, dest[:n], dataOff+off)
@@ -701,6 +786,9 @@ func (zs *zipFileState) close() {
 	if zs.fr != nil {
 		_ = zs.fr.Close()
 	}
+	if zs.ring != nil {
+		zipRingPool.Put(zs.ring)
+	}
 	zs.fr = nil
 	zs.sec = nil
 	zs.br = nil
@@ -739,6 +827,9 @@ func (zs *zipFileState) Lseek(off uint64, whence uint32) uint64 {
 // zipAttr answers hidden zips and virtual paths; a miss must fall through to
 // the agent so real files under an anchor keep working.
 func (fs *ARPCFS) zipAttr(filename string) (fswire.AgentFileInfo, error, bool) {
+	if !fs.zipActive.Load() {
+		return fswire.AgentFileInfo{}, nil, false
+	}
 	fs.zipMu.RLock()
 	if _, shadowed := fs.zipShadowed[filename]; shadowed {
 		fs.zipMu.RUnlock()
@@ -787,6 +878,9 @@ func (fs *ARPCFS) zipMarkShadowed(filename string) {
 }
 
 func (fs *ARPCFS) zipHidden(fullPath string) bool {
+	if !fs.zipActive.Load() {
+		return false
+	}
 	fs.zipMu.RLock()
 	_, ok := fs.zipOverlays[fullPath]
 	fs.zipMu.RUnlock()
@@ -970,11 +1064,15 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 		fs.zipAnchors[anchor] = append(fs.zipAnchors[anchor], overlay)
 		fs.zipBytes += int64(len(overlay.entries)*96 + overlay.nameBytes)
 	}
+	fs.zipActive.Store(len(fs.zipOverlays) > 0)
 	fs.zipMu.Unlock()
 	return true
 }
 
 func (fs *ARPCFS) zipOpen(ctx context.Context, filename string) (*ARPCFile, bool) {
+	if !fs.zipActive.Load() {
+		return nil, false
+	}
 	fs.zipMu.RLock()
 	if _, shadowed := fs.zipShadowed[filename]; shadowed {
 		fs.zipMu.RUnlock()
@@ -1037,13 +1135,28 @@ type zipVChild struct {
 // zipCollectChildren merges root children of overlays anchored at dir with
 // subtree children of overlays anchored above dir.
 func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
+	if !fs.zipActive.Load() {
+		return nil
+	}
 	fs.zipMu.RLock()
 	defer fs.zipMu.RUnlock()
 
+	var hidden map[string]struct{}
+	anchored := fs.zipAnchors[dir]
+	if len(anchored) > 0 {
+		hidden = make(map[string]struct{}, len(anchored))
+		for _, ov := range anchored {
+			hidden[baseName(ov.zipPath)] = struct{}{}
+		}
+	}
+
 	var out []zipVChild
-	for _, ov := range fs.zipAnchors[dir] {
+	for _, ov := range anchored {
 		if d := ov.dirs[""]; d != nil {
 			for _, c := range d.children {
+				if _, skip := hidden[c.name]; skip {
+					continue
+				}
 				out = append(out, zipVChild{ov, c})
 			}
 		}
@@ -1059,6 +1172,9 @@ func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
 		for _, ov := range fs.zipAnchors[anchorKey(dir[:i])] {
 			if d := ov.dirs[inner]; d != nil {
 				for _, c := range d.children {
+					if _, skip := hidden[c.name]; skip {
+						continue
+					}
 					out = append(out, zipVChild{ov, c})
 				}
 			}
@@ -1069,6 +1185,9 @@ func (fs *ARPCFS) zipCollectChildren(dir string) []zipVChild {
 
 // zipIsVirtualDir reports whether dirPath names an overlay-only directory, even childless.
 func (fs *ARPCFS) zipIsVirtualDir(dirPath string) bool {
+	if !fs.zipActive.Load() {
+		return false
+	}
 	fs.zipMu.RLock()
 	defer fs.zipMu.RUnlock()
 
@@ -1097,6 +1216,7 @@ func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 	fs.zipSkipped = nil
 	fs.zipShadowed = nil
 	fs.zipBytes = 0
+	fs.zipActive.Store(false)
 	fs.zipMu.Unlock()
 	for _, ov := range ovs {
 		if ov.src != nil {
@@ -1113,25 +1233,24 @@ func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 func (fs *ARPCFS) zipReaddir(ctx context.Context, dirPath string) (fs.DirStream, bool) {
 	virtual := fs.zipCollectChildren(dirPath)
 
-	var agent *DirStream
+	ms := &zipMergeStream{
+		fs:      fs,
+		path:    dirPath,
+		emitted: map[string]struct{}{},
+	}
 	if stream, err := fs.ReadDir(ctx, dirPath); err == nil {
-		agent = &stream
+		ms.agent = &stream
 	} else if len(virtual) == 0 && !fs.zipIsVirtualDir(dirPath) {
 		return nil, false
 	}
 
-	return &zipMergeStream{
-		fs:      fs,
-		path:    dirPath,
-		agent:   agent,
-		emitted: map[string]struct{}{},
-	}, true
+	return ms, true
 }
 
 type zipMergeStream struct {
 	fs        *ARPCFS
 	path      string
-	agent     *DirStream
+	agent     fs.DirStream
 	mu        sync.Mutex
 	agentDone bool
 	vqueue    []zipVChild
@@ -1161,10 +1280,12 @@ func (s *zipMergeStream) HasNext() bool {
 					// Attr hides expanded archives itself (post-stat probe returns
 					// ENOENT), so an error here usually means hidden, not vanished.
 					fi, aerr := s.fs.Attr(s.fs.Ctx, full, true)
-					if aerr == nil && !fi.IsDir && fi.Size >= 32 && s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
+					if aerr == nil && !fi.IsDir && fi.Size >= zipMinSize && s.fs.zipProbe(s.fs.Ctx, full, fi.Size) {
+						s.fs.FileCount.Add(-1)
 						continue
 					}
 					if aerr != nil && s.fs.zipHidden(full) {
+						s.fs.FileCount.Add(-1)
 						continue
 					}
 					s.markEmitted(e.Name)
@@ -1188,9 +1309,6 @@ func (s *zipMergeStream) HasNext() bool {
 		vc := s.vqueue[s.vidx]
 		s.vidx++
 		if _, shadowed := s.emitted[vc.child.name]; shadowed {
-			continue
-		}
-		if s.fs.zipHidden(joinPath(s.path, vc.child.name)) {
 			continue
 		}
 		mode := uint32(fuse.S_IFREG)
@@ -1224,10 +1342,12 @@ func (s *zipMergeStream) Next() (fuse.DirEntry, syscall.Errno) {
 	e := *s.pending
 	s.pending = nil
 
-	if e.Mode&uint32(fuse.S_IFDIR) != 0 {
-		s.fs.FolderCount.Add(1)
-	} else {
-		s.fs.FileCount.Add(1)
+	if s.agentDone {
+		if e.Mode&syscall.S_IFMT == fuse.S_IFDIR {
+			s.fs.FolderCount.Add(1)
+		} else {
+			s.fs.FileCount.Add(1)
+		}
 	}
 	return e, 0
 }

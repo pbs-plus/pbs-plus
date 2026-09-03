@@ -4,6 +4,7 @@ package arpcfs
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,14 @@ func parseArchiveOverlay(readAt func(ctx context.Context, p []byte, off int64) (
 // ponytail: per-open LZMA dict is sized by archive properties; ulikunitz
 // rejects absurd dicts, which demotes via the probe.
 func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) (int, error), size, maxEntries int64) (*zipOverlay, error) {
+	var hdr [32]byte
+	if _, err := readAt(context.Background(), hdr[:], 0); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if binary.LittleEndian.Uint64(hdr[20:]) == 0 {
+		return emptyOverlay(readAt, size), nil
+	}
+
 	zr, err := sevenzip.NewReader(zipSrc{readAt}, size)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errZipUnsupported, err)
@@ -60,7 +69,10 @@ func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) 
 		}
 		m := f.Mode()
 		isDir := namedDir || m.IsDir()
-		mtime := f.Modified.Unix()
+		var mtime int64
+		if !f.Modified.IsZero() {
+			mtime = f.Modified.Unix()
+		}
 		if isDir {
 			if _, exists := ov.byName[name]; exists {
 				continue
@@ -93,6 +105,7 @@ func parseSevenZipOverlay(readAt func(ctx context.Context, p []byte, off int64) 
 		parent.children = append(parent.children, zipChild{name: baseName(name), entry: idx})
 	}
 
+	ov.backfillDirMtimes()
 	if expansionTooLarge(ov.uncompSum, size) {
 		return nil, fmt.Errorf("%w: %d/%d", errZipBomb, ov.uncompSum, size)
 	}
