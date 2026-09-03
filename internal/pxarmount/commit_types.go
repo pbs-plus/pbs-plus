@@ -37,12 +37,12 @@ type deferredDir struct {
 }
 
 type commitWalkState struct {
-	mfs          *MutableFS
-	writer       transfer.ArchiveWriter
-	prog         CommitProgress
-	xattrCache   map[int64][]format.XAttr
-	backedHashes  map[string]uint64
-	mutableFiles  int
+	mfs            *MutableFS
+	writer         transfer.ArchiveWriter
+	prog           CommitProgress
+	xattrCache     map[int64][]format.XAttr
+	backedHashes   map[string]uint64
+	mutableFiles   int
 	unchangedFiles int64
 
 	redirectCache map[string]*pxar.Entry
