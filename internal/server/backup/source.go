@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
@@ -73,32 +72,8 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 			}
 			break
 		}
-		qSess, qExists := b.app.Agents.GetQuicPipe(job.Target.GetHostname())
-		tSess, tExists := b.app.Agents.GetStreamPipe(job.Target.GetHostname())
-		if !qExists && !tExists {
-			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
-		}
-
-		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		var respMsg string
-		var err error
-		if qExists {
-			respMsg, err = qSess.CallMessage(
-				timeoutCtx,
-				"target_status",
-				&fswire.TargetStatusReq{Drive: job.Target.VolumeID},
-			)
-		} else {
-			respMsg, err = tSess.CallMessage(
-				timeoutCtx,
-				"target_status",
-				&fswire.TargetStatusReq{Drive: job.Target.VolumeID},
-			)
-		}
-		if err != nil || !isReachable(respMsg) {
-			return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, job.Target.Name)
+		if err := validateAgentConnection(job.Target, b.app.Agents.IsOnline(job.Target.GetHostname())); err != nil {
+			return err
 		}
 
 	case coredb.TargetTypeS3:
@@ -107,8 +82,11 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 	return nil
 }
 
-func isReachable(msg string) bool {
-	return len(msg) >= 9 && msg[:9] == "reachable"
+func validateAgentConnection(target coredb.Target, online bool) error {
+	if !online {
+		return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, target.Name)
+	}
+	return nil
 }
 
 func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (string, *mountrpc.AgentMount, *mountrpc.S3Mount, error) {
