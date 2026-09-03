@@ -19,6 +19,9 @@ const (
 	ModeRO = "ro"
 	ModeRW = "rw"
 
+	BackendFUSE = "fuse"
+	BackendNFS  = "nfs"
+
 	dirTimeLayout = "2006-01-02T15:04:05Z"
 )
 
@@ -30,6 +33,7 @@ type Session struct {
 	BackupTime string `json:"backup_time"`
 	FileName   string `json:"file_name"`
 	Mode       string `json:"mode"`
+	Backend    string `json:"backend,omitempty"`
 	MountPoint string `json:"mount_point"`
 	OverlayDir string `json:"overlay_dir,omitempty"`
 	SocketPath string `json:"socket_path,omitempty"`

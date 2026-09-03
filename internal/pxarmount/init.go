@@ -26,6 +26,7 @@ func RunInitSubcommand() {
 	passthrough := fs.String("passthrough", "", "Backing directory for write passthrough")
 	verbose := fs.Bool("verbose", false, "Enable verbose logging")
 	fuseOpts := fs.String("options", "rw,default_permissions", "FUSE mount options")
+	nfsBackend := fs.Bool("nfs", false, "Serve through a loopback NFSv3 mount")
 	aclOwner := fs.Int("acl-owner", 0, "Default owner UID for new files/dirs (0 = inherit)")
 	aclGroup := fs.Int("acl-group", 0, "Default group GID for new files/dirs (0 = inherit)")
 	aclSpec := fs.String("acl-spec", "", "POSIX ACL spec string (setfacl-style) served as virtual xattrs")
@@ -40,7 +41,7 @@ func RunInitSubcommand() {
 	} //nolint:errcheck // ExitOnError set, calls os.Exit on failure
 
 	if *pbsStore == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount init --pbs-store <path> --socket <path> [--passthrough <dir>] [--namespace <ns>] [--verbose] <mountpoint>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount init --pbs-store <path> --socket <path> [--passthrough <dir>] [--namespace <ns>] [--nfs] [--verbose] <mountpoint>\n\n")
 		fmt.Fprintf(os.Stderr, "Creates a writable mount that, on commit, produces a new PBS snapshot.\n")
 		fs.PrintDefaults()
 		os.Exit(1)
@@ -61,6 +62,7 @@ func RunInitSubcommand() {
 		FuseOpts:   *fuseOpts,
 		Verbose:    *verbose,
 		InitMode:   true,
+		NFS:        *nfsBackend,
 		ACL:        BuildACLConfig(*aclOwner, *aclGroup, *aclSpec, *defaultAclSpec),
 	})
 }

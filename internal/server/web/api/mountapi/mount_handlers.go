@@ -33,6 +33,7 @@ type mountForm struct {
 	BackupTime string
 	FileName   string
 	Mode       string
+	Backend    string
 	MountPath  string
 	Force      bool
 }
@@ -46,6 +47,7 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 		BackupTime: strings.TrimSpace(r.FormValue("backup-time")),
 		FileName:   strings.TrimSpace(r.FormValue("file-name")),
 		Mode:       strings.TrimSpace(r.FormValue("mode")),
+		Backend:    strings.TrimSpace(r.FormValue("backend")),
 		MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 		Force:      r.FormValue("force") == "1" || r.FormValue("force") == "true",
 	}
@@ -73,6 +75,9 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 	}
 	if f.Mode != "" && f.Mode != snapshotmount.ModeRO && f.Mode != snapshotmount.ModeRW {
 		return f, fmt.Errorf("invalid mode %q", f.Mode)
+	}
+	if f.Backend != "" && f.Backend != snapshotmount.BackendFUSE && f.Backend != snapshotmount.BackendNFS {
+		return f, fmt.Errorf("invalid backend %q", f.Backend)
 	}
 	if err := snapshotmount.ValidateMountPath(f.MountPath); err != nil {
 		return f, err
@@ -182,6 +187,7 @@ func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 			BackupTime: f.BackupTime,
 			FileName:   f.FileName,
 			Mode:       f.Mode,
+			Backend:    f.Backend,
 			MountPath:  f.MountPath,
 			UPID:       upidTask(task),
 			Web:        true,
@@ -221,6 +227,7 @@ func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
 			Namespace:  strings.TrimSpace(r.FormValue("ns")),
 			BackupType: strings.TrimSpace(r.FormValue("backup-type")),
 			BackupID:   strings.TrimSpace(r.FormValue("backup-id")),
+			Backend:    strings.TrimSpace(r.FormValue("backend")),
 			MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 			Web:        true,
 		}
@@ -384,6 +391,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 			BackupTime    string `json:"backup-time"`
 			FileName      string `json:"file-name"`
 			Mode          string `json:"mode"`
+			Backend       string `json:"backend"`
 			MountPoint    string `json:"mount-point"`
 			Mounted       bool   `json:"mounted"`
 			CommitCapable bool   `json:"commit-capable"`
@@ -401,6 +409,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 				BackupTime:    s.BackupTime,
 				FileName:      s.FileName,
 				Mode:          s.Mode,
+				Backend:       s.Backend,
 				MountPoint:    s.MountPoint,
 				Mounted:       snapshotmount.IsMounted(s.MountPoint),
 				CommitCapable: s.CommitCapable(),

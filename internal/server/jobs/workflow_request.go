@@ -56,6 +56,7 @@ type SnapshotMountInput struct {
 	BackupTime string `json:"backup_time"`
 	FileName   string `json:"file_name"`
 	Mode       string `json:"mode"`
+	Backend    string `json:"backend"`
 	MountPath  string `json:"mount_path"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`
@@ -86,6 +87,7 @@ type SnapshotInitInput struct {
 	Namespace  string `json:"namespace"`
 	BackupType string `json:"backup_type"`
 	BackupID   string `json:"backup_id"`
+	Backend    string `json:"backend"`
 	MountPath  string `json:"mount_path"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`

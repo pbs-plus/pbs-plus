@@ -478,6 +478,14 @@ var mountPanel = js.Panel{
 							],
 						},
 						{
+							xtype: "combobox",
+							name: "backend",
+							fieldLabel: gettext("Backend"),
+							store: [["fuse", "FUSE"], ["nfs", "NFSv3"]],
+							value: "fuse",
+							editable: false,
+						},
+						{
 							xtype: "textfield",
 							name: "mount-path",
 							fieldLabel: gettext("Mount Path"),
@@ -495,6 +503,7 @@ var mountPanel = js.Panel{
 								let win = btn.up("window");
 								let values = win.down("radiogroup").getValue();
 								params.mode = values.mode;
+								params.backend = win.down("combobox[name=backend]").getValue();
 								params["mount-path"] = win.down("textfield[name=mount-path]").getValue();
 								PBS.PlusUtils.API2Request({
 									url: "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(view.datastore)),

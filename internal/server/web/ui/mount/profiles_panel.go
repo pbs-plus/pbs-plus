@@ -6,7 +6,7 @@ import (
 
 var mountProfilesModel = js.Model{
 	Name:       "pbs-model-mount-profiles",
-	Fields:     js.Fields("id", "datastore", "namespace", "backup-type", "backup-id", "mode", "mount-path", "schedule", "auto-mount"),
+	Fields:     js.Fields("id", "datastore", "namespace", "backup-type", "backup-id", "mode", "backend", "mount-path", "schedule", "auto-mount"),
 	IDProperty: "id",
 }
 
@@ -76,6 +76,14 @@ var mountProfilesPanel = js.Panel{
 						],
 					},
 					{
+						xtype: "combobox",
+						name: "backend",
+						fieldLabel: gettext("Backend"),
+						store: [["fuse", "FUSE"], ["nfs", "NFSv3"]],
+						value: values.backend || "fuse",
+						editable: false,
+					},
+					{
 						xtype: "proxmoxtextfield",
 						name: "mount-path",
 						fieldLabel: gettext("Mount Path"),
@@ -118,6 +126,7 @@ var mountProfilesPanel = js.Panel{
 								"backup-type": vals["backup-type"],
 								"backup-id": vals["backup-id"],
 								mode: vals.mode,
+								backend: vals.backend,
 								"mount-path": vals["mount-path"] || "",
 								"schedule": vals.schedule || "",
 								"auto-mount": vals["auto-mount"] === "1" ? 1 : 0,
@@ -209,6 +218,7 @@ var mountProfilesPanel = js.Panel{
 		{Text: "Mode", DataIndex: "mode", Width: 60, Renderer: js.Func("v", `
 			return v === "rw" ? "rw" : "ro";
 		`)},
+		{Text: "Backend", DataIndex: "backend", Width: 75, Renderer: js.Func("v", `return v === "nfs" ? "NFSv3" : "FUSE";`)},
 		{Text: "Mount Path", DataIndex: "mount-path", Flex: 1, Renderer: js.Func("v", `
 			return v ? Ext.String.htmlEncode(v) : gettext("Automatic");
 		`)},

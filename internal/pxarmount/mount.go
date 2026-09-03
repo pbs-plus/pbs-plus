@@ -98,6 +98,11 @@ func Serve(cfg MountConfig) {
 		}
 	}
 
+	if cfg.NFS {
+		serveNFS(cfg, rawFS, mfs, sockListener, !mutationMode)
+		return
+	}
+
 	fuseOpts := cfg.FuseOpts
 	if mutationMode {
 		fuseOpts = strings.Replace(fuseOpts, "ro,", "rw,", 1)
@@ -155,6 +160,58 @@ func Serve(cfg MountConfig) {
 
 	server.Serve()
 
+	closeMountState(mfs)
+}
+
+func serveNFS(cfg MountConfig, rawFS fuse.RawFileSystem, mfs *MutableFS, sockListener net.Listener, readOnly bool) {
+	server, err := ServeNFSAsync(cfg, rawFS, readOnly)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  error creating NFS server: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg.Verbose {
+		mode := "mount"
+		if cfg.InitMode {
+			mode = "init"
+		}
+		fmt.Fprintf(os.Stderr, "  %s: serving at %s via NFSv3\n", mode, cfg.MountPoint)
+	}
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, unix.SIGINT, unix.SIGTERM)
+
+	select {
+	case <-sigCh:
+		if sockListener != nil {
+			if err := sockListener.Close(); err != nil {
+				log.Error(err, "")
+			}
+		}
+		if err := server.Close(); err != nil {
+			log.Error(err, "")
+		}
+		select {
+		case err := <-server.done:
+			if err != nil {
+				log.Error(err, "nfs serve")
+			}
+		case <-sigCh:
+			os.Exit(1)
+		}
+	case err := <-server.done:
+		if err != nil {
+			log.Error(err, "nfs serve")
+		}
+		if err := server.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}
+
+	closeMountState(mfs)
+}
+
+func closeMountState(mfs *MutableFS) {
 	if mfs != nil {
 		mfs.Close()
 	}

@@ -18,7 +18,7 @@ func TestProfileRoundTrip(t *testing.T) {
 
 	p := Profile{
 		Datastore: "ds1", Namespace: "ns/a", BackupType: "host", BackupID: "id1",
-		Mode: ModeRW, MountPath: "/mnt/p", Schedule: "mon..fri 02:00", AutoMount: true,
+		Mode: ModeRW, Backend: BackendNFS, MountPath: "/mnt/p", Schedule: "mon..fri 02:00", AutoMount: true,
 	}
 	id := p.ID()
 	if id == "" {
@@ -71,6 +71,8 @@ func TestValidateProfile(t *testing.T) {
 		{func(p *Profile) { p.BackupID = "" }, false},
 		{func(p *Profile) { p.Mode = "rw" }, true},
 		{func(p *Profile) { p.Mode = "readwrite" }, false},
+		{func(p *Profile) { p.Backend = BackendNFS }, true},
+		{func(p *Profile) { p.Backend = "smb" }, false},
 		{func(p *Profile) { p.MountPath = "/mnt/x" }, true},
 		{func(p *Profile) { p.MountPath = "/var/x" }, false},
 		{func(p *Profile) { p.Schedule = "mon..fri 02:00" }, true},

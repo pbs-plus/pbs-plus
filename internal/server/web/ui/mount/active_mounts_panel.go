@@ -6,7 +6,7 @@ import (
 
 var activeMountsModel = js.Model{
 	Name:       "pbs-model-active-mounts",
-	Fields:     js.Fields("datastore", "namespace", "backup-type", "backup-id", "backup-time", "file-name", "mode", "mount-point", "mounted", "commit-capable"),
+	Fields:     js.Fields("datastore", "namespace", "backup-type", "backup-id", "backup-time", "file-name", "mode", "backend", "mount-point", "mounted", "commit-capable"),
 	IDProperty: "mount-point",
 }
 
@@ -80,6 +80,14 @@ var activeMountsPanel = js.Panel{
 						allowBlank: false,
 					},
 					{
+						xtype: "combobox",
+						name: "backend",
+						fieldLabel: gettext("Backend"),
+						store: [["fuse", "FUSE"], ["nfs", "NFSv3"]],
+						value: "fuse",
+						editable: false,
+					},
+					{
 						xtype: "proxmoxtextfield",
 						name: "mount-path",
 						fieldLabel: gettext("Mount Path"),
@@ -101,6 +109,7 @@ var activeMountsPanel = js.Panel{
 								"ns": vals.ns || "",
 								"backup-type": vals["backup-type"],
 								"backup-id": vals["backup-id"],
+								"backend": vals.backend,
 								"mount-path": vals["mount-path"] || "",
 							},
 							waitMsgTarget: win,
@@ -229,6 +238,7 @@ var activeMountsPanel = js.Panel{
 		{Text: "Mode", DataIndex: "mode", Width: 70, Renderer: js.Func("v", `
 			return v === "rw" ? '<i class="fa fa-fw fa-pencil"></i> rw' : '<i class="fa fa-fw fa-lock"></i> ro';
 		`)},
+		{Text: "Backend", DataIndex: "backend", Width: 75, Renderer: js.Func("v", `return v === "nfs" ? "NFSv3" : "FUSE";`)},
 		{Text: "Mount Point", DataIndex: "mount-point", Flex: 1.2, Renderer: js.Func("v", `return Ext.String.htmlEncode(v);`)},
 		{Text: "Status", DataIndex: "mounted", Width: 90, Renderer: js.Func("v", `
 			return v ? '<i class="fa fa-check-circle"></i> ' + gettext("Mounted")

@@ -14,6 +14,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fxamacker/cbor/v2 v2.9.3
+	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/gobwas/glob v1.0.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofrs/flock v0.13.1
@@ -33,6 +34,7 @@ require (
 	github.com/quic-go/quic-go v0.61.0
 	github.com/rclone/rclone v1.75.0
 	github.com/stretchr/testify v1.12.1
+	github.com/willscott/go-nfs v0.0.4
 	github.com/xtaci/smux v1.5.57
 	github.com/zeebo/xxh3 v1.1.0
 	go.uber.org/goleak v1.3.0
@@ -104,6 +106,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
+	github.com/rasky/go-xdr v0.0.0-20170124162913-1a41d1a06c93 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
@@ -112,6 +115,7 @@ require (
 	github.com/stangelandcl/ppmd v0.1.1 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/ulikunitz/xz v0.5.15 // indirect
+	github.com/willscott/go-nfs-client v0.0.0-20251022144359-801f10d98886 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect

@@ -130,6 +130,10 @@ func runInit(ctx context.Context, in jobs.SnapshotInitInput) error {
 }
 
 func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotInitInput, key string) (Session, error) {
+	backend, err := normalizeBackend(in.Backend)
+	if err != nil {
+		return Session{}, err
+	}
 	if err := validate.ValidateDatastore(in.Datastore); err != nil {
 		return Session{}, fmt.Errorf("invalid datastore: %w", err)
 	}
@@ -177,6 +181,7 @@ func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapshot
 		BackupType: in.BackupType,
 		BackupID:   in.BackupID,
 		Mode:       ModeRW,
+		Backend:    backend,
 		MountPoint: mountPoint,
 		OverlayDir: OverlayDir(pbsStoreRoot, key),
 		SocketPath: SocketPath(key),
@@ -205,6 +210,9 @@ func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapshot
 		"--namespace", ns,
 		"--options", "rw,allow_other,default_permissions",
 		mountPoint,
+	}
+	if backend == BackendNFS {
+		args = append(args[:len(args)-1], "--nfs", mountPoint)
 	}
 	return startSession(ctx, session, mountPoint, managed, args)
 }
@@ -242,6 +250,10 @@ func runMount(ctx context.Context, in jobs.SnapshotMountInput) error {
 }
 
 func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotMountInput, parsedTime time.Time, key string) (Session, error) {
+	backend, err := normalizeBackend(in.Backend)
+	if err != nil {
+		return Session{}, err
+	}
 	mode := in.Mode
 	if mode == "" {
 		mode = ModeRO
@@ -285,6 +297,7 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 		BackupTime: in.BackupTime,
 		FileName:   in.FileName,
 		Mode:       mode,
+		Backend:    backend,
 		MountPoint: mountPoint,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -320,9 +333,22 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 			"--options", "rw,allow_other,default_permissions",
 		)
 	}
+	if backend == BackendNFS {
+		args = append(args, "--nfs")
+	}
 	args = append(args, mountPoint)
 
 	return startSession(ctx, session, mountPoint, managed, args)
+}
+
+func normalizeBackend(backend string) (string, error) {
+	if backend == "" {
+		return BackendFUSE, nil
+	}
+	if backend != BackendFUSE && backend != BackendNFS {
+		return "", fmt.Errorf("invalid backend %q", backend)
+	}
+	return backend, nil
 }
 
 func startSession(ctx context.Context, session Session, mountPoint string, managed bool, args []string) (Session, error) {

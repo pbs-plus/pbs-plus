@@ -44,6 +44,7 @@ func runMountSubcommand() {
 	verifyChunks := flag.Bool("verify-chunks", false, "Verify chunk SHA256 on read (accepted for CLI compat)")
 	cacheMB := flag.Int("cache-size", 256, "Cache size in MB (accepted for CLI compat)")
 	fuseOpts := flag.String("options", "ro,default_permissions", "FUSE mount options")
+	nfsEnabled := flag.Bool("nfs", false, "Serve through a loopback NFSv3 mount instead of FUSE")
 	passthrough := flag.String("passthrough", "", "Backing directory for write passthrough (enables rw mode)")
 	socketPath := flag.String("socket", "", "Unix socket path for commit commands")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
@@ -57,7 +58,7 @@ func runMountSubcommand() {
 	flag.Parse()
 
 	if *pbsStore == "" || *ppxarDidx == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--passthrough <dir>] [--socket <path>] [--verbose] <mountpoint>\n")
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--passthrough <dir>] [--socket <path>] [--nfs] [--verbose] <mountpoint>\n")
 		os.Exit(1)
 	}
 
@@ -137,6 +138,7 @@ func runMountSubcommand() {
 		MountPoint:    mountPoint,
 		SocketPath:    *socketPath,
 		FuseOpts:      *fuseOpts,
+		NFS:           *nfsEnabled,
 		Verbose:       *verbose,
 		ACL:           pxarmount.BuildACLConfig(*aclOwner, *aclGroup, *aclSpec, *defaultAclSpec),
 	})

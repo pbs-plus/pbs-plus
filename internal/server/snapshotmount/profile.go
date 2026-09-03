@@ -23,6 +23,7 @@ type Profile struct {
 	BackupType string `json:"backup_type"`
 	BackupID   string `json:"backup_id"`
 	Mode       string `json:"mode"`
+	Backend    string `json:"backend,omitempty"`
 	MountPath  string `json:"mount_path"`
 	Schedule   string `json:"schedule"`
 	AutoMount  bool   `json:"auto_mount"`
@@ -54,6 +55,9 @@ func ValidateProfile(p Profile) error {
 	}
 	if p.Mode != ModeRO && p.Mode != ModeRW {
 		return fmt.Errorf("invalid mode %q", p.Mode)
+	}
+	if p.Backend != "" && p.Backend != BackendFUSE && p.Backend != BackendNFS {
+		return fmt.Errorf("invalid backend %q", p.Backend)
 	}
 	if p.Schedule != "" {
 		if _, err := calendar.Parse(p.Schedule); err != nil {

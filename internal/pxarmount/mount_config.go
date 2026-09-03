@@ -9,6 +9,7 @@ type MountConfig struct {
 	SocketPath    string
 	Namespace     string
 	FuseOpts      string
+	NFS           bool
 	Verbose       bool
 	InitMode      bool
 	ACL           ACLConfig

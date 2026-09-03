@@ -190,6 +190,7 @@ func autoMountProfiles(ctx context.Context, engine *jobs.Engine, only []Profile)
 			BackupTime: backupTime,
 			FileName:   fileName,
 			Mode:       p.Mode,
+			Backend:    p.Backend,
 			MountPath:  p.MountPath,
 		}
 		request, err := jobs.NewWorkflowSubmit(jobs.WorkflowSnapshotMount, key, "auto-mount", "", input, []string{"snapshot-mount:" + key}, 1, time.Minute)
