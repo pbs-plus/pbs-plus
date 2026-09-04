@@ -12,14 +12,21 @@ var outpostsModel = js.Model{
 
 var outpostsPanel = js.Panel{
 	Name: "PBS.D2DSnapshotMount.OutpostsPanel", XType: "pbsPlusOutpostsPanel",
-	Title: "Outposts",
-	Store: js.Store{StoreID: "pbs-plus-outposts", Model: "pbs-model-outposts", APIPath: "/api2/extjs/config/d2d-outposts", Sorters: "name"},
+	Title:     "Outposts",
+	Store:     js.Store{StoreID: "pbs-plus-outposts", Model: "pbs-model-outposts", Interval: 5000, APIPath: "/api2/extjs/config/d2d-outposts", Sorters: "name"},
+	Listeners: js.Listeners{Activate: "startStore", Deactivate: "stopStore", BeforeDestroy: "stopStore"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"init": js.Func("view", `
 			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 		`),
+		"startStore": js.Func("", `
+			this.getView().getStore().rstore.startUpdate();
+		`),
+		"stopStore": js.Func("", `
+			this.getView().getStore().rstore.stopUpdate();
+		`),
 		"reload": js.Func("", `
-			this.getView().getStore().load();
+			this.getView().getStore().rstore.load();
 		`),
 		"add": js.Func("", `
 			this.openEdit(null);
@@ -173,7 +180,7 @@ var outpostsPanel = js.Panel{
 								failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
 								success: () => {
 									w.close();
-									panel.getStore().load();
+									panel.getStore().rstore.load();
 								},
 							});
 						},
@@ -196,7 +203,7 @@ var outpostsPanel = js.Panel{
 						method: "DELETE",
 						waitMsgTarget: panel,
 						failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-						success: () => panel.getStore().load(),
+						success: () => panel.getStore().rstore.load(),
 					});
 				},
 			);

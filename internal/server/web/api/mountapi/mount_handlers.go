@@ -508,6 +508,9 @@ func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 			if s.Datastore != datastore || (ns != "" && !strings.HasPrefix(s.Namespace, ns)) {
 				continue
 			}
+			if s.Outpost != "" && s.ShareName != "" {
+				outpost.Detach(s.Outpost, s.ShareName)
+			}
 			if err := systemd.StopMountService(r.Context(), s.ServiceName()); err != nil {
 				log.Error(err, "")
 			}

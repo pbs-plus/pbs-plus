@@ -13,13 +13,20 @@ var mountProfilesModel = js.Model{
 var mountProfilesPanel = js.Panel{
 	Name: "PBS.D2DSnapshotMount.ProfilesPanel", XType: "pbsPlusMountProfilesPanel",
 	Title: "Mount Profiles",
-	Store: js.Store{StoreID: "pbs-plus-mount-profiles", Model: "pbs-model-mount-profiles", APIPath: "/api2/extjs/config/d2d-mount-profiles", Sorters: "id"},
+	Store: js.Store{StoreID: "pbs-plus-mount-profiles", Model: "pbs-model-mount-profiles", Interval: 5000, APIPath: "/api2/extjs/config/d2d-mount-profiles", Sorters: "id"},
+	Listeners: js.Listeners{Activate: "startStore", Deactivate: "stopStore", BeforeDestroy: "stopStore"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"init": js.Func("view", `
 			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
 		`),
+		"startStore": js.Func("", `
+			this.getView().getStore().rstore.startUpdate();
+		`),
+		"stopStore": js.Func("", `
+			this.getView().getStore().rstore.stopUpdate();
+		`),
 		"reload": js.Func("", `
-			this.getView().getStore().load();
+			this.getView().getStore().rstore.load();
 		`),
 		"openEdit": js.Func("view, rec", `
 			let isEdit = !!rec;
@@ -182,7 +189,7 @@ var mountProfilesPanel = js.Panel{
 								success: () => {
 									w.close();
 									const panel = me.getView();
-									if (panel) panel.getStore().load();
+									if (panel) panel.getStore().rstore.load();
 								},
 							});
 						},
@@ -215,7 +222,7 @@ var mountProfilesPanel = js.Panel{
 						failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
 						success: () => {
 							const panel = me.getView();
-							if (panel) panel.getStore().load();
+							if (panel) panel.getStore().rstore.load();
 						},
 					});
 				},
@@ -233,7 +240,7 @@ var mountProfilesPanel = js.Panel{
 						upid: resp.result.data,
 						taskDone: () => {
 							const panel = me.getView();
-							if (panel) panel.getStore().load();
+							if (panel) panel.getStore().rstore.load();
 						},
 					}).show();
 				},

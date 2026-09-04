@@ -89,6 +89,10 @@ func TestValidateMountPath(t *testing.T) {
 		{"/mnt/../etc", false},
 		{"mnt/foo", false},
 		{"", true},
+		{OutpostShareMountPath("abc123"), true},
+		{OutpostShareMountPath("abc123") + "/sub", true},
+		{"/var/run/pbs-plus-mounts/shares", false},
+		{"/var/run/pbs-plus-mounts/shares/../evil", false},
 	}
 	for _, c := range cases {
 		err := ValidateMountPath(c.path)

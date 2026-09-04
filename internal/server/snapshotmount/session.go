@@ -166,13 +166,17 @@ func ValidateMountPath(path string) error {
 		return nil
 	}
 	clean := filepath.Clean(path)
-	if clean == "/mnt" {
-		return fmt.Errorf("mount path cannot be /mnt itself")
+	base := "/mnt"
+	if strings.HasPrefix(clean, OutpostShareMountPath("")+string(filepath.Separator)) {
+		base = OutpostShareMountPath("")
 	}
-	if !strings.HasPrefix(clean, "/mnt/") {
+	if clean == base {
+		return fmt.Errorf("mount path cannot be %s itself", base)
+	}
+	if !strings.HasPrefix(clean, base+string(filepath.Separator)) {
 		return fmt.Errorf("custom mount paths must live under /mnt")
 	}
-	if err := validate.SanitizeMountPoint(clean, "/mnt"); err != nil {
+	if err := validate.SanitizeMountPoint(clean, base); err != nil {
 		return err
 	}
 	return nil

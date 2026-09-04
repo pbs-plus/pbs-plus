@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -495,6 +496,9 @@ func resolveSession(in jobs.SnapshotUnmountInput) (Session, string, error) {
 func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
 	task.LogString("unmounting " + session.MountPoint)
 
+	if session.Outpost != "" && session.ShareName != "" {
+		outpost.Detach(session.Outpost, session.ShareName)
+	}
 	if session.ServiceKey != "" {
 		if err := systemd.StopMountService(ctx, session.ServiceName()); err != nil {
 			log.Error(err, "")
