@@ -126,6 +126,7 @@ func (s *sambaInstance) sync() error {
 		fmt.Fprintf(&b, "\tpath = %s\n", a.Path)
 		if a.ReadOnly {
 			fmt.Fprintf(&b, "\tread only = yes\n")
+			fmt.Fprintf(&b, "\tguest ok = yes\n")
 		} else {
 			fmt.Fprintf(&b, "\tread only = no\n")
 		}

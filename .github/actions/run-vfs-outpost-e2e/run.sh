@@ -212,6 +212,7 @@ mkdir -p /etc/ganesha /var/run/ganesha
 cat > /etc/ganesha/ganesha.conf <<'EOF'
 NFS_CORE_PARAM {
 	Protocols = 3;
+	allow_set_io_flusher_fail = true;
 }
 LOG {
 	Components {
