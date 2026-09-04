@@ -26,8 +26,8 @@ type Stack struct {
 // BuildStack constructs the PxarFS (MutableFS-wrapped for writable mounts)
 // described by cfg; the caller owns the result and must Close it.
 func BuildStack(cfg MountConfig) (*Stack, error) {
-	reader, ok := cfg.Reader.(*transfer.SplitReader)
-	if !ok || reader == nil {
+	reader, _ := cfg.Reader.(*transfer.SplitReader)
+	if reader == nil && !cfg.InitMode {
 		return nil, fmt.Errorf("mount config requires a *transfer.SplitReader reader")
 	}
 	pxarFS, err := NewPxarFS(reader)
