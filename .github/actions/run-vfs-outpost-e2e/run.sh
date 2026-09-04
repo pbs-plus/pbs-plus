@@ -202,7 +202,7 @@ wait_for_proc() {
 section "Start dbus, rpcbind, ganesha and smbd"
 
 mkdir -p /run/dbus
-dbus-daemon --system --fork 2>/dev/null || true
+dbus-daemon --system --fork || true
 wait_for_proc "system dbus running" 30 busctl --system status org.freedesktop.DBus
 
 rpcbind -w 2>/dev/null || true
