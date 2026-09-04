@@ -61,6 +61,7 @@ var coreViews = []js.Value{
 						var tabs = [];
 						tabs.push({ xtype: "pbsPlusActiveMountsPanel", title: "Active Mounts", itemId: "d2d-mounts-active", iconCls: "fa fa-hdd-o" });
 						tabs.push({ xtype: "pbsPlusMountProfilesPanel", title: "Mount Profiles", itemId: "d2d-mounts-profiles", iconCls: "fa fa-cogs" });
+						tabs.push({ xtype: "pbsPlusOutpostsPanel", title: "Outposts", itemId: "d2d-outposts", iconCls: "fa fa-globe" });
 						Ext.Array.forEach(records, function (rec) {
 							var name = rec.get("store");
 							tabs.push({ xtype: "pbsPlusSnapshotMountDatastorePanel", title: name, itemId: "d2d-mount-" + name, iconCls: "fa fa-archive", datastore: name });
@@ -68,7 +69,7 @@ var coreViews = []js.Value{
 						var added = me.add(tabs);
 						if (added && added.length) {
 							// land on the first datastore content tree, not Active Mounts
-							me.setActiveTab(added[2] || added[0]);
+							me.setActiveTab(added[3] || added[0]);
 						} else if (me.items && me.items.getCount() > 0) {
 							me.setActiveTab(me.items.getAt(0));
 						}

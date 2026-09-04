@@ -127,6 +127,7 @@ var mountProfilesPanel = js.Panel{
 								"backup-id": vals["backup-id"],
 								mode: vals.mode,
 								backend: vals.backend,
+									outpost: vals.outpost || "",
 								"mount-path": vals["mount-path"] || "",
 								"schedule": vals.schedule || "",
 								"auto-mount": vals["auto-mount"] === "1" ? 1 : 0,

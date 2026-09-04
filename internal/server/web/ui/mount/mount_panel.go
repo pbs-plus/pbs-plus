@@ -486,6 +486,28 @@ var mountPanel = js.Panel{
 							editable: false,
 						},
 						{
+							xtype: "combobox",
+							name: "outpost",
+							fieldLabel: gettext("Outpost"),
+							store: {
+								fields: ["name", "type", "listen-addr", "running"],
+								autoLoad: true,
+								proxy: { type: "proxmox", url: "/api2/extjs/config/d2d-outposts" },
+							},
+							displayField: "name",
+							valueField: "name",
+							queryMode: "local",
+							editable: false,
+							emptyText: gettext("None (mount locally)"),
+							listeners: {
+								change: (cb, v) => {
+									let win = cb.up("window");
+									win.down("combobox[name=backend]").setDisabled(!!v);
+									win.down("textfield[name=mount-path]").setDisabled(!!v);
+								},
+							},
+						},
+						{
 							xtype: "textfield",
 							name: "mount-path",
 							fieldLabel: gettext("Mount Path"),
@@ -504,7 +526,8 @@ var mountPanel = js.Panel{
 								let values = win.down("radiogroup").getValue();
 								params.mode = values.mode;
 								params.backend = win.down("combobox[name=backend]").getValue();
-								params["mount-path"] = win.down("textfield[name=mount-path]").getValue();
+								params.outpost = win.down("combobox[name=outpost]").getValue() || "";
+								params["mount-path"] = params.outpost ? "" : win.down("textfield[name=mount-path]").getValue();
 								PBS.PlusUtils.API2Request({
 									url: "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(view.datastore)),
 									method: "POST",
