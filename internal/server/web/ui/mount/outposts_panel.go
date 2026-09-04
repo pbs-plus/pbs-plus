@@ -6,7 +6,7 @@ import (
 
 var outpostsModel = js.Model{
 	Name:       "pbs-model-outposts",
-	Fields:     js.Fields("name", "type", "listen-addr", "running", "error", "attached", "endpoints"),
+	Fields:     js.Fields("name", "type", "listen-addr", "sectype", "running", "error", "attached", "endpoints"),
 	IDProperty: "name",
 }
 
@@ -62,10 +62,23 @@ var outpostsPanel = js.Panel{
 							xtype: "combobox",
 							name: "type",
 							fieldLabel: gettext("Type"),
-							store: [["nfs", "NFSv3"]],
+							store: [
+								["nfs", "NFSv3 (built-in)"],
+								["ganesha", "NFS (Ganesha, Kerberos)"],
+								["samba", "SMB (Samba)"],
+							],
 							value: values.type || "nfs",
 							editable: false,
 							allowBlank: false,
+							listeners: {
+								change: (f, v) => {
+									let form = f.up("form");
+									let listen = form.down("[name=listen-addr]");
+									let sectype = form.down("[name=sectype]");
+									if (listen) listen.setDisabled(v !== "nfs");
+									if (sectype) sectype.setDisabled(v !== "ganesha");
+								},
+							},
 						},
 						{
 							xtype: "proxmoxtextfield",
@@ -74,10 +87,20 @@ var outpostsPanel = js.Panel{
 							emptyText: "0.0.0.0:2049",
 							allowBlank: false,
 							value: values["listen-addr"],
+							disabled: values.type && values.type !== "nfs",
+						},
+						{
+							xtype: "combobox",
+							name: "sectype",
+							fieldLabel: gettext("SecType"),
+							store: [["krb5i", "krb5i"], ["krb5p", "krb5p"], ["krb5,krb5i", "krb5,krb5i"], ["sys", "sys (no auth)"]],
+							value: values.sectype || "krb5i",
+							editable: false,
+							disabled: !values.type || values.type !== "ganesha",
 						},
 						{
 							xtype: "displayfield",
-							value: gettext("Outposts serve attached mounts as shares; remote clients mount them over the network. NFS has no per-user authentication: restrict network access to trusted hosts."),
+							value: gettext("Ganesha and Samba outposts require the service installed and running; shares are exported from private mounts. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
 						},
 					],
 				}],
@@ -92,7 +115,8 @@ var outpostsPanel = js.Panel{
 							let params = {
 								name: vals.name,
 								type: vals.type,
-								"listen-addr": vals["listen-addr"],
+								"listen-addr": vals["listen-addr"] || "",
+								sectype: vals.sectype || "",
 							};
 							let url = "/api2/extjs/config/d2d-outposts";
 							let method = "POST";
@@ -141,7 +165,13 @@ var outpostsPanel = js.Panel{
 	},
 	Columns: []js.Column{
 		{Text: "Name", DataIndex: "name", Width: 140},
-		{Text: "Type", DataIndex: "type", Width: 80, Renderer: js.Func("v", `return v === "nfs" ? "NFSv3" : Ext.String.htmlEncode(v || "");`)},
+		{Text: "Type", DataIndex: "type", Width: 130, Renderer: js.Func("v", `
+			if (v === "nfs") return "NFSv3";
+			if (v === "ganesha") return "NFS (Ganesha)";
+			if (v === "samba") return "SMB (Samba)";
+			return Ext.String.htmlEncode(v || "");
+		`)},
+		{Text: "SecType", DataIndex: "sectype", Width: 90, Renderer: js.Func("v", `return Ext.String.htmlEncode(v || "-");`)},
 		{Text: "Listen Address", DataIndex: "listen-addr", Width: 160, Renderer: js.Func("v", `return Ext.String.htmlEncode(v || "");`)},
 		{Text: "Status", DataIndex: "running", Width: 90, Renderer: js.Func("v, meta, rec", `
 			if (v) return '<i class="fa fa-check-circle"></i> ' + gettext("Running");

@@ -18,6 +18,7 @@ type outpostView struct {
 	Name       string   `json:"name"`
 	Type       string   `json:"type"`
 	ListenAddr string   `json:"listen-addr"`
+	Sectype    string   `json:"sectype"`
 	Running    bool     `json:"running"`
 	Error      string   `json:"error,omitempty"`
 	Attached   []string `json:"attached"`
@@ -29,6 +30,7 @@ func toOutpostView(s outpost.Status) outpostView {
 		Name:       s.Name,
 		Type:       s.Type,
 		ListenAddr: s.ListenAddr,
+		Sectype:    s.Sectype,
 		Running:    s.Running,
 		Error:      s.Error,
 		Attached:   s.Attached,
@@ -41,6 +43,7 @@ func outpostFormValues(r *http.Request) outpost.Outpost {
 		Name:       strings.TrimSpace(r.FormValue("name")),
 		Type:       strings.TrimSpace(r.FormValue("type")),
 		ListenAddr: strings.TrimSpace(r.FormValue("listen-addr")),
+		Sectype:    strings.TrimSpace(r.FormValue("sectype")),
 	}
 }
 
