@@ -316,6 +316,20 @@ echo ""
 if [ "$FAIL" -gt 0 ]; then
 	echo "  SOME TESTS FAILED"
 	dump_logs
+	repro_pxarmount
 	exit 1
 fi
 echo "  ALL TESTS PASSED"
+
+repro_pxarmount() {
+	echo "--- manual pxar-mount repro ---"
+	local snap didx mpxar ppxar
+	snap=$(latest_snapshot "$INIT_GROUP_DIR") || return 0
+	didx=$(didx_in "$INIT_GROUP_DIR/$snap") || return 0
+	mpxar="$INIT_GROUP_DIR/$snap/$didx"
+	ppxar="$INIT_GROUP_DIR/$snap/$(printf %s "$didx" | sed 's/\.mpxar\.didx$/.ppxar.didx/')"
+	mkdir -p /tmp/pxarmount-repro
+	timeout 20 /usr/bin/pxar-mount --pbs-store /mnt/test --mpxar-didx "$mpxar" --ppxar-didx "$ppxar" /tmp/pxarmount-repro
+	echo "repro exit=$?"
+	umount /tmp/pxarmount-repro 2>/dev/null || true
+}
