@@ -308,22 +308,25 @@ func hasPrefix(path, prefix []string) bool {
 }
 
 func encodeHandle(share string, id uuid.UUID) []byte {
-	out := make([]byte, 0, 2+len(share)+16)
+	raw := 2 + len(share) + 16
+	pad := (4 - raw%4) % 4
+	out := make([]byte, 0, raw+pad)
 	out = binary.BigEndian.AppendUint16(out, uint16(len(share)))
 	out = append(out, share...)
+	out = append(out, make([]byte, pad)...)
 	b, _ := id.MarshalBinary()
 	return append(out, b...)
 }
 
 func decodeHandle(fh []byte) (string, []byte, error) {
-	if len(fh) < 2+16 {
+	if len(fh) < 2+16 || (len(fh)-16)%4 != 0 {
 		return "", nil, fmt.Errorf("short handle")
 	}
 	nameLen := int(binary.BigEndian.Uint16(fh[:2]))
 	if nameLen > 0 && len(fh) < 2+nameLen+16 {
 		return "", nil, fmt.Errorf("short handle")
 	}
-	return string(fh[2 : 2+nameLen]), fh[2+nameLen:], nil
+	return string(fh[2 : 2+nameLen]), fh[len(fh)-16:], nil
 }
 
 // VerifierFor hashes the full listing (names, sizes, modes, mtimes), not just

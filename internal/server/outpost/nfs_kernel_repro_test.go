@@ -1,8 +1,11 @@
 package outpost
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -20,6 +23,7 @@ import (
 
 	nfsc "github.com/willscott/go-nfs-client/nfs"
 	"github.com/willscott/go-nfs-client/nfs/rpc"
+	"github.com/willscott/go-nfs-client/nfs/xdr"
 
 	"github.com/pbs-plus/pbs-plus/internal/pxarmount"
 )
@@ -72,6 +76,8 @@ func TestKernelNFSOutpostRepro(t *testing.T) {
 
 	reproProbe(t, net.JoinHostPort("127.0.0.1", port), "share-a")
 	reproProbe(t, net.JoinHostPort("127.0.0.1", port), "share-b")
+	fmt.Println("--- shared-connection kernel sequence ---")
+	reproKernelSequence(t, net.JoinHostPort("127.0.0.1", port))
 
 	if os.Getenv("KERNEL_NFS_MOUNT") == "" {
 		return
@@ -100,6 +106,83 @@ func TestKernelNFSOutpostRepro(t *testing.T) {
 
 	vols, _ := os.ReadFile("/proc/fs/nfsfs/volumes")
 	fmt.Printf("--- /proc/fs/nfsfs/volumes ---\n%s\n", vols)
+}
+
+func reproKernelSequence(t *testing.T, addr string) {
+	t.Helper()
+	client, err := rpc.DialTCP("tcp", addr, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	mnt := &nfsc.Mount{Client: client}
+	auth := rpc.NewAuthUnix("ci", 0, 0)
+	ta, err := mnt.Mount("share-a", auth.Auth())
+	if err != nil {
+		t.Fatalf("mount a: %v", err)
+	}
+	fmt.Printf("[seq] mount a ok\n")
+	if m, err := ta.Access(".", 0x3f); err != nil {
+		t.Errorf("access a: %v", err)
+	} else if m&0x23 == 0 {
+		t.Errorf("access a granted mask %#x denies reads", m)
+	} else {
+		fmt.Printf("[seq] access a: mask=%#x\n", m)
+	}
+	if _, err := ta.ReadDirPlus("."); err != nil {
+		fmt.Printf("[seq] readdirplus a: err=%v\n", err)
+	} else {
+		fmt.Printf("[seq] readdirplus a ok\n")
+	}
+	tb, err := mnt.Mount("share-b", auth.Auth())
+	if err != nil {
+		t.Fatalf("mount b: %v", err)
+	}
+	fmt.Printf("[seq] mount b ok\n")
+	if m, err := tb.Access(".", 0x3f); err != nil {
+		t.Errorf("access b: %v", err)
+	} else if m&0x23 == 0 {
+		t.Errorf("access b granted mask %#x denies reads", m)
+	} else {
+		fmt.Printf("[seq] access b: mask=%#x\n", m)
+	}
+	if entries, err := tb.ReadDirPlus("."); err != nil {
+		fmt.Printf("[seq] readdirplus b: err=%v\n", err)
+	} else {
+		fmt.Printf("[seq] readdirplus b ok: %d entries\n", len(entries))
+	}
+	reproDumpAccessReply(t, client, ta, ".")
+}
+
+func reproDumpAccessReply(t *testing.T, client *rpc.Client, target *nfsc.Target, path string) {
+	t.Helper()
+	_, fh, err := target.Lookup(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type accessArgs struct {
+		rpc.Header
+		FH     []byte
+		Access uint32
+	}
+	res, err := client.Call(&accessArgs{
+		Rpcvers: 2, Prog: 100003, Vers: 3, Proc: 4, Cred: rpc.NewAuthUnix("ci", 0, 0).Auth(), Verf: rpc.AuthNull,
+		FH: fh, Access: 0x3f,
+	})
+	dump := new(bytes.Buffer)
+	_ = xdr.Write(dump, &accessArgs{
+		Rpcvers: 2, Prog: 100003, Vers: 3, Proc: 4, Cred: rpc.NewAuthUnix("ci", 0, 0).Auth(), Verf: rpc.AuthNull,
+		FH: fh, Access: 0x3f,
+	})
+	fmt.Printf("[raw] marshaled request (%d bytes): %x\n", dump.Len(), dump.Bytes())
+	if err != nil {
+		t.Fatalf("raw access call: %v", err)
+	}
+	body, _ := io.ReadAll(res)
+	fmt.Printf("[raw] access(0x3f) reply (%d bytes): %x\n", len(body), body)
+	for i := 0; i+4 <= len(body); i += 4 {
+		fmt.Printf("[raw]   +%03d: %08x (%d)\n", i, binary.BigEndian.Uint32(body[i:i+4]), binary.BigEndian.Uint32(body[i:i+4]))
+	}
 }
 
 func reproProbe(t *testing.T, addr, share string) {
@@ -134,6 +217,11 @@ func reproProbe(t *testing.T, addr, share string) {
 			names = append(names, e.Name())
 		}
 		fmt.Printf("[%s] readdirplus(.): %v\n", share, names)
+		for _, e := range entries {
+			if _, _, err := target.Lookup(e.Name()); err != nil {
+				fmt.Printf("[%s] lookup(%s): err=%v\n", share, e.Name(), err)
+			}
+		}
 	}
 }
 
