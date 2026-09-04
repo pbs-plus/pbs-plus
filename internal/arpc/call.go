@@ -87,22 +87,25 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 		default:
 			payloadBytes, err = s.cborEnc.Marshal(p)
 			if err != nil {
-				return stream, nil, fmt.Errorf("marshal payload: %w", err)
+				releaseStream(stream)
+				return nil, nil, fmt.Errorf("marshal payload: %w", err)
 			}
 		}
 	}
 
 	req := Request{Method: method, Payload: payloadBytes}
 	if err := enc.Encode(req); err != nil {
-		return stream, nil, fmt.Errorf("write request: %w", err)
+		releaseStream(stream)
+		return nil, nil, fmt.Errorf("write request: %w", err)
 	}
 
 	var resp Response
 	if err := dec.Decode(&resp); err != nil {
+		releaseStream(stream)
 		if ctx.Err() != nil {
-			return stream, nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
-		return stream, nil, fmt.Errorf("decode response: %w", err)
+		return nil, nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	return stream, &resp, nil
@@ -113,7 +116,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stream.Close() }()
+	defer releaseStream(stream)
 
 	if resp.Status == StatusRawStream {
 		handler, ok := out.(RawStreamHandler)
@@ -157,7 +160,7 @@ func (s *StreamPipe) CallMessage(ctx context.Context, method string, payload any
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = stream.Close() }()
+	defer releaseStream(stream)
 
 	if resp.Status == StatusRawStream {
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", StatusRawStream)
@@ -180,7 +183,7 @@ func (s *StreamPipe) CallBinaryWithMeta(ctx context.Context, method string, payl
 	if err != nil {
 		return 0, nil, err
 	}
-	defer func() { _ = stream.Close() }()
+	defer releaseStream(stream)
 
 	if resp.Status != StatusRawStream {
 		var serErr SerializableError

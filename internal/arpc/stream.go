@@ -8,6 +8,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/quic-go/quic-go"
 	"github.com/xtaci/smux"
 )
 
@@ -16,6 +17,16 @@ type ARPCStream interface {
 	io.Writer
 	io.Closer
 	SetDeadline(time.Time) error
+}
+
+func releaseStream(stream ARPCStream) {
+	if stream == nil {
+		return
+	}
+	if q, ok := stream.(*quic.Stream); ok {
+		q.CancelRead(quicStreamDoneCode)
+	}
+	_ = stream.Close()
 }
 
 func writeErrorResponse(stream io.Writer, status int, err error) {

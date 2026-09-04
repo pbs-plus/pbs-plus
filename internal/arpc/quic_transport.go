@@ -27,6 +27,9 @@ const (
 	quicMaxIdleTimeout  = 60 * time.Second
 )
 
+// quicStreamDoneCode tells the peer a finished stream needs no more data.
+const quicStreamDoneCode quic.StreamErrorCode = 0
+
 func quicConfig() *quic.Config {
 	return &quic.Config{
 		MaxIdleTimeout:             quicMaxIdleTimeout,
@@ -132,7 +135,7 @@ func DialQuic(ctx context.Context, serverAddr string, tlsConfig *tls.Config, hea
 		pipe.Close()
 		return nil, fmt.Errorf("failed to initialize header stream: %w", err)
 	}
-	defer func() { _ = stream.Close() }()
+	defer releaseStream(stream)
 
 	if werr := writeHeadersFrame(stream, hdrCopy); werr != nil {
 		pipe.Close()
@@ -200,7 +203,7 @@ func (q *QuicPipe) Serve() error {
 					log.Debug("recovered from panic in quic handler", "panic", fmt.Sprintf("%v", rec))
 
 				}
-				_ = stream.Close()
+				releaseStream(stream)
 			}()
 			router.serveStream(stream)
 		}()
@@ -230,24 +233,25 @@ func (q *QuicPipe) call(ctx context.Context, method string, payload any) (ARPCSt
 		default:
 			payloadBytes, err = q.cborEnc.Marshal(p)
 			if err != nil {
-				return stream, nil, fmt.Errorf("marshal payload: %w", err)
+				releaseStream(stream)
+				return nil, nil, fmt.Errorf("marshal payload: %w", err)
 			}
 		}
 	}
 
-	// headers travel once on the connection header frame; nothing reads
-	// Request.Headers, so per-request encoding is dead wire weight
 	req := Request{Method: method, Payload: payloadBytes}
 	if err := enc.Encode(req); err != nil {
-		return stream, nil, fmt.Errorf("write request: %w", err)
+		releaseStream(stream)
+		return nil, nil, fmt.Errorf("write request: %w", err)
 	}
 
 	var resp Response
 	if err := dec.Decode(&resp); err != nil {
+		releaseStream(stream)
 		if ctx.Err() != nil {
-			return stream, nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
-		return stream, nil, fmt.Errorf("decode response: %w", err)
+		return nil, nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	return stream, &resp, nil
@@ -271,7 +275,7 @@ func (q *QuicPipe) Call(ctx context.Context, method string, payload any, out any
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stream.Close() }()
+	defer releaseStream(stream)
 
 	if resp.Status == StatusRawStream {
 		handler, ok := out.(RawStreamHandler)
@@ -315,7 +319,7 @@ func (q *QuicPipe) CallMessage(ctx context.Context, method string, payload any) 
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = stream.Close() }()
+	defer releaseStream(stream)
 
 	if resp.Status == StatusRawStream {
 		return "", fmt.Errorf("RPC error: raw stream not supported by CallMessage (status %d)", StatusRawStream)
@@ -524,7 +528,7 @@ func readHeadersFromFirstStream(ctx context.Context, conn *quic.Conn) (http.Head
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = stream.Close() }()
+	defer releaseStream(stream)
 
 	hdrs, rerr := readHeadersFrame(stream)
 	if rerr != nil {
