@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
+	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
@@ -105,6 +106,12 @@ func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Schedule
 	}
 	app.Engine = engine
 	go snapshotmount.FollowLatestProfiles(mainCtx, engine)
+	outpost.StartAll(mainCtx)
+	go snapshotmount.ReattachOutposts(mainCtx)
+	go func() {
+		<-mainCtx.Done()
+		outpost.StopAll()
+	}()
 	s := scheduler.NewScheduler(mainCtx, app)
 	s.Start()
 	app.OnBackupComplete = s.TriggerPendingVerifications
