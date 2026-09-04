@@ -38,6 +38,14 @@ func TestRender(t *testing.T) {
 		`gettext("Unmount Selected")`,
 		`text: gettext("Profile"),`,
 		`me.requestUnmount(view, sel, false);`,
+		`gettext("Remount Selected")`,
+		`gettext("Commit Selected")`,
+		`gettext("Discard Selected")`,
+		`selectionchange: "onSelectionChange",`,
+		`return { url, params };`,
+		`recs.every((r) => !r.data.mounted)`,
+		`recs.every((r) => r.data["commit-capable"] && r.data.mounted)`,
+		`recs.every((r) => r.data.mode === "rw")`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("rendered UI does not contain %q", want)

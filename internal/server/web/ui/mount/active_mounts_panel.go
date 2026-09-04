@@ -19,10 +19,26 @@ var activeMountsPanel = js.Panel{
 		StoreID: "pbs-plus-active-mounts", Model: "pbs-model-active-mounts",
 		Interval: 5000, APIPath: "/api2/extjs/config/d2d-mounts", Sorters: "mount-point",
 	},
-	Listeners: js.Listeners{Activate: "startStore", Deactivate: "stopStore", BeforeDestroy: "stopStore"},
+	Listeners: js.Listeners{
+		Activate: "startStore", Deactivate: "stopStore", BeforeDestroy: "stopStore",
+		SelectionChange: "onSelectionChange",
+	},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"init": js.Func("view", `
 			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+		`),
+		"onSelectionChange": js.Func("selModel, selected", `
+			let view = this.getView();
+			let rec = selected[0] || null;
+			view.query("proxmoxButton").forEach((btn) => {
+				if (btn.enableFn) {
+					btn.setDisabled(!btn.enableFn(rec));
+				} else if (btn.selModel !== false) {
+					btn.setDisabled(!rec);
+				} else {
+					btn.setDisabled(false);
+				}
+			});
 		`),
 		"startStore": js.Func("", `
 			this.getView().getStore().rstore.startUpdate();
@@ -241,7 +257,22 @@ var activeMountsPanel = js.Panel{
 			);
 		`),
 		"remount": js.Func("view, rowIdx, colIdx, item, e, rec", `
-			let d = rec.data;
+			let m = this.mountParams(rec.data);
+			PBS.PlusUtils.API2Request({
+				url: m.url,
+				method: "POST",
+				params: m.params,
+				waitMsgTarget: view,
+				failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+				success: (resp) => {
+					Ext.create("PBS.plusWindow.TaskViewer", {
+						upid: resp.result.data,
+						taskDone: () => view.getStore().rstore.load(),
+					}).show();
+				},
+			});
+		`),
+		"mountParams": js.Func("d", `
 			let params = {
 				"ns": d.namespace || "",
 				"backup-type": d["backup-type"],
@@ -265,25 +296,90 @@ var activeMountsPanel = js.Panel{
 					url = "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(d.datastore));
 				}
 			}
-			PBS.PlusUtils.API2Request({
-				url: url,
-				method: "POST",
-				params: params,
-				waitMsgTarget: view,
-				failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-				success: (resp) => {
-					Ext.create("PBS.plusWindow.TaskViewer", {
-						upid: resp.result.data,
-						taskDone: () => view.getStore().rstore.load(),
-					}).show();
+			return { url, params };
+		`),
+		"remountSelected": js.Func("", `
+			let view = this.getView();
+			let sel = view.getSelectionModel().getSelection();
+			if (!sel.length) {
+				Ext.Msg.alert(gettext("Error"), gettext("Please select at least one mount."));
+				return;
+			}
+			for (const rec of sel) {
+				let m = this.mountParams(rec.data);
+				PBS.PlusUtils.API2Request({
+					url: m.url,
+					method: "POST",
+					params: m.params,
+					waitMsgTarget: view,
+					failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+					success: () => view.getStore().rstore.load(),
+				});
+			}
+		`),
+		"commitSelected": js.Func("", `
+			let view = this.getView();
+			let sel = view.getSelectionModel().getSelection();
+			if (!sel.length) {
+				Ext.Msg.alert(gettext("Error"), gettext("Please select at least one mount."));
+				return;
+			}
+			Ext.Msg.confirm(
+				gettext("Confirm"),
+				Ext.String.format(gettext("Commit the uncommitted changes of {0} selected mounts into new snapshots?"), sel.length),
+				(btn) => {
+					if (btn !== "yes") return;
+					for (const rec of sel) {
+						let d = rec.data;
+						PBS.PlusUtils.API2Request({
+							url: "/api2/extjs/config/d2d-commit/" + encodeURIComponent(encodePathValue(d.datastore)),
+							method: "POST",
+							params: { "mount-path": d["mount-point"] },
+							waitMsgTarget: view,
+							failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+							success: () => view.getStore().rstore.load(),
+						});
+					}
 				},
-			});
+			);
+		`),
+		"discardSelected": js.Func("", `
+			let me = this;
+			let view = this.getView();
+			let sel = view.getSelectionModel().getSelection();
+			if (!sel.length) {
+				Ext.Msg.alert(gettext("Error"), gettext("Please select at least one mount."));
+				return;
+			}
+			Ext.Msg.confirm(
+				gettext("Confirm"),
+				Ext.String.format(gettext("Delete the uncommitted changes of {0} selected mounts? This cannot be undone."), sel.length),
+				(btn) => {
+					if (btn !== "yes") return;
+					me.requestUnmount(view, sel, true);
+				},
+			);
 		`),
 	}},
 	Tbar: []js.Tool{
-		{XType: js.XButton, Text: "Reload", IconCls: "fa fa-refresh", Handler: "reload"},
-		{XType: js.XButton, Text: "New Snapshot", IconCls: "fa fa-plus", Handler: "initNew"},
-		{XType: js.XButton, Text: "Unmount Selected", IconCls: "fa fa-eject", Handler: "unmountSelected"},
+		{XType: js.XButton, Text: "Reload", IconCls: "fa fa-refresh", Handler: "reload", SelModel: new(false)},
+		{XType: js.XButton, Text: "New Snapshot", IconCls: "fa fa-plus", Handler: "initNew", SelModel: new(false)}, js.Sep(),
+		{
+			XType: js.XButton, Text: "Remount Selected", IconCls: "fa fa-play", Handler: "remountSelected",
+			Disabled: true, EnableFn: js.SelectionEvery(`!r.data.mounted`),
+		},
+		{
+			XType: js.XButton, Text: "Commit Selected", IconCls: "fa fa-upload", Handler: "commitSelected",
+			Disabled: true, EnableFn: js.SelectionEvery(`r.data["commit-capable"] && r.data.mounted`),
+		},
+		{
+			XType: js.XButton, Text: "Unmount Selected", IconCls: "fa fa-eject", Handler: "unmountSelected",
+			Disabled: true, EnableFn: js.SelectionEvery(`r.data.mounted`),
+		},
+		{
+			XType: js.XButton, Text: "Discard Selected", IconCls: "fa fa-trash-o", Handler: "discardSelected",
+			Disabled: true, EnableFn: js.SelectionEvery(`r.data.mode === "rw"`),
+		},
 	},
 	Columns: []js.Column{
 		{Text: "Datastore", DataIndex: "datastore", Width: 120},
