@@ -145,7 +145,7 @@ func (g *ganeshaInstance) Attach(a Attachment) error {
 	if err := os.WriteFile(frag, []byte(ganeshaFragment(id, a.Path, a.Name, access, g.sectype)), 0o600); err != nil {
 		return fmt.Errorf("write ganesha export fragment: %w", err)
 	}
-	if err := g.bus.AddExport(frag, ""); err != nil {
+	if err := g.bus.AddExport(frag, fmt.Sprintf("EXPORT(Export_Id=%d)", id)); err != nil {
 		_ = os.Remove(frag)
 		return fmt.Errorf("ganesha AddExport %s: %w", frag, err)
 	}
