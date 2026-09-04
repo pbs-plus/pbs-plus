@@ -5,6 +5,7 @@ package outpost
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -71,7 +72,7 @@ func TestSambaAttachDetach(t *testing.T) {
 	if err := inst.Attach(Attachment{Name: "snap-two", ReadOnly: false, Path: path}); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(sambaIncludePath("edge"))
+	data, err := os.ReadFile(sambaIncludePath())
 	if err != nil {
 		t.Fatalf("include file missing: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestSambaAttachDetach(t *testing.T) {
 	if err := inst.Attach(Attachment{Name: "snap-ro", ReadOnly: true, Path: "/x"}); err != nil {
 		t.Fatal(err)
 	}
-	data, _ = os.ReadFile(sambaIncludePath("edge"))
+	data, _ = os.ReadFile(sambaIncludePath())
 	if !strings.Contains(string(data), "read only = yes") {
 		t.Fatalf("read-only flag missing:\n%s", data)
 	}
@@ -100,7 +101,7 @@ func TestSambaAttachDetach(t *testing.T) {
 	if err := inst.Detach("snap-two"); err != nil {
 		t.Fatal(err)
 	}
-	data, _ = os.ReadFile(sambaIncludePath("edge"))
+	data, _ = os.ReadFile(sambaIncludePath())
 	if strings.Contains(string(data), "[snap-two]") {
 		t.Fatalf("share survived detach:\n%s", data)
 	}
@@ -254,5 +255,53 @@ func TestSambaShareStanzaGuestWritable(t *testing.T) {
 	}
 	if strings.Contains(got, "valid users") {
 		t.Fatalf("guest share got valid users:\n%s", got)
+	}
+}
+
+func TestSambaSingleIncludeAcrossOutposts(t *testing.T) {
+	instA := startSamba(t)
+	instB, err := (sambaDriver{}).Start(t.Context(), Outpost{Name: "two", Type: TypeSamba, Guest: true})
+	if err != nil {
+		t.Fatalf("start second samba: %v", err)
+	}
+	t.Cleanup(func() { _ = instB.Stop() })
+
+	dir := filepath.Dir(sambaIncludePath())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "samba-legacy.conf"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := instA.Attach(Attachment{Name: "share-a", ReadOnly: true, Path: "/a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := instB.Attach(Attachment{Name: "share-b", ReadOnly: true, Path: "/b"}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(sambaIncludePath())
+	if err != nil {
+		t.Fatalf("single include missing: %v", err)
+	}
+	for _, want := range []string{"[share-a]", "[share-b]"} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("include missing %q:\n%s", want, data)
+		}
+	}
+	if legacy, _ := filepath.Glob(filepath.Join(dir, "samba-*.conf")); len(legacy) != 0 {
+		t.Fatalf("legacy include files survived: %v", legacy)
+	}
+
+	if err := instB.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(sambaIncludePath())
+	if strings.Contains(string(data), "[share-b]") {
+		t.Fatalf("stopped outpost shares survived:\n%s", data)
+	}
+	if !strings.Contains(string(data), "[share-a]") {
+		t.Fatalf("live outpost shares dropped:\n%s", data)
 	}
 }

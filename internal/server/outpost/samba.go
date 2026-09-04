@@ -95,11 +95,15 @@ func (sambaDriver) Validate(o Outpost) error {
 func (sambaDriver) Start(ctx context.Context, o Outpost) (Instance, error) {
 	if err := runSmbcontrol("smbd", "ping"); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
-			return nil, fmt.Errorf("smbcontrol not found: install samba and add 'include = %s' to smb.conf [global]: %w", sambaIncludePath(o.Name), err)
+			return nil, fmt.Errorf("smbcontrol not found: install samba and add 'include = %s' to smb.conf [global]: %w", sambaIncludePath(), err)
 		}
 		return nil, fmt.Errorf("smbd is not running: %w", err)
 	}
-	return &sambaInstance{name: o.Name, cfg: o, shares: map[string]Attachment{}}, nil
+	inst := &sambaInstance{name: o.Name, cfg: o, shares: map[string]Attachment{}}
+	sambaRegMu.Lock()
+	sambaLive[o.Name] = inst
+	sambaRegMu.Unlock()
+	return inst, nil
 }
 
 type sambaInstance struct {
@@ -109,6 +113,12 @@ type sambaInstance struct {
 	mu     sync.Mutex
 	shares map[string]Attachment
 }
+
+// sambaLive tracks every running samba outpost for the single include file.
+var (
+	sambaRegMu sync.Mutex
+	sambaLive  = map[string]*sambaInstance{}
+)
 
 func (s *sambaInstance) Attach(a Attachment) error {
 	if a.Path == "" {
@@ -166,34 +176,52 @@ func (s *sambaInstance) Stop() error {
 	s.mu.Lock()
 	s.shares = map[string]Attachment{}
 	s.mu.Unlock()
+	sambaRegMu.Lock()
+	delete(sambaLive, s.name)
+	sambaRegMu.Unlock()
 	return s.sync()
 }
 
-// sync rewrites the managed include file (admin smb.conf keeps one include line) and reloads smbd.
+// sync rewrites the one managed include with all samba outposts' shares and reloads smbd.
 func (s *sambaInstance) sync() error {
-	s.mu.Lock()
-	names := make([]string, 0, len(s.shares))
-	for name := range s.shares {
+	sambaRegMu.Lock()
+	names := make([]string, 0, len(sambaLive))
+	for name := range sambaLive {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	var b strings.Builder
-	fmt.Fprintf(&b, "# managed by pbs-plus; include from smb.conf [global]\n")
+	fmt.Fprintf(&b, "# managed by pbs-plus; one include line in smb.conf [global]: include = %s\n", sambaIncludePath())
 	for _, name := range names {
-		b.WriteString(sambaShareStanza(s.cfg, s.shares[name]))
+		inst := sambaLive[name]
+		inst.mu.Lock()
+		shareNames := make([]string, 0, len(inst.shares))
+		for sn := range inst.shares {
+			shareNames = append(shareNames, sn)
+		}
+		sort.Strings(shareNames)
+		for _, sn := range shareNames {
+			b.WriteString(sambaShareStanza(inst.cfg, inst.shares[sn]))
+		}
+		inst.mu.Unlock()
 	}
-	s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(sambaIncludePath(s.name)), 0o755); err != nil {
+	sambaRegMu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(sambaIncludePath()), 0o755); err != nil {
 		return fmt.Errorf("create samba include dir: %w", err)
 	}
-	if err := os.WriteFile(sambaIncludePath(s.name), []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(sambaIncludePath(), []byte(b.String()), 0o644); err != nil {
 		return fmt.Errorf("write samba include file: %w", err)
+	}
+	if legacy, _ := filepath.Glob(filepath.Join(filepath.Dir(sambaIncludePath()), "samba-*.conf")); len(legacy) > 0 {
+		for _, f := range legacy {
+			_ = os.Remove(f)
+		}
 	}
 	return runSmbcontrol("smbd", "reload-config")
 }
 
-func sambaIncludePath(name string) string {
-	return filepath.Join(conf.StatePrefix, "outposts", "samba-"+name+".conf")
+func sambaIncludePath() string {
+	return filepath.Join(conf.StatePrefix, "outposts", "samba.conf")
 }
 
 // sambaShareStanza renders one share, applying the outpost's access policy.
