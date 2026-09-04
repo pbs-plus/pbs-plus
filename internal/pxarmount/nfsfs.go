@@ -14,6 +14,8 @@ import (
 
 	"github.com/go-git/go-billy/v5"
 	"github.com/hanwen/go-fuse/v2/fuse"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
 // fuseDirentHeaderSize matches fuse._Dirent: Ino, Off uint64 + NameLen, Typ uint32.
@@ -245,6 +247,7 @@ func (f *NFSFilesystem) create(filename string, flag int, perm os.FileMode) (bil
 func (f *NFSFilesystem) ReadDir(dirname string) ([]os.FileInfo, error) {
 	ino, attr, err := f.resolve(dirname)
 	if err != nil {
+		log.Error(err, "nfs readdir resolve failed", "dir", dirname)
 		return nil, err
 	}
 	defer f.release(ino)
@@ -254,6 +257,7 @@ func (f *NFSFilesystem) ReadDir(dirname string) ([]os.FileInfo, error) {
 
 	names, err := f.listNames(ino)
 	if err != nil {
+		log.Error(err, "nfs readdir failed", "dir", dirname)
 		return nil, err
 	}
 

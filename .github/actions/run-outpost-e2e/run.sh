@@ -19,12 +19,18 @@ NFS_PORT=32049
 CLIENT_BASE="/tmp/pbs-plus-outpost-client"
 CLIENT_A="$CLIENT_BASE/backup"
 CLIENT_B="$CLIENT_BASE/init"
+NFS_TCPDUMP_PID=""
 
 req() { curl -k -s "$@" -w "\nHTTP_CODE:%{http_code}"; }
 code_of() { tail -1 <<<"$1" | sed 's/^HTTP_CODE://'; }
 body_of() { sed '$d' <<<"$1"; }
 
 dump_logs() {
+	stop_nfs_capture
+	if [ -f /tmp/nfs-e2e.pcap ]; then
+		echo "--- nfs wire ops (tcpdump -vv) ---"
+		tcpdump -r /tmp/nfs-e2e.pcap -nn -vv 2>/dev/null | grep -i "nfs\|mount" | tail -300 || true
+	fi
 	echo "--- outposts ---"
 	curl -k -s "$PBS_API/api2/extjs/config/d2d-outposts" || true
 	echo ""
@@ -139,12 +145,32 @@ mount_share() {
 	local share=$1
 	local target=$2
 	mkdir -p "$target"
+	start_nfs_capture
 	timeout 60 mount -t nfs \
 		-o "nfsvers=3,proto=tcp,mountproto=tcp,port=$NFS_PORT,mountport=$NFS_PORT,nolock,noacl,ro,soft,timeo=50,retrans=2" \
 		"pbs-plus-test:/$share" "$target"
 }
 
+start_nfs_capture() {
+	if [ -n "${NFS_TCPDUMP_PID:-}" ]; then
+		return 0
+	fi
+	if ! command -v tcpdump >/dev/null 2>&1; then
+		apt-get update -qq >/dev/null 2>&1 || true
+		apt-get install -y -qq tcpdump >/dev/null 2>&1 || true
+	fi
+	command -v tcpdump >/dev/null 2>&1 || return 0
+	tcpdump -i any -s0 -w /tmp/nfs-e2e.pcap "port $NFS_PORT" >/dev/null 2>&1 &
+	NFS_TCPDUMP_PID=$!
+}
+
+stop_nfs_capture() {
+	[ -z "${NFS_TCPDUMP_PID:-}" ] || kill "$NFS_TCPDUMP_PID" 2>/dev/null || true
+	NFS_TCPDUMP_PID=""
+}
+
 cleanup_client_mounts() {
+	stop_nfs_capture
 	for mount_point in "$CLIENT_A" "$CLIENT_B"; do
 		if mountpoint -q "$mount_point"; then
 			timeout 30 umount -f -l "$mount_point" >/dev/null 2>&1 || true
