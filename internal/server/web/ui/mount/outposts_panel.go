@@ -6,7 +6,7 @@ import (
 
 var outpostsModel = js.Model{
 	Name:       "pbs-model-outposts",
-	Fields:     js.Fields("name", "type", "listen-addr", "running", "error", "attached", "endpoints"),
+	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "running", "error", "attached", "endpoints"),
 	IDProperty: "name",
 }
 
@@ -73,7 +73,12 @@ var outpostsPanel = js.Panel{
 								change: (f, v) => {
 									let form = f.up("form");
 									let listen = form.down("[name=listen-addr]");
+									let smb = v === "samba";
 									if (listen) listen.setDisabled(v !== "nfs");
+									["guest", "valid-users", "force-user", "hosts-allow"].forEach((n) => {
+										let fld = form.down("[name=" + n + "]");
+										if (fld) fld.setDisabled(!smb);
+									});
 								},
 							},
 						},
@@ -87,8 +92,42 @@ var outpostsPanel = js.Panel{
 							disabled: values.type && values.type !== "nfs",
 						},
 						{
+							xtype: "proxmoxcheckbox",
+							name: "guest",
+							fieldLabel: gettext("Allow Guests"),
+							uncheckedValue: "0",
+							inputValue: "1",
+							value: values.guest,
+							disabled: values.type !== "samba",
+							boxLabel: gettext("Anonymous access, no password"),
+						},
+						{
+							xtype: "proxmoxtextfield",
+							name: "valid-users",
+							fieldLabel: gettext("Valid Users"),
+							emptyText: "DOMAIN\\\\restore-ops, @DOMAIN\\\\backup-admins",
+							value: values["valid-users"],
+							disabled: values.type !== "samba",
+						},
+						{
+							xtype: "proxmoxtextfield",
+							name: "force-user",
+							fieldLabel: gettext("Force User"),
+							emptyText: "root",
+							value: values["force-user"],
+							disabled: values.type !== "samba",
+						},
+						{
+							xtype: "proxmoxtextfield",
+							name: "hosts-allow",
+							fieldLabel: gettext("Hosts Allow"),
+							emptyText: "10.0.0.0/8, 192.168.1.",
+							value: values["hosts-allow"],
+							disabled: values.type !== "samba",
+						},
+						{
 							xtype: "displayfield",
-							value: gettext("Samba outposts require smbd installed and running; shares are exported from private mounts. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
+							value: gettext("Samba outposts need smbd running with 'include' pointing at the pbs-plus outpost config. Set either guest access or valid users. Domain accounts (DOMAIN\\\\user) require the host to be joined with 'net ads join'; snapshot files keep their backed-up ownership, so set Force User to root if restore operators must read everything. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
 						},
 					],
 				}],
@@ -104,6 +143,10 @@ var outpostsPanel = js.Panel{
 								name: vals.name,
 								type: vals.type,
 								"listen-addr": vals["listen-addr"] || "",
+								guest: vals.guest || "0",
+								"valid-users": vals["valid-users"] || "",
+								"force-user": vals["force-user"] || "",
+								"hosts-allow": vals["hosts-allow"] || "",
 							};
 							let url = "/api2/extjs/config/d2d-outposts";
 							let method = "POST";
@@ -158,6 +201,11 @@ var outpostsPanel = js.Panel{
 			return Ext.String.htmlEncode(v || "");
 		`)},
 		{Text: "Listen Address", DataIndex: "listen-addr", Width: 160, Renderer: js.Func("v", `return Ext.String.htmlEncode(v || "");`)},
+		{Text: "Access", DataIndex: "valid-users", Width: 180, Renderer: js.Func("v, meta, rec", `
+			if (rec.get("type") !== "samba") return "-";
+			if (rec.get("guest")) return gettext("Guest");
+			return Ext.String.htmlEncode(v || "-");
+		`)},
 		{Text: "Status", DataIndex: "running", Width: 90, Renderer: js.Func("v, meta, rec", `
 			if (v) return '<i class="fa fa-check-circle"></i> ' + gettext("Running");
 			return '<i class="fa fa-times-circle"></i> ' + gettext("Stopped");

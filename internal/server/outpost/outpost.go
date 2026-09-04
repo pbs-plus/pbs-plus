@@ -33,6 +33,10 @@ type Outpost struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`
 	ListenAddr string `json:"listen_addr,omitempty"`
+	Guest      bool   `json:"guest,omitempty"`
+	ValidUsers string `json:"valid_users,omitempty"`
+	ForceUser  string `json:"force_user,omitempty"`
+	HostsAllow string `json:"hosts_allow,omitempty"`
 	CreatedAt  int64  `json:"created_at"`
 }
 

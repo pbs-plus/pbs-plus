@@ -46,7 +46,7 @@ func startSamba(t *testing.T) Instance {
 	t.Helper()
 	withStatePrefix(t)
 	withFakeSmbcontrol(t)
-	inst, err := (sambaDriver{}).Start(t.Context(), Outpost{Name: "edge", Type: TypeSamba})
+	inst, err := (sambaDriver{}).Start(t.Context(), Outpost{Name: "edge", Type: TypeSamba, Guest: true})
 	if err != nil {
 		t.Fatalf("start samba: %v", err)
 	}
@@ -130,5 +130,107 @@ func TestSambaAttachRollsBackOnReloadFailure(t *testing.T) {
 	}
 	if got := inst.Attached(); len(got) != 0 {
 		t.Fatalf("share not rolled back: %v", got)
+	}
+}
+
+func withFakeNet(t *testing.T, err error) *[][]string {
+	t.Helper()
+	var calls [][]string
+	old := runNet
+	runNet = func(args ...string) error {
+		calls = append(calls, args)
+		return err
+	}
+	t.Cleanup(func() { runNet = old })
+	return &calls
+}
+
+func TestSambaValidateAccessPolicy(t *testing.T) {
+	d := sambaDriver{}
+	cases := []struct {
+		name    string
+		o       Outpost
+		wantErr string
+	}{
+		{"guest only", Outpost{Guest: true}, ""},
+		{"local users only", Outpost{ValidUsers: "restore, ops"}, ""},
+		{"both", Outpost{Guest: true, ValidUsers: "restore"}, "mutually exclusive"},
+		{"neither", Outpost{}, "set valid users or enable guest access"},
+		{"stanza injection", Outpost{ValidUsers: "ops\n[evil]\npath = /"}, "valid users must not"},
+		{"force user injection", Outpost{Guest: true, ForceUser: "root]\n["}, "force user must not"},
+		{"hosts allow injection", Outpost{Guest: true, HostsAllow: "10.0.0.0/8\n[x]"}, "hosts allow must not"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := d.Validate(tc.o)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestSambaValidateDomainRequiresJoin(t *testing.T) {
+	calls := withFakeNet(t, errors.New("not joined"))
+	err := (sambaDriver{}).Validate(Outpost{ValidUsers: `CORP\restore-ops`})
+	if err == nil || !strings.Contains(err.Error(), "not joined to a domain") {
+		t.Fatalf("err = %v, want domain join error", err)
+	}
+	if len(*calls) != 1 || strings.Join((*calls)[0], " ") != "ads testjoin" {
+		t.Fatalf("net calls = %v", *calls)
+	}
+}
+
+func TestSambaValidateDomainAcceptsJoinedHost(t *testing.T) {
+	withFakeNet(t, nil)
+	for _, users := range []string{`CORP\restore`, "restore@CORP.EXAMPLE", `@CORP\backup-admins`} {
+		if err := (sambaDriver{}).Validate(Outpost{ValidUsers: users}); err != nil {
+			t.Fatalf("%s: %v", users, err)
+		}
+	}
+}
+
+func TestSambaValidateLocalUsersSkipDomainCheck(t *testing.T) {
+	calls := withFakeNet(t, errors.New("not joined"))
+	if err := (sambaDriver{}).Validate(Outpost{ValidUsers: "restore, @operators"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("net consulted for local accounts: %v", *calls)
+	}
+}
+
+func TestSambaShareStanzaAppliesAccessPolicy(t *testing.T) {
+	got := sambaShareStanza(Outpost{
+		ValidUsers: `CORP\restore, @CORP\backup-admins`,
+		ForceUser:  "root",
+		HostsAllow: "10.0.0.0/8",
+	}, Attachment{Name: "snap", Path: "/mnt/snap", ReadOnly: true})
+	for _, want := range []string{
+		"[snap]", "path = /mnt/snap", "browseable = no", "read only = yes",
+		"guest ok = no", `valid users = CORP\restore, @CORP\backup-admins`,
+		"force user = root", "hosts allow = 10.0.0.0/8",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stanza missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSambaShareStanzaGuestWritable(t *testing.T) {
+	got := sambaShareStanza(Outpost{Guest: true}, Attachment{Name: "snap", Path: "/mnt/snap"})
+	for _, want := range []string{"guest ok = yes", "read only = no"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("stanza missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "valid users") {
+		t.Fatalf("guest share got valid users:\n%s", got)
 	}
 }
