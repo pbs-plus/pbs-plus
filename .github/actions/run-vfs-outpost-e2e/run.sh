@@ -13,10 +13,8 @@ DATASTORE="test"
 NAMESPACE="test"
 INIT_GROUP_DIR="/mnt/test/ns/test/host/e2e-init"
 ENC_DS=$(printf %s "$DATASTORE" | base64 -w0)
-GANESHA_OUTPOST="e2e-ganesha"
 SMB_OUTPOST="smb"
 SAMBA_INCLUDE="/var/lib/pbs-plus/outposts/samba-$SMB_OUTPOST.conf"
-CLIENT_GANESHA="/tmp/pbs-plus-vfs-ganesha"
 CLIENT_SMB="/tmp/pbs-plus-vfs-smb"
 
 req() { curl -k -s "$@" -w "\nHTTP_CODE:%{http_code}"; }
@@ -42,8 +40,6 @@ dump_logs() {
 	echo "--- mount sessions ---"
 	curl -k -s "$PBS_API/api2/extjs/config/d2d-mounts" || true
 	echo ""
-	echo "--- ganesha log ---"
-	tail -60 /tmp/ganesha.log 2>/dev/null || true
 	echo "--- samba include file ---"
 	cat "$SAMBA_INCLUDE" 2>/dev/null || true
 	echo "--- mount process logs ---"
@@ -173,12 +169,10 @@ wait_for() {
 }
 
 cleanup_client_mounts() {
-	for mount_point in "$CLIENT_GANESHA" "$CLIENT_SMB"; do
-		if mountpoint -q "$mount_point"; then
-			timeout 30 umount -f -l "$mount_point" >/dev/null 2>&1 || true
-		fi
-	done
-	rm -rf "$CLIENT_GANESHA" "$CLIENT_SMB"
+	if mountpoint -q "$CLIENT_SMB"; then
+		timeout 30 umount -f -l "$CLIENT_SMB" >/dev/null 2>&1 || true
+	fi
+	rm -rf "$CLIENT_SMB"
 }
 
 trap cleanup_client_mounts EXIT
@@ -199,29 +193,7 @@ wait_for_proc() {
 	return 1
 }
 
-section "Start dbus, rpcbind, ganesha and smbd"
-
-mkdir -p /run/dbus
-dbus-daemon --system --fork || true
-wait_for_proc "system dbus running" 30 dbus-send --system --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.ListNames
-
-rpcbind -w 2>/dev/null || true
-wait_for_proc "rpcbind running" 30 rpcinfo -p localhost
-
-mkdir -p /etc/ganesha /var/run/ganesha
-cat > /etc/ganesha/ganesha.conf <<'EOF'
-NFS_CORE_PARAM {
-	Protocols = 3;
-	allow_set_io_flusher_fail = true;
-}
-LOG {
-	Components {
-		ALL = EVENT;
-	}
-}
-EOF
-ganesha.nfsd -F -L /tmp/ganesha.log &
-wait_for_proc "ganesha running with dbus" 60 dbus-send --system --print-reply --dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr org.ganesha.nfsd.exportmgr.ShowExports
+section "Start smbd"
 
 mkdir -p /etc/samba
 cat > /etc/samba/smb.conf <<EOF
@@ -245,83 +217,6 @@ DIDX=$(didx_in "$INIT_GROUP_DIR/$SNAP")
 [ -n "$DIDX" ] || { fail "e2e-init archive missing"; exit 1; }
 
 detach_existing_session e2e-init "$SNAP" "$DIDX" || true
-
-section "Serve one share through ganesha"
-
-RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
-	-d "name=$GANESHA_OUTPOST" -d "type=ganesha" -d "sectype=sys")
-submit_ok "$RESP" && ok "ganesha outpost created" || fail "ganesha outpost rejected: $(body_of "$RESP")"
-
-RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
-	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
-	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro" -d "outpost=$GANESHA_OUTPOST")
-submit_ok "$RESP" && ok "ganesha share request accepted" || fail "ganesha share rejected: $(body_of "$RESP")"
-
-GANESHA_FUSE_UNSUPPORTED=0
-deadline=$((SECONDS + 90))
-while [ $SECONDS -lt $deadline ]; do
-	if session_ready e2e-init "$GANESHA_OUTPOST" >/dev/null 2>&1; then
-		break
-	fi
-	errs=$(find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(mount|unmount):' | while read -r f; do tail -3 "$f" 2>/dev/null; done)
-	if grep -q "ganesha AddExport" <<<"$errs" && grep -q "validation errors in block\|invalid param value\|Operation not supported" <<<"$errs"; then
-		GANESHA_FUSE_UNSUPPORTED=1
-		break
-	fi
-	sleep 2
-done
-if [ "$GANESHA_FUSE_UNSUPPORTED" = 1 ]; then
-	ok "ganesha cannot export FUSE mounts (FSAL_VFS needs name_to_handle_at); content checks skipped"
-elif session_ready e2e-init "$GANESHA_OUTPOST" >/dev/null 2>&1; then
-	ok "ganesha share attached"
-else
-	fail "ganesha share attached (timeout after 90s)"
-fi
-if [ "$GANESHA_FUSE_UNSUPPORTED" = 0 ]; then
-	wait_for "ganesha outpost reports one share" 30 outpost_shares "$GANESHA_OUTPOST" 1 || true
-fi
-
-ENDPOINT=$(session_endpoint e2e-init "$GANESHA_OUTPOST")
-if [ -z "$ENDPOINT" ] && [ "$GANESHA_FUSE_UNSUPPORTED" = 0 ]; then
-	fail "ganesha endpoint missing"
-fi
-[ -n "$ENDPOINT" ] && ok "ganesha endpoint reported: $ENDPOINT" || true
-
-GANESHA_PATH=${ENDPOINT#nfs://*/}
-mkdir -p "$CLIENT_GANESHA"
-if [ -z "$ENDPOINT" ]; then
-	ok "ganesha NFS mount skipped (no export)"
-elif [ -n "$GANESHA_PATH" ] && timeout 60 mount -t nfs \
-	-o "nfsvers=3,proto=tcp,nolock" "pbs-plus-test:$GANESHA_PATH" "$CLIENT_GANESHA"; then
-	ok "share mounted through ganesha NFSv3"
-else
-	fail "ganesha NFS mount failed (path: $GANESHA_PATH)"
-fi
-
-if [ -z "$ENDPOINT" ]; then
-	ok "ganesha kernel mount skipped"
-elif mountpoint -q "$CLIENT_GANESHA"; then
-	ok "ganesha kernel mount active"
-else
-	fail "ganesha kernel mount inactive"
-fi
-if [ -z "$ENDPOINT" ]; then
-	ok "ganesha content check skipped"
-elif [ "$(cat "$CLIENT_GANESHA/hello.txt" 2>/dev/null)" = "hello-e2e" ]; then
-	ok "ganesha share content readable"
-else
-	fail "ganesha share content mismatch"
-fi
-
-RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" \
-	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
-	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "force=1")
-submit_ok "$RESP" && ok "ganesha detach accepted" || fail "ganesha detach rejected: $(body_of "$RESP")"
-wait_for "ganesha session removed" 120 session_gone e2e-init "$GANESHA_OUTPOST" || true
-wait_for "ganesha outpost reports no shares" 30 outpost_shares "$GANESHA_OUTPOST" 0 || true
-
-RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-outposts/$GANESHA_OUTPOST")
-submit_ok "$RESP" && ok "ganesha outpost removed" || fail "ganesha outpost delete rejected: $(body_of "$RESP")"
 
 section "Serve one share through samba"
 

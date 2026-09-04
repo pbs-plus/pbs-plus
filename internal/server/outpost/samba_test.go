@@ -7,7 +7,17 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 )
+
+func withStatePrefix(t *testing.T) string {
+	t.Helper()
+	old := conf.StatePrefix
+	conf.StatePrefix = t.TempDir()
+	t.Cleanup(func() { conf.StatePrefix = old })
+	return conf.StatePrefix
+}
 
 type fakeSmbcontrol struct {
 	calls   [][]string

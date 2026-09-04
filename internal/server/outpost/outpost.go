@@ -24,9 +24,8 @@ import (
 )
 
 const (
-	TypeNFS     = "nfs"
-	TypeGanesha = "ganesha"
-	TypeSamba   = "samba"
+	TypeNFS   = "nfs"
+	TypeSamba = "samba"
 )
 
 // Outpost is the persisted configuration of one serving endpoint.
@@ -34,11 +33,10 @@ type Outpost struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`
 	ListenAddr string `json:"listen_addr,omitempty"`
-	Sectype    string `json:"sectype,omitempty"`
 	CreatedAt  int64  `json:"created_at"`
 }
 
-// Attachment is a share served by an outpost: FS serves in process (nfs driver), Path backs VFS drivers (ganesha, samba).
+// Attachment is a share served by an outpost: FS serves in process (nfs driver), Path backs VFS drivers (samba).
 type Attachment struct {
 	Name     string
 	ReadOnly bool
@@ -65,9 +63,8 @@ type Instance interface {
 
 // drivers registers the available outpost types.
 var drivers = map[string]Driver{
-	TypeNFS:     nfsDriver{},
-	TypeGanesha: ganeshaDriver{},
-	TypeSamba:   sambaDriver{},
+	TypeNFS:   nfsDriver{},
+	TypeSamba: sambaDriver{},
 }
 
 func DriverTypes() []string {

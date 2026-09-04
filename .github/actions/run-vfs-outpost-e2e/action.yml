@@ -1,5 +1,5 @@
 name: Run VFS Outpost E2E
-description: Serve snapshot mounts through NFS-Ganesha and Samba outposts and read them through kernel clients
+description: Serve snapshot mounts through Samba outposts and read them through kernel CIFS clients
 
 inputs:
   timeout-seconds:

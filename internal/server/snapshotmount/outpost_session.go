@@ -130,7 +130,7 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 	if !found {
 		return Session{}, fmt.Errorf("outpost %q does not exist", in.Outpost)
 	}
-	if o.Type == outpost.TypeGanesha || o.Type == outpost.TypeSamba {
+	if o.Type == outpost.TypeSamba {
 		return mountVFSOutpostSession(ctx, task, in, parsedTime, key, mode)
 	}
 
