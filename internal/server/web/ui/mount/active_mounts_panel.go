@@ -192,19 +192,28 @@ var activeMountsPanel = js.Panel{
 		`),
 		"remount": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			let d = rec.data;
-			let isInit = !d["backup-time"];
 			let params = {
 				"ns": d.namespace || "",
 				"backup-type": d["backup-type"],
 				"backup-id": d["backup-id"],
-				"mount-path": d["mount-point"],
 			};
-			let url = "/api2/extjs/config/d2d-init/" + encodeURIComponent(encodePathValue(d.datastore));
-			if (!isInit) {
+			let url;
+			if (d.outpost) {
 				params["backup-time"] = d["backup-time"];
 				params["file-name"] = d["file-name"];
 				params.mode = d.mode;
+				params.outpost = d.outpost;
+				if (d["share-name"]) params["share-name"] = d["share-name"];
 				url = "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(d.datastore));
+			} else {
+				params["mount-path"] = d["mount-point"];
+				url = "/api2/extjs/config/d2d-init/" + encodeURIComponent(encodePathValue(d.datastore));
+				if (d["backup-time"]) {
+					params["backup-time"] = d["backup-time"];
+					params["file-name"] = d["file-name"];
+					params.mode = d.mode;
+					url = "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(d.datastore));
+				}
 			}
 			PBS.PlusUtils.API2Request({
 				url: url,

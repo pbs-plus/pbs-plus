@@ -41,4 +41,7 @@ func TestRender(t *testing.T) {
 	if n := strings.Count(source, `proxy: { type: "proxmox", url: "/api2/extjs/config/d2d-outposts" }`); n != 0 {
 		t.Errorf("%d outpost combobox store(s) still target the PBS origin instead of pbsPlusBaseUrl", n)
 	}
+	if !strings.Contains(source, `if (d.outpost) {`) {
+		t.Error("rendered UI remount handler is not outpost-aware")
+	}
 }

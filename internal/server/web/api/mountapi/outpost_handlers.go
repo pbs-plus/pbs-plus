@@ -11,6 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
+	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
 )
 
@@ -163,6 +164,7 @@ func ExtJsOutpostSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 				outpost.StopOutpost(existing.Name)
 			}
+			snapshotmount.ReattachOutpost(r.Context(), o.Name)
 			for _, s := range outpost.StatusAll() {
 				if s.Name == o.Name {
 					writeExtJS(w, toOutpostView(s))

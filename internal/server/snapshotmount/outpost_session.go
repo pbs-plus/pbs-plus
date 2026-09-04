@@ -355,6 +355,14 @@ func rollbackVFSMount(ctx context.Context, session Session) {
 }
 
 func ReattachOutposts(ctx context.Context) {
+	reattachOutposts(ctx, "")
+}
+
+func ReattachOutpost(ctx context.Context, name string) {
+	reattachOutposts(ctx, name)
+}
+
+func reattachOutposts(ctx context.Context, only string) {
 	sessions, err := ListSessions()
 	if err != nil {
 		log.Error(err, "reattach outposts: listing sessions")
@@ -362,6 +370,9 @@ func ReattachOutposts(ctx context.Context) {
 	}
 	for _, s := range sessions {
 		if s.Outpost == "" {
+			continue
+		}
+		if only != "" && s.Outpost != only {
 			continue
 		}
 		parsed, err := time.Parse(time.RFC3339, s.BackupTime)
