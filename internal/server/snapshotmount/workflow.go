@@ -310,6 +310,7 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 		Mode:       mode,
 		Backend:    backend,
 		SubPath:    in.SubPath,
+		Profile:    in.Profile,
 		MountPoint: mountPoint,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -501,6 +502,9 @@ func resolveSession(in jobs.SnapshotUnmountInput) (Session, string, error) {
 }
 
 func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
+	if session.Profile != "" && in.Reason == "" {
+		RecordProfileSkip(session)
+	}
 	task.LogString("unmounting " + session.MountPoint)
 
 	if session.Outpost != "" && session.ShareName != "" {

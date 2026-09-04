@@ -35,6 +35,9 @@ func TestRender(t *testing.T) {
 		`xtype: "pbsD2DCalendarEvent",`,
 		`xtype: "pbsNamespaceSelector"`,
 		`nsCombo.setDatastore(v);`,
+		`gettext("Unmount Selected")`,
+		`text: gettext("Profile"),`,
+		`me.requestUnmount(view, sel, false);`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("rendered UI does not contain %q", want)
@@ -48,6 +51,12 @@ func TestRender(t *testing.T) {
 	}
 	if !strings.Contains(source, `if (d.outpost) {`) {
 		t.Error("rendered UI remount handler is not outpost-aware")
+	}
+	if strings.Contains(source, `tree.getSelection()`) {
+		t.Error("rendered UI still calls getSelection on a treepanel instead of its view")
+	}
+	if !strings.Contains(source, `selType: "checkboxmodel"`) || !strings.Contains(source, `multiSelect: true`) {
+		t.Error("active mounts panel is not multi-select")
 	}
 	if strings.Contains(source, `fields: ["id", "datastore", "namespace", "backup-type", "backup-id"`) {
 		t.Error("rendered profiles panel still pins single backup groups")

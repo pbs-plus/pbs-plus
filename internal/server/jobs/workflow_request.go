@@ -60,6 +60,7 @@ type SnapshotMountInput struct {
 	Outpost    string `json:"outpost,omitempty"`
 	ShareName  string `json:"share_name,omitempty"`
 	SubPath    string `json:"sub_path,omitempty"`
+	Profile    string `json:"profile,omitempty"`
 	MountPath  string `json:"mount_path"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`
@@ -74,6 +75,7 @@ type SnapshotUnmountInput struct {
 	FileName   string `json:"file_name"`
 	MountPath  string `json:"mount_path"`
 	Force      bool   `json:"force"`
+	Reason     string `json:"reason,omitempty"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`
 }

@@ -438,6 +438,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 			Backend       string `json:"backend"`
 			Outpost       string `json:"outpost"`
 			ShareName     string `json:"share-name"`
+			Profile       string `json:"profile"`
 			Endpoint      string `json:"endpoint"`
 			MountPoint    string `json:"mount-point"`
 			Mounted       bool   `json:"mounted"`
@@ -463,6 +464,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 				Backend:       s.Backend,
 				Outpost:       s.Outpost,
 				ShareName:     snapshotmount.ShareName(s),
+				Profile:       s.Profile,
 				Endpoint:      s.Endpoint,
 				MountPoint:    s.MountPoint,
 				Mounted:       mounted,

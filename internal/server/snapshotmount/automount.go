@@ -4,6 +4,7 @@ package snapshotmount
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -104,7 +105,7 @@ func AutoMountProfiles(ctx context.Context, engine *jobs.Engine) {
 }
 
 func submitUnmount(ctx context.Context, engine *jobs.Engine, session Session, reason string) {
-	input := jobs.SnapshotUnmountInput{MountPath: session.MountPoint, Force: false}
+	input := jobs.SnapshotUnmountInput{MountPath: session.MountPoint, Force: false, Reason: reason}
 	request, err := jobs.NewWorkflowSubmit(jobs.WorkflowSnapshotUnmount, session.ServiceKey, reason, "", input, []string{"snapshot-mount:" + session.ServiceKey}, 1, time.Minute)
 	if err != nil {
 		log.Error(err, "auto-mount: building unmount submit", "mount-point", session.MountPoint)
@@ -142,6 +143,7 @@ func submitBatchMount(ctx context.Context, engine *jobs.Engine, p Profile, g Nam
 		Outpost:    p.Outpost,
 		ShareName:  profileShare(p),
 		SubPath:    sub,
+		Profile:    p.ID(),
 		MountPath:  mountPath,
 	}
 	request, err := jobs.NewWorkflowSubmit(jobs.WorkflowSnapshotMount, key, "auto-mount", "", input, []string{"snapshot-mount:" + key}, 1, time.Minute)
@@ -162,7 +164,51 @@ func mustStoreRoot(p Profile) string {
 	return dsInfo.Path
 }
 
-// batchSessionsOwned filters sessions this profile reconciles: sub-path
+func skipPath(id string) string { return filepath.Join(profilesDir(), id+".skip.json") }
+
+func loadSkips(id string) map[string]time.Time {
+	skips := map[string]time.Time{}
+	raw, err := os.ReadFile(skipPath(id))
+	if err != nil {
+		return skips
+	}
+	_ = json.Unmarshal(raw, &skips)
+	return skips
+}
+
+func saveSkips(id string, skips map[string]time.Time) {
+	if len(skips) == 0 {
+		_ = os.Remove(skipPath(id))
+		return
+	}
+	if err := os.MkdirAll(profilesDir(), 0o700); err != nil {
+		return
+	}
+	raw, err := json.Marshal(skips)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(skipPath(id), raw, 0o600)
+}
+
+// RecordProfileSkip remembers that the user manually unmounted a
+// profile-owned group so the reconcile loop does not remount it. The stored
+// time is the group's latest snapshot at unmount time, so a newer latest
+// still triggers a remount (replace semantics).
+func RecordProfileSkip(s Session) {
+	at := time.Now()
+	if dsInfo, err := cli.GetDatastoreInfo(s.Datastore); err == nil {
+		if bt, _, err := LatestSnapshotIn(dsInfo.Path, s.Namespace, s.BackupType, s.BackupID); err == nil {
+			if parsed, err := time.Parse(time.RFC3339, bt); err == nil {
+				at = parsed
+			}
+		}
+	}
+	skips := loadSkips(s.Profile)
+	skips[groupKeyOf(s.Namespace, s.BackupType, s.BackupID)] = at
+	saveSkips(s.Profile, skips)
+}
+
 // sessions on the same datastore routed through the same target.
 func batchSessionsOwned(p Profile, share string) ([]Session, error) {
 	sessions, err := ListSessions()
@@ -223,6 +269,7 @@ func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) {
 		log.Error(err, "auto-mount: listing sessions")
 		return
 	}
+	skips := loadSkips(p.ID())
 
 	mountedOfGroup := map[string][]Session{}
 	for _, s := range owned {
@@ -244,6 +291,18 @@ func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) {
 		gk := groupKeyOf(g.Namespace, g.BackupType, g.BackupID)
 		live := mountedOfGroup[gk]
 		if len(live) == 0 {
+			if t, ok := skips[gk]; ok {
+				latestStr, _, err := LatestSnapshotIn(storeRoot, g.Namespace, g.BackupType, g.BackupID)
+				if err != nil {
+					continue
+				}
+				latest, err := time.Parse(time.RFC3339, latestStr)
+				if err != nil || !latest.After(t) {
+					continue
+				}
+				delete(skips, gk)
+				saveSkips(p.ID(), skips)
+			}
 			submitBatchMount(ctx, engine, p, g, subs[gk])
 			continue
 		}
@@ -286,5 +345,6 @@ func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) {
 
 // ReconcileProfileNow runs one reconcile pass for a single profile (mount-now).
 func ReconcileProfileNow(ctx context.Context, engine *jobs.Engine, p Profile) {
+	_ = os.Remove(skipPath(p.ID()))
 	reconcileProfile(ctx, engine, p)
 }

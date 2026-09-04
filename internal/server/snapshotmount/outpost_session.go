@@ -199,6 +199,7 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 		Outpost:    in.Outpost,
 		ShareName:  in.ShareName,
 		SubPath:    in.SubPath,
+		Profile:    in.Profile,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
 	}
@@ -363,6 +364,7 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 		Outpost:    in.Outpost,
 		ShareName:  in.ShareName,
 		SubPath:    in.SubPath,
+		Profile:    in.Profile,
 		MountPoint: mountPoint,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
