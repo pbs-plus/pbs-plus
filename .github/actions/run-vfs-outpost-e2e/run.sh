@@ -70,8 +70,17 @@ repro_pxarmount() {
 	mpxar="$INIT_GROUP_DIR/$snap/$didx"
 	ppxar="$INIT_GROUP_DIR/$snap/$(printf %s "$didx" | sed 's/\.mpxar\.didx$/.ppxar.didx/')"
 	mkdir -p /tmp/pxarmount-repro
-	timeout 20 /usr/bin/pxar-mount --pbs-store /mnt/test --mpxar-didx "$mpxar" --ppxar-didx "$ppxar" /tmp/pxarmount-repro
-	echo "repro exit=$?"
+	/usr/bin/pxar-mount --pbs-store /mnt/test --mpxar-didx "$mpxar" --ppxar-didx "$ppxar" /tmp/pxarmount-repro &
+	local pid=$!
+	for i in $(seq 1 15); do
+		sleep 1
+		if mountpoint -q /tmp/pxarmount-repro; then
+			echo "mounted after ${i}s"
+			ls /tmp/pxarmount-repro || true
+			break
+		fi
+	done
+	kill "$pid" 2>/dev/null || true
 	umount /tmp/pxarmount-repro 2>/dev/null || true
 }
 

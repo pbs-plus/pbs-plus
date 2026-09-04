@@ -401,11 +401,11 @@ func startSession(ctx context.Context, session Session, mountPoint string, manag
 
 // logMountServiceOutput surfaces why a mount service or process failed.
 func logMountServiceOutput(serviceName string) {
-	if out, err := exec.Command("journalctl", "-u", serviceName, "--no-pager", "-n", "60").CombinedOutput(); err == nil && len(out) > 0 {
+	if out, err := exec.Command("journalctl", "-u", serviceName, "--no-pager", "-n", "60").CombinedOutput(); err == nil && strings.Contains(string(out), serviceName) {
 		log.Error(errors.New(string(out)), "mount service journal for "+serviceName)
 		return
 	}
-	if data, err := os.ReadFile(filepath.Join("/var/run/pbs-plus-mounts", serviceName+".log")); err == nil {
+	if data, err := os.ReadFile(filepath.Join("/var/run/pbs-plus-mounts", serviceName+".log")); err == nil && len(data) > 0 {
 		log.Error(errors.New(string(data)), "mount process log for "+serviceName)
 	}
 }
