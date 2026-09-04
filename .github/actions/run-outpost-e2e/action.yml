@@ -1,0 +1,23 @@
+name: Run NFS Outpost E2E
+description: Serve two snapshot mounts from one NFS outpost and read both through the kernel NFS client
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "600"
+    description: Timeout for the e2e test script
+
+runs:
+  using: composite
+  steps:
+    - name: Copy e2e script into container
+      shell: bash
+      run: |
+        docker cp .github/actions/run-outpost-e2e/run.sh pbs-plus-test:/tmp/e2e-nfs-outpost.sh
+        docker exec pbs-plus-test chmod +x /tmp/e2e-nfs-outpost.sh
+
+    - name: Run NFS outpost e2e tests
+      shell: bash
+      run: |
+        echo "Running NFS outpost e2e tests..."
+        timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-nfs-outpost.sh
