@@ -111,12 +111,18 @@ func (fs *MutableFS) getParentInfo(path string) (parentIno uint64, parentMode ui
 }
 
 func (fs *MutableFS) applyACLOwnership(absPath string) {
-	uid := fs.acl.OwnerUID
-	gid := fs.acl.OwnerGID
-	if uid != 0 || gid != 0 {
-		if err := os.Chown(absPath, uid, gid); err != nil {
-			fs.logNonFatal("chown", absPath, err)
-		}
+	uid, gid := -1, -1
+	if fs.acl.ForceUID || fs.acl.OwnerUID != 0 {
+		uid = fs.acl.OwnerUID
+	}
+	if fs.acl.ForceGID || fs.acl.OwnerGID != 0 {
+		gid = fs.acl.OwnerGID
+	}
+	if uid == -1 && gid == -1 {
+		return
+	}
+	if err := os.Chown(absPath, uid, gid); err != nil {
+		fs.logNonFatal("chown", absPath, err)
 	}
 }
 

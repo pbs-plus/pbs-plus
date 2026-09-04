@@ -31,10 +31,8 @@ func RunInitSubcommand() {
 	aclGroup := fs.Int("acl-group", 0, "Default group GID for new files/dirs (0 = inherit)")
 	aclSpec := fs.String("acl-spec", "", "POSIX ACL spec string (setfacl-style) served as virtual xattrs")
 	defaultAclSpec := fs.String("default-acl-spec", "", "Default POSIX ACL spec string served as virtual xattrs")
-
-	// Accepted for CLI compat  -  ownership is enforced virtually.
-	_ = fs.Bool("force-acl-owner", false, "")
-	_ = fs.Bool("force-acl-group", false, "")
+	forceACLOwner := fs.Bool("force-acl-owner", false, "Apply acl-owner even when it is UID 0")
+	forceACLGroup := fs.Bool("force-acl-group", false, "Apply acl-group even when it is GID 0")
 
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		log.Error(err, "")
@@ -63,6 +61,6 @@ func RunInitSubcommand() {
 		Verbose:    *verbose,
 		InitMode:   true,
 		NFS:        *nfsBackend,
-		ACL:        BuildACLConfig(*aclOwner, *aclGroup, *aclSpec, *defaultAclSpec),
+		ACL:        BuildACLConfig(*aclOwner, *aclGroup, *forceACLOwner, *forceACLGroup, *aclSpec, *defaultAclSpec),
 	})
 }

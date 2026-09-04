@@ -15,8 +15,9 @@ import (
 type ACLConfig struct {
 	OwnerUID int
 	OwnerGID int
+	ForceUID bool
+	ForceGID bool
 
-	// Full POSIX ACL entries. When set, these are served as virtual
 	// system.posix_acl_access / system.posix_acl_default xattrs.
 	ACLEntries        []ACLEntry
 	DefaultACLEntries []ACLEntry
@@ -123,29 +124,41 @@ func parsePerm(s string) uint16 {
 	return p
 }
 
-func lookupUID(name string) (uint32, error) {
-	// Try Go's user.Lookup first (uses NSS when dynamically linked).
+// LookupUserIDs resolves a user through NSS, including winbind-backed domain users.
+func LookupUserIDs(name string) (uint32, uint32, error) {
 	if u, err := user.Lookup(name); err == nil {
-		uid, err := strconv.ParseUint(u.Uid, 10, 32)
-		if err != nil {
-			log.Error(err, "")
+		uid, uidErr := strconv.ParseUint(u.Uid, 10, 32)
+		gid, gidErr := strconv.ParseUint(u.Gid, 10, 32)
+		if uidErr != nil {
+			return 0, 0, fmt.Errorf("bad uid for user %q: %w", name, uidErr)
 		}
-		return uint32(uid), nil
+		if gidErr != nil {
+			return 0, 0, fmt.Errorf("bad gid for user %q: %w", name, gidErr)
+		}
+		return uint32(uid), uint32(gid), nil
 	}
-	// Fallback: try getent which respects NSS/winbind even from
 	out, err := exec.Command("getent", "passwd", name).Output()
 	if err != nil {
-		return 0, fmt.Errorf("unknown user %q", name)
+		return 0, 0, fmt.Errorf("unknown user %q", name)
 	}
-	fields := strings.SplitN(strings.TrimSpace(string(out)), ":", 4)
-	if len(fields) < 3 {
-		return 0, fmt.Errorf("malformed getent output for user %q", name)
+	fields := strings.SplitN(strings.TrimSpace(string(out)), ":", 5)
+	if len(fields) < 4 {
+		return 0, 0, fmt.Errorf("malformed getent output for user %q", name)
 	}
 	uid, err := strconv.ParseUint(fields[2], 10, 32)
 	if err != nil {
-		return 0, fmt.Errorf("bad uid for user %q: %w", name, err)
+		return 0, 0, fmt.Errorf("bad uid for user %q: %w", name, err)
 	}
-	return uint32(uid), nil
+	gid, err := strconv.ParseUint(fields[3], 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("bad gid for user %q: %w", name, err)
+	}
+	return uint32(uid), uint32(gid), nil
+}
+
+func lookupUID(name string) (uint32, error) {
+	uid, _, err := LookupUserIDs(name)
+	return uid, err
 }
 
 func lookupGID(name string) (uint32, error) {
@@ -175,10 +188,12 @@ func (c ACLConfig) HasACLs() bool {
 	return len(c.ACLEntries) > 0
 }
 
-func BuildACLConfig(ownerUID, ownerGID int, aclSpec, defaultAclSpec string) ACLConfig {
+func BuildACLConfig(ownerUID, ownerGID int, forceUID, forceGID bool, aclSpec, defaultAclSpec string) ACLConfig {
 	cfg := ACLConfig{
 		OwnerUID: ownerUID,
 		OwnerGID: ownerGID,
+		ForceUID: forceUID,
+		ForceGID: forceGID,
 	}
 	if aclSpec != "" {
 		entries, err := ParseACLSpec(aclSpec)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,8 +226,41 @@ func unmountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, sessio
 	return nil
 }
 
+var lookupOutpostUserIDs = pxarmount.LookupUserIDs
+
+func sambaOwnershipArgs(outpostName string) ([]string, error) {
+	o, found, err := outpost.LoadOutpost(outpostName)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("outpost %q does not exist", outpostName)
+	}
+	if o.Type != outpost.TypeSamba || o.ForceUser == "" {
+		return nil, nil
+	}
+	uid, gid, err := lookupOutpostUserIDs(o.ForceUser)
+	if err != nil {
+		return nil, fmt.Errorf("resolve samba force user %q: %w", o.ForceUser, err)
+	}
+	return []string{
+		"--acl-owner", strconv.FormatUint(uint64(uid), 10),
+		"--acl-group", strconv.FormatUint(uint64(gid), 10),
+		"--force-acl-owner", "--force-acl-group",
+	}, nil
+}
+
 // mountVFSOutpostSession mounts the snapshot privately via pxar-mount and hands the path to a VFS outpost driver.
 func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotMountInput, parsedTime time.Time, key, mode string) (Session, error) {
+	var ownershipArgs []string
+	if mode == ModeRW {
+		var err error
+		ownershipArgs, err = sambaOwnershipArgs(in.Outpost)
+		if err != nil {
+			return Session{}, err
+		}
+	}
+
 	dsInfo, err := cli.GetDatastoreInfo(in.Datastore)
 	if err != nil {
 		return Session{}, err
@@ -263,6 +297,7 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 		CreatedAt:  time.Now().Unix(),
 	}
 	if mode == ModeRW {
+		args = append(args, ownershipArgs...)
 		session.OverlayDir = OverlayDir(pbsStoreRoot, key)
 		session.SocketPath = SocketPath(key)
 		if err := os.MkdirAll(session.OverlayDir, 0o700); err != nil {

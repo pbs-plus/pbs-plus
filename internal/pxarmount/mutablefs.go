@@ -113,14 +113,11 @@ func (fs *MutableFS) SetACLConfig(cfg ACLConfig) { fs.acl = cfg }
 
 // applyACL overrides the UID/GID and mode on a ResolvedEntry when the ACL
 // config specifies a default owner, group, or mask.
-
-// applyACL overrides the UID/GID and mode on a ResolvedEntry when the ACL
-// config specifies a default owner, group, or mask.
 func (fs *MutableFS) applyACL(re *ResolvedEntry) {
-	if fs.acl.OwnerUID != 0 {
+	if fs.acl.ForceUID || fs.acl.OwnerUID != 0 {
 		re.UID = uint32(fs.acl.OwnerUID)
 	}
-	if fs.acl.OwnerGID != 0 {
+	if fs.acl.ForceGID || fs.acl.OwnerGID != 0 {
 		re.GID = uint32(fs.acl.OwnerGID)
 	}
 

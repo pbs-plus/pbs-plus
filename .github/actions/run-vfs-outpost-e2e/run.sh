@@ -141,6 +141,14 @@ session_endpoint() {
 		'.data[]? | select(.outpost == $outpost and .["backup-id"] == $id) | .endpoint' | head -1
 }
 
+session_mountpoint() {
+	local backup_id=$1
+	local outpost=$2
+	curl -k -s "$PBS_API/api2/extjs/config/d2d-mounts" | jq -r \
+		--arg id "$backup_id" --arg outpost "$outpost" \
+		'.data[]? | select(.outpost == $outpost and .["backup-id"] == $id) | .["mount-point"]' | head -1
+}
+
 session_gone() {
 	local backup_id=$1
 	local outpost=$2
@@ -293,13 +301,13 @@ submit_ok "$RESP" && fail "samba outpost with guest and valid users accepted" \
 	|| ok "samba outpost with contradictory access rejected"
 
 RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
-	-d "name=$ACL_OUTPOST" -d "type=samba" -d "valid-users=$ACL_USER" -d "force-user=root")
+	-d "name=$ACL_OUTPOST" -d "type=samba" -d "valid-users=$ACL_USER" -d "force-user=$ACL_USER")
 submit_ok "$RESP" && ok "samba outpost with valid users created" \
 	|| fail "samba acl outpost rejected: $(body_of "$RESP")"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
 	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
-	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro" -d "outpost=$ACL_OUTPOST")
+	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=rw" -d "outpost=$ACL_OUTPOST")
 submit_ok "$RESP" && ok "samba acl share request accepted" || fail "samba acl share rejected: $(body_of "$RESP")"
 
 wait_for "samba acl share attached" 240 session_ready e2e-init "$ACL_OUTPOST" || true
@@ -309,7 +317,7 @@ ACL_SHARE=${ACL_SHARE##*/}
 [ -n "$ACL_SHARE" ] && ok "samba acl endpoint reported: $ACL_SHARE" || fail "samba acl endpoint missing"
 grep -q "valid users = $ACL_USER" "$ACL_INCLUDE" 2>/dev/null \
 	&& ok "acl share stanza carries valid users" || fail "acl share stanza missing valid users"
-grep -q "force user = root" "$ACL_INCLUDE" 2>/dev/null \
+grep -q "force user = $ACL_USER" "$ACL_INCLUDE" 2>/dev/null \
 	&& ok "acl share stanza carries force user" || fail "acl share stanza missing force user"
 
 mkdir -p "$CLIENT_SMB_ACL"
@@ -329,6 +337,15 @@ else
 fi
 [ "$(cat "$CLIENT_SMB_ACL/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
 	&& ok "restricted share content readable as valid user" || fail "restricted share content mismatch"
+printf 'rw-e2e\n' > "$CLIENT_SMB_ACL/created-by-samba.txt" 2>/dev/null \
+	&& ok "valid user can write through rw share" || fail "valid user cannot write through rw share"
+[ "$(cat "$CLIENT_SMB_ACL/created-by-samba.txt" 2>/dev/null)" = "rw-e2e" ] \
+	&& ok "rw share write is readable" || fail "rw share write mismatch"
+ACL_MOUNTPOINT=$(session_mountpoint e2e-init "$ACL_OUTPOST")
+ACL_UID=$(id -u "$ACL_USER")
+ACL_GID=$(id -g "$ACL_USER")
+[ "$(stat -c '%u:%g' "$ACL_MOUNTPOINT" 2>/dev/null)" = "$ACL_UID:$ACL_GID" ] \
+	&& ok "pxar mount ownership matches samba force user" || fail "pxar mount ownership does not match samba force user"
 
 RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" \
 	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \

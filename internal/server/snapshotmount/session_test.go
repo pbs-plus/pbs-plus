@@ -3,10 +3,13 @@
 package snapshotmount
 
 import (
+	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 )
 
 func TestSessionRoundTrip(t *testing.T) {
@@ -132,5 +135,42 @@ func TestEnsureShareNameFree(t *testing.T) {
 	}
 	if err := ensureShareNameFree("edge", "other", "k2"); err != nil {
 		t.Fatalf("distinct name rejected: %v", err)
+	}
+}
+
+func TestSambaOwnershipArgs(t *testing.T) {
+	dir := t.TempDir()
+	oldPrefix := conf.StatePrefix
+	conf.StatePrefix = dir
+	t.Cleanup(func() { conf.StatePrefix = oldPrefix })
+
+	if err := outpost.SaveOutpost(outpost.Outpost{
+		Name: "smb", Type: outpost.TypeSamba, ValidUsers: "restore", ForceUser: `DOMAIN\restore`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	oldLookup := lookupOutpostUserIDs
+	lookupOutpostUserIDs = func(name string) (uint32, uint32, error) {
+		if name != `DOMAIN\restore` {
+			t.Fatalf("lookup user = %q", name)
+		}
+		return 0, 0, nil
+	}
+	t.Cleanup(func() { lookupOutpostUserIDs = oldLookup })
+
+	got, err := sambaOwnershipArgs("smb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--acl-owner", "0", "--acl-group", "0", "--force-acl-owner", "--force-acl-group"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ownership args = %q, want %q", got, want)
+	}
+
+	lookupOutpostUserIDs = func(string) (uint32, uint32, error) {
+		return 0, 0, errors.New("not mapped")
+	}
+	if _, err := sambaOwnershipArgs("smb"); err == nil {
+		t.Fatal("unmapped force user accepted")
 	}
 }
