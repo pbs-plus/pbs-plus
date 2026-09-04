@@ -59,6 +59,7 @@ type SnapshotMountInput struct {
 	Backend    string `json:"backend"`
 	Outpost    string `json:"outpost,omitempty"`
 	ShareName  string `json:"share_name,omitempty"`
+	SubPath    string `json:"sub_path,omitempty"`
 	MountPath  string `json:"mount_path"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`

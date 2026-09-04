@@ -117,14 +117,21 @@ func attachOutpostSession(s Session, parsedTime time.Time) error {
 	}
 
 	share := ShareName(s)
-	if err := outpost.Attach(s.Outpost, outpost.Attachment{
+	att := outpost.Attachment{
 		Name:     share,
 		ReadOnly: s.Mode == ModeRO,
 		FS:       pxarmount.NewNFSFilesystem(stack.Raw, s.Mode == ModeRO),
 		Release:  stack.Close,
-	}); err != nil {
+	}
+	var attachErr error
+	if s.SubPath != "" {
+		attachErr = outpost.AttachSub(s.Outpost, share, s.SubPath, att)
+	} else {
+		attachErr = outpost.Attach(s.Outpost, att)
+	}
+	if attachErr != nil {
 		stack.Close()
-		return err
+		return attachErr
 	}
 	return nil
 }
@@ -134,16 +141,38 @@ func OutpostShareMountPath(key string) string {
 	return filepath.Join("/var/run/pbs-plus-mounts", "shares", key)
 }
 
+// OutpostShareRoot backs an outpost's shared SMB share; batch sessions mount
+// individual snapshots in subdirectories of it.
+func OutpostShareRoot(outpostName string) string {
+	return filepath.Join("/var/run/pbs-plus-mounts", "outposts", outpostName)
+}
+
+// ValidateSubPath accepts a clean relative path of sanitized components.
+func ValidateSubPath(sub string) error {
+	switch {
+	case sub == "":
+		return nil
+	case strings.ContainsAny(sub, "\\/"), strings.HasPrefix(sub, "."), strings.HasSuffix(sub, "."):
+		return fmt.Errorf("invalid sub path %q", sub)
+	case filepath.Clean(sub) != sub, strings.Contains(sub, ".."):
+		return fmt.Errorf("invalid sub path %q", sub)
+	}
+	return nil
+}
+
 // mountOutpostSession attaches a snapshot to an outpost as a share instead
 // of mounting it locally.
 func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotMountInput, parsedTime time.Time, key, mode string) (Session, error) {
 	if in.MountPath != "" {
 		return Session{}, fmt.Errorf("mount_path cannot be combined with an outpost")
 	}
+	if err := ValidateSubPath(in.SubPath); err != nil {
+		return Session{}, err
+	}
 	if err := outpost.ValidateShareName(in.ShareName); err != nil {
 		return Session{}, err
 	}
-	if in.ShareName != "" {
+	if in.ShareName != "" && in.SubPath == "" {
 		if err := ensureShareNameFree(in.Outpost, in.ShareName, key); err != nil {
 			return Session{}, err
 		}
@@ -226,6 +255,24 @@ func unmountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, sessio
 	return nil
 }
 
+// sharedShareInUse reports whether another session still mounts through the
+// same outpost share; the share is only detached when the last one leaves.
+func sharedShareInUse(session Session) bool {
+	sessions, err := ListSessions()
+	if err != nil {
+		return true
+	}
+	for _, s := range sessions {
+		if s.ServiceKey == session.ServiceKey {
+			continue
+		}
+		if s.Outpost == session.Outpost && s.ShareName == session.ShareName {
+			return true
+		}
+	}
+	return false
+}
+
 var lookupOutpostUserIDs = pxarmount.LookupUserIDs
 
 func sambaOwnershipArgs(outpostName string) ([]string, error) {
@@ -270,7 +317,19 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 		return Session{}, errors.New("invalid datastore configuration")
 	}
 
+	share := in.ShareName
 	mountPoint := OutpostShareMountPath(key)
+	root := ""
+	if in.SubPath != "" {
+		if share == "" {
+			share = in.Outpost
+		}
+		if err := outpost.ValidateShareName(share); err != nil {
+			return Session{}, err
+		}
+		root = OutpostShareRoot(in.Outpost)
+		mountPoint = filepath.Join(root, in.SubPath)
+	}
 	mpxarPath, ppxarPath, isMetadataSplit, err := proxmox.BuildPxarPaths(pbsStoreRoot, in.Namespace, in.BackupType, in.BackupID, DirTime(parsedTime), in.FileName)
 	if err != nil {
 		return Session{}, err
@@ -292,6 +351,7 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 		Mode:       mode,
 		Outpost:    in.Outpost,
 		ShareName:  in.ShareName,
+		SubPath:    in.SubPath,
 		MountPoint: mountPoint,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -319,14 +379,30 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 		return Session{}, err
 	}
 
-	share := ShareName(session)
-	if err := outpost.Attach(in.Outpost, outpost.Attachment{Name: share, ReadOnly: mode == ModeRO, Path: mountPoint}); err != nil {
+	if share == "" {
+		share = ShareName(session)
+	}
+	var attachErr error
+	if root != "" {
+		attachErr = outpost.AttachSub(in.Outpost, share, in.SubPath, outpost.Attachment{Name: share, ReadOnly: mode == ModeRO, Path: root})
+	} else {
+		attachErr = outpost.Attach(in.Outpost, outpost.Attachment{Name: share, ReadOnly: mode == ModeRO, Path: mountPoint})
+	}
+	if attachErr != nil {
 		rollbackVFSMount(ctx, session)
-		return Session{}, err
+		return Session{}, attachErr
 	}
 	session.Endpoint = outpost.EndpointOf(in.Outpost, share)
+	if root != "" {
+		session.Endpoint += "/" + in.SubPath
+		session.ShareName = share
+	}
 	if err := SaveSession(session); err != nil {
-		outpost.Detach(in.Outpost, share)
+		if root != "" {
+			outpost.DetachSub(in.Outpost, share, in.SubPath)
+		} else {
+			outpost.Detach(in.Outpost, share)
+		}
 		rollbackVFSMount(ctx, session)
 		return Session{}, fmt.Errorf("persist mount session: %w", err)
 	}
@@ -383,7 +459,13 @@ func reattachOutposts(ctx context.Context, only string) {
 		share := ShareName(s)
 		if s.MountPoint != "" {
 			if IsMounted(s.MountPoint) {
-				if err := outpost.Attach(s.Outpost, outpost.Attachment{Name: share, ReadOnly: s.Mode == ModeRO, Path: s.MountPoint}); err != nil {
+				var err error
+				if s.SubPath != "" {
+					err = outpost.AttachSub(s.Outpost, share, s.SubPath, outpost.Attachment{Name: share, ReadOnly: s.Mode == ModeRO, Path: OutpostShareRoot(s.Outpost)})
+				} else {
+					err = outpost.Attach(s.Outpost, outpost.Attachment{Name: share, ReadOnly: s.Mode == ModeRO, Path: s.MountPoint})
+				}
+				if err != nil {
 					log.Error(err, "reattaching outpost share "+share)
 				}
 				continue
@@ -398,6 +480,7 @@ func reattachOutposts(ctx context.Context, only string) {
 				Mode:       s.Mode,
 				Outpost:    s.Outpost,
 				ShareName:  s.ShareName,
+				SubPath:    s.SubPath,
 			}
 			if _, err := mountVFSOutpostSession(ctx, nil, in, parsed, s.ServiceKey, s.Mode); err != nil {
 				log.Error(err, "reattaching outpost share "+share)

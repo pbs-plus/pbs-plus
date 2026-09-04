@@ -64,6 +64,11 @@ type Instance interface {
 	Attached() []string
 	Endpoint(share string) string
 	Stop() error
+	// AttachSub adds one sub-directory mount to a shared share; the share is
+	// created on first use and stays until the outpost stops.
+	AttachSub(share, sub string, a Attachment) error
+	// DetachSub removes one sub-directory mount from a shared share.
+	DetachSub(share, sub string)
 }
 
 // drivers registers the available outpost types.
@@ -326,6 +331,47 @@ func Attach(outpostName string, a Attachment) error {
 	}
 	mgr.attached[outpostName][a.Name] = a
 	return nil
+}
+
+// AttachShared attaches a share idempotently: a no-op when the same share is
+// already attached at the same path, an error on a conflicting path.
+func AttachShared(outpostName, share, path string) error {
+	mgr.mu.RLock()
+	_, running := mgr.instances[outpostName]
+	existing, attached := mgr.attached[outpostName][share]
+	mgr.mu.RUnlock()
+	if !running {
+		return fmt.Errorf("outpost %q is not running", outpostName)
+	}
+	if attached {
+		if existing.Path == path {
+			return nil
+		}
+		return fmt.Errorf("share %q on outpost %q is already attached to %s", share, outpostName, existing.Path)
+	}
+	return Attach(outpostName, Attachment{Name: share, ReadOnly: false, Path: path})
+}
+
+// AttachSub adds one sub-directory mount to an outpost's shared share.
+func AttachSub(outpostName, share, sub string, a Attachment) error {
+	mgr.mu.RLock()
+	inst := mgr.instances[outpostName]
+	mgr.mu.RUnlock()
+	if inst == nil {
+		return fmt.Errorf("outpost %q is not running", outpostName)
+	}
+	return inst.AttachSub(share, sub, a)
+}
+
+// DetachSub removes one sub-directory mount from an outpost's shared share.
+func DetachSub(outpostName, share, sub string) {
+	mgr.mu.RLock()
+	inst := mgr.instances[outpostName]
+	mgr.mu.RUnlock()
+	if inst == nil {
+		return
+	}
+	inst.DetachSub(share, sub)
 }
 
 // Detach removes the named share and releases its underlying stack.
