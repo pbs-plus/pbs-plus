@@ -32,6 +32,7 @@ func TestParseMountFormFullParams(t *testing.T) {
 		"backup-time": {"2026-01-02T03:04:05Z"},
 		"file-name":   {"root.mpxar.didx"},
 		"mode":        {"rw"},
+		"backend":     {"nfs"},
 		"mount-path":  {"/mnt/custom"},
 	}
 	r := formRequest("ds1", values)
@@ -42,7 +43,7 @@ func TestParseMountFormFullParams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !f.hasBackupParams() || f.Mode != "rw" || f.MountPath != "/mnt/custom" {
+	if !f.hasBackupParams() || f.Mode != "rw" || f.Backend != "nfs" || f.MountPath != "/mnt/custom" {
 		t.Fatalf("form = %+v", f)
 	}
 }
@@ -69,6 +70,7 @@ func TestParseMountFormRejectsBadInput(t *testing.T) {
 		{"mount-path": {"/tmp/elsewhere"}},
 		{"mount-path": {"/mnt"}},
 		{"mode": {"readwrite"}},
+		{"backend": {"smb"}},
 		{"backup-time": {"not-a-time"}},
 	}
 	for _, values := range cases {

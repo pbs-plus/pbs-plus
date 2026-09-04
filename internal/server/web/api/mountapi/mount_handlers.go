@@ -18,6 +18,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/backupapi"
@@ -33,6 +34,9 @@ type mountForm struct {
 	BackupTime string
 	FileName   string
 	Mode       string
+	Backend    string
+	Outpost    string
+	ShareName  string
 	MountPath  string
 	Force      bool
 }
@@ -46,6 +50,9 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 		BackupTime: strings.TrimSpace(r.FormValue("backup-time")),
 		FileName:   strings.TrimSpace(r.FormValue("file-name")),
 		Mode:       strings.TrimSpace(r.FormValue("mode")),
+		Backend:    strings.TrimSpace(r.FormValue("backend")),
+		Outpost:    strings.TrimSpace(r.FormValue("outpost")),
+		ShareName:  strings.TrimSpace(r.FormValue("share-name")),
 		MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 		Force:      r.FormValue("force") == "1" || r.FormValue("force") == "true",
 	}
@@ -73,6 +80,25 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 	}
 	if f.Mode != "" && f.Mode != snapshotmount.ModeRO && f.Mode != snapshotmount.ModeRW {
 		return f, fmt.Errorf("invalid mode %q", f.Mode)
+	}
+	if f.Backend != "" && f.Backend != snapshotmount.BackendFUSE && f.Backend != snapshotmount.BackendNFS {
+		return f, fmt.Errorf("invalid backend %q", f.Backend)
+	}
+	if f.Outpost != "" {
+		if !outpost.IsValidName(f.Outpost) {
+			return f, fmt.Errorf("invalid outpost %q", f.Outpost)
+		}
+		if f.MountPath != "" {
+			return f, fmt.Errorf("mount-path cannot be combined with an outpost")
+		}
+	}
+	if f.ShareName != "" {
+		if f.Outpost == "" {
+			return f, fmt.Errorf("share-name requires an outpost")
+		}
+		if err := outpost.ValidateShareName(f.ShareName); err != nil {
+			return f, err
+		}
 	}
 	if err := snapshotmount.ValidateMountPath(f.MountPath); err != nil {
 		return f, err
@@ -182,6 +208,9 @@ func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 			BackupTime: f.BackupTime,
 			FileName:   f.FileName,
 			Mode:       f.Mode,
+			Backend:    f.Backend,
+			Outpost:    f.Outpost,
+			ShareName:  f.ShareName,
 			MountPath:  f.MountPath,
 			UPID:       upidTask(task),
 			Web:        true,
@@ -221,6 +250,8 @@ func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
 			Namespace:  strings.TrimSpace(r.FormValue("ns")),
 			BackupType: strings.TrimSpace(r.FormValue("backup-type")),
 			BackupID:   strings.TrimSpace(r.FormValue("backup-id")),
+			Backend:    strings.TrimSpace(r.FormValue("backend")),
+			Outpost:    strings.TrimSpace(r.FormValue("outpost")),
 			MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 			Web:        true,
 		}
@@ -326,18 +357,34 @@ func ExtJsCommitHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-		if f.MountPath == "" {
+		if f.MountPath == "" && !f.hasBackupParams() {
 			http.Error(w, "Missing mount-path parameter", http.StatusBadRequest)
 			return
 		}
-		session, found, err := snapshotmount.FindSessionByMountPoint(f.MountPath)
-		if err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		if !found {
-			respond.WriteErrorResponse(w, fmt.Errorf("no mount session at %s", f.MountPath))
-			return
+		var session snapshotmount.Session
+		if f.MountPath != "" {
+			loaded, found, ferr := snapshotmount.FindSessionByMountPoint(f.MountPath)
+			if ferr != nil {
+				respond.WriteErrorResponse(w, ferr)
+				return
+			}
+			if !found {
+				respond.WriteErrorResponse(w, fmt.Errorf("no mount session at %s", f.MountPath))
+				return
+			}
+			session = loaded
+		} else {
+			safe, serr := f.safeTime()
+			if serr != nil {
+				respond.WriteErrorResponse(w, serr)
+				return
+			}
+			loaded, lerr := snapshotmount.LoadSession(snapshotmount.Key(f.Datastore, f.Namespace, f.BackupType, f.BackupID, safe))
+			if lerr != nil {
+				respond.WriteErrorResponse(w, lerr)
+				return
+			}
+			session = loaded
 		}
 		if !session.CommitCapable() {
 			respond.WriteErrorResponse(w, fmt.Errorf("mount at %s is not commit-capable (read-only or offline)", f.MountPath))
@@ -351,10 +398,14 @@ func ExtJsCommitHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		upid, ok := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotCommit, key, "snapshot-mount:"+key, jobs.SnapshotCommitInput{
-			Datastore: session.Datastore,
-			MountPath: session.MountPoint,
-			UPID:      upidTask(task),
-			Web:       true,
+			Datastore:  session.Datastore,
+			Namespace:  session.Namespace,
+			BackupType: session.BackupType,
+			BackupID:   session.BackupID,
+			BackupTime: session.BackupTime,
+			MountPath:  session.MountPoint,
+			UPID:       upidTask(task),
+			Web:        true,
 		}, 10*time.Minute)
 		if !ok {
 			task.CloseErr(fmt.Errorf("workflow submit failed"))
@@ -384,6 +435,10 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 			BackupTime    string `json:"backup-time"`
 			FileName      string `json:"file-name"`
 			Mode          string `json:"mode"`
+			Backend       string `json:"backend"`
+			Outpost       string `json:"outpost"`
+			ShareName     string `json:"share-name"`
+			Endpoint      string `json:"endpoint"`
 			MountPoint    string `json:"mount-point"`
 			Mounted       bool   `json:"mounted"`
 			CommitCapable bool   `json:"commit-capable"`
@@ -393,6 +448,10 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 			if datastore != "" && s.Datastore != datastore {
 				continue
 			}
+			mounted := snapshotmount.IsMounted(s.MountPoint)
+			if s.Outpost != "" {
+				mounted = outpost.EndpointOf(s.Outpost, snapshotmount.ShareName(s)) != ""
+			}
 			views = append(views, sessionView{
 				Datastore:     s.Datastore,
 				Namespace:     s.Namespace,
@@ -401,8 +460,12 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 				BackupTime:    s.BackupTime,
 				FileName:      s.FileName,
 				Mode:          s.Mode,
+				Backend:       s.Backend,
+				Outpost:       s.Outpost,
+				ShareName:     snapshotmount.ShareName(s),
+				Endpoint:      s.Endpoint,
 				MountPoint:    s.MountPoint,
-				Mounted:       snapshotmount.IsMounted(s.MountPoint),
+				Mounted:       mounted,
 				CommitCapable: s.CommitCapable(),
 			})
 		}

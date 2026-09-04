@@ -118,6 +118,16 @@ jobs:
         with:
           timeout-seconds: 900
 
+      - name: Run NFS outpost e2e tests
+        uses: ./.github/actions/run-outpost-e2e
+        with:
+          timeout-seconds: 600
+
+      - name: Run VFS outpost e2e tests
+        uses: ./.github/actions/run-vfs-outpost-e2e
+        with:
+          timeout-seconds: 900
+
       - name: Run archive expansion e2e tests
         uses: ./.github/actions/run-archive-expand-e2e
         with:

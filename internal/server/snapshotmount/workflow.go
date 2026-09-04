@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -130,6 +131,10 @@ func runInit(ctx context.Context, in jobs.SnapshotInitInput) error {
 }
 
 func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotInitInput, key string) (Session, error) {
+	backend, err := normalizeBackend(in.Backend)
+	if err != nil {
+		return Session{}, err
+	}
 	if err := validate.ValidateDatastore(in.Datastore); err != nil {
 		return Session{}, fmt.Errorf("invalid datastore: %w", err)
 	}
@@ -177,6 +182,7 @@ func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapshot
 		BackupType: in.BackupType,
 		BackupID:   in.BackupID,
 		Mode:       ModeRW,
+		Backend:    backend,
 		MountPoint: mountPoint,
 		OverlayDir: OverlayDir(pbsStoreRoot, key),
 		SocketPath: SocketPath(key),
@@ -205,6 +211,9 @@ func initSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapshot
 		"--namespace", ns,
 		"--options", "rw,allow_other,default_permissions",
 		mountPoint,
+	}
+	if backend == BackendNFS {
+		args = append(args[:len(args)-1], "--nfs", mountPoint)
 	}
 	return startSession(ctx, session, mountPoint, managed, args)
 }
@@ -242,12 +251,19 @@ func runMount(ctx context.Context, in jobs.SnapshotMountInput) error {
 }
 
 func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotMountInput, parsedTime time.Time, key string) (Session, error) {
+	backend, err := normalizeBackend(in.Backend)
+	if err != nil {
+		return Session{}, err
+	}
 	mode := in.Mode
 	if mode == "" {
 		mode = ModeRO
 	}
 	if mode != ModeRO && mode != ModeRW {
 		return Session{}, fmt.Errorf("invalid mode %q", mode)
+	}
+	if in.Outpost != "" {
+		return mountOutpostSession(ctx, task, in, parsedTime, key, mode)
 	}
 	if existing, lerr := LoadSession(key); lerr == nil && existing.Mode == ModeRW && mode == ModeRO {
 		return Session{}, fmt.Errorf("read-write mount state exists for this snapshot (%s); remount it read-write to restore changes, or unmount with force to discard them", existing.MountPoint)
@@ -285,6 +301,7 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 		BackupTime: in.BackupTime,
 		FileName:   in.FileName,
 		Mode:       mode,
+		Backend:    backend,
 		MountPoint: mountPoint,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -320,9 +337,22 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 			"--options", "rw,allow_other,default_permissions",
 		)
 	}
+	if backend == BackendNFS {
+		args = append(args, "--nfs")
+	}
 	args = append(args, mountPoint)
 
 	return startSession(ctx, session, mountPoint, managed, args)
+}
+
+func normalizeBackend(backend string) (string, error) {
+	if backend == "" {
+		return BackendFUSE, nil
+	}
+	if backend != BackendFUSE && backend != BackendNFS {
+		return "", fmt.Errorf("invalid backend %q", backend)
+	}
+	return backend, nil
 }
 
 func startSession(ctx context.Context, session Session, mountPoint string, managed bool, args []string) (Session, error) {
@@ -364,8 +394,20 @@ func startSession(ctx context.Context, session Session, mountPoint string, manag
 	}
 
 	_ = systemd.StopMountService(context.WithoutCancel(ctx), serviceName)
+	logMountServiceOutput(serviceName)
 	cleanupMountPoint(mountPoint, managed)
 	return Session{}, errors.New("mount failed")
+}
+
+// logMountServiceOutput surfaces why a mount service or process failed.
+func logMountServiceOutput(serviceName string) {
+	if out, err := exec.Command("journalctl", "-u", serviceName, "--no-pager", "-n", "60").CombinedOutput(); err == nil && strings.Contains(string(out), serviceName) {
+		log.Error(errors.New(string(out)), "mount service journal for "+serviceName)
+		return
+	}
+	if data, err := os.ReadFile(filepath.Join("/var/run/pbs-plus-mounts", serviceName+".log")); err == nil && len(data) > 0 {
+		log.Error(errors.New(string(data)), "mount process log for "+serviceName)
+	}
 }
 
 func validatePath(mountPoint, base string) error {
@@ -396,6 +438,9 @@ func runUnmount(ctx context.Context, in jobs.SnapshotUnmountInput) error {
 	}
 
 	runErr := unmountSession(ctx, task, session, in)
+	if session.Outpost != "" {
+		runErr = unmountOutpostSession(ctx, task, session, in)
+	}
 	if runErr != nil {
 		task.CloseErr(runErr)
 		if errors.Is(runErr, context.Canceled) {
@@ -403,7 +448,9 @@ func runUnmount(ctx context.Context, in jobs.SnapshotUnmountInput) error {
 		}
 		return jobs.NonRetryable(runErr)
 	}
-	task.LogString("unmounted " + session.MountPoint)
+	if session.MountPoint != "" {
+		task.LogString("unmounted " + session.MountPoint)
+	}
 	task.CloseOK()
 	return nil
 }
@@ -476,12 +523,9 @@ func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Sessi
 }
 
 func runCommit(ctx context.Context, in jobs.SnapshotCommitInput) error {
-	session, found, err := FindSessionByMountPoint(in.MountPath)
+	session, err := resolveCommitSession(in)
 	if err != nil {
 		return jobs.NonRetryable(err)
-	}
-	if !found {
-		return jobs.NonRetryable(fmt.Errorf("no mount session at %s", in.MountPath))
 	}
 	if !session.CommitCapable() {
 		return jobs.NonRetryable(fmt.Errorf("mount at %s is not commit-capable (read-only or offline)", in.MountPath))
@@ -503,6 +547,24 @@ func runCommit(ctx context.Context, in jobs.SnapshotCommitInput) error {
 	task.LogString(fmt.Sprintf("committed %s/%s", session.BackupType, session.BackupID))
 	task.CloseOK()
 	return nil
+}
+
+func resolveCommitSession(in jobs.SnapshotCommitInput) (Session, error) {
+	if in.MountPath != "" {
+		session, found, err := FindSessionByMountPoint(in.MountPath)
+		if err != nil {
+			return Session{}, err
+		}
+		if !found {
+			return Session{}, fmt.Errorf("no mount session at %s", in.MountPath)
+		}
+		return session, nil
+	}
+	parsedTime, err := time.Parse(time.RFC3339, in.BackupTime)
+	if err != nil {
+		return Session{}, fmt.Errorf("invalid backup-time format: %w", err)
+	}
+	return LoadSession(Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, DirTime(parsedTime)))
 }
 
 func commitSession(ctx context.Context, task *tasklog.WorkerTask, session Session) error {

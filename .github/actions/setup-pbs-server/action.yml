@@ -20,8 +20,9 @@ runs:
           -p 8017:8017 \
           -v ./test:/mnt/test \
           --tmpfs /run/proxmox-backup:size=64M \
-          --cap-add SYS_ADMIN --device /dev/fuse \
+          --cap-add SYS_ADMIN --cap-add SETPCAP --cap-add DAC_READ_SEARCH --device /dev/fuse \
           --security-opt apparmor:unconfined \
+          -e LOG_LEVEL=trace \
           pbs-plus:test
 
     - name: Wait for PBS Plus

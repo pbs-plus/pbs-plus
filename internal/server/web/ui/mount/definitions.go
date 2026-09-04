@@ -5,5 +5,5 @@ import (
 )
 
 func Definitions() []js.Value {
-	return []js.Value{activeMountsModel, activeMountsPanel, mountProfilesModel, mountProfilesPanel, composeWindow, mountPanel}
+	return []js.Value{activeMountsModel, activeMountsPanel, mountProfilesModel, mountProfilesPanel, composeWindow, mountPanel, outpostsModel, outpostsPanel}
 }

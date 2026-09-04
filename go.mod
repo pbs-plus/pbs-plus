@@ -14,11 +14,14 @@ require (
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/fxamacker/cbor/v2 v2.9.3
+	github.com/go-git/go-billy/v5 v5.9.1
 	github.com/gobwas/glob v1.0.0
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/gofrs/flock v0.13.1
 	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/google/uuid v1.6.0
 	github.com/hanwen/go-fuse/v2 v2.11.0
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kardianos/service v1.3.0
 	github.com/klauspost/compress v1.19.2
 	github.com/minio/minio-go/v7 v7.3.0
@@ -33,6 +36,8 @@ require (
 	github.com/quic-go/quic-go v0.61.0
 	github.com/rclone/rclone v1.75.0
 	github.com/stretchr/testify v1.12.1
+	github.com/willscott/go-nfs v0.0.4
+	github.com/willscott/go-nfs-client v0.0.0-20251022144359-801f10d98886
 	github.com/xtaci/smux v1.5.57
 	github.com/zeebo/xxh3 v1.1.0
 	go.uber.org/goleak v1.3.0
@@ -82,8 +87,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
-	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/jzelinskie/whirlpool v0.0.0-20201016144138-0675e54bb004 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
@@ -104,6 +107,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
+	github.com/rasky/go-xdr v0.0.0-20170124162913-1a41d1a06c93 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect

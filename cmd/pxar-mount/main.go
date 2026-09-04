@@ -44,20 +44,21 @@ func runMountSubcommand() {
 	verifyChunks := flag.Bool("verify-chunks", false, "Verify chunk SHA256 on read (accepted for CLI compat)")
 	cacheMB := flag.Int("cache-size", 256, "Cache size in MB (accepted for CLI compat)")
 	fuseOpts := flag.String("options", "ro,default_permissions", "FUSE mount options")
+	nfsEnabled := flag.Bool("nfs", false, "Serve through a loopback NFSv3 mount instead of FUSE")
 	passthrough := flag.String("passthrough", "", "Backing directory for write passthrough (enables rw mode)")
 	socketPath := flag.String("socket", "", "Unix socket path for commit commands")
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 	aclOwner := flag.Int("acl-owner", 0, "Default owner UID for new files/dirs (0 = inherit)")
 	aclGroup := flag.Int("acl-group", 0, "Default group GID for new files/dirs (0 = inherit)")
-	_ = flag.Bool("force-acl-owner", false, "Accepted for CLI compat (no-op)")
-	_ = flag.Bool("force-acl-group", false, "Accepted for CLI compat (no-op)")
+	forceACLOwner := flag.Bool("force-acl-owner", false, "Apply acl-owner even when it is UID 0")
+	forceACLGroup := flag.Bool("force-acl-group", false, "Apply acl-group even when it is GID 0")
 	aclSpec := flag.String("acl-spec", "", "POSIX ACL spec string (setfacl-style) served as virtual xattrs")
 	defaultAclSpec := flag.String("default-acl-spec", "", "Default POSIX ACL spec string served as virtual xattrs")
 
 	flag.Parse()
 
 	if *pbsStore == "" || *ppxarDidx == "" {
-		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--passthrough <dir>] [--socket <path>] [--verbose] <mountpoint>\n")
+		fmt.Fprintf(os.Stderr, "Usage: pxar-mount --pbs-store <path> --ppxar-didx <path> [--mpxar-didx <path>] [--passthrough <dir>] [--socket <path>] [--nfs] [--verbose] <mountpoint>\n")
 		os.Exit(1)
 	}
 
@@ -137,7 +138,8 @@ func runMountSubcommand() {
 		MountPoint:    mountPoint,
 		SocketPath:    *socketPath,
 		FuseOpts:      *fuseOpts,
+		NFS:           *nfsEnabled,
 		Verbose:       *verbose,
-		ACL:           pxarmount.BuildACLConfig(*aclOwner, *aclGroup, *aclSpec, *defaultAclSpec),
+		ACL:           pxarmount.BuildACLConfig(*aclOwner, *aclGroup, *forceACLOwner, *forceACLGroup, *aclSpec, *defaultAclSpec),
 	})
 }

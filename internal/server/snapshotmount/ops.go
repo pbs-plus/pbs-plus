@@ -45,6 +45,7 @@ func ParseMountPoints() ([]string, error) {
 }
 
 func IsMounted(path string) bool {
+	resolved, rerr := filepath.EvalSymlinks(path)
 	mountInfoFile, err := os.Open("/proc/self/mountinfo")
 	if err != nil {
 		return false
@@ -58,7 +59,7 @@ func IsMounted(path string) bool {
 	scanner := bufio.NewScanner(mountInfoFile)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) >= 5 && fields[4] == path {
+		if len(fields) >= 5 && (fields[4] == path || (rerr == nil && fields[4] == resolved)) {
 			return true
 		}
 	}

@@ -66,12 +66,21 @@ func decideRemount(p Profile, mountedOfGroup []Session, latest time.Time) (remou
 			continue
 		}
 		if p.MountPath == "" {
-			parsed, err := time.Parse(time.RFC3339, s.BackupTime)
-			if err != nil {
-				continue
-			}
-			if s.MountPoint != DefaultMountPoint(s.Datastore, s.Namespace, s.BackupType, s.BackupID, parsed) {
-				continue
+			if p.Outpost != "" {
+				if s.Outpost != p.Outpost {
+					continue
+				}
+				if p.ShareName != "" && s.ShareName != p.ShareName {
+					continue
+				}
+			} else {
+				parsed, err := time.Parse(time.RFC3339, s.BackupTime)
+				if err != nil {
+					continue
+				}
+				if s.MountPoint != DefaultMountPoint(s.Datastore, s.Namespace, s.BackupType, s.BackupID, parsed) {
+					continue
+				}
 			}
 		}
 		t, err := time.Parse(time.RFC3339, s.BackupTime)
@@ -190,6 +199,9 @@ func autoMountProfiles(ctx context.Context, engine *jobs.Engine, only []Profile)
 			BackupTime: backupTime,
 			FileName:   fileName,
 			Mode:       p.Mode,
+			Backend:    p.Backend,
+			Outpost:    p.Outpost,
+			ShareName:  p.ShareName,
 			MountPath:  p.MountPath,
 		}
 		request, err := jobs.NewWorkflowSubmit(jobs.WorkflowSnapshotMount, key, "auto-mount", "", input, []string{"snapshot-mount:" + key}, 1, time.Minute)

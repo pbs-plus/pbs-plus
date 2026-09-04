@@ -56,6 +56,9 @@ type SnapshotMountInput struct {
 	BackupTime string `json:"backup_time"`
 	FileName   string `json:"file_name"`
 	Mode       string `json:"mode"`
+	Backend    string `json:"backend"`
+	Outpost    string `json:"outpost,omitempty"`
+	ShareName  string `json:"share_name,omitempty"`
 	MountPath  string `json:"mount_path"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`
@@ -75,10 +78,14 @@ type SnapshotUnmountInput struct {
 }
 
 type SnapshotCommitInput struct {
-	Datastore string `json:"datastore"`
-	MountPath string `json:"mount_path"`
-	UPID      string `json:"upid"`
-	Web       bool   `json:"web"`
+	Datastore  string `json:"datastore"`
+	Namespace  string `json:"namespace"`
+	BackupType string `json:"backup_type"`
+	BackupID   string `json:"backup_id"`
+	BackupTime string `json:"backup_time"`
+	MountPath  string `json:"mount_path"`
+	UPID       string `json:"upid"`
+	Web        bool   `json:"web"`
 }
 
 type SnapshotInitInput struct {
@@ -86,6 +93,8 @@ type SnapshotInitInput struct {
 	Namespace  string `json:"namespace"`
 	BackupType string `json:"backup_type"`
 	BackupID   string `json:"backup_id"`
+	Backend    string `json:"backend"`
+	Outpost    string `json:"outpost,omitempty"`
 	MountPath  string `json:"mount_path"`
 	UPID       string `json:"upid"`
 	Web        bool   `json:"web"`

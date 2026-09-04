@@ -26,6 +26,7 @@ depends:
   - proxmox-backup-server (>= 3.2)
   - proxmox-backup-client (>= 3.2.5)
   - fuse3
+  - nfs-common
   - memcached
 
 contents:

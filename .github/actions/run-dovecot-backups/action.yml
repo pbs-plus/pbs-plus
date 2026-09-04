@@ -3,8 +3,8 @@ description: Verify Dovecot mailbox backup and restore over TLS
 inputs:
   timeout-seconds:
     required: false
-    default: "300"
-    description: Timeout for each Dovecot job
+    default: "700"
+    description: Timeout for each Dovecot job; must exceed dovecot's hardcoded 600s dsync I/O stall watchdog so a stalled sync resolves into a diagnosable failure instead of an opaque timeout
 runs:
   using: composite
   steps:
@@ -225,6 +225,8 @@ runs:
           done
 
           echo "Backup job $job_id timed out after ${timeout}s"
+          echo "--- source container log ---"
+          docker logs --tail=60 pbs-plus-dovecot-source 2>&1 | tail -40 || true
           docker logs --tail=100 pbs-plus-test 2>&1
           return 1
         }
@@ -357,7 +359,7 @@ runs:
               echo "Restore job $job_id succeeded"
               return 0
             fi
-            if [[ -n "$task_status" && "$task_status" != 'null' ]]; then
+            if [[ -n "$task_status" && "$task_status" != 'null' && "$task_status" != 'QUEUED: '* ]]; then
               echo "Restore job $job_id failed: $task_status"
               echo "--- destination container log ---"
               docker logs --tail=60 pbs-plus-dovecot-destination 2>&1 | tail -40 || true
@@ -367,6 +369,8 @@ runs:
             sleep 5
           done
           echo "Restore job $job_id timed out after ${timeout}s"
+          echo "--- destination container log ---"
+          docker logs --tail=60 pbs-plus-dovecot-destination 2>&1 | tail -40 || true
           docker logs --tail=100 pbs-plus-test 2>&1
           return 1
         }

@@ -23,6 +23,9 @@ type profileView struct {
 	BackupType string `json:"backup-type"`
 	BackupID   string `json:"backup-id"`
 	Mode       string `json:"mode"`
+	Backend    string `json:"backend"`
+	Outpost    string `json:"outpost"`
+	ShareName  string `json:"share-name"`
 	MountPath  string `json:"mount-path"`
 	Schedule   string `json:"schedule"`
 	AutoMount  bool   `json:"auto-mount"`
@@ -36,6 +39,9 @@ func toProfileView(p snapshotmount.Profile) profileView {
 		BackupType: p.BackupType,
 		BackupID:   p.BackupID,
 		Mode:       p.Mode,
+		Backend:    p.Backend,
+		Outpost:    p.Outpost,
+		ShareName:  p.ShareName,
 		MountPath:  p.MountPath,
 		Schedule:   p.Schedule,
 		AutoMount:  p.AutoMount,
@@ -53,6 +59,9 @@ func profileFormValues(r *http.Request) snapshotmount.Profile {
 		BackupType: strings.TrimSpace(r.FormValue("backup-type")),
 		BackupID:   strings.TrimSpace(r.FormValue("backup-id")),
 		Mode:       mode,
+		Backend:    strings.TrimSpace(r.FormValue("backend")),
+		Outpost:    strings.TrimSpace(r.FormValue("outpost")),
+		ShareName:  strings.TrimSpace(r.FormValue("share-name")),
 		MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 		Schedule:   strings.TrimSpace(r.FormValue("schedule")),
 		AutoMount:  r.FormValue("auto-mount") == "1" || r.FormValue("auto-mount") == "true",
@@ -209,6 +218,7 @@ func ExtJsMountProfileMountHandler(app *application.Runtime) http.HandlerFunc {
 			BackupTime: backupTime,
 			FileName:   fileName,
 			Mode:       p.Mode,
+			Backend:    p.Backend,
 			MountPath:  p.MountPath,
 			UPID:       upidTask(task),
 			Web:        true,

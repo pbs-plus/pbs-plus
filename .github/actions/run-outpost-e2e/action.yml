@@ -1,0 +1,42 @@
+name: Run NFS Outpost E2E
+description: Serve two snapshot mounts from one NFS outpost and read both through the kernel NFS client
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "600"
+    description: Timeout for the e2e test script
+
+runs:
+  using: composite
+  steps:
+    - name: Copy e2e script into container
+      shell: bash
+      run: |
+        docker cp .github/actions/run-outpost-e2e/run.sh pbs-plus-test:/tmp/e2e-nfs-outpost.sh
+        docker exec pbs-plus-test chmod +x /tmp/e2e-nfs-outpost.sh
+
+    - name: Run NFS outpost e2e tests
+      shell: bash
+      run: |
+        echo "Running NFS outpost e2e tests..."
+        timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-nfs-outpost.sh
+
+    - name: Decode NFS wire capture
+      if: always()
+      shell: bash
+      run: |
+        echo "--- pbs-plus nfs server op trace (last 600 lines) ---"
+        docker logs --since 30m pbs-plus-test 2>&1 | grep -E 'nfs\.|mount\.|error handling req' | tail -600 || true
+        docker cp pbs-plus-test:/tmp/nfs-e2e.pcap ./nfs-e2e.pcap 2>/dev/null || exit 0
+        ls -la nfs-e2e.pcap
+        if ! command -v tshark >/dev/null 2>&1; then
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y -qq tshark >/dev/null 2>&1 || true
+        fi
+        if command -v tshark >/dev/null 2>&1; then
+          echo "--- tshark nfs ops ---"
+          tshark -r nfs-e2e.pcap -Y 'nfs || mount' 2>/dev/null | tail -500 || true
+          echo "--- tshark nfs error statuses ---"
+          tshark -r nfs-e2e.pcap -V 2>/dev/null | grep -E 'Opcode: [0-9]+|Status: [0-9]+' | tail -200 || true
+        fi

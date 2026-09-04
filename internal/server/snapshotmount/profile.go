@@ -14,6 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
+	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -23,6 +24,9 @@ type Profile struct {
 	BackupType string `json:"backup_type"`
 	BackupID   string `json:"backup_id"`
 	Mode       string `json:"mode"`
+	Backend    string `json:"backend,omitempty"`
+	Outpost    string `json:"outpost,omitempty"`
+	ShareName  string `json:"share_name,omitempty"`
 	MountPath  string `json:"mount_path"`
 	Schedule   string `json:"schedule"`
 	AutoMount  bool   `json:"auto_mount"`
@@ -54,6 +58,20 @@ func ValidateProfile(p Profile) error {
 	}
 	if p.Mode != ModeRO && p.Mode != ModeRW {
 		return fmt.Errorf("invalid mode %q", p.Mode)
+	}
+	if p.Backend != "" && p.Backend != BackendFUSE && p.Backend != BackendNFS {
+		return fmt.Errorf("invalid backend %q", p.Backend)
+	}
+	if p.Outpost != "" && !outpost.IsValidName(p.Outpost) {
+		return fmt.Errorf("invalid outpost %q", p.Outpost)
+	}
+	if p.ShareName != "" {
+		if p.Outpost == "" {
+			return fmt.Errorf("share name requires an outpost")
+		}
+		if err := outpost.ValidateShareName(p.ShareName); err != nil {
+			return err
+		}
 	}
 	if p.Schedule != "" {
 		if _, err := calendar.Parse(p.Schedule); err != nil {

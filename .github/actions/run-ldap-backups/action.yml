@@ -376,7 +376,7 @@ runs:
               echo "Restore job $job_id completed with warnings: $task_status"
               return 0
             fi
-            if [[ -n "$task_status" && "$task_status" != 'null' ]]; then
+            if [[ -n "$task_status" && "$task_status" != 'null' && "$task_status" != 'QUEUED: '* ]]; then
               echo "Restore job $job_id failed: $task_status"
               return 1
             fi
@@ -396,7 +396,7 @@ runs:
               echo "Restore job $job_id safely rejected the missing subtree"
               return 0
             fi
-            if [[ -n "$task_status" && "$task_status" != 'null' ]]; then
+            if [[ -n "$task_status" && "$task_status" != 'null' && "$task_status" != 'QUEUED: '* ]]; then
               echo "Restore job $job_id had an unexpected result: $task_status"
               return 1
             fi
