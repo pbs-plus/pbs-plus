@@ -6,7 +6,7 @@ import (
 
 var activeMountsModel = js.Model{
 	Name:       "pbs-model-active-mounts",
-	Fields:     js.Fields("datastore", "namespace", "backup-type", "backup-id", "backup-time", "file-name", "mode", "backend", "mount-point", "mounted", "commit-capable"),
+	Fields:     js.Fields("datastore", "namespace", "backup-type", "backup-id", "backup-time", "file-name", "mode", "backend", "outpost", "endpoint", "mount-point", "mounted", "commit-capable"),
 	IDProperty: "mount-point",
 }
 
@@ -239,7 +239,13 @@ var activeMountsPanel = js.Panel{
 			return v === "rw" ? '<i class="fa fa-fw fa-pencil"></i> rw' : '<i class="fa fa-fw fa-lock"></i> ro';
 		`)},
 		{Text: "Backend", DataIndex: "backend", Width: 75, Renderer: js.Func("v", `return v === "nfs" ? "NFSv3" : "FUSE";`)},
-		{Text: "Mount Point", DataIndex: "mount-point", Flex: 1.2, Renderer: js.Func("v", `return Ext.String.htmlEncode(v);`)},
+		{Text: "Outpost", DataIndex: "outpost", Width: 110, Renderer: js.Func("v", `
+			return v ? Ext.String.htmlEncode(v) : "-";
+		`)},
+		{Text: "Mount Point", DataIndex: "mount-point", Flex: 1.2, Renderer: js.Func("v, meta, rec", `
+			let endpoint = rec.get("endpoint");
+			return Ext.String.htmlEncode(endpoint || v);
+		`)},
 		{Text: "Status", DataIndex: "mounted", Width: 90, Renderer: js.Func("v", `
 			return v ? '<i class="fa fa-check-circle"></i> ' + gettext("Mounted")
 				: '<i class="fa fa-warning"></i> ' + gettext("Offline");

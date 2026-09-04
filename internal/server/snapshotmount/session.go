@@ -34,6 +34,8 @@ type Session struct {
 	FileName   string `json:"file_name"`
 	Mode       string `json:"mode"`
 	Backend    string `json:"backend,omitempty"`
+	Outpost    string `json:"outpost,omitempty"`
+	Endpoint   string `json:"endpoint,omitempty"`
 	MountPoint string `json:"mount_point"`
 	OverlayDir string `json:"overlay_dir,omitempty"`
 	SocketPath string `json:"socket_path,omitempty"`
