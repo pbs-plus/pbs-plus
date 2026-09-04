@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -393,8 +394,20 @@ func startSession(ctx context.Context, session Session, mountPoint string, manag
 	}
 
 	_ = systemd.StopMountService(context.WithoutCancel(ctx), serviceName)
+	logMountServiceOutput(serviceName)
 	cleanupMountPoint(mountPoint, managed)
 	return Session{}, errors.New("mount failed")
+}
+
+// logMountServiceOutput surfaces why a mount service or process failed.
+func logMountServiceOutput(serviceName string) {
+	if out, err := exec.Command("journalctl", "-u", serviceName, "--no-pager", "-n", "60").CombinedOutput(); err == nil && len(out) > 0 {
+		log.Error(errors.New(string(out)), "mount service journal for "+serviceName)
+		return
+	}
+	if data, err := os.ReadFile(filepath.Join("/var/run/pbs-plus-mounts", serviceName+".log")); err == nil {
+		log.Error(errors.New(string(data)), "mount process log for "+serviceName)
+	}
 }
 
 func validatePath(mountPoint, base string) error {

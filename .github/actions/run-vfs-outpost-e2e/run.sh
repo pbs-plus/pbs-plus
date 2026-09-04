@@ -47,7 +47,10 @@ dump_logs() {
 	echo "--- samba include file ---"
 	cat "$SAMBA_INCLUDE" 2>/dev/null || true
 	echo "--- mount process logs ---"
+	ls -la /var/run/pbs-plus-mounts/ /run/pbs-plus-outposts/ 2>/dev/null || true
 	tail -60 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
+	echo "--- journal ---"
+	journalctl --no-pager -n 200 2>/dev/null | tail -200 || true
 	echo "--- mount task logs ---"
 	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(mount|unmount):' | while read -r file; do
 		echo "== $file =="
