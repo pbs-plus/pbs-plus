@@ -4,6 +4,7 @@ package snapshotmount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxarmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
+	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
 	"github.com/pbs-plus/pxar/datastore"
 	"github.com/pbs-plus/pxar/transfer"
 )
@@ -110,12 +112,26 @@ func attachOutpostSession(s Session, parsedTime time.Time) error {
 	return nil
 }
 
-// called on server start once outposts are running.
+// OutpostShareMountPath is the private FUSE mount backing a VFS outpost share; /run state, rebuilt on boot.
+func OutpostShareMountPath(key string) string {
+	return filepath.Join("/var/run/pbs-plus-mounts", "shares", key)
+}
+
 // mountOutpostSession attaches a snapshot to an outpost as a share instead
 // of mounting it locally.
-func mountOutpostSession(task *tasklog.WorkerTask, in jobs.SnapshotMountInput, parsedTime time.Time, key, mode string) (Session, error) {
+func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotMountInput, parsedTime time.Time, key, mode string) (Session, error) {
 	if in.MountPath != "" {
 		return Session{}, fmt.Errorf("mount_path cannot be combined with an outpost")
+	}
+	o, found, err := outpost.LoadOutpost(in.Outpost)
+	if err != nil {
+		return Session{}, err
+	}
+	if !found {
+		return Session{}, fmt.Errorf("outpost %q does not exist", in.Outpost)
+	}
+	if o.Type == outpost.TypeGanesha || o.Type == outpost.TypeSamba {
+		return mountVFSOutpostSession(ctx, task, in, parsedTime, key, mode)
 	}
 
 	session := Session{
@@ -155,10 +171,25 @@ func mountOutpostSession(task *tasklog.WorkerTask, in jobs.SnapshotMountInput, p
 	return session, nil
 }
 
-func unmountOutpostSession(task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
+func unmountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
 	share := ShareName(session)
 	outpost.Detach(session.Outpost, share)
-	task.LogString("detached " + share + " from outpost " + session.Outpost)
+	if task != nil {
+		task.LogString("detached " + share + " from outpost " + session.Outpost)
+	}
+	if session.MountPoint != "" {
+		if err := systemd.StopMountService(ctx, session.ServiceName()); err != nil {
+			log.Error(err, "")
+		}
+		if IsMounted(session.MountPoint) {
+			if err := UnmountPath(session.MountPoint); err != nil {
+				log.Error(err, "")
+			}
+		}
+		if err := os.RemoveAll(session.MountPoint); err != nil && !os.IsNotExist(err) {
+			log.Error(err, "")
+		}
+	}
 	if session.Mode == ModeRW && !in.Force {
 		removeSessionSockets(session)
 		task.LogString("uncommitted changes preserved in " + session.OverlayDir)
@@ -167,6 +198,99 @@ func unmountOutpostSession(task *tasklog.WorkerTask, session Session, in jobs.Sn
 	}
 	cleanupSessionFiles(session)
 	return nil
+}
+
+// mountVFSOutpostSession mounts the snapshot privately via pxar-mount and hands the path to a VFS outpost driver.
+func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.SnapshotMountInput, parsedTime time.Time, key, mode string) (Session, error) {
+	dsInfo, err := cli.GetDatastoreInfo(in.Datastore)
+	if err != nil {
+		return Session{}, err
+	}
+	pbsStoreRoot := dsInfo.Path
+	if pbsStoreRoot == "" {
+		return Session{}, errors.New("invalid datastore configuration")
+	}
+
+	mountPoint := OutpostShareMountPath(key)
+	mpxarPath, ppxarPath, isMetadataSplit, err := proxmox.BuildPxarPaths(pbsStoreRoot, in.Namespace, in.BackupType, in.BackupID, DirTime(parsedTime), in.FileName)
+	if err != nil {
+		return Session{}, err
+	}
+	args := []string{"--pbs-store", pbsStoreRoot}
+	if isMetadataSplit {
+		args = append(args, "--mpxar-didx", mpxarPath, "--ppxar-didx", ppxarPath)
+	} else {
+		args = append(args, "--ppxar-didx", ppxarPath)
+	}
+
+	session := Session{
+		Datastore:  in.Datastore,
+		Namespace:  in.Namespace,
+		BackupType: in.BackupType,
+		BackupID:   in.BackupID,
+		BackupTime: in.BackupTime,
+		FileName:   in.FileName,
+		Mode:       mode,
+		Outpost:    in.Outpost,
+		MountPoint: mountPoint,
+		ServiceKey: key,
+		CreatedAt:  time.Now().Unix(),
+	}
+	if mode == ModeRW {
+		session.OverlayDir = OverlayDir(pbsStoreRoot, key)
+		session.SocketPath = SocketPath(key)
+		if err := os.MkdirAll(session.OverlayDir, 0o700); err != nil {
+			return Session{}, fmt.Errorf("create overlay dir: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(session.SocketPath), 0o755); err != nil {
+			return Session{}, fmt.Errorf("create socket dir: %w", err)
+		}
+		args = append(args,
+			"--passthrough", session.OverlayDir,
+			"--socket", session.SocketPath,
+			"--options", "rw,allow_other,default_permissions",
+		)
+	}
+	args = append(args, mountPoint)
+
+	session, err = startSession(ctx, session, mountPoint, true, args)
+	if err != nil {
+		return Session{}, err
+	}
+
+	share := ShareName(session)
+	if err := outpost.Attach(in.Outpost, outpost.Attachment{Name: share, ReadOnly: mode == ModeRO, Path: mountPoint}); err != nil {
+		rollbackVFSMount(ctx, session)
+		return Session{}, err
+	}
+	session.Endpoint = outpost.EndpointOf(in.Outpost, share)
+	if err := SaveSession(session); err != nil {
+		outpost.Detach(in.Outpost, share)
+		rollbackVFSMount(ctx, session)
+		return Session{}, fmt.Errorf("persist mount session: %w", err)
+	}
+	if task != nil {
+		task.LogString(fmt.Sprintf("attached %s/%s as %s on outpost %s (%s)",
+			in.BackupType, in.BackupID, share, in.Outpost, session.Endpoint))
+	}
+	return session, nil
+}
+
+func rollbackVFSMount(ctx context.Context, session Session) {
+	if err := systemd.StopMountService(context.WithoutCancel(ctx), session.ServiceName()); err != nil {
+		log.Error(err, "")
+	}
+	if IsMounted(session.MountPoint) {
+		if err := UnmountPath(session.MountPoint); err != nil {
+			log.Error(err, "")
+		}
+	}
+	if err := os.RemoveAll(session.MountPoint); err != nil && !os.IsNotExist(err) {
+		log.Error(err, "")
+	}
+	if err := DeleteSession(session.ServiceKey); err != nil {
+		log.Error(err, "")
+	}
 }
 
 func ReattachOutposts(ctx context.Context) {
@@ -184,8 +308,31 @@ func ReattachOutposts(ctx context.Context) {
 			log.Error(fmt.Errorf("parse backup time %q: %w", s.BackupTime, err), "reattach outpost "+s.Outpost)
 			continue
 		}
+		share := ShareName(s)
+		if s.MountPoint != "" {
+			if IsMounted(s.MountPoint) {
+				if err := outpost.Attach(s.Outpost, outpost.Attachment{Name: share, ReadOnly: s.Mode == ModeRO, Path: s.MountPoint}); err != nil {
+					log.Error(err, "reattaching outpost share "+share)
+				}
+				continue
+			}
+			in := jobs.SnapshotMountInput{
+				Datastore:  s.Datastore,
+				Namespace:  s.Namespace,
+				BackupType: s.BackupType,
+				BackupID:   s.BackupID,
+				BackupTime: s.BackupTime,
+				FileName:   s.FileName,
+				Mode:       s.Mode,
+				Outpost:    s.Outpost,
+			}
+			if _, err := mountVFSOutpostSession(ctx, nil, in, parsed, s.ServiceKey, s.Mode); err != nil {
+				log.Error(err, "reattaching outpost share "+share)
+			}
+			continue
+		}
 		if err := attachOutpostSession(s, parsed); err != nil {
-			log.Error(err, "reattaching outpost share "+ShareName(s))
+			log.Error(err, "reattaching outpost share "+share)
 		}
 	}
 }

@@ -261,6 +261,9 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	if mode != ModeRO && mode != ModeRW {
 		return Session{}, fmt.Errorf("invalid mode %q", mode)
 	}
+	if in.Outpost != "" {
+		return mountOutpostSession(ctx, task, in, parsedTime, key, mode)
+	}
 	if existing, lerr := LoadSession(key); lerr == nil && existing.Mode == ModeRW && mode == ModeRO {
 		return Session{}, fmt.Errorf("read-write mount state exists for this snapshot (%s); remount it read-write to restore changes, or unmount with force to discard them", existing.MountPoint)
 	}
@@ -422,6 +425,9 @@ func runUnmount(ctx context.Context, in jobs.SnapshotUnmountInput) error {
 	}
 
 	runErr := unmountSession(ctx, task, session, in)
+	if session.Outpost != "" {
+		runErr = unmountOutpostSession(ctx, task, session, in)
+	}
 	if runErr != nil {
 		task.CloseErr(runErr)
 		if errors.Is(runErr, context.Canceled) {
@@ -429,7 +435,9 @@ func runUnmount(ctx context.Context, in jobs.SnapshotUnmountInput) error {
 		}
 		return jobs.NonRetryable(runErr)
 	}
-	task.LogString("unmounted " + session.MountPoint)
+	if session.MountPoint != "" {
+		task.LogString("unmounted " + session.MountPoint)
+	}
 	task.CloseOK()
 	return nil
 }
