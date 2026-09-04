@@ -257,17 +257,33 @@ RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
 	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro" -d "outpost=$GANESHA_OUTPOST")
 submit_ok "$RESP" && ok "ganesha share request accepted" || fail "ganesha share rejected: $(body_of "$RESP")"
 
-wait_for "ganesha share attached" 90 session_ready e2e-init "$GANESHA_OUTPOST" || true
-wait_for "ganesha outpost reports one share" 30 outpost_shares "$GANESHA_OUTPOST" 1 || true
+GANESHA_FUSE_UNSUPPORTED=0
+deadline=$((SECONDS + 90))
+while [ $SECONDS -lt $deadline ]; do
+	if session_ready e2e-init "$GANESHA_OUTPOST" >/dev/null 2>&1; then
+		break
+	fi
+	errs=$(find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(mount|unmount):' | while read -r f; do tail -3 "$f" 2>/dev/null; done)
+	if grep -q "ganesha AddExport" <<<"$errs" && grep -q "validation errors in block\|invalid param value\|Operation not supported" <<<"$errs"; then
+		GANESHA_FUSE_UNSUPPORTED=1
+		break
+	fi
+	sleep 2
+done
+if [ "$GANESHA_FUSE_UNSUPPORTED" = 1 ]; then
+	ok "ganesha cannot export FUSE mounts (FSAL_VFS needs name_to_handle_at); content checks skipped"
+elif session_ready e2e-init "$GANESHA_OUTPOST" >/dev/null 2>&1; then
+	ok "ganesha share attached"
+else
+	fail "ganesha share attached (timeout after 90s)"
+fi
+if [ "$GANESHA_FUSE_UNSUPPORTED" = 0 ]; then
+	wait_for "ganesha outpost reports one share" 30 outpost_shares "$GANESHA_OUTPOST" 1 || true
+fi
 
 ENDPOINT=$(session_endpoint e2e-init "$GANESHA_OUTPOST")
-if [ -z "$ENDPOINT" ]; then
-	if find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(mount|unmount):' | while read -r f; do tail -5 "$f" 2>/dev/null; done \
-		| grep -q "validation errors in block\|invalid param value\|Operation not supported"; then
-		ok "ganesha cannot export FUSE mounts (FSAL_VFS needs name_to_handle_at); content checks skipped"
-	else
-		fail "ganesha endpoint missing"
-	fi
+if [ -z "$ENDPOINT" ] && [ "$GANESHA_FUSE_UNSUPPORTED" = 0 ]; then
+	fail "ganesha endpoint missing"
 fi
 [ -n "$ENDPOINT" ] && ok "ganesha endpoint reported: $ENDPOINT" || true
 
