@@ -45,6 +45,9 @@ func TestKernelNFSOutpostRepro(t *testing.T) {
 	storeB := reproArchive(t, filepath.Join(base, "storeB"), map[string]string{
 		"hello.txt": "hello init\n",
 	})
+	storeC := reproArchive(t, filepath.Join(base, "storeC"), map[string]string{
+		"bare.txt": "bare ro share\n",
+	})
 
 	overlayA := filepath.Join(base, "overlayA")
 	overlayB := filepath.Join(base, "overlayB")
@@ -64,6 +67,11 @@ func TestKernelNFSOutpostRepro(t *testing.T) {
 
 	stackB := reproStack(t, storeB, overlayB)
 
+	bareFS, err := pxarmount.NewPxarFS(reproReader(t, storeC))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	inst := reproServe(t, port)
 	defer inst.Stop()
 
@@ -71,6 +79,9 @@ func TestKernelNFSOutpostRepro(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := inst.Attach(Attachment{Name: "share-a", FS: pxarmount.NewNFSFilesystem(stackA.Raw, true)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := inst.Attach(Attachment{Name: "share-c", FS: pxarmount.NewNFSFilesystem(bareFS, true)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,12 +157,58 @@ func reproKernelSequence(t *testing.T, addr string) {
 	} else {
 		fmt.Printf("[seq] access b: mask=%#x\n", m)
 	}
+	for _, tc := range []struct {
+		share string
+		file  string
+	}{{"share-a", "random1.txt"}, {"share-b", "hello.txt"}} {
+		var target *nfsc.Target
+		if tc.share == "share-a" {
+			target = ta
+		} else {
+			target = tb
+		}
+		f, err := target.Open("/" + tc.file)
+		if err != nil {
+			t.Errorf("open %s/%s: %v", tc.share, tc.file, err)
+			continue
+		}
+		buf, err := io.ReadAll(f)
+		_ = f.Close()
+		if err != nil {
+			t.Errorf("read %s/%s: %v", tc.share, tc.file, err)
+		} else {
+			fmt.Printf("[seq] read %s/%s ok: %q\n", tc.share, tc.file, string(buf))
+		}
+	}
 	if entries, err := tb.ReadDirPlus("."); err != nil {
 		fmt.Printf("[seq] readdirplus b: err=%v\n", err)
 	} else {
 		fmt.Printf("[seq] readdirplus b ok: %d entries\n", len(entries))
 	}
 	reproDumpAccessReply(t, client, ta, ".")
+
+	tc2, err := mnt.Mount("share-c", auth.Auth())
+	if err != nil {
+		t.Fatalf("mount c: %v", err)
+	}
+	fmt.Printf("[seq] mount c ok\n")
+	cf, err := tc2.Open("/bare.txt")
+	if err != nil {
+		t.Errorf("open share-c/bare.txt: %v", err)
+	} else {
+		buf, rerr := io.ReadAll(cf)
+		_ = cf.Close()
+		if rerr != nil {
+			t.Errorf("read share-c/bare.txt: %v", rerr)
+		} else {
+			fmt.Printf("[seq] read share-c/bare.txt ok: %q\n", string(buf))
+		}
+	}
+	if entries, err := tc2.ReadDirPlus("."); err != nil {
+		t.Errorf("readdirplus c: %v", err)
+	} else {
+		fmt.Printf("[seq] readdirplus c ok: %d entries\n", len(entries))
+	}
 }
 
 func reproDumpAccessReply(t *testing.T, client *rpc.Client, target *nfsc.Target, path string) {

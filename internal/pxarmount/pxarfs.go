@@ -431,6 +431,11 @@ func (fs *PxarFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr s
 
 func (fs *PxarFS) Release(cancel <-chan struct{}, input *fuse.ReleaseIn) {}
 
+// Flush is a no-op: the archive view is read-only and has no write state.
+func (fs *PxarFS) Flush(cancel <-chan struct{}, input *fuse.FlushIn) fuse.Status {
+	return fuse.OK
+}
+
 func (fs *PxarFS) Forget(nodeID, nlookup uint64) {
 	fs.mu.Lock()
 	if n, ok := fs.nodes[nodeID]; ok {
