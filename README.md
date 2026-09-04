@@ -9,6 +9,7 @@ Advanced backup features for [Proxmox Backup Server](https://pbs.proxmox.com/): 
 | How it works, architecture, ports                                                                         | [Architecture](docs/architecture.md)               |
 | Server, agent, container, operator install                                                                | [Installation](docs/installation.md)               |
 | Backup/restore jobs, S3 and database targets, hook scripts, snapshot mounts, verification, tape migration | [Usage](docs/usage.md)                             |
+| NFS/SMB serving endpoints for mounted snapshots                                                                | [Outposts](docs/outposts.md)                      |
 | Read/write FUSE mount for PBS archives                                                                    | [pxar-mount](docs/pxar-mount.md)                   |
 | K8s operator for annotated PVCs                                                                           | [Kubernetes Operator](docs/kubernetes-operator.md) |
 | CI workflows and E2E testing                                                                              | [Development](docs/development.md)                 |

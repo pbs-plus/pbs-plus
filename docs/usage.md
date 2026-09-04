@@ -198,6 +198,7 @@ The **Snapshots** page manages read/write FUSE mounts of PBS archives on the ser
 - **Active Mounts**: running mount sessions, with unmount (keeping or discarding read/write changes) and remount actions for offline sessions
 - **Mount Profiles**: persistent mount definitions that remount the latest snapshot of a group, optionally on a schedule. Profiles with **auto-mount** enabled follow the newest snapshot: when a newer snapshot appears, read-only mounts are remounted onto it. Read/write mounts are never auto-remounted. Each profile can define its own calendar-format check schedule; without one, checks run every 5 minutes.
 - **Datastore tabs**: browse snapshots per datastore, mount them, or **compose** a new snapshot from selected paths of an existing archive (with optional single-directory flattening)
+- **Outposts**: expose mounted snapshots as NFS or SMB shares instead of local mounts (see [Outposts](outposts.md))
 
 Read/write overlay data is stored inside the datastore under `.pbs-plus/mount-overlays/`, a hidden directory PBS group scans skip.
 

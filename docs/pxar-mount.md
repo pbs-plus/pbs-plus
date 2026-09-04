@@ -53,6 +53,7 @@ The PBS Plus **Snapshots** page drives `pxar-mount` for you. Each mount session 
 - **Mount Profiles** persist a mount definition (datastore, namespace, backup type/ID, mode, mount path, schedule). With **auto-mount** enabled, the server mounts the latest snapshot of the group and remounts onto newer snapshots as they appear. Read/write sessions are never auto-remounted. Profiles without a custom calendar schedule are checked every 5 minutes; a per-profile schedule tightens or loosens that.
 - **Compose** builds a new snapshot from selected paths of an existing `.mpxar.didx` / `.pxar.didx` archive, into a configurable target namespace/type/ID, optionally flattening a single selected directory to the archive root. Composition runs locally on the server and reports progress to the UI.
 - **Init** creates fresh archives through the UI via the snapshot init workflow.
+- **Outposts** attach snapshots as NFS/SMB network shares instead of local mounts (see [Outposts](outposts.md)).
 
 Read/write overlays live inside the datastore at `<datastore>/.pbs-plus/mount-overlays/<key>`. The leading dot keeps PBS group scans away from them.
 
