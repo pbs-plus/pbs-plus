@@ -99,7 +99,11 @@ func (i *nfsInstance) Attach(a Attachment) error {
 		return fmt.Errorf("invalid share name %q", a.Name)
 	}
 	i.mu.Lock()
-	i.shares[a.Name] = a.FS
+	var fs billy.Filesystem
+	if a.FS != nil {
+		fs = newUniqueInoFS(a.FS, nextUniqueInoSeq())
+	}
+	i.shares[a.Name] = fs
 	i.mu.Unlock()
 	return nil
 }
