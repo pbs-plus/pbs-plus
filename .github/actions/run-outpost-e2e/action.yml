@@ -26,6 +26,8 @@ runs:
       if: always()
       shell: bash
       run: |
+        echo "--- pbs-plus nfs server op trace (last 600 lines) ---"
+        docker logs --since 30m pbs-plus-test 2>&1 | grep -E 'nfs\.|mount\.|error handling req' | tail -600 || true
         docker cp pbs-plus-test:/tmp/nfs-e2e.pcap ./nfs-e2e.pcap 2>/dev/null || exit 0
         ls -la nfs-e2e.pcap
         if ! command -v tshark >/dev/null 2>&1; then

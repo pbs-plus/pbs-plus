@@ -22,6 +22,7 @@ runs:
           --tmpfs /run/proxmox-backup:size=64M \
           --cap-add SYS_ADMIN --device /dev/fuse \
           --security-opt apparmor:unconfined \
+          -e LOG_LEVEL=trace \
           pbs-plus:test
 
     - name: Wait for PBS Plus
