@@ -54,36 +54,20 @@ var mountProfilesPanel = js.Panel{
 						listeners: {
 							change: (cb, v) => {
 								let win = cb.up("window");
-								let nsCombo = win.down("combobox[name=ns]");
+								let nsCombo = win.down("pbsNamespaceSelector[name=ns]");
 								if (nsCombo) {
-									nsCombo.getStore().getProxy().setUrl("/api2/extjs/admin/datastore/" + encodeURIComponent(encodePathValue(v)) + "/namespace");
-									nsCombo.getStore().load();
-									nsCombo.clearValue();
+									nsCombo.setDatastore(v);
 								}
 							},
 						},
 					},
 					{
-						xtype: "combobox",
+						xtype: "pbsNamespaceSelector",
 						name: "ns",
 						fieldLabel: gettext("Parent Namespace"),
-						store: {
-							fields: ["ns"],
-							autoLoad: !!values.datastore,
-							proxy: { type: "proxmox", url: "/api2/extjs/admin/datastore/" + encodeURIComponent(encodePathValue(values.datastore || "")) + "/namespace" },
-						},
-						displayField: "ns",
-						valueField: "ns",
-						queryMode: "remote",
-						minChars: 0,
-						editable: false,
-						allowBlank: true,
+						datastore: values.datastore,
 						emptyText: gettext("root (all namespaces)"),
 						value: values.namespace,
-						displayTpl: ['<tpl for=".">', '{[values.ns === "" ? "(root — all namespaces)" : Ext.String.htmlEncode(values.ns)]}', '</tpl>'],
-						listConfig: {
-							itemTpl: ['<div class="x-combo-list-item">{[values.ns === "" ? "(root — all namespaces)" : Ext.String.htmlEncode(values.ns)]}</div>'],
-						},
 					},
 					{
 						xtype: "radiogroup",

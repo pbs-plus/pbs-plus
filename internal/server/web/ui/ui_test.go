@@ -33,7 +33,8 @@ func TestRender(t *testing.T) {
 		`"Mounts the newest snapshot of every group under the parent namespace; each namespace appears as its own directory inside the share or root path."`,
 		`"replace": vals["replace"] === "1" ? 1 : 0,`,
 		`xtype: "pbsD2DCalendarEvent",`,
-		`"/api2/extjs/admin/datastore/" + encodeURIComponent(encodePathValue(v)) + "/namespace"`,
+		`xtype: "pbsNamespaceSelector"`,
+		`nsCombo.setDatastore(v);`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("rendered UI does not contain %q", want)
