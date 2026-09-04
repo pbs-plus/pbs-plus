@@ -46,6 +46,8 @@ dump_logs() {
 	tail -60 /tmp/ganesha.log 2>/dev/null || true
 	echo "--- samba include file ---"
 	cat "$SAMBA_INCLUDE" 2>/dev/null || true
+	echo "--- mount process logs ---"
+	tail -60 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
 	echo "--- mount task logs ---"
 	find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(mount|unmount):' | while read -r file; do
 		echo "== $file =="
@@ -181,7 +183,7 @@ wait_for_proc "system dbus running" 30 busctl --system status org.freedesktop.DB
 rpcbind -w 2>/dev/null || true
 wait_for_proc "rpcbind running" 30 rpcinfo -p localhost
 
-mkdir -p /etc/ganesha
+mkdir -p /etc/ganesha /var/run/ganesha
 cat > /etc/ganesha/ganesha.conf <<'EOF'
 NFS_CORE_PARAM {
 	Protocols = 3;
