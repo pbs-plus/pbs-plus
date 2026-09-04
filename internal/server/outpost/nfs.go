@@ -194,6 +194,9 @@ func (h *muxHandler) FSStat(ctx context.Context, f billy.Filesystem, s *nfs.FSSt
 func (h *muxHandler) HandleLimit() int { return nfsHandleLimit }
 
 func (h *muxHandler) ToHandle(f billy.Filesystem, p []string) []byte {
+	if f == nil {
+		return nil
+	}
 	share, ok := h.inst.shareOf(f)
 	if !ok {
 		share = ""

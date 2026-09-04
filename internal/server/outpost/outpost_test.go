@@ -131,6 +131,9 @@ func TestNFSMultiShareDispatch(t *testing.T) {
 	if st, _ := mount("/snap-one/sub"); st != nfs.MountStatusErrNoEnt {
 		t.Fatalf("nested path should be NoEnt, got status %v", st)
 	}
+	if handle := mux.ToHandle(nil, nil); handle != nil {
+		t.Fatalf("nil filesystem handle = %x, want nil", handle)
+	}
 
 	h1 := mux.ToHandle(fs1, []string{})
 	h2 := mux.ToHandle(fs2, []string{})
