@@ -90,12 +90,12 @@ type nfsInstance struct {
 	shares map[string]billy.Filesystem
 }
 
-// maxShareName bounds share names so share-prefixed file handles stay under
+// MaxShareName bounds share names so share-prefixed file handles stay under
 // the NFSv3 64-byte handle limit (2-byte prefix + name + 16-byte uuid).
-const maxShareName = 46
+const MaxShareName = 46
 
 func (i *nfsInstance) Attach(a Attachment) error {
-	if strings.ContainsAny(a.Name, "/\\") || a.Name == "." || a.Name == ".." || len(a.Name) > maxShareName {
+	if strings.ContainsAny(a.Name, "/\\") || a.Name == "." || a.Name == ".." || len(a.Name) > MaxShareName {
 		return fmt.Errorf("invalid share name %q", a.Name)
 	}
 	i.mu.Lock()

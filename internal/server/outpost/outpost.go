@@ -88,6 +88,9 @@ func ValidateOutpost(o Outpost) error {
 	return driver.Validate(o)
 }
 
+// IsValidName reports whether name is a valid outpost name.
+func IsValidName(name string) bool { return nameRe.MatchString(name) }
+
 func outpostsDir() string { return filepath.Join(conf.StatePrefix, "outposts") }
 
 func SaveOutpost(o Outpost) error {
@@ -261,7 +264,18 @@ func StopAll() {
 	}
 }
 
-// Attach exposes a as a share of the named outpost.
+// EndpointOf returns the client-facing locator of a share on a running
+// outpost, or "" when the outpost is not running.
+func EndpointOf(outpostName, share string) string {
+	mgr.mu.RLock()
+	inst := mgr.instances[outpostName]
+	mgr.mu.RUnlock()
+	if inst == nil {
+		return ""
+	}
+	return inst.Endpoint(share)
+}
+
 func Attach(outpostName string, a Attachment) error {
 	if a.Name == "" || a.FS == nil {
 		return fmt.Errorf("attachment needs a name and filesystem")
