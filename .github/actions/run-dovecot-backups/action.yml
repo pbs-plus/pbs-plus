@@ -359,7 +359,7 @@ runs:
               echo "Restore job $job_id succeeded"
               return 0
             fi
-            if [[ -n "$task_status" && "$task_status" != 'null' ]]; then
+            if [[ -n "$task_status" && "$task_status" != 'null' && "$task_status" != 'QUEUED: '* ]]; then
               echo "Restore job $job_id failed: $task_status"
               echo "--- destination container log ---"
               docker logs --tail=60 pbs-plus-dovecot-destination 2>&1 | tail -40 || true
