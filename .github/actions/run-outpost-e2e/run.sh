@@ -83,6 +83,33 @@ session_endpoint() {
 		'.data[]? | select(.outpost == $outpost and .["backup-id"] == $id) | .endpoint' | head -1
 }
 
+snapshot_session_absent() {
+	local backup_id=$1
+	local backup_time=$2
+	! curl -k -s "$PBS_API/api2/extjs/config/d2d-mounts" | jq -e \
+		--arg id "$backup_id" --arg backup_time "$backup_time" \
+		'.data[]? | select(.["backup-id"] == $id and .["backup-time"] == $backup_time)' \
+		>/dev/null
+}
+
+detach_existing_session() {
+	local backup_id=$1
+	local backup_time=$2
+	local file_name=$3
+	local response
+	if snapshot_session_absent "$backup_id" "$backup_time"; then
+		return 0
+	fi
+	response=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" \
+		-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=$backup_id" \
+		-d "backup-time=$backup_time" -d "file-name=$file_name" -d "force=1")
+	submit_ok "$response" || {
+		fail "existing $backup_id session detach rejected: $(body_of "$response")"
+		return 1
+	}
+	wait_for "existing $backup_id session removed" 120 snapshot_session_absent "$backup_id" "$backup_time"
+}
+
 outpost_share_count() {
 	local expected=$1
 	curl -k -s "$PBS_API/api2/extjs/config/d2d-outposts" | jq -e \
@@ -128,7 +155,7 @@ cleanup_client_mounts() {
 
 trap cleanup_client_mounts EXIT
 
-section "Create one NFS outpost"
+section "Locate snapshots"
 
 SNAP_A=$(latest_snapshot "$HOST_DIR")
 SNAP_B=$(latest_snapshot "$INIT_GROUP_DIR")
@@ -138,6 +165,11 @@ DIDX_A=$(didx_in "$HOST_DIR/$SNAP_A")
 DIDX_B=$(didx_in "$INIT_GROUP_DIR/$SNAP_B")
 [ -n "$DIDX_A" ] || { fail "test-backup-job archive missing"; exit 1; }
 [ -n "$DIDX_B" ] || { fail "e2e-init archive missing"; exit 1; }
+
+detach_existing_session test-backup-job "$SNAP_A" "$DIDX_A" || true
+detach_existing_session e2e-init "$SNAP_B" "$DIDX_B" || true
+
+section "Create one NFS outpost"
 
 RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
 	-d "name=$OUTPOST" -d "type=nfs" -d "listen-addr=0.0.0.0:$NFS_PORT")
