@@ -12,8 +12,8 @@ var mountProfilesModel = js.Model{
 
 var mountProfilesPanel = js.Panel{
 	Name: "PBS.D2DSnapshotMount.ProfilesPanel", XType: "pbsPlusMountProfilesPanel",
-	Title: "Mount Profiles",
-	Store: js.Store{StoreID: "pbs-plus-mount-profiles", Model: "pbs-model-mount-profiles", Interval: 5000, APIPath: "/api2/extjs/config/d2d-mount-profiles", Sorters: "id"},
+	Title:     "Mount Profiles",
+	Store:     js.Store{StoreID: "pbs-plus-mount-profiles", Model: "pbs-model-mount-profiles", Interval: 5000, APIPath: "/api2/extjs/config/d2d-mount-profiles", Sorters: "id"},
 	Listeners: js.Listeners{Activate: "startStore", Deactivate: "stopStore", BeforeDestroy: "stopStore"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"init": js.Func("view", `
@@ -195,9 +195,14 @@ var mountProfilesPanel = js.Panel{
 		"edit": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			this.openEdit(view, rec);
 		`),
-		"editSelected": js.Func("view", `
-			let rec = view.getSelection()[0];
-			if (rec) this.openEdit(view, rec);
+		"editSelected": js.Func("btn", `
+			let view = this.getView();
+			let rec = view.getSelectionModel().getSelection()[0];
+			if (!rec) {
+				Ext.Msg.alert(gettext("Error"), gettext("Please select a profile."));
+				return;
+			}
+			this.openEdit(view, rec);
 		`),
 		"remove": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			let me = this;

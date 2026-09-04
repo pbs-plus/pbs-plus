@@ -82,7 +82,7 @@ var pathBrowserWindow = js.Panel{
 			"fileChanged": js.Func("", `
 				let view = this.getView();
 				let tree = this.lookup("tree");
-				let selection = tree.getSelection();
+				let selection = tree.getView().getSelection();
 				let canSelect = selection && selection.length > 0;
 				if (canSelect && view.getOnlyDirs()) {
 					let rec = selection[0];
@@ -95,7 +95,7 @@ var pathBrowserWindow = js.Panel{
 			"onSelect": js.Func("", `
 				let view = this.getView();
 				let tree = this.lookup("tree");
-				let selection = tree.getSelection();
+				let selection = tree.getView().getSelection();
 				if (selection && selection.length > 0) {
 					let rec = selection[0];
 					if (view.getOnlyDirs() && rec.get("leaf") === true) {
