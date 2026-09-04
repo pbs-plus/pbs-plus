@@ -212,6 +212,25 @@ mountpoint -q "$CLIENT_B" && ok "second kernel mount active" || fail "second ker
 [ ! -e "$CLIENT_A/hello.txt" ] && [ -e "$CLIENT_B/hello.txt" ] \
 	&& ok "share contents remain isolated" || fail "share contents crossed exports"
 
+dump_client_state() {
+	echo "--- client A listing ($CLIENT_A) ---"
+	ls -la "$CLIENT_A" 2>&1 || true
+	echo "--- client B listing ($CLIENT_B) ---"
+	ls -la "$CLIENT_B" 2>&1 || true
+	echo "--- client A hello.txt ---"
+	cat "$CLIENT_A/hello.txt" 2>&1 || true
+	echo "--- client B hello.txt ---"
+	cat "$CLIENT_B/hello.txt" 2>&1 || true
+	echo "--- nfs mounts ---"
+	grep nfs /proc/self/mounts 2>/dev/null || true
+	echo "--- nfs volumes ---"
+	cat /proc/fs/nfsfs/volumes 2>/dev/null || true
+	echo "--- nfs servers ---"
+	cat /proc/fs/nfsfs/servers 2>/dev/null || true
+}
+
+dump_client_state
+
 cleanup_client_mounts
 
 section "Detach shares and remove outpost"
