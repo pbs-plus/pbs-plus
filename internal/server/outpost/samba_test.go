@@ -223,6 +223,17 @@ func TestSambaShareStanzaAppliesAccessPolicy(t *testing.T) {
 	}
 }
 
+func TestSambaShareStanzaBrowseable(t *testing.T) {
+	hidden := sambaShareStanza(Outpost{Guest: true}, Attachment{Name: "snap", Path: "/mnt/snap"})
+	if !strings.Contains(hidden, "browseable = no") {
+		t.Fatalf("default stanza not hidden:\n%s", hidden)
+	}
+	shown := sambaShareStanza(Outpost{Guest: true, Browseable: true}, Attachment{Name: "snap", Path: "/mnt/snap"})
+	if !strings.Contains(shown, "browseable = yes") {
+		t.Fatalf("browseable stanza hidden:\n%s", shown)
+	}
+}
+
 func TestSambaShareStanzaGuestWritable(t *testing.T) {
 	got := sambaShareStanza(Outpost{Guest: true}, Attachment{Name: "snap", Path: "/mnt/snap"})
 	for _, want := range []string{"guest ok = yes", "read only = no"} {

@@ -182,6 +182,12 @@ func TestManagerAttachDetach(t *testing.T) {
 	if err := Attach(o.Name, Attachment{Name: "share", FS: memfs.New(), Release: rel}); err != nil {
 		t.Fatal(err)
 	}
+	if err := Attach(o.Name, Attachment{Name: "SHARE", FS: memfs.New()}); err == nil {
+		t.Fatal("duplicate share attachment accepted")
+	}
+	if released {
+		t.Fatal("duplicate attachment released the original share")
+	}
 
 	statuses := StatusAll()
 	if len(statuses) != 1 || !statuses[0].Running {
@@ -205,5 +211,18 @@ func TestManagerAttachDetach(t *testing.T) {
 	StopAll()
 	if s := StatusAll(); s[0].Running {
 		t.Fatal("outpost still running after StopAll")
+	}
+}
+
+func TestValidateShareName(t *testing.T) {
+	for _, ok := range []string{"", "snap", "host-vm-2026", "Latest_Restore", "a.b-c_d"} {
+		if err := ValidateShareName(ok); err != nil {
+			t.Fatalf("ValidateShareName(%q) = %v", ok, err)
+		}
+	}
+	for _, bad := range []string{".", "..", "/snap", "snap/x", "a b", "-lead", "caf\u00e9", "global", "Homes", "PRINTERS", strings.Repeat("x", MaxShareName+1)} {
+		if err := ValidateShareName(bad); err == nil {
+			t.Fatalf("ValidateShareName(%q) accepted", bad)
+		}
 	}
 }

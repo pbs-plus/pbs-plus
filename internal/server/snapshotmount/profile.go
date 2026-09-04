@@ -26,6 +26,7 @@ type Profile struct {
 	Mode       string `json:"mode"`
 	Backend    string `json:"backend,omitempty"`
 	Outpost    string `json:"outpost,omitempty"`
+	ShareName  string `json:"share_name,omitempty"`
 	MountPath  string `json:"mount_path"`
 	Schedule   string `json:"schedule"`
 	AutoMount  bool   `json:"auto_mount"`
@@ -63,6 +64,14 @@ func ValidateProfile(p Profile) error {
 	}
 	if p.Outpost != "" && !outpost.IsValidName(p.Outpost) {
 		return fmt.Errorf("invalid outpost %q", p.Outpost)
+	}
+	if p.ShareName != "" {
+		if p.Outpost == "" {
+			return fmt.Errorf("share name requires an outpost")
+		}
+		if err := outpost.ValidateShareName(p.ShareName); err != nil {
+			return err
+		}
 	}
 	if p.Schedule != "" {
 		if _, err := calendar.Parse(p.Schedule); err != nil {

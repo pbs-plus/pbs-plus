@@ -504,8 +504,16 @@ var mountPanel = js.Panel{
 									let win = cb.up("window");
 									win.down("combobox[name=backend]").setDisabled(!!v);
 									win.down("textfield[name=mount-path]").setDisabled(!!v);
+									win.down("textfield[name=share-name]").setDisabled(!v);
 								},
 							},
+						},
+						{
+							xtype: "proxmoxtextfield",
+							name: "share-name",
+							fieldLabel: gettext("Share Name"),
+							emptyText: gettext("Automatic"),
+							disabled: true,
 						},
 						{
 							xtype: "textfield",
@@ -528,6 +536,7 @@ var mountPanel = js.Panel{
 								params.backend = win.down("combobox[name=backend]").getValue();
 								params.outpost = win.down("combobox[name=outpost]").getValue() || "";
 								params["mount-path"] = params.outpost ? "" : win.down("textfield[name=mount-path]").getValue();
+								params["share-name"] = params.outpost ? win.down("textfield[name=share-name]").getValue() : "";
 								PBS.PlusUtils.API2Request({
 									url: "/api2/extjs/config/d2d-mount/" + encodeURIComponent(encodePathValue(view.datastore)),
 									method: "POST",

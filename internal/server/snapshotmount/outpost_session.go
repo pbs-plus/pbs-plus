@@ -28,6 +28,9 @@ import (
 // snapshot descriptor plus a short key hash so it stays unique and within
 // the NFS handle budget.
 func ShareName(s Session) string {
+	if s.ShareName != "" {
+		return s.ShareName
+	}
 	raw := fmt.Sprintf("%s-%s-%s", s.BackupType, s.BackupID, s.BackupTime)
 	var b strings.Builder
 	for _, r := range raw {
@@ -44,6 +47,19 @@ func ShareName(s Session) string {
 		name = name[:max]
 	}
 	return name + "-" + suffix
+}
+
+func ensureShareNameFree(outpostName, share, key string) error {
+	sessions, err := ListSessions()
+	if err != nil {
+		return fmt.Errorf("listing sessions: %w", err)
+	}
+	for _, s := range sessions {
+		if s.Outpost == outpostName && s.ServiceKey != key && strings.EqualFold(ShareName(s), share) {
+			return fmt.Errorf("share name %q is already in use on outpost %q", share, outpostName)
+		}
+	}
+	return nil
 }
 
 // attachOutpostSession builds the snapshot stack in-process and attaches it
@@ -123,6 +139,14 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 	if in.MountPath != "" {
 		return Session{}, fmt.Errorf("mount_path cannot be combined with an outpost")
 	}
+	if err := outpost.ValidateShareName(in.ShareName); err != nil {
+		return Session{}, err
+	}
+	if in.ShareName != "" {
+		if err := ensureShareNameFree(in.Outpost, in.ShareName, key); err != nil {
+			return Session{}, err
+		}
+	}
 	o, found, err := outpost.LoadOutpost(in.Outpost)
 	if err != nil {
 		return Session{}, err
@@ -143,6 +167,7 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 		FileName:   in.FileName,
 		Mode:       mode,
 		Outpost:    in.Outpost,
+		ShareName:  in.ShareName,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
 	}
@@ -232,6 +257,7 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 		FileName:   in.FileName,
 		Mode:       mode,
 		Outpost:    in.Outpost,
+		ShareName:  in.ShareName,
 		MountPoint: mountPoint,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -325,6 +351,7 @@ func ReattachOutposts(ctx context.Context) {
 				FileName:   s.FileName,
 				Mode:       s.Mode,
 				Outpost:    s.Outpost,
+				ShareName:  s.ShareName,
 			}
 			if _, err := mountVFSOutpostSession(ctx, nil, in, parsed, s.ServiceKey, s.Mode); err != nil {
 				log.Error(err, "reattaching outpost share "+share)

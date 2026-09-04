@@ -35,6 +35,7 @@ type Session struct {
 	Mode       string `json:"mode"`
 	Backend    string `json:"backend,omitempty"`
 	Outpost    string `json:"outpost,omitempty"`
+	ShareName  string `json:"share_name,omitempty"`
 	Endpoint   string `json:"endpoint,omitempty"`
 	MountPoint string `json:"mount_point"`
 	OverlayDir string `json:"overlay_dir,omitempty"`

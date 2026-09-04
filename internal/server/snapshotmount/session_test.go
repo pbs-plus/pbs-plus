@@ -94,3 +94,43 @@ func TestValidateMountPath(t *testing.T) {
 		}
 	}
 }
+
+func TestShareNameOverride(t *testing.T) {
+	s := Session{BackupType: "host", BackupID: "vm1", BackupTime: "2026-01-02T03:04:05Z", ServiceKey: "k"}
+	auto := ShareName(s)
+	s.ShareName = "restore-latest"
+	if got := ShareName(s); got != "restore-latest" {
+		t.Fatalf("ShareName override ignored: %q (auto was %q)", got, auto)
+	}
+	if got := ShareName(Session{BackupType: "host", BackupID: "vm1", ServiceKey: "k"}); got == "" {
+		t.Fatal("generated ShareName empty")
+	}
+}
+
+func TestEnsureShareNameFree(t *testing.T) {
+	dir := t.TempDir()
+	old := conf.StatePrefix
+	conf.StatePrefix = dir
+	t.Cleanup(func() { conf.StatePrefix = old })
+
+	if err := SaveSession(Session{
+		Datastore: "ds1", BackupType: "host", BackupID: "vm1",
+		BackupTime: "2026-01-02T03:04:05Z", FileName: "root.mpxar.didx",
+		Mode: ModeRO, Outpost: "edge", ShareName: "restore",
+		ServiceKey: "k1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureShareNameFree("edge", "RESTORE", "k2"); err == nil {
+		t.Fatal("duplicate share name accepted")
+	}
+	if err := ensureShareNameFree("edge", "restore", "k1"); err != nil {
+		t.Fatalf("own preserved session rejected: %v", err)
+	}
+	if err := ensureShareNameFree("other", "restore", "k2"); err != nil {
+		t.Fatalf("other outpost rejected: %v", err)
+	}
+	if err := ensureShareNameFree("edge", "other", "k2"); err != nil {
+		t.Fatalf("distinct name rejected: %v", err)
+	}
+}

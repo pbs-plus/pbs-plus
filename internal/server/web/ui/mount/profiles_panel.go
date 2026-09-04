@@ -6,7 +6,7 @@ import (
 
 var mountProfilesModel = js.Model{
 	Name:       "pbs-model-mount-profiles",
-	Fields:     js.Fields("id", "datastore", "namespace", "backup-type", "backup-id", "mode", "backend", "mount-path", "schedule", "auto-mount"),
+	Fields:     js.Fields("id", "datastore", "namespace", "backup-type", "backup-id", "mode", "backend", "outpost", "share-name", "mount-path", "schedule", "auto-mount"),
 	IDProperty: "id",
 }
 
@@ -82,6 +82,39 @@ var mountProfilesPanel = js.Panel{
 						store: [["fuse", "FUSE"], ["nfs", "NFSv3"]],
 						value: values.backend || "fuse",
 						editable: false,
+						disabled: !!values.outpost,
+					},
+					{
+						xtype: "combobox",
+						name: "outpost",
+						fieldLabel: gettext("Outpost"),
+						store: {
+							fields: ["name", "type", "running"],
+							autoLoad: true,
+							proxy: { type: "proxmox", url: "/api2/extjs/config/d2d-outposts" },
+						},
+						displayField: "name",
+						valueField: "name",
+						queryMode: "local",
+						editable: false,
+						emptyText: gettext("None (mount locally)"),
+						value: values.outpost,
+						listeners: {
+							change: (cb, v) => {
+								let win = cb.up("window");
+								win.down("combobox[name=backend]").setDisabled(!!v);
+								win.down("textfield[name=mount-path]").setDisabled(!!v);
+								win.down("textfield[name=share-name]").setDisabled(!v);
+							},
+						},
+					},
+					{
+						xtype: "proxmoxtextfield",
+						name: "share-name",
+						fieldLabel: gettext("Share Name"),
+						emptyText: gettext("Automatic"),
+						value: values["share-name"],
+						disabled: !values.outpost,
 					},
 					{
 						xtype: "proxmoxtextfield",
@@ -89,6 +122,7 @@ var mountProfilesPanel = js.Panel{
 						fieldLabel: gettext("Mount Path"),
 						emptyText: gettext("Automatic (under /mnt/pbs-plus-restores)"),
 						value: values["mount-path"],
+						disabled: !!values.outpost,
 					},
 					{
 						xtype: "proxmoxtextfield",
@@ -128,6 +162,7 @@ var mountProfilesPanel = js.Panel{
 								mode: vals.mode,
 								backend: vals.backend,
 									outpost: vals.outpost || "",
+									"share-name": vals["share-name"] || "",
 								"mount-path": vals["mount-path"] || "",
 								"schedule": vals.schedule || "",
 								"auto-mount": vals["auto-mount"] === "1" ? 1 : 0,
@@ -220,7 +255,9 @@ var mountProfilesPanel = js.Panel{
 			return v === "rw" ? "rw" : "ro";
 		`)},
 		{Text: "Backend", DataIndex: "backend", Width: 75, Renderer: js.Func("v", `return v === "nfs" ? "NFSv3" : "FUSE";`)},
-		{Text: "Mount Path", DataIndex: "mount-path", Flex: 1, Renderer: js.Func("v", `
+		{Text: "Target", DataIndex: "mount-path", Flex: 1, Renderer: js.Func("v, meta, rec", `
+			let outpost = rec.get("outpost");
+			if (outpost) return Ext.String.htmlEncode(outpost + "/" + (rec.get("share-name") || gettext("Automatic")));
 			return v ? Ext.String.htmlEncode(v) : gettext("Automatic");
 		`)},
 		{Text: "Schedule", DataIndex: "schedule", Width: 140, Renderer: js.Func("v", `

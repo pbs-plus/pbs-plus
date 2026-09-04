@@ -6,7 +6,7 @@ import (
 
 var outpostsModel = js.Model{
 	Name:       "pbs-model-outposts",
-	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "running", "error", "attached", "endpoints"),
+	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints"),
 	IDProperty: "name",
 }
 
@@ -75,7 +75,7 @@ var outpostsPanel = js.Panel{
 									let listen = form.down("[name=listen-addr]");
 									let smb = v === "samba";
 									if (listen) listen.setDisabled(v !== "nfs");
-									["guest", "valid-users", "force-user", "hosts-allow"].forEach((n) => {
+									["guest", "valid-users", "force-user", "hosts-allow", "browseable"].forEach((n) => {
 										let fld = form.down("[name=" + n + "]");
 										if (fld) fld.setDisabled(!smb);
 									});
@@ -126,8 +126,18 @@ var outpostsPanel = js.Panel{
 							disabled: values.type !== "samba",
 						},
 						{
+							xtype: "proxmoxcheckbox",
+							name: "browseable",
+							fieldLabel: gettext("Browseable"),
+							uncheckedValue: "0",
+							inputValue: "1",
+							value: values.browseable,
+							disabled: values.type !== "samba",
+							boxLabel: gettext("List share names when clients enumerate the server"),
+						},
+						{
 							xtype: "displayfield",
-							value: gettext("Samba outposts need smbd running with 'include' pointing at the pbs-plus outpost config. Set either guest access or valid users. Domain accounts (DOMAIN\\\\user) require the host to be joined with 'net ads join'; snapshot files keep their backed-up ownership, so set Force User to root if restore operators must read everything. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
+							value: gettext("Samba outposts need smbd running with 'include' pointing at the pbs-plus outpost config. Set either guest access or valid users. Domain accounts (DOMAIN\\\\user) require the host to be joined with 'net ads join'. Read-only shares preserve backed-up ownership. Writable shares with Force User map pxar ownership to that NSS/winbind account while retaining source mode and ACL checks. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
 						},
 					],
 				}],
@@ -147,6 +157,7 @@ var outpostsPanel = js.Panel{
 								"valid-users": vals["valid-users"] || "",
 								"force-user": vals["force-user"] || "",
 								"hosts-allow": vals["hosts-allow"] || "",
+								browseable: vals.browseable || "0",
 							};
 							let url = "/api2/extjs/config/d2d-outposts";
 							let method = "POST";

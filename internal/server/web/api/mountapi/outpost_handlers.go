@@ -22,6 +22,7 @@ type outpostView struct {
 	ValidUsers string   `json:"valid-users"`
 	ForceUser  string   `json:"force-user"`
 	HostsAllow string   `json:"hosts-allow"`
+	Browseable bool     `json:"browseable"`
 	Running    bool     `json:"running"`
 	Error      string   `json:"error,omitempty"`
 	Attached   []string `json:"attached"`
@@ -37,6 +38,7 @@ func toOutpostView(s outpost.Status) outpostView {
 		ValidUsers: s.ValidUsers,
 		ForceUser:  s.ForceUser,
 		HostsAllow: s.HostsAllow,
+		Browseable: s.Browseable,
 		Running:    s.Running,
 		Error:      s.Error,
 		Attached:   s.Attached,
@@ -53,6 +55,7 @@ func outpostFormValues(r *http.Request) outpost.Outpost {
 		ValidUsers: strings.TrimSpace(r.FormValue("valid-users")),
 		ForceUser:  strings.TrimSpace(r.FormValue("force-user")),
 		HostsAllow: strings.TrimSpace(r.FormValue("hosts-allow")),
+		Browseable: r.FormValue("browseable") == "1" || r.FormValue("browseable") == "true",
 	}
 }
 

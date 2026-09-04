@@ -197,12 +197,17 @@ func sambaIncludePath(name string) string {
 }
 
 // sambaShareStanza renders one share, applying the outpost's access policy.
-// Shares are never browseable: their names are session keys, not a directory.
+// Shares are hidden by default; Browseable only lists names, access is still
+// gated by guest/valid users.
 func sambaShareStanza(o Outpost, a Attachment) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n[%s]\n", a.Name)
 	fmt.Fprintf(&b, "\tpath = %s\n", a.Path)
-	fmt.Fprintf(&b, "\tbrowseable = no\n")
+	browseableVal := "no"
+	if o.Browseable {
+		browseableVal = "yes"
+	}
+	fmt.Fprintf(&b, "\tbrowseable = %s\n", browseableVal)
 	if a.ReadOnly {
 		fmt.Fprintf(&b, "\tread only = yes\n")
 	} else {

@@ -33,6 +33,33 @@ func TestParseMountFormOutpost(t *testing.T) {
 		t.Fatalf("form = %+v", f)
 	}
 
+	values.Set("share-name", "restore-latest")
+	r = formRequest("ds1", values)
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = parseMountForm(r); err != nil || f.ShareName != "restore-latest" {
+		t.Fatalf("share-name form = %+v err = %v", f, err)
+	}
+	values.Set("share-name", "bad name")
+	r = formRequest("ds1", values)
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseMountForm(r); err == nil {
+		t.Fatal("invalid share name should be rejected")
+	}
+	values.Del("share-name")
+	values.Set("outpost", "")
+	values.Set("share-name", "restore-latest")
+	r = formRequest("ds1", values)
+	if err := r.ParseForm(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseMountForm(r); err == nil {
+		t.Fatal("share-name without outpost should be rejected")
+	}
+
 	values.Set("mount-path", "/mnt/custom")
 	r = formRequest("ds1", values)
 	if err := r.ParseForm(); err != nil {

@@ -37,6 +37,7 @@ type Outpost struct {
 	ValidUsers string `json:"valid_users,omitempty"`
 	ForceUser  string `json:"force_user,omitempty"`
 	HostsAllow string `json:"hosts_allow,omitempty"`
+	Browseable bool   `json:"browseable,omitempty"`
 	CreatedAt  int64  `json:"created_at"`
 }
 
@@ -82,6 +83,8 @@ func DriverTypes() []string {
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
+var shareNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 func ValidateOutpost(o Outpost) error {
 	if !nameRe.MatchString(o.Name) {
 		return fmt.Errorf("invalid outpost name %q: lowercase alphanumerics and dashes, max 32 chars", o.Name)
@@ -95,6 +98,24 @@ func ValidateOutpost(o Outpost) error {
 
 // IsValidName reports whether name is a valid outpost name.
 func IsValidName(name string) bool { return nameRe.MatchString(name) }
+
+// ValidateShareName checks a user-chosen share name: it lands in NFS filehandles and smb.conf sections.
+func ValidateShareName(name string) error {
+	if name == "" {
+		return nil
+	}
+	switch strings.ToLower(name) {
+	case "global", "homes", "printers":
+		return fmt.Errorf("reserved share name %q", name)
+	}
+	if len(name) > MaxShareName {
+		return fmt.Errorf("share name %q longer than %d characters", name, MaxShareName)
+	}
+	if name == "." || name == ".." || !shareNameRe.MatchString(name) {
+		return fmt.Errorf("invalid share name %q (allowed: letters, digits, '.', '_', '-')", name)
+	}
+	return nil
+}
 
 func outpostsDir() string { return filepath.Join(conf.StatePrefix, "outposts") }
 
@@ -281,26 +302,29 @@ func EndpointOf(outpostName, share string) string {
 	return inst.Endpoint(share)
 }
 
+// Attach adds a share without replacing an existing attachment.
 func Attach(outpostName string, a Attachment) error {
 	if a.Name == "" || (a.FS == nil && a.Path == "") {
 		return fmt.Errorf("attachment needs a name and a filesystem or path")
 	}
-	mgr.mu.RLock()
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
 	inst := mgr.instances[outpostName]
-	mgr.mu.RUnlock()
 	if inst == nil {
 		return fmt.Errorf("outpost %q is not running", outpostName)
 	}
-	Detach(outpostName, a.Name)
-	if err := inst.Attach(a); err != nil {
-		return err
-	}
-	mgr.mu.Lock()
 	if mgr.attached[outpostName] == nil {
 		mgr.attached[outpostName] = map[string]Attachment{}
 	}
+	for name := range mgr.attached[outpostName] {
+		if strings.EqualFold(name, a.Name) {
+			return fmt.Errorf("share %q is already attached to outpost %q", a.Name, outpostName)
+		}
+	}
+	if err := inst.Attach(a); err != nil {
+		return err
+	}
 	mgr.attached[outpostName][a.Name] = a
-	mgr.mu.Unlock()
 	return nil
 }
 

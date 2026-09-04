@@ -14,6 +14,7 @@ NAMESPACE="test"
 INIT_GROUP_DIR="/mnt/test/ns/test/host/e2e-init"
 ENC_DS=$(printf %s "$DATASTORE" | base64 -w0)
 SMB_OUTPOST="smb"
+SMB_SHARE_NAME="restore-public"
 SAMBA_INCLUDE="/var/lib/pbs-plus/outposts/samba-$SMB_OUTPOST.conf"
 CLIENT_SMB="/tmp/pbs-plus-vfs-smb"
 ACL_OUTPOST="smb-acl"
@@ -234,12 +235,13 @@ detach_existing_session e2e-init "$SNAP" "$DIDX" || true
 section "Serve one share through samba"
 
 RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
-	-d "name=$SMB_OUTPOST" -d "type=samba" -d "guest=1")
+	-d "name=$SMB_OUTPOST" -d "type=samba" -d "guest=1" -d "browseable=1")
 submit_ok "$RESP" && ok "samba outpost created" || fail "samba outpost rejected: $(body_of "$RESP")"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
 	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
-	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro" -d "outpost=$SMB_OUTPOST")
+	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro" -d "outpost=$SMB_OUTPOST" \
+	-d "share-name=$SMB_SHARE_NAME")
 submit_ok "$RESP" && ok "samba share request accepted" || fail "samba share rejected: $(body_of "$RESP")"
 
 wait_for "samba share attached" 240 session_ready e2e-init "$SMB_OUTPOST" || true
@@ -247,9 +249,14 @@ wait_for "samba outpost reports one share" 30 outpost_shares "$SMB_OUTPOST" 1 ||
 
 ENDPOINT=$(session_endpoint e2e-init "$SMB_OUTPOST")
 SMB_SHARE=${ENDPOINT##*/}
-[ -n "$SMB_SHARE" ] && ok "samba endpoint reported: $ENDPOINT" || fail "samba endpoint missing"
+[ "$SMB_SHARE" = "$SMB_SHARE_NAME" ] && ok "custom samba share name reported: $ENDPOINT" \
+	|| fail "custom samba share name mismatch: $ENDPOINT"
 grep -q "\\[$SMB_SHARE\\]" "$SAMBA_INCLUDE" 2>/dev/null \
 	&& ok "samba include file has share stanza" || fail "samba include file missing share stanza"
+grep -q "browseable = yes" "$SAMBA_INCLUDE" 2>/dev/null \
+	&& ok "samba share marked browseable" || fail "samba share not marked browseable"
+smbclient -L //127.0.0.1 -N -g 2>/dev/null | grep -Fq "Disk|$SMB_SHARE|" \
+	&& ok "samba share visible in server enumeration" || fail "samba share missing from server enumeration"
 
 mkdir -p "$CLIENT_SMB"
 if [ -n "$SMB_SHARE" ] && timeout 60 mount -t cifs \

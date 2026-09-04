@@ -36,6 +36,7 @@ type mountForm struct {
 	Mode       string
 	Backend    string
 	Outpost    string
+	ShareName  string
 	MountPath  string
 	Force      bool
 }
@@ -51,6 +52,7 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 		Mode:       strings.TrimSpace(r.FormValue("mode")),
 		Backend:    strings.TrimSpace(r.FormValue("backend")),
 		Outpost:    strings.TrimSpace(r.FormValue("outpost")),
+		ShareName:  strings.TrimSpace(r.FormValue("share-name")),
 		MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 		Force:      r.FormValue("force") == "1" || r.FormValue("force") == "true",
 	}
@@ -88,6 +90,14 @@ func parseMountForm(r *http.Request) (mountForm, error) {
 		}
 		if f.MountPath != "" {
 			return f, fmt.Errorf("mount-path cannot be combined with an outpost")
+		}
+	}
+	if f.ShareName != "" {
+		if f.Outpost == "" {
+			return f, fmt.Errorf("share-name requires an outpost")
+		}
+		if err := outpost.ValidateShareName(f.ShareName); err != nil {
+			return f, err
 		}
 	}
 	if err := snapshotmount.ValidateMountPath(f.MountPath); err != nil {
@@ -200,6 +210,7 @@ func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 			Mode:       f.Mode,
 			Backend:    f.Backend,
 			Outpost:    f.Outpost,
+			ShareName:  f.ShareName,
 			MountPath:  f.MountPath,
 			UPID:       upidTask(task),
 			Web:        true,
@@ -426,6 +437,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 			Mode          string `json:"mode"`
 			Backend       string `json:"backend"`
 			Outpost       string `json:"outpost"`
+			ShareName     string `json:"share-name"`
 			Endpoint      string `json:"endpoint"`
 			MountPoint    string `json:"mount-point"`
 			Mounted       bool   `json:"mounted"`
@@ -450,6 +462,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 				Mode:          s.Mode,
 				Backend:       s.Backend,
 				Outpost:       s.Outpost,
+				ShareName:     snapshotmount.ShareName(s),
 				Endpoint:      s.Endpoint,
 				MountPoint:    s.MountPoint,
 				Mounted:       mounted,
