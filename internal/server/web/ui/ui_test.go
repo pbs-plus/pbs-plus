@@ -30,6 +30,10 @@ func TestRender(t *testing.T) {
 		`edit: function (view, rowIdx, colIdx, item, e, rec)`,
 		`remove: function (view, rowIdx, colIdx, item, e, rec)`,
 		`proxy: { type: "pbsplus", url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-outposts" },`,
+		`"Mounts the newest snapshot of every group under the parent namespace; each namespace appears as its own directory inside the share or root path."`,
+		`"replace": vals["replace"] === "1" ? 1 : 0,`,
+		`xtype: "pbsD2DCalendarEvent",`,
+		`"/api2/extjs/admin/datastore/" + encodeURIComponent(encodePathValue(v)) + "/namespace"`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("rendered UI does not contain %q", want)
@@ -43,5 +47,8 @@ func TestRender(t *testing.T) {
 	}
 	if !strings.Contains(source, `if (d.outpost) {`) {
 		t.Error("rendered UI remount handler is not outpost-aware")
+	}
+	if strings.Contains(source, `fields: ["id", "datastore", "namespace", "backup-type", "backup-id"`) {
+		t.Error("rendered profiles panel still pins single backup groups")
 	}
 }

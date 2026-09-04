@@ -198,6 +198,7 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 		Mode:       mode,
 		Outpost:    in.Outpost,
 		ShareName:  in.ShareName,
+		SubPath:    in.SubPath,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
 	}
@@ -217,6 +218,9 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 		return Session{}, err
 	}
 	session.Endpoint = outpost.EndpointOf(in.Outpost, ShareName(session))
+	if in.SubPath != "" {
+		session.Endpoint += "/" + in.SubPath
+	}
 	if err := SaveSession(session); err != nil {
 		outpost.Detach(in.Outpost, ShareName(session))
 		return Session{}, fmt.Errorf("persist mount session: %w", err)
@@ -228,7 +232,14 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 
 func unmountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
 	share := ShareName(session)
-	outpost.Detach(session.Outpost, share)
+	if session.SubPath == "" {
+		outpost.Detach(session.Outpost, share)
+	} else {
+		outpost.DetachSub(session.Outpost, share, session.SubPath)
+		if !sharedShareInUse(session) {
+			outpost.Detach(session.Outpost, share)
+		}
+	}
 	if task != nil {
 		task.LogString("detached " + share + " from outpost " + session.Outpost)
 	}

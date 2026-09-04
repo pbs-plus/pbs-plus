@@ -63,6 +63,22 @@ The session appears in **Active Mounts** with its outpost and client endpoint:
 
 Unmounting follows the Active Mounts rules: read/write sessions unmount while keeping uncommitted changes in the overlay (remount to restore them, or force-unmount to discard).
 
+## Batch Mounts
+
+A **Mount Profile** is a batch definition: pick a datastore, a **parent namespace** (empty = root), and a target (an outpost, or a local root path). PBS Plus then mounts the newest snapshot of every backup group at or under that namespace, each namespace appearing as its own directory inside the share:
+
+```text
+\\host\archive\1988-PROJECTS\...
+\\host\archive\1989-PROJECTS\...
+```
+
+- One share carries all mounts; the share name defaults to the outpost name.
+- Namespaces holding several backup groups get one directory per group (`<namespace>/<type>-<id>`); single-group namespaces mount directly at the namespace path.
+- The reconcile loop runs every 5 minutes (or on the profile's calendar **Check Schedule**): new namespaces are mounted, vanished ones are unmounted, and read-write sessions are never replaced automatically.
+- **Replace on new snapshot** (on by default) remounts read-only mounts when a newer snapshot appears; turn it off to pin whatever was mounted first.
+- The play button in Mount Profiles runs one reconcile pass immediately.
+- The same batch works without an outpost: leave the target empty and every namespace directory appears under `/mnt/pbs-plus-restores/<datastore>/` (or a custom root under `/mnt`).
+
 ## Lifecycle
 
 - Outposts start automatically on server boot; sessions with an outpost are reattached after restart (read/write Samba sessions are re-mounted from their persisted definitions).
