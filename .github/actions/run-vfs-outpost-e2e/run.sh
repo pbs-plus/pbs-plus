@@ -16,6 +16,11 @@ ENC_DS=$(printf %s "$DATASTORE" | base64 -w0)
 SMB_OUTPOST="smb"
 SAMBA_INCLUDE="/var/lib/pbs-plus/outposts/samba-$SMB_OUTPOST.conf"
 CLIENT_SMB="/tmp/pbs-plus-vfs-smb"
+ACL_OUTPOST="smb-acl"
+ACL_INCLUDE="/var/lib/pbs-plus/outposts/samba-$ACL_OUTPOST.conf"
+ACL_USER="e2erestore"
+ACL_PASS="e2e-restore-pw"
+CLIENT_SMB_ACL="/tmp/pbs-plus-vfs-smb-acl"
 
 req() { curl -k -s "$@" -w "\nHTTP_CODE:%{http_code}"; }
 code_of() { tail -1 <<<"$1" | sed 's/^HTTP_CODE://'; }
@@ -42,6 +47,7 @@ dump_logs() {
 	echo ""
 	echo "--- samba include file ---"
 	cat "$SAMBA_INCLUDE" 2>/dev/null || true
+	cat "$ACL_INCLUDE" 2>/dev/null || true
 	echo "--- mount process logs ---"
 	ls -la /var/run/pbs-plus-mounts/ /run/pbs-plus-outposts/ 2>/dev/null || true
 	tail -60 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
@@ -169,10 +175,12 @@ wait_for() {
 }
 
 cleanup_client_mounts() {
-	if mountpoint -q "$CLIENT_SMB"; then
-		timeout 30 umount -f -l "$CLIENT_SMB" >/dev/null 2>&1 || true
-	fi
-	rm -rf "$CLIENT_SMB"
+	for mount_point in "$CLIENT_SMB" "$CLIENT_SMB_ACL"; do
+		if mountpoint -q "$mount_point"; then
+			timeout 30 umount -f -l "$mount_point" >/dev/null 2>&1 || true
+		fi
+	done
+	rm -rf "$CLIENT_SMB" "$CLIENT_SMB_ACL"
 }
 
 trap cleanup_client_mounts EXIT
@@ -204,8 +212,13 @@ cat > /etc/samba/smb.conf <<EOF
 	guest account = root
 	load printers = no
 	include = $SAMBA_INCLUDE
+	include = $ACL_INCLUDE
 EOF
-touch "$SAMBA_INCLUDE"
+mkdir -p "$(dirname "$SAMBA_INCLUDE")"
+touch "$SAMBA_INCLUDE" "$ACL_INCLUDE"
+useradd -M -s /usr/sbin/nologin "$ACL_USER" 2>/dev/null || true
+printf '%s\n%s\n' "$ACL_PASS" "$ACL_PASS" | smbpasswd -s -a "$ACL_USER" >/dev/null 2>&1 \
+	&& ok "samba local restore account created" || fail "smbpasswd could not create $ACL_USER"
 smbd -D
 wait_for_proc "smbd listening on 445" 30 ss -lnt sport = :445
 
@@ -221,7 +234,7 @@ detach_existing_session e2e-init "$SNAP" "$DIDX" || true
 section "Serve one share through samba"
 
 RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
-	-d "name=$SMB_OUTPOST" -d "type=samba")
+	-d "name=$SMB_OUTPOST" -d "type=samba" -d "guest=1")
 submit_ok "$RESP" && ok "samba outpost created" || fail "samba outpost rejected: $(body_of "$RESP")"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
@@ -259,6 +272,65 @@ wait_for "samba outpost reports no shares" 30 outpost_shares "$SMB_OUTPOST" 0 ||
 
 RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-outposts/$SMB_OUTPOST")
 submit_ok "$RESP" && ok "samba outpost removed" || fail "samba outpost delete rejected: $(body_of "$RESP")"
+
+section "Enforce samba access policy"
+
+RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
+	-d "name=$ACL_OUTPOST" -d "type=samba")
+submit_ok "$RESP" && fail "samba outpost without access policy accepted" \
+	|| ok "samba outpost without guest or valid users rejected"
+
+RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
+	-d "name=$ACL_OUTPOST" -d "type=samba" -d "guest=1" -d "valid-users=$ACL_USER")
+submit_ok "$RESP" && fail "samba outpost with guest and valid users accepted" \
+	|| ok "samba outpost with contradictory access rejected"
+
+RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
+	-d "name=$ACL_OUTPOST" -d "type=samba" -d "valid-users=$ACL_USER" -d "force-user=root")
+submit_ok "$RESP" && ok "samba outpost with valid users created" \
+	|| fail "samba acl outpost rejected: $(body_of "$RESP")"
+
+RESP=$(api_post "/api2/extjs/config/d2d-mount/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
+	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "mode=ro" -d "outpost=$ACL_OUTPOST")
+submit_ok "$RESP" && ok "samba acl share request accepted" || fail "samba acl share rejected: $(body_of "$RESP")"
+
+wait_for "samba acl share attached" 240 session_ready e2e-init "$ACL_OUTPOST" || true
+
+ACL_SHARE=$(session_endpoint e2e-init "$ACL_OUTPOST")
+ACL_SHARE=${ACL_SHARE##*/}
+[ -n "$ACL_SHARE" ] && ok "samba acl endpoint reported: $ACL_SHARE" || fail "samba acl endpoint missing"
+grep -q "valid users = $ACL_USER" "$ACL_INCLUDE" 2>/dev/null \
+	&& ok "acl share stanza carries valid users" || fail "acl share stanza missing valid users"
+grep -q "force user = root" "$ACL_INCLUDE" 2>/dev/null \
+	&& ok "acl share stanza carries force user" || fail "acl share stanza missing force user"
+
+mkdir -p "$CLIENT_SMB_ACL"
+if [ -n "$ACL_SHARE" ] && timeout 60 mount -t cifs \
+	-o "guest,vers=3.0" "//127.0.0.1/$ACL_SHARE" "$CLIENT_SMB_ACL" 2>/dev/null; then
+	fail "guest mounted a share restricted to valid users"
+	timeout 30 umount -f -l "$CLIENT_SMB_ACL" >/dev/null 2>&1 || true
+else
+	ok "guest denied on share restricted to valid users"
+fi
+
+if [ -n "$ACL_SHARE" ] && timeout 60 mount -t cifs \
+	-o "username=$ACL_USER,password=$ACL_PASS,vers=3.0" "//127.0.0.1/$ACL_SHARE" "$CLIENT_SMB_ACL"; then
+	ok "valid user mounted the restricted share"
+else
+	fail "valid user could not mount the restricted share (share: $ACL_SHARE)"
+fi
+[ "$(cat "$CLIENT_SMB_ACL/hello.txt" 2>/dev/null)" = "hello-e2e" ] \
+	&& ok "restricted share content readable as valid user" || fail "restricted share content mismatch"
+
+RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" \
+	-d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=e2e-init" \
+	-d "backup-time=$SNAP" -d "file-name=$DIDX" -d "force=1")
+submit_ok "$RESP" && ok "samba acl detach accepted" || fail "samba acl detach rejected: $(body_of "$RESP")"
+wait_for "samba acl session removed" 120 session_gone e2e-init "$ACL_OUTPOST" || true
+
+RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-outposts/$ACL_OUTPOST")
+submit_ok "$RESP" && ok "samba acl outpost removed" || fail "samba acl outpost delete rejected: $(body_of "$RESP")"
 
 section "RESULTS"
 
