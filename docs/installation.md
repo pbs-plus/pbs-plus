@@ -105,7 +105,7 @@ Initial env vars (`PBS_PLUS_INIT_SERVER_URL`, `PBS_PLUS_INIT_BOOTSTRAP_TOKEN`, `
 To obtain the CA fingerprint, click **Show Fingerprint** in the Agent Bootstrap panel, or run:
 
 ```bash
-openssl x509 -in /etc/proxmox-backup/pbs-plus/ca.pem -noout -fingerprint -sha256 | cut -d= -f2
+openssl x509 -in /etc/proxmox-backup/pbs-plus/certs/ca.crt -noout -fingerprint -sha256 | cut -d= -f2
 ```
 
 ---

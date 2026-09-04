@@ -22,12 +22,16 @@ echo "PBS_PLUS_HOSTNAME=$(hostname -f)" >> /etc/proxmox-backup/pbs-plus/pbs-plus
 systemctl restart pbs-plus
 ```
 
-**Agent (Linux)**: install the package, set env vars, restart:
+**Agent (Linux)**: install the package, set env vars in the agent env file, restart:
 
 ```bash
-echo "PBS_PLUS_INIT_SERVER_URL=https://<pbs>:8008" >> /etc/pbs-plus-agent/registry.toml
-echo "PBS_PLUS_INIT_BOOTSTRAP_TOKEN=<token>" >> /etc/pbs-plus-agent/registry.toml
-echo "PBS_PLUS_HOSTNAME=$(hostname -f)" >> /etc/default/pbs-plus-agent
+sudo tee /etc/pbs-plus-agent/agent.env >/dev/null <<EOF
+PBS_PLUS_INIT_SERVER_URL="https://<pbs>:8008"
+PBS_PLUS_INIT_BOOTSTRAP_TOKEN="<token>"
+PBS_PLUS_HOSTNAME="$(hostname -f)"
+EOF
+sudo chown -R pbsplus:pbsplus /etc/pbs-plus-agent
+sudo chmod 0640 /etc/pbs-plus-agent/agent.env
 systemctl restart pbs-plus-agent
 ```
 

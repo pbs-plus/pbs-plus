@@ -21,15 +21,22 @@ kubectl apply -f deploy/kubernetes/operator.yaml
 To obtain the CA fingerprint, click **Show Fingerprint** in the Agent Bootstrap panel, or run:
 
 ```bash
-openssl x509 -in /etc/proxmox-backup/pbs-plus/ca.pem -noout -fingerprint -sha256 | cut -d= -f2
+openssl x509 -in /etc/proxmox-backup/pbs-plus/certs/ca.crt -noout -fingerprint -sha256 | cut -d= -f2
 ```
+
+The manifest ships a placeholder `pbs-plus-bootstrap` secret in the
+`pbs-plus-operator` namespace. Replace it (the `ca-fingerprint` key is
+required by backup agent pods) and restart the operator so it picks up the
+new server URL:
 
 ```bash
 kubectl create secret generic pbs-plus-bootstrap \
   --from-literal=server-url='https://<pbs-server>:8008' \
   --from-literal=bootstrap-token='<your-bootstrap-token>' \
   --from-literal=ca-fingerprint='<sha256-hex-fingerprint>' \
-  -n pbs-plus-operator
+  -n pbs-plus-operator \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n pbs-plus-operator rollout restart deployment/pbs-plus-operator
 ```
 
 ## Usage
