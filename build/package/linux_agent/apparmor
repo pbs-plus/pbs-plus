@@ -8,8 +8,9 @@ abi <abi/3.0>,
   #include <abstractions/base>
   #include <abstractions/nameservice>
 
-  # Allow binary execution and updates
-  /opt/pbs-plus-agent/pbs-plus-agent mr,
+  # Allow binary execution and updates. ix is required because the agent
+  # re-execs itself to fork per-job child processes (cli/exec_unix.go).
+  /opt/pbs-plus-agent/pbs-plus-agent mrix,
   /opt/pbs-plus-agent/{,**} rwk,
 
   # Allow systemd control and unit file installation
@@ -22,6 +23,10 @@ abi <abi/3.0>,
   /var/lib/pbs-plus-agent/{,**} rwk,
   /var/log/pbs-plus-agent/{,**} rwk,
   /etc/pbs-plus-agent/{,**} rwk,
+
+  # Parent->child handshake token files written by cli/backup.go,
+  # cli/restore.go, and cli/verify.go; read and unlinked by cli/entry.go.
+  /tmp/.pbs-plus-token-* rw,
 
   # Backup sources: the agent reads arbitrary paths on the host
   / r,
