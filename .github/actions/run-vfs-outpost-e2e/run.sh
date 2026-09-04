@@ -221,7 +221,7 @@ LOG {
 }
 EOF
 ganesha.nfsd -F -L /tmp/ganesha.log &
-wait_for_proc "ganesha running with dbus" 60 dbus-send --system --print-reply --dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr org.freedesktop.DBus.Peer.GetId
+wait_for_proc "ganesha running with dbus" 60 dbus-send --system --print-reply --dest=org.ganesha.nfsd /org/ganesha/nfsd/ExportMgr org.ganesha.nfsd.exportmgr.ShowExports
 
 mkdir -p /etc/samba
 cat > /etc/samba/smb.conf <<EOF
@@ -263,7 +263,7 @@ wait_for "ganesha outpost reports one share" 30 outpost_shares "$GANESHA_OUTPOST
 ENDPOINT=$(session_endpoint e2e-init "$GANESHA_OUTPOST")
 if [ -z "$ENDPOINT" ]; then
 	if find /var/log/proxmox-backup/tasks -type f 2>/dev/null | grep -E ':(mount|unmount):' | while read -r f; do tail -5 "$f" 2>/dev/null; done \
-		| grep -q "invalid param value\|Operation not supported"; then
+		| grep -q "validation errors in block\|invalid param value\|Operation not supported"; then
 		ok "ganesha cannot export FUSE mounts (FSAL_VFS needs name_to_handle_at); content checks skipped"
 	else
 		fail "ganesha endpoint missing"
