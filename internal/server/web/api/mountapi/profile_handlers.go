@@ -3,6 +3,7 @@
 package mountapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -200,7 +201,7 @@ func ExtJsMountProfileMountHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		go func() {
-			snapshotmount.ReconcileProfileNow(r.Context(), app.Engine, p)
+			snapshotmount.ReconcileProfileNow(context.WithoutCancel(r.Context()), app.Engine, p)
 			task.LogString("reconciled batch profile " + id)
 			task.CloseOK()
 		}()
