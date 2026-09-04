@@ -26,10 +26,10 @@ The NFSv3 implementation serves with null authentication: any client that can re
 Requires Samba installed and `smbd` running, with one `include` line added to `smb.conf` `[global]`:
 
 ```ini
-include = /var/lib/pbs-plus/outposts/samba-<name>.conf
+include = /var/lib/pbs-plus/outposts/samba.conf
 ```
 
-PBS Plus rewrites that file on every attach/detach and reloads `smbd` via `smbcontrol`.
+PBS Plus rewrites that single file on every attach/detach with the shares of all running Samba outposts and reloads `smbd` via `smbcontrol`; the line never changes no matter how many outposts exist.
 
 | Field        | Description                                                                                                                    |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------ |
