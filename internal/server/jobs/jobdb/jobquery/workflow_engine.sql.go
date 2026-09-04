@@ -126,7 +126,7 @@ WHERE execution_id = ? AND name = ? AND state = 'running'
       AND state = 'running'
       AND lease_owner = ?
       AND job_executions.attempt = ?
-      AND lease_until >= unixepoch()
+      AND lease_until >= ?
   )
 `
 
@@ -137,6 +137,7 @@ type CompleteActivityParams struct {
 	Name        string         `json:"name"`
 	LeaseOwner  sql.NullString `json:"lease_owner"`
 	Attempt     int64          `json:"attempt"`
+	LeaseUntil  sql.NullInt64  `json:"lease_until"`
 }
 
 func (q *Queries) CompleteActivity(ctx context.Context, arg CompleteActivityParams) (int64, error) {
@@ -147,6 +148,7 @@ func (q *Queries) CompleteActivity(ctx context.Context, arg CompleteActivityPara
 		arg.Name,
 		arg.LeaseOwner,
 		arg.Attempt,
+		arg.LeaseUntil,
 	)
 	if err != nil {
 		return 0, err
@@ -895,7 +897,7 @@ WHERE execution_id = ? AND name = ? AND state IN ('pending', 'running')
       AND state = 'running'
       AND lease_owner = ?
       AND job_executions.attempt = ?
-      AND lease_until >= unixepoch()
+      AND lease_until >= ?
   )
 `
 
@@ -905,6 +907,7 @@ type StartActivityParams struct {
 	Name        string         `json:"name"`
 	LeaseOwner  sql.NullString `json:"lease_owner"`
 	Attempt     int64          `json:"attempt"`
+	LeaseUntil  sql.NullInt64  `json:"lease_until"`
 }
 
 func (q *Queries) StartActivity(ctx context.Context, arg StartActivityParams) (int64, error) {
@@ -914,6 +917,7 @@ func (q *Queries) StartActivity(ctx context.Context, arg StartActivityParams) (i
 		arg.Name,
 		arg.LeaseOwner,
 		arg.Attempt,
+		arg.LeaseUntil,
 	)
 	if err != nil {
 		return 0, err
