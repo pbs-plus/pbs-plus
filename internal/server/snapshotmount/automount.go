@@ -273,6 +273,12 @@ func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) {
 
 	mountedOfGroup := map[string][]Session{}
 	for _, s := range owned {
+		if s.Profile == "" {
+			s.Profile = p.ID()
+			if err := SaveSession(s); err != nil {
+				log.Error(err, "auto-mount: backfilling profile on session", "session", s.ServiceKey)
+			}
+		}
 		gk := groupKeyOf(s.Namespace, s.BackupType, s.BackupID)
 		if want, ok := subs[gk]; !ok || want != s.SubPath {
 			if s.Mode == ModeRW {

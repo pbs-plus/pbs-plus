@@ -362,22 +362,22 @@ var activeMountsPanel = js.Panel{
 		`),
 	}},
 	Tbar: []js.Tool{
-		{XType: js.XButton, Text: "Reload", IconCls: "fa fa-refresh", Handler: "reload", SelModel: new(false)},
-		{XType: js.XButton, Text: "New Snapshot", IconCls: "fa fa-plus", Handler: "initNew", SelModel: new(false)}, js.Sep(),
+		{Text: "Reload", IconCls: "fa fa-refresh", Handler: "reload", SelModel: new(false)},
+		{Text: "New Snapshot", IconCls: "fa fa-plus", Handler: "initNew", SelModel: new(false)}, js.Sep(),
 		{
-			XType: js.XButton, Text: "Remount Selected", IconCls: "fa fa-play", Handler: "remountSelected",
+			Text: "Remount Selected", IconCls: "fa fa-play", Handler: "remountSelected",
 			Disabled: true, EnableFn: js.SelectionEvery(`!r.data.mounted`),
 		},
 		{
-			XType: js.XButton, Text: "Commit Selected", IconCls: "fa fa-upload", Handler: "commitSelected",
+			Text: "Commit Selected", IconCls: "fa fa-upload", Handler: "commitSelected",
 			Disabled: true, EnableFn: js.SelectionEvery(`r.data["commit-capable"] && r.data.mounted`),
 		},
 		{
-			XType: js.XButton, Text: "Unmount Selected", IconCls: "fa fa-eject", Handler: "unmountSelected",
+			Text: "Unmount Selected", IconCls: "fa fa-eject", Handler: "unmountSelected",
 			Disabled: true, EnableFn: js.SelectionEvery(`r.data.mounted`),
 		},
 		{
-			XType: js.XButton, Text: "Discard Selected", IconCls: "fa fa-trash-o", Handler: "discardSelected",
+			Text: "Discard Selected", IconCls: "fa fa-trash-o", Handler: "discardSelected",
 			Disabled: true, EnableFn: js.SelectionEvery(`r.data.mode === "rw"`),
 		},
 	},
