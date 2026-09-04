@@ -53,19 +53,11 @@ type Service struct {
 	Engine *jobs.Engine
 }
 
-// blockedReason reports why a user-triggered run cannot start now, or "" when it can; resourceKey is empty for backups because concurrent reads of one target are safe, while restores pass their destination because they write it.
-func (s *Service) blockedReason(kind, definitionID, resourceKey string) string {
+func (s *Service) blockedReason(kind, definitionID string) string {
 	if _, err := s.Engine.ActiveExecution(s.ctx, kind, definitionID); err == nil {
 		return "this job is already queued or running"
 	}
-	if resourceKey == "" {
-		return ""
-	}
-	holder, err := s.Engine.ResourceHolder(s.ctx, resourceKey)
-	if err != nil || holder.DefinitionID == definitionID {
-		return ""
-	}
-	return fmt.Sprintf("%q is in use by %s job %q", resourceKey, holder.Kind, holder.DefinitionID)
+	return ""
 }
 
 func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
@@ -79,7 +71,7 @@ func (s *Service) BackupQueue(args *BackupQueueArgs, reply *QueueReply) error {
 		return nil
 	}
 
-	if reason := s.blockedReason(jobs.WorkflowBackup, args.Job.ID, ""); reason != "" {
+	if reason := s.blockedReason(jobs.WorkflowBackup, args.Job.ID); reason != "" {
 		reply.Status = 409
 		reply.Message = fmt.Sprintf("%s (%s)", jobs.ErrOneInstance, reason)
 		return nil
@@ -127,7 +119,7 @@ func (s *Service) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error 
 		return nil
 	}
 
-	if reason := s.blockedReason(jobs.WorkflowRestore, args.Job.ID, "target:"+args.Job.DestTarget.Name); reason != "" {
+	if reason := s.blockedReason(jobs.WorkflowRestore, args.Job.ID); reason != "" {
 		reply.Status = 409
 		reply.Message = fmt.Sprintf("%s (%s)", jobs.ErrOneInstance, reason)
 		return nil
@@ -139,7 +131,7 @@ func (s *Service) RestoreQueue(args *RestoreQueueArgs, reply *QueueReply) error 
 		"manual",
 		"",
 		jobs.RestoreInput{SkipCheck: args.SkipCheck, Web: args.Web},
-		[]string{"restore:" + args.Job.ID, "target:" + args.Job.DestTarget.Name},
+		[]string{"restore:" + args.Job.ID},
 		args.Job.Retry+1,
 		time.Duration(max(args.Job.RetryInterval, 1))*time.Minute,
 	)

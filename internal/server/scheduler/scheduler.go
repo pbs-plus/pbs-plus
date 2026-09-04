@@ -167,7 +167,7 @@ func (s *Scheduler) checkRestores() {
 			"retry",
 			fmt.Sprintf("restore:%s:retry:%d-%d", r.ID, r.History.LastRunEndtime, r.History.RetryCount),
 			jobs.RestoreInput{},
-			[]string{"restore:" + r.ID, "target:" + r.DestTarget.Name},
+			[]string{"restore:" + r.ID},
 			r.Retry+1,
 			time.Duration(max(r.RetryInterval, 1))*time.Minute,
 		)
