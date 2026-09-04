@@ -11,40 +11,35 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
 )
 
 type profileView struct {
-	ID         string `json:"id"`
-	Datastore  string `json:"datastore"`
-	Namespace  string `json:"namespace"`
-	BackupType string `json:"backup-type"`
-	BackupID   string `json:"backup-id"`
-	Mode       string `json:"mode"`
-	Backend    string `json:"backend"`
-	Outpost    string `json:"outpost"`
-	ShareName  string `json:"share-name"`
-	MountPath  string `json:"mount-path"`
-	Schedule   string `json:"schedule"`
-	AutoMount  bool   `json:"auto-mount"`
+	ID        string `json:"id"`
+	Datastore string `json:"datastore"`
+	Namespace string `json:"namespace"`
+	Mode      string `json:"mode"`
+	Outpost   string `json:"outpost"`
+	ShareName string `json:"share-name"`
+	MountPath string `json:"mount-path"`
+	Schedule  string `json:"schedule"`
+	AutoMount bool   `json:"auto-mount"`
+	Replace   bool   `json:"replace"`
 }
 
 func toProfileView(p snapshotmount.Profile) profileView {
 	return profileView{
-		ID:         p.ID(),
-		Datastore:  p.Datastore,
-		Namespace:  p.Namespace,
-		BackupType: p.BackupType,
-		BackupID:   p.BackupID,
-		Mode:       p.Mode,
-		Backend:    p.Backend,
-		Outpost:    p.Outpost,
-		ShareName:  p.ShareName,
-		MountPath:  p.MountPath,
-		Schedule:   p.Schedule,
-		AutoMount:  p.AutoMount,
+		ID:        p.ID(),
+		Datastore: p.Datastore,
+		Namespace: p.Namespace,
+		Mode:      p.Mode,
+		Outpost:   p.Outpost,
+		ShareName: p.ShareName,
+		MountPath: p.MountPath,
+		Schedule:  p.Schedule,
+		AutoMount: p.AutoMount,
+		Replace:   p.Replace,
 	}
 }
 
@@ -54,17 +49,15 @@ func profileFormValues(r *http.Request) snapshotmount.Profile {
 		mode = snapshotmount.ModeRO
 	}
 	return snapshotmount.Profile{
-		Datastore:  strings.TrimSpace(r.FormValue("datastore")),
-		Namespace:  strings.TrimSpace(r.FormValue("ns")),
-		BackupType: strings.TrimSpace(r.FormValue("backup-type")),
-		BackupID:   strings.TrimSpace(r.FormValue("backup-id")),
-		Mode:       mode,
-		Backend:    strings.TrimSpace(r.FormValue("backend")),
-		Outpost:    strings.TrimSpace(r.FormValue("outpost")),
-		ShareName:  strings.TrimSpace(r.FormValue("share-name")),
-		MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
-		Schedule:   strings.TrimSpace(r.FormValue("schedule")),
-		AutoMount:  r.FormValue("auto-mount") == "1" || r.FormValue("auto-mount") == "true",
+		Datastore: strings.TrimSpace(r.FormValue("datastore")),
+		Namespace: strings.TrimSpace(r.FormValue("ns")),
+		Mode:      mode,
+		Outpost:   strings.TrimSpace(r.FormValue("outpost")),
+		ShareName: strings.TrimSpace(r.FormValue("share-name")),
+		MountPath: strings.TrimSpace(r.FormValue("mount-path")),
+		Schedule:  strings.TrimSpace(r.FormValue("schedule")),
+		AutoMount: r.FormValue("auto-mount") == "1" || r.FormValue("auto-mount") == "true",
+		Replace:   r.FormValue("replace") == "1" || r.FormValue("replace") == "true",
 	}
 }
 
@@ -113,7 +106,7 @@ func ExtJsMountProfilesHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, err)
 			return
 		} else if exists {
-			respond.WriteErrorResponse(w, fmt.Errorf("profile for %s/%s already exists", p.BackupType, p.BackupID))
+			respond.WriteErrorResponse(w, fmt.Errorf("batch profile for %s already exists", p.ID()))
 			return
 		}
 		p.CreatedAt = time.Now().Unix()
@@ -151,11 +144,18 @@ func ExtJsMountProfileSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 			p := profileFormValues(r)
-			if p.Datastore == "" || p.BackupType == "" || p.BackupID == "" {
+			if _, ok := r.Form["datastore"]; !ok {
 				p.Datastore = existing.Datastore
 				p.Namespace = existing.Namespace
-				p.BackupType = existing.BackupType
-				p.BackupID = existing.BackupID
+			}
+			if _, ok := r.Form["outpost"]; !ok {
+				p.Outpost = existing.Outpost
+			}
+			if _, ok := r.Form["share-name"]; !ok {
+				p.ShareName = existing.ShareName
+			}
+			if _, ok := r.Form["mount-path"]; !ok {
+				p.MountPath = existing.MountPath
 			}
 			if err := snapshotmount.ValidateProfile(p); err != nil {
 				writeProfileInvalid(w, err)
@@ -194,39 +194,16 @@ func ExtJsMountProfileMountHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, fmt.Errorf("no such profile"))
 			return
 		}
-		backupTime, fileName, err := snapshotmount.LatestSnapshot(p)
+		task, err := newTask("mount", p.Datastore, id)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-		parsed, err := time.Parse(time.RFC3339, backupTime)
-		if err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		key := snapshotmount.Key(p.Datastore, p.Namespace, p.BackupType, p.BackupID, snapshotmount.DirTime(parsed))
-		task, err := newTask("mount", p.Datastore, key)
-		if err != nil {
-			respond.WriteErrorResponse(w, err)
-			return
-		}
-		upid, ok2 := submitSnapshotWorkflow(w, r, app, jobs.WorkflowSnapshotMount, key, "snapshot-mount:"+key, jobs.SnapshotMountInput{
-			Datastore:  p.Datastore,
-			Namespace:  p.Namespace,
-			BackupType: p.BackupType,
-			BackupID:   p.BackupID,
-			BackupTime: backupTime,
-			FileName:   fileName,
-			Mode:       p.Mode,
-			Backend:    p.Backend,
-			MountPath:  p.MountPath,
-			UPID:       upidTask(task),
-			Web:        true,
-		}, time.Minute)
-		if !ok2 {
-			task.CloseErr(fmt.Errorf("workflow submit failed"))
-			return
-		}
-		writeExtJS(w, upid)
+		go func() {
+			snapshotmount.ReconcileProfileNow(r.Context(), app.Engine, p)
+			task.LogString("reconciled batch profile " + id)
+			task.CloseOK()
+		}()
+		writeExtJS(w, upidTask(task))
 	}
 }

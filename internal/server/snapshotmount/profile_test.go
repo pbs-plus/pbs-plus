@@ -17,8 +17,8 @@ func TestProfileRoundTrip(t *testing.T) {
 	t.Cleanup(func() { conf.StatePrefix = old })
 
 	p := Profile{
-		Datastore: "ds1", Namespace: "ns/a", BackupType: "host", BackupID: "id1",
-		Mode: ModeRW, Backend: BackendNFS, MountPath: "/mnt/p", Schedule: "mon..fri 02:00", AutoMount: true,
+		Datastore: "ds1", Namespace: "ns/a", Outpost: "edge-smb", ShareName: "archive",
+		Mode: ModeRW, Schedule: "mon..fri 02:00", AutoMount: true, Replace: true,
 	}
 	id := p.ID()
 	if id == "" {
@@ -51,14 +51,18 @@ func TestProfileRoundTrip(t *testing.T) {
 		t.Fatal("profile survived delete")
 	}
 
-	p.BackupID = "id2"
+	p.Outpost = "edge-nfs"
 	if p.ID() == id {
-		t.Fatal("id not group-scoped")
+		t.Fatal("id not target-scoped")
+	}
+	p.Outpost = ""
+	if p.ID() == id {
+		t.Fatal("local batch id collides with outpost id")
 	}
 }
 
 func TestValidateProfile(t *testing.T) {
-	valid := Profile{Datastore: "ds1", BackupType: "host", BackupID: "id1"}
+	valid := Profile{Datastore: "ds1"}
 	cases := []struct {
 		mutate func(*Profile)
 		ok     bool
@@ -67,16 +71,16 @@ func TestValidateProfile(t *testing.T) {
 		{func(p *Profile) { p.Datastore = "" }, false},
 		{func(p *Profile) { p.Datastore = "../x" }, false},
 		{func(p *Profile) { p.Namespace = "bad ns" }, false},
-		{func(p *Profile) { p.BackupType = "weird" }, false},
-		{func(p *Profile) { p.BackupID = "" }, false},
 		{func(p *Profile) { p.Mode = "rw" }, true},
 		{func(p *Profile) { p.Mode = "readwrite" }, false},
-		{func(p *Profile) { p.Backend = BackendNFS }, true},
-		{func(p *Profile) { p.Backend = "smb" }, false},
 		{func(p *Profile) { p.Outpost = "edge-nfs" }, true},
 		{func(p *Profile) { p.Outpost = "Bad_Name" }, false},
+		{func(p *Profile) { p.ShareName = "arch" }, false},
+		{func(p *Profile) { p.Outpost = "edge"; p.ShareName = "arch" }, true},
+		{func(p *Profile) { p.Outpost = "edge"; p.ShareName = "bad name" }, false},
 		{func(p *Profile) { p.MountPath = "/mnt/x" }, true},
 		{func(p *Profile) { p.MountPath = "/var/x" }, false},
+		{func(p *Profile) { p.Outpost = "edge"; p.MountPath = "/mnt/x" }, false},
 		{func(p *Profile) { p.Schedule = "mon..fri 02:00" }, true},
 		{func(p *Profile) { p.Schedule = "not a schedule" }, false},
 	}
