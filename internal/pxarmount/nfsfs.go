@@ -728,7 +728,7 @@ func (i *nfsFileInfo) Sys() any {
 	return &syscall.Stat_t{
 		Ino:   i.attr.Ino,
 		Mode:  i.attr.Mode,
-		Nlink: uint64(nlink),
+		Nlink: statNlink(nlink),
 		Uid:   i.attr.Uid,
 		Gid:   i.attr.Gid,
 		Size:  int64(i.attr.Size),
