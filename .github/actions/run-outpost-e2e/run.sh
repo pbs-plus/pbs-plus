@@ -28,8 +28,8 @@ body_of() { sed '$d' <<<"$1"; }
 dump_logs() {
 	stop_nfs_capture
 	if [ -f /tmp/nfs-e2e.pcap ]; then
-		echo "--- nfs wire ops (tcpdump -vv) ---"
-		tcpdump -r /tmp/nfs-e2e.pcap -nn -vv 2>/dev/null | grep -i "nfs\|mount" | tail -300 || true
+		echo "--- nfs wire ops (tcpdump -vv, last 400 lines) ---"
+		tcpdump -r /tmp/nfs-e2e.pcap -nn -vv 2>&1 | tail -400 || true
 	fi
 	echo "--- outposts ---"
 	curl -k -s "$PBS_API/api2/extjs/config/d2d-outposts" || true

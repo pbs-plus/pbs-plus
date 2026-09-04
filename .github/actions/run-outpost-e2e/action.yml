@@ -21,3 +21,20 @@ runs:
       run: |
         echo "Running NFS outpost e2e tests..."
         timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-nfs-outpost.sh
+
+    - name: Decode NFS wire capture
+      if: always()
+      shell: bash
+      run: |
+        docker cp pbs-plus-test:/tmp/nfs-e2e.pcap ./nfs-e2e.pcap 2>/dev/null || exit 0
+        ls -la nfs-e2e.pcap
+        if ! command -v tshark >/dev/null 2>&1; then
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y -qq tshark >/dev/null 2>&1 || true
+        fi
+        if command -v tshark >/dev/null 2>&1; then
+          echo "--- tshark nfs ops ---"
+          tshark -r nfs-e2e.pcap -Y 'nfs || mount' 2>/dev/null | tail -500 || true
+          echo "--- tshark nfs error statuses ---"
+          tshark -r nfs-e2e.pcap -V 2>/dev/null | grep -E 'Opcode: [0-9]+|Status: [0-9]+' | tail -200 || true
+        fi
