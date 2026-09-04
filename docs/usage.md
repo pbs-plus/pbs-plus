@@ -196,7 +196,7 @@ Exit non-zero to abort the backup if the dump fails.
 The **Snapshots** page manages read/write FUSE mounts of PBS archives on the server (powered by `pxar-mount`, see [pxar-mount](pxar-mount.md) for the full commit workflow):
 
 - **Active Mounts**: running mount sessions, with unmount (keeping or discarding read/write changes) and remount actions for offline sessions
-- **Mount Profiles**: persistent mount definitions that remount the latest snapshot of a group, optionally on a schedule. Profiles with **auto-mount** enabled follow the newest snapshot: when a newer snapshot appears, read-only mounts are remounted onto it. Read/write mounts are never auto-remounted. Each profile can define its own calendar-format check schedule; without one, checks run every 5 minutes.
+- **Mount Profiles**: batch mount definitions that mount the newest snapshot of every backup group under a parent namespace (root by default), each namespace in its own directory inside one share or local root. Profiles with **auto-mount** enabled reconcile continuously: new namespaces appear, vanished ones are unmounted, and read-only mounts follow the newest snapshot when **Replace on new snapshot** is enabled. Read/write mounts are never auto-replaced. Each profile can define its own calendar-format check schedule; without one, checks run every 5 minutes.
 - **Datastore tabs**: browse snapshots per datastore, mount them, or **compose** a new snapshot from selected paths of an existing archive (with optional single-directory flattening)
 - **Outposts**: expose mounted snapshots as NFS or SMB shares instead of local mounts (see [Outposts](outposts.md))
 

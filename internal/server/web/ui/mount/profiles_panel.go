@@ -6,14 +6,14 @@ import (
 
 var mountProfilesModel = js.Model{
 	Name:       "pbs-model-mount-profiles",
-	Fields:     js.Fields("id", "datastore", "namespace", "backup-type", "backup-id", "mode", "backend", "outpost", "share-name", "mount-path", "schedule", "auto-mount"),
+	Fields:     js.Fields("id", "datastore", "namespace", "mode", "outpost", "share-name", "mount-path", "schedule", "auto-mount", "replace"),
 	IDProperty: "id",
 }
 
 var mountProfilesPanel = js.Panel{
 	Name: "PBS.D2DSnapshotMount.ProfilesPanel", XType: "pbsPlusMountProfilesPanel",
-	Title: "Mount Profiles",
-	Store: js.Store{StoreID: "pbs-plus-mount-profiles", Model: "pbs-model-mount-profiles", Interval: 5000, APIPath: "/api2/extjs/config/d2d-mount-profiles", Sorters: "id"},
+	Title:     "Mount Profiles",
+	Store:     js.Store{StoreID: "pbs-plus-mount-profiles", Model: "pbs-model-mount-profiles", Interval: 5000, APIPath: "/api2/extjs/config/d2d-mount-profiles", Sorters: "id"},
 	Listeners: js.Listeners{Activate: "startStore", Deactivate: "stopStore", BeforeDestroy: "stopStore"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"init": js.Func("view", `
@@ -32,7 +32,7 @@ var mountProfilesPanel = js.Panel{
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
 			let win = Ext.create("Ext.window.Window", {
-				title: isEdit ? Ext.String.format(gettext("Edit Profile '{0}'"), values["backup-type"] + "/" + values["backup-id"]) : gettext("Add Mount Profile"),
+				title: isEdit ? Ext.String.format(gettext("Edit Batch '{0}'"), values.namespace || gettext("root")) : gettext("Add Mount Batch"),
 				width: 480,
 				modal: true,
 				bodyPadding: 10,
@@ -51,28 +51,23 @@ var mountProfilesPanel = js.Panel{
 						valueField: "store",
 						allowBlank: false,
 						value: values.datastore,
+						listeners: {
+							change: (cb, v) => {
+								let win = cb.up("window");
+								let nsCombo = win.down("pbsNamespaceSelector[name=ns]");
+								if (nsCombo) {
+									nsCombo.setDatastore(v);
+								}
+							},
+						},
 					},
 					{
-						xtype: "proxmoxtextfield",
+						xtype: "pbsNamespaceSelector",
 						name: "ns",
-						fieldLabel: gettext("Namespace"),
-						emptyText: gettext("root"),
+						fieldLabel: gettext("Parent Namespace"),
+						datastore: values.datastore,
+						emptyText: gettext("root (all namespaces)"),
 						value: values.namespace,
-					},
-					{
-						xtype: "combobox",
-						name: "backup-type",
-						fieldLabel: gettext("Backup Type"),
-						store: [["host", "host"], ["vm", "vm"], ["ct", "ct"]],
-						allowBlank: false,
-						value: values["backup-type"] || "host",
-					},
-					{
-						xtype: "proxmoxtextfield",
-						name: "backup-id",
-						fieldLabel: gettext("Backup ID"),
-						allowBlank: false,
-						value: values["backup-id"],
 					},
 					{
 						xtype: "radiogroup",
@@ -81,15 +76,6 @@ var mountProfilesPanel = js.Panel{
 							{ boxLabel: gettext("Read-only"), name: "mode", inputValue: "ro", checked: !isEdit || values.mode === "ro" },
 							{ boxLabel: gettext("Read-write (commit-capable)"), name: "mode", inputValue: "rw", checked: values.mode === "rw" },
 						],
-					},
-					{
-						xtype: "combobox",
-						name: "backend",
-						fieldLabel: gettext("Backend"),
-						store: [["fuse", "FUSE"], ["nfs", "NFSv3"]],
-						value: values.backend || "fuse",
-						editable: false,
-						disabled: !!values.outpost,
 					},
 					{
 						xtype: "combobox",
@@ -109,7 +95,6 @@ var mountProfilesPanel = js.Panel{
 						listeners: {
 							change: (cb, v) => {
 								let win = cb.up("window");
-								win.down("combobox[name=backend]").setDisabled(!!v);
 								win.down("textfield[name=mount-path]").setDisabled(!!v);
 								win.down("textfield[name=share-name]").setDisabled(!v);
 							},
@@ -119,24 +104,24 @@ var mountProfilesPanel = js.Panel{
 						xtype: "proxmoxtextfield",
 						name: "share-name",
 						fieldLabel: gettext("Share Name"),
-						emptyText: gettext("Automatic"),
+						emptyText: gettext("Outpost name"),
 						value: values["share-name"],
 						disabled: !values.outpost,
 					},
 					{
 						xtype: "proxmoxtextfield",
 						name: "mount-path",
-						fieldLabel: gettext("Mount Path"),
+						fieldLabel: gettext("Local Root Path"),
 						emptyText: gettext("Automatic (under /mnt/pbs-plus-restores)"),
 						value: values["mount-path"],
 						disabled: !!values.outpost,
 					},
 					{
-						xtype: "proxmoxtextfield",
+						xtype: "pbsD2DCalendarEvent",
 						name: "schedule",
 						fieldLabel: gettext("Check Schedule"),
-						emptyText: gettext("Always (checked every 5 minutes)"),
-						value: values.schedule,
+						value: values.schedule || undefined,
+						editable: true,
 					},
 					{
 						xtype: "proxmoxcheckbox",
@@ -146,9 +131,17 @@ var mountProfilesPanel = js.Panel{
 						uncheckedValue: "0",
 						checked: !!values["auto-mount"],
 					},
+					{
+						xtype: "proxmoxcheckbox",
+						name: "replace",
+						fieldLabel: gettext("Replace on new snapshot"),
+						inputValue: "1",
+						uncheckedValue: "0",
+						checked: !isEdit || !!values.replace,
+					},
 						{
 							xtype: "displayfield",
-							value: gettext("The profile always mounts the newest snapshot of the group."),
+							value: gettext("Mounts the newest snapshot of every group under the parent namespace; each namespace appears as its own directory inside the share or root path."),
 						},
 					],
 				}],
@@ -164,15 +157,13 @@ var mountProfilesPanel = js.Panel{
 							let params = {
 								datastore: vals.datastore,
 								ns: vals.ns || "",
-								"backup-type": vals["backup-type"],
-								"backup-id": vals["backup-id"],
 								mode: vals.mode,
-								backend: vals.backend,
-									outpost: vals.outpost || "",
-									"share-name": vals["share-name"] || "",
+								outpost: vals.outpost || "",
+								"share-name": vals["share-name"] || "",
 								"mount-path": vals["mount-path"] || "",
 								"schedule": vals.schedule || "",
 								"auto-mount": vals["auto-mount"] === "1" ? 1 : 0,
+								"replace": vals["replace"] === "1" ? 1 : 0,
 							};
 							let url = "/api2/extjs/config/d2d-mount-profiles";
 							let method = "POST";
@@ -204,15 +195,20 @@ var mountProfilesPanel = js.Panel{
 		"edit": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			this.openEdit(view, rec);
 		`),
-		"editSelected": js.Func("view", `
-			let rec = view.getSelection()[0];
-			if (rec) this.openEdit(view, rec);
+		"editSelected": js.Func("btn", `
+			let view = this.getView();
+			let rec = view.getSelectionModel().getSelection()[0];
+			if (!rec) {
+				Ext.Msg.alert(gettext("Error"), gettext("Please select a profile."));
+				return;
+			}
+			this.openEdit(view, rec);
 		`),
 		"remove": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			let me = this;
 			Ext.Msg.confirm(
 				gettext("Confirm"),
-				Ext.String.format(gettext("Delete profile for '{0}/{1}'?"), rec.get("backup-type"), rec.get("backup-id")),
+				Ext.String.format(gettext("Delete batch '{0}'?"), rec.get("namespace") || gettext("root")),
 				(btn) => {
 					if (btn !== "yes") return;
 					PBS.PlusUtils.API2Request({
@@ -254,18 +250,14 @@ var mountProfilesPanel = js.Panel{
 	},
 	Columns: []js.Column{
 		{Text: "Datastore", DataIndex: "datastore", Width: 120},
-		{Text: "Namespace", DataIndex: "namespace", Width: 110, Renderer: js.Func("v", `return v ? Ext.String.htmlEncode(v) : "-";`)},
-		{Text: "Group", DataIndex: "backup-id", Flex: 1, Renderer: js.Func("v, meta, rec", `
-			return Ext.String.htmlEncode(rec.get("backup-type") + "/" + v);
-		`)},
+		{Text: "Parent NS", DataIndex: "namespace", Width: 110, Renderer: js.Func("v", `return v ? Ext.String.htmlEncode(v) : "-";`)},
 		{Text: "Mode", DataIndex: "mode", Width: 60, Renderer: js.Func("v", `
 			return v === "rw" ? "rw" : "ro";
 		`)},
-		{Text: "Backend", DataIndex: "backend", Width: 75, Renderer: js.Func("v", `return v === "nfs" ? "NFSv3" : "FUSE";`)},
-		{Text: "Target", DataIndex: "mount-path", Flex: 1, Renderer: js.Func("v, meta, rec", `
-			let outpost = rec.get("outpost");
-			if (outpost) return Ext.String.htmlEncode(outpost + "/" + (rec.get("share-name") || gettext("Automatic")));
-			return v ? Ext.String.htmlEncode(v) : gettext("Automatic");
+		{Text: "Target", DataIndex: "outpost", Flex: 1, Renderer: js.Func("v, meta, rec", `
+			if (v) return Ext.String.htmlEncode(v + "/" + (rec.get("share-name") || v));
+			let p = rec.get("mount-path");
+			return p ? Ext.String.htmlEncode(p) : gettext("Automatic local root");
 		`)},
 		{Text: "Schedule", DataIndex: "schedule", Width: 140, Renderer: js.Func("v", `
 			return v ? Ext.String.htmlEncode(v) : gettext("Always");
@@ -273,10 +265,13 @@ var mountProfilesPanel = js.Panel{
 		{Text: "Auto-mount", DataIndex: "auto-mount", Width: 90, Renderer: js.Func("v", `
 			return v ? '<i class="fa fa-check-circle"></i> ' + gettext("Yes") : gettext("No");
 		`)},
+		{Text: "Replace", DataIndex: "replace", Width: 70, Renderer: js.Func("v", `
+			return v ? '<i class="fa fa-check-circle"></i> ' + gettext("Yes") : gettext("No");
+		`)},
 		{XType: js.XActionColumn, Text: "Actions", DataIndex: "id", Width: 110, Items: js.Arr{
 			js.Obj{
 				"handler": "mountNow",
-				"tooltip": js.T("Mount the newest snapshot now"),
+				"tooltip": js.T("Mount the newest snapshots now"),
 				"getClass": js.Func("v, meta, rec", `
 					return "fa fa-fw fa-play";
 				`),

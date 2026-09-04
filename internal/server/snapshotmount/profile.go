@@ -13,29 +13,30 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/calendar"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
 type Profile struct {
-	Datastore  string `json:"datastore"`
-	Namespace  string `json:"namespace"`
-	BackupType string `json:"backup_type"`
-	BackupID   string `json:"backup_id"`
-	Mode       string `json:"mode"`
-	Backend    string `json:"backend,omitempty"`
-	Outpost    string `json:"outpost,omitempty"`
-	ShareName  string `json:"share_name,omitempty"`
-	MountPath  string `json:"mount_path"`
-	Schedule   string `json:"schedule"`
-	AutoMount  bool   `json:"auto_mount"`
-	CreatedAt  int64  `json:"created_at"`
-	UpdatedAt  int64  `json:"updated_at"`
+	Datastore string `json:"datastore"`
+	Namespace string `json:"namespace"` // parent namespace; "" = root
+	Mode      string `json:"mode"`
+	Outpost   string `json:"outpost,omitempty"` // "" = mount locally
+	ShareName string `json:"share_name,omitempty"`
+	MountPath string `json:"mount_path,omitempty"` // local batch root; empty = default base
+	Schedule  string `json:"schedule"`
+	AutoMount bool   `json:"auto_mount"`
+	Replace   bool   `json:"replace"` // replace a mounted snapshot when a newer latest appears
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
 }
 
 func (p Profile) ID() string {
-	return Key(p.Datastore, p.Namespace, p.BackupType, p.BackupID, "latest")
+	target := p.Outpost
+	if target == "" {
+		target = "local"
+	}
+	return Key(p.Datastore, p.Namespace, "batch", target, "profile")
 }
 
 func profilesDir() string { return filepath.Join(conf.StatePrefix, "mount-profiles") }
@@ -47,23 +48,17 @@ func ValidateProfile(p Profile) error {
 	if err := validate.ValidateNamespace(p.Namespace); err != nil {
 		return err
 	}
-	if err := validate.ValidateBackupType(p.BackupType); err != nil {
-		return err
-	}
-	if err := validate.ValidateBackupID(p.BackupID); err != nil {
-		return err
-	}
 	if p.Mode == "" {
 		p.Mode = ModeRO
 	}
 	if p.Mode != ModeRO && p.Mode != ModeRW {
 		return fmt.Errorf("invalid mode %q", p.Mode)
 	}
-	if p.Backend != "" && p.Backend != BackendFUSE && p.Backend != BackendNFS {
-		return fmt.Errorf("invalid backend %q", p.Backend)
-	}
 	if p.Outpost != "" && !outpost.IsValidName(p.Outpost) {
 		return fmt.Errorf("invalid outpost %q", p.Outpost)
+	}
+	if p.Outpost != "" && p.MountPath != "" {
+		return fmt.Errorf("mount path cannot be combined with an outpost")
 	}
 	if p.ShareName != "" {
 		if p.Outpost == "" {
@@ -142,17 +137,6 @@ func ListProfiles() ([]Profile, error) {
 		}
 	}
 	return profiles, nil
-}
-
-func LatestSnapshot(p Profile) (backupTime string, fileName string, err error) {
-	dsInfo, err := cli.GetDatastoreInfo(p.Datastore)
-	if err != nil {
-		return "", "", err
-	}
-	if dsInfo.Path == "" {
-		return "", "", fmt.Errorf("datastore %s has no path", p.Datastore)
-	}
-	return LatestSnapshotIn(dsInfo.Path, p.Namespace, p.BackupType, p.BackupID)
 }
 
 func LatestSnapshotIn(storeRoot, ns, backupType, backupID string) (string, string, error) {

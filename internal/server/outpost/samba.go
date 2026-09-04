@@ -136,6 +136,24 @@ func (s *sambaInstance) Attach(a Attachment) error {
 	return nil
 }
 
+// AttachSub ensures the shared share exists at the outpost root path; the
+// per-sub FUSE mounts underneath are managed by the caller.
+func (s *sambaInstance) AttachSub(share, sub string, a Attachment) error {
+	s.mu.Lock()
+	existing, ok := s.shares[share]
+	s.mu.Unlock()
+	if ok {
+		if existing.Path != a.Path {
+			return fmt.Errorf("share %q on outpost %q is already attached to %s", share, s.name, existing.Path)
+		}
+		return nil
+	}
+	return s.Attach(a)
+}
+
+// DetachSub is a no-op: the share stays until the last mount detaches it.
+func (s *sambaInstance) DetachSub(share, sub string) {}
+
 func (s *sambaInstance) Detach(name string) error {
 	s.mu.Lock()
 	_, ok := s.shares[name]

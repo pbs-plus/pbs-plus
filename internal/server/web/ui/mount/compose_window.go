@@ -29,7 +29,7 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 			let me = this;
 			let view = me.getView();
 			let tree = me.lookup("tree");
-			let sel = tree.getSelection();
+			let sel = tree.getView().getSelection();
 			if (!sel || sel.length < 1) {
 				Ext.Msg.alert(gettext("Error"), gettext("Select at least one file or directory."));
 				return;

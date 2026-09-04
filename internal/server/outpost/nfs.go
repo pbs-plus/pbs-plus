@@ -108,6 +108,38 @@ func (i *nfsInstance) Attach(a Attachment) error {
 	return nil
 }
 
+// AttachSub registers fs as the sub directory of the shared export share,
+// creating the share (backed by a composite dirFS) on first use. Children are
+// file-id-prefixed here because the composite itself is not wrapped again.
+func (i *nfsInstance) AttachSub(share, sub string, a Attachment) error {
+	if a.FS == nil {
+		return fmt.Errorf("shared nfs mounts need a filesystem")
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	root, ok := i.shares[share]
+	if !ok {
+		root = newDirFS()
+		i.shares[share] = root
+	}
+	d, ok := root.(*dirFS)
+	if !ok {
+		return fmt.Errorf("share %q already carries a single mount", share)
+	}
+	return d.add(sub, newUniqueInoFS(a.FS, nextUniqueInoSeq()))
+}
+
+// DetachSub drops the sub directory mount and the whole share once empty.
+func (i *nfsInstance) DetachSub(share, sub string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if d, ok := i.shares[share].(*dirFS); ok {
+		if d.remove(sub) == 0 {
+			delete(i.shares, share)
+		}
+	}
+}
+
 // Detach drops the share; handles issued for it resolve to ESTALE on next
 // use, the correct NFS semantic for a removed export.
 func (i *nfsInstance) Detach(name string) error {

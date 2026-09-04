@@ -474,7 +474,7 @@ func (d *Store) StartActivity(ctx context.Context, executionID, owner string, at
 		if err != nil {
 			return fmt.Errorf("getting workflow execution: %w", err)
 		}
-		if execution.State != StateRunning || fromNullString(execution.LeaseOwner) != owner || execution.Attempt != int64(attempt) || fromNullTime(execution.LeaseUntil).Before(time.Now()) {
+		if execution.State != StateRunning || fromNullString(execution.LeaseOwner) != owner || execution.Attempt != int64(attempt) || fromNullTime(execution.LeaseUntil).Before(now) {
 			return ErrNotFound
 		}
 		row, err := q.GetActivity(ctx, jobquery.GetActivityParams{ExecutionID: executionID, Name: name})
@@ -523,6 +523,7 @@ func (d *Store) StartActivity(ctx context.Context, executionID, owner string, at
 			Name:        name,
 			LeaseOwner:  nullString(owner),
 			Attempt:     int64(attempt),
+			LeaseUntil:  nullInt64(now.Unix()),
 		})
 		if err != nil {
 			return fmt.Errorf("starting activity: %w", err)
@@ -576,6 +577,7 @@ func (d *Store) CompleteActivity(ctx context.Context, executionID, owner string,
 			Name:        name,
 			LeaseOwner:  nullString(owner),
 			Attempt:     int64(attempt),
+			LeaseUntil:  nullInt64(now.Unix()),
 		})
 		if err != nil {
 			return fmt.Errorf("completing activity: %w", err)

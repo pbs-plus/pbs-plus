@@ -277,39 +277,77 @@ else
 	fail "remount unmount rejected: $(body_of "$RESP")"
 fi
 
-section "PHASE 4: Mount profiles"
+section "PHASE 4: Batch mount profiles"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles" \
-	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-backup-job" \
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" \
 	-d "mode=ro" -d "auto-mount=0" -d "schedule=not a schedule")
 CODE=$(code_of "$RESP")
 [ "$CODE" = "400" ] && ok "invalid schedule rejected" || fail "invalid schedule accepted (HTTP $CODE)"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles" \
-	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-backup-job" \
-	-d "mode=ro" -d "auto-mount=0" -d "schedule=02:00")
-submit_ok "$RESP" && ok "profile created" || fail "profile create rejected: $(body_of "$RESP")"
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "mode=ro" \
+	-d "share-name=batch-share" -d "auto-mount=0" -d "schedule=02:00")
+CODE=$(code_of "$RESP")
+[ "$CODE" = "400" ] && ok "share name without outpost rejected" || fail "share name without outpost accepted (HTTP $CODE)"
+
+RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles" \
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "mode=ro" \
+	-d "auto-mount=0" -d "replace=1" -d "schedule=02:00")
+submit_ok "$RESP" && ok "batch profile created" || fail "profile create rejected: $(body_of "$RESP")"
 
 PROFILE_ID=$(curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles" \
-	| jq -r --arg id "$DATASTORE" '.data[]? | select(.datastore==$id) | .id' | head -1)
+	| jq -r --arg ds "$DATASTORE" --arg ns "$NAMESPACE" \
+		'.data[]? | select(.datastore==$ds and .namespace==$ns) | .id' | head -1)
 [ -n "$PROFILE_ID" ] && ok "profile listed: $PROFILE_ID" || die "profile not listed"
+
+RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles" \
+	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "mode=ro" -d "auto-mount=0" -d "schedule=02:00")
+if submit_ok "$RESP"; then
+	fail "duplicate batch profile accepted"
+else
+	ok "duplicate batch profile rejected"
+fi
 
 RESP=$(req -X PUT "$PBS_API/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID" \
 	-H "Content-Type: application/x-www-form-urlencoded" \
-	-d "datastore=$DATASTORE" -d "ns=$NAMESPACE" -d "backup-type=host" -d "backup-id=test-backup-job" \
-	-d "mode=ro" -d "auto-mount=0" -d "schedule=*:00/30")
+	-d "mode=ro" -d "auto-mount=0" -d "replace=0" -d "schedule=*:00/30")
 submit_ok "$RESP" && ok "profile updated" || fail "profile update rejected: $(body_of "$RESP")"
+
+UPDATED=$(curl -k -s "$PBS_API/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID")
+[ "$(jq -r '.data.datastore' <<<"$UPDATED")" = "$DATASTORE" ] \
+	&& [ "$(jq -r '.data.namespace' <<<"$UPDATED")" = "$NAMESPACE" ] \
+	&& [ "$(jq -r '.data.schedule' <<<"$UPDATED")" = "*:00/30" ] \
+	&& [ "$(jq -r '.data.replace' <<<"$UPDATED")" = "false" ] \
+	&& ok "partial update kept target, applied schedule and replace" \
+	|| fail "partial update lost fields: $UPDATED"
 
 RESP=$(api_post "/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID/mount")
 submit_ok "$RESP" && ok "mount-now accepted" || fail "mount-now rejected: $(body_of "$RESP")"
 
-LATEST=$(latest_snapshot "$HOST_DIR")
-PROFILE_MP="$MOUNT_BASE/$DATASTORE/$NAMESPACE/host-test-backup-job/$LATEST"
-wait_for "profile auto-mounted latest snapshot" 240 session_mounted "$PROFILE_MP" || true
+BATCH_MP="$MOUNT_BASE/$DATASTORE/host-test-backup-job"
+BATCH_INIT_MP="$MOUNT_BASE/$DATASTORE/host-e2e-init"
+wait_for "batch mounted backup group at stable path" 240 session_mounted "$BATCH_MP" || true
+wait_for "batch mounted second group in the namespace" 240 session_mounted "$BATCH_INIT_MP" || true
 
-RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$PROFILE_MP" -d "force=1")
-submit_ok "$RESP" && ok "profile mount unmounted" || fail "profile mount unmount rejected: $(body_of "$RESP")"
-wait_for "profile session unmounted" 120 session_gone "$PROFILE_MP" || true
+[ "$(sessions_field --arg id "$PROFILE_ID" --arg mp "$BATCH_MP" \
+	'.data[]? | select(.["mount-point"]==$mp) | .profile' | head -1)" = "$PROFILE_ID" ] \
+	&& ok "batch session owned by the profile" || fail "batch session missing profile owner"
+
+BATCH_LATEST=$(latest_snapshot "$HOST_DIR")
+BATCH_TIME=$(sessions_field --arg mp "$BATCH_MP" \
+	'.data[]? | select(.["mount-point"]==$mp) | .["backup-time"]' | head -1)
+if [ "$BATCH_TIME" = "$BATCH_LATEST" ]; then
+	ok "batch mount points at the latest snapshot"
+else
+	fail "batch mount is at $BATCH_TIME, want latest $BATCH_LATEST"
+fi
+
+for MP in $(sessions_field --arg id "$PROFILE_ID" '.data[]? | select(.profile==$id) | .["mount-point"]'); do
+	RESP=$(api_post "/api2/extjs/config/d2d-unmount/$ENC_DS" -d "mount-path=$MP" -d "force=1")
+	submit_ok "$RESP" || fail "profile mount unmount rejected: $(body_of "$RESP")"
+	wait_for "profile session unmounted: $MP" 120 session_gone "$MP" || true
+done
 
 RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-mount-profiles/$PROFILE_ID")
 CODE=$(code_of "$RESP")

@@ -263,6 +263,9 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	if mode != ModeRO && mode != ModeRW {
 		return Session{}, fmt.Errorf("invalid mode %q", mode)
 	}
+	if err := ValidateSubPath(in.SubPath); err != nil {
+		return Session{}, err
+	}
 	if in.Outpost != "" {
 		return mountOutpostSession(ctx, task, in, parsedTime, key, mode)
 	}
@@ -284,7 +287,10 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 
 	mountPoint := in.MountPath
 	managed := false
-	if mountPoint == "" {
+	if mountPoint == "" && in.SubPath != "" {
+		mountPoint = filepath.Join(conf.RestoreMountBasePath, in.Datastore, in.SubPath)
+		managed = true
+	} else if mountPoint == "" {
 		mountPoint = DefaultMountPoint(in.Datastore, in.Namespace, in.BackupType, in.BackupID, parsedTime)
 		managed = true
 		if err := validatePath(mountPoint, conf.RestoreMountBasePath); err != nil {
@@ -303,6 +309,8 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 		FileName:   in.FileName,
 		Mode:       mode,
 		Backend:    backend,
+		SubPath:    in.SubPath,
+		Profile:    in.Profile,
 		MountPoint: mountPoint,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -494,10 +502,20 @@ func resolveSession(in jobs.SnapshotUnmountInput) (Session, string, error) {
 }
 
 func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
+	if session.Profile != "" && in.Reason == "" {
+		RecordProfileSkip(session)
+	}
 	task.LogString("unmounting " + session.MountPoint)
 
 	if session.Outpost != "" && session.ShareName != "" {
-		outpost.Detach(session.Outpost, session.ShareName)
+		if session.SubPath == "" {
+			outpost.Detach(session.Outpost, session.ShareName)
+		} else {
+			outpost.DetachSub(session.Outpost, session.ShareName, session.SubPath)
+			if !sharedShareInUse(session) {
+				outpost.Detach(session.Outpost, session.ShareName)
+			}
+		}
 	}
 	if session.ServiceKey != "" {
 		if err := systemd.StopMountService(ctx, session.ServiceName()); err != nil {

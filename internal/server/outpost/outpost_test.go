@@ -226,3 +226,56 @@ func TestValidateShareName(t *testing.T) {
 		}
 	}
 }
+
+func TestDirFSComposite(t *testing.T) {
+	d := newDirFS()
+	a := memfs.New()
+	f, err := a.Create("f.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if err := d.add("1988-PROJECTS", a); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.add("1990-PROJECTS/ns2", memfs.New()); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := d.ReadDir("/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, e := range root {
+		names[e.Name()] = true
+	}
+	if !names["1988-PROJECTS"] || !names["1990-PROJECTS"] {
+		t.Fatalf("root listing missing synthetic dirs: %v", names)
+	}
+	sub, err := d.ReadDir("/1990-PROJECTS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sub) != 1 || sub[0].Name() != "ns2" {
+		t.Fatalf("nested synthetic listing wrong: %v", sub)
+	}
+	if fi, err := d.Stat("/1988-PROJECTS/f.txt"); err != nil || fi.Name() != "f.txt" {
+		t.Fatalf("child stat failed: %v %v", fi, err)
+	}
+	if _, err := d.Stat("/1990-PROJECTS/f.txt"); err == nil {
+		t.Fatal("stat leaked into wrong child")
+	}
+	if _, err := d.Stat("/nope"); err == nil {
+		t.Fatal("stat of missing path succeeded")
+	}
+	if _, err := d.Open("/1988-PROJECTS/f.txt"); err != nil {
+		t.Fatalf("child open failed: %v", err)
+	}
+	if d.remove("1990-PROJECTS/ns2") != 1 {
+		t.Fatal("remove left wrong count")
+	}
+	if _, err := d.Stat("/1990-PROJECTS"); err == nil {
+		t.Fatal("empty synthetic parent survived")
+	}
+}

@@ -167,7 +167,7 @@ WHERE execution_id = ? AND name = ? AND state IN ('pending', 'running')
       AND state = 'running'
       AND lease_owner = ?
       AND job_executions.attempt = ?
-      AND lease_until >= unixepoch()
+      AND lease_until >= ?
   );
 
 -- name: CheckpointActivity :execrows
@@ -195,7 +195,7 @@ WHERE execution_id = ? AND name = ? AND state = 'running'
       AND state = 'running'
       AND lease_owner = ?
       AND job_executions.attempt = ?
-      AND lease_until >= unixepoch()
+      AND lease_until >= ?
   );
 
 -- name: InvalidateActivity :execrows

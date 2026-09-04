@@ -3,106 +3,21 @@
 package snapshotmount
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
-func sess(backupTime, mode, mountPoint string) Session {
-	parsed, _ := time.Parse(time.RFC3339, backupTime)
-	return Session{
-		Datastore: "ds1", Namespace: "", BackupType: "host", BackupID: "id1",
-		BackupTime: backupTime, Mode: mode, MountPoint: mountPoint,
-		ServiceKey: Key("ds1", "", "host", "id1", parsed.Format("2006-01-02_15-04-05")),
-	}
-}
-
-func defaultPath(s Session) string {
-	parsed, _ := time.Parse(time.RFC3339, s.BackupTime)
-	return DefaultMountPoint(s.Datastore, s.Namespace, s.BackupType, s.BackupID, parsed)
-}
-
-func TestDecideRemount(t *testing.T) {
-	oldSnap := "2026-01-01T00:00:00Z"
-	newSnap := "2026-02-01T00:00:00Z"
-	freshSnap := "2026-02-01T00:00:01Z"
-	staleRO := sess(oldSnap, ModeRO, "")
-	freshRO := sess(newSnap, ModeRO, "")
-	rwSession := sess(newSnap, ModeRW, "")
-
-	cases := []struct {
-		name     string
-		profile  Profile
-		sessions []Session
-		latest   string
-		want     remountAction
-	}{
-		{"no session mounts", Profile{Mode: ModeRO}, nil, newSnap, remountMount},
-		{"stale ro remounts", Profile{Mode: ModeRO}, []Session{staleRO}, newSnap, remountUnmount},
-		{"fresh ro stays", Profile{Mode: ModeRO}, []Session{freshRO}, newSnap, remountNone},
-		{"rw session skips", Profile{Mode: ModeRO}, []Session{rwSession}, freshSnap, remountSkipRW},
-		{
-			"newest of several default-path sessions decides",
-			Profile{Mode: ModeRO},
-			[]Session{staleRO, sess(oldSnap, ModeRO, "")},
-			newSnap,
-			remountUnmount,
-		},
-		{
-			"custom profile path ignores other default mounts",
-			Profile{Mode: ModeRO, MountPath: "/mnt/pinned"},
-			[]Session{staleRO},
-			newSnap,
-			remountMount,
-		},
-		{
-			"custom profile path stale remounts",
-			Profile{Mode: ModeRO, MountPath: "/mnt/pinned"},
-			[]Session{sess(oldSnap, ModeRO, "/mnt/pinned")},
-			newSnap,
-			remountUnmount,
-		},
-		{
-			"custom profile path fresh stays",
-			Profile{Mode: ModeRO, MountPath: "/mnt/pinned"},
-			[]Session{sess(newSnap, ModeRO, "/mnt/pinned")},
-			newSnap,
-			remountNone,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			sessions := make([]Session, len(c.sessions))
-			copy(sessions, c.sessions)
-			for i := range sessions {
-				if sessions[i].MountPoint == "" {
-					sessions[i].MountPoint = defaultPath(sessions[i])
-				}
-			}
-			latest, err := time.Parse(time.RFC3339, c.latest)
-			if err != nil {
-				t.Fatal(err)
-			}
-			action, target := decideRemount(c.profile, sessions, latest)
-			if action != c.want {
-				t.Fatalf("action = %d, want %d", action, c.want)
-			}
-			if action == remountUnmount && target.MountPoint == "" {
-				t.Fatal("unmount action without target session")
-			}
-		})
-	}
-}
-
 func TestGroupKeyOfCollidesOnlyOnSameGroup(t *testing.T) {
-	a := groupKeyOf("ds1", "ns", "host", "id1")
-	if a != groupKeyOf("ds1", "ns", "host", "id1") {
+	a := groupKeyOf("ns", "host", "id1")
+	if a != groupKeyOf("ns", "host", "id1") {
 		t.Fatal("same group produced different keys")
 	}
 	for _, other := range []string{
-		groupKeyOf("ds2", "ns", "host", "id1"),
-		groupKeyOf("ds1", "ns2", "host", "id1"),
-		groupKeyOf("ds1", "ns", "vm", "id1"),
-		groupKeyOf("ds1", "ns", "host", "id2"),
+		groupKeyOf("ns2", "host", "id1"),
+		groupKeyOf("ns", "vm", "id1"),
+		groupKeyOf("ns", "host", "id2"),
 	} {
 		if a == other {
 			t.Fatal("different groups produced same key")
@@ -126,7 +41,7 @@ func TestFollowGateDue(t *testing.T) {
 		t.Fatal("unparseable schedule falls back to always due")
 	}
 
-	p := Profile{Datastore: "ds1", BackupType: "host", BackupID: "id1", Schedule: "02:00"}
+	p := Profile{Datastore: "ds1", Namespace: "ns", Schedule: "02:00"}
 	if gate.due(p, tick) {
 		t.Fatal("first tick before any event since ref should not be due")
 	}
@@ -143,5 +58,84 @@ func TestFollowGateDue(t *testing.T) {
 	}
 	if !gate.due(p, next.Add(25*time.Hour)) {
 		t.Fatal("next day event must fire")
+	}
+}
+
+func TestPlanBatchSubPaths(t *testing.T) {
+	groups := []NamespaceGroup{
+		{Namespace: "", BackupType: "host", BackupID: "root-host"},
+		{Namespace: "1988-PROJECTS", BackupType: "host", BackupID: "x"},
+		{Namespace: "1990-PROJECTS", BackupType: "host", BackupID: "x"},
+		{Namespace: "1990-PROJECTS", BackupType: "ct", BackupID: "y"},
+		{Namespace: "1990-PROJECTS/inner", BackupType: "host", BackupID: "x"},
+	}
+	subs := planBatch(groups, "")
+
+	want := map[string]string{
+		groupKeyOf("", "host", "root-host"):            "host-root-host",
+		groupKeyOf("1988-PROJECTS", "host", "x"):       "1988-PROJECTS",
+		groupKeyOf("1990-PROJECTS", "host", "x"):       "1990-PROJECTS/host-x",
+		groupKeyOf("1990-PROJECTS", "ct", "y"):         "1990-PROJECTS/ct-y",
+		groupKeyOf("1990-PROJECTS/inner", "host", "x"): "1990-PROJECTS/inner",
+	}
+	for k, want := range want {
+		if subs[k] != want {
+			t.Errorf("sub[%s] = %q, want %q", k, subs[k], want)
+		}
+	}
+
+	subs = planBatch([]NamespaceGroup{{Namespace: "parent/child", BackupType: "host", BackupID: "x"}}, "parent")
+	if s := subs[groupKeyOf("parent/child", "host", "x")]; s != "child" {
+		t.Fatalf("relative sub = %q, want child", s)
+	}
+}
+
+func TestListNamespaceGroups(t *testing.T) {
+	root := t.TempDir()
+	mkdir := func(parts ...string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(append([]string{root}, parts...)...), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkdir("host", "live-id", "2026-01-01T00:00:00Z")
+	mkdir("ns", "1988-PROJECTS", "host", "xmedia", "2026-01-02T00:00:00Z")
+	mkdir("ns", "1988-PROJECTS", "ns", "inner", "host", "x", "2026-01-03T00:00:00Z")
+	mkdir("ns", "empty-ns")
+	mkdir("ns", "no-snaps", "host", "gone")
+
+	groups, err := ListNamespaceGroups(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, g := range groups {
+		got[g.Namespace+"\x00"+g.BackupType+"\x00"+g.BackupID] = true
+	}
+	for _, want := range []string{
+		"\x00host\x00live-id",
+		"1988-PROJECTS\x00host\x00xmedia",
+		"1988-PROJECTS/inner\x00host\x00x",
+	} {
+		if !got[want] {
+			t.Errorf("missing group %q in %v", want, got)
+		}
+	}
+	if len(groups) != 3 {
+		t.Fatalf("groups = %+v", groups)
+	}
+
+	if _, err := ListNamespaceGroups(root, "1988-PROJECTS"); err != nil {
+		t.Fatal(err)
+	}
+	groups, err = ListNamespaceGroups(root, "1988-PROJECTS")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("scoped groups = %+v", groups)
+	}
+	if _, err := ListNamespaceGroups(root, "missing"); err == nil {
+		t.Fatal("missing namespace accepted")
 	}
 }

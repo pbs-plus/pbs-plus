@@ -33,7 +33,7 @@ var outpostsPanel = js.Panel{
 		`),
 		"editSelected": js.Func("", `
 			let view = this.getView();
-			let rec = view.getSelection()[0];
+			let rec = view.getSelectionModel().getSelection()[0];
 			if (!rec) {
 				Ext.Msg.alert(gettext("Error"), gettext("Please select an outpost."));
 				return;
