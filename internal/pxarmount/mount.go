@@ -14,89 +14,128 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// It blocks until the process receives SIGINT/SIGTERM.
-func Serve(cfg MountConfig) {
-	reader, _ := cfg.Reader.(*transfer.SplitReader)
+// Stack is a snapshot filesystem built for serving without mounting it.
+type Stack struct {
+	Raw  fuse.RawFileSystem
+	MFS  *MutableFS
+	Sock net.Listener
+
+	journal *Journal
+}
+
+// BuildStack constructs the PxarFS (MutableFS-wrapped for writable mounts)
+// described by cfg; the caller owns the result and must Close it.
+func BuildStack(cfg MountConfig) (*Stack, error) {
+	reader, ok := cfg.Reader.(*transfer.SplitReader)
+	if !ok || reader == nil {
+		return nil, fmt.Errorf("mount config requires a *transfer.SplitReader reader")
+	}
 	pxarFS, err := NewPxarFS(reader)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  ✗ error creating pxar FS: %v\n", err)
-		os.Exit(1)
+		return nil, fmt.Errorf("creating pxar FS: %w", err)
 	}
 	pxarFS.SetVerbose(cfg.Verbose)
+
+	stack := &Stack{Raw: pxarFS}
 
 	backingDir := cfg.BackingDir
 	if backingDir == "" && cfg.InitMode {
 		backingDir = cfg.MountPoint + ".backing"
 	}
+	if backingDir == "" {
+		return stack, nil
+	}
 
-	mutationMode := backingDir != ""
-	var rawFS fuse.RawFileSystem = pxarFS
-	var mfs *MutableFS
-	var sockListener net.Listener
+	if err := os.MkdirAll(backingDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating backing dir: %w", err)
+	}
 
-	if mutationMode {
-		if err := os.MkdirAll(backingDir, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ error creating backing dir: %v\n", err)
-			os.Exit(1)
+	journalDir := filepath.Join(backingDir, JournalDir)
+	journal, err := OpenJournal(journalDir)
+	if err != nil {
+		return nil, fmt.Errorf("opening journal: %w", err)
+	}
+
+	if cfg.Verbose {
+		fmt.Fprintf(os.Stderr, "  mutation mode, journal in %s\n", journalDir)
+	}
+
+	mfs := NewMutableFS(pxarFS, journal, backingDir)
+
+	origSnap := ParseOrigSnapshot(cfg.PBSStore, cfg.OrigPpxarDidx)
+	if cfg.InitMode {
+		origSnap = SnapshotRefForInit(cfg.Namespace)
+	}
+
+	mfs.SetSnapshotRef(origSnap)
+	mfs.SetACLConfig(cfg.ACL)
+	mfs.SetStorePaths(cfg.PBSStore, cfg.OrigPpxarDidx)
+	mfs.SetVerbose(cfg.Verbose)
+
+	if err := mfs.InitMutableRoot(); err != nil {
+		if err := journal.Close(); err != nil {
+			log.Error(err, "")
 		}
+		return nil, fmt.Errorf("initializing mutable root: %w", err)
+	}
 
-		journalDir := filepath.Join(backingDir, JournalDir)
-		journal, err := OpenJournal(journalDir)
+	if err := mfs.ReconcileMutableDir(); err != nil && cfg.Verbose {
+		fmt.Fprintf(os.Stderr, "  warning: reconcile error: %v\n", err)
+	}
+
+	mfs.applyACLOwnership(backingDir)
+
+	mfs.mapInode(RootInode, "/")
+
+	stack.Raw = mfs
+	stack.MFS = mfs
+	stack.journal = journal
+
+	if cfg.SocketPath != "" {
+		l, err := StartCommitListener(cfg.SocketPath, mfs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ error opening journal: %v\n", err)
-			os.Exit(1)
+			stack.Close()
+			return nil, fmt.Errorf("starting commit listener: %w", err)
 		}
-		defer func() {
-			if err := journal.Close(); err != nil {
-				log.Error(err, "")
-			}
-		}()
-
+		stack.Sock = l
 		if cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "  mutation mode, journal in %s\n", journalDir)
-		}
-
-		mfs = NewMutableFS(pxarFS, journal, backingDir)
-
-		origSnap := ParseOrigSnapshot(cfg.PBSStore, cfg.OrigPpxarDidx)
-		if cfg.InitMode {
-			origSnap = SnapshotRefForInit(cfg.Namespace)
-		}
-
-		mfs.SetSnapshotRef(origSnap)
-		mfs.SetACLConfig(cfg.ACL)
-		mfs.SetStorePaths(cfg.PBSStore, cfg.OrigPpxarDidx)
-		mfs.SetVerbose(cfg.Verbose)
-
-		if err := mfs.InitMutableRoot(); err != nil {
-			fmt.Fprintf(os.Stderr, "  ✗ error initializing mutable root: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Reconcile orphan disk entries with journal on startup.
-		if err := mfs.ReconcileMutableDir(); err != nil && cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "  warning: reconcile error: %v\n", err)
-		}
-
-		mfs.applyACLOwnership(backingDir)
-
-		// Map root inode.
-		mfs.mapInode(RootInode, "/")
-
-		rawFS = mfs
-
-		if cfg.SocketPath != "" {
-			l, err := StartCommitListener(cfg.SocketPath, mfs)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "  ✗ error starting socket listener: %v\n", err)
-				os.Exit(1)
-			}
-			sockListener = l
-			if cfg.Verbose {
-				fmt.Fprintf(os.Stderr, "  listening for commits on %s\n", cfg.SocketPath)
-			}
+			fmt.Fprintf(os.Stderr, "  listening for commits on %s\n", cfg.SocketPath)
 		}
 	}
+
+	return stack, nil
+}
+
+// Close releases the commit listener, overlay, and journal; safe to call twice.
+func (s *Stack) Close() {
+	if s.Sock != nil {
+		if err := s.Sock.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}
+	if s.MFS != nil {
+		s.MFS.Close()
+	}
+	if s.journal != nil {
+		if err := s.journal.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}
+}
+
+// Serve mounts the snapshot and blocks until SIGINT/SIGTERM.
+func Serve(cfg MountConfig) {
+	stack, err := BuildStack(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "   error building mount stack: %v\n", err)
+		os.Exit(1)
+	}
+	defer stack.Close()
+
+	mfs := stack.MFS
+	mutationMode := mfs != nil
+	var rawFS fuse.RawFileSystem = stack.Raw
+	var sockListener net.Listener = stack.Sock
 
 	if cfg.NFS {
 		serveNFS(cfg, rawFS, mfs, sockListener, !mutationMode)
