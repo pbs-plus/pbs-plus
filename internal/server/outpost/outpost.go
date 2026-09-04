@@ -24,7 +24,9 @@ import (
 )
 
 const (
-	TypeNFS = "nfs"
+	TypeNFS     = "nfs"
+	TypeGanesha = "ganesha"
+	TypeSamba   = "samba"
 )
 
 // Outpost is the persisted configuration of one serving endpoint.
@@ -32,16 +34,16 @@ type Outpost struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`
 	ListenAddr string `json:"listen_addr,omitempty"`
+	Sectype    string `json:"sectype,omitempty"`
 	CreatedAt  int64  `json:"created_at"`
 }
 
-// Attachment is a mount served through an outpost instance. Name is the
-// share name clients address it by; Release frees the underlying stack and
-// is owned by the manager.
+// Attachment is a share served by an outpost: FS serves in process (nfs driver), Path backs VFS drivers (ganesha, samba).
 type Attachment struct {
 	Name     string
 	ReadOnly bool
 	FS       billy.Filesystem
+	Path     string
 	Release  func()
 }
 
@@ -63,7 +65,9 @@ type Instance interface {
 
 // drivers registers the available outpost types.
 var drivers = map[string]Driver{
-	TypeNFS: nfsDriver{},
+	TypeNFS:     nfsDriver{},
+	TypeGanesha: ganeshaDriver{},
+	TypeSamba:   sambaDriver{},
 }
 
 func DriverTypes() []string {
@@ -277,8 +281,8 @@ func EndpointOf(outpostName, share string) string {
 }
 
 func Attach(outpostName string, a Attachment) error {
-	if a.Name == "" || a.FS == nil {
-		return fmt.Errorf("attachment needs a name and filesystem")
+	if a.Name == "" || (a.FS == nil && a.Path == "") {
+		return fmt.Errorf("attachment needs a name and a filesystem or path")
 	}
 	mgr.mu.RLock()
 	inst := mgr.instances[outpostName]
