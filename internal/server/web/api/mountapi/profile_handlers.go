@@ -24,6 +24,7 @@ type profileView struct {
 	BackupID   string `json:"backup-id"`
 	Mode       string `json:"mode"`
 	Backend    string `json:"backend"`
+	Outpost    string `json:"outpost"`
 	MountPath  string `json:"mount-path"`
 	Schedule   string `json:"schedule"`
 	AutoMount  bool   `json:"auto-mount"`
@@ -38,6 +39,7 @@ func toProfileView(p snapshotmount.Profile) profileView {
 		BackupID:   p.BackupID,
 		Mode:       p.Mode,
 		Backend:    p.Backend,
+		Outpost:    p.Outpost,
 		MountPath:  p.MountPath,
 		Schedule:   p.Schedule,
 		AutoMount:  p.AutoMount,
@@ -56,6 +58,7 @@ func profileFormValues(r *http.Request) snapshotmount.Profile {
 		BackupID:   strings.TrimSpace(r.FormValue("backup-id")),
 		Mode:       mode,
 		Backend:    strings.TrimSpace(r.FormValue("backend")),
+		Outpost:    strings.TrimSpace(r.FormValue("outpost")),
 		MountPath:  strings.TrimSpace(r.FormValue("mount-path")),
 		Schedule:   strings.TrimSpace(r.FormValue("schedule")),
 		AutoMount:  r.FormValue("auto-mount") == "1" || r.FormValue("auto-mount") == "true",

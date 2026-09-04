@@ -73,6 +73,8 @@ func TestValidateProfile(t *testing.T) {
 		{func(p *Profile) { p.Mode = "readwrite" }, false},
 		{func(p *Profile) { p.Backend = BackendNFS }, true},
 		{func(p *Profile) { p.Backend = "smb" }, false},
+		{func(p *Profile) { p.Outpost = "edge-nfs" }, true},
+		{func(p *Profile) { p.Outpost = "Bad_Name" }, false},
 		{func(p *Profile) { p.MountPath = "/mnt/x" }, true},
 		{func(p *Profile) { p.MountPath = "/var/x" }, false},
 		{func(p *Profile) { p.Schedule = "mon..fri 02:00" }, true},

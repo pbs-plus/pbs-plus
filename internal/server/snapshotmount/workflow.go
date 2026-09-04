@@ -502,12 +502,9 @@ func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Sessi
 }
 
 func runCommit(ctx context.Context, in jobs.SnapshotCommitInput) error {
-	session, found, err := FindSessionByMountPoint(in.MountPath)
+	session, err := resolveCommitSession(in)
 	if err != nil {
 		return jobs.NonRetryable(err)
-	}
-	if !found {
-		return jobs.NonRetryable(fmt.Errorf("no mount session at %s", in.MountPath))
 	}
 	if !session.CommitCapable() {
 		return jobs.NonRetryable(fmt.Errorf("mount at %s is not commit-capable (read-only or offline)", in.MountPath))
@@ -529,6 +526,24 @@ func runCommit(ctx context.Context, in jobs.SnapshotCommitInput) error {
 	task.LogString(fmt.Sprintf("committed %s/%s", session.BackupType, session.BackupID))
 	task.CloseOK()
 	return nil
+}
+
+func resolveCommitSession(in jobs.SnapshotCommitInput) (Session, error) {
+	if in.MountPath != "" {
+		session, found, err := FindSessionByMountPoint(in.MountPath)
+		if err != nil {
+			return Session{}, err
+		}
+		if !found {
+			return Session{}, fmt.Errorf("no mount session at %s", in.MountPath)
+		}
+		return session, nil
+	}
+	parsedTime, err := time.Parse(time.RFC3339, in.BackupTime)
+	if err != nil {
+		return Session{}, fmt.Errorf("invalid backup-time format: %w", err)
+	}
+	return LoadSession(Key(in.Datastore, in.Namespace, in.BackupType, in.BackupID, DirTime(parsedTime)))
 }
 
 func commitSession(ctx context.Context, task *tasklog.WorkerTask, session Session) error {
