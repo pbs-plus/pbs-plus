@@ -41,11 +41,11 @@ var runNet = func(args ...string) error {
 	return nil
 }
 
-// sambaList splits a comma separated smb.conf value into trimmed entries.
 func sambaList(s string) []string {
 	var out []string
-	for _, part := range strings.Split(s, ",") {
-		if part = strings.TrimSpace(part); part != "" {
+	for part := range strings.SplitSeq(s, ",") {
+		part = strings.ReplaceAll(strings.TrimSpace(part), "\\\\", "\\")
+		if part != "" {
 			out = append(out, part)
 		}
 	}

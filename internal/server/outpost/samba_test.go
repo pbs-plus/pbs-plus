@@ -223,6 +223,17 @@ func TestSambaShareStanzaAppliesAccessPolicy(t *testing.T) {
 	}
 }
 
+func TestSambaShareStanzaCollapsesDoubledBackslashes(t *testing.T) {
+	got := sambaShareStanza(Outpost{ValidUsers: `@SGL-LAN\\it`}, Attachment{Name: "s", Path: "/mnt/s"})
+	want := "valid users = @SGL-LAN\\\\it"
+	if strings.Contains(got, want) {
+		t.Fatalf("stanza kept doubled backslash:\n%s", got)
+	}
+	if !strings.Contains(got, `valid users = @SGL-LAN\it`) {
+		t.Fatalf("stanza missing single-separator group:\n%s", got)
+	}
+}
+
 func TestSambaShareStanzaBrowseable(t *testing.T) {
 	hidden := sambaShareStanza(Outpost{Guest: true}, Attachment{Name: "snap", Path: "/mnt/snap"})
 	if !strings.Contains(hidden, "browseable = no") {

@@ -105,7 +105,7 @@ var outpostsPanel = js.Panel{
 							xtype: "proxmoxtextfield",
 							name: "valid-users",
 							fieldLabel: gettext("Valid Users"),
-							emptyText: "DOMAIN\\\\restore-ops, @DOMAIN\\\\backup-admins",
+							emptyText: "DOMAIN\\restore-ops, @DOMAIN\\backup-admins",
 							value: values["valid-users"],
 							disabled: values.type !== "samba",
 						},
@@ -137,7 +137,7 @@ var outpostsPanel = js.Panel{
 						},
 						{
 							xtype: "displayfield",
-							value: gettext("Samba outposts need smbd running with 'include' pointing at the pbs-plus outpost config. Set either guest access or valid users. Domain accounts (DOMAIN\\\\user) require the host to be joined with 'net ads join'. Read-only shares preserve backed-up ownership. Writable shares with Force User map pxar ownership to that NSS/winbind account while retaining source mode and ACL checks. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
+							value: gettext("Samba outposts need smbd running with 'include' pointing at the pbs-plus outpost config. Set either guest access or valid users. Domain accounts (DOMAIN\\user) require the host to be joined with 'net ads join'. Read-only shares preserve backed-up ownership. Writable shares with Force User map pxar ownership to that NSS/winbind account while retaining source mode and ACL checks. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
 						},
 					],
 				}],
