@@ -4,6 +4,7 @@ package outpost
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,7 +18,11 @@ import (
 
 // runSmbcontrol shells out (Samba has no stable reload API) and is faked in tests.
 var runSmbcontrol = func(args ...string) error {
-	if err := exec.Command("smbcontrol", args...).Run(); err != nil {
+	path, err := exec.LookPath("smbcontrol")
+	if err != nil {
+		return fmt.Errorf("smbcontrol not found: %w", err)
+	}
+	if err := exec.Command(path, args...).Run(); err != nil {
 		return fmt.Errorf("smbcontrol %s: %w", strings.Join(args, " "), err)
 	}
 	return nil
@@ -30,10 +35,10 @@ func (sambaDriver) Type() string { return TypeSamba }
 func (sambaDriver) Validate(o Outpost) error { return nil }
 
 func (sambaDriver) Start(ctx context.Context, o Outpost) (Instance, error) {
-	if _, err := exec.LookPath("smbcontrol"); err != nil {
-		return nil, fmt.Errorf("smbcontrol not found: install samba and add 'include = %s' to smb.conf [global]", sambaIncludePath(o.Name))
-	}
 	if err := runSmbcontrol("smbd", "ping"); err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("smbcontrol not found: install samba and add 'include = %s' to smb.conf [global]: %w", sambaIncludePath(o.Name), err)
+		}
 		return nil, fmt.Errorf("smbd is not running: %w", err)
 	}
 	return &sambaInstance{name: o.Name, shares: map[string]Attachment{}}, nil
