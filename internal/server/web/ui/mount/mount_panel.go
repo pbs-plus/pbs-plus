@@ -492,7 +492,7 @@ var mountPanel = js.Panel{
 							store: {
 								fields: ["name", "type", "listen-addr", "running"],
 								autoLoad: true,
-								proxy: { type: "proxmox", url: "/api2/extjs/config/d2d-outposts" },
+								proxy: { type: "pbsplus", url: pbsPlusBaseUrl + "/api2/extjs/config/d2d-outposts" },
 							},
 							displayField: "name",
 							valueField: "name",

@@ -181,7 +181,10 @@ var outpostsPanel = js.Panel{
 				],
 			}).show();
 		`),
-		"remove": js.Func("table, rec, el, rowIdx, colIdx, item, e, rec", `
+		"edit": js.Func("view, rowIdx, colIdx, item, e, rec", `
+			this.openEdit(rec);
+		`),
+		"remove": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			let panel = this.getView();
 			Ext.Msg.confirm(
 				gettext("Remove Outpost"),
