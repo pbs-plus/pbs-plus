@@ -5,13 +5,13 @@ import (
 	"container/list"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/util"
+	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/plumbing"
 )
 
 // Pooler is the interface implemented by a pool.
 type Pooler interface {
-	Get(offset int64) (util.SizeReadSeekCloser, bool)
-	Put(offset int64, rc util.SizeReadSeekCloser) (bool, error)
+	Get(offset int64) (plumbing.SizeReadSeekCloser, bool)
+	Put(offset int64, rc plumbing.SizeReadSeekCloser) (bool, error)
 }
 
 // Constructor is the function prototype used to instantiate a pool.
@@ -24,11 +24,11 @@ func NewNoopPool() (Pooler, error) {
 	return new(noopPool), nil
 }
 
-func (noopPool) Get(_ int64) (util.SizeReadSeekCloser, bool) {
+func (noopPool) Get(_ int64) (plumbing.SizeReadSeekCloser, bool) {
 	return nil, false
 }
 
-func (noopPool) Put(_ int64, rc util.SizeReadSeekCloser) (bool, error) {
+func (noopPool) Put(_ int64, rc plumbing.SizeReadSeekCloser) (bool, error) {
 	return false, rc.Close()
 }
 
@@ -47,11 +47,11 @@ type pool struct {
 
 type entry struct {
 	key   int64
-	value util.SizeReadSeekCloser
+	value plumbing.SizeReadSeekCloser
 }
 
 // NewPool returns a Pooler that uses a LRU strategy to maintain a fixed pool
-// of util.SizeReadSeekCloser's keyed by their stream offset.
+// of plumbing.SizeReadSeekCloser's keyed by their stream offset.
 func NewPool() (Pooler, error) {
 	return &pool{
 		size:      poolSize,
@@ -63,7 +63,7 @@ func NewPool() (Pooler, error) {
 // Get returns the pooled reader at exactly offset, or the one with the
 // largest key below it. The pool holds at most poolSize entries, so a
 // linear scan avoids the alloc+sort a sorted-key lookup would need.
-func (p *pool) Get(offset int64) (util.SizeReadSeekCloser, bool) {
+func (p *pool) Get(offset int64) (plumbing.SizeReadSeekCloser, bool) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
@@ -89,7 +89,7 @@ func (p *pool) Get(offset int64) (util.SizeReadSeekCloser, bool) {
 	return best.Value.(*entry).value, true
 }
 
-func (p *pool) Put(offset int64, rc util.SizeReadSeekCloser) (bool, error) {
+func (p *pool) Put(offset int64, rc plumbing.SizeReadSeekCloser) (bool, error) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 

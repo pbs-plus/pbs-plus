@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/plumbing"
-	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/util"
 )
 
 var (
@@ -273,7 +272,7 @@ func (si *streamsInfo) folderReader(r io.ReaderAt, folder int, password string) 
 
 	for i, input := range f.packed {
 		size := int64(si.packInfo.size[packedOffset+i]) //nolint:gosec
-		in[input] = util.NopCloser(bufio.NewReader(io.NewSectionReader(r, si.folderOffset(folder)+offset, size)))
+		in[input] = plumbing.NopCloser(bufio.NewReader(io.NewSectionReader(r, si.folderOffset(folder)+offset, size)))
 		offset += size
 	}
 

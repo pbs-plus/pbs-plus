@@ -11,8 +11,8 @@ import (
 	"math/bits"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/util"
 	"github.com/bodgit/windows"
+	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/plumbing"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
@@ -186,7 +186,7 @@ func readSizes(r io.ByteReader, count uint64) ([]uint64, error) {
 	return sizes, nil
 }
 
-func readCRC(r util.Reader, count uint64) ([]uint32, error) {
+func readCRC(r plumbing.Reader, count uint64) ([]uint32, error) {
 	if err := checkUint64(count, true); err != nil {
 		return nil, err
 	}
@@ -210,7 +210,7 @@ func readCRC(r util.Reader, count uint64) ([]uint32, error) {
 }
 
 //nolint:cyclop
-func readPackInfo(r util.Reader) (*packInfo, error) {
+func readPackInfo(r plumbing.Reader) (*packInfo, error) {
 	p := new(packInfo)
 
 	var err error
@@ -260,7 +260,7 @@ func readPackInfo(r util.Reader) (*packInfo, error) {
 }
 
 //nolint:cyclop
-func readCoder(r util.Reader) (*coder, error) {
+func readCoder(r plumbing.Reader) (*coder, error) {
 	c := new(coder)
 
 	v, err := r.ReadByte()
@@ -311,7 +311,7 @@ func readCoder(r util.Reader) (*coder, error) {
 }
 
 //nolint:cyclop,funlen
-func readFolder(r util.Reader) (*folder, error) {
+func readFolder(r plumbing.Reader) (*folder, error) {
 	f := new(folder)
 
 	coders, err := readUint64Bounded(r, true)
@@ -388,7 +388,7 @@ func readFolder(r util.Reader) (*folder, error) {
 }
 
 //nolint:cyclop,funlen,gocognit
-func readUnpackInfo(r util.Reader) (*unpackInfo, error) {
+func readUnpackInfo(r plumbing.Reader) (*unpackInfo, error) {
 	u := new(unpackInfo)
 
 	if id, err := r.ReadByte(); err != nil || id != idFolder {
@@ -484,7 +484,7 @@ func readUnpackInfo(r util.Reader) (*unpackInfo, error) {
 }
 
 //nolint:cyclop,funlen,gocognit
-func readSubStreamsInfo(r util.Reader, folder []*folder) (*subStreamsInfo, error) {
+func readSubStreamsInfo(r plumbing.Reader, folder []*folder) (*subStreamsInfo, error) {
 	s := new(subStreamsInfo)
 
 	id, err := r.ReadByte()
@@ -569,7 +569,7 @@ func readSubStreamsInfo(r util.Reader, folder []*folder) (*subStreamsInfo, error
 }
 
 //nolint:cyclop
-func readStreamsInfo(r util.Reader) (*streamsInfo, error) {
+func readStreamsInfo(r plumbing.Reader) (*streamsInfo, error) {
 	s := new(streamsInfo)
 
 	id, err := r.ReadByte()
@@ -621,7 +621,7 @@ func readStreamsInfo(r util.Reader) (*streamsInfo, error) {
 	return s, nil
 }
 
-func readTimes(r util.Reader, count uint64) ([]time.Time, error) {
+func readTimes(r plumbing.Reader, count uint64) ([]time.Time, error) {
 	if err := checkUint64(count, true); err != nil {
 		return nil, err
 	}
@@ -682,7 +682,7 @@ func splitNull(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return
 }
 
-func readNames(r util.Reader, count, length uint64) ([]string, error) {
+func readNames(r plumbing.Reader, count, length uint64) ([]string, error) {
 	if err := checkUint64(count, true); err != nil {
 		return nil, err
 	}
@@ -727,7 +727,7 @@ func readNames(r util.Reader, count, length uint64) ([]string, error) {
 	return names, nil
 }
 
-func readAttributes(r util.Reader, count uint64) ([]uint32, error) {
+func readAttributes(r plumbing.Reader, count uint64) ([]uint32, error) {
 	if err := checkUint64(count, true); err != nil {
 		return nil, err
 	}
@@ -770,7 +770,7 @@ func readAttributes(r util.Reader, count uint64) ([]uint32, error) {
 }
 
 //nolint:cyclop,funlen,gocognit,gocyclo
-func readFilesInfo(r util.Reader) (*filesInfo, error) {
+func readFilesInfo(r plumbing.Reader) (*filesInfo, error) {
 	f := new(filesInfo)
 
 	files, err := readUint64Bounded(r, true)
@@ -885,7 +885,7 @@ func readFilesInfo(r util.Reader) (*filesInfo, error) {
 }
 
 //nolint:cyclop,funlen
-func readHeader(r util.Reader) (*header, error) {
+func readHeader(r plumbing.Reader) (*header, error) {
 	h := new(header)
 
 	id, err := r.ReadByte()
@@ -957,7 +957,7 @@ func readHeader(r util.Reader) (*header, error) {
 	return h, nil
 }
 
-func readEncodedHeader(r util.Reader) (*header, error) {
+func readEncodedHeader(r plumbing.Reader) (*header, error) {
 	if id, err := r.ReadByte(); err != nil || id != idHeader {
 		if err != nil {
 			return nil, fmt.Errorf("readEncodedHeader: ReadByte error: %w", err)

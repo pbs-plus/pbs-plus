@@ -7,8 +7,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/util"
 	"github.com/klauspost/compress/flate"
+	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/plumbing"
 )
 
 type readCloser struct {
@@ -62,12 +62,12 @@ func NewReader(_ []byte, _ uint64, readers []io.ReadCloser) (io.ReadCloser, erro
 	if ok {
 		frf, ok := fr.(flate.Resetter)
 		if ok {
-			if err := frf.Reset(util.ByteReadCloser(readers[0]), nil); err != nil {
+			if err := frf.Reset(plumbing.ByteReadCloser(readers[0]), nil); err != nil {
 				return nil, fmt.Errorf("deflate: error resetting: %w", err)
 			}
 		}
 	} else {
-		fr = flate.NewReader(util.ByteReadCloser(readers[0]))
+		fr = flate.NewReader(plumbing.ByteReadCloser(readers[0]))
 	}
 
 	return &readCloser{

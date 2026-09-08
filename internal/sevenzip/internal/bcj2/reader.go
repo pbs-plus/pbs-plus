@@ -8,15 +8,15 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/util"
+	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/plumbing"
 )
 
 type readCloser struct {
-	main util.ReadCloser
+	main plumbing.ReadCloser
 	call io.ReadCloser
 	jump io.ReadCloser
 
-	rd     util.ReadCloser
+	rd     plumbing.ReadCloser
 	nrange uint
 	code   uint
 
@@ -67,10 +67,10 @@ func NewReader(_ []byte, _ uint64, readers []io.ReadCloser) (io.ReadCloser, erro
 	}
 
 	rc := &readCloser{
-		main:   util.ByteReadCloser(readers[0]),
+		main:   plumbing.ByteReadCloser(readers[0]),
 		call:   readers[1],
 		jump:   readers[2],
-		rd:     util.ByteReadCloser(readers[3]),
+		rd:     plumbing.ByteReadCloser(readers[3]),
 		nrange: 0xffffffff,
 		buf:    new(bytes.Buffer),
 	}

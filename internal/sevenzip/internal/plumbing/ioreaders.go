@@ -1,5 +1,5 @@
-// Package util implements various utility types and interfaces.
-package util
+// Implements various utility types and interfaces.
+package plumbing
 
 import "io"
 

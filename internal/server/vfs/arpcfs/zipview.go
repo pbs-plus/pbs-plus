@@ -18,12 +18,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/sevenzip"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/klauspost/compress/flate"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/sevenzip"
 )
 
 const (

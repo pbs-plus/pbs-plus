@@ -19,7 +19,6 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/plumbing"
 	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/pool"
-	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/util"
 	"github.com/spf13/afero"
 	"go4.org/readerutil"
 )
@@ -78,7 +77,7 @@ type File struct {
 }
 
 type fileReader struct {
-	rc util.SizeReadSeekCloser
+	rc plumbing.SizeReadSeekCloser
 	f  *File
 	n  int64
 }
@@ -422,7 +421,7 @@ func (z *Reader) init(r io.ReaderAt, size int64) (err error) {
 		}
 
 		// CRC of the start header should match
-		if util.CRC32Equal(h.Sum(nil), sh.CRC) {
+		if plumbing.CRC32Equal(h.Sum(nil), sh.CRC) {
 			break
 		}
 
@@ -481,7 +480,7 @@ func (z *Reader) init(r io.ReaderAt, size int64) (err error) {
 	}
 
 	// CRC should match the one from the start header
-	if !util.CRC32Equal(h.Sum(nil), start.CRC) {
+	if !plumbing.CRC32Equal(h.Sum(nil), start.CRC) {
 		return errChecksum
 	}
 
@@ -510,14 +509,14 @@ func (z *Reader) init(r io.ReaderAt, size int64) (err error) {
 			err = errors.Join(err, fr.Close())
 		}()
 
-		if header, err = readEncodedHeader(util.ByteReadCloser(fr)); err != nil {
+		if header, err = readEncodedHeader(plumbing.ByteReadCloser(fr)); err != nil {
 			return &ReadError{
 				Encrypted: fr.hasEncryption,
 				Err:       err,
 			}
 		}
 
-		if crc != 0 && !util.CRC32Equal(fr.Checksum(), crc) {
+		if crc != 0 && !plumbing.CRC32Equal(fr.Checksum(), crc) {
 			return errChecksum
 		}
 	}
