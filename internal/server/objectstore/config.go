@@ -21,6 +21,8 @@ type Config struct {
 	Region      string       `json:"region,omitempty"`
 	Buckets     []Bucket     `json:"buckets"`
 	Credentials []Credential `json:"credentials"`
+	TLSCertFile string       `json:"tls-cert,omitempty"`
+	TLSKeyFile  string       `json:"tls-key,omitempty"`
 }
 
 type Bucket struct {
@@ -46,6 +48,9 @@ type Grant struct {
 }
 
 func (c Config) Validate() error {
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
+		return fmt.Errorf("s3 tls-cert and tls-key must be set together")
+	}
 	region := c.RegionName()
 	if strings.ContainsAny(region, " /\\\t\r\n") {
 		return fmt.Errorf("s3 region %q is invalid", region)

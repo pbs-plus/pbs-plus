@@ -83,6 +83,11 @@ auth id that becomes the group `owner`. Supported: PUT/GET/HEAD/Range/DELETE,
 durable part spooling. Not supported (explicit errors): versioning, CopyObject,
 server-side encryption, presigned URLs, anonymous access.
 
+Optional `tls-cert`/`tls-key` (PEM paths, both or neither) serve HTTPS with the
+host's certificates, e.g. the pbs-plus agent material at
+`/etc/proxmox-backup/pbs-plus/certs/{server.crt,server.key}`; clients then
+trust `/etc/proxmox-backup/pbs-plus/certs/ca.crt`.
+
 Outpost configurations persist as JSON under `/var/lib/pbs-plus/outposts/`.
 
 ## Attaching Snapshots

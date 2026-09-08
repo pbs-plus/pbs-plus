@@ -59,7 +59,7 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 		IdleTimeout:       conf.HTTPIdleTimeout,
 		MaxHeaderBytes:    conf.HTTPMaxHeaderBytes,
 	}
-	instance := &s3Instance{listener: listener, server: server, handler: handler}
+	instance := &s3Instance{listener: listener, server: server, handler: handler, tls: o.S3.TLSCertFile != ""}
 	ctx, cancel := context.WithCancel(ctx)
 	instance.cancel = cancel
 	instance.maintainDone = make(chan struct{})
@@ -86,7 +86,12 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 		}
 	}()
 	go func() {
-		err := server.Serve(listener)
+		var err error
+		if instance.tls {
+			err = server.ServeTLS(listener, o.S3.TLSCertFile, o.S3.TLSKeyFile)
+		} else {
+			err = server.Serve(listener)
+		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error(err, "s3 outpost "+o.Name)
 		}
@@ -100,6 +105,7 @@ type s3Instance struct {
 	handler      *objectstore.Handler
 	cancel       context.CancelFunc
 	maintainDone chan struct{}
+	tls          bool
 }
 
 func (s *s3Instance) Attach(a Attachment) error {
@@ -117,7 +123,11 @@ func (s *s3Instance) Detach(name string) error { return nil }
 func (s *s3Instance) Attached() []string { return nil }
 
 func (s *s3Instance) Endpoint(bucket string) string {
-	endpoint := "http://" + s.listener.Addr().String()
+	scheme := "http"
+	if s.tls {
+		scheme = "https"
+	}
+	endpoint := scheme + "://" + s.listener.Addr().String()
 	if bucket == "" {
 		return endpoint + "/"
 	}

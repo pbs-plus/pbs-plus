@@ -3,9 +3,20 @@
 package outpost
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +44,78 @@ func testS3Outpost() Outpost {
 				Grants:    []objectstore.Grant{{Bucket: "backups", Read: true}},
 			}},
 		},
+	}
+}
+
+func TestS3DriverTLSRoundTrip(t *testing.T) {
+	certPath := filepath.Join(t.TempDir(), "server.crt")
+	keyPath := filepath.Join(t.TempDir(), "server.key")
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "localhost"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:              []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	configured := testS3Outpost()
+	configured.S3.TLSCertFile = certPath
+	configured.S3.TLSKeyFile = keyPath
+	instance, err := (s3Driver{}).Start(t.Context(), configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = instance.Stop() })
+
+	if !strings.HasPrefix(instance.Endpoint(""), "https://") {
+		t.Fatalf("endpoint = %q", instance.Endpoint(""))
+	}
+	endpoint, err := url.Parse(instance.Endpoint(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := minio.New(endpoint.Host, &minio.Options{
+		Creds:        credentials.NewStaticV4("outpost-access", "outpost-secret-key", ""),
+		Secure:       true,
+		Region:       "us-east-1",
+		BucketLookup: minio.BucketLookupPath,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buckets, err := client.ListBuckets(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets) != 1 || buckets[0].Name != "backups" {
+		t.Fatalf("buckets = %+v", buckets)
 	}
 }
 
