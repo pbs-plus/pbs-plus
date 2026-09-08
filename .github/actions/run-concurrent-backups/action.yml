@@ -103,7 +103,7 @@ runs:
           owners[$upid]=$job
 
           task_log=$(docker exec -e UPID="$upid" pbs-plus-test sh -ec 'pstart=$(printf "%s" "$UPID" | cut -d: -f4); bucket=$(printf "%02X" "$((0x$pstart & 255))"); cat "/var/log/proxmox-backup/tasks/$bucket/$UPID"')
-          if ! grep -Fq "Starting backup: [${namespace}]:" <<<"$task_log"; then
+          if ! grep -Fq "\"ns/${namespace}/host/${job}/" <<<"$task_log"; then
             printf '%s\n' "${job} is associated with a task outside namespace ${namespace}: ${upid}"
             printf '%s\n' "$task_log"
             exit 1
