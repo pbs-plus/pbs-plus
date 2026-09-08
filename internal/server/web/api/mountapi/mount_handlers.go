@@ -172,7 +172,7 @@ func submitSnapshotWorkflow(w http.ResponseWriter, r *http.Request, app *applica
 func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -190,7 +190,7 @@ func ExtJsMountHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		if !f.hasBackupParams() {
-			http.Error(w, "Missing backup parameters", http.StatusBadRequest)
+			respond.BadRequest(w, "missing backup parameters")
 			return
 		}
 		key := snapshotmount.Key(f.Datastore, f.Namespace, f.BackupType, f.BackupID, safeTime)
@@ -233,7 +233,7 @@ func upidTask(task *tasklog.WorkerTask) string {
 func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -242,7 +242,7 @@ func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
 		}
 		datastore := validate.DecodePath(r.PathValue("datastore"))
 		if datastore == "" {
-			http.Error(w, "Missing datastore", http.StatusBadRequest)
+			respond.BadRequest(w, "missing datastore")
 			return
 		}
 		in := jobs.SnapshotInitInput{
@@ -256,7 +256,7 @@ func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
 			Web:        true,
 		}
 		if in.BackupType == "" || in.BackupID == "" {
-			http.Error(w, "Missing backup parameters", http.StatusBadRequest)
+			respond.BadRequest(w, "missing backup parameters")
 			return
 		}
 
@@ -280,7 +280,7 @@ func ExtJsInitHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -305,7 +305,7 @@ func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 			}
 		} else {
 			if !f.hasBackupParams() {
-				http.Error(w, "Missing backup parameters or mount-path", http.StatusBadRequest)
+				respond.BadRequest(w, "missing backup parameters or mount-path")
 				return
 			}
 			safeTime, err := f.safeTime()
@@ -345,7 +345,7 @@ func ExtJsUnmountHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsCommitHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {
@@ -358,7 +358,7 @@ func ExtJsCommitHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		if f.MountPath == "" && !f.hasBackupParams() {
-			http.Error(w, "Missing mount-path parameter", http.StatusBadRequest)
+			respond.BadRequest(w, "missing mount-path parameter")
 			return
 		}
 		var session snapshotmount.Session
@@ -418,7 +418,7 @@ func ExtJsCommitHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		sessions, err := snapshotmount.ListSessions()
@@ -484,7 +484,7 @@ func ExtJsMountsHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsUnmountAllHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {

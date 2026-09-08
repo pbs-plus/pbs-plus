@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
@@ -15,13 +16,40 @@ import (
 )
 
 type ErrorResponse struct {
-	Message string `json:"message"`
-	Status  int    `json:"status"`
-	Success bool   `json:"success"`
+	Message string            `json:"message"`
+	Errors  map[string]string `json:"errors,omitempty"`
+	Status  int               `json:"status"`
+	Success bool              `json:"success"`
 }
 
+var (
+	ErrBadRequest       = errors.New("bad request")
+	ErrUnauthorized     = errors.New("unauthorized")
+	ErrForbidden        = errors.New("forbidden")
+	ErrNotFound         = errors.New("not found")
+	ErrMethodNotAllowed = errors.New("invalid HTTP method")
+	ErrConflict         = errors.New("conflict")
+)
+
 func statusFromErr(err error) int {
-	if errors.Is(err, coredb.ErrBackupNotFound) ||
+	if errors.Is(err, ErrBadRequest) {
+		return http.StatusBadRequest
+	}
+
+	if errors.Is(err, ErrUnauthorized) {
+		return http.StatusUnauthorized
+	}
+
+	if errors.Is(err, ErrForbidden) {
+		return http.StatusForbidden
+	}
+
+	if errors.Is(err, ErrMethodNotAllowed) {
+		return http.StatusMethodNotAllowed
+	}
+
+	if errors.Is(err, ErrNotFound) ||
+		errors.Is(err, coredb.ErrBackupNotFound) ||
 		errors.Is(err, coredb.ErrTargetNotFound) ||
 		errors.Is(err, coredb.ErrRestoreNotFound) ||
 		errors.Is(err, coredb.ErrTokenNotFound) ||
@@ -33,7 +61,7 @@ func statusFromErr(err error) int {
 		return http.StatusNotFound
 	}
 
-	if errors.Is(err, jobs.ErrOneInstance) {
+	if errors.Is(err, ErrConflict) || errors.Is(err, jobs.ErrOneInstance) {
 		return http.StatusConflict
 	}
 
@@ -49,16 +77,51 @@ func statusFromErr(err error) int {
 }
 
 func WriteErrorResponse(w http.ResponseWriter, err error) {
-	statusCode := statusFromErr(err)
+	writeError(w, statusFromErr(err), err, nil)
+}
+
+func Error(w http.ResponseWriter, status int, err error) {
+	writeError(w, status, err, nil)
+}
+
+func Errorf(w http.ResponseWriter, status int, format string, args ...any) {
+	writeError(w, status, fmt.Errorf(format, args...), nil)
+}
+
+func FieldErrors(w http.ResponseWriter, status int, err error, fields map[string]string) {
+	writeError(w, status, err, fields)
+}
+
+func BadRequest(w http.ResponseWriter, format string, args ...any) {
+	writeError(w, http.StatusBadRequest, fmt.Errorf(format, args...), nil)
+}
+
+func NotFound(w http.ResponseWriter, format string, args ...any) {
+	writeError(w, http.StatusNotFound, fmt.Errorf(format, args...), nil)
+}
+
+func MethodNotAllowed(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusMethodNotAllowed,
+		fmt.Errorf("invalid HTTP method: %s not allowed on %s", r.Method, r.URL.Path), nil)
+}
+
+func writeError(w http.ResponseWriter, status int, err error, fields map[string]string) {
+	if err == nil {
+		err = errors.New(http.StatusText(status))
+	}
+	if status <= 0 {
+		status = http.StatusInternalServerError
+	}
 	log.Error(err, "")
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(&ErrorResponse{
+	w.WriteHeader(status)
+	if encErr := json.NewEncoder(w).Encode(&ErrorResponse{
 		Message: err.Error(),
-		Status:  statusCode,
+		Errors:  fields,
+		Status:  status,
 		Success: false,
-	}); err != nil {
-		log.Error(err, "")
+	}); encErr != nil {
+		log.Error(encErr, "")
 	}
 }

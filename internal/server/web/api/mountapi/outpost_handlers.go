@@ -3,12 +3,10 @@
 package mountapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
@@ -61,22 +59,13 @@ func outpostFormValues(r *http.Request) outpost.Outpost {
 }
 
 func writeOutpostInvalid(w http.ResponseWriter, err error) {
-	log.Error(err, "")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadRequest)
-	if encErr := json.NewEncoder(w).Encode(&respond.ErrorResponse{
-		Message: err.Error(),
-		Status:  http.StatusBadRequest,
-		Success: false,
-	}); encErr != nil {
-		log.Error(encErr, "")
-	}
+	respond.Error(w, http.StatusBadRequest, err)
 }
 
 func ExtJsOutpostsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		switch r.Method {
@@ -117,7 +106,7 @@ func ExtJsOutpostsHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsOutpostSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		name := r.PathValue("name")
@@ -127,7 +116,7 @@ func ExtJsOutpostSingleHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		if !ok {
-			respond.WriteErrorResponse(w, fmt.Errorf("no such outpost"))
+			respond.NotFound(w, "no such outpost: %s", name)
 			return
 		}
 		switch r.Method {

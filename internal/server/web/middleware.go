@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -10,8 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"uuid"
+
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
 )
 
 type contextKey int
@@ -79,7 +82,7 @@ func Recovery(next http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"method", r.Method,
 				)
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+				respond.Error(w, http.StatusInternalServerError, errors.New("internal server error"))
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -163,7 +166,7 @@ func RateLimit(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 		if !globalRateLimiter.allow(ip) {
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			respond.Error(w, http.StatusTooManyRequests, errors.New("rate limit exceeded"))
 			return
 		}
 		next.ServeHTTP(w, r)

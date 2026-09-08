@@ -28,7 +28,7 @@ import (
 func D2DBackupHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -79,7 +79,7 @@ func D2DBackupHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -87,7 +87,7 @@ func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 
 		backupIDs := r.URL.Query()["job"]
 		if len(backupIDs) == 0 {
-			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
+			respond.BadRequest(w, "missing job parameter(s)")
 			return
 		}
 
@@ -176,7 +176,7 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupConfigResponse{}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -365,7 +365,7 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -676,7 +676,7 @@ func ExtJsBackupUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupUPIDsResponse{}
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
