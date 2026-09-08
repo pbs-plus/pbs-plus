@@ -35,6 +35,7 @@ func (rc *readCloser) Close() error {
 	if err := rc.c.Close(); err != nil {
 		return fmt.Errorf("lzma2: error closing: %w", err)
 	}
+	rc.r.Release()
 	rc.c, rc.r = nil, nil
 	return nil
 }

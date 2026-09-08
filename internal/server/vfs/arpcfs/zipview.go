@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bodgit/sevenzip"
+	"github.com/pbs-plus/pbs-plus/internal/sevenzip"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/klauspost/compress/flate"

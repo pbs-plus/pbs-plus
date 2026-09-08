@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 )
 
 const inputWindowSize = 256 << 10
@@ -29,6 +30,7 @@ func (rc *readCloser) Close() error {
 	if err := rc.c.Close(); err != nil {
 		return fmt.Errorf("lzma: error closing: %w", err)
 	}
+	rc.d.release()
 	rc.c, rc.d = nil, nil
 	return nil
 }
@@ -87,10 +89,20 @@ func pickDictCap(dictSize, size int64) (int, error) {
 
 func newCore(p props, dictCap int, size int64) (*core, error) {
 	d := &core{
-		in:   make([]byte, inputWindowSize),
+		in:   windowPool.Get().([]byte),
 		dict: make([]byte, dictCap+1),
 		size: size,
 	}
 	d.initModel(p)
 	return d, nil
 }
+
+// release returns the pooled input window; the core must not be read after.
+func (d *core) release() {
+	if d.in != nil {
+		windowPool.Put(d.in)
+		d.in = nil
+	}
+}
+
+var windowPool = sync.Pool{New: func() any { return make([]byte, inputWindowSize) }}

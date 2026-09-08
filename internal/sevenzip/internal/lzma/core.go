@@ -93,6 +93,11 @@ const (
 // core is a fused LZMA decoder: range decoder, probability model, state,
 // and ring-buffer dictionary in one struct so the hot loop touches one
 // object and no interfaces.
+// litStride is the per-literal-state probability table stride, 0x300
+// entries rounded up to a power of two so hot-loop indexing can mask
+// instead of bounds-check.
+const litStride = 0x400
+
 type core struct {
 	r     io.Reader
 	in    []byte
@@ -246,7 +251,7 @@ func (d *core) initModel(p props) {
 		d.isRepG1[i] = probInit
 		d.isRepG2[i] = probInit
 	}
-	d.litProbs = make([]uint16, 0x300<<(p.lc+p.lp))
+	d.litProbs = make([]uint16, litStride<<(p.lc+p.lp))
 	for i := range d.litProbs {
 		d.litProbs[i] = probInit
 	}
@@ -647,43 +652,161 @@ func (d *core) possiblyAtEnd() bool { return d.code == 0 }
 // decompressed counts bytes produced since the current (re)start.
 func (d *core) decompressed() int64 { return d.head - d.start }
 
-// decompress fills the dictionary until full or the stream ends.
+// decompress fills the dictionary until full or the stream ends. The hot
+// literal path runs with range state in locals across ops; the match paths
+// sync state back to the struct and reuse decodeOp.
 func (d *core) decompress() error {
 	if d.eos {
 		return io.EOF
 	}
+	rng, code := d.nrange, d.code
+	ipos, iend := d.ipos, d.iend
+	in := (*[inputWindowSize]byte)(d.in)
 	for d.avail() >= maxMatchLen {
-		o, err := d.decodeOp()
-		if err == errEOS {
-			d.eos = true
-			if !d.possiblyAtEnd() {
-				return errDataAfterEOS
+		posState := uint32(d.head) & ((1 << d.p.pb) - 1)
+		state2 := d.state<<maxPosBits | posState
+
+		p := &d.isMatch[state2]
+		bound := (rng >> probbits) * uint32(*p)
+		lt := ^uint32(0) * uint32((uint64(code)-uint64(bound))>>63)
+		rng = (bound & lt) | ((rng - bound) &^ lt)
+		code = (code & lt) | ((code - bound) &^ lt)
+		pv := uint32(*p)
+		pv += (1<<probbits - pv) >> movebits & lt
+		pv -= pv >> movebits &^ lt
+		*p = uint16(pv)
+		bit := ^lt & 1
+		if rng < 1<<24 {
+			rng <<= 8
+			if ipos >= iend {
+				d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
+				d.fill()
+				ipos, iend = d.ipos, d.iend
+				if ipos >= iend {
+					if d.inErr == nil {
+						d.inErr = io.EOF
+					}
+					d.eos = true
+					return io.ErrUnexpectedEOF
+				}
 			}
-			if d.size >= 0 && d.size != d.decompressed() {
-				return errSize
+			code = code<<8 | uint32(in[ipos&(inputWindowSize-1)])
+			ipos++
+		}
+
+		if bit == 0 {
+			prev := d.byteAt(1)
+			ls := (uint32(d.head)&(1<<d.p.lp-1))<<d.p.lc | uint32(prev)>>(8-d.p.lc)
+			probs := (*[litStride]uint16)(d.litProbs[ls*litStride : (ls+1)*litStride])
+			symbol := uint32(1)
+			var bitv uint32
+			if d.state >= 7 {
+				m := uint32(d.byteAt(int(d.rep[0]) + 1))
+				for {
+					matchBit := m >> 7 & 1
+					m <<= 1
+					idx := ((1+matchBit)<<8 | symbol) & (litStride - 1)
+					pv := uint32(probs[idx])
+					b2 := (rng >> probbits) * pv
+					lt := ^uint32(0) * uint32((uint64(code)-uint64(b2))>>63)
+					rng = (b2 & lt) | ((rng - b2) &^ lt)
+					code = (code & lt) | ((code - b2) &^ lt)
+					pv += (1<<probbits - pv) >> movebits & lt
+					pv -= pv >> movebits &^ lt
+					bitv = ^lt & 1
+					probs[idx] = uint16(pv)
+					if rng < 1<<24 {
+						rng <<= 8
+						if ipos >= iend {
+							d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
+							d.fill()
+							ipos, iend = d.ipos, d.iend
+							if ipos >= iend {
+								if d.inErr == nil {
+									d.inErr = io.EOF
+								}
+								d.eos = true
+								return io.ErrUnexpectedEOF
+							}
+						}
+						code = code<<8 | uint32(in[ipos&(inputWindowSize-1)])
+						ipos++
+					}
+					symbol = symbol<<1 | bitv
+					if matchBit != bitv || symbol >= 0x100 {
+						break
+					}
+				}
 			}
-			return io.EOF
-		}
-		if err == io.EOF {
-			d.eos = true
-			return io.ErrUnexpectedEOF
-		}
-		if err != nil {
-			return err
-		}
-		if d.inErr != nil && d.ipos >= d.iend {
-			d.eos = true
-			if d.inErr == io.EOF {
-				return io.ErrUnexpectedEOF
+			for symbol < 0x100 {
+				pv := uint32(probs[symbol&(litStride-1)])
+				b2 := (rng >> probbits) * pv
+				lt := ^uint32(0) * uint32((uint64(code)-uint64(b2))>>63)
+				rng = (b2 & lt) | ((rng - b2) &^ lt)
+				code = (code & lt) | ((code - b2) &^ lt)
+				pv += (1<<probbits - pv) >> movebits & lt
+				pv -= pv >> movebits &^ lt
+				bitv = ^lt & 1
+				probs[symbol&(litStride-1)] = uint16(pv)
+				if rng < 1<<24 {
+					rng <<= 8
+					if ipos >= iend {
+						d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
+						d.fill()
+						ipos, iend = d.ipos, d.iend
+						if ipos >= iend {
+							if d.inErr == nil {
+								d.inErr = io.EOF
+							}
+							d.eos = true
+							return io.ErrUnexpectedEOF
+						}
+					}
+					code = code<<8 | uint32(in[ipos&(inputWindowSize-1)])
+					ipos++
+				}
+				symbol = symbol<<1 | bitv
 			}
-			return d.inErr
-		}
-		if o.kind == opLit {
-			d.writeLit(o.b)
-		} else if err := d.writeMatch(o.dist, o.n); err != nil {
-			return err
+			d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
+			d.writeLit(byte(symbol - 0x100))
+			switch {
+			case d.state < 4:
+				d.state = 0
+			case d.state < 10:
+				d.state -= 3
+			default:
+				d.state -= 6
+			}
+		} else {
+			d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
+			o, err := d.decodeMatchOp(posState, state2)
+			rng, code, ipos, iend = d.nrange, d.code, d.ipos, d.iend
+			if err == errEOS {
+				d.eos = true
+				if !d.possiblyAtEnd() {
+					return errDataAfterEOS
+				}
+				if d.size >= 0 && d.size != d.decompressed() {
+					return errSize
+				}
+				return io.EOF
+			}
+			if d.inErr != nil && d.ipos >= d.iend {
+				d.eos = true
+				if d.inErr == io.EOF {
+					return io.ErrUnexpectedEOF
+				}
+				return d.inErr
+			}
+			if err != nil {
+				return err
+			}
+			if err := d.writeMatch(o.dist, o.n); err != nil {
+				return err
+			}
 		}
 		if d.size >= 0 && d.decompressed() >= d.size {
+			d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
 			d.eos = true
 			if d.decompressed() > d.size {
 				return errSize
@@ -703,7 +826,62 @@ func (d *core) decompress() error {
 			return io.EOF
 		}
 	}
+	d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
 	return nil
+}
+
+// decodeMatchOp decodes the non-literal half of an operation (match, rep,
+// short rep, EOS marker) using struct range state.
+func (d *core) decodeMatchOp(posState, state2 uint32) (op, error) {
+	if d.decodeBit(&d.isRep[d.state]) == 0 {
+		d.rep[3], d.rep[2], d.rep[1] = d.rep[2], d.rep[1], d.rep[0]
+		if d.state < 7 {
+			d.state = 7
+		} else {
+			d.state = 10
+		}
+		l := d.decodeLen(&d.lenChoice, &d.lenLow, &d.lenMid, &d.lenHigh, posState)
+		dist := d.decodeDist(l)
+		d.rep[0] = dist
+		if dist == eosDist {
+			d.eosMarker = true
+			return op{}, errEOS
+		}
+		return op{kind: opMatch, n: int(l) + minMatchLen, dist: int(dist) + 1}, nil
+	}
+
+	dist := d.rep[0]
+	if d.decodeBit(&d.isRepG0[d.state]) == 0 {
+		if d.decodeBit(&d.isRepG0L[state2]) == 0 {
+			if d.state < 7 {
+				d.state = 9
+			} else {
+				d.state = 11
+			}
+			return op{kind: opMatch, n: 1, dist: int(dist) + 1}, nil
+		}
+	} else {
+		if d.decodeBit(&d.isRepG1[d.state]) == 0 {
+			dist = d.rep[1]
+		} else {
+			if d.decodeBit(&d.isRepG2[d.state]) == 0 {
+				dist = d.rep[2]
+			} else {
+				dist = d.rep[3]
+				d.rep[3] = d.rep[2]
+			}
+			d.rep[2] = d.rep[1]
+		}
+		d.rep[1] = d.rep[0]
+		d.rep[0] = dist
+	}
+	n := d.decodeLen(&d.repLenChoice, &d.repLenLow, &d.repLenMid, &d.repLenHigh, posState)
+	if d.state < 7 {
+		d.state = 8
+	} else {
+		d.state = 11
+	}
+	return op{kind: opMatch, n: int(n) + minMatchLen, dist: int(dist) + 1}, nil
 }
 
 // Read drains decoded data, decompressing as needed.

@@ -235,6 +235,11 @@ func (r2 *Reader2) fillUncompressed() error {
 	return nil
 }
 
+// Release returns pooled decoder buffers; the reader must not be used after.
+func (r2 *Reader2) Release() {
+	r2.d.release()
+}
+
 // Read returns uncompressed data from the current chunk, advancing across
 // chunks as they end.
 func (r2 *Reader2) Read(p []byte) (n int, err error) {
