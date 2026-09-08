@@ -388,3 +388,22 @@ func TestObjectManifestMetadata(t *testing.T) {
 		t.Fatalf("manifest etag = %q", extra.Object.ETag)
 	}
 }
+
+func TestObjectStreamingPutWithoutContentEncoding(t *testing.T) {
+	handler, _, _ := newRoundTripHandler(t)
+	body := []byte("streamed object from clients that omit the aws-chunked content encoding")
+
+	request := signedStreamingRequestNoEncoding(t, body)
+	response := serve(t, handler, request)
+	mustStatus(t, response, http.StatusOK)
+
+	response = serve(t, handler, signedObjectRequest(t, http.MethodGet, "http://s3.test/mariadb/"+roundTripKey))
+	mustStatus(t, response, http.StatusOK)
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(body) {
+		t.Fatalf("round trip = %q", got)
+	}
+}

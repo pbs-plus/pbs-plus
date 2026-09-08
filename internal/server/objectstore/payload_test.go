@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -171,4 +172,66 @@ func signedStreamingRequest(t *testing.T, payload []byte, trailerName, trailerVa
 		requestTime,
 		&closingHash{Hash: sha256.New()},
 	), requestTime
+}
+
+// signedStreamingRequestNoEncoding mirrors how current minio-go/mc stream:
+// the aws-chunked framing is identified by the payload hash and
+// x-amz-decoded-content-length alone, with no Content-Encoding header signed
+// or sent.
+func signedStreamingRequestNoEncoding(t *testing.T, payload []byte) *http.Request {
+	t.Helper()
+	requestTime := time.Now().UTC()
+	region := "us-west-2"
+	scope := requestTime.Format("20060102") + "/" + region + "/s3/aws4_request"
+	request := httptest.NewRequest(http.MethodPut, "http://s3.test/mariadb/backup.sql.gz", nil)
+	request.Header.Set("X-Amz-Content-Sha256", streamingPayloadHash)
+	request.Header.Set("X-Amz-Decoded-Content-Length", strconv.Itoa(len(payload)))
+	request.Header.Set("X-Amz-Date", requestTime.Format(signatureTimeFormat))
+	request = signer.SignV4(*request, testAccessKey, testSecretKey, "", region)
+	authorization := request.Header.Get("Authorization")
+	requestSignature := authorization[strings.LastIndex(authorization, "Signature=")+len("Signature="):]
+
+	key := sumHMAC([]byte("AWS4"+testSecretKey), []byte(requestTime.Format("20060102")))
+	key = sumHMAC(key, []byte(region))
+	key = sumHMAC(key, []byte("s3"))
+	key = sumHMAC(key, []byte("aws4_request"))
+	emptySum := sha256.Sum256(nil)
+	emptyHash := hex.EncodeToString(emptySum[:])
+	previous := requestSignature
+	var framed bytes.Buffer
+	chunks := [][]byte{payload}
+	for _, chunk := range chunks {
+		chunkSum := sha256.Sum256(chunk)
+		stringToSign := strings.Join([]string{
+			"AWS4-HMAC-SHA256-PAYLOAD",
+			requestTime.Format(signatureTimeFormat),
+			scope,
+			previous,
+			emptyHash,
+			hex.EncodeToString(chunkSum[:]),
+		}, "\n")
+		signature := hex.EncodeToString(sumHMAC(key, []byte(stringToSign)))
+		previous = signature
+		framed.WriteString(strconv.FormatInt(int64(len(chunk)), 16))
+		framed.WriteString(";chunk-signature=")
+		framed.WriteString(signature)
+		framed.WriteString("\r\n")
+		framed.Write(chunk)
+		framed.WriteString("\r\n")
+	}
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256-PAYLOAD",
+		requestTime.Format(signatureTimeFormat),
+		scope,
+		previous,
+		emptyHash,
+		emptyHash,
+	}, "\n")
+	finalSignature := hex.EncodeToString(sumHMAC(key, []byte(stringToSign)))
+	framed.WriteString("0;chunk-signature=")
+	framed.WriteString(finalSignature)
+	framed.WriteString("\r\n\r\n")
+	request.Body = io.NopCloser(bytes.NewReader(framed.Bytes()))
+	request.ContentLength = int64(framed.Len())
+	return request
 }

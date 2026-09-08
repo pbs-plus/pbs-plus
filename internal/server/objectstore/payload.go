@@ -110,9 +110,6 @@ type awsChunkedReader struct {
 }
 
 func newAWSChunkedReader(r *http.Request, credential Credential, withTrailer bool) (io.ReadCloser, int64, error) {
-	if !headerContainsToken(r.Header.Get("Content-Encoding"), "aws-chunked") {
-		return nil, 0, fmt.Errorf("aws-chunked content encoding is required")
-	}
 	decodedLength, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
 	if err != nil || decodedLength < 0 {
 		return nil, 0, fmt.Errorf("invalid decoded content length")
