@@ -46,10 +46,29 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 		log.Error(err, "s3 outpost "+o.Name+" key index; serving via snapshot scan")
 	} else {
 		go func() {
-			if err := handler.ReconcileIndex(ctx); err != nil {
-				log.Error(err, "s3 outpost "+o.Name+" index reconcile")
+			maintain := func() {
+				if err := handler.ReconcileIndex(ctx); err != nil {
+					log.Error(err, "s3 outpost "+o.Name+" index reconcile")
+				}
+				if err := handler.ReapMultipartUploads(time.Now()); err != nil {
+					log.Error(err, "s3 outpost "+o.Name+" multipart reap")
+				}
+			}
+			maintain()
+			ticker := time.NewTicker(24 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					maintain()
+				}
 			}
 		}()
+	}
+	if err := handler.OpenMultipartSpool(filepath.Join(conf.StatePrefix, "objectstore", o.Name+"-uploads")); err != nil {
+		log.Error(err, "s3 outpost "+o.Name+" multipart spool")
 	}
 	listener, err := net.Listen("tcp", o.ListenAddr)
 	if err != nil {

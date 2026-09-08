@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	signatureAlgorithm = "AWS4-HMAC-SHA256"
+	signatureAlgorithm  = "AWS4-HMAC-SHA256"
 	signatureTimeFormat = "20060102T150405Z"
 	maximumClockSkew    = 15 * time.Minute
 )

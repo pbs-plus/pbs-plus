@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -70,23 +69,54 @@ func (h *Handler) putObject(r *http.Request, bucket Bucket, credential Credentia
 	}
 	defer func() { err = errors.Join(err, payload.Close()) }()
 
+	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
+	stream := io.Reader(payload)
+	etagFunc := func() string { return `"` + strings.ToLower(payloadHash) + `"` }
+	if payloadHash == streamingPayloadHash || payloadHash == streamingTrailerPayloadHash {
+		fullPayloadHash := sha256.New()
+		stream = io.TeeReader(payload, fullPayloadHash)
+		etagFunc = func() string { return `"` + hex.EncodeToString(fullPayloadHash.Sum(nil)) + `"` }
+	}
+	if err := h.publishObject(r.Context(), bucket, credential, key, objectUpload{
+		Stream:      stream,
+		Size:        decodedLength,
+		ContentType: objectContentType(r.Header),
+		Metadata:    objectUserMetadata(r.Header),
+		ETag:        etagFunc,
+	}); err != nil {
+		return "", err
+	}
+	return etagFunc(), nil
+}
+
+// objectUpload is one complete object body handed to publishObject as a stream.
+type objectUpload struct {
+	Stream      io.Reader
+	Size        int64
+	ContentType string
+	Metadata    map[string]string
+	ETag        func() string
+}
+
+// publishObject streams one object body through a locked PBS snapshot publication.
+func (h *Handler) publishObject(ctx context.Context, bucket Bucket, credential Credential, key string, upload objectUpload) (err error) {
 	storeRoot, err := h.datastoreRoot(bucket.Datastore)
 	if err != nil {
-		return "", err
+		return err
 	}
 	backupType, err := datastore.ParseBackupType(bucket.BackupType)
 	if err != nil {
-		return "", fmt.Errorf("parse backup type: %w", err)
+		return fmt.Errorf("parse backup type: %w", err)
 	}
-	publication, err := beginPublication(r.Context(), bucket.Datastore, storeRoot, bucket, credential.AuthID, h.now().UTC())
+	publication, err := beginPublication(ctx, bucket.Datastore, storeRoot, bucket, credential.AuthID, h.now().UTC())
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer func() { err = errors.Join(err, publication.Close()) }()
 
 	chunkConfig, err := buzhash.NewConfig(4 << 20)
 	if err != nil {
-		return "", fmt.Errorf("configure object chunking: %w", err)
+		return fmt.Errorf("configure object chunking: %w", err)
 	}
 	uid, gid := proxmox.BackupUID, proxmox.BackupGID
 	if os.Geteuid() != 0 {
@@ -98,9 +128,9 @@ func (h *Handler) putObject(r *http.Request, bucket Bucket, credential Credentia
 		GID:      gid,
 	})
 	if err != nil {
-		return "", fmt.Errorf("open datastore publisher: %w", err)
+		return fmt.Errorf("open datastore publisher: %w", err)
 	}
-	session, err := store.StartSession(r.Context(), backupproxy.BackupConfig{
+	session, err := store.StartSession(ctx, backupproxy.BackupConfig{
 		BackupType: backupType,
 		BackupID:   bucket.BackupID,
 		BackupTime: publication.backupTime,
@@ -108,36 +138,24 @@ func (h *Handler) putObject(r *http.Request, bucket Bucket, credential Credentia
 		CryptMode:  datastore.CryptModeNone,
 	})
 	if err != nil {
-		return "", fmt.Errorf("start datastore session: %w", err)
+		return fmt.Errorf("start datastore session: %w", err)
 	}
 	defer func() { err = errors.Join(err, session.Close()) }()
 
-	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
-	hashing := payloadHash == streamingPayloadHash || payloadHash == streamingTrailerPayloadHash
-	etag = `"` + strings.ToLower(payloadHash) + `"`
-	stream := io.Reader(payload)
-	var fullPayloadHash hash.Hash
-	if hashing {
-		fullPayloadHash = sha256.New()
-		stream = io.TeeReader(payload, fullPayloadHash)
-	}
-	result, err := session.UploadArchive(r.Context(), objectArchiveName, stream)
+	result, err := session.UploadArchive(ctx, objectArchiveName, upload.Stream)
 	if err != nil {
-		return "", fmt.Errorf("upload object archive: %w", err)
+		return fmt.Errorf("upload object archive: %w", err)
 	}
-	if hashing {
-		etag = `"` + hex.EncodeToString(fullPayloadHash.Sum(nil)) + `"`
-	}
-	if result.Size != uint64(decodedLength) {
-		return "", fmt.Errorf("uploaded object size %d does not match decoded length %d", result.Size, decodedLength)
+	if result.Size != uint64(upload.Size) {
+		return fmt.Errorf("uploaded object size %d does not match decoded length %d", result.Size, upload.Size)
 	}
 	if err := verifyObjectIndex(filepath.Join(publication.snapshotDir, objectArchiveName), result); err != nil {
-		return "", err
+		return err
 	}
 
-	manifest, err := session.Finish(r.Context())
+	manifest, err := session.Finish(ctx)
 	if err != nil {
-		return "", fmt.Errorf("finish datastore session: %w", err)
+		return fmt.Errorf("finish datastore session: %w", err)
 	}
 	object := indexedObject{
 		Bucket:       bucket.Name,
@@ -147,21 +165,21 @@ func (h *Handler) putObject(r *http.Request, bucket Bucket, credential Credentia
 		BackupType:   bucket.BackupType,
 		BackupID:     bucket.BackupID,
 		SnapshotTime: publication.backupTime,
-		Size:         decodedLength,
-		ETag:         etag,
-		ContentType:  objectContentType(r.Header),
-		UserMetadata: objectUserMetadata(r.Header),
+		Size:         upload.Size,
+		ETag:         upload.ETag(),
+		ContentType:  upload.ContentType,
+		UserMetadata: upload.Metadata,
 	}
 	if err := writeObjectManifest(publication.snapshotDir, manifest, object); err != nil {
-		return "", err
+		return err
 	}
 	if h.index != nil {
-		if err := h.index.put(r.Context(), object); err != nil {
-			return "", err
+		if err := h.index.put(ctx, object); err != nil {
+			return err
 		}
 	}
 	publication.Commit()
-	return etag, nil
+	return nil
 }
 
 func verifyObjectIndex(path string, result *backupproxy.UploadResult) error {

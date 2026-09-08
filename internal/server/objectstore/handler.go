@@ -20,6 +20,7 @@ type Handler struct {
 	createdAt        time.Time
 	now              func() time.Time
 	index            *keyIndex
+	multipartDir     string
 	resolveDatastore func(string) (string, error)
 }
 
@@ -100,11 +101,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveObjectRequest(w http.ResponseWriter, r *http.Request, bucket Bucket, credential Credential, key string) {
-	for _, flag := range []string{"uploads", "uploadId", "partNumber"} {
-		if hasQueryFlag(r, flag) {
-			writeError(w, r, http.StatusNotImplemented, "NotImplemented", "Multipart upload is not implemented yet.")
-			return
-		}
+	query := r.URL.Query()
+	if query.Get("uploadId") != "" || hasQueryFlag(r, "uploads") {
+		h.serveMultipartRequest(w, r, bucket, credential, key)
+		return
+	}
+	if hasQueryFlag(r, "partNumber") {
+		writeError(w, r, http.StatusNotImplemented, "NotImplemented", "The requested operation is not implemented yet.")
+		return
 	}
 	switch r.Method {
 	case http.MethodPut:

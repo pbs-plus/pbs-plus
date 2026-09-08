@@ -42,6 +42,9 @@ func newRoundTripHandler(t *testing.T) (handler *Handler, root, indexPath string
 		t.Fatal(err)
 	}
 	handler.resolveDatastore = func(string) (string, error) { return root, nil }
+	if err := handler.OpenMultipartSpool(filepath.Join(t.TempDir(), "uploads")); err != nil {
+		t.Fatal(err)
+	}
 	indexPath = filepath.Join(t.TempDir(), "index.db")
 	if err := handler.OpenKeyIndex(indexPath); err != nil {
 		t.Fatal(err)
