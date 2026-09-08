@@ -6,7 +6,7 @@ import (
 
 var outpostsModel = js.Model{
 	Name:       "pbs-model-outposts",
-	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints"),
+	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints", "s3"),
 	IDProperty: "name",
 }
 
@@ -44,7 +44,7 @@ var outpostsPanel = js.Panel{
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
 			let panel = this.getView();
-			Ext.create("Ext.window.Window", {
+			let win = Ext.create("Ext.window.Window", {
 				title: isEdit ? Ext.String.format(gettext("Edit Outpost '{0}'"), values.name) : gettext("Add Outpost"),
 				width: 460,
 				modal: true,
@@ -72,6 +72,7 @@ var outpostsPanel = js.Panel{
 							store: [
 								["nfs", "NFSv3 (built-in)"],
 								["samba", "SMB (Samba)"],
+								["s3", "S3 (objects as snapshots)"],
 							],
 							value: values.type || "nfs",
 							editable: false,
@@ -81,11 +82,13 @@ var outpostsPanel = js.Panel{
 									let form = f.up("form");
 									let listen = form.down("[name=listen-addr]");
 									let smb = v === "samba";
-									if (listen) listen.setDisabled(v !== "nfs");
+									if (listen) listen.setDisabled(smb);
 									["guest", "valid-users", "force-user", "hosts-allow", "browseable"].forEach((n) => {
 										let fld = form.down("[name=" + n + "]");
 										if (fld) fld.setDisabled(!smb);
 									});
+									let s3 = form.down("[name=s3]");
+									if (s3) s3.setDisabled(v !== "s3");
 								},
 							},
 						},
@@ -96,7 +99,7 @@ var outpostsPanel = js.Panel{
 							emptyText: "0.0.0.0:2049",
 							allowBlank: false,
 							value: values["listen-addr"],
-							disabled: values.type && values.type !== "nfs",
+							disabled: values.type === "samba",
 						},
 						{
 							xtype: "proxmoxcheckbox",
@@ -143,6 +146,14 @@ var outpostsPanel = js.Panel{
 							boxLabel: gettext("List share names when clients enumerate the server"),
 						},
 						{
+							xtype: "textarea",
+							name: "s3",
+							fieldLabel: gettext("S3 Config (JSON)"),
+							height: 180,
+							emptyText: '{"region":"us-east-1","buckets":[...],"credentials":[...]}',
+							disabled: values.type !== "s3",
+						},
+						{
 							xtype: "displayfield",
 							value: gettext("Samba outposts need smbd running with 'include' pointing at the pbs-plus outpost config. Set either guest access or valid users. Domain accounts (DOMAIN\\user) require the host to be joined with 'net ads join'. Read-only shares preserve backed-up ownership. Writable shares with Force User map pxar ownership to that NSS/winbind account while retaining source mode and ACL checks. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
 						},
@@ -166,6 +177,7 @@ var outpostsPanel = js.Panel{
 								"hosts-allow": vals["hosts-allow"] || "",
 								browseable: vals.browseable || "0",
 							};
+							if (vals.type === "s3") params.s3 = vals.s3 || "";
 							let url = "/api2/extjs/config/d2d-outposts";
 							let method = "POST";
 							if (isEdit) {
@@ -186,7 +198,11 @@ var outpostsPanel = js.Panel{
 						},
 					},
 				],
-			}).show();
+			});
+			if (values.s3) {
+				win.down("form").down("[name=s3]").setValue(JSON.stringify(values.s3, null, 2));
+			}
+			win.show();
 		`),
 		"edit": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			this.openEdit(rec);
@@ -219,10 +235,15 @@ var outpostsPanel = js.Panel{
 		{Text: "Type", DataIndex: "type", Width: 130, Renderer: js.Func("v", `
 			if (v === "nfs") return "NFSv3";
 			if (v === "samba") return "SMB (Samba)";
+			if (v === "s3") return "S3";
 			return Ext.String.htmlEncode(v || "");
 		`)},
 		{Text: "Listen Address", DataIndex: "listen-addr", Width: 160, Renderer: js.Func("v", `return Ext.String.htmlEncode(v || "");`)},
 		{Text: "Access", DataIndex: "valid-users", Width: 180, Renderer: js.Func("v, meta, rec", `
+			if (rec.get("type") === "s3") {
+				let s3 = rec.get("s3");
+				return (s3 && s3.buckets ? s3.buckets.length : 0) + " bucket(s)";
+			}
 			if (rec.get("type") !== "samba") return "-";
 			if (rec.get("guest")) return gettext("Guest");
 			return Ext.String.htmlEncode(v || "-");
