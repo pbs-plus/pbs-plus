@@ -22,3 +22,6 @@ WHERE bucket = ? AND key = ?;
 
 -- name: DeleteObject :exec
 DELETE FROM objects WHERE bucket = ? AND key = ?;
+
+-- name: ListObjectKeysByBucket :many
+SELECT key FROM objects WHERE bucket = ?;

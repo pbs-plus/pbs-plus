@@ -284,26 +284,26 @@ func scanLatestObject(storeRoot string, bucket Bucket, key string) (indexedObjec
 	return indexedObject{}, "", errObjectNotFound
 }
 
-func loadObjectSnapshot(snapshotDir string, bucket Bucket, key string) (indexedObject, error) {
+func readSnapshotObject(snapshotDir string) (manifestObject, int64, error) {
 	raw, err := os.ReadFile(filepath.Join(snapshotDir, "index.json.blob"))
 	if err != nil {
-		return indexedObject{}, err
+		return manifestObject{}, 0, err
 	}
 	data, err := datastore.DecodeBlob(nil, raw)
 	if err != nil {
-		return indexedObject{}, err
+		return manifestObject{}, 0, err
 	}
 	manifest, err := datastore.UnmarshalManifest(data)
 	if err != nil {
-		return indexedObject{}, err
+		return manifestObject{}, 0, err
 	}
 	var extra manifestUnprotected
 	if err := json.Unmarshal(manifest.Unprotected, &extra); err != nil {
-		return indexedObject{}, err
+		return manifestObject{}, 0, err
 	}
 	metadata := extra.Object
-	if metadata.Bucket != bucket.Name || metadata.Key != key || metadata.Size < 0 || metadata.ETag == "" {
-		return indexedObject{}, errObjectNotFound
+	if metadata.Size < 0 || metadata.ETag == "" {
+		return manifestObject{}, 0, errors.New("object metadata is invalid")
 	}
 	foundArchive := false
 	for _, file := range manifest.Files {
@@ -313,7 +313,18 @@ func loadObjectSnapshot(snapshotDir string, bucket Bucket, key string) (indexedO
 		}
 	}
 	if !foundArchive {
-		return indexedObject{}, errors.New("object archive is missing from manifest")
+		return manifestObject{}, 0, errors.New("object archive is missing from manifest")
+	}
+	return metadata, manifest.BackupTime, nil
+}
+
+func loadObjectSnapshot(snapshotDir string, bucket Bucket, key string) (indexedObject, error) {
+	metadata, backupTime, err := readSnapshotObject(snapshotDir)
+	if err != nil {
+		return indexedObject{}, err
+	}
+	if metadata.Bucket != bucket.Name || metadata.Key != key {
+		return indexedObject{}, errObjectNotFound
 	}
 	return indexedObject{
 		Bucket:       bucket.Name,
@@ -322,7 +333,7 @@ func loadObjectSnapshot(snapshotDir string, bucket Bucket, key string) (indexedO
 		Namespace:    bucket.Namespace,
 		BackupType:   bucket.BackupType,
 		BackupID:     bucket.BackupID,
-		SnapshotTime: manifest.BackupTime,
+		SnapshotTime: backupTime,
 		Size:         metadata.Size,
 		ETag:         metadata.ETag,
 		ContentType:  metadata.ContentType,

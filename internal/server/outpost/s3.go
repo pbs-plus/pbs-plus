@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -41,6 +42,15 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("s3 outpost config: %w", err)
 	}
+	if err := handler.OpenKeyIndex(filepath.Join(conf.StatePrefix, "objectstore", o.Name+".db")); err != nil {
+		log.Error(err, "s3 outpost "+o.Name+" key index; serving via snapshot scan")
+	} else {
+		go func() {
+			if err := handler.ReconcileIndex(ctx); err != nil {
+				log.Error(err, "s3 outpost "+o.Name+" index reconcile")
+			}
+		}()
+	}
 	listener, err := net.Listen("tcp", o.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("s3 outpost listen: %w", err)
@@ -52,7 +62,7 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 		IdleTimeout:       conf.HTTPIdleTimeout,
 		MaxHeaderBytes:    conf.HTTPMaxHeaderBytes,
 	}
-	instance := &s3Instance{listener: listener, server: server}
+	instance := &s3Instance{listener: listener, server: server, handler: handler}
 	go func() {
 		err := server.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -65,6 +75,7 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 type s3Instance struct {
 	listener net.Listener
 	server   *http.Server
+	handler  *objectstore.Handler
 }
 
 func (s *s3Instance) Attach(a Attachment) error {
@@ -89,4 +100,6 @@ func (s *s3Instance) Endpoint(bucket string) string {
 	return endpoint + "/" + bucket
 }
 
-func (s *s3Instance) Stop() error { return s.server.Close() }
+func (s *s3Instance) Stop() error {
+	return errors.Join(s.server.Close(), s.handler.Close())
+}

@@ -32,7 +32,7 @@ func TestHandlerS3Contract(t *testing.T) {
 		{name: "bucket location", method: http.MethodGet, target: "/mariadb?location", wantStatus: http.StatusOK, wantBody: []string{"<LocationConstraint", "us-west-2"}},
 		{name: "unknown bucket", method: http.MethodHead, target: "/missing", wantStatus: http.StatusNotFound, wantBody: []string{"<Code>NoSuchBucket</Code>"}},
 		{name: "ungranted bucket", method: http.MethodHead, target: "/private", wantStatus: http.StatusForbidden, wantBody: []string{"<Code>AccessDenied</Code>"}},
-		{name: "bucket listing pending", method: http.MethodGet, target: "/mariadb", wantStatus: http.StatusNotImplemented, wantBody: []string{"<Code>NotImplemented</Code>"}},
+		{name: "empty bucket listing", method: http.MethodGet, target: "/mariadb", wantStatus: http.StatusOK, wantBody: []string{"<ListBucketResult", "<Name>mariadb</Name>"}},
 		{name: "missing object", method: http.MethodGet, target: "/mariadb/dump.sql", wantStatus: http.StatusNotFound, wantBody: []string{"<Code>NoSuchKey</Code>"}},
 	}
 	for _, test := range tests {

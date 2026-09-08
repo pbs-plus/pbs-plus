@@ -90,6 +90,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodGet && hasQueryFlag(r, "location"):
 		h.getBucketLocation(w)
+	case r.Method == http.MethodGet:
+		h.listObjects(w, r, bucket, credential)
+	case r.Method == http.MethodPost && hasQueryFlag(r, "delete"):
+		h.deleteObjects(w, r, bucket, credential)
 	default:
 		writeError(w, r, http.StatusNotImplemented, "NotImplemented", "The requested operation is not implemented yet.")
 	}

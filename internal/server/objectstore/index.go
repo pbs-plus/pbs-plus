@@ -97,6 +97,18 @@ func (i *keyIndex) put(ctx context.Context, object indexedObject) error {
 	return nil
 }
 
+func (i *keyIndex) listKeys(ctx context.Context, bucket string) (map[string]struct{}, error) {
+	rows, err := i.read.ListObjectKeysByBucket(ctx, bucket)
+	if err != nil {
+		return nil, fmt.Errorf("read object index: %w", err)
+	}
+	keys := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		keys[row] = struct{}{}
+	}
+	return keys, nil
+}
+
 func (i *keyIndex) delete(ctx context.Context, bucket, key string) error {
 	if err := i.write.DeleteObject(ctx, objectstorequery.DeleteObjectParams{Bucket: bucket, Key: key}); err != nil {
 		return fmt.Errorf("delete object index: %w", err)
