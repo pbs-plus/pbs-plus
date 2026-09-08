@@ -69,4 +69,15 @@ func TestRender(t *testing.T) {
 	if strings.Contains(source, `fields: ["id", "datastore", "namespace", "backup-type", "backup-id"`) {
 		t.Error("rendered profiles panel still pins single backup groups")
 	}
+	for _, want := range []string{
+		`value: values["listen-addr"] || "0.0.0.0:2049"`,
+		`listen.setDisabled(v === "samba");`,
+		`smb.setDisabled(v !== "samba");`,
+		`structured.setDisabled(v !== "s3" || complexS3);`,
+		`raw.setDisabled(v !== "s3" || !complexS3);`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Errorf("outpost form does not disable inactive fields: %s", want)
+		}
+	}
 }

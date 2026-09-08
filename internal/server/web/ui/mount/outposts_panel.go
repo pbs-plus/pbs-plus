@@ -95,10 +95,22 @@ var outpostsPanel = js.Panel{
 									let smb = form.down("[itemId=sambaFields]");
 									let structured = form.down("[itemId=s3Fields]");
 									let raw = form.down("[itemId=s3JsonFields]");
-									if (listen) listen.setVisible(v !== "samba");
-									if (smb) smb.setVisible(v === "samba");
-									if (structured) structured.setVisible(v === "s3" && !complexS3);
-									if (raw) raw.setVisible(v === "s3" && complexS3);
+									if (listen) {
+										listen.setVisible(v !== "samba");
+										listen.setDisabled(v === "samba");
+									}
+									if (smb) {
+										smb.setVisible(v === "samba");
+										smb.setDisabled(v !== "samba");
+									}
+									if (structured) {
+										structured.setVisible(v === "s3" && !complexS3);
+										structured.setDisabled(v !== "s3" || complexS3);
+									}
+									if (raw) {
+										raw.setVisible(v === "s3" && complexS3);
+										raw.setDisabled(v !== "s3" || !complexS3);
+									}
 								},
 							},
 						},
@@ -108,14 +120,16 @@ var outpostsPanel = js.Panel{
 							fieldLabel: gettext("Listen Address"),
 							emptyText: "0.0.0.0:2049",
 							allowBlank: false,
-							value: values["listen-addr"],
+							value: values["listen-addr"] || "0.0.0.0:2049",
 							hidden: values.type === "samba",
+							disabled: values.type === "samba",
 						},
 						{
 							xtype: "container",
 							itemId: "sambaFields",
 							defaults: { anchor: "100%", labelWidth: 120 },
 							hidden: values.type !== "samba",
+							disabled: values.type !== "samba",
 							items: [
 								{
 									xtype: "proxmoxcheckbox",
@@ -163,6 +177,7 @@ var outpostsPanel = js.Panel{
 							itemId: "s3Fields",
 							defaults: { anchor: "100%", labelWidth: 120 },
 							hidden: values.type !== "s3" || complexS3,
+							disabled: values.type !== "s3" || complexS3,
 							items: [
 								{
 									xtype: "fieldset",
@@ -311,6 +326,7 @@ var outpostsPanel = js.Panel{
 							itemId: "s3JsonFields",
 							defaults: { anchor: "100%", labelWidth: 120 },
 							hidden: values.type !== "s3" || !complexS3,
+							disabled: values.type !== "s3" || !complexS3,
 							items: [
 								{
 									xtype: "displayfield",
