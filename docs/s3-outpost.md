@@ -209,11 +209,14 @@ path behind.
    journal and reaper. Index reconcile on start and schedule.
    Check: a 5 GiB `FPutObject` interrupted and retried.
 4. **Integration.** ExtJS panel fields in `outposts_panel.go`, API surface at
-   `/api2/extjs/config/d2d-outposts`, task logs, metrics, TLS via existing mtls
-   config, SSE-C and presigned decision, docs in `docs/outposts.md`.
-   Check: `.github/actions/run-s3-outpost-e2e` runs a real mariadb-operator
-   `Backup` and `Restore` against the outpost, plus a minio-go conformance
-   subset.
+   `/api2/extjs/config/d2d-outposts`, TLS via `tls-cert`/`tls-key` PEM paths,
+   SSE-C and presigned decision, mutation logging, docs in `docs/outposts.md`.
+   Deliberately deferred: Prometheus metrics (the `/plus/metrics` registry is
+   private and cardinality-safe labelling needs a design pass), per-mutation
+   UPID tasks (the tasklog registry is job/worker-shaped, not request-shaped),
+   and the `run-s3-outpost-e2e` mariadb-operator CI action (needs a real PBS
+   datastore in CI; the Go test suite already runs genuine minio-go
+   PUT/GET/Range/List/multipart/delete cycles against a temporary datastore).
 
 ## Open decisions
 

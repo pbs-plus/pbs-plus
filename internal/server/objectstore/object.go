@@ -16,6 +16,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"time"
 
 	"github.com/pbs-plus/pxar/backupproxy"
@@ -179,6 +181,10 @@ func (h *Handler) publishObject(ctx context.Context, bucket Bucket, credential C
 		}
 	}
 	publication.Commit()
+	log.Info("s3 put object",
+		"bucket", bucket.Name, "key", key, "size", upload.Size, "etag", object.ETag,
+		"datastore", bucket.Datastore, "namespace", bucket.Namespace,
+		"backup_type", bucket.BackupType, "backup_id", bucket.BackupID)
 	return nil
 }
 
@@ -512,6 +518,7 @@ func (h *Handler) deleteObject(ctx context.Context, bucket Bucket, credential Cr
 			return fmt.Errorf("remove object snapshot: %w", err)
 		}
 	}
+	log.Info("s3 delete object", "bucket", bucket.Name, "key", key, "versions", len(versions), "datastore", bucket.Datastore)
 	if h.index != nil {
 		return h.index.delete(ctx, bucket.Name, key)
 	}
