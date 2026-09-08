@@ -3,8 +3,6 @@ package pool
 
 import (
 	"container/list"
-	"runtime"
-	"sort"
 	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/util"
@@ -31,8 +29,14 @@ func (noopPool) Get(_ int64) (util.SizeReadSeekCloser, bool) {
 }
 
 func (noopPool) Put(_ int64, rc util.SizeReadSeekCloser) (bool, error) {
-	return false, rc.Close() //nolint:wrapcheck
+	return false, rc.Close()
 }
+
+// poolSize caps pooled folder decoders: every entry holds a live LZMA
+// dictionary (16MB+ at default 7z settings), so NumCPU entries can pin
+// hundreds of MB per solid folder. Two entries cover sequential reads;
+// strictly reverse-order walks restart decoders more often as a result.
+const poolSize = 2
 
 type pool struct {
 	mutex     sync.Mutex
@@ -50,37 +54,39 @@ type entry struct {
 // of util.SizeReadSeekCloser's keyed by their stream offset.
 func NewPool() (Pooler, error) {
 	return &pool{
-		size:      runtime.NumCPU(),
+		size:      poolSize,
 		evictList: list.New(),
 		items:     make(map[int64]*list.Element),
 	}, nil
 }
 
+// Get returns the pooled reader at exactly offset, or the one with the
+// largest key below it. The pool holds at most poolSize entries, so a
+// linear scan avoids the alloc+sort a sorted-key lookup would need.
 func (p *pool) Get(offset int64) (util.SizeReadSeekCloser, bool) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
 	if ent, ok := p.items[offset]; ok {
 		_ = p.removeElement(ent, false)
-
-		return ent.Value.(*entry).value, true //nolint:forcetypeassert
+		return ent.Value.(*entry).value, true
 	}
 
-	// Sort keys in descending order
-	keys := p.keys()
-	sort.Slice(keys, func(i, j int) bool { return keys[i] > keys[j] })
-
-	for _, k := range keys {
-		// First key less than offset is the closest
-		if k < offset {
-			ent := p.items[k]
-			_ = p.removeElement(ent, false)
-
-			return ent.Value.(*entry).value, true //nolint:forcetypeassert
+	var best *list.Element
+	for _, ent := range p.items {
+		k := ent.Value.(*entry).key
+		if k >= offset {
+			continue
+		}
+		if best == nil || k > best.Value.(*entry).key {
+			best = ent
 		}
 	}
-
-	return nil, false
+	if best == nil {
+		return nil, false
+	}
+	_ = p.removeElement(best, false)
+	return best.Value.(*entry).value, true
 }
 
 func (p *pool) Put(offset int64, rc util.SizeReadSeekCloser) (bool, error) {
@@ -105,18 +111,6 @@ func (p *pool) Put(offset int64, rc util.SizeReadSeekCloser) (bool, error) {
 	return evict, err
 }
 
-func (p *pool) keys() []int64 {
-	keys := make([]int64, len(p.items))
-	i := 0
-
-	for ent := p.evictList.Back(); ent != nil; ent = ent.Prev() {
-		keys[i] = ent.Value.(*entry).key //nolint:forcetypeassert
-		i++
-	}
-
-	return keys
-}
-
 func (p *pool) removeOldest() error {
 	if ent := p.evictList.Back(); ent != nil {
 		return p.removeElement(ent, true)
@@ -127,11 +121,11 @@ func (p *pool) removeOldest() error {
 
 func (p *pool) removeElement(e *list.Element, cb bool) error {
 	p.evictList.Remove(e)
-	kv := e.Value.(*entry) //nolint:forcetypeassert
+	kv := e.Value.(*entry)
 	delete(p.items, kv.key)
 
 	if cb {
-		return kv.value.Close() //nolint:wrapcheck
+		return kv.value.Close()
 	}
 
 	return nil
