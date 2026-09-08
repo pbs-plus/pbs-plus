@@ -27,7 +27,7 @@ aliases=$(grep -rhoE '[a-z][a-zA-Z0-9_]+ "github\.com/pbs-plus/pbs-plus/[a-z0-9/
 bad=$(ls cmd | grep -E '_|[A-Z]')
 [ -z "$bad" ] || err "cmd dirs must be kebab-case: $bad"
 
-gen=$(grep -E 'package: ".*(query)"' sqlc.yaml | grep -vE '(corequery|jobquery|mtfquery)')
+gen=$(grep -E 'package: ".*(query)"' sqlc.yaml | grep -vE '(corequery|jobquery|mtfquery|objectstorequery)')
 [ -z "$gen" ] || err "sqlc package naming drift in sqlc.yaml"
 
 gofmt -l internal cmd | grep . && err "unformatted files (gofmt -l)"

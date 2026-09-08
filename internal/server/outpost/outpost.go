@@ -32,16 +32,16 @@ const (
 
 // Outpost is the persisted configuration of one serving endpoint.
 type Outpost struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	ListenAddr string `json:"listen_addr,omitempty"`
-	Guest      bool   `json:"guest,omitempty"`
-	ValidUsers string `json:"valid_users,omitempty"`
-	ForceUser  string `json:"force_user,omitempty"`
-	HostsAllow string `json:"hosts_allow,omitempty"`
-	Browseable bool   `json:"browseable,omitempty"`
+	Name       string              `json:"name"`
+	Type       string              `json:"type"`
+	ListenAddr string              `json:"listen_addr,omitempty"`
+	Guest      bool                `json:"guest,omitempty"`
+	ValidUsers string              `json:"valid_users,omitempty"`
+	ForceUser  string              `json:"force_user,omitempty"`
+	HostsAllow string              `json:"hosts_allow,omitempty"`
+	Browseable bool                `json:"browseable,omitempty"`
 	S3         *objectstore.Config `json:"s3,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
+	CreatedAt  int64               `json:"created_at"`
 }
 
 // Attachment is a share served by an outpost: FS serves in process (nfs driver), Path backs VFS drivers (samba).
