@@ -54,8 +54,9 @@ func TestValidateOutpost(t *testing.T) {
 		want string
 	}{
 		{"ok", testOutpost(), ""},
+		{"s3", testS3Outpost(), ""},
 		{"bad name", Outpost{Name: "Bad_Name", Type: TypeNFS, ListenAddr: "0.0.0.0:2049"}, "invalid outpost name"},
-		{"unknown type", Outpost{Name: "a", Type: "s3", ListenAddr: "0.0.0.0:2049"}, "unknown outpost type"},
+		{"unknown type", Outpost{Name: "a", Type: "bogus", ListenAddr: "0.0.0.0:2049"}, "unknown outpost type"},
 		{"missing listen", Outpost{Name: "a", Type: TypeNFS}, "listen_addr is required"},
 		{"bad listen", Outpost{Name: "a", Type: TypeNFS, ListenAddr: "no-port"}, "invalid listen_addr"},
 	}

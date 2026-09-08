@@ -2,12 +2,13 @@
 
 Outposts are serving endpoints on the PBS server that expose mounted snapshots as network shares. Instead of mounting an archive at a local path on the server, you attach it to an outpost and clients reach it over NFS or SMB.
 
-Outposts are managed on the **Snapshots** page, **Outposts** tab. Two outpost types exist:
+Outposts are managed on the **Snapshots** page, **Outposts** tab. Three outpost types exist:
 
 | Type    | Serves             | Implementation                                     |
 | ------- | ------------------ | -------------------------------------------------- |
 | `nfs`   | NFSv3 (in-process) | Built into `pbs-plus`; only needs a listen address |
 | `samba` | SMB                | System Samba (`smbd`); see prerequisites below     |
+| `s3`    | S3 (HTTPS-style)   | Built into `pbs-plus`; writes objects as snapshots |
 
 ## Creating an Outpost
 
@@ -40,6 +41,52 @@ PBS Plus rewrites that single file on every attach/detach with the shares of all
 | Browseable   | List share names when clients enumerate the server. Shares are hidden by default; hidden shares stay fully accessible by name. |
 
 Domain principals (`DOMAIN\user`, `user@REALM`, `@DOMAIN\group`) require the PBS host to be joined to the domain first (`net ads join -U administrator`).
+
+### S3
+
+Serves an S3-compatible API (SigV4 authentication) for backup clients such as
+mariadb-operator. Every object becomes a PBS snapshot in the mapped backup
+group: one object archive per snapshot, an atomic `index.json` publish, and
+chunk-level dedup against the rest of the datastore. Overwrites create a new
+snapshot version (latest wins); `DELETE` removes all versions unless the
+snapshot is protected by a `.protected` marker.
+
+Configured on the **Outposts** tab (the S3 type carries a JSON config field)
+or through the REST API (`POST /api2/extjs/config/d2d-outposts` with
+`type=s3` and an `s3` JSON form value):
+
+```sh
+curl -X POST -d 'name=db-backups' -d 'type=s3' \
+  -d 'listen-addr=0.0.0.0:9000' \
+  -d 's3={
+        "region": "us-east-1",
+        "buckets": [{
+          "name": "mariadb",
+          "datastore": "backup",
+          "namespace": "databases",
+          "backup_type": "host",
+          "backup_id": "mariadb"
+        }],
+        "credentials": [{
+          "access_key": "operator",
+          "secret_key": "change-me",
+          "auth_id": "backup@pbs!s3",
+          "grants": [{"bucket": "mariadb", "read": true, "write": true, "delete": true}]
+        }]
+      }' https://<pbs-host>:8007/api2/extjs/config/d2d-outposts
+```
+
+Buckets bind an S3 bucket name to a PBS datastore/namespace/backup-type/backup-id
+group; each credential carries per-bucket read/write/delete grants and the PBS
+auth id that becomes the group `owner`. Supported: PUT/GET/HEAD/Range/DELETE,
+`ListBuckets`, `ListObjectsV2`/v1, `DeleteObjects`, multipart uploads with
+durable part spooling. Not supported (explicit errors): versioning, CopyObject,
+server-side encryption, presigned URLs, anonymous access.
+
+Optional `tls-cert`/`tls-key` (PEM paths, both or neither) serve HTTPS with the
+host's certificates, e.g. the pbs-plus agent material at
+`/etc/proxmox-backup/pbs-plus/certs/{server.crt,server.key}`; clients then
+trust `/etc/proxmox-backup/pbs-plus/certs/ca.crt`.
 
 Outpost configurations persist as JSON under `/var/lib/pbs-plus/outposts/`.
 

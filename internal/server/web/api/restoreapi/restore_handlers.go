@@ -30,7 +30,7 @@ import (
 func D2DRestoreHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -87,7 +87,7 @@ func D2DRestoreHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -95,7 +95,7 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 
 		restoreIDs := r.URL.Query()["job"]
 		if len(restoreIDs) == 0 {
-			http.Error(w, "Missing restore parameter(s)", http.StatusBadRequest)
+			respond.BadRequest(w, "missing restore parameter(s)")
 			return
 		}
 
@@ -172,7 +172,7 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := RestoreConfigResponse{}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -307,7 +307,7 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := RestoreConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 

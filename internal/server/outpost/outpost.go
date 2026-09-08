@@ -21,24 +21,27 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/objectstore"
 )
 
 const (
 	TypeNFS   = "nfs"
+	TypeS3    = "s3"
 	TypeSamba = "samba"
 )
 
 // Outpost is the persisted configuration of one serving endpoint.
 type Outpost struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	ListenAddr string `json:"listen_addr,omitempty"`
-	Guest      bool   `json:"guest,omitempty"`
-	ValidUsers string `json:"valid_users,omitempty"`
-	ForceUser  string `json:"force_user,omitempty"`
-	HostsAllow string `json:"hosts_allow,omitempty"`
-	Browseable bool   `json:"browseable,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
+	Name       string              `json:"name"`
+	Type       string              `json:"type"`
+	ListenAddr string              `json:"listen_addr,omitempty"`
+	Guest      bool                `json:"guest,omitempty"`
+	ValidUsers string              `json:"valid_users,omitempty"`
+	ForceUser  string              `json:"force_user,omitempty"`
+	HostsAllow string              `json:"hosts_allow,omitempty"`
+	Browseable bool                `json:"browseable,omitempty"`
+	S3         *objectstore.Config `json:"s3,omitempty"`
+	CreatedAt  int64               `json:"created_at"`
 }
 
 // Attachment is a share served by an outpost: FS serves in process (nfs driver), Path backs VFS drivers (samba).
@@ -74,6 +77,7 @@ type Instance interface {
 // drivers registers the available outpost types.
 var drivers = map[string]Driver{
 	TypeNFS:   nfsDriver{},
+	TypeS3:    s3Driver{},
 	TypeSamba: sambaDriver{},
 }
 

@@ -6,7 +6,7 @@ import (
 
 var outpostsModel = js.Model{
 	Name:       "pbs-model-outposts",
-	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints"),
+	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints", "s3"),
 	IDProperty: "name",
 }
 
@@ -44,15 +44,26 @@ var outpostsPanel = js.Panel{
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
 			let panel = this.getView();
-			Ext.create("Ext.window.Window", {
+			let s3cfg = values.s3 || {};
+			let s3bucket = (s3cfg.buckets && s3cfg.buckets[0]) || {};
+			let s3cred = (s3cfg.credentials && s3cfg.credentials[0]) || {};
+			let s3grant = {};
+			if (s3cred.grants) {
+				for (let grant of s3cred.grants) {
+					if (grant.bucket === s3bucket.name) { s3grant = grant; break; }
+				}
+			}
+			let complexS3 = !!(s3cfg.buckets && s3cfg.buckets.length > 1) || !!(s3cfg.credentials && s3cfg.credentials.length > 1);
+			let win = Ext.create("Ext.window.Window", {
 				title: isEdit ? Ext.String.format(gettext("Edit Outpost '{0}'"), values.name) : gettext("Add Outpost"),
-				width: 460,
+				width: 520,
 				modal: true,
 				bodyPadding: 10,
 				items: [{
 					xtype: "form",
 					anchor: "100%",
 					border: false,
+					autoScroll: true,
 					defaults: { anchor: "100%", labelWidth: 120 },
 					items: [
 						{
@@ -72,6 +83,7 @@ var outpostsPanel = js.Panel{
 							store: [
 								["nfs", "NFSv3 (built-in)"],
 								["samba", "SMB (Samba)"],
+								["s3", "S3 (objects as snapshots)"],
 							],
 							value: values.type || "nfs",
 							editable: false,
@@ -80,12 +92,13 @@ var outpostsPanel = js.Panel{
 								change: (f, v) => {
 									let form = f.up("form");
 									let listen = form.down("[name=listen-addr]");
-									let smb = v === "samba";
-									if (listen) listen.setDisabled(v !== "nfs");
-									["guest", "valid-users", "force-user", "hosts-allow", "browseable"].forEach((n) => {
-										let fld = form.down("[name=" + n + "]");
-										if (fld) fld.setDisabled(!smb);
-									});
+									let smb = form.down("[itemId=sambaFields]");
+									let structured = form.down("[itemId=s3Fields]");
+									let raw = form.down("[itemId=s3JsonFields]");
+									if (listen) listen.setVisible(v !== "samba");
+									if (smb) smb.setVisible(v === "samba");
+									if (structured) structured.setVisible(v === "s3" && !complexS3);
+									if (raw) raw.setVisible(v === "s3" && complexS3);
 								},
 							},
 						},
@@ -96,51 +109,220 @@ var outpostsPanel = js.Panel{
 							emptyText: "0.0.0.0:2049",
 							allowBlank: false,
 							value: values["listen-addr"],
-							disabled: values.type && values.type !== "nfs",
+							hidden: values.type === "samba",
 						},
 						{
-							xtype: "proxmoxcheckbox",
-							name: "guest",
-							fieldLabel: gettext("Allow Guests"),
-							uncheckedValue: "0",
-							inputValue: "1",
-							value: values.guest,
-							disabled: values.type !== "samba",
-							boxLabel: gettext("Anonymous access, no password"),
+							xtype: "container",
+							itemId: "sambaFields",
+							defaults: { anchor: "100%", labelWidth: 120 },
+							hidden: values.type !== "samba",
+							items: [
+								{
+									xtype: "proxmoxcheckbox",
+									name: "guest",
+									fieldLabel: gettext("Allow Guests"),
+									uncheckedValue: "0",
+									inputValue: "1",
+									value: values.guest,
+									boxLabel: gettext("Anonymous access, no password"),
+								},
+								{
+									xtype: "proxmoxtextfield",
+									name: "valid-users",
+									fieldLabel: gettext("Valid Users"),
+									emptyText: "DOMAIN\\restore-ops, @DOMAIN\\backup-admins",
+									value: values["valid-users"],
+								},
+								{
+									xtype: "proxmoxtextfield",
+									name: "force-user",
+									fieldLabel: gettext("Force User"),
+									emptyText: "root",
+									value: values["force-user"],
+								},
+								{
+									xtype: "proxmoxtextfield",
+									name: "hosts-allow",
+									fieldLabel: gettext("Hosts Allow"),
+									emptyText: "10.0.0.0/8, 192.168.1.",
+									value: values["hosts-allow"],
+								},
+								{
+									xtype: "proxmoxcheckbox",
+									name: "browseable",
+									fieldLabel: gettext("Browseable"),
+									uncheckedValue: "0",
+									inputValue: "1",
+									value: values.browseable,
+									boxLabel: gettext("List share names when clients enumerate the server"),
+								},
+							],
 						},
 						{
-							xtype: "proxmoxtextfield",
-							name: "valid-users",
-							fieldLabel: gettext("Valid Users"),
-							emptyText: "DOMAIN\\restore-ops, @DOMAIN\\backup-admins",
-							value: values["valid-users"],
-							disabled: values.type !== "samba",
+							xtype: "container",
+							itemId: "s3Fields",
+							defaults: { anchor: "100%", labelWidth: 120 },
+							hidden: values.type !== "s3" || complexS3,
+							items: [
+								{
+									xtype: "fieldset",
+									title: gettext("Bucket"),
+									items: [
+										{
+											xtype: "proxmoxtextfield",
+											name: "bucket",
+											fieldLabel: gettext("Bucket Name"),
+											allowBlank: false,
+											regex: /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/,
+											regexText: gettext("3-63 lowercase letters, digits, dots and dashes"),
+											value: s3bucket.name,
+										},
+										{
+											xtype: "combobox",
+											name: "datastore",
+											fieldLabel: gettext("Datastore"),
+											store: "pbs-datastore-list",
+											displayField: "store",
+											valueField: "store",
+											allowBlank: false,
+											value: s3bucket.datastore,
+											listeners: {
+												change: (cb, v) => {
+													let nsCombo = cb.up("form").down("pbsNamespaceSelector[name=ns]");
+													if (nsCombo) nsCombo.setDatastore(v);
+												},
+											},
+										},
+										{
+											xtype: "pbsNamespaceSelector",
+											name: "ns",
+											fieldLabel: gettext("Namespace"),
+											datastore: s3bucket.datastore,
+											emptyText: gettext("root"),
+											value: s3bucket.namespace,
+										},
+										{
+											xtype: "combobox",
+											name: "backup-type",
+											fieldLabel: gettext("Backup Type"),
+											store: [["host", gettext("Host")], ["vm", gettext("VM")], ["ct", gettext("Container")]],
+											value: s3bucket.backup_type || "host",
+											editable: false,
+											allowBlank: false,
+										},
+										{
+											xtype: "proxmoxtextfield",
+											name: "backup-id",
+											fieldLabel: gettext("Backup ID"),
+											allowBlank: false,
+											regex: /^[A-Za-z0-9_][A-Za-z0-9._-]*$/,
+											regexText: gettext("Letters, digits, dots, dashes and underscores; start with a letter or digit"),
+											value: s3bucket.backup_id,
+										},
+									],
+								},
+								{
+									xtype: "fieldset",
+									title: gettext("Credential"),
+									items: [
+										{
+											xtype: "proxmoxtextfield",
+											name: "access-key",
+											fieldLabel: gettext("Access Key"),
+											allowBlank: false,
+											value: s3cred.access_key,
+										},
+										{
+											xtype: "proxmoxtextfield",
+											name: "secret-key",
+											fieldLabel: gettext("Secret Key"),
+											inputType: "password",
+											allowBlank: false,
+											minLength: 8,
+											value: s3cred.secret_key,
+										},
+										{
+											xtype: "proxmoxtextfield",
+											name: "auth-id",
+											fieldLabel: gettext("Owner"),
+											allowBlank: false,
+											regex: /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+(![A-Za-z0-9._-]+)?$/,
+											regexText: gettext("PBS auth id, e.g. root@pam"),
+											value: s3cred.auth_id || "root@pam",
+										},
+										{
+											xtype: "checkboxgroup",
+											fieldLabel: gettext("Permissions"),
+											items: [
+												{ boxLabel: gettext("Read"), name: "read", inputValue: "1", uncheckedValue: "0", checked: isEdit ? !!s3grant.read : true },
+												{ boxLabel: gettext("Write"), name: "write", inputValue: "1", uncheckedValue: "0", checked: isEdit ? !!s3grant.write : true },
+												{ boxLabel: gettext("Delete"), name: "delete", inputValue: "1", uncheckedValue: "0", checked: isEdit ? !!s3grant.delete : true },
+											],
+										},
+									],
+								},
+								{
+									xtype: "fieldset",
+									title: gettext("Advanced"),
+									collapsible: true,
+									collapsed: !(s3cfg["tls-cert"] || s3cfg["tls-key"] || s3cfg["spool-dir"]),
+									items: [
+										{
+											xtype: "combobox",
+											name: "region",
+											fieldLabel: gettext("Region"),
+											store: ["us-east-1", "us-east-2", "us-west-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-west-2", "ap-southeast-1", "ap-northeast-1", "sa-east-1"],
+											queryMode: "local",
+											editable: true,
+											forceSelection: false,
+											value: s3cfg.region || "us-east-1",
+										},
+										{
+											xtype: "proxmoxtextfield",
+											name: "tls-cert",
+											fieldLabel: gettext("TLS Certificate"),
+											emptyText: "/etc/proxmox-backup/pbs-plus/certs/server.crt",
+											value: s3cfg["tls-cert"],
+										},
+										{
+											xtype: "proxmoxtextfield",
+											name: "tls-key",
+											fieldLabel: gettext("TLS Key"),
+											emptyText: "/etc/proxmox-backup/pbs-plus/certs/server.key",
+											value: s3cfg["tls-key"],
+										},
+										{
+											xtype: "proxmoxtextfield",
+											name: "spool-dir",
+											fieldLabel: gettext("Spool Directory"),
+											emptyText: gettext("inside the datastore (default)"),
+											value: s3cfg["spool-dir"],
+										},
+									],
+								},
+								{
+									xtype: "displayfield",
+									value: gettext("Objects become snapshots in the mapped backup group; clients authenticate with SigV4 access keys."),
+								},
+							],
 						},
 						{
-							xtype: "proxmoxtextfield",
-							name: "force-user",
-							fieldLabel: gettext("Force User"),
-							emptyText: "root",
-							value: values["force-user"],
-							disabled: values.type !== "samba",
-						},
-						{
-							xtype: "proxmoxtextfield",
-							name: "hosts-allow",
-							fieldLabel: gettext("Hosts Allow"),
-							emptyText: "10.0.0.0/8, 192.168.1.",
-							value: values["hosts-allow"],
-							disabled: values.type !== "samba",
-						},
-						{
-							xtype: "proxmoxcheckbox",
-							name: "browseable",
-							fieldLabel: gettext("Browseable"),
-							uncheckedValue: "0",
-							inputValue: "1",
-							value: values.browseable,
-							disabled: values.type !== "samba",
-							boxLabel: gettext("List share names when clients enumerate the server"),
+							xtype: "container",
+							itemId: "s3JsonFields",
+							defaults: { anchor: "100%", labelWidth: 120 },
+							hidden: values.type !== "s3" || !complexS3,
+							items: [
+								{
+									xtype: "displayfield",
+									value: gettext("This outpost maps multiple buckets or credentials; edit the raw S3 JSON."),
+								},
+								{
+									xtype: "textarea",
+									name: "s3",
+									fieldLabel: gettext("S3 Config (JSON)"),
+									height: 240,
+								},
+							],
 						},
 						{
 							xtype: "displayfield",
@@ -166,6 +348,41 @@ var outpostsPanel = js.Panel{
 								"hosts-allow": vals["hosts-allow"] || "",
 								browseable: vals.browseable || "0",
 							};
+							if (vals.type === "s3") {
+								if (complexS3) {
+									params.s3 = vals.s3 || "";
+									try { JSON.parse(params.s3); } catch (err) {
+										Ext.Msg.alert(gettext("Error"), gettext("S3 config is not valid JSON."));
+										return;
+									}
+								} else {
+									let s3 = {
+										region: vals.region || "",
+										buckets: [{
+											name: vals.bucket,
+											datastore: vals.datastore,
+											namespace: vals.ns || "",
+											backup_type: vals["backup-type"],
+											backup_id: vals["backup-id"],
+										}],
+										credentials: [{
+											access_key: vals["access-key"],
+											secret_key: vals["secret-key"],
+											auth_id: vals["auth-id"],
+											grants: [{
+												bucket: vals.bucket,
+												read: vals.read === "1",
+												write: vals.write === "1",
+												delete: vals.delete === "1",
+											}],
+										}],
+									};
+									if (vals["tls-cert"]) s3["tls-cert"] = vals["tls-cert"];
+									if (vals["tls-key"]) s3["tls-key"] = vals["tls-key"];
+									if (vals["spool-dir"]) s3["spool-dir"] = vals["spool-dir"];
+									params.s3 = JSON.stringify(s3);
+								}
+							}
 							let url = "/api2/extjs/config/d2d-outposts";
 							let method = "POST";
 							if (isEdit) {
@@ -186,7 +403,11 @@ var outpostsPanel = js.Panel{
 						},
 					},
 				],
-			}).show();
+			});
+			if (complexS3 && values.s3) {
+				win.down("form").down("[name=s3]").setValue(JSON.stringify(values.s3, null, 2));
+			}
+			win.show();
 		`),
 		"edit": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			this.openEdit(rec);
@@ -219,10 +440,15 @@ var outpostsPanel = js.Panel{
 		{Text: "Type", DataIndex: "type", Width: 130, Renderer: js.Func("v", `
 			if (v === "nfs") return "NFSv3";
 			if (v === "samba") return "SMB (Samba)";
+			if (v === "s3") return "S3";
 			return Ext.String.htmlEncode(v || "");
 		`)},
 		{Text: "Listen Address", DataIndex: "listen-addr", Width: 160, Renderer: js.Func("v", `return Ext.String.htmlEncode(v || "");`)},
 		{Text: "Access", DataIndex: "valid-users", Width: 180, Renderer: js.Func("v, meta, rec", `
+			if (rec.get("type") === "s3") {
+				let s3 = rec.get("s3");
+				return (s3 && s3.buckets ? s3.buckets.length : 0) + " bucket(s)";
+			}
 			if (rec.get("type") !== "samba") return "-";
 			if (rec.get("guest")) return gettext("Guest");
 			return Ext.String.htmlEncode(v || "-");

@@ -112,6 +112,7 @@ All E2E steps are in `.github/actions/` as reusable composite actions:
 | `run-verification`       | Trigger and verify a verification job                       |
 | `run-pxar-e2e`           | Run pxar-mount FUSE e2e test inside PBS container           |
 | `run-mount-e2e`          | Run server-managed mount e2e test                           |
+| `run-s3-outpost-e2e`     | Run S3 outpost e2e test with the real `mc` client           |
 | `show-logs`              | Dump container logs on failure                              |
 | `cleanup`                | Remove containers and network                               |
 

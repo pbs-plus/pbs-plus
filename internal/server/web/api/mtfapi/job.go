@@ -25,13 +25,13 @@ import (
 func ExtJsMtfJobRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
 		jobIDs := r.URL.Query()["job"]
 		if len(jobIDs) == 0 {
-			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
+			respond.BadRequest(w, "missing job parameter(s)")
 			return
 		}
 
@@ -146,7 +146,7 @@ func ExtJsMtfJobHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -184,7 +184,7 @@ func ExtJsMtfJobHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsMtfJobSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		ms := mtfStore(app)
@@ -274,7 +274,7 @@ func ExtJsMtfJobSingleHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsMtfJobUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		ms := mtfStore(app)

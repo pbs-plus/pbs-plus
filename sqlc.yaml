@@ -42,3 +42,17 @@ sql:
         emit_exact_table_names: false
         emit_empty_slices: true
         emit_pointers_for_null_types: false
+  - engine: "sqlite"
+    queries: "internal/server/objectstore/queries"
+    schema: "internal/server/objectstore/migrations"
+    gen:
+      go:
+        package: "objectstorequery"
+        out: "internal/server/objectstore/objectstorequery"
+        sql_package: "database/sql"
+        emit_json_tags: true
+        emit_prepared_queries: false
+        emit_interface: true
+        emit_exact_table_names: false
+        emit_empty_slices: true
+        emit_pointers_for_null_types: false

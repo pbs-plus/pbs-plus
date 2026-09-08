@@ -4,6 +4,8 @@ package notificationapi
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -34,7 +36,7 @@ func NotificationBatchHandler(app *application.Runtime) http.HandlerFunc {
 		case http.MethodDelete:
 			deleteNotificationBatch(app, w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 		}
 	}
 }
@@ -86,7 +88,7 @@ func listNotificationBatches(app *application.Runtime, w http.ResponseWriter, r 
 func getNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request, name string) {
 	batch, err := app.CoreDB.GetNotificationBatch(name)
 	if err != nil || batch.Name == "" {
-		http.Error(w, "Batch not found", http.StatusNotFound)
+		respond.NotFound(w, "batch not found")
 		return
 	}
 
@@ -102,11 +104,11 @@ func getNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *ht
 func createNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		http.Error(w, "Missing batch name", http.StatusBadRequest)
+		respond.BadRequest(w, "missing batch name")
 		return
 	}
 	if err := validate.ValidateJobId(name); err != nil {
-		http.Error(w, "Invalid batch name: "+err.Error(), http.StatusBadRequest)
+		respond.Error(w, http.StatusBadRequest, fmt.Errorf("invalid batch name: %w", err))
 		return
 	}
 
@@ -115,7 +117,7 @@ func createNotificationBatch(app *application.Runtime, w http.ResponseWriter, r 
 		log.Error(err, "")
 	}
 	if existing.Name != "" {
-		http.Error(w, "Batch already exists", http.StatusConflict)
+		respond.Error(w, http.StatusConflict, errors.New("batch already exists"))
 		return
 	}
 
@@ -168,13 +170,13 @@ func createNotificationBatch(app *application.Runtime, w http.ResponseWriter, r 
 func updateNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("batch")
 	if name == "" {
-		http.Error(w, "Missing batch parameter", http.StatusBadRequest)
+		respond.BadRequest(w, "missing batch parameter")
 		return
 	}
 
 	existing, err := app.CoreDB.GetNotificationBatch(name)
 	if err != nil || existing.Name == "" {
-		http.Error(w, "Batch not found", http.StatusNotFound)
+		respond.NotFound(w, "batch not found")
 		return
 	}
 
@@ -232,7 +234,7 @@ func updateNotificationBatch(app *application.Runtime, w http.ResponseWriter, r 
 func deleteNotificationBatch(app *application.Runtime, w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("batch")
 	if name == "" {
-		http.Error(w, "Missing batch parameter", http.StatusBadRequest)
+		respond.BadRequest(w, "missing batch parameter")
 		return
 	}
 
@@ -260,7 +262,7 @@ func NotificationBatchJobsHandler(app *application.Runtime) http.HandlerFunc {
 		case http.MethodDelete:
 			removeBatchJob(app, w, r)
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 		}
 	}
 }
@@ -298,12 +300,12 @@ func addBatchJob(app *application.Runtime, w http.ResponseWriter, r *http.Reques
 	jobID := r.FormValue("job-id")
 
 	if batchName == "" || jobType == "" || jobID == "" {
-		http.Error(w, "Missing batch-name, job-type, or job-id", http.StatusBadRequest)
+		respond.BadRequest(w, "missing batch-name, job-type, or job-id")
 		return
 	}
 
 	if jobType != "backup" && jobType != "restore" && jobType != "verification" {
-		http.Error(w, "Invalid job-type, must be backup, restore, or verification", http.StatusBadRequest)
+		respond.BadRequest(w, "invalid job-type, must be backup, restore, or verification")
 		return
 	}
 
@@ -331,7 +333,7 @@ func removeBatchJob(app *application.Runtime, w http.ResponseWriter, r *http.Req
 	jobID := r.FormValue("job-id")
 
 	if batchName == "" || jobType == "" || jobID == "" {
-		http.Error(w, "Missing batch-name, job-type, or job-id", http.StatusBadRequest)
+		respond.BadRequest(w, "missing batch-name, job-type, or job-id")
 		return
 	}
 
@@ -349,7 +351,7 @@ func removeBatchJob(app *application.Runtime, w http.ResponseWriter, r *http.Req
 func NotificationBatchStatusHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 

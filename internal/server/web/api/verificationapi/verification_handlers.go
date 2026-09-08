@@ -41,7 +41,7 @@ type VerificationRunResponse struct {
 func D2DVerificationHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -75,13 +75,13 @@ func D2DVerificationHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsVerificationRunHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
 		jobIDs := r.URL.Query()["job"]
 		if len(jobIDs) == 0 {
-			http.Error(w, "Missing job parameter(s)", http.StatusBadRequest)
+			respond.BadRequest(w, "missing job parameter(s)")
 			return
 		}
 
@@ -140,7 +140,7 @@ func ExtJsVerificationRunHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsVerificationConfigHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -486,14 +486,14 @@ func ExtJsVerificationConfigSingleHandler(app *application.Runtime) http.Handler
 			return
 		}
 
-		http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+		respond.MethodNotAllowed(w, r)
 	}
 }
 
 func VerificationAggregateHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -528,7 +528,7 @@ func VerificationAggregateHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsVerificationResultsHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -568,7 +568,7 @@ func ExtJsVerificationResultsHandler(app *application.Runtime) http.HandlerFunc 
 func VerificationResultsExportHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 

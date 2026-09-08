@@ -37,6 +37,77 @@ Ext.define("PBS.PlusUtils", {
       .then(callback);
   },
 
+  formatRequestError: function (response) {
+    if (response.aborted) {
+      return Ext.htmlEncode(gettext("Connection error") + " - aborted.");
+    }
+    if (response.timedout) {
+      return Ext.htmlEncode(gettext("Connection error") + " - Timeout.");
+    }
+
+    let result = response.result;
+    if (!result && response.responseText) {
+      try {
+        result = Ext.decode(response.responseText);
+      } catch (_e) {
+        result = null;
+      }
+    }
+    if (result && !result.success) {
+      return Proxmox.Utils.extractRequestError(result, true);
+    }
+
+    let status = response.status;
+    if (!status || status <= 0) {
+      return Ext.htmlEncode(gettext("Connection error") + " - server offline?");
+    }
+
+    let text = (response.responseText || "").trim();
+    if (text && text.length <= 1024 && text.charAt(0) !== "<") {
+      return Ext.htmlEncode(`${text} (${status})`);
+    }
+
+    let reason = response.statusText || gettext("Error");
+    return Ext.htmlEncode(`${reason} (${status})`);
+  },
+
+  monStoreErrors: function (
+    component,
+    store,
+    clearMaskBeforeLoad,
+    errorCallback,
+  ) {
+    component.mon(store, "beforeload", function (s, operation, eOpts) {
+      if (clearMaskBeforeLoad) {
+        Proxmox.Utils.setErrorMask(component, false);
+      } else if (!component.loadCount) {
+        component.loadCount = 0;
+        Proxmox.Utils.setErrorMask(component, true);
+      }
+    });
+
+    component.mon(store.proxy, "afterload", function (proxy, request, success) {
+      component.loadCount++;
+
+      if (success) {
+        Proxmox.Utils.setErrorMask(component, false);
+        return;
+      }
+
+      let error = request._operation.getError() || {};
+      let msg = PBS.PlusUtils.formatRequestError({
+        status: error.status,
+        statusText: error.statusText,
+        responseText: error.response?.responseText,
+        aborted: error.aborted,
+        timedout: error.timedout,
+      });
+      if (!errorCallback || !errorCallback(error, msg)) {
+        Proxmox.Utils.setErrorMask(component, msg);
+      }
+    });
+  },
+
   API2Request: function (reqOpts) {
     var newopts = Ext.apply(
       {
@@ -81,13 +152,19 @@ Ext.define("PBS.PlusUtils", {
               unmask(options.waitMsgTarget);
             }
           }
-          let result = Ext.decode(response.responseText);
+          let result = {};
+          try {
+            result = Ext.decode(response.responseText) ?? {};
+          } catch (_e) {
+            result = {
+              success: false,
+              message: gettext("Invalid response from server"),
+              status: response.status,
+            };
+          }
           response.result = result;
           if (!result.success) {
-            response.htmlStatus = Proxmox.Utils.extractRequestError(
-              result,
-              true,
-            );
+            response.htmlStatus = PBS.PlusUtils.formatRequestError(response);
             Ext.callback(callbackFn, options.scope, [options, false, response]);
             Ext.callback(failureFn, options.scope, [response, options]);
             if (autoErrorAlert) {
@@ -109,25 +186,13 @@ Ext.define("PBS.PlusUtils", {
           response.result = {};
           try {
             response.result = Ext.decode(response.responseText);
-          } catch (_e) {
-            // ignore
-          }
-          let msg = gettext("Connection error") + " - server offline?";
-          if (response.aborted) {
-            msg = gettext("Connection error") + " - aborted.";
-          } else if (response.timedout) {
-            msg = gettext("Connection error") + " - Timeout.";
-          } else if (response.status && response.statusText) {
-            msg =
-              gettext("Connection error") +
-              " " +
-              response.status +
-              ": " +
-              response.statusText;
-          }
-          response.htmlStatus = Ext.htmlEncode(msg);
+          } catch (_e) {}
+          response.htmlStatus = PBS.PlusUtils.formatRequestError(response);
           Ext.callback(callbackFn, options.scope, [options, false, response]);
           Ext.callback(failureFn, options.scope, [response, options]);
+          if (autoErrorAlert) {
+            Ext.Msg.alert(gettext("Error"), response.htmlStatus);
+          }
         },
       });
     };

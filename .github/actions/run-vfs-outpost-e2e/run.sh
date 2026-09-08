@@ -15,10 +15,9 @@ INIT_GROUP_DIR="/mnt/test/ns/test/host/e2e-init"
 ENC_DS=$(printf %s "$DATASTORE" | base64 -w0)
 SMB_OUTPOST="smb"
 SMB_SHARE_NAME="restore-public"
-SAMBA_INCLUDE="/var/lib/pbs-plus/outposts/samba-$SMB_OUTPOST.conf"
+SAMBA_INCLUDE="/var/lib/pbs-plus/outposts/samba.conf"
 CLIENT_SMB="/tmp/pbs-plus-vfs-smb"
 ACL_OUTPOST="smb-acl"
-ACL_INCLUDE="/var/lib/pbs-plus/outposts/samba-$ACL_OUTPOST.conf"
 ACL_USER="e2erestore"
 ACL_PASS="e2e-restore-pw"
 CLIENT_SMB_ACL="/tmp/pbs-plus-vfs-smb-acl"
@@ -48,7 +47,6 @@ dump_logs() {
 	echo ""
 	echo "--- samba include file ---"
 	cat "$SAMBA_INCLUDE" 2>/dev/null || true
-	cat "$ACL_INCLUDE" 2>/dev/null || true
 	echo "--- mount process logs ---"
 	ls -la /var/run/pbs-plus-mounts/ /run/pbs-plus-outposts/ 2>/dev/null || true
 	tail -60 /var/run/pbs-plus-mounts/*.log 2>/dev/null || true
@@ -221,10 +219,9 @@ cat > /etc/samba/smb.conf <<EOF
 	guest account = root
 	load printers = no
 	include = $SAMBA_INCLUDE
-	include = $ACL_INCLUDE
 EOF
 mkdir -p "$(dirname "$SAMBA_INCLUDE")"
-touch "$SAMBA_INCLUDE" "$ACL_INCLUDE"
+touch "$SAMBA_INCLUDE"
 useradd -M -s /usr/sbin/nologin "$ACL_USER" 2>/dev/null || true
 printf '%s\n%s\n' "$ACL_PASS" "$ACL_PASS" | smbpasswd -s -a "$ACL_USER" >/dev/null 2>&1 \
 	&& ok "samba local restore account created" || fail "smbpasswd could not create $ACL_USER"
@@ -315,9 +312,9 @@ wait_for "samba acl share attached" 240 session_ready e2e-init "$ACL_OUTPOST" ||
 ACL_SHARE=$(session_endpoint e2e-init "$ACL_OUTPOST")
 ACL_SHARE=${ACL_SHARE##*/}
 [ -n "$ACL_SHARE" ] && ok "samba acl endpoint reported: $ACL_SHARE" || fail "samba acl endpoint missing"
-grep -q "valid users = $ACL_USER" "$ACL_INCLUDE" 2>/dev/null \
+grep -q "valid users = $ACL_USER" "$SAMBA_INCLUDE" 2>/dev/null \
 	&& ok "acl share stanza carries valid users" || fail "acl share stanza missing valid users"
-grep -q "force user = $ACL_USER" "$ACL_INCLUDE" 2>/dev/null \
+grep -q "force user = $ACL_USER" "$SAMBA_INCLUDE" 2>/dev/null \
 	&& ok "acl share stanza carries force user" || fail "acl share stanza missing force user"
 
 mkdir -p "$CLIENT_SMB_ACL"

@@ -57,7 +57,17 @@ func (s *Scheduler) run() {
 	}
 }
 
+// hasActiveExecution reports a pending or running execution for the definition.
+func (s *Scheduler) hasActiveExecution(kind, definitionID string) bool {
+	_, err := s.app.Engine.ActiveExecution(s.app.Ctx, kind, definitionID)
+	return err == nil
+}
+
 func (s *Scheduler) submitBackup(b coredb.Backup, trigger string, occurrence time.Time) error {
+	if s.hasActiveExecution(jobs.WorkflowBackup, b.ID) {
+		log.Info("scheduler: skipping backup, execution already queued or running", "backupID", b.ID, "trigger", trigger)
+		return nil
+	}
 	request, err := jobs.NewWorkflowSubmit(
 		jobs.WorkflowBackup,
 		b.ID,
@@ -161,6 +171,10 @@ func (s *Scheduler) checkRestores() {
 		if r.Retry == 0 || !s.shouldRetryRestore(r, now) {
 			continue
 		}
+		if s.hasActiveExecution(jobs.WorkflowRestore, r.ID) {
+			log.Info("scheduler: skipping restore, execution already queued or running", "restoreID", r.ID)
+			continue
+		}
 		request, err := jobs.NewWorkflowSubmit(
 			jobs.WorkflowRestore,
 			r.ID,
@@ -230,6 +244,10 @@ func (s *Scheduler) checkVerifications() {
 }
 
 func (s *Scheduler) submitVerification(vJob coredb.VerificationJob, trigger string, occurrence time.Time) error {
+	if s.hasActiveExecution(jobs.WorkflowVerification, vJob.ID) {
+		log.Info("scheduler: skipping verification, execution already queued or running", "verificationJobID", vJob.ID, "trigger", trigger)
+		return nil
+	}
 	request, err := jobs.NewWorkflowSubmit(
 		jobs.WorkflowVerification,
 		vJob.ID,
