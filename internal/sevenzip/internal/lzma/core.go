@@ -505,30 +505,79 @@ func (d *core) decodeDist(l uint32) uint32 {
 var errEOS = errors.New("lzma: EOS marker found")
 
 // decodeOp decodes the next operation without applying it.
+// decodeLiteral decodes one literal with range state in locals; a small
+// function keeps the 8-bit loop in registers instead of spilling like it
+// does inlined into decodeOp. Probabilities are accessed by value: pointer
+// updates through the slice defeated the register allocator.
+func (d *core) decodeLiteral() (byte, error) {
+	prev := d.byteAt(1)
+	ls := (uint32(d.head)&(1<<d.p.lp-1))<<d.p.lc | uint32(prev)>>(8-d.p.lc)
+	base := ls * 0x300
+	probs := d.litProbs[base : base+0x300]
+	matched := d.state >= 7
+	var m uint32
+	if matched {
+		m = uint32(d.byteAt(int(d.rep[0]) + 1))
+	}
+	rng, code := d.nrange, d.code
+	in, ipos, iend := d.in, d.ipos, d.iend
+	symbol := uint32(1)
+	for range 8 {
+		idx := symbol
+		if matched {
+			idx = (1+(m>>7&1))<<8 | symbol
+		}
+		pv := probs[idx]
+		bound := (rng >> probbits) * uint32(pv)
+		var bit uint32
+		if code < bound {
+			rng = bound
+			pv += (1<<probbits - pv) >> movebits
+		} else {
+			code -= bound
+			rng -= bound
+			pv -= pv >> movebits
+			bit = 1
+		}
+		probs[idx] = pv
+		if rng < 1<<24 {
+			rng <<= 8
+			if ipos >= iend {
+				d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
+				d.fill()
+				ipos, iend = d.ipos, d.iend
+				if ipos >= iend {
+					if d.inErr == nil {
+						d.inErr = io.EOF
+					}
+					d.ipos = ipos
+					return 0, io.EOF
+				}
+			}
+			code = code<<8 | uint32(in[ipos])
+			ipos++
+		}
+		symbol = symbol<<1 | bit
+		if matched {
+			mb := m >> 7 & 1
+			m <<= 1
+			if mb != bit {
+				matched = false
+			}
+		}
+	}
+	d.nrange, d.code, d.ipos, d.iend = rng, code, ipos, iend
+	return byte(symbol - 0x100), nil
+}
+
 func (d *core) decodeOp() (op, error) {
 	posState := uint32(d.head) & ((1 << d.p.pb) - 1)
 	state2 := d.state<<maxPosBits | posState
 
 	if d.decodeBit(&d.isMatch[state2]) == 0 {
-		prev := d.byteAt(1)
-		ls := (uint32(d.head)&(1<<d.p.lp-1))<<d.p.lc | uint32(prev)>>(8-d.p.lc)
-		probs := d.litProbs[ls*0x300 : ls*0x300+0x300]
-		symbol := uint32(1)
-		if d.state >= 7 {
-			m := uint32(d.byteAt(int(d.rep[0]) + 1))
-			for {
-				matchBit := m >> 7 & 1
-				m <<= 1
-				i := (1+matchBit)<<8 | symbol
-				bit := d.decodeBit(&probs[i])
-				symbol = symbol<<1 | bit
-				if matchBit != bit || symbol >= 0x100 {
-					break
-				}
-			}
-		}
-		for symbol < 0x100 {
-			symbol = symbol<<1 | d.decodeBit(&probs[symbol])
+		b, err := d.decodeLiteral()
+		if err != nil {
+			return op{}, err
 		}
 		switch {
 		case d.state < 4:
@@ -538,7 +587,7 @@ func (d *core) decodeOp() (op, error) {
 		default:
 			d.state -= 6
 		}
-		return op{kind: opLit, b: byte(symbol - 0x100)}, nil
+		return op{kind: opLit, b: b}, nil
 	}
 
 	if d.decodeBit(&d.isRep[d.state]) == 0 {
@@ -604,13 +653,6 @@ func (d *core) decompress() error {
 		return io.EOF
 	}
 	for d.avail() >= maxMatchLen {
-		if d.inErr != nil && d.ipos >= d.iend {
-			d.eos = true
-			if d.inErr == io.EOF {
-				return io.ErrUnexpectedEOF
-			}
-			return d.inErr
-		}
 		o, err := d.decodeOp()
 		if err == errEOS {
 			d.eos = true
@@ -621,6 +663,10 @@ func (d *core) decompress() error {
 				return errSize
 			}
 			return io.EOF
+		}
+		if err == io.EOF {
+			d.eos = true
+			return io.ErrUnexpectedEOF
 		}
 		if err != nil {
 			return err
@@ -645,7 +691,7 @@ func (d *core) decompress() error {
 			if !d.possiblyAtEnd() {
 				_, err := d.decodeOp()
 				switch {
-				case d.inErr != nil && d.ipos >= d.iend:
+				case d.inErr != nil && d.ipos >= d.iend, err == io.EOF:
 					return io.ErrUnexpectedEOF
 				case err == nil:
 					return errSize
