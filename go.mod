@@ -23,7 +23,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.11.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kardianos/service v1.3.0
-	github.com/klauspost/compress v1.19.2
+	github.com/klauspost/compress v1.20.0
 	github.com/minio/crc64nvme v1.1.1
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/minio/sha256-simd v1.0.1
