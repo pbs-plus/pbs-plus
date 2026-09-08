@@ -222,3 +222,57 @@ func TestReapMultipartUploads(t *testing.T) {
 		t.Fatalf("fresh upload was reaped")
 	}
 }
+
+func TestListPartsAndUploads(t *testing.T) {
+	handler, _, _ := newRoundTripHandler(t)
+	key := "listed.sql.gz"
+	otherKey := "other.sql.gz"
+	uploadID := startMultipartUpload(t, handler, key)
+	startMultipartUpload(t, handler, otherKey)
+	uploadMultipartPart(t, handler, key, uploadID, 1, []byte("part-one "))
+	uploadMultipartPart(t, handler, key, uploadID, 2, []byte("part-two"))
+
+	response := serve(t, handler, signedObjectRequest(t, http.MethodGet, "http://s3.test/mariadb/"+key+"?uploadId="+uploadID))
+	mustStatus(t, response, http.StatusOK)
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "<PartNumber>1</PartNumber>") || !strings.Contains(body, "<PartNumber>2</PartNumber>") {
+		t.Fatalf("list parts = %s", body)
+	}
+	if !strings.Contains(body, "<Size>9</Size>") || !strings.Contains(body, "<Size>8</Size>") {
+		t.Fatalf("list parts sizes = %s", body)
+	}
+
+	response = serve(t, handler, signedObjectRequest(t, http.MethodGet, "http://s3.test/mariadb/"+key+"?uploadId="+uploadID+"&max-parts=1"))
+	mustStatus(t, response, http.StatusOK)
+	data, err = io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "<IsTruncated>true</IsTruncated>") {
+		t.Fatalf("paged list parts = %s", data)
+	}
+
+	response = serve(t, handler, signedObjectRequest(t, http.MethodGet, "http://s3.test/mariadb?uploads"))
+	mustStatus(t, response, http.StatusOK)
+	data, err = io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = string(data)
+	if !strings.Contains(body, "<Key>"+key+"</Key>") || !strings.Contains(body, "<Key>"+otherKey+"</Key>") {
+		t.Fatalf("list uploads = %s", body)
+	}
+	if !strings.Contains(body, "<UploadId>"+uploadID+"</UploadId>") {
+		t.Fatalf("list uploads ids = %s", body)
+	}
+	if !strings.Contains(body, "<IsTruncated>false</IsTruncated>") {
+		t.Fatalf("list uploads truncation = %s", body)
+	}
+
+	response = serve(t, handler, signedObjectRequest(t, http.MethodGet, "http://s3.test/mariadb/"+key+"?uploadId=unknown"))
+	mustStatus(t, response, http.StatusNotFound)
+}

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -192,6 +193,8 @@ func (h *Handler) serveMultipartRequest(w http.ResponseWriter, r *http.Request, 
 		h.completeMultipartUpload(w, r, bucket, credential, key, uploadID)
 	case r.Method == http.MethodDelete && uploadID != "":
 		h.abortMultipartUpload(w, r, bucket, credential, key, uploadID)
+	case r.Method == http.MethodGet && uploadID != "":
+		h.listParts(w, r, bucket, credential, key, uploadID)
 	default:
 		writeError(w, r, http.StatusNotImplemented, "NotImplemented", "The requested operation is not implemented yet.")
 	}
@@ -493,6 +496,183 @@ func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type listPartsResult struct {
+	XMLName              xml.Name            `xml:"ListPartsResult"`
+	XMLNS                string              `xml:"xmlns,attr"`
+	Bucket               string
+	Key                  string
+	UploadID             string `xml:"UploadId"`
+	StorageClass         string
+	PartNumberMarker     int
+	NextPartNumberMarker int `xml:",omitempty"`
+	MaxParts             int
+	IsTruncated          bool
+	Parts                []listPartsEntry `xml:"Part"`
+}
+
+type listPartsEntry struct {
+	PartNumber   int
+	LastModified string
+	ETag         string
+	Size         int64
+}
+
+func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket Bucket, credential Credential, key, uploadID string) {
+	if !credential.canRead(bucket.Name) {
+		writeError(w, r, http.StatusForbidden, "AccessDenied", "Access Denied.")
+		return
+	}
+	journal, _, err := h.loadUpload(bucket, key, uploadID)
+	if err != nil {
+		writeError(w, r, http.StatusNotFound, "NoSuchUpload", "The specified upload does not exist.")
+		return
+	}
+	query := r.URL.Query()
+	maxParts := maxListKeys
+	if raw := query.Get("max-parts"); raw != "" {
+		value, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || value < 0 {
+			writeError(w, r, http.StatusBadRequest, "InvalidArgument", "max-parts must be an integer between 0 and 2147483647.")
+			return
+		}
+		maxParts = min(value, maxListKeys)
+	}
+	marker, err := strconv.Atoi(query.Get("part-number-marker"))
+	if err != nil {
+		marker = 0
+	}
+	lastModified := time.Unix(journal.Initiated, 0).UTC().Format(time.RFC3339)
+	result := listPartsResult{
+		XMLNS:            s3XMLNamespace,
+		Bucket:           bucket.Name,
+		Key:              key,
+		UploadID:         uploadID,
+		StorageClass:     "STANDARD",
+		PartNumberMarker: marker,
+		MaxParts:         maxParts,
+		Parts:            make([]listPartsEntry, 0, min(maxParts, len(journal.Parts))),
+	}
+	for _, part := range journal.Parts {
+		if part.Number <= marker {
+			continue
+		}
+		if len(result.Parts) == maxParts && maxParts > 0 {
+			result.IsTruncated = true
+			break
+		}
+		if len(result.Parts) > 0 {
+			result.NextPartNumberMarker = result.Parts[len(result.Parts)-1].PartNumber
+		}
+		result.Parts = append(result.Parts, listPartsEntry{
+			PartNumber:   part.Number,
+			LastModified: lastModified,
+			ETag:         part.ETag,
+			Size:         part.Size,
+		})
+	}
+	if !result.IsTruncated && len(result.Parts) > 0 {
+		result.NextPartNumberMarker = result.Parts[len(result.Parts)-1].PartNumber
+	}
+	writeXML(w, http.StatusOK, result)
+}
+
+type listMultipartUploadsResult struct {
+	XMLName           xml.Name             `xml:"ListMultipartUploadsResult"`
+	XMLNS             string               `xml:"xmlns,attr"`
+	Bucket            string
+	KeyMarker         string
+	UploadIDMarker    string               `xml:"UploadIdMarker"`
+	NextKeyMarker     string               `xml:",omitempty"`
+	NextUploadIDMarker string               `xml:"NextUploadIdMarker,omitempty"`
+	MaxUploads        int
+	IsTruncated       bool
+	Uploads           []listUploadsEntry `xml:"Upload"`
+	EncodingType      string             `xml:",omitempty"`
+}
+
+type listUploadsEntry struct {
+	Key       string
+	UploadID  string `xml:"UploadId"`
+	Initiated string
+}
+
+func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, bucket Bucket, credential Credential) {
+	if !credential.canRead(bucket.Name) {
+		writeError(w, r, http.StatusForbidden, "AccessDenied", "Access Denied.")
+		return
+	}
+	if h.multipartDir == "" {
+		writeError(w, r, http.StatusInternalServerError, "InternalError", "The multipart spool is unavailable.")
+		return
+	}
+	entries, err := os.ReadDir(h.multipartDir)
+	if err != nil && !os.IsNotExist(err) {
+		writeObjectError(w, r, err)
+		return
+	}
+	uploads := make([]listUploadsEntry, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		journal, loadErr := loadMultipartJournal(filepath.Join(h.multipartDir, entry.Name()))
+		if loadErr != nil || journal.Bucket != bucket.Name {
+			continue
+		}
+		uploads = append(uploads, listUploadsEntry{
+			Key:       journal.Key,
+			UploadID:  entry.Name(),
+			Initiated: time.Unix(journal.Initiated, 0).UTC().Format(time.RFC3339),
+		})
+	}
+	slices.SortFunc(uploads, func(a, b listUploadsEntry) int {
+		if c := strings.Compare(a.Key, b.Key); c != 0 {
+			return c
+		}
+		return strings.Compare(a.UploadID, b.UploadID)
+	})
+
+	query := r.URL.Query()
+	keyMarker := query.Get("key-marker")
+	uploadMarker := query.Get("upload-id-marker")
+	maxUploads := maxListKeys
+	if raw := query.Get("max-uploads"); raw != "" {
+		value, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || value < 0 {
+			writeError(w, r, http.StatusBadRequest, "InvalidArgument", "max-uploads must be an integer between 0 and 2147483647.")
+			return
+		}
+		maxUploads = min(value, maxListKeys)
+	}
+	encoding := query.Get("encoding-type")
+	result := listMultipartUploadsResult{
+		XMLNS:          s3XMLNamespace,
+		Bucket:         bucket.Name,
+		KeyMarker:      encodeIfURL(encoding, keyMarker),
+		UploadIDMarker: uploadMarker,
+		MaxUploads:     maxUploads,
+		EncodingType:   encoding,
+	}
+	for _, upload := range uploads {
+		if upload.Key < keyMarker || (upload.Key == keyMarker && upload.UploadID <= uploadMarker) {
+			continue
+		}
+		if len(result.Uploads) == maxUploads && maxUploads > 0 {
+			result.IsTruncated = true
+			break
+		}
+		result.Uploads = append(result.Uploads, listUploadsEntry{
+			Key:       encodeIfURL(encoding, upload.Key),
+			UploadID:  upload.UploadID,
+			Initiated: upload.Initiated,
+		})
+		result.NextKeyMarker = upload.Key
+		result.NextUploadIDMarker = upload.UploadID
+	}
+	result.NextKeyMarker = encodeIfURL(encoding, result.NextKeyMarker)
+	writeXML(w, http.StatusOK, result)
 }
 
 // ReapMultipartUploads removes spooled uploads with no activity for the reap age.

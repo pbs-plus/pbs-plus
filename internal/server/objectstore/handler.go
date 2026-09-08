@@ -91,6 +91,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodGet && hasQueryFlag(r, "location"):
 		h.getBucketLocation(w)
+	case r.Method == http.MethodGet && hasQueryFlag(r, "uploads"):
+		h.listMultipartUploads(w, r, bucket, credential)
 	case r.Method == http.MethodGet:
 		h.listObjects(w, r, bucket, credential)
 	case r.Method == http.MethodPost && hasQueryFlag(r, "delete"):
