@@ -42,33 +42,11 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 	if err != nil {
 		return nil, fmt.Errorf("s3 outpost config: %w", err)
 	}
-	if err := handler.OpenKeyIndex(filepath.Join(conf.StatePrefix, "objectstore", o.Name+".db")); err != nil {
-		log.Error(err, "s3 outpost "+o.Name+" key index; serving via snapshot scan")
-	} else {
-		go func() {
-			maintain := func() {
-				if err := handler.ReconcileIndex(ctx); err != nil {
-					log.Error(err, "s3 outpost "+o.Name+" index reconcile")
-				}
-				if err := handler.ReapMultipartUploads(time.Now()); err != nil {
-					log.Error(err, "s3 outpost "+o.Name+" multipart reap")
-				}
-			}
-			maintain()
-			ticker := time.NewTicker(24 * time.Hour)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					maintain()
-				}
-			}
-		}()
-	}
 	if err := handler.OpenMultipartSpool(filepath.Join(conf.StatePrefix, "objectstore", o.Name+"-uploads")); err != nil {
 		log.Error(err, "s3 outpost "+o.Name+" multipart spool")
+	}
+	if err := handler.OpenKeyIndex(filepath.Join(conf.StatePrefix, "objectstore", o.Name+".db")); err != nil {
+		log.Error(err, "s3 outpost "+o.Name+" key index; serving via snapshot scan")
 	}
 	listener, err := net.Listen("tcp", o.ListenAddr)
 	if err != nil {
@@ -82,6 +60,31 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 		MaxHeaderBytes:    conf.HTTPMaxHeaderBytes,
 	}
 	instance := &s3Instance{listener: listener, server: server, handler: handler}
+	ctx, cancel := context.WithCancel(ctx)
+	instance.cancel = cancel
+	instance.maintainDone = make(chan struct{})
+	go func() {
+		defer close(instance.maintainDone)
+		maintain := func() {
+			if err := handler.ReconcileIndex(ctx); err != nil {
+				log.Error(err, "s3 outpost "+o.Name+" index reconcile")
+			}
+			if err := handler.ReapMultipartUploads(time.Now()); err != nil {
+				log.Error(err, "s3 outpost "+o.Name+" multipart reap")
+			}
+		}
+		maintain()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				maintain()
+			}
+		}
+	}()
 	go func() {
 		err := server.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -92,9 +95,11 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 }
 
 type s3Instance struct {
-	listener net.Listener
-	server   *http.Server
-	handler  *objectstore.Handler
+	listener     net.Listener
+	server       *http.Server
+	handler      *objectstore.Handler
+	cancel       context.CancelFunc
+	maintainDone chan struct{}
 }
 
 func (s *s3Instance) Attach(a Attachment) error {
@@ -120,5 +125,7 @@ func (s *s3Instance) Endpoint(bucket string) string {
 }
 
 func (s *s3Instance) Stop() error {
+	s.cancel()
+	<-s.maintainDone
 	return errors.Join(s.server.Close(), s.handler.Close())
 }
