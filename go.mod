@@ -36,7 +36,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.27
 	github.com/prometheus/client_golang v1.24.1
 	github.com/puzpuzpuz/xsync/v4 v4.5.0
-	github.com/quic-go/quic-go v0.61.0
+	github.com/quic-go/quic-go v0.62.0
 	github.com/rclone/rclone v1.75.0
 	github.com/spf13/afero v1.15.0
 	github.com/stangelandcl/ppmd v0.1.1
