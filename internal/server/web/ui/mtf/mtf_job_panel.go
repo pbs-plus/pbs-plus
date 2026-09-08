@@ -68,7 +68,7 @@ var mtfJobPanel = js.Panel{
 		`),
 		"openTaskLog": js.OpenTaskLog("last-run-upid"),
 		"init": js.Func("view", `
-			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
 			view.getStore().on("datachanged", function () {
 				let sel = view.getSelectionModel().getSelection();
 				view.query("proxmoxButton").forEach(function (btn) {

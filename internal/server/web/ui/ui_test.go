@@ -18,7 +18,7 @@ func TestRender(t *testing.T) {
 		`beforedestroy: "stopStore",`,
 		`deactivate: "stopStore",`,
 		`activate: "startStore",`,
-		`Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);`,
+		`PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);`,
 		`PBS.PlusUtils.LoadCodeMirror(function () {`,
 	} {
 		if !strings.Contains(source, want) {

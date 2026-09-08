@@ -158,7 +158,7 @@ var backupPanel = js.Panel{
 			});
 		`),
 		"init": js.Func("view", `
-			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
 			if (!document.getElementById("pbs-backup-job-styles")) {
 				const style = document.createElement("style");
 				style.id = "pbs-backup-job-styles";

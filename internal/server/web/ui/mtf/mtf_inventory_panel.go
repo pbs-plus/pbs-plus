@@ -295,7 +295,7 @@ var mtfInventoryPanel = js.Panel{
 			});
 		`),
 		"init": js.Func("view", `
-			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
 			this.checkScanStatus();
 			this.scanPoll = setInterval(() => this.checkScanStatus(), 5000);
 			view.on("destroy", () => { if (this.scanPoll) clearInterval(this.scanPoll); });

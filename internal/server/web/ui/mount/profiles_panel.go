@@ -17,7 +17,7 @@ var mountProfilesPanel = js.Panel{
 	Listeners: js.Listeners{Activate: "startStore", Deactivate: "stopStore", BeforeDestroy: "stopStore"},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"init": js.Func("view", `
-			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
 		`),
 		"startStore": js.Func("", `
 			this.getView().getStore().rstore.startUpdate();

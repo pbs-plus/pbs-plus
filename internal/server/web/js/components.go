@@ -593,7 +593,7 @@ func withStoreLifecycle(c Controller) Controller {
 		"reload":     Func("", "this.getView().getStore().rstore.load();"),
 		"stopStore":  Func("", "this.getView().getStore().rstore.stopUpdate();"),
 		"startStore": Func("", "this.getView().getStore().rstore.startUpdate();"),
-		"init":       Func("view", "Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);"),
+		"init":       Func("view", "PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);"),
 	}
 	maps.Copy(m, c.Methods)
 	c.Methods = m

@@ -25,7 +25,7 @@ var activeMountsPanel = js.Panel{
 	},
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"init": js.Func("view", `
-			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
 		`),
 		"onSelectionChange": js.Func("selModel, selected", `
 			let view = this.getView();

@@ -56,7 +56,7 @@ var restorePanel = js.Panel{
 			});
 		`),
 		"init": js.Func("view", `
-			Proxmox.Utils.monStoreErrors(view, view.getStore().rstore);
+			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
 			view.getStore().setGrouper({ property: "dest-target", groupFn: `+string(restoreGroupFn)+` });
 		`),
 	}},
