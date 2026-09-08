@@ -10,7 +10,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/bodgit/sevenzip"
+	"github.com/pbs-plus/pbs-plus/internal/sevenzip"
 )
 
 // m7z marks entries served by the sevenzip library instead of flate.
