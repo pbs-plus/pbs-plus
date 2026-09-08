@@ -5,6 +5,7 @@ package objectstore
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -23,6 +24,7 @@ type Config struct {
 	Credentials []Credential `json:"credentials"`
 	TLSCertFile string       `json:"tls-cert,omitempty"`
 	TLSKeyFile  string       `json:"tls-key,omitempty"`
+	SpoolDir    string       `json:"spool-dir,omitempty"`
 }
 
 type Bucket struct {
@@ -50,6 +52,9 @@ type Grant struct {
 func (c Config) Validate() error {
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return fmt.Errorf("s3 tls-cert and tls-key must be set together")
+	}
+	if c.SpoolDir != "" && !filepath.IsAbs(c.SpoolDir) {
+		return fmt.Errorf("s3 spool-dir %q must be an absolute path", c.SpoolDir)
 	}
 	region := c.RegionName()
 	if strings.ContainsAny(region, " /\\\t\r\n") {

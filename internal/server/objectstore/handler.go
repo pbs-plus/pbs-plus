@@ -164,6 +164,8 @@ func writeObjectError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errObjectNotFound):
 		writeError(w, r, http.StatusNotFound, "NoSuchKey", "The specified key does not exist.")
+	case errors.Is(err, errNoSuchUpload):
+		writeError(w, r, http.StatusNotFound, "NoSuchUpload", "The specified upload does not exist.")
 	case errors.Is(err, errObjectProtected):
 		writeError(w, r, http.StatusForbidden, "AccessDenied", "The object is protected and cannot be deleted.")
 	case errors.Is(err, errInvalidObjectRange):

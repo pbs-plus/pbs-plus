@@ -195,7 +195,9 @@ func TestMultipartCompleteRejectsBadETag(t *testing.T) {
 	if !strings.Contains(strings.ToLower(response.Status), "bad request") {
 		t.Fatalf("status text = %q", response.Status)
 	}
-	if _, err := os.Stat(handler.uploadDir(uploadID)); err != nil {
+	if dir, err := handler.uploadDir(testConfig().Buckets[0], uploadID); err != nil {
+		t.Fatal(err)
+	} else if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("failed upload removed its spool: %v", err)
 	}
 }
@@ -220,6 +222,36 @@ func TestReapMultipartUploads(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(handler.multipartDir, freshID)); err != nil {
 		t.Fatalf("fresh upload was reaped")
+	}
+}
+
+func TestMultipartSpoolsInsideDatastore(t *testing.T) {
+	handler, root, _ := newRoundTripHandler(t)
+	handler.multipartDir = ""
+
+	key := "placed.sql.gz"
+	uploadID := startMultipartUpload(t, handler, key)
+	uploadMultipartPart(t, handler, key, uploadID, 1, []byte("part-one"))
+
+	partPath := filepath.Join(root, ".pbs-plus", "objectstore", "uploads", uploadID, "part-1")
+	if _, err := os.Stat(partPath); err != nil {
+		t.Fatalf("part not spooled inside the datastore: %v", err)
+	}
+
+	response := serve(t, handler, signedObjectRequest(t, http.MethodGet, "http://s3.test/mariadb/"+key+"?uploadId="+uploadID))
+	mustStatus(t, response, http.StatusOK)
+	data, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "<PartNumber>1</PartNumber>") {
+		t.Fatalf("list parts = %s", data)
+	}
+
+	response = serve(t, handler, signedObjectRequest(t, http.MethodDelete, "http://s3.test/mariadb/"+key+"?uploadId="+uploadID))
+	mustStatus(t, response, http.StatusNoContent)
+	if _, err := os.Stat(filepath.Dir(partPath)); !os.IsNotExist(err) {
+		t.Fatalf("abort left the spool behind: %v", err)
 	}
 }
 

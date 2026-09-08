@@ -63,8 +63,21 @@ func (h *Handler) OpenMultipartSpool(path string) error {
 	return nil
 }
 
-func (h *Handler) uploadDir(uploadID string) string {
-	return filepath.Join(h.multipartDir, uploadID)
+// uploadDir resolves the spool directory for an upload. An explicit spool-dir
+// (set through OpenMultipartSpool) overrides placement; by default parts
+// spool inside the bucket's datastore at .pbs-plus/objectstore/uploads, the
+// same convention the rw mount uses for overlays, so large uploads land on
+// the datastore volume instead of the root filesystem.
+func (h *Handler) uploadDir(bucket Bucket, uploadID string) (string, error) {
+	root := h.multipartDir
+	if root == "" {
+		datastoreRoot, err := h.datastoreRoot(bucket.Datastore)
+		if err != nil {
+			return "", err
+		}
+		root = filepath.Join(datastoreRoot, ".pbs-plus", "objectstore", "uploads")
+	}
+	return filepath.Join(root, uploadID), nil
 }
 
 func loadMultipartJournal(dir string) (multipartJournal, error) {
@@ -179,10 +192,6 @@ func (s *partSequence) Close() error {
 }
 
 func (h *Handler) serveMultipartRequest(w http.ResponseWriter, r *http.Request, bucket Bucket, credential Credential, key string) {
-	if h.multipartDir == "" {
-		writeError(w, r, http.StatusInternalServerError, "InternalError", "The multipart spool is unavailable.")
-		return
-	}
 	uploadID := r.URL.Query().Get("uploadId")
 	switch {
 	case r.Method == http.MethodPost && hasQueryFlag(r, "uploads"):
@@ -201,7 +210,10 @@ func (h *Handler) serveMultipartRequest(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *Handler) loadUpload(bucket Bucket, key, uploadID string) (multipartJournal, string, error) {
-	dir := h.uploadDir(uploadID)
+	dir, err := h.uploadDir(bucket, uploadID)
+	if err != nil {
+		return multipartJournal{}, "", err
+	}
 	journal, err := loadMultipartJournal(dir)
 	if err != nil {
 		return multipartJournal{}, "", errNoSuchUpload
@@ -231,8 +243,12 @@ func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	uploadID := hex.EncodeToString(id[:])
-	dir := h.uploadDir(uploadID)
-	if err := os.Mkdir(dir, multipartSpoolMode); err != nil {
+	dir, err := h.uploadDir(bucket, uploadID)
+	if err != nil {
+		writeError(w, r, http.StatusInternalServerError, "InternalError", err.Error())
+		return
+	}
+	if err := os.MkdirAll(dir, multipartSpoolMode); err != nil {
 		writeError(w, r, http.StatusInternalServerError, "InternalError", err.Error())
 		return
 	}
@@ -268,7 +284,7 @@ func (h *Handler) uploadPart(w http.ResponseWriter, r *http.Request, bucket Buck
 	}
 	journal, dir, err := h.loadUpload(bucket, key, uploadID)
 	if err != nil {
-		writeError(w, r, http.StatusNotFound, "NoSuchUpload", "The specified upload does not exist.")
+		writeObjectError(w, r, err)
 		return
 	}
 	payload, decodedLength, err := newVerifiedPayload(r, credential)
@@ -376,7 +392,7 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	}
 	journal, dir, err := h.loadUpload(bucket, key, uploadID)
 	if err != nil {
-		writeError(w, r, http.StatusNotFound, "NoSuchUpload", "The specified upload does not exist.")
+		writeObjectError(w, r, err)
 		return
 	}
 	payload, _, err := newVerifiedPayload(r, credential)
@@ -488,7 +504,7 @@ func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, b
 	}
 	_, dir, err := h.loadUpload(bucket, key, uploadID)
 	if err != nil {
-		writeError(w, r, http.StatusNotFound, "NoSuchUpload", "The specified upload does not exist.")
+		writeObjectError(w, r, err)
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -499,8 +515,8 @@ func (h *Handler) abortMultipartUpload(w http.ResponseWriter, r *http.Request, b
 }
 
 type listPartsResult struct {
-	XMLName              xml.Name            `xml:"ListPartsResult"`
-	XMLNS                string              `xml:"xmlns,attr"`
+	XMLName              xml.Name `xml:"ListPartsResult"`
+	XMLNS                string   `xml:"xmlns,attr"`
 	Bucket               string
 	Key                  string
 	UploadID             string `xml:"UploadId"`
@@ -526,7 +542,7 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket Bucke
 	}
 	journal, _, err := h.loadUpload(bucket, key, uploadID)
 	if err != nil {
-		writeError(w, r, http.StatusNotFound, "NoSuchUpload", "The specified upload does not exist.")
+		writeObjectError(w, r, err)
 		return
 	}
 	query := r.URL.Query()
@@ -579,17 +595,17 @@ func (h *Handler) listParts(w http.ResponseWriter, r *http.Request, bucket Bucke
 }
 
 type listMultipartUploadsResult struct {
-	XMLName           xml.Name             `xml:"ListMultipartUploadsResult"`
-	XMLNS             string               `xml:"xmlns,attr"`
-	Bucket            string
-	KeyMarker         string
-	UploadIDMarker    string               `xml:"UploadIdMarker"`
-	NextKeyMarker     string               `xml:",omitempty"`
-	NextUploadIDMarker string               `xml:"NextUploadIdMarker,omitempty"`
-	MaxUploads        int
-	IsTruncated       bool
-	Uploads           []listUploadsEntry `xml:"Upload"`
-	EncodingType      string             `xml:",omitempty"`
+	XMLName            xml.Name `xml:"ListMultipartUploadsResult"`
+	XMLNS              string   `xml:"xmlns,attr"`
+	Bucket             string
+	KeyMarker          string
+	UploadIDMarker     string `xml:"UploadIdMarker"`
+	NextKeyMarker      string `xml:",omitempty"`
+	NextUploadIDMarker string `xml:"NextUploadIdMarker,omitempty"`
+	MaxUploads         int
+	IsTruncated        bool
+	Uploads            []listUploadsEntry `xml:"Upload"`
+	EncodingType       string             `xml:",omitempty"`
 }
 
 type listUploadsEntry struct {
@@ -598,34 +614,59 @@ type listUploadsEntry struct {
 	Initiated string
 }
 
+// multipartSpoolRoots lists every directory multipart uploads can spool into:
+// the explicit override when one is configured, otherwise the
+// .pbs-plus/objectstore/uploads tree inside each configured datastore.
+func (h *Handler) multipartSpoolRoots() []string {
+	if h.multipartDir != "" {
+		return []string{h.multipartDir}
+	}
+	roots := make([]string, 0, len(h.config.Buckets))
+	seen := make(map[string]struct{}, len(h.config.Buckets))
+	for _, bucket := range h.config.Buckets {
+		datastoreRoot, err := h.datastoreRoot(bucket.Datastore)
+		if err != nil {
+			continue
+		}
+		root := filepath.Join(datastoreRoot, ".pbs-plus", "objectstore", "uploads")
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		roots = append(roots, root)
+	}
+	return roots
+}
+
 func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, bucket Bucket, credential Credential) {
 	if !credential.canRead(bucket.Name) {
 		writeError(w, r, http.StatusForbidden, "AccessDenied", "Access Denied.")
 		return
 	}
-	if h.multipartDir == "" {
-		writeError(w, r, http.StatusInternalServerError, "InternalError", "The multipart spool is unavailable.")
-		return
-	}
-	entries, err := os.ReadDir(h.multipartDir)
-	if err != nil && !os.IsNotExist(err) {
-		writeObjectError(w, r, err)
-		return
-	}
-	uploads := make([]listUploadsEntry, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	uploads := make([]listUploadsEntry, 0)
+	for _, root := range h.multipartSpoolRoots() {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				writeObjectError(w, r, err)
+				return
+			}
 			continue
 		}
-		journal, loadErr := loadMultipartJournal(filepath.Join(h.multipartDir, entry.Name()))
-		if loadErr != nil || journal.Bucket != bucket.Name {
-			continue
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			journal, loadErr := loadMultipartJournal(filepath.Join(root, entry.Name()))
+			if loadErr != nil || journal.Bucket != bucket.Name {
+				continue
+			}
+			uploads = append(uploads, listUploadsEntry{
+				Key:       journal.Key,
+				UploadID:  entry.Name(),
+				Initiated: time.Unix(journal.Initiated, 0).UTC().Format(time.RFC3339),
+			})
 		}
-		uploads = append(uploads, listUploadsEntry{
-			Key:       journal.Key,
-			UploadID:  entry.Name(),
-			Initiated: time.Unix(journal.Initiated, 0).UTC().Format(time.RFC3339),
-		})
 	}
 	slices.SortFunc(uploads, func(a, b listUploadsEntry) int {
 		if c := strings.Compare(a.Key, b.Key); c != 0 {
@@ -677,29 +718,28 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 
 // ReapMultipartUploads removes spooled uploads with no activity for the reap age.
 func (h *Handler) ReapMultipartUploads(now time.Time) error {
-	if h.multipartDir == "" {
-		return nil
-	}
-	entries, err := os.ReadDir(h.multipartDir)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for _, root := range h.multipartSpoolRoots() {
+		entries, err := os.ReadDir(root)
+		if os.IsNotExist(err) {
 			continue
 		}
-		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		if now.Sub(info.ModTime()) < multipartReapAge {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(h.multipartDir, entry.Name())); err != nil {
-			return err
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if now.Sub(info.ModTime()) < multipartReapAge {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
