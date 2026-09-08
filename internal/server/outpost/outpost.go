@@ -21,10 +21,12 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/objectstore"
 )
 
 const (
 	TypeNFS   = "nfs"
+	TypeS3    = "s3"
 	TypeSamba = "samba"
 )
 
@@ -38,6 +40,7 @@ type Outpost struct {
 	ForceUser  string `json:"force_user,omitempty"`
 	HostsAllow string `json:"hosts_allow,omitempty"`
 	Browseable bool   `json:"browseable,omitempty"`
+	S3         *objectstore.Config `json:"s3,omitempty"`
 	CreatedAt  int64  `json:"created_at"`
 }
 
@@ -74,6 +77,7 @@ type Instance interface {
 // drivers registers the available outpost types.
 var drivers = map[string]Driver{
 	TypeNFS:   nfsDriver{},
+	TypeS3:    s3Driver{},
 	TypeSamba: sambaDriver{},
 }
 
