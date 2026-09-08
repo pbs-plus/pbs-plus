@@ -149,11 +149,31 @@ func (c Config) bucketNames(credential Credential) []string {
 	return names
 }
 
-func (c Credential) canAccess(bucket string) bool {
+func (c Credential) grant(bucket string) (Grant, bool) {
 	for _, grant := range c.Grants {
 		if grant.Bucket == bucket {
-			return grant.Read || grant.Write || grant.Delete
+			return grant, true
 		}
 	}
-	return false
+	return Grant{}, false
+}
+
+func (c Credential) canAccess(bucket string) bool {
+	grant, ok := c.grant(bucket)
+	return ok && (grant.Read || grant.Write || grant.Delete)
+}
+
+func (c Credential) canRead(bucket string) bool {
+	grant, _ := c.grant(bucket)
+	return grant.Read
+}
+
+func (c Credential) canWrite(bucket string) bool {
+	grant, _ := c.grant(bucket)
+	return grant.Write
+}
+
+func (c Credential) canDelete(bucket string) bool {
+	grant, _ := c.grant(bucket)
+	return grant.Delete
 }

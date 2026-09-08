@@ -18,6 +18,7 @@ func TestHandlerS3Contract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler.resolveDatastore = func(string) (string, error) { return t.TempDir(), nil }
 	tests := []struct {
 		name       string
 		method     string
@@ -32,7 +33,7 @@ func TestHandlerS3Contract(t *testing.T) {
 		{name: "unknown bucket", method: http.MethodHead, target: "/missing", wantStatus: http.StatusNotFound, wantBody: []string{"<Code>NoSuchBucket</Code>"}},
 		{name: "ungranted bucket", method: http.MethodHead, target: "/private", wantStatus: http.StatusForbidden, wantBody: []string{"<Code>AccessDenied</Code>"}},
 		{name: "bucket listing pending", method: http.MethodGet, target: "/mariadb", wantStatus: http.StatusNotImplemented, wantBody: []string{"<Code>NotImplemented</Code>"}},
-		{name: "object operations pending", method: http.MethodGet, target: "/mariadb/dump.sql", wantStatus: http.StatusNotImplemented, wantBody: []string{"<Code>NotImplemented</Code>"}},
+		{name: "missing object", method: http.MethodGet, target: "/mariadb/dump.sql", wantStatus: http.StatusNotFound, wantBody: []string{"<Code>NoSuchKey</Code>"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -66,7 +67,7 @@ func TestHandlerRejectsInvalidSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	tests := []struct {
-		name   string
+		name    string
 		request func(*testing.T) *http.Request
 	}{
 		{name: "unsigned", request: func(t *testing.T) *http.Request {
