@@ -22,7 +22,7 @@ import (
 func D2DExclusionHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -58,7 +58,7 @@ func ExtJsExclusionHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -106,7 +106,7 @@ func ExtJsExclusionSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := ExclusionConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 

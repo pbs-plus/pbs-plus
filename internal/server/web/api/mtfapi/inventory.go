@@ -25,7 +25,7 @@ import (
 func ExtJsMtfInventoryHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		ms := mtfStore(app)
@@ -108,7 +108,7 @@ func ExtJsMtfScanHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		ms := mtfStore(app)

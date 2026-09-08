@@ -19,7 +19,7 @@ func ExtJsAgentSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := AgentConfigResponse{}
 		if r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 

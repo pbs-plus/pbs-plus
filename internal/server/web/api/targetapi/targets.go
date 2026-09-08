@@ -26,7 +26,7 @@ import (
 func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -65,7 +65,7 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 func D2DTargetStatusHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -101,7 +101,7 @@ type NewAgentHostnameRequest struct {
 func D2DTargetAgentHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -204,7 +204,7 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -263,7 +263,7 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPut && r.Method != http.MethodGet && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -395,7 +395,7 @@ func ExtJsTargetS3SecretHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := TargetConfigResponse{}
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -435,7 +435,7 @@ func ExtJsTargetS3SecretHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsTargetDatabasePasswordHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {

@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
+	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
 )
 
 func getClientInfo(r *http.Request) string {
@@ -202,7 +204,7 @@ func AgentOnly(app *application.Runtime, next http.Handler) http.HandlerFunc {
 		if err != nil {
 			log.Error(err, "", "hostname", getClientInfo(r), "mode", "agent_only")
 
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			respond.Error(w, http.StatusUnauthorized, errors.New("authentication failed - no authentication credentials provided"))
 			return
 		}
 
@@ -216,7 +218,7 @@ func ServerOnly(app *application.Runtime, next http.Handler) http.HandlerFunc {
 		if err := checkProxyAuth(r); err != nil && !IsLocalhost(r) {
 			log.Error(err, "", "hostname", getClientInfo(r), "mode", "server_only")
 
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			respond.Error(w, http.StatusUnauthorized, errors.New("authentication failed - no authentication credentials provided"))
 			return
 		}
 
@@ -245,7 +247,7 @@ func AgentOrServer(app *application.Runtime, next http.Handler) http.HandlerFunc
 		if !authenticated {
 			log.Error(lastErr, "", "hostname", getClientInfo(r), "mode", "agent_or_server")
 
-			http.Error(w, "authentication failed - no authentication credentials provided", http.StatusUnauthorized)
+			respond.Error(w, http.StatusUnauthorized, errors.New("authentication failed - no authentication credentials provided"))
 			return
 		}
 

@@ -20,7 +20,7 @@ import (
 func AgentLogHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -51,7 +51,7 @@ type BootstrapRequest struct {
 func AgentBootstrapHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
@@ -255,7 +255,7 @@ func AgentBootstrapHandler(app *application.Runtime) http.HandlerFunc {
 func AgentRenewHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 

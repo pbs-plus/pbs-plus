@@ -102,7 +102,7 @@ func AlertSettingsHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		respond.MethodNotAllowed(w, r)
 	}
 }
 
@@ -195,7 +195,7 @@ func AlertSettingSingleHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		respond.MethodNotAllowed(w, r)
 	}
 }
 
@@ -255,7 +255,7 @@ func AlertExclusionsHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		respond.MethodNotAllowed(w, r)
 	}
 }
 
@@ -303,6 +303,6 @@ func AlertExclusionSingleHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		respond.MethodNotAllowed(w, r)
 	}
 }

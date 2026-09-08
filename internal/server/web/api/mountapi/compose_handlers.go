@@ -136,7 +136,7 @@ func decodeComposePaths(values []string) ([]string, error) {
 func ExtJsComposeHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		if err := r.ParseForm(); err != nil {

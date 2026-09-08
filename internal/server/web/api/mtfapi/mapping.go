@@ -77,7 +77,7 @@ func ExtJsMtfMappingHandler(app *application.Runtime) http.HandlerFunc {
 			}
 
 		default:
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 		}
 	}
 }
@@ -85,7 +85,7 @@ func ExtJsMtfMappingHandler(app *application.Runtime) http.HandlerFunc {
 func ExtJsMtfMappingSingleHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPut && r.Method != http.MethodDelete {
-			http.Error(w, "Invalid HTTP method", http.StatusBadRequest)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 		ms := mtfStore(app)

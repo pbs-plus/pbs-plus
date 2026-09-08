@@ -20,7 +20,7 @@ import (
 func D2DFileTree(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "Invalid HTTP method", http.StatusMethodNotAllowed)
+			respond.MethodNotAllowed(w, r)
 			return
 		}
 
