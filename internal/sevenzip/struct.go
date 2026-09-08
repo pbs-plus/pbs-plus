@@ -9,6 +9,7 @@ import (
 	"io"
 	iofs "io/fs"
 	"path"
+	"slices"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/plumbing"
@@ -176,9 +177,9 @@ func (f *folder) unpackSize() uint64 {
 		return 0
 	}
 
-	for i := len(f.size) - 1; i >= 0; i-- {
+	for i, v := range slices.Backward(f.size) {
 		if f.findOutBindPair(uint64(i)) == nil {
-			return f.size[i]
+			return v
 		}
 	}
 
@@ -381,7 +382,7 @@ func (fi headerFileInfo) IsDir() bool         { return fi.Mode().IsDir() }
 func (fi headerFileInfo) ModTime() time.Time  { return fi.fh.Modified.UTC() }
 func (fi headerFileInfo) Mode() iofs.FileMode { return fi.fh.Mode() }
 func (fi headerFileInfo) Type() iofs.FileMode { return fi.fh.Mode().Type() }
-func (fi headerFileInfo) Sys() interface{}    { return fi.fh }
+func (fi headerFileInfo) Sys() any            { return fi.fh }
 
 func (fi headerFileInfo) Info() (iofs.FileInfo, error) { return fi, nil }
 

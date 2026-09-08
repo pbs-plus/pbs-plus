@@ -630,7 +630,7 @@ func (e *fileListEntry) Size() int64         { return 0 }
 func (e *fileListEntry) Mode() iofs.FileMode { return iofs.ModeDir | 0o555 }
 func (e *fileListEntry) Type() iofs.FileMode { return iofs.ModeDir }
 func (e *fileListEntry) IsDir() bool         { return true }
-func (e *fileListEntry) Sys() interface{}    { return nil }
+func (e *fileListEntry) Sys() any            { return nil }
 
 func (e *fileListEntry) ModTime() time.Time {
 	if e.file == nil {

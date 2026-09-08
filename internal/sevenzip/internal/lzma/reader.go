@@ -1,112 +1,96 @@
-// Package lzma implements the LZMA decompressor.
 package lzma
 
 import (
-	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
-
-	"github.com/ulikunitz/xz/lzma"
 )
 
+const inputWindowSize = 256 << 10
+
+// readCloser adapts the decoder to the sevenzip decompressor interface,
+// closing the single upstream reader on Close.
 type readCloser struct {
 	c io.Closer
-	r io.Reader
-}
-
-var (
-	errAlreadyClosed = errors.New("lzma: already closed")
-	errNeedOneReader = errors.New("lzma: need exactly one reader")
-)
-
-func (rc *readCloser) Close() error {
-	if rc.c == nil || rc.r == nil {
-		return errAlreadyClosed
-	}
-
-	if err := rc.c.Close(); err != nil {
-		return fmt.Errorf("lzma: error closing: %w", err)
-	}
-
-	rc.c, rc.r = nil, nil
-
-	return nil
+	d *core
 }
 
 func (rc *readCloser) Read(p []byte) (int, error) {
-	if rc.r == nil {
+	if rc.d == nil {
 		return 0, errAlreadyClosed
 	}
-
-	n, err := rc.r.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
-		err = fmt.Errorf("lzma: error reading: %w", err)
-	}
-
-	return n, err
+	return rc.d.Read(p)
 }
 
-// NewReader returns a new LZMA io.ReadCloser.
+func (rc *readCloser) Close() error {
+	if rc.c == nil || rc.d == nil {
+		return errAlreadyClosed
+	}
+	if err := rc.c.Close(); err != nil {
+		return fmt.Errorf("lzma: error closing: %w", err)
+	}
+	rc.c, rc.d = nil, nil
+	return nil
+}
+
+// NewReader returns a new LZMA io.ReadCloser. p holds the 7z coder
+// properties (one props byte, dictSize uint32 LE); s is the uncompressed
+// stream size.
 func NewReader(p []byte, s uint64, readers []io.ReadCloser) (io.ReadCloser, error) {
 	if len(readers) != 1 {
 		return nil, errNeedOneReader
 	}
-
-	h := bytes.NewBuffer(p)
-	_ = binary.Write(h, binary.LittleEndian, s)
-
-	lr, err := lzma.NewReader(multiReader(h, readers[0]))
+	if len(p) != 5 {
+		return nil, fmt.Errorf("lzma: expected 5 property bytes, got %d", len(p))
+	}
+	pr, err := propsForCode(p[0])
 	if err != nil {
-		return nil, fmt.Errorf("lzma: error creating reader: %w", err)
+		return nil, fmt.Errorf("lzma: %w", err)
 	}
-
-	return &readCloser{
-		c: readers[0],
-		r: lr,
-	}, nil
-}
-
-func multiReader(b *bytes.Buffer, rc io.ReadCloser) io.Reader {
-	mr := io.MultiReader(b, rc)
-
-	if br, ok := rc.(io.ByteReader); ok {
-		return &multiByteReader{
-			b:  b,
-			br: br,
-			mr: mr,
-		}
+	dictSize := int64(binary.LittleEndian.Uint32(p[1:5]))
+	size := int64(s)
+	if s == 1<<64-1 {
+		size = -1
 	}
-
-	return mr
-}
-
-type multiByteReader struct {
-	b  *bytes.Buffer
-	br io.ByteReader
-	mr io.Reader
-}
-
-func (m *multiByteReader) ReadByte() (b byte, err error) {
-	if m.b.Len() > 0 {
-		b, err = m.b.ReadByte()
-	} else {
-		b, err = m.br.ReadByte()
-	}
-
+	dictCap, err := pickDictCap(dictSize, size)
 	if err != nil {
-		err = fmt.Errorf("lzma: error multi byte reading: %w", err)
+		return nil, err
 	}
-
-	return b, err
+	d, err := newCore(pr, dictCap, size)
+	if err != nil {
+		return nil, err
+	}
+	d.r = readers[0]
+	if err := d.initRangeDecoder(); err != nil {
+		return nil, fmt.Errorf("lzma: %w", err)
+	}
+	return &readCloser{c: readers[0], d: d}, nil
 }
 
-func (m *multiByteReader) Read(p []byte) (int, error) {
-	n, err := m.mr.Read(p)
-	if err != nil {
-		err = fmt.Errorf("lzma: error multi reading: %w", err)
+// pickDictCap clamps the header dictionary size the same way upstream does:
+// floor at MinDictCap, shrink to a smaller known stream size.
+func pickDictCap(dictSize, size int64) (int, error) {
+	if dictSize > maxDictCap {
+		return 0, errDictSize
 	}
+	if dictSize < minDictCap {
+		dictSize = minDictCap
+	}
+	if size >= 0 && size < dictSize && size > 0 {
+		dictSize = size
+	}
+	if dictSize < minDictCap {
+		dictSize = minDictCap
+	}
+	return int(dictSize), nil
+}
 
-	return n, err
+func newCore(p props, dictCap int, size int64) (*core, error) {
+	d := &core{
+		in:   make([]byte, inputWindowSize),
+		dict: make([]byte, dictCap+1),
+		size: size,
+	}
+	d.initModel(p)
+	return d, nil
 }

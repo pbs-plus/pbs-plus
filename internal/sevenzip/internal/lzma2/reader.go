@@ -6,13 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ulikunitz/xz/lzma"
+	lzma "github.com/pbs-plus/pbs-plus/internal/sevenzip/internal/lzma"
 )
-
-type readCloser struct {
-	c io.Closer
-	r io.Reader
-}
 
 var (
 	errAlreadyClosed          = errors.New("lzma2: already closed")
@@ -21,62 +16,45 @@ var (
 	errInvalidProperties      = errors.New("lzma2: invalid properties")
 )
 
-func (rc *readCloser) Close() error {
-	if rc.c == nil || rc.r == nil {
-		return errAlreadyClosed
-	}
-
-	if err := rc.c.Close(); err != nil {
-		return fmt.Errorf("lzma2: error closing: %w", err)
-	}
-
-	rc.c, rc.r = nil, nil
-
-	return nil
+type readCloser struct {
+	c io.Closer
+	r *lzma.Reader2
 }
 
 func (rc *readCloser) Read(p []byte) (int, error) {
 	if rc.r == nil {
 		return 0, errAlreadyClosed
 	}
-
-	n, err := rc.r.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
-		err = fmt.Errorf("lzma2: error reading: %w", err)
-	}
-
-	return n, err
+	return rc.r.Read(p)
 }
 
-// NewReader returns a new LZMA2 io.ReadCloser.
+func (rc *readCloser) Close() error {
+	if rc.c == nil || rc.r == nil {
+		return errAlreadyClosed
+	}
+	if err := rc.c.Close(); err != nil {
+		return fmt.Errorf("lzma2: error closing: %w", err)
+	}
+	rc.c, rc.r = nil, nil
+	return nil
+}
+
+// NewReader returns a new LZMA2 io.ReadCloser; p[0] encodes the dictionary
+// capacity per the LZMA2 spec.
 func NewReader(p []byte, _ uint64, readers []io.ReadCloser) (io.ReadCloser, error) {
 	if len(readers) != 1 {
 		return nil, errNeedOneReader
 	}
-
 	if len(p) != 1 {
 		return nil, errInsufficientProperties
 	}
-
 	if p[0] > 40 {
 		return nil, errInvalidProperties
 	}
-
-	config := lzma.Reader2Config{
-		DictCap: (2 | (int(p[0]) & 1)) << (p[0]/2 + 11), // This gem came from Lzma2Dec.c
-	}
-
-	if err := config.Verify(); err != nil {
-		return nil, fmt.Errorf("lzma2: error verifying config: %w", err)
-	}
-
-	lr, err := config.NewReader2(readers[0])
+	dictCap := (2 | (int(p[0]) & 1)) << (p[0]/2 + 11)
+	r2, err := lzma.NewReader2(dictCap, readers[0])
 	if err != nil {
 		return nil, fmt.Errorf("lzma2: error creating reader: %w", err)
 	}
-
-	return &readCloser{
-		c: readers[0],
-		r: lr,
-	}, nil
+	return &readCloser{c: readers[0], r: r2}, nil
 }
