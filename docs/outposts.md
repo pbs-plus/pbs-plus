@@ -51,9 +51,9 @@ chunk-level dedup against the rest of the datastore. Overwrites create a new
 snapshot version (latest wins); `DELETE` removes all versions unless the
 snapshot is protected by a `.protected` marker.
 
-Currently configured through the REST API (`POST
-/api2/extjs/config/d2d-outposts` with `type=s3` and an `s3` JSON form value);
-panel fields follow.
+Configured on the **Outposts** tab (the S3 type carries a JSON config field)
+or through the REST API (`POST /api2/extjs/config/d2d-outposts` with
+`type=s3` and an `s3` JSON form value):
 
 ```sh
 curl -X POST -d 'name=db-backups' -d 'type=s3' \

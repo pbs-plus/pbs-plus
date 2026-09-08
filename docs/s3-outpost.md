@@ -1,232 +1,134 @@
-# S3 Outpost (design)
+# S3 Outposts
 
-Status: design, not implemented. Branch `feat/s3-outpost`.
+An S3 outpost serves an S3-compatible endpoint whose objects are PBS snapshots.
+It targets automated backup systems that can only speak S3 - mariadb-operator,
+CNPG barman, Velero, pgBackRest, dump sidecars. They PUT a dump, LIST to find
+the newest one, GET it back and DELETE for retention.
 
-An S3 outpost is a third outpost driver (`s3`, next to `nfs` and `samba`) that
-serves an S3-compatible endpoint whose objects are PBS snapshots. It exists for
-automated backup systems that can only write to S3: mariadb-operator, CNPG
-barman, Velero, pgBackRest, mysqldump sidecars. They PUT a dump, LIST to find
-the newest one, GET it back, DELETE for retention. Nothing else.
-
-`internal/server/outpost/outpost.go:5` already names this as the reason drivers
-are registered per type.
-
-## Why not pbs-s3gateway
-
-`~/pbs-s3gateway` proves the protocol translation works and its
-`keymapper`/`upload` split is the right decomposition. Four things in it do not
-survive contact with a real datastore, and they drive this design:
-
-| Defect                                                                                                 | Consequence                                                                                                                                                             |
-| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| One backup group per object key (`keymapper/mapper.go:44`), backup-id derived by encoding the filename | Group explosion, PBS prune (per group, keep-last N) is useless, no dedup lineage between successive dumps, lossy against `SAFE_ID_REGEX` `[A-Za-z0-9_][A-Za-z0-9._\-]*` |
-| Namespace derived from arbitrary key prefixes, auto-created on 404 (`pbs/upload.go`)                   | Namespace explosion, silently breaches `MAX_NAMESPACE_DEPTH` (8), no ACL boundary an operator chose                                                                     |
-| Prefix listing decodes IDs without the namespace (`FilterByPrefix`), so it cannot page                 | `ListObjectsV2` is O(datastore) per call and `ContinuationToken` cannot be honoured                                                                                     |
-| Talks to PBS over HTTP/2 from outside, holding no datastore lock                                       | Double hop for data that is already local; races against prune, GC, sync and verify                                                                                     |
-
-The fix for all four is the same: bind buckets to real PBS boundaries chosen by
-an operator, keep the literal S3 key in the manifest instead of encoding it into
-an id, and publish through the same locked local path that mount commits already
-use (`internal/server/snapshotmount/compose_publish.go:40`).
+Client-facing usage (creating an outpost, buckets, credentials, TLS) is
+documented in [outposts.md](outposts.md). This document is the technical
+reference: how objects map onto the datastore, what the server guarantees, and
+what it deliberately refuses.
 
 ## Object model
 
-**Bucket = (datastore, namespace, backup type, group id).** Configured, never
-derived from request paths. `ListBuckets` returns exactly the configured set;
-`CreateBucket`/`DeleteBucket` return `405`. This is the whole answer to
-namespace and group explosion, and it puts PBS ACLs, prune jobs, GC and
-verification on a boundary an admin picked.
+**A bucket is (datastore, namespace, backup type, backup id).** The binding is
+configured by an operator, never derived from request paths. `ListBuckets`
+returns exactly the configured set; `CreateBucket` and `DeleteBucket` answer
+`405`. This puts PBS ACLs, prune jobs, GC and verification on a boundary an
+admin picked, and keeps one prune policy per bucket.
 
-**Key = a snapshot in that group.** The object write time (UTC, second
-granularity) is the snapshot time. The literal key is stored, never encoded:
+**A key is a snapshot in that group.** The object write time (UTC, one-second
+granularity) is the snapshot time. The literal S3 key is stored unencoded in
+the manifest's free-form `unprotected` section, which PBS excludes from the
+manifest signature:
 
 ```json
 "unprotected": {
   "pbs-plus-s3": {
-    "bucket": "mariadb", "key": "mariadb/backup.2026-01-01T00:00:00Z.sql.gz",
-    "etag": "\"...\"", "size": 918273645,
-    "content-type": "application/gzip", "user-metadata": {}
+    "bucket": "mariadb",
+    "key": "mariadb/backup.2026-01-01T00:00:00Z.sql.gz",
+    "etag": "\"...\"",
+    "size": 918273645,
+    "content-type": "application/gzip",
+    "user-metadata": {}
   }
 }
 ```
 
-`unprotected` is free-form and excluded from the manifest signature, so this is
-inert to PBS. The snapshot's `notes` gets the key too, so the PBS UI is readable
-without pbs-plus.
-
-Consequences that fall out for free:
+Consequences:
 
 - Successive dumps land in one group, so PBS prune keep-last/keep-daily works
-  unchanged and chunk dedup has a lineage (`BackupConfig.PreviousBackup`).
-- PUT of an existing key writes a new snapshot; newest wins for GET, older ones
-  are versions that prune trims. S3 overwrite semantics hold, and version
-  history is a side effect rather than new machinery.
-- DELETE destroys the snapshots for that key through the locked prune path.
-  `.protected` snapshots return `AccessDenied` naming the marker.
+  unchanged and chunk dedup has a lineage between dumps.
+- PUT of an existing key writes a new snapshot; newest wins for GET and LIST.
+  Older snapshots are versions that prune trims.
+- DELETE removes every snapshot of that key through the locked path. A
+  `.protected` marker on any snapshot makes that snapshot answer `AccessDenied`
+  naming the marker.
 
-**Group id.** Flat-key clients (mariadb-operator writes `<prefix>/<basename>`,
-`pkg/minio/minio.go` `PrefixedFileName`) get one group from bucket config. For
-clients that use real key hierarchies, the bucket may opt into
-`group_from = first-path-segment`, slugified to `SAFE_ID_REGEX` with a
-`-<8 hex of sha256(segment)>` suffix whenever slugification is not injective.
-Never more than one namespace level is invented.
+## Authentication
 
-## Key index
+minio-go always signs SigV4, so the outpost verifies instead of trusting:
+signature against the secret bound to the access key, S3 credential scope,
+region and date match, ±15 minute clock skew, constant-time comparison.
+Streaming bodies use `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` and its `-TRAILER`
+variant with chained per-chunk signatures, `x-amz-decoded-content-length`
+enforcement, and signed `x-amz-checksum-crc32c`/`x-amz-checksum-crc64nvme`
+trailers. `STREAMING-UNSIGNED-PAYLOAD-TRAILER` and `UNSIGNED-PAYLOAD` are
+rejected; clients that need them should use plain HTTP or TLS with signed
+payloads, which every dump tool does.
 
-Listing by reading every manifest is O(snapshots) per request and cannot page.
-A SQLite table (sqlc, alongside `coredb`) maps
-`(bucket, key) → (datastore, ns, type, group, snapshot_time, size, etag, content_type, deleted)`,
-ordered by key so `ContinuationToken` is a real cursor.
+`GetBucketLocation` returns the configured region so clients stop probing.
+Each access key carries a PBS auth id and per-bucket `read`/`write`/`delete`
+grants; the auth id becomes the group `owner` file, so PBS ownership checks
+stay meaningful.
 
-The index is a cache, never the truth. The datastore is the truth.
+## Publication lifecycle
 
-- Written in the same transaction boundary as the publish, after the manifest
-  lands.
-- Reconciled at outpost start and on the scheduler (reuse `internal/calendar`),
-  by walking group manifests: entries whose snapshot vanished (prune, GC,
-  manual delete, sync) are dropped, snapshots found with a `pbs-plus-s3`
-  manifest section and no row are added.
-- A `GET`/`HEAD` miss falls back to a manifest read before answering `404`, so a
-  stale index degrades latency, never correctness.
+A snapshot appears only when it is complete. Per PUT, in order: register an
+active write under `/run/proxmox-backup/active-operations` -> ensure and chown
+the group path -> acquire the group and snapshot locks under
+`/run/proxmox-backup/locks` -> write/validate the `owner` file -> take a
+shared read lock on `<datastore>/.lock` -> stream the body through the
+buzhash chunker into `.chunks` as one `s3-object.didx` -> verify the index ->
+publish `index.json.blob` -> drop locks. Any failure removes the snapshot
+directory and, if the group was newly created, the group. A snapshot without
+its manifest is a broken snapshot to PBS, and this path never produces one.
 
-## Component layout
+GC safety is inherited: chunks are written with a fresh atime and PBS GC only
+sweeps below `now - 24h5m`, so an upload is safe as long as it finishes inside
+that window.
 
-`internal/server/outpost/` holds `.go` files, so per CONVENTIONS it takes no
-subpackages. The driver stays there; the protocol and object model live in a
-sibling package.
+## Multipart
 
-```
-internal/server/outpost/s3.go          s3Driver, s3Instance; registers TypeS3
-internal/server/objectstore/
-  doc.go            package doc: mapping rules, what is deliberately unsupported
-  bucket.go         bucket config, binding to datastore/ns/group, ListBuckets
-  sigv4.go          SigV4 verification, aws-chunked + trailer decoding
-  request.go        router, handlers, Expect: 100-continue, error mapping
-  wire.go           XML request/response types
-  object.go         key <-> snapshot mapping, manifest section, ETag rules
-  index.go          key index queries and reconcile
-  writer.go         PUT -> chunked snapshot publish (locks, owner, chown)
-  reader.go         GET/HEAD, Range via ParseDynamicIndex + chunk source
-  multipart.go      spooled multipart upload, journal, reaper
-  credential.go     access key -> secret + PBS auth id + bucket grants
-  errors.go         S3 error codes
-```
+Parts spool to `<state>/objectstore/<outpost>-uploads/<uploadID>/part-N` with
+an fsynced JSON journal; nothing is held in memory. Clients upload parts
+concurrently, so part data lands in a private temp file first and the rename
+plus journal update run under a per-upload `flock`. `CompleteMultipartUpload`
+holds the same lock, streams the parts in order through one publish - opening
+one part file at a time, so ten-thousand-part uploads cannot exhaust file
+descriptors - and removes the spool on success. The multipart ETag is
+`<md5-of-concatenated-binary-part-md5s>-<n>`; single PUT records the SHA-256.
+Abandoned uploads are reaped after 7 days of spool inactivity, at outpost
+start and daily.
 
-Storage seam: writes go through `backupproxy.RemoteStore`. Local (default) is
-`backupproxy.NewDatastoreStore(datastoreDir, snapshotDir, ...)`, which writes
-chunks into the shared `.chunks` and publishes index and manifest into the
-snapshot dir. An outpost running off the PBS host (`feat/external-outposts`)
-substitutes `backupproxy.NewPBSStore` and nothing else changes; both satisfy the
-same interface, so this costs one constructor switch, not a second code path.
+## Listing and the key index
 
-An object body is uploaded with one `BackupSession.UploadArchive` call, which
-buzhash-chunks the stream into a single `.didx`. One index per object is what
-makes Range reads and cross-version dedup work.
+Listing scans the datastore (newest version wins per key) and honours prefix,
+delimiter, `max-keys` up to 1000, `continuation-token`/`start-after`,
+`encoding-type=url`, and the v1 `marker`. `DeleteObjects` batches up to 1000
+keys with per-key results.
 
-## Reliability
+A SQLite key index under `<state>/objectstore/<outpost>.db` caches
+`(bucket, key) -> snapshot` lookups for GET/HEAD. It is a cache, never the
+truth: GET/HEAD falls back to a manifest scan before answering `404`, and a
+reconciler rebuilds it from the datastore at outpost start and daily. A stale
+index degrades latency, never correctness.
 
-This is the part that separates this from the prototype.
+## Unsupported, by name
 
-**Authentication is verified, not parsed.** minio-go always signs SigV4. The
-outpost verifies the signature against the secret bound to the access key, with
-a ±15 min skew window, and supports `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`,
-`STREAMING-UNSIGNED-PAYLOAD-TRAILER` and the trailer variants minio-go ≥7.0.70
-sends. `GetBucketLocation` returns the configured region so the client stops
-probing. Each access key carries a PBS auth id and per-bucket grants
-(`read`, `write`, `delete`); the auth id becomes the group `owner` file, so PBS
-ownership checks stay meaningful.
+Correct S3 errors instead of lying:
 
-**A snapshot appears only when it is complete.** Order per PUT, mirroring
-`compose_publish.go`: register in `/run/proxmox-backup/active-operations` →
-ensure group path → group lock in `/run/proxmox-backup/locks` → write `owner`
-→ stream chunks into `.chunks` → publish `.didx` → publish `index.json` →
-chown `backup:backup` → drop locks. Any failure unlinks the snapshot dir and
-the group if we created it. A snapshot without `index.json` is a broken
-snapshot to PBS, and this design never produces one.
+| API                                                                 | Answer                                                                           |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Versioning, lifecycle, replication, tagging, ACL, CORS, object lock | `NotImplemented`                                                                 |
+| `CopyObject`                                                        | `NotImplemented` (an index insert plus manifest write, cheap to add)             |
+| Any `x-amz-server-side-encryption*` header                          | `NotImplemented` - ignoring an encryption header silently is worse than refusing |
+| Presigned URLs, anonymous access                                    | `AccessDenied`                                                                   |
 
-GC safety is inherited rather than invented: chunks are written with a fresh
-atime and PBS GC only sweeps below `now - 24h5m`, so an upload is safe as long
-as it finishes inside that window. Uploads are bounded well below it.
+Prometheus metrics and per-mutation UPID tasks are not implemented; PUT and
+DELETE emit structured log lines (`s3 put object`, `s3 delete object`) with
+bucket, key, size, ETag and datastore instead.
 
-**Multipart survives a restart.** Parts spool to
-`<state>/objectstore/uploads/<uploadID>/<n>` with an fsynced JSON journal; nothing
-is held in memory. `CompleteMultipartUpload` streams the parts in order through
-one `UploadArchive`. Out-of-order arrival and part re-upload are legal in S3, so
-spooling is the correct shape; the sequential-arrival fast path that chunks
-inline is deliberately future work. Abandoned uploads are reaped by age
-(default 7d) at start and on schedule.
+## Testing
 
-**Concurrency.** A per-`(bucket, key)` mutex plus the PBS group lock. Snapshot
-time collisions increment by one second with a bounded retry, the same rule the
-prototype learned (`pbs/upload.go` `retryStartSession`) but bounded by the lock
-rather than by parsing error strings. Concurrent chunking sessions per outpost
-are capped; chunking is CPU and IO bound and an unbounded S3 endpoint is a
-denial-of-service surface.
+Unit tests drive the server with genuine minio-go clients: signed single and
+streaming PUTs, GET/HEAD/Range, overwrite, `.protected`, grants, listing with
+pagination and URL-encoding, DeleteObjects, multipart `FPutObject` round trips
+with ranged reads across part boundaries, restart, abort, bad ETag and reaping
 
-**ETag is recorded, never recomputed.** SHA-256 of the object for single PUT,
-`<md5-of-part-md5s>-<n>` for multipart, matching what clients expect to compare.
-
-**Every mutation is a PBS task.** PUT/DELETE open a UPID task log through
-`internal/proxmox/tasklog`, so an operator sees S3 ingest in the PBS task list
-next to real backups. Prometheus counters per bucket for requests, bytes,
-failures and upload duration.
-
-## Deliberately unsupported
-
-Named, returning correct S3 errors rather than lying:
-
-- Versioning API, lifecycle, replication, tagging, ACL, CORS, object lock →
-  `NotImplemented`. Version history exists as snapshots but is not exposed via
-  the versioning API.
-- `CopyObject` → `NotImplemented` initially; a server-side copy is an index
-  insert plus a manifest write and is cheap to add later.
-- SSE-C: mariadb-operator supports it (`pkg/minio/minio.go` `getSSEC`). Phase 4
-  rejects it explicitly: any `x-amz-server-side-encryption*` header answers
-  `NotImplemented`, because silently ignoring an encryption header is the one
-  failure mode worse than not supporting it. Encrypting streams with a
-  customer key remains future work if a deployment needs it.
-- Presigned URLs → unsupported. Only header-signed SigV4 requests are
-  accepted; query-string authentication answers `AccessDenied` like any
-  unsigned request.
-- Anonymous access → never.
-
-## Phases
-
-Each phase ends on a runnable check, no phase leaves a half-written snapshot
-path behind.
-
-1. **Skeleton and contract.** `outpost.Outpost` gains the s3 fields, `TypeS3`
-   registers, config persists and the endpoint starts/stops with the others.
-   Bucket config, credential store, SigV4 verification, `ListBuckets`,
-   `GetBucketLocation`, `HeadBucket`. Unit tests sign real minio-go requests
-   against the verifier.
-2. **Single-object round trip.** PUT (single part, `aws-chunked` decoded) →
-   locked publish → `index.json` with the `pbs-plus-s3` section. GET, HEAD,
-   Range. DELETE with `.protected` handling. Key index created and written.
-   Check: `mc cp`/`mc cat`/`mc rm` and a Go test using minio-go.
-3. **Listing and multipart.** `ListObjectsV2` (prefix, delimiter, max-keys,
-   continuation), `ListObjects` v1, `DeleteObjects`. Spooled multipart with
-   journal and reaper. Index reconcile on start and schedule.
-   Check: a 5 GiB `FPutObject` interrupted and retried.
-4. **Integration.** ExtJS panel fields in `outposts_panel.go`, API surface at
-   `/api2/extjs/config/d2d-outposts`, TLS via `tls-cert`/`tls-key` PEM paths,
-   SSE-C and presigned decision, mutation logging, docs in `docs/outposts.md`.
-   Deliberately deferred: Prometheus metrics (the `/plus/metrics` registry is
-   private and cardinality-safe labelling needs a design pass), per-mutation
-   UPID tasks (the tasklog registry is job/worker-shaped, not request-shaped),
-   and the `run-s3-outpost-e2e` mariadb-operator CI action (needs a real PBS
-   datastore in CI; the Go test suite already runs genuine minio-go
-   PUT/GET/Range/List/multipart/delete cycles against a temporary datastore).
-
-## Open decisions
-
-1. Bucket-to-group binding for hierarchical keys: one group per bucket with keys
-   as snapshots (simple, one prune policy per bucket) versus first-path-segment
-   groups (finer prune, invents ids). Default is the former; the latter is
-   opt-in per bucket.
-2. Retention ownership: let clients express retention through DELETE only, or
-   also expose a bucket prune policy that PBS enforces. If both act, an
-   operator's prune job and a client's `maxRetention` will disagree.
-3. External outposts: whether the S3 outpost also carries the `NewPBSStore`
-   path for `feat/external-outposts`, or stays PBS-host-local (direct
-   datastore writes) until that feature needs it. Default: stay host-local.
+- all against a temporary datastore with real locks. The
+  `run-s3-outpost-e2e` action extends this in CI: it creates an S3 outpost
+  through the management API and pushes, lists, overwrites and deletes objects
+  with the real `mc` client, asserting the snapshots land in the datastore and
+  disappear on delete.
