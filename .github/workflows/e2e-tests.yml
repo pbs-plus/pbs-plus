@@ -128,6 +128,11 @@ jobs:
         with:
           timeout-seconds: 900
 
+      - name: Run S3 outpost e2e tests
+        uses: ./.github/actions/run-s3-outpost-e2e
+        with:
+          timeout-seconds: 900
+
       - name: Run archive expansion e2e tests
         uses: ./.github/actions/run-archive-expand-e2e
         with:

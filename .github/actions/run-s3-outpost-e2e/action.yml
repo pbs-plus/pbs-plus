@@ -1,0 +1,30 @@
+name: Run S3 Outpost E2E
+description: Push, list, overwrite and delete S3 objects through the real minio client and verify they land as PBS snapshots
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "900"
+    description: Timeout for the e2e test script
+
+runs:
+  using: composite
+  steps:
+    - name: Copy e2e script into container
+      shell: bash
+      run: |
+        docker cp .github/actions/run-s3-outpost-e2e/run.sh pbs-plus-test:/tmp/e2e-s3-outpost.sh
+        docker exec pbs-plus-test chmod +x /tmp/e2e-s3-outpost.sh
+
+    - name: Run S3 outpost e2e tests
+      shell: bash
+      run: |
+        echo "Running S3 outpost e2e tests..."
+        timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-s3-outpost.sh
+
+    - name: Dump S3 outpost state
+      if: always()
+      shell: bash
+      run: |
+        echo "--- pbs-plus s3 server trace (last 400 lines) ---"
+        docker logs --since 30m pbs-plus-test 2>&1 | grep -Ei 's3 outpost|objectstore|s3 put|s3 delete|s3 object' | tail -400 || true
