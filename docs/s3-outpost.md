@@ -181,10 +181,13 @@ Named, returning correct S3 errors rather than lying:
 - `CopyObject` → `NotImplemented` initially; a server-side copy is an index
   insert plus a manifest write and is cheap to add later.
 - SSE-C: mariadb-operator supports it (`pkg/minio/minio.go` `getSSEC`). Phase 4
-  either honours the header by encrypting the stream with the supplied key, or
-  rejects it explicitly. Silently ignoring an encryption header is the one
-  failure mode worse than not supporting it.
-- Presigned URLs → phase 4.
+  rejects it explicitly: any `x-amz-server-side-encryption*` header answers
+  `NotImplemented`, because silently ignoring an encryption header is the one
+  failure mode worse than not supporting it. Encrypting streams with a
+  customer key remains future work if a deployment needs it.
+- Presigned URLs → unsupported. Only header-signed SigV4 requests are
+  accepted; query-string authentication answers `AccessDenied` like any
+  unsigned request.
 - Anonymous access → never.
 
 ## Phases
@@ -221,6 +224,6 @@ path behind.
 2. Retention ownership: let clients express retention through DELETE only, or
    also expose a bucket prune policy that PBS enforces. If both act, an
    operator's prune job and a client's `maxRetention` will disagree.
-3. External outposts: whether the S3 outpost ships in phase 1 as PBS-host-local
-   only (direct datastore writes) or carries the `NewPBSStore` path from the
-   start.
+3. External outposts: whether the S3 outpost also carries the `NewPBSStore`
+   path for `feat/external-outposts`, or stays PBS-host-local (direct
+   datastore writes) until that feature needs it. Default: stay host-local.

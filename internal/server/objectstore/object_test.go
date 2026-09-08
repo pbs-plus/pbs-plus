@@ -290,6 +290,22 @@ func TestObjectGrants(t *testing.T) {
 	mustStatus(t, serve(t, readerOnly, signedObjectRequest(t, http.MethodGet, base)), http.StatusOK)
 }
 
+func TestObjectRejectsServerSideEncryption(t *testing.T) {
+	handler, _, _ := newRoundTripHandler(t)
+	base := "http://s3.test/mariadb/" + roundTripKey
+
+	request := signedPut(t, base, []byte("secret"), nil)
+	request.Header.Set("X-Amz-Server-Side-Encryption-Customer-Algorithm", "AES256")
+	request.Header.Set("X-Amz-Server-Side-Encryption-Customer-Key", "c2VjcmV0a2V5")
+	response := serve(t, handler, request)
+	mustStatus(t, response, http.StatusNotImplemented)
+
+	mustPutKey(t, handler, roundTripKey, []byte("data"))
+	request = signedObjectRequest(t, http.MethodGet, base)
+	request.Header.Set("X-Amz-Server-Side-Encryption", "AES256")
+	mustStatus(t, serve(t, handler, request), http.StatusNotImplemented)
+}
+
 func TestObjectIndexSurvivesRestart(t *testing.T) {
 	handler, _, indexPath := newRoundTripHandler(t)
 	base := "http://s3.test/mariadb/" + roundTripKey

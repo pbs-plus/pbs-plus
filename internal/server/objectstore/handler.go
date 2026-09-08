@@ -103,6 +103,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveObjectRequest(w http.ResponseWriter, r *http.Request, bucket Bucket, credential Credential, key string) {
+	for _, name := range []string{
+		"x-amz-server-side-encryption",
+		"x-amz-server-side-encryption-customer-algorithm",
+		"x-amz-server-side-encryption-customer-key",
+		"x-amz-server-side-encryption-customer-key-md5",
+		"x-amz-server-side-encryption-aws-kms-key-id",
+	} {
+		if r.Header.Get(name) != "" {
+			writeError(w, r, http.StatusNotImplemented, "NotImplemented", "Server-side encryption is not implemented.")
+			return
+		}
+	}
 	query := r.URL.Query()
 	if query.Get("uploadId") != "" || hasQueryFlag(r, "uploads") {
 		h.serveMultipartRequest(w, r, bucket, credential, key)
