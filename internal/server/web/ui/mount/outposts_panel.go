@@ -44,56 +44,19 @@ var outpostsPanel = js.Panel{
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
 			let panel = this.getView();
-			let s3cfg = values.s3 || {};
-			let s3bucket = (s3cfg.buckets && s3cfg.buckets[0]) || {};
-			let s3cred = (s3cfg.credentials && s3cfg.credentials[0]) || {};
-			let s3grant = {};
-			if (s3cred.grants) {
-				for (let grant of s3cred.grants) {
-					if (grant.bucket === s3bucket.name) { s3grant = grant; break; }
-				}
-			}
-			let complexS3 = !!(s3cfg.buckets && s3cfg.buckets.length > 1) || !!(s3cfg.credentials && s3cfg.credentials.length > 1);
-			let managedS3 = complexS3 ? Ext.clone(s3cfg) : null;
+			let managedS3 = values.s3 ? Ext.clone(values.s3) : null;
 			let win;
 			let updateS3Summary = () => {
 				if (!win) return;
 				let summary = win.down("[itemId=s3Summary]");
 				if (!summary) return;
-				let config = managedS3 || s3cfg;
+				let config = managedS3 || {};
 				let buckets = config.buckets ? config.buckets.length : 0;
 				let credentials = config.credentials ? config.credentials.length : 0;
 				summary.setValue(Ext.String.format(gettext("{0} bucket(s), {1} credential(s)"), buckets, credentials));
 			};
 			let openS3Manager = () => {
-				let config = Ext.clone(managedS3 || s3cfg || {});
-				if (!managedS3 && win) {
-					let vals = win.down("form").getForm().getValues();
-					config.region = vals.region || "us-east-1";
-					config.tls = vals.tls !== "0";
-					if (vals.bucket) {
-						config.buckets = [{
-							name: vals.bucket,
-							datastore: vals.datastore,
-							namespace: vals.ns || "",
-							backup_type: vals["backup-type"],
-							backup_id: vals["backup-id"],
-						}];
-					}
-					if (vals["access-key"]) {
-						config.credentials = [{
-							access_key: vals["access-key"],
-							secret_key: vals["secret-key"] || "",
-							auth_id: vals["auth-id"],
-							grants: [{
-								bucket: vals.bucket,
-								read: vals.read === "1",
-								write: vals.write === "1",
-								delete: vals.delete === "1",
-							}],
-						}];
-					}
-				}
+				let config = Ext.clone(managedS3 || {});
 				let bucketStore = Ext.create("Ext.data.Store", {
 					fields: ["name", "datastore", "namespace", "backup_type", "backup_id"],
 					data: config.buckets || [],
@@ -459,10 +422,6 @@ var outpostsPanel = js.Panel{
 							if (cert) managedS3["tls-cert"] = cert;
 							if (key) managedS3["tls-key"] = key;
 							if (vals["manager-spool-dir"]) managedS3["spool-dir"] = vals["manager-spool-dir"];
-							complexS3 = true;
-							let form = win.down("form");
-							form.down("[itemId=s3Fields]").setVisible(false).setDisabled(true);
-							form.down("[itemId=s3JsonFields]").setVisible(true).setDisabled(false);
 							updateS3Summary();
 							manager.close();
 						},
@@ -514,7 +473,6 @@ var outpostsPanel = js.Panel{
 									}
 									let smb = form.down("[itemId=sambaFields]");
 									let structured = form.down("[itemId=s3Fields]");
-									let raw = form.down("[itemId=s3JsonFields]");
 									if (listen) {
 										listen.setVisible(v !== "samba");
 										listen.setDisabled(v === "samba");
@@ -524,12 +482,8 @@ var outpostsPanel = js.Panel{
 										smb.setDisabled(v !== "samba");
 									}
 									if (structured) {
-										structured.setVisible(v === "s3" && !complexS3);
-										structured.setDisabled(v !== "s3" || complexS3);
-									}
-									if (raw) {
-										raw.setVisible(v === "s3" && complexS3);
-										raw.setDisabled(v !== "s3" || !complexS3);
+										structured.setVisible(v === "s3");
+										structured.setDisabled(v !== "s3");
 									}
 								},
 							},
@@ -596,174 +550,8 @@ var outpostsPanel = js.Panel{
 							xtype: "container",
 							itemId: "s3Fields",
 							defaults: { anchor: "100%", labelWidth: 120 },
-							hidden: values.type !== "s3" || complexS3,
-							disabled: values.type !== "s3" || complexS3,
-							items: [
-								{
-									xtype: "fieldset",
-									title: gettext("Bucket"),
-									items: [
-										{
-											xtype: "proxmoxtextfield",
-											name: "bucket",
-											fieldLabel: gettext("Bucket Name"),
-											allowBlank: false,
-											regex: /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/,
-											regexText: gettext("3-63 lowercase letters, digits, dots and dashes"),
-											value: s3bucket.name,
-										},
-										{
-											xtype: "combobox",
-											name: "datastore",
-											fieldLabel: gettext("Datastore"),
-											store: "pbs-datastore-list",
-											displayField: "store",
-											valueField: "store",
-											allowBlank: false,
-											value: s3bucket.datastore,
-											listeners: {
-												change: (cb, v) => {
-													let nsCombo = cb.up("form").down("pbsNamespaceSelector[name=ns]");
-													if (nsCombo) nsCombo.setDatastore(v);
-												},
-											},
-										},
-										{
-											xtype: "pbsNamespaceSelector",
-											name: "ns",
-											fieldLabel: gettext("Namespace"),
-											datastore: s3bucket.datastore,
-											emptyText: gettext("root"),
-											value: s3bucket.namespace,
-										},
-										{
-											xtype: "combobox",
-											name: "backup-type",
-											fieldLabel: gettext("Backup Type"),
-											store: [["host", gettext("Host")], ["vm", gettext("VM")], ["ct", gettext("Container")]],
-											value: s3bucket.backup_type || "host",
-											editable: false,
-											allowBlank: false,
-										},
-										{
-											xtype: "proxmoxtextfield",
-											name: "backup-id",
-											fieldLabel: gettext("Backup ID"),
-											allowBlank: false,
-											regex: /^[A-Za-z0-9_][A-Za-z0-9._-]*$/,
-											regexText: gettext("Letters, digits, dots, dashes and underscores; start with a letter or digit"),
-											value: s3bucket.backup_id,
-										},
-									],
-								},
-								{
-									xtype: "fieldset",
-									title: gettext("Credential"),
-									items: [
-										{
-											xtype: "proxmoxtextfield",
-											name: "access-key",
-											fieldLabel: gettext("Access Key"),
-											allowBlank: false,
-											value: s3cred.access_key,
-										},
-										{
-											xtype: "proxmoxtextfield",
-											name: "secret-key",
-											fieldLabel: gettext("Secret Key"),
-											inputType: "password",
-											allowBlank: !(isEdit && values.type === "s3"),
-											minLength: 8,
-											emptyText: isEdit ? gettext("Unchanged") : "",
-											value: s3cred.secret_key,
-										},
-										{
-											xtype: "proxmoxtextfield",
-											name: "auth-id",
-											fieldLabel: gettext("Owner"),
-											allowBlank: false,
-											regex: /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+(![A-Za-z0-9._-]+)?$/,
-											regexText: gettext("PBS auth id, e.g. root@pam"),
-											value: s3cred.auth_id || "root@pam",
-										},
-										{
-											xtype: "checkboxgroup",
-											fieldLabel: gettext("Permissions"),
-											items: [
-												{ boxLabel: gettext("Read"), name: "read", inputValue: "1", uncheckedValue: "0", checked: isEdit ? !!s3grant.read : true },
-												{ boxLabel: gettext("Write"), name: "write", inputValue: "1", uncheckedValue: "0", checked: isEdit ? !!s3grant.write : true },
-												{ boxLabel: gettext("Delete"), name: "delete", inputValue: "1", uncheckedValue: "0", checked: isEdit ? !!s3grant.delete : true },
-											],
-										},
-									],
-								},
-								{
-									xtype: "fieldset",
-									title: gettext("Advanced"),
-									collapsible: true,
-									collapsed: !(s3cfg["tls-cert"] || s3cfg["tls-key"] || s3cfg["spool-dir"]),
-									items: [
-										{
-											xtype: "combobox",
-											name: "region",
-											fieldLabel: gettext("Region"),
-											store: ["us-east-1", "us-east-2", "us-west-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-west-2", "ap-southeast-1", "ap-northeast-1", "sa-east-1"],
-											queryMode: "local",
-											editable: true,
-											forceSelection: false,
-											value: s3cfg.region || "us-east-1",
-										},
-										{
-											xtype: "proxmoxcheckbox",
-											name: "tls",
-											fieldLabel: gettext("HTTPS"),
-											boxLabel: gettext("Serve HTTPS using the current PBS certificate"),
-											inputValue: "1",
-											uncheckedValue: "0",
-											checked: s3cfg.tls !== false,
-										},
-										{
-											xtype: "proxmoxtextfield",
-											name: "tls-cert",
-											fieldLabel: gettext("Custom Certificate"),
-											emptyText: gettext("Current PBS certificate (default)"),
-											value: s3cfg["tls-cert"],
-										},
-										{
-											xtype: "proxmoxtextfield",
-											name: "tls-key",
-											fieldLabel: gettext("Custom Key"),
-											emptyText: gettext("Current PBS key (default)"),
-											value: s3cfg["tls-key"],
-										},
-										{
-											xtype: "proxmoxtextfield",
-											name: "spool-dir",
-											fieldLabel: gettext("Spool Directory"),
-											emptyText: gettext("inside the datastore (default)"),
-											value: s3cfg["spool-dir"],
-										},
-									],
-								},
-								{
-									xtype: "button",
-									text: gettext("Manage Multiple Buckets and Credentials"),
-									iconCls: "fa fa-list",
-									margin: "0 0 10 0",
-									handler: openS3Manager,
-								},
-								{
-									xtype: "displayfield",
-									value: gettext("Objects become snapshots in the mapped backup group; clients authenticate with SigV4 access keys."),
-								},
-							],
-						},
-						{
-							xtype: "container",
-							itemId: "s3JsonFields",
-							defaults: { anchor: "100%", labelWidth: 120 },
-							hidden: values.type !== "s3" || !complexS3,
-							disabled: values.type !== "s3" || !complexS3,
+							hidden: values.type !== "s3",
+							disabled: values.type !== "s3",
 							items: [
 								{
 									xtype: "displayfield",
@@ -774,7 +562,12 @@ var outpostsPanel = js.Panel{
 									xtype: "button",
 									text: gettext("Manage Buckets and Credentials"),
 									iconCls: "fa fa-list",
+									margin: "0 0 10 0",
 									handler: openS3Manager,
+								},
+								{
+									xtype: "displayfield",
+									value: gettext("Objects become snapshots in the mapped backup group; clients authenticate with SigV4 access keys."),
 								},
 							],
 						},
@@ -803,44 +596,11 @@ var outpostsPanel = js.Panel{
 								browseable: vals.browseable || "0",
 							};
 							if (vals.type === "s3") {
-								if (complexS3) {
-									params.s3 = JSON.stringify(managedS3);
-								} else {
-									if (vals.tls === "1" && (!!vals["tls-cert"] !== !!vals["tls-key"])) {
-										Ext.Msg.alert(gettext("Error"), gettext("Set both the custom TLS certificate and key, or leave both empty."));
-										return;
-									}
-									if (vals.read !== "1" && vals.write !== "1" && vals.delete !== "1") {
-										Ext.Msg.alert(gettext("Error"), gettext("Assign at least one bucket permission."));
-										return;
-									}
-									let s3 = {
-										region: vals.region || "",
-										tls: vals.tls === "1",
-										buckets: [{
-											name: vals.bucket,
-											datastore: vals.datastore,
-											namespace: vals.ns || "",
-											backup_type: vals["backup-type"],
-											backup_id: vals["backup-id"],
-										}],
-										credentials: [{
-											access_key: vals["access-key"],
-											secret_key: vals["secret-key"],
-											auth_id: vals["auth-id"],
-											grants: [{
-												bucket: vals.bucket,
-												read: vals.read === "1",
-												write: vals.write === "1",
-												delete: vals.delete === "1",
-											}],
-										}],
-									};
-									if (s3.tls && vals["tls-cert"]) s3["tls-cert"] = vals["tls-cert"];
-									if (s3.tls && vals["tls-key"]) s3["tls-key"] = vals["tls-key"];
-									if (vals["spool-dir"]) s3["spool-dir"] = vals["spool-dir"];
-									params.s3 = JSON.stringify(s3);
+								if (!managedS3 || !(managedS3.buckets || []).length || !(managedS3.credentials || []).length) {
+									Ext.Msg.alert(gettext("Error"), gettext("Use 'Manage Buckets and Credentials' to add at least one bucket and one credential."));
+									return;
 								}
+								params.s3 = JSON.stringify(managedS3);
 							}
 							let url = "/api2/extjs/config/d2d-outposts";
 							let method = "POST";
