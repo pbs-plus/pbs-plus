@@ -85,7 +85,10 @@ auth id that becomes the group `owner`. Existing secret keys are not returned by
 the API and can be left empty when editing an unchanged access key. Supported:
 PUT/GET/HEAD/Range/DELETE,
 `ListBuckets`, `ListObjectsV2`/v1, `DeleteObjects`, multipart uploads with
-durable part spooling. Not supported (explicit errors): versioning, CopyObject,
+durable part spooling. Request bodies may be sent with a SHA-256 payload hash,
+as signed or unsigned `aws-chunked` streams, or as `UNSIGNED-PAYLOAD`, which is
+what AWS and MinIO clients switch to over HTTPS; trailing CRC32C/CRC64NVME
+checksums are verified when present. Not supported (explicit errors): versioning, CopyObject,
 server-side encryption, presigned URLs, anonymous access.
 
 HTTPS is enabled by default using Proxmox Backup Server's current certificate
