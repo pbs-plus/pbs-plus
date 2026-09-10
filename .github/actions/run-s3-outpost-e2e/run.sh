@@ -18,11 +18,13 @@ ACCESS="e2e-access"
 SECRET="e2e-secret-key"
 GROUP_DIR="/mnt/$DATASTORE/ns/$NAMESPACE/host/e2e-s3"
 WORK="/tmp/s3-e2e"
-ENDPOINT="http://127.0.0.1:$S3_PORT"
+ENDPOINT="https://127.0.0.1:$S3_PORT"
 
 req() { curl -k -s "$@" -w "\nHTTP_CODE:%{http_code}"; }
 code_of() { tail -1 <<<"$1" | sed 's/^HTTP_CODE://'; }
 body_of() { sed '$d' <<<"$1"; }
+
+mc() { command mc --insecure "$@"; }
 
 api_post() {
 	local path=$1
@@ -101,7 +103,7 @@ snapshot_count() {
 }
 
 install_mc() {
-	if command -v mc >/dev/null 2>&1; then
+	if type -P mc >/dev/null 2>&1; then
 		return 0
 	fi
 	local target=/usr/local/bin/mc
