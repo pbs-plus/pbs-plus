@@ -47,7 +47,12 @@ func toOutpostView(s outpost.Status) (outpostView, error) {
 		Endpoints:  s.Endpoints,
 	}
 	if s.S3 != nil {
-		data, err := json.Marshal(s.S3)
+		config := *s.S3
+		config.Credentials = append([]objectstore.Credential(nil), s.S3.Credentials...)
+		for i := range config.Credentials {
+			config.Credentials[i].SecretKey = ""
+		}
+		data, err := json.Marshal(config)
 		if err != nil {
 			return outpostView{}, err
 		}
@@ -84,6 +89,21 @@ func outpostFormValues(r *http.Request) (outpost.Outpost, error) {
 		o.S3 = config
 	}
 	return o, nil
+}
+
+func preserveS3Secrets(next, current *objectstore.Config) {
+	if next == nil || current == nil {
+		return
+	}
+	secrets := make(map[string]string, len(current.Credentials))
+	for _, credential := range current.Credentials {
+		secrets[credential.AccessKey] = credential.SecretKey
+	}
+	for i := range next.Credentials {
+		if next.Credentials[i].SecretKey == "" {
+			next.Credentials[i].SecretKey = secrets[next.Credentials[i].AccessKey]
+		}
+	}
 }
 
 func writeOutpostInvalid(w http.ResponseWriter, err error) {
@@ -178,6 +198,7 @@ func ExtJsOutpostSingleHandler(app *application.Runtime) http.HandlerFunc {
 				o.Name = existing.Name
 			}
 			o.CreatedAt = existing.CreatedAt
+			preserveS3Secrets(o.S3, existing.S3)
 			if err := outpost.ValidateOutpost(o); err != nil {
 				writeOutpostInvalid(w, err)
 				return

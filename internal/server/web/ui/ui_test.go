@@ -70,11 +70,16 @@ func TestRender(t *testing.T) {
 		t.Error("rendered profiles panel still pins single backup groups")
 	}
 	for _, want := range []string{
-		`value: values["listen-addr"] || "0.0.0.0:2049"`,
+		`values.type === "s3" ? "0.0.0.0:9000" : "0.0.0.0:2049"`,
 		`listen.setDisabled(v === "samba");`,
 		`smb.setDisabled(v !== "samba");`,
 		`structured.setDisabled(v !== "s3" || complexS3);`,
 		`raw.setDisabled(v !== "s3" || !complexS3);`,
+		`text: gettext("Manage Buckets and Credentials")`,
+		`title: gettext("Bucket Mappings")`,
+		`title: gettext("Credentials")`,
+		`boxLabel: gettext("Serve HTTPS using the current PBS certificate")`,
+		`params.s3 = JSON.stringify(managedS3);`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("outpost form does not disable inactive fields: %s", want)
