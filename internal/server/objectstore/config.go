@@ -22,6 +22,7 @@ type Config struct {
 	Region      string       `json:"region,omitempty"`
 	Buckets     []Bucket     `json:"buckets"`
 	Credentials []Credential `json:"credentials"`
+	TLS         *bool        `json:"tls,omitempty"`
 	TLSCertFile string       `json:"tls-cert,omitempty"`
 	TLSKeyFile  string       `json:"tls-key,omitempty"`
 	SpoolDir    string       `json:"spool-dir,omitempty"`
@@ -52,6 +53,9 @@ type Grant struct {
 func (c Config) Validate() error {
 	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") {
 		return fmt.Errorf("s3 tls-cert and tls-key must be set together")
+	}
+	if !c.TLSEnabled() && c.TLSCertFile != "" {
+		return fmt.Errorf("s3 tls-cert and tls-key require tls")
 	}
 	if c.SpoolDir != "" && !filepath.IsAbs(c.SpoolDir) {
 		return fmt.Errorf("s3 spool-dir %q must be an absolute path", c.SpoolDir)
@@ -128,6 +132,10 @@ func (c Config) RegionName() string {
 		return DefaultRegion
 	}
 	return c.Region
+}
+
+func (c Config) TLSEnabled() bool {
+	return c.TLS == nil || *c.TLS
 }
 
 func (c Config) credential(accessKey string) (Credential, bool) {

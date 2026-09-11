@@ -51,15 +51,17 @@ chunk-level dedup against the rest of the datastore. Overwrites create a new
 snapshot version (latest wins); `DELETE` removes all versions unless the
 snapshot is protected by a `.protected` marker.
 
-Configured on the **Outposts** tab (the S3 type carries a JSON config field)
-or through the REST API (`POST /api2/extjs/config/d2d-outposts` with
-`type=s3` and an `s3` JSON form value):
+Configured on the **Outposts** tab with separate bucket mappings,
+credentials, and per-bucket permission controls, or through the REST API
+(`POST /api2/extjs/config/d2d-outposts` with `type=s3` and an `s3` JSON form
+value):
 
 ```sh
 curl -X POST -d 'name=db-backups' -d 'type=s3' \
   -d 'listen-addr=0.0.0.0:9000' \
   -d 's3={
         "region": "us-east-1",
+        "tls": true,
         "buckets": [{
           "name": "mariadb",
           "datastore": "backup",
@@ -77,16 +79,24 @@ curl -X POST -d 'name=db-backups' -d 'type=s3' \
 ```
 
 Buckets bind an S3 bucket name to a PBS datastore/namespace/backup-type/backup-id
-group; each credential carries per-bucket read/write/delete grants and the PBS
-auth id that becomes the group `owner`. Supported: PUT/GET/HEAD/Range/DELETE,
+group. An outpost can contain multiple buckets and credentials; each credential
+carries independent read/write/delete grants for one or more buckets and the PBS
+auth id that becomes the group `owner`. Existing secret keys are not returned by
+the API and can be left empty when editing an unchanged access key. Supported:
+PUT/GET/HEAD/Range/DELETE,
 `ListBuckets`, `ListObjectsV2`/v1, `DeleteObjects`, multipart uploads with
-durable part spooling. Not supported (explicit errors): versioning, CopyObject,
+durable part spooling. Request bodies may be sent with a SHA-256 payload hash,
+as signed or unsigned `aws-chunked` streams, or as `UNSIGNED-PAYLOAD`, which is
+what AWS and MinIO clients switch to over HTTPS; trailing CRC32C/CRC64NVME
+checksums are verified when present. Not supported (explicit errors): versioning, CopyObject,
 server-side encryption, presigned URLs, anonymous access.
 
-Optional `tls-cert`/`tls-key` (PEM paths, both or neither) serve HTTPS with the
-host's certificates, e.g. the pbs-plus agent material at
-`/etc/proxmox-backup/pbs-plus/certs/{server.crt,server.key}`; clients then
-trust `/etc/proxmox-backup/pbs-plus/certs/ca.crt`.
+HTTPS is enabled by default using Proxmox Backup Server's current certificate
+and key at `/etc/proxmox-backup/{proxy.pem,proxy.key}`. This follows certificate
+changes made through the PBS certificate UI after the outpost is restarted.
+Optional `tls-cert`/`tls-key` values select another PEM certificate pair. Set
+`"tls": false` only when a trusted reverse proxy terminates TLS in front of the
+outpost.
 
 Outpost configurations persist as JSON under `/var/lib/pbs-plus/outposts/`.
 

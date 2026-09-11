@@ -27,6 +27,7 @@ import (
 )
 
 func testS3Outpost() Outpost {
+	tlsDisabled := false
 	return Outpost{
 		Name:       "s3-test",
 		Type:       TypeS3,
@@ -34,6 +35,7 @@ func testS3Outpost() Outpost {
 		CreatedAt:  time.Now().Unix(),
 		S3: &objectstore.Config{
 			Region: "us-east-1",
+			TLS:    &tlsDisabled,
 			Buckets: []objectstore.Bucket{{
 				Name: "backups", Datastore: "store", BackupType: "host", BackupID: "logical",
 			}},
@@ -44,6 +46,19 @@ func testS3Outpost() Outpost {
 				Grants:    []objectstore.Grant{{Bucket: "backups", Read: true}},
 			}},
 		},
+	}
+}
+
+func TestS3DriverRejectsMissingTLSCertificate(t *testing.T) {
+	configured := testS3Outpost()
+	tlsEnabled := true
+	configured.S3.TLS = &tlsEnabled
+	configured.S3.TLSCertFile = filepath.Join(t.TempDir(), "missing.crt")
+	configured.S3.TLSKeyFile = filepath.Join(t.TempDir(), "missing.key")
+
+	_, err := (s3Driver{}).Start(t.Context(), configured)
+	if err == nil || !strings.Contains(err.Error(), "s3 outpost tls") {
+		t.Fatalf("Start() error = %v, want synchronous TLS certificate error", err)
 	}
 }
 
@@ -83,6 +98,8 @@ func TestS3DriverTLSRoundTrip(t *testing.T) {
 	}
 
 	configured := testS3Outpost()
+	tlsEnabled := true
+	configured.S3.TLS = &tlsEnabled
 	configured.S3.TLSCertFile = certPath
 	configured.S3.TLSKeyFile = keyPath
 	instance, err := (s3Driver{}).Start(t.Context(), configured)

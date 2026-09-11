@@ -74,7 +74,7 @@ func (h *Handler) putObject(r *http.Request, bucket Bucket, credential Credentia
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
 	stream := io.Reader(payload)
 	etagFunc := func() string { return `"` + strings.ToLower(payloadHash) + `"` }
-	if payloadHash == streamingPayloadHash || payloadHash == streamingTrailerPayloadHash {
+	if !isPayloadDigest(payloadHash) {
 		fullPayloadHash := sha256.New()
 		stream = io.TeeReader(payload, fullPayloadHash)
 		etagFunc = func() string { return `"` + hex.EncodeToString(fullPayloadHash.Sum(nil)) + `"` }

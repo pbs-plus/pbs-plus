@@ -417,8 +417,14 @@ func StatusAll() []Status {
 		if inst := mgr.instances[o.Name]; inst != nil {
 			st.Running = true
 			st.Attached = inst.Attached()
-			for _, share := range st.Attached {
-				st.Endpoints = append(st.Endpoints, inst.Endpoint(share))
+			if o.Type == TypeS3 && o.S3 != nil {
+				for _, bucket := range o.S3.Buckets {
+					st.Endpoints = append(st.Endpoints, inst.Endpoint(bucket.Name))
+				}
+			} else {
+				for _, share := range st.Attached {
+					st.Endpoints = append(st.Endpoints, inst.Endpoint(share))
+				}
 			}
 		}
 		statuses = append(statuses, st)

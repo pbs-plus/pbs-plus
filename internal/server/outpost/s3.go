@@ -4,6 +4,7 @@ package outpost
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -37,6 +38,18 @@ func (s3Driver) Validate(o Outpost) error {
 }
 
 func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
+	var tlsConfig *tls.Config
+	if o.S3.TLSEnabled() {
+		certFile, keyFile := o.S3.TLSCertFile, o.S3.TLSKeyFile
+		if certFile == "" {
+			certFile, keyFile = conf.CertFile, conf.KeyFile
+		}
+		certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("s3 outpost tls: %w", err)
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}
+	}
 	createdAt := time.Unix(o.CreatedAt, 0)
 	handler, err := objectstore.NewHandler(*o.S3, createdAt)
 	if err != nil {
@@ -54,12 +67,13 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 	}
 	server := &http.Server{
 		Handler:           handler,
+		TLSConfig:         tlsConfig,
 		ReadHeaderTimeout: conf.HTTPReadTimeout,
 		WriteTimeout:      conf.HTTPWriteTimeout,
 		IdleTimeout:       conf.HTTPIdleTimeout,
 		MaxHeaderBytes:    conf.HTTPMaxHeaderBytes,
 	}
-	instance := &s3Instance{listener: listener, server: server, handler: handler, tls: o.S3.TLSCertFile != ""}
+	instance := &s3Instance{listener: listener, server: server, handler: handler, tls: o.S3.TLSEnabled()}
 	ctx, cancel := context.WithCancel(ctx)
 	instance.cancel = cancel
 	instance.maintainDone = make(chan struct{})
@@ -88,7 +102,7 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 	go func() {
 		var err error
 		if instance.tls {
-			err = server.ServeTLS(listener, o.S3.TLSCertFile, o.S3.TLSKeyFile)
+			err = server.ServeTLS(listener, "", "")
 		} else {
 			err = server.Serve(listener)
 		}

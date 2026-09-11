@@ -42,6 +42,13 @@ func TestConfigValidate(t *testing.T) {
 		{name: "short secret", mutate: func(c *Config) { c.Credentials[0].SecretKey = "short" }, want: "at least 8"},
 		{name: "unknown grant", mutate: func(c *Config) { c.Credentials[0].Grants[0].Bucket = "missing" }, want: "unknown bucket"},
 		{name: "empty grant", mutate: func(c *Config) { c.Credentials[0].Grants[0] = Grant{Bucket: "mariadb"} }, want: "no permissions"},
+		{name: "tls cert without key", mutate: func(c *Config) { c.TLSCertFile = "/tmp/server.crt" }, want: "must be set together"},
+		{name: "tls files while disabled", mutate: func(c *Config) {
+			disabled := false
+			c.TLS = &disabled
+			c.TLSCertFile = "/tmp/server.crt"
+			c.TLSKeyFile = "/tmp/server.key"
+		}, want: "require tls"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -63,5 +70,15 @@ func TestConfigValidate(t *testing.T) {
 func TestConfigRegionName(t *testing.T) {
 	if got := (Config{}).RegionName(); got != DefaultRegion {
 		t.Fatalf("RegionName() = %q, want %q", got, DefaultRegion)
+	}
+}
+
+func TestConfigTLSEnabled(t *testing.T) {
+	if !(Config{}).TLSEnabled() {
+		t.Fatal("TLS should default to enabled")
+	}
+	disabled := false
+	if (Config{TLS: &disabled}).TLSEnabled() {
+		t.Fatal("explicitly disabled TLS should remain disabled")
 	}
 }

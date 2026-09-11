@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/minio/crc64nvme"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/signer"
 )
 
@@ -27,6 +29,71 @@ type closingHash struct {
 }
 
 func (*closingHash) Close() {}
+
+func newSecureMinioClient(t *testing.T, handler http.Handler, trailingHeaders bool) *minio.Client {
+	t.Helper()
+	server := httptest.NewTLSServer(handler)
+	t.Cleanup(server.Close)
+	client, err := minio.New(strings.TrimPrefix(server.URL, "https://"), &minio.Options{
+		Creds:           credentials.NewStaticV4(testAccessKey, testSecretKey, ""),
+		Region:          "us-west-2",
+		Secure:          true,
+		Transport:       server.Client().Transport,
+		TrailingHeaders: trailingHeaders,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+// TestUnsignedPayloadOverTLS covers the payload modes clients switch to on HTTPS.
+func TestUnsignedPayloadOverTLS(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		trailingHeaders bool
+		options         minio.PutObjectOptions
+		want            string
+	}{
+		{name: "unsigned payload", want: unsignedPayloadHash},
+		{name: "unsigned trailer", trailingHeaders: true, options: minio.PutObjectOptions{Checksum: minio.ChecksumCRC32C}, want: unsignedTrailerPayloadHash},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handler, _, _ := newRoundTripHandler(t)
+			var uploadPayloadHash string
+			capture := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut {
+					uploadPayloadHash = r.Header.Get("X-Amz-Content-Sha256")
+				}
+				handler.ServeHTTP(w, r)
+			})
+			client := newSecureMinioClient(t, capture, test.trailingHeaders)
+
+			body := []byte("unsigned payload database backup")
+			info, err := client.PutObject(t.Context(), "mariadb", "backup.sql.gz", bytes.NewReader(body), int64(len(body)), test.options)
+			if err != nil {
+				t.Fatalf("PutObject() error = %v", err)
+			}
+			if uploadPayloadHash != test.want {
+				t.Fatalf("upload payload hash = %q, want %q", uploadPayloadHash, test.want)
+			}
+			sum := sha256.Sum256(body)
+			if info.ETag != hex.EncodeToString(sum[:]) {
+				t.Fatalf("etag = %q, want %q", info.ETag, hex.EncodeToString(sum[:]))
+			}
+
+			object, err := client.GetObject(t.Context(), "mariadb", "backup.sql.gz", minio.GetObjectOptions{})
+			if err != nil {
+				t.Fatalf("GetObject() error = %v", err)
+			}
+			defer object.Close()
+			got, err := io.ReadAll(object)
+			if err != nil || !bytes.Equal(got, body) {
+				t.Fatalf("object = %q, err = %v", got, err)
+			}
+		})
+	}
+}
 
 func TestVerifiedPayload(t *testing.T) {
 	payload := []byte("database backup")
@@ -152,6 +219,29 @@ func TestAWSChunkedChecksumTrailers(t *testing.T) {
 				t.Fatalf("payload = %q", got)
 			}
 		})
+	}
+}
+
+func TestUnsignedTrailerRejectsBadChecksum(t *testing.T) {
+	payload := []byte("database backup")
+	var sum [4]byte
+	binary.BigEndian.PutUint32(sum[:], crc32.Checksum(payload, crc32.MakeTable(crc32.Castagnoli))^1)
+
+	var body bytes.Buffer
+	body.WriteString(strconv.FormatInt(int64(len(payload)), 16) + "\r\n")
+	body.Write(payload)
+	body.WriteString("\r\n0\r\nx-amz-checksum-crc32c:" + base64.StdEncoding.EncodeToString(sum[:]) + "\n\r\n\r\n")
+	request := httptest.NewRequest(http.MethodPut, "http://s3.test/mariadb/backup.sql.gz", bytes.NewReader(body.Bytes()))
+	request.Header.Set("X-Amz-Content-Sha256", unsignedTrailerPayloadHash)
+	request.Header.Set("X-Amz-Decoded-Content-Length", strconv.Itoa(len(payload)))
+	request.Header.Set("X-Amz-Trailer", "x-amz-checksum-crc32c")
+
+	reader, _, err := newVerifiedPayload(request, testConfig().Credentials[0])
+	if err != nil {
+		t.Fatalf("new verified payload: %v", err)
+	}
+	if _, err := io.ReadAll(reader); err == nil || !strings.Contains(err.Error(), "crc32c checksum does not match") {
+		t.Fatalf("read error = %v", err)
 	}
 }
 

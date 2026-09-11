@@ -24,6 +24,8 @@ import (
 const (
 	streamingPayloadHash        = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
 	streamingTrailerPayloadHash = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	unsignedPayloadHash         = "UNSIGNED-PAYLOAD"
+	unsignedTrailerPayloadHash  = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
 	emptySHA256                 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	maximumChunkHeaderSize      = 1024
 )
@@ -41,9 +43,14 @@ func newVerifiedPayload(r *http.Request, credential Credential) (io.ReadCloser, 
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
 	switch payloadHash {
 	case streamingPayloadHash, streamingTrailerPayloadHash:
-		return newAWSChunkedReader(r, credential, payloadHash == streamingTrailerPayloadHash)
-	case "", "UNSIGNED-PAYLOAD":
-		return nil, 0, fmt.Errorf("unsigned payload is not supported")
+		return newAWSChunkedReader(r, credential, payloadHash == streamingTrailerPayloadHash, true)
+	case unsignedTrailerPayloadHash:
+		return newAWSChunkedReader(r, credential, true, false)
+	case "", unsignedPayloadHash:
+		if r.ContentLength < 0 {
+			return nil, 0, fmt.Errorf("content length is required")
+		}
+		return r.Body, r.ContentLength, nil
 	}
 	if r.ContentLength < 0 {
 		return nil, 0, fmt.Errorf("content length is required")
@@ -58,6 +65,16 @@ func newVerifiedPayload(r *http.Request, credential Credential) (io.ReadCloser, 
 		expected: expected,
 		length:   r.ContentLength,
 	}, r.ContentLength, nil
+}
+
+// isPayloadDigest reports whether X-Amz-Content-Sha256 carries the body's own
+// SHA-256 rather than a streaming or unsigned payload marker.
+func isPayloadDigest(payloadHash string) bool {
+	if len(payloadHash) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(payloadHash)
+	return err == nil
 }
 
 func (r *verifiedReader) Read(p []byte) (int, error) {
@@ -102,6 +119,7 @@ type awsChunkedReader struct {
 	decodedLength     int64
 	decoded           int64
 	withTrailer       bool
+	signed            bool
 	trailerNames      map[string]struct{}
 	crc32c            hash.Hash32
 	crc64nvme         hash.Hash64
@@ -109,30 +127,33 @@ type awsChunkedReader struct {
 	done              bool
 }
 
-func newAWSChunkedReader(r *http.Request, credential Credential, withTrailer bool) (io.ReadCloser, int64, error) {
+func newAWSChunkedReader(r *http.Request, credential Credential, withTrailer, signed bool) (io.ReadCloser, int64, error) {
 	decodedLength, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64)
 	if err != nil || decodedLength < 0 {
 		return nil, 0, fmt.Errorf("invalid decoded content length")
 	}
-	header, err := parseSignatureHeader(r.Header.Get("Authorization"))
-	if err != nil {
-		return nil, 0, err
-	}
-	requestTime, err := time.Parse(signatureTimeFormat, r.Header.Get("X-Amz-Date"))
-	if err != nil {
-		return nil, 0, fmt.Errorf("invalid x-amz-date")
-	}
 	reader := &awsChunkedReader{
 		body:          r.Body,
 		buffer:        bufio.NewReaderSize(r.Body, maximumChunkHeaderSize),
-		requestTime:   requestTime,
-		region:        header.region,
-		signingKey:    signingKey(credential.SecretKey, header.date, header.region),
 		chunkHash:     sha256.New(),
 		decodedLength: decodedLength,
 		withTrailer:   withTrailer,
+		signed:        signed,
 	}
-	copy(reader.previousSignature[:], header.signature)
+	if signed {
+		header, err := parseSignatureHeader(r.Header.Get("Authorization"))
+		if err != nil {
+			return nil, 0, err
+		}
+		requestTime, err := time.Parse(signatureTimeFormat, r.Header.Get("X-Amz-Date"))
+		if err != nil {
+			return nil, 0, fmt.Errorf("invalid x-amz-date")
+		}
+		reader.requestTime = requestTime
+		reader.region = header.region
+		reader.signingKey = signingKey(credential.SecretKey, header.date, header.region)
+		copy(reader.previousSignature[:], header.signature)
+	}
 	if err := reader.configureTrailers(r.Header.Values("X-Amz-Trailer")); err != nil {
 		return nil, 0, err
 	}
@@ -197,15 +218,17 @@ func (r *awsChunkedReader) startChunk() error {
 		return fmt.Errorf("read aws chunk header: %w", err)
 	}
 	sizeText, signatureText, ok := strings.Cut(string(line), ";chunk-signature=")
-	if !ok || strings.Contains(signatureText, ";") {
+	if ok != r.signed || strings.Contains(signatureText, ";") {
 		return fmt.Errorf("invalid aws chunk header")
 	}
 	size, err := strconv.ParseInt(sizeText, 16, 64)
 	if err != nil || size < 0 {
 		return fmt.Errorf("invalid aws chunk size")
 	}
-	if n, err := hex.Decode(r.chunkSignature[:], []byte(signatureText)); err != nil || n != sha256.Size {
-		return fmt.Errorf("invalid aws chunk signature")
+	if r.signed {
+		if n, err := hex.Decode(r.chunkSignature[:], []byte(signatureText)); err != nil || n != sha256.Size {
+			return fmt.Errorf("invalid aws chunk signature")
+		}
 	}
 	r.chunkRemaining = size
 	r.chunkHash.Reset()
@@ -237,6 +260,9 @@ func (r *awsChunkedReader) finishChunk() error {
 }
 
 func (r *awsChunkedReader) verifyChunk() error {
+	if !r.signed {
+		return nil
+	}
 	checksum := hex.EncodeToString(r.chunkHash.Sum(nil))
 	scope := strings.Join([]string{r.requestTime.Format("20060102"), r.region, "s3", "aws4_request"}, "/")
 	stringToSign := strings.Join([]string{
@@ -315,6 +341,12 @@ func (r *awsChunkedReader) readTrailers() error {
 	}
 	if err := r.expectCRLF(); err != nil {
 		return err
+	}
+	if !r.signed {
+		if err := r.verifyChecksums(values); err != nil {
+			return err
+		}
+		return r.expectCRLF()
 	}
 	line, err := r.readLine()
 	if err != nil {
