@@ -59,17 +59,13 @@ var coreViews = []js.Value{
 				store.load({ callback: function (records, operation, success) {
 					if (success && records && records.length) {
 						var tabs = [];
-						tabs.push({ xtype: "pbsPlusActiveMountsPanel", title: "Active Mounts", itemId: "d2d-mounts-active", iconCls: "fa fa-hdd-o" });
-						tabs.push({ xtype: "pbsPlusMountProfilesPanel", title: "Mount Profiles", itemId: "d2d-mounts-profiles", iconCls: "fa fa-cogs" });
-						tabs.push({ xtype: "pbsPlusOutpostsPanel", title: "Outposts", itemId: "d2d-outposts", iconCls: "fa fa-globe" });
 						Ext.Array.forEach(records, function (rec) {
 							var name = rec.get("store");
 							tabs.push({ xtype: "pbsPlusSnapshotMountDatastorePanel", title: name, itemId: "d2d-mount-" + name, iconCls: "fa fa-archive", datastore: name });
 						});
 						var added = me.add(tabs);
 						if (added && added.length) {
-							// land on the first datastore content tree, not Active Mounts
-							me.setActiveTab(added[3] || added[0]);
+							me.setActiveTab(added[0]);
 						} else if (me.items && me.items.getCount() > 0) {
 							me.setActiveTab(me.items.getAt(0));
 						}
@@ -78,6 +74,18 @@ var coreViews = []js.Value{
 			}
 			me.callParent();
 		`)},
+		PanelDefaults: true,
+	},
+	js.Panel{
+		Name:   "PBS.D2DMounts",
+		XType:  "pbsD2DMounts",
+		Title:  "Mounts",
+		Extend: js.ExtTabPanel,
+		Border: true,
+		Items: js.Items(
+			js.Field{XType: "pbsPlusActiveMountsPanel", Title: "Active Mounts", ItemID: "d2d-mounts-active", IconCls: "fa fa-hdd-o"},
+			js.Field{XType: "pbsPlusMountProfilesPanel", Title: "Mount Profiles", ItemID: "d2d-mounts-profiles", IconCls: "fa fa-cogs"},
+		),
 		PanelDefaults: true,
 	},
 	js.Panel{
@@ -125,6 +133,8 @@ var coreViews = []js.Value{
 					{ text: "Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", leaf: true },
 					{ text: "Targets", iconCls: "fa fa-bullseye", id: "d2d_targets", path: "pbsD2DTargets", leaf: true },
 					{ text: "Snapshots", iconCls: "fa fa-history", id: "snapshot_mount", path: "pbsD2DSnapshotMount", leaf: true },
+					{ text: "Mounts", iconCls: "fa fa-hdd-o", id: "d2d_mounts", path: "pbsD2DMounts", leaf: true },
+					{ text: "Outposts", iconCls: "fa fa-globe", id: "d2d_outposts", path: "pbsPlusOutpostsPanel", leaf: true },
 					{ text: "Data Verification", iconCls: "fa fa-check-circle", id: "data_verification", path: "pbsD2DDataVerification", leaf: true },
 					{ text: "MTF Migration", iconCls: "fa fa-archive", id: "mtf_tapes", path: "pbsMtfManagement", leaf: true },
 				],

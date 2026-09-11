@@ -161,7 +161,9 @@ func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 	managementStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DManagement",`))
 	targetsStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DTargets",`))
 	snapshotsStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DSnapshotMount",`))
-	if configurationStart < 0 || managementStart < 0 || targetsStart < 0 || snapshotsStart < 0 {
+	mountsStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DMounts",`))
+	verificationStart := bytes.Index(source, []byte(`Ext.define("PBS.D2DDataVerification",`))
+	if configurationStart < 0 || managementStart < 0 || targetsStart < 0 || snapshotsStart < 0 || mountsStart < 0 || verificationStart < 0 {
 		t.Fatal("rendered UI is missing a core PBS Plus view")
 	}
 
@@ -185,6 +187,20 @@ func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 	if !bytes.Contains(source[targetsStart:snapshotsStart], []byte(`xtype: "pbsDiskTokenPanel"`)) {
 		t.Error("agent bootstrap is missing from Targets")
 	}
+	if !bytes.Contains(source[snapshotsStart:mountsStart], []byte(`xtype: "pbsPlusSnapshotMountDatastorePanel"`)) {
+		t.Error("Snapshots is missing datastore browsers")
+	}
+	for _, xtype := range [][]byte{[]byte(`xtype: "pbsPlusActiveMountsPanel"`), []byte(`xtype: "pbsPlusMountProfilesPanel"`)} {
+		if bytes.Contains(source[snapshotsStart:mountsStart], xtype) {
+			t.Errorf("Snapshots still contains %q", xtype)
+		}
+		if !bytes.Contains(source[mountsStart:verificationStart], xtype) {
+			t.Errorf("Mounts is missing %q", xtype)
+		}
+	}
+	if bytes.Contains(source[snapshotsStart:verificationStart], []byte(`xtype: "pbsPlusOutpostsPanel"`)) {
+		t.Error("Snapshots or Mounts still contains Outposts")
+	}
 	if got := bytes.Count(source, []byte("root.insertChild(")); got != 1 {
 		t.Fatalf("rendered %d top-level PBS Plus navigation insertions, want 1", got)
 	}
@@ -194,6 +210,8 @@ func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 		[]byte(`title: gettext("Backup / Restore")`),
 		[]byte(`title: gettext("Targets")`),
 		[]byte(`title: gettext("Snapshots")`),
+		[]byte(`title: gettext("Mounts")`),
+		[]byte(`title: gettext("Outposts")`),
 		[]byte(`title: gettext("Data Verification")`),
 		[]byte(`title: gettext("MTF Migration")`),
 		[]byte(`id: "pbs_plus"`),
@@ -201,6 +219,10 @@ func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 		[]byte(`id: "backup_targets"`),
 		[]byte(`id: "d2d_targets"`),
 		[]byte(`id: "snapshot_mount"`),
+		[]byte(`id: "d2d_mounts"`),
+		[]byte(`path: "pbsD2DMounts"`),
+		[]byte(`id: "d2d_outposts"`),
+		[]byte(`path: "pbsPlusOutpostsPanel"`),
 		[]byte(`id: "data_verification"`),
 		[]byte(`id: "mtf_tapes"`),
 	} {
