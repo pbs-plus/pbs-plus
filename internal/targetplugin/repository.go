@@ -234,19 +234,33 @@ func (artifact RepositoryArtifact) validate() error {
 }
 
 func verifyP256Signature(message, signature []byte, publicKey *ecdsa.PublicKey) error {
-	if publicKey == nil || publicKey.Curve != elliptic.P256() {
-		return fmt.Errorf("%w: invalid P-256 public key", ErrInvalidRepositorySignature)
+	digest := sha256.Sum256(message)
+	if err := verifyP256Digest(digest[:], signature, publicKey); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidRepositorySignature, err)
 	}
-	if _, err := publicKey.ECDH(); err != nil {
-		return fmt.Errorf("%w: invalid P-256 public key", ErrInvalidRepositorySignature)
+	return nil
+}
+
+func verifyP256Digest(digest, signature []byte, publicKey *ecdsa.PublicKey) error {
+	if err := validateP256PublicKey(publicKey); err != nil {
+		return err
 	}
 	decoded, err := decodeP256Signature(signature)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidRepositorySignature, err)
+		return err
 	}
-	digest := sha256.Sum256(message)
-	if !ecdsa.Verify(publicKey, digest[:], decoded.R, decoded.S) {
-		return ErrInvalidRepositorySignature
+	if !ecdsa.Verify(publicKey, digest, decoded.R, decoded.S) {
+		return errors.New("signature mismatch")
+	}
+	return nil
+}
+
+func validateP256PublicKey(publicKey *ecdsa.PublicKey) error {
+	if publicKey == nil || publicKey.Curve != elliptic.P256() {
+		return errors.New("invalid P-256 public key")
+	}
+	if _, err := publicKey.ECDH(); err != nil {
+		return errors.New("invalid P-256 public key")
 	}
 	return nil
 }
