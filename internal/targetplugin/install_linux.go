@@ -15,7 +15,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const installCheckTimeout = 10 * time.Second
+const (
+	installCheckTimeout = 10 * time.Second
+	installExecRetry    = 10 * time.Millisecond
+)
 
 // ErrVersionInstalled reports an attempt to replace an installed immutable version.
 var ErrVersionInstalled = errors.New("plugin version is already installed")
@@ -165,7 +168,7 @@ func checkStagedPlugin(ctx context.Context, executable string, manifest PluginMa
 	checkContext, cancel := context.WithTimeout(ctx, installCheckTimeout)
 	defer cancel()
 
-	process, err := Start(checkContext, executable)
+	process, err := startStagedPlugin(checkContext, executable)
 	if err != nil {
 		return Descriptor{}, fmt.Errorf("start staged plugin: %w", err)
 	}
@@ -203,6 +206,21 @@ func checkStagedPlugin(ctx context.Context, executable string, manifest PluginMa
 	}
 	closed = true
 	return descriptor, nil
+}
+
+// startStagedPlugin retries while a concurrent install still holds a write descriptor on a staged artifact.
+func startStagedPlugin(ctx context.Context, executable string) (*Process, error) {
+	for {
+		process, err := Start(ctx, executable)
+		if !errors.Is(err, unix.ETXTBSY) {
+			return process, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(installExecRetry):
+		}
+	}
 }
 
 func syncDirectory(path string) error {
