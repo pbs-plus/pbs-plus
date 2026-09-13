@@ -3,6 +3,7 @@ package arpc
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -126,6 +127,54 @@ func AcceptConnection(ctx context.Context, tun *smux.Session, conn net.Conn) (*S
 		return nil, fmt.Errorf("failed to create server pipe: %w", err)
 	}
 
+	return pipe, nil
+}
+
+// NewClientPipe creates an aRPC client over an existing connection.
+func NewClientPipe(ctx context.Context, conn net.Conn) (*StreamPipe, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if conn == nil {
+		return nil, errors.New("nil connection")
+	}
+
+	tun, err := smux.Client(conn, defaultConfig())
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("create smux client: %w", err)
+	}
+
+	pipe, err := newStreamPipe(ctx, tun, conn, "", nil)
+	if err != nil {
+		_ = tun.Close()
+		_ = conn.Close()
+		return nil, fmt.Errorf("create client pipe: %w", err)
+	}
+	return pipe, nil
+}
+
+// NewServerPipe creates an aRPC server over an existing connection.
+func NewServerPipe(ctx context.Context, conn net.Conn) (*StreamPipe, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if conn == nil {
+		return nil, errors.New("nil connection")
+	}
+
+	tun, err := smux.Server(conn, defaultConfig())
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("create smux server: %w", err)
+	}
+
+	pipe, err := newStreamPipe(ctx, tun, conn, "", nil)
+	if err != nil {
+		_ = tun.Close()
+		_ = conn.Close()
+		return nil, fmt.Errorf("create server pipe: %w", err)
+	}
 	return pipe, nil
 }
 

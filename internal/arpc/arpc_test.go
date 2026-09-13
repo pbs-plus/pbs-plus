@@ -218,6 +218,53 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	_ = serverTLS
 }
 
+func TestStreamPipeOverConnection(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+
+	client, err := NewClientPipe(nil, clientConn)
+	if err != nil {
+		t.Fatalf("NewClientPipe: %v", err)
+	}
+	defer client.Close()
+
+	server, err := NewServerPipe(t.Context(), serverConn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer server.Close()
+
+	clientRouter := NewRouter()
+	clientRouter.Handle("client.echo", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+	client.SetRouter(clientRouter)
+
+	serverRouter := NewRouter()
+	serverRouter.Handle("server.echo", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+	server.SetRouter(serverRouter)
+
+	go func() { _ = client.Serve() }()
+	go func() { _ = server.Serve() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	for caller, method := range map[*StreamPipe]string{
+		client: "server.echo",
+		server: "client.echo",
+	} {
+		var got string
+		if err := caller.Call(ctx, method, "hello", &got); err != nil {
+			t.Fatalf("Call(%s): %v", method, err)
+		}
+		if got != "hello" {
+			t.Fatalf("Call(%s) = %q, want hello", method, got)
+		}
+	}
+}
+
 func TestStreamPipeCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req *Request) (Response, error) {
