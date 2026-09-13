@@ -110,7 +110,7 @@ func runInstall(w *jobs.WorkflowContext, app *application.Runtime, input jobs.Pl
 	}
 
 	installedRaw, err := w.Activity("install", json.RawMessage(`{}`), func(ctx context.Context, _ jobs.ActivityInfo) (json.RawMessage, error) {
-		installed, err := installRelease(ctx, fetcher, repository.URL, resolved, publisherKey)
+		installed, err := installRelease(ctx, fetcher, conf.PluginsBasePath, repository.URL, resolved, publisherKey)
 		if err != nil {
 			return nil, err
 		}
@@ -129,10 +129,10 @@ func runInstall(w *jobs.WorkflowContext, app *application.Runtime, input jobs.Pl
 	})
 }
 
-func installRelease(ctx context.Context, fetcher targetplugin.Fetcher, indexURL string, resolved resolvedRelease, publisherKey *ecdsa.PublicKey) (installedArtifact, error) {
+func installRelease(ctx context.Context, fetcher targetplugin.Fetcher, root, indexURL string, resolved resolvedRelease, publisherKey *ecdsa.PublicKey) (installedArtifact, error) {
 	platform := resolved.Artifact.OS + "/" + resolved.Artifact.Arch
 	result := installedArtifact{
-		Directory:      filepath.Join(conf.PluginsBasePath, resolved.Release.PluginID, resolved.Release.Version),
+		Directory:      filepath.Join(root, resolved.Release.PluginID, resolved.Release.Version),
 		Platform:       platform,
 		ArtifactSHA256: resolved.Artifact.SHA256,
 	}
@@ -147,7 +147,7 @@ func installRelease(ctx context.Context, fetcher targetplugin.Fetcher, indexURL 
 	defer stream.Close()
 
 	installedVersion, err := targetplugin.InstallVersion(ctx, targetplugin.InstallVersionRequest{
-		Root:             conf.PluginsBasePath,
+		Root:             root,
 		ManifestBytes:    manifestBytes,
 		Release:          resolved.Release,
 		Artifact:         resolved.Artifact,

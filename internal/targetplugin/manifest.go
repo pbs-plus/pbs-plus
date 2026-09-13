@@ -149,6 +149,11 @@ func (manifest PluginManifest) descriptor() Descriptor {
 	}
 }
 
+// SchemaDigest is the canonical CBOR digest a manifest must publish for its three form schemas.
+func SchemaDigest(descriptor Descriptor) (string, error) {
+	return descriptorSchemaDigest(descriptor)
+}
+
 func descriptorSchemaDigest(descriptor Descriptor) (string, error) {
 	schemas := struct {
 		Target  FormSchema `cbor:"target"`
