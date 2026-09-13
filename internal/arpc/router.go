@@ -33,8 +33,8 @@ func (r *Router) CloseHandle(method string) {
 	r.handlers.Del(method)
 }
 
-func (r *Router) serveStream(stream ARPCStream) {
-	dec := cbor.NewDecoder(stream)
+func (r *Router) serveStream(stream ARPCStream, messageLimit int64) {
+	dec := cbor.NewDecoder(newMessageLimitReader(stream, messageLimit))
 	enc := cbor.NewEncoder(stream)
 
 	var req Request

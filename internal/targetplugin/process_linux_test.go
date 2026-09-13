@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -81,6 +82,28 @@ func TestProcessTimeout(t *testing.T) {
 		t.Fatalf("Describe error = %v, want deadline exceeded", err)
 	}
 	_ = process.Close()
+	assertProcessGone(t, process)
+}
+
+func TestProcessOversizedDescribe(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	process, err := Start(ctx, executable, "-test.run=^TestPluginOversizedHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := process.Describe(ctx); !errors.Is(err, arpc.ErrMessageTooLarge) {
+		t.Fatalf("Describe error = %v, want ErrMessageTooLarge", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
 	assertProcessGone(t, process)
 }
 
@@ -174,6 +197,49 @@ func TestPluginTimeoutHelper(t *testing.T) {
 	pipe.SetRouter(router)
 	go func() { _ = pipe.Serve() }()
 	select {}
+}
+
+func TestPluginOversizedHelper(t *testing.T) {
+	fdText, ok := os.LookupEnv(SocketFDEnv)
+	if !ok {
+		return
+	}
+	fd, err := strconv.Atoi(fdText)
+	if err != nil {
+		t.Fatalf("parse socket fd: %v", err)
+	}
+
+	file := os.NewFile(uintptr(fd), "pbs-plus-plugin")
+	if file == nil {
+		t.Fatal("open inherited socket")
+	}
+	conn, err := net.FileConn(file)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("net.FileConn: %v", err)
+	}
+
+	pipe, err := arpc.NewServerPipe(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer pipe.Close()
+
+	router := arpc.NewRouter()
+	router.Handle(MethodDescribe, func(*arpc.Request) (arpc.Response, error) {
+		data, err := cbor.Marshal(Descriptor{
+			ProtocolVersion: CurrentProtocolVersion,
+			PluginID:        strings.Repeat("a", int(arpc.DefaultLocalMessageLimit)),
+			Version:         "1.0.0",
+			TargetTypes:     []string{"test"},
+		})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode descriptor: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
+	pipe.SetRouter(router)
+	_ = pipe.Serve()
 }
 
 func assertProcessGone(t *testing.T, process *Process) {

@@ -26,10 +26,11 @@ type StreamPipe struct {
 	headers    http.Header
 	version    string
 
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-	cborEnc    cbor.EncMode
-	cborDec    cbor.DecMode
+	ctx          context.Context
+	cancelFunc   context.CancelFunc
+	cborEnc      cbor.EncMode
+	cborDec      cbor.DecMode
+	messageLimit int64
 }
 
 type ConnectionState int32
@@ -38,6 +39,9 @@ const (
 	StateConnected ConnectionState = iota
 	StateDisconnected
 )
+
+// DefaultLocalMessageLimit bounds local aRPC control envelopes, not raw streams.
+const DefaultLocalMessageLimit int64 = 4 << 20
 
 func (s *StreamPipe) SetRouter(router Router) {
 	s.mu.Lock()
@@ -81,7 +85,7 @@ func ConnectToServer(ctx context.Context, serverAddr string, headers http.Header
 		return nil, fmt.Errorf("failed to create smux client: %w", err)
 	}
 
-	pipe, err := newStreamPipe(ctx, smuxC, conn, serverAddr, arpcTls)
+	pipe, err := newStreamPipe(ctx, smuxC, conn, serverAddr, arpcTls, 0)
 	if err != nil {
 		log.Debug("closing tun and conn due to stream pipe err init")
 		_ = smuxC.Close()
@@ -122,7 +126,7 @@ func AcceptConnection(ctx context.Context, tun *smux.Session, conn net.Conn) (*S
 		ctx = context.Background()
 	}
 
-	pipe, err := newStreamPipe(ctx, tun, conn, "", nil)
+	pipe, err := newStreamPipe(ctx, tun, conn, "", nil, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server pipe: %w", err)
 	}
@@ -145,7 +149,7 @@ func NewClientPipe(ctx context.Context, conn net.Conn) (*StreamPipe, error) {
 		return nil, fmt.Errorf("create smux client: %w", err)
 	}
 
-	pipe, err := newStreamPipe(ctx, tun, conn, "", nil)
+	pipe, err := newStreamPipe(ctx, tun, conn, "", nil, DefaultLocalMessageLimit)
 	if err != nil {
 		_ = tun.Close()
 		_ = conn.Close()
@@ -169,7 +173,7 @@ func NewServerPipe(ctx context.Context, conn net.Conn) (*StreamPipe, error) {
 		return nil, fmt.Errorf("create smux server: %w", err)
 	}
 
-	pipe, err := newStreamPipe(ctx, tun, conn, "", nil)
+	pipe, err := newStreamPipe(ctx, tun, conn, "", nil, DefaultLocalMessageLimit)
 	if err != nil {
 		_ = tun.Close()
 		_ = conn.Close()
@@ -178,7 +182,7 @@ func NewServerPipe(ctx context.Context, conn net.Conn) (*StreamPipe, error) {
 	return pipe, nil
 }
 
-func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, serverAddr string, tlsConfig *tls.Config) (*StreamPipe, error) {
+func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, serverAddr string, tlsConfig *tls.Config, messageLimit int64) (*StreamPipe, error) {
 	if tun == nil {
 		return nil, fmt.Errorf("nil smux tunnel")
 	}
@@ -209,8 +213,9 @@ func newStreamPipe(ctx context.Context, tun *smux.Session, conn net.Conn, server
 		serverAddr: serverAddr,
 		tlsConfig:  tlsConfig,
 
-		cborDec: cborDec,
-		cborEnc: cborEnc,
+		cborDec:      cborDec,
+		cborEnc:      cborEnc,
+		messageLimit: messageLimit,
 	}
 
 	go func() {
@@ -298,7 +303,7 @@ func (s *StreamPipe) Serve() error {
 				}
 				_ = stream.Close()
 			}()
-			router.serveStream(st)
+			router.serveStream(st, s.messageLimit)
 		}(stream)
 	}
 }

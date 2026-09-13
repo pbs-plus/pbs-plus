@@ -71,7 +71,7 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 	}
 
 	enc := s.cborEnc.NewEncoder(stream)
-	dec := s.cborDec.NewDecoder(stream)
+	dec := s.cborDec.NewDecoder(newMessageLimitReader(stream, s.messageLimit))
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := stream.SetDeadline(deadline); err != nil {
@@ -91,6 +91,10 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 				return nil, nil, fmt.Errorf("marshal payload: %w", err)
 			}
 		}
+	}
+	if s.messageLimit > 0 && int64(len(payloadBytes)) >= s.messageLimit {
+		releaseStream(stream)
+		return nil, nil, ErrMessageTooLarge
 	}
 
 	req := Request{Method: method, Payload: payloadBytes}

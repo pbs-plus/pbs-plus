@@ -205,7 +205,7 @@ func (q *QuicPipe) Serve() error {
 				}
 				releaseStream(stream)
 			}()
-			router.serveStream(stream)
+			router.serveStream(stream, 0)
 		}()
 	}
 }

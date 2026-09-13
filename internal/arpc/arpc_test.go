@@ -265,6 +265,69 @@ func TestStreamPipeOverConnection(t *testing.T) {
 	}
 }
 
+func TestLocalPipeMessageLimit(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+
+	client, err := NewClientPipe(t.Context(), clientConn)
+	if err != nil {
+		t.Fatalf("NewClientPipe: %v", err)
+	}
+	defer client.Close()
+
+	server, err := NewServerPipe(t.Context(), serverConn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer server.Close()
+
+	router := NewRouter()
+	router.Handle("oversized", func(*Request) (Response, error) {
+		return Response{
+			Status: http.StatusOK,
+			Data:   bytes.Repeat([]byte{'x'}, int(DefaultLocalMessageLimit)),
+		}, nil
+	})
+	router.Handle("raw", func(*Request) (Response, error) {
+		return Response{
+			Status: StatusRawStream,
+			RawStream: func(stream ARPCStream) {
+				data := make([]byte, int(DefaultLocalMessageLimit)+1)
+				_ = SendDataFromReader(bytes.NewReader(data), len(data), stream)
+			},
+		}, nil
+	})
+	server.SetRouter(router)
+	go func() { _ = server.Serve() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	var response []byte
+	if err := client.Call(ctx, "oversized", nil, &response); !errors.Is(err, ErrMessageTooLarge) {
+		t.Fatalf("oversized response error = %v, want ErrMessageTooLarge", err)
+	}
+
+	request := bytes.Repeat([]byte{'x'}, int(DefaultLocalMessageLimit))
+	if err := client.Call(ctx, "oversized", request, nil); !errors.Is(err, ErrMessageTooLarge) {
+		t.Fatalf("oversized request error = %v, want ErrMessageTooLarge", err)
+	}
+
+	raw := make([]byte, int(DefaultLocalMessageLimit)+1)
+	handler := RawStreamHandler(func(stream ARPCStream) error {
+		n, err := ReceiveDataInto(stream, raw)
+		if err != nil {
+			return err
+		}
+		if n != len(raw) {
+			return fmt.Errorf("raw bytes = %d, want %d", n, len(raw))
+		}
+		return nil
+	})
+	if err := client.Call(ctx, "raw", nil, handler); err != nil {
+		t.Fatalf("raw stream over message limit: %v", err)
+	}
+}
+
 func TestStreamPipeCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req *Request) (Response, error) {
