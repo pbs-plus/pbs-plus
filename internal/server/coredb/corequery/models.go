@@ -231,6 +231,38 @@ type TargetMysql struct {
 	DefaultClientDir    string `json:"default_client_dir"`
 }
 
+type TargetPlugin struct {
+	PluginID      string `json:"plugin_id"`
+	RepositoryID  string `json:"repository_id"`
+	ActiveVersion string `json:"active_version"`
+	Enabled       int64  `json:"enabled"`
+}
+
+type TargetPluginRepository struct {
+	ID              string        `json:"id"`
+	Name            string        `json:"name"`
+	Url             string        `json:"url"`
+	PublicKey       []byte        `json:"public_key"`
+	Enabled         int64         `json:"enabled"`
+	Etag            string        `json:"etag"`
+	LastModified    string        `json:"last_modified"`
+	LastRefreshedAt sql.NullInt64 `json:"last_refreshed_at"`
+	LastError       string        `json:"last_error"`
+}
+
+type TargetPluginVersion struct {
+	PluginID        string        `json:"plugin_id"`
+	Version         string        `json:"version"`
+	Platform        string        `json:"platform"`
+	InstallPath     string        `json:"install_path"`
+	Manifest        []byte        `json:"manifest"`
+	ArtifactSha256  string        `json:"artifact_sha256"`
+	InstalledAt     int64         `json:"installed_at"`
+	HealthState     string        `json:"health_state"`
+	HealthMessage   string        `json:"health_message"`
+	HealthCheckedAt sql.NullInt64 `json:"health_checked_at"`
+}
+
 type TargetPostgresql struct {
 	TargetName       string `json:"target_name"`
 	Host             string `json:"host"`

@@ -10,10 +10,12 @@ import (
 )
 
 type Querier interface {
+	ActivateTargetPluginVersion(ctx context.Context, arg ActivateTargetPluginVersionParams) (int64, error)
 	AddJobToBatch(ctx context.Context, arg AddJobToBatchParams) error
 	AgentHostExists(ctx context.Context, name string) (int64, error)
 	BackupExists(ctx context.Context, id string) (int64, error)
 	BackupGroupMigrationCompleted(ctx context.Context, backupID string) (int64, error)
+	ClearTargetPluginActivation(ctx context.Context, pluginID string) (int64, error)
 	CompleteBackupGroupMigration(ctx context.Context, backupID string) error
 	CountBackups(ctx context.Context) (int64, error)
 	CountRestores(ctx context.Context) (int64, error)
@@ -25,6 +27,8 @@ type Querier interface {
 	CreateRestore(ctx context.Context, arg CreateRestoreParams) error
 	CreateScript(ctx context.Context, arg CreateScriptParams) error
 	CreateTarget(ctx context.Context, arg CreateTargetParams) error
+	CreateTargetPluginRepository(ctx context.Context, arg CreateTargetPluginRepositoryParams) error
+	CreateTargetPluginVersion(ctx context.Context, arg CreateTargetPluginVersionParams) error
 	CreateToken(ctx context.Context, arg CreateTokenParams) error
 	CreateVerificationJob(ctx context.Context, arg CreateVerificationJobParams) error
 	CreateVerificationResult(ctx context.Context, arg CreateVerificationResultParams) (sql.Result, error)
@@ -37,7 +41,9 @@ type Querier interface {
 	DeleteBackupDovecotOptions(ctx context.Context, backupID string) error
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
 	DeleteBatchResults(ctx context.Context, batchName string) error
+	DeleteEmptyTargetPlugin(ctx context.Context, pluginID string) (int64, error)
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
+	DeleteInactiveTargetPluginVersion(ctx context.Context, arg DeleteInactiveTargetPluginVersionParams) (int64, error)
 	DeleteNotificationBatch(ctx context.Context, name string) error
 	DeleteRestore(ctx context.Context, id string) (int64, error)
 	DeleteRestoreDatabaseOptions(ctx context.Context, restoreID string) error
@@ -48,11 +54,13 @@ type Querier interface {
 	DeleteTargetFilesystem(ctx context.Context, targetName string) error
 	DeleteTargetLdap(ctx context.Context, targetName string) error
 	DeleteTargetMySQL(ctx context.Context, targetName string) error
+	DeleteTargetPluginRepository(ctx context.Context, id string) (int64, error)
 	DeleteTargetPostgreSQL(ctx context.Context, targetName string) error
 	DeleteTargetS3(ctx context.Context, targetName string) error
 	DeleteToken(ctx context.Context, token string) error
 	DeleteVerificationJob(ctx context.Context, id string) (int64, error)
 	DeleteVerificationResults(ctx context.Context, verificationJobID string) (int64, error)
+	EnsureTargetPlugin(ctx context.Context, arg EnsureTargetPluginParams) error
 	GetAgentHost(ctx context.Context, name string) (AgentHost, error)
 	GetAgentHostAuth(ctx context.Context, name string) (sql.NullString, error)
 	GetAlertExclusion(ctx context.Context, id int64) (AlertExclusion, error)
@@ -73,6 +81,9 @@ type Querier interface {
 	GetTargetDovecotPassword(ctx context.Context, targetName string) (string, error)
 	GetTargetLdapPassword(ctx context.Context, targetName string) (string, error)
 	GetTargetMySQLPassword(ctx context.Context, targetName string) (string, error)
+	GetTargetPlugin(ctx context.Context, pluginID string) (TargetPlugin, error)
+	GetTargetPluginRepository(ctx context.Context, id string) (TargetPluginRepository, error)
+	GetTargetPluginVersion(ctx context.Context, arg GetTargetPluginVersionParams) (TargetPluginVersion, error)
 	GetTargetPostgreSQLPassword(ctx context.Context, targetName string) (string, error)
 	GetTargetS3Secret(ctx context.Context, targetName string) (string, error)
 	GetToken(ctx context.Context, token string) (Token, error)
@@ -95,6 +106,9 @@ type Querier interface {
 	ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusionsRow, error)
 	ListNonRevokedTokens(ctx context.Context) ([]Token, error)
 	ListNotificationBatches(ctx context.Context) ([]NotificationBatch, error)
+	ListTargetPluginRepositories(ctx context.Context) ([]TargetPluginRepository, error)
+	ListTargetPluginVersions(ctx context.Context, pluginID string) ([]TargetPluginVersion, error)
+	ListTargetPlugins(ctx context.Context) ([]TargetPlugin, error)
 	ListTargetsByAgentHost(ctx context.Context, agentHost sql.NullString) ([]ListTargetsByAgentHostRow, error)
 	MarkVerificationResultStatus(ctx context.Context, arg MarkVerificationResultStatusParams) error
 	RemoveJobFromAllBatches(ctx context.Context, arg RemoveJobFromAllBatchesParams) error
@@ -103,6 +117,8 @@ type Querier interface {
 	RestoreExists(ctx context.Context, id string) (int64, error)
 	RevokeToken(ctx context.Context, token string) error
 	ScriptExists(ctx context.Context, path string) (int64, error)
+	SetTargetPluginEnabled(ctx context.Context, arg SetTargetPluginEnabledParams) (int64, error)
+	SetTargetPluginRepositoryEnabled(ctx context.Context, arg SetTargetPluginRepositoryEnabledParams) (int64, error)
 	TargetExists(ctx context.Context, name string) (int64, error)
 	UpdateAgentHost(ctx context.Context, arg UpdateAgentHostParams) error
 	UpdateAlertLastSent(ctx context.Context, arg UpdateAlertLastSentParams) error
@@ -117,6 +133,9 @@ type Querier interface {
 	UpdateTargetDovecotPassword(ctx context.Context, arg UpdateTargetDovecotPasswordParams) (int64, error)
 	UpdateTargetLdapPassword(ctx context.Context, arg UpdateTargetLdapPasswordParams) (int64, error)
 	UpdateTargetMySQLPassword(ctx context.Context, arg UpdateTargetMySQLPasswordParams) (int64, error)
+	UpdateTargetPluginRepository(ctx context.Context, arg UpdateTargetPluginRepositoryParams) (int64, error)
+	UpdateTargetPluginRepositoryRefresh(ctx context.Context, arg UpdateTargetPluginRepositoryRefreshParams) (int64, error)
+	UpdateTargetPluginVersionHealth(ctx context.Context, arg UpdateTargetPluginVersionHealthParams) (int64, error)
 	UpdateTargetPostgreSQLPassword(ctx context.Context, arg UpdateTargetPostgreSQLPasswordParams) (int64, error)
 	UpdateTargetS3Secret(ctx context.Context, arg UpdateTargetS3SecretParams) (int64, error)
 	UpdateVerificationJob(ctx context.Context, arg UpdateVerificationJobParams) error
