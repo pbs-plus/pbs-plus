@@ -19,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
@@ -160,6 +161,9 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 	}
 	if err := snapshotmount.Register(engine); err != nil {
 		return fmt.Errorf("registering snapshot mount workflows: %w", err)
+	}
+	if err := plugins.Register(engine, app); err != nil {
+		return fmt.Errorf("registering plugin install workflow: %w", err)
 	}
 	return nil
 }

@@ -41,6 +41,7 @@ const (
 var (
 	StatePrefix         = "/var/lib/pbs-plus"
 	ScriptsBasePath     = StatePrefix + "/scripts"
+	PluginsBasePath     = StatePrefix + "/plugins"
 	SecretsKeyPath      = StatePrefix + "/.secret.key"
 	BackupLogsBasePath  = "/var/log/pbs-plus"
 	RestoreLogsBasePath = "/var/log/pbs-plus/restores"
