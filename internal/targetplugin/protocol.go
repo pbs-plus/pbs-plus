@@ -7,18 +7,123 @@ import (
 	"github.com/Masterminds/semver"
 )
 
-const (
-	CurrentProtocolVersion uint16 = 1
-	MethodDescribe                = "plugin.describe"
-	SocketFDEnv                   = "PBS_PLUS_PLUGIN_FD"
-)
+const CurrentProtocolVersion uint16 = 1
 
 const (
-	maxPluginIDLength   = 255
-	maxVersionLength    = 64
-	maxTargetTypeLength = 255
-	maxTargetTypes      = 32
+	MethodDescribe              = "plugin.describe"
+	MethodPluginHealth          = "plugin.health"
+	MethodTargetValidate        = "target.validate"
+	MethodTargetProbe           = "target.probe"
+	MethodTargetMigrate         = "target.migrate"
+	MethodBackupOpen            = "backup.open"
+	MethodBackupCheck           = "backup.check"
+	MethodBackupMigrateOptions  = "backup.migrate_options"
+	MethodRestoreOpen           = "restore.open"
+	MethodRestoreConsume        = "restore.consume"
+	MethodRestoreCheck          = "restore.check"
+	MethodRestoreMigrateOptions = "restore.migrate_options"
+	MethodHostEvent             = "host.event"
+	MethodHostScratch           = "host.scratch"
+	MethodHostAgentBackupMount  = "host.agent_backup_mount"
+	MethodHostAgentRestore      = "host.agent_restore"
+	MethodHostLeaseClose        = "host.lease_close"
 )
+
+const SocketFDEnv = "PBS_PLUS_PLUGIN_FD"
+
+const (
+	maxPluginIDLength       = 255
+	maxVersionLength        = 64
+	maxTargetTypeLength     = 255
+	maxTargetTypes          = 32
+	maxOperationIDLength    = 128
+	maxIdempotencyKeyLength = 255
+	maxProtocolErrorBytes   = 4096
+)
+
+// ErrorCode identifies a stable plugin failure class.
+type ErrorCode string
+
+const (
+	ErrorInvalidRequest   ErrorCode = "invalid_request"
+	ErrorUnauthorized     ErrorCode = "unauthorized"
+	ErrorNotFound         ErrorCode = "not_found"
+	ErrorConflict         ErrorCode = "conflict"
+	ErrorUnsupported      ErrorCode = "unsupported"
+	ErrorUnavailable      ErrorCode = "temporarily_unavailable"
+	ErrorDeadlineExceeded ErrorCode = "deadline_exceeded"
+	ErrorCancelled        ErrorCode = "cancelled"
+	ErrorInternal         ErrorCode = "internal"
+)
+
+// Operation identifies one retryable plugin call.
+type Operation struct {
+	ID                string `cbor:"id"`
+	IdempotencyKey    string `cbor:"idempotency_key"`
+	DeadlineUnixMilli int64  `cbor:"deadline_unix_milli"`
+	PluginVersion     string `cbor:"plugin_version"`
+	TargetType        string `cbor:"target_type,omitempty"`
+	SchemaVersion     uint32 `cbor:"schema_version,omitempty"`
+}
+
+// ProtocolError is a bounded, user-safe plugin failure.
+type ProtocolError struct {
+	Code             ErrorCode `cbor:"code"`
+	Message          string    `cbor:"message"`
+	RetryAfterMillis uint64    `cbor:"retry_after_millis,omitempty"`
+}
+
+// Validate checks required operation identity and target schema metadata.
+func (operation Operation) Validate() error {
+	if err := validateText("operation ID", operation.ID, maxOperationIDLength); err != nil {
+		return err
+	}
+	if err := validateText("idempotency key", operation.IdempotencyKey, maxIdempotencyKeyLength); err != nil {
+		return err
+	}
+	if operation.DeadlineUnixMilli <= 0 {
+		return errors.New("operation deadline is required")
+	}
+	if operation.PluginVersion == "" {
+		return errors.New("operation plugin version is required")
+	}
+	if len(operation.PluginVersion) > maxVersionLength {
+		return fmt.Errorf("operation plugin version exceeds %d bytes", maxVersionLength)
+	}
+	if _, err := semver.NewVersion(operation.PluginVersion); err != nil {
+		return fmt.Errorf("invalid operation plugin version: %w", err)
+	}
+	if operation.TargetType == "" {
+		if operation.SchemaVersion != 0 {
+			return errors.New("operation schema version requires a target type")
+		}
+		return nil
+	}
+	if err := validateIdentifier("operation target type", operation.TargetType, maxTargetTypeLength); err != nil {
+		return err
+	}
+	if operation.SchemaVersion == 0 {
+		return errors.New("operation target schema version is required")
+	}
+	return nil
+}
+
+// Validate checks the stable error code and bounded diagnostic.
+func (protocolError ProtocolError) Validate() error {
+	switch protocolError.Code {
+	case ErrorInvalidRequest, ErrorUnauthorized, ErrorNotFound, ErrorConflict, ErrorUnsupported,
+		ErrorUnavailable, ErrorDeadlineExceeded, ErrorCancelled, ErrorInternal:
+	default:
+		return fmt.Errorf("unsupported plugin error code %q", protocolError.Code)
+	}
+	if err := validateText("plugin error message", protocolError.Message, maxProtocolErrorBytes); err != nil {
+		return err
+	}
+	if protocolError.RetryAfterMillis != 0 && protocolError.Code != ErrorUnavailable {
+		return errors.New("retry delay is only valid for temporarily unavailable errors")
+	}
+	return nil
+}
 
 // DescribeRequest identifies the protocol version offered by the host.
 type DescribeRequest struct {
