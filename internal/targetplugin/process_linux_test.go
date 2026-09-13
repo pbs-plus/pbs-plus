@@ -47,15 +47,6 @@ func TestProcessDescribe(t *testing.T) {
 	}
 }
 
-type invokeTestRequest struct {
-	Operation Operation `cbor:"operation"`
-	Value     string    `cbor:"value"`
-}
-
-type invokeTestResponse struct {
-	Value string `cbor:"value"`
-}
-
 func TestProcessInvoke(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
@@ -67,13 +58,61 @@ func TestProcessInvoke(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	request := invokeTestRequest{Operation: validTestOperation(), Value: "ping"}
-	var response invokeTestResponse
+	request := TargetProbeRequest{
+		Operation: validTestOperation(),
+		Target:    TargetInput{Config: Values{"path": NewStringScalar("/data")}},
+	}
+	var response TargetProbeResponse
 	if err := process.Invoke(t.Context(), MethodTargetProbe, request, &response); err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
-	if response.Value != "pong" {
-		t.Fatalf("response value = %q, want pong", response.Value)
+	if !response.Available {
+		t.Fatal("target is unavailable")
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRejectsInvalidRequest(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var response TargetProbeResponse
+	err = process.Invoke(t.Context(), MethodTargetProbe, TargetProbeRequest{}, &response)
+	if err == nil || !strings.Contains(err.Error(), "validate plugin protocol request") {
+		t.Fatalf("Invoke error = %v, want request validation error", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRejectsInvalidResponse(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	operation := validTestOperation()
+	operation.TargetType = ""
+	operation.SchemaVersion = 0
+	var response PluginHealthResponse
+	err = process.Invoke(t.Context(), MethodPluginHealth, PluginHealthRequest{Operation: operation}, &response)
+	if err == nil || !strings.Contains(err.Error(), "validate plugin protocol response") {
+		t.Fatalf("Invoke error = %v, want response validation error", err)
 	}
 	if err := process.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -97,13 +136,14 @@ func TestProcessInvokeRawStream(t *testing.T) {
 		data, err = io.ReadAll(stream)
 		return err
 	})
-	var metadata invokeTestResponse
+	var metadata BackupOpenResponse
 	response := &RawStreamResponse{Metadata: &metadata, Handle: handler}
-	if err := process.Invoke(t.Context(), MethodBackupOpen, invokeTestRequest{Operation: validTestOperation()}, response); err != nil {
+	request := BackupOpenRequest{Operation: jobTestOperation(), Job: validJobInput()}
+	if err := process.Invoke(t.Context(), MethodBackupOpen, request, response); err != nil {
 		t.Fatalf("Invoke: %v", err)
 	}
-	if metadata.Value != "lease" {
-		t.Fatalf("metadata value = %q, want lease", metadata.Value)
+	if metadata.Kind != SourceRawStream {
+		t.Fatalf("metadata kind = %q, want %q", metadata.Kind, SourceRawStream)
 	}
 	if string(data) != "bulk-data" {
 		t.Fatalf("raw data = %q, want bulk-data", data)
@@ -114,7 +154,7 @@ func TestProcessInvokeRawStream(t *testing.T) {
 }
 
 func TestProcessInvokeRejectsNonOperationMethod(t *testing.T) {
-	err := (*Process)(nil).Invoke(t.Context(), MethodDescribe, DescribeRequest{}, nil)
+	err := (*Process)(nil).Invoke(t.Context(), MethodDescribe, PluginHealthRequest{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "unsupported plugin invocation method") {
 		t.Fatalf("Invoke error = %v, want unsupported method", err)
 	}
@@ -259,31 +299,39 @@ func TestPluginInvokeHelper(t *testing.T) {
 
 	router := arpc.NewRouter()
 	router.Handle(MethodTargetProbe, func(request *arpc.Request) (arpc.Response, error) {
-		var probe invokeTestRequest
+		var probe TargetProbeRequest
 		if err := UnmarshalProtocol(request.Payload, &probe); err != nil {
 			return arpc.Response{}, fmt.Errorf("decode probe request: %w", err)
 		}
-		if err := probe.Operation.Validate(); err != nil {
+		if err := probe.Validate(); err != nil {
 			return arpc.Response{}, fmt.Errorf("validate probe operation: %w", err)
 		}
-		if probe.Value != "ping" {
-			return arpc.Response{}, fmt.Errorf("probe value %q", probe.Value)
-		}
-		data, err := MarshalProtocol(invokeTestResponse{Value: "pong"})
+		data, err := MarshalProtocol(TargetProbeResponse{Available: true})
 		if err != nil {
 			return arpc.Response{}, fmt.Errorf("encode probe response: %w", err)
 		}
 		return arpc.Response{Status: http.StatusOK, Data: data}, nil
 	})
+	router.Handle(MethodPluginHealth, func(_ *arpc.Request) (arpc.Response, error) {
+		data, err := MarshalProtocol(PluginHealthResponse{})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode health response: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
 	router.Handle(MethodBackupOpen, func(request *arpc.Request) (arpc.Response, error) {
-		var open invokeTestRequest
+		var open BackupOpenRequest
 		if err := UnmarshalProtocol(request.Payload, &open); err != nil {
 			return arpc.Response{}, fmt.Errorf("decode backup request: %w", err)
 		}
-		if err := open.Operation.Validate(); err != nil {
+		if err := open.Validate(); err != nil {
 			return arpc.Response{}, fmt.Errorf("validate backup operation: %w", err)
 		}
-		data, err := MarshalProtocol(invokeTestResponse{Value: "lease"})
+		data, err := MarshalProtocol(BackupOpenResponse{
+			Kind:         SourceRawStream,
+			Archive:      Archive{Type: "pxar", FormatVersion: 1},
+			CleanupToken: []byte("lease"),
+		})
 		if err != nil {
 			return arpc.Response{}, fmt.Errorf("encode backup response: %w", err)
 		}

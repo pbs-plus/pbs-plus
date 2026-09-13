@@ -38,6 +38,7 @@ const (
 	maxTargetTypes          = 32
 	maxOperationIDLength    = 128
 	maxIdempotencyKeyLength = 255
+	brokerTokenBytes        = 32
 	maxProtocolErrorBytes   = 4096
 )
 
@@ -65,6 +66,7 @@ type Operation struct {
 	PluginVersion     string `cbor:"plugin_version"`
 	TargetType        string `cbor:"target_type,omitempty"`
 	SchemaVersion     uint32 `cbor:"schema_version,omitempty"`
+	BrokerToken       []byte `cbor:"broker_token,omitempty"`
 }
 
 // ProtocolError is a bounded, user-safe plugin failure.
@@ -96,6 +98,9 @@ func (operation Operation) Validate() error {
 	}
 	if _, err := semver.NewVersion(operation.PluginVersion); err != nil {
 		return fmt.Errorf("invalid operation plugin version: %w", err)
+	}
+	if len(operation.BrokerToken) != 0 && len(operation.BrokerToken) != brokerTokenBytes {
+		return fmt.Errorf("operation broker token must be %d bytes", brokerTokenBytes)
 	}
 	if operation.TargetType == "" {
 		if operation.SchemaVersion != 0 {

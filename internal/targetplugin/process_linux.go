@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"sync"
 	"syscall"
@@ -121,14 +122,11 @@ func (p *Process) Describe(ctx context.Context) (Descriptor, error) {
 	if err := p.callProtocol(ctx, MethodDescribe, DescribeRequest{ProtocolVersion: CurrentProtocolVersion}, &descriptor); err != nil {
 		return Descriptor{}, fmt.Errorf("describe plugin: %w", err)
 	}
-	if err := descriptor.Validate(); err != nil {
-		return Descriptor{}, fmt.Errorf("validate plugin descriptor: %w", err)
-	}
 	return descriptor, nil
 }
 
 // Invoke performs one plugin operation without a separate description handshake.
-func (p *Process) Invoke(ctx context.Context, method string, request, response any) error {
+func (p *Process) Invoke(ctx context.Context, method string, request interface{ Validate() error }, response any) error {
 	if err := validateInvocationMethod(method); err != nil {
 		return err
 	}
@@ -145,6 +143,9 @@ func (p *Process) callProtocol(ctx context.Context, method string, request, resp
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := validateProtocolValue("request", request); err != nil {
+		return err
+	}
 	payload, err := MarshalProtocol(request)
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)
@@ -159,6 +160,9 @@ func (p *Process) callProtocol(ctx context.Context, method string, request, resp
 			}
 			if err := UnmarshalProtocol(data, raw.Metadata); err != nil {
 				return fmt.Errorf("decode raw stream metadata: %w", err)
+			}
+			if err := validateProtocolValue("response", raw.Metadata); err != nil {
+				return err
 			}
 			return raw.Handle(stream)
 		}))
@@ -175,6 +179,24 @@ func (p *Process) callProtocol(ctx context.Context, method string, request, resp
 	}
 	if err := UnmarshalProtocol(data, response); err != nil {
 		return fmt.Errorf("decode response: %w", err)
+	}
+	return validateProtocolValue("response", response)
+}
+
+func validateProtocolValue(label string, value any) error {
+	if value == nil {
+		return nil
+	}
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() == reflect.Pointer && reflected.IsNil() {
+		return fmt.Errorf("plugin protocol %s is nil", label)
+	}
+	validator, ok := value.(interface{ Validate() error })
+	if !ok {
+		return nil
+	}
+	if err := validator.Validate(); err != nil {
+		return fmt.Errorf("validate plugin protocol %s: %w", label, err)
 	}
 	return nil
 }

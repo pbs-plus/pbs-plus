@@ -66,6 +66,18 @@ func TestOperationValidate(t *testing.T) {
 			wantError: "operation deadline is required",
 		},
 		{
+			name: "invalid broker token",
+			operation: Operation{
+				ProtocolVersion:   CurrentProtocolVersion,
+				ID:                "op-1",
+				IdempotencyKey:    "retry-1",
+				DeadlineUnixMilli: 1700000000000,
+				PluginVersion:     "1.0.0",
+				BrokerToken:       []byte("short"),
+			},
+			wantError: "broker token must be 32 bytes",
+		},
+		{
 			name: "schema without target",
 			operation: Operation{
 				ProtocolVersion:   CurrentProtocolVersion,
