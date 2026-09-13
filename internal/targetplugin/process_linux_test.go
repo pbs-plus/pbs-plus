@@ -270,6 +270,21 @@ func TestPluginProcessHelper(t *testing.T) {
 		}
 		return arpc.Response{Status: http.StatusOK, Data: data}, nil
 	})
+	router.Handle(MethodPluginHealth, func(request *arpc.Request) (arpc.Response, error) {
+		var health PluginHealthRequest
+		if err := UnmarshalProtocol(request.Payload, &health); err != nil {
+			return arpc.Response{}, fmt.Errorf("decode health request: %w", err)
+		}
+		response := PluginHealthResponse{Healthy: true}
+		if os.Getenv("PBS_PLUS_TEST_PLUGIN_UNHEALTHY") == "1" {
+			response = PluginHealthResponse{Message: "test failure"}
+		}
+		data, err := MarshalProtocol(response)
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode health response: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
 	pipe.SetRouter(router)
 	_ = pipe.Serve()
 }
