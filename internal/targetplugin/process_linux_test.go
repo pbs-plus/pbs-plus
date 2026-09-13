@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -43,6 +44,79 @@ func TestProcessDescribe(t *testing.T) {
 	}
 	if err := process.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+type invokeTestRequest struct {
+	Operation Operation `cbor:"operation"`
+	Value     string    `cbor:"value"`
+}
+
+type invokeTestResponse struct {
+	Value string `cbor:"value"`
+}
+
+func TestProcessInvoke(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	request := invokeTestRequest{Operation: validTestOperation(), Value: "ping"}
+	var response invokeTestResponse
+	if err := process.Invoke(t.Context(), MethodTargetProbe, request, &response); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if response.Value != "pong" {
+		t.Fatalf("response value = %q, want pong", response.Value)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRawStream(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var data []byte
+	handler := arpc.RawStreamHandler(func(stream arpc.ARPCStream) error {
+		var err error
+		data, err = io.ReadAll(stream)
+		return err
+	})
+	var metadata invokeTestResponse
+	response := &RawStreamResponse{Metadata: &metadata, Handle: handler}
+	if err := process.Invoke(t.Context(), MethodBackupOpen, invokeTestRequest{Operation: validTestOperation()}, response); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if metadata.Value != "lease" {
+		t.Fatalf("metadata value = %q, want lease", metadata.Value)
+	}
+	if string(data) != "bulk-data" {
+		t.Fatalf("raw data = %q, want bulk-data", data)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRejectsNonOperationMethod(t *testing.T) {
+	err := (*Process)(nil).Invoke(t.Context(), MethodDescribe, DescribeRequest{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported plugin invocation method") {
+		t.Fatalf("Invoke error = %v, want unsupported method", err)
 	}
 }
 
@@ -155,6 +229,82 @@ func TestPluginProcessHelper(t *testing.T) {
 	})
 	pipe.SetRouter(router)
 	_ = pipe.Serve()
+}
+
+func TestPluginInvokeHelper(t *testing.T) {
+	fdText, ok := os.LookupEnv(SocketFDEnv)
+	if !ok {
+		return
+	}
+	fd, err := strconv.Atoi(fdText)
+	if err != nil {
+		t.Fatalf("parse socket fd: %v", err)
+	}
+
+	file := os.NewFile(uintptr(fd), "pbs-plus-plugin")
+	if file == nil {
+		t.Fatal("open inherited socket")
+	}
+	conn, err := net.FileConn(file)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("net.FileConn: %v", err)
+	}
+
+	pipe, err := arpc.NewServerPipe(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer pipe.Close()
+
+	router := arpc.NewRouter()
+	router.Handle(MethodTargetProbe, func(request *arpc.Request) (arpc.Response, error) {
+		var probe invokeTestRequest
+		if err := UnmarshalProtocol(request.Payload, &probe); err != nil {
+			return arpc.Response{}, fmt.Errorf("decode probe request: %w", err)
+		}
+		if err := probe.Operation.Validate(); err != nil {
+			return arpc.Response{}, fmt.Errorf("validate probe operation: %w", err)
+		}
+		if probe.Value != "ping" {
+			return arpc.Response{}, fmt.Errorf("probe value %q", probe.Value)
+		}
+		data, err := MarshalProtocol(invokeTestResponse{Value: "pong"})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode probe response: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
+	router.Handle(MethodBackupOpen, func(request *arpc.Request) (arpc.Response, error) {
+		var open invokeTestRequest
+		if err := UnmarshalProtocol(request.Payload, &open); err != nil {
+			return arpc.Response{}, fmt.Errorf("decode backup request: %w", err)
+		}
+		if err := open.Operation.Validate(); err != nil {
+			return arpc.Response{}, fmt.Errorf("validate backup operation: %w", err)
+		}
+		data, err := MarshalProtocol(invokeTestResponse{Value: "lease"})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode backup response: %w", err)
+		}
+		return arpc.Response{Status: arpc.StatusRawStream, Data: data, RawStream: func(stream arpc.ARPCStream) {
+			_, _ = stream.Write([]byte("bulk-data"))
+		}}, nil
+	})
+	pipe.SetRouter(router)
+	_ = pipe.Serve()
+}
+
+func validTestOperation() Operation {
+	return Operation{
+		ProtocolVersion:   CurrentProtocolVersion,
+		ID:                "op-1",
+		IdempotencyKey:    "retry-1",
+		DeadlineUnixMilli: time.Now().Add(time.Minute).UnixMilli(),
+		PluginVersion:     "1.0.0",
+		TargetType:        "test",
+		SchemaVersion:     1,
+	}
 }
 
 func TestPluginCrashHelper(t *testing.T) {

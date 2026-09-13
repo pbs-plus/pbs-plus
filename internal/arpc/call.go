@@ -32,6 +32,9 @@ type SerializableError struct {
 
 type RawStreamHandler func(ARPCStream) error
 
+// RawStreamDataHandler receives response metadata before the raw stream body.
+type RawStreamDataHandler func([]byte, ARPCStream) error
+
 var readySignal = []byte{0xFF}
 
 const StatusRawStream = 213
@@ -62,6 +65,25 @@ func performHandshake(stream ARPCStream) error {
 		return fmt.Errorf("invalid ack signal: expected 0xAA, got 0x%02X", ack[0])
 	}
 	return nil
+}
+
+func handleRawStreamResponse(stream ARPCStream, response *Response, out any) error {
+	handler, handlesStream := out.(RawStreamHandler)
+	dataHandler, handlesData := out.(RawStreamDataHandler)
+	if handlesStream {
+		if handler == nil {
+			return fmt.Errorf("invalid out handler while in raw stream mode")
+		}
+	} else if !handlesData || dataHandler == nil {
+		return fmt.Errorf("invalid out handler while in raw stream mode")
+	}
+	if err := performHandshake(stream); err != nil {
+		return err
+	}
+	if handlesStream {
+		return handler(stream)
+	}
+	return dataHandler(response.Data, stream)
 }
 
 func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPCStream, *Response, error) {
@@ -123,16 +145,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	defer releaseStream(stream)
 
 	if resp.Status == StatusRawStream {
-		handler, ok := out.(RawStreamHandler)
-		if !ok || handler == nil {
-			return fmt.Errorf("invalid out handler while in raw stream mode")
-		}
-
-		if err := performHandshake(stream); err != nil {
-			return err
-		}
-
-		return handler(stream)
+		return handleRawStreamResponse(stream, resp, out)
 	}
 
 	if err := s.checkRPCError(resp); err != nil {

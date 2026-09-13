@@ -33,7 +33,12 @@ type Process struct {
 	closeErr  error
 }
 
-// Start launches a plugin using an inherited Unix socket and no shell.
+// RawStreamResponse receives canonical control metadata and its raw stream in one response.
+type RawStreamResponse struct {
+	Metadata any
+	Handle   arpc.RawStreamHandler
+}
+
 func Start(ctx context.Context, executable string, args ...string) (*Process, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -110,24 +115,79 @@ func Start(ctx context.Context, executable string, args ...string) (*Process, er
 	return &Process{command: command, pipe: pipe, wait: wait}, nil
 }
 
-// Describe retrieves and validates the plugin identity before other calls are allowed.
+// Describe retrieves and validates plugin metadata during installation or refresh.
 func (p *Process) Describe(ctx context.Context) (Descriptor, error) {
-	request, err := MarshalProtocol(DescribeRequest{ProtocolVersion: CurrentProtocolVersion})
-	if err != nil {
-		return Descriptor{}, fmt.Errorf("encode describe request: %w", err)
-	}
-	var response []byte
-	if err := p.pipe.Call(ctx, MethodDescribe, request, &response); err != nil {
-		return Descriptor{}, fmt.Errorf("describe plugin: %w", err)
-	}
 	var descriptor Descriptor
-	if err := UnmarshalProtocol(response, &descriptor); err != nil {
-		return Descriptor{}, fmt.Errorf("decode plugin descriptor: %w", err)
+	if err := p.callProtocol(ctx, MethodDescribe, DescribeRequest{ProtocolVersion: CurrentProtocolVersion}, &descriptor); err != nil {
+		return Descriptor{}, fmt.Errorf("describe plugin: %w", err)
 	}
 	if err := descriptor.Validate(); err != nil {
 		return Descriptor{}, fmt.Errorf("validate plugin descriptor: %w", err)
 	}
 	return descriptor, nil
+}
+
+// Invoke performs one plugin operation without a separate description handshake.
+func (p *Process) Invoke(ctx context.Context, method string, request, response any) error {
+	if err := validateInvocationMethod(method); err != nil {
+		return err
+	}
+	if err := p.callProtocol(ctx, method, request, response); err != nil {
+		return fmt.Errorf("invoke %s: %w", method, err)
+	}
+	return nil
+}
+
+func (p *Process) callProtocol(ctx context.Context, method string, request, response any) error {
+	if p == nil || p.pipe == nil {
+		return errors.New("plugin process is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	payload, err := MarshalProtocol(request)
+	if err != nil {
+		return fmt.Errorf("encode request: %w", err)
+	}
+	if raw, ok := response.(*RawStreamResponse); ok {
+		if raw == nil || raw.Metadata == nil || raw.Handle == nil {
+			return errors.New("raw stream response requires metadata and a handler")
+		}
+		return p.pipe.Call(ctx, method, payload, arpc.RawStreamDataHandler(func(data []byte, stream arpc.ARPCStream) error {
+			if len(data) == 0 {
+				return errors.New("plugin raw stream metadata is empty")
+			}
+			if err := UnmarshalProtocol(data, raw.Metadata); err != nil {
+				return fmt.Errorf("decode raw stream metadata: %w", err)
+			}
+			return raw.Handle(stream)
+		}))
+	}
+	var data []byte
+	if err := p.pipe.Call(ctx, method, payload, &data); err != nil {
+		return err
+	}
+	if response == nil {
+		return nil
+	}
+	if len(data) == 0 {
+		return errors.New("plugin response is empty")
+	}
+	if err := UnmarshalProtocol(data, response); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+func validateInvocationMethod(method string) error {
+	switch method {
+	case MethodPluginHealth, MethodTargetValidate, MethodTargetProbe, MethodTargetMigrate,
+		MethodBackupOpen, MethodBackupCheck, MethodBackupMigrateOptions,
+		MethodRestoreOpen, MethodRestoreConsume, MethodRestoreCheck, MethodRestoreMigrateOptions:
+		return nil
+	default:
+		return fmt.Errorf("unsupported plugin invocation method %q", method)
+	}
 }
 
 // Close closes the aRPC session and reaps the plugin process.

@@ -278,16 +278,7 @@ func (q *QuicPipe) Call(ctx context.Context, method string, payload any, out any
 	defer releaseStream(stream)
 
 	if resp.Status == StatusRawStream {
-		handler, ok := out.(RawStreamHandler)
-		if !ok || handler == nil {
-			return fmt.Errorf("invalid out handler while in raw stream mode")
-		}
-
-		if err := performHandshake(stream); err != nil {
-			return err
-		}
-
-		return handler(stream)
+		return handleRawStreamResponse(stream, resp, out)
 	}
 
 	if err := q.checkRPCError(resp); err != nil {

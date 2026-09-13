@@ -134,7 +134,7 @@ Optional `backup.check` and `restore.check` calls are for explicit preflight wor
 
 ## Protocol methods
 
-All method payloads and results are typed CBOR maps with integer or stable snake-case string keys. Every request includes an operation ID, idempotency key, deadline, plugin version, target type, and schema version where relevant.
+All method payloads and results are typed CBOR maps with integer or stable snake-case string keys. Every runtime request includes the protocol version, operation ID, idempotency key, deadline, plugin version, target type, and schema version where relevant.
 
 ### Required methods
 

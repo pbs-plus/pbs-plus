@@ -58,6 +58,7 @@ const (
 
 // Operation identifies one retryable plugin call.
 type Operation struct {
+	ProtocolVersion   uint16 `cbor:"protocol_version"`
 	ID                string `cbor:"id"`
 	IdempotencyKey    string `cbor:"idempotency_key"`
 	DeadlineUnixMilli int64  `cbor:"deadline_unix_milli"`
@@ -75,6 +76,9 @@ type ProtocolError struct {
 
 // Validate checks required operation identity and target schema metadata.
 func (operation Operation) Validate() error {
+	if operation.ProtocolVersion != CurrentProtocolVersion {
+		return fmt.Errorf("unsupported plugin protocol %d", operation.ProtocolVersion)
+	}
 	if err := validateText("operation ID", operation.ID, maxOperationIDLength); err != nil {
 		return err
 	}

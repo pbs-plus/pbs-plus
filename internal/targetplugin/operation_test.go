@@ -15,6 +15,7 @@ func TestOperationValidate(t *testing.T) {
 		{
 			name: "target operation",
 			operation: Operation{
+				ProtocolVersion:   CurrentProtocolVersion,
 				ID:                "op-1",
 				IdempotencyKey:    "retry-1",
 				DeadlineUnixMilli: 1700000000000,
@@ -26,6 +27,7 @@ func TestOperationValidate(t *testing.T) {
 		{
 			name: "plugin operation",
 			operation: Operation{
+				ProtocolVersion:   CurrentProtocolVersion,
 				ID:                "op-1",
 				IdempotencyKey:    "retry-1",
 				DeadlineUnixMilli: 1700000000000,
@@ -33,8 +35,20 @@ func TestOperationValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "protocol",
+			operation: Operation{
+				ProtocolVersion:   CurrentProtocolVersion + 1,
+				ID:                "op-1",
+				IdempotencyKey:    "retry-1",
+				DeadlineUnixMilli: 1700000000000,
+				PluginVersion:     "1.0.0",
+			},
+			wantError: "unsupported plugin protocol",
+		},
+		{
 			name: "missing ID",
 			operation: Operation{
+				ProtocolVersion:   CurrentProtocolVersion,
 				IdempotencyKey:    "retry-1",
 				DeadlineUnixMilli: 1700000000000,
 				PluginVersion:     "1.0.0",
@@ -44,15 +58,17 @@ func TestOperationValidate(t *testing.T) {
 		{
 			name: "missing deadline",
 			operation: Operation{
-				ID:             "op-1",
-				IdempotencyKey: "retry-1",
-				PluginVersion:  "1.0.0",
+				ProtocolVersion: CurrentProtocolVersion,
+				ID:              "op-1",
+				IdempotencyKey:  "retry-1",
+				PluginVersion:   "1.0.0",
 			},
 			wantError: "operation deadline is required",
 		},
 		{
 			name: "schema without target",
 			operation: Operation{
+				ProtocolVersion:   CurrentProtocolVersion,
 				ID:                "op-1",
 				IdempotencyKey:    "retry-1",
 				DeadlineUnixMilli: 1700000000000,
@@ -64,6 +80,7 @@ func TestOperationValidate(t *testing.T) {
 		{
 			name: "target without schema",
 			operation: Operation{
+				ProtocolVersion:   CurrentProtocolVersion,
 				ID:                "op-1",
 				IdempotencyKey:    "retry-1",
 				DeadlineUnixMilli: 1700000000000,
@@ -133,6 +150,7 @@ func TestProtocolErrorValidate(t *testing.T) {
 
 func TestOperationCBORFixture(t *testing.T) {
 	encoded, err := MarshalProtocol(Operation{
+		ProtocolVersion:   CurrentProtocolVersion,
 		ID:                "op-1",
 		IdempotencyKey:    "retry-1",
 		DeadlineUnixMilli: 1700000000000,
@@ -143,7 +161,7 @@ func TestOperationCBORFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarshalProtocol: %v", err)
 	}
-	const want = "a6626964646f702d316b7461726765745f7479706564746573746e706c7567696e5f76657273696f6e65312e302e306e736368656d615f76657273696f6e016f6964656d706f74656e63795f6b65796772657472792d3173646561646c696e655f756e69785f6d696c6c691b0000018bcfe56800"
+	const want = "a7626964646f702d316b7461726765745f7479706564746573746e706c7567696e5f76657273696f6e65312e302e306e736368656d615f76657273696f6e016f6964656d706f74656e63795f6b65796772657472792d317070726f746f636f6c5f76657273696f6e0173646561646c696e655f756e69785f6d696c6c691b0000018bcfe56800"
 	if got := hex.EncodeToString(encoded); got != want {
 		t.Fatalf("operation fixture = %s, want %s", got, want)
 	}
