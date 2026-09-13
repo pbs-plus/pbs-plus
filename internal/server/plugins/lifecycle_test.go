@@ -127,6 +127,18 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatalf("events = %#v", events)
 	}
 
+	healthy, err := CheckHealth(ctx, db, supervisor, lifecyclePluginID, active.Version)
+	if err != nil || !healthy {
+		t.Fatalf("CheckHealth = %v, %v", healthy, err)
+	}
+	checked, err := db.GetInstalledPluginVersion(ctx, lifecyclePluginID, active.Version)
+	if err != nil || checked.HealthState != coredb.PluginHealthHealthy || checked.HealthCheckedAt.IsZero() {
+		t.Fatalf("checked version = %#v, %v", checked, err)
+	}
+	if _, err := CheckHealth(ctx, db, supervisor, lifecyclePluginID, "9.9.9"); err == nil {
+		t.Fatal("CheckHealth succeeded for a missing version")
+	}
+
 	if rolled, err := db.ActivatePluginVersion(ctx, lifecyclePluginID, "1.0.0"); err != nil || !rolled {
 		t.Fatalf("rollback = %v, %v", rolled, err)
 	}

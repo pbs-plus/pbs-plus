@@ -12,10 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
+
+const healthCheckTimeout = 30 * time.Second
 
 // AddRepositoryRequest carries the trust decision an administrator made out of band.
 type AddRepositoryRequest struct {
@@ -81,7 +84,45 @@ func RemoveRepository(ctx context.Context, db *coredb.Store, repositoryID string
 	return nil
 }
 
-// UninstallVersion removes one inactive version and its root-confined install directory.
+// CheckHealth probes one installed version and records the outcome for operators.
+func CheckHealth(ctx context.Context, db *coredb.Store, supervisor *targetplugin.Supervisor, pluginID, version string) (bool, error) {
+	installed, err := db.GetInstalledPluginVersion(ctx, pluginID, version)
+	if err != nil {
+		return false, err
+	}
+	var health targetplugin.PluginHealthResponse
+	runErr := supervisor.Run(ctx, pluginID, installed.InstallPath, func(runCtx context.Context, process *targetplugin.Process) error {
+		deadline, ok := runCtx.Deadline()
+		if !ok {
+			deadline = time.Now().Add(healthCheckTimeout)
+		}
+		request := targetplugin.PluginHealthRequest{Operation: targetplugin.Operation{
+			ProtocolVersion:   targetplugin.CurrentProtocolVersion,
+			ID:                "health-" + version,
+			IdempotencyKey:    pluginID + "@" + version,
+			DeadlineUnixMilli: deadline.UnixMilli(),
+			PluginVersion:     version,
+		}}
+		return process.Invoke(runCtx, targetplugin.MethodPluginHealth, request, &health)
+	})
+
+	state := coredb.PluginHealthHealthy
+	message := health.Message
+	if runErr != nil {
+		state = coredb.PluginHealthUnhealthy
+		message = runErr.Error()
+	} else if !health.Healthy {
+		state = coredb.PluginHealthUnhealthy
+	}
+	if _, err := db.UpdatePluginVersionHealth(ctx, pluginID, version, state, message, time.Now()); err != nil {
+		return false, err
+	}
+	if runErr != nil {
+		return false, runErr
+	}
+	return state == coredb.PluginHealthHealthy, nil
+}
+
 func UninstallVersion(ctx context.Context, db *coredb.Store, root, pluginID, version string) error {
 	plugin, err := db.GetInstalledPlugin(ctx, pluginID)
 	if err != nil {
