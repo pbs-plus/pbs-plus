@@ -167,6 +167,11 @@ func (fetcher Fetcher) do(ctx context.Context, target string, headers map[string
 	return response, nil
 }
 
+// ValidateRepositoryURL requires an absolute HTTPS repository location.
+func ValidateRepositoryURL(target string) error {
+	return validateAbsoluteRepositoryURL(target)
+}
+
 func validateAbsoluteRepositoryURL(target string) error {
 	parsed, err := url.Parse(target)
 	if err != nil {

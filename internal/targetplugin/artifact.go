@@ -67,6 +67,11 @@ func VerifyArtifact(dst io.Writer, src io.Reader, artifact RepositoryArtifact, p
 	return nil
 }
 
+// PublicKeyFingerprint is the hexadecimal SHA-256 of a PKIX-encoded publisher key.
+func PublicKeyFingerprint(publicKey *ecdsa.PublicKey) (string, error) {
+	return p256Fingerprint(publicKey)
+}
+
 func p256Fingerprint(publicKey *ecdsa.PublicKey) (string, error) {
 	if err := validateP256PublicKey(publicKey); err != nil {
 		return "", err
