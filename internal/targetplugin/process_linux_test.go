@@ -136,13 +136,13 @@ func TestPluginProcessHelper(t *testing.T) {
 	router := arpc.NewRouter()
 	router.Handle(MethodDescribe, func(request *arpc.Request) (arpc.Response, error) {
 		var describe DescribeRequest
-		if err := cbor.Unmarshal(request.Payload, &describe); err != nil {
+		if err := UnmarshalProtocol(request.Payload, &describe); err != nil {
 			return arpc.Response{}, fmt.Errorf("decode describe request: %w", err)
 		}
 		if describe.ProtocolVersion != CurrentProtocolVersion {
 			return arpc.Response{}, fmt.Errorf("unsupported host protocol %d", describe.ProtocolVersion)
 		}
-		data, err := cbor.Marshal(Descriptor{
+		data, err := MarshalProtocol(Descriptor{
 			ProtocolVersion: CurrentProtocolVersion,
 			PluginID:        "org.pbs-plus.test",
 			Version:         "1.0.0",

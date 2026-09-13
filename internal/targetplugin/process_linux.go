@@ -112,10 +112,17 @@ func Start(ctx context.Context, executable string, args ...string) (*Process, er
 
 // Describe retrieves and validates the plugin identity before other calls are allowed.
 func (p *Process) Describe(ctx context.Context) (Descriptor, error) {
-	var descriptor Descriptor
-	request := DescribeRequest{ProtocolVersion: CurrentProtocolVersion}
-	if err := p.pipe.Call(ctx, MethodDescribe, request, &descriptor); err != nil {
+	request, err := MarshalProtocol(DescribeRequest{ProtocolVersion: CurrentProtocolVersion})
+	if err != nil {
+		return Descriptor{}, fmt.Errorf("encode describe request: %w", err)
+	}
+	var response []byte
+	if err := p.pipe.Call(ctx, MethodDescribe, request, &response); err != nil {
 		return Descriptor{}, fmt.Errorf("describe plugin: %w", err)
+	}
+	var descriptor Descriptor
+	if err := UnmarshalProtocol(response, &descriptor); err != nil {
+		return Descriptor{}, fmt.Errorf("decode plugin descriptor: %w", err)
 	}
 	if err := descriptor.Validate(); err != nil {
 		return Descriptor{}, fmt.Errorf("validate plugin descriptor: %w", err)
