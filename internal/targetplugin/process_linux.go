@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"sync"
 	"syscall"
@@ -29,6 +30,10 @@ type Process struct {
 	command *exec.Cmd
 	pipe    *arpc.StreamPipe
 	wait    <-chan error
+
+	mu       sync.Mutex
+	released bool
+	cleanup  []func() error
 
 	closeOnce sync.Once
 	closeErr  error
@@ -212,13 +217,42 @@ func validateInvocationMethod(method string) error {
 	}
 }
 
-// Close closes the aRPC session and reaps the plugin process.
+// AddCleanup registers host-owned release work that runs even when the plugin crashes.
+func (p *Process) AddCleanup(step func() error) error {
+	if step == nil {
+		return errors.New("plugin cleanup step is required")
+	}
+	p.mu.Lock()
+	if p.released {
+		p.mu.Unlock()
+		return step()
+	}
+	p.cleanup = append(p.cleanup, step)
+	p.mu.Unlock()
+	return nil
+}
+
+// Close closes the aRPC session, reaps the plugin process, and releases host-owned leases.
 func (p *Process) Close() error {
 	p.closeOnce.Do(func() {
 		p.pipe.Close()
-		p.closeErr = p.waitForExit()
+		p.closeErr = errors.Join(p.waitForExit(), p.releaseCleanup())
 	})
 	return p.closeErr
+}
+
+func (p *Process) releaseCleanup() error {
+	p.mu.Lock()
+	steps := p.cleanup
+	p.cleanup = nil
+	p.released = true
+	p.mu.Unlock()
+
+	var err error
+	for _, step := range slices.Backward(steps) {
+		err = errors.Join(err, step())
+	}
+	return err
 }
 
 func (p *Process) waitForExit() error {

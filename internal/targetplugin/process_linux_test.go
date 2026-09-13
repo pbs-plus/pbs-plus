@@ -221,6 +221,76 @@ func TestProcessOversizedDescribe(t *testing.T) {
 	assertProcessGone(t, process)
 }
 
+func TestProcessCleanupRunsAfterCrash(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginCrashHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var order []string
+	for _, name := range []string{"first", "second"} {
+		if err := process.AddCleanup(func() error {
+			order = append(order, name)
+			return nil
+		}); err != nil {
+			t.Fatalf("AddCleanup(%s): %v", name, err)
+		}
+	}
+	leaseErr := errors.New("lease close failed")
+	if err := process.AddCleanup(func() error { return leaseErr }); err != nil {
+		t.Fatalf("AddCleanup lease: %v", err)
+	}
+
+	if err := process.Close(); !errors.Is(err, leaseErr) {
+		t.Fatalf("Close error = %v, want lease error", err)
+	}
+	if len(order) != 2 || order[0] != "second" || order[1] != "first" {
+		t.Fatalf("cleanup order = %v, want [second first]", order)
+	}
+	assertProcessGone(t, process)
+
+	if err := process.Close(); !errors.Is(err, leaseErr) {
+		t.Fatalf("second Close error = %v, want lease error", err)
+	}
+	if len(order) != 2 {
+		t.Fatalf("cleanup ran again: %v", order)
+	}
+}
+
+func TestProcessAddCleanupAfterCloseRunsImmediately(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginProcessHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ran := false
+	if err := process.AddCleanup(func() error {
+		ran = true
+		return nil
+	}); err != nil {
+		t.Fatalf("AddCleanup: %v", err)
+	}
+	if !ran {
+		t.Fatal("late cleanup step did not run")
+	}
+	if err := process.AddCleanup(nil); err == nil {
+		t.Fatal("AddCleanup(nil) succeeded")
+	}
+}
+
 func TestPluginProcessHelper(t *testing.T) {
 	fdText, ok := os.LookupEnv(SocketFDEnv)
 	if !ok {
