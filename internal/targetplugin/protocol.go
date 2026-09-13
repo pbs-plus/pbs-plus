@@ -141,10 +141,13 @@ type DescribeRequest struct {
 
 // Descriptor identifies an installed plugin and the target types it provides.
 type Descriptor struct {
-	ProtocolVersion uint16   `cbor:"protocol_version"`
-	PluginID        string   `cbor:"plugin_id"`
-	Version         string   `cbor:"version"`
-	TargetTypes     []string `cbor:"target_types"`
+	ProtocolVersion uint16     `cbor:"protocol_version"`
+	PluginID        string     `cbor:"plugin_id"`
+	Version         string     `cbor:"version"`
+	TargetTypes     []string   `cbor:"target_types"`
+	TargetSchema    FormSchema `cbor:"target_schema"`
+	BackupSchema    FormSchema `cbor:"backup_schema"`
+	RestoreSchema   FormSchema `cbor:"restore_schema"`
 }
 
 // Validate checks descriptor identity and protocol compatibility.
@@ -180,6 +183,15 @@ func (d Descriptor) Validate() error {
 			return fmt.Errorf("duplicate target type %q", targetType)
 		}
 		seen[targetType] = struct{}{}
+	}
+	if err := d.TargetSchema.Validate(); err != nil {
+		return fmt.Errorf("target schema: %w", err)
+	}
+	if err := d.BackupSchema.Validate(); err != nil {
+		return fmt.Errorf("backup schema: %w", err)
+	}
+	if err := d.RestoreSchema.Validate(); err != nil {
+		return fmt.Errorf("restore schema: %w", err)
 	}
 	return nil
 }

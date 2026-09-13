@@ -309,6 +309,12 @@ A repository serves a versioned TOML index and detached signature. Each release 
 
 The signed bytes are the exact downloaded TOML bytes. Parsing happens only after signature verification.
 
+### Install manifest
+
+A release manifest is bounded to 4 MiB and contains `format_version`, `protocol`, `plugin_id`, `version`, `target_types`, `schema_sha256`, and the `target_schema`, `backup_schema`, and `restore_schema` TOML tables. The manifest bytes are authenticated by the SHA-256 digest in the signed repository index, so they are parsed only after that digest matches.
+
+`schema_sha256` is the hexadecimal SHA-256 of canonical CBOR for a map with `target`, `backup`, and `restore` keys whose values are the three form schemas. Installation validates this digest from the manifest tables, then compares the manifest identity and schema digest with `plugin.describe`. These checks are local install-time work and add no runtime operation round trips.
+
 ### Trust model
 
 - The first-party repository key is pinned in the server package.

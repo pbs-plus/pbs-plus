@@ -261,6 +261,9 @@ func TestPluginProcessHelper(t *testing.T) {
 			PluginID:        "org.pbs-plus.test",
 			Version:         "1.0.0",
 			TargetTypes:     []string{"test"},
+			TargetSchema:    FormSchema{Version: 1},
+			BackupSchema:    FormSchema{Version: 1},
+			RestoreSchema:   FormSchema{Version: 1},
 		})
 		if err != nil {
 			return arpc.Response{}, fmt.Errorf("encode descriptor: %w", err)
@@ -430,6 +433,9 @@ func TestPluginOversizedHelper(t *testing.T) {
 			PluginID:        strings.Repeat("a", int(arpc.DefaultLocalMessageLimit)),
 			Version:         "1.0.0",
 			TargetTypes:     []string{"test"},
+			TargetSchema:    FormSchema{Version: 1},
+			BackupSchema:    FormSchema{Version: 1},
+			RestoreSchema:   FormSchema{Version: 1},
 		})
 		if err != nil {
 			return arpc.Response{}, fmt.Errorf("encode descriptor: %w", err)
