@@ -76,6 +76,17 @@ func Start(ctx context.Context, executable string, args ...string) (*Process, er
 	command.ExtraFiles = []*os.File{childFile}
 	command.Env = pluginEnvironment()
 	command.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
+	command.Cancel = func() error {
+		_ = conn.Close()
+		if command.Process == nil {
+			return nil
+		}
+		if err := command.Process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+		return nil
+	}
+	command.WaitDelay = pluginTerminateBy
 	if err := command.Start(); err != nil {
 		_ = childFile.Close()
 		_ = conn.Close()
