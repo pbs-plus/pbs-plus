@@ -262,6 +262,73 @@ func TestProcessCleanupRunsAfterCrash(t *testing.T) {
 	}
 }
 
+func TestProcessHostEvent(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      string
+		delivered bool
+		wantError string
+	}{
+		{name: "authorized token", mode: "valid", delivered: true},
+		{name: "foreign token", mode: "foreign", wantError: "not authorized"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatalf("os.Executable: %v", err)
+			}
+
+			process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			events := make(chan HostEvent, 1)
+			process.SetEventSink(func(event HostEvent) error {
+				events <- event
+				return nil
+			})
+
+			operation := validTestOperation()
+			operation.BrokerToken = process.BrokerToken()
+			request := TargetProbeRequest{
+				Operation: operation,
+				Target: TargetInput{Config: Values{
+					"path":  NewStringScalar("/data"),
+					"event": NewStringScalar(test.mode),
+				}},
+			}
+			var response TargetProbeResponse
+			if err := process.Invoke(t.Context(), MethodTargetProbe, request, &response); err != nil {
+				t.Fatalf("Invoke: %v", err)
+			}
+			if test.wantError != "" && !strings.Contains(response.Message, test.wantError) {
+				t.Fatalf("probe message = %q, want %q", response.Message, test.wantError)
+			}
+			if test.wantError == "" && response.Message != "" {
+				t.Fatalf("probe message = %q, want empty", response.Message)
+			}
+
+			select {
+			case event := <-events:
+				if !test.delivered {
+					t.Fatalf("unauthorized event was delivered: %#v", event)
+				}
+				if event.Level != EventWarning || event.Message != "probe is slow" || event.Completed != 2 || event.Total != 4 {
+					t.Fatalf("event = %#v", event)
+				}
+			default:
+				if test.delivered {
+					t.Fatal("authorized event was not delivered")
+				}
+			}
+			if err := process.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		})
+	}
+}
+
 func TestProcessAddCleanupAfterCloseRunsImmediately(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
@@ -394,7 +461,13 @@ func TestPluginInvokeHelper(t *testing.T) {
 		if err := probe.Validate(); err != nil {
 			return arpc.Response{}, fmt.Errorf("validate probe operation: %w", err)
 		}
-		data, err := MarshalProtocol(TargetProbeResponse{Available: true})
+		response := TargetProbeResponse{Available: true}
+		if mode, ok := probe.Target.Config["event"]; ok {
+			if err := emitTestEvent(t.Context(), pipe, probe.Operation, mode); err != nil {
+				response.Message = err.Error()
+			}
+		}
+		data, err := MarshalProtocol(response)
 		if err != nil {
 			return arpc.Response{}, fmt.Errorf("encode probe response: %w", err)
 		}
@@ -429,6 +502,24 @@ func TestPluginInvokeHelper(t *testing.T) {
 	})
 	pipe.SetRouter(router)
 	_ = pipe.Serve()
+}
+
+func emitTestEvent(ctx context.Context, pipe *arpc.StreamPipe, operation Operation, mode Scalar) error {
+	if value, _ := mode.StringValue(); value == "foreign" {
+		operation.BrokerToken = make([]byte, len(operation.BrokerToken))
+	}
+	payload, err := MarshalProtocol(HostEvent{
+		Operation: operation,
+		Level:     EventWarning,
+		Message:   "probe is slow",
+		Completed: 2,
+		Total:     4,
+	})
+	if err != nil {
+		return fmt.Errorf("encode host event: %w", err)
+	}
+	var data []byte
+	return pipe.Call(ctx, MethodHostEvent, payload, &data)
 }
 
 func validTestOperation() Operation {

@@ -28,7 +28,25 @@ type TargetInput struct {
 	Secrets Secrets `cbor:"secrets,omitempty"`
 }
 
-// PluginHealthRequest identifies an explicit plugin health check.
+// EventLevel classifies one plugin diagnostic.
+type EventLevel string
+
+const (
+	EventDebug   EventLevel = "debug"
+	EventInfo    EventLevel = "info"
+	EventWarning EventLevel = "warning"
+	EventError   EventLevel = "error"
+)
+
+// HostEvent is a bounded, user-safe plugin diagnostic or progress update.
+type HostEvent struct {
+	Operation Operation  `cbor:"operation"`
+	Level     EventLevel `cbor:"level"`
+	Message   string     `cbor:"message"`
+	Completed uint64     `cbor:"completed,omitempty"`
+	Total     uint64     `cbor:"total,omitempty"`
+}
+
 type PluginHealthRequest struct {
 	Operation Operation `cbor:"operation"`
 }
@@ -203,6 +221,28 @@ func (response PluginHealthResponse) Validate() error {
 		return nil
 	}
 	return validateText("plugin health message", response.Message, maxProtocolErrorBytes)
+}
+
+// Validate checks broker authorization, level, bounded message, and progress bounds.
+func (event HostEvent) Validate() error {
+	if err := validateBrokerOperation(event.Operation); err != nil {
+		return err
+	}
+	switch event.Level {
+	case EventDebug, EventInfo, EventWarning, EventError:
+	default:
+		return fmt.Errorf("invalid event level %q", event.Level)
+	}
+	if event.Message == "" {
+		return errors.New("event message is required")
+	}
+	if err := validateText("event message", event.Message, maxProtocolErrorBytes); err != nil {
+		return err
+	}
+	if event.Total != 0 && event.Completed > event.Total {
+		return errors.New("event progress exceeds total")
+	}
+	return nil
 }
 
 // Validate checks target values and operation identity.
@@ -440,8 +480,19 @@ func validateJobOperation(operation Operation) error {
 	if err := validateTargetOperation(operation); err != nil {
 		return err
 	}
+	return requireBrokerToken(operation)
+}
+
+func validateBrokerOperation(operation Operation) error {
+	if err := operation.Validate(); err != nil {
+		return err
+	}
+	return requireBrokerToken(operation)
+}
+
+func requireBrokerToken(operation Operation) error {
 	if len(operation.BrokerToken) != brokerTokenBytes {
-		return errors.New("job operation requires a broker token")
+		return errors.New("operation requires a broker token")
 	}
 	return nil
 }

@@ -1,10 +1,14 @@
 package targetplugin
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,9 +35,12 @@ type Process struct {
 	pipe    *arpc.StreamPipe
 	wait    <-chan error
 
-	mu       sync.Mutex
-	released bool
-	cleanup  []func() error
+	brokerToken []byte
+
+	mu        sync.Mutex
+	released  bool
+	cleanup   []func() error
+	eventSink func(HostEvent) error
 
 	closeOnce sync.Once
 	closeErr  error
@@ -118,7 +125,53 @@ func Start(ctx context.Context, executable string, args ...string) (*Process, er
 		close(wait)
 	}()
 
-	return &Process{command: command, pipe: pipe, wait: wait}, nil
+	token := make([]byte, brokerTokenBytes)
+	if _, err := rand.Read(token); err != nil {
+		pipe.Close()
+		<-wait
+		return nil, fmt.Errorf("create plugin broker token: %w", err)
+	}
+	process := &Process{command: command, pipe: pipe, wait: wait, brokerToken: token}
+	router := arpc.NewRouter()
+	router.Handle(MethodHostEvent, process.handleHostEvent)
+	pipe.SetRouter(router)
+	go func() { _ = pipe.Serve() }()
+
+	return process, nil
+}
+
+// BrokerToken authorizes reverse host calls for this process only.
+func (p *Process) BrokerToken() []byte {
+	return bytes.Clone(p.brokerToken)
+}
+
+// SetEventSink receives plugin diagnostics and progress until the process is closed.
+func (p *Process) SetEventSink(sink func(HostEvent) error) {
+	p.mu.Lock()
+	p.eventSink = sink
+	p.mu.Unlock()
+}
+
+func (p *Process) handleHostEvent(request *arpc.Request) (arpc.Response, error) {
+	var event HostEvent
+	if err := UnmarshalProtocol(request.Payload, &event); err != nil {
+		return arpc.Response{}, fmt.Errorf("decode host event: %w", err)
+	}
+	if err := event.Validate(); err != nil {
+		return arpc.Response{}, fmt.Errorf("validate host event: %w", err)
+	}
+	if subtle.ConstantTimeCompare(event.Operation.BrokerToken, p.brokerToken) != 1 {
+		return arpc.Response{}, errors.New("host event broker token is not authorized")
+	}
+	p.mu.Lock()
+	sink := p.eventSink
+	p.mu.Unlock()
+	if sink != nil {
+		if err := sink(event); err != nil {
+			return arpc.Response{}, fmt.Errorf("handle host event: %w", err)
+		}
+	}
+	return arpc.Response{Status: http.StatusOK}, nil
 }
 
 // Describe retrieves and validates plugin metadata during installation or refresh.
