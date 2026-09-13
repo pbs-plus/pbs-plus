@@ -112,7 +112,7 @@ For each validate, probe, backup, restore, or migration operation, the superviso
 2. Create a Unix socket pair with close-on-exec enabled.
 3. Pass one socket to the child as an inherited file descriptor. No filesystem socket and no listening port are created.
 4. Start smux over the socket and wrap it in an aRPC `StreamPipe`.
-5. Exchange a protocol handshake before sending secrets or target data.
+5. Send protocol and operation identity in the first method request; do not add a separate runtime description handshake.
 6. Apply a deadline and operation-specific payload limits.
 7. Close the aRPC session when the operation finishes.
 8. On cancellation, request graceful cancellation, close the session, send `SIGTERM`, then send `SIGKILL` after a fixed grace period.
@@ -123,6 +123,14 @@ The inherited descriptor number and protocol version may be passed through envir
 The aRPC package needs a local constructor around an existing `net.Conn` and smux session. It should reuse `newStreamPipe` rather than duplicate the request, response, and routing code (`internal/arpc/pipe.go:132-174`). Plugin decoding must use conservative limits instead of the current broad array limit used by the general stream pipe (`internal/arpc/pipe.go:132-157`).
 
 One process per operation is deliberate. It avoids cross-job state, makes upgrades atomic for new operations, and turns a crashed plugin into a failed job rather than a failed server.
+
+### Hot-path latency
+
+The plugin layer adds one local aRPC request and response to each short operation. `plugin.describe` runs only during install, activation, or explicit metadata refresh; `plugin.health` runs only during install or an explicit health check. Neither method runs before normal validate, probe, backup, or restore calls. The first operation request carries the protocol version, complete operation envelope, normalized configuration, secret values, and job options needed by that method.
+
+`backup.open` and `restore.open` exchange control metadata once, then the host moves bulk data through the returned local path or the existing aRPC raw stream. Structured restore uses one `restore.consume` call after host-side extraction. No file chunk, database row, progress event, or PBS command crosses a CBOR request loop. Reverse broker calls occur only for capabilities that require host-owned resources, such as the existing agent session.
+
+Optional `backup.check` and `restore.check` calls are for explicit preflight workflows. The scheduler does not call them immediately before `backup.open`, `restore.open`, or `restore.consume`; those opening methods perform the same validation in their single request. The host may coalesce concurrent probes and briefly cache successful status results, but it does not reuse a plugin process across unrelated operations.
 
 ## Protocol methods
 
