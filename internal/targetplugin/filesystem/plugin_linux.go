@@ -15,13 +15,13 @@ import (
 )
 
 const (
-	PluginID        = "org.pbs-plus.filesystem"
-	TargetTypeLocal = "local"
-	ArchiveType     = "filesystem"
+	PluginID             = "org.pbs-plus.filesystem"
+	TargetTypeLocal      = "local"
+	ArchiveType          = "filesystem"
+	ArchiveFormatVersion = 1
 
-	schemaVersion        = 1
-	archiveFormatVersion = 1
-	pathField            = "path"
+	schemaVersion = 1
+	pathField     = "path"
 )
 
 // Version is the plugin release version reported to the host.
@@ -122,7 +122,7 @@ func backupOpen(_ context.Context, payload []byte) (any, error) {
 	return targetplugin.BackupOpenResponse{
 		Kind:    targetplugin.SourceDirectory,
 		Path:    path,
-		Archive: targetplugin.Archive{Type: ArchiveType, FormatVersion: archiveFormatVersion},
+		Archive: targetplugin.Archive{Type: ArchiveType, FormatVersion: ArchiveFormatVersion},
 		HostFeatures: []targetplugin.HostFeature{
 			targetplugin.FeatureSubpath,
 			targetplugin.FeatureExclusions,
@@ -149,7 +149,7 @@ func restoreOpen(_ context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if request.Archive.Type != ArchiveType || request.Archive.FormatVersion != archiveFormatVersion {
+	if request.Archive.Type != ArchiveType || request.Archive.FormatVersion != ArchiveFormatVersion {
 		return nil, fmt.Errorf("archive %s v%d was not written by this plugin", request.Archive.Type, request.Archive.FormatVersion)
 	}
 	path, err := sourcePath(request.Job)

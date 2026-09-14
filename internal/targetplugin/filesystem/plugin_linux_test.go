@@ -71,7 +71,7 @@ func TestHandlers(t *testing.T) {
 	destination, err := call[targetplugin.RestoreOpenResponse](t, handlers[targetplugin.MethodRestoreOpen],
 		targetplugin.RestoreOpenRequest{
 			Operation: operation(), Job: job,
-			Archive: targetplugin.Archive{Type: ArchiveType, FormatVersion: archiveFormatVersion},
+			Archive: targetplugin.Archive{Type: ArchiveType, FormatVersion: ArchiveFormatVersion},
 		})
 	if err != nil {
 		t.Fatalf("restore.open: %v", err)
