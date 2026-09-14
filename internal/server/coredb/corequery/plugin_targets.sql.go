@@ -207,6 +207,52 @@ func (q *Queries) ListPluginTargetSecrets(ctx context.Context, targetName string
 	return items, nil
 }
 
+const migratePluginTargetConfig = `-- name: MigratePluginTargetConfig :execrows
+UPDATE plugin_target_configs
+SET plugin_version = ?1,
+    schema_version = ?2,
+    config = ?3,
+    updated_at = ?4
+WHERE target_name = ?5
+  AND plugin_id = ?6
+  AND plugin_version = ?7
+  AND schema_version = ?8
+  AND config = ?9
+  AND updated_at = ?10
+`
+
+type MigratePluginTargetConfigParams struct {
+	ToPluginVersion   string `json:"to_plugin_version"`
+	ToSchemaVersion   int64  `json:"to_schema_version"`
+	ToConfig          []byte `json:"to_config"`
+	ToUpdatedAt       int64  `json:"to_updated_at"`
+	TargetName        string `json:"target_name"`
+	PluginID          string `json:"plugin_id"`
+	FromPluginVersion string `json:"from_plugin_version"`
+	FromSchemaVersion int64  `json:"from_schema_version"`
+	FromConfig        []byte `json:"from_config"`
+	FromUpdatedAt     int64  `json:"from_updated_at"`
+}
+
+func (q *Queries) MigratePluginTargetConfig(ctx context.Context, arg MigratePluginTargetConfigParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, migratePluginTargetConfig,
+		arg.ToPluginVersion,
+		arg.ToSchemaVersion,
+		arg.ToConfig,
+		arg.ToUpdatedAt,
+		arg.TargetName,
+		arg.PluginID,
+		arg.FromPluginVersion,
+		arg.FromSchemaVersion,
+		arg.FromConfig,
+		arg.FromUpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updatePluginTargetConfig = `-- name: UpdatePluginTargetConfig :execrows
 UPDATE plugin_target_configs
 SET plugin_version = ?1,

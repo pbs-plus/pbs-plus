@@ -11,6 +11,7 @@ import (
 
 type Querier interface {
 	ActivateTargetPluginVersion(ctx context.Context, arg ActivateTargetPluginVersionParams) (int64, error)
+	ActivateTargetPluginVersionFrom(ctx context.Context, arg ActivateTargetPluginVersionFromParams) (int64, error)
 	AddJobToBatch(ctx context.Context, arg AddJobToBatchParams) error
 	AgentHostExists(ctx context.Context, name string) (int64, error)
 	ArchiveBackupPluginOptions(ctx context.Context, arg ArchiveBackupPluginOptionsParams) error
@@ -112,6 +113,7 @@ type Querier interface {
 	ListAllTokensWithDetails(ctx context.Context) ([]ListAllTokensWithDetailsRow, error)
 	ListAllVerificationJobs(ctx context.Context) ([]VerificationJob, error)
 	ListBackupPluginOptionHistory(ctx context.Context, backupID string) ([]BackupPluginOptionHistory, error)
+	ListBackupPluginOptionsByPlugin(ctx context.Context, pluginID string) ([]BackupPluginOption, error)
 	ListBackupPluginOptionsByPluginVersion(ctx context.Context, arg ListBackupPluginOptionsByPluginVersionParams) ([]BackupPluginOption, error)
 	ListBatchJobs(ctx context.Context) ([]NotificationBatchJob, error)
 	ListBatchesWithResults(ctx context.Context) ([]string, error)
@@ -122,12 +124,16 @@ type Querier interface {
 	ListPluginTargetConfigsByPlugin(ctx context.Context, pluginID string) ([]PluginTargetConfig, error)
 	ListPluginTargetSecrets(ctx context.Context, targetName string) ([]ListPluginTargetSecretsRow, error)
 	ListRestorePluginOptionHistory(ctx context.Context, restoreID string) ([]RestorePluginOptionHistory, error)
+	ListRestorePluginOptionsByPlugin(ctx context.Context, pluginID string) ([]RestorePluginOption, error)
 	ListRestorePluginOptionsByPluginVersion(ctx context.Context, arg ListRestorePluginOptionsByPluginVersionParams) ([]RestorePluginOption, error)
 	ListTargetPluginRepositories(ctx context.Context) ([]TargetPluginRepository, error)
 	ListTargetPluginVersions(ctx context.Context, pluginID string) ([]TargetPluginVersion, error)
 	ListTargetPlugins(ctx context.Context) ([]TargetPlugin, error)
 	ListTargetsByAgentHost(ctx context.Context, agentHost sql.NullString) ([]ListTargetsByAgentHostRow, error)
 	MarkVerificationResultStatus(ctx context.Context, arg MarkVerificationResultStatusParams) error
+	MigrateBackupPluginOptions(ctx context.Context, arg MigrateBackupPluginOptionsParams) (int64, error)
+	MigratePluginTargetConfig(ctx context.Context, arg MigratePluginTargetConfigParams) (int64, error)
+	MigrateRestorePluginOptions(ctx context.Context, arg MigrateRestorePluginOptionsParams) (int64, error)
 	RemoveJobFromAllBatches(ctx context.Context, arg RemoveJobFromAllBatchesParams) error
 	RemoveJobFromBatch(ctx context.Context, arg RemoveJobFromBatchParams) error
 	RemoveJobsByBatch(ctx context.Context, batchName string) error

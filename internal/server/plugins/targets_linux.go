@@ -221,7 +221,11 @@ func loadActiveManifest(ctx context.Context, db *coredb.Store, pluginID string) 
 	if plugin.ActiveVersion == "" {
 		return targetplugin.PluginManifest{}, coredb.InstalledPluginVersion{}, fmt.Errorf("plugin %q has no active version", pluginID)
 	}
-	installed, err := db.GetInstalledPluginVersion(ctx, pluginID, plugin.ActiveVersion)
+	return loadInstalledManifest(ctx, db, pluginID, plugin.ActiveVersion)
+}
+
+func loadInstalledManifest(ctx context.Context, db *coredb.Store, pluginID, version string) (targetplugin.PluginManifest, coredb.InstalledPluginVersion, error) {
+	installed, err := db.GetInstalledPluginVersion(ctx, pluginID, version)
 	if err != nil {
 		return targetplugin.PluginManifest{}, coredb.InstalledPluginVersion{}, err
 	}

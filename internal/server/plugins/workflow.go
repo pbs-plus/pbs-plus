@@ -125,7 +125,7 @@ func runInstall(w *jobs.WorkflowContext, app *application.Runtime, input jobs.Pl
 	}
 
 	return w.Step("register", func(ctx context.Context) error {
-		return registerVersion(ctx, app.CoreDB, repository.ID, resolved, installed, input.Activate)
+		return registerVersion(ctx, app.CoreDB, app.PluginSupervisor, repository.ID, resolved, installed, input.Activate)
 	})
 }
 
@@ -165,26 +165,19 @@ func installRelease(ctx context.Context, fetcher targetplugin.Fetcher, root, ind
 	return result, nil
 }
 
-func registerVersion(ctx context.Context, db *coredb.Store, repositoryID string, resolved resolvedRelease, installed installedArtifact, activate bool) error {
+func registerVersion(ctx context.Context, db *coredb.Store, supervisor *targetplugin.Supervisor, repositoryID string, resolved resolvedRelease, installed installedArtifact, activate bool) error {
 	if _, err := db.GetInstalledPluginVersion(ctx, resolved.Release.PluginID, resolved.Release.Version); err == nil {
 		if !activate {
 			return nil
 		}
-		activated, err := db.ActivatePluginVersion(ctx, resolved.Release.PluginID, resolved.Release.Version)
-		if err != nil {
-			return err
-		}
-		if !activated {
-			return fmt.Errorf("plugin %q version %q was not activated", resolved.Release.PluginID, resolved.Release.Version)
-		}
-		return nil
+		return ActivateVersion(ctx, db, supervisor, resolved.Release.PluginID, resolved.Release.Version)
 	}
 	manifestBytes, err := os.ReadFile(filepath.Join(installed.Directory, manifestFileName))
 	if err != nil {
 		return fmt.Errorf("reading installed plugin manifest: %w", err)
 	}
 	now := time.Now()
-	return db.RegisterPluginVersion(ctx, repositoryID, coredb.InstalledPluginVersion{
+	if err := db.RegisterPluginVersion(ctx, repositoryID, coredb.InstalledPluginVersion{
 		PluginID:        resolved.Release.PluginID,
 		Version:         resolved.Release.Version,
 		Platform:        installed.Platform,
@@ -194,7 +187,13 @@ func registerVersion(ctx context.Context, db *coredb.Store, repositoryID string,
 		InstalledAt:     now,
 		HealthState:     coredb.PluginHealthHealthy,
 		HealthCheckedAt: now,
-	}, activate)
+	}, false); err != nil {
+		return err
+	}
+	if !activate {
+		return nil
+	}
+	return ActivateVersion(ctx, db, supervisor, resolved.Release.PluginID, resolved.Release.Version)
 }
 
 func resolveRelease(index targetplugin.RepositoryIndex, pluginID, version string) (resolvedRelease, error) {

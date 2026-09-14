@@ -13,6 +13,19 @@ SET plugin_version = sqlc.arg(plugin_version),
 WHERE target_name = sqlc.arg(target_name)
   AND plugin_id = sqlc.arg(plugin_id);
 
+-- name: MigratePluginTargetConfig :execrows
+UPDATE plugin_target_configs
+SET plugin_version = sqlc.arg(to_plugin_version),
+    schema_version = sqlc.arg(to_schema_version),
+    config = sqlc.arg(to_config),
+    updated_at = sqlc.arg(to_updated_at)
+WHERE target_name = sqlc.arg(target_name)
+  AND plugin_id = sqlc.arg(plugin_id)
+  AND plugin_version = sqlc.arg(from_plugin_version)
+  AND schema_version = sqlc.arg(from_schema_version)
+  AND config = sqlc.arg(from_config)
+  AND updated_at = sqlc.arg(from_updated_at);
+
 -- name: GetPluginTargetConfig :one
 SELECT target_name, plugin_id, plugin_version, target_type, schema_version, config, updated_at
 FROM plugin_target_configs

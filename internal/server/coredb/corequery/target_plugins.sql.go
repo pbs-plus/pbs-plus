@@ -35,6 +35,33 @@ func (q *Queries) ActivateTargetPluginVersion(ctx context.Context, arg ActivateT
 	return result.RowsAffected()
 }
 
+const activateTargetPluginVersionFrom = `-- name: ActivateTargetPluginVersionFrom :execrows
+UPDATE target_plugins
+SET active_version = ?1
+WHERE target_plugins.plugin_id = ?2
+  AND active_version = ?3
+  AND EXISTS (
+    SELECT 1
+    FROM target_plugin_versions
+    WHERE target_plugin_versions.plugin_id = target_plugins.plugin_id
+      AND target_plugin_versions.version = ?1
+  )
+`
+
+type ActivateTargetPluginVersionFromParams struct {
+	ToVersion   string `json:"to_version"`
+	PluginID    string `json:"plugin_id"`
+	FromVersion string `json:"from_version"`
+}
+
+func (q *Queries) ActivateTargetPluginVersionFrom(ctx context.Context, arg ActivateTargetPluginVersionFromParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, activateTargetPluginVersionFrom, arg.ToVersion, arg.PluginID, arg.FromVersion)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const clearTargetPluginActivation = `-- name: ClearTargetPluginActivation :execrows
 UPDATE target_plugins
 SET active_version = ''

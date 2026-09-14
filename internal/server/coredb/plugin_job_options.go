@@ -99,6 +99,18 @@ func (db *Store) ListBackupPluginOptions(ctx context.Context, pluginID, pluginVe
 	return options, nil
 }
 
+func (db *Store) ListBackupPluginOptionsByPlugin(ctx context.Context, pluginID string) ([]PluginJobOptions, error) {
+	rows, err := db.readQueries.ListBackupPluginOptionsByPlugin(db.pluginContext(ctx), pluginID)
+	if err != nil {
+		return nil, fmt.Errorf("list backup plugin options: %w", err)
+	}
+	options := make([]PluginJobOptions, len(rows))
+	for index := range rows {
+		options[index] = backupPluginOptionsFromRow(rows[index])
+	}
+	return options, nil
+}
+
 func (db *Store) ListBackupPluginOptionHistory(ctx context.Context, backupID string) ([]PluginJobOptionsHistory, error) {
 	rows, err := db.readQueries.ListBackupPluginOptionHistory(db.pluginContext(ctx), backupID)
 	if err != nil {
@@ -183,6 +195,18 @@ func (db *Store) ListRestorePluginOptions(ctx context.Context, pluginID, pluginV
 	options := make([]PluginJobOptions, len(rows))
 	for index, row := range rows {
 		options[index] = restorePluginOptionsFromRow(row)
+	}
+	return options, nil
+}
+
+func (db *Store) ListRestorePluginOptionsByPlugin(ctx context.Context, pluginID string) ([]PluginJobOptions, error) {
+	rows, err := db.readQueries.ListRestorePluginOptionsByPlugin(db.pluginContext(ctx), pluginID)
+	if err != nil {
+		return nil, fmt.Errorf("list restore plugin options: %w", err)
+	}
+	options := make([]PluginJobOptions, len(rows))
+	for index := range rows {
+		options[index] = restorePluginOptionsFromRow(rows[index])
 	}
 	return options, nil
 }

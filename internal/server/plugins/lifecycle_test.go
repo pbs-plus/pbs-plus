@@ -11,13 +11,16 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +76,10 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatalf("Refresh = %v, %v, %v", len(refreshed.Releases), changed, err)
 	}
 
+	supervisor, err := targetplugin.NewSupervisor(2, 1)
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
 	root := t.TempDir()
 	for _, version := range versions {
 		resolved, err := resolveRelease(index, lifecyclePluginID, version)
@@ -83,7 +90,7 @@ func TestPluginLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("installRelease(%s): %v", version, err)
 		}
-		if err := registerVersion(ctx, db, lifecycleRepositoryID, resolved, installed, true); err != nil {
+		if err := registerVersion(ctx, db, supervisor, lifecycleRepositoryID, resolved, installed, true); err != nil {
 			t.Fatalf("registerVersion(%s): %v", version, err)
 		}
 	}
@@ -93,10 +100,6 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatalf("upgraded plugin = %#v, %v", plugin, err)
 	}
 
-	supervisor, err := targetplugin.NewSupervisor(2, 1)
-	if err != nil {
-		t.Fatalf("NewSupervisor: %v", err)
-	}
 	active, err := db.GetInstalledPluginVersion(ctx, lifecyclePluginID, plugin.ActiveVersion)
 	if err != nil {
 		t.Fatalf("GetInstalledPluginVersion: %v", err)
@@ -120,7 +123,7 @@ func TestPluginLifecycle(t *testing.T) {
 			},
 			Target: targetplugin.TargetInput{
 				Config:  targetplugin.Values{"path": targetplugin.NewStringScalar("/data")},
-				Secrets: targetplugin.Secrets{"token": []byte("secret")},
+				Secrets: targetplugin.Secrets{"credential": []byte("secret")},
 			},
 		}
 		var response targetplugin.TargetProbeResponse
@@ -155,12 +158,12 @@ func TestPluginLifecycle(t *testing.T) {
 	if err != nil || len(targetTypes) != 1 || targetTypes[0].TargetType != "lifecycle" {
 		t.Fatalf("ListTargetTypes = %#v, %v", targetTypes, err)
 	}
-	form := map[string][]string{"path": {"/data"}, "token": {"secret"}}
+	form := map[string][]string{"path": {"/data"}, "credential": {"secret"}}
 	if err := CreateTarget(ctx, db, supervisor, "plugin-target", lifecyclePluginID, "lifecycle", form); err != nil {
 		t.Fatalf("CreateTarget: %v", err)
 	}
 	pluginTarget, err := db.GetPluginTarget(ctx, "plugin-target")
-	if err != nil || pluginTarget.PluginVersion != "1.1.0" || pluginTarget.TargetType != "lifecycle" || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "token" {
+	if err != nil || pluginTarget.PluginVersion != "1.1.0" || pluginTarget.TargetType != "lifecycle" || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "credential" {
 		t.Fatalf("plugin target = %#v, %v", pluginTarget, err)
 	}
 	if err := db.Close(); err != nil {
@@ -171,7 +174,7 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatalf("Initialize after restart: %v", err)
 	}
 	pluginTarget, err = db.GetPluginTarget(ctx, "plugin-target")
-	if err != nil || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "token" {
+	if err != nil || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "credential" {
 		t.Fatalf("restarted plugin target = %#v, %v", pluginTarget, err)
 	}
 	probe, err := ProbeTarget(ctx, db, supervisor, "plugin-target")
@@ -185,8 +188,8 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatalf("DeleteTarget: %v", err)
 	}
 
-	if rolled, err := db.ActivatePluginVersion(ctx, lifecyclePluginID, "1.0.0"); err != nil || !rolled {
-		t.Fatalf("rollback = %v, %v", rolled, err)
+	if err := ActivateVersion(ctx, db, supervisor, lifecyclePluginID, "1.0.0"); err != nil {
+		t.Fatalf("rollback: %v", err)
 	}
 	if disabled, err := db.SetInstalledPluginEnabled(ctx, lifecyclePluginID, false); err != nil || !disabled {
 		t.Fatalf("disable = %v, %v", disabled, err)
@@ -206,6 +209,134 @@ func TestPluginLifecycle(t *testing.T) {
 	if err := RemoveRepository(ctx, db, lifecycleRepositoryID); err != nil {
 		t.Fatalf("RemoveRepository: %v", err)
 	}
+}
+
+func TestActivateVersionMigratesStoredRecords(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	pbscrypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
+	t.Cleanup(func() { pbscrypto.SetSealKeyPath(conf.SecretsKeyPath) })
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	server, index := releaseServer(t, key, []string{"1.0.0", "1.1.0", "1.2.0"})
+	defer server.Close()
+	db, err := coredb.Initialize(ctx, filepath.Join(directory, "migration.db"))
+	if err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	defer db.Close()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	if err := db.CreatePluginRepository(ctx, coredb.PluginRepository{
+		ID: lifecycleRepositoryID, Name: "PBS Plus Tests", URL: server.URL + "/index.toml", PublicKey: der, Enabled: true,
+	}); err != nil {
+		t.Fatalf("CreatePluginRepository: %v", err)
+	}
+	supervisor, err := targetplugin.NewSupervisor(2, 1)
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+	fetcher := targetplugin.Fetcher{Client: server.Client()}
+	root := t.TempDir()
+	install := func(version string) error {
+		resolved, err := resolveRelease(index, lifecyclePluginID, version)
+		if err != nil {
+			return err
+		}
+		installed, err := installRelease(ctx, fetcher, root, server.URL+"/index.toml", resolved, &key.PublicKey)
+		if err != nil {
+			return err
+		}
+		return registerVersion(ctx, db, supervisor, lifecycleRepositoryID, resolved, installed, true)
+	}
+	if err := install("1.0.0"); err != nil {
+		t.Fatalf("install 1.0.0: %v", err)
+	}
+	config := lifecycleValues(t, targetplugin.Values{"path": targetplugin.NewStringScalar("/data")})
+	if err := db.CreatePluginTarget(ctx, coredb.PluginTarget{
+		Name: "migrated-target", PluginID: lifecyclePluginID, PluginVersion: "1.0.0", TargetType: "lifecycle", SchemaVersion: 1, Config: config,
+	}, map[string][]byte{"token": []byte("secret")}); err != nil {
+		t.Fatalf("CreatePluginTarget: %v", err)
+	}
+	if err := db.CreateBackup(nil, coredb.Backup{
+		ID: "migrated-backup", Store: "store", Target: coredb.Target{Name: "migrated-target"},
+		PluginOptions: &coredb.PluginJobOptions{PluginID: lifecyclePluginID, PluginVersion: "1.0.0", SchemaVersion: 1,
+			Options: lifecycleValues(t, targetplugin.Values{"policy": targetplugin.NewStringScalar("daily")})},
+	}); err != nil {
+		t.Fatalf("CreateBackup: %v", err)
+	}
+	if err := db.CreateRestore(nil, coredb.Restore{
+		ID: "migrated-restore", Store: "store", Snapshot: "host/vm/100/2026-01-01T00:00:00Z", SrcPath: "/",
+		DestTarget: coredb.Target{Name: "migrated-target"},
+		PluginOptions: &coredb.PluginJobOptions{PluginID: lifecyclePluginID, PluginVersion: "1.0.0", SchemaVersion: 1,
+			Options: lifecycleValues(t, targetplugin.Values{"mode": targetplugin.NewStringScalar("replace")})},
+	}); err != nil {
+		t.Fatalf("CreateRestore: %v", err)
+	}
+
+	if err := install("1.1.0"); err != nil {
+		t.Fatalf("install 1.1.0: %v", err)
+	}
+	assertLifecycleMigrationState(t, ctx, db, "1.1.0", 2, "credential", 1)
+
+	if err := install("1.2.0"); err == nil || !strings.Contains(err.Error(), "test migration failure") {
+		t.Fatalf("install 1.2.0 error = %v", err)
+	}
+	assertLifecycleMigrationState(t, ctx, db, "1.1.0", 2, "credential", 1)
+
+	if err := ActivateVersion(ctx, db, supervisor, lifecyclePluginID, "1.0.0"); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	assertLifecycleMigrationState(t, ctx, db, "1.0.0", 1, "token", 2)
+}
+
+func assertLifecycleMigrationState(t *testing.T, ctx context.Context, db *coredb.Store, version string, schemaVersion uint32, secretField string, historyLength int) {
+	t.Helper()
+	plugin, err := db.GetInstalledPlugin(ctx, lifecyclePluginID)
+	if err != nil || plugin.ActiveVersion != version {
+		t.Fatalf("active plugin = %#v, %v", plugin, err)
+	}
+	target, err := db.GetPluginTarget(ctx, "migrated-target")
+	if err != nil || target.PluginVersion != version || target.SchemaVersion != schemaVersion || !slices.Equal(target.SecretFields, []string{secretField}) {
+		t.Fatalf("migrated target = %#v, %v", target, err)
+	}
+	secrets, err := db.ResolvePluginTargetSecrets(ctx, target.Name)
+	if err != nil || string(secrets[secretField]) != "secret" || len(secrets) != 1 {
+		t.Fatalf("migrated secrets = %#v, %v", secrets, err)
+	}
+	backup, err := db.GetBackupPluginOptions(ctx, "migrated-backup")
+	if err != nil || backup.PluginVersion != version || backup.SchemaVersion != schemaVersion {
+		t.Fatalf("migrated backup options = %#v, %v", backup, err)
+	}
+	restore, err := db.GetRestorePluginOptions(ctx, "migrated-restore")
+	if err != nil || restore.PluginVersion != version || restore.SchemaVersion != schemaVersion {
+		t.Fatalf("migrated restore options = %#v, %v", restore, err)
+	}
+	targetHistory, err := db.ListPluginTargetConfigHistory(ctx, target.Name)
+	if err != nil || len(targetHistory) != historyLength {
+		t.Fatalf("target history = %#v, %v", targetHistory, err)
+	}
+	backupHistory, err := db.ListBackupPluginOptionHistory(ctx, backup.JobID)
+	if err != nil || len(backupHistory) != historyLength {
+		t.Fatalf("backup history = %#v, %v", backupHistory, err)
+	}
+	restoreHistory, err := db.ListRestorePluginOptionHistory(ctx, restore.JobID)
+	if err != nil || len(restoreHistory) != historyLength {
+		t.Fatalf("restore history = %#v, %v", restoreHistory, err)
+	}
+}
+
+func lifecycleValues(t *testing.T, values targetplugin.Values) []byte {
+	t.Helper()
+	encoded, err := targetplugin.MarshalProtocol(values)
+	if err != nil {
+		t.Fatalf("MarshalProtocol: %v", err)
+	}
+	return encoded
 }
 
 func releaseServer(t *testing.T, key *ecdsa.PrivateKey, versions []string) (*httptest.Server, targetplugin.RepositoryIndex) {
@@ -275,8 +406,7 @@ func releaseServer(t *testing.T, key *ecdsa.PrivateKey, versions []string) (*htt
 
 func lifecycleManifest(t *testing.T, version string) []byte {
 	t.Helper()
-	descriptor := lifecycleDescriptor()
-	descriptor.Version = version
+	descriptor := lifecycleDescriptorForVersion(version)
 	digest, err := targetplugin.SchemaDigest(descriptor)
 	if err != nil {
 		t.Fatalf("SchemaDigest: %v", err)
@@ -323,6 +453,46 @@ func TestLifecyclePluginHelper(t *testing.T) {
 		}
 		return lifecycleResponse(targetplugin.TargetValidateResponse{Config: validate.Target.Config})
 	})
+	router.Handle(targetplugin.MethodTargetMigrate, func(request *arpc.Request) (arpc.Response, error) {
+		var migration targetplugin.TargetMigrateRequest
+		if err := targetplugin.UnmarshalProtocol(request.Payload, &migration); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := migration.Validate(); err != nil {
+			return arpc.Response{}, err
+		}
+		if descriptor.Version == "1.2.0" {
+			return arpc.Response{}, errors.New("test migration failure")
+		}
+		response := targetplugin.TargetMigrateResponse{Values: migration.Values}
+		if migration.FromSchemaVersion == 1 && migration.ToSchemaVersion == 2 {
+			response.RenameSecrets = map[string]string{"token": "credential"}
+		}
+		if migration.FromSchemaVersion == 2 && migration.ToSchemaVersion == 1 {
+			response.RenameSecrets = map[string]string{"credential": "token"}
+		}
+		return lifecycleResponse(response)
+	})
+	router.Handle(targetplugin.MethodBackupMigrateOptions, func(request *arpc.Request) (arpc.Response, error) {
+		var migration targetplugin.BackupMigrateOptionsRequest
+		if err := targetplugin.UnmarshalProtocol(request.Payload, &migration); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := migration.Validate(); err != nil {
+			return arpc.Response{}, err
+		}
+		return lifecycleResponse(targetplugin.BackupMigrateOptionsResponse{Values: migration.Values})
+	})
+	router.Handle(targetplugin.MethodRestoreMigrateOptions, func(request *arpc.Request) (arpc.Response, error) {
+		var migration targetplugin.RestoreMigrateOptionsRequest
+		if err := targetplugin.UnmarshalProtocol(request.Payload, &migration); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := migration.Validate(); err != nil {
+			return arpc.Response{}, err
+		}
+		return lifecycleResponse(targetplugin.RestoreMigrateOptionsResponse{Values: migration.Values})
+	})
 	router.Handle(targetplugin.MethodTargetProbe, func(request *arpc.Request) (arpc.Response, error) {
 		var probe targetplugin.TargetProbeRequest
 		if err := targetplugin.UnmarshalProtocol(request.Payload, &probe); err != nil {
@@ -333,7 +503,11 @@ func TestLifecyclePluginHelper(t *testing.T) {
 		}
 		path, ok := probe.Target.Config["path"]
 		pathValue, pathOK := path.StringValue()
-		if !ok || !pathOK || pathValue != "/data" || string(probe.Target.Secrets["token"]) != "secret" {
+		secretKey := "token"
+		if descriptor.Version != "1.0.0" {
+			secretKey = "credential"
+		}
+		if !ok || !pathOK || pathValue != "/data" || string(probe.Target.Secrets[secretKey]) != "secret" {
 			return arpc.Response{}, fmt.Errorf("probe received incomplete target values")
 		}
 		event, err := targetplugin.MarshalProtocol(targetplugin.HostEvent{
@@ -359,17 +533,35 @@ func lifecycleDescriptor() targetplugin.Descriptor {
 	if version == "" {
 		version = "1.0.0"
 	}
+	return lifecycleDescriptorForVersion(version)
+}
+
+func lifecycleDescriptorForVersion(version string) targetplugin.Descriptor {
+	schemaVersion := uint32(1)
+	secretKey := "token"
+	if version == "1.1.0" {
+		schemaVersion = 2
+		secretKey = "credential"
+	}
+	if version == "1.2.0" {
+		schemaVersion = 3
+		secretKey = "credential"
+	}
 	return targetplugin.Descriptor{
 		ProtocolVersion: targetplugin.CurrentProtocolVersion,
 		PluginID:        lifecyclePluginID,
 		Version:         version,
 		TargetTypes:     []string{"lifecycle"},
-		TargetSchema: targetplugin.FormSchema{Version: 1, Fields: []targetplugin.FormField{
+		TargetSchema: targetplugin.FormSchema{Version: schemaVersion, Fields: []targetplugin.FormField{
 			{Key: "path", Label: "Path", Control: targetplugin.ControlPath, Required: true},
-			{Key: "token", Label: "Token", Control: targetplugin.ControlSecret, Required: true},
+			{Key: secretKey, Label: "Credential", Control: targetplugin.ControlSecret, Required: true},
 		}},
-		BackupSchema:  targetplugin.FormSchema{Version: 1},
-		RestoreSchema: targetplugin.FormSchema{Version: 1},
+		BackupSchema: targetplugin.FormSchema{Version: schemaVersion, Fields: []targetplugin.FormField{
+			{Key: "policy", Label: "Policy", Control: targetplugin.ControlText},
+		}},
+		RestoreSchema: targetplugin.FormSchema{Version: schemaVersion, Fields: []targetplugin.FormField{
+			{Key: "mode", Label: "Mode", Control: targetplugin.ControlText},
+		}},
 	}
 }
 

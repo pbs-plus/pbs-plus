@@ -88,6 +88,18 @@ WHERE target_plugins.plugin_id = sqlc.arg(plugin_id)
       AND target_plugin_versions.version = sqlc.arg(version)
   );
 
+-- name: ActivateTargetPluginVersionFrom :execrows
+UPDATE target_plugins
+SET active_version = sqlc.arg(to_version)
+WHERE target_plugins.plugin_id = sqlc.arg(plugin_id)
+  AND active_version = sqlc.arg(from_version)
+  AND EXISTS (
+    SELECT 1
+    FROM target_plugin_versions
+    WHERE target_plugin_versions.plugin_id = target_plugins.plugin_id
+      AND target_plugin_versions.version = sqlc.arg(to_version)
+  );
+
 -- name: UpdateTargetPluginVersionHealth :execrows
 UPDATE target_plugin_versions
 SET health_state = sqlc.arg(health_state),

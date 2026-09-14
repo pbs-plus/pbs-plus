@@ -145,6 +145,43 @@ func (q *Queries) ListBackupPluginOptionHistory(ctx context.Context, backupID st
 	return items, nil
 }
 
+const listBackupPluginOptionsByPlugin = `-- name: ListBackupPluginOptionsByPlugin :many
+SELECT backup_id, plugin_id, plugin_version, schema_version, options, updated_at
+FROM backup_plugin_options
+WHERE plugin_id = ?
+ORDER BY backup_id
+`
+
+func (q *Queries) ListBackupPluginOptionsByPlugin(ctx context.Context, pluginID string) ([]BackupPluginOption, error) {
+	rows, err := q.db.QueryContext(ctx, listBackupPluginOptionsByPlugin, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BackupPluginOption{}
+	for rows.Next() {
+		var i BackupPluginOption
+		if err := rows.Scan(
+			&i.BackupID,
+			&i.PluginID,
+			&i.PluginVersion,
+			&i.SchemaVersion,
+			&i.Options,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBackupPluginOptionsByPluginVersion = `-- name: ListBackupPluginOptionsByPluginVersion :many
 SELECT backup_id, plugin_id, plugin_version, schema_version, options, updated_at
 FROM backup_plugin_options
@@ -225,6 +262,43 @@ func (q *Queries) ListRestorePluginOptionHistory(ctx context.Context, restoreID 
 	return items, nil
 }
 
+const listRestorePluginOptionsByPlugin = `-- name: ListRestorePluginOptionsByPlugin :many
+SELECT restore_id, plugin_id, plugin_version, schema_version, options, updated_at
+FROM restore_plugin_options
+WHERE plugin_id = ?
+ORDER BY restore_id
+`
+
+func (q *Queries) ListRestorePluginOptionsByPlugin(ctx context.Context, pluginID string) ([]RestorePluginOption, error) {
+	rows, err := q.db.QueryContext(ctx, listRestorePluginOptionsByPlugin, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RestorePluginOption{}
+	for rows.Next() {
+		var i RestorePluginOption
+		if err := rows.Scan(
+			&i.RestoreID,
+			&i.PluginID,
+			&i.PluginVersion,
+			&i.SchemaVersion,
+			&i.Options,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRestorePluginOptionsByPluginVersion = `-- name: ListRestorePluginOptionsByPluginVersion :many
 SELECT restore_id, plugin_id, plugin_version, schema_version, options, updated_at
 FROM restore_plugin_options
@@ -265,6 +339,98 @@ func (q *Queries) ListRestorePluginOptionsByPluginVersion(ctx context.Context, a
 		return nil, err
 	}
 	return items, nil
+}
+
+const migrateBackupPluginOptions = `-- name: MigrateBackupPluginOptions :execrows
+UPDATE backup_plugin_options
+SET plugin_version = ?1,
+    schema_version = ?2,
+    options = ?3,
+    updated_at = ?4
+WHERE backup_id = ?5
+  AND plugin_id = ?6
+  AND plugin_version = ?7
+  AND schema_version = ?8
+  AND options = ?9
+  AND updated_at = ?10
+`
+
+type MigrateBackupPluginOptionsParams struct {
+	ToPluginVersion   string `json:"to_plugin_version"`
+	ToSchemaVersion   int64  `json:"to_schema_version"`
+	ToOptions         []byte `json:"to_options"`
+	ToUpdatedAt       int64  `json:"to_updated_at"`
+	BackupID          string `json:"backup_id"`
+	PluginID          string `json:"plugin_id"`
+	FromPluginVersion string `json:"from_plugin_version"`
+	FromSchemaVersion int64  `json:"from_schema_version"`
+	FromOptions       []byte `json:"from_options"`
+	FromUpdatedAt     int64  `json:"from_updated_at"`
+}
+
+func (q *Queries) MigrateBackupPluginOptions(ctx context.Context, arg MigrateBackupPluginOptionsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, migrateBackupPluginOptions,
+		arg.ToPluginVersion,
+		arg.ToSchemaVersion,
+		arg.ToOptions,
+		arg.ToUpdatedAt,
+		arg.BackupID,
+		arg.PluginID,
+		arg.FromPluginVersion,
+		arg.FromSchemaVersion,
+		arg.FromOptions,
+		arg.FromUpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const migrateRestorePluginOptions = `-- name: MigrateRestorePluginOptions :execrows
+UPDATE restore_plugin_options
+SET plugin_version = ?1,
+    schema_version = ?2,
+    options = ?3,
+    updated_at = ?4
+WHERE restore_id = ?5
+  AND plugin_id = ?6
+  AND plugin_version = ?7
+  AND schema_version = ?8
+  AND options = ?9
+  AND updated_at = ?10
+`
+
+type MigrateRestorePluginOptionsParams struct {
+	ToPluginVersion   string `json:"to_plugin_version"`
+	ToSchemaVersion   int64  `json:"to_schema_version"`
+	ToOptions         []byte `json:"to_options"`
+	ToUpdatedAt       int64  `json:"to_updated_at"`
+	RestoreID         string `json:"restore_id"`
+	PluginID          string `json:"plugin_id"`
+	FromPluginVersion string `json:"from_plugin_version"`
+	FromSchemaVersion int64  `json:"from_schema_version"`
+	FromOptions       []byte `json:"from_options"`
+	FromUpdatedAt     int64  `json:"from_updated_at"`
+}
+
+func (q *Queries) MigrateRestorePluginOptions(ctx context.Context, arg MigrateRestorePluginOptionsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, migrateRestorePluginOptions,
+		arg.ToPluginVersion,
+		arg.ToSchemaVersion,
+		arg.ToOptions,
+		arg.ToUpdatedAt,
+		arg.RestoreID,
+		arg.PluginID,
+		arg.FromPluginVersion,
+		arg.FromSchemaVersion,
+		arg.FromOptions,
+		arg.FromUpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertBackupPluginOptions = `-- name: UpsertBackupPluginOptions :exec
