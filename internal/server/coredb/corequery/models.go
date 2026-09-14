@@ -124,6 +124,32 @@ type NotificationBatchResult struct {
 	RecordedAt int64  `json:"recorded_at"`
 }
 
+type PluginTargetConfig struct {
+	TargetName    string `json:"target_name"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	TargetType    string `json:"target_type"`
+	SchemaVersion int64  `json:"schema_version"`
+	Config        []byte `json:"config"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
+type PluginTargetConfigHistory struct {
+	ID            int64  `json:"id"`
+	TargetName    string `json:"target_name"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Config        []byte `json:"config"`
+	MigratedAt    int64  `json:"migrated_at"`
+}
+
+type PluginTargetSecret struct {
+	TargetName     string `json:"target_name"`
+	FieldKey       string `json:"field_key"`
+	EncryptedValue string `json:"encrypted_value"`
+}
+
 type Restore struct {
 	ID                    string         `json:"id"`
 	Store                 string         `json:"store"`

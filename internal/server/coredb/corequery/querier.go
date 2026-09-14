@@ -13,6 +13,7 @@ type Querier interface {
 	ActivateTargetPluginVersion(ctx context.Context, arg ActivateTargetPluginVersionParams) (int64, error)
 	AddJobToBatch(ctx context.Context, arg AddJobToBatchParams) error
 	AgentHostExists(ctx context.Context, name string) (int64, error)
+	ArchivePluginTargetConfig(ctx context.Context, arg ArchivePluginTargetConfigParams) error
 	BackupExists(ctx context.Context, id string) (int64, error)
 	BackupGroupMigrationCompleted(ctx context.Context, backupID string) (int64, error)
 	ClearTargetPluginActivation(ctx context.Context, pluginID string) (int64, error)
@@ -24,6 +25,7 @@ type Querier interface {
 	CreateBackup(ctx context.Context, arg CreateBackupParams) error
 	CreateExclusion(ctx context.Context, arg CreateExclusionParams) error
 	CreateNotificationBatch(ctx context.Context, arg CreateNotificationBatchParams) error
+	CreatePluginTargetConfig(ctx context.Context, arg CreatePluginTargetConfigParams) error
 	CreateRestore(ctx context.Context, arg CreateRestoreParams) error
 	CreateScript(ctx context.Context, arg CreateScriptParams) error
 	CreateTarget(ctx context.Context, arg CreateTargetParams) error
@@ -45,6 +47,7 @@ type Querier interface {
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
 	DeleteInactiveTargetPluginVersion(ctx context.Context, arg DeleteInactiveTargetPluginVersionParams) (int64, error)
 	DeleteNotificationBatch(ctx context.Context, name string) error
+	DeletePluginTargetSecret(ctx context.Context, arg DeletePluginTargetSecretParams) (int64, error)
 	DeleteRestore(ctx context.Context, id string) (int64, error)
 	DeleteRestoreDatabaseOptions(ctx context.Context, restoreID string) error
 	DeleteRestoreDovecotOptions(ctx context.Context, restoreID string) error
@@ -75,6 +78,7 @@ type Querier interface {
 	GetExclusion(ctx context.Context, arg GetExclusionParams) (Exclusion, error)
 	GetLatestVerificationResult(ctx context.Context, verificationJobID string) (VerificationResult, error)
 	GetNotificationBatch(ctx context.Context, name string) (NotificationBatch, error)
+	GetPluginTargetConfig(ctx context.Context, targetName string) (PluginTargetConfig, error)
 	GetRestore(ctx context.Context, id string) (GetRestoreRow, error)
 	GetScript(ctx context.Context, path string) (GetScriptRow, error)
 	GetTarget(ctx context.Context, name string) (GetTargetRow, error)
@@ -106,6 +110,9 @@ type Querier interface {
 	ListGlobalExclusions(ctx context.Context) ([]ListGlobalExclusionsRow, error)
 	ListNonRevokedTokens(ctx context.Context) ([]Token, error)
 	ListNotificationBatches(ctx context.Context) ([]NotificationBatch, error)
+	ListPluginTargetConfigHistory(ctx context.Context, targetName string) ([]PluginTargetConfigHistory, error)
+	ListPluginTargetConfigsByPlugin(ctx context.Context, pluginID string) ([]PluginTargetConfig, error)
+	ListPluginTargetSecrets(ctx context.Context, targetName string) ([]ListPluginTargetSecretsRow, error)
 	ListTargetPluginRepositories(ctx context.Context) ([]TargetPluginRepository, error)
 	ListTargetPluginVersions(ctx context.Context, pluginID string) ([]TargetPluginVersion, error)
 	ListTargetPlugins(ctx context.Context) ([]TargetPlugin, error)
@@ -127,6 +134,7 @@ type Querier interface {
 	UpdateBackupNamespace(ctx context.Context, arg UpdateBackupNamespaceParams) error
 	UpdateExclusion(ctx context.Context, arg UpdateExclusionParams) (int64, error)
 	UpdateNotificationBatch(ctx context.Context, arg UpdateNotificationBatchParams) error
+	UpdatePluginTargetConfig(ctx context.Context, arg UpdatePluginTargetConfigParams) (int64, error)
 	UpdateRestore(ctx context.Context, arg UpdateRestoreParams) error
 	UpdateScript(ctx context.Context, arg UpdateScriptParams) error
 	UpdateTarget(ctx context.Context, arg UpdateTargetParams) error
@@ -144,6 +152,7 @@ type Querier interface {
 	UpsertBackupDatabaseOptions(ctx context.Context, arg UpsertBackupDatabaseOptionsParams) error
 	UpsertBackupDovecotOptions(ctx context.Context, arg UpsertBackupDovecotOptionsParams) error
 	UpsertBatchResult(ctx context.Context, arg UpsertBatchResultParams) error
+	UpsertPluginTargetSecret(ctx context.Context, arg UpsertPluginTargetSecretParams) error
 	UpsertRestoreDatabaseOptions(ctx context.Context, arg UpsertRestoreDatabaseOptionsParams) error
 	UpsertRestoreDovecotOptions(ctx context.Context, arg UpsertRestoreDovecotOptionsParams) error
 	UpsertTarget(ctx context.Context, arg UpsertTargetParams) error
