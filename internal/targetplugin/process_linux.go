@@ -37,11 +37,12 @@ type Process struct {
 
 	brokerToken []byte
 
-	mu           sync.Mutex
-	released     bool
-	cleanup      []func() error
-	eventSink    func(HostEvent) error
-	agentRestore func(context.Context, HostAgentRestoreRequest) error
+	mu               sync.Mutex
+	released         bool
+	cleanup          []func() error
+	eventSink        func(HostEvent) error
+	agentBackupMount func(context.Context, HostAgentBackupMountRequest) (HostAgentBackupMountResponse, func() error, error)
+	agentRestore     func(context.Context, HostAgentRestoreRequest) error
 
 	closeOnce sync.Once
 	closeErr  error
@@ -135,6 +136,7 @@ func Start(ctx context.Context, executable string, args ...string) (*Process, er
 	process := &Process{command: command, pipe: pipe, wait: wait, brokerToken: token}
 	router := arpc.NewRouter()
 	router.Handle(MethodHostEvent, process.handleHostEvent)
+	router.Handle(MethodHostAgentBackupMount, process.handleHostAgentBackupMount)
 	router.Handle(MethodHostAgentRestore, process.handleHostAgentRestore)
 	pipe.SetRouter(router)
 	go func() { _ = pipe.Serve() }()
@@ -151,6 +153,12 @@ func (p *Process) BrokerToken() []byte {
 func (p *Process) SetEventSink(sink func(HostEvent) error) {
 	p.mu.Lock()
 	p.eventSink = sink
+	p.mu.Unlock()
+}
+
+func (p *Process) SetAgentBackupMountHandler(handler func(context.Context, HostAgentBackupMountRequest) (HostAgentBackupMountResponse, func() error, error)) {
+	p.mu.Lock()
+	p.agentBackupMount = handler
 	p.mu.Unlock()
 }
 
@@ -181,6 +189,40 @@ func (p *Process) handleHostEvent(request *arpc.Request) (arpc.Response, error) 
 		}
 	}
 	return arpc.Response{Status: http.StatusOK}, nil
+}
+
+func (p *Process) handleHostAgentBackupMount(request *arpc.Request) (arpc.Response, error) {
+	var mountRequest HostAgentBackupMountRequest
+	if err := UnmarshalProtocol(request.Payload, &mountRequest); err != nil {
+		return arpc.Response{}, fmt.Errorf("decode host agent backup mount: %w", err)
+	}
+	if err := mountRequest.Validate(); err != nil {
+		return arpc.Response{}, fmt.Errorf("validate host agent backup mount: %w", err)
+	}
+	if subtle.ConstantTimeCompare(mountRequest.Operation.BrokerToken, p.brokerToken) != 1 {
+		return arpc.Response{}, errors.New("host agent backup mount broker token is not authorized")
+	}
+	p.mu.Lock()
+	handler := p.agentBackupMount
+	p.mu.Unlock()
+	if handler == nil {
+		return arpc.Response{}, errors.New("host agent backup mount is not available")
+	}
+	response, cleanup, err := handler(request.Context, mountRequest)
+	if err != nil {
+		return arpc.Response{}, fmt.Errorf("host agent backup mount: %w", err)
+	}
+	if err := p.AddCleanup(cleanup); err != nil {
+		return arpc.Response{}, fmt.Errorf("register host agent backup mount cleanup: %w", err)
+	}
+	if err := response.Validate(); err != nil {
+		return arpc.Response{}, fmt.Errorf("validate host agent backup mount response: %w", err)
+	}
+	data, err := MarshalProtocol(response)
+	if err != nil {
+		return arpc.Response{}, fmt.Errorf("encode host agent backup mount response: %w", err)
+	}
+	return arpc.Response{Status: http.StatusOK, Data: data}, nil
 }
 
 func (p *Process) handleHostAgentRestore(request *arpc.Request) (arpc.Response, error) {

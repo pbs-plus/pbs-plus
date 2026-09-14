@@ -18,6 +18,8 @@ import (
 // MethodHandler answers one plugin method; the returned value is encoded as canonical CBOR.
 type MethodHandler func(ctx context.Context, payload []byte) (any, error)
 
+type hostPipeContextKey struct{}
+
 // Serve answers plugin methods over the socket the host inherited to this process.
 func Serve(ctx context.Context, descriptor Descriptor, handlers map[string]MethodHandler) error {
 	if err := descriptor.Validate(); err != nil {
@@ -47,7 +49,8 @@ func Serve(ctx context.Context, descriptor Descriptor, handlers map[string]Metho
 	})
 	for method, handler := range handlers {
 		router.Handle(method, func(request *arpc.Request) (arpc.Response, error) {
-			value, err := handler(request.Context, request.Payload)
+			handlerCtx := context.WithValue(request.Context, hostPipeContextKey{}, pipe)
+			value, err := handler(handlerCtx, request.Payload)
 			if err != nil {
 				return arpc.Response{}, err
 			}
@@ -72,6 +75,49 @@ func Request[T interface{ Validate() error }](payload []byte) (T, error) {
 		return request, err
 	}
 	return request, nil
+}
+
+func CallHost(ctx context.Context, method string, request interface{ Validate() error }, response any) error {
+	if ctx == nil {
+		return errors.New("host call context is required")
+	}
+	pipe, ok := ctx.Value(hostPipeContextKey{}).(*arpc.StreamPipe)
+	if !ok || pipe == nil {
+		return errors.New("host calls are only available inside a plugin handler")
+	}
+	if err := validateHostInvocationMethod(method); err != nil {
+		return err
+	}
+	if err := validateProtocolValue("host request", request); err != nil {
+		return err
+	}
+	payload, err := MarshalProtocol(request)
+	if err != nil {
+		return fmt.Errorf("encode host request: %w", err)
+	}
+	var data []byte
+	if err := pipe.Call(ctx, method, payload, &data); err != nil {
+		return fmt.Errorf("invoke %s: %w", method, err)
+	}
+	if response == nil {
+		return nil
+	}
+	if len(data) == 0 {
+		return errors.New("host response is empty")
+	}
+	if err := UnmarshalProtocol(data, response); err != nil {
+		return fmt.Errorf("decode host response: %w", err)
+	}
+	return validateProtocolValue("host response", response)
+}
+
+func validateHostInvocationMethod(method string) error {
+	switch method {
+	case MethodHostEvent, MethodHostScratch, MethodHostAgentBackupMount, MethodHostAgentRestore, MethodHostLeaseClose:
+		return nil
+	default:
+		return fmt.Errorf("unsupported host invocation method %q", method)
+	}
 }
 
 func inheritedPipe(ctx context.Context) (*arpc.StreamPipe, error) {

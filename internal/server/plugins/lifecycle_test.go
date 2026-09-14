@@ -724,7 +724,8 @@ func TestLifecyclePluginHelper(t *testing.T) {
 			response.Mode = targetplugin.RestoreModeStructured
 		case "agent":
 			brokerRequest := targetplugin.HostAgentRestoreRequest{
-				Operation: open.Operation, Hostname: "agent.example", VolumeID: "disk-1", DestinationPath: "/restore",
+				Operation: open.Operation, Hostname: "agent.example", VolumeID: "disk-1",
+				OperatingSystem: "linux", DestinationPath: "/restore",
 			}
 			encoded, err := targetplugin.MarshalProtocol(brokerRequest)
 			if err != nil {

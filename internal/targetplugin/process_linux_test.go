@@ -329,6 +329,48 @@ func TestProcessHostEvent(t *testing.T) {
 	}
 }
 
+func TestProcessHostAgentBackupMount(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginAgentBackupMountHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cleaned := false
+	process.SetAgentBackupMountHandler(func(_ context.Context, request HostAgentBackupMountRequest) (HostAgentBackupMountResponse, func() error, error) {
+		if request.Hostname != "agent.example" || request.VolumeID != "root" || request.OperatingSystem != "linux" {
+			return HostAgentBackupMountResponse{}, nil, fmt.Errorf("unexpected mount request: %#v", request)
+		}
+		return HostAgentBackupMountResponse{Path: "/mnt/agent"}, func() error {
+			cleaned = true
+			return nil
+		}, nil
+	})
+
+	operation := validTestOperation()
+	operation.BrokerToken = process.BrokerToken()
+	var response TargetProbeResponse
+	if err := process.Invoke(t.Context(), MethodTargetProbe, TargetProbeRequest{
+		Operation: operation,
+		Target:    TargetInput{Config: Values{"path": NewStringScalar("/data")}},
+	}, &response); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	path, _ := response.Details["path"].StringValue()
+	if path != "/mnt/agent" {
+		t.Fatalf("mount path = %q", path)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !cleaned {
+		t.Fatal("agent mount cleanup did not run")
+	}
+}
+
 func TestProcessAddCleanupAfterCloseRunsImmediately(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
@@ -424,6 +466,40 @@ func TestPluginProcessHelper(t *testing.T) {
 	})
 	pipe.SetRouter(router)
 	_ = pipe.Serve()
+}
+
+func TestPluginAgentBackupMountHelper(t *testing.T) {
+	if _, ok := os.LookupEnv(SocketFDEnv); !ok {
+		return
+	}
+	handler := func(ctx context.Context, payload []byte) (any, error) {
+		probe, err := Request[TargetProbeRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		var mount HostAgentBackupMountResponse
+		if err := CallHost(ctx, MethodHostAgentBackupMount, HostAgentBackupMountRequest{
+			Operation:       probe.Operation,
+			Hostname:        "agent.example",
+			VolumeID:        "root",
+			OperatingSystem: "linux",
+		}, &mount); err != nil {
+			return nil, err
+		}
+		return TargetProbeResponse{Available: true, Details: Values{"path": NewStringScalar(mount.Path)}}, nil
+	}
+	err := Serve(t.Context(), Descriptor{
+		ProtocolVersion: CurrentProtocolVersion,
+		PluginID:        "org.pbs-plus.test",
+		Version:         "1.0.0",
+		TargetTypes:     []string{"test"},
+		TargetSchema:    FormSchema{Version: 1},
+		BackupSchema:    FormSchema{Version: 1},
+		RestoreSchema:   FormSchema{Version: 1},
+	}, map[string]MethodHandler{MethodTargetProbe: handler})
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
 }
 
 func TestPluginInvokeHelper(t *testing.T) {

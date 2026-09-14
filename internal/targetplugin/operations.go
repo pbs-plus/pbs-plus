@@ -166,11 +166,24 @@ type RestoreOpenResponse struct {
 	CleanupToken []byte      `cbor:"cleanup_token"`
 }
 
+type HostAgentBackupMountRequest struct {
+	Operation       Operation `cbor:"operation"`
+	Hostname        string    `cbor:"hostname"`
+	VolumeID        string    `cbor:"volume_id"`
+	OperatingSystem string    `cbor:"operating_system"`
+}
+
+type HostAgentBackupMountResponse struct {
+	Path  string `cbor:"path"`
+	Empty bool   `cbor:"empty,omitempty"`
+}
+
 // HostAgentRestoreRequest asks the host to stream one snapshot to an agent.
 type HostAgentRestoreRequest struct {
 	Operation       Operation `cbor:"operation"`
 	Hostname        string    `cbor:"hostname"`
 	VolumeID        string    `cbor:"volume_id"`
+	OperatingSystem string    `cbor:"operating_system"`
 	DestinationPath string    `cbor:"destination_path"`
 }
 
@@ -362,18 +375,36 @@ func (response RestoreOpenResponse) Validate() error {
 	return validateCleanupToken(response.CleanupToken)
 }
 
+func (request HostAgentBackupMountRequest) Validate() error {
+	if err := validateAgentBrokerRequest(request.Operation, request.Hostname, request.VolumeID, request.OperatingSystem); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (response HostAgentBackupMountResponse) Validate() error {
+	return validateAbsolutePath("agent backup mount path", response.Path)
+}
+
 // Validate checks one scoped agent restore broker request.
 func (request HostAgentRestoreRequest) Validate() error {
-	if err := validateBrokerOperation(request.Operation); err != nil {
-		return err
-	}
-	if err := validateText("agent hostname", request.Hostname, maxPathBytes); err != nil {
-		return err
-	}
-	if err := validateText("agent volume ID", request.VolumeID, maxPathBytes); err != nil {
+	if err := validateAgentBrokerRequest(request.Operation, request.Hostname, request.VolumeID, request.OperatingSystem); err != nil {
 		return err
 	}
 	return validateText("agent destination path", request.DestinationPath, maxPathBytes)
+}
+
+func validateAgentBrokerRequest(operation Operation, hostname, volumeID, operatingSystem string) error {
+	if err := validateBrokerOperation(operation); err != nil {
+		return err
+	}
+	if err := validateText("agent hostname", hostname, maxPathBytes); err != nil {
+		return err
+	}
+	if err := validateText("agent volume ID", volumeID, maxPathBytes); err != nil {
+		return err
+	}
+	return validateText("agent operating system", operatingSystem, maxPathBytes)
 }
 
 func (request RestoreCheckRequest) Validate() error {
