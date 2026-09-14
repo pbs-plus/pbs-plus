@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
@@ -125,13 +126,27 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 		return nil, nil, fmt.Errorf("write request: %w", err)
 	}
 
+	decoded := make(chan struct{})
+	if ctx.Done() != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				if err := stream.SetDeadline(time.Now()); err != nil {
+					log.Error(err, "arpc: failed to interrupt cancelled call")
+				}
+			case <-decoded:
+			}
+		}()
+	}
 	var resp Response
-	if err := dec.Decode(&resp); err != nil {
+	decodeErr := dec.Decode(&resp)
+	close(decoded)
+	if decodeErr != nil {
 		releaseStream(stream)
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
-		return nil, nil, fmt.Errorf("decode response: %w", err)
+		return nil, nil, fmt.Errorf("decode response: %w", decodeErr)
 	}
 
 	return stream, &resp, nil

@@ -166,12 +166,23 @@ func TestPluginLifecycle(t *testing.T) {
 	if err != nil || pluginTarget.PluginVersion != "1.1.0" || pluginTarget.TargetType != "lifecycle" || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "credential" {
 		t.Fatalf("plugin target = %#v, %v", pluginTarget, err)
 	}
-	optionValues := lifecycleValues(t, targetplugin.Values{"policy": targetplugin.NewStringScalar("full")})
-	lease, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-job", "execution-id", &coredb.PluginJobOptions{
-		JobID: "backup-job", PluginID: lifecyclePluginID, PluginVersion: "1.1.0", SchemaVersion: 2, Options: optionValues,
-	}, nil)
+	backupOptions := func(jobID, policy string) *coredb.PluginJobOptions {
+		return &coredb.PluginJobOptions{
+			JobID: jobID, PluginID: lifecyclePluginID, PluginVersion: "1.1.0", SchemaVersion: 2,
+			Options: lifecycleValues(t, targetplugin.Values{"policy": targetplugin.NewStringScalar(policy)}),
+		}
+	}
+	var backupEvents []targetplugin.HostEvent
+	lease, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-job", "execution-id", backupOptions("backup-job", "full"),
+		func(event targetplugin.HostEvent) error {
+			backupEvents = append(backupEvents, event)
+			return nil
+		})
 	if err != nil {
 		t.Fatalf("OpenBackup: %v", err)
+	}
+	if len(backupEvents) != 1 || backupEvents[0].Message != "backup source ready" {
+		t.Fatalf("backup events = %#v", backupEvents)
 	}
 	leasePath := lease.Path
 	if data, err := os.ReadFile(filepath.Join(leasePath, "payload")); err != nil || string(data) != "plugin backup" {
@@ -205,6 +216,63 @@ func TestPluginLifecycle(t *testing.T) {
 	if metadata.Archive.FormatVersion != 1 {
 		t.Fatalf("snapshot archive = %#v", metadata.Archive)
 	}
+
+	for _, failure := range []struct {
+		name     string
+		policy   string
+		wantText string
+	}{
+		{name: "plugin error", policy: "fail", wantText: "injected backup failure"},
+		{name: "source outside workspace", policy: "escape", wantText: "outside its workspace"},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			before := pluginTempDirs(t)
+			_, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-"+failure.policy, "execution-"+failure.policy,
+				backupOptions("backup-"+failure.policy, failure.policy), nil)
+			if err == nil || !strings.Contains(err.Error(), failure.wantText) {
+				t.Fatalf("OpenBackup error = %v, want %q", err, failure.wantText)
+			}
+			if after := pluginTempDirs(t); after != before {
+				t.Fatalf("plugin temp directories = %d, want %d", after, before)
+			}
+		})
+	}
+
+	t.Run("cancellation releases the plugin slot", func(t *testing.T) {
+		before := pluginTempDirs(t)
+		cancelCtx, cancel := context.WithCancel(ctx)
+		hung := make(chan error, 1)
+		go func() {
+			_, err := OpenBackup(cancelCtx, db, supervisor, "plugin-target", "backup-hang", "execution-hang",
+				backupOptions("backup-hang", "hang"), nil)
+			hung <- err
+		}()
+		time.Sleep(200 * time.Millisecond)
+		cancel()
+		select {
+		case err := <-hung:
+			if err == nil {
+				t.Fatal("cancelled OpenBackup succeeded")
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("cancelled OpenBackup did not return")
+		}
+		if after := pluginTempDirs(t); after != before {
+			t.Fatalf("plugin temp directories = %d, want %d", after, before)
+		}
+
+		retried, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-retry", "execution-retry",
+			backupOptions("backup-retry", "full"), nil)
+		if err != nil {
+			t.Fatalf("retried OpenBackup: %v", err)
+		}
+		if err := retried.Close(); err != nil {
+			t.Fatalf("close retried lease: %v", err)
+		}
+		if after := pluginTempDirs(t); after != before {
+			t.Fatalf("plugin temp directories after retry = %d, want %d", after, before)
+		}
+	})
 	newRestoreOptions := func(jobID, mode string) *coredb.PluginJobOptions {
 		return &coredb.PluginJobOptions{
 			JobID: jobID, PluginID: lifecyclePluginID, PluginVersion: "1.1.0", SchemaVersion: 2,
@@ -422,6 +490,15 @@ func assertLifecycleMigrationState(t *testing.T, ctx context.Context, db *coredb
 	}
 }
 
+func pluginTempDirs(t *testing.T) int {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), ".pbs-plus-plugin-*"))
+	if err != nil {
+		t.Fatalf("glob plugin temp directories: %v", err)
+	}
+	return len(matches)
+}
+
 func lifecycleValues(t *testing.T, values targetplugin.Values) []byte {
 	t.Helper()
 	encoded, err := targetplugin.MarshalProtocol(values)
@@ -575,8 +652,37 @@ func TestLifecyclePluginHelper(t *testing.T) {
 		}
 		policy, ok := open.Job.Options["policy"]
 		policyValue, valueOK := policy.StringValue()
-		if !ok || !valueOK || policyValue != "full" || string(open.Job.Target.Secrets["credential"]) != "secret" {
+		if !ok || !valueOK || string(open.Job.Target.Secrets["credential"]) != "secret" {
 			return arpc.Response{}, errors.New("backup received incomplete job values")
+		}
+		switch policyValue {
+		case "full":
+		case "fail":
+			return arpc.Response{}, errors.New("injected backup failure")
+		case "escape":
+			return lifecycleResponse(targetplugin.BackupOpenResponse{
+				Kind:         targetplugin.SourceDirectory,
+				Path:         os.TempDir(),
+				Archive:      targetplugin.Archive{Type: "lifecycle", FormatVersion: 1},
+				CleanupToken: []byte("cleanup"),
+			})
+		case "hang":
+			<-request.Context.Done()
+			return arpc.Response{}, request.Context.Err()
+		default:
+			return arpc.Response{}, fmt.Errorf("unsupported test backup policy %q", policyValue)
+		}
+		event, err := targetplugin.MarshalProtocol(targetplugin.HostEvent{
+			Operation: open.Operation,
+			Level:     targetplugin.EventInfo,
+			Message:   "backup source ready",
+		})
+		if err != nil {
+			return arpc.Response{}, err
+		}
+		var acknowledged []byte
+		if err := pipe.Call(request.Context, targetplugin.MethodHostEvent, event, &acknowledged); err != nil {
+			return arpc.Response{}, err
 		}
 		source := filepath.Join(open.Job.Workspace, "source")
 		if err := os.Mkdir(source, 0o700); err != nil {
