@@ -164,13 +164,13 @@ Target deletion has no remote cleanup hook in version 1. Current target deletion
 
 A long-running plugin process can call a small host router over the same bidirectional aRPC session:
 
-| Method                    | Purpose                                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------------------- |
-| `host.event`              | Emit a structured log, warning, progress update, or user-safe diagnostic                 |
-| `host.scratch`            | Request an operation-scoped directory with a size policy                                 |
-| `host.agent_backup_mount` | Acquire the existing agent filesystem source lease for the first-party filesystem plugin |
-| `host.agent_restore`      | Run the existing agent restore stream for the first-party filesystem plugin              |
-| `host.lease_close`        | Release a brokered lease early                                                           |
+| Method                    | Purpose                                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------- |
+| `host.event`              | Emit a structured log, warning, progress update, or user-safe diagnostic                       |
+| `host.scratch`            | Request an operation-scoped directory with a size policy                                       |
+| `host.agent_backup_mount` | Acquire the existing agent filesystem source lease for the first-party agent filesystem plugin |
+| `host.agent_restore`      | Run the existing agent restore stream for the first-party agent filesystem plugin              |
+| `host.lease_close`        | Release a brokered lease early                                                                 |
 
 Broker calls use an unforgeable operation token created after spawn. The token only authorizes the current target and operation. No generic database, shell, file-read, or secret-fetch broker is exposed.
 
@@ -386,18 +386,19 @@ The Targets tree becomes descriptor-driven. Installed target types provide label
 
 ## First-party parity plan
 
-First-party plugins live as separate `cmd/target-plugin-*` executables. They may reuse internal implementation packages while they are built from this repository, but their code is not linked into `pbs-plus`.
+First-party plugins live as separate `cmd/plugin-*` executables. They may reuse internal implementation packages while they are built from this repository, but their code is not linked into `pbs-plus`.
 
 The aRPC/CBOR wire format and golden fixtures are the public contract. A small Go SDK may wrap them, but installation cannot require that a plugin be written in Go. smux and CBOR interoperability are part of the repository conformance check.
 
-| Plugin        | Target config                                                 | Probe                         | Backup                   | Restore                                      | Special host service               |
-| ------------- | ------------------------------------------------------------- | ----------------------------- | ------------------------ | -------------------------------------------- | ---------------------------------- |
-| filesystem    | local or agent access, path, agent host                       | statfs or agent               | readable path lease      | writable local path or brokered agent stream | scoped agent backup/restore broker |
-| S3            | endpoint, bucket, region, prefix, TLS, addressing, access key | TCP/TLS and bucket check      | S3 FUSE path lease       | unsupported, preserving current behavior     | none                               |
-| PostgreSQL    | host, port, username, TLS, CA, client selection               | TCP plus client preflight     | staged dump directory    | structured consumer                          | none                               |
-| MySQL/MariaDB | PostgreSQL fields plus server/client family                   | TCP plus client preflight     | staged dump directory    | structured consumer                          | none                               |
-| LDAP          | host, port, bind user, TLS, CA, base DN, client selection     | TCP/TLS plus client preflight | staged LDIF directory    | structured consumer                          | none                               |
-| Dovecot       | listener, password, CA, client selection                      | TCP/TLS plus client preflight | staged mailbox directory | structured consumer                          | none                               |
+| Plugin           | Target config                                                 | Probe                         | Backup                     | Restore                                  | Special host service               |
+| ---------------- | ------------------------------------------------------------- | ----------------------------- | -------------------------- | ---------------------------------------- | ---------------------------------- |
+| filesystem       | path                                                          | statfs                        | readable path lease        | writable local path                      | none                               |
+| agent filesystem | agent hostname, volume, operating system                      | host-side agent session       | brokered agent mount lease | brokered agent stream                    | scoped agent backup/restore broker |
+| S3               | endpoint, bucket, region, prefix, TLS, addressing, access key | TCP/TLS and bucket check      | S3 FUSE path lease         | unsupported, preserving current behavior | none                               |
+| PostgreSQL       | host, port, username, TLS, CA, client selection               | TCP plus client preflight     | staged dump directory      | structured consumer                      | none                               |
+| MySQL/MariaDB    | PostgreSQL fields plus server/client family                   | TCP plus client preflight     | staged dump directory      | structured consumer                      | none                               |
+| LDAP             | host, port, bind user, TLS, CA, base DN, client selection     | TCP/TLS plus client preflight | staged LDIF directory      | structured consumer                      | none                               |
+| Dovecot          | listener, password, CA, client selection                      | TCP/TLS plus client preflight | staged mailbox directory   | structured consumer                      | none                               |
 
 The database and Dovecot plugins initially move existing orchestration behind the contract rather than rewrite it. Their current staging implementations already expose archive directories (`internal/server/backup/source.go:111-160`), which matches `backup.open`.
 
@@ -451,13 +452,15 @@ Exit: a third-party test plugin completes backup and restore through the normal 
 
 Migrate in increasing integration difficulty:
 
-1. local filesystem
-2. S3
-3. PostgreSQL
-4. MySQL/MariaDB
-5. LDAP
-6. Dovecot
-7. agent filesystem
+1. local filesystem (`org.pbs-plus.filesystem`)
+2. PostgreSQL (`org.pbs-plus.postgresql`)
+3. S3 (`org.pbs-plus.s3`)
+4. MySQL/MariaDB (`org.pbs-plus.mysql`)
+5. LDAP (`org.pbs-plus.ldap`)
+6. Dovecot (`org.pbs-plus.dovecot`)
+7. agent filesystem (`org.pbs-plus.agentfs`)
+
+PostgreSQL moved ahead of S3 because it is self-contained, while S3 first needed a source decision: the S3 plugin mounts `internal/server/vfs/s3fs` inside its own process and unmounts before exit, so no host mount broker was added. Agent filesystem is a separate plugin rather than a second target type of the filesystem plugin, because one plugin carries one target schema and folding agent fields into it would break the required local `path` field and force a schema migration of already-imported targets.
 
 For each plugin:
 
