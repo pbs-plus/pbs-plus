@@ -390,14 +390,14 @@ First-party plugins live as separate `cmd/target-plugin-*` executables. They may
 
 The aRPC/CBOR wire format and golden fixtures are the public contract. A small Go SDK may wrap them, but installation cannot require that a plugin be written in Go. smux and CBOR interoperability are part of the repository conformance check.
 
-| Plugin        | Target config                                             | Probe                         | Backup                   | Restore                                      | Special host service               |
-| ------------- | --------------------------------------------------------- | ----------------------------- | ------------------------ | -------------------------------------------- | ---------------------------------- |
-| filesystem    | local or agent access, path, agent host                   | statfs or agent               | readable path lease      | writable local path or brokered agent stream | scoped agent backup/restore broker |
-| S3            | endpoint, bucket, region, TLS, addressing, access key     | TCP/TLS and bucket check      | S3 FUSE path lease       | unsupported, preserving current behavior     | none                               |
-| PostgreSQL    | host, port, username, TLS, CA, client selection           | TCP plus client preflight     | staged dump directory    | structured consumer                          | none                               |
-| MySQL/MariaDB | PostgreSQL fields plus server/client family               | TCP plus client preflight     | staged dump directory    | structured consumer                          | none                               |
-| LDAP          | host, port, bind user, TLS, CA, base DN, client selection | TCP/TLS plus client preflight | staged LDIF directory    | structured consumer                          | none                               |
-| Dovecot       | listener, password, CA, client selection                  | TCP/TLS plus client preflight | staged mailbox directory | structured consumer                          | none                               |
+| Plugin        | Target config                                                 | Probe                         | Backup                   | Restore                                      | Special host service               |
+| ------------- | ------------------------------------------------------------- | ----------------------------- | ------------------------ | -------------------------------------------- | ---------------------------------- |
+| filesystem    | local or agent access, path, agent host                       | statfs or agent               | readable path lease      | writable local path or brokered agent stream | scoped agent backup/restore broker |
+| S3            | endpoint, bucket, region, prefix, TLS, addressing, access key | TCP/TLS and bucket check      | S3 FUSE path lease       | unsupported, preserving current behavior     | none                               |
+| PostgreSQL    | host, port, username, TLS, CA, client selection               | TCP plus client preflight     | staged dump directory    | structured consumer                          | none                               |
+| MySQL/MariaDB | PostgreSQL fields plus server/client family                   | TCP plus client preflight     | staged dump directory    | structured consumer                          | none                               |
+| LDAP          | host, port, bind user, TLS, CA, base DN, client selection     | TCP/TLS plus client preflight | staged LDIF directory    | structured consumer                          | none                               |
+| Dovecot       | listener, password, CA, client selection                      | TCP/TLS plus client preflight | staged mailbox directory | structured consumer                          | none                               |
 
 The database and Dovecot plugins initially move existing orchestration behind the contract rather than rewrite it. Their current staging implementations already expose archive directories (`internal/server/backup/source.go:111-160`), which matches `backup.open`.
 

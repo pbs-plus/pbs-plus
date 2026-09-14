@@ -12,6 +12,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/postgresql"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/s3"
 )
 
 type importConfig func(coredb.Target) (targetplugin.Values, map[string][]byte, error)
@@ -25,8 +26,36 @@ func ImportLocalTargets(ctx context.Context, db *coredb.Store) (int, error) {
 		})
 }
 
-// ImportPostgreSQLTargets attaches plugin configs to every legacy PostgreSQL target,
-// copying the stored password into the plugin secret store so both paths stay usable.
+// ImportS3Targets copies legacy S3 settings into the encrypted plugin store while preserving the public target row.
+func ImportS3Targets(ctx context.Context, db *coredb.Store) (int, error) {
+	return importTargets(ctx, db, s3.PluginID, s3.TargetType,
+		func(target coredb.Target) bool { return target.IsS3() },
+		func(target coredb.Target) (targetplugin.Values, map[string][]byte, error) {
+			if target.S3Info == nil {
+				return nil, nil, fmt.Errorf("S3 target %q has no parsed configuration", target.Name)
+			}
+			secret, err := db.GetS3Secret(target.Name)
+			if err != nil {
+				return nil, nil, fmt.Errorf("get S3 secret for %q: %w", target.Name, err)
+			}
+			config := targetplugin.Values{
+				"endpoint":   targetplugin.NewStringScalar(target.S3Info.Endpoint),
+				"bucket":     targetplugin.NewStringScalar(target.S3Info.Bucket),
+				"access_key": targetplugin.NewStringScalar(target.S3Info.AccessKey),
+				"use_ssl":    targetplugin.NewBooleanScalar(target.S3Info.UseSSL),
+				"path_style": targetplugin.NewBooleanScalar(target.S3Info.IsPathStyle),
+			}
+			if target.S3Info.Region != "" {
+				config["region"] = targetplugin.NewStringScalar(target.S3Info.Region)
+			}
+			if target.S3Info.Key != "" {
+				config["prefix"] = targetplugin.NewStringScalar(target.S3Info.Key)
+			}
+			return config, map[string][]byte{"secret_key": []byte(secret)}, nil
+		})
+}
+
+// ImportPostgreSQLTargets preserves the legacy target while copying its password into the plugin secret store.
 func ImportPostgreSQLTargets(ctx context.Context, db *coredb.Store) (int, error) {
 	return importTargets(ctx, db, postgresql.PluginID, postgresql.TargetType,
 		func(target coredb.Target) bool { return target.Type == coredb.TargetTypePostgreSQL },

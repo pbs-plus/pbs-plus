@@ -9,6 +9,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/postgresql"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/s3"
 )
 
 // LegacySnapshotMetadata maps pre-plugin snapshots only to fixed first-party archive contracts.
@@ -19,6 +20,8 @@ func LegacySnapshotMetadata(ctx context.Context, db *coredb.Store, target coredb
 		archive = targetplugin.Archive{Type: filesystem.ArchiveType, FormatVersion: filesystem.ArchiveFormatVersion}
 	case target.PluginID == postgresql.PluginID && target.TargetType == postgresql.TargetType:
 		archive = targetplugin.Archive{Type: postgresql.ArchiveType, FormatVersion: postgresql.ArchiveFormatVersion}
+	case target.PluginID == s3.PluginID && target.TargetType == s3.TargetType:
+		archive = targetplugin.Archive{Type: s3.ArchiveType, FormatVersion: s3.ArchiveFormatVersion}
 	default:
 		return targetplugin.SnapshotMetadata{}, false
 	}

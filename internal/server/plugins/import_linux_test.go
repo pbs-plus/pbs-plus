@@ -13,6 +13,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/postgresql"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/s3"
 )
 
 func TestImportLocalTargets(t *testing.T) {
@@ -54,6 +55,70 @@ func TestImportLocalTargets(t *testing.T) {
 	again, err := ImportLocalTargets(ctx, db)
 	if err != nil || again != 0 {
 		t.Fatalf("second ImportLocalTargets = %d, %v", again, err)
+	}
+}
+
+func TestImportS3Targets(t *testing.T) {
+	ctx := context.Background()
+	directory := t.TempDir()
+	crypto.SetSealKeyPath(filepath.Join(directory, "seal.key"))
+	t.Cleanup(func() { crypto.SetSealKeyPath("") })
+	db, err := coredb.Initialize(ctx, filepath.Join(directory, "import-s3.db"))
+	if err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	defer db.Close()
+
+	installTestPlugin(t, ctx, db, s3.Descriptor(), s3.Version)
+	target := coredb.Target{
+		Name: "archive", Type: coredb.TargetTypeS3,
+		Path: "https://backup@minio.example:9000/archive/base?region=us-east-1&path-style=true",
+	}
+	if err := db.CreateTarget(nil, target); err != nil {
+		t.Fatalf("CreateTarget: %v", err)
+	}
+	if err := db.AddS3Secret(nil, target.Name, "s3-secret"); err != nil {
+		t.Fatalf("AddS3Secret: %v", err)
+	}
+
+	imported, err := ImportS3Targets(ctx, db)
+	if err != nil || imported != 1 {
+		t.Fatalf("ImportS3Targets = %d, %v", imported, err)
+	}
+	pluginTarget, err := db.GetPluginTarget(ctx, target.Name)
+	if err != nil || pluginTarget.PluginID != s3.PluginID ||
+		pluginTarget.TargetType != s3.TargetType || pluginTarget.PluginVersion != s3.Version {
+		t.Fatalf("imported plugin target = %#v, %v", pluginTarget, err)
+	}
+	var config targetplugin.Values
+	if err := targetplugin.UnmarshalProtocol(pluginTarget.Config, &config); err != nil {
+		t.Fatalf("UnmarshalProtocol: %v", err)
+	}
+	if endpoint, _ := config["endpoint"].StringValue(); endpoint != "minio.example:9000" {
+		t.Fatalf("imported config = %#v", config)
+	}
+	if pathStyle, _ := config["path_style"].BooleanValue(); !pathStyle {
+		t.Fatalf("imported config = %#v", config)
+	}
+	if prefix, _ := config["prefix"].StringValue(); prefix != "base" {
+		t.Fatalf("imported config = %#v", config)
+	}
+	secrets, err := db.ResolvePluginTargetSecrets(ctx, target.Name)
+	if err != nil || string(secrets["secret_key"]) != "s3-secret" {
+		t.Fatalf("imported secrets = %#v, %v", secrets, err)
+	}
+	legacyAfter, err := db.GetTarget(target.Name)
+	if err != nil || legacyAfter.Type != coredb.TargetTypeS3 || legacyAfter.Path != target.Path {
+		t.Fatalf("legacy target after import = %#v, %v", legacyAfter, err)
+	}
+	metadata, ok := LegacySnapshotMetadata(ctx, db, pluginTarget)
+	if !ok || metadata.PluginID != s3.PluginID || metadata.Archive.Type != s3.ArchiveType {
+		t.Fatalf("legacy snapshot metadata = %#v, %v", metadata, ok)
+	}
+
+	again, err := ImportS3Targets(ctx, db)
+	if err != nil || again != 0 {
+		t.Fatalf("second ImportS3Targets = %d, %v", again, err)
 	}
 }
 

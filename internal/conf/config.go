@@ -16,6 +16,7 @@ type EnvConfig struct {
 	InitServerURL         string
 	InitBootstrapToken    string
 	PluginLocalTargets    bool
+	PluginS3Targets       bool
 	PluginDatabaseTargets bool
 }
 
@@ -36,6 +37,7 @@ func loadEnvConfig() EnvConfig {
 		InitServerURL:         os.Getenv("PBS_PLUS_INIT_SERVER_URL"),
 		InitBootstrapToken:    os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN"),
 		PluginLocalTargets:    os.Getenv("PBS_PLUS_PLUGIN_LOCAL_TARGETS") == "true",
+		PluginS3Targets:       os.Getenv("PBS_PLUS_PLUGIN_S3_TARGETS") == "true",
 		PluginDatabaseTargets: os.Getenv("PBS_PLUS_PLUGIN_DATABASE_TARGETS") == "true",
 	}
 }
