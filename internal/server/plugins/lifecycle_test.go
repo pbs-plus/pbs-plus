@@ -201,6 +201,61 @@ func TestPluginLifecycle(t *testing.T) {
 	if _, err := os.Stat(metadataPath); !os.IsNotExist(err) {
 		t.Fatalf("backup metadata survived close: %v", err)
 	}
+
+	archive := targetplugin.Archive{Type: "lifecycle", FormatVersion: 1}
+	newRestoreOptions := func(jobID, mode string) *coredb.PluginJobOptions {
+		return &coredb.PluginJobOptions{
+			JobID: jobID, PluginID: lifecyclePluginID, PluginVersion: "1.1.0", SchemaVersion: 2,
+			Options: lifecycleValues(t, targetplugin.Values{"mode": targetplugin.NewStringScalar(mode)}),
+		}
+	}
+	pathLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-path", "execution-path", "attempt-path", archive, newRestoreOptions("restore-path", "path"), nil, nil)
+	if err != nil {
+		t.Fatalf("OpenRestore path: %v", err)
+	}
+	pathWorkspace := pathLease.StagingPath()
+	if err := os.WriteFile(filepath.Join(pathLease.Path, "restored"), []byte("restored"), 0o600); err != nil {
+		t.Fatalf("write path restore payload: %v", err)
+	}
+	if err := pathLease.Close(); err != nil {
+		t.Fatalf("close path restore lease: %v", err)
+	}
+	if _, err := os.Stat(pathWorkspace); !os.IsNotExist(err) {
+		t.Fatalf("path restore workspace survived close: %v", err)
+	}
+
+	structuredLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-structured", "execution-structured", "attempt-structured", archive, newRestoreOptions("restore-structured", "structured"), nil, nil)
+	if err != nil {
+		t.Fatalf("OpenRestore structured: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(structuredLease.StagingPath(), "payload"), []byte("plugin restore"), 0o600); err != nil {
+		t.Fatalf("stage structured restore payload: %v", err)
+	}
+	if err := structuredLease.Consume(ctx); err != nil {
+		t.Fatalf("Consume structured restore: %v", err)
+	}
+	if err := structuredLease.Consume(ctx); err == nil || !strings.Contains(err.Error(), "already consumed") {
+		t.Fatalf("second Consume error = %v", err)
+	}
+	if err := structuredLease.Close(); err != nil {
+		t.Fatalf("close structured restore lease: %v", err)
+	}
+
+	var agentRequest targetplugin.HostAgentRestoreRequest
+	agentLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-agent", "execution-agent", "attempt-agent", archive, newRestoreOptions("restore-agent", "agent"), nil, func(_ context.Context, request targetplugin.HostAgentRestoreRequest) error {
+		agentRequest = request
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("OpenRestore agent: %v", err)
+	}
+	if agentRequest.Hostname != "agent.example" || agentRequest.VolumeID != "disk-1" || agentRequest.DestinationPath != "/restore" {
+		t.Fatalf("agent restore request = %#v", agentRequest)
+	}
+	if err := agentLease.Close(); err != nil {
+		t.Fatalf("close agent restore lease: %v", err)
+	}
+
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close before restart: %v", err)
 	}
@@ -535,6 +590,64 @@ func TestLifecyclePluginHelper(t *testing.T) {
 			HostFeatures: []targetplugin.HostFeature{targetplugin.FeatureSubpath, targetplugin.FeatureExclusions},
 			CleanupToken: []byte("cleanup"),
 		})
+	})
+	router.Handle(targetplugin.MethodRestoreOpen, func(request *arpc.Request) (arpc.Response, error) {
+		var open targetplugin.RestoreOpenRequest
+		if err := targetplugin.UnmarshalProtocol(request.Payload, &open); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := open.Validate(); err != nil {
+			return arpc.Response{}, err
+		}
+		mode, ok := open.Job.Options["mode"]
+		modeValue, valueOK := mode.StringValue()
+		if !ok || !valueOK || string(open.Job.Target.Secrets["credential"]) != "secret" {
+			return arpc.Response{}, errors.New("restore received incomplete job values")
+		}
+		response := targetplugin.RestoreOpenResponse{CleanupToken: []byte("cleanup")}
+		switch modeValue {
+		case "path":
+			response.Mode = targetplugin.RestoreModePath
+			response.Path = filepath.Join(open.Job.Workspace, "destination")
+			if err := os.Mkdir(response.Path, 0o700); err != nil {
+				return arpc.Response{}, err
+			}
+		case "structured":
+			response.Mode = targetplugin.RestoreModeStructured
+		case "agent":
+			brokerRequest := targetplugin.HostAgentRestoreRequest{
+				Operation: open.Operation, Hostname: "agent.example", VolumeID: "disk-1", DestinationPath: "/restore",
+			}
+			encoded, err := targetplugin.MarshalProtocol(brokerRequest)
+			if err != nil {
+				return arpc.Response{}, err
+			}
+			var ignored []byte
+			if err := pipe.Call(request.Context, targetplugin.MethodHostAgentRestore, encoded, &ignored); err != nil {
+				return arpc.Response{}, err
+			}
+			response.Mode = targetplugin.RestoreModeAgent
+		default:
+			return arpc.Response{}, fmt.Errorf("unsupported test restore mode %q", modeValue)
+		}
+		return lifecycleResponse(response)
+	})
+	router.Handle(targetplugin.MethodRestoreConsume, func(request *arpc.Request) (arpc.Response, error) {
+		var consume targetplugin.RestoreConsumeRequest
+		if err := targetplugin.UnmarshalProtocol(request.Payload, &consume); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := consume.Validate(); err != nil {
+			return arpc.Response{}, err
+		}
+		payload, err := os.ReadFile(filepath.Join(consume.ArchivePath, "payload"))
+		if err != nil {
+			return arpc.Response{}, err
+		}
+		if string(payload) != "plugin restore" {
+			return arpc.Response{}, errors.New("unexpected structured restore payload")
+		}
+		return lifecycleResponse(targetplugin.RestoreConsumeResponse{})
 	})
 	router.Handle(targetplugin.MethodBackupMigrateOptions, func(request *arpc.Request) (arpc.Response, error) {
 		var migration targetplugin.BackupMigrateOptionsRequest

@@ -37,10 +37,11 @@ type Process struct {
 
 	brokerToken []byte
 
-	mu        sync.Mutex
-	released  bool
-	cleanup   []func() error
-	eventSink func(HostEvent) error
+	mu           sync.Mutex
+	released     bool
+	cleanup      []func() error
+	eventSink    func(HostEvent) error
+	agentRestore func(context.Context, HostAgentRestoreRequest) error
 
 	closeOnce sync.Once
 	closeErr  error
@@ -134,6 +135,7 @@ func Start(ctx context.Context, executable string, args ...string) (*Process, er
 	process := &Process{command: command, pipe: pipe, wait: wait, brokerToken: token}
 	router := arpc.NewRouter()
 	router.Handle(MethodHostEvent, process.handleHostEvent)
+	router.Handle(MethodHostAgentRestore, process.handleHostAgentRestore)
 	pipe.SetRouter(router)
 	go func() { _ = pipe.Serve() }()
 
@@ -149,6 +151,13 @@ func (p *Process) BrokerToken() []byte {
 func (p *Process) SetEventSink(sink func(HostEvent) error) {
 	p.mu.Lock()
 	p.eventSink = sink
+	p.mu.Unlock()
+}
+
+// SetAgentRestoreHandler grants this process access to the scoped agent restore broker.
+func (p *Process) SetAgentRestoreHandler(handler func(context.Context, HostAgentRestoreRequest) error) {
+	p.mu.Lock()
+	p.agentRestore = handler
 	p.mu.Unlock()
 }
 
@@ -174,7 +183,29 @@ func (p *Process) handleHostEvent(request *arpc.Request) (arpc.Response, error) 
 	return arpc.Response{Status: http.StatusOK}, nil
 }
 
-// Describe retrieves and validates plugin metadata during installation or refresh.
+func (p *Process) handleHostAgentRestore(request *arpc.Request) (arpc.Response, error) {
+	var restore HostAgentRestoreRequest
+	if err := UnmarshalProtocol(request.Payload, &restore); err != nil {
+		return arpc.Response{}, fmt.Errorf("decode host agent restore: %w", err)
+	}
+	if err := restore.Validate(); err != nil {
+		return arpc.Response{}, fmt.Errorf("validate host agent restore: %w", err)
+	}
+	if subtle.ConstantTimeCompare(restore.Operation.BrokerToken, p.brokerToken) != 1 {
+		return arpc.Response{}, errors.New("host agent restore broker token is not authorized")
+	}
+	p.mu.Lock()
+	handler := p.agentRestore
+	p.mu.Unlock()
+	if handler == nil {
+		return arpc.Response{}, errors.New("host agent restore is not available")
+	}
+	if err := handler(request.Context, restore); err != nil {
+		return arpc.Response{}, fmt.Errorf("host agent restore: %w", err)
+	}
+	return arpc.Response{Status: http.StatusOK}, nil
+}
+
 func (p *Process) Describe(ctx context.Context) (Descriptor, error) {
 	var descriptor Descriptor
 	if err := p.callProtocol(ctx, MethodDescribe, DescribeRequest{ProtocolVersion: CurrentProtocolVersion}, &descriptor); err != nil {

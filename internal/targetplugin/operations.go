@@ -150,13 +150,30 @@ type RestoreOpenRequest struct {
 	Archive   Archive   `cbor:"archive"`
 }
 
-// RestoreOpenResponse leases one writable directory to the host.
+// RestoreMode identifies how the host supplies snapshot data to a plugin.
+type RestoreMode string
+
+const (
+	RestoreModePath       RestoreMode = "path"
+	RestoreModeStructured RestoreMode = "structured"
+	RestoreModeAgent      RestoreMode = "agent"
+)
+
+// RestoreOpenResponse selects one restore mode and leases plugin resources.
 type RestoreOpenResponse struct {
-	Path         string `cbor:"path"`
-	CleanupToken []byte `cbor:"cleanup_token"`
+	Mode         RestoreMode `cbor:"mode"`
+	Path         string      `cbor:"path,omitempty"`
+	CleanupToken []byte      `cbor:"cleanup_token"`
 }
 
-// RestoreCheckRequest validates an extracted structured archive.
+// HostAgentRestoreRequest asks the host to stream one snapshot to an agent.
+type HostAgentRestoreRequest struct {
+	Operation       Operation `cbor:"operation"`
+	Hostname        string    `cbor:"hostname"`
+	VolumeID        string    `cbor:"volume_id"`
+	DestinationPath string    `cbor:"destination_path"`
+}
+
 type RestoreCheckRequest struct {
 	Operation   Operation `cbor:"operation"`
 	Job         JobInput  `cbor:"job"`
@@ -328,15 +345,37 @@ func (request RestoreOpenRequest) Validate() error {
 	return request.Archive.Validate()
 }
 
-// Validate checks the writable path and cleanup capability.
+// Validate checks the selected restore mode and cleanup capability.
 func (response RestoreOpenResponse) Validate() error {
-	if err := validateAbsolutePath("restore destination path", response.Path); err != nil {
-		return err
+	switch response.Mode {
+	case RestoreModePath:
+		if err := validateAbsolutePath("restore destination path", response.Path); err != nil {
+			return err
+		}
+	case RestoreModeStructured, RestoreModeAgent:
+		if response.Path != "" {
+			return fmt.Errorf("%s restore must not contain a path", response.Mode)
+		}
+	default:
+		return fmt.Errorf("unsupported restore mode %q", response.Mode)
 	}
 	return validateCleanupToken(response.CleanupToken)
 }
 
-// Validate checks all inputs required to inspect a structured archive.
+// Validate checks one scoped agent restore broker request.
+func (request HostAgentRestoreRequest) Validate() error {
+	if err := validateBrokerOperation(request.Operation); err != nil {
+		return err
+	}
+	if err := validateText("agent hostname", request.Hostname, maxPathBytes); err != nil {
+		return err
+	}
+	if err := validateText("agent volume ID", request.VolumeID, maxPathBytes); err != nil {
+		return err
+	}
+	return validateText("agent destination path", request.DestinationPath, maxPathBytes)
+}
+
 func (request RestoreCheckRequest) Validate() error {
 	if err := validateJobOperation(request.Operation); err != nil {
 		return err
