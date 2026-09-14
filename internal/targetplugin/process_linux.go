@@ -95,6 +95,9 @@ func Start(ctx context.Context, executable string, args ...string) (*Process, er
 	command := exec.CommandContext(ctx, executable, args...)
 	command.ExtraFiles = []*os.File{childFile}
 	command.Env = pluginEnvironment()
+	if os.Getenv(StderrEnv) == "true" {
+		command.Stderr = os.Stderr
+	}
 	command.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 	command.Cancel = func() error {
 		_ = conn.Close()

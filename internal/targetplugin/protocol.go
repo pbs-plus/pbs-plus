@@ -31,6 +31,9 @@ const (
 
 const SocketFDEnv = "PBS_PLUS_PLUGIN_FD"
 
+// StderrEnv forwards plugin stderr to the host, which is otherwise discarded and unrecoverable in the field.
+const StderrEnv = "PBS_PLUS_PLUGIN_STDERR"
+
 const (
 	maxPluginIDLength       = 255
 	maxVersionLength        = 64

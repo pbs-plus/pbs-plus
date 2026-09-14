@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 )
@@ -59,10 +60,22 @@ func Serve(ctx context.Context, descriptor Descriptor, handlers map[string]Metho
 	}
 	pipe.SetRouter(router)
 	serveErr := pipe.Serve()
-	if serveErr == nil || errors.Is(serveErr, context.Canceled) || errors.Is(serveErr, io.EOF) || errors.Is(serveErr, io.ErrClosedPipe) {
+	if hostClosed(serveErr) {
 		return nil
 	}
 	return serveErr
+}
+
+// hostClosed covers every teardown error a closed plugin socket produces, including the ECONNRESET a host close races into.
+func hostClosed(err error) bool {
+	return err == nil ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 // Request decodes and validates one plugin request payload.
