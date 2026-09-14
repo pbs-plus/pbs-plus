@@ -190,6 +190,11 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 		} else if imported > 0 {
 			log.Info("imported MySQL targets into plugin execution", "count", imported)
 		}
+		if imported, err := plugins.ImportLDAPTargets(context.Background(), app.CoreDB); err != nil {
+			log.Error(err, "bootstrap: import LDAP targets into plugin execution")
+		} else if imported > 0 {
+			log.Info("imported LDAP targets into plugin execution", "count", imported)
+		}
 	}
 	return nil
 }

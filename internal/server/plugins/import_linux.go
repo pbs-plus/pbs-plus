@@ -11,6 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/ldap"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/mysql"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/postgresql"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/s3"
@@ -98,6 +99,34 @@ func ImportMySQLTargets(ctx context.Context, db *coredb.Store) (int, error) {
 				"username":      targetplugin.NewStringScalar(target.DatabaseUsername),
 				"variant":       targetplugin.NewStringScalar(target.DatabaseVariant),
 				"client_family": targetplugin.NewStringScalar(target.DatabaseClientFamily),
+			}
+			if target.DatabaseTLSMode != "" {
+				config["tls_mode"] = targetplugin.NewStringScalar(target.DatabaseTLSMode)
+			}
+			if target.DatabaseCACertificate != "" {
+				config["ca_certificate"] = targetplugin.NewStringScalar(target.DatabaseCACertificate)
+			}
+			if target.DatabaseDefaultClientDir != "" {
+				config["default_client_dir"] = targetplugin.NewStringScalar(target.DatabaseDefaultClientDir)
+			}
+			return config, map[string][]byte{"password": []byte(password)}, nil
+		})
+}
+
+// ImportLDAPTargets preserves the legacy target while copying its password into the plugin secret store.
+func ImportLDAPTargets(ctx context.Context, db *coredb.Store) (int, error) {
+	return importTargets(ctx, db, ldap.PluginID, ldap.TargetType,
+		func(target coredb.Target) bool { return target.Type == coredb.TargetTypeLDAP },
+		func(target coredb.Target) (targetplugin.Values, map[string][]byte, error) {
+			password, err := db.GetDatabasePassword(target.Name)
+			if err != nil {
+				return nil, nil, fmt.Errorf("get database password for %q: %w", target.Name, err)
+			}
+			config := targetplugin.Values{
+				"host":     targetplugin.NewStringScalar(target.DatabaseHost),
+				"port":     targetplugin.NewIntegerScalar(int64(target.DatabasePort)),
+				"username": targetplugin.NewStringScalar(target.DatabaseUsername),
+				"base_dn":  targetplugin.NewStringScalar(target.LdapBaseDN),
 			}
 			if target.DatabaseTLSMode != "" {
 				config["tls_mode"] = targetplugin.NewStringScalar(target.DatabaseTLSMode)
