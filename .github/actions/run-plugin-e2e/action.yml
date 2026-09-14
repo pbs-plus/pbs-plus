@@ -1,0 +1,180 @@
+name: Run Target Plugin E2E Tests
+description: Verify bundled plugin installation, plugin target backup, and plugin restore through the normal scheduler
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "300"
+    description: Timeout for each plugin job
+
+runs:
+  using: composite
+  steps:
+    - name: Verify bundled plugin installation
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        api_get() {
+          docker exec pbs-plus-test curl -k -fsS "https://localhost:8017$1" -H 'Accept: application/json'
+        }
+
+        installed=$(api_get '/api2/extjs/config/d2d-installed-plugin')
+        jq -e '.success == true' <<<"$installed" >/dev/null
+
+        for plugin in org.pbs-plus.filesystem org.pbs-plus.agentfs org.pbs-plus.s3 \
+          org.pbs-plus.postgresql org.pbs-plus.mysql org.pbs-plus.ldap org.pbs-plus.dovecot; do
+          entry=$(jq -cer --arg id "$plugin" '.data[] | select(.plugin_id == $id)' <<<"$installed")
+          jq -e '.enabled == true and (.active_version | length > 0)' <<<"$entry" >/dev/null || {
+            echo "Plugin $plugin is not enabled with an active version: $entry"
+            exit 1
+          }
+          echo "Plugin $plugin active at $(jq -r '.active_version' <<<"$entry")"
+        done
+
+        types=$(api_get '/api2/extjs/config/d2d-plugin-target-types')
+        for target_type in local agent s3 postgresql mysql ldap dovecot; do
+          jq -e --arg type "$target_type" 'any(.data[]; .target_type == $type)' <<<"$types" >/dev/null || {
+            echo "Target type $target_type is missing from the plugin definitions"
+            exit 1
+          }
+        done
+        echo "All first-party plugin target types are available"
+
+    - name: Run plugin backup and restore
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        timeout='${{ inputs.timeout-seconds }}'
+
+        api_post() {
+          local path=$1
+          shift
+          docker exec pbs-plus-test curl -k -fsS -X POST "https://localhost:8017$path" \
+            -H 'Content-Type: application/x-www-form-urlencoded' "$@"
+        }
+        expect_success() {
+          local response=$1 label=$2
+          jq -e '.success == true' <<<"$response" >/dev/null || {
+            echo "$label failed: $response"
+            exit 1
+          }
+        }
+        wait_for_job() {
+          local job_id=$1 status_lines deadline=$((SECONDS + timeout))
+          while ((SECONDS < deadline)); do
+            status_lines=$(docker logs pbs-plus-test 2>&1 | grep -F "\"jobID\":\"$job_id\"" | grep -F '"msg":"updating job status"' || true)
+            if grep -qF '"succeeded":true' <<<"$status_lines"; then
+              echo "Job $job_id succeeded"
+              return 0
+            fi
+            if grep -qF '"succeeded":false' <<<"$status_lines"; then
+              echo "Job $job_id failed"
+              docker logs --tail=150 pbs-plus-test 2>&1
+              return 1
+            fi
+            sleep 5
+          done
+          echo "Job $job_id timed out after ${timeout}s"
+          docker logs --tail=150 pbs-plus-test 2>&1
+          return 1
+        }
+
+        docker exec pbs-plus-test sh -ec '
+          rm -rf /srv/plugin-e2e /srv/plugin-e2e-restore
+          mkdir -p /srv/plugin-e2e/nested /srv/plugin-e2e-restore
+          echo "plugin backup payload" > /srv/plugin-e2e/payload.txt
+          echo "nested payload" > /srv/plugin-e2e/nested/deep.txt
+        '
+
+        response=$(api_post '/api2/extjs/config/d2d-plugin-target' \
+          --data-urlencode 'name=e2e-plugin-local' \
+          --data-urlencode 'plugin_id=org.pbs-plus.filesystem' \
+          --data-urlencode 'target_type=local' \
+          --data-urlencode 'config.path=/srv/plugin-e2e')
+        expect_success "$response" 'Plugin target creation'
+
+        response=$(api_post '/api2/extjs/config/d2d-plugin-target' \
+          --data-urlencode 'name=e2e-plugin-restore-dest' \
+          --data-urlencode 'plugin_id=org.pbs-plus.filesystem' \
+          --data-urlencode 'target_type=local' \
+          --data-urlencode 'config.path=/srv/plugin-e2e-restore')
+        expect_success "$response" 'Plugin restore target creation'
+
+        target_path=$(printf '%s' 'e2e-plugin-local' | base64 -w0)
+        response=$(api_post "/api2/extjs/config/d2d-plugin-target/$target_path/probe")
+        expect_success "$response" 'Plugin target probe'
+        jq -e '.data.available == true' <<<"$response" >/dev/null || {
+          echo "Plugin target is not available: $response"
+          exit 1
+        }
+
+        response=$(api_post '/api2/extjs/config/disk-backup' \
+          --data-urlencode 'id=e2e-plugin-backup' \
+          --data-urlencode 'target=e2e-plugin-local' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=plugin-e2e' \
+          --data-urlencode 'schedule=' \
+          --data-urlencode 'retry=0' \
+          --data-urlencode 'retry-interval=1' \
+          --data-urlencode 'max-dir-entries=' \
+          --data-urlencode 'mode=' \
+          --data-urlencode 'sourcemode=' \
+          --data-urlencode 'readmode=' \
+          --data-urlencode 'include-xattr=' \
+          --data-urlencode 'comment=' \
+          --data-urlencode 'rawexclusions=' \
+          --data-urlencode 'pre_script=' \
+          --data-urlencode 'post_script=')
+        expect_success "$response" 'Plugin backup job creation'
+
+        encoded=$(printf '%s' 'e2e-plugin-backup' | base64 -w0)
+        response=$(api_post "/api2/extjs/d2d/backup?job=$encoded")
+        expect_success "$response" 'Plugin backup start'
+        wait_for_job 'e2e-plugin-backup'
+
+        snapshot_dir='/mnt/test/ns/plugin-e2e/host/e2e-plugin-backup'
+        snapshot_time=$(docker exec pbs-plus-test sh -ec "ls '$snapshot_dir' | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1")
+        if [[ -z "$snapshot_time" ]]; then
+          echo "No plugin snapshot was written under $snapshot_dir"
+          docker exec pbs-plus-test ls -R /mnt/test/ns/plugin-e2e || true
+          exit 1
+        fi
+        docker exec pbs-plus-test sh -ec "ls '$snapshot_dir/$snapshot_time' | grep -q '^pbs-plus-target-plugin'" || {
+          echo "Snapshot $snapshot_time carries no plugin metadata archive"
+          docker exec pbs-plus-test ls "$snapshot_dir/$snapshot_time"
+          exit 1
+        }
+        echo "Snapshot $snapshot_time carries the plugin metadata archive"
+
+        snapshot_epoch=$(docker exec pbs-plus-test date -d "$snapshot_time" +%s)
+        response=$(api_post '/api2/extjs/config/disk-restore' \
+          --data-urlencode 'id=e2e-plugin-restore' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=plugin-e2e' \
+          --data-urlencode "snapshot=host/e2e-plugin-backup/$snapshot_epoch" \
+          --data-urlencode 'src-path=/' \
+          --data-urlencode 'dest-target=e2e-plugin-restore-dest' \
+          --data-urlencode 'dest-subpath=' \
+          --data-urlencode 'mode=0' \
+          --data-urlencode 'retry=0' \
+          --data-urlencode 'retry-interval=1' \
+          --data-urlencode 'comment=' \
+          --data-urlencode 'pre_script=' \
+          --data-urlencode 'post_script=')
+        expect_success "$response" 'Plugin restore job creation'
+
+        encoded=$(printf '%s' 'e2e-plugin-restore' | base64 -w0)
+        response=$(api_post "/api2/extjs/d2d/restore?job=$encoded")
+        expect_success "$response" 'Plugin restore start'
+        wait_for_job 'e2e-plugin-restore'
+
+        docker exec pbs-plus-test sh -ec '
+          set -e
+          test -f /srv/plugin-e2e-restore/payload.txt
+          test -f /srv/plugin-e2e-restore/nested/deep.txt
+          grep -qx "plugin backup payload" /srv/plugin-e2e-restore/payload.txt
+          grep -qx "nested payload" /srv/plugin-e2e-restore/nested/deep.txt
+        '
+        echo "Plugin restore wrote the expected files into the destination plugin target"
