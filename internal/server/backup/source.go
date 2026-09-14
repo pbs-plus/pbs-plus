@@ -4,6 +4,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,7 +16,9 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
 
 type taskLogWriter struct {
@@ -97,17 +100,33 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	}
 
 	var (
-		srcPath    = target.Path
-		agentMount *mountrpc.AgentMount
-		s3Mount    *mountrpc.S3Mount
-		err        error
+		srcPath         = target.Path
+		agentMount      *mountrpc.AgentMount
+		s3Mount         *mountrpc.S3Mount
+		pluginSource    bool
+		supportsSubpath bool
+		err             error
 	)
 
 	b.mu.RLock()
 	job := b.job
 	b.mu.RUnlock()
 
-	if target.IsDatabase() && b.databaseAware {
+	pluginTarget, pluginErr := b.app.CoreDB.GetPluginTarget(ctx, target.Name)
+	if pluginErr == nil {
+		lease, err := plugins.OpenBackup(ctx, b.app.CoreDB, b.app.PluginSupervisor, pluginTarget.Name, job.ID, b.executionID, job.PluginOptions, b.handlePluginEvent)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		b.mu.Lock()
+		b.pluginLease = lease
+		b.mu.Unlock()
+		srcPath = lease.Path
+		pluginSource = true
+		supportsSubpath = lease.Supports(targetplugin.FeatureSubpath)
+	} else if !errors.Is(pluginErr, coredb.ErrTargetNotFound) {
+		return "", nil, nil, pluginErr
+	} else if target.IsDatabase() && b.databaseAware {
 		password, err := b.app.CoreDB.GetDatabasePassword(target.Name)
 		if err != nil {
 			return "", nil, nil, fmt.Errorf("get database password: %w", err)
@@ -231,11 +250,14 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		}
 	}
 
-	if !target.IsDatabase() && !target.IsDovecot() {
+	if pluginSource && job.Subpath != "" && !supportsSubpath {
+		return "", agentMount, s3Mount, errors.New("plugin backup source does not support subpaths")
+	}
+	if (pluginSource && supportsSubpath) || (!pluginSource && !target.IsDatabase() && !target.IsDovecot()) {
 		srcPath = filepath.Join(srcPath, job.Subpath)
 	}
 
-	if job.Subpath != "" && !target.IsS3() {
+	if job.Subpath != "" && (pluginSource || !target.IsS3()) {
 		info, err := os.Stat(srcPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -249,4 +271,19 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	}
 
 	return srcPath, agentMount, s3Mount, nil
+}
+
+func (b *backupJob) handlePluginEvent(event targetplugin.HostEvent) error {
+	attributes := []any{"completed", event.Completed, "total", event.Total}
+	switch event.Level {
+	case targetplugin.EventDebug:
+		b.logger.Debug(event.Message, attributes...)
+	case targetplugin.EventWarning:
+		b.logger.Warn(event.Message, attributes...)
+	case targetplugin.EventError:
+		b.logger.Error(errors.New(event.Message), "target plugin reported an error", attributes...)
+	default:
+		b.logger.Info(event.Message, attributes...)
+	}
+	return nil
 }

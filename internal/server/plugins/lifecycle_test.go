@@ -166,6 +166,26 @@ func TestPluginLifecycle(t *testing.T) {
 	if err != nil || pluginTarget.PluginVersion != "1.1.0" || pluginTarget.TargetType != "lifecycle" || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "credential" {
 		t.Fatalf("plugin target = %#v, %v", pluginTarget, err)
 	}
+	optionValues := lifecycleValues(t, targetplugin.Values{"policy": targetplugin.NewStringScalar("full")})
+	lease, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-job", "execution-id", &coredb.PluginJobOptions{
+		JobID: "backup-job", PluginID: lifecyclePluginID, PluginVersion: "1.1.0", SchemaVersion: 2, Options: optionValues,
+	}, nil)
+	if err != nil {
+		t.Fatalf("OpenBackup: %v", err)
+	}
+	leasePath := lease.Path
+	if data, err := os.ReadFile(filepath.Join(leasePath, "payload")); err != nil || string(data) != "plugin backup" {
+		t.Fatalf("backup payload = %q, %v", data, err)
+	}
+	if !lease.Supports(targetplugin.FeatureExclusions) || lease.Supports(targetplugin.FeatureXattrs) {
+		t.Fatalf("backup features = %#v", lease.HostFeatures)
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatalf("close backup lease: %v", err)
+	}
+	if _, err := os.Stat(leasePath); !os.IsNotExist(err) {
+		t.Fatalf("backup workspace survived close: %v", err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close before restart: %v", err)
 	}
@@ -472,6 +492,34 @@ func TestLifecyclePluginHelper(t *testing.T) {
 			response.RenameSecrets = map[string]string{"credential": "token"}
 		}
 		return lifecycleResponse(response)
+	})
+	router.Handle(targetplugin.MethodBackupOpen, func(request *arpc.Request) (arpc.Response, error) {
+		var open targetplugin.BackupOpenRequest
+		if err := targetplugin.UnmarshalProtocol(request.Payload, &open); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := open.Validate(); err != nil {
+			return arpc.Response{}, err
+		}
+		policy, ok := open.Job.Options["policy"]
+		policyValue, valueOK := policy.StringValue()
+		if !ok || !valueOK || policyValue != "full" || string(open.Job.Target.Secrets["credential"]) != "secret" {
+			return arpc.Response{}, errors.New("backup received incomplete job values")
+		}
+		source := filepath.Join(open.Job.Workspace, "source")
+		if err := os.Mkdir(source, 0o700); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := os.WriteFile(filepath.Join(source, "payload"), []byte("plugin backup"), 0o600); err != nil {
+			return arpc.Response{}, err
+		}
+		return lifecycleResponse(targetplugin.BackupOpenResponse{
+			Kind:         targetplugin.SourceDirectory,
+			Path:         source,
+			Archive:      targetplugin.Archive{Type: "lifecycle", FormatVersion: 1},
+			HostFeatures: []targetplugin.HostFeature{targetplugin.FeatureSubpath, targetplugin.FeatureExclusions},
+			CleanupToken: []byte("cleanup"),
+		})
 	})
 	router.Handle(targetplugin.MethodBackupMigrateOptions, func(request *arpc.Request) (arpc.Response, error) {
 		var migration targetplugin.BackupMigrateOptionsRequest

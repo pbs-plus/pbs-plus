@@ -148,6 +148,37 @@ func TestSupervisorReleasesGlobalCapacity(t *testing.T) {
 	assertProcessGone(t, reaped)
 }
 
+func TestSupervisorOpenHoldsCapacityUntilClose(t *testing.T) {
+	supervisor, err := NewSupervisor(1, 1)
+	if err != nil {
+		t.Fatalf("NewSupervisor: %v", err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	process, err := supervisor.Open(t.Context(), "org.pbs-plus.first", executable, "-test.run=^TestPluginProcessHelper$")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	defer cancel()
+	if _, err := supervisor.Open(ctx, "org.pbs-plus.second", executable, "-test.run=^TestPluginProcessHelper$"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Open at global limit error = %v, want deadline exceeded", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	process, err = supervisor.Open(t.Context(), "org.pbs-plus.second", executable, "-test.run=^TestPluginProcessHelper$")
+	if err != nil {
+		t.Fatalf("Open after close: %v", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
 func TestSupervisorReleasesCapacityAfterStartFailure(t *testing.T) {
 	supervisor, err := NewSupervisor(1, 1)
 	if err != nil {

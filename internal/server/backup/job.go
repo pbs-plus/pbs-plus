@@ -23,6 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
 
@@ -83,6 +84,7 @@ type backupJob struct {
 	s3Mount       *mountrpc.S3Mount
 	stagedDump    *database.StagedDump
 	stagedDovecot *dovecot.StagedBackup
+	pluginLease   *plugins.BackupLease
 	srcPath       string
 	cmd           *exec.Cmd
 	upid          string
@@ -191,6 +193,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	b.mu.RLock()
 	job := b.job
 	extraExclusions := b.extraExclusions
+	pluginLease := b.pluginLease
 	b.mu.RUnlock()
 
 	workerID, err := backupWorkerID(job)
@@ -221,7 +224,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 		}
 	}
 
-	cmd, err := prepareBackupCommand(ctx, job, b.app, srcPath, target.IsAgent(), extraExclusions, b.logger)
+	cmd, err := prepareBackupCommand(ctx, job, b.app, srcPath, target.IsAgent(), extraExclusions, pluginLease, b.logger)
 	if err != nil {
 		return nil, proxmox.Task{}, "", fmt.Errorf("%w: %w", ErrPrepareBackupCommand, err)
 	}

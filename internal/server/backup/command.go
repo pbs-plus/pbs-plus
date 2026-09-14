@@ -16,6 +16,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -27,7 +29,7 @@ func getBackupId(backup coredb.Backup) (string, error) {
 	return backup.ID, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, pluginLease *plugins.BackupLease, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -42,7 +44,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
 	}
 
-	detectionMode, useExclusions := backupCommandPolicy(backup)
+	detectionMode, useExclusions := backupCommandPolicy(backup, pluginLease)
 
 	cmdArgs := []string{}
 	if nofile := conf.Env.ClientNofile; nofile != "" {
@@ -109,16 +111,20 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	return cmd, nil
 }
 
-func backupCommandPolicy(backup coredb.Backup) (string, bool) {
+func backupCommandPolicy(backup coredb.Backup, pluginLease *plugins.BackupLease) (string, bool) {
 	if backup.Target.IsDatabase() || backup.Target.IsDovecot() {
 		return "--change-detection-mode=metadata", false
 	}
+	useExclusions := pluginLease == nil || pluginLease.Supports(targetplugin.FeatureExclusions)
+	if pluginLease != nil && !pluginLease.Supports(targetplugin.FeatureChangeDetection) {
+		return "--change-detection-mode=metadata", useExclusions
+	}
 	switch backup.Mode {
 	case "legacy":
-		return "--change-detection-mode=legacy", true
+		return "--change-detection-mode=legacy", useExclusions
 	case "data":
-		return "--change-detection-mode=data", true
+		return "--change-detection-mode=data", useExclusions
 	default:
-		return "--change-detection-mode=metadata", true
+		return "--change-detection-mode=metadata", useExclusions
 	}
 }

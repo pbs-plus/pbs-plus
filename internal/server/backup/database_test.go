@@ -15,6 +15,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
 
 func TestTaskLogWriterMirrorsDatabaseOutput(t *testing.T) {
@@ -45,12 +47,23 @@ func TestDatabaseBackupCommandPolicy(t *testing.T) {
 		Target: coredb.Target{
 			Type: coredb.TargetTypePostgreSQL,
 		},
-	})
+	}, nil)
 	if mode != "--change-detection-mode=metadata" {
 		t.Fatalf("database change detection mode = %q", mode)
 	}
 	if useExclusions {
 		t.Fatal("database backup accepted PXAR exclusions")
+	}
+
+	lease := &plugins.BackupLease{}
+	mode, useExclusions = backupCommandPolicy(coredb.Backup{Mode: "legacy"}, lease)
+	if mode != "--change-detection-mode=metadata" || useExclusions {
+		t.Fatalf("basic plugin policy = %q, %v", mode, useExclusions)
+	}
+	lease.HostFeatures = []targetplugin.HostFeature{targetplugin.FeatureChangeDetection, targetplugin.FeatureExclusions}
+	mode, useExclusions = backupCommandPolicy(coredb.Backup{Mode: "legacy"}, lease)
+	if mode != "--change-detection-mode=legacy" || !useExclusions {
+		t.Fatalf("full plugin policy = %q, %v", mode, useExclusions)
 	}
 }
 

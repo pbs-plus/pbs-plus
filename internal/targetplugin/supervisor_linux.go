@@ -37,14 +37,29 @@ func NewSupervisor(globalLimit, perPluginLimit int) (*Supervisor, error) {
 
 // Run waits for capacity, starts one plugin process, invokes operation, and reaps the process.
 func (s *Supervisor) Run(ctx context.Context, pluginID, executable string, operation func(context.Context, *Process) error, args ...string) error {
-	if s == nil {
-		return errors.New("plugin supervisor is nil")
-	}
 	if operation == nil {
 		return errors.New("plugin operation is required")
 	}
-	if err := validateIdentifier("plugin ID", pluginID, maxPluginIDLength); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	process, err := s.Open(ctx, pluginID, executable, args...)
+	if err != nil {
 		return err
+	}
+	if err := errors.Join(operation(ctx, process), process.Close()); err != nil {
+		return fmt.Errorf("run plugin %q: %w", pluginID, err)
+	}
+	return nil
+}
+
+// Open starts a supervised process whose capacity is held until Close.
+func (s *Supervisor) Open(ctx context.Context, pluginID, executable string, args ...string) (*Process, error) {
+	if s == nil {
+		return nil, errors.New("plugin supervisor is nil")
+	}
+	if err := validateIdentifier("plugin ID", pluginID, maxPluginIDLength); err != nil {
+		return nil, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -52,35 +67,30 @@ func (s *Supervisor) Run(ctx context.Context, pluginID, executable string, opera
 
 	releasePlugin, err := s.acquirePlugin(ctx, pluginID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer releasePlugin()
-
 	select {
 	case s.globalSlots <- struct{}{}:
-		defer func() { <-s.globalSlots }()
 	case <-ctx.Done():
-		return ctx.Err()
+		releasePlugin()
+		return nil, ctx.Err()
 	}
 
 	process, err := Start(ctx, executable, args...)
 	if err != nil {
-		return err
+		<-s.globalSlots
+		releasePlugin()
+		return nil, err
 	}
-	closed := false
-	defer func() {
-		if !closed {
-			_ = process.Close()
-		}
-	}()
-
-	operationErr := operation(ctx, process)
-	closeErr := process.Close()
-	closed = true
-	if err := errors.Join(operationErr, closeErr); err != nil {
-		return fmt.Errorf("run plugin %q: %w", pluginID, err)
+	if err := process.AddCleanup(func() error {
+		<-s.globalSlots
+		releasePlugin()
+		return nil
+	}); err != nil {
+		_ = process.Close()
+		return nil, err
 	}
-	return nil
+	return process, nil
 }
 
 func (s *Supervisor) acquirePlugin(ctx context.Context, pluginID string) (func(), error) {

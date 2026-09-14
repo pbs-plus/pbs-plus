@@ -150,6 +150,7 @@ func (b *backupJob) cleanup() {
 		s3Mount := b.s3Mount
 		stagedDump := b.stagedDump
 		stagedDovecot := b.stagedDovecot
+		pluginLease := b.pluginLease
 		logger := b.logger
 		cancel := b.cancel
 		b.mu.Unlock()
@@ -174,6 +175,11 @@ func (b *backupJob) cleanup() {
 		if stagedDovecot != nil {
 			if err := stagedDovecot.Cleanup(); err != nil && logger != nil {
 				logger.Error(err, "failed to remove Dovecot backup staging data")
+			}
+		}
+		if pluginLease != nil {
+			if err := pluginLease.Close(); err != nil && logger != nil {
+				logger.Error(err, "failed to close plugin backup lease")
 			}
 		}
 		if logger != nil {
