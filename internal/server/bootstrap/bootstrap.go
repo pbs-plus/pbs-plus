@@ -185,6 +185,11 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 		} else if imported > 0 {
 			log.Info("imported PostgreSQL targets into plugin execution", "count", imported)
 		}
+		if imported, err := plugins.ImportMySQLTargets(context.Background(), app.CoreDB); err != nil {
+			log.Error(err, "bootstrap: import MySQL targets into plugin execution")
+		} else if imported > 0 {
+			log.Info("imported MySQL targets into plugin execution", "count", imported)
+		}
 	}
 	return nil
 }
