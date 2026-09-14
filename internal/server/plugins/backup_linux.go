@@ -22,6 +22,8 @@ const backupOpenTimeout = 5 * time.Minute
 
 type BackupLease struct {
 	targetplugin.BackupOpenResponse
+	Metadata           targetplugin.SnapshotMetadata
+	MetadataSourcePath string
 
 	process   *targetplugin.Process
 	cancel    context.CancelFunc
@@ -105,6 +107,19 @@ func OpenBackup(ctx context.Context, db *coredb.Store, supervisor *targetplugin.
 	if err := validateBackupPath(workspace, lease.Path, manifest.TargetSchema.Fields, config); err != nil {
 		return nil, errors.Join(err, lease.Close())
 	}
+	lease.Metadata = targetplugin.SnapshotMetadata{
+		FormatVersion:       targetplugin.SnapshotMetadataFormatVersion,
+		PluginID:            installed.PluginID,
+		PluginVersion:       installed.Version,
+		TargetType:          target.TargetType,
+		TargetSchemaVersion: target.SchemaVersion,
+		BackupSchemaVersion: manifest.BackupSchema.Version,
+		Archive:             lease.Archive,
+	}
+	lease.MetadataSourcePath, err = writeSnapshotMetadata(lease.Metadata)
+	if err != nil {
+		return nil, errors.Join(err, lease.Close())
+	}
 	return lease, nil
 }
 
@@ -115,13 +130,32 @@ func (lease *BackupLease) Close() error {
 	lease.closeOnce.Do(func() {
 		lease.closeErr = lease.process.Close()
 		lease.cancel()
-		lease.closeErr = errors.Join(lease.closeErr, os.RemoveAll(lease.workspace))
+		lease.closeErr = errors.Join(lease.closeErr, os.RemoveAll(lease.workspace), os.RemoveAll(lease.MetadataSourcePath))
 	})
 	return lease.closeErr
 }
 
 func (lease *BackupLease) Supports(feature targetplugin.HostFeature) bool {
 	return lease != nil && slices.Contains(lease.HostFeatures, feature)
+}
+
+func writeSnapshotMetadata(metadata targetplugin.SnapshotMetadata) (string, error) {
+	if err := metadata.Validate(); err != nil {
+		return "", err
+	}
+	encoded, err := targetplugin.MarshalProtocol(metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode plugin snapshot metadata: %w", err)
+	}
+	directory, err := os.MkdirTemp("", ".pbs-plus-plugin-metadata-")
+	if err != nil {
+		return "", fmt.Errorf("create plugin snapshot metadata directory: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, targetplugin.SnapshotMetadataFileName), encoded, 0o600); err != nil {
+		_ = os.RemoveAll(directory)
+		return "", fmt.Errorf("write plugin snapshot metadata: %w", err)
+	}
+	return directory, nil
 }
 
 func backupOptions(manifest targetplugin.PluginManifest, installed coredb.InstalledPluginVersion, jobID string, options *coredb.PluginJobOptions) (targetplugin.Values, error) {

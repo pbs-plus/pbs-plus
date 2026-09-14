@@ -180,11 +180,26 @@ func TestPluginLifecycle(t *testing.T) {
 	if !lease.Supports(targetplugin.FeatureExclusions) || lease.Supports(targetplugin.FeatureXattrs) {
 		t.Fatalf("backup features = %#v", lease.HostFeatures)
 	}
+	metadataPath := lease.MetadataSourcePath
+	encodedMetadata, err := os.ReadFile(filepath.Join(metadataPath, targetplugin.SnapshotMetadataFileName))
+	if err != nil {
+		t.Fatalf("read snapshot metadata: %v", err)
+	}
+	var metadata targetplugin.SnapshotMetadata
+	if err := targetplugin.UnmarshalProtocol(encodedMetadata, &metadata); err != nil {
+		t.Fatalf("decode snapshot metadata: %v", err)
+	}
+	if metadata.PluginID != lifecyclePluginID || metadata.PluginVersion != "1.1.0" || metadata.TargetType != "lifecycle" || metadata.TargetSchemaVersion != 2 || metadata.BackupSchemaVersion != 2 || metadata.Archive.Type != "lifecycle" {
+		t.Fatalf("snapshot metadata = %#v", metadata)
+	}
 	if err := lease.Close(); err != nil {
 		t.Fatalf("close backup lease: %v", err)
 	}
 	if _, err := os.Stat(leasePath); !os.IsNotExist(err) {
 		t.Fatalf("backup workspace survived close: %v", err)
+	}
+	if _, err := os.Stat(metadataPath); !os.IsNotExist(err) {
+		t.Fatalf("backup metadata survived close: %v", err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close before restart: %v", err)

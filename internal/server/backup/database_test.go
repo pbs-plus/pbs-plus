@@ -67,6 +67,21 @@ func TestDatabaseBackupCommandPolicy(t *testing.T) {
 	}
 }
 
+func TestPluginBackupIncludesSnapshotMetadataArchive(t *testing.T) {
+	backup := coredb.Backup{Target: coredb.Target{Name: "plugin-target"}}
+	lease := &plugins.BackupLease{MetadataSourcePath: "/metadata"}
+	sources, err := backupSourceArgs(backup, "/source", lease)
+	if err != nil {
+		t.Fatalf("backupSourceArgs: %v", err)
+	}
+	if len(sources) != 2 || sources[0] != "plugin-target.pxar:/source" || sources[1] != targetplugin.SnapshotMetadataArchiveName+".pxar:/metadata" {
+		t.Fatalf("plugin backup sources = %#v", sources)
+	}
+	if _, err := backupSourceArgs(backup, "/source", &plugins.BackupLease{}); err == nil {
+		t.Fatal("plugin backup without metadata source accepted")
+	}
+}
+
 func TestRegisterSelectsBackupWorkflowVersion2(t *testing.T) {
 	db, err := jobdb.Open(filepath.Join(t.TempDir(), "jobs.db"))
 	if err != nil {

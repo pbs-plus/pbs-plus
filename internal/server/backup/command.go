@@ -4,6 +4,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -53,17 +54,20 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		cmdArgs = append(cmdArgs, "--nofile=1024:1024")
 	}
 
-	cmdArgs = append(cmdArgs, []string{
-		"/usr/bin/proxmox-backup-client",
-		"backup",
-		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target.Name), srcPath),
+	cmdArgs = append(cmdArgs, "/usr/bin/proxmox-backup-client", "backup")
+	backupSources, err := backupSourceArgs(backup, srcPath, pluginLease)
+	if err != nil {
+		return nil, err
+	}
+	cmdArgs = append(cmdArgs, backupSources...)
+	cmdArgs = append(cmdArgs,
 		"--repository", backupStore,
 		detectionMode,
 		"--entries-max", fmt.Sprintf("%d", backup.MaxDirEntries+1024),
 		"--backup-type", "host",
 		"--backup-id", backupID,
 		"--crypt-mode=none",
-	}...)
+	)
 
 	addExclusion := func(path string) {
 		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") && !strings.HasPrefix(path, "**/") {
@@ -85,6 +89,9 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 			for _, exclusion := range globalExclusions {
 				addExclusion(exclusion.Path)
 			}
+		}
+		if pluginLease != nil {
+			addExclusion("!" + targetplugin.SnapshotMetadataFileName)
 		}
 	}
 
@@ -109,6 +116,17 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	}
 
 	return cmd, nil
+}
+
+func backupSourceArgs(backup coredb.Backup, srcPath string, pluginLease *plugins.BackupLease) ([]string, error) {
+	sources := []string{fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target.Name), srcPath)}
+	if pluginLease == nil {
+		return sources, nil
+	}
+	if pluginLease.MetadataSourcePath == "" {
+		return nil, errors.New("plugin snapshot metadata source is required")
+	}
+	return append(sources, fmt.Sprintf("%s.pxar:%s", targetplugin.SnapshotMetadataArchiveName, pluginLease.MetadataSourcePath)), nil
 }
 
 func backupCommandPolicy(backup coredb.Backup, pluginLease *plugins.BackupLease) (string, bool) {
