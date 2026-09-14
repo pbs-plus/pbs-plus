@@ -20,6 +20,10 @@ func TestRender(t *testing.T) {
 		`activate: "startStore",`,
 		`PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);`,
 		`PBS.PlusUtils.LoadCodeMirror(function () {`,
+		`Ext.define("PBS.D2DManagement.PluginTargetEditWindow", {`,
+		`name: "config." + spec.key,`,
+		`(spec.fields || []).forEach(visit);`,
+		`xtype: "pbsPluginTargetPanel",`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("rendered UI does not contain %q:\n%s", want, source)

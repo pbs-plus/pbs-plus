@@ -18,16 +18,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
-type pluginTargetResponse struct {
-	Name          string         `json:"name"`
-	PluginID      string         `json:"plugin_id"`
-	PluginVersion string         `json:"plugin_version"`
-	TargetType    string         `json:"target_type"`
-	SchemaVersion uint32         `json:"schema_version"`
-	Config        map[string]any `json:"config"`
-	SecretFields  []string       `json:"secret_fields"`
-}
-
 type pluginTargetTypeResponse struct {
 	PluginID      string             `json:"plugin_id"`
 	PluginVersion string             `json:"plugin_version"`
@@ -104,7 +94,7 @@ func ExtJsPluginTargetsHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
-			data := make([]pluginTargetResponse, len(targets))
+			data := make([]map[string]any, len(targets))
 			for index, target := range targets {
 				data[index], err = newPluginTargetResponse(target)
 				if err != nil {
@@ -210,24 +200,23 @@ func pluginDeleteFields(values []string) ([]string, error) {
 	return fields, nil
 }
 
-func newPluginTargetResponse(target coredb.PluginTarget) (pluginTargetResponse, error) {
+func newPluginTargetResponse(target coredb.PluginTarget) (map[string]any, error) {
 	var config targetplugin.Values
 	if err := targetplugin.UnmarshalProtocol(target.Config, &config); err != nil {
-		return pluginTargetResponse{}, err
+		return nil, err
 	}
-	values := make(map[string]any, len(config))
+	response := map[string]any{
+		"name":           target.Name,
+		"plugin_id":      target.PluginID,
+		"plugin_version": target.PluginVersion,
+		"target_type":    target.TargetType,
+		"schema_version": target.SchemaVersion,
+		"secret_fields":  target.SecretFields,
+	}
 	for key, value := range config {
-		values[key] = pluginScalarValue(value)
+		response["config."+key] = pluginScalarValue(value)
 	}
-	return pluginTargetResponse{
-		Name:          target.Name,
-		PluginID:      target.PluginID,
-		PluginVersion: target.PluginVersion,
-		TargetType:    target.TargetType,
-		SchemaVersion: target.SchemaVersion,
-		Config:        values,
-		SecretFields:  target.SecretFields,
-	}, nil
+	return response, nil
 }
 
 func pluginFormSchemaResponse(schema targetplugin.FormSchema) pluginFormResponse {

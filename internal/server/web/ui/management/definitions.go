@@ -12,7 +12,7 @@ func Definitions() []js.Value {
 	items = append(items, windows...)
 	items = append(items, exclusionPanel, notificationBatchPanel, tokenPanel)
 	items = append(items, restorePanel, backupPanel)
-	items = append(items, targetPanelController, targetPanel)
+	items = append(items, targetPanelController, targetPanel, pluginUI)
 	items = append(items, alertsPanel, alertEditWindow)
 	items = append(items, notificationTabs, restoreModesStore, restoreJobEdit)
 	items = append(items, backupModeStores, backupJobEdit, notificationBatchEdit)

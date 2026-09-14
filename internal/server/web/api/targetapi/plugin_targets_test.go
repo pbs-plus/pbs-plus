@@ -69,7 +69,7 @@ func TestPluginTargetResponseUsesPrimitiveValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPluginTargetResponse: %v", err)
 	}
-	if response.Config["path"] != "/srv/archive" || response.Config["retries"] != int64(3) || response.Config["enabled"] != false {
-		t.Fatalf("config = %#v", response.Config)
+	if response["config.path"] != "/srv/archive" || response["config.retries"] != int64(3) || response["config.enabled"] != false {
+		t.Fatalf("response = %#v", response)
 	}
 }
