@@ -279,6 +279,19 @@ jobs:
             ./cmd/pbs-plus
           echo "Server binary size: $(stat -c%s dist-bins/pbs-plus) bytes"
 
+      - name: Build target plugin binaries
+        run: |
+          mkdir -p dist-bins/plugins
+          for plugin in filesystem agentfs s3 postgresql mysql ldap dovecot; do
+            CGO_ENABLED=0 GOEXPERIMENT=greenteagc GOFIPS140=latest \
+              go build \
+              -trimpath \
+              -ldflags "-s -w" \
+              -o "dist-bins/plugins/pbs-plus-plugin-$plugin" \
+              "./cmd/plugin-$plugin"
+          done
+          ls -l dist-bins/plugins
+
       - name: Download bkf2pxar from release
         run: |
           TAG="${{ github.ref_name }}"

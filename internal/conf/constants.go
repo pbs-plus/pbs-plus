@@ -42,6 +42,7 @@ var (
 	StatePrefix         = "/var/lib/pbs-plus"
 	ScriptsBasePath     = StatePrefix + "/scripts"
 	PluginsBasePath     = StatePrefix + "/plugins"
+	BundledPluginsPath  = "/usr/lib/pbs-plus/plugins"
 	SecretsKeyPath      = StatePrefix + "/.secret.key"
 	BackupLogsBasePath  = "/var/log/pbs-plus"
 	RestoreLogsBasePath = "/var/log/pbs-plus/restores"

@@ -3,6 +3,8 @@ package targetplugin
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -68,7 +70,36 @@ func InstallVersion(ctx context.Context, request InstallVersionRequest) (Install
 		return InstalledVersion{}, fmt.Errorf("plugin artifact platform %s/%s does not match host %s/%s", request.Artifact.OS, request.Artifact.Arch, runtime.GOOS, runtime.GOARCH)
 	}
 
-	pluginRoot := filepath.Join(request.Root, manifest.PluginID)
+	return promoteVersion(ctx, request.Root, request.ManifestBytes, manifest, func(path string) error {
+		return stageArtifact(path, request)
+	})
+}
+
+// InstallBundledVersion promotes an artifact shipped inside the signed pbs-plus package, whose package signature is the trust anchor.
+func InstallBundledVersion(ctx context.Context, root string, manifestBytes []byte, artifactPath string) (InstalledVersion, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !filepath.IsAbs(root) {
+		return InstalledVersion{}, errors.New("plugin install root must be absolute")
+	}
+	digest := sha256.Sum256(manifestBytes)
+	manifest, err := ParsePluginManifest(manifestBytes, hex.EncodeToString(digest[:]))
+	if err != nil {
+		return InstalledVersion{}, err
+	}
+	return promoteVersion(ctx, root, manifestBytes, manifest, func(path string) error {
+		source, err := os.Open(artifactPath)
+		if err != nil {
+			return fmt.Errorf("open bundled plugin artifact: %w", err)
+		}
+		defer source.Close()
+		return copyArtifact(path, source)
+	})
+}
+
+func promoteVersion(ctx context.Context, root string, manifestBytes []byte, manifest PluginManifest, stage func(path string) error) (InstalledVersion, error) {
+	pluginRoot := filepath.Join(root, manifest.PluginID)
 	versionDirectory := filepath.Join(pluginRoot, manifest.Version)
 	if _, err := os.Lstat(versionDirectory); err == nil {
 		return InstalledVersion{}, ErrVersionInstalled
@@ -85,10 +116,10 @@ func InstallVersion(ctx context.Context, request InstallVersionRequest) (Install
 	defer os.RemoveAll(stagingDirectory)
 
 	executable := filepath.Join(stagingDirectory, "plugin")
-	if err := stageArtifact(executable, request); err != nil {
+	if err := stage(executable); err != nil {
 		return InstalledVersion{}, err
 	}
-	if err := writeInstallFile(filepath.Join(stagingDirectory, "manifest.toml"), request.ManifestBytes, 0o444); err != nil {
+	if err := writeInstallFile(filepath.Join(stagingDirectory, "manifest.toml"), manifestBytes, 0o444); err != nil {
 		return InstalledVersion{}, fmt.Errorf("write plugin manifest: %w", err)
 	}
 
@@ -142,6 +173,26 @@ func stageArtifact(path string, request InstallVersionRequest) error {
 		return fmt.Errorf("close staging artifact: %w", err)
 	}
 	return nil
+}
+
+func copyArtifact(path string, source io.Reader) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create staging artifact: %w", err)
+	}
+	if _, err := io.Copy(file, source); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("copy bundled plugin artifact: %w", err)
+	}
+	if err := file.Chmod(0o555); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("make staging artifact executable: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync staging artifact: %w", err)
+	}
+	return file.Close()
 }
 
 func writeInstallFile(path string, data []byte, mode os.FileMode) error {
