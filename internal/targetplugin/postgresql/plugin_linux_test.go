@@ -20,7 +20,7 @@ func TestDescriptorIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaDigest: %v", err)
 	}
-	const want = "dff1c2ddebaa1343c19f1cd0f1f3f7c5dc238dcc50a8e9b287b34ed1ccf1f193"
+	const want = "e4270d4cbe5f980b8ee6dbb73363bba718ae4a57e470650508803fce1d784811"
 	if digest != want {
 		t.Fatalf("schema digest = %s, want %s (changing the forms needs a schema version bump)", digest, want)
 	}
@@ -96,6 +96,18 @@ func TestValidateRejectsIncompleteTargets(t *testing.T) {
 			},
 			wantText: "invalid port",
 		},
+		{
+			name: "relative client directory",
+			target: targetplugin.TargetInput{
+				Config: targetplugin.Values{
+					hostField:      targetplugin.NewStringScalar("db.example"),
+					usernameField:  targetplugin.NewStringScalar("backup"),
+					clientDirField: targetplugin.NewStringScalar("postgres/bin"),
+				},
+				Secrets: targetplugin.Secrets{passwordField: []byte("secret")},
+			},
+			wantText: "client directory must be absolute",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -110,6 +122,36 @@ func TestValidateRejectsIncompleteTargets(t *testing.T) {
 				t.Fatalf("target.validate error = %v, want %q", err, test.wantText)
 			}
 		})
+	}
+}
+
+func TestTargetMigrateAddsConnectionDefaults(t *testing.T) {
+	payload, err := targetplugin.MarshalProtocol(targetplugin.TargetMigrateRequest{
+		Operation:         operation(),
+		FromSchemaVersion: 1,
+		ToSchemaVersion:   targetSchemaVersion,
+		Values: targetplugin.Values{
+			hostField:     targetplugin.NewStringScalar("db.example"),
+			usernameField: targetplugin.NewStringScalar("backup"),
+		},
+		SecretFields: []string{passwordField},
+	})
+	if err != nil {
+		t.Fatalf("MarshalProtocol: %v", err)
+	}
+	response, err := Handlers()[targetplugin.MethodTargetMigrate](context.Background(), payload)
+	if err != nil {
+		t.Fatalf("target.migrate: %v", err)
+	}
+	migrated, ok := response.(targetplugin.TargetMigrateResponse)
+	if !ok {
+		t.Fatalf("response = %T", response)
+	}
+	if port, _ := migrated.Values[portField].IntegerValue(); port != defaultPort {
+		t.Fatalf("migrated port = %d, want %d", port, defaultPort)
+	}
+	if mode, _ := migrated.Values[tlsModeField].StringValue(); mode != "prefer" {
+		t.Fatalf("migrated TLS mode = %q, want prefer", mode)
 	}
 }
 
@@ -167,7 +209,7 @@ func operation() targetplugin.Operation {
 		DeadlineUnixMilli: time.Now().Add(time.Minute).UnixMilli(),
 		PluginVersion:     Version,
 		TargetType:        TargetType,
-		SchemaVersion:     schemaVersion,
+		SchemaVersion:     targetSchemaVersion,
 		BrokerToken:       make([]byte, 32),
 	}
 }

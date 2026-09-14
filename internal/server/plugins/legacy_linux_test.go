@@ -10,7 +10,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 )
 
-func TestLegacyLocalSnapshotMetadata(t *testing.T) {
+func TestLegacySnapshotMetadata(t *testing.T) {
 	ctx := context.Background()
 	db, err := coredb.Initialize(ctx, t.TempDir()+"/legacy-local.db")
 	if err != nil {
@@ -18,12 +18,12 @@ func TestLegacyLocalSnapshotMetadata(t *testing.T) {
 	}
 	defer db.Close()
 
-	if _, ok := LegacyLocalSnapshotMetadata(ctx, db, coredb.PluginTarget{
+	if _, ok := LegacySnapshotMetadata(ctx, db, coredb.PluginTarget{
 		PluginID: filesystem.PluginID, TargetType: filesystem.TargetTypeLocal,
 	}); ok {
 		t.Fatal("legacy metadata was synthesized without an installed plugin")
 	}
-	if _, ok := LegacyLocalSnapshotMetadata(ctx, db, coredb.PluginTarget{
+	if _, ok := LegacySnapshotMetadata(ctx, db, coredb.PluginTarget{
 		PluginID: "org.pbs-plus.other", TargetType: filesystem.TargetTypeLocal,
 	}); ok {
 		t.Fatal("legacy metadata was synthesized for a third-party plugin")
@@ -35,7 +35,7 @@ func TestLegacyLocalSnapshotMetadata(t *testing.T) {
 		t.Fatalf("ImportLocalTargets: %v", err)
 	}
 
-	metadata, ok := LegacyLocalSnapshotMetadata(ctx, db, coredb.PluginTarget{
+	metadata, ok := LegacySnapshotMetadata(ctx, db, coredb.PluginTarget{
 		Name: legacy.Name, PluginID: pluginID, PluginVersion: version,
 		TargetType: filesystem.TargetTypeLocal,
 	})

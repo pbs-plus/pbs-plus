@@ -20,12 +20,12 @@ const maxSnapshotMetadataBytes = 1 << 20
 func (b *restoreJob) pluginExecute(ctx context.Context, target coredb.PluginTarget, idempotencyKey string) (err error) {
 	metadata, err := b.snapshotPluginMetadata(ctx)
 	if err != nil {
-		legacy, ok := plugins.LegacyLocalSnapshotMetadata(ctx, b.app.CoreDB, target)
+		legacy, ok := plugins.LegacySnapshotMetadata(ctx, b.app.CoreDB, target)
 		if !ok {
 			return err
 		}
 		metadata = legacy
-		b.task.WriteString("snapshot predates plugin metadata; using the legacy local filesystem mapping")
+		b.task.WriteString("snapshot predates plugin metadata; using the legacy first-party target mapping")
 	}
 	b.task.WriteString(fmt.Sprintf(
 		"restoring with plugin %s %s [target type: %s, archive: %s v%d]",

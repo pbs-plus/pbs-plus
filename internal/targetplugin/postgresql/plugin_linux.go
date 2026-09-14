@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -22,16 +23,18 @@ const (
 	ArchiveType          = "postgresql"
 	ArchiveFormatVersion = 1
 
-	schemaVersion = 1
-	defaultPort   = 5432
-	probeTimeout  = 5 * time.Second
+	targetSchemaVersion = 2
+	jobSchemaVersion    = 1
+	defaultPort         = 5432
+	probeTimeout        = 5 * time.Second
 
-	hostField     = "host"
-	portField     = "port"
-	usernameField = "username"
-	passwordField = "password"
-	tlsModeField  = "tls_mode"
-	caCertField   = "ca_certificate"
+	hostField      = "host"
+	portField      = "port"
+	usernameField  = "username"
+	passwordField  = "password"
+	tlsModeField   = "tls_mode"
+	caCertField    = "ca_certificate"
+	clientDirField = "default_client_dir"
 
 	scopeField       = "scope"
 	databaseField    = "database"
@@ -41,7 +44,7 @@ const (
 )
 
 // Version is the plugin release version reported to the host.
-var Version = "1.0.0"
+var Version = "1.1.0"
 
 // Descriptor is the identity and form contract this plugin serves.
 func Descriptor() targetplugin.Descriptor {
@@ -51,7 +54,7 @@ func Descriptor() targetplugin.Descriptor {
 		PluginID:        PluginID,
 		Version:         Version,
 		TargetTypes:     []string{TargetType},
-		TargetSchema: targetplugin.FormSchema{Version: schemaVersion, Fields: []targetplugin.FormField{
+		TargetSchema: targetplugin.FormSchema{Version: targetSchemaVersion, Fields: []targetplugin.FormField{
 			{Key: hostField, Label: "Host", Control: targetplugin.ControlText, Required: true},
 			{Key: portField, Label: "Port", Control: targetplugin.ControlInteger, Minimum: &port, Maximum: maximumPort()},
 			{Key: usernameField, Label: "Username", Control: targetplugin.ControlText, Required: true},
@@ -64,15 +67,16 @@ func Descriptor() targetplugin.Descriptor {
 				{Label: "Disable", Value: targetplugin.NewStringScalar("disable")},
 			}},
 			{Key: caCertField, Label: "CA Certificate", Control: targetplugin.ControlCertificatePath},
+			{Key: clientDirField, Label: "Client Directory", Control: targetplugin.ControlPath},
 		}},
-		BackupSchema: targetplugin.FormSchema{Version: schemaVersion, Fields: []targetplugin.FormField{
+		BackupSchema: targetplugin.FormSchema{Version: jobSchemaVersion, Fields: []targetplugin.FormField{
 			{Key: scopeField, Label: "Scope", Control: targetplugin.ControlSelect, Options: []targetplugin.SelectOption{
 				{Label: "Whole server", Value: targetplugin.NewStringScalar("server")},
 				{Label: "Single database", Value: targetplugin.NewStringScalar("database")},
 			}},
 			{Key: databaseField, Label: "Database", Control: targetplugin.ControlText},
 		}},
-		RestoreSchema: targetplugin.FormSchema{Version: schemaVersion, Fields: []targetplugin.FormField{
+		RestoreSchema: targetplugin.FormSchema{Version: jobSchemaVersion, Fields: []targetplugin.FormField{
 			{Key: sourceField, Label: "Source Database", Control: targetplugin.ControlText},
 			{Key: destinationField, Label: "Destination Database", Control: targetplugin.ControlText},
 			{Key: replaceField, Label: "Replace Existing", Control: targetplugin.ControlBoolean},
@@ -86,17 +90,18 @@ func Handlers() map[string]targetplugin.MethodHandler {
 		targetplugin.MethodPluginHealth:   health,
 		targetplugin.MethodTargetValidate: validate,
 		targetplugin.MethodTargetProbe:    probe,
+		targetplugin.MethodTargetMigrate:  targetMigrate,
 		targetplugin.MethodBackupOpen:     backupOpen,
 		targetplugin.MethodRestoreOpen:    restoreOpen,
 		targetplugin.MethodRestoreConsume: restoreConsume,
 	}
 }
 
-func health(_ context.Context, payload []byte) (any, error) {
+func health(ctx context.Context, payload []byte) (any, error) {
 	if _, err := targetplugin.Request[targetplugin.PluginHealthRequest](payload); err != nil {
 		return nil, err
 	}
-	if _, err := database.DiscoverClientBundles(context.Background()); err != nil {
+	if _, err := database.DiscoverClientBundles(ctx); err != nil {
 		return targetplugin.PluginHealthResponse{Message: err.Error()}, nil
 	}
 	return targetplugin.PluginHealthResponse{Healthy: true}, nil
@@ -115,6 +120,21 @@ func validate(_ context.Context, payload []byte) (any, error) {
 		return nil, errors.New("password is required")
 	}
 	return targetplugin.TargetValidateResponse{Config: config}, nil
+}
+
+func targetMigrate(_ context.Context, payload []byte) (any, error) {
+	request, err := targetplugin.Request[targetplugin.TargetMigrateRequest](payload)
+	if err != nil {
+		return nil, err
+	}
+	if request.FromSchemaVersion != 1 || request.ToSchemaVersion != targetSchemaVersion {
+		return nil, fmt.Errorf("unsupported target schema migration %d to %d", request.FromSchemaVersion, request.ToSchemaVersion)
+	}
+	values, err := normalizeConfig(request.Values)
+	if err != nil {
+		return nil, err
+	}
+	return targetplugin.TargetMigrateResponse{Values: values}, nil
 }
 
 func probe(_ context.Context, payload []byte) (any, error) {
@@ -234,13 +254,15 @@ func databaseTarget(job targetplugin.JobInput) (coredb.Target, string, error) {
 	username, _ := config[usernameField].StringValue()
 	tlsMode, _ := config[tlsModeField].StringValue()
 	caCertificate, _ := config[caCertField].StringValue()
+	clientDir, _ := config[clientDirField].StringValue()
 	return coredb.Target{
-		Type:                  coredb.TargetTypePostgreSQL,
-		DatabaseHost:          host,
-		DatabasePort:          int(port),
-		DatabaseUsername:      username,
-		DatabaseTLSMode:       tlsMode,
-		DatabaseCACertificate: caCertificate,
+		Type:                     coredb.TargetTypePostgreSQL,
+		DatabaseHost:             host,
+		DatabasePort:             int(port),
+		DatabaseUsername:         username,
+		DatabaseTLSMode:          tlsMode,
+		DatabaseCACertificate:    caCertificate,
+		DatabaseDefaultClientDir: clientDir,
 	}, password, nil
 }
 
@@ -265,11 +287,22 @@ func normalizeConfig(config targetplugin.Values) (targetplugin.Values, error) {
 		portField:     targetplugin.NewIntegerScalar(port),
 		usernameField: targetplugin.NewStringScalar(username),
 	}
-	if tlsMode, ok := config[tlsModeField].StringValue(); ok && tlsMode != "" {
-		normalized[tlsModeField] = targetplugin.NewStringScalar(tlsMode)
+	tlsMode, _ := config[tlsModeField].StringValue()
+	if tlsMode == "" {
+		tlsMode = "prefer"
 	}
+	normalized[tlsModeField] = targetplugin.NewStringScalar(tlsMode)
 	if caCertificate, ok := config[caCertField].StringValue(); ok && caCertificate != "" {
+		if !filepath.IsAbs(caCertificate) {
+			return nil, errors.New("CA certificate path must be absolute")
+		}
 		normalized[caCertField] = targetplugin.NewStringScalar(caCertificate)
+	}
+	if clientDir, ok := config[clientDirField].StringValue(); ok && clientDir != "" {
+		if !filepath.IsAbs(clientDir) {
+			return nil, errors.New("client directory must be absolute")
+		}
+		normalized[clientDirField] = targetplugin.NewStringScalar(clientDir)
 	}
 	return normalized, nil
 }

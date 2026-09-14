@@ -172,6 +172,13 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 			log.Info("imported local targets into plugin execution", "count", imported)
 		}
 	}
+	if conf.Env.PluginDatabaseTargets {
+		if imported, err := plugins.ImportPostgreSQLTargets(context.Background(), app.CoreDB); err != nil {
+			log.Error(err, "bootstrap: import PostgreSQL targets into plugin execution")
+		} else if imported > 0 {
+			log.Info("imported PostgreSQL targets into plugin execution", "count", imported)
+		}
+	}
 	return nil
 }
 

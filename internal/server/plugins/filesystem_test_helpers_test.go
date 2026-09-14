@@ -18,7 +18,11 @@ import (
 // installFilesystemPlugin registers and activates the given filesystem plugin version.
 func installFilesystemPlugin(t *testing.T, ctx context.Context, db *coredb.Store, version string) (pluginID, active string) {
 	t.Helper()
-	descriptor := filesystem.Descriptor()
+	return installTestPlugin(t, ctx, db, filesystem.Descriptor(), version)
+}
+
+func installTestPlugin(t *testing.T, ctx context.Context, db *coredb.Store, descriptor targetplugin.Descriptor, version string) (pluginID, active string) {
+	t.Helper()
 	digest, err := targetplugin.SchemaDigest(descriptor)
 	if err != nil {
 		t.Fatalf("SchemaDigest: %v", err)
@@ -38,7 +42,7 @@ func installFilesystemPlugin(t *testing.T, ctx context.Context, db *coredb.Store
 		t.Fatalf("marshal manifest: %v", err)
 	}
 	repository := coredb.PluginRepository{
-		ID: "org.pbs-plus.filesystem-tests", Name: "Filesystem Tests",
+		ID: descriptor.PluginID + "-tests", Name: "Plugin Tests",
 		URL: "https://plugins.example.test/index.toml", PublicKey: []byte("key"), Enabled: true,
 	}
 	if err := db.CreatePluginRepository(ctx, repository); err != nil {
@@ -46,7 +50,7 @@ func installFilesystemPlugin(t *testing.T, ctx context.Context, db *coredb.Store
 	}
 	if err := db.RegisterPluginVersion(ctx, repository.ID, coredb.InstalledPluginVersion{
 		PluginID: descriptor.PluginID, Version: version, Platform: "linux/amd64",
-		InstallPath: filepath.Join("/plugins/filesystem", version), Manifest: manifest,
+		InstallPath: filepath.Join("/plugins", descriptor.PluginID, version), Manifest: manifest,
 		ArtifactSHA256: strings.Repeat("ab", 32), InstalledAt: time.Unix(1_700_000_000, 0),
 		HealthState: coredb.PluginHealthUnknown,
 	}, true); err != nil {

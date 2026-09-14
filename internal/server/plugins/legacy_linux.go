@@ -8,13 +8,18 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/postgresql"
 )
 
-// LegacyLocalSnapshotMetadata synthesizes plugin metadata for local filesystem
-// snapshots written before plugin metadata archives existed. The host owns
-// this fixed mapping; third-party plugins cannot claim legacy snapshots.
-func LegacyLocalSnapshotMetadata(ctx context.Context, db *coredb.Store, target coredb.PluginTarget) (targetplugin.SnapshotMetadata, bool) {
-	if target.PluginID != filesystem.PluginID || target.TargetType != filesystem.TargetTypeLocal {
+// LegacySnapshotMetadata maps pre-plugin snapshots only to fixed first-party archive contracts.
+func LegacySnapshotMetadata(ctx context.Context, db *coredb.Store, target coredb.PluginTarget) (targetplugin.SnapshotMetadata, bool) {
+	var archive targetplugin.Archive
+	switch {
+	case target.PluginID == filesystem.PluginID && target.TargetType == filesystem.TargetTypeLocal:
+		archive = targetplugin.Archive{Type: filesystem.ArchiveType, FormatVersion: filesystem.ArchiveFormatVersion}
+	case target.PluginID == postgresql.PluginID && target.TargetType == postgresql.TargetType:
+		archive = targetplugin.Archive{Type: postgresql.ArchiveType, FormatVersion: postgresql.ArchiveFormatVersion}
+	default:
 		return targetplugin.SnapshotMetadata{}, false
 	}
 	manifest, _, err := loadActiveManifest(ctx, db, target.PluginID)
@@ -28,7 +33,7 @@ func LegacyLocalSnapshotMetadata(ctx context.Context, db *coredb.Store, target c
 		TargetType:          target.TargetType,
 		TargetSchemaVersion: manifest.TargetSchema.Version,
 		BackupSchemaVersion: manifest.BackupSchema.Version,
-		Archive:             targetplugin.Archive{Type: filesystem.ArchiveType, FormatVersion: filesystem.ArchiveFormatVersion},
+		Archive:             archive,
 	}
 	if err := metadata.Validate(); err != nil {
 		return targetplugin.SnapshotMetadata{}, false
