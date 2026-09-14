@@ -55,6 +55,28 @@ func (db *Store) CreatePluginTarget(ctx context.Context, target PluginTarget, se
 	})
 }
 
+// AttachPluginTarget adds a plugin config to an existing target row, leaving the
+// legacy kind and detail tables untouched for the compatibility read path.
+func (db *Store) AttachPluginTarget(ctx context.Context, target PluginTarget, secrets map[string][]byte) error {
+	if err := validatePluginTarget(target); err != nil {
+		return err
+	}
+	encrypted, err := encryptPluginTargetSecrets(secrets)
+	if err != nil {
+		return err
+	}
+	ctx = db.pluginContext(ctx)
+	return db.RunInTransaction(ctx, func(_ *Transaction, queries *corequery.Queries) error {
+		if _, err := queries.GetTarget(ctx, target.Name); err != nil {
+			return fmt.Errorf("attach plugin target: target %q does not exist: %w", target.Name, err)
+		}
+		if err := queries.CreatePluginTargetConfig(ctx, pluginTargetParams(target)); err != nil {
+			return fmt.Errorf("create plugin target config: %w", err)
+		}
+		return writePluginTargetSecrets(ctx, queries, target.Name, encrypted, nil)
+	})
+}
+
 func (db *Store) UpdatePluginTarget(ctx context.Context, target PluginTarget, secrets map[string][]byte, deleteSecrets []string) error {
 	if err := validatePluginTarget(target); err != nil {
 		return err

@@ -165,6 +165,13 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 	if err := plugins.Register(engine, app); err != nil {
 		return fmt.Errorf("registering plugin install workflow: %w", err)
 	}
+	if conf.Env.PluginLocalTargets {
+		if imported, err := plugins.ImportLocalTargets(context.Background(), app.CoreDB); err != nil {
+			log.Error(err, "bootstrap: import local targets into plugin execution")
+		} else if imported > 0 {
+			log.Info("imported local targets into plugin execution", "count", imported)
+		}
+	}
 	return nil
 }
 
