@@ -90,7 +90,7 @@ func health(ctx context.Context, payload []byte) (any, error) {
 		return nil, err
 	}
 	if _, err := dovecot.SelectClient(ctx, coredb.Target{}); err != nil {
-		return targetplugin.PluginHealthResponse{Message: err.Error()}, nil
+		return targetplugin.PluginHealthResponse{Healthy: true, Message: "client tools unavailable: " + err.Error()}, nil
 	}
 	return targetplugin.PluginHealthResponse{Healthy: true}, nil
 }
