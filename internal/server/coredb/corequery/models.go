@@ -93,6 +93,25 @@ type BackupGroupMigration struct {
 	CompletedAt string `json:"completed_at"`
 }
 
+type BackupPluginOption struct {
+	BackupID      string `json:"backup_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
+type BackupPluginOptionHistory struct {
+	ID            int64  `json:"id"`
+	BackupID      string `json:"backup_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	MigratedAt    int64  `json:"migrated_at"`
+}
+
 type Exclusion struct {
 	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`
@@ -193,6 +212,25 @@ type RestoreDovecotOption struct {
 	DestinationUsername string `json:"destination_username"`
 	Mailbox             string `json:"mailbox"`
 	ReplaceExisting     int64  `json:"replace_existing"`
+}
+
+type RestorePluginOption struct {
+	RestoreID     string `json:"restore_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
+type RestorePluginOptionHistory struct {
+	ID            int64  `json:"id"`
+	RestoreID     string `json:"restore_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	MigratedAt    int64  `json:"migrated_at"`
 }
 
 type Script struct {
