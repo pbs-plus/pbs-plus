@@ -90,6 +90,85 @@ func ParseFormValues(schema FormSchema, submitted map[string][]string, secretPre
 	return values, secrets, nil
 }
 
+// ValidateFormConfig checks typed config and secret presence against a descriptor schema.
+func ValidateFormConfig(schema FormSchema, config Values, secretPresent map[string]bool) error {
+	if err := schema.Validate(); err != nil {
+		return fmt.Errorf("validate form schema: %w", err)
+	}
+	fields := flattenFormFields(schema.Fields)
+	byKey := make(map[string]FormField, len(fields))
+	for _, field := range fields {
+		byKey[field.Key] = field
+	}
+	for key, value := range config {
+		field, ok := byKey[key]
+		if !ok {
+			return fmt.Errorf("unknown config field %q", key)
+		}
+		if field.Control == ControlGroup || field.Control == ControlStatus || field.Control == ControlSecret {
+			return fmt.Errorf("config field %q does not accept a value", key)
+		}
+		if err := validateFormScalar(field, value); err != nil {
+			return fmt.Errorf("config field %q: %w", key, err)
+		}
+	}
+	for key, present := range secretPresent {
+		if !present {
+			continue
+		}
+		field, ok := byKey[key]
+		if !ok || field.Control != ControlSecret {
+			return fmt.Errorf("unknown secret field %q", key)
+		}
+	}
+	visible := make(map[string]bool, len(fields))
+	markFormFieldVisibility(schema.Fields, config, true, visible)
+	for _, field := range fields {
+		if !visible[field.Key] {
+			if _, ok := config[field.Key]; ok || secretPresent[field.Key] {
+				return fmt.Errorf("field %q is not visible", field.Key)
+			}
+			continue
+		}
+		if !field.Required {
+			continue
+		}
+		if field.Control == ControlSecret {
+			if !secretPresent[field.Key] {
+				return fmt.Errorf("field %q is required", field.Key)
+			}
+			continue
+		}
+		value, ok := config[field.Key]
+		if !ok || scalarEmpty(value) {
+			return fmt.Errorf("field %q is required", field.Key)
+		}
+	}
+	return nil
+}
+
+func validateFormScalar(field FormField, value Scalar) error {
+	if err := validateFieldScalar(field, value); err != nil {
+		return err
+	}
+	if field.Control == ControlInteger {
+		integer, _ := value.IntegerValue()
+		if field.Minimum != nil && integer < *field.Minimum || field.Maximum != nil && integer > *field.Maximum {
+			return errors.New("value is outside its bounds")
+		}
+	}
+	if field.Control == ControlSelect && !selectContains(field, value) {
+		return errors.New("value is not a select option")
+	}
+	if field.Pattern != "" {
+		text, _ := value.StringValue()
+		if !regexp.MustCompile(field.Pattern).MatchString(text) {
+			return errors.New("value does not match its pattern")
+		}
+	}
+	return nil
+}
+
 func singleFormValue(submitted map[string][]string, key string) (string, bool, error) {
 	values, ok := submitted[key]
 	if !ok {

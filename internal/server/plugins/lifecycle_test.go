@@ -139,6 +139,24 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatal("CheckHealth succeeded for a missing version")
 	}
 
+	targetTypes, err := ListTargetTypes(ctx, db)
+	if err != nil || len(targetTypes) != 1 || targetTypes[0].TargetType != "lifecycle" {
+		t.Fatalf("ListTargetTypes = %#v, %v", targetTypes, err)
+	}
+	if err := CreateTarget(ctx, db, supervisor, "plugin-target", lifecyclePluginID, "lifecycle", nil); err != nil {
+		t.Fatalf("CreateTarget: %v", err)
+	}
+	pluginTarget, err := db.GetPluginTarget(ctx, "plugin-target")
+	if err != nil || pluginTarget.PluginVersion != "1.1.0" || pluginTarget.TargetType != "lifecycle" {
+		t.Fatalf("plugin target = %#v, %v", pluginTarget, err)
+	}
+	if err := UpdateTarget(ctx, db, supervisor, "plugin-target", nil, nil); err != nil {
+		t.Fatalf("UpdateTarget: %v", err)
+	}
+	if err := db.DeleteTarget(nil, "plugin-target"); err != nil {
+		t.Fatalf("DeleteTarget: %v", err)
+	}
+
 	if rolled, err := db.ActivatePluginVersion(ctx, lifecyclePluginID, "1.0.0"); err != nil || !rolled {
 		t.Fatalf("rollback = %v, %v", rolled, err)
 	}
@@ -273,6 +291,16 @@ func TestLifecyclePluginHelper(t *testing.T) {
 	})
 	router.Handle(targetplugin.MethodPluginHealth, func(*arpc.Request) (arpc.Response, error) {
 		return lifecycleResponse(targetplugin.PluginHealthResponse{Healthy: true})
+	})
+	router.Handle(targetplugin.MethodTargetValidate, func(request *arpc.Request) (arpc.Response, error) {
+		var validate targetplugin.TargetValidateRequest
+		if err := targetplugin.UnmarshalProtocol(request.Payload, &validate); err != nil {
+			return arpc.Response{}, err
+		}
+		if err := validate.Validate(); err != nil {
+			return arpc.Response{}, err
+		}
+		return lifecycleResponse(targetplugin.TargetValidateResponse{Config: validate.Target.Config})
 	})
 	router.Handle(targetplugin.MethodTargetProbe, func(request *arpc.Request) (arpc.Response, error) {
 		var probe targetplugin.TargetProbeRequest

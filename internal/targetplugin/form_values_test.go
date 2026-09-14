@@ -52,6 +52,9 @@ func TestParseFormValues(t *testing.T) {
 	if string(secrets["password"]) != "secret" {
 		t.Fatalf("secrets = %#v", secrets)
 	}
+	if err := ValidateFormConfig(schema, values, map[string]bool{"password": true}); err != nil {
+		t.Fatalf("ValidateFormConfig: %v", err)
+	}
 
 	values, secrets, err = ParseFormValues(schema, map[string][]string{
 		"path":         {"/srv/data"},
@@ -62,6 +65,35 @@ func TestParseFormValues(t *testing.T) {
 	}
 	if _, ok := values["note"]; ok || len(secrets) != 0 {
 		t.Fatalf("hidden values = %#v, secrets = %#v", values, secrets)
+	}
+}
+
+func TestValidateFormConfigRejectsPluginOutput(t *testing.T) {
+	visible := NewBooleanScalar(true)
+	schema := FormSchema{Version: 1, Fields: []FormField{
+		{Key: "show", Label: "Show", Control: ControlBoolean},
+		{Key: "detail", Label: "Detail", Control: ControlText, VisibleWhen: &FieldVisibility{Field: "show", Equals: visible}},
+		{Key: "secret", Label: "Secret", Control: ControlSecret},
+	}}
+
+	tests := []struct {
+		name      string
+		config    Values
+		secrets   map[string]bool
+		wantError string
+	}{
+		{name: "unknown config", config: Values{"extra": NewStringScalar("x")}, wantError: "unknown config field"},
+		{name: "secret in config", config: Values{"secret": NewStringScalar("x")}, wantError: "does not accept a value"},
+		{name: "unknown secret", secrets: map[string]bool{"extra": true}, wantError: "unknown secret field"},
+		{name: "hidden output", config: Values{"detail": NewStringScalar("x")}, wantError: "is not visible"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateFormConfig(schema, test.config, test.secrets)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("ValidateFormConfig error = %v, want %q", err, test.wantError)
+			}
+		})
 	}
 }
 
