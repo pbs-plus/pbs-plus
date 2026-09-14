@@ -19,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -192,6 +193,10 @@ func D2DTargetAgentHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		tx = nil
+		if _, err := plugins.ImportAgentTargets(r.Context(), app.CoreDB); err != nil {
+			respond.WriteErrorResponse(w, fmt.Errorf("syncing agent plugin targets: %w", err))
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]bool{
@@ -253,6 +258,10 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
+		}
+		if err := syncFirstPartyTarget(r.Context(), app.CoreDB, newTarget); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
 
 		response.Status = http.StatusOK
@@ -320,6 +329,10 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 					respond.WriteErrorResponse(w, err)
 					return
 				}
+			}
+			if err := syncFirstPartyTarget(r.Context(), app.CoreDB, target); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
 			}
 
 			response.Status = http.StatusOK
@@ -629,6 +642,32 @@ func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error 
 	}
 	if target.Type == coredb.TargetTypeS3 {
 		return applyS3Form(target, r)
+	}
+	return nil
+}
+
+func syncFirstPartyTarget(ctx context.Context, db *coredb.Store, target coredb.Target) error {
+	var importer func(context.Context, *coredb.Store) (int, error)
+	switch {
+	case target.IsLocal():
+		importer = plugins.ImportLocalTargets
+	case target.IsAgent():
+		importer = plugins.ImportAgentTargets
+	case target.IsS3():
+		importer = plugins.ImportS3Targets
+	case target.Type == coredb.TargetTypePostgreSQL:
+		importer = plugins.ImportPostgreSQLTargets
+	case target.Type == coredb.TargetTypeMySQL:
+		importer = plugins.ImportMySQLTargets
+	case target.Type == coredb.TargetTypeLDAP:
+		importer = plugins.ImportLDAPTargets
+	case target.Type == coredb.TargetTypeDovecot:
+		importer = plugins.ImportDovecotTargets
+	default:
+		return fmt.Errorf("target type %q has no first-party plugin", target.Type)
+	}
+	if _, err := importer(ctx, db); err != nil {
+		return fmt.Errorf("syncing target %q into plugin execution: %w", target.Name, err)
 	}
 	return nil
 }

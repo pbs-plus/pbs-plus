@@ -166,50 +166,14 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 		return fmt.Errorf("registering plugin install workflow: %w", err)
 	}
 	if installed, err := plugins.InstallBuiltins(context.Background(), app.CoreDB, conf.BundledPluginsPath); err != nil {
-		log.Error(err, "bootstrap: install bundled target plugins")
+		return fmt.Errorf("installing bundled target plugins: %w", err)
 	} else if installed > 0 {
 		log.Info("installed bundled target plugins", "count", installed)
 	}
-	if conf.Env.PluginLocalTargets {
-		if imported, err := plugins.ImportLocalTargets(context.Background(), app.CoreDB); err != nil {
-			log.Error(err, "bootstrap: import local targets into plugin execution")
-		} else if imported > 0 {
-			log.Info("imported local targets into plugin execution", "count", imported)
-		}
-		if imported, err := plugins.ImportAgentTargets(context.Background(), app.CoreDB); err != nil {
-			log.Error(err, "bootstrap: import agent targets into plugin execution")
-		} else if imported > 0 {
-			log.Info("imported agent targets into plugin execution", "count", imported)
-		}
-	}
-	if conf.Env.PluginS3Targets {
-		if imported, err := plugins.ImportS3Targets(context.Background(), app.CoreDB); err != nil {
-			log.Error(err, "bootstrap: import S3 targets into plugin execution")
-		} else if imported > 0 {
-			log.Info("imported S3 targets into plugin execution", "count", imported)
-		}
-	}
-	if conf.Env.PluginDatabaseTargets {
-		if imported, err := plugins.ImportPostgreSQLTargets(context.Background(), app.CoreDB); err != nil {
-			log.Error(err, "bootstrap: import PostgreSQL targets into plugin execution")
-		} else if imported > 0 {
-			log.Info("imported PostgreSQL targets into plugin execution", "count", imported)
-		}
-		if imported, err := plugins.ImportMySQLTargets(context.Background(), app.CoreDB); err != nil {
-			log.Error(err, "bootstrap: import MySQL targets into plugin execution")
-		} else if imported > 0 {
-			log.Info("imported MySQL targets into plugin execution", "count", imported)
-		}
-		if imported, err := plugins.ImportLDAPTargets(context.Background(), app.CoreDB); err != nil {
-			log.Error(err, "bootstrap: import LDAP targets into plugin execution")
-		} else if imported > 0 {
-			log.Info("imported LDAP targets into plugin execution", "count", imported)
-		}
-		if imported, err := plugins.ImportDovecotTargets(context.Background(), app.CoreDB); err != nil {
-			log.Error(err, "bootstrap: import Dovecot targets into plugin execution")
-		} else if imported > 0 {
-			log.Info("imported Dovecot targets into plugin execution", "count", imported)
-		}
+	if imported, err := plugins.ImportFirstPartyTargets(context.Background(), app.CoreDB); err != nil {
+		return fmt.Errorf("importing first-party targets into plugin execution: %w", err)
+	} else if imported > 0 {
+		log.Info("imported first-party targets into plugin execution", "count", imported)
 	}
 	return nil
 }

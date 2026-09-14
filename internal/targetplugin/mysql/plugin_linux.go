@@ -162,7 +162,15 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	bundle, err := database.SelectClientBundle(ctx, target, password, nil)
+	logWriter := targetplugin.NewHostEventWriter(ctx, request.Operation, targetplugin.EventInfo)
+	label := "MySQL"
+	if target.DatabaseVariant == "mariadb" {
+		label = "MariaDB"
+	}
+	if _, err := fmt.Fprintf(logWriter, "--- %s log starts here ---\n", label); err != nil {
+		return nil, err
+	}
+	bundle, err := database.SelectClientBundle(ctx, target, password, logWriter)
 	if err != nil {
 		return nil, err
 	}
@@ -172,8 +180,9 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	}
 	name, _ := request.Job.Options[databaseField].StringValue()
 	staged, err := database.StageDump(ctx, request.Job.Workspace, target, password, database.DumpOptions{
-		Scope:    scope,
-		Database: name,
+		Scope:     scope,
+		Database:  name,
+		LogWriter: logWriter,
 	}, bundle)
 	if err != nil {
 		return nil, err

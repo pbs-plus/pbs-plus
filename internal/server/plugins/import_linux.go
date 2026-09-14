@@ -3,6 +3,7 @@
 package plugins
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -183,6 +184,28 @@ func ImportDovecotTargets(ctx context.Context, db *coredb.Store) (int, error) {
 		})
 }
 
+// ImportFirstPartyTargets attaches first-party plugin configs to all legacy targets.
+func ImportFirstPartyTargets(ctx context.Context, db *coredb.Store) (int, error) {
+	importers := []func(context.Context, *coredb.Store) (int, error){
+		ImportLocalTargets,
+		ImportAgentTargets,
+		ImportS3Targets,
+		ImportPostgreSQLTargets,
+		ImportMySQLTargets,
+		ImportLDAPTargets,
+		ImportDovecotTargets,
+	}
+	total := 0
+	for _, importer := range importers {
+		imported, err := importer(ctx, db)
+		if err != nil {
+			return total, err
+		}
+		total += imported
+	}
+	return total, nil
+}
+
 func importTargets(
 	ctx context.Context,
 	db *coredb.Store,
@@ -212,11 +235,6 @@ func importTargets(
 		if !matches(target) {
 			continue
 		}
-		if _, err := db.GetPluginTarget(ctx, target.Name); err == nil {
-			continue
-		} else if !errors.Is(err, coredb.ErrTargetNotFound) {
-			return imported, err
-		}
 		values, secrets, err := build(target)
 		if err != nil {
 			return imported, err
@@ -230,7 +248,7 @@ func importTargets(
 			secretFields = append(secretFields, field)
 		}
 		slices.Sort(secretFields)
-		if err := db.AttachPluginTarget(ctx, coredb.PluginTarget{
+		desired := coredb.PluginTarget{
 			Name:          target.Name,
 			PluginID:      pluginID,
 			PluginVersion: plugin.ActiveVersion,
@@ -238,10 +256,51 @@ func importTargets(
 			SchemaVersion: manifest.TargetSchema.Version,
 			Config:        config,
 			SecretFields:  secretFields,
-		}, secrets); err != nil {
+		}
+		existing, err := db.GetPluginTarget(ctx, target.Name)
+		if errors.Is(err, coredb.ErrTargetNotFound) {
+			if err := db.AttachPluginTarget(ctx, desired, secrets); err != nil {
+				return imported, err
+			}
+			imported++
+			continue
+		}
+		if err != nil {
+			return imported, err
+		}
+		if existing.PluginID != pluginID || existing.TargetType != targetType {
+			return imported, fmt.Errorf("target %q is attached to plugin %s type %s", target.Name, existing.PluginID, existing.TargetType)
+		}
+		storedSecrets, err := db.ResolvePluginTargetSecrets(ctx, target.Name)
+		if err != nil {
+			return imported, err
+		}
+		if existing.PluginVersion == desired.PluginVersion && existing.SchemaVersion == desired.SchemaVersion && bytes.Equal(existing.Config, desired.Config) && equalSecrets(storedSecrets, secrets) {
+			continue
+		}
+		deleteSecrets := make([]string, 0)
+		for field := range storedSecrets {
+			if _, keep := secrets[field]; !keep {
+				deleteSecrets = append(deleteSecrets, field)
+			}
+		}
+		if err := db.SyncAttachedPluginTarget(ctx, desired, secrets, deleteSecrets); err != nil {
 			return imported, err
 		}
 		imported++
 	}
 	return imported, nil
+}
+
+func equalSecrets(left, right map[string][]byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for field, value := range left {
+		rightValue, ok := right[field]
+		if !ok || !bytes.Equal(value, rightValue) {
+			return false
+		}
+	}
+	return true
 }

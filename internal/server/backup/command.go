@@ -30,7 +30,7 @@ func getBackupId(backup coredb.Backup) (string, error) {
 	return backup.ID, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, pluginLease *plugins.BackupLease, logger *log.Logger) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, extraExclusions []string, pluginLease *plugins.BackupLease, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -130,9 +130,6 @@ func backupSourceArgs(backup coredb.Backup, srcPath string, pluginLease *plugins
 }
 
 func backupCommandPolicy(backup coredb.Backup, pluginLease *plugins.BackupLease) (string, bool) {
-	if backup.Target.IsDatabase() || backup.Target.IsDovecot() {
-		return "--change-detection-mode=metadata", false
-	}
 	useExclusions := pluginLease == nil || pluginLease.Supports(targetplugin.FeatureExclusions)
 	if pluginLease != nil && !pluginLease.Supports(targetplugin.FeatureChangeDetection) {
 		return "--change-detection-mode=metadata", useExclusions

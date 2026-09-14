@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
@@ -122,6 +123,33 @@ func CallHost(ctx context.Context, method string, request interface{ Validate() 
 		return fmt.Errorf("decode host response: %w", err)
 	}
 	return validateProtocolValue("host response", response)
+}
+
+type hostEventWriter struct {
+	ctx       context.Context
+	operation Operation
+	level     EventLevel
+}
+
+// NewHostEventWriter converts line-oriented tool output into authenticated host events.
+func NewHostEventWriter(ctx context.Context, operation Operation, level EventLevel) io.Writer {
+	return &hostEventWriter{ctx: ctx, operation: operation, level: level}
+}
+
+func (writer *hostEventWriter) Write(data []byte) (int, error) {
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(data), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if err := CallHost(writer.ctx, MethodHostEvent, HostEvent{
+			Operation: writer.operation,
+			Level:     writer.level,
+			Message:   line,
+		}, nil); err != nil {
+			return 0, err
+		}
+	}
+	return len(data), nil
 }
 
 func validateHostInvocationMethod(method string) error {

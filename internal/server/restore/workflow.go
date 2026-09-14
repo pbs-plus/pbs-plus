@@ -25,10 +25,9 @@ type runResult struct {
 	ErrCount int32 `json:"errCount"`
 }
 
-// Register keeps workflow version 1 available for existing executions and
-// registers database-aware version 2 for new executions.
+// Register keeps both persisted workflow versions available for execution recovery.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	register := func(version string, databaseAware bool) error {
+	register := func(version string) error {
 		return engine.RegisterVersion(jobs.WorkflowRestore, version, func(w *jobs.WorkflowContext) error {
 			var input jobs.RestoreInput
 			if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
@@ -38,24 +37,23 @@ func Register(engine *jobs.Engine, app *application.Runtime) error {
 			if err != nil {
 				return jobs.NonRetryable(fmt.Errorf("getting restore workflow definition: %w", err))
 			}
-			return runWorkflow(w, app, job, input, databaseAware)
+			return runWorkflow(w, app, job, input)
 		})
 	}
-	if err := register("1", false); err != nil {
+	if err := register("1"); err != nil {
 		return err
 	}
-	return register("2", true)
+	return register("2")
 }
 
-func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Restore, input jobs.RestoreInput, databaseAware bool) error {
+func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Restore, input jobs.RestoreInput) error {
 	b := &restoreJob{
-		job:           job,
-		app:           app,
-		skipCheck:     input.SkipCheck,
-		databaseAware: databaseAware,
-		waitGroup:     &sync.WaitGroup{},
-		logger:        log.WithScope(log.Scope{JobID: job.ID}),
-		executionID:   w.Execution.ID,
+		job:         job,
+		app:         app,
+		skipCheck:   input.SkipCheck,
+		waitGroup:   &sync.WaitGroup{},
+		logger:      log.WithScope(log.Scope{JobID: job.ID}),
+		executionID: w.Execution.ID,
 	}
 	defer b.cleanup()
 	queued, err := tasklog.NewQueuedTask("reader", tasklog.FormatWorkerID(job.Store, "host-", job.DestTarget.GetHostname()), input.Web)

@@ -141,8 +141,15 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	logWriter := targetplugin.NewHostEventWriter(ctx, request.Operation, targetplugin.EventInfo)
+	if _, err := fmt.Fprintln(logWriter, "--- Dovecot log starts here ---"); err != nil {
+		return nil, err
+	}
 	client, err := dovecot.SelectClient(ctx, target)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := fmt.Fprintf(logWriter, "using Dovecot client %s from %s\n", client.Version, client.Program); err != nil {
 		return nil, err
 	}
 	if err := os.Chmod(request.Job.Workspace, 0o711); err != nil {
@@ -151,8 +158,9 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	username, _ := request.Job.Options[usernameField].StringValue()
 	mailbox, _ := request.Job.Options[mailboxField].StringValue()
 	staged, err := dovecot.StageBackup(ctx, request.Job.Workspace, target, password, dovecot.BackupOptions{
-		Username: username,
-		Mailbox:  mailbox,
+		Username:  username,
+		Mailbox:   mailbox,
+		LogWriter: logWriter,
 	}, client)
 	if err != nil {
 		return nil, err

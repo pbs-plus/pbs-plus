@@ -112,6 +112,36 @@ func (db *Store) UpdatePluginTarget(ctx context.Context, target PluginTarget, se
 	})
 }
 
+// SyncAttachedPluginTarget updates plugin data without replacing the legacy target kind used by compatibility APIs.
+func (db *Store) SyncAttachedPluginTarget(ctx context.Context, target PluginTarget, secrets map[string][]byte, deleteSecrets []string) error {
+	if err := validatePluginTarget(target); err != nil {
+		return err
+	}
+	encrypted, err := encryptPluginTargetSecrets(secrets)
+	if err != nil {
+		return err
+	}
+	ctx = db.pluginContext(ctx)
+	return db.RunInTransaction(ctx, func(_ *Transaction, queries *corequery.Queries) error {
+		rows, err := queries.UpdatePluginTargetConfig(ctx, corequery.UpdatePluginTargetConfigParams{
+			PluginVersion: target.PluginVersion,
+			TargetType:    target.TargetType,
+			SchemaVersion: int64(target.SchemaVersion),
+			Config:        target.Config,
+			UpdatedAt:     pluginTargetUpdatedAt(target).Unix(),
+			TargetName:    target.Name,
+			PluginID:      target.PluginID,
+		})
+		if err != nil {
+			return fmt.Errorf("sync attached plugin target config: %w", err)
+		}
+		if rows != 1 {
+			return ErrTargetNotFound
+		}
+		return writePluginTargetSecrets(ctx, queries, target.Name, encrypted, deleteSecrets)
+	})
+}
+
 func (db *Store) GetPluginTarget(ctx context.Context, name string) (PluginTarget, error) {
 	ctx = db.pluginContext(ctx)
 	row, err := db.readQueries.GetPluginTargetConfig(ctx, name)

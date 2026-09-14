@@ -41,7 +41,7 @@ type waitResult struct {
 // Register keeps workflow version 1 available for existing executions and
 // registers database-aware version 2 for new executions.
 func Register(engine *jobs.Engine, app *application.Runtime) error {
-	register := func(version string, databaseAware bool) error {
+	register := func(version string) error {
 		return engine.RegisterVersion(jobs.WorkflowBackup, version, func(w *jobs.WorkflowContext) error {
 			var input jobs.BackupInput
 			if err := json.Unmarshal(w.Execution.Payload, &input); err != nil {
@@ -51,24 +51,24 @@ func Register(engine *jobs.Engine, app *application.Runtime) error {
 			if err != nil {
 				return jobs.NonRetryable(fmt.Errorf("getting backup workflow definition: %w", err))
 			}
-			return runWorkflow(w, app, job, input, databaseAware)
+			return runWorkflow(w, app, job, input)
 		})
 	}
-	if err := register("1", false); err != nil {
+	if err := register("1"); err != nil {
 		return err
 	}
-	return register("2", true)
+	return register("2")
 }
 
-func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Backup, input jobs.BackupInput, databaseAware bool) error {
+func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.Backup, input jobs.BackupInput) error {
 	b := &backupJob{
 		job:             job,
 		app:             app,
 		skipCheck:       input.SkipCheck,
 		logger:          log.WithScope(log.Scope{JobID: job.ID}),
 		extraExclusions: input.ExtraExclusions,
-		databaseAware:   databaseAware,
-		waitGroup:       &sync.WaitGroup{},
+
+		waitGroup: &sync.WaitGroup{},
 	}
 	defer b.cleanup()
 	workerID, err := backupWorkerID(job)
@@ -159,18 +159,16 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 // start mounts the source and launches proxmox-backup-client, returning
 // the durable task identity for the wait activity.
 func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
-	srcPath, agentMount, s3Mount, err := b.mountSource(ctx, b.job.Target)
+	srcPath, err := b.mountSource(ctx, b.job.Target)
 	if err != nil {
 		return nil, err
 	}
 
 	b.mu.Lock()
 	b.srcPath = srcPath
-	b.agentMount = agentMount
-	b.s3Mount = s3Mount
 	b.mu.Unlock()
 
-	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, b.job.Target, info)
+	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, info)
 	if err != nil {
 		return nil, err
 	}

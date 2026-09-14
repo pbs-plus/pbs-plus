@@ -60,6 +60,29 @@ func TestImportLocalTargets(t *testing.T) {
 	if err != nil || again != 0 {
 		t.Fatalf("second ImportLocalTargets = %d, %v", again, err)
 	}
+
+	legacyAfter.Path = "/srv/updated"
+	if err := db.UpdateTarget(nil, legacyAfter); err != nil {
+		t.Fatalf("UpdateTarget: %v", err)
+	}
+	updated, err := ImportLocalTargets(ctx, db)
+	if err != nil || updated != 1 {
+		t.Fatalf("updated ImportLocalTargets = %d, %v", updated, err)
+	}
+	pluginTarget, err = db.GetPluginTarget(ctx, "docs")
+	if err != nil {
+		t.Fatalf("GetPluginTarget: %v", err)
+	}
+	if err := targetplugin.UnmarshalProtocol(pluginTarget.Config, &config); err != nil {
+		t.Fatalf("UnmarshalProtocol updated: %v", err)
+	}
+	if path, _ := config["path"].StringValue(); path != "/srv/updated" {
+		t.Fatalf("updated config = %#v", config)
+	}
+	legacyUpdated, err := db.GetTarget("docs")
+	if err != nil || legacyUpdated.Type != coredb.TargetTypeFilesystem || legacyUpdated.Access != coredb.FilesystemAccessLocal {
+		t.Fatalf("legacy target after sync = %#v, %v", legacyUpdated, err)
+	}
 }
 
 func TestImportAgentTargets(t *testing.T) {

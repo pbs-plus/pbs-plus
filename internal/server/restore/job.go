@@ -42,15 +42,14 @@ type restoreJob struct {
 	errCount     atomic.Int32
 	receivedDone atomic.Bool
 
-	job           coredb.Restore
-	executionID   string
-	remoteServer  *pxar.RemoteServer
-	localClient   *pxar.Client
-	agentPipe     *arpc.StreamPipe
-	app           *application.Runtime
-	skipCheck     bool
-	databaseAware bool
-	stagingDir    string
+	job          coredb.Restore
+	executionID  string
+	remoteServer *pxar.RemoteServer
+	localClient  *pxar.Client
+	agentPipe    *arpc.StreamPipe
+	app          *application.Runtime
+	skipCheck    bool
+	stagingDir   string
 }
 
 func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
@@ -60,28 +59,14 @@ func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	b.updateRestoreWithTask(b.task.Task)
 	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
-	pluginTarget, pluginErr := b.app.CoreDB.GetPluginTarget(ctx, b.job.DestTarget.Name)
-	if pluginErr == nil {
-		return b.pluginExecute(ctx, pluginTarget, idempotencyKey)
+	pluginTarget, err := b.app.CoreDB.GetPluginTarget(ctx, b.job.DestTarget.Name)
+	if err != nil {
+		if errors.Is(err, coredb.ErrTargetNotFound) {
+			return fmt.Errorf("target %q has not been imported into plugin execution", b.job.DestTarget.Name)
+		}
+		return fmt.Errorf("getting plugin restore target: %w", err)
 	}
-	if !errors.Is(pluginErr, coredb.ErrTargetNotFound) {
-		return pluginErr
-	}
-
-	switch {
-	case b.job.DestTarget.IsDatabase() && b.databaseAware:
-		return b.databaseExecute(ctx)
-	case b.job.DestTarget.IsDovecot() && b.databaseAware:
-		return b.dovecotExecute(ctx)
-	case b.job.DestTarget.IsAgent():
-		return b.agentExecute(ctx, idempotencyKey)
-	case b.job.DestTarget.IsLocal():
-		return b.localExecute(ctx)
-	case b.job.DestTarget.IsS3():
-		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
-	default:
-		return jobs.ErrTargetNotFound
-	}
+	return b.pluginExecute(ctx, pluginTarget, idempotencyKey)
 }
 
 func (b *restoreJob) finalizeFailure(err error) {
@@ -256,11 +241,6 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	return nil
 }
 
-func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) error {
-	target := b.job.DestTarget
-	return b.agentRestore(ctx, target.GetHostname(), target.VolumeID, target.AgentHost.OperatingSystem, target.GetAgentHostPath(), idempotencyKey)
-}
-
 func (b *restoreJob) agentRestore(ctx context.Context, hostname, volumeID, operatingSystem, basePath, idempotencyKey string) error {
 	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -414,20 +394,6 @@ func (b *restoreJob) agentRestore(ctx context.Context, hostname, volumeID, opera
 		return err
 	}
 
-	return b.waitForCompletion(ctx)
-}
-
-func (b *restoreJob) localExecute(ctx context.Context) error {
-	destPath := filepath.Join(b.job.DestTarget.Path, b.job.DestSubpath)
-
-	srcPath := b.job.SrcPath
-	if strings.TrimSpace(b.job.SrcPath) == "" {
-		srcPath = "/"
-	}
-
-	if err := b.startLocalRestore(ctx, destPath, []string{srcPath}, pxar.RestoreMode(b.job.Mode)); err != nil {
-		return err
-	}
 	return b.waitForCompletion(ctx)
 }
 
