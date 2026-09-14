@@ -16,7 +16,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
 // removes the mount directory. It is a no-op when path is empty.
@@ -183,80 +182,4 @@ func (a *AgentMount) CloseMount() {
 	log.Info(reply.Message)
 }
 
-// S3Mount is the client-side handle for an S3 FS mount created via the mount
-type S3Mount struct {
-	BackupID  string
-	Endpoint  string
-	AccessKey string
-	SecretKey string
-	Bucket    string
-	Region    string
-	Prefix    string
-	UseSSL    bool
-	Path      string
-	isEmpty   bool
-}
 
-func S3FSMount(ctx context.Context, app *application.Runtime, backup coredb.Backup, target coredb.Target) (*S3Mount, error) {
-	parsedS3 := target.S3Info
-
-	s3Mount := &S3Mount{
-		BackupID:  backup.ID,
-		Endpoint:  parsedS3.Endpoint,
-		AccessKey: parsedS3.AccessKey,
-		Bucket:    parsedS3.Bucket,
-		Region:    parsedS3.Region,
-		UseSSL:    parsedS3.UseSSL,
-		Prefix:    backup.Subpath,
-	}
-
-	s3Mount.Path = filepath.Join(conf.AgentMountBasePath, backup.ID)
-	s3Mount.Unmount()
-
-	if err := os.MkdirAll(s3Mount.Path, 0700); err != nil {
-		s3Mount.CloseMount()
-		return nil, fmt.Errorf("error creating directory \"%s\" -> %w", s3Mount.Path, err)
-	}
-
-	errCleanup := func() {
-		s3Mount.CloseMount()
-		s3Mount.Unmount()
-	}
-
-	args := &S3BackupArgs{
-		BackupID:     backup.ID,
-		Endpoint:     parsedS3.Endpoint,
-		AccessKey:    parsedS3.AccessKey,
-		Bucket:       parsedS3.Bucket,
-		Region:       parsedS3.Region,
-		UseSSL:       parsedS3.UseSSL,
-		UsePathStyle: parsedS3.IsPathStyle,
-		Prefix:       backup.Subpath,
-	}
-	var reply BackupReply
-
-	if err := callMountRPC(ctx, ServiceName+".S3Backup", args, &reply); err != nil {
-		errCleanup()
-		return nil, err
-	}
-	if reply.Status != 200 {
-		errCleanup()
-		return nil, fmt.Errorf("%s", reply.Message)
-	}
-
-	empty, ok := waitForAccessible(ctx, s3Mount.Path)
-	if !ok {
-		errCleanup()
-		return nil, fmt.Errorf("mounted directory not accessible after timeout")
-	}
-	s3Mount.isEmpty = empty
-	return s3Mount, nil
-}
-
-func (a *S3Mount) Unmount() { unmountPath(a.Path) }
-
-func (a *S3Mount) IsEmpty() bool { return a.isEmpty }
-
-func (a *S3Mount) CloseMount() {
-	sessions.DisconnectSession(a.Endpoint + "|" + a.BackupID)
-}

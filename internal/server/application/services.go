@@ -44,10 +44,6 @@ func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 			if sess := sessions.GetSessionARPCFS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}
-		case b.Target.IsS3():
-			if sess := sessions.GetSessionS3FS(b.GetStreamID()); sess != nil {
-				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
-			}
 		}
 	}
 	return backups, nil

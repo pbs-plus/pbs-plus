@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -49,7 +48,6 @@ type restoreJob struct {
 	agentPipe    *arpc.StreamPipe
 	app          *application.Runtime
 	skipCheck    bool
-	stagingDir   string
 }
 
 func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
@@ -175,11 +173,6 @@ func (b *restoreJob) cleanup() {
 	}
 
 	sessions.DisconnectSession(childKey)
-	if b.stagingDir != "" {
-		if err := os.RemoveAll(b.stagingDir); err != nil {
-			b.logger.Error(err, "failed to remove restore staging data")
-		}
-	}
 }
 
 func (b *restoreJob) writeStatsSummary() {
