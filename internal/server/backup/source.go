@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
@@ -114,13 +115,20 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 
 	pluginTarget, pluginErr := b.app.CoreDB.GetPluginTarget(ctx, target.Name)
 	if pluginErr == nil {
-		lease, err := plugins.OpenBackup(ctx, b.app.CoreDB, b.app.PluginSupervisor, pluginTarget.Name, job.ID, b.executionID, job.PluginOptions, b.handlePluginEvent)
+		var emptyAgentMount atomic.Bool
+		lease, err := plugins.OpenBackup(ctx, b.app.CoreDB, b.app.PluginSupervisor, pluginTarget.Name, job.ID, b.executionID, job.PluginOptions, b.handlePluginEvent,
+			func(mountCtx context.Context, request targetplugin.HostAgentBackupMountRequest) (targetplugin.HostAgentBackupMountResponse, func() error, error) {
+				return b.brokerAgentMount(mountCtx, job, target.Name, request, &emptyAgentMount)
+			})
 		if err != nil {
 			return "", nil, nil, err
 		}
 		b.mu.Lock()
 		b.pluginLease = lease
 		b.mu.Unlock()
+		if emptyAgentMount.Load() {
+			return "", nil, nil, jobs.ErrMountEmpty
+		}
 		srcPath = lease.Path
 		pluginSource = true
 		supportsSubpath = lease.Supports(targetplugin.FeatureSubpath)
@@ -271,6 +279,27 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	}
 
 	return srcPath, agentMount, s3Mount, nil
+}
+
+// brokerAgentMount keeps agent mount creation and release host-owned; the plugin only receives the mounted path.
+func (b *backupJob) brokerAgentMount(ctx context.Context, job coredb.Backup, targetName string, request targetplugin.HostAgentBackupMountRequest, empty *atomic.Bool) (targetplugin.HostAgentBackupMountResponse, func() error, error) {
+	mountCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	mount, err := mountrpc.AgentFSMount(mountCtx, b.app, job, coredb.Target{
+		Name:      targetName,
+		AgentHost: coredb.AgentHost{Name: request.Hostname, OperatingSystem: request.OperatingSystem},
+		VolumeID:  request.VolumeID,
+	})
+	if err != nil {
+		return targetplugin.HostAgentBackupMountResponse{}, nil, err
+	}
+	empty.Store(mount.IsEmpty())
+	return targetplugin.HostAgentBackupMountResponse{Path: mount.Path, Empty: mount.IsEmpty()}, func() error {
+		mount.Unmount()
+		mount.CloseMount()
+		return nil
+	}, nil
 }
 
 func (b *backupJob) handlePluginEvent(event targetplugin.HostEvent) error {

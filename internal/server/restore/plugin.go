@@ -33,7 +33,10 @@ func (b *restoreJob) pluginExecute(ctx context.Context, target coredb.PluginTarg
 	))
 
 	lease, err := plugins.OpenRestore(ctx, b.app.CoreDB, b.app.PluginSupervisor, target.Name, b.job.ID,
-		b.executionID, idempotencyKey, metadata, b.job.PluginOptions, b.handlePluginEvent, nil)
+		b.executionID, idempotencyKey, metadata, b.job.PluginOptions, b.handlePluginEvent,
+		func(restoreCtx context.Context, request targetplugin.HostAgentRestoreRequest) error {
+			return b.agentRestore(restoreCtx, request.Hostname, request.VolumeID, request.OperatingSystem, request.DestinationPath, idempotencyKey)
+		})
 	if err != nil {
 		return err
 	}
@@ -67,7 +70,6 @@ func (b *restoreJob) pluginExecute(ctx context.Context, target coredb.PluginTarg
 			return err
 		}
 	case targetplugin.RestoreModeAgent:
-		return fmt.Errorf("plugin %q requested a brokered agent restore, which is not wired into the scheduler yet", metadata.PluginID)
 	default:
 		return fmt.Errorf("plugin restore mode %q is not supported", lease.Mode)
 	}

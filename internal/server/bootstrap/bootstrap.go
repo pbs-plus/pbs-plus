@@ -171,6 +171,11 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 		} else if imported > 0 {
 			log.Info("imported local targets into plugin execution", "count", imported)
 		}
+		if imported, err := plugins.ImportAgentTargets(context.Background(), app.CoreDB); err != nil {
+			log.Error(err, "bootstrap: import agent targets into plugin execution")
+		} else if imported > 0 {
+			log.Info("imported agent targets into plugin execution", "count", imported)
+		}
 	}
 	if conf.Env.PluginS3Targets {
 		if imported, err := plugins.ImportS3Targets(context.Background(), app.CoreDB); err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/agentfs"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/ldap"
@@ -26,6 +27,23 @@ func ImportLocalTargets(ctx context.Context, db *coredb.Store) (int, error) {
 		func(target coredb.Target) bool { return target.IsLocal() },
 		func(target coredb.Target) (targetplugin.Values, map[string][]byte, error) {
 			return targetplugin.Values{"path": targetplugin.NewStringScalar(target.Path)}, nil, nil
+		})
+}
+
+// ImportAgentTargets attaches plugin configs to every legacy agent filesystem target.
+func ImportAgentTargets(ctx context.Context, db *coredb.Store) (int, error) {
+	return importTargets(ctx, db, agentfs.PluginID, agentfs.TargetType,
+		func(target coredb.Target) bool { return target.IsAgent() },
+		func(target coredb.Target) (targetplugin.Values, map[string][]byte, error) {
+			operatingSystem := target.AgentHost.OperatingSystem
+			if operatingSystem == "" {
+				operatingSystem = "linux"
+			}
+			return targetplugin.Values{
+				"hostname":         targetplugin.NewStringScalar(target.GetHostname()),
+				"volume_id":        targetplugin.NewStringScalar(target.VolumeID),
+				"operating_system": targetplugin.NewStringScalar(operatingSystem),
+			}, nil, nil
 		})
 }
 

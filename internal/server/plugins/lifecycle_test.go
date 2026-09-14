@@ -177,7 +177,7 @@ func TestPluginLifecycle(t *testing.T) {
 		func(event targetplugin.HostEvent) error {
 			backupEvents = append(backupEvents, event)
 			return nil
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("OpenBackup: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Run(failure.name, func(t *testing.T) {
 			before := pluginTempDirs(t)
 			_, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-"+failure.policy, "execution-"+failure.policy,
-				backupOptions("backup-"+failure.policy, failure.policy), nil)
+				backupOptions("backup-"+failure.policy, failure.policy), nil, nil)
 			if err == nil || !strings.Contains(err.Error(), failure.wantText) {
 				t.Fatalf("OpenBackup error = %v, want %q", err, failure.wantText)
 			}
@@ -244,7 +244,7 @@ func TestPluginLifecycle(t *testing.T) {
 		hung := make(chan error, 1)
 		go func() {
 			_, err := OpenBackup(cancelCtx, db, supervisor, "plugin-target", "backup-hang", "execution-hang",
-				backupOptions("backup-hang", "hang"), nil)
+				backupOptions("backup-hang", "hang"), nil, nil)
 			hung <- err
 		}()
 		time.Sleep(200 * time.Millisecond)
@@ -262,7 +262,7 @@ func TestPluginLifecycle(t *testing.T) {
 		}
 
 		retried, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-retry", "execution-retry",
-			backupOptions("backup-retry", "full"), nil)
+			backupOptions("backup-retry", "full"), nil, nil)
 		if err != nil {
 			t.Fatalf("retried OpenBackup: %v", err)
 		}
@@ -271,6 +271,34 @@ func TestPluginLifecycle(t *testing.T) {
 		}
 		if after := pluginTempDirs(t); after != before {
 			t.Fatalf("plugin temp directories after retry = %d, want %d", after, before)
+		}
+	})
+
+	t.Run("brokered agent mount is a valid backup source", func(t *testing.T) {
+		mounted := t.TempDir()
+		released := false
+		mountLease, err := OpenBackup(ctx, db, supervisor, "plugin-target", "backup-mount", "execution-mount",
+			backupOptions("backup-mount", "agent-mount"), nil,
+			func(_ context.Context, request targetplugin.HostAgentBackupMountRequest) (targetplugin.HostAgentBackupMountResponse, func() error, error) {
+				if request.Hostname != "agent.example" || request.VolumeID != "disk-1" {
+					return targetplugin.HostAgentBackupMountResponse{}, nil, fmt.Errorf("unexpected mount request: %#v", request)
+				}
+				return targetplugin.HostAgentBackupMountResponse{Path: mounted}, func() error {
+					released = true
+					return nil
+				}, nil
+			})
+		if err != nil {
+			t.Fatalf("OpenBackup: %v", err)
+		}
+		if mountLease.Path != mounted {
+			t.Fatalf("backup source = %q, want %q", mountLease.Path, mounted)
+		}
+		if err := mountLease.Close(); err != nil {
+			t.Fatalf("close mount lease: %v", err)
+		}
+		if !released {
+			t.Fatal("brokered agent mount was not released")
 		}
 	})
 	newRestoreOptions := func(jobID, mode string) *coredb.PluginJobOptions {
@@ -663,6 +691,27 @@ func TestLifecyclePluginHelper(t *testing.T) {
 			return lifecycleResponse(targetplugin.BackupOpenResponse{
 				Kind:         targetplugin.SourceDirectory,
 				Path:         os.TempDir(),
+				Archive:      targetplugin.Archive{Type: "lifecycle", FormatVersion: 1},
+				CleanupToken: []byte("cleanup"),
+			})
+		case "agent-mount":
+			mountRequest, err := targetplugin.MarshalProtocol(targetplugin.HostAgentBackupMountRequest{
+				Operation: open.Operation, Hostname: "agent.example", VolumeID: "disk-1", OperatingSystem: "linux",
+			})
+			if err != nil {
+				return arpc.Response{}, err
+			}
+			var encodedMount []byte
+			if err := pipe.Call(request.Context, targetplugin.MethodHostAgentBackupMount, mountRequest, &encodedMount); err != nil {
+				return arpc.Response{}, err
+			}
+			var mount targetplugin.HostAgentBackupMountResponse
+			if err := targetplugin.UnmarshalProtocol(encodedMount, &mount); err != nil {
+				return arpc.Response{}, err
+			}
+			return lifecycleResponse(targetplugin.BackupOpenResponse{
+				Kind:         targetplugin.SourceDirectory,
+				Path:         mount.Path,
 				Archive:      targetplugin.Archive{Type: "lifecycle", FormatVersion: 1},
 				CleanupToken: []byte("cleanup"),
 			})

@@ -7,6 +7,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/agentfs"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/ldap"
@@ -21,6 +22,8 @@ func LegacySnapshotMetadata(ctx context.Context, db *coredb.Store, target coredb
 	switch {
 	case target.PluginID == filesystem.PluginID && target.TargetType == filesystem.TargetTypeLocal:
 		archive = targetplugin.Archive{Type: filesystem.ArchiveType, FormatVersion: filesystem.ArchiveFormatVersion}
+	case target.PluginID == agentfs.PluginID && target.TargetType == agentfs.TargetType:
+		archive = targetplugin.Archive{Type: agentfs.ArchiveType, FormatVersion: agentfs.ArchiveFormatVersion}
 	case target.PluginID == postgresql.PluginID && target.TargetType == postgresql.TargetType:
 		archive = targetplugin.Archive{Type: postgresql.ArchiveType, FormatVersion: postgresql.ArchiveFormatVersion}
 	case target.PluginID == mysql.PluginID && target.TargetType == mysql.TargetType:

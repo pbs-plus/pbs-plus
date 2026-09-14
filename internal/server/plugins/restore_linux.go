@@ -232,7 +232,7 @@ func OpenRestore(ctx context.Context, db *coredb.Store, supervisor *targetplugin
 	}
 	switch lease.Mode {
 	case targetplugin.RestoreModePath:
-		if err := validateBackupPath(workspace, lease.Path, manifest.TargetSchema.Fields, config); err != nil {
+		if err := validateBackupPath(workspace, lease.Path, manifest.TargetSchema.Fields, config, nil); err != nil {
 			return nil, errors.Join(err, lease.Close())
 		}
 	case targetplugin.RestoreModeStructured:

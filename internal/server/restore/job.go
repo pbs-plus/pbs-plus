@@ -257,13 +257,18 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 }
 
 func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) error {
+	target := b.job.DestTarget
+	return b.agentRestore(ctx, target.GetHostname(), target.VolumeID, target.AgentHost.OperatingSystem, target.GetAgentHostPath(), idempotencyKey)
+}
+
+func (b *restoreJob) agentRestore(ctx context.Context, hostname, volumeID, operatingSystem, basePath, idempotencyKey string) error {
 	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget.Name))
 
-	qSess, qExists := b.app.Agents.GetQuicPipe(b.job.DestTarget.GetHostname())
-	tSess, tExists := b.app.Agents.GetStreamPipe(b.job.DestTarget.GetHostname())
+	qSess, qExists := b.app.Agents.GetQuicPipe(hostname)
+	tSess, tExists := b.app.Agents.GetStreamPipe(hostname)
 	if !qExists && !tExists {
 		return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
@@ -277,13 +282,13 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 		respMsg, statusErr = qSess.CallMessage(
 			timeoutCtx,
 			"target_status",
-			&fswire.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+			&fswire.TargetStatusReq{Drive: volumeID},
 		)
 	} else {
 		respMsg, statusErr = tSess.CallMessage(
 			timeoutCtx,
 			"target_status",
-			&fswire.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+			&fswire.TargetStatusReq{Drive: volumeID},
 		)
 	}
 	if statusErr != nil || !strings.HasPrefix(respMsg, "reachable") {
@@ -291,10 +296,9 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 	}
 
 	destPath := b.job.DestSubpath
-	basePath := b.job.DestTarget.GetAgentHostPath()
 	fullPath := path.Join(basePath, destPath)
 
-	if b.job.DestTarget.AgentHost.OperatingSystem == "windows" {
+	if operatingSystem == "windows" {
 		fullPath = strings.ReplaceAll(fullPath, "/", "\\")
 		if len(fullPath) >= 2 && fullPath[1] == ':' {
 			drive := strings.ToUpper(fullPath[:2])

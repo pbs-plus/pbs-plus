@@ -11,6 +11,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/agentfs"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/ldap"
@@ -58,6 +59,60 @@ func TestImportLocalTargets(t *testing.T) {
 	again, err := ImportLocalTargets(ctx, db)
 	if err != nil || again != 0 {
 		t.Fatalf("second ImportLocalTargets = %d, %v", again, err)
+	}
+}
+
+func TestImportAgentTargets(t *testing.T) {
+	ctx := context.Background()
+	db, err := coredb.Initialize(ctx, filepath.Join(t.TempDir(), "import-agent.db"))
+	if err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	defer db.Close()
+
+	installTestPlugin(t, ctx, db, agentfs.Descriptor(), agentfs.Version)
+	if err := db.CreateAgentHost(nil, coredb.AgentHost{Name: "workstation", IP: "10.0.0.8", OperatingSystem: "windows"}); err != nil {
+		t.Fatalf("CreateAgentHost: %v", err)
+	}
+	legacy := coredb.Target{
+		Name: "workstation - C", Type: coredb.TargetTypeFilesystem, Access: coredb.FilesystemAccessAgent,
+		Path: "agent://workstation/C", AgentHost: coredb.AgentHost{Name: "workstation", OperatingSystem: "windows"}, VolumeID: "C",
+	}
+	if err := db.CreateTarget(nil, legacy); err != nil {
+		t.Fatalf("CreateTarget: %v", err)
+	}
+
+	imported, err := ImportAgentTargets(ctx, db)
+	if err != nil || imported != 1 {
+		t.Fatalf("ImportAgentTargets = %d, %v", imported, err)
+	}
+	pluginTarget, err := db.GetPluginTarget(ctx, legacy.Name)
+	if err != nil || pluginTarget.PluginID != agentfs.PluginID || pluginTarget.TargetType != agentfs.TargetType {
+		t.Fatalf("imported plugin target = %#v, %v", pluginTarget, err)
+	}
+	var config targetplugin.Values
+	if err := targetplugin.UnmarshalProtocol(pluginTarget.Config, &config); err != nil {
+		t.Fatalf("UnmarshalProtocol: %v", err)
+	}
+	for key, want := range map[string]string{
+		"hostname": "workstation", "volume_id": "C", "operating_system": "windows",
+	} {
+		if got, _ := config[key].StringValue(); got != want {
+			t.Fatalf("imported config[%q] = %q, want %q", key, got, want)
+		}
+	}
+	legacyAfter, err := db.GetTarget(legacy.Name)
+	if err != nil || !legacyAfter.IsAgent() || legacyAfter.VolumeID != legacy.VolumeID {
+		t.Fatalf("legacy target after import = %#v, %v", legacyAfter, err)
+	}
+	metadata, ok := LegacySnapshotMetadata(ctx, db, pluginTarget)
+	if !ok || metadata.PluginID != agentfs.PluginID || metadata.Archive.Type != agentfs.ArchiveType {
+		t.Fatalf("legacy snapshot metadata = %#v, %v", metadata, ok)
+	}
+
+	again, err := ImportAgentTargets(ctx, db)
+	if err != nil || again != 0 {
+		t.Fatalf("second ImportAgentTargets = %d, %v", again, err)
 	}
 }
 

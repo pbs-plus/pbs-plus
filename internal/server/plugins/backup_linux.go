@@ -20,6 +20,9 @@ import (
 
 const backupOpenTimeout = 5 * time.Minute
 
+// AgentBackupMount mounts one agent volume for the host and returns its release step.
+type AgentBackupMount func(context.Context, targetplugin.HostAgentBackupMountRequest) (targetplugin.HostAgentBackupMountResponse, func() error, error)
+
 type BackupLease struct {
 	targetplugin.BackupOpenResponse
 	Metadata           targetplugin.SnapshotMetadata
@@ -28,11 +31,13 @@ type BackupLease struct {
 	process   *targetplugin.Process
 	cancel    context.CancelFunc
 	workspace string
+	mu        sync.Mutex
+	brokered  []string
 	closeOnce sync.Once
 	closeErr  error
 }
 
-func OpenBackup(ctx context.Context, db *coredb.Store, supervisor *targetplugin.Supervisor, targetName, jobID, cancellationID string, options *coredb.PluginJobOptions, eventSink func(targetplugin.HostEvent) error) (*BackupLease, error) {
+func OpenBackup(ctx context.Context, db *coredb.Store, supervisor *targetplugin.Supervisor, targetName, jobID, cancellationID string, options *coredb.PluginJobOptions, eventSink func(targetplugin.HostEvent) error, agentMount AgentBackupMount) (*BackupLease, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -98,13 +103,25 @@ func OpenBackup(ctx context.Context, db *coredb.Store, supervisor *targetplugin.
 		},
 	}
 	lease := &BackupLease{process: process, cancel: cancel, workspace: workspace}
+	if agentMount != nil {
+		process.SetAgentBackupMountHandler(func(mountCtx context.Context, mountRequest targetplugin.HostAgentBackupMountRequest) (targetplugin.HostAgentBackupMountResponse, func() error, error) {
+			response, cleanup, err := agentMount(mountCtx, mountRequest)
+			if err != nil {
+				return targetplugin.HostAgentBackupMountResponse{}, nil, err
+			}
+			lease.mu.Lock()
+			lease.brokered = append(lease.brokered, response.Path)
+			lease.mu.Unlock()
+			return response, cleanup, nil
+		})
+	}
 	if err := process.Invoke(openCtx, targetplugin.MethodBackupOpen, request, &lease.BackupOpenResponse); err != nil {
 		return nil, errors.Join(err, lease.Close())
 	}
 	if lease.Kind != targetplugin.SourceDirectory {
 		return nil, errors.Join(fmt.Errorf("plugin backup source kind %q is not supported", lease.Kind), lease.Close())
 	}
-	if err := validateBackupPath(workspace, lease.Path, manifest.TargetSchema.Fields, config); err != nil {
+	if err := validateBackupPath(workspace, lease.Path, manifest.TargetSchema.Fields, config, lease.brokeredPaths()); err != nil {
 		return nil, errors.Join(err, lease.Close())
 	}
 	lease.Metadata = targetplugin.SnapshotMetadata{
@@ -133,6 +150,12 @@ func (lease *BackupLease) Close() error {
 		lease.closeErr = errors.Join(lease.closeErr, os.RemoveAll(lease.workspace), os.RemoveAll(lease.MetadataSourcePath))
 	})
 	return lease.closeErr
+}
+
+func (lease *BackupLease) brokeredPaths() []string {
+	lease.mu.Lock()
+	defer lease.mu.Unlock()
+	return slices.Clone(lease.brokered)
 }
 
 func (lease *BackupLease) Supports(feature targetplugin.HostFeature) bool {
@@ -172,7 +195,7 @@ func backupOptions(manifest targetplugin.PluginManifest, installed coredb.Instal
 	return values, nil
 }
 
-func validateBackupPath(workspace, path string, fields []targetplugin.FormField, config targetplugin.Values) error {
+func validateBackupPath(workspace, path string, fields []targetplugin.FormField, config targetplugin.Values, extraRoots []string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("stat plugin backup source: %w", err)
@@ -185,6 +208,7 @@ func validateBackupPath(workspace, path string, fields []targetplugin.FormField,
 		return fmt.Errorf("resolve plugin backup source: %w", err)
 	}
 	allowed := append([]string{workspace}, configuredPaths(fields, config)...)
+	allowed = append(allowed, extraRoots...)
 	for _, root := range allowed {
 		resolvedRoot, err := filepath.EvalSymlinks(root)
 		if err != nil {
