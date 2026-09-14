@@ -15,6 +15,7 @@ type EnvConfig struct {
 	LogDedupWindow     string
 	InitServerURL      string
 	InitBootstrapToken string
+	PluginLocalTargets bool
 }
 
 var Env = loadEnvConfig()
@@ -33,5 +34,6 @@ func loadEnvConfig() EnvConfig {
 		LogDedupWindow:     os.Getenv("LOG_DEDUP_WINDOW"),
 		InitServerURL:      os.Getenv("PBS_PLUS_INIT_SERVER_URL"),
 		InitBootstrapToken: os.Getenv("PBS_PLUS_INIT_BOOTSTRAP_TOKEN"),
+		PluginLocalTargets: os.Getenv("PBS_PLUS_PLUGIN_LOCAL_TARGETS") == "true",
 	}
 }
