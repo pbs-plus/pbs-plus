@@ -44,6 +44,7 @@ type Querier interface {
 	DeleteBackupDatabaseOptions(ctx context.Context, backupID string) error
 	DeleteBackupDovecotOptions(ctx context.Context, backupID string) error
 	DeleteBackupExclusions(ctx context.Context, jobID string) error
+	DeleteBackupPluginOptions(ctx context.Context, backupID string) error
 	DeleteBatchResults(ctx context.Context, batchName string) error
 	DeleteEmptyTargetPlugin(ctx context.Context, pluginID string) (int64, error)
 	DeleteExclusion(ctx context.Context, arg DeleteExclusionParams) error
@@ -53,6 +54,7 @@ type Querier interface {
 	DeleteRestore(ctx context.Context, id string) (int64, error)
 	DeleteRestoreDatabaseOptions(ctx context.Context, restoreID string) error
 	DeleteRestoreDovecotOptions(ctx context.Context, restoreID string) error
+	DeleteRestorePluginOptions(ctx context.Context, restoreID string) error
 	DeleteScript(ctx context.Context, path string) (int64, error)
 	DeleteTarget(ctx context.Context, name string) (int64, error)
 	DeleteTargetDovecot(ctx context.Context, targetName string) error

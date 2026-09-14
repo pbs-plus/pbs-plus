@@ -159,6 +159,9 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	if err = db.storeBackupDovecotOptions(q, backup); err != nil {
 		return fmt.Errorf("CreateBackup: %w", err)
 	}
+	if err = db.storeBackupPluginOptions(q, backup); err != nil {
+		return fmt.Errorf("CreateBackup: %w", err)
+	}
 
 	for _, exclusion := range backup.Exclusions {
 		if exclusion.JobID == "" {
@@ -276,6 +279,10 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 	}
 	backup.RawExclusions = strings.Join(exclusionPaths, "\n")
 
+	backup.PluginOptions, err = db.loadBackupPluginOptions(id)
+	if err != nil {
+		return Backup{}, fmt.Errorf("GetBackup: get plugin options: %w", err)
+	}
 	db.populateBackupExtras(&backup)
 
 	return backup, nil
@@ -459,6 +466,9 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 		return fmt.Errorf("UpdateBackup: %w", err)
 	}
 	if err = db.storeBackupDovecotOptions(q, backup); err != nil {
+		return fmt.Errorf("UpdateBackup: %w", err)
+	}
+	if err = db.storeBackupPluginOptions(q, backup); err != nil {
 		return fmt.Errorf("UpdateBackup: %w", err)
 	}
 
@@ -780,8 +790,9 @@ type Backup struct {
 	History          JobHistory  `json:"history"`
 	DatabaseScope    string      `json:"database_scope,omitempty"`
 	DatabaseName     string      `json:"database_name,omitempty"`
-	DovecotUsername  string      `json:"dovecot_username,omitempty"`
-	DovecotMailbox   string      `json:"dovecot_mailbox,omitempty"`
+	DovecotUsername  string            `json:"dovecot_username,omitempty"`
+	DovecotMailbox   string            `json:"dovecot_mailbox,omitempty"`
+	PluginOptions    *PluginJobOptions `json:"-"`
 }
 
 func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup) error {

@@ -21,8 +21,11 @@ func TestRender(t *testing.T) {
 		`PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);`,
 		`PBS.PlusUtils.LoadCodeMirror(function () {`,
 		`Ext.define("PBS.D2DManagement.PluginTargetEditWindow", {`,
-		`name: "config." + spec.key,`,
+		`name: (prefix || "config.") + spec.key,`,
 		`(spec.fields || []).forEach(visit);`,
+		`"plugin-options."`,
+		`"backup_schema"`,
+		`"restore_schema"`,
 		`xtype: "pbsPluginTargetPanel",`,
 		`+ "/probe",`,
 	} {

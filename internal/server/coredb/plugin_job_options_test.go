@@ -22,10 +22,20 @@ func TestPluginJobOptionsPersistence(t *testing.T) {
 	}
 
 	pluginID, pluginVersion, targetName := createPluginJobOptionsFixture(t, ctx, db)
+	backupOptions := pluginJobOptionsValue(t, "daily")
+	restoreOptions := pluginJobOptionsValue(t, "overwrite")
+	updatedAt := time.Unix(1_700_000_100, 0)
 	if err := db.CreateBackup(nil, Backup{
 		ID:     "plugin-backup",
 		Store:  "store",
 		Target: Target{Name: targetName},
+		PluginOptions: &PluginJobOptions{
+			PluginID:      pluginID,
+			PluginVersion: pluginVersion,
+			SchemaVersion: 1,
+			Options:       backupOptions,
+			UpdatedAt:     updatedAt,
+		},
 	}); err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
@@ -35,32 +45,15 @@ func TestPluginJobOptionsPersistence(t *testing.T) {
 		Snapshot:   "host/vm/100/2026-01-01T00:00:00Z",
 		SrcPath:    "/",
 		DestTarget: Target{Name: targetName},
+		PluginOptions: &PluginJobOptions{
+			PluginID:      pluginID,
+			PluginVersion: pluginVersion,
+			SchemaVersion: 2,
+			Options:       restoreOptions,
+			UpdatedAt:     updatedAt,
+		},
 	}); err != nil {
 		t.Fatalf("CreateRestore: %v", err)
-	}
-
-	backupOptions := pluginJobOptionsValue(t, "daily")
-	restoreOptions := pluginJobOptionsValue(t, "overwrite")
-	updatedAt := time.Unix(1_700_000_100, 0)
-	if err := db.UpsertBackupPluginOptions(ctx, PluginJobOptions{
-		JobID:         "plugin-backup",
-		PluginID:      pluginID,
-		PluginVersion: pluginVersion,
-		SchemaVersion: 1,
-		Options:       backupOptions,
-		UpdatedAt:     updatedAt,
-	}); err != nil {
-		t.Fatalf("UpsertBackupPluginOptions: %v", err)
-	}
-	if err := db.UpsertRestorePluginOptions(ctx, PluginJobOptions{
-		JobID:         "plugin-restore",
-		PluginID:      pluginID,
-		PluginVersion: pluginVersion,
-		SchemaVersion: 2,
-		Options:       restoreOptions,
-		UpdatedAt:     updatedAt,
-	}); err != nil {
-		t.Fatalf("UpsertRestorePluginOptions: %v", err)
 	}
 
 	storedBackup, err := db.GetBackupPluginOptions(ctx, "plugin-backup")
@@ -81,6 +74,14 @@ func TestPluginJobOptionsPersistence(t *testing.T) {
 		Options:       restoreOptions,
 		UpdatedAt:     updatedAt,
 	})
+	backup, err := db.GetBackup("plugin-backup")
+	if err != nil || backup.PluginOptions == nil || !bytes.Equal(backup.PluginOptions.Options, backupOptions) {
+		t.Fatalf("GetBackup plugin options = %#v, %v", backup.PluginOptions, err)
+	}
+	restore, err := db.GetRestore("plugin-restore")
+	if err != nil || restore.PluginOptions == nil || !bytes.Equal(restore.PluginOptions.Options, restoreOptions) {
+		t.Fatalf("GetRestore plugin options = %#v, %v", restore.PluginOptions, err)
+	}
 
 	backups, err := db.ListBackupPluginOptions(ctx, pluginID, pluginVersion)
 	if err != nil || len(backups) != 1 || backups[0].JobID != "plugin-backup" {
@@ -93,15 +94,15 @@ func TestPluginJobOptionsPersistence(t *testing.T) {
 
 	backupOptions = pluginJobOptionsValue(t, "weekly")
 	updatedAt = time.Unix(1_700_000_200, 0)
-	if err := db.UpsertBackupPluginOptions(ctx, PluginJobOptions{
-		JobID:         "plugin-backup",
+	backup.PluginOptions = &PluginJobOptions{
 		PluginID:      pluginID,
 		PluginVersion: pluginVersion,
 		SchemaVersion: 3,
 		Options:       backupOptions,
 		UpdatedAt:     updatedAt,
-	}); err != nil {
-		t.Fatalf("update backup plugin options: %v", err)
+	}
+	if err := db.UpdateBackup(nil, backup); err != nil {
+		t.Fatalf("UpdateBackup: %v", err)
 	}
 
 	if err := db.Close(); err != nil {

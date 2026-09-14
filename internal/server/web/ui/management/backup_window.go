@@ -102,6 +102,7 @@ var backupJobEdit = js.EditWindow{
 				if (ldap && scopeCombo && !scopeCombo.getValue()) {
 					scopeCombo.setValue("server");
 				}
+				PBS.D2DManagement.PluginForms.jobFields(this.lookup("pluginBackupOptions"), record, "backup_schema");
 			`),
 			"databaseScopeChange": js.Func("field, value", `
 				let databaseName = this.lookup("databaseName");
@@ -128,6 +129,7 @@ var backupJobEdit = js.EditWindow{
 				Column1: js.Items(
 					js.Field{XType: js.XDisplayEditField, Name: "id", Label: "Job ID", Renderer: "Ext.htmlEncode", AllowBlank: new(true), EditableWhenCreate: true},
 					js.Field{XType: "pbsD2DTargetSelector", Label: "Target", Name: "target", Reference: "target"},
+					js.Field{XType: js.XFieldContainer, Reference: "pluginBackupOptions", Layout: "anchor", Hidden: true, Disabled: true},
 					js.Field{XType: js.XFieldContainer, Reference: "filesystemSource", Layout: "anchor", Items: js.Items(
 						js.Field{XType: "pbsD2DTargetPathSelector", Label: "Subpath", Reference: "pathSelectorSubpath", Name: "subpath", DeleteEmptyWhenNotCreate: true},
 					)},

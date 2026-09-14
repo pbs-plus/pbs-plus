@@ -3,6 +3,7 @@
 package targetapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,20 +39,23 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 
 		app.Target.OverlayStatus(all)
 
-		digest, err := digest.Calculate(all)
+		data := make([]targetResponse, len(all))
+		for i := range all {
+			data[i], err = newTargetResponseWithPlugin(r.Context(), app.CoreDB, all[i])
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
+		responseDigest, err := digest.Calculate(data)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-
-		data := make([]targetResponse, len(all))
-		for i := range all {
-			data[i] = newTargetResponse(all[i])
-		}
-
 		toReturn := TargetsResponse{
 			Data:    data,
-			Digest:  digest,
+			Digest:  responseDigest,
 			Success: true,
 		}
 
@@ -364,9 +368,14 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 			default:
 			}
 
+			data, err := newTargetResponseWithPlugin(r.Context(), app.CoreDB, target)
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = newTargetResponse(target)
+			response.Data = data
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -481,14 +490,16 @@ type TargetConfigResponse struct {
 
 type targetResponse struct {
 	coredb.Target
-	TargetType  string `json:"target_type"`
-	Kind        string `json:"kind"`
-	S3Endpoint  string `json:"s3_endpoint,omitempty"`
-	S3Region    string `json:"s3_region,omitempty"`
-	S3AccessKey string `json:"s3_access_key,omitempty"`
-	S3Bucket    string `json:"s3_bucket,omitempty"`
-	S3UseSSL    bool   `json:"s3_use_ssl"`
-	S3PathStyle bool   `json:"s3_path_style"`
+	TargetType    string `json:"target_type"`
+	Kind          string `json:"kind"`
+	PluginID      string `json:"plugin_id,omitempty"`
+	PluginVersion string `json:"plugin_version,omitempty"`
+	S3Endpoint    string `json:"s3_endpoint,omitempty"`
+	S3Region      string `json:"s3_region,omitempty"`
+	S3AccessKey   string `json:"s3_access_key,omitempty"`
+	S3Bucket      string `json:"s3_bucket,omitempty"`
+	S3UseSSL      bool   `json:"s3_use_ssl"`
+	S3PathStyle   bool   `json:"s3_path_style"`
 }
 
 func newTargetResponse(target coredb.Target) targetResponse {
@@ -506,6 +517,20 @@ func newTargetResponse(target coredb.Target) targetResponse {
 		response.S3PathStyle = target.S3Info.IsPathStyle
 	}
 	return response
+}
+
+func newTargetResponseWithPlugin(ctx context.Context, db *coredb.Store, target coredb.Target) (targetResponse, error) {
+	response := newTargetResponse(target)
+	pluginTarget, err := db.GetPluginTarget(ctx, target.Name)
+	if errors.Is(err, coredb.ErrTargetNotFound) {
+		return response, nil
+	}
+	if err != nil {
+		return targetResponse{}, err
+	}
+	response.PluginID = pluginTarget.PluginID
+	response.PluginVersion = pluginTarget.PluginVersion
+	return response, nil
 }
 
 func targetTypeFromRequest(r *http.Request) coredb.TargetType {

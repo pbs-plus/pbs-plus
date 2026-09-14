@@ -2,6 +2,8 @@ package coredb
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -49,6 +51,37 @@ func (db *Store) GetBackupPluginOptions(ctx context.Context, backupID string) (P
 		return PluginJobOptions{}, fmt.Errorf("get backup plugin options: %w", err)
 	}
 	return backupPluginOptionsFromRow(row), nil
+}
+
+func (db *Store) storeBackupPluginOptions(q *corequery.Queries, backup Backup) error {
+	if backup.PluginOptions == nil {
+		return q.DeleteBackupPluginOptions(db.ctx, backup.ID)
+	}
+	options := *backup.PluginOptions
+	options.JobID = backup.ID
+	if err := validatePluginJobOptions(options); err != nil {
+		return err
+	}
+	return q.UpsertBackupPluginOptions(db.ctx, corequery.UpsertBackupPluginOptionsParams{
+		BackupID:      options.JobID,
+		PluginID:      options.PluginID,
+		PluginVersion: options.PluginVersion,
+		SchemaVersion: int64(options.SchemaVersion),
+		Options:       options.Options,
+		UpdatedAt:     pluginJobOptionsUpdatedAt(options).Unix(),
+	})
+}
+
+func (db *Store) loadBackupPluginOptions(backupID string) (*PluginJobOptions, error) {
+	row, err := db.readQueries.GetBackupPluginOptions(db.ctx, backupID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	options := backupPluginOptionsFromRow(row)
+	return &options, nil
 }
 
 func (db *Store) ListBackupPluginOptions(ctx context.Context, pluginID, pluginVersion string) ([]PluginJobOptions, error) {
@@ -106,6 +139,37 @@ func (db *Store) GetRestorePluginOptions(ctx context.Context, restoreID string) 
 		return PluginJobOptions{}, fmt.Errorf("get restore plugin options: %w", err)
 	}
 	return restorePluginOptionsFromRow(row), nil
+}
+
+func (db *Store) storeRestorePluginOptions(q *corequery.Queries, restore Restore) error {
+	if restore.PluginOptions == nil {
+		return q.DeleteRestorePluginOptions(db.ctx, restore.ID)
+	}
+	options := *restore.PluginOptions
+	options.JobID = restore.ID
+	if err := validatePluginJobOptions(options); err != nil {
+		return err
+	}
+	return q.UpsertRestorePluginOptions(db.ctx, corequery.UpsertRestorePluginOptionsParams{
+		RestoreID:     options.JobID,
+		PluginID:      options.PluginID,
+		PluginVersion: options.PluginVersion,
+		SchemaVersion: int64(options.SchemaVersion),
+		Options:       options.Options,
+		UpdatedAt:     pluginJobOptionsUpdatedAt(options).Unix(),
+	})
+}
+
+func (db *Store) loadRestorePluginOptions(restoreID string) (*PluginJobOptions, error) {
+	row, err := db.readQueries.GetRestorePluginOptions(db.ctx, restoreID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	options := restorePluginOptionsFromRow(row)
+	return &options, nil
 }
 
 func (db *Store) ListRestorePluginOptions(ctx context.Context, pluginID, pluginVersion string) ([]PluginJobOptions, error) {

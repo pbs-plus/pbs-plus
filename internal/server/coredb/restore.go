@@ -142,6 +142,9 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
 		return fmt.Errorf("CreateRestore: %w", err)
 	}
+	if err = db.storeRestorePluginOptions(q, restore); err != nil {
+		return fmt.Errorf("CreateRestore: %w", err)
+	}
 
 	commitNeeded = true
 	return nil
@@ -223,6 +226,10 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		restore.Namespace = row.Namespace.String
 	}
 
+	restore.PluginOptions, err = db.loadRestorePluginOptions(id)
+	if err != nil {
+		return Restore{}, fmt.Errorf("GetRestore: get plugin options: %w", err)
+	}
 	db.populateRestoreExtras(&restore)
 
 	return restore, nil
@@ -339,6 +346,9 @@ func (db *Store) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 		return fmt.Errorf("UpdateRestore: %w", err)
 	}
 	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
+		return fmt.Errorf("UpdateRestore: %w", err)
+	}
+	if err = db.storeRestorePluginOptions(q, restore); err != nil {
 		return fmt.Errorf("UpdateRestore: %w", err)
 	}
 
@@ -600,7 +610,8 @@ type Restore struct {
 	DovecotSourceUsername      string     `json:"dovecot_source_username,omitempty"`
 	DovecotDestinationUsername string     `json:"dovecot_destination_username,omitempty"`
 	DovecotMailbox             string     `json:"dovecot_mailbox,omitempty"`
-	ReplaceExisting            bool       `json:"replace_existing,omitempty"`
+	ReplaceExisting            bool              `json:"replace_existing,omitempty"`
+	PluginOptions              *PluginJobOptions `json:"-"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {

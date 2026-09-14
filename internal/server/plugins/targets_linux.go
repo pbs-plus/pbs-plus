@@ -21,6 +21,8 @@ type TargetType struct {
 	PluginVersion string
 	TargetType    string
 	Schema        targetplugin.FormSchema
+	BackupSchema  targetplugin.FormSchema
+	RestoreSchema targetplugin.FormSchema
 }
 
 func ListTargetTypes(ctx context.Context, db *coredb.Store) ([]TargetType, error) {
@@ -43,6 +45,8 @@ func ListTargetTypes(ctx context.Context, db *coredb.Store) ([]TargetType, error
 				PluginVersion: plugin.ActiveVersion,
 				TargetType:    targetType,
 				Schema:        manifest.TargetSchema,
+				BackupSchema:  manifest.BackupSchema,
+				RestoreSchema: manifest.RestoreSchema,
 			})
 		}
 	}

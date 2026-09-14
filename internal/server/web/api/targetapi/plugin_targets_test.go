@@ -3,6 +3,7 @@
 package targetapi
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
@@ -45,6 +46,26 @@ func TestPluginTargetFormUsesConfigNamespace(t *testing.T) {
 	}
 	if _, err := pluginDeleteFields([]string{"password"}); err == nil {
 		t.Fatal("pluginDeleteFields accepted an unnamespaced field")
+	}
+}
+
+func TestPluginTargetTypeResponseIncludesJobSchemas(t *testing.T) {
+	response := pluginTargetTypeResponse{
+		PluginID:      "example.storage",
+		PluginVersion: "1.0.0",
+		TargetType:    "example",
+		Schema:        pluginFormResponse{Version: 1},
+		BackupSchema:  pluginFormResponse{Version: 2},
+		RestoreSchema: pluginFormResponse{Version: 3},
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{`"backup_schema":{"version":2`, `"restore_schema":{"version":3`} {
+		if !strings.Contains(string(encoded), field) {
+			t.Fatalf("response %s does not contain %s", encoded, field)
+		}
 	}
 }
 

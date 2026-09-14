@@ -4,10 +4,12 @@ import "github.com/pbs-plus/pbs-plus/internal/server/web/js"
 
 var pluginUI = js.Raw(`
 PBS.D2DManagement.PluginForms = {
-	field: function(spec, isCreate) {
+	definitions: null,
+
+	field: function(spec, isCreate, prefix) {
 		let common = {
 			fieldLabel: spec.label,
-			name: "config." + spec.key,
+			name: (prefix || "config.") + spec.key,
 			pluginFieldKey: spec.key,
 			allowBlank: !spec.required,
 			value: spec.default,
@@ -22,7 +24,7 @@ PBS.D2DManagement.PluginForms = {
 				title: spec.label,
 				pluginFieldKey: spec.key,
 				layout: "anchor",
-				items: this.fields(spec.fields || [], isCreate),
+				items: this.fields(spec.fields || [], isCreate, prefix),
 			};
 		}
 		if (spec.control === "integer") {
@@ -59,18 +61,18 @@ PBS.D2DManagement.PluginForms = {
 		return Ext.apply(common, { xtype: "proxmoxtextfield" });
 	},
 
-	fields: function(specs, isCreate) {
+	fields: function(specs, isCreate, prefix) {
 		let ordered = (specs || []).slice().sort((left, right) => (left.order || 0) - (right.order || 0));
-		return ordered.map((spec) => this.field(spec, isCreate));
+		return ordered.map((spec) => this.field(spec, isCreate, prefix));
 	},
 
-	visibility: function(win) {
+	visibility: function(win, schema) {
 		let byKey = {};
 		win.query("[pluginFieldKey]").forEach((field) => {
 			byKey[field.pluginFieldKey] = field;
 		});
 		let update = function() {
-			(win.definition.schema.fields || []).forEach(function visit(spec) {
+			((schema || win.definition.schema).fields || []).forEach(function visit(spec) {
 				let field = byKey[spec.key];
 				if (field && spec.visible_when) {
 					let source = byKey[spec.visible_when.field];
@@ -84,7 +86,45 @@ PBS.D2DManagement.PluginForms = {
 		win.query("field").forEach((field) => field.on("change", update));
 		update();
 	},
+
+	loadDefinitions: function(callback) {
+		let me = this;
+		if (me.definitions) {
+			callback(me.definitions);
+			return;
+		}
+		PBS.PlusUtils.API2Request({
+			url: "/api2/extjs/config/d2d-plugin-target-types",
+			method: "GET",
+			success: function(response) {
+				me.definitions = (response.result && response.result.data) || [];
+				callback(me.definitions);
+			},
+			failure: function() {
+				me.definitions = [];
+				callback(me.definitions);
+			},
+		});
+	},
+
+	jobFields: function(container, record, schemaName) {
+		let me = this;
+		me.loadDefinitions(function(definitions) {
+			let definition = record && definitions.find((item) =>
+				item.plugin_id === record.get("plugin_id") && item.target_type === record.get("target_type"));
+			let schema = definition && definition[schemaName];
+			container.removeAll();
+			container.setHidden(!schema || !(schema.fields || []).length);
+			container.setDisabled(!schema || !(schema.fields || []).length);
+			if (schema && (schema.fields || []).length) {
+				container.add(me.fields(schema.fields, false, "plugin-options."));
+				me.visibility(container, schema);
+			}
+		});
+	},
 };
+
+PBS.D2DManagement.PluginForms.loadDefinitions(Ext.emptyFn);
 
 Ext.define("PBS.D2DManagement.PluginTargetEditWindow", {
 	extend: "PBS.plusWindow.Edit",

@@ -14,6 +14,10 @@ SELECT backup_id, plugin_id, plugin_version, schema_version, options, updated_at
 FROM backup_plugin_options
 WHERE backup_id = ?;
 
+-- name: DeleteBackupPluginOptions :exec
+DELETE FROM backup_plugin_options
+WHERE backup_id = ?;
+
 -- name: ListBackupPluginOptionsByPluginVersion :many
 SELECT backup_id, plugin_id, plugin_version, schema_version, options, updated_at
 FROM backup_plugin_options
@@ -48,6 +52,10 @@ ON CONFLICT(restore_id) DO UPDATE SET
 -- name: GetRestorePluginOptions :one
 SELECT restore_id, plugin_id, plugin_version, schema_version, options, updated_at
 FROM restore_plugin_options
+WHERE restore_id = ?;
+
+-- name: DeleteRestorePluginOptions :exec
+DELETE FROM restore_plugin_options
 WHERE restore_id = ?;
 
 -- name: ListRestorePluginOptionsByPluginVersion :many

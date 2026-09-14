@@ -5,6 +5,7 @@ package backupapi
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -21,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -325,6 +327,12 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			DovecotMailbox:   r.FormValue("dovecot_mailbox"),
 		}
 
+		newBackup.PluginOptions, err = plugins.ParseBackupJobOptions(r.Context(), app.CoreDB, newBackup.Target.Name, r.Form)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+
 		rawExclusions := r.FormValue("rawexclusions")
 		for exclusion := range strings.SplitSeq(rawExclusions, "\n") {
 			exclusion = strings.TrimSpace(exclusion)
@@ -607,6 +615,12 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 			}
 
+			backup.PluginOptions, err = plugins.ParseBackupJobOptions(r.Context(), app.CoreDB, backup.Target.Name, r.Form)
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+
 			err = app.Backup.UpdateBackup(backup)
 			if err != nil {
 				respond.WriteErrorResponse(w, err)
@@ -640,6 +654,12 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			flat := extjs.FlattenBackupForEdit(backup)
+			pluginData, err := plugins.PluginJobOptionFormData(backup.PluginOptions)
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+			maps.Copy(flat, pluginData)
 			flat["notification-batch"] = notificationapi.GetJobBatchName(app, "backup", backup.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {

@@ -47,6 +47,26 @@ func (q *Queries) ArchiveRestorePluginOptions(ctx context.Context, arg ArchiveRe
 	return err
 }
 
+const deleteBackupPluginOptions = `-- name: DeleteBackupPluginOptions :exec
+DELETE FROM backup_plugin_options
+WHERE backup_id = ?
+`
+
+func (q *Queries) DeleteBackupPluginOptions(ctx context.Context, backupID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBackupPluginOptions, backupID)
+	return err
+}
+
+const deleteRestorePluginOptions = `-- name: DeleteRestorePluginOptions :exec
+DELETE FROM restore_plugin_options
+WHERE restore_id = ?
+`
+
+func (q *Queries) DeleteRestorePluginOptions(ctx context.Context, restoreID string) error {
+	_, err := q.db.ExecContext(ctx, deleteRestorePluginOptions, restoreID)
+	return err
+}
+
 const getBackupPluginOptions = `-- name: GetBackupPluginOptions :one
 SELECT backup_id, plugin_id, plugin_version, schema_version, options, updated_at
 FROM backup_plugin_options

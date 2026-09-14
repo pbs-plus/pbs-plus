@@ -23,6 +23,8 @@ type pluginTargetTypeResponse struct {
 	PluginVersion string             `json:"plugin_version"`
 	TargetType    string             `json:"target_type"`
 	Schema        pluginFormResponse `json:"schema"`
+	BackupSchema  pluginFormResponse `json:"backup_schema"`
+	RestoreSchema pluginFormResponse `json:"restore_schema"`
 }
 
 type pluginFormResponse struct {
@@ -74,6 +76,8 @@ func ExtJsPluginTargetTypesHandler(app *application.Runtime) http.HandlerFunc {
 				PluginVersion: targetType.PluginVersion,
 				TargetType:    targetType.TargetType,
 				Schema:        pluginFormSchemaResponse(targetType.Schema),
+				BackupSchema:  pluginFormSchemaResponse(targetType.BackupSchema),
+				RestoreSchema: pluginFormSchemaResponse(targetType.RestoreSchema),
 			}
 		}
 		writePluginTargetResponse(w, data)
