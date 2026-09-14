@@ -294,6 +294,9 @@ Ext.define("PBS.D2DManagement.PluginTargetPanel", {
 			text: "Edit",
 			handler: () => me.editTarget(),
 		}, {
+			text: "Probe",
+			handler: () => me.probeTarget(),
+		}, {
 			text: "Remove",
 			handler: () => me.removeTarget(),
 		}, "-", {
@@ -397,6 +400,23 @@ Ext.define("PBS.D2DManagement.PluginTargetPanel", {
 			definition: definition,
 			listeners: { destroy: () => me.reloadTargets() },
 		}).show();
+	},
+
+	probeTarget: function() {
+		let me = this;
+		let record = me.getSelection()[0];
+		if (!record) return;
+		PBS.PlusUtils.API2Request({
+			url: "/api2/extjs/config/d2d-plugin-target/" + encodeURIComponent(encodePathValue(record.get("name"))) + "/probe",
+			method: "POST",
+			waitMsgTarget: me,
+			success: function(response) {
+				let result = (response.result && response.result.data) || {};
+				let title = result.available ? gettext("Available") : gettext("Unavailable");
+				Ext.Msg.alert(title, Ext.String.htmlEncode(result.message || title));
+			},
+			failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
+		});
 	},
 
 	removeTarget: function() {

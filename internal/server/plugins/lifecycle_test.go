@@ -16,12 +16,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
+	"github.com/pbs-plus/pbs-plus/internal/conf"
+	pbscrypto "github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
@@ -33,6 +36,9 @@ const (
 
 func TestPluginLifecycle(t *testing.T) {
 	ctx := context.Background()
+	directory := t.TempDir()
+	pbscrypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
+	t.Cleanup(func() { pbscrypto.SetSealKeyPath(conf.SecretsKeyPath) })
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
@@ -41,7 +47,12 @@ func TestPluginLifecycle(t *testing.T) {
 	server, index := releaseServer(t, key, versions)
 	defer server.Close()
 
-	db := testStore(t, "lifecycle.db")
+	dbPath := filepath.Join(directory, "lifecycle.db")
+	db, err := coredb.Initialize(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
 	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if err != nil {
 		t.Fatalf("MarshalPKIXPublicKey: %v", err)
@@ -107,9 +118,10 @@ func TestPluginLifecycle(t *testing.T) {
 				SchemaVersion:     1,
 				BrokerToken:       process.BrokerToken(),
 			},
-			Target: targetplugin.TargetInput{Config: targetplugin.Values{
-				"path": targetplugin.NewStringScalar("/data"),
-			}},
+			Target: targetplugin.TargetInput{
+				Config:  targetplugin.Values{"path": targetplugin.NewStringScalar("/data")},
+				Secrets: targetplugin.Secrets{"token": []byte("secret")},
+			},
 		}
 		var response targetplugin.TargetProbeResponse
 		if err := process.Invoke(runCtx, targetplugin.MethodTargetProbe, request, &response); err != nil {
@@ -143,14 +155,30 @@ func TestPluginLifecycle(t *testing.T) {
 	if err != nil || len(targetTypes) != 1 || targetTypes[0].TargetType != "lifecycle" {
 		t.Fatalf("ListTargetTypes = %#v, %v", targetTypes, err)
 	}
-	if err := CreateTarget(ctx, db, supervisor, "plugin-target", lifecyclePluginID, "lifecycle", nil); err != nil {
+	form := map[string][]string{"path": {"/data"}, "token": {"secret"}}
+	if err := CreateTarget(ctx, db, supervisor, "plugin-target", lifecyclePluginID, "lifecycle", form); err != nil {
 		t.Fatalf("CreateTarget: %v", err)
 	}
 	pluginTarget, err := db.GetPluginTarget(ctx, "plugin-target")
-	if err != nil || pluginTarget.PluginVersion != "1.1.0" || pluginTarget.TargetType != "lifecycle" {
+	if err != nil || pluginTarget.PluginVersion != "1.1.0" || pluginTarget.TargetType != "lifecycle" || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "token" {
 		t.Fatalf("plugin target = %#v, %v", pluginTarget, err)
 	}
-	if err := UpdateTarget(ctx, db, supervisor, "plugin-target", nil, nil); err != nil {
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close before restart: %v", err)
+	}
+	db, err = coredb.Initialize(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("Initialize after restart: %v", err)
+	}
+	pluginTarget, err = db.GetPluginTarget(ctx, "plugin-target")
+	if err != nil || len(pluginTarget.SecretFields) != 1 || pluginTarget.SecretFields[0] != "token" {
+		t.Fatalf("restarted plugin target = %#v, %v", pluginTarget, err)
+	}
+	probe, err := ProbeTarget(ctx, db, supervisor, "plugin-target")
+	if err != nil || !probe.Available || probe.Size == nil || probe.Size.Total != 10 {
+		t.Fatalf("ProbeTarget = %#v, %v", probe, err)
+	}
+	if err := UpdateTarget(ctx, db, supervisor, "plugin-target", map[string][]string{"path": {"/data"}}, nil); err != nil {
 		t.Fatalf("UpdateTarget: %v", err)
 	}
 	if err := db.DeleteTarget(nil, "plugin-target"); err != nil {
@@ -247,15 +275,8 @@ func releaseServer(t *testing.T, key *ecdsa.PrivateKey, versions []string) (*htt
 
 func lifecycleManifest(t *testing.T, version string) []byte {
 	t.Helper()
-	descriptor := targetplugin.Descriptor{
-		ProtocolVersion: targetplugin.CurrentProtocolVersion,
-		PluginID:        lifecyclePluginID,
-		Version:         version,
-		TargetTypes:     []string{"lifecycle"},
-		TargetSchema:    targetplugin.FormSchema{Version: 1},
-		BackupSchema:    targetplugin.FormSchema{Version: 1},
-		RestoreSchema:   targetplugin.FormSchema{Version: 1},
-	}
+	descriptor := lifecycleDescriptor()
+	descriptor.Version = version
 	digest, err := targetplugin.SchemaDigest(descriptor)
 	if err != nil {
 		t.Fatalf("SchemaDigest: %v", err)
@@ -310,6 +331,11 @@ func TestLifecyclePluginHelper(t *testing.T) {
 		if err := probe.Validate(); err != nil {
 			return arpc.Response{}, err
 		}
+		path, ok := probe.Target.Config["path"]
+		pathValue, pathOK := path.StringValue()
+		if !ok || !pathOK || pathValue != "/data" || string(probe.Target.Secrets["token"]) != "secret" {
+			return arpc.Response{}, fmt.Errorf("probe received incomplete target values")
+		}
 		event, err := targetplugin.MarshalProtocol(targetplugin.HostEvent{
 			Operation: probe.Operation,
 			Level:     targetplugin.EventInfo,
@@ -322,7 +348,7 @@ func TestLifecyclePluginHelper(t *testing.T) {
 		if err := pipe.Call(t.Context(), targetplugin.MethodHostEvent, event, &ignored); err != nil {
 			return arpc.Response{}, err
 		}
-		return lifecycleResponse(targetplugin.TargetProbeResponse{Available: true})
+		return lifecycleResponse(targetplugin.TargetProbeResponse{Available: true, Size: &targetplugin.Size{Total: 10, Used: 6, Free: 4}})
 	})
 	pipe.SetRouter(router)
 	_ = pipe.Serve()
@@ -338,9 +364,12 @@ func lifecycleDescriptor() targetplugin.Descriptor {
 		PluginID:        lifecyclePluginID,
 		Version:         version,
 		TargetTypes:     []string{"lifecycle"},
-		TargetSchema:    targetplugin.FormSchema{Version: 1},
-		BackupSchema:    targetplugin.FormSchema{Version: 1},
-		RestoreSchema:   targetplugin.FormSchema{Version: 1},
+		TargetSchema: targetplugin.FormSchema{Version: 1, Fields: []targetplugin.FormField{
+			{Key: "path", Label: "Path", Control: targetplugin.ControlPath, Required: true},
+			{Key: "token", Label: "Token", Control: targetplugin.ControlSecret, Required: true},
+		}},
+		BackupSchema:  targetplugin.FormSchema{Version: 1},
+		RestoreSchema: targetplugin.FormSchema{Version: 1},
 	}
 }
 

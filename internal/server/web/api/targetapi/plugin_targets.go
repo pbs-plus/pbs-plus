@@ -172,6 +172,32 @@ func ExtJsPluginTargetHandler(app *application.Runtime) http.HandlerFunc {
 	}
 }
 
+func ExtJsPluginTargetProbeHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			respond.MethodNotAllowed(w, r)
+			return
+		}
+		response, err := plugins.ProbeTarget(r.Context(), app.CoreDB, app.PluginSupervisor, validate.DecodePath(r.PathValue("target")))
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		data := map[string]any{"available": response.Available, "message": response.Message}
+		if response.Size != nil {
+			data["size"] = map[string]uint64{"total": response.Size.Total, "used": response.Size.Used, "free": response.Size.Free}
+		}
+		if len(response.Details) != 0 {
+			details := make(map[string]any, len(response.Details))
+			for key, value := range response.Details {
+				details[key] = pluginScalarValue(value)
+			}
+			data["details"] = details
+		}
+		writePluginTargetResponse(w, data)
+	}
+}
+
 func pluginTargetForm(r *http.Request) (map[string][]string, error) {
 	form := make(map[string][]string, len(r.Form))
 	for key, values := range r.Form {

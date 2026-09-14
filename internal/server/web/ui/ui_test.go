@@ -24,6 +24,7 @@ func TestRender(t *testing.T) {
 		`name: "config." + spec.key,`,
 		`(spec.fields || []).forEach(visit);`,
 		`xtype: "pbsPluginTargetPanel",`,
+		`+ "/probe",`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("rendered UI does not contain %q:\n%s", want, source)

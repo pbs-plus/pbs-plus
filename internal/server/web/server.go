@@ -72,6 +72,7 @@ func NewServer(app *application.Runtime, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-target", ServerOnly(app, targetapi.ExtJsTargetHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-plugin-target", ServerOnly(app, targetapi.ExtJsPluginTargetsHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-plugin-target/{target}", ServerOnly(app, targetapi.ExtJsPluginTargetHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-plugin-target/{target}/probe", ServerOnly(app, targetapi.ExtJsPluginTargetProbeHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-plugin-target-types", ServerOnly(app, targetapi.ExtJsPluginTargetTypesHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-plugin-repository", ServerOnly(app, targetapi.ExtJsPluginRepositoriesHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-plugin-repository/{repository}", ServerOnly(app, targetapi.ExtJsPluginRepositoryHandler(app)))

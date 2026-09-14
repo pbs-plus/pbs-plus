@@ -14,7 +14,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
 
-const targetValidationTimeout = 30 * time.Second
+const targetOperationTimeout = 30 * time.Second
 
 type TargetType struct {
 	PluginID      string
@@ -143,6 +143,57 @@ func UpdateTarget(ctx context.Context, db *coredb.Store, supervisor *targetplugi
 	return db.UpdatePluginTarget(ctx, target, newSecrets, deleteSecrets)
 }
 
+// ProbeTarget runs the active plugin against one persisted target.
+func ProbeTarget(ctx context.Context, db *coredb.Store, supervisor *targetplugin.Supervisor, name string) (targetplugin.TargetProbeResponse, error) {
+	target, err := db.GetPluginTarget(ctx, name)
+	if err != nil {
+		return targetplugin.TargetProbeResponse{}, err
+	}
+	manifest, installed, err := loadActiveManifest(ctx, db, target.PluginID)
+	if err != nil {
+		return targetplugin.TargetProbeResponse{}, err
+	}
+	if installed.Version != target.PluginVersion || manifest.TargetSchema.Version != target.SchemaVersion {
+		return targetplugin.TargetProbeResponse{}, errors.New("plugin target requires schema migration before probe")
+	}
+	var config targetplugin.Values
+	if err := targetplugin.UnmarshalProtocol(target.Config, &config); err != nil {
+		return targetplugin.TargetProbeResponse{}, fmt.Errorf("decode target config: %w", err)
+	}
+	secrets, err := db.ResolvePluginTargetSecrets(ctx, name)
+	if err != nil {
+		return targetplugin.TargetProbeResponse{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, targetOperationTimeout)
+		defer cancel()
+	}
+	deadline, _ := ctx.Deadline()
+	operationID := uuid.NewString()
+	request := targetplugin.TargetProbeRequest{
+		Operation: targetplugin.Operation{
+			ProtocolVersion:   targetplugin.CurrentProtocolVersion,
+			ID:                operationID,
+			IdempotencyKey:    "target-probe:" + operationID,
+			DeadlineUnixMilli: deadline.UnixMilli(),
+			PluginVersion:     installed.Version,
+			TargetType:        target.TargetType,
+			SchemaVersion:     target.SchemaVersion,
+		},
+		Target: targetplugin.TargetInput{Config: config, Secrets: secrets},
+	}
+	var response targetplugin.TargetProbeResponse
+	err = supervisor.Run(ctx, installed.PluginID, installed.InstallPath, func(runCtx context.Context, process *targetplugin.Process) error {
+		request.Operation.BrokerToken = process.BrokerToken()
+		return process.Invoke(runCtx, targetplugin.MethodTargetProbe, request, &response)
+	})
+	return response, err
+}
+
 func secretFieldExists(fields []targetplugin.FormField, key string) bool {
 	for _, field := range fields {
 		if field.Key == key {
@@ -187,7 +238,7 @@ func validateTarget(ctx context.Context, supervisor *targetplugin.Supervisor, in
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, targetValidationTimeout)
+		ctx, cancel = context.WithTimeout(ctx, targetOperationTimeout)
 		defer cancel()
 	}
 	deadline, _ := ctx.Deadline()
