@@ -7,6 +7,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/filesystem"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/ldap"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/mysql"
@@ -26,6 +27,8 @@ func LegacySnapshotMetadata(ctx context.Context, db *coredb.Store, target coredb
 		archive = targetplugin.Archive{Type: mysql.ArchiveType, FormatVersion: mysql.ArchiveFormatVersion}
 	case target.PluginID == ldap.PluginID && target.TargetType == ldap.TargetType:
 		archive = targetplugin.Archive{Type: ldap.ArchiveType, FormatVersion: ldap.ArchiveFormatVersion}
+	case target.PluginID == dovecot.PluginID && target.TargetType == dovecot.TargetType:
+		archive = targetplugin.Archive{Type: dovecot.ArchiveType, FormatVersion: dovecot.ArchiveFormatVersion}
 	case target.PluginID == s3.PluginID && target.TargetType == s3.TargetType:
 		archive = targetplugin.Archive{Type: s3.ArchiveType, FormatVersion: s3.ArchiveFormatVersion}
 	default:
