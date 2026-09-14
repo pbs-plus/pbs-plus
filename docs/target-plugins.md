@@ -479,7 +479,7 @@ Exit: all existing target types run through external executables and the server 
 - Enable plugin execution by default for migrated installations.
 - retain legacy field emission for the documented compatibility window
 - remove old detail writes after one release with successful migration telemetry
-- document repository hosting, signing, development, testing, and recovery
+- document repository hosting, signing, development, testing, and recovery in `docs/target-plugin-authoring.md`
 
 Exit: a fresh installation receives first-party target support only through separately packaged plugin artifacts.
 
