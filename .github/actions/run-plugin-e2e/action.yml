@@ -168,7 +168,26 @@ runs:
         encoded=$(printf '%s' 'e2e-plugin-restore' | base64 -w0)
         response=$(api_post "/api2/extjs/d2d/restore?job=$encoded")
         expect_success "$response" 'Plugin restore start'
-        wait_for_job 'e2e-plugin-restore'
+
+        restore_deadline=$((SECONDS + timeout))
+        while ((SECONDS < restore_deadline)); do
+          restore_status=$(docker exec pbs-plus-test curl -k -fsS "https://localhost:8017/api2/extjs/config/disk-restore/$encoded" -H 'Accept: application/json' | jq -r '.data.history."last-run-state"')
+          if [[ "$restore_status" == 'OK' || "$restore_status" == 'WARNINGS: '* ]]; then
+            echo "Plugin restore job succeeded ($restore_status)"
+            break
+          fi
+          if [[ -n "$restore_status" && "$restore_status" != 'null' && "$restore_status" != 'unknown' && "$restore_status" != 'QUEUED: '* ]]; then
+            echo "Plugin restore job failed: $restore_status"
+            docker logs --tail=150 pbs-plus-test 2>&1
+            exit 1
+          fi
+          sleep 5
+        done
+        if [[ "$restore_status" != 'OK' && "$restore_status" != 'WARNINGS: '* ]]; then
+          echo "Plugin restore job timed out after ${timeout}s"
+          docker logs --tail=150 pbs-plus-test 2>&1
+          exit 1
+        fi
 
         docker exec pbs-plus-test sh -ec '
           set -e
