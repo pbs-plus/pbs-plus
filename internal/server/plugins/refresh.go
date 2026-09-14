@@ -31,11 +31,10 @@ func Refresh(ctx context.Context, db *coredb.Store, fetcher targetplugin.Fetcher
 		ETag:         repository.ETag,
 		LastModified: repository.LastModified,
 	})
+	changed := true
 	if errors.Is(err, targetplugin.ErrRepositoryUnchanged) {
-		return targetplugin.RepositoryIndex{}, false, recordRefresh(ctx, db, repository, targetplugin.PluginRepositoryCache{
-			ETag:         repository.ETag,
-			LastModified: repository.LastModified,
-		}, "")
+		changed = false
+		document, err = fetcher.Index(ctx, repository.URL, targetplugin.PluginRepositoryCache{})
 	}
 	if err != nil {
 		return targetplugin.RepositoryIndex{}, false, recordRefreshFailure(ctx, db, repository, err)
@@ -55,7 +54,7 @@ func Refresh(ctx context.Context, db *coredb.Store, fetcher targetplugin.Fetcher
 	}, ""); err != nil {
 		return targetplugin.RepositoryIndex{}, false, err
 	}
-	return index, true, nil
+	return index, changed, nil
 }
 
 func recordRefreshFailure(ctx context.Context, db *coredb.Store, repository coredb.PluginRepository, cause error) error {

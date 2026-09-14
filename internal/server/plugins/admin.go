@@ -90,8 +90,10 @@ func CheckHealth(ctx context.Context, db *coredb.Store, supervisor *targetplugin
 	if err != nil {
 		return false, err
 	}
+	healthCtx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
+	defer cancel()
 	var health targetplugin.PluginHealthResponse
-	runErr := supervisor.Run(ctx, pluginID, installed.InstallPath, func(runCtx context.Context, process *targetplugin.Process) error {
+	runErr := supervisor.Run(healthCtx, pluginID, installed.InstallPath, func(runCtx context.Context, process *targetplugin.Process) error {
 		deadline, ok := runCtx.Deadline()
 		if !ok {
 			deadline = time.Now().Add(healthCheckTimeout)

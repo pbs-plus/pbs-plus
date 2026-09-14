@@ -225,11 +225,36 @@ Ext.define("PBS.D2DManagement.PluginAdminWindow", {
 			proxy: { type: "proxmox", url: "/api2/extjs/config/d2d-plugin-repository" },
 			autoLoad: true,
 		});
+		let availableStore = Ext.create("Ext.data.Store", {
+			fields: ["repository_id", "plugin_id", "version", "publisher", "publisher_key_fingerprint", "minimum_host_version", "maximum_host_version", "protocol_version", "target_types", "manifest_sha256", "channel", "revoked", "revocation_reason", "platforms", "repository_signature_verified"],
+		});
 		let pluginStore = Ext.create("Ext.data.Store", {
 			fields: ["plugin_id", "repository_id", "active_version", "enabled", "versions"],
 			proxy: { type: "proxmox", url: "/api2/extjs/config/d2d-installed-plugin" },
 			autoLoad: true,
 		});
+		let reloadPlugins = function() {
+			PBS.D2DManagement.PluginForms.definitions = null;
+			pluginStore.reload();
+		};
+		let withVersion = function(button, title, callback) {
+			let record = button.up("grid").getSelection()[0];
+			if (!record) return;
+			let versions = record.get("versions") || [];
+			if (!versions.length) return;
+			let initial = record.get("active_version") || versions[0].version;
+			Ext.Msg.prompt(title, "Installed version:", function(choice, version) {
+				if (choice !== "ok") return;
+				if (!versions.some((item) => item.version === version)) {
+					Ext.Msg.alert(gettext("Error"), gettext("Choose an installed version."));
+					return;
+				}
+				callback(record, version);
+			}, null, false, initial);
+		};
+		let versionURL = function(record, version) {
+			return "/api2/extjs/config/d2d-installed-plugin/" + encodeURIComponent(encodePathValue(record.get("plugin_id"))) + "/" + encodeURIComponent(encodePathValue(version));
+		};
 		me.items = [{
 			xtype: "tabpanel",
 			items: [{
@@ -250,7 +275,7 @@ Ext.define("PBS.D2DManagement.PluginAdminWindow", {
 						Ext.create("PBS.D2DManagement.PluginRepositoryEditWindow", { listeners: { destroy: () => repositoryStore.reload() } }).show();
 					},
 				}, {
-					text: "Refresh",
+					text: "Browse / Refresh",
 					handler: function(button) {
 						let record = button.up("grid").getSelection()[0];
 						if (!record) return;
@@ -258,7 +283,12 @@ Ext.define("PBS.D2DManagement.PluginAdminWindow", {
 							url: "/api2/extjs/config/d2d-plugin-repository/" + encodeURIComponent(encodePathValue(record.get("id"))) + "/refresh",
 							method: "POST",
 							waitMsgTarget: me,
-							success: () => repositoryStore.reload(),
+							success: function(response) {
+								let releases = (response.result && response.result.data && response.result.data.releases) || [];
+								availableStore.loadData(releases.map((release) => Ext.apply({ repository_id: record.get("id") }, release)));
+								repositoryStore.reload();
+								button.up("tabpanel").setActiveTab(1);
+							},
 							failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
 						});
 					},
@@ -280,12 +310,41 @@ Ext.define("PBS.D2DManagement.PluginAdminWindow", {
 					handler: function(button) {
 						let record = button.up("grid").getSelection()[0];
 						if (!record) return;
-						PBS.PlusUtils.API2Request({
-							url: "/api2/extjs/config/d2d-plugin-repository/" + encodeURIComponent(encodePathValue(record.get("id"))),
-							method: "DELETE",
-							success: () => repositoryStore.reload(),
-							failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
+						Ext.Msg.confirm(gettext("Confirm"), "Remove repository '" + Ext.String.htmlEncode(record.get("name")) + "'?", function(choice) {
+							if (choice !== "yes") return;
+							PBS.PlusUtils.API2Request({
+								url: "/api2/extjs/config/d2d-plugin-repository/" + encodeURIComponent(encodePathValue(record.get("id"))),
+								method: "DELETE",
+								success: () => repositoryStore.reload(),
+								failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
+							});
 						});
+					},
+				}],
+			}, {
+				title: "Available Plugins",
+				xtype: "grid",
+				store: availableStore,
+				columns: [
+					{ text: "Plugin ID", dataIndex: "plugin_id", flex: 1 },
+					{ text: "Version", dataIndex: "version", width: 100 },
+					{ text: "Publisher", dataIndex: "publisher", flex: 1 },
+					{ text: "Channel", dataIndex: "channel", width: 90 },
+					{ text: "Target Types", dataIndex: "target_types", flex: 1, renderer: (types) => (types || []).join(", ") },
+					{ text: "Platforms", dataIndex: "platforms", flex: 1, renderer: (platforms) => (platforms || []).join(", ") },
+					{ text: "Index Signed", dataIndex: "repository_signature_verified", width: 95, renderer: Proxmox.Utils.format_boolean },
+					{ text: "Revoked", dataIndex: "revoked", width: 75, renderer: Proxmox.Utils.format_boolean },
+				],
+				tbar: [{
+					text: "Install Selected",
+					handler: function(button) {
+						let record = button.up("grid").getSelection()[0];
+						if (!record || record.get("revoked")) return;
+						let win = Ext.create("PBS.D2DManagement.PluginInstallWindow", { listeners: { destroy: reloadPlugins } });
+						win.show();
+						win.down("[name=repository_id]").setValue(record.get("repository_id"));
+						win.down("[name=plugin_id]").setValue(record.get("plugin_id"));
+						win.down("[name=version]").setValue(record.get("version"));
 					},
 				}],
 			}, {
@@ -297,14 +356,68 @@ Ext.define("PBS.D2DManagement.PluginAdminWindow", {
 					{ text: "Repository", dataIndex: "repository_id", flex: 1 },
 					{ text: "Active Version", dataIndex: "active_version", flex: 1 },
 					{ text: "Enabled", dataIndex: "enabled", renderer: Proxmox.Utils.format_boolean },
-					{ text: "Installed Versions", dataIndex: "versions", flex: 2, renderer: (versions) => (versions || []).map((version) => version.version).join(", ") },
+					{ text: "Installed Versions", dataIndex: "versions", flex: 2, renderer: (versions) => (versions || []).map((version) => Ext.String.htmlEncode(version.version + " (" + version.health_state + ")" + (version.health_message ? ": " + version.health_message : "") + (version.health_checked_at ? " [" + version.health_checked_at + "]" : ""))).join("<br>") },
 				],
 				tbar: [{
 					text: "Install Plugin",
 					handler: function() {
-						Ext.create("PBS.D2DManagement.PluginInstallWindow", { listeners: { destroy: () => pluginStore.reload() } }).show();
+						Ext.create("PBS.D2DManagement.PluginInstallWindow", { listeners: { destroy: reloadPlugins } }).show();
 					},
-				}, { text: "Refresh", handler: () => pluginStore.reload() }],
+				}, {
+					text: "Enable / Disable",
+					handler: function(button) {
+						let record = button.up("grid").getSelection()[0];
+						if (!record) return;
+						PBS.PlusUtils.API2Request({
+							url: "/api2/extjs/config/d2d-installed-plugin/" + encodeURIComponent(encodePathValue(record.get("plugin_id"))),
+							method: "PUT",
+							params: { enabled: !record.get("enabled") },
+							success: reloadPlugins,
+							failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
+						});
+					},
+				}, {
+					text: "Check Health",
+					handler: function(button) {
+						withVersion(button, gettext("Check Plugin Health"), function(record, version) {
+							PBS.PlusUtils.API2Request({
+								url: versionURL(record, version) + "/health",
+								method: "POST",
+								waitMsgTarget: me,
+								success: reloadPlugins,
+								failure: (response) => { reloadPlugins(); Ext.Msg.alert(gettext("Error"), response.htmlStatus); },
+							});
+						});
+					},
+				}, {
+					text: "Activate / Roll Back",
+					handler: function(button) {
+						withVersion(button, gettext("Activate Plugin Version"), function(record, version) {
+							PBS.PlusUtils.API2Request({
+								url: versionURL(record, version) + "/activate",
+								method: "POST",
+								waitMsgTarget: me,
+								success: reloadPlugins,
+								failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
+							});
+						});
+					},
+				}, {
+					text: "Uninstall Version",
+					handler: function(button) {
+						withVersion(button, gettext("Uninstall Plugin Version"), function(record, version) {
+							Ext.Msg.confirm(gettext("Confirm"), "Uninstall " + Ext.String.htmlEncode(record.get("plugin_id") + "@" + version) + "?", function(choice) {
+								if (choice !== "yes") return;
+								PBS.PlusUtils.API2Request({
+									url: versionURL(record, version),
+									method: "DELETE",
+									success: reloadPlugins,
+									failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
+								});
+							});
+						});
+					},
+				}, "->", { text: "Refresh", handler: reloadPlugins }],
 			}],
 		}];
 		me.callParent();

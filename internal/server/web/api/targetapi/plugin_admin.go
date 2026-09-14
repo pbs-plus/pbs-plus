@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
@@ -44,11 +45,20 @@ type installedVersionResponse struct {
 }
 
 type repositoryReleaseResponse struct {
-	PluginID    string   `json:"plugin_id"`
-	Version     string   `json:"version"`
-	Publisher   string   `json:"publisher"`
-	Channel     string   `json:"channel"`
-	TargetTypes []string `json:"target_types"`
+	PluginID                    string   `json:"plugin_id"`
+	Version                     string   `json:"version"`
+	Publisher                   string   `json:"publisher"`
+	PublisherKeyFingerprint     string   `json:"publisher_key_fingerprint"`
+	MinimumHostVersion          string   `json:"minimum_host_version"`
+	MaximumHostVersion          string   `json:"maximum_host_version"`
+	ProtocolVersion             uint16   `json:"protocol_version"`
+	TargetTypes                 []string `json:"target_types"`
+	ManifestSHA256              string   `json:"manifest_sha256"`
+	Channel                     string   `json:"channel"`
+	Revoked                     bool     `json:"revoked"`
+	RevocationReason            string   `json:"revocation_reason,omitempty"`
+	Platforms                   []string `json:"platforms"`
+	RepositorySignatureVerified bool     `json:"repository_signature_verified"`
 }
 
 func ExtJsPluginRepositoriesHandler(app *application.Runtime) http.HandlerFunc {
@@ -148,13 +158,7 @@ func ExtJsPluginRepositoryRefreshHandler(app *application.Runtime) http.HandlerF
 		}
 		data := make([]repositoryReleaseResponse, len(index.Releases))
 		for releaseIndex, release := range index.Releases {
-			data[releaseIndex] = repositoryReleaseResponse{
-				PluginID:    release.PluginID,
-				Version:     release.Version,
-				Publisher:   release.Publisher,
-				Channel:     release.Channel,
-				TargetTypes: release.TargetTypes,
-			}
+			data[releaseIndex] = newRepositoryReleaseResponse(release)
 		}
 		writePluginTargetResponse(w, map[string]any{"changed": changed, "releases": data})
 	}
@@ -198,6 +202,111 @@ func ExtJsInstalledPluginsHandler(app *application.Runtime) http.HandlerFunc {
 			}
 		}
 		writePluginTargetResponse(w, data)
+	}
+}
+
+func ExtJsInstalledPluginHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			respond.MethodNotAllowed(w, r)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		enabled, err := strconv.ParseBool(r.FormValue("enabled"))
+		if err != nil {
+			respond.WriteErrorResponse(w, errors.New("enabled must be true or false"))
+			return
+		}
+		updated, err := app.CoreDB.SetInstalledPluginEnabled(r.Context(), validate.DecodePath(r.PathValue("plugin")), enabled)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		if !updated {
+			respond.WriteErrorResponse(w, errors.New("installed plugin was not found"))
+			return
+		}
+		writePluginTargetResponse(w, nil)
+	}
+}
+
+func ExtJsInstalledPluginVersionHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			respond.MethodNotAllowed(w, r)
+			return
+		}
+		if err := plugins.UninstallVersion(r.Context(), app.CoreDB, conf.PluginsBasePath,
+			validate.DecodePath(r.PathValue("plugin")), validate.DecodePath(r.PathValue("version"))); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		writePluginTargetResponse(w, nil)
+	}
+}
+
+func ExtJsInstalledPluginVersionActivateHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			respond.MethodNotAllowed(w, r)
+			return
+		}
+		if app.PluginSupervisor == nil {
+			respond.WriteErrorResponse(w, errors.New("plugin supervisor is unavailable"))
+			return
+		}
+		if err := plugins.ActivateVersion(r.Context(), app.CoreDB, app.PluginSupervisor,
+			validate.DecodePath(r.PathValue("plugin")), validate.DecodePath(r.PathValue("version"))); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		writePluginTargetResponse(w, nil)
+	}
+}
+
+func ExtJsInstalledPluginVersionHealthHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			respond.MethodNotAllowed(w, r)
+			return
+		}
+		if app.PluginSupervisor == nil {
+			respond.WriteErrorResponse(w, errors.New("plugin supervisor is unavailable"))
+			return
+		}
+		healthy, err := plugins.CheckHealth(r.Context(), app.CoreDB, app.PluginSupervisor,
+			validate.DecodePath(r.PathValue("plugin")), validate.DecodePath(r.PathValue("version")))
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		writePluginTargetResponse(w, map[string]bool{"healthy": healthy})
+	}
+}
+
+func newRepositoryReleaseResponse(release targetplugin.RepositoryRelease) repositoryReleaseResponse {
+	platforms := make([]string, len(release.Artifacts))
+	for index, artifact := range release.Artifacts {
+		platforms[index] = artifact.OS + "/" + artifact.Arch
+	}
+	return repositoryReleaseResponse{
+		PluginID:                    release.PluginID,
+		Version:                     release.Version,
+		Publisher:                   release.Publisher,
+		PublisherKeyFingerprint:     release.PublisherKeyFingerprint,
+		MinimumHostVersion:          release.MinimumHostVersion,
+		MaximumHostVersion:          release.MaximumHostVersion,
+		ProtocolVersion:             release.ProtocolVersion,
+		TargetTypes:                 release.TargetTypes,
+		ManifestSHA256:              release.ManifestSHA256,
+		Channel:                     release.Channel,
+		Revoked:                     release.Revoked,
+		RevocationReason:            release.RevocationReason,
+		Platforms:                   platforms,
+		RepositorySignatureVerified: true,
 	}
 }
 

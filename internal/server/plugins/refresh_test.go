@@ -54,8 +54,9 @@ func TestRefresh(t *testing.T) {
 		t.Fatalf("stored = %#v", stored)
 	}
 
-	if _, changed, err = Refresh(ctx, db, fetcher, repository.ID); err != nil || changed {
-		t.Fatalf("conditional Refresh = %v, %v", changed, err)
+	parsed, changed, err = Refresh(ctx, db, fetcher, repository.ID)
+	if err != nil || changed || len(parsed.Releases) != 1 {
+		t.Fatalf("conditional Refresh = %#v, %v, %v", parsed, changed, err)
 	}
 	stored, err = db.GetPluginRepository(ctx, repository.ID)
 	if err != nil {
