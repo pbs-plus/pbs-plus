@@ -81,7 +81,7 @@ func installBuiltin(ctx context.Context, db *coredb.Store, builtin builtinPlugin
 		return false, err
 	}
 	if errors.Is(err, targetplugin.ErrVersionInstalled) {
-		version.Directory = filepath.Join(conf.PluginsBasePath, descriptor.PluginID, descriptor.Version)
+		version.Executable = filepath.Join(conf.PluginsBasePath, descriptor.PluginID, descriptor.Version, executableFileName)
 	}
 	if err := ensureBuiltinRepository(ctx, db); err != nil {
 		return false, err
@@ -96,7 +96,7 @@ func installBuiltin(ctx context.Context, db *coredb.Store, builtin builtinPlugin
 		PluginID:       descriptor.PluginID,
 		Version:        descriptor.Version,
 		Platform:       runtime.GOOS + "/" + runtime.GOARCH,
-		InstallPath:    version.Directory,
+		InstallPath:    version.Executable,
 		Manifest:       manifestBytes,
 		ArtifactSHA256: digest,
 		InstalledAt:    time.Now().UTC(),

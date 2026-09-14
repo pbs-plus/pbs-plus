@@ -43,7 +43,7 @@ func TestInstallBuiltins(t *testing.T) {
 		t.Fatalf("installed plugin = %#v, %v", plugin, err)
 	}
 	version, err := db.GetInstalledPluginVersion(ctx, filesystem.PluginID, filesystem.Version)
-	if err != nil || version.InstallPath != filepath.Join(root, filesystem.PluginID, filesystem.Version) {
+	if err != nil || version.InstallPath != filepath.Join(root, filesystem.PluginID, filesystem.Version, "plugin") {
 		t.Fatalf("installed version = %#v, %v", version, err)
 	}
 	manifest, _, err := loadActiveManifest(ctx, db, filesystem.PluginID)
