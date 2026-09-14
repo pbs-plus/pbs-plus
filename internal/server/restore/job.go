@@ -60,6 +60,14 @@ func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	b.updateRestoreWithTask(b.task.Task)
 	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
+	pluginTarget, pluginErr := b.app.CoreDB.GetPluginTarget(ctx, b.job.DestTarget.Name)
+	if pluginErr == nil {
+		return b.pluginExecute(ctx, pluginTarget, idempotencyKey)
+	}
+	if !errors.Is(pluginErr, coredb.ErrTargetNotFound) {
+		return pluginErr
+	}
+
 	switch {
 	case b.job.DestTarget.IsDatabase() && b.databaseAware:
 		return b.databaseExecute(ctx)

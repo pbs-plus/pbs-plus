@@ -5,11 +5,12 @@ import (
 	"fmt"
 
 	"github.com/Masterminds/semver"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 )
 
 const (
 	SnapshotMetadataFormatVersion uint16 = 1
-	SnapshotMetadataArchiveName          = "pbs-plus-target-plugin"
+	SnapshotMetadataArchiveName          = proxmox.PluginMetadataArchiveName
 	SnapshotMetadataFileName             = "metadata.cbor"
 )
 

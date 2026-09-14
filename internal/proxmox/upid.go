@@ -147,7 +147,9 @@ func buildGroupPath(ns, backupType, backupID, backupTime string) string {
 	return filepath.Join(parts...)
 }
 
-// BuildPxarPaths returns filesystem paths for pxar/mpxar/ppxar files.
+// PluginMetadataArchiveName is the snapshot archive holding target plugin metadata rather than backed up data.
+const PluginMetadataArchiveName = "pbs-plus-target-plugin"
+
 // For split pxar both paths are populated; for non-split, ppxarPath is empty.
 func BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName string) (mpxarPath, ppxarPath string, isMetadataSplit bool, err error) {
 	groupPath := buildGroupPath(ns, backupType, backupID, backupTime)
@@ -159,13 +161,15 @@ func BuildPxarPaths(pbsStoreRoot, ns, backupType, backupID, backupTime, fileName
 			return "", "", false, fmt.Errorf("failed to read backup directory: %w", err)
 		}
 
-		// Prefer split archives (.mpxar.didx), then .pxar.didx.
 		var foundMpxar, foundPxar string
 		for _, entry := range entries {
 			if entry.IsDir() {
 				continue
 			}
 			name := entry.Name()
+			if strings.HasPrefix(name, PluginMetadataArchiveName+".") {
+				continue
+			}
 			if strings.HasSuffix(name, ".mpxar.didx") && foundMpxar == "" {
 				foundMpxar = name
 			} else if strings.HasSuffix(name, ".pxar.didx") && foundPxar == "" {
