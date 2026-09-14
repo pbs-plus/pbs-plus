@@ -28,6 +28,24 @@ jobs:
         shell: bash
         if: matrix.os == 'ubuntu-24.04'
         run: go test -v -race ./... -count=1 -timeout 5m
+      - name: Verify bundled target plugins
+        shell: bash
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          mkdir -p /tmp/plugin-verify/plugins /tmp/plugin-verify/source
+          echo payload > /tmp/plugin-verify/source/payload.txt
+          for plugin in filesystem agentfs s3 postgresql mysql ldap dovecot; do
+            CGO_ENABLED=0 go build -o "/tmp/plugin-verify/plugins/pbs-plus-plugin-$plugin" "./cmd/plugin-$plugin"
+          done
+          CGO_ENABLED=0 go build -o /tmp/plugin-verify/plugin-verify ./cmd/plugin-verify
+          for attempt in 1 2 3 4 5; do
+            rm -rf /tmp/plugin-verify/state
+            /tmp/plugin-verify/plugin-verify \
+              -artifacts /tmp/plugin-verify/plugins \
+              -state /tmp/plugin-verify/state \
+              -source /tmp/plugin-verify/source
+          done
+
       - name: Run Windows tests
         if: matrix.os == 'windows-2025'
         shell: pwsh
