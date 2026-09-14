@@ -202,14 +202,16 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatalf("backup metadata survived close: %v", err)
 	}
 
-	archive := targetplugin.Archive{Type: "lifecycle", FormatVersion: 1}
+	if metadata.Archive.FormatVersion != 1 {
+		t.Fatalf("snapshot archive = %#v", metadata.Archive)
+	}
 	newRestoreOptions := func(jobID, mode string) *coredb.PluginJobOptions {
 		return &coredb.PluginJobOptions{
 			JobID: jobID, PluginID: lifecyclePluginID, PluginVersion: "1.1.0", SchemaVersion: 2,
 			Options: lifecycleValues(t, targetplugin.Values{"mode": targetplugin.NewStringScalar(mode)}),
 		}
 	}
-	pathLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-path", "execution-path", "attempt-path", archive, newRestoreOptions("restore-path", "path"), nil, nil)
+	pathLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-path", "execution-path", "attempt-path", metadata, newRestoreOptions("restore-path", "path"), nil, nil)
 	if err != nil {
 		t.Fatalf("OpenRestore path: %v", err)
 	}
@@ -224,7 +226,7 @@ func TestPluginLifecycle(t *testing.T) {
 		t.Fatalf("path restore workspace survived close: %v", err)
 	}
 
-	structuredLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-structured", "execution-structured", "attempt-structured", archive, newRestoreOptions("restore-structured", "structured"), nil, nil)
+	structuredLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-structured", "execution-structured", "attempt-structured", metadata, newRestoreOptions("restore-structured", "structured"), nil, nil)
 	if err != nil {
 		t.Fatalf("OpenRestore structured: %v", err)
 	}
@@ -242,7 +244,7 @@ func TestPluginLifecycle(t *testing.T) {
 	}
 
 	var agentRequest targetplugin.HostAgentRestoreRequest
-	agentLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-agent", "execution-agent", "attempt-agent", archive, newRestoreOptions("restore-agent", "agent"), nil, func(_ context.Context, request targetplugin.HostAgentRestoreRequest) error {
+	agentLease, err := OpenRestore(ctx, db, supervisor, "plugin-target", "restore-agent", "execution-agent", "attempt-agent", metadata, newRestoreOptions("restore-agent", "agent"), nil, func(_ context.Context, request targetplugin.HostAgentRestoreRequest) error {
 		agentRequest = request
 		return nil
 	})
