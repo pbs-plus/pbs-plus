@@ -14,6 +14,19 @@ import (
 
 const PluginJobOptionPrefix = "plugin-options."
 
+// legacyJobOptionForms maps pre-plugin form names to schema fields so legacy HTML forms keep configuring plugin jobs.
+var legacyJobOptionForms = map[string][]string{
+	"database_scope":               {"scope"},
+	"database_name":                {"database", "subtree_dn"},
+	"dovecot_username":             {"username"},
+	"dovecot_mailbox":              {"mailbox"},
+	"source_database":              {"source_database", "source_dn"},
+	"destination_database":         {"destination_database", "destination_dn"},
+	"dovecot_source_username":      {"source_username"},
+	"dovecot_destination_username": {"destination_username"},
+	"replace_existing":             {"replace_existing"},
+}
+
 func ParseBackupJobOptions(ctx context.Context, db *coredb.Store, targetName string, submitted map[string][]string) (*coredb.PluginJobOptions, error) {
 	return parsePluginJobOptions(ctx, db, targetName, submitted, func(manifest targetplugin.PluginManifest) targetplugin.FormSchema {
 		return manifest.BackupSchema
@@ -61,6 +74,25 @@ func parsePluginJobOptions(ctx context.Context, db *coredb.Store, targetName str
 		return nil, fmt.Errorf("target %q uses inactive plugin version %q", targetName, target.PluginVersion)
 	}
 	jobSchema := schema(manifest)
+	fieldNames := make(map[string]struct{}, len(jobSchema.Fields))
+	for _, field := range jobSchema.Fields {
+		fieldNames[field.Key] = struct{}{}
+	}
+	for legacyName, candidates := range legacyJobOptionForms {
+		values, submitted := submitted[legacyName]
+		if !submitted || len(values) == 0 {
+			continue
+		}
+		for _, fieldName := range candidates {
+			if _, exists := fieldNames[fieldName]; !exists {
+				continue
+			}
+			if _, taken := form[fieldName]; !taken {
+				form[fieldName] = values
+			}
+			break
+		}
+	}
 	encoded, err := encodePluginJobForm(jobSchema, form)
 	if err != nil {
 		return nil, err

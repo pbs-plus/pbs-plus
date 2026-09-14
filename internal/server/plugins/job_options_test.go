@@ -136,4 +136,18 @@ func TestParsePluginJobOptionsUsesActiveManifest(t *testing.T) {
 	if err != nil || data["plugin-options.scope"] != "daily" {
 		t.Fatalf("plugin option form data = %#v, %v", data, err)
 	}
+
+	legacy, err := ParseBackupJobOptions(ctx, db, "archive", map[string][]string{
+		"store": {"backup"}, "database_scope": {"server"}, "schedule": {""},
+	})
+	if err != nil {
+		t.Fatalf("ParseBackupJobOptions legacy form: %v", err)
+	}
+	legacyData, err := PluginJobOptionFormData(legacy)
+	if err != nil || legacyData["plugin-options.scope"] != "server" {
+		t.Fatalf("legacy plugin option form data = %#v, %v", legacyData, err)
+	}
+	if len(legacyData) != 1 {
+		t.Fatalf("unrelated un-prefixed fields leaked into plugin options: %#v", legacyData)
+	}
 }
