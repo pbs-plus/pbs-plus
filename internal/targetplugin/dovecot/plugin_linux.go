@@ -141,8 +141,8 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	logWriter := targetplugin.NewHostEventWriter(ctx, request.Operation, targetplugin.EventInfo)
-	if _, err := fmt.Fprintln(logWriter, "--- Dovecot log starts here ---"); err != nil {
+	logWriter, err := targetplugin.NewJobEventLog(ctx, request.Operation, "Dovecot")
+	if err != nil {
 		return nil, err
 	}
 	client, err := dovecot.SelectClient(ctx, target)
@@ -205,6 +205,10 @@ func restoreConsume(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	logWriter, err := targetplugin.NewJobEventLog(ctx, request.Operation, "Dovecot")
+	if err != nil {
+		return nil, err
+	}
 	client, err := dovecot.SelectClient(ctx, target)
 	if err != nil {
 		return nil, err
@@ -218,6 +222,7 @@ func restoreConsume(ctx context.Context, payload []byte) (any, error) {
 		DestinationUsername: destinationUsername,
 		Mailbox:             mailbox,
 		ReplaceExisting:     replace,
+		LogWriter:           logWriter,
 	}, client); err != nil {
 		return nil, err
 	}

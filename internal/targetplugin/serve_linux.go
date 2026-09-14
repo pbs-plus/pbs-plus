@@ -136,6 +136,15 @@ func NewHostEventWriter(ctx context.Context, operation Operation, level EventLev
 	return &hostEventWriter{ctx: ctx, operation: operation, level: level}
 }
 
+// NewJobEventLog opens an info-level host-event log and writes its section marker.
+func NewJobEventLog(ctx context.Context, operation Operation, label string) (io.Writer, error) {
+	writer := NewHostEventWriter(ctx, operation, EventInfo)
+	if _, err := fmt.Fprintf(writer, "--- %s log starts here ---\n", label); err != nil {
+		return nil, err
+	}
+	return writer, nil
+}
+
 func (writer *hostEventWriter) Write(data []byte) (int, error) {
 	for line := range strings.SplitSeq(strings.TrimSuffix(string(data), "\n"), "\n") {
 		if line == "" {

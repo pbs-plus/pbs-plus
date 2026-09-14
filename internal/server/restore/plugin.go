@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
@@ -53,7 +54,11 @@ func (b *restoreJob) pluginExecute(ctx context.Context, target coredb.PluginTarg
 
 	switch lease.Mode {
 	case targetplugin.RestoreModePath:
-		if err := b.startLocalRestore(ctx, lease.Path, []string{sourcePath}, pxar.RestoreMode(b.job.Mode)); err != nil {
+		destPath, err := restoreDestinationPath(lease.Path, b.job.DestSubpath)
+		if err != nil {
+			return err
+		}
+		if err := b.startLocalRestore(ctx, destPath, []string{sourcePath}, pxar.RestoreMode(b.job.Mode)); err != nil {
 			return err
 		}
 		if err := b.waitForTransfer(ctx); err != nil {
@@ -98,15 +103,24 @@ func (b *restoreJob) handlePluginEvent(event targetplugin.HostEvent) error {
 	b.task.WriteString(event.Message)
 	attributes := []any{"completed", event.Completed, "total", event.Total}
 	switch event.Level {
-	case targetplugin.EventDebug:
-		b.logger.Debug(event.Message, attributes...)
 	case targetplugin.EventWarning:
 		b.logger.Warn(event.Message, attributes...)
 	case targetplugin.EventError:
 		b.errCount.Add(1)
 		b.logger.Error(errors.New(event.Message), "target plugin reported an error", attributes...)
-	default:
-		b.logger.Info(event.Message, attributes...)
 	}
 	return nil
+}
+
+// restoreDestinationPath keeps a restore subpath inside the plugin-granted destination.
+func restoreDestinationPath(leasePath, subpath string) (string, error) {
+	if strings.TrimSpace(subpath) == "" {
+		return leasePath, nil
+	}
+	root := filepath.Clean(leasePath)
+	joined := filepath.Clean(filepath.Join(root, subpath))
+	if joined != root && !strings.HasPrefix(joined, root+string(filepath.Separator)) {
+		return "", fmt.Errorf("restore subpath %q escapes the destination target", subpath)
+	}
+	return joined, nil
 }

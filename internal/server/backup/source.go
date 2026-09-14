@@ -132,14 +132,10 @@ func (b *backupJob) handlePluginEvent(event targetplugin.HostEvent) error {
 	}
 	attributes := []any{"completed", event.Completed, "total", event.Total}
 	switch event.Level {
-	case targetplugin.EventDebug:
-		b.logger.Debug(event.Message, attributes...)
 	case targetplugin.EventWarning:
 		b.logger.Warn(event.Message, attributes...)
 	case targetplugin.EventError:
 		b.logger.Error(errors.New(event.Message), "target plugin reported an error", attributes...)
-	default:
-		b.logger.Info(event.Message, attributes...)
 	}
 	return nil
 }

@@ -162,12 +162,12 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	logWriter := targetplugin.NewHostEventWriter(ctx, request.Operation, targetplugin.EventInfo)
 	label := "MySQL"
 	if target.DatabaseVariant == "mariadb" {
 		label = "MariaDB"
 	}
-	if _, err := fmt.Fprintf(logWriter, "--- %s log starts here ---\n", label); err != nil {
+	logWriter, err := targetplugin.NewJobEventLog(ctx, request.Operation, label)
+	if err != nil {
 		return nil, err
 	}
 	bundle, err := database.SelectClientBundle(ctx, target, password, logWriter)
@@ -226,7 +226,11 @@ func restoreConsume(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	bundle, err := database.SelectClientBundle(ctx, target, password, nil)
+	restoreLogWriter, err := targetplugin.NewJobEventLog(ctx, request.Operation, "MySQL")
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := database.SelectClientBundle(ctx, target, password, restoreLogWriter)
 	if err != nil {
 		return nil, err
 	}

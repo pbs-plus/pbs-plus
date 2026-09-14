@@ -168,8 +168,8 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	logWriter := targetplugin.NewHostEventWriter(ctx, request.Operation, targetplugin.EventInfo)
-	if _, err := fmt.Fprintln(logWriter, "--- PostgreSQL log starts here ---"); err != nil {
+	logWriter, err := targetplugin.NewJobEventLog(ctx, request.Operation, "PostgreSQL")
+	if err != nil {
 		return nil, err
 	}
 	bundle, err := database.SelectClientBundle(ctx, target, password, logWriter)
@@ -228,7 +228,11 @@ func restoreConsume(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	bundle, err := database.SelectClientBundle(ctx, target, password, nil)
+	logWriter, err := targetplugin.NewJobEventLog(ctx, request.Operation, "PostgreSQL")
+	if err != nil {
+		return nil, err
+	}
+	bundle, err := database.SelectClientBundle(ctx, target, password, logWriter)
 	if err != nil {
 		return nil, err
 	}

@@ -98,3 +98,37 @@ func filesystemManifest(t *testing.T, version string) []byte {
 	}
 	return manifest
 }
+
+func TestRestoreDestinationPath(t *testing.T) {
+	cases := []struct {
+		name     string
+		lease    string
+		subpath  string
+		expected string
+		wantErr  bool
+	}{
+		{name: "empty subpath keeps the lease root", lease: "/srv/dest", subpath: "", expected: "/srv/dest"},
+		{name: "blank subpath keeps the lease root", lease: "/srv/dest", subpath: "  ", expected: "/srv/dest"},
+		{name: "subpath joins under the root", lease: "/srv/dest", subpath: "nested/dir", expected: "/srv/dest/nested/dir"},
+		{name: "absolute subpath stays under the root", lease: "/srv/dest", subpath: "/etc", expected: "/srv/dest/etc"},
+		{name: "dotdot escapes the root", lease: "/srv/dest", subpath: "../escape", wantErr: true},
+		{name: "traversal that stays inside the root is allowed", lease: "/srv/dest", subpath: "a/../b", expected: "/srv/dest/b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := restoreDestinationPath(tc.lease, tc.subpath)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("restoreDestinationPath(%q, %q) = %q, want error", tc.lease, tc.subpath, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("restoreDestinationPath(%q, %q): %v", tc.lease, tc.subpath, err)
+			}
+			if got != tc.expected {
+				t.Fatalf("restoreDestinationPath(%q, %q) = %q, want %q", tc.lease, tc.subpath, got, tc.expected)
+			}
+		})
+	}
+}
