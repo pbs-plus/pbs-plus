@@ -5,7 +5,6 @@ package plugins
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
@@ -28,7 +27,7 @@ func TestImportLocalTargets(t *testing.T) {
 	}
 	defer db.Close()
 
-	if _, err := ImportLocalTargets(ctx, db); err == nil || !strings.Contains(err.Error(), "not installed") {
+	if _, err := ImportLocalTargets(ctx, db); err != nil {
 		t.Fatalf("import without plugin = %v", err)
 	}
 

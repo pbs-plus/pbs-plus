@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin/agentfs"
@@ -192,10 +193,12 @@ func importTargets(
 ) (int, error) {
 	plugin, err := db.GetInstalledPlugin(ctx, pluginID)
 	if err != nil {
-		return 0, fmt.Errorf("plugin %s is not installed: %w", pluginID, err)
+		log.Info(fmt.Sprintf("skipping %s target import: plugin not installed", pluginID))
+		return 0, nil
 	}
 	if !plugin.Enabled || plugin.ActiveVersion == "" {
-		return 0, fmt.Errorf("plugin %s is not enabled", pluginID)
+		log.Info(fmt.Sprintf("skipping %s target import: plugin not active", pluginID))
+		return 0, nil
 	}
 	manifest, _, err := loadActiveManifest(ctx, db, pluginID)
 	if err != nil {

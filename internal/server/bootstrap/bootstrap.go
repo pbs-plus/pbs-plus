@@ -175,7 +175,30 @@ func registerWorkflows(engine *jobs.Engine, app *application.Runtime) error {
 	} else if imported > 0 {
 		log.Info("imported first-party targets into plugin execution", "count", imported)
 	}
+	go ensureDefaultPlugins(app)
 	return nil
+}
+
+// Boot must not block on repository reachability, so default-plugin install runs in the background.
+func ensureDefaultPlugins(app *application.Runtime) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	installed, err := plugins.EnsureFirstPartyPlugins(ctx, app.CoreDB)
+	if err != nil {
+		log.Error(err, "first-party plugin repository unavailable; targets stay unsupported until it installs")
+		return
+	}
+	if installed > 0 {
+		log.Info("installed first-party plugins from the default repository", "count", installed)
+		imported, err := plugins.ImportFirstPartyTargets(ctx, app.CoreDB)
+		if err != nil {
+			log.Error(err, "importing first-party targets after default plugin install")
+			return
+		}
+		if imported > 0 {
+			log.Info("imported first-party targets into plugin execution", "count", imported)
+		}
+	}
 }
 
 func cleanupStaleMounts() error {
