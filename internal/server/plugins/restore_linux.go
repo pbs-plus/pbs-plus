@@ -138,19 +138,14 @@ func OpenRestore(ctx context.Context, db *coredb.Store, supervisor *targetplugin
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	target, err := db.GetPluginTarget(ctx, targetName)
+	loaded, err := loadPluginTarget(ctx, db, targetName, "restore")
 	if err != nil {
 		return nil, err
 	}
+	target, manifest, installed := loaded.target, loaded.manifest, loaded.installed
+	config, secrets := loaded.config, loaded.secrets
 	if target.PluginID != metadata.PluginID {
 		return nil, fmt.Errorf("target %q is owned by plugin %q, but the snapshot was written by plugin %q", targetName, target.PluginID, metadata.PluginID)
-	}
-	manifest, installed, err := loadActiveManifest(ctx, db, target.PluginID)
-	if err != nil {
-		return nil, err
-	}
-	if target.PluginVersion != installed.Version || target.SchemaVersion != manifest.TargetSchema.Version {
-		return nil, errors.New("plugin target requires schema migration before restore")
 	}
 	_, compatible, err := SelectRestorePlugin(ctx, db, metadata)
 	if err != nil {
@@ -158,14 +153,6 @@ func OpenRestore(ctx context.Context, db *coredb.Store, supervisor *targetplugin
 	}
 	if compatible.Version != installed.Version {
 		return nil, fmt.Errorf("restoring this snapshot needs plugin %q version %q; activate it before restoring", metadata.PluginID, compatible.Version)
-	}
-	var config targetplugin.Values
-	if err := targetplugin.UnmarshalProtocol(target.Config, &config); err != nil {
-		return nil, fmt.Errorf("decode target config: %w", err)
-	}
-	secrets, err := db.ResolvePluginTargetSecrets(ctx, targetName)
-	if err != nil {
-		return nil, err
 	}
 	jobOptions, err := restoreOptions(manifest, installed, jobID, options)
 	if err != nil {

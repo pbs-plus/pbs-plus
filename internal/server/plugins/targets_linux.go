@@ -149,28 +149,14 @@ func UpdateTarget(ctx context.Context, db *coredb.Store, supervisor *targetplugi
 
 // ProbeTarget runs the active plugin against one persisted target.
 func ProbeTarget(ctx context.Context, db *coredb.Store, supervisor *targetplugin.Supervisor, name string) (targetplugin.TargetProbeResponse, error) {
-	target, err := db.GetPluginTarget(ctx, name)
-	if err != nil {
-		return targetplugin.TargetProbeResponse{}, err
-	}
-	manifest, installed, err := loadActiveManifest(ctx, db, target.PluginID)
-	if err != nil {
-		return targetplugin.TargetProbeResponse{}, err
-	}
-	if installed.Version != target.PluginVersion || manifest.TargetSchema.Version != target.SchemaVersion {
-		return targetplugin.TargetProbeResponse{}, errors.New("plugin target requires schema migration before probe")
-	}
-	var config targetplugin.Values
-	if err := targetplugin.UnmarshalProtocol(target.Config, &config); err != nil {
-		return targetplugin.TargetProbeResponse{}, fmt.Errorf("decode target config: %w", err)
-	}
-	secrets, err := db.ResolvePluginTargetSecrets(ctx, name)
-	if err != nil {
-		return targetplugin.TargetProbeResponse{}, err
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	loaded, err := loadPluginTarget(ctx, db, name, "probe")
+	if err != nil {
+		return targetplugin.TargetProbeResponse{}, err
+	}
+	target, installed, config, secrets := loaded.target, loaded.installed, loaded.config, loaded.secrets
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, targetOperationTimeout)

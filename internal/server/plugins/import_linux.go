@@ -22,6 +22,12 @@ import (
 
 type importConfig func(coredb.Target) (targetplugin.Values, map[string][]byte, error)
 
+func optionalString(config targetplugin.Values, key, value string) {
+	if value != "" {
+		config[key] = targetplugin.NewStringScalar(value)
+	}
+}
+
 // ImportLocalTargets attaches plugin configs to every legacy local filesystem target.
 func ImportLocalTargets(ctx context.Context, db *coredb.Store) (int, error) {
 	return importTargets(ctx, db, filesystem.PluginID, filesystem.TargetTypeLocal,
@@ -67,12 +73,8 @@ func ImportS3Targets(ctx context.Context, db *coredb.Store) (int, error) {
 				"use_ssl":    targetplugin.NewBooleanScalar(target.S3Info.UseSSL),
 				"path_style": targetplugin.NewBooleanScalar(target.S3Info.IsPathStyle),
 			}
-			if target.S3Info.Region != "" {
-				config["region"] = targetplugin.NewStringScalar(target.S3Info.Region)
-			}
-			if target.S3Info.Key != "" {
-				config["prefix"] = targetplugin.NewStringScalar(target.S3Info.Key)
-			}
+			optionalString(config, "region", target.S3Info.Region)
+			optionalString(config, "prefix", target.S3Info.Key)
 			return config, map[string][]byte{"secret_key": []byte(secret)}, nil
 		})
 }
@@ -91,20 +93,13 @@ func ImportPostgreSQLTargets(ctx context.Context, db *coredb.Store) (int, error)
 				"port":     targetplugin.NewIntegerScalar(int64(target.DatabasePort)),
 				"username": targetplugin.NewStringScalar(target.DatabaseUsername),
 			}
-			if target.DatabaseTLSMode != "" {
-				config["tls_mode"] = targetplugin.NewStringScalar(target.DatabaseTLSMode)
-			}
-			if target.DatabaseCACertificate != "" {
-				config["ca_certificate"] = targetplugin.NewStringScalar(target.DatabaseCACertificate)
-			}
-			if target.DatabaseDefaultClientDir != "" {
-				config["default_client_dir"] = targetplugin.NewStringScalar(target.DatabaseDefaultClientDir)
-			}
+			optionalString(config, "tls_mode", target.DatabaseTLSMode)
+			optionalString(config, "ca_certificate", target.DatabaseCACertificate)
+			optionalString(config, "default_client_dir", target.DatabaseDefaultClientDir)
 			return config, map[string][]byte{"password": []byte(password)}, nil
 		})
 }
 
-// ImportMySQLTargets preserves the legacy target while copying its password into the plugin secret store.
 func ImportMySQLTargets(ctx context.Context, db *coredb.Store) (int, error) {
 	return importTargets(ctx, db, mysql.PluginID, mysql.TargetType,
 		func(target coredb.Target) bool { return target.Type == coredb.TargetTypeMySQL },
@@ -120,20 +115,13 @@ func ImportMySQLTargets(ctx context.Context, db *coredb.Store) (int, error) {
 				"variant":       targetplugin.NewStringScalar(target.DatabaseVariant),
 				"client_family": targetplugin.NewStringScalar(target.DatabaseClientFamily),
 			}
-			if target.DatabaseTLSMode != "" {
-				config["tls_mode"] = targetplugin.NewStringScalar(target.DatabaseTLSMode)
-			}
-			if target.DatabaseCACertificate != "" {
-				config["ca_certificate"] = targetplugin.NewStringScalar(target.DatabaseCACertificate)
-			}
-			if target.DatabaseDefaultClientDir != "" {
-				config["default_client_dir"] = targetplugin.NewStringScalar(target.DatabaseDefaultClientDir)
-			}
+			optionalString(config, "tls_mode", target.DatabaseTLSMode)
+			optionalString(config, "ca_certificate", target.DatabaseCACertificate)
+			optionalString(config, "default_client_dir", target.DatabaseDefaultClientDir)
 			return config, map[string][]byte{"password": []byte(password)}, nil
 		})
 }
 
-// ImportLDAPTargets preserves the legacy target while copying its password into the plugin secret store.
 func ImportLDAPTargets(ctx context.Context, db *coredb.Store) (int, error) {
 	return importTargets(ctx, db, ldap.PluginID, ldap.TargetType,
 		func(target coredb.Target) bool { return target.Type == coredb.TargetTypeLDAP },
@@ -148,20 +136,13 @@ func ImportLDAPTargets(ctx context.Context, db *coredb.Store) (int, error) {
 				"username": targetplugin.NewStringScalar(target.DatabaseUsername),
 				"base_dn":  targetplugin.NewStringScalar(target.LdapBaseDN),
 			}
-			if target.DatabaseTLSMode != "" {
-				config["tls_mode"] = targetplugin.NewStringScalar(target.DatabaseTLSMode)
-			}
-			if target.DatabaseCACertificate != "" {
-				config["ca_certificate"] = targetplugin.NewStringScalar(target.DatabaseCACertificate)
-			}
-			if target.DatabaseDefaultClientDir != "" {
-				config["default_client_dir"] = targetplugin.NewStringScalar(target.DatabaseDefaultClientDir)
-			}
+			optionalString(config, "tls_mode", target.DatabaseTLSMode)
+			optionalString(config, "ca_certificate", target.DatabaseCACertificate)
+			optionalString(config, "default_client_dir", target.DatabaseDefaultClientDir)
 			return config, map[string][]byte{"password": []byte(password)}, nil
 		})
 }
 
-// ImportDovecotTargets preserves the legacy target while copying its password into the plugin secret store.
 func ImportDovecotTargets(ctx context.Context, db *coredb.Store) (int, error) {
 	return importTargets(ctx, db, dovecot.PluginID, dovecot.TargetType,
 		func(target coredb.Target) bool { return target.Type == coredb.TargetTypeDovecot },
@@ -174,17 +155,12 @@ func ImportDovecotTargets(ctx context.Context, db *coredb.Store) (int, error) {
 				"host": targetplugin.NewStringScalar(target.DatabaseHost),
 				"port": targetplugin.NewIntegerScalar(int64(target.DatabasePort)),
 			}
-			if target.DatabaseCACertificate != "" {
-				config["ca_certificate"] = targetplugin.NewStringScalar(target.DatabaseCACertificate)
-			}
-			if target.DatabaseDefaultClientDir != "" {
-				config["default_client_dir"] = targetplugin.NewStringScalar(target.DatabaseDefaultClientDir)
-			}
+			optionalString(config, "ca_certificate", target.DatabaseCACertificate)
+			optionalString(config, "default_client_dir", target.DatabaseDefaultClientDir)
 			return config, map[string][]byte{"password": []byte(password)}, nil
 		})
 }
 
-// ImportFirstPartyTargets attaches first-party plugin configs to all legacy targets.
 func ImportFirstPartyTargets(ctx context.Context, db *coredb.Store) (int, error) {
 	importers := []func(context.Context, *coredb.Store) (int, error){
 		ImportLocalTargets,

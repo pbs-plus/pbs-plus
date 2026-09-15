@@ -37,29 +37,49 @@ type BackupLease struct {
 	closeErr  error
 }
 
+type pluginTargetContext struct {
+	target    coredb.PluginTarget
+	manifest  targetplugin.PluginManifest
+	installed coredb.InstalledPluginVersion
+	config    targetplugin.Values
+	secrets   map[string][]byte
+}
+
+// loadPluginTarget resolves and validates the plugin identity, active manifest,
+// decoded config, and secrets shared by every operation against one target.
+func loadPluginTarget(ctx context.Context, db *coredb.Store, targetName, operation string) (pluginTargetContext, error) {
+	var loaded pluginTargetContext
+	target, err := db.GetPluginTarget(ctx, targetName)
+	if err != nil {
+		return loaded, err
+	}
+	manifest, installed, err := loadActiveManifest(ctx, db, target.PluginID)
+	if err != nil {
+		return loaded, err
+	}
+	if target.PluginVersion != installed.Version || target.SchemaVersion != manifest.TargetSchema.Version {
+		return loaded, fmt.Errorf("plugin target requires schema migration before %s", operation)
+	}
+	var config targetplugin.Values
+	if err := targetplugin.UnmarshalProtocol(target.Config, &config); err != nil {
+		return loaded, fmt.Errorf("decode target config: %w", err)
+	}
+	secrets, err := db.ResolvePluginTargetSecrets(ctx, targetName)
+	if err != nil {
+		return loaded, err
+	}
+	return pluginTargetContext{target: target, manifest: manifest, installed: installed, config: config, secrets: secrets}, nil
+}
+
 func OpenBackup(ctx context.Context, db *coredb.Store, supervisor *targetplugin.Supervisor, targetName, jobID, cancellationID string, options *coredb.PluginJobOptions, eventSink func(targetplugin.HostEvent) error, agentMount AgentBackupMount) (*BackupLease, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	target, err := db.GetPluginTarget(ctx, targetName)
+	loaded, err := loadPluginTarget(ctx, db, targetName, "backup")
 	if err != nil {
 		return nil, err
 	}
-	manifest, installed, err := loadActiveManifest(ctx, db, target.PluginID)
-	if err != nil {
-		return nil, err
-	}
-	if target.PluginVersion != installed.Version || target.SchemaVersion != manifest.TargetSchema.Version {
-		return nil, errors.New("plugin target requires schema migration before backup")
-	}
-	var config targetplugin.Values
-	if err := targetplugin.UnmarshalProtocol(target.Config, &config); err != nil {
-		return nil, fmt.Errorf("decode target config: %w", err)
-	}
-	secrets, err := db.ResolvePluginTargetSecrets(ctx, targetName)
-	if err != nil {
-		return nil, err
-	}
+	manifest, installed, target, config, secrets := loaded.manifest, loaded.installed, loaded.target, loaded.config, loaded.secrets
 	jobOptions, err := backupOptions(manifest, installed, jobID, options)
 	if err != nil {
 		return nil, err
