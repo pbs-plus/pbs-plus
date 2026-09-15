@@ -81,7 +81,7 @@ latest_snapshot() {
 }
 
 didx_in() {
-	ls -1 "$1" 2>/dev/null | grep -E '\.mpxar\.didx$' | head -1 || ls -1 "$1" 2>/dev/null | grep -E '\.pxar\.didx$' | head -1
+	ls -1 "$1" 2>/dev/null | grep -E '\.mpxar\.didx$' | grep -v '^pbs-plus-target-plugin\.' | head -1 || ls -1 "$1" 2>/dev/null | grep -E '\.pxar\.didx$' | head -1
 }
 
 create_backup_job() {
