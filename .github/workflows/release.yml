@@ -292,6 +292,18 @@ jobs:
           done
           ls -l dist-bins/plugins
 
+      - name: Smoke test bundled target plugins
+        run: |
+          mkdir -p /tmp/plugin-verify/source
+          echo payload > /tmp/plugin-verify/source/payload.txt
+          CGO_ENABLED=0 GOEXPERIMENT=greenteagc GOFIPS140=latest \
+            go build -o /tmp/plugin-verify/plugin-verify ./cmd/plugin-verify
+          rm -rf /tmp/plugin-verify/state
+          /tmp/plugin-verify/plugin-verify \
+            -artifacts dist-bins/plugins \
+            -state /tmp/plugin-verify/state \
+            -source /tmp/plugin-verify/source
+
       - name: Download bkf2pxar from release
         run: |
           TAG="${{ github.ref_name }}"
