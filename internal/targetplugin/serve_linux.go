@@ -4,6 +4,7 @@ package targetplugin
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -143,6 +144,15 @@ func NewJobEventLog(ctx context.Context, operation Operation, label string) (io.
 		return nil, err
 	}
 	return writer, nil
+}
+
+// NewLeaseToken mints the random cleanup token a plugin returns for its lease.
+func NewLeaseToken() ([]byte, error) {
+	token := make([]byte, 16)
+	if _, err := rand.Read(token); err != nil {
+		return nil, fmt.Errorf("create lease token: %w", err)
+	}
+	return token, nil
 }
 
 func (writer *hostEventWriter) Write(data []byte) (int, error) {

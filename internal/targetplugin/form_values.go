@@ -7,7 +7,11 @@ import (
 	"strconv"
 )
 
-// ParseFormValues converts bounded HTTP-style form values into typed config and separate secrets.
+// MaxTCPPort bounds integer port fields to the TCP range.
+func MaxTCPPort() *int64 {
+	maximum := int64(65535)
+	return &maximum
+}
 func ParseFormValues(schema FormSchema, submitted map[string][]string, secretPresent map[string]bool) (Values, Secrets, error) {
 	if err := schema.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("validate form schema: %w", err)

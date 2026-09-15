@@ -4,7 +4,6 @@ package postgresql
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
@@ -56,7 +55,7 @@ func Descriptor() targetplugin.Descriptor {
 		TargetTypes:     []string{TargetType},
 		TargetSchema: targetplugin.FormSchema{Version: targetSchemaVersion, Fields: []targetplugin.FormField{
 			{Key: hostField, Label: "Host", Control: targetplugin.ControlText, Required: true},
-			{Key: portField, Label: "Port", Control: targetplugin.ControlInteger, Minimum: &port, Maximum: maximumPort()},
+			{Key: portField, Label: "Port", Control: targetplugin.ControlInteger, Minimum: &port, Maximum: targetplugin.MaxTCPPort()},
 			{Key: usernameField, Label: "Username", Control: targetplugin.ControlText, Required: true},
 			{Key: passwordField, Label: "Password", Control: targetplugin.ControlSecret, Required: true},
 			{Key: tlsModeField, Label: "TLS Mode", Control: targetplugin.ControlSelect, Options: []targetplugin.SelectOption{
@@ -189,7 +188,7 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	token, err := leaseToken()
+	token, err := targetplugin.NewLeaseToken()
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +211,7 @@ func restoreOpen(_ context.Context, payload []byte) (any, error) {
 	if _, _, err := databaseTarget(request.Job); err != nil {
 		return nil, err
 	}
-	token, err := leaseToken()
+	token, err := targetplugin.NewLeaseToken()
 	if err != nil {
 		return nil, err
 	}
@@ -314,17 +313,4 @@ func normalizeConfig(config targetplugin.Values) (targetplugin.Values, error) {
 		normalized[clientDirField] = targetplugin.NewStringScalar(clientDir)
 	}
 	return normalized, nil
-}
-
-func maximumPort() *int64 {
-	maximum := int64(65535)
-	return &maximum
-}
-
-func leaseToken() ([]byte, error) {
-	token := make([]byte, 16)
-	if _, err := rand.Read(token); err != nil {
-		return nil, fmt.Errorf("create lease token: %w", err)
-	}
-	return token, nil
 }

@@ -4,8 +4,6 @@ package agentfs
 
 import (
 	"context"
-	"crypto/rand"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -128,7 +126,7 @@ func backupOpen(ctx context.Context, payload []byte) (any, error) {
 	}, &mount); err != nil {
 		return nil, err
 	}
-	token, err := leaseToken()
+	token, err := targetplugin.NewLeaseToken()
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +156,7 @@ func restoreOpen(ctx context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	token, err := leaseToken()
+	token, err := targetplugin.NewLeaseToken()
 	if err != nil {
 		return nil, err
 	}
@@ -224,12 +222,4 @@ func text(config targetplugin.Values, field string) (string, error) {
 		return "", fmt.Errorf("%s must be text", field)
 	}
 	return strings.TrimSpace(result), nil
-}
-
-func leaseToken() ([]byte, error) {
-	token := make([]byte, 16)
-	if _, err := rand.Read(token); err != nil {
-		return nil, errors.New("create lease token")
-	}
-	return token, nil
 }

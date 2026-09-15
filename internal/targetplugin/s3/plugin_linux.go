@@ -4,7 +4,6 @@ package s3
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -192,10 +191,10 @@ func (plugin *Plugin) backupOpen(_ context.Context, payload []byte) (any, error)
 	plugin.mount = fs
 	plugin.mu.Unlock()
 
-	token := make([]byte, 16)
-	if _, err := rand.Read(token); err != nil {
+	token, err := targetplugin.NewLeaseToken()
+	if err != nil {
 		plugin.Close()
-		return nil, fmt.Errorf("create lease token: %w", err)
+		return nil, err
 	}
 	return targetplugin.BackupOpenResponse{
 		Kind:    targetplugin.SourceDirectory,

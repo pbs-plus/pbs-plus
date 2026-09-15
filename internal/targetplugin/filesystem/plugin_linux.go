@@ -4,7 +4,6 @@ package filesystem
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -115,7 +114,7 @@ func backupOpen(_ context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	token, err := leaseToken()
+	token, err := targetplugin.NewLeaseToken()
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +155,7 @@ func restoreOpen(_ context.Context, payload []byte) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	token, err := leaseToken()
+	token, err := targetplugin.NewLeaseToken()
 	if err != nil {
 		return nil, err
 	}
@@ -202,12 +201,4 @@ func requireDirectory(path string) error {
 		return fmt.Errorf("target path %q is not a directory", path)
 	}
 	return nil
-}
-
-func leaseToken() ([]byte, error) {
-	token := make([]byte, 16)
-	if _, err := rand.Read(token); err != nil {
-		return nil, fmt.Errorf("create lease token: %w", err)
-	}
-	return token, nil
 }
