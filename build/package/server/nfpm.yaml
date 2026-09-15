@@ -32,10 +32,6 @@ contents:
     dst: /usr/bin/pbs-plus
   - src: ./dist-bins/bkf2pxar
     dst: /usr/bin/bkf2pxar
-  - src: ./dist-bins/plugins/pbs-plus-plugin-*
-    dst: /usr/lib/pbs-plus/plugins/
-    file_info:
-      mode: 0755
   - src: ./build/package/server/pbs-plus.service
     dst: /lib/systemd/system/pbs-plus.service
     type: config

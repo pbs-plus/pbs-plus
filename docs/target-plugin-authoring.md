@@ -55,6 +55,27 @@ The index signature covers the exact index bytes, verified before any TOML decod
 
 ## Hosting a repository
 
+A repository is a static tree, hostable from any HTTPS location including a plain
+public git repository such as GitHub. Build it with the publisher tool instead of
+hand-writing the interlocked digests:
+
+```sh
+go build ./cmd/plugin-filesystem -o plugin-filesystem
+openssl ecparam -name prime256v1 -genkey -noout -out publisher-key.pem
+go run ./cmd/plugin-publish \
+  -key publisher-key.pem -id com.example.plugins -publisher "Example Ltd" \
+  -out repo-tree/ plugin-filesystem
+git -C repo-tree init && git -C repo-tree add -A && git -C repo-tree commit -m publish
+```
+
+`plugin-publish` runs each binary's `plugin.describe`, writes per-release
+`manifest.toml`, computes and signs digests, assembles and signs `index.toml`,
+then round-trips the tree through the host's own verifier. On GitHub, push the
+tree and register `https://raw.githubusercontent.com/<owner>/<repo>/main/index.toml`
+as the repository URL; all artifact URLs are relative, so the tree works unchanged
+at any hosting root. Do not track artifacts with Git LFS (raw hosts serve the LFS
+pointer, not the binary), and pin a tag rather than `main` when immutability matters.
+
 A repository is two static files per index plus the artifacts. No server software is required.
 
 `index.toml`:
@@ -117,7 +138,15 @@ Unknown fields are rejected on decode, URLs must be HTTPS or relative to the ind
 
 ## Installing
 
-Administrators add a repository, confirm the publisher fingerprint out of band, then install a release. The HTTP surface is under `/api2/extjs/config` (`internal/server/web/server.go:77`):
+The first-party repository (`org.pbs-plus.plugins`, served from
+`https://raw.githubusercontent.com/pbs-plus/plugins/main/index.toml`) is enabled by
+default: on boot the server installs its newest compatible releases in the background
+and imports existing targets, so a fresh installation needs network access to
+raw.githubusercontent.com on first boot. Offline installs can stage plugin binaries
+under `/usr/lib/pbs-plus/plugins`, which the same boot path registers as a local
+repository; the release package itself ships no plugin binaries.
+
+Administrators add further repositories, confirm the publisher fingerprint out of band, then install a release. The HTTP surface is under `/api2/extjs/config` (`internal/server/web/server.go:77`):
 
 | Route                                              | Purpose                                   |
 | -------------------------------------------------- | ----------------------------------------- |
