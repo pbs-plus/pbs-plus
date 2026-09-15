@@ -15,8 +15,9 @@ runs:
 
         timeout='${{ inputs.timeout-seconds }}'
         doveadm_password='e2e-doveadm-password'
-        workdir=$(mktemp -d)
-        trap 'rm -rf "$workdir" >/dev/null 2>&1 || true' EXIT
+        workdir="$(pwd)/.dovecot-e2e-work"
+        rm -rf "$workdir"
+        mkdir -p "$workdir"
 
         create_server() {
           local name=$1 hostname=$2
@@ -304,7 +305,7 @@ runs:
         set -euo pipefail
 
         timeout='${{ inputs.timeout-seconds }}'
-        trap 'docker rm -f pbs-plus-dovecot-source pbs-plus-dovecot-destination >/dev/null 2>&1 || true' EXIT
+        trap 'docker rm -f pbs-plus-dovecot-source pbs-plus-dovecot-destination >/dev/null 2>&1 || true; rm -rf "$(pwd)/.dovecot-e2e-work" >/dev/null 2>&1 || true' EXIT
 
         api_get() {
           docker exec pbs-plus-test curl -k -fsS "https://localhost:8017$1" -H 'Accept: application/json'

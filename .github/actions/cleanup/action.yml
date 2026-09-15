@@ -11,4 +11,9 @@ runs:
         docker rm -f pbs-plus-agent || true
         docker rm -f pbs-plus-postgres || true
         docker rm -f pbs-plus-mariadb || true
+        docker rm -f pbs-plus-ldap || true
+        docker rm -f pbs-plus-ldap-restore || true
+        docker rm -f pbs-plus-dovecot-source || true
+        docker rm -f pbs-plus-dovecot-destination || true
+        rm -rf .dovecot-e2e-work || true
         docker network rm pbs-plus-test || true
