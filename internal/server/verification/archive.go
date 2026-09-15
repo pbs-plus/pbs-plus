@@ -39,6 +39,18 @@ type verifyState struct {
 	fs *vfs.LocalFS
 }
 
+func selectDataArchive(files []string) (string, error) {
+	for _, f := range files {
+		if strings.HasPrefix(f, proxmox.PluginMetadataArchiveName+".") {
+			continue
+		}
+		if strings.HasSuffix(f, ".mpxar.didx") || strings.HasSuffix(f, ".pxar.didx") {
+			return f, nil
+		}
+	}
+	return "", fmt.Errorf("no pxar archive found in snapshot")
+}
+
 func (vs *verifyState) Close() error {
 	if vs.fs != nil {
 		return vs.fs.Close()
@@ -57,15 +69,9 @@ func (v *verificationJob) openArchive(backup coredb.Backup, snap *snapshotInfo) 
 	t := time.Unix(snap.BackupTime, 0).UTC()
 	snapshotTime := t.Format(time.RFC3339)
 
-	var fileName string
-	for _, f := range snap.Files {
-		if strings.HasSuffix(f, ".mpxar.didx") || strings.HasSuffix(f, ".pxar.didx") {
-			fileName = f
-			break
-		}
-	}
-	if fileName == "" {
-		return nil, fmt.Errorf("no pxar archive found in snapshot")
+	fileName, err := selectDataArchive(snap.Files)
+	if err != nil {
+		return nil, err
 	}
 
 	mpxarPath, ppxarPath, isSplit, err := proxmox.BuildPxarPaths(
