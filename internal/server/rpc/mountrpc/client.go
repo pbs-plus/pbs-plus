@@ -181,5 +181,3 @@ func (a *AgentMount) CloseMount() {
 	}
 	log.Info(reply.Message)
 }
-
-
