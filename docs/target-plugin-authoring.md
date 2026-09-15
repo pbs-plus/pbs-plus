@@ -17,7 +17,7 @@ func main() {
 }
 ```
 
-`Serve` answers `plugin.describe` itself, rejects host protocol mismatches, and returns nil when the host closes the socket, so a clean shutdown exits 0. Handlers receive canonical CBOR payloads; `targetplugin.Request[T]` decodes and validates one. Reverse host calls go through `targetplugin.CallHost` and are limited to `host.event`, `host.scratch`, `host.agent_backup_mount`, `host.agent_restore`, and `host.lease_close`.
+`Serve` answers `plugin.describe` itself, rejects host protocol mismatches, and returns nil when the host closes the socket, so a clean shutdown exits 0. Handlers receive canonical CBOR payloads; `targetplugin.Request[T]` decodes and validates one. Reverse host calls go through `targetplugin.CallHost` and are limited to `host.event`, `host.scratch`, `host.agent_backup_mount`, `host.agent_restore`, and `host.lease_close`. Line-oriented tool output becomes task-log lines through `targetplugin.NewJobEventLog` (writes the section marker) or `targetplugin.NewHostEventWriter` (chooses the event level); `targetplugin.NewLeaseToken` mints the lease cleanup token.
 
 Other languages implement the same wire format directly: smux over the inherited socket, aRPC request and response envelopes, canonical CBOR payloads bounded at 4 MiB. The Go package is a convenience, not the contract.
 
