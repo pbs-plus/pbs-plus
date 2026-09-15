@@ -27,7 +27,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	pbscrypto "github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
@@ -40,8 +40,8 @@ const (
 func TestPluginLifecycle(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
-	pbscrypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
-	t.Cleanup(func() { pbscrypto.SetSealKeyPath(conf.SecretsKeyPath) })
+	crypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
+	t.Cleanup(func() { crypto.SetSealKeyPath(conf.SecretsKeyPath) })
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)
@@ -402,8 +402,8 @@ func TestPluginLifecycle(t *testing.T) {
 func TestActivateVersionMigratesStoredRecords(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
-	pbscrypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
-	t.Cleanup(func() { pbscrypto.SetSealKeyPath(conf.SecretsKeyPath) })
+	crypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
+	t.Cleanup(func() { crypto.SetSealKeyPath(conf.SecretsKeyPath) })
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %v", err)

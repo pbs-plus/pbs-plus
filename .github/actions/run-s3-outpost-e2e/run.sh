@@ -111,7 +111,8 @@ install_mc() {
 		target=/tmp/mc
 	fi
 	if curl -fsSL -o "$target" https://dl.min.io/client/mc/release/linux-amd64/mc \
-		&& chmod +x "$target"; then
+		|| curl -fsSL -o "$target" https://github.com/minio/mc/releases/download/RELEASE.2025-08-13T08-35-41Z/mc.linux-amd64.RELEASE.2025-08-13T08-35-41Z; then
+		chmod +x "$target"
 		return 0
 	fi
 	return 1

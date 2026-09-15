@@ -9,15 +9,15 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
-	pbscrypto "github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/crypto"
 	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
 
 func TestPluginTargetPersistence(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
-	pbscrypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
-	t.Cleanup(func() { pbscrypto.SetSealKeyPath(conf.SecretsKeyPath) })
+	crypto.SetSealKeyPath(filepath.Join(directory, "secrets.key"))
+	t.Cleanup(func() { crypto.SetSealKeyPath(conf.SecretsKeyPath) })
 
 	databasePath := filepath.Join(directory, "plugin-target.db")
 	db, err := Initialize(ctx, databasePath)
