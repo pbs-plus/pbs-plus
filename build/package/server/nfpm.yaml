@@ -6,8 +6,6 @@
 #     --target pbs-plus-v0.97.0-amd64.deb \
 #     --config build/package/server/nfpm.yaml
 #
-# Requires: dist-bins/pbs-plus (server binary) and dist-bins/bkf2pxar
-# to be present (downloaded from the goreleaser Phase 1 release).
 
 name: pbs-plus
 version: ${VERSION}

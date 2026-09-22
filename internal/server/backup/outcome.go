@@ -146,10 +146,7 @@ func (b *backupJob) cleanup() {
 
 		b.mu.Lock()
 		b.job.CurrentPID = 0
-		agentMount := b.agentMount
-		s3Mount := b.s3Mount
-		stagedDump := b.stagedDump
-		stagedDovecot := b.stagedDovecot
+		pluginLease := b.pluginLease
 		logger := b.logger
 		cancel := b.cancel
 		b.mu.Unlock()
@@ -158,22 +155,9 @@ func (b *backupJob) cleanup() {
 			cancel()
 		}
 
-		if agentMount != nil {
-			agentMount.Unmount()
-			agentMount.CloseMount()
-		}
-		if s3Mount != nil {
-			s3Mount.Unmount()
-			s3Mount.CloseMount()
-		}
-		if stagedDump != nil {
-			if err := stagedDump.Cleanup(); err != nil && logger != nil {
-				logger.Error(err, "failed to remove database backup staging data")
-			}
-		}
-		if stagedDovecot != nil {
-			if err := stagedDovecot.Cleanup(); err != nil && logger != nil {
-				logger.Error(err, "failed to remove Dovecot backup staging data")
+		if pluginLease != nil {
+			if err := pluginLease.Close(); err != nil && logger != nil {
+				logger.Error(err, "failed to close plugin backup lease")
 			}
 		}
 		if logger != nil {
@@ -205,22 +189,6 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	return succeeded, warningsNum
-}
-
-func databaseLogLabel(target coredb.Target) string {
-	if !target.IsDatabase() {
-		return ""
-	}
-	if target.Type == coredb.TargetTypeLDAP {
-		return "LDAP"
-	}
-	if target.Type == coredb.TargetTypePostgreSQL {
-		return "PostgreSQL"
-	}
-	if target.DatabaseVariant == "mariadb" {
-		return "MariaDB"
-	}
-	return "MySQL"
 }
 
 func (b *backupJob) updatePBSStatus(succeeded bool, warningsNum int, upid string) {

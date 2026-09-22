@@ -348,11 +348,13 @@ func (fs *MutableFS) Close() {
 	}
 	fs.mmapData = nil
 
-	fs.handles.Range(func(_ uint64, fh *passFh) bool {
-		if err := syscall.Close(fh.fd); err != nil {
-			fs.logNonFatal("close-fd", "fd", err)
-		}
-		return true
-	})
-	fs.handles = nil
+	if fs.handles != nil {
+		fs.handles.Range(func(_ uint64, fh *passFh) bool {
+			if err := syscall.Close(fh.fd); err != nil {
+				fs.logNonFatal("close-fd", "fd", err)
+			}
+			return true
+		})
+		fs.handles = nil
+	}
 }

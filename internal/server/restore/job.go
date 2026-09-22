@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -42,15 +41,13 @@ type restoreJob struct {
 	errCount     atomic.Int32
 	receivedDone atomic.Bool
 
-	job           coredb.Restore
-	executionID   string
-	remoteServer  *pxar.RemoteServer
-	localClient   *pxar.Client
-	agentPipe     *arpc.StreamPipe
-	app           *application.Runtime
-	skipCheck     bool
-	databaseAware bool
-	stagingDir    string
+	job          coredb.Restore
+	executionID  string
+	remoteServer *pxar.RemoteServer
+	localClient  *pxar.Client
+	agentPipe    *arpc.StreamPipe
+	app          *application.Runtime
+	skipCheck    bool
 }
 
 func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
@@ -60,20 +57,14 @@ func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
 	b.updateRestoreWithTask(b.task.Task)
 	b.logger.Info("restore starting", "target", b.job.DestTarget.Name, "snapshot", b.job.Snapshot, "store", b.job.Store)
 
-	switch {
-	case b.job.DestTarget.IsDatabase() && b.databaseAware:
-		return b.databaseExecute(ctx)
-	case b.job.DestTarget.IsDovecot() && b.databaseAware:
-		return b.dovecotExecute(ctx)
-	case b.job.DestTarget.IsAgent():
-		return b.agentExecute(ctx, idempotencyKey)
-	case b.job.DestTarget.IsLocal():
-		return b.localExecute(ctx)
-	case b.job.DestTarget.IsS3():
-		return fmt.Errorf("S3 restores are unsupported for now (%s)", b.job.DestTarget.Path)
-	default:
-		return jobs.ErrTargetNotFound
+	pluginTarget, err := b.app.CoreDB.GetPluginTarget(ctx, b.job.DestTarget.Name)
+	if err != nil {
+		if errors.Is(err, coredb.ErrTargetNotFound) {
+			return fmt.Errorf("target %q has not been imported into plugin execution", b.job.DestTarget.Name)
+		}
+		return fmt.Errorf("getting plugin restore target: %w", err)
 	}
+	return b.pluginExecute(ctx, pluginTarget, idempotencyKey)
 }
 
 func (b *restoreJob) finalizeFailure(err error) {
@@ -182,11 +173,6 @@ func (b *restoreJob) cleanup() {
 	}
 
 	sessions.DisconnectSession(childKey)
-	if b.stagingDir != "" {
-		if err := os.RemoveAll(b.stagingDir); err != nil {
-			b.logger.Error(err, "failed to remove restore staging data")
-		}
-	}
 }
 
 func (b *restoreJob) writeStatsSummary() {
@@ -248,14 +234,14 @@ func (b *restoreJob) runPreScript(ctx context.Context) error {
 	return nil
 }
 
-func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) error {
+func (b *restoreJob) agentRestore(ctx context.Context, hostname, volumeID, operatingSystem, basePath, idempotencyKey string) error {
 	preCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	b.task.WriteString(fmt.Sprintf("getting stream pipe of %s", b.job.DestTarget.Name))
 
-	qSess, qExists := b.app.Agents.GetQuicPipe(b.job.DestTarget.GetHostname())
-	tSess, tExists := b.app.Agents.GetStreamPipe(b.job.DestTarget.GetHostname())
+	qSess, qExists := b.app.Agents.GetQuicPipe(hostname)
+	tSess, tExists := b.app.Agents.GetStreamPipe(hostname)
 	if !qExists && !tExists {
 		return fmt.Errorf("%w: %s", jobs.ErrTargetUnreachable, b.job.DestTarget.Name)
 	}
@@ -269,13 +255,13 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 		respMsg, statusErr = qSess.CallMessage(
 			timeoutCtx,
 			"target_status",
-			&fswire.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+			&fswire.TargetStatusReq{Drive: volumeID},
 		)
 	} else {
 		respMsg, statusErr = tSess.CallMessage(
 			timeoutCtx,
 			"target_status",
-			&fswire.TargetStatusReq{Drive: b.job.DestTarget.VolumeID},
+			&fswire.TargetStatusReq{Drive: volumeID},
 		)
 	}
 	if statusErr != nil || !strings.HasPrefix(respMsg, "reachable") {
@@ -283,10 +269,9 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 	}
 
 	destPath := b.job.DestSubpath
-	basePath := b.job.DestTarget.GetAgentHostPath()
 	fullPath := path.Join(basePath, destPath)
 
-	if b.job.DestTarget.AgentHost.OperatingSystem == "windows" {
+	if operatingSystem == "windows" {
 		fullPath = strings.ReplaceAll(fullPath, "/", "\\")
 		if len(fullPath) >= 2 && fullPath[1] == ':' {
 			drive := strings.ToUpper(fullPath[:2])
@@ -402,20 +387,6 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 		return err
 	}
 
-	return b.waitForCompletion(ctx)
-}
-
-func (b *restoreJob) localExecute(ctx context.Context) error {
-	destPath := filepath.Join(b.job.DestTarget.Path, b.job.DestSubpath)
-
-	srcPath := b.job.SrcPath
-	if strings.TrimSpace(b.job.SrcPath) == "" {
-		srcPath = "/"
-	}
-
-	if err := b.startLocalRestore(ctx, destPath, []string{srcPath}, pxar.RestoreMode(b.job.Mode)); err != nil {
-		return err
-	}
 	return b.waitForCompletion(ctx)
 }
 

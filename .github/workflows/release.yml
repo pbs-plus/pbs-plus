@@ -279,6 +279,51 @@ jobs:
             ./cmd/pbs-plus
           echo "Server binary size: $(stat -c%s dist-bins/pbs-plus) bytes"
 
+      - name: Build target plugin binaries
+        run: |
+          mkdir -p dist-bins/plugins
+          for plugin in filesystem agentfs s3 postgresql mysql ldap dovecot; do
+            CGO_ENABLED=0 GOEXPERIMENT=greenteagc GOFIPS140=latest \
+              go build \
+              -trimpath \
+              -ldflags "-s -w" \
+              -o "dist-bins/plugins/pbs-plus-plugin-$plugin" \
+              "./cmd/plugin-$plugin"
+          done
+          ls -l dist-bins/plugins
+
+      - name: Smoke test bundled target plugins
+        run: |
+          mkdir -p /tmp/plugin-verify/source
+          echo payload > /tmp/plugin-verify/source/payload.txt
+          CGO_ENABLED=0 GOEXPERIMENT=greenteagc GOFIPS140=latest \
+            go build -o /tmp/plugin-verify/plugin-verify ./cmd/plugin-verify
+          rm -rf /tmp/plugin-verify/state
+          /tmp/plugin-verify/plugin-verify \
+            -artifacts dist-bins/plugins \
+            -state /tmp/plugin-verify/state \
+            -source /tmp/plugin-verify/source
+
+      - name: Publish plugins repository
+        env:
+          PLUGIN_PUBLISHER_KEY: ${{ secrets.PLUGIN_PUBLISHER_KEY }}
+          PLUGINS_REPO_TOKEN: ${{ secrets.PLUGINS_REPO_TOKEN }}
+        run: |
+          echo "$PLUGIN_PUBLISHER_KEY" > /tmp/plugin-publisher-key.pem
+          go run ./cmd/plugin-publish \
+            -key /tmp/plugin-publisher-key.pem \
+            -id org.pbs-plus.plugins \
+            -publisher "PBS Plus" \
+            -out /tmp/plugins-repo-tree \
+            dist-bins/plugins/pbs-plus-plugin-*
+          cd /tmp/plugins-repo-tree
+          git init -q -b main
+          git config user.name "pbs-plus-ci"
+          git config user.email "ci@pbs-plus.org"
+          git add -A
+          git commit -qm "publish plugins for ${GITHUB_REF_NAME}"
+          git push -q "https://x-access-token:${PLUGINS_REPO_TOKEN}@github.com/pbs-plus/plugins.git" main
+
       - name: Download bkf2pxar from release
         run: |
           TAG="${{ github.ref_name }}"

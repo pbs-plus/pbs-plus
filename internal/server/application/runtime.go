@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf/mtfdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/notification"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 
 	_ "modernc.org/sqlite"
 )
@@ -37,7 +38,8 @@ type Runtime struct {
 	Engine           *jobs.Engine
 	BatchTracker     *notification.BatchTracker
 	AlertScanner     *notification.AlertScanner
-	OnBackupComplete func(backupJobID string) // called after backup completion to trigger pending verifications
+	PluginSupervisor *targetplugin.Supervisor
+	OnBackupComplete func(backupJobID string)
 	arpcFS           *safemap.Map[string, *arpcfs.ARPCFS]
 	CertManager      *mtls.CertManager
 }
@@ -65,6 +67,11 @@ func New(ctx context.Context, paths map[string]string) (*Runtime, error) {
 	scriptSvc := NewScriptService(db)
 	targetSvc := NewTargetService(db, agentsManager)
 	verificationSvc := NewVerificationService(db)
+	pluginSupervisor, err := targetplugin.NewSupervisor(16, 4)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize plugin supervisor: %w", err)
+	}
 
 	mtfDB, err := mtfdb.Initialize(ctx, "")
 	if err != nil {
@@ -88,21 +95,22 @@ func New(ctx context.Context, paths map[string]string) (*Runtime, error) {
 	}()
 
 	store := &Runtime{
-		Ctx:          ctx,
-		CoreDB:       db,
-		MtfDB:        mtfDB,
-		MtfMapper:    mtfMapper,
-		Backup:       backupSvc,
-		Restore:      restoreSvc,
-		Exclusion:    exclusionSvc,
-		AgentHost:    agentHostSvc,
-		Token:        tokenSvc,
-		Script:       scriptSvc,
-		Target:       targetSvc,
-		Verification: verificationSvc,
-		arpcFS:       safemap.New[string, *arpcfs.ARPCFS](),
-		Agents:       agentsManager,
-		CertManager:  mtls.NewCertManager(),
+		Ctx:              ctx,
+		CoreDB:           db,
+		MtfDB:            mtfDB,
+		MtfMapper:        mtfMapper,
+		Backup:           backupSvc,
+		Restore:          restoreSvc,
+		Exclusion:        exclusionSvc,
+		AgentHost:        agentHostSvc,
+		Token:            tokenSvc,
+		Script:           scriptSvc,
+		Target:           targetSvc,
+		Verification:     verificationSvc,
+		PluginSupervisor: pluginSupervisor,
+		arpcFS:           safemap.New[string, *arpcfs.ARPCFS](),
+		Agents:           agentsManager,
+		CertManager:      mtls.NewCertManager(),
 	}
 
 	store.BatchTracker = notification.NewBatchTracker(db)

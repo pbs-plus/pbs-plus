@@ -116,6 +116,7 @@ var restoreJobEdit = js.EditWindow{
 				let restoreMode = this.lookup("filesystemRestoreMode");
 				restoreMode.setHidden(structured);
 				restoreMode.setDisabled(structured);
+				PBS.D2DManagement.PluginForms.jobFields(this.lookup("pluginRestoreOptions"), record, "restore_schema");
 			`),
 		},
 	},
@@ -139,6 +140,7 @@ var restoreJobEdit = js.EditWindow{
 				),
 				Column2: js.Items(
 					js.Field{XType: "pbsD2DTargetSelector", Label: "Target restore destination", Name: "dest-target", Reference: "dest-target"},
+					js.Field{XType: js.XFieldContainer, Reference: "pluginRestoreOptions", Layout: "anchor", Hidden: true, Disabled: true},
 					js.Field{XType: js.XFieldContainer, Reference: "filesystemDestination", Layout: "anchor", Items: js.Items(
 						js.Field{XType: "pbsD2DTargetPathSelector", Label: "Path to destination", Reference: "pathSelectorDestination", Name: "dest-subpath", OnlyDirs: true, DeleteEmptyWhenNotCreate: true},
 					)},

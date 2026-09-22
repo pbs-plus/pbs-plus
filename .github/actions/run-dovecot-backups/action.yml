@@ -15,8 +15,9 @@ runs:
 
         timeout='${{ inputs.timeout-seconds }}'
         doveadm_password='e2e-doveadm-password'
-        workdir=$(mktemp -d)
-        trap 'rm -rf "$workdir" >/dev/null 2>&1 || true' EXIT
+        workdir="$(pwd)/.dovecot-e2e-work"
+        rm -rf "$workdir"
+        mkdir -p "$workdir"
 
         create_server() {
           local name=$1 hostname=$2
@@ -304,7 +305,7 @@ runs:
         set -euo pipefail
 
         timeout='${{ inputs.timeout-seconds }}'
-        trap 'docker rm -f pbs-plus-dovecot-source pbs-plus-dovecot-destination >/dev/null 2>&1 || true' EXIT
+        trap 'docker rm -f pbs-plus-dovecot-source pbs-plus-dovecot-destination >/dev/null 2>&1 || true; rm -rf "$(pwd)/.dovecot-e2e-work" >/dev/null 2>&1 || true' EXIT
 
         api_get() {
           docker exec pbs-plus-test curl -k -fsS "https://localhost:8017$1" -H 'Accept: application/json'
@@ -359,7 +360,7 @@ runs:
               echo "Restore job $job_id succeeded"
               return 0
             fi
-            if [[ -n "$task_status" && "$task_status" != 'null' && "$task_status" != 'QUEUED: '* ]]; then
+            if [[ -n "$task_status" && "$task_status" != 'null' && "$task_status" != 'unknown' && "$task_status" != 'QUEUED: '* ]]; then
               echo "Restore job $job_id failed: $task_status"
               echo "--- destination container log ---"
               docker logs --tail=60 pbs-plus-dovecot-destination 2>&1 | tail -40 || true

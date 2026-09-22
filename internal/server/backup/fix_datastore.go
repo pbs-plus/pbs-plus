@@ -15,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
 
 type NamespaceReq struct {
@@ -178,9 +179,12 @@ func CleanUnfinishedSnapshot(backup coredb.Backup, backupID string) error {
 
 	expectedPxarName := proxmox.NormalizeHostname(backup.Target.Name)
 	tmpSuffixes := map[string]struct{}{
-		expectedPxarName + ".mpxar.tmp_didx": {},
-		expectedPxarName + ".ppxar.tmp_didx": {},
-		expectedPxarName + ".pxar.tmp_didx":  {},
+		expectedPxarName + ".mpxar.tmp_didx":                         {},
+		expectedPxarName + ".ppxar.tmp_didx":                         {},
+		expectedPxarName + ".pxar.tmp_didx":                          {},
+		targetplugin.SnapshotMetadataArchiveName + ".mpxar.tmp_didx": {},
+		targetplugin.SnapshotMetadataArchiveName + ".ppxar.tmp_didx": {},
+		targetplugin.SnapshotMetadataArchiveName + ".pxar.tmp_didx":  {},
 	}
 
 	for _, e := range entries {

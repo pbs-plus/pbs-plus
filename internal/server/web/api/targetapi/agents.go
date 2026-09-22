@@ -15,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 )
 
 func AgentLogHandler(app *application.Runtime) http.HandlerFunc {
@@ -241,6 +242,13 @@ func AgentBootstrapHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
+		if _, err := plugins.ImportAgentTargets(r.Context(), app.CoreDB); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			respond.WriteErrorResponse(w, fmt.Errorf("syncing agent plugin targets: %w", err))
+			log.Error(err, "failed to sync agent plugin targets after bootstrap")
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]string{"ca": encodedCA, "cert": encodedCert})
 		if err != nil {
@@ -411,6 +419,13 @@ func AgentRenewHandler(app *application.Runtime) http.HandlerFunc {
 			w.WriteHeader(http.StatusInternalServerError)
 			respond.WriteErrorResponse(w, err)
 			log.Error(err, "")
+			return
+		}
+
+		if _, err := plugins.ImportAgentTargets(r.Context(), app.CoreDB); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			respond.WriteErrorResponse(w, fmt.Errorf("syncing agent plugin targets: %w", err))
+			log.Error(err, "failed to sync agent plugin targets after renewal")
 			return
 		}
 

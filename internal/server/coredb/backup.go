@@ -159,6 +159,9 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	if err = db.storeBackupDovecotOptions(q, backup); err != nil {
 		return fmt.Errorf("CreateBackup: %w", err)
 	}
+	if err = db.storeBackupPluginOptions(q, backup); err != nil {
+		return fmt.Errorf("CreateBackup: %w", err)
+	}
 
 	for _, exclusion := range backup.Exclusions {
 		if exclusion.JobID == "" {
@@ -276,6 +279,10 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 	}
 	backup.RawExclusions = strings.Join(exclusionPaths, "\n")
 
+	backup.PluginOptions, err = db.loadBackupPluginOptions(id)
+	if err != nil {
+		return Backup{}, fmt.Errorf("GetBackup: get plugin options: %w", err)
+	}
 	db.populateBackupExtras(&backup)
 
 	return backup, nil
@@ -459,6 +466,9 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 		return fmt.Errorf("UpdateBackup: %w", err)
 	}
 	if err = db.storeBackupDovecotOptions(q, backup); err != nil {
+		return fmt.Errorf("UpdateBackup: %w", err)
+	}
+	if err = db.storeBackupPluginOptions(q, backup); err != nil {
 		return fmt.Errorf("UpdateBackup: %w", err)
 	}
 
@@ -748,40 +758,41 @@ func (b *Backup) GetAllUPIDs() []Tasks {
 }
 
 type Backup struct {
-	ID               string      `json:"id"`
-	Store            string      `json:"store"`
-	SourceMode       string      `json:"sourcemode"`
-	ReadMode         string      `json:"readmode"`
-	Mode             string      `json:"mode"`
-	Target           Target      `json:"target"`
-	IncludeXattr     bool        `json:"include-xattr"`
-	LegacyXattr      bool        `json:"legacy-xattr"`
-	ExpandArchives   bool        `json:"expand-archives"`
-	ExpandZip        bool        `json:"expand-zip"`
-	ExpandSevenZip   bool        `json:"expand-7z"`
-	ExpandMaxDepth   int         `json:"expand-max-depth"`
-	ExpandMaxEntries int         `json:"expand-max-entries"`
-	Subpath          string      `json:"subpath"`
-	Schedule         string      `json:"schedule"`
-	Comment          string      `json:"comment"`
-	NotificationMode string      `json:"notification-mode"`
-	PreScript        string      `json:"pre_script"`
-	PostScript       string      `json:"post_script"`
-	Namespace        string      `json:"ns"`
-	NextRun          int64       `json:"next-run"`
-	Retry            int         `json:"retry"`
-	RetryInterval    int         `json:"retry-interval"`
-	MaxDirEntries    int         `json:"max-dir-entries"`
-	CurrentPID       int         `json:"current_pid"`
-	Exclusions       []Exclusion `json:"exclusions"`
-	RawExclusions    string      `json:"rawexclusions"`
-	UPIDs            []Tasks     `json:"upids"`
-	CurrentStats     JobStats    `json:"current-stats"`
-	History          JobHistory  `json:"history"`
-	DatabaseScope    string      `json:"database_scope,omitempty"`
-	DatabaseName     string      `json:"database_name,omitempty"`
-	DovecotUsername  string      `json:"dovecot_username,omitempty"`
-	DovecotMailbox   string      `json:"dovecot_mailbox,omitempty"`
+	ID               string            `json:"id"`
+	Store            string            `json:"store"`
+	SourceMode       string            `json:"sourcemode"`
+	ReadMode         string            `json:"readmode"`
+	Mode             string            `json:"mode"`
+	Target           Target            `json:"target"`
+	IncludeXattr     bool              `json:"include-xattr"`
+	LegacyXattr      bool              `json:"legacy-xattr"`
+	ExpandArchives   bool              `json:"expand-archives"`
+	ExpandZip        bool              `json:"expand-zip"`
+	ExpandSevenZip   bool              `json:"expand-7z"`
+	ExpandMaxDepth   int               `json:"expand-max-depth"`
+	ExpandMaxEntries int               `json:"expand-max-entries"`
+	Subpath          string            `json:"subpath"`
+	Schedule         string            `json:"schedule"`
+	Comment          string            `json:"comment"`
+	NotificationMode string            `json:"notification-mode"`
+	PreScript        string            `json:"pre_script"`
+	PostScript       string            `json:"post_script"`
+	Namespace        string            `json:"ns"`
+	NextRun          int64             `json:"next-run"`
+	Retry            int               `json:"retry"`
+	RetryInterval    int               `json:"retry-interval"`
+	MaxDirEntries    int               `json:"max-dir-entries"`
+	CurrentPID       int               `json:"current_pid"`
+	Exclusions       []Exclusion       `json:"exclusions"`
+	RawExclusions    string            `json:"rawexclusions"`
+	UPIDs            []Tasks           `json:"upids"`
+	CurrentStats     JobStats          `json:"current-stats"`
+	History          JobHistory        `json:"history"`
+	DatabaseScope    string            `json:"database_scope,omitempty"`
+	DatabaseName     string            `json:"database_name,omitempty"`
+	DovecotUsername  string            `json:"dovecot_username,omitempty"`
+	DovecotMailbox   string            `json:"dovecot_mailbox,omitempty"`
+	PluginOptions    *PluginJobOptions `json:"-"`
 }
 
 func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup) error {

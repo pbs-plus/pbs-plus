@@ -22,7 +22,16 @@ const (
 	WorkflowSnapshotCommit  = "snapshot.commit"
 	WorkflowSnapshotInit    = "snapshot.init"
 	WorkflowSnapshotCompose = "snapshot.compose"
+
+	WorkflowPluginInstall = "plugin.install"
 )
+
+type PluginInstallInput struct {
+	RepositoryID string `json:"repository_id"`
+	PluginID     string `json:"plugin_id"`
+	Version      string `json:"version"`
+	Activate     bool   `json:"activate"`
+}
 
 type BackupInput struct {
 	SkipCheck       bool     `json:"skip_check"`

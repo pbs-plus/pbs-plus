@@ -1,0 +1,706 @@
+package targetplugin
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/fxamacker/cbor/v2"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
+)
+
+func TestProcessDescribe(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	process, err := Start(ctx, executable, "-test.run=^TestPluginProcessHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	descriptor, err := process.Describe(ctx)
+	if err != nil {
+		t.Fatalf("Describe: %v", err)
+	}
+	if descriptor.PluginID != "org.pbs-plus.test" {
+		t.Fatalf("PluginID = %q, want org.pbs-plus.test", descriptor.PluginID)
+	}
+	if len(descriptor.TargetTypes) != 1 || descriptor.TargetTypes[0] != "test" {
+		t.Fatalf("TargetTypes = %v, want [test]", descriptor.TargetTypes)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvoke(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	request := TargetProbeRequest{
+		Operation: validTestOperation(),
+		Target:    TargetInput{Config: Values{"path": NewStringScalar("/data")}},
+	}
+	var response TargetProbeResponse
+	if err := process.Invoke(t.Context(), MethodTargetProbe, request, &response); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if !response.Available {
+		t.Fatal("target is unavailable")
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRejectsInvalidRequest(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var response TargetProbeResponse
+	err = process.Invoke(t.Context(), MethodTargetProbe, TargetProbeRequest{}, &response)
+	if err == nil || !strings.Contains(err.Error(), "validate plugin protocol request") {
+		t.Fatalf("Invoke error = %v, want request validation error", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRejectsInvalidResponse(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	operation := validTestOperation()
+	operation.TargetType = ""
+	operation.SchemaVersion = 0
+	var response PluginHealthResponse
+	err = process.Invoke(t.Context(), MethodPluginHealth, PluginHealthRequest{Operation: operation}, &response)
+	if err == nil || !strings.Contains(err.Error(), "validate plugin protocol response") {
+		t.Fatalf("Invoke error = %v, want response validation error", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRawStream(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var data []byte
+	handler := arpc.RawStreamHandler(func(stream arpc.ARPCStream) error {
+		var err error
+		data, err = io.ReadAll(stream)
+		return err
+	})
+	var metadata BackupOpenResponse
+	response := &RawStreamResponse{Metadata: &metadata, Handle: handler}
+	request := BackupOpenRequest{Operation: jobTestOperation(), Job: validJobInput()}
+	if err := process.Invoke(t.Context(), MethodBackupOpen, request, response); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	if metadata.Kind != SourceRawStream {
+		t.Fatalf("metadata kind = %q, want %q", metadata.Kind, SourceRawStream)
+	}
+	if string(data) != "bulk-data" {
+		t.Fatalf("raw data = %q, want bulk-data", data)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestProcessInvokeRejectsNonOperationMethod(t *testing.T) {
+	err := (*Process)(nil).Invoke(t.Context(), MethodDescribe, PluginHealthRequest{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported plugin invocation method") {
+		t.Fatalf("Invoke error = %v, want unsupported method", err)
+	}
+}
+
+func TestProcessCrash(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginCrashHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := process.Describe(t.Context()); err == nil {
+		t.Fatal("Describe succeeded after plugin crash")
+	}
+	if err := process.Close(); err == nil {
+		t.Fatal("Close succeeded after plugin crash")
+	}
+	assertProcessGone(t, process)
+}
+
+func TestProcessTimeout(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	defer cancel()
+
+	process, err := Start(ctx, executable, "-test.run=^TestPluginTimeoutHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := process.Describe(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Describe error = %v, want deadline exceeded", err)
+	}
+	_ = process.Close()
+	assertProcessGone(t, process)
+}
+
+func TestProcessOversizedDescribe(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	process, err := Start(ctx, executable, "-test.run=^TestPluginOversizedHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := process.Describe(ctx); !errors.Is(err, arpc.ErrMessageTooLarge) {
+		t.Fatalf("Describe error = %v, want ErrMessageTooLarge", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	assertProcessGone(t, process)
+}
+
+func TestProcessCleanupRunsAfterCrash(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginCrashHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var order []string
+	for _, name := range []string{"first", "second"} {
+		if err := process.AddCleanup(func() error {
+			order = append(order, name)
+			return nil
+		}); err != nil {
+			t.Fatalf("AddCleanup(%s): %v", name, err)
+		}
+	}
+	leaseErr := errors.New("lease close failed")
+	if err := process.AddCleanup(func() error { return leaseErr }); err != nil {
+		t.Fatalf("AddCleanup lease: %v", err)
+	}
+
+	if err := process.Close(); !errors.Is(err, leaseErr) {
+		t.Fatalf("Close error = %v, want lease error", err)
+	}
+	if len(order) != 2 || order[0] != "second" || order[1] != "first" {
+		t.Fatalf("cleanup order = %v, want [second first]", order)
+	}
+	assertProcessGone(t, process)
+
+	if err := process.Close(); !errors.Is(err, leaseErr) {
+		t.Fatalf("second Close error = %v, want lease error", err)
+	}
+	if len(order) != 2 {
+		t.Fatalf("cleanup ran again: %v", order)
+	}
+}
+
+func TestProcessHostEvent(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      string
+		delivered bool
+		wantError string
+	}{
+		{name: "authorized token", mode: "valid", delivered: true},
+		{name: "foreign token", mode: "foreign", wantError: "not authorized"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatalf("os.Executable: %v", err)
+			}
+
+			process, err := Start(t.Context(), executable, "-test.run=^TestPluginInvokeHelper$")
+			if err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			events := make(chan HostEvent, 1)
+			process.SetEventSink(func(event HostEvent) error {
+				events <- event
+				return nil
+			})
+
+			operation := validTestOperation()
+			operation.BrokerToken = process.BrokerToken()
+			request := TargetProbeRequest{
+				Operation: operation,
+				Target: TargetInput{Config: Values{
+					"path":  NewStringScalar("/data"),
+					"event": NewStringScalar(test.mode),
+				}},
+			}
+			var response TargetProbeResponse
+			if err := process.Invoke(t.Context(), MethodTargetProbe, request, &response); err != nil {
+				t.Fatalf("Invoke: %v", err)
+			}
+			if test.wantError != "" && !strings.Contains(response.Message, test.wantError) {
+				t.Fatalf("probe message = %q, want %q", response.Message, test.wantError)
+			}
+			if test.wantError == "" && response.Message != "" {
+				t.Fatalf("probe message = %q, want empty", response.Message)
+			}
+
+			select {
+			case event := <-events:
+				if !test.delivered {
+					t.Fatalf("unauthorized event was delivered: %#v", event)
+				}
+				if event.Level != EventWarning || event.Message != "probe is slow" || event.Completed != 2 || event.Total != 4 {
+					t.Fatalf("event = %#v", event)
+				}
+			default:
+				if test.delivered {
+					t.Fatal("authorized event was not delivered")
+				}
+			}
+			if err := process.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		})
+	}
+}
+
+func TestProcessHostAgentBackupMount(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginAgentBackupMountHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cleaned := false
+	process.SetAgentBackupMountHandler(func(_ context.Context, request HostAgentBackupMountRequest) (HostAgentBackupMountResponse, func() error, error) {
+		if request.Hostname != "agent.example" || request.VolumeID != "root" || request.OperatingSystem != "linux" {
+			return HostAgentBackupMountResponse{}, nil, fmt.Errorf("unexpected mount request: %#v", request)
+		}
+		return HostAgentBackupMountResponse{Path: "/mnt/agent"}, func() error {
+			cleaned = true
+			return nil
+		}, nil
+	})
+
+	operation := validTestOperation()
+	operation.BrokerToken = process.BrokerToken()
+	var response TargetProbeResponse
+	if err := process.Invoke(t.Context(), MethodTargetProbe, TargetProbeRequest{
+		Operation: operation,
+		Target:    TargetInput{Config: Values{"path": NewStringScalar("/data")}},
+	}, &response); err != nil {
+		t.Fatalf("Invoke: %v", err)
+	}
+	path, _ := response.Details["path"].StringValue()
+	if path != "/mnt/agent" {
+		t.Fatalf("mount path = %q", path)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !cleaned {
+		t.Fatal("agent mount cleanup did not run")
+	}
+}
+
+func TestProcessAddCleanupAfterCloseRunsImmediately(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	process, err := Start(t.Context(), executable, "-test.run=^TestPluginProcessHelper$")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ran := false
+	if err := process.AddCleanup(func() error {
+		ran = true
+		return nil
+	}); err != nil {
+		t.Fatalf("AddCleanup: %v", err)
+	}
+	if !ran {
+		t.Fatal("late cleanup step did not run")
+	}
+	if err := process.AddCleanup(nil); err == nil {
+		t.Fatal("AddCleanup(nil) succeeded")
+	}
+}
+
+func TestPluginProcessHelper(t *testing.T) {
+	fdText, ok := os.LookupEnv(SocketFDEnv)
+	if !ok {
+		return
+	}
+	fd, err := strconv.Atoi(fdText)
+	if err != nil {
+		t.Fatalf("parse socket fd: %v", err)
+	}
+
+	file := os.NewFile(uintptr(fd), "pbs-plus-plugin")
+	if file == nil {
+		t.Fatal("open inherited socket")
+	}
+	conn, err := net.FileConn(file)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("net.FileConn: %v", err)
+	}
+
+	pipe, err := arpc.NewServerPipe(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer pipe.Close()
+
+	router := arpc.NewRouter()
+	router.Handle(MethodDescribe, func(request *arpc.Request) (arpc.Response, error) {
+		var describe DescribeRequest
+		if err := UnmarshalProtocol(request.Payload, &describe); err != nil {
+			return arpc.Response{}, fmt.Errorf("decode describe request: %w", err)
+		}
+		if describe.ProtocolVersion != CurrentProtocolVersion {
+			return arpc.Response{}, fmt.Errorf("unsupported host protocol %d", describe.ProtocolVersion)
+		}
+		data, err := MarshalProtocol(Descriptor{
+			ProtocolVersion: CurrentProtocolVersion,
+			PluginID:        "org.pbs-plus.test",
+			Version:         "1.0.0",
+			TargetTypes:     []string{"test"},
+			TargetSchema:    FormSchema{Version: 1},
+			BackupSchema:    FormSchema{Version: 1},
+			RestoreSchema:   FormSchema{Version: 1},
+		})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode descriptor: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
+	router.Handle(MethodPluginHealth, func(request *arpc.Request) (arpc.Response, error) {
+		var health PluginHealthRequest
+		if err := UnmarshalProtocol(request.Payload, &health); err != nil {
+			return arpc.Response{}, fmt.Errorf("decode health request: %w", err)
+		}
+		response := PluginHealthResponse{Healthy: true}
+		if os.Getenv("PBS_PLUS_TEST_PLUGIN_UNHEALTHY") == "1" {
+			response = PluginHealthResponse{Message: "test failure"}
+		}
+		data, err := MarshalProtocol(response)
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode health response: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
+	pipe.SetRouter(router)
+	_ = pipe.Serve()
+}
+
+func TestPluginAgentBackupMountHelper(t *testing.T) {
+	if _, ok := os.LookupEnv(SocketFDEnv); !ok {
+		return
+	}
+	handler := func(ctx context.Context, payload []byte) (any, error) {
+		probe, err := Request[TargetProbeRequest](payload)
+		if err != nil {
+			return nil, err
+		}
+		var mount HostAgentBackupMountResponse
+		if err := CallHost(ctx, MethodHostAgentBackupMount, HostAgentBackupMountRequest{
+			Operation:       probe.Operation,
+			Hostname:        "agent.example",
+			VolumeID:        "root",
+			OperatingSystem: "linux",
+		}, &mount); err != nil {
+			return nil, err
+		}
+		return TargetProbeResponse{Available: true, Details: Values{"path": NewStringScalar(mount.Path)}}, nil
+	}
+	err := Serve(t.Context(), Descriptor{
+		ProtocolVersion: CurrentProtocolVersion,
+		PluginID:        "org.pbs-plus.test",
+		Version:         "1.0.0",
+		TargetTypes:     []string{"test"},
+		TargetSchema:    FormSchema{Version: 1},
+		BackupSchema:    FormSchema{Version: 1},
+		RestoreSchema:   FormSchema{Version: 1},
+	}, map[string]MethodHandler{MethodTargetProbe: handler})
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+}
+
+func TestPluginInvokeHelper(t *testing.T) {
+	fdText, ok := os.LookupEnv(SocketFDEnv)
+	if !ok {
+		return
+	}
+	fd, err := strconv.Atoi(fdText)
+	if err != nil {
+		t.Fatalf("parse socket fd: %v", err)
+	}
+
+	file := os.NewFile(uintptr(fd), "pbs-plus-plugin")
+	if file == nil {
+		t.Fatal("open inherited socket")
+	}
+	conn, err := net.FileConn(file)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("net.FileConn: %v", err)
+	}
+
+	pipe, err := arpc.NewServerPipe(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer pipe.Close()
+
+	router := arpc.NewRouter()
+	router.Handle(MethodTargetProbe, func(request *arpc.Request) (arpc.Response, error) {
+		var probe TargetProbeRequest
+		if err := UnmarshalProtocol(request.Payload, &probe); err != nil {
+			return arpc.Response{}, fmt.Errorf("decode probe request: %w", err)
+		}
+		if err := probe.Validate(); err != nil {
+			return arpc.Response{}, fmt.Errorf("validate probe operation: %w", err)
+		}
+		response := TargetProbeResponse{Available: true}
+		if mode, ok := probe.Target.Config["event"]; ok {
+			if err := emitTestEvent(t.Context(), pipe, probe.Operation, mode); err != nil {
+				response.Message = err.Error()
+			}
+		}
+		data, err := MarshalProtocol(response)
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode probe response: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
+	router.Handle(MethodPluginHealth, func(_ *arpc.Request) (arpc.Response, error) {
+		data, err := MarshalProtocol(PluginHealthResponse{})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode health response: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
+	router.Handle(MethodBackupOpen, func(request *arpc.Request) (arpc.Response, error) {
+		var open BackupOpenRequest
+		if err := UnmarshalProtocol(request.Payload, &open); err != nil {
+			return arpc.Response{}, fmt.Errorf("decode backup request: %w", err)
+		}
+		if err := open.Validate(); err != nil {
+			return arpc.Response{}, fmt.Errorf("validate backup operation: %w", err)
+		}
+		data, err := MarshalProtocol(BackupOpenResponse{
+			Kind:         SourceRawStream,
+			Archive:      Archive{Type: "pxar", FormatVersion: 1},
+			CleanupToken: []byte("lease"),
+		})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode backup response: %w", err)
+		}
+		return arpc.Response{Status: arpc.StatusRawStream, Data: data, RawStream: func(stream arpc.ARPCStream) {
+			_, _ = stream.Write([]byte("bulk-data"))
+		}}, nil
+	})
+	pipe.SetRouter(router)
+	_ = pipe.Serve()
+}
+
+func emitTestEvent(ctx context.Context, pipe *arpc.StreamPipe, operation Operation, mode Scalar) error {
+	if value, _ := mode.StringValue(); value == "foreign" {
+		operation.BrokerToken = make([]byte, len(operation.BrokerToken))
+	}
+	payload, err := MarshalProtocol(HostEvent{
+		Operation: operation,
+		Level:     EventWarning,
+		Message:   "probe is slow",
+		Completed: 2,
+		Total:     4,
+	})
+	if err != nil {
+		return fmt.Errorf("encode host event: %w", err)
+	}
+	var data []byte
+	return pipe.Call(ctx, MethodHostEvent, payload, &data)
+}
+
+func validTestOperation() Operation {
+	return Operation{
+		ProtocolVersion:   CurrentProtocolVersion,
+		ID:                "op-1",
+		IdempotencyKey:    "retry-1",
+		DeadlineUnixMilli: time.Now().Add(time.Minute).UnixMilli(),
+		PluginVersion:     "1.0.0",
+		TargetType:        "test",
+		SchemaVersion:     1,
+	}
+}
+
+func TestPluginCrashHelper(t *testing.T) {
+	if _, ok := os.LookupEnv(SocketFDEnv); !ok {
+		return
+	}
+	os.Exit(23)
+}
+
+func TestPluginTimeoutHelper(t *testing.T) {
+	fdText, ok := os.LookupEnv(SocketFDEnv)
+	if !ok {
+		return
+	}
+	fd, err := strconv.Atoi(fdText)
+	if err != nil {
+		t.Fatalf("parse socket fd: %v", err)
+	}
+
+	file := os.NewFile(uintptr(fd), "pbs-plus-plugin")
+	if file == nil {
+		t.Fatal("open inherited socket")
+	}
+	conn, err := net.FileConn(file)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("net.FileConn: %v", err)
+	}
+
+	pipe, err := arpc.NewServerPipe(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer pipe.Close()
+
+	router := arpc.NewRouter()
+	router.Handle(MethodDescribe, func(*arpc.Request) (arpc.Response, error) {
+		select {}
+	})
+	pipe.SetRouter(router)
+	go func() { _ = pipe.Serve() }()
+	select {}
+}
+
+func TestPluginOversizedHelper(t *testing.T) {
+	fdText, ok := os.LookupEnv(SocketFDEnv)
+	if !ok {
+		return
+	}
+	fd, err := strconv.Atoi(fdText)
+	if err != nil {
+		t.Fatalf("parse socket fd: %v", err)
+	}
+
+	file := os.NewFile(uintptr(fd), "pbs-plus-plugin")
+	if file == nil {
+		t.Fatal("open inherited socket")
+	}
+	conn, err := net.FileConn(file)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("net.FileConn: %v", err)
+	}
+
+	pipe, err := arpc.NewServerPipe(t.Context(), conn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer pipe.Close()
+
+	router := arpc.NewRouter()
+	router.Handle(MethodDescribe, func(*arpc.Request) (arpc.Response, error) {
+		data, err := cbor.Marshal(Descriptor{
+			ProtocolVersion: CurrentProtocolVersion,
+			PluginID:        strings.Repeat("a", int(arpc.DefaultLocalMessageLimit)),
+			Version:         "1.0.0",
+			TargetTypes:     []string{"test"},
+			TargetSchema:    FormSchema{Version: 1},
+			BackupSchema:    FormSchema{Version: 1},
+			RestoreSchema:   FormSchema{Version: 1},
+		})
+		if err != nil {
+			return arpc.Response{}, fmt.Errorf("encode descriptor: %w", err)
+		}
+		return arpc.Response{Status: http.StatusOK, Data: data}, nil
+	})
+	pipe.SetRouter(router)
+	_ = pipe.Serve()
+}
+
+func assertProcessGone(t *testing.T, process *Process) {
+	t.Helper()
+	if err := syscall.Kill(process.command.Process.Pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("process still exists: %v", err)
+	}
+}

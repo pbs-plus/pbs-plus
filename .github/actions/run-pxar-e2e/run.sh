@@ -36,7 +36,7 @@ HOST_DIR="${PBS_STORE}/ns/${NAMESPACE}/host/${BACKUP_ID}"
 find_archives() {
 	local snap_dir=$1
 	local mpxar_name ppxar_name
-	mpxar_name=$(ls -1 "$snap_dir" 2>/dev/null | grep -E '\.mpxar\.didx$' | head -1)
+	mpxar_name=$(ls -1 "$snap_dir" 2>/dev/null | grep -E '\.mpxar\.didx$' | grep -v '^pbs-plus-target-plugin\.' | head -1)
 	if [ -z "$mpxar_name" ]; then
 		echo "ERROR: no .mpxar.didx found in $snap_dir" >&2
 		return 1

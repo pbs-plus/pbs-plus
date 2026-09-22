@@ -8,7 +8,11 @@ RUN go mod download
 COPY . .
 
 RUN GOFIPS140=latest go build -o pbs-plus ./cmd/pbs-plus && \
-    GOFIPS140=latest go build -o pxar-mount ./cmd/pxar-mount
+    GOFIPS140=latest go build -o pxar-mount ./cmd/pxar-mount && \
+    mkdir -p plugins && \
+    for plugin in filesystem agentfs s3 postgresql mysql ldap dovecot; do \
+      GOFIPS140=latest go build -o "plugins/pbs-plus-plugin-$plugin" "./cmd/plugin-$plugin"; \
+    done
 
 FROM ghcr.io/pbs-plus/proxmox-backup-docker:latest
 
@@ -17,8 +21,9 @@ RUN rm -f /etc/apt/sources.list.d/*enterprise*.list /etc/apt/sources.list.d/*ent
 
 COPY --from=builder /build/pbs-plus /usr/bin/pbs-plus
 COPY --from=builder /build/pxar-mount /usr/bin/pxar-mount
+COPY --from=builder /build/plugins/ /usr/lib/pbs-plus/plugins/
 
-RUN chmod 0755 /usr/bin/pbs-plus
+RUN chmod 0755 /usr/bin/pbs-plus /usr/lib/pbs-plus/plugins/*
 
 RUN install -d -m 0755 -o root -g root /etc/proxmox-backup/pbs-plus
 

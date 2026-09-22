@@ -17,7 +17,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpcserver"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
-	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
@@ -27,19 +26,6 @@ type BackupArgs struct {
 	BackupID       string
 	TargetHostname string
 	Drive          string
-}
-
-type S3BackupArgs struct {
-	BackupID     string
-	Endpoint     string
-	AccessKey    string
-	SecretKey    string
-	Bucket       string
-	Region       string
-	Prefix       string
-	UseSSL       bool
-	UsePathStyle bool
-	Path         string
 }
 
 type BackupReply struct {
@@ -183,51 +169,6 @@ func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
 	reply.Status = 200
 	reply.Message = backupMode + "|" + backup.Namespace
 	reply.BackupMode = backupMode
-	log.Info("mounting successful")
-
-	return nil
-}
-
-func (s *Service) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
-	log.Info("received S3 backup request")
-
-	backup, err := s.Store.CoreDB.GetBackup(args.BackupID)
-	if err != nil {
-		reply.Status = 404
-		reply.Message = "unable to get backup from id"
-		return fmt.Errorf("backup: %w", err)
-	}
-
-	secretKey, err := s.Store.CoreDB.GetS3Secret(backup.Target.Name)
-	if err != nil {
-		reply.Status = 404
-		reply.Message = "unable to get secret key of target"
-		return fmt.Errorf("backup: %w", err)
-	}
-
-	backupCtx, backupCancel := context.WithCancel(s.ctx)
-	s.jobCtxCancels.Set(args.BackupID, backupCancel)
-
-	s3FS := s3fs.NewS3FS(backupCtx, backup, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL, args.UsePathStyle)
-	if s3FS == nil {
-		reply.Status = 500
-		reply.Message = "failed to send create S3FS"
-		return errors.New(reply.Message)
-	}
-
-	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
-
-	if err := s3fs.MountS3(s3FS, mntPath); err != nil {
-		log.Error(err, "")
-		reply.Status = 500
-		reply.Message = fmt.Sprintf("mount: fuse connection failed: %v", err)
-		return fmt.Errorf("backup: %w", err)
-	}
-
-	sessions.NewS3FSMount(backup.GetStreamID(), s3FS)
-
-	reply.Status = 200
-	reply.Message = backup.Namespace
 	log.Info("mounting successful")
 
 	return nil

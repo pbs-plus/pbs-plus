@@ -5,6 +5,7 @@ package restoreapi
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -22,6 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -286,6 +288,11 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
 		}
+		newRestore.PluginOptions, err = plugins.ParseRestoreJobOptions(r.Context(), app.CoreDB, newRestore.DestTarget.Name, r.Form)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
 
 		err = app.Restore.CreateRestore(newRestore)
 		if err != nil {
@@ -479,6 +486,12 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 			}
 
+			restore.PluginOptions, err = plugins.ParseRestoreJobOptions(r.Context(), app.CoreDB, restore.DestTarget.Name, r.Form)
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+
 			err = app.Restore.UpdateRestore(restore)
 			if err != nil {
 				respond.WriteErrorResponse(w, err)
@@ -512,6 +525,12 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 			response.Status = http.StatusOK
 			response.Success = true
 			flat := extjs.FlattenRestoreForEdit(restore)
+			pluginData, err := plugins.PluginJobOptionFormData(restore.PluginOptions)
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+			maps.Copy(flat, pluginData)
 			flat["notification-batch"] = notificationapi.GetJobBatchName(app, "restore", restore.ID)
 			response.Data = flat
 			if err := json.NewEncoder(w).Encode(response); err != nil {

@@ -142,6 +142,9 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
 		return fmt.Errorf("CreateRestore: %w", err)
 	}
+	if err = db.storeRestorePluginOptions(q, restore); err != nil {
+		return fmt.Errorf("CreateRestore: %w", err)
+	}
 
 	commitNeeded = true
 	return nil
@@ -223,6 +226,10 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		restore.Namespace = row.Namespace.String
 	}
 
+	restore.PluginOptions, err = db.loadRestorePluginOptions(id)
+	if err != nil {
+		return Restore{}, fmt.Errorf("GetRestore: get plugin options: %w", err)
+	}
 	db.populateRestoreExtras(&restore)
 
 	return restore, nil
@@ -339,6 +346,9 @@ func (db *Store) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 		return fmt.Errorf("UpdateRestore: %w", err)
 	}
 	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
+		return fmt.Errorf("UpdateRestore: %w", err)
+	}
+	if err = db.storeRestorePluginOptions(q, restore); err != nil {
 		return fmt.Errorf("UpdateRestore: %w", err)
 	}
 
@@ -576,31 +586,32 @@ func (r *Restore) GetStreamID() string {
 }
 
 type Restore struct {
-	ID                         string     `json:"id"`
-	Store                      string     `json:"store"`
-	Snapshot                   string     `json:"snapshot"`
-	Namespace                  string     `json:"ns"`
-	Mode                       int        `json:"mode"`
-	SrcPath                    string     `json:"src-path"`
-	DestTarget                 Target     `json:"dest-target"`
-	DestSubpath                string     `json:"dest-subpath"`
-	PreScript                  string     `json:"pre_script"`
-	PostScript                 string     `json:"post_script"`
-	Comment                    string     `json:"comment"`
-	NotificationMode           string     `json:"notification-mode"`
-	Retry                      int        `json:"retry"`
-	RetryInterval              int        `json:"retry-interval"`
-	CurrentPID                 int        `json:"current_pid"`
-	ExpectedSize               int        `json:"expected_size,omitempty"`
-	UPIDs                      []string   `json:"upids"`
-	CurrentStats               JobStats   `json:"current-stats"`
-	History                    JobHistory `json:"history"`
-	SourceDatabase             string     `json:"source_database,omitempty"`
-	DestinationDatabase        string     `json:"destination_database,omitempty"`
-	DovecotSourceUsername      string     `json:"dovecot_source_username,omitempty"`
-	DovecotDestinationUsername string     `json:"dovecot_destination_username,omitempty"`
-	DovecotMailbox             string     `json:"dovecot_mailbox,omitempty"`
-	ReplaceExisting            bool       `json:"replace_existing,omitempty"`
+	ID                         string            `json:"id"`
+	Store                      string            `json:"store"`
+	Snapshot                   string            `json:"snapshot"`
+	Namespace                  string            `json:"ns"`
+	Mode                       int               `json:"mode"`
+	SrcPath                    string            `json:"src-path"`
+	DestTarget                 Target            `json:"dest-target"`
+	DestSubpath                string            `json:"dest-subpath"`
+	PreScript                  string            `json:"pre_script"`
+	PostScript                 string            `json:"post_script"`
+	Comment                    string            `json:"comment"`
+	NotificationMode           string            `json:"notification-mode"`
+	Retry                      int               `json:"retry"`
+	RetryInterval              int               `json:"retry-interval"`
+	CurrentPID                 int               `json:"current_pid"`
+	ExpectedSize               int               `json:"expected_size,omitempty"`
+	UPIDs                      []string          `json:"upids"`
+	CurrentStats               JobStats          `json:"current-stats"`
+	History                    JobHistory        `json:"history"`
+	SourceDatabase             string            `json:"source_database,omitempty"`
+	DestinationDatabase        string            `json:"destination_database,omitempty"`
+	DovecotSourceUsername      string            `json:"dovecot_source_username,omitempty"`
+	DovecotDestinationUsername string            `json:"dovecot_destination_username,omitempty"`
+	DovecotMailbox             string            `json:"dovecot_mailbox,omitempty"`
+	ReplaceExisting            bool              `json:"replace_existing,omitempty"`
+	PluginOptions              *PluginJobOptions `json:"-"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {

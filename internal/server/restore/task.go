@@ -37,6 +37,9 @@ func ReopenRestoreTask(job coredb.Restore, upid string) (*RestoreTask, error) {
 }
 
 func (t *RestoreTask) WriteString(data string) {
+	if t == nil || t.WorkerTask == nil {
+		return
+	}
 	t.LogString(data)
 }
 

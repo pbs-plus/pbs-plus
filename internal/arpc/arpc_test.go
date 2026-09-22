@@ -218,6 +218,116 @@ func TestRouterServeStream_Echo(t *testing.T) {
 	_ = serverTLS
 }
 
+func TestStreamPipeOverConnection(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+
+	client, err := NewClientPipe(nil, clientConn)
+	if err != nil {
+		t.Fatalf("NewClientPipe: %v", err)
+	}
+	defer client.Close()
+
+	server, err := NewServerPipe(t.Context(), serverConn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer server.Close()
+
+	clientRouter := NewRouter()
+	clientRouter.Handle("client.echo", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+	client.SetRouter(clientRouter)
+
+	serverRouter := NewRouter()
+	serverRouter.Handle("server.echo", func(req *Request) (Response, error) {
+		return Response{Status: http.StatusOK, Data: req.Payload}, nil
+	})
+	server.SetRouter(serverRouter)
+
+	go func() { _ = client.Serve() }()
+	go func() { _ = server.Serve() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	for caller, method := range map[*StreamPipe]string{
+		client: "server.echo",
+		server: "client.echo",
+	} {
+		var got string
+		if err := caller.Call(ctx, method, "hello", &got); err != nil {
+			t.Fatalf("Call(%s): %v", method, err)
+		}
+		if got != "hello" {
+			t.Fatalf("Call(%s) = %q, want hello", method, got)
+		}
+	}
+}
+
+func TestLocalPipeMessageLimit(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+
+	client, err := NewClientPipe(t.Context(), clientConn)
+	if err != nil {
+		t.Fatalf("NewClientPipe: %v", err)
+	}
+	defer client.Close()
+
+	server, err := NewServerPipe(t.Context(), serverConn)
+	if err != nil {
+		t.Fatalf("NewServerPipe: %v", err)
+	}
+	defer server.Close()
+
+	router := NewRouter()
+	router.Handle("oversized", func(*Request) (Response, error) {
+		return Response{
+			Status: http.StatusOK,
+			Data:   bytes.Repeat([]byte{'x'}, int(DefaultLocalMessageLimit)),
+		}, nil
+	})
+	router.Handle("raw", func(*Request) (Response, error) {
+		return Response{
+			Status: StatusRawStream,
+			RawStream: func(stream ARPCStream) {
+				data := make([]byte, int(DefaultLocalMessageLimit)+1)
+				_ = SendDataFromReader(bytes.NewReader(data), len(data), stream)
+			},
+		}, nil
+	})
+	server.SetRouter(router)
+	go func() { _ = server.Serve() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	var response []byte
+	if err := client.Call(ctx, "oversized", nil, &response); !errors.Is(err, ErrMessageTooLarge) {
+		t.Fatalf("oversized response error = %v, want ErrMessageTooLarge", err)
+	}
+
+	request := bytes.Repeat([]byte{'x'}, int(DefaultLocalMessageLimit))
+	if err := client.Call(ctx, "oversized", request, nil); !errors.Is(err, ErrMessageTooLarge) {
+		t.Fatalf("oversized request error = %v, want ErrMessageTooLarge", err)
+	}
+
+	raw := make([]byte, int(DefaultLocalMessageLimit)+1)
+	handler := RawStreamHandler(func(stream ARPCStream) error {
+		n, err := ReceiveDataInto(stream, raw)
+		if err != nil {
+			return err
+		}
+		if n != len(raw) {
+			return fmt.Errorf("raw bytes = %d, want %d", n, len(raw))
+		}
+		return nil
+	})
+	if err := client.Call(ctx, "raw", nil, handler); err != nil {
+		t.Fatalf("raw stream over message limit: %v", err)
+	}
+}
+
 func TestStreamPipeCall_Success(t *testing.T) {
 	router := NewRouter()
 	router.Handle("ping", func(req *Request) (Response, error) {

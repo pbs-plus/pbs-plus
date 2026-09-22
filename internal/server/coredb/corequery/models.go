@@ -93,6 +93,25 @@ type BackupGroupMigration struct {
 	CompletedAt string `json:"completed_at"`
 }
 
+type BackupPluginOption struct {
+	BackupID      string `json:"backup_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
+type BackupPluginOptionHistory struct {
+	ID            int64  `json:"id"`
+	BackupID      string `json:"backup_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	MigratedAt    int64  `json:"migrated_at"`
+}
+
 type Exclusion struct {
 	JobID   string         `json:"job_id"`
 	Path    string         `json:"path"`
@@ -122,6 +141,32 @@ type NotificationBatchResult struct {
 	Error      string `json:"error"`
 	Severity   string `json:"severity"`
 	RecordedAt int64  `json:"recorded_at"`
+}
+
+type PluginTargetConfig struct {
+	TargetName    string `json:"target_name"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	TargetType    string `json:"target_type"`
+	SchemaVersion int64  `json:"schema_version"`
+	Config        []byte `json:"config"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
+type PluginTargetConfigHistory struct {
+	ID            int64  `json:"id"`
+	TargetName    string `json:"target_name"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Config        []byte `json:"config"`
+	MigratedAt    int64  `json:"migrated_at"`
+}
+
+type PluginTargetSecret struct {
+	TargetName     string `json:"target_name"`
+	FieldKey       string `json:"field_key"`
+	EncryptedValue string `json:"encrypted_value"`
 }
 
 type Restore struct {
@@ -167,6 +212,25 @@ type RestoreDovecotOption struct {
 	DestinationUsername string `json:"destination_username"`
 	Mailbox             string `json:"mailbox"`
 	ReplaceExisting     int64  `json:"replace_existing"`
+}
+
+type RestorePluginOption struct {
+	RestoreID     string `json:"restore_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	UpdatedAt     int64  `json:"updated_at"`
+}
+
+type RestorePluginOptionHistory struct {
+	ID            int64  `json:"id"`
+	RestoreID     string `json:"restore_id"`
+	PluginID      string `json:"plugin_id"`
+	PluginVersion string `json:"plugin_version"`
+	SchemaVersion int64  `json:"schema_version"`
+	Options       []byte `json:"options"`
+	MigratedAt    int64  `json:"migrated_at"`
 }
 
 type Script struct {
@@ -229,6 +293,38 @@ type TargetMysql struct {
 	CaCertificate       string `json:"ca_certificate"`
 	DefaultClientFamily string `json:"default_client_family"`
 	DefaultClientDir    string `json:"default_client_dir"`
+}
+
+type TargetPlugin struct {
+	PluginID      string `json:"plugin_id"`
+	RepositoryID  string `json:"repository_id"`
+	ActiveVersion string `json:"active_version"`
+	Enabled       int64  `json:"enabled"`
+}
+
+type TargetPluginRepository struct {
+	ID              string        `json:"id"`
+	Name            string        `json:"name"`
+	Url             string        `json:"url"`
+	PublicKey       []byte        `json:"public_key"`
+	Enabled         int64         `json:"enabled"`
+	Etag            string        `json:"etag"`
+	LastModified    string        `json:"last_modified"`
+	LastRefreshedAt sql.NullInt64 `json:"last_refreshed_at"`
+	LastError       string        `json:"last_error"`
+}
+
+type TargetPluginVersion struct {
+	PluginID        string        `json:"plugin_id"`
+	Version         string        `json:"version"`
+	Platform        string        `json:"platform"`
+	InstallPath     string        `json:"install_path"`
+	Manifest        []byte        `json:"manifest"`
+	ArtifactSha256  string        `json:"artifact_sha256"`
+	InstalledAt     int64         `json:"installed_at"`
+	HealthState     string        `json:"health_state"`
+	HealthMessage   string        `json:"health_message"`
+	HealthCheckedAt sql.NullInt64 `json:"health_checked_at"`
 }
 
 type TargetPostgresql struct {

@@ -44,10 +44,6 @@ func (s *BackupService) ListBackups() ([]coredb.Backup, error) {
 			if sess := sessions.GetSessionARPCFS(b.GetStreamID()); sess != nil {
 				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
 			}
-		case b.Target.IsS3():
-			if sess := sessions.GetSessionS3FS(b.GetStreamID()); sess != nil {
-				backups[i].CurrentStats = jobStatsFromVFS(sess.GetStats())
-			}
 		}
 	}
 	return backups, nil
@@ -276,7 +272,7 @@ func (s *TargetService) CheckStatus(ctx context.Context, targets []coredb.Target
 			case tgt.IsS3():
 				result.Error = probeS3Target(timeoutCtx, tgt)
 				result.ConnectionStatus = result.Error == nil
-			case tgt.IsDatabase():
+			case tgt.IsDatabase() || tgt.IsDovecot():
 				result.Error = probeTCP(timeoutCtx, net.JoinHostPort(tgt.DatabaseHost, strconv.Itoa(tgt.DatabasePort)))
 				result.ConnectionStatus = result.Error == nil
 			default:

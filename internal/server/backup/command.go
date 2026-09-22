@@ -4,6 +4,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -27,7 +30,7 @@ func getBackupId(backup coredb.Backup) (string, error) {
 	return backup.ID, nil
 }
 
-func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
+func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, extraExclusions []string, pluginLease *plugins.BackupLease, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
 		return nil, fmt.Errorf("RunBackup: source path is required")
 	}
@@ -42,7 +45,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
 	}
 
-	detectionMode, useExclusions := backupCommandPolicy(backup)
+	detectionMode, useExclusions := backupCommandPolicy(backup, pluginLease)
 
 	cmdArgs := []string{}
 	if nofile := conf.Env.ClientNofile; nofile != "" {
@@ -51,17 +54,20 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 		cmdArgs = append(cmdArgs, "--nofile=1024:1024")
 	}
 
-	cmdArgs = append(cmdArgs, []string{
-		"/usr/bin/proxmox-backup-client",
-		"backup",
-		fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target.Name), srcPath),
+	cmdArgs = append(cmdArgs, "/usr/bin/proxmox-backup-client", "backup")
+	backupSources, err := backupSourceArgs(backup, srcPath, pluginLease)
+	if err != nil {
+		return nil, err
+	}
+	cmdArgs = append(cmdArgs, backupSources...)
+	cmdArgs = append(cmdArgs,
 		"--repository", backupStore,
 		detectionMode,
 		"--entries-max", fmt.Sprintf("%d", backup.MaxDirEntries+1024),
 		"--backup-type", "host",
 		"--backup-id", backupID,
 		"--crypt-mode=none",
-	}...)
+	)
 
 	addExclusion := func(path string) {
 		if !strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "!") && !strings.HasPrefix(path, "**/") {
@@ -83,6 +89,9 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 			for _, exclusion := range globalExclusions {
 				addExclusion(exclusion.Path)
 			}
+		}
+		if pluginLease != nil {
+			addExclusion("!" + targetplugin.SnapshotMetadataFileName)
 		}
 	}
 
@@ -109,16 +118,28 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	return cmd, nil
 }
 
-func backupCommandPolicy(backup coredb.Backup) (string, bool) {
-	if backup.Target.IsDatabase() || backup.Target.IsDovecot() {
-		return "--change-detection-mode=metadata", false
+func backupSourceArgs(backup coredb.Backup, srcPath string, pluginLease *plugins.BackupLease) ([]string, error) {
+	sources := []string{fmt.Sprintf("%s.pxar:%s", proxmox.NormalizeHostname(backup.Target.Name), srcPath)}
+	if pluginLease == nil {
+		return sources, nil
+	}
+	if pluginLease.MetadataSourcePath == "" {
+		return nil, errors.New("plugin snapshot metadata source is required")
+	}
+	return append(sources, fmt.Sprintf("%s.pxar:%s", targetplugin.SnapshotMetadataArchiveName, pluginLease.MetadataSourcePath)), nil
+}
+
+func backupCommandPolicy(backup coredb.Backup, pluginLease *plugins.BackupLease) (string, bool) {
+	useExclusions := pluginLease == nil || pluginLease.Supports(targetplugin.FeatureExclusions)
+	if pluginLease != nil && !pluginLease.Supports(targetplugin.FeatureChangeDetection) {
+		return "--change-detection-mode=metadata", useExclusions
 	}
 	switch backup.Mode {
 	case "legacy":
-		return "--change-detection-mode=legacy", true
+		return "--change-detection-mode=legacy", useExclusions
 	case "data":
-		return "--change-detection-mode=data", true
+		return "--change-detection-mode=data", useExclusions
 	default:
-		return "--change-detection-mode=metadata", true
+		return "--change-detection-mode=metadata", useExclusions
 	}
 }

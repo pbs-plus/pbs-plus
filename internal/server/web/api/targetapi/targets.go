@@ -3,6 +3,7 @@
 package targetapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/plugins"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -38,20 +40,23 @@ func D2DTargetHandler(app *application.Runtime) http.HandlerFunc {
 
 		app.Target.OverlayStatus(all)
 
-		digest, err := digest.Calculate(all)
+		data := make([]targetResponse, len(all))
+		for i := range all {
+			data[i], err = newTargetResponseWithPlugin(r.Context(), app.CoreDB, all[i])
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
+		responseDigest, err := digest.Calculate(data)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-
-		data := make([]targetResponse, len(all))
-		for i := range all {
-			data[i] = newTargetResponse(all[i])
-		}
-
 		toReturn := TargetsResponse{
 			Data:    data,
-			Digest:  digest,
+			Digest:  responseDigest,
 			Success: true,
 		}
 
@@ -188,6 +193,10 @@ func D2DTargetAgentHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		tx = nil
+		if _, err := plugins.ImportAgentTargets(r.Context(), app.CoreDB); err != nil {
+			respond.WriteErrorResponse(w, fmt.Errorf("syncing agent plugin targets: %w", err))
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(map[string]bool{
@@ -249,6 +258,10 @@ func ExtJsTargetHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
+		}
+		if err := syncFirstPartyTarget(r.Context(), app.CoreDB, newTarget); err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
 
 		response.Status = http.StatusOK
@@ -317,6 +330,10 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 					return
 				}
 			}
+			if err := syncFirstPartyTarget(r.Context(), app.CoreDB, target); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
 
 			response.Status = http.StatusOK
 			response.Success = true
@@ -364,9 +381,14 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 			default:
 			}
 
+			data, err := newTargetResponseWithPlugin(r.Context(), app.CoreDB, target)
+			if err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
 			response.Status = http.StatusOK
 			response.Success = true
-			response.Data = newTargetResponse(target)
+			response.Data = data
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}
@@ -481,14 +503,16 @@ type TargetConfigResponse struct {
 
 type targetResponse struct {
 	coredb.Target
-	TargetType  string `json:"target_type"`
-	Kind        string `json:"kind"`
-	S3Endpoint  string `json:"s3_endpoint,omitempty"`
-	S3Region    string `json:"s3_region,omitempty"`
-	S3AccessKey string `json:"s3_access_key,omitempty"`
-	S3Bucket    string `json:"s3_bucket,omitempty"`
-	S3UseSSL    bool   `json:"s3_use_ssl"`
-	S3PathStyle bool   `json:"s3_path_style"`
+	TargetType    string `json:"target_type"`
+	Kind          string `json:"kind"`
+	PluginID      string `json:"plugin_id,omitempty"`
+	PluginVersion string `json:"plugin_version,omitempty"`
+	S3Endpoint    string `json:"s3_endpoint,omitempty"`
+	S3Region      string `json:"s3_region,omitempty"`
+	S3AccessKey   string `json:"s3_access_key,omitempty"`
+	S3Bucket      string `json:"s3_bucket,omitempty"`
+	S3UseSSL      bool   `json:"s3_use_ssl"`
+	S3PathStyle   bool   `json:"s3_path_style"`
 }
 
 func newTargetResponse(target coredb.Target) targetResponse {
@@ -506,6 +530,20 @@ func newTargetResponse(target coredb.Target) targetResponse {
 		response.S3PathStyle = target.S3Info.IsPathStyle
 	}
 	return response
+}
+
+func newTargetResponseWithPlugin(ctx context.Context, db *coredb.Store, target coredb.Target) (targetResponse, error) {
+	response := newTargetResponse(target)
+	pluginTarget, err := db.GetPluginTarget(ctx, target.Name)
+	if errors.Is(err, coredb.ErrTargetNotFound) {
+		return response, nil
+	}
+	if err != nil {
+		return targetResponse{}, err
+	}
+	response.PluginID = pluginTarget.PluginID
+	response.PluginVersion = pluginTarget.PluginVersion
+	return response, nil
 }
 
 func targetTypeFromRequest(r *http.Request) coredb.TargetType {
@@ -604,6 +642,32 @@ func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error 
 	}
 	if target.Type == coredb.TargetTypeS3 {
 		return applyS3Form(target, r)
+	}
+	return nil
+}
+
+func syncFirstPartyTarget(ctx context.Context, db *coredb.Store, target coredb.Target) error {
+	var importer func(context.Context, *coredb.Store) (int, error)
+	switch {
+	case target.IsLocal():
+		importer = plugins.ImportLocalTargets
+	case target.IsAgent():
+		importer = plugins.ImportAgentTargets
+	case target.IsS3():
+		importer = plugins.ImportS3Targets
+	case target.Type == coredb.TargetTypePostgreSQL:
+		importer = plugins.ImportPostgreSQLTargets
+	case target.Type == coredb.TargetTypeMySQL:
+		importer = plugins.ImportMySQLTargets
+	case target.Type == coredb.TargetTypeLDAP:
+		importer = plugins.ImportLDAPTargets
+	case target.Type == coredb.TargetTypeDovecot:
+		importer = plugins.ImportDovecotTargets
+	default:
+		return fmt.Errorf("target type %q has no first-party plugin", target.Type)
+	}
+	if _, err := importer(ctx, db); err != nil {
+		return fmt.Errorf("syncing target %q into plugin execution: %w", target.Name, err)
 	}
 	return nil
 }

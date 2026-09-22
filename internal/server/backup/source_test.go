@@ -3,22 +3,35 @@
 package backup
 
 import (
-	"errors"
+	"os"
+	"strings"
 	"testing"
 
-	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
+	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/targetplugin"
 )
 
-func TestValidateAgentConnection(t *testing.T) {
-	target := coredb.Target{Name: "agent-target"}
+func TestHandlePluginEventWritesClientLog(t *testing.T) {
+	jobID := "plugin-event-" + strings.ReplaceAll(t.Name(), "/", "-")
+	logger := log.WithScope(log.Scope{JobID: jobID})
+	defer logger.Close()
 
-	if err := validateAgentConnection(target, true); err != nil {
-		t.Fatalf("online agent rejected: %v", err)
+	job := &backupJob{logger: logger}
+	const marker = "--- PostgreSQL log starts here ---"
+	if err := job.handlePluginEvent(targetplugin.HostEvent{Level: targetplugin.EventInfo, Message: marker}); err != nil {
+		t.Fatalf("handlePluginEvent: %v", err)
 	}
-
-	err := validateAgentConnection(target, false)
-	if !errors.Is(err, jobs.ErrTargetUnreachable) {
-		t.Fatalf("offline agent error = %v, want ErrTargetUnreachable", err)
+	if err := logger.FlushJobLog(); err != nil {
+		t.Fatalf("flush job log: %v", err)
 	}
+	content, err := os.ReadFile(logger.JobLogPath())
+	if err != nil {
+		t.Fatalf("read job log: %v", err)
+	}
+	for line := range strings.SplitSeq(string(content), "\n") {
+		if line == marker {
+			return
+		}
+	}
+	t.Fatalf("job log does not contain raw plugin event:\n%s", content)
 }

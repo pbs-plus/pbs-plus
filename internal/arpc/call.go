@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
@@ -31,6 +32,9 @@ type SerializableError struct {
 }
 
 type RawStreamHandler func(ARPCStream) error
+
+// RawStreamDataHandler receives response metadata before the raw stream body.
+type RawStreamDataHandler func([]byte, ARPCStream) error
 
 var readySignal = []byte{0xFF}
 
@@ -64,6 +68,25 @@ func performHandshake(stream ARPCStream) error {
 	return nil
 }
 
+func handleRawStreamResponse(stream ARPCStream, response *Response, out any) error {
+	handler, handlesStream := out.(RawStreamHandler)
+	dataHandler, handlesData := out.(RawStreamDataHandler)
+	if handlesStream {
+		if handler == nil {
+			return fmt.Errorf("invalid out handler while in raw stream mode")
+		}
+	} else if !handlesData || dataHandler == nil {
+		return fmt.Errorf("invalid out handler while in raw stream mode")
+	}
+	if err := performHandshake(stream); err != nil {
+		return err
+	}
+	if handlesStream {
+		return handler(stream)
+	}
+	return dataHandler(response.Data, stream)
+}
+
 func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPCStream, *Response, error) {
 	stream, err := s.openStream(ctx)
 	if err != nil {
@@ -71,7 +94,7 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 	}
 
 	enc := s.cborEnc.NewEncoder(stream)
-	dec := s.cborDec.NewDecoder(stream)
+	dec := s.cborDec.NewDecoder(newMessageLimitReader(stream, s.messageLimit))
 
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := stream.SetDeadline(deadline); err != nil {
@@ -92,6 +115,10 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 			}
 		}
 	}
+	if s.messageLimit > 0 && int64(len(payloadBytes)) >= s.messageLimit {
+		releaseStream(stream)
+		return nil, nil, ErrMessageTooLarge
+	}
 
 	req := Request{Method: method, Payload: payloadBytes}
 	if err := enc.Encode(req); err != nil {
@@ -99,13 +126,27 @@ func (s *StreamPipe) call(ctx context.Context, method string, payload any) (ARPC
 		return nil, nil, fmt.Errorf("write request: %w", err)
 	}
 
+	decoded := make(chan struct{})
+	if ctx.Done() != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				if err := stream.SetDeadline(time.Now()); err != nil {
+					log.Error(err, "arpc: failed to interrupt cancelled call")
+				}
+			case <-decoded:
+			}
+		}()
+	}
 	var resp Response
-	if err := dec.Decode(&resp); err != nil {
+	decodeErr := dec.Decode(&resp)
+	close(decoded)
+	if decodeErr != nil {
 		releaseStream(stream)
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
-		return nil, nil, fmt.Errorf("decode response: %w", err)
+		return nil, nil, fmt.Errorf("decode response: %w", decodeErr)
 	}
 
 	return stream, &resp, nil
@@ -119,16 +160,7 @@ func (s *StreamPipe) Call(ctx context.Context, method string, payload any, out a
 	defer releaseStream(stream)
 
 	if resp.Status == StatusRawStream {
-		handler, ok := out.(RawStreamHandler)
-		if !ok || handler == nil {
-			return fmt.Errorf("invalid out handler while in raw stream mode")
-		}
-
-		if err := performHandshake(stream); err != nil {
-			return err
-		}
-
-		return handler(stream)
+		return handleRawStreamResponse(stream, resp, out)
 	}
 
 	if err := s.checkRPCError(resp); err != nil {

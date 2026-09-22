@@ -63,7 +63,37 @@ func (r *PxarReader) Elapsed() time.Duration {
 	return time.Since(r.startTime)
 }
 
-func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, task TaskWriter) (*PxarReader, error) {
+func NewPxarReader(ctx context.Context, socketPath, pbsStore, namespace, snapshot string, task TaskWriter) (*PxarReader, error) {
+	return newPxarReader(ctx, socketPath, pbsStore, namespace, snapshot, "", task)
+}
+
+// ReadArchiveFile returns one bounded file from a named archive of a snapshot.
+func ReadArchiveFile(ctx context.Context, pbsStore, namespace, snapshot, archiveName, filePath string, maxBytes int64) ([]byte, error) {
+	reader, err := newPxarReader(ctx, "", pbsStore, namespace, snapshot, archiveName+".mpxar.didx", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	info, err := reader.LookupByPath(ctx, filePath)
+	if err != nil {
+		return nil, fmt.Errorf("look up %s in archive %s: %w", filePath, archiveName, err)
+	}
+	if info.RawSize == 0 || len(info.ContentRange) < 2 {
+		return nil, fmt.Errorf("%s in archive %s has no content", filePath, archiveName)
+	}
+	if int64(info.RawSize) > maxBytes {
+		return nil, fmt.Errorf("%s in archive %s exceeds %d bytes", filePath, archiveName, maxBytes)
+	}
+	content, err := reader.ReadFileContentReader(ctx, info.ContentRange[0], info.ContentRange[1])
+	if err != nil {
+		return nil, fmt.Errorf("read %s in archive %s: %w", filePath, archiveName, err)
+	}
+	defer content.Close()
+	return io.ReadAll(io.LimitReader(content, maxBytes))
+}
+
+func newPxarReader(_ context.Context, _, pbsStore, namespace, snapshot, fileName string, task TaskWriter) (*PxarReader, error) {
 	dsInfo, err := cli.GetDatastoreInfo(pbsStore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get datastore: %w", err)
@@ -92,7 +122,7 @@ func NewPxarReader(_ context.Context, _, pbsStore, namespace, snapshot string, t
 		backupType,
 		snapshotID,
 		snapshotTime,
-		"",
+		fileName,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build pxar paths: %w", err)
