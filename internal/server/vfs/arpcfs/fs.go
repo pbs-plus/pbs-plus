@@ -28,14 +28,50 @@ import (
 const attrPrefix = "attr:"
 const xattrPrefix = "xattr:"
 
+// maxLoggedPaths caps the per-mount suppression set, which is otherwise one
+// retained map entry per failing path for the life of the mount.
+const maxLoggedPaths = 4096
+
+// ErrSessionLost reports that the agent transport failed to answer, as opposed
+// to the agent answering that an entry is absent. Callers must surface EIO for
+// it: reporting ENOENT makes proxmox-backup-client treat the entry as a file
+// that vanished mid-run and omit it from the snapshot without failing the job.
+var ErrSessionLost = errors.New("arpc session lost")
+
+// sessionLost latches the outage so it is logged once per outage, not once per
+// FUSE call, and returns the error callers must propagate.
+func (fs *ARPCFS) sessionLost(err error) error {
+	if !fs.sessionDown.Swap(true) {
+		log.Error(err,
+			"arpc session is nil",
+			"backupID", fs.Backup.ID, "hostname", fs.Hostname)
+	}
+	if errors.Is(err, ErrSessionLost) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrSessionLost, err)
+}
+
+// sessionRestored clears the latch so a later loss is logged again.
+func (fs *ARPCFS) sessionRestored() {
+	if fs.sessionDown.Swap(false) {
+		log.Info("arpc session restored",
+			"backupID", fs.Backup.ID, "hostname", fs.Hostname)
+	}
+}
+
 // path are suppressed to avoid noisy duplicate entries in task logs.
 func (fs *ARPCFS) logOnce(path string, err error, op string) {
 	if isIgnoredPath(path) {
 		return
 	}
+	if fs.loggedPathCount.Load() >= maxLoggedPaths {
+		return
+	}
 	if _, loaded := fs.loggedPaths.LoadOrStore(path, struct{}{}); loaded {
 		return
 	}
+	fs.loggedPathCount.Add(1)
 	log.Error(err,
 		"FUSE "+op+" failed",
 		"path", path)
@@ -136,19 +172,20 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 	for {
 		session, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
 		if exists {
+			fs.sessionRestored()
 			return session, nil
 		}
 
 		if _, exists := fs.agentManager.GetStreamPipe(fs.Hostname); exists {
 			primaryUpCount++
 			if primaryUpCount > 4 {
-				return nil, fmt.Errorf("primary agent for %s is reachable but the backup session is severed; agent crashed without graceful exit", fs.Hostname)
+				return nil, fmt.Errorf("%w: primary agent for %s is reachable but the backup session is severed; agent crashed without graceful exit", ErrSessionLost, fs.Hostname)
 			}
 		}
 
 		select {
 		case <-pipeCtx.Done():
-			return nil, pipeCtx.Err()
+			return nil, fmt.Errorf("%w: %w", ErrSessionLost, pipeCtx.Err())
 		case <-ticker.C:
 			continue
 		}
@@ -181,10 +218,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 	}
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return nil, syscall.ENOENT
+		return nil, fs.sessionLost(err)
 	}
 	log.Debug("openFile called",
 
@@ -238,10 +272,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 				return fi, errno
 			}
 		}
-		log.Error(err,
-			"arpc session is nil")
-
-		return fswire.AgentFileInfo{}, syscall.ENOENT
+		return fswire.AgentFileInfo{}, fs.sessionLost(err)
 	}
 
 	cacheKey := fs.GetCacheKey(attrPrefix, filename)
@@ -342,10 +373,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (fswire.AgentF
 	var fi fswire.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return fswire.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, fs.sessionLost(err)
 	}
 
 	var fiCached fswire.AgentFileInfo
@@ -437,10 +465,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (fswire.StatFS, error) {
 
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return fswire.StatFS{}, syscall.ENOENT
+		return fswire.StatFS{}, fs.sessionLost(err)
 	}
 
 	var fsStat fswire.StatFS
@@ -476,10 +501,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return DirStream{}, syscall.ENOENT
+		return DirStream{}, fs.sessionLost(err)
 	}
 
 	var handleId fswire.FileHandleID
@@ -567,7 +589,11 @@ type ARPCFS struct {
 	sessionId    string
 	Hostname     string
 	backupMode   string
-	loggedPaths  sync.Map
+
+	mountpoint      string
+	sessionDown     atomic.Bool
+	loggedPaths     sync.Map
+	loggedPathCount atomic.Int64
 
 	expandArchives   bool
 	expandZip        bool

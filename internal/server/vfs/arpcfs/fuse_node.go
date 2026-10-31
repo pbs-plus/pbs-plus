@@ -5,6 +5,7 @@ package arpcfs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path"
@@ -130,10 +131,20 @@ func (n *Node) Statx(ctx context.Context, f fs.FileHandle, flags uint32, mask ui
 	return 0
 }
 
+// errnoFor keeps a dead transport from masquerading as a missing or unreadable
+// entry. proxmox-backup-client skips an ENOENT as a vanished file and records
+// the snapshot as successful, so transport loss must surface as EIO.
+func errnoFor(err error, fallback syscall.Errno) syscall.Errno {
+	if errors.Is(err, ErrSessionLost) {
+		return syscall.EIO
+	}
+	return fallback
+}
+
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
-		return syscall.ESTALE
+		return errnoFor(err, syscall.ESTALE)
 	}
 
 	mode := fi.Mode
@@ -362,7 +373,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
-		return nil, syscall.ENOENT
+		return nil, errnoFor(err, syscall.ENOENT)
 	}
 
 	childNode := &Node{
@@ -412,7 +423,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
 		n.fs.logOnce(n.getPath(), err, "Readdir")
-		return nil, syscall.EIO
+		return nil, errnoFor(err, syscall.EIO)
 	}
 
 	return &entries, 0
@@ -422,7 +433,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
 		n.fs.logOnce(n.getPath(), err, "Open")
-		return nil, 0, syscall.ESTALE
+		return nil, 0, errnoFor(err, syscall.ESTALE)
 	}
 
 	return &FileHandle{
@@ -434,7 +445,7 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 	stat, err := n.fs.StatFS(ctx)
 	if err != nil {
-		return 0
+		return errnoFor(err, 0)
 	}
 
 	out.Blocks = stat.Blocks
@@ -462,7 +473,7 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {
 		fh.fs.logOnce(fh.file.name, err, "Read")
-		return nil, syscall.EIO
+		return nil, errnoFor(err, syscall.EIO)
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
@@ -472,7 +483,7 @@ func (fh *FileHandle) Lseek(ctx context.Context, off uint64, whence uint32) (uin
 	n, err := fh.file.Lseek(ctx, int64(off), int(whence))
 	if err != nil && err != io.EOF {
 		fh.fs.logOnce(fh.file.name, err, "Lseek")
-		return off, 0
+		return off, errnoFor(err, 0)
 	}
 
 	return n, 0
