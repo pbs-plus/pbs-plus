@@ -32,101 +32,67 @@ func agentJob() coredb.Backup {
 	}
 }
 
-func TestDiagnoseNamesCauseAndActionForOperators(t *testing.T) {
+func TestFailureSummaryNamesTheFailure(t *testing.T) {
 	job := agentJob()
 
 	cases := map[string]struct {
-		err      error
-		problem  string
-		wantCase bool
+		err  error
+		want string
 	}{
-		"unreachable agent": {
-			err:      fmt.Errorf("mounting: %w", jobs.ErrTargetUnreachable),
-			problem:  "could not reach",
-			wantCase: true,
-		},
-		"severed session": {
-			err:      fmt.Errorf("reading: %w", arpcfs.ErrSessionLost),
-			problem:  "could not reach",
-			wantCase: true,
-		},
-		"stalled run": {
-			err:      fmt.Errorf("%w: agent transport down for 15m0s", ErrBackupStalled),
-			problem:  "stopped transferring",
-			wantCase: true,
-		},
-		"empty source": {
-			err:      jobs.ErrMountEmpty,
-			problem:  "contained no files",
-			wantCase: true,
-		},
-		"missing subpath": {
-			err:      jobs.ErrSubpathNotFound,
-			problem:  "does not exist",
-			wantCase: true,
-		},
-		"duplicate run": {
-			err:      sessions.ErrMountInUse,
-			problem:  "still active",
-			wantCase: true,
-		},
-		"cancelled": {
-			err:     jobs.ErrCanceled,
-			problem: "was cancelled",
-		},
-		"unknown": {
-			err:     errors.New("something nobody mapped"),
-			problem: "The backup failed.",
-		},
+		"unreachable agent": {fmt.Errorf("mounting: %w", jobs.ErrTargetUnreachable), "cannot reach agent DP-D030 (10.1.24.9)"},
+		"severed session":   {fmt.Errorf("reading: %w", arpcfs.ErrSessionLost), "cannot reach agent DP-D030 (10.1.24.9)"},
+		"stalled run":       {fmt.Errorf("%w: down 15m", ErrBackupStalled), "cancelled after the connection to agent DP-D030 (10.1.24.9) stayed down"},
+		"empty source":      {jobs.ErrMountEmpty, "source /C/Data is empty, nothing was backed up"},
+		"missing subpath":   {jobs.ErrSubpathNotFound, "subpath Data does not exist on agent DP-D030 (10.1.24.9)"},
+		"duplicate run":     {sessions.ErrMountInUse, "a previous run of this job is still active"},
+		"cancelled":         {jobs.ErrCanceled, "cancelled before it finished"},
+		"client failure":    {ErrTaskFailed, "proxmox-backup-client reported a failure"},
+		"unmapped":          {errors.New("something nobody mapped"), "backup failed"},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			d := diagnose(tc.err, job)
-			if !strings.Contains(d.Problem, tc.problem) {
-				t.Fatalf("problem = %q, want it to contain %q", d.Problem, tc.problem)
-			}
-			if d.Action == "" {
-				t.Error("every diagnosis must tell the operator what to do")
-			}
-			if tc.wantCase && d.Cause == "" {
-				t.Error("want a likely cause for a diagnosable failure")
+			if got := failureSummary(tc.err, job); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestDiagnoseIdentifiesTheSourceMachine(t *testing.T) {
-	d := diagnose(jobs.ErrTargetUnreachable, agentJob())
-	if !strings.Contains(d.Problem, "DP-D030") || !strings.Contains(d.Problem, "10.1.24.9") {
-		t.Fatalf("problem = %q, want the agent name and address", d.Problem)
+func TestReportLinesCarryIdentityWindowAndResult(t *testing.T) {
+	lines := reportLines(agentJob(), jobs.ErrTargetUnreachable, 1700000000, 1700003600)
+
+	want := []string{
+		"Job: DP-D030-D",
+		"Datastore: phoenix, namespace DP/DP-D030/D",
+		"Source: agent DP-D030 (10.1.24.9), path /C/Data, mode snapshot",
+		"Result: cannot reach agent DP-D030 (10.1.24.9)",
+		"Detail: target unreachable",
+	}
+	joined := strings.Join(lines, "\n")
+	for _, w := range want {
+		if !strings.Contains(joined, w) {
+			t.Errorf("report missing %q; got:\n%s", w, joined)
+		}
+	}
+	if !strings.Contains(joined, "duration 1h0m0s") {
+		t.Errorf("report missing the duration; got:\n%s", joined)
 	}
 }
 
-func TestReportLinesCarryIdentityWindowAndDiagnosis(t *testing.T) {
-	lines := reportLines(agentJob(), jobs.ErrTargetUnreachable, 1700000000, 1700003600)
-	joined := strings.Join(lines, "\n")
-
-	for _, want := range []string{
-		`Backup job "DP-D030-D"`,
-		`datastore "phoenix"`,
-		"DP/DP-D030/D",
-		"/C/Data",
-		"ran for 1h0m0s",
-		"PROBLEM:",
-		"LIKELY CAUSE:",
-		"WHAT TO DO:",
-		"TECHNICAL DETAIL: target unreachable",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("report missing %q; got:\n%s", want, joined)
-		}
+func TestReportLinesOmitDetailWhenThereIsNoError(t *testing.T) {
+	joined := strings.Join(reportLines(agentJob(), nil, 1700000000, 1700000010), "\n")
+	if strings.Contains(joined, "Detail:") {
+		t.Fatalf("want no detail line on success, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "Result: backup finished") {
+		t.Fatalf("want a result line, got:\n%s", joined)
 	}
 }
 
 func TestReportLinesTolerateAnUnfinishedRun(t *testing.T) {
 	joined := strings.Join(reportLines(agentJob(), jobs.ErrCanceled, 0, 0), "\n")
-	if !strings.Contains(joined, "Started unknown, ended unknown, ran for unknown") {
+	if !strings.Contains(joined, "Started: unknown, ended unknown, duration unknown") {
 		t.Fatalf("want unknown timestamps, got:\n%s", joined)
 	}
 }

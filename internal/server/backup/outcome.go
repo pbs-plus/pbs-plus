@@ -30,7 +30,7 @@ func (b *backupJob) finalizeFailure(err error) {
 
 	if b.started.Load() {
 		succeeded, warningsNum := b.processPBSLogs(err, b.upid)
-		b.logger.Info("file transfer finished, running the post-backup script")
+		b.logger.Info("backup finished, running post-backup script")
 		b.runPostScript(succeeded, warningsNum)
 		succeeded, warningsNum = b.processPBSLogs(err, b.upid)
 		b.updatePBSStatus(succeeded, warningsNum, b.upid)
@@ -153,14 +153,14 @@ func (b *backupJob) cleanup() {
 
 		if agentMount != nil {
 			if logger != nil {
-				logger.Info("releasing the agent files and closing the agent session")
+				logger.Info("unmounting agent source")
 			}
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
 		if s3Mount != nil {
 			if logger != nil {
-				logger.Info("releasing the S3 mount")
+				logger.Info("unmounting S3 source")
 			}
 			s3Mount.Unmount()
 			s3Mount.CloseMount()
@@ -198,9 +198,9 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	if succeeded || cancelled {
-		b.logger.Info("the backup finished or was cancelled without errors")
+		b.logger.Info("backup finished or was cancelled")
 	} else {
-		b.logger.Error(logErr, "the backup did not finish; it runs again on its next schedule")
+		b.logger.Error(logErr, "backup did not finish, retrying on next schedule")
 	}
 
 	return succeeded, warningsNum

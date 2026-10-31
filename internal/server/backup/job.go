@@ -153,14 +153,14 @@ func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan
 			}
 			if mount.IsConnected() {
 				if !downSince.IsZero() {
-					b.logger.Info("the connection to the backup agent was restored", "upid", upid)
+					b.logger.Info("agent connection restored", "upid", upid)
 					downSince = time.Time{}
 				}
 				continue
 			}
 			if downSince.IsZero() {
 				downSince = time.Now()
-				b.logger.Warn("lost the connection to the backup agent; this run is cancelled if it does not come back",
+				b.logger.Warn("agent connection lost, cancelling run if it does not return",
 					"waitingFor", agentOutageGrace.String(), "upid", upid)
 				continue
 			}
@@ -358,7 +358,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	stdoutWriter := io.MultiWriter(logger.JobStdoutWriter(), os.Stdout)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stdoutWriter
-	b.logger.Info("starting the file transfer with proxmox-backup-client", "command", cmd.String())
+	b.logger.Info("starting proxmox-backup-client", "command", cmd.String())
 
 	if err := cmd.Start(); err != nil {
 		if currOwner != "" {
