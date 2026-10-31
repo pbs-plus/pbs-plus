@@ -387,7 +387,9 @@ func isIgnoredS3Path(p string) bool {
 func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		if err := fs.Fuse.Unmount(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "fuse unmount failed, forcing lazy detach",
+				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
+			forceUnmount(fs.mountpoint)
 		}
 	}
 	fs.Cancel()
@@ -399,5 +401,6 @@ type S3FS struct {
 	client      *minio.Client
 	bucket      string
 	prefix      string
+	mountpoint  string
 	loggedPaths sync.Map
 }

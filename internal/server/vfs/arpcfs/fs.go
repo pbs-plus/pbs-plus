@@ -558,7 +558,9 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 
 	if fs.Fuse != nil {
 		if err := fs.Fuse.Unmount(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "fuse unmount failed, forcing lazy detach",
+				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
+			forceUnmount(fs.mountpoint)
 		}
 		log.Debug("fuse unmounted",
 			"backupID", fs.Backup.ID)
@@ -567,15 +569,10 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 
 	fs.zipShutdown(ctx)
 
-	pipe, err := fs.getPipe(ctx)
-	if err != nil {
-		log.Error(err, "")
-	}
-	if pipe != nil {
+	if pipe, exists := fs.agentManager.GetStreamPipe(fs.sessionId); exists && pipe != nil {
 		pipe.Close()
 		log.Debug("aRPC session closed",
 			"backupID", fs.Backup.ID)
-
 	}
 	fs.Cancel()
 	log.Debug("context canceled",
