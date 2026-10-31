@@ -41,7 +41,7 @@ func ReadConfig() (*Config, error) {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close tape.cfg")
 		}
 	}()
 
