@@ -58,7 +58,11 @@ func ReserveMount(ctx context.Context, connID, owner string) (*FSMount, error) {
 }
 
 // FinishSetup must run even when construction fails so teardown can safely take ownership of partially initialized resources.
-func (m *FSMount) FinishSetup() { m.setupOnce.Do(func() { close(m.ready) }) }
+func (m *FSMount) FinishSetup() {
+	registerMu.Lock()
+	defer registerMu.Unlock()
+	m.setupOnce.Do(func() { close(m.ready) })
+}
 
 func (m *FSMount) SetCleanup(cleanup func(context.Context) error) { m.cleanup = cleanup }
 
@@ -70,6 +74,11 @@ func (m *FSMount) AttachARPCFS(fs *arpcfs.ARPCFS) error {
 	if cur, ok := activeMounts.Get(m.id); !ok || cur != m || !m.empty() {
 		return ErrMountStale
 	}
+	select {
+	case <-m.ready:
+		return ErrMountStale
+	default:
+	}
 	m.arpcfs = fs
 	return nil
 }
@@ -79,6 +88,11 @@ func (m *FSMount) AttachS3FS(fs *s3fs.S3FS) error {
 	defer registerMu.Unlock()
 	if cur, ok := activeMounts.Get(m.id); !ok || cur != m || !m.empty() {
 		return ErrMountStale
+	}
+	select {
+	case <-m.ready:
+		return ErrMountStale
+	default:
 	}
 	m.s3fs = fs
 	return nil
