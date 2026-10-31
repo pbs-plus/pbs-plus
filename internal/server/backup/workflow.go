@@ -131,7 +131,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		}
 		succeeded, warnings := b.processPBSLogs(nil, b.upid)
 		if !succeeded {
-			return nil, fmt.Errorf("%w: upid %s", ErrTaskFailed, startRes.UPID)
+			if reason := taskFailureReason(startRes.UPID); reason != "" {
+				return nil, fmt.Errorf("%w: %s (task %s)", ErrTaskFailed, reason, startRes.UPID)
+			}
+			return nil, fmt.Errorf("%w: task %s ended without a success marker", ErrTaskFailed, startRes.UPID)
 		}
 		return json.Marshal(waitResult{Succeeded: succeeded, Warnings: warnings})
 	})

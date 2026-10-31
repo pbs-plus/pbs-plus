@@ -3,6 +3,7 @@ package proxmox
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -27,4 +28,16 @@ func ChownBackupUser(path string) error {
 // FormatLogLine renders a PBS FileLogger line: "<rfc3339>: <msg>".
 func FormatLogLine(t time.Time, msg string) string {
 	return t.Format(time.RFC3339) + ": " + msg
+}
+
+// TrimLogLineTimestamp drops a leading FormatLogLine stamp so re-logging a line does not stamp it twice.
+func TrimLogLineTimestamp(line string) string {
+	stamp, rest, found := strings.Cut(line, ": ")
+	if !found {
+		return line
+	}
+	if _, err := time.Parse(time.RFC3339, stamp); err != nil {
+		return line
+	}
+	return rest
 }

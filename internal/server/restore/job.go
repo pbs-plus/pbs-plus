@@ -590,12 +590,12 @@ func (b *restoreJob) createOK(err error) {
 	task, terr := GenerateRestoreTaskOKFile(
 		b.job,
 		[]string{
-			"Done handling from a job run request",
-			"Restore ID: " + b.job.ID,
-			"Snapshot: " + b.job.Snapshot,
-			"Store: " + b.job.Store,
+			fmt.Sprintf("Restore job %q from snapshot %s in datastore %q", b.job.ID, b.job.Snapshot, b.job.Store),
 			"Destination: " + b.job.DestTarget.Name,
-			"Response: " + err.Error(),
+			"",
+			"PROBLEM: Nothing was restored because the selected files were empty.",
+			"WHAT TO DO: Confirm the snapshot and subpath you selected actually hold files, then start the restore again.",
+			"TECHNICAL DETAIL: " + err.Error(),
 		},
 	)
 	if terr != nil {

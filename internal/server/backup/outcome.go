@@ -30,7 +30,7 @@ func (b *backupJob) finalizeFailure(err error) {
 
 	if b.started.Load() {
 		succeeded, warningsNum := b.processPBSLogs(err, b.upid)
-		b.logger.Info("backup completed, running post-backup script")
+		b.logger.Info("file transfer finished, running the post-backup script")
 		b.runPostScript(succeeded, warningsNum)
 		succeeded, warningsNum = b.processPBSLogs(err, b.upid)
 		b.updatePBSStatus(succeeded, warningsNum, b.upid)
@@ -59,14 +59,11 @@ func (b *backupJob) finalizeFailure(err error) {
 	if flushErr := b.logger.FlushJobLog(); flushErr != nil {
 		b.logger.Error(flushErr, "failed to flush backup job log")
 	}
+	workflowStart, workflowEnd := b.workflowTimes()
 	task, terr := GenerateBackupTaskErrorFile(
 		b.job,
 		err,
-		[]string{
-			"Error handling from a scheduled job run request",
-			"Backup ID: " + job.ID,
-			"Source Mode: " + job.SourceMode,
-		},
+		reportLines(job, err, workflowStart, workflowEnd),
 		b.logger.JobLogPath(),
 	)
 	if terr != nil {
@@ -155,10 +152,16 @@ func (b *backupJob) cleanup() {
 		}
 
 		if agentMount != nil {
+			if logger != nil {
+				logger.Info("releasing the agent files and closing the agent session")
+			}
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
 		if s3Mount != nil {
+			if logger != nil {
+				logger.Info("releasing the S3 mount")
+			}
 			s3Mount.Unmount()
 			s3Mount.CloseMount()
 		}
@@ -195,9 +198,9 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	if succeeded || cancelled {
-		b.logger.Info("backup succeeded or cancelled")
+		b.logger.Info("the backup finished or was cancelled without errors")
 	} else {
-		b.logger.Error(logErr, "backup failed, scheduler will retry")
+		b.logger.Error(logErr, "the backup did not finish; it runs again on its next schedule")
 	}
 
 	return succeeded, warningsNum
@@ -235,20 +238,13 @@ func (b *backupJob) createOK(err error) {
 	job := b.job
 	b.mu.RUnlock()
 
-	task, terr := GenerateBackupTaskOKFile(
-		job,
-		[]string{
-			"Done handling from a job run request",
-			"Job ID: " + job.ID,
-			"Source Mode: " + job.SourceMode,
-			"Response: " + err.Error(),
-		},
-	)
+	okStart, okEnd := b.workflowTimes()
+	task, terr := GenerateBackupTaskOKFile(job, reportLines(job, err, okStart, okEnd))
 	if terr != nil {
 		return
 	}
 
-	workflowStart, workflowEnd := b.workflowTimes()
+	workflowStart, workflowEnd := okStart, okEnd
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

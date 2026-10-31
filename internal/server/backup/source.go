@@ -177,11 +177,15 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
+		b.logger.Info("connecting to the backup agent and mounting its files",
+			"agent", target.AgentHost.Name, "agentAddress", target.AgentHost.IP, "sourcePath", target.Path)
 		agentMount, err = mountrpc.AgentFSMount(timedCtx, b.app, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
 		srcPath = agentMount.Path
+		b.logger.Info("agent files are mounted and readable",
+			"agent", target.AgentHost.Name, "mountpoint", agentMount.Path)
 
 		select {
 		case <-ctx.Done():
@@ -205,11 +209,13 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
+		b.logger.Info("mounting the S3 bucket for reading", "target", target.Name)
 		s3Mount, err = mountrpc.S3FSMount(timedCtx, b.app, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
 		srcPath = s3Mount.Path
+		b.logger.Info("S3 bucket is mounted and readable", "target", target.Name, "mountpoint", s3Mount.Path)
 
 		select {
 		case <-ctx.Done():
