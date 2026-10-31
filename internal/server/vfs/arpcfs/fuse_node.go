@@ -187,20 +187,20 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 	case pxar.XAttrFileAttributes:
 		d, err := cbor.Marshal(fi.FileAttributes)
 		if err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to encode file attributes", "path", n.getPath())
 		}
 		data = d
 	case pxar.XAttrACLs:
 		if fi.PosixACLs != nil {
 			d, err := cbor.Marshal(fi.PosixACLs)
 			if err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to encode POSIX ACLs", "path", n.getPath())
 			}
 			data = d
 		} else if fi.WinACLs != nil {
 			d, err := cbor.Marshal(fi.WinACLs)
 			if err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to encode Windows ACLs", "path", n.getPath())
 			}
 			data = d
 		} else {

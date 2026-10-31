@@ -68,7 +68,7 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 	case coredb.TargetTypeFilesystem:
 		if job.Target.IsLocal() {
 			if _, err := os.Stat(job.Target.Path); err != nil {
-				return fmt.Errorf("%w: %s (%v)", jobs.ErrTargetUnreachable, job.Target.Name, err)
+				return fmt.Errorf("%w: %s: %w", jobs.ErrTargetUnreachable, job.Target.Name, err)
 			}
 			break
 		}

@@ -145,10 +145,10 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 			"backupID", fs.Backup.ID)
 
 		if err := fs.Memcache.DeleteAll(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to flush the attribute cache", "backupID", fs.Backup.ID)
 		}
 		if err := fs.Memcache.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the attribute cache", "backupID", fs.Backup.ID)
 		}
 
 		fs.TotalBytes.Reset()
@@ -156,7 +156,7 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 		fs.FileCount.Reset()
 		fs.StatCacheHits.Reset()
 		if err := stopMemLocal(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to stop the attribute cache process", "backupID", fs.Backup.ID)
 		}
 	}()
 
@@ -352,7 +352,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 	if !isLookup {
 		if !fi.IsDir {
 			if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
-				log.Error(err, "")
+				log.Error(err, "failed to evict a cached attribute", "cacheKey", cacheKey)
 			}
 			log.Debug("attr counted file and cleared cache",
 
@@ -408,7 +408,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (fswire.AgentF
 	if err == nil {
 		req.AclOnly = true
 		if err := cbor.Unmarshal(rawCached.Value, &fiCached); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to decode a cached attribute", "cacheKey", cacheKey)
 		}
 		log.Debug("xattr cache hit for metadata",
 
@@ -445,7 +445,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (fswire.AgentF
 	}
 
 	if err := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: xattrBytes, Expiration: 5}); err != nil {
-		log.Error(err, "")
+		log.Error(err, "failed to cache extended attributes", "cacheKey", cacheKey)
 	}
 
 	return fi, nil
@@ -496,7 +496,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (fswire.StatFS, error) {
 	var fsStat fswire.StatFS
 	raw, err := pipe.CallData(ctxN, "StatFS", nil)
 	if err != nil {
-		log.Error(err, "")
+		log.Error(err, "failed to read filesystem statistics from the agent", "backupID", fs.Backup.ID)
 
 		return fswire.StatFS{}, syscall.ENOENT
 	}
@@ -541,7 +541,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	}
 
 	if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
-		log.Error(err, "")
+		log.Error(err, "failed to evict a cached directory listing", "cacheKey", cacheKey)
 	}
 	log.Debug("readDir opened directory",
 
@@ -553,7 +553,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 	defaultDec, err := decOpts.DecMode()
 	if err != nil {
 		log.Error(err,
-			"ReadDir decoder failed",
+			"failed to build the ReadDir decoder",
 			"path", path)
 
 		return DirStream{}, syscall.ENOENT

@@ -114,17 +114,17 @@ func NewS3FS(
 			"backupID", fs.Backup.ID)
 
 		if err := fs.Memcache.DeleteAll(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to flush the attribute cache", "backupID", fs.Backup.ID)
 		}
 		if err := fs.Memcache.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the attribute cache", "backupID", fs.Backup.ID)
 		}
 		fs.TotalBytes.Reset()
 		fs.FolderCount.Reset()
 		fs.FileCount.Reset()
 		fs.StatCacheHits.Reset()
 		if err := stopMemLocal(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to stop the attribute cache process", "backupID", fs.Backup.ID)
 		}
 	}()
 
@@ -218,7 +218,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (fswire.A
 	if raw, err := cbor.Marshal(fi); err == nil {
 		if isLookup {
 			if err := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to cache a lookup result", "cacheKey", cacheKey)
 			}
 		}
 	}
@@ -226,7 +226,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (fswire.A
 	if !isLookup {
 		if !fi.IsDir {
 			if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
-				log.Error(err, "")
+				log.Error(err, "failed to evict a cached attribute", "cacheKey", cacheKey)
 			}
 			fs.FileCount.Add(1)
 			log.Debug("attr counted file and cleared cache",
@@ -292,7 +292,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 	}
 
 	if err := fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix)); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
-		log.Error(err, "")
+		log.Error(err, "failed to evict a cached directory attribute", "prefix", prefix)
 	}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
@@ -344,7 +344,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 		itemKey := fs.GetCacheKey(attrPrefix, fs.fullKey(path.Join(fpath, name)))
 		if raw, err := cbor.Marshal(entry); err == nil {
 			if err := fs.Memcache.Set(&memcache.Item{Key: itemKey, Value: raw, Expiration: 0}); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to cache a directory entry", "cacheKey", itemKey)
 			}
 		}
 	}

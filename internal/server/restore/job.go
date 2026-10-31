@@ -390,7 +390,7 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("%s", err))
-					b.logger.Error(err, "", "restore", "agent-error")
+					b.logger.Error(err, "failed to restore a file to the agent", "restore", "agent-error")
 					b.errCount.Add(1)
 				}
 			}
@@ -473,7 +473,7 @@ func (b *restoreJob) startLocalRestore(ctx context.Context, destPath string, sou
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("client error: %s", err.Error()))
-					b.logger.Error(err, "", "restore", "local-error")
+					b.logger.Error(err, "failed to restore a file locally", "restore", "local-error")
 					b.errCount.Add(1)
 				}
 			}

@@ -291,7 +291,7 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 
 	b.job = latest
 	if uerr := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); uerr != nil {
-		b.logger.Error(uerr, "", "upid", task.UPID)
+		b.logger.Error(uerr, "failed to record the job run in the database", "upid", task.UPID)
 		return
 	}
 	jobs.MarkRunFinalized(latest.ID, b.executionID)

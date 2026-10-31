@@ -53,7 +53,7 @@ type MemcachedConfig struct {
 // socket and returns a stop function that terminates the server and cleans up.
 func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop func() error, err error) {
 	if strings.TrimSpace(cfg.SocketPath) == "" {
-		return nil, errors.New("SocketPath is required")
+		return nil, errors.New("socket path is required")
 	}
 
 	bin := cfg.MemcachedBinary
@@ -75,7 +75,7 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 			return nil, fmt.Errorf("socket %s already serving a live memcached", cfg.SocketPath)
 		}
 		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
+			log.Error(err, "failed to remove stale memcached socket", "socket", cfg.SocketPath)
 		}
 	}
 
@@ -136,13 +136,13 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	defer cancel()
 	if err := waitForUnixSocket(readyCtx, cfg.SocketPath); err != nil {
 		if err := terminateProcessGroup(cmd.Process); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to stop memcached that never became ready", "socket", cfg.SocketPath)
 		}
 		if err := cmd.Wait(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "memcached that never became ready exited with an error", "socket", cfg.SocketPath)
 		}
 		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
+			log.Error(err, "failed to remove the socket of a memcached that never became ready", "socket", cfg.SocketPath)
 		}
 		return nil, fmt.Errorf("memcached did not become ready: %w", err)
 	}
@@ -151,14 +151,14 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	stopFn := func() error {
 		stopOnce.Do(func() {
 			if err := terminateProcessGroup(cmd.Process); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to stop memcached", "socket", cfg.SocketPath)
 			}
 			var exitErr *exec.ExitError
 			if err := cmd.Wait(); err != nil && !errors.As(err, &exitErr) {
-				log.Error(err, "")
+				log.Error(err, "failed to reap memcached", "socket", cfg.SocketPath)
 			}
 			if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "")
+				log.Error(err, "failed to remove memcached socket after stopping it", "socket", cfg.SocketPath)
 			}
 		})
 		return nil
@@ -167,7 +167,7 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	go func() {
 		<-ctx.Done()
 		if err := stopFn(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to stop memcached after its context ended", "socket", cfg.SocketPath)
 		}
 	}()
 
@@ -190,7 +190,7 @@ func socketIsLive(path string) bool {
 		return false
 	}
 	if err := conn.Close(); err != nil {
-		log.Error(err, "")
+		log.Error(err, "failed to close the memcached socket liveness probe", "socket", path)
 	}
 	return true
 }
@@ -226,7 +226,7 @@ func waitForUnixSocket(ctx context.Context, path string) error {
 		conn, err := d.DialContext(ctx, "unix", path)
 		if err == nil {
 			if err := conn.Close(); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to close the memcached readiness probe", "socket", path)
 			}
 			return nil
 		}
@@ -245,20 +245,20 @@ func terminateProcessGroup(p *os.Process) error {
 	pgid, err := syscall.Getpgid(p.Pid)
 	if err == nil {
 		if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to signal the process group", "pgid", pgid, "signal", "SIGTERM")
 		}
 		time.Sleep(250 * time.Millisecond)
 		if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to signal the process group", "pgid", pgid, "signal", "SIGKILL")
 		}
 		return nil
 	}
 	if err := p.Signal(syscall.SIGTERM); err != nil {
-		log.Error(err, "")
+		log.Error(err, "failed to signal the process", "pid", p.Pid, "signal", "SIGTERM")
 	}
 	time.Sleep(250 * time.Millisecond)
 	if err := p.Kill(); err != nil {
-		log.Error(err, "")
+		log.Error(err, "failed to kill the process", "pid", p.Pid)
 	}
 	return nil
 }

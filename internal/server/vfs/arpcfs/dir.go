@@ -5,7 +5,6 @@ package arpcfs
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,6 +18,8 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
+
+var errDirStreamIndex = errors.New("directory stream index out of bounds")
 
 var bufPool = sync.Pool{
 	New: func() any {
@@ -70,13 +71,13 @@ func (s *DirStream) HasNext() bool {
 
 	if err != nil {
 		if errors.Is(err, os.ErrProcessDone) {
-			log.Debug("hasNext: process done received, closing dirstream",
+			log.Debug("directory stream reached the end, closing it",
 
 				"entriesReturned", s.totalReturned.Load(), "path", s.path)
 
 		} else {
 			log.Error(err,
-				"HasNext: RPC error, closing dirstream",
+				"directory stream request failed, closing it",
 
 				"entriesReturned", s.totalReturned.Load(), "handleId", s.handleId, "path", s.path)
 
@@ -86,7 +87,7 @@ func (s *DirStream) HasNext() bool {
 
 	oldLen := len(s.lastResp)
 	s.lastResp = entries
-	log.Debug("hasNext: decoding new batch",
+	log.Debug("decoding a new directory batch",
 
 		"oldBatchLen", oldLen, "path", s.path)
 
@@ -96,7 +97,7 @@ func (s *DirStream) HasNext() bool {
 		"path", s.path, "entries", newBatchLen)
 
 	if newBatchLen == 0 {
-		log.Debug("hasNext: empty batch received, end of directory",
+		log.Debug("received an empty directory batch, end of directory",
 
 			"totalEntriesReturned", s.totalReturned.Load(), "path", s.path)
 
@@ -109,7 +110,7 @@ func (s *DirStream) HasNext() bool {
 	if currentReturned+uint64(newBatchLen) > maxEntries {
 		allowedCount := maxEntries - currentReturned
 		s.lastResp = s.lastResp[:allowedCount]
-		log.Warn("hasNext: batch truncated to fit per-directory limit",
+		log.Warn("truncated a directory batch to fit the per-directory limit",
 
 			"entriesSkipped", newBatchLen-int(allowedCount), "maxDirEntries", maxEntries, "currentReturned", currentReturned, "truncatedBatchSize", allowedCount, "originalBatchSize", newBatchLen, "path", s.path)
 
@@ -120,7 +121,7 @@ func (s *DirStream) HasNext() bool {
 	if currentReturned+uint64(newBatchLen) < maxEntries {
 		s.startPrefetch()
 	}
-	log.Debug("hasNext: returning true with new batch",
+	log.Debug("serving a new directory batch",
 
 		"curIdx", s.curIdx.Load(), "batchSize", newBatchLen, "path", s.path)
 
@@ -223,7 +224,7 @@ func (s *DirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	curIdxVal := s.curIdx.Load()
 
 	if int(curIdxVal) >= len(s.lastResp) {
-		log.Error(fmt.Errorf("internal state error: index out of bounds in Next"), "", "lastRespLen", len(s.lastResp), "curIdx", curIdxVal, "path", s.path)
+		log.Error(errDirStreamIndex, "directory stream index is out of bounds", "lastRespLen", len(s.lastResp), "curIdx", curIdxVal, "path", s.path)
 
 		return fuse.DirEntry{}, syscall.EBADF
 	}
@@ -344,7 +345,7 @@ func (s *DirStream) Close() {
 	_, err = pipe.CallData(ctxN, "Close", &closeReq)
 	if err != nil && !errors.Is(err, os.ErrProcessDone) {
 		log.Error(err,
-			"DirStream close RPC failed",
+			"failed to close the directory stream on the agent",
 
 			"handleId", s.handleId, "path", s.path)
 
