@@ -14,6 +14,8 @@ import (
 
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -69,6 +71,9 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	}
 
 	if _, statErr := os.Stat(cfg.SocketPath); statErr == nil {
+		if socketIsLive(cfg.SocketPath) {
+			return nil, fmt.Errorf("socket %s already serving a live memcached", cfg.SocketPath)
+		}
 		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
 			log.Error(err, "")
 		}
@@ -83,6 +88,9 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	}
 
 	sysMem, err := conf.GetSysMem()
+	if err != nil {
+		return nil, fmt.Errorf("reading system memory: %w", err)
+	}
 
 	switch {
 	case cfg.MemoryMB > 0:
@@ -139,21 +147,20 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 		return nil, fmt.Errorf("memcached did not become ready: %w", err)
 	}
 
-	stopped := false
+	var stopOnce sync.Once
 	stopFn := func() error {
-		if stopped {
-			return nil
-		}
-		stopped = true
-		if err := terminateProcessGroup(cmd.Process); err != nil {
-			log.Error(err, "")
-		}
-		if err := cmd.Wait(); err != nil {
-			log.Error(err, "")
-		}
-		if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
-		}
+		stopOnce.Do(func() {
+			if err := terminateProcessGroup(cmd.Process); err != nil {
+				log.Error(err, "")
+			}
+			var exitErr *exec.ExitError
+			if err := cmd.Wait(); err != nil && !errors.As(err, &exitErr) {
+				log.Error(err, "")
+			}
+			if err := os.Remove(cfg.SocketPath); err != nil && !os.IsNotExist(err) {
+				log.Error(err, "")
+			}
+		})
 		return nil
 	}
 
@@ -165,6 +172,52 @@ func StartMemcachedOnUnixSocket(ctx context.Context, cfg MemcachedConfig) (stop 
 	}()
 
 	return stopFn, nil
+}
+
+var memcachedInstance atomic.Uint64
+
+// NextMemcachedInstance returns a process-unique socket suffix. Keying the
+// socket on the backup ID alone lets a second filesystem for the same backup
+// steal the path and orphan the first instance.
+func NextMemcachedInstance() uint64 {
+	return memcachedInstance.Add(1)
+}
+
+// socketIsLive reports whether something still accepts on path.
+func socketIsLive(path string) bool {
+	conn, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return false
+	}
+	if err := conn.Close(); err != nil {
+		log.Error(err, "")
+	}
+	return true
+}
+
+// ReapStaleMemcachedSockets removes socket files left behind by instances that
+// died without running their stop function, so the directory does not grow
+// without bound across restarts.
+func ReapStaleMemcachedSockets() {
+	entries, err := os.ReadDir(conf.MemcachedSocketPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Error(err, "failed to scan memcached socket directory")
+		}
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sock") {
+			continue
+		}
+		path := filepath.Join(conf.MemcachedSocketPath, entry.Name())
+		if socketIsLive(path) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Error(err, "failed to remove stale memcached socket", "path", path)
+		}
+	}
 }
 
 func waitForUnixSocket(ctx context.Context, path string) error {

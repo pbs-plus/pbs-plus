@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpcserver"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
@@ -315,6 +316,7 @@ func (s *Service) Status(args *StatusArgs, reply *StatusReply) error {
 }
 
 func RunServer(ctx context.Context, socketPath string, app *application.Runtime) error {
+	vfs.ReapStaleMemcachedSockets()
 	return rpcserver.Run(ctx, socketPath, ServiceName, &Service{
 		ctx:           ctx,
 		Store:         app,

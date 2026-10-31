@@ -98,7 +98,8 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 
 	ctxFs, cancel := context.WithCancel(ctx)
 
-	memcachePath := filepath.Join(conf.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
+	memcachePath := filepath.Join(conf.MemcachedSocketPath,
+		fmt.Sprintf("%s-%d.sock", backup.ID, vfs.NextMemcachedInstance()))
 	log.Debug("starting local memcached",
 
 		"backupID", backup.ID, "socketPath", memcachePath)
