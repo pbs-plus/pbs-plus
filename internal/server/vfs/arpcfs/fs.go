@@ -176,6 +176,9 @@ func (fs *ARPCFS) SessionConnected() bool {
 // Done is closed once the filesystem has been torn down.
 func (fs *ARPCFS) Done() <-chan struct{} { return fs.Ctx.Done() }
 
+// ShutDown reports whether the filesystem has been torn down.
+func (fs *ARPCFS) ShutDown() bool { return fs.Ctx.Err() != nil }
+
 func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 	if err := fs.Ctx.Err(); err != nil {
 		return nil, fmt.Errorf("%w: filesystem shut down: %w", ErrSessionLost, err)

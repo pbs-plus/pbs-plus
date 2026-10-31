@@ -384,6 +384,9 @@ func isIgnoredS3Path(p string) bool {
 	return false
 }
 
+// ShutDown reports whether the filesystem has been torn down.
+func (fs *S3FS) ShutDown() bool { return fs.Ctx.Err() != nil }
+
 func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		if err := fs.Fuse.Unmount(); err != nil {
