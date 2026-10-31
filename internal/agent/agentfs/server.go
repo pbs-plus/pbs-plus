@@ -53,6 +53,13 @@ func NewServer(jobID string, readMode string, snapshot snapshots.Snapshot) *Serv
 	return s
 }
 
+// alignForMmap rounds an offset down to the allocation granularity, which both mmap(2) and MapViewOfFile require; diff is how far into the mapping the caller's data starts.
+func (s *Server) alignForMmap(off int64, length int) (aligned int64, diff int, size int) {
+	aligned = off - (off % int64(s.allocGranularity))
+	diff = int(off - aligned)
+	return aligned, diff, length + diff
+}
+
 func (s *Server) RegisterHandlers(r *arpc.Router) {
 	r.Handle("OpenFile", safeHandler(s.handleOpenFile))
 	r.Handle("Attr", safeHandler(s.handleAttr))

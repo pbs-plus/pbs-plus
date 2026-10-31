@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"golang.org/x/sys/windows"
 )
 
@@ -127,19 +128,30 @@ func (s *Server) platformXstat(path string, aclOnly bool) (fswire.AgentFileInfo,
 }
 
 func (s *Server) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
+	aligned, diff, size := s.alignForMmap(off, length)
+
 	h, err := windows.CreateFileMapping(windows.Handle(fh.file.Fd()), nil, windows.PAGE_READONLY, 0, 0, nil)
 	if err != nil {
 		return nil, nil, false
 	}
-	defer windows.CloseHandle(h)
-	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ, uint32(off>>32), uint32(off), uintptr(length))
+	defer func() {
+		if err := windows.CloseHandle(h); err != nil {
+			log.Error(err, "agentfs: closing file mapping handle failed")
+		}
+	}()
+
+	addr, err := windows.MapViewOfFile(h, windows.FILE_MAP_READ,
+		uint32(uint64(aligned)>>32), uint32(uint64(aligned)), uintptr(size))
 	if err != nil {
 		return nil, nil, false
 	}
-	data := make([]byte, length)
-	copy(data, unsafe.Slice((*byte)(unsafe.Pointer(addr)), length))
-	windows.UnmapViewOfFile(addr)
-	return data, func() {}, true
+
+	data := unsafe.Slice((*byte)(unsafe.Pointer(addr)), size)
+	return data[diff : diff+length], func() {
+		if err := windows.UnmapViewOfFile(addr); err != nil {
+			log.Error(err, "agentfs: unmapping file view failed")
+		}
+	}, true
 }
 
 func (s *Server) platformLseek(fh *FileHandle, off int64, whence int) (int64, error) {
