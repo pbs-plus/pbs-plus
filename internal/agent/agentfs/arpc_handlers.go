@@ -106,7 +106,7 @@ func (s *Server) handleXattr(req *arpc.Request) (arpc.Response, error) {
 	return arpc.Response{Status: 200, Data: data}, nil
 }
 
-func (s *Server) handleReadDir(req *arpc.Request) (arpc.Response, error) {
+func (s *Server) handleReadDir(req *arpc.Request) (resp arpc.Response, err error) {
 	log.Debug("handleReadDir: decoding request")
 	var payload fswire.ReadDirReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
@@ -124,6 +124,11 @@ func (s *Server) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 		log.Debug("handleReadDir: handle is closing", "handle_id", payload.HandleID)
 		return arpc.Response{}, os.ErrClosed
 	}
+	defer func() {
+		if resp.Cleanup == nil {
+			fh.releaseOp()
+		}
+	}()
 
 	fh.mu.Lock()
 	reader := fh.dirReader
@@ -131,15 +136,14 @@ func (s *Server) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 
 	encodedBatch, err := reader.NextBatch(req.Context, s.statFs.Bsize)
 	if err != nil {
-		fh.releaseOp()
 		return arpc.Response{}, err
 	}
 	log.Debug("handleReadDir: sending batch", "bytes", len(encodedBatch), "handle_id", payload.HandleID)
 
 	return arpc.Response{
-		Status: 213,
+		Status:  213,
+		Cleanup: fh.releaseOp,
 		RawStream: func(stream arpc.ARPCStream) {
-			defer fh.releaseOp()
 			if err := arpc.SendDataFromReader(bytes.NewReader(encodedBatch), len(encodedBatch), stream); err != nil {
 				log.Error(err, "")
 			}
@@ -147,7 +151,7 @@ func (s *Server) handleReadDir(req *arpc.Request) (arpc.Response, error) {
 	}, nil
 }
 
-func (s *Server) handleReadAt(req *arpc.Request) (arpc.Response, error) {
+func (s *Server) handleReadAt(req *arpc.Request) (resp arpc.Response, err error) {
 	log.Debug("handleReadAt: decoding request")
 	var payload fswire.ReadAtReq
 	if err := cbor.Unmarshal(req.Payload, &payload); err != nil {
@@ -169,6 +173,11 @@ func (s *Server) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		log.Debug("handleReadAt: handle is closing", "handle_id", payload.HandleID)
 		return arpc.Response{}, os.ErrClosed
 	}
+	defer func() {
+		if resp.Cleanup == nil {
+			fh.releaseOp()
+		}
+	}()
 
 	fh.mu.Lock()
 	fileSize := fh.fileSize
@@ -176,8 +185,7 @@ func (s *Server) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 	fh.mu.Unlock()
 
 	if payload.Offset >= fileSize {
-		fh.releaseOp()
-		return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
+		return arpc.Response{Status: 213, Cleanup: fh.releaseOp, RawStream: func(stream arpc.ARPCStream) {
 			if err := arpc.SendDataFromReader(bytes.NewReader(nil), 0, stream); err != nil {
 				log.Error(err, "")
 			}
@@ -189,20 +197,16 @@ func (s *Server) handleReadAt(req *arpc.Request) (arpc.Response, error) {
 		reqLen = int(fileSize - payload.Offset)
 	}
 
-	if s.readMode == "mmap" && reqLen > 0 {
-		if data, cleanup, ok := s.platformMmap(fh, payload.Offset, reqLen); ok {
-			return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
-				defer fh.releaseOp()
+	return arpc.Response{Status: 213, Cleanup: fh.releaseOp, RawStream: func(stream arpc.ARPCStream) {
+		if s.readMode == "mmap" && reqLen > 0 {
+			if data, cleanup, ok := s.platformMmap(fh, payload.Offset, reqLen); ok {
 				defer cleanup()
 				if err := arpc.SendDataFromReader(bytes.NewReader(data), len(data), stream); err != nil {
 					log.Error(err, "")
 				}
-			}}, nil
+				return
+			}
 		}
-	}
-
-	return arpc.Response{Status: 213, RawStream: func(stream arpc.ARPCStream) {
-		defer fh.releaseOp()
 		sr := io.NewSectionReader(f, payload.Offset, int64(reqLen))
 		if err := arpc.SendDataFromReader(sr, reqLen, stream); err != nil {
 			log.Error(err, "")
