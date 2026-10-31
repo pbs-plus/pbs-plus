@@ -8,4 +8,5 @@ var (
 	ErrTaskMonitoringTimedOut             = errors.New("task monitoring initialization timed out")
 	ErrProxmoxBackupClientStart           = errors.New("proxmox-backup-client start error")
 	ErrTaskDetectionFailed                = errors.New("failed while waiting for backup to start")
+	ErrBackupStalled                      = errors.New("backup stalled")
 )
