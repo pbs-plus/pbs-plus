@@ -589,7 +589,10 @@ func (fs *ARPCFS) unmount(ctx context.Context) {
 		if err := fs.Fuse.Unmount(); err != nil {
 			log.Error(err, "fuse unmount failed, forcing lazy detach",
 				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
-			forceUnmount(fs.mountpoint)
+			if ferr := vfs.ForceUnmount(fs.mountpoint); ferr != nil {
+				log.Error(ferr, "lazy detach failed, mountpoint left attached",
+					"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
+			}
 		}
 		log.Debug("fuse unmounted",
 			"backupID", fs.Backup.ID)

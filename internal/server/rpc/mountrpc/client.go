@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/rpc"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
@@ -24,14 +24,9 @@ func unmountPath(path string) {
 	if path == "" {
 		return
 	}
-	umount := exec.Command("fusermount", "-uz", path)
-	umount.Env = os.Environ()
-	if err := umount.Run(); err != nil {
-		umount = exec.Command("umount", "-lf", path)
-		umount.Env = os.Environ()
-		if err := umount.Run(); err != nil {
-			return
-		}
+	if err := vfs.ForceUnmount(path); err != nil {
+		log.Error(err, "lazy detach failed, leaving mount directory in place", "path", path)
+		return
 	}
 	if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
 		log.Error(err, "")

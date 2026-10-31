@@ -3,37 +3,15 @@
 package s3fs
 
 import (
-	"os"
-	"os/exec"
-
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 )
-
-// forceUnmount lazily detaches a mountpoint whose FUSE server refused to go
-// away. A plain umount on a mount whose backend is gone hangs forever and
-// takes every later statfs on the host with it.
-func forceUnmount(mountpoint string) {
-	if mountpoint == "" {
-		return
-	}
-	if err := exec.Command("fusermount", "-uz", mountpoint).Run(); err == nil {
-		return
-	}
-	umount := exec.Command("umount", "-lf", mountpoint)
-	umount.Env = os.Environ()
-	if err := umount.Run(); err != nil {
-		log.Error(err, "lazy unmount failed", "mountpoint", mountpoint)
-	}
-}
 
 func MountS3(f *S3FS, mountpoint string) error {
 	fsName := "pbs-plus://" + f.Backup.ID
 
-	umount := exec.Command("umount", "-lf", mountpoint)
-	umount.Env = os.Environ()
-	if err := umount.Run(); err != nil {
-		log.Error(err, "")
-	}
+	// Nothing is normally mounted here, so a failure is the expected case and not worth logging.
+	_ = vfs.ForceUnmount(mountpoint)
 
 	server, err := MountFuse(mountpoint, fsName, f)
 	if err != nil {
