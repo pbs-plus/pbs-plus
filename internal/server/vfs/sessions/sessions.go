@@ -5,6 +5,7 @@ package sessions
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
@@ -22,12 +23,59 @@ type FSMount struct {
 
 var activeMounts = safemap.New[string, *FSMount]()
 
+const sessionProbeInterval = 5 * time.Second
+
 func NewARPCFSMount(connId string, fs *arpcfs.ARPCFS) {
 	conn := &FSMount{
 		arpcfs: fs,
 	}
 
 	activeMounts.Set(connId, conn)
+	go superviseARPCFS(connId, fs)
+}
+
+type sessionWatch struct {
+	downSince time.Time
+}
+
+// observe records one liveness sample and reports whether the transport has
+// been missing for longer than grace. A reconnect at any point clears the
+// timer, so only an uninterrupted outage expires the mount.
+func (w *sessionWatch) observe(connected bool, now time.Time, grace time.Duration) bool {
+	if connected {
+		w.downSince = time.Time{}
+		return false
+	}
+	if w.downSince.IsZero() {
+		w.downSince = now
+		return false
+	}
+	return now.Sub(w.downSince) >= grace
+}
+
+func superviseARPCFS(connId string, fs *arpcfs.ARPCFS) {
+	ticker := time.NewTicker(sessionProbeInterval)
+	defer ticker.Stop()
+
+	var watch sessionWatch
+
+	for {
+		select {
+		case <-fs.Done():
+			return
+		case <-ticker.C:
+		}
+
+		if !watch.observe(fs.SessionConnected(), time.Now(), arpcfs.SessionGrace) {
+			continue
+		}
+
+		log.Error(arpcfs.ErrSessionLost,
+			"agent gone past grace period, tearing down mount",
+			"connId", connId, "grace", arpcfs.SessionGrace.String())
+		DisconnectSession(connId)
+		return
+	}
 }
 
 func NewPxarReader(connId string, r *pxar.PxarReader) {

@@ -161,7 +161,26 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 	return fs
 }
 
+// SessionGrace is how long a mount may keep a missing transport before its
+// owner tears it down. It only needs to outlast a legitimate agent reconnect:
+// proxmox-backup-client aborts on the first EIO anyway, so a longer window
+// buys nothing and just keeps a dead mount attached.
+const SessionGrace = 2 * time.Minute
+
+// SessionConnected reports whether the mount's agent transport is live.
+func (fs *ARPCFS) SessionConnected() bool {
+	_, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
+	return exists
+}
+
+// Done is closed once the filesystem has been torn down.
+func (fs *ARPCFS) Done() <-chan struct{} { return fs.Ctx.Done() }
+
 func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
+	if err := fs.Ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: filesystem shut down: %w", ErrSessionLost, err)
+	}
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -552,7 +571,14 @@ func (fs *ARPCFS) Root() string {
 	return fs.BasePath
 }
 
+// Unmount is idempotent: the session supervisor and the explicit cleanup paths
+// both reach it, and racing a second FUSE unmount would detach a mountpoint a
+// later run already owns.
 func (fs *ARPCFS) Unmount(ctx context.Context) {
+	fs.unmountOnce.Do(func() { fs.unmount(ctx) })
+}
+
+func (fs *ARPCFS) unmount(ctx context.Context) {
 	log.Debug("unmount called",
 		"backupID", fs.Backup.ID)
 
@@ -589,6 +615,7 @@ type ARPCFS struct {
 	backupMode   string
 
 	mountpoint      string
+	unmountOnce     sync.Once
 	sessionDown     atomic.Bool
 	loggedPaths     sync.Map
 	loggedPathCount atomic.Int64
