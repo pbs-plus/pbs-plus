@@ -4,8 +4,9 @@ on:
   workflow_call:
     inputs:
       go-version:
-        required: true
+        required: false
         type: string
+        default: ""
       timeout-seconds:
         required: false
         type: number
@@ -21,8 +22,6 @@ jobs:
 
       - name: Setup environment
         uses: ./.github/actions/setup-test-env
-        with:
-          go-version: ${{ inputs.go-version }}
 
       - name: Build images
         uses: ./.github/actions/build-images
