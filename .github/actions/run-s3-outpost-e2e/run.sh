@@ -102,6 +102,8 @@ snapshot_count() {
 	[ "$count" = "$expected" ]
 }
 
+MC_RELEASE="${MC_RELEASE:-RELEASE.2025-08-13T08-35-41Z}"
+
 install_mc() {
 	if type -P mc >/dev/null 2>&1; then
 		return 0
@@ -110,10 +112,11 @@ install_mc() {
 	if [ ! -w /usr/local/bin ]; then
 		target=/tmp/mc
 	fi
-	if curl -fsSL -o "$target" https://dl.min.io/client/mc/release/linux-amd64/mc \
-		&& chmod +x "$target"; then
+	local url="https://github.com/minio/mc/releases/download/${MC_RELEASE}/mc.linux-amd64.${MC_RELEASE}"
+	if curl -fsSL -o "$target" "$url" && chmod +x "$target"; then
 		return 0
 	fi
+	echo "install_mc: failed to download mc from $url" >&2
 	return 1
 }
 
