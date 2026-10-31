@@ -100,6 +100,24 @@ const (
 	stallCheckInterval = time.Minute
 )
 
+var exitDrainTimeout = 30 * time.Second
+
+// awaitExit bounds the post-kill wait: a client wedged in D state ignores SIGKILL, and the unmount that frees it only runs after this returns.
+func (b *backupJob) awaitExit(done <-chan error, upid string) {
+	timer := time.NewTimer(exitDrainTimeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			b.logger.Debug("backup process exited", "error", err.Error(), "upid", upid)
+		}
+	case <-timer.C:
+		b.logger.Warn("backup process did not exit after kill, proceeding to unmount",
+			"timeout", exitDrainTimeout.String(), "upid", upid)
+	}
+}
+
 // watchStall reports when a run can no longer make progress, either because
 // its agent transport has been down past the grace period or because it has
 // outlived the runtime ceiling.
@@ -207,7 +225,7 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 				b.logger.Error(killErr, "failed to kill stalled backup process", "upid", upid)
 			}
 		}
-		<-done
+		b.awaitExit(done, upid)
 		b.mu.Lock()
 		b.err = err
 		b.mu.Unlock()
@@ -218,7 +236,7 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 				b.logger.Error(err, "failed to kill backup process after cancellation")
 			}
 		}
-		<-done
+		b.awaitExit(done, upid)
 		b.mu.Lock()
 		b.err = jobs.ErrCanceled
 		b.mu.Unlock()
@@ -229,7 +247,7 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 				b.logger.Error(err, "failed to kill backup process after task stopped", "upid", upid)
 			}
 		}
-		<-done
+		b.awaitExit(done, upid)
 		if taskExitSucceeded(exitStatus) {
 			return nil
 		}
