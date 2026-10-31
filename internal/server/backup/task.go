@@ -75,7 +75,11 @@ func appendBackupJobLog(task *tasklog.WorkerTask, path string) {
 		task.LogString("failed to open backup job log: " + err.Error())
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			task.LogString("failed to close backup job log: " + err.Error())
+		}
+	}()
 	task.LogString("--- proxmox-backup-client log starts here ---")
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
