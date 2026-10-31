@@ -35,6 +35,21 @@ func TestWaitForCompletionReturnsWhenClientExits(t *testing.T) {
 	}
 }
 
+// A client wedged in D state ignores SIGKILL and never reaps, so cmd.Wait never sends; blocking here would deadlock the unmount that frees it.
+func TestAwaitExitReturnsWhenProcessNeverReaps(t *testing.T) {
+	prev := exitDrainTimeout
+	exitDrainTimeout = 50 * time.Millisecond
+	defer func() { exitDrainTimeout = prev }()
+
+	b := &backupJob{logger: log.WithScope(log.Scope{JobID: "test"})}
+	start := time.Now()
+	b.awaitExit(make(chan error), "upid")
+
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("awaitExit blocked for %s on a channel that never fires", elapsed)
+	}
+}
+
 func TestWaitForCompletionKillsClientWhenTaskStops(t *testing.T) {
 	restoreTask := tasklog.UseTaskDir(t.TempDir())
 	defer restoreTask()

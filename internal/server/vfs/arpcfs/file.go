@@ -31,12 +31,7 @@ func (f *ARPCFile) Close(ctx context.Context) error {
 
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-
-			"arpc session is nil",
-			"path", f.name)
-
-		return syscall.ENOENT
+		return f.fs.sessionLost(err)
 	}
 	log.Debug("issuing Close RPC",
 
@@ -81,12 +76,7 @@ func (f *ARPCFile) Lseek(ctx context.Context, off int64, whence int) (uint64, er
 
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-
-			"arpc session is nil",
-			"path", f.name)
-
-		return 0, syscall.EOPNOTSUPP
+		return 0, f.fs.sessionLost(err)
 	}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
@@ -129,12 +119,7 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 
 	pipe, err := f.fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-
-			"fs session is nil",
-			"path", f.name)
-
-		return 0, syscall.ENOENT
+		return 0, f.fs.sessionLost(err)
 	}
 	log.Debug("readAt called",
 

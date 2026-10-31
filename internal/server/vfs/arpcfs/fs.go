@@ -28,14 +28,50 @@ import (
 const attrPrefix = "attr:"
 const xattrPrefix = "xattr:"
 
+// maxLoggedPaths caps the per-mount suppression set, which is otherwise one
+// retained map entry per failing path for the life of the mount.
+const maxLoggedPaths = 4096
+
+// ErrSessionLost reports that the agent transport failed to answer, as opposed
+// to the agent answering that an entry is absent. Callers must surface EIO for
+// it: reporting ENOENT makes proxmox-backup-client treat the entry as a file
+// that vanished mid-run and omit it from the snapshot without failing the job.
+var ErrSessionLost = errors.New("arpc session lost")
+
+// sessionLost latches the outage so it is logged once per outage, not once per
+// FUSE call, and returns the error callers must propagate.
+func (fs *ARPCFS) sessionLost(err error) error {
+	if !fs.sessionDown.Swap(true) {
+		log.Error(err,
+			"arpc session is nil",
+			"backupID", fs.Backup.ID, "hostname", fs.Hostname)
+	}
+	if errors.Is(err, ErrSessionLost) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrSessionLost, err)
+}
+
+// sessionRestored clears the latch so a later loss is logged again.
+func (fs *ARPCFS) sessionRestored() {
+	if fs.sessionDown.Swap(false) {
+		log.Info("arpc session restored",
+			"backupID", fs.Backup.ID, "hostname", fs.Hostname)
+	}
+}
+
 // path are suppressed to avoid noisy duplicate entries in task logs.
 func (fs *ARPCFS) logOnce(path string, err error, op string) {
 	if isIgnoredPath(path) {
 		return
 	}
+	if fs.loggedPathCount.Load() >= maxLoggedPaths {
+		return
+	}
 	if _, loaded := fs.loggedPaths.LoadOrStore(path, struct{}{}); loaded {
 		return
 	}
+	fs.loggedPathCount.Add(1)
 	log.Error(err,
 		"FUSE "+op+" failed",
 		"path", path)
@@ -62,7 +98,8 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 
 	ctxFs, cancel := context.WithCancel(ctx)
 
-	memcachePath := filepath.Join(conf.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
+	memcachePath := filepath.Join(conf.MemcachedSocketPath,
+		fmt.Sprintf("%s-%d.sock", backup.ID, vfs.NextMemcachedInstance()))
 	log.Debug("starting local memcached",
 
 		"backupID", backup.ID, "socketPath", memcachePath)
@@ -124,7 +161,29 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 	return fs
 }
 
+// SessionGrace is how long a mount may keep a missing transport before its
+// owner tears it down. It only needs to outlast a legitimate agent reconnect:
+// proxmox-backup-client aborts on the first EIO anyway, so a longer window
+// buys nothing and just keeps a dead mount attached.
+const SessionGrace = 2 * time.Minute
+
+// SessionConnected reports whether the mount's agent transport is live.
+func (fs *ARPCFS) SessionConnected() bool {
+	_, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
+	return exists
+}
+
+// Done is closed once the filesystem has been torn down.
+func (fs *ARPCFS) Done() <-chan struct{} { return fs.Ctx.Done() }
+
+// ShutDown reports whether the filesystem has been torn down.
+func (fs *ARPCFS) ShutDown() bool { return fs.Ctx.Err() != nil }
+
 func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
+	if err := fs.Ctx.Err(); err != nil {
+		return nil, fmt.Errorf("%w: filesystem shut down: %w", ErrSessionLost, err)
+	}
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -136,19 +195,20 @@ func (fs *ARPCFS) getPipe(ctx context.Context) (*arpc.StreamPipe, error) {
 	for {
 		session, exists := fs.agentManager.GetStreamPipe(fs.sessionId)
 		if exists {
+			fs.sessionRestored()
 			return session, nil
 		}
 
 		if _, exists := fs.agentManager.GetStreamPipe(fs.Hostname); exists {
 			primaryUpCount++
 			if primaryUpCount > 4 {
-				return nil, fmt.Errorf("primary agent for %s is reachable but the backup session is severed; agent crashed without graceful exit", fs.Hostname)
+				return nil, fmt.Errorf("%w: primary agent for %s is reachable but the backup session is severed; agent crashed without graceful exit", ErrSessionLost, fs.Hostname)
 			}
 		}
 
 		select {
 		case <-pipeCtx.Done():
-			return nil, pipeCtx.Err()
+			return nil, fmt.Errorf("%w: %w", ErrSessionLost, pipeCtx.Err())
 		case <-ticker.C:
 			continue
 		}
@@ -181,10 +241,7 @@ func (fs *ARPCFS) OpenFile(ctx context.Context, filename string, flag int, perm 
 	}
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return nil, syscall.ENOENT
+		return nil, fs.sessionLost(err)
 	}
 	log.Debug("openFile called",
 
@@ -238,10 +295,7 @@ func (fs *ARPCFS) Attr(ctx context.Context, filename string, isLookup bool) (fsw
 				return fi, errno
 			}
 		}
-		log.Error(err,
-			"arpc session is nil")
-
-		return fswire.AgentFileInfo{}, syscall.ENOENT
+		return fswire.AgentFileInfo{}, fs.sessionLost(err)
 	}
 
 	cacheKey := fs.GetCacheKey(attrPrefix, filename)
@@ -342,10 +396,7 @@ func (fs *ARPCFS) ListXattr(ctx context.Context, filename string) (fswire.AgentF
 	var fi fswire.AgentFileInfo
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return fswire.AgentFileInfo{}, syscall.ENOTSUP
+		return fswire.AgentFileInfo{}, fs.sessionLost(err)
 	}
 
 	var fiCached fswire.AgentFileInfo
@@ -437,10 +488,7 @@ func (fs *ARPCFS) StatFS(ctx context.Context) (fswire.StatFS, error) {
 
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return fswire.StatFS{}, syscall.ENOENT
+		return fswire.StatFS{}, fs.sessionLost(err)
 	}
 
 	var fsStat fswire.StatFS
@@ -476,10 +524,7 @@ func (fs *ARPCFS) ReadDir(ctx context.Context, path string) (DirStream, error) {
 
 	pipe, err := fs.getPipe(ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
-		return DirStream{}, syscall.ENOENT
+		return DirStream{}, fs.sessionLost(err)
 	}
 
 	var handleId fswire.FileHandleID
@@ -529,13 +574,25 @@ func (fs *ARPCFS) Root() string {
 	return fs.BasePath
 }
 
+// Unmount is idempotent: the session supervisor and the explicit cleanup paths
+// both reach it, and racing a second FUSE unmount would detach a mountpoint a
+// later run already owns.
 func (fs *ARPCFS) Unmount(ctx context.Context) {
+	fs.unmountOnce.Do(func() { fs.unmount(ctx) })
+}
+
+func (fs *ARPCFS) unmount(ctx context.Context) {
 	log.Debug("unmount called",
 		"backupID", fs.Backup.ID)
 
 	if fs.Fuse != nil {
 		if err := fs.Fuse.Unmount(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "fuse unmount failed, forcing lazy detach",
+				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
+			if ferr := vfs.ForceUnmount(fs.mountpoint); ferr != nil {
+				log.Error(ferr, "lazy detach failed, mountpoint left attached",
+					"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
+			}
 		}
 		log.Debug("fuse unmounted",
 			"backupID", fs.Backup.ID)
@@ -544,15 +601,10 @@ func (fs *ARPCFS) Unmount(ctx context.Context) {
 
 	fs.zipShutdown(ctx)
 
-	pipe, err := fs.getPipe(ctx)
-	if err != nil {
-		log.Error(err, "")
-	}
-	if pipe != nil {
+	if pipe, exists := fs.agentManager.GetStreamPipe(fs.sessionId); exists && pipe != nil {
 		pipe.Close()
 		log.Debug("aRPC session closed",
 			"backupID", fs.Backup.ID)
-
 	}
 	fs.Cancel()
 	log.Debug("context canceled",
@@ -567,7 +619,12 @@ type ARPCFS struct {
 	sessionId    string
 	Hostname     string
 	backupMode   string
-	loggedPaths  sync.Map
+
+	mountpoint      string
+	unmountOnce     sync.Once
+	sessionDown     atomic.Bool
+	loggedPaths     sync.Map
+	loggedPathCount atomic.Int64
 
 	expandArchives   bool
 	expandZip        bool

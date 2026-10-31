@@ -4,13 +4,12 @@ package snapshotmount
 
 import (
 	"bufio"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
 
@@ -67,16 +66,7 @@ func IsMounted(path string) bool {
 }
 
 func UnmountPath(mountPoint string) error {
-	if err := exec.Command("fusermount3", "-uz", mountPoint).Run(); err == nil {
-		return nil
-	}
-	if err := exec.Command("fusermount", "-uz", mountPoint).Run(); err == nil {
-		return nil
-	}
-	if err := exec.Command("umount", "-f", "-l", mountPoint).Run(); err == nil {
-		return nil
-	}
-	return fmt.Errorf("failed to unmount %s", mountPoint)
+	return vfs.ForceUnmount(mountPoint)
 }
 
 func RemoveEmptyDirsToBase(path, basePath string) {

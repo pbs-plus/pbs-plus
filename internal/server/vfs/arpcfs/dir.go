@@ -337,9 +337,7 @@ func (s *DirStream) Close() {
 	closeReq := fswire.CloseReq{HandleID: s.handleId}
 	pipe, err := s.fs.getPipe(s.fs.Ctx)
 	if err != nil {
-		log.Error(err,
-			"arpc session is nil")
-
+		_ = s.fs.sessionLost(err)
 		return
 	}
 

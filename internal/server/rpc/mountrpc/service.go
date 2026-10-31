@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpcserver"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
 	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
 	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
@@ -159,11 +160,27 @@ func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
 		}
 	}
 
+	streamID := backup.GetStreamID()
+	release, err := sessions.ReserveMount(streamID)
+	if err != nil {
+		log.Error(err, "refusing duplicate mount", "backupID", args.BackupID)
+		reply.Status = 409
+		reply.Message = err.Error()
+		return fmt.Errorf("backup: %w", err)
+	}
+	attached := false
+	defer func() {
+		if !attached {
+			release()
+		}
+	}()
+
 	backupCtx, backupCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.BackupID, backupCancel)
 
-	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.Agents, backup.GetStreamID(), args.TargetHostname, backup, backupMode)
+	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.Agents, streamID, args.TargetHostname, backup, backupMode)
 	if arpcFS == nil {
+		backupCancel()
 		reply.Status = 500
 		reply.Message = "failed to send create ARPCFS"
 		return errors.New(reply.Message)
@@ -173,12 +190,14 @@ func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
 
 	if err := arpcfs.MountARPC(arpcFS, mntPath); err != nil {
 		log.Error(err, "")
+		arpcFS.Unmount(s.ctx)
 		reply.Status = 500
 		reply.Message = fmt.Sprintf("mount: fuse connection failed: %v", err)
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	sessions.NewARPCFSMount(backup.GetStreamID(), arpcFS)
+	sessions.AttachARPCFS(streamID, arpcFS)
+	attached = true
 
 	reply.Status = 200
 	reply.Message = backupMode + "|" + backup.Namespace
@@ -205,11 +224,27 @@ func (s *Service) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
 		return fmt.Errorf("backup: %w", err)
 	}
 
+	streamID := backup.GetStreamID()
+	release, err := sessions.ReserveMount(streamID)
+	if err != nil {
+		log.Error(err, "refusing duplicate mount", "backupID", args.BackupID)
+		reply.Status = 409
+		reply.Message = err.Error()
+		return fmt.Errorf("backup: %w", err)
+	}
+	attached := false
+	defer func() {
+		if !attached {
+			release()
+		}
+	}()
+
 	backupCtx, backupCancel := context.WithCancel(s.ctx)
 	s.jobCtxCancels.Set(args.BackupID, backupCancel)
 
 	s3FS := s3fs.NewS3FS(backupCtx, backup, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL, args.UsePathStyle)
 	if s3FS == nil {
+		backupCancel()
 		reply.Status = 500
 		reply.Message = "failed to send create S3FS"
 		return errors.New(reply.Message)
@@ -219,12 +254,14 @@ func (s *Service) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
 
 	if err := s3fs.MountS3(s3FS, mntPath); err != nil {
 		log.Error(err, "")
+		s3FS.Unmount(s.ctx)
 		reply.Status = 500
 		reply.Message = fmt.Sprintf("mount: fuse connection failed: %v", err)
 		return fmt.Errorf("backup: %w", err)
 	}
 
-	sessions.NewS3FSMount(backup.GetStreamID(), s3FS)
+	sessions.AttachS3FS(streamID, s3FS)
+	attached = true
 
 	reply.Status = 200
 	reply.Message = backup.Namespace
@@ -315,6 +352,7 @@ func (s *Service) Status(args *StatusArgs, reply *StatusReply) error {
 }
 
 func RunServer(ctx context.Context, socketPath string, app *application.Runtime) error {
+	vfs.ReapStaleMemcachedSockets()
 	return rpcserver.Run(ctx, socketPath, ServiceName, &Service{
 		ctx:           ctx,
 		Store:         app,

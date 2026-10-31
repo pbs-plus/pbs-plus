@@ -100,9 +100,7 @@ func (s *Server) platformXstat(path string, aclOnly bool) (fswire.AgentFileInfo,
 }
 
 func (s *Server) platformMmap(fh *FileHandle, off int64, length int) ([]byte, func(), bool) {
-	aligned := off - (off % int64(s.allocGranularity))
-	diff := int(off - aligned)
-	size := length + diff
+	aligned, diff, size := s.alignForMmap(off, length)
 	data, err := unix.Mmap(int(fh.file.Fd()), aligned, size, unix.PROT_READ, unix.MAP_SHARED)
 	if err != nil {
 		return nil, nil, false

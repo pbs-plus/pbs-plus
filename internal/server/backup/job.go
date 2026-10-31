@@ -92,6 +92,89 @@ type backupJob struct {
 	scriptTask    *tasklog.QueuedTask
 }
 
+const (
+	agentOutageGrace = 15 * time.Minute
+
+	maxBackupRuntime = 72 * time.Hour
+
+	stallCheckInterval = time.Minute
+)
+
+var exitDrainTimeout = 30 * time.Second
+
+// awaitExit bounds the post-kill wait: a client wedged in D state ignores SIGKILL, and the unmount that frees it only runs after this returns.
+func (b *backupJob) awaitExit(done <-chan error, upid string) {
+	timer := time.NewTimer(exitDrainTimeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			b.logger.Debug("backup process exited", "error", err.Error(), "upid", upid)
+		}
+	case <-timer.C:
+		b.logger.Warn("backup process did not exit after kill, proceeding to unmount",
+			"timeout", exitDrainTimeout.String(), "upid", upid)
+	}
+}
+
+// watchStall reports when a run can no longer make progress, either because
+// its agent transport has been down past the grace period or because it has
+// outlived the runtime ceiling.
+func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan struct{}) <-chan error {
+	stalled := make(chan error, 1)
+
+	b.mu.RLock()
+	mount := b.agentMount
+	b.mu.RUnlock()
+
+	go func() {
+		ticker := time.NewTicker(stallCheckInterval)
+		defer ticker.Stop()
+
+		start := time.Now()
+		var downSince time.Time
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-finished:
+				return
+			case <-ticker.C:
+			}
+
+			if time.Since(start) > maxBackupRuntime {
+				stalled <- fmt.Errorf("%w: exceeded %s runtime ceiling", ErrBackupStalled, maxBackupRuntime)
+				return
+			}
+
+			if mount == nil {
+				continue
+			}
+			if mount.IsConnected() {
+				if !downSince.IsZero() {
+					b.logger.Info("agent transport recovered", "upid", upid)
+					downSince = time.Time{}
+				}
+				continue
+			}
+			if downSince.IsZero() {
+				downSince = time.Now()
+				b.logger.Info("agent transport down, starting stall timer",
+					"grace", agentOutageGrace.String(), "upid", upid)
+				continue
+			}
+			if time.Since(downSince) > agentOutageGrace {
+				stalled <- fmt.Errorf("%w: agent transport down for %s", ErrBackupStalled, agentOutageGrace)
+				return
+			}
+		}
+	}()
+
+	return stalled
+}
+
 func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid string) error {
 	if cmd == nil {
 		return b.waitTaskByUPID(ctx, upid)
@@ -124,6 +207,8 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 		}
 	}()
 
+	stalled := b.watchStall(ctx, upid, waitDone)
+
 	select {
 	case err := <-done:
 		if err != nil {
@@ -133,13 +218,25 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 			return err
 		}
 		return nil
+	case err := <-stalled:
+		b.logger.Error(err, "killing stalled backup process", "upid", upid)
+		if cmd.Process != nil {
+			if killErr := cmd.Process.Kill(); killErr != nil {
+				b.logger.Error(killErr, "failed to kill stalled backup process", "upid", upid)
+			}
+		}
+		b.awaitExit(done, upid)
+		b.mu.Lock()
+		b.err = err
+		b.mu.Unlock()
+		return err
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
 				b.logger.Error(err, "failed to kill backup process after cancellation")
 			}
 		}
-		<-done
+		b.awaitExit(done, upid)
 		b.mu.Lock()
 		b.err = jobs.ErrCanceled
 		b.mu.Unlock()
@@ -150,7 +247,7 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 				b.logger.Error(err, "failed to kill backup process after task stopped", "upid", upid)
 			}
 		}
-		<-done
+		b.awaitExit(done, upid)
 		if taskExitSucceeded(exitStatus) {
 			return nil
 		}

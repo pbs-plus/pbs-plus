@@ -76,7 +76,8 @@ func NewS3FS(
 	}
 
 	s3ctx, cancel := context.WithCancel(ctx)
-	memcachePath := filepath.Join(conf.MemcachedSocketPath, fmt.Sprintf("%s.sock", backup.ID))
+	memcachePath := filepath.Join(conf.MemcachedSocketPath,
+		fmt.Sprintf("%s-%d.sock", backup.ID, vfs.NextMemcachedInstance()))
 	log.Debug("starting local memcached",
 
 		"backupID", backup.ID, "socketPath", memcachePath)
@@ -383,10 +384,18 @@ func isIgnoredS3Path(p string) bool {
 	return false
 }
 
+// ShutDown reports whether the filesystem has been torn down.
+func (fs *S3FS) ShutDown() bool { return fs.Ctx.Err() != nil }
+
 func (fs *S3FS) Unmount(ctx context.Context) {
 	if fs.Fuse != nil {
 		if err := fs.Fuse.Unmount(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "fuse unmount failed, forcing lazy detach",
+				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
+			if ferr := vfs.ForceUnmount(fs.mountpoint); ferr != nil {
+				log.Error(ferr, "lazy detach failed, mountpoint left attached",
+					"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
+			}
 		}
 	}
 	fs.Cancel()
@@ -398,5 +407,6 @@ type S3FS struct {
 	client      *minio.Client
 	bucket      string
 	prefix      string
+	mountpoint  string
 	loggedPaths sync.Map
 }
