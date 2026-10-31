@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,12 +14,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/safemap"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpcserver"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
-	arpcfs "github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
-	s3fs "github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs/arpcfs"
+	"github.com/pbs-plus/pbs-plus/internal/server/vfs/s3fs"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
@@ -28,6 +28,7 @@ type BackupArgs struct {
 	BackupID       string
 	TargetHostname string
 	Drive          string
+	MountID        string
 }
 
 type S3BackupArgs struct {
@@ -41,6 +42,7 @@ type S3BackupArgs struct {
 	UseSSL       bool
 	UsePathStyle bool
 	Path         string
+	MountID      string
 }
 
 type BackupReply struct {
@@ -52,20 +54,16 @@ type BackupReply struct {
 type StatusArgs struct {
 	BackupID       string
 	TargetHostname string
+	MountID        string
 }
 
-type StatusReply struct {
-	Connected bool
-}
-
-type VFSStatusArgs struct {
-	Key string
-}
+type StatusReply struct{ Connected bool }
 
 type CleanupArgs struct {
 	BackupID       string
 	TargetHostname string
 	Drive          string
+	MountID        string
 }
 
 type CleanupReply struct {
@@ -73,289 +71,191 @@ type CleanupReply struct {
 	Message string
 }
 
-type WarnCountArgs struct {
-	BackupID string
-}
-
-type WarnCountReply struct {
-	Count int
-}
-
 type Service struct {
-	ctx           context.Context
-	Store         *application.Runtime
-	jobCtxCancels *safemap.Map[string, context.CancelFunc]
+	ctx   context.Context
+	Store *application.Runtime
+}
+
+type agentCaller interface {
+	CallMessage(context.Context, string, any) (string, error)
+}
+
+func (s *Service) agent(host string) agentCaller {
+	if pipe, ok := s.Store.Agents.GetQuicPipe(host); ok {
+		return pipe
+	}
+	if pipe, ok := s.Store.Agents.GetStreamPipe(host); ok {
+		return pipe
+	}
+	return nil
+}
+
+func (s *Service) reserve(streamID, owner string, reply *BackupReply) (*sessions.FSMount, error) {
+	if owner == "" {
+		reply.Status = 400
+		reply.Message = "mount ownership id is required"
+		return nil, errors.New(reply.Message)
+	}
+	m, err := sessions.ReserveMount(s.ctx, streamID, owner)
+	if err != nil {
+		reply.Status = 409
+		reply.Message = err.Error()
+	}
+	return m, err
+}
+
+func (s *Service) finishSetup(m *sessions.FSMount, reply *BackupReply) {
+	m.FinishSetup()
+	if reply.Status == 200 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 30*time.Second)
+	defer cancel()
+	if err := m.Disconnect(ctx); err != nil {
+		log.Error(err, "failed mount cleanup retained for retry")
+	}
+}
+
+func removeMountDirectory(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) Backup(args *BackupArgs, reply *BackupReply) error {
-	log.Info("received backup request")
-
 	backup, err := s.Store.CoreDB.GetBackup(args.BackupID)
 	if err != nil {
 		reply.Status = 404
 		reply.Message = "unable to get backup from id"
 		return fmt.Errorf("backup: %w", err)
 	}
-
-	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
-	defer cancel()
-
-	// Retrieve the ARPC session for the target (QUIC preferred, TCP fallback).
-	var respMsg string
-	if qPipe, ok := s.Store.Agents.GetQuicPipe(args.TargetHostname); ok {
-		backupReq := fswire.BackupReq{
-			Drive:      args.Drive,
-			BackupID:   args.BackupID,
-			SourceMode: backup.SourceMode,
-			ReadMode:   backup.ReadMode,
+	streamID := backup.GetStreamID()
+	m, err := s.reserve(streamID, args.MountID, reply)
+	if err != nil {
+		return err
+	}
+	defer s.finishSetup(m, reply)
+	backupCtx := m.Context()
+	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
+	m.SetCleanup(func(ctx context.Context) error {
+		if caller := s.agent(args.TargetHostname); caller != nil {
+			if _, err := caller.CallMessage(ctx, "cleanup", &fswire.BackupReq{Drive: args.Drive, BackupID: args.BackupID}); err != nil {
+				return err
+			}
 		}
-
-		s.Store.Agents.Expect(backup.GetStreamID())
-
-		var err error
-		respMsg, err = qPipe.CallMessage(ctx, "backup", &backupReq)
-		if err != nil {
-			log.Error(err, "")
-			reply.Status = 500
-			reply.Message = err.Error()
-			return errors.New(reply.Message)
-		}
-	} else if tcpPipe, ok := s.Store.Agents.GetStreamPipe(args.TargetHostname); ok {
-		backupReq := fswire.BackupReq{
-			Drive:      args.Drive,
-			BackupID:   args.BackupID,
-			SourceMode: backup.SourceMode,
-			ReadMode:   backup.ReadMode,
-		}
-
-		s.Store.Agents.Expect(backup.GetStreamID())
-
-		var err error
-		respMsg, err = tcpPipe.CallMessage(ctx, "backup", &backupReq)
-		if err != nil {
-			log.Error(err, "")
-			reply.Status = 500
-			reply.Message = err.Error()
-			return errors.New(reply.Message)
-		}
-	} else {
+		s.Store.Agents.NotExpect(streamID)
+		return removeMountDirectory(mntPath)
+	})
+	caller := s.agent(args.TargetHostname)
+	if caller == nil {
 		reply.Status = 500
 		reply.Message = "unable to reach target"
 		return errors.New(reply.Message)
 	}
+	ctx, cancel := context.WithTimeout(backupCtx, 5*time.Minute)
+	defer cancel()
+	s.Store.Agents.Expect(streamID)
+	respMsg, err := caller.CallMessage(ctx, "backup", &fswire.BackupReq{
+		Drive: args.Drive, BackupID: args.BackupID, SourceMode: backup.SourceMode, ReadMode: backup.ReadMode,
+	})
 	if err != nil {
-		log.Error(err, "")
 		reply.Status = 500
 		reply.Message = err.Error()
-		return errors.New(reply.Message)
+		return err
 	}
-
-	backupRespSplit := strings.Split(respMsg, "|")
-	backupMode := backupRespSplit[0]
-
-	if len(backupRespSplit) == 2 && backupRespSplit[1] != "" {
-		backup.Namespace = backupRespSplit[1]
+	parts := strings.SplitN(respMsg, "|", 2)
+	backupMode := parts[0]
+	if len(parts) == 2 && parts[1] != "" {
+		backup.Namespace = parts[1]
 		if err := s.Store.CoreDB.UpdateBackupNamespace(backup.ID, backup.Namespace); err != nil {
-			log.Error(err, "", "namespace", backup.Namespace)
+			log.Error(err, "failed to update backup namespace")
 		}
 	}
-
-	streamID := backup.GetStreamID()
-	release, err := sessions.ReserveMount(streamID)
-	if err != nil {
-		log.Error(err, "refusing duplicate mount", "backupID", args.BackupID)
-		reply.Status = 409
-		reply.Message = err.Error()
-		return fmt.Errorf("backup: %w", err)
+	if err := os.MkdirAll(mntPath, 0700); err != nil {
+		return err
 	}
-	attached := false
-	defer func() {
-		if !attached {
-			release()
-		}
-	}()
-
-	backupCtx, backupCancel := context.WithCancel(s.ctx)
-	s.jobCtxCancels.Set(args.BackupID, backupCancel)
-
-	arpcFS := arpcfs.NewARPCFS(backupCtx, s.Store.Agents, streamID, args.TargetHostname, backup, backupMode)
-	if arpcFS == nil {
-		backupCancel()
-		reply.Status = 500
-		reply.Message = "failed to send create ARPCFS"
-		return errors.New(reply.Message)
+	fs := arpcfs.NewARPCFS(backupCtx, s.Store.Agents, streamID, args.TargetHostname, backup, backupMode)
+	if fs == nil {
+		return errors.New("failed to create ARPC filesystem")
 	}
-
-	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
-
-	if err := arpcfs.MountARPC(arpcFS, mntPath); err != nil {
-		log.Error(err, "")
-		arpcFS.Unmount(s.ctx)
-		reply.Status = 500
-		reply.Message = fmt.Sprintf("mount: fuse connection failed: %v", err)
-		return fmt.Errorf("backup: %w", err)
+	if err := m.AttachARPCFS(fs); err != nil {
+		return errors.Join(err, fs.Unmount(ctx))
 	}
-
-	sessions.AttachARPCFS(streamID, arpcFS)
-	attached = true
-
+	if err := arpcfs.MountARPC(fs, mntPath); err != nil {
+		return fmt.Errorf("mount: %w", err)
+	}
 	reply.Status = 200
 	reply.Message = backupMode + "|" + backup.Namespace
 	reply.BackupMode = backupMode
-	log.Info("mounting successful")
-
 	return nil
 }
 
 func (s *Service) S3Backup(args *S3BackupArgs, reply *BackupReply) error {
-	log.Info("received S3 backup request")
-
 	backup, err := s.Store.CoreDB.GetBackup(args.BackupID)
 	if err != nil {
-		reply.Status = 404
-		reply.Message = "unable to get backup from id"
 		return fmt.Errorf("backup: %w", err)
 	}
-
 	secretKey, err := s.Store.CoreDB.GetS3Secret(backup.Target.Name)
 	if err != nil {
-		reply.Status = 404
-		reply.Message = "unable to get secret key of target"
-		return fmt.Errorf("backup: %w", err)
+		return fmt.Errorf("secret: %w", err)
 	}
-
-	streamID := backup.GetStreamID()
-	release, err := sessions.ReserveMount(streamID)
+	m, err := s.reserve(backup.GetStreamID(), args.MountID, reply)
 	if err != nil {
-		log.Error(err, "refusing duplicate mount", "backupID", args.BackupID)
-		reply.Status = 409
-		reply.Message = err.Error()
-		return fmt.Errorf("backup: %w", err)
+		return err
 	}
-	attached := false
-	defer func() {
-		if !attached {
-			release()
-		}
-	}()
-
-	backupCtx, backupCancel := context.WithCancel(s.ctx)
-	s.jobCtxCancels.Set(args.BackupID, backupCancel)
-
-	s3FS := s3fs.NewS3FS(backupCtx, backup, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL, args.UsePathStyle)
-	if s3FS == nil {
-		backupCancel()
-		reply.Status = 500
-		reply.Message = "failed to send create S3FS"
-		return errors.New(reply.Message)
-	}
-
+	defer s.finishSetup(m, reply)
+	backupCtx := m.Context()
 	mntPath := filepath.Join(conf.AgentMountBasePath, args.BackupID)
-
-	if err := s3fs.MountS3(s3FS, mntPath); err != nil {
-		log.Error(err, "")
-		s3FS.Unmount(s.ctx)
-		reply.Status = 500
-		reply.Message = fmt.Sprintf("mount: fuse connection failed: %v", err)
-		return fmt.Errorf("backup: %w", err)
+	m.SetCleanup(func(context.Context) error {
+		return removeMountDirectory(mntPath)
+	})
+	if err := os.MkdirAll(mntPath, 0700); err != nil {
+		return err
 	}
-
-	sessions.AttachS3FS(streamID, s3FS)
-	attached = true
-
+	fs := s3fs.NewS3FS(backupCtx, backup, args.Endpoint, args.AccessKey, secretKey, args.Bucket, args.Region, args.Prefix, args.UseSSL, args.UsePathStyle)
+	if fs == nil {
+		return errors.New("failed to create S3 filesystem")
+	}
+	if err := m.AttachS3FS(fs); err != nil {
+		return errors.Join(err, fs.Unmount(s.ctx))
+	}
+	if err := s3fs.MountS3(fs, mntPath); err != nil {
+		return fmt.Errorf("mount: %w", err)
+	}
 	reply.Status = 200
 	reply.Message = backup.Namespace
-	log.Info("mounting successful")
-
 	return nil
 }
 
 func (s *Service) ARPCCleanup(args *CleanupArgs, reply *CleanupReply) error {
-	log.Info("received cleanup request")
-
-	childKey := args.TargetHostname + "|" + args.BackupID
-	sessions.DisconnectSession(childKey)
-
-	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), 30*time.Second)
 	defer cancel()
-
-	ctxCancel, ok := s.jobCtxCancels.GetAndDel(args.BackupID)
-	if ok {
-		ctxCancel()
+	if args.MountID == "" {
+		return errors.New("mount ownership id is required")
 	}
-
-	s.Store.Agents.NotExpect(childKey)
-
-	// Try QUIC first, then TCP fallback
-	qSess, qExists := s.Store.Agents.GetQuicPipe(args.TargetHostname)
-	tSess, tExists := s.Store.Agents.GetStreamPipe(args.TargetHostname)
-	if !qExists && !tExists {
-		log.Info("target unreachable, assuming cleanup successful.",
-			"jobID", args.BackupID)
-
-		reply.Status = 200
-		reply.Message = "Target unreachable, assuming cleanup successful."
-		return nil
+	if err := sessions.DisconnectSession(ctx, args.TargetHostname+"|"+args.BackupID, args.MountID); err != nil {
+		return err
 	}
-
-	cleanupReq := fswire.BackupReq{
-		Drive:    args.Drive,
-		BackupID: args.BackupID,
-	}
-
-	if qExists {
-		_, err := qSess.CallMessage(ctx, "cleanup", &cleanupReq)
-		if err != nil {
-			log.Error(err, "")
-			reply.Status = 500
-			reply.Message = err.Error()
-			return errors.New(reply.Message)
-		}
-	} else {
-		_, err := tSess.CallMessage(ctx, "cleanup", &cleanupReq)
-		if err != nil {
-			log.Error(err, "")
-			reply.Status = 500
-			reply.Message = err.Error()
-			return errors.New(reply.Message)
-		}
-	}
-
 	reply.Status = 200
 	reply.Message = "Cleanup successful"
-	log.Info("cleanup successful",
-		"backupID", args.BackupID)
-
 	return nil
 }
 
+func (s *Service) S3Cleanup(args *CleanupArgs, reply *CleanupReply) error {
+	return s.ARPCCleanup(args, reply)
+}
+
 func (s *Service) Status(args *StatusArgs, reply *StatusReply) error {
-	log.Info("received status request")
-
-	_, qExists := s.Store.Agents.GetQuicPipe(args.TargetHostname)
-	_, tExists := s.Store.Agents.GetStreamPipe(args.TargetHostname)
-	controlOk := qExists || tExists
-	if !controlOk {
-		reply.Connected = false
-		return nil
-	}
-
 	childKey := args.TargetHostname + "|" + args.BackupID
-	_, exists := s.Store.Agents.GetStreamPipe(childKey)
-	if !exists {
-		reply.Connected = false
+	if !sessions.OwnsMount(childKey, args.MountID) || s.agent(args.TargetHostname) == nil {
 		return nil
 	}
-
-	reply.Connected = true
+	_, reply.Connected = s.Store.Agents.GetStreamPipe(childKey)
 	return nil
 }
 
 func RunServer(ctx context.Context, socketPath string, app *application.Runtime) error {
 	vfs.ReapStaleMemcachedSockets()
-	return rpcserver.Run(ctx, socketPath, ServiceName, &Service{
-		ctx:           ctx,
-		Store:         app,
-		jobCtxCancels: safemap.New[string, context.CancelFunc](),
-	})
+	return rpcserver.Run(ctx, socketPath, ServiceName, &Service{ctx: ctx, Store: app})
 }

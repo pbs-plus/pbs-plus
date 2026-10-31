@@ -570,17 +570,23 @@ func (zs *zipFileState) init(ctx context.Context) error {
 
 func (zs *zipFileState) restart() error {
 	if zs.ent.method == m7z {
-		zs.fr.Close()
+		if err := zs.fr.Close(); err != nil {
+			return err
+		}
 		fr, err := zs.ov.sfiles[zs.ent.sidx].Open()
 		if err != nil {
 			return fmt.Errorf("%w: %w", errZipUnsupported, err)
 		}
 		zs.fr = fr
 	} else {
-		zs.sec.Seek(0, io.SeekStart)
+		if _, err := zs.sec.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
 		zs.br.Reset(zs.sec)
 		if r, ok := zs.fr.(flate.Resetter); ok {
-			r.Reset(zs.br, nil)
+			if err := r.Reset(zs.br, nil); err != nil {
+				return err
+			}
 		}
 	}
 	zs.ringStart = 0
@@ -1002,7 +1008,9 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 	}
 	ov, err := parseArchiveOverlay(src.ReadAt, size, maxEntries)
 	if err != nil {
-		src.Close(ctx)
+		if err := src.Close(ctx); err != nil {
+			log.Error(err, "failed to close unused archive source")
+		}
 		fs.zipMu.Lock()
 		if fs.zipSkipped == nil {
 			fs.zipSkipped = map[string]struct{}{}
@@ -1028,7 +1036,9 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 	}
 	if fs.zipBytes+est > zipCentralBudget {
 		fs.zipMu.Unlock()
-		src.Close(ctx)
+		if err := src.Close(ctx); err != nil {
+			log.Error(err, "failed to close unused archive source")
+		}
 		for _, nested := range overlays[1:] {
 			nested.cleanup()
 		}
@@ -1037,7 +1047,9 @@ func (fs *ARPCFS) zipProbe(ctx context.Context, fullPath string, size int64) boo
 	}
 	if _, dup := fs.zipOverlays[fullPath]; dup {
 		fs.zipMu.Unlock()
-		src.Close(ctx)
+		if err := src.Close(ctx); err != nil {
+			log.Error(err, "failed to close unused archive source")
+		}
 		for _, nested := range overlays[1:] {
 			nested.cleanup()
 		}
@@ -1220,7 +1232,9 @@ func (fs *ARPCFS) zipShutdown(ctx context.Context) {
 	fs.zipMu.Unlock()
 	for _, ov := range ovs {
 		if ov.src != nil {
-			ov.src.Close(ctx)
+			if err := ov.src.Close(ctx); err != nil {
+				log.Error(err, "failed to close archive source during teardown")
+			}
 		}
 		if ov.cleanup != nil {
 			ov.cleanup()

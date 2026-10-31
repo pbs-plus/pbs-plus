@@ -4,6 +4,7 @@ package mountrpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/rpc"
@@ -11,38 +12,23 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
-	"github.com/pbs-plus/pbs-plus/internal/server/vfs"
-	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 )
 
-// removes the mount directory. It is a no-op when path is empty.
-func unmountPath(path string) {
-	if path == "" {
-		return
-	}
-	if err := vfs.ForceUnmount(path); err != nil {
-		log.Error(err, "lazy detach failed, leaving mount directory in place", "path", path)
-		return
-	}
-	if err := os.RemoveAll(path); err != nil && !os.IsNotExist(err) {
-		log.Error(err, "")
-	}
-}
-
 func waitForAccessible(ctx context.Context, path string) (isEmpty, ok bool) {
-	checkTimeout := time.After(30 * time.Second)
+	checkTimeout := time.NewTimer(30 * time.Second)
+	defer checkTimeout.Stop()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return false, false
-		case <-checkTimeout:
+		case <-checkTimeout.C:
 			return false, false
 		case <-ticker.C:
 			if entries, err := os.ReadDir(path); err == nil {
@@ -52,206 +38,139 @@ func waitForAccessible(ctx context.Context, path string) (isEmpty, ok bool) {
 	}
 }
 
-// callMountRPC dials the mount unix socket and invokes serviceMethod. Dial
 func callMountRPC(ctx context.Context, serviceMethod string, args, reply any) error {
 	d := net.Dialer{}
 	conn, err := d.DialContext(ctx, "unix", conf.MountSocketPath)
 	if err != nil {
 		return fmt.Errorf("failed to reach backup RPC: %w", err)
 	}
-	rpcClient := rpc.NewClient(conn)
-	defer func() {
-		if err := rpcClient.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-	return rpcClient.Call(serviceMethod, args, reply)
+	return callMountRPCConn(ctx, conn, serviceMethod, args, reply)
 }
 
-// AgentMount is the client-side handle for an agent FS mount created via the
+func callMountRPCConn(ctx context.Context, conn net.Conn, serviceMethod string, args, reply any) error {
+	rpcClient := rpc.NewClient(conn)
+	stop := context.AfterFunc(ctx, func() {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			log.Error(err, "failed to close canceled mount RPC")
+		}
+	})
+	defer stop()
+	defer func() {
+		if err := rpcClient.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			log.Error(err, "failed to close mount RPC")
+		}
+	}()
+	err := rpcClient.Call(serviceMethod, args, reply)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 type AgentMount struct {
 	BackupID string
 	Hostname string
 	Drive    string
 	Path     string
+	MountID  string
 	isEmpty  bool
 }
 
-// AgentFSMount asks the mount RPC service to back up + mount the agent target,
 func AgentFSMount(ctx context.Context, app *application.Runtime, backup coredb.Backup, target coredb.Target) (*AgentMount, error) {
-	agentMount := &AgentMount{
-		BackupID: backup.ID,
-		Hostname: target.GetHostname(),
-		Drive:    target.VolumeID,
+	m := &AgentMount{
+		BackupID: backup.ID, Hostname: target.GetHostname(), Drive: target.VolumeID,
+		Path: filepath.Join(conf.AgentMountBasePath, backup.ID), MountID: uuid.NewString(),
 	}
-
-	agentMount.Path = filepath.Join(conf.AgentMountBasePath, backup.ID)
-	agentMount.Unmount()
-
-	if err := os.MkdirAll(agentMount.Path, 0700); err != nil {
-		agentMount.CloseMount()
-		return nil, fmt.Errorf("error creating directory \"%s\" -> %w", agentMount.Path, err)
-	}
-
-	errCleanup := func() {
-		agentMount.CloseMount()
-		agentMount.Unmount()
-	}
-
-	args := &BackupArgs{
-		BackupID:       backup.ID,
-		TargetHostname: target.GetHostname(),
-		Drive:          target.VolumeID,
-	}
+	args := &BackupArgs{BackupID: m.BackupID, TargetHostname: m.Hostname, Drive: m.Drive, MountID: m.MountID}
 	var reply BackupReply
-
 	if err := callMountRPC(ctx, ServiceName+".Backup", args, &reply); err != nil {
-		errCleanup()
+		m.CloseMount()
 		return nil, err
 	}
 	if reply.Status != 200 {
-		errCleanup()
-		if reply.Message == "" || reply.Status == 0 {
-			return nil, fmt.Errorf("server rpc did not respond on time")
-		}
-		return nil, fmt.Errorf("%s", reply.Message)
+		m.CloseMount()
+		return nil, fmt.Errorf("mount rejected (%d): %s", reply.Status, reply.Message)
 	}
-
-	empty, ok := waitForAccessible(ctx, agentMount.Path)
+	empty, ok := waitForAccessible(ctx, m.Path)
 	if !ok {
-		errCleanup()
-		return nil, fmt.Errorf("mounted directory not accessible after timeout")
+		m.CloseMount()
+		return nil, errors.New("mounted directory not accessible after timeout")
 	}
-	agentMount.isEmpty = empty
-	return agentMount, nil
+	m.isEmpty = empty
+	return m, nil
 }
 
 func (a *AgentMount) IsEmpty() bool { return a.isEmpty }
 
 func (a *AgentMount) IsConnected() bool {
-	args := &StatusArgs{
-		BackupID:       a.BackupID,
-		TargetHostname: a.Hostname,
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	args := &StatusArgs{BackupID: a.BackupID, TargetHostname: a.Hostname, MountID: a.MountID}
 	var reply StatusReply
-
-	conn, err := net.DialTimeout("unix", conf.MountSocketPath, 5*time.Minute)
-	if err != nil {
-		return false
-	}
-	rpcClient := rpc.NewClient(conn)
-	defer func() {
-		if err := rpcClient.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-	if err := rpcClient.Call(ServiceName+".Status", args, &reply); err != nil {
+	if err := callMountRPC(ctx, ServiceName+".Status", args, &reply); err != nil {
 		return false
 	}
 	return reply.Connected
 }
 
-func (a *AgentMount) Unmount() { unmountPath(a.Path) }
+func (a *AgentMount) Unmount() { a.CloseMount() }
 
-func (a *AgentMount) CloseMount() {
-	args := &CleanupArgs{
-		BackupID:       a.BackupID,
-		TargetHostname: a.Hostname,
-		Drive:          a.Drive,
-	}
+func closeMount(serviceMethod string, args *CleanupArgs) {
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
 	var reply CleanupReply
-
-	conn, err := net.DialTimeout("unix", conf.MountSocketPath, 1*time.Minute)
-	if err != nil {
-		return
+	if err := callMountRPC(ctx, serviceMethod, args, &reply); err != nil {
+		log.Error(err, "mount cleanup failed, server retains ownership for retry")
 	}
-	rpcClient := rpc.NewClient(conn)
-	defer func() {
-		if err := rpcClient.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	if err := rpcClient.Call(ServiceName+".ARPCCleanup", args, &reply); err != nil {
-		log.Error(err, reply.Message)
-	}
-	log.Info(reply.Message)
 }
 
-// S3Mount is the client-side handle for an S3 FS mount created via the mount
+func (a *AgentMount) CloseMount() {
+	closeMount(ServiceName+".ARPCCleanup", &CleanupArgs{
+		BackupID: a.BackupID, TargetHostname: a.Hostname, Drive: a.Drive, MountID: a.MountID,
+	})
+}
+
 type S3Mount struct {
-	BackupID  string
-	Endpoint  string
-	AccessKey string
-	SecretKey string
-	Bucket    string
-	Region    string
-	Prefix    string
-	UseSSL    bool
-	Path      string
-	isEmpty   bool
+	BackupID string
+	Endpoint string
+	Path     string
+	MountID  string
+	isEmpty  bool
 }
 
 func S3FSMount(ctx context.Context, app *application.Runtime, backup coredb.Backup, target coredb.Target) (*S3Mount, error) {
-	parsedS3 := target.S3Info
-
-	s3Mount := &S3Mount{
-		BackupID:  backup.ID,
-		Endpoint:  parsedS3.Endpoint,
-		AccessKey: parsedS3.AccessKey,
-		Bucket:    parsedS3.Bucket,
-		Region:    parsedS3.Region,
-		UseSSL:    parsedS3.UseSSL,
-		Prefix:    backup.Subpath,
+	info := target.S3Info
+	m := &S3Mount{
+		BackupID: backup.ID, Endpoint: info.Endpoint,
+		Path: filepath.Join(conf.AgentMountBasePath, backup.ID), MountID: uuid.NewString(),
 	}
-
-	s3Mount.Path = filepath.Join(conf.AgentMountBasePath, backup.ID)
-	s3Mount.Unmount()
-
-	if err := os.MkdirAll(s3Mount.Path, 0700); err != nil {
-		s3Mount.CloseMount()
-		return nil, fmt.Errorf("error creating directory \"%s\" -> %w", s3Mount.Path, err)
-	}
-
-	errCleanup := func() {
-		s3Mount.CloseMount()
-		s3Mount.Unmount()
-	}
-
 	args := &S3BackupArgs{
-		BackupID:     backup.ID,
-		Endpoint:     parsedS3.Endpoint,
-		AccessKey:    parsedS3.AccessKey,
-		Bucket:       parsedS3.Bucket,
-		Region:       parsedS3.Region,
-		UseSSL:       parsedS3.UseSSL,
-		UsePathStyle: parsedS3.IsPathStyle,
-		Prefix:       backup.Subpath,
+		BackupID: backup.ID, Endpoint: info.Endpoint, AccessKey: info.AccessKey,
+		Bucket: info.Bucket, Region: info.Region, UseSSL: info.UseSSL,
+		UsePathStyle: info.IsPathStyle, Prefix: backup.Subpath, MountID: m.MountID,
 	}
 	var reply BackupReply
-
 	if err := callMountRPC(ctx, ServiceName+".S3Backup", args, &reply); err != nil {
-		errCleanup()
+		m.CloseMount()
 		return nil, err
 	}
 	if reply.Status != 200 {
-		errCleanup()
-		return nil, fmt.Errorf("%s", reply.Message)
+		m.CloseMount()
+		return nil, fmt.Errorf("mount rejected (%d): %s", reply.Status, reply.Message)
 	}
-
-	empty, ok := waitForAccessible(ctx, s3Mount.Path)
+	empty, ok := waitForAccessible(ctx, m.Path)
 	if !ok {
-		errCleanup()
-		return nil, fmt.Errorf("mounted directory not accessible after timeout")
+		m.CloseMount()
+		return nil, errors.New("mounted directory not accessible after timeout")
 	}
-	s3Mount.isEmpty = empty
-	return s3Mount, nil
+	m.isEmpty = empty
+	return m, nil
 }
 
-func (a *S3Mount) Unmount() { unmountPath(a.Path) }
-
+func (a *S3Mount) Unmount()      { a.CloseMount() }
 func (a *S3Mount) IsEmpty() bool { return a.isEmpty }
-
 func (a *S3Mount) CloseMount() {
-	sessions.DisconnectSession(a.Endpoint + "|" + a.BackupID)
+	closeMount(ServiceName+".S3Cleanup", &CleanupArgs{
+		BackupID: a.BackupID, TargetHostname: a.Endpoint, MountID: a.MountID,
+	})
 }

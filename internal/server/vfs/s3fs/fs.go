@@ -106,7 +106,9 @@ func NewS3FS(
 		prefix: prefix,
 	}
 
+	fs.cleanupDone = make(chan struct{})
 	go func() {
+		defer close(fs.cleanupDone)
 		<-s3ctx.Done()
 		log.Debug("context done, cleaning up memcache and memlocal",
 			"backupID", fs.Backup.ID)
@@ -387,18 +389,25 @@ func isIgnoredS3Path(p string) bool {
 // ShutDown reports whether the filesystem has been torn down.
 func (fs *S3FS) ShutDown() bool { return fs.Ctx.Err() != nil }
 
-func (fs *S3FS) Unmount(ctx context.Context) {
-	if fs.Fuse != nil {
-		if err := fs.Fuse.Unmount(); err != nil {
-			log.Error(err, "fuse unmount failed, forcing lazy detach",
-				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
-			if ferr := vfs.ForceUnmount(fs.mountpoint); ferr != nil {
-				log.Error(ferr, "lazy detach failed, mountpoint left attached",
-					"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
-			}
-		}
+func (fs *S3FS) Unmount(ctx context.Context) error {
+	fs.unmountMu.Lock()
+	defer fs.unmountMu.Unlock()
+	if fs.unmounted {
+		return nil
 	}
 	fs.Cancel()
+	if err := vfs.ForceUnmount(ctx, fs.mountpoint); err != nil {
+		return err
+	}
+	if fs.cleanupDone != nil {
+		select {
+		case <-fs.cleanupDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	fs.unmounted = true
+	return nil
 }
 
 type S3FS struct {
@@ -408,5 +417,8 @@ type S3FS struct {
 	bucket      string
 	prefix      string
 	mountpoint  string
+	unmountMu   sync.Mutex
+	unmounted   bool
+	cleanupDone chan struct{}
 	loggedPaths sync.Map
 }

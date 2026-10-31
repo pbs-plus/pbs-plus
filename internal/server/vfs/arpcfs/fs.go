@@ -137,7 +137,9 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 
 		"basePath", fs.BasePath, "hostname", fs.Hostname, "backupID", fs.Backup.ID)
 
+	fs.cleanupDone = make(chan struct{})
 	go func() {
+		defer close(fs.cleanupDone)
 		<-ctxFs.Done()
 		log.Debug("context done, cleaning up memcache and memlocal",
 			"backupID", fs.Backup.ID)
@@ -574,42 +576,32 @@ func (fs *ARPCFS) Root() string {
 	return fs.BasePath
 }
 
-// Unmount is idempotent: the session supervisor and the explicit cleanup paths
-// both reach it, and racing a second FUSE unmount would detach a mountpoint a
-// later run already owns.
-func (fs *ARPCFS) Unmount(ctx context.Context) {
-	fs.unmountOnce.Do(func() { fs.unmount(ctx) })
-}
-
-func (fs *ARPCFS) unmount(ctx context.Context) {
-	log.Debug("unmount called",
-		"backupID", fs.Backup.ID)
-
-	if fs.Fuse != nil {
-		if err := fs.Fuse.Unmount(); err != nil {
-			log.Error(err, "fuse unmount failed, forcing lazy detach",
-				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
-			if ferr := vfs.ForceUnmount(fs.mountpoint); ferr != nil {
-				log.Error(ferr, "lazy detach failed, mountpoint left attached",
-					"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
-			}
-		}
-		log.Debug("fuse unmounted",
-			"backupID", fs.Backup.ID)
-
-	}
-
-	fs.zipShutdown(ctx)
-
-	if pipe, exists := fs.agentManager.GetStreamPipe(fs.sessionId); exists && pipe != nil {
-		pipe.Close()
-		log.Debug("aRPC session closed",
-			"backupID", fs.Backup.ID)
+// Unmount serializes teardown and allows a failed detach to be retried.
+func (fs *ARPCFS) Unmount(ctx context.Context) error {
+	fs.unmountMu.Lock()
+	defer fs.unmountMu.Unlock()
+	if fs.unmounted {
+		return nil
 	}
 	fs.Cancel()
-	log.Debug("context canceled",
-		"backupID", fs.Backup.ID)
-
+	if err := vfs.ForceUnmount(ctx, fs.mountpoint); err != nil {
+		return err
+	}
+	fs.zipShutdown(ctx)
+	if fs.agentManager != nil {
+		if pipe, exists := fs.agentManager.GetStreamPipe(fs.sessionId); exists && pipe != nil {
+			pipe.Close()
+		}
+	}
+	if fs.cleanupDone != nil {
+		select {
+		case <-fs.cleanupDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	fs.unmounted = true
+	return nil
 }
 
 type ARPCFS struct {
@@ -621,7 +613,9 @@ type ARPCFS struct {
 	backupMode   string
 
 	mountpoint      string
-	unmountOnce     sync.Once
+	unmountMu       sync.Mutex
+	unmounted       bool
+	cleanupDone     chan struct{}
 	sessionDown     atomic.Bool
 	loggedPaths     sync.Map
 	loggedPathCount atomic.Int64

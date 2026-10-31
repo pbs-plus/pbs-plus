@@ -4,6 +4,7 @@ package snapshotmount
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +67,7 @@ func IsMounted(path string) bool {
 }
 
 func UnmountPath(mountPoint string) error {
-	return vfs.ForceUnmount(mountPoint)
+	return vfs.ForceUnmount(context.Background(), mountPoint)
 }
 
 func RemoveEmptyDirsToBase(path, basePath string) {
