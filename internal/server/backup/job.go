@@ -64,7 +64,6 @@ type backupJob struct {
 
 	Task      proxmox.Task
 	currOwner string
-	waitGroup *sync.WaitGroup
 	err       error
 
 	logger *log.Logger

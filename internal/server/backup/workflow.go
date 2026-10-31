@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
@@ -68,7 +67,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		logger:          log.WithScope(log.Scope{JobID: job.ID}),
 		extraExclusions: input.ExtraExclusions,
 		databaseAware:   databaseAware,
-		waitGroup:       &sync.WaitGroup{},
 	}
 	defer b.cleanup()
 	workerID, err := backupWorkerID(job)

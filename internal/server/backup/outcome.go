@@ -29,7 +29,6 @@ func (b *backupJob) finalizeFailure(err error) {
 	}
 
 	if b.started.Load() {
-		b.waitGroup.Wait()
 		succeeded, warningsNum := b.processPBSLogs(err, b.upid)
 		b.logger.Info("backup completed, running post-backup script")
 		b.runPostScript(succeeded, warningsNum)
@@ -104,8 +103,6 @@ func (b *backupJob) finalizeSuccess(succeeded bool, warningsNum int) {
 
 	}
 
-	b.waitGroup.Wait()
-
 	if currOwner != "" {
 		b.logger.Info("setting owner to datastore owner")
 		if err := SetDatastoreOwner(job, b.app, currOwner); err != nil {
@@ -142,7 +139,6 @@ func (b *backupJob) finalizeSuccess(succeeded bool, warningsNum int) {
 
 func (b *backupJob) cleanup() {
 	b.cleanupOnce.Do(func() {
-		b.waitGroup.Wait()
 
 		b.mu.Lock()
 		b.job.CurrentPID = 0
