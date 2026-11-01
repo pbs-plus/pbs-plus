@@ -103,14 +103,20 @@ func AgentFSMount(ctx context.Context, app *application.Runtime, backup coredb.B
 func (a *AgentMount) IsEmpty() bool { return a.isEmpty }
 
 func (a *AgentMount) IsConnected() bool {
+	connected, _ := a.Progress()
+	return connected
+}
+
+// Progress pairs reachability with a served-operation count so a caller can spot a mount that is connected but no longer doing work.
+func (a *AgentMount) Progress() (connected bool, activity int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	args := &StatusArgs{BackupID: a.BackupID, TargetHostname: a.Hostname, MountID: a.MountID}
 	var reply StatusReply
 	if err := callMountRPC(ctx, ServiceName+".Status", args, &reply); err != nil {
-		return false
+		return false, 0
 	}
-	return reply.Connected
+	return reply.Connected, reply.Activity
 }
 
 func (a *AgentMount) Unmount() { a.CloseMount() }

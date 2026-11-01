@@ -57,7 +57,11 @@ type StatusArgs struct {
 	MountID        string
 }
 
-type StatusReply struct{ Connected bool }
+// StatusReply exposes Activity, a monotonic filesystem-operation count, because Connected alone cannot distinguish a working run from a wedged one.
+type StatusReply struct {
+	Connected bool
+	Activity  int64
+}
 
 type CleanupArgs struct {
 	BackupID       string
@@ -252,6 +256,9 @@ func (s *Service) Status(args *StatusArgs, reply *StatusReply) error {
 		return nil
 	}
 	_, reply.Connected = s.Store.Agents.GetStreamPipe(childKey)
+	if fs := sessions.GetSessionARPCFS(childKey); fs != nil {
+		reply.Activity = fs.FileCount.Value() + fs.FolderCount.Value() + fs.TotalBytes.Value()
+	}
 	return nil
 }
 
