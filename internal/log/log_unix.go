@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"log/syslog"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
@@ -75,6 +76,39 @@ func (l *Logger) writePlatform(e *entry, attrs []any) {
 	l.zlog.Log(ctxNone, levelFromEntry(e), e.message, attrs...)
 }
 
+var jobLogIdentityFields = []string{"hostname", "jobID", "backupID", "restoreID", "verifyID"}
+
+// formatJobLogLine keeps the "WARNING: " prefix because processPBSProxyLogs counts that marker.
+func formatJobLogLine(e *entry) string {
+	var sb strings.Builder
+	sb.WriteString("pbs-plus: ")
+	if e.level == "error" || e.level == "warn" {
+		sb.WriteString("WARNING: ")
+	}
+	if e.message != "" {
+		sb.WriteString(e.message)
+	}
+	if e.err != nil {
+		if e.message != "" {
+			sb.WriteString(": ")
+		}
+		sb.WriteString(e.err.Error())
+	}
+
+	keys := make([]string, 0, len(e.fields))
+	for k := range e.fields {
+		if slices.Contains(jobLogIdentityFields, k) {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&sb, " %s=%v", k, e.fields[k])
+	}
+	return sb.String()
+}
+
 func (l *Logger) writeServer(e *entry, attrs []any) {
 	if e.level == "debug" && os.Getenv("DEBUG") != "true" {
 		return
@@ -83,23 +117,7 @@ func (l *Logger) writeServer(e *entry, attrs []any) {
 	if e.jobID != "" {
 		jl := getExistingJobLogger(e.jobID)
 		if jl != nil {
-			var sb strings.Builder
-			sb.WriteString("pbs-plus: ")
-			if e.level == "error" {
-				sb.WriteString("WARNING: [non-fatal " + e.level + "]")
-			} else {
-				sb.WriteString("[" + e.level + "]")
-			}
-			if e.err != nil {
-				sb.WriteString(" " + e.err.Error())
-			}
-			if e.message != "" {
-				sb.WriteString(": " + e.message)
-			}
-			if len(e.fields) > 0 {
-				sb.WriteString(fmt.Sprintf(" (debug values: %v)", e.fields))
-			}
-			if _, err := jl.Write([]byte(sb.String())); err != nil {
+			if _, err := jl.Write([]byte(formatJobLogLine(e))); err != nil {
 				slog.Error("failed to write to job logger", "error", err)
 			}
 		}

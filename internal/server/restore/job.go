@@ -51,6 +51,7 @@ type restoreJob struct {
 	skipCheck     bool
 	databaseAware bool
 	stagingDir    string
+	mountSession  *sessions.FSMount
 }
 
 func (b *restoreJob) execute(ctx context.Context, idempotencyKey string) error {
@@ -181,7 +182,13 @@ func (b *restoreJob) cleanup() {
 		}
 	}
 
-	sessions.DisconnectSession(childKey)
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cleanupCancel()
+	if b.mountSession != nil {
+		if err := b.mountSession.Disconnect(cleanupCtx); err != nil {
+			b.logger.Error(err, "failed to close restore session")
+		}
+	}
 	if b.stagingDir != "" {
 		if err := os.RemoveAll(b.stagingDir); err != nil {
 			b.logger.Error(err, "failed to remove restore staging data")
@@ -383,7 +390,7 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("%s", err))
-					b.logger.Error(err, "", "restore", "agent-error")
+					b.logger.Error(err, "failed to restore a file to the agent", "restore", "agent-error")
 					b.errCount.Add(1)
 				}
 			}
@@ -392,7 +399,10 @@ func (b *restoreJob) agentExecute(ctx context.Context, idempotencyKey string) er
 	b.waitGroup.Add(1)
 
 	agentRPC.SetRouter(*b.remoteServer.Router())
-	sessions.NewPxarReader(childKey, reader)
+	b.mountSession, err = sessions.NewPxarReader(ctx, childKey, reader)
+	if err != nil {
+		return errors.Join(err, reader.Close())
+	}
 	b.logger.Info("restore request sent to agent")
 
 	b.task.WriteString(fmt.Sprintf("sending ready signal to stream pipe of %s", childKey))
@@ -463,14 +473,17 @@ func (b *restoreJob) startLocalRestore(ctx context.Context, destPath string, sou
 				}
 				if err != nil {
 					b.task.WriteString(fmt.Sprintf("client error: %s", err.Error()))
-					b.logger.Error(err, "", "restore", "local-error")
+					b.logger.Error(err, "failed to restore a file locally", "restore", "local-error")
 					b.errCount.Add(1)
 				}
 			}
 		}
 	})
 
-	sessions.NewPxarReader(childKey, reader)
+	b.mountSession, err = sessions.NewPxarReader(ctx, childKey, reader)
+	if err != nil {
+		return errors.Join(err, reader.Close())
+	}
 	return nil
 }
 
@@ -577,12 +590,11 @@ func (b *restoreJob) createOK(err error) {
 	task, terr := GenerateRestoreTaskOKFile(
 		b.job,
 		[]string{
-			"Done handling from a job run request",
-			"Restore ID: " + b.job.ID,
-			"Snapshot: " + b.job.Snapshot,
-			"Store: " + b.job.Store,
+			"Job: " + b.job.ID,
+			fmt.Sprintf("Datastore: %s, snapshot %s", b.job.Store, b.job.Snapshot),
 			"Destination: " + b.job.DestTarget.Name,
-			"Response: " + err.Error(),
+			"Result: source is empty, nothing was restored",
+			"Detail: " + err.Error(),
 		},
 	)
 	if terr != nil {

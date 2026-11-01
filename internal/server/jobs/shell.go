@@ -60,11 +60,11 @@ func runShellScript(
 	}
 	envFilePath := envFile.Name()
 	if err := envFile.Close(); err != nil {
-		log.Error(err, "")
+		log.Error(err, "failed to close the script environment file", "path", envFilePath)
 	}
 	defer func() {
 		if err := os.Remove(envFilePath); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
+			log.Error(err, "failed to remove the script environment file", "path", envFilePath)
 		}
 	}()
 
@@ -89,7 +89,7 @@ func runShellScript(
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to kill the script after its context ended", "pid", cmd.Process.Pid)
 			}
 		}
 		<-done
@@ -183,7 +183,7 @@ func getInterpreterFromShebang(scriptFilePath string) (string, error) {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the script file", "path", scriptFilePath)
 		}
 	}()
 

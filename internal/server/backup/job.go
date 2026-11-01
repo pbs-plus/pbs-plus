@@ -64,7 +64,6 @@ type backupJob struct {
 
 	Task      proxmox.Task
 	currOwner string
-	waitGroup *sync.WaitGroup
 	err       error
 
 	logger *log.Logger
@@ -96,9 +95,12 @@ const (
 	agentOutageGrace = 15 * time.Minute
 
 	maxBackupRuntime = 72 * time.Hour
-
-	stallCheckInterval = time.Minute
 )
+
+var stallCheckInterval = time.Minute
+
+// noProgressGrace is generous because a large source legitimately spends a long time in metadata comparison, emitting no chunks and no task log lines.
+var noProgressGrace = 2 * time.Hour
 
 var exitDrainTimeout = 30 * time.Second
 
@@ -121,19 +123,23 @@ func (b *backupJob) awaitExit(done <-chan error, upid string) {
 // watchStall reports when a run can no longer make progress, either because
 // its agent transport has been down past the grace period or because it has
 // outlived the runtime ceiling.
-func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan struct{}) <-chan error {
-	stalled := make(chan error, 1)
+type mountProgressReporter interface {
+	Progress() (connected bool, activity int64)
+}
 
-	b.mu.RLock()
-	mount := b.agentMount
-	b.mu.RUnlock()
+func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan struct{}, mount mountProgressReporter) <-chan error {
+	stalled := make(chan error, 1)
+	idleGrace := noProgressGrace
+	checkInterval := stallCheckInterval
 
 	go func() {
-		ticker := time.NewTicker(stallCheckInterval)
+		ticker := time.NewTicker(checkInterval)
 		defer ticker.Stop()
 
 		start := time.Now()
 		var downSince time.Time
+		lastActivity := int64(-1)
+		activitySince := time.Now()
 
 		for {
 			select {
@@ -152,17 +158,27 @@ func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan
 			if mount == nil {
 				continue
 			}
-			if mount.IsConnected() {
+			connected, activity := mount.Progress()
+			if connected {
 				if !downSince.IsZero() {
-					b.logger.Info("agent transport recovered", "upid", upid)
+					b.logger.Info("agent connection restored", "upid", upid)
 					downSince = time.Time{}
+				}
+				if activity != lastActivity {
+					lastActivity = activity
+					activitySince = time.Now()
+					continue
+				}
+				if time.Since(activitySince) > idleGrace {
+					stalled <- fmt.Errorf("%w: agent served no filesystem operations for %s", ErrBackupStalled, idleGrace)
+					return
 				}
 				continue
 			}
 			if downSince.IsZero() {
 				downSince = time.Now()
-				b.logger.Info("agent transport down, starting stall timer",
-					"grace", agentOutageGrace.String(), "upid", upid)
+				b.logger.Warn("agent connection lost, cancelling run if it does not return",
+					"waitingFor", agentOutageGrace.String(), "upid", upid)
 				continue
 			}
 			if time.Since(downSince) > agentOutageGrace {
@@ -207,7 +223,15 @@ func (b *backupJob) waitForCompletion(ctx context.Context, cmd *exec.Cmd, upid s
 		}
 	}()
 
-	stalled := b.watchStall(ctx, upid, waitDone)
+	b.mu.RLock()
+	agentMount := b.agentMount
+	b.mu.RUnlock()
+	var mount mountProgressReporter
+	if agentMount != nil {
+		mount = agentMount
+	}
+
+	stalled := b.watchStall(ctx, upid, waitDone, mount)
 
 	select {
 	case err := <-done:
@@ -359,7 +383,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	stdoutWriter := io.MultiWriter(logger.JobStdoutWriter(), os.Stdout)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stdoutWriter
-	b.logger.Info("starting backup job", "args", cmd.Args)
+	b.logger.Info("starting proxmox-backup-client", "command", cmd.String())
 
 	if err := cmd.Start(); err != nil {
 		if currOwner != "" {

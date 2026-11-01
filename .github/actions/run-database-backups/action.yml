@@ -251,7 +251,7 @@ runs:
           fi
           section=$(awk -v marker="$marker" '
             $0 == marker { capture = 1; next }
-            capture && /pbs-plus: \[info\]: starting backup job/ { exit }
+            capture && /pbs-plus: starting proxmox-backup-client/ { exit }
             capture { print }
           ' <<<"$log")
           if ! grep -q '[^[:space:]]' <<<"$section"; then

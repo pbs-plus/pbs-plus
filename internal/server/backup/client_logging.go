@@ -22,7 +22,7 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd, l
 	}
 	defer func() {
 		if err := watcher.Close(); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to close the client log watcher")
 		}
 	}()
 
@@ -33,7 +33,7 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd, l
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to close the client log file")
 		}
 	}()
 
@@ -130,7 +130,7 @@ func processFileBuffer(
 	if bytes.Contains(buf[:n], connectionFailedPattern) {
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
-				logger.Error(err, "")
+				logger.Error(err, "failed to kill proxmox-backup-client after a connection failure", "pid", cmd.Process.Pid)
 			}
 		}
 		return currentPos + int64(n), true

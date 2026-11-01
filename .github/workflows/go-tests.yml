@@ -13,6 +13,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2025]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -27,9 +28,9 @@ jobs:
       - name: Run Linux tests
         shell: bash
         if: matrix.os == 'ubuntu-24.04'
-        run: go test -v -race ./... -count=1 -timeout 5m
+        run: go test -race ./... -count=1 -timeout 5m
       - name: Run Windows tests
         if: matrix.os == 'windows-2025'
         shell: pwsh
         run: |
-          go test -v -race ./internal/agent/agentfs/... -tags=windows -count=1 -timeout 3m
+          go test -race ./internal/agent/agentfs/... -tags=windows -count=1 -timeout 3m

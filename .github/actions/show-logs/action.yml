@@ -7,30 +7,25 @@ runs:
     - name: Show response contents
       shell: bash
       run: |
-        echo ""
-        echo "==================================="
-        echo "Port 8007 Response:"
-        echo "==================================="
-        cat port_8007.log || echo "No log file found"
-        
-        echo ""
-        echo "==================================="
-        echo "Port 8017 Response:"
-        echo "==================================="
-        cat port_8017.log || echo "No log file found"
+        for port in 8007 8017; do
+          echo
+          echo "==================================="
+          echo "Port ${port} Response:"
+          echo "==================================="
+          cat "port_${port}.log" 2>/dev/null || echo "no log file found"
+        done
 
     - name: Show container logs
       shell: bash
       run: |
-        echo "==================================="
-        echo "Container Logs:"
-        echo "==================================="
-        docker logs pbs-plus-test
-
-    - name: Show agent logs
-      shell: bash
-      run: |
-        echo "==================================="
-        echo "Agent Logs:"
-        echo "==================================="
-        docker logs pbs-plus-agent
+        for container in pbs-plus-test pbs-plus-agent; do
+          echo
+          echo "==================================="
+          echo "${container} logs:"
+          echo "==================================="
+          if [ -n "$(docker ps -aq -f "name=^${container}$")" ]; then
+            docker logs "${container}" 2>&1 || echo "could not read logs for ${container}"
+          else
+            echo "${container} was not started by this suite"
+          fi
+        done

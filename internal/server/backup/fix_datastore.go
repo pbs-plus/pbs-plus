@@ -3,6 +3,7 @@
 package backup
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,11 +33,11 @@ type PBSStoreGroupsResponse struct {
 
 func CreateNamespace(namespace string, backup coredb.Backup, app *application.Runtime) error {
 	if app == nil {
-		return fmt.Errorf("CreateNamespace: store is required")
+		return errors.New("creating a namespace: store is required")
 	}
 
 	if err := cli.EnsureNamespace(backup.Store, namespace); err != nil {
-		return fmt.Errorf("CreateNamespace: %w", err)
+		return fmt.Errorf("creating a namespace: %w", err)
 	}
 
 	return nil
@@ -44,16 +45,16 @@ func CreateNamespace(namespace string, backup coredb.Backup, app *application.Ru
 
 func GetOwnerFilePath(backup coredb.Backup, app *application.Runtime) (string, error) {
 	if app == nil {
-		return "", fmt.Errorf("GetCurrentOwner: store is required")
+		return "", errors.New("getting the current owner: store is required")
 	}
 
 	backupID, err := getBackupId(backup)
 	if err != nil {
-		return "", fmt.Errorf("GetCurrentOwner: failed to get backup ID: %w", err)
+		return "", fmt.Errorf("getting the current owner: getting the backup ID: %w", err)
 	}
 	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
-		return "", fmt.Errorf("GetCurrentOwner: failed to get datastore; %w", err)
+		return "", fmt.Errorf("getting the current owner: getting the datastore: %w", err)
 	}
 
 	namespaceSplit := strings.Split(backup.Namespace, "/")
@@ -91,23 +92,23 @@ func SetDatastoreOwner(backup coredb.Backup, app *application.Runtime, owner str
 
 	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
-		return fmt.Errorf("SetDatastoreOwner: failed to get datastore; %w", err)
+		return fmt.Errorf("setting the datastore owner: getting the datastore: %w", err)
 	}
 
 	backupID, err := getBackupId(backup)
 	if err != nil {
-		return fmt.Errorf("SetDatastoreOwner: failed to get backup ID: %w", err)
+		return fmt.Errorf("setting the datastore owner: getting the backup ID: %w", err)
 	}
 	if err := proxmox.EnsureGroupPath(datastoreInfo.Path, backup.Namespace, "host", backupID); err != nil {
-		return fmt.Errorf("SetDatastoreOwner: ensure group path: %w", err)
+		return fmt.Errorf("setting the datastore owner: ensuring the group path: %w", err)
 	}
 
 	if err := os.WriteFile(filePath, []byte(owner), os.FileMode(0644)); err != nil {
-		return fmt.Errorf("SetDatastoreOwner: failed to write owner file -> %w", err)
+		return fmt.Errorf("setting the datastore owner: writing the owner file: %w", err)
 	}
 
 	if err := proxmox.ChownBackupUser(filePath); err != nil {
-		return fmt.Errorf("SetDatastoreOwner: error changing filesystem owner -> %w", err)
+		return fmt.Errorf("setting the datastore owner: changing the filesystem owner: %w", err)
 	}
 
 	return nil
@@ -127,12 +128,12 @@ func parseSnapshotTimestamp(input string) (time.Time, error) {
 
 func CleanUnfinishedSnapshot(backup coredb.Backup, backupID string) error {
 	if backupID == "" {
-		return fmt.Errorf("CleanUnfinishedSnapshot: backupID is required")
+		return errors.New("cleaning an unfinished snapshot: backup ID is required")
 	}
 
 	datastoreInfo, err := cli.GetDatastoreInfo(backup.Store)
 	if err != nil {
-		return fmt.Errorf("CleanUnfinishedSnapshot: failed to get datastore; %w", err)
+		return fmt.Errorf("cleaning an unfinished snapshot: getting the datastore: %w", err)
 	}
 
 	namespaceSplit := strings.Split(backup.Namespace, "/")
@@ -186,7 +187,7 @@ func CleanUnfinishedSnapshot(backup coredb.Backup, backupID string) error {
 	for _, e := range entries {
 		if _, ok := tmpSuffixes[e.Name()]; ok {
 			if err := os.RemoveAll(snapshotPath); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "")
+				log.Error(err, "failed to remove an unfinished snapshot", "path", snapshotPath)
 			}
 			break
 		}

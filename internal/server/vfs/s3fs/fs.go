@@ -106,23 +106,25 @@ func NewS3FS(
 		prefix: prefix,
 	}
 
+	fs.cleanupDone = make(chan struct{})
 	go func() {
+		defer close(fs.cleanupDone)
 		<-s3ctx.Done()
 		log.Debug("context done, cleaning up memcache and memlocal",
 			"backupID", fs.Backup.ID)
 
 		if err := fs.Memcache.DeleteAll(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to flush the attribute cache", "backupID", fs.Backup.ID)
 		}
 		if err := fs.Memcache.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the attribute cache", "backupID", fs.Backup.ID)
 		}
 		fs.TotalBytes.Reset()
 		fs.FolderCount.Reset()
 		fs.FileCount.Reset()
 		fs.StatCacheHits.Reset()
 		if err := stopMemLocal(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to stop the attribute cache process", "backupID", fs.Backup.ID)
 		}
 	}()
 
@@ -216,7 +218,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (fswire.A
 	if raw, err := cbor.Marshal(fi); err == nil {
 		if isLookup {
 			if err := fs.Memcache.Set(&memcache.Item{Key: cacheKey, Value: raw, Expiration: 0}); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to cache a lookup result", "cacheKey", cacheKey)
 			}
 		}
 	}
@@ -224,7 +226,7 @@ func (fs *S3FS) Attr(ctx context.Context, fpath string, isLookup bool) (fswire.A
 	if !isLookup {
 		if !fi.IsDir {
 			if err := fs.Memcache.Delete(cacheKey); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
-				log.Error(err, "")
+				log.Error(err, "failed to evict a cached attribute", "cacheKey", cacheKey)
 			}
 			fs.FileCount.Add(1)
 			log.Debug("attr counted file and cleared cache",
@@ -290,7 +292,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 	}
 
 	if err := fs.Memcache.Delete(fs.GetCacheKey(attrPrefix, prefix)); err != nil && !errors.Is(err, memcache.ErrCacheMiss) {
-		log.Error(err, "")
+		log.Error(err, "failed to evict a cached directory attribute", "prefix", prefix)
 	}
 
 	ctxN, cancelN := context.WithTimeout(ctx, 1*time.Minute)
@@ -342,7 +344,7 @@ func (fs *S3FS) ReadDir(ctx context.Context, fpath string) (*S3DirStream, error)
 		itemKey := fs.GetCacheKey(attrPrefix, fs.fullKey(path.Join(fpath, name)))
 		if raw, err := cbor.Marshal(entry); err == nil {
 			if err := fs.Memcache.Set(&memcache.Item{Key: itemKey, Value: raw, Expiration: 0}); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to cache a directory entry", "cacheKey", itemKey)
 			}
 		}
 	}
@@ -387,18 +389,25 @@ func isIgnoredS3Path(p string) bool {
 // ShutDown reports whether the filesystem has been torn down.
 func (fs *S3FS) ShutDown() bool { return fs.Ctx.Err() != nil }
 
-func (fs *S3FS) Unmount(ctx context.Context) {
-	if fs.Fuse != nil {
-		if err := fs.Fuse.Unmount(); err != nil {
-			log.Error(err, "fuse unmount failed, forcing lazy detach",
-				"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
-			if ferr := vfs.ForceUnmount(fs.mountpoint); ferr != nil {
-				log.Error(ferr, "lazy detach failed, mountpoint left attached",
-					"backupID", fs.Backup.ID, "mountpoint", fs.mountpoint)
-			}
-		}
+func (fs *S3FS) Unmount(ctx context.Context) error {
+	fs.unmountMu.Lock()
+	defer fs.unmountMu.Unlock()
+	if fs.unmounted {
+		return nil
 	}
 	fs.Cancel()
+	if err := vfs.ForceUnmount(ctx, fs.mountpoint); err != nil {
+		return err
+	}
+	if fs.cleanupDone != nil {
+		select {
+		case <-fs.cleanupDone:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	fs.unmounted = true
+	return nil
 }
 
 type S3FS struct {
@@ -408,5 +417,8 @@ type S3FS struct {
 	bucket      string
 	prefix      string
 	mountpoint  string
+	unmountMu   sync.Mutex
+	unmounted   bool
+	cleanupDone chan struct{}
 	loggedPaths sync.Map
 }

@@ -79,7 +79,7 @@ func GetProxmoxCertInfo() (*CertInfo, error) {
 			certInfo.PublicKeyType = strings.TrimSpace(matches[1])
 		} else if matches := publicKeyBitsRx.FindStringSubmatch(line); len(matches) > 1 {
 			if _, err := fmt.Sscanf(matches[1], "%d", &certInfo.PublicKeyBits); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to parse the certificate public key size", "value", matches[1])
 			}
 		}
 	}

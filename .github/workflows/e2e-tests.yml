@@ -4,8 +4,9 @@ on:
   workflow_call:
     inputs:
       go-version:
-        required: true
+        required: false
         type: string
+        default: ""
       timeout-seconds:
         required: false
         type: number
@@ -13,18 +14,24 @@ on:
 
 jobs:
   e2e-tests:
+    name: E2E tests (${{ matrix.suite }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [database, backup, mount]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Setup environment
         uses: ./.github/actions/setup-test-env
-        with:
-          go-version: ${{ inputs.go-version }}
 
       - name: Build images
         uses: ./.github/actions/build-images
+        with:
+          cache-write: ${{ matrix.suite == 'backup' }}
 
       - name: Setup PBS Plus server
         uses: ./.github/actions/setup-pbs-server
@@ -39,21 +46,25 @@ jobs:
         id: init-pbs
 
       - name: Run database backup tests
+        if: matrix.suite == 'database'
         uses: ./.github/actions/run-database-backups
         with:
           timeout-seconds: 300
 
       - name: Run LDAP backup tests
+        if: matrix.suite == 'database'
         uses: ./.github/actions/run-ldap-backups
         with:
           timeout-seconds: 300
 
       - name: Run Dovecot mailbox tests
+        if: matrix.suite == 'database'
         uses: ./.github/actions/run-dovecot-backups
         with:
           timeout-seconds: 300
 
       - name: Setup and run agent
+        if: matrix.suite != 'database'
         uses: ./.github/actions/setup-agent
         with:
           plus-token: ${{ steps.init-pbs.outputs.plus-token }}
@@ -61,11 +72,13 @@ jobs:
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
       - name: Run backup test
+        if: matrix.suite != 'database'
         uses: ./.github/actions/run-backup
         with:
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
       - name: Verify backup task log
+        if: matrix.suite == 'backup'
         uses: ./.github/actions/verify-task-log
         with:
           endpoint: json/d2d/backup
@@ -74,21 +87,25 @@ jobs:
           worker-type: backup
 
       - name: Run concurrent backup correlation test
+        if: matrix.suite == 'backup'
         uses: ./.github/actions/run-concurrent-backups
         with:
           timeout-seconds: 240
 
       - name: Run notification batch test
+        if: matrix.suite == 'backup'
         uses: ./.github/actions/run-notification-batch
         with:
           timeout-seconds: 240
 
       - name: Run restore test
+        if: matrix.suite == 'backup'
         uses: ./.github/actions/run-restore
         with:
           timeout-seconds: ${{ inputs.timeout-seconds }}
 
       - name: Verify restore task log
+        if: matrix.suite == 'backup'
         uses: ./.github/actions/verify-task-log
         with:
           endpoint: extjs/config/disk-restore
@@ -97,11 +114,13 @@ jobs:
           allow-warnings: true
 
       - name: Run verification test
+        if: matrix.suite == 'backup'
         uses: ./.github/actions/run-verification
         with:
           timeout-seconds: 120
 
       - name: Verify verification task log
+        if: matrix.suite == 'backup'
         uses: ./.github/actions/verify-task-log
         with:
           endpoint: extjs/config/d2d-verification
@@ -109,31 +128,37 @@ jobs:
           worker-type: verification
 
       - name: Run pxar-mount e2e tests
+        if: matrix.suite == 'mount'
         uses: ./.github/actions/run-pxar-e2e
         with:
           timeout-seconds: 300
 
       - name: Run mount API e2e tests
+        if: matrix.suite == 'mount'
         uses: ./.github/actions/run-mount-e2e
         with:
           timeout-seconds: 900
 
       - name: Run NFS outpost e2e tests
+        if: matrix.suite == 'mount'
         uses: ./.github/actions/run-outpost-e2e
         with:
           timeout-seconds: 600
 
       - name: Run VFS outpost e2e tests
+        if: matrix.suite == 'mount'
         uses: ./.github/actions/run-vfs-outpost-e2e
         with:
           timeout-seconds: 900
 
       - name: Run S3 outpost e2e tests
+        if: matrix.suite == 'mount'
         uses: ./.github/actions/run-s3-outpost-e2e
         with:
           timeout-seconds: 900
 
       - name: Run archive expansion e2e tests
+        if: matrix.suite == 'mount'
         uses: ./.github/actions/run-archive-expand-e2e
         with:
           timeout-seconds: 900

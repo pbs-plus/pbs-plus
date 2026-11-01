@@ -59,6 +59,9 @@ func (r *Router) serveStream(stream ARPCStream) {
 
 	req.Context = ctx
 	resp, err := handler(&req)
+	if resp.Cleanup != nil {
+		defer resp.Cleanup()
+	}
 	if err != nil {
 		writeErrorResponse(stream, http.StatusInternalServerError, err)
 		return

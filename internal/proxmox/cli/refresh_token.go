@@ -94,7 +94,7 @@ func GetToken() string {
 		token, err = createAPIToken()
 		if err == nil {
 			if err := token.saveToFile(); err != nil {
-				log.Error(err, "")
+				log.Error(err, "failed to save the API token")
 			}
 		}
 	}
@@ -243,7 +243,7 @@ func createAPIToken() (*APIToken, error) {
 	if err := runCommandAndIgnoreExists(cmdAclToken, []string{"entry '" + proxmox.AuthID + "' already exists"}); err != nil {
 		return nil, err
 	}
-	log.Info("user token creation process completed successfully.")
+	log.Info("created the user API token")
 	return finalToken, nil
 }
 
@@ -266,7 +266,7 @@ func (token *APIToken) saveToFile() error {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the API token file after writing it")
 		}
 	}()
 
@@ -285,7 +285,7 @@ func getAPITokenFromFile() (*APIToken, error) {
 	}
 	defer func() {
 		if err := jsonFile.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the API token file after reading it")
 		}
 	}()
 

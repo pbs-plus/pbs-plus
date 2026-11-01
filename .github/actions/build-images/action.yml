@@ -1,16 +1,34 @@
 name: Build Docker Images
 description: Build PBS Plus server and agent images
 
+inputs:
+  cache-write:
+    required: false
+    default: "true"
+    description: Export layers to the shared cache. Parallel shards cannot reuse each other's export within a run, so only one shard should write.
+
 runs:
   using: composite
   steps:
     - name: Build test PBS Plus server
-      shell: bash
-      run: docker build -f ./build/tests/Dockerfile -t pbs-plus:test .
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: ./build/tests/Dockerfile
+        tags: pbs-plus:test
+        load: true
+        cache-from: type=gha,scope=pbs-plus-server
+        cache-to: ${{ inputs.cache-write == 'true' && 'type=gha,mode=max,scope=pbs-plus-server' || '' }}
 
     - name: Build containerized agent
-      shell: bash
-      run: docker build -f Dockerfile -t pbs-plus-agent:test .
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: ./Dockerfile
+        tags: pbs-plus-agent:test
+        load: true
+        cache-from: type=gha,scope=pbs-plus-agent
+        cache-to: ${{ inputs.cache-write == 'true' && 'type=gha,mode=max,scope=pbs-plus-agent' || '' }}
 
     - name: Make test datastore
       shell: bash

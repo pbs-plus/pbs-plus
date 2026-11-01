@@ -20,6 +20,7 @@ type Response struct {
 	Message   string           `cbor:"message"`
 	Data      []byte           `cbor:"data"`
 	RawStream func(ARPCStream) `cbor:"-"`
+	Cleanup   func()           `cbor:"-"`
 }
 
 type SerializableError struct {

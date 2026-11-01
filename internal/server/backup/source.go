@@ -68,7 +68,7 @@ func (b *backupJob) validateTargetConnection(ctx context.Context) error {
 	case coredb.TargetTypeFilesystem:
 		if job.Target.IsLocal() {
 			if _, err := os.Stat(job.Target.Path); err != nil {
-				return fmt.Errorf("%w: %s (%v)", jobs.ErrTargetUnreachable, job.Target.Name, err)
+				return fmt.Errorf("%w: %s: %w", jobs.ErrTargetUnreachable, job.Target.Name, err)
 			}
 			break
 		}
@@ -177,11 +177,15 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
+		b.logger.Info("mounting agent source",
+			"agent", target.AgentHost.Name, "agentAddress", target.AgentHost.IP, "sourcePath", target.Path)
 		agentMount, err = mountrpc.AgentFSMount(timedCtx, b.app, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
 		srcPath = agentMount.Path
+		b.logger.Info("agent source mounted",
+			"agent", target.AgentHost.Name, "mountpoint", agentMount.Path)
 
 		select {
 		case <-ctx.Done():
@@ -205,11 +209,13 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
 
+		b.logger.Info("mounting S3 source", "target", target.Name)
 		s3Mount, err = mountrpc.S3FSMount(timedCtx, b.app, job, target)
 		if err != nil {
 			return "", nil, nil, err
 		}
 		srcPath = s3Mount.Path
+		b.logger.Info("S3 source mounted", "target", target.Name, "mountpoint", s3Mount.Path)
 
 		select {
 		case <-ctx.Done():

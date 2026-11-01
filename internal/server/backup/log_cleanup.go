@@ -47,7 +47,7 @@ func processFile(path string, removedCount *int64) error {
 	}
 	defer func() {
 		if err := inputFile.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the task list being pruned")
 		}
 	}()
 
@@ -70,7 +70,7 @@ func processFile(path string, removedCount *int64) error {
 	tmpName := tmpFile.Name()
 	defer func() {
 		if err := tmpFile.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the pruned task list", "path", tmpName)
 		}
 	}()
 
@@ -87,13 +87,13 @@ func processFile(path string, removedCount *int64) error {
 		} else {
 			if _, err := writer.Write(line); err != nil {
 				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-					log.Error(err, "")
+					log.Error(err, "failed to discard the pruned task list after a write error", "path", tmpName)
 				}
 				return fmt.Errorf("writing to temp file for %s: %w", path, err)
 			}
 			if err := writer.WriteByte('\n'); err != nil {
 				if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-					log.Error(err, "")
+					log.Error(err, "failed to discard the pruned task list after a newline write error", "path", tmpName)
 				}
 				return fmt.Errorf("writing newline for %s: %w", path, err)
 			}
@@ -101,23 +101,23 @@ func processFile(path string, removedCount *int64) error {
 	}
 	if err := scanner.Err(); err != nil {
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
+			log.Error(err, "failed to discard the pruned task list after a read error", "path", tmpName)
 		}
 		return fmt.Errorf("scanning file %s: %w", path, err)
 	}
 	if err := writer.Flush(); err != nil {
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
+			log.Error(err, "failed to discard the pruned task list after a flush error", "path", tmpName)
 		}
 		return fmt.Errorf("flushing writer for %s: %w", path, err)
 	}
 
 	if removedInFile == 0 {
 		if err := tmpFile.Close(); err != nil {
-			log.Error(err, "")
+			log.Error(err, "failed to close the unchanged task list copy", "path", tmpName)
 		}
 		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			log.Error(err, "")
+			log.Error(err, "failed to remove the unchanged task list copy", "path", tmpName)
 		}
 		return nil
 	}

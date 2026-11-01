@@ -29,9 +29,8 @@ func (b *backupJob) finalizeFailure(err error) {
 	}
 
 	if b.started.Load() {
-		b.waitGroup.Wait()
 		succeeded, warningsNum := b.processPBSLogs(err, b.upid)
-		b.logger.Info("backup completed, running post-backup script")
+		b.logger.Info("backup finished, running post-backup script")
 		b.runPostScript(succeeded, warningsNum)
 		succeeded, warningsNum = b.processPBSLogs(err, b.upid)
 		b.updatePBSStatus(succeeded, warningsNum, b.upid)
@@ -60,14 +59,11 @@ func (b *backupJob) finalizeFailure(err error) {
 	if flushErr := b.logger.FlushJobLog(); flushErr != nil {
 		b.logger.Error(flushErr, "failed to flush backup job log")
 	}
+	workflowStart, workflowEnd := b.workflowTimes()
 	task, terr := GenerateBackupTaskErrorFile(
 		b.job,
 		err,
-		[]string{
-			"Error handling from a scheduled job run request",
-			"Backup ID: " + job.ID,
-			"Source Mode: " + job.SourceMode,
-		},
+		reportLines(job, err, workflowStart, workflowEnd),
 		b.logger.JobLogPath(),
 	)
 	if terr != nil {
@@ -103,8 +99,6 @@ func (b *backupJob) finalizeSuccess(succeeded bool, warningsNum int) {
 		b.logger.Warn(fmt.Sprintf("skipped %s due to an error from previous retry attempts", ext))
 
 	}
-
-	b.waitGroup.Wait()
 
 	if currOwner != "" {
 		b.logger.Info("setting owner to datastore owner")
@@ -142,7 +136,6 @@ func (b *backupJob) finalizeSuccess(succeeded bool, warningsNum int) {
 
 func (b *backupJob) cleanup() {
 	b.cleanupOnce.Do(func() {
-		b.waitGroup.Wait()
 
 		b.mu.Lock()
 		b.job.CurrentPID = 0
@@ -159,10 +152,16 @@ func (b *backupJob) cleanup() {
 		}
 
 		if agentMount != nil {
+			if logger != nil {
+				logger.Info("unmounting agent source")
+			}
 			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
 		if s3Mount != nil {
+			if logger != nil {
+				logger.Info("unmounting S3 source")
+			}
 			s3Mount.Unmount()
 			s3Mount.CloseMount()
 		}
@@ -199,9 +198,9 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 	}
 
 	if succeeded || cancelled {
-		b.logger.Info("backup succeeded or cancelled")
+		b.logger.Info("backup finished or was cancelled")
 	} else {
-		b.logger.Error(logErr, "backup failed, scheduler will retry")
+		b.logger.Error(logErr, "backup did not finish, retrying on next schedule")
 	}
 
 	return succeeded, warningsNum
@@ -239,20 +238,13 @@ func (b *backupJob) createOK(err error) {
 	job := b.job
 	b.mu.RUnlock()
 
-	task, terr := GenerateBackupTaskOKFile(
-		job,
-		[]string{
-			"Done handling from a job run request",
-			"Job ID: " + job.ID,
-			"Source Mode: " + job.SourceMode,
-			"Response: " + err.Error(),
-		},
-	)
+	okStart, okEnd := b.workflowTimes()
+	task, terr := GenerateBackupTaskOKFile(job, reportLines(job, err, okStart, okEnd))
 	if terr != nil {
 		return
 	}
 
-	workflowStart, workflowEnd := b.workflowTimes()
+	workflowStart, workflowEnd := okStart, okEnd
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -299,7 +291,7 @@ func (b *backupJob) updateBackupWithTask(task proxmox.Task) {
 
 	b.job = latest
 	if uerr := b.app.CoreDB.UpdateBackupHistory(latest.ID, latest.History, latest.CurrentPID); uerr != nil {
-		b.logger.Error(uerr, "", "upid", task.UPID)
+		b.logger.Error(uerr, "failed to record the job run in the database", "upid", task.UPID)
 		return
 	}
 	jobs.MarkRunFinalized(latest.ID, b.executionID)

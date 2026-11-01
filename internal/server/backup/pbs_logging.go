@@ -47,6 +47,13 @@ var (
 		"upload failed:",
 	}
 
+	pbsFailureReasonMarkers = []string{
+		"TASK ERROR: ",
+		"backup failed: ",
+		"upload failed: ",
+		"backup ended and finish failed: ",
+	}
+
 	pbsWarningMarkers = []string{
 		"WARNING: ",
 	}
@@ -71,6 +78,20 @@ func systemLocation() *time.Location {
 	}
 
 	return loc
+}
+
+func failureReasonFromLine(line string) string {
+	if _, has := containsAny(line, pbsFailureReasonMarkers); !has {
+		return ""
+	}
+	trimmed := strings.TrimSpace(proxmox.TrimLogLineTimestamp(line))
+	if after, ok := strings.CutPrefix(trimmed, "TASK ERROR: "); ok {
+		trimmed = strings.TrimSpace(after)
+	}
+	if trimmed == jobs.ErrUnexpected.Error() {
+		return ""
+	}
+	return trimmed
 }
 
 func containsAny(s string, markers []string) (string, bool) {
@@ -122,7 +143,7 @@ func mergePBSLogs(
 	}
 	defer func() {
 		if err := inFile.Close(); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to close the PBS task log", "path", proxyLogPath)
 		}
 	}()
 
@@ -156,10 +177,10 @@ func mergePBSLogs(
 	defer func() {
 		if tmpFile != nil {
 			if err := tmpFile.Close(); err != nil {
-				logger.Error(err, "")
+				logger.Error(err, "failed to close the merged task log", "path", tmpName)
 			}
 			if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-				logger.Error(err, "")
+				logger.Error(err, "failed to discard the merged task log", "path", tmpName)
 			}
 		}
 	}()
@@ -172,6 +193,7 @@ func mergePBSLogs(
 	hasOnlySpuriousError := true
 	incomplete := true
 	inClientLogs := false
+	failureReason := ""
 
 	scanner := bufio.NewScanner(inFile)
 	scanner.Buffer(buf, maxCapacity)
@@ -185,6 +207,10 @@ func mergePBSLogs(
 
 		if IsJunkLog(line) {
 			continue
+		}
+
+		if reason := failureReasonFromLine(line); reason != "" {
+			failureReason = reason
 		}
 
 		skip := false
@@ -205,10 +231,10 @@ func mergePBSLogs(
 		}
 
 		if _, err := tmpWriter.WriteString(line); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to write a PBS task log line", "path", tmpName)
 		}
 		if err := tmpWriter.WriteByte('\n'); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to end a PBS task log line", "path", tmpName)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -224,12 +250,12 @@ func mergePBSLogs(
 	}
 	defer func() {
 		if err := clientFile.Close(); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to close the client log", "path", clientLogPath)
 		}
 	}()
 
 	if _, err := tmpWriter.WriteString("--- proxmox-backup-client log starts here ---\n"); err != nil {
-		logger.Error(err, "")
+		logger.Error(err, "failed to write the client log marker", "path", tmpName)
 	}
 
 	clientScanner := bufio.NewScanner(clientFile)
@@ -263,10 +289,10 @@ func mergePBSLogs(
 		}
 
 		if _, err := tmpWriter.WriteString(strings.TrimSpace(line)); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to write a client log line", "path", tmpName)
 		}
 		if err := tmpWriter.WriteByte('\n'); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to end a client log line", "path", tmpName)
 		}
 	}
 
@@ -289,6 +315,9 @@ func mergePBSLogs(
 	case hasError, incomplete:
 		cancelled = true
 		msg := jobs.ErrUnexpected.Error()
+		if failureReason != "" {
+			msg = failureReason
+		}
 		if customErr != nil {
 			msg = customErrStr
 		}
@@ -308,7 +337,7 @@ func mergePBSLogs(
 
 	finalLine := proxmox.FormatLogLine(time.Now().In(systemLocation()), state.ResultText()) + "\n"
 	if _, err := tmpWriter.WriteString(finalLine); err != nil {
-		logger.Error(err, "")
+		logger.Error(err, "failed to write the task result line", "path", tmpName)
 	}
 
 	if err := tmpWriter.Flush(); err != nil {

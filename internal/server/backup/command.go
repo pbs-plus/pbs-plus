@@ -4,6 +4,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,17 +30,17 @@ func getBackupId(backup coredb.Backup) (string, error) {
 
 func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *application.Runtime, srcPath string, isAgent bool, extraExclusions []string, logger *log.Logger) (*exec.Cmd, error) {
 	if srcPath == "" {
-		return nil, fmt.Errorf("RunBackup: source path is required")
+		return nil, errors.New("source path is required")
 	}
 
 	backupID, err := getBackupId(backup)
 	if err != nil {
-		return nil, fmt.Errorf("RunBackup: failed to get backup ID: %w", err)
+		return nil, fmt.Errorf("getting the backup ID: %w", err)
 	}
 
 	backupStore := fmt.Sprintf("%s@localhost:%s", proxmox.AuthID, backup.Store)
 	if backupStore == "@localhost:" {
-		return nil, fmt.Errorf("RunBackup: invalid backup store configuration")
+		return nil, errors.New("invalid backup store configuration")
 	}
 
 	detectionMode, useExclusions := backupCommandPolicy(backup)
@@ -88,7 +89,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 
 	if backup.Namespace != "" {
 		if err := CreateNamespace(backup.Namespace, backup, app); err != nil {
-			logger.Error(err, "")
+			logger.Error(err, "failed to create the datastore namespace", "namespace", backup.Namespace)
 		}
 		cmdArgs = append(cmdArgs, "--ns", backup.Namespace)
 	}
@@ -103,7 +104,7 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 
 	if err := CleanUnfinishedSnapshot(backup, backupID); err != nil {
-		logger.Error(err, "")
+		logger.Error(err, "failed to clean an unfinished snapshot", "backupID", backupID)
 	}
 
 	return cmd, nil

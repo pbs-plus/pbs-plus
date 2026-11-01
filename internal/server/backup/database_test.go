@@ -7,7 +7,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -109,7 +108,7 @@ func TestBackupCleanupRemovesDatabaseStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	archiveDir := staged.ArchiveDir
-	b := &backupJob{waitGroup: &sync.WaitGroup{}, stagedDump: staged}
+	b := &backupJob{stagedDump: staged}
 	b.cleanup()
 	if _, err := os.Stat(archiveDir); !os.IsNotExist(err) {
 		t.Fatalf("database staging directory still exists: %v", err)

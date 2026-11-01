@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox"
@@ -68,7 +67,6 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		logger:          log.WithScope(log.Scope{JobID: job.ID}),
 		extraExclusions: input.ExtraExclusions,
 		databaseAware:   databaseAware,
-		waitGroup:       &sync.WaitGroup{},
 	}
 	defer b.cleanup()
 	workerID, err := backupWorkerID(job)
@@ -87,7 +85,9 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 	b.scriptTask = queued
 	b.mu.Unlock()
 
-	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, b.executionID, queued.Task.StartTime, 0, b.app); err != nil {
+	jobs.ClearRunFinalized(job.ID, b.executionID)
+
+	if err := updateBackupStatus(false, 0, b.job, proxmox.Task{UPID: queued.UPID()}, b.executionID, queued.Task.StartTime, 0, b.app); err != nil && !errors.Is(err, jobs.ErrRunFinalized) {
 		b.logger.Error(err, "failed to assign queued task to backup job")
 	}
 
@@ -133,7 +133,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		}
 		succeeded, warnings := b.processPBSLogs(nil, b.upid)
 		if !succeeded {
-			return nil, fmt.Errorf("%w: upid %s", ErrTaskFailed, startRes.UPID)
+			if reason := taskFailureReason(startRes.UPID); reason != "" {
+				return nil, fmt.Errorf("%w: %s (task %s)", ErrTaskFailed, reason, startRes.UPID)
+			}
+			return nil, fmt.Errorf("%w: task %s ended without a success marker", ErrTaskFailed, startRes.UPID)
 		}
 		return json.Marshal(waitResult{Succeeded: succeeded, Warnings: warnings})
 	})
