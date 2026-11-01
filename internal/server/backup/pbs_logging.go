@@ -47,6 +47,13 @@ var (
 		"upload failed:",
 	}
 
+	pbsFailureReasonMarkers = []string{
+		"TASK ERROR: ",
+		"backup failed: ",
+		"upload failed: ",
+		"backup ended and finish failed: ",
+	}
+
 	pbsWarningMarkers = []string{
 		"WARNING: ",
 	}
@@ -71,6 +78,20 @@ func systemLocation() *time.Location {
 	}
 
 	return loc
+}
+
+func failureReasonFromLine(line string) string {
+	if _, has := containsAny(line, pbsFailureReasonMarkers); !has {
+		return ""
+	}
+	trimmed := strings.TrimSpace(proxmox.TrimLogLineTimestamp(line))
+	if after, ok := strings.CutPrefix(trimmed, "TASK ERROR: "); ok {
+		trimmed = strings.TrimSpace(after)
+	}
+	if trimmed == jobs.ErrUnexpected.Error() {
+		return ""
+	}
+	return trimmed
 }
 
 func containsAny(s string, markers []string) (string, bool) {
@@ -172,6 +193,7 @@ func mergePBSLogs(
 	hasOnlySpuriousError := true
 	incomplete := true
 	inClientLogs := false
+	failureReason := ""
 
 	scanner := bufio.NewScanner(inFile)
 	scanner.Buffer(buf, maxCapacity)
@@ -185,6 +207,10 @@ func mergePBSLogs(
 
 		if IsJunkLog(line) {
 			continue
+		}
+
+		if reason := failureReasonFromLine(line); reason != "" {
+			failureReason = reason
 		}
 
 		skip := false
@@ -289,6 +315,9 @@ func mergePBSLogs(
 	case hasError, incomplete:
 		cancelled = true
 		msg := jobs.ErrUnexpected.Error()
+		if failureReason != "" {
+			msg = failureReason
+		}
 		if customErr != nil {
 			msg = customErrStr
 		}
