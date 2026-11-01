@@ -32,6 +32,18 @@ func RunFinalized(jobID, executionID string) bool {
 	return ok && v.(string) == executionID
 }
 
+// ClearRunFinalized reopens jobID for executionID because a workflow retry reuses the execution ID and would otherwise have its placeholder rejected as stale.
+func ClearRunFinalized(jobID, executionID string) {
+	if jobID == "" || executionID == "" {
+		return
+	}
+	value, _ := statusMutexes.LoadOrStore(jobID, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	finalizedRuns.CompareAndDelete(jobID, executionID)
+}
+
 // MarkRunFinalized records executionID as jobID's terminal history writer; terminal writers that bypass UpdateJobHistory must call it.
 func MarkRunFinalized(jobID, executionID string) {
 	if jobID == "" || executionID == "" {
