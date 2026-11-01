@@ -91,6 +91,10 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 		b.logger.Error(err, "failed to assign queued task to backup job")
 	}
 
+	if err := CleanUnfinishedSnapshot(job, job.ID); err != nil {
+		b.logger.Error(err, "failed to clean unfinished snapshots before the run", "backupID", job.ID)
+	}
+
 	if err := w.Step("pre-script", b.runPreScript); err != nil {
 		return b.finalizeFailed(w, err)
 	}

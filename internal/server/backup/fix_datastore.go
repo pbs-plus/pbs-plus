@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -150,48 +149,73 @@ func CleanUnfinishedSnapshot(backup coredb.Backup, backupID string) error {
 
 	pathWithBackupId := filepath.Join(fullNamespacePath, "host", backupID)
 
-	existingSnapshots, err := os.ReadDir(pathWithBackupId)
-	if len(existingSnapshots) == 0 || err != nil {
-		return nil
-	}
-
-	var latestSnapshot string
-	for _, existingSnapshot := range slices.Backward(existingSnapshots) {
-		name := existingSnapshot.Name()
-		if name == "owner" {
-			continue
-		}
-		if _, err := parseSnapshotTimestamp(name); err == nil {
-			latestSnapshot = name
-			break
-		}
-	}
-
-	if latestSnapshot == "" {
-		return nil
-	}
-
-	snapshotPath := filepath.Join(pathWithBackupId, latestSnapshot)
-	entries, err := os.ReadDir(snapshotPath)
-	if err != nil {
-		return nil
-	}
-
-	expectedPxarName := proxmox.NormalizeHostname(backup.Target.Name)
-	tmpSuffixes := map[string]struct{}{
-		expectedPxarName + ".mpxar.tmp_didx": {},
-		expectedPxarName + ".ppxar.tmp_didx": {},
-		expectedPxarName + ".pxar.tmp_didx":  {},
-	}
-
-	for _, e := range entries {
-		if _, ok := tmpSuffixes[e.Name()]; ok {
-			if err := os.RemoveAll(snapshotPath); err != nil && !os.IsNotExist(err) {
-				log.Error(err, "failed to remove an unfinished snapshot", "path", snapshotPath)
-			}
-			break
-		}
-	}
+	pruneIncompleteSnapshots(pathWithBackupId)
 
 	return nil
+}
+
+// incompleteSnapshotGrace keeps a snapshot a live client is still writing out of reach of the pruner; a finished run replaces its tmp index within milliseconds, so anything older is abandoned.
+var incompleteSnapshotGrace = 5 * time.Minute
+
+func snapshotIsIncomplete(snapshotPath string) bool {
+	entries, err := os.ReadDir(snapshotPath)
+	if err != nil {
+		return false
+	}
+
+	hasTemporaryIndex := false
+	for _, e := range entries {
+		name := e.Name()
+		if name == "index.json.blob" {
+			return false
+		}
+		if strings.HasSuffix(name, ".tmp_didx") || strings.HasSuffix(name, ".tmp_fidx") {
+			hasTemporaryIndex = true
+		}
+	}
+
+	return hasTemporaryIndex
+}
+
+func pruneIncompleteSnapshots(groupPath string) int {
+	entries, err := os.ReadDir(groupPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Error(err, "failed to read the backup group directory", "path", groupPath)
+		}
+		return 0
+	}
+
+	removed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, err := parseSnapshotTimestamp(entry.Name()); err != nil {
+			continue
+		}
+
+		snapshotPath := filepath.Join(groupPath, entry.Name())
+		if !snapshotIsIncomplete(snapshotPath) {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			log.Error(err, "failed to stat an unfinished snapshot", "path", snapshotPath)
+			continue
+		}
+		if time.Since(info.ModTime()) < incompleteSnapshotGrace {
+			continue
+		}
+
+		if err := os.RemoveAll(snapshotPath); err != nil && !os.IsNotExist(err) {
+			log.Error(err, "failed to remove an unfinished snapshot", "path", snapshotPath)
+			continue
+		}
+		log.Info("removed an unfinished snapshot left by an earlier run", "path", snapshotPath)
+		removed++
+	}
+
+	return removed
 }

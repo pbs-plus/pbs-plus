@@ -103,10 +103,6 @@ func prepareBackupCommand(ctx context.Context, backup coredb.Backup, app *applic
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 
-	if err := CleanUnfinishedSnapshot(backup, backupID); err != nil {
-		logger.Error(err, "failed to clean an unfinished snapshot", "backupID", backupID)
-	}
-
 	return cmd, nil
 }
 
