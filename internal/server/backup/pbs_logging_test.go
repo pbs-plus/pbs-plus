@@ -80,7 +80,7 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	writeLines(t, realClientPath, clientLines, 0666)
 
 	for attempt := range 2 {
-		succeeded, cancelled, warnings, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil)
+		succeeded, cancelled, warnings, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil, "")
 		if err != nil {
 			t.Fatalf("mergePBSLogs: %v", err)
 		}
@@ -158,6 +158,40 @@ func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	}
 }
 
+func TestMergePBSLogsReplaysTheCapturedFailureAfterRotation(t *testing.T) {
+	dir := t.TempDir()
+	proxyLog := filepath.Join(dir, "proxy.log")
+
+	writeLines(t, proxyLog, []string{
+		"2026-10-31T21:39:36-04:00: starting backup",
+		"2026-10-31T22:22:54-04:00: backup failed: connection error: not connected",
+	}, 0660)
+
+	jobID := "pbsplus-test-rotated-" + strings.ReplaceAll(t.Name(), "/", "-")
+	defer func() {
+		_ = os.Remove(filepath.Join(os.TempDir(), "job-"+jobID+"-stdout"))
+	}()
+	logger := log.WithScope(log.Scope{JobID: jobID})
+	if err := logger.FlushJobLog(); err != nil {
+		t.Fatalf("flush job log: %v", err)
+	}
+	realClientPath := logger.JobLogPath()
+	writeLines(t, realClientPath, []string{}, 0666)
+
+	captured := `Error: upload failed: update atime failed for chunk/file "/phoenix/.chunks/2b8c/2b8cafd066ee" - EPERM: Operation not permitted`
+	if _, _, _, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil, captured); err != nil {
+		t.Fatalf("mergePBSLogs: %v", err)
+	}
+
+	merged := strings.Join(readLines(t, proxyLog), "\n")
+	if !strings.Contains(merged, "update atime failed") {
+		t.Fatalf("rotated client log lost the captured failure:\n%s", merged)
+	}
+	if !strings.Contains(merged, "TASK ERROR: Error: upload failed: update atime failed") {
+		t.Fatalf("task result must name the root cause:\n%s", merged)
+	}
+}
+
 func TestMergePBSLogsIncompleteYieldsErrorStatus(t *testing.T) {
 	dir := t.TempDir()
 	proxyLog := filepath.Join(dir, "proxy.log")
@@ -178,7 +212,7 @@ func TestMergePBSLogsIncompleteYieldsErrorStatus(t *testing.T) {
 	realClientPath := logger.JobLogPath()
 	writeLines(t, realClientPath, []string{"client: no completion markers here"}, 0666)
 
-	succeeded, cancelled, _, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil)
+	succeeded, cancelled, _, err := mergePBSLogs(proxyLog, realClientPath, logger, true, nil, "")
 	if err != nil {
 		t.Fatalf("mergePBSLogs: %v", err)
 	}

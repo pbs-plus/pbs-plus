@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -14,7 +15,28 @@ import (
 
 var connectionFailedPattern = []byte("connection failed")
 
-func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd, logger *log.Logger) {
+// clientFailureMarkers are ordered most specific first so the recorded line names the root cause, not the connection teardown it triggers.
+var clientFailureMarkers = []string{
+	"update atime failed",
+	"panicked at",
+	"sending on a closed channel",
+	"Error: upload failed:",
+	"upload failed:",
+}
+
+func firstClientFailure(chunk []byte) string {
+	for _, marker := range clientFailureMarkers {
+		for line := range strings.SplitSeq(string(chunk), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && strings.Contains(line, marker) {
+				return line
+			}
+		}
+	}
+	return ""
+}
+
+func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd, logger *log.Logger, record func(string)) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.Error(err, "failed to create watcher")
@@ -75,7 +97,7 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd, l
 		select {
 		case event, ok := <-watcher.Events:
 			if !ok {
-				_, _ = processFileBuffer(file, offset, buf, cmd, logger)
+				_, _ = processFileBuffer(file, offset, buf, cmd, logger, record)
 				return
 			}
 			if event.Op&fsnotify.Write == fsnotify.Write {
@@ -84,21 +106,21 @@ func monitorPBSClientLogs(ctx context.Context, filePath string, cmd *exec.Cmd, l
 
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				_, _ = processFileBuffer(file, offset, buf, cmd, logger)
+				_, _ = processFileBuffer(file, offset, buf, cmd, logger, record)
 				return
 			}
 			logger.Error(err, "watcher error")
 
 		case <-debounceC:
 			debounceC = nil
-			newOffset, errored := processFileBuffer(file, offset, buf, cmd, logger)
+			newOffset, errored := processFileBuffer(file, offset, buf, cmd, logger, record)
 			offset = newOffset
 			if errored {
 				return
 			}
 
 		case <-ctx.Done():
-			_, _ = processFileBuffer(file, offset, buf, cmd, logger)
+			_, _ = processFileBuffer(file, offset, buf, cmd, logger, record)
 			return
 		}
 	}
@@ -110,6 +132,7 @@ func processFileBuffer(
 	buf []byte,
 	cmd *exec.Cmd,
 	logger *log.Logger,
+	record func(string),
 ) (int64, bool) {
 	currentPos, err := file.Seek(offset, io.SeekStart)
 	if err != nil {
@@ -125,6 +148,12 @@ func processFileBuffer(
 
 	if n == 0 {
 		return currentPos, false
+	}
+
+	if record != nil {
+		if failure := firstClientFailure(buf[:n]); failure != "" {
+			record(failure)
+		}
 	}
 
 	if bytes.Contains(buf[:n], connectionFailedPattern) {
