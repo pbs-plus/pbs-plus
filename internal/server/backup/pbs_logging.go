@@ -54,6 +54,12 @@ var (
 		"backup ended and finish failed: ",
 	}
 
+	pbsRootCauseMarkers = []string{
+		"update atime failed",
+		"panicked at",
+		"sending on a closed channel",
+	}
+
 	pbsWarningMarkers = []string{
 		"WARNING: ",
 	}
@@ -108,6 +114,7 @@ func processPBSProxyLogs(
 	upid string,
 	clientLogFile *log.Logger,
 	customErr error,
+	recordedFailure string,
 ) (bool, bool, int, error) {
 	proxyLogPath := getTaskLogPath(upid)
 	if proxyLogPath == "" {
@@ -117,7 +124,7 @@ func processPBSProxyLogs(
 	if clientLogPath == "" {
 		return false, false, 0, fmt.Errorf("client job log path is empty for upid %q", upid)
 	}
-	return mergePBSLogs(proxyLogPath, clientLogPath, clientLogFile, isGraceful, customErr)
+	return mergePBSLogs(proxyLogPath, clientLogPath, clientLogFile, isGraceful, customErr, recordedFailure)
 }
 
 func mergePBSLogs(
@@ -126,6 +133,7 @@ func mergePBSLogs(
 	logger *log.Logger,
 	isGraceful bool,
 	customErr error,
+	recordedFailure string,
 ) (bool, bool, int, error) {
 	customErrStr := ""
 	if customErr != nil {
@@ -194,6 +202,7 @@ func mergePBSLogs(
 	incomplete := true
 	inClientLogs := false
 	failureReason := ""
+	rootCause := ""
 
 	scanner := bufio.NewScanner(inFile)
 	scanner.Buffer(buf, maxCapacity)
@@ -211,6 +220,11 @@ func mergePBSLogs(
 
 		if reason := failureReasonFromLine(line); reason != "" {
 			failureReason = reason
+		}
+		if rootCause == "" {
+			if _, has := containsAny(line, pbsRootCauseMarkers); has {
+				rootCause = strings.TrimSpace(proxmox.TrimLogLineTimestamp(line))
+			}
 		}
 
 		skip := false
@@ -265,6 +279,12 @@ func mergePBSLogs(
 		line := clientScanner.Text()
 		skip := false
 
+		if rootCause == "" {
+			if _, has := containsAny(line, pbsRootCauseMarkers); has {
+				rootCause = strings.TrimSpace(proxmox.TrimLogLineTimestamp(line))
+			}
+		}
+
 		if _, has := containsAny(line, pbsWarningMarkers); has {
 			pbsWarningRawCount++
 		}
@@ -300,6 +320,13 @@ func mergePBSLogs(
 		return false, false, 0, fmt.Errorf("scanning client log file: %w", err)
 	}
 
+	if rootCause == "" && recordedFailure != "" {
+		rootCause = strings.TrimSpace(proxmox.TrimLogLineTimestamp(recordedFailure))
+		if _, err := tmpWriter.WriteString(rootCause + "\n"); err != nil {
+			logger.Error(err, "failed to write the captured client failure", "path", tmpName)
+		}
+	}
+
 	succeeded := false
 	cancelled := false
 	warningsNum := pbsWarningRawCount
@@ -317,6 +344,9 @@ func mergePBSLogs(
 		msg := jobs.ErrUnexpected.Error()
 		if failureReason != "" {
 			msg = failureReason
+		}
+		if rootCause != "" {
+			msg = rootCause
 		}
 		if customErr != nil {
 			msg = customErrStr

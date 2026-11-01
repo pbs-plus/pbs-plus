@@ -89,6 +89,22 @@ type backupJob struct {
 	workflowStart int64
 	executionID   string
 	scriptTask    *tasklog.QueuedTask
+	clientFailure string
+}
+
+// recordClientFailure keeps the first client failure line because a retry rotates the job log before the task log is assembled, losing the original cause.
+func (b *backupJob) recordClientFailure(line string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.clientFailure == "" {
+		b.clientFailure = line
+	}
+}
+
+func (b *backupJob) clientFailureLine() string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.clientFailure
 }
 
 const (
@@ -418,7 +434,7 @@ func (b *backupJob) startBackup(ctx context.Context, srcPath string, target core
 	loggerPath := logger.JobLogPath()
 	b.mu.RUnlock()
 
-	go monitorPBSClientLogs(ctx, loggerPath, cmd, b.logger)
+	go monitorPBSClientLogs(ctx, loggerPath, cmd, b.logger, b.recordClientFailure)
 	taskChan, errChan := b.startTaskMonitoring(ctx, workerID, before)
 
 	select {

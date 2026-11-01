@@ -82,7 +82,7 @@ func formatRunDuration(start, end int64) string {
 	return (time.Duration(end-start) * time.Second).Round(time.Second).String()
 }
 
-func reportLines(job coredb.Backup, err error, start, end int64) []string {
+func reportLines(job coredb.Backup, err error, start, end int64, clientFailure string) []string {
 	namespace := job.Namespace
 	if namespace == "" {
 		namespace = "(root)"
@@ -96,8 +96,12 @@ func reportLines(job coredb.Backup, err error, start, end int64) []string {
 	if err == nil {
 		return append(lines, "Result: "+failureSummary(nil, job))
 	}
-	return append(lines,
+	lines = append(lines,
 		"Result: "+failureSummary(err, job),
 		"Detail: "+err.Error(),
 	)
+	if clientFailure != "" && !strings.Contains(err.Error(), clientFailure) {
+		lines = append(lines, "Client error: "+clientFailure)
+	}
+	return lines
 }

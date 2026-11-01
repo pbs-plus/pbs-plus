@@ -63,7 +63,7 @@ func (b *backupJob) finalizeFailure(err error) {
 	task, terr := GenerateBackupTaskErrorFile(
 		b.job,
 		err,
-		reportLines(job, err, workflowStart, workflowEnd),
+		reportLines(job, err, workflowStart, workflowEnd, b.clientFailureLine()),
 		b.logger.JobLogPath(),
 	)
 	if terr != nil {
@@ -192,7 +192,7 @@ func (b *backupJob) processPBSLogs(logErr error, upid string) (bool, int) {
 		b.logger.Error(err, "failed to flush job log")
 	}
 
-	succeeded, cancelled, warningsNum, err := processPBSProxyLogs(gracefulEnd, upid, logger, logErr)
+	succeeded, cancelled, warningsNum, err := processPBSProxyLogs(gracefulEnd, upid, logger, logErr, b.clientFailureLine())
 	if err != nil {
 		b.logger.Error(err, "failed to process logs")
 	}
@@ -239,7 +239,7 @@ func (b *backupJob) createOK(err error) {
 	b.mu.RUnlock()
 
 	okStart, okEnd := b.workflowTimes()
-	task, terr := GenerateBackupTaskOKFile(job, reportLines(job, err, okStart, okEnd))
+	task, terr := GenerateBackupTaskOKFile(job, reportLines(job, err, okStart, okEnd, b.clientFailureLine()))
 	if terr != nil {
 		return
 	}

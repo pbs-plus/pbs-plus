@@ -60,7 +60,7 @@ func TestFailureSummaryNamesTheFailure(t *testing.T) {
 }
 
 func TestReportLinesCarryIdentityWindowAndResult(t *testing.T) {
-	lines := reportLines(agentJob(), jobs.ErrTargetUnreachable, 1700000000, 1700003600)
+	lines := reportLines(agentJob(), jobs.ErrTargetUnreachable, 1700000000, 1700003600, "")
 
 	want := []string{
 		"Job: DP-D030-D",
@@ -81,7 +81,7 @@ func TestReportLinesCarryIdentityWindowAndResult(t *testing.T) {
 }
 
 func TestReportLinesOmitDetailWhenThereIsNoError(t *testing.T) {
-	joined := strings.Join(reportLines(agentJob(), nil, 1700000000, 1700000010), "\n")
+	joined := strings.Join(reportLines(agentJob(), nil, 1700000000, 1700000010, ""), "\n")
 	if strings.Contains(joined, "Detail:") {
 		t.Fatalf("want no detail line on success, got:\n%s", joined)
 	}
@@ -91,7 +91,7 @@ func TestReportLinesOmitDetailWhenThereIsNoError(t *testing.T) {
 }
 
 func TestReportLinesTolerateAnUnfinishedRun(t *testing.T) {
-	joined := strings.Join(reportLines(agentJob(), jobs.ErrCanceled, 0, 0), "\n")
+	joined := strings.Join(reportLines(agentJob(), jobs.ErrCanceled, 0, 0, ""), "\n")
 	if !strings.Contains(joined, "Started: unknown, ended unknown, duration unknown") {
 		t.Fatalf("want unknown timestamps, got:\n%s", joined)
 	}
