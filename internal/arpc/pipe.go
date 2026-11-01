@@ -214,6 +214,16 @@ func (s *StreamPipe) Serve() error {
 		return fmt.Errorf("nil smux tunnel")
 	}
 
+	watchCancel := make(chan struct{})
+	defer close(watchCancel)
+	go func() {
+		select {
+		case <-s.ctx.Done():
+			_ = s.tun.Close()
+		case <-watchCancel:
+		}
+	}()
+
 	for {
 		select {
 		case <-s.ctx.Done():
