@@ -22,6 +22,7 @@ SELECT
     COALESCE(dbo.database_name, '') AS database_name,
     COALESCE(dbo.client_family, '') AS database_client_family,
     COALESCE(dbo.client_dir, '') AS database_client_dir,
+    COALESCE(dvo.scope, '') AS dovecot_scope,
     COALESCE(dvo.username, '') AS dovecot_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
     t.name, t.target_type, t.mount_script,
@@ -39,6 +40,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
@@ -69,6 +71,7 @@ SELECT
     COALESCE(dbo.database_name, '') AS database_name,
     COALESCE(dbo.client_family, '') AS database_client_family,
     COALESCE(dbo.client_dir, '') AS database_client_dir,
+    COALESCE(dvo.scope, '') AS dovecot_scope,
     COALESCE(dvo.username, '') AS dovecot_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
     t.name, t.target_type, t.mount_script,
@@ -86,6 +89,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
@@ -139,9 +143,10 @@ ON CONFLICT(backup_id) DO UPDATE SET
 DELETE FROM backup_database_options WHERE backup_id = ?;
 
 -- name: UpsertBackupDovecotOptions :exec
-INSERT INTO backup_dovecot_options (backup_id, username, mailbox)
-VALUES (?, ?, ?)
+INSERT INTO backup_dovecot_options (backup_id, scope, username, mailbox)
+VALUES (?, ?, ?, ?)
 ON CONFLICT(backup_id) DO UPDATE SET
+    scope = excluded.scope,
     username = excluded.username,
     mailbox = excluded.mailbox;
 

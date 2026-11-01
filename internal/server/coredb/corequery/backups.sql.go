@@ -186,6 +186,7 @@ SELECT
     COALESCE(dbo.database_name, '') AS database_name,
     COALESCE(dbo.client_family, '') AS database_client_family,
     COALESCE(dbo.client_dir, '') AS database_client_dir,
+    COALESCE(dvo.scope, '') AS dovecot_scope,
     COALESCE(dvo.username, '') AS dovecot_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
     t.name, t.target_type, t.mount_script,
@@ -203,6 +204,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
@@ -258,6 +260,7 @@ type GetBackupRow struct {
 	DatabaseName                string         `json:"database_name"`
 	DatabaseClientFamily        string         `json:"database_client_family"`
 	DatabaseClientDir           string         `json:"database_client_dir"`
+	DovecotScope                string         `json:"dovecot_scope"`
 	DovecotUsername             string         `json:"dovecot_username"`
 	DovecotMailbox              string         `json:"dovecot_mailbox"`
 	Name                        sql.NullString `json:"name"`
@@ -285,6 +288,7 @@ type GetBackupRow struct {
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
 	LdapBaseDn                  string         `json:"ldap_base_dn"`
+	DovecotApiPort              int64          `json:"dovecot_api_port"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
 	AgentAuth                   sql.NullString `json:"agent_auth"`
@@ -333,6 +337,7 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.DatabaseName,
 		&i.DatabaseClientFamily,
 		&i.DatabaseClientDir,
+		&i.DovecotScope,
 		&i.DovecotUsername,
 		&i.DovecotMailbox,
 		&i.Name,
@@ -360,6 +365,7 @@ func (q *Queries) GetBackup(ctx context.Context, id string) (GetBackupRow, error
 		&i.DatabaseVariant,
 		&i.DatabaseDefaultClientFamily,
 		&i.LdapBaseDn,
+		&i.DovecotApiPort,
 		&i.AgentName,
 		&i.AgentIp,
 		&i.AgentAuth,
@@ -383,6 +389,7 @@ SELECT
     COALESCE(dbo.database_name, '') AS database_name,
     COALESCE(dbo.client_family, '') AS database_client_family,
     COALESCE(dbo.client_dir, '') AS database_client_dir,
+    COALESCE(dvo.scope, '') AS dovecot_scope,
     COALESCE(dvo.username, '') AS dovecot_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
     t.name, t.target_type, t.mount_script,
@@ -400,6 +407,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM backups j
@@ -454,6 +462,7 @@ type ListAllBackupsRow struct {
 	DatabaseName                string         `json:"database_name"`
 	DatabaseClientFamily        string         `json:"database_client_family"`
 	DatabaseClientDir           string         `json:"database_client_dir"`
+	DovecotScope                string         `json:"dovecot_scope"`
 	DovecotUsername             string         `json:"dovecot_username"`
 	DovecotMailbox              string         `json:"dovecot_mailbox"`
 	Name                        sql.NullString `json:"name"`
@@ -481,6 +490,7 @@ type ListAllBackupsRow struct {
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
 	LdapBaseDn                  string         `json:"ldap_base_dn"`
+	DovecotApiPort              int64          `json:"dovecot_api_port"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
 	AgentAuth                   sql.NullString `json:"agent_auth"`
@@ -535,6 +545,7 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.DatabaseName,
 			&i.DatabaseClientFamily,
 			&i.DatabaseClientDir,
+			&i.DovecotScope,
 			&i.DovecotUsername,
 			&i.DovecotMailbox,
 			&i.Name,
@@ -562,6 +573,7 @@ func (q *Queries) ListAllBackups(ctx context.Context) ([]ListAllBackupsRow, erro
 			&i.DatabaseVariant,
 			&i.DatabaseDefaultClientFamily,
 			&i.LdapBaseDn,
+			&i.DovecotApiPort,
 			&i.AgentName,
 			&i.AgentIp,
 			&i.AgentAuth,
@@ -755,20 +767,27 @@ func (q *Queries) UpsertBackupDatabaseOptions(ctx context.Context, arg UpsertBac
 }
 
 const upsertBackupDovecotOptions = `-- name: UpsertBackupDovecotOptions :exec
-INSERT INTO backup_dovecot_options (backup_id, username, mailbox)
-VALUES (?, ?, ?)
+INSERT INTO backup_dovecot_options (backup_id, scope, username, mailbox)
+VALUES (?, ?, ?, ?)
 ON CONFLICT(backup_id) DO UPDATE SET
+    scope = excluded.scope,
     username = excluded.username,
     mailbox = excluded.mailbox
 `
 
 type UpsertBackupDovecotOptionsParams struct {
 	BackupID string `json:"backup_id"`
+	Scope    string `json:"scope"`
 	Username string `json:"username"`
 	Mailbox  string `json:"mailbox"`
 }
 
 func (q *Queries) UpsertBackupDovecotOptions(ctx context.Context, arg UpsertBackupDovecotOptionsParams) error {
-	_, err := q.db.ExecContext(ctx, upsertBackupDovecotOptions, arg.BackupID, arg.Username, arg.Mailbox)
+	_, err := q.db.ExecContext(ctx, upsertBackupDovecotOptions,
+		arg.BackupID,
+		arg.Scope,
+		arg.Username,
+		arg.Mailbox,
+	)
 	return err
 }

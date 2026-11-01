@@ -83,11 +83,12 @@ ON CONFLICT(target_name) DO UPDATE SET
 
 -- name: UpsertTargetDovecot :exec
 INSERT INTO target_dovecot (
-    target_name, host, port, ca_certificate, default_client_dir
-) VALUES (?, ?, ?, ?, ?)
+    target_name, host, port, api_port, ca_certificate, default_client_dir
+) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(target_name) DO UPDATE SET
     host = excluded.host,
     port = excluded.port,
+    api_port = excluded.api_port,
     ca_certificate = excluded.ca_certificate,
     default_client_dir = excluded.default_client_dir;
 
@@ -144,6 +145,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     COUNT(j.id) AS job_count,
     ah.name AS agent_name, ah.ip AS agent_ip, ah.auth AS agent_auth,
     ah.token_used AS agent_token_used, ah.os AS agent_os
@@ -191,6 +193,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     COUNT(j.id) AS job_count,
     ah.name AS agent_name, ah.ip AS agent_ip, ah.auth AS agent_auth,
     ah.token_used AS agent_token_used, ah.os AS agent_os
@@ -212,7 +215,7 @@ GROUP BY t.name, t.target_type, t.mount_script, f.access, f.path, s.url,
          p.ssl_mode, m.tls_mode, l.tls_mode,
          p.ca_certificate, m.ca_certificate, l.ca_certificate, d.ca_certificate,
          p.default_client_dir, m.default_client_dir, l.default_client_dir, d.default_client_dir,
-         m.variant, m.default_client_family, l.base_dn,
+         m.variant, m.default_client_family, l.base_dn, d.api_port,
          ah.name, ah.ip, ah.auth, ah.token_used, ah.os
 ORDER BY t.name;
 

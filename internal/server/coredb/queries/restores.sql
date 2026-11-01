@@ -20,6 +20,8 @@ SELECT
     COALESCE(dvo.source_username, '') AS dovecot_source_username,
     COALESCE(dvo.destination_username, '') AS dovecot_destination_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
+    COALESCE(dvo.destination_mailbox, '') AS dovecot_destination_mailbox,
+    COALESCE(dvo.messages, '') AS dovecot_messages,
     COALESCE(dvo.replace_existing, 0) AS dovecot_replace_existing,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
@@ -36,6 +38,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
@@ -66,6 +69,8 @@ SELECT
     COALESCE(dvo.source_username, '') AS dovecot_source_username,
     COALESCE(dvo.destination_username, '') AS dovecot_destination_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
+    COALESCE(dvo.destination_mailbox, '') AS dovecot_destination_mailbox,
+    COALESCE(dvo.messages, '') AS dovecot_messages,
     COALESCE(dvo.replace_existing, 0) AS dovecot_replace_existing,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
@@ -82,6 +87,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
@@ -122,12 +128,15 @@ DELETE FROM restore_database_options WHERE restore_id = ?;
 
 -- name: UpsertRestoreDovecotOptions :exec
 INSERT INTO restore_dovecot_options (
-    restore_id, source_username, destination_username, mailbox, replace_existing
-) VALUES (?, ?, ?, ?, ?)
+    restore_id, source_username, destination_username, mailbox,
+    destination_mailbox, messages, replace_existing
+) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(restore_id) DO UPDATE SET
     source_username = excluded.source_username,
     destination_username = excluded.destination_username,
     mailbox = excluded.mailbox,
+    destination_mailbox = excluded.destination_mailbox,
+    messages = excluded.messages,
     replace_existing = excluded.replace_existing;
 
 -- name: DeleteRestoreDovecotOptions :exec

@@ -86,6 +86,7 @@ type BackupDovecotOption struct {
 	BackupID string `json:"backup_id"`
 	Username string `json:"username"`
 	Mailbox  string `json:"mailbox"`
+	Scope    string `json:"scope"`
 }
 
 type BackupGroupMigration struct {
@@ -167,6 +168,8 @@ type RestoreDovecotOption struct {
 	DestinationUsername string `json:"destination_username"`
 	Mailbox             string `json:"mailbox"`
 	ReplaceExisting     int64  `json:"replace_existing"`
+	DestinationMailbox  string `json:"destination_mailbox"`
+	Messages            string `json:"messages"`
 }
 
 type Script struct {
@@ -187,6 +190,7 @@ type TargetDovecot struct {
 	Password         string `json:"password"`
 	CaCertificate    string `json:"ca_certificate"`
 	DefaultClientDir string `json:"default_client_dir"`
+	ApiPort          int64  `json:"api_port"`
 }
 
 type TargetFilesystem struct {
