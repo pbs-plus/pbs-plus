@@ -24,8 +24,30 @@ func TestRootPrefersOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o700 {
-		t.Fatalf("staging mode = %o, want 700", mode)
+	if mode := info.Mode().Perm(); mode&0o111 != 0o111 {
+		t.Fatalf("staging mode = %o, want it traversable", mode)
+	}
+}
+
+func TestRootMakesExistingDirectoryTraversable(t *testing.T) {
+	previous := conf.Env.StagingDir
+	t.Cleanup(func() { conf.Env.StagingDir = previous })
+
+	override := filepath.Join(t.TempDir(), "staging")
+	if err := os.Mkdir(override, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	conf.Env.StagingDir = override
+
+	if got := Root("any-store"); got != override {
+		t.Fatalf("Root = %q, want %q", got, override)
+	}
+	info, err := os.Stat(override)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode&0o111 != 0o111 {
+		t.Fatalf("staging mode = %o, want it traversable", mode)
 	}
 }
 
