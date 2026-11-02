@@ -621,6 +621,14 @@ func TestUserDirName(t *testing.T) {
 }
 
 func TestParseUserList(t *testing.T) {
+	listed, err := parseUserList([]byte(`[["doveadmResponse",{"userList":["alice@example.com","dave@example.com"]},"pbs-plus"]]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(listed, []string{"alice@example.com", "dave@example.com"}) {
+		t.Fatalf("listed users = %#v", listed)
+	}
+
 	keyed, err := parseUserList([]byte(`[["doveadmResponse",{"bob@example.com":{},"alice@example.com":{}},"pbs-plus"]]`))
 	if err != nil {
 		t.Fatal(err)

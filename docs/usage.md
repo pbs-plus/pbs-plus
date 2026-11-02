@@ -170,7 +170,25 @@ Dovecot targets preserve messages, folders, flags, keywords, and mailbox metadat
 3. Create a backup job with **Backup Scope** set to a single user plus its username, or to the entire server. Leave **Mailbox** empty for every mailbox, or enter one mailbox name for selective backup. A user that fails during an entire-server run is recorded in the snapshot manifest and in the task log; the remaining users still complete.
 4. Restore to the original username or another destination username, optionally into a different mailbox. Leave **Source Mailbox** empty to use the backup's scope. Fill **Messages** with newline-delimited Maildir paths (for example `.Sent/cur/1700000000.M1P2.mail:2,S`) to recover individual mail. Additive restore uses one-way `doveadm sync` and never deletes destination messages; **Replace Existing** uses `doveadm backup` to mirror the backup into the destination and requires fresh or empty destination mail storage.
 
-The PBS Plus host requires Dovecot 2.4 or newer client tools. Remote Dovecot 2.3 and 2.4 servers are supported through the doveadm protocol. For Dovecot 2.4, a minimal listener includes `doveadm_password`, `ssl_server_cert_file`, `ssl_server_key_file`, and a `service doveadm` inet listener with `ssl = yes`. Dovecot 2.3 uses its corresponding 2.3 SSL setting names. Validate the version-specific configuration with `doveconf -n`, verify the listener with `openssl s_client`, and use the upstream [Dovecot 2.4 doveadm documentation](https://doc.dovecot.org/main/core/admin/doveadm.html) or [Dovecot 2.3 dsync TCP documentation](https://doc.dovecot.org/2.3/configuration_manual/replication/).
+The PBS Plus host requires Dovecot 2.4 or newer client tools. Remote Dovecot 2.3 and 2.4 servers are supported through the doveadm protocol; backup and additive restore were verified against both 2.3.19 and 2.4.x servers. For Dovecot 2.4, a minimal listener includes `doveadm_password`, `ssl_server_cert_file`, `ssl_server_key_file`, and a `service doveadm` inet listener with `ssl = yes`. Dovecot 2.3 uses its corresponding 2.3 SSL setting names.
+
+Entire-server scope additionally needs the doveadm HTTP API, whose listener block is the same on 2.3 and 2.4:
+
+```
+service doveadm {
+  inet_listener doveadm {
+    port = 24245
+    ssl = yes
+  }
+  inet_listener http {
+    port = 24280
+    ssl = yes
+  }
+}
+```
+
+Enter that HTTPS port as the target's **Doveadm API Port**. Both versions answer a wildcard user lookup with the same JSON, and the API reads the same `doveadm_password`. The userdb must be iterable: `passwd-file`, SQL, and LDAP userdbs enumerate users, while a `static` userdb has nothing to list, so those servers can only use single-user scope.
+Validate the version-specific configuration with `doveconf -n`, verify the listener with `openssl s_client`, and use the upstream [Dovecot 2.4 doveadm documentation](https://doc.dovecot.org/main/core/admin/doveadm.html) or [Dovecot 2.3 dsync TCP documentation](https://doc.dovecot.org/2.3/configuration_manual/replication/).
 
 Snapshots store each user under `users/<user-directory>/mail`, alongside a `dovecot-manifest.json` mapping directories back to usernames. Snapshots taken by earlier PBS Plus versions keep their single-user layout and still restore.
 

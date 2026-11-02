@@ -120,8 +120,9 @@ func parseUserList(data []byte) ([]string, error) {
 	return slices.Compact(usernames), nil
 }
 
-// parseUserEntries reads both doveadm payload shapes: a map keyed by username
-// and a list of rows carrying a username field.
+// parseUserEntries reads every doveadm payload shape: a wildcard lookup answers
+// with a userList array, a single lookup with a map keyed by username, and some
+// versions with rows carrying a username field.
 func parseUserEntries(payload json.RawMessage) ([]string, error) {
 	var rows []map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &rows); err == nil {
@@ -150,9 +151,18 @@ func parseUserEntries(payload json.RawMessage) ([]string, error) {
 		return nil, fmt.Errorf("decode Dovecot user list: %w", err)
 	}
 	usernames := make([]string, 0, len(keyed))
-	for username := range keyed {
-		if username != "" {
-			usernames = append(usernames, username)
+	for key, raw := range keyed {
+		var list []string
+		if err := json.Unmarshal(raw, &list); err == nil {
+			for _, username := range list {
+				if username != "" {
+					usernames = append(usernames, username)
+				}
+			}
+			continue
+		}
+		if key != "" {
+			usernames = append(usernames, key)
 		}
 	}
 	return usernames, nil
