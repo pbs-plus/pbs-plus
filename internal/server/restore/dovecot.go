@@ -5,12 +5,17 @@ package restore
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
 )
 
 func (b *restoreJob) dovecotExecute(ctx context.Context) error {
-	stagingDir, err := b.restoreArchive(ctx, ".pbs-plus-dovecot-restore-")
+	sources := []string{"/"}
+	if b.job.DovecotSourceUsername != "" {
+		sources = dovecot.ArchiveUserPaths(b.job.DovecotSourceUsername)
+	}
+	stagingDir, err := b.restoreArchiveSources(ctx, ".pbs-plus-dovecot-restore-", sources)
 	if err != nil {
 		return err
 	}
@@ -25,7 +30,9 @@ func (b *restoreJob) dovecotExecute(ctx context.Context) error {
 	if err := dovecot.RestoreBackup(ctx, stagingDir, b.job.DestTarget, password, dovecot.RestoreOptions{
 		SourceUsername:      b.job.DovecotSourceUsername,
 		DestinationUsername: b.job.DovecotDestinationUsername,
-		Mailbox:             b.job.DovecotMailbox,
+		SourceMailbox:       b.job.DovecotMailbox,
+		DestinationMailbox:  b.job.DovecotDestinationMailbox,
+		Messages:            dovecotMessages(b.job.DovecotMessages),
 		ReplaceExisting:     b.job.ReplaceExisting,
 		LogWriter:           taskLineWriter{task: b.task},
 	}, client); err != nil {
@@ -33,4 +40,14 @@ func (b *restoreJob) dovecotExecute(ctx context.Context) error {
 	}
 	b.runPostScript()
 	return nil
+}
+
+func dovecotMessages(raw string) []string {
+	var messages []string
+	for line := range strings.SplitSeq(raw, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			messages = append(messages, trimmed)
+		}
+	}
+	return messages
 }

@@ -162,6 +162,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 			return "", nil, nil, fmt.Errorf("write Dovecot client selection: %w", err)
 		}
 		stagedBackup, err := dovecot.StageBackup(ctx, "", target, password, dovecot.BackupOptions{
+			Scope:     job.DovecotScope,
 			Username:  job.DovecotUsername,
 			Mailbox:   job.DovecotMailbox,
 			LogWriter: dovecotLog,
@@ -173,6 +174,9 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		b.stagedDovecot = stagedBackup
 		b.mu.Unlock()
 		srcPath = stagedBackup.ArchiveDir
+		if len(stagedBackup.Manifest.Failed) > 0 {
+			b.logger.Warn("Dovecot backup skipped failed users", "users", stagedBackup.Manifest.Failed)
+		}
 	} else if target.IsAgent() {
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
