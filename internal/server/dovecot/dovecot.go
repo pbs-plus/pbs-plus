@@ -339,6 +339,13 @@ func restoreUser(ctx context.Context, archiveDir string, user ManifestUser, targ
 	if err := os.MkdirAll(filepath.Join(userDir, sieveDirName, "scripts"), 0o700); err != nil {
 		return fmt.Errorf("create Dovecot restore sieve directory: %w", err)
 	}
+	archiveInfo, err := os.Stat(archiveDir)
+	if err != nil {
+		return fmt.Errorf("read Dovecot restore staging directory: %w", err)
+	}
+	if err := os.Chmod(archiveDir, archiveInfo.Mode().Perm()|0o111); err != nil {
+		return fmt.Errorf("prepare Dovecot restore staging directory: %w", err)
+	}
 	if err := chownForMail(userDir); err != nil {
 		return fmt.Errorf("prepare Dovecot restore permissions: %w", err)
 	}

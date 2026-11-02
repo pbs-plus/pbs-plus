@@ -576,6 +576,13 @@ func TestRestoreBackupFlattenedUserArchive(t *testing.T) {
 	if err := RestoreBackup(context.Background(), archiveDir, target, "pa55word", RestoreOptions{SourceUsername: user.Username}, Client{Program: program, Version: "2.4.1"}); err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(archiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 != 0o111 {
+		t.Fatalf("archive mode = %o", info.Mode().Perm())
+	}
 	assertDovecotTestCall(t, readDovecotTestCalls(t, logPath), 0, []string{
 		"USER=alice@example.com",
 		"ARG=-c",
