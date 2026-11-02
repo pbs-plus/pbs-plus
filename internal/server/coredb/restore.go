@@ -205,10 +205,13 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		DovecotSourceUsername:      row.DovecotSourceUsername,
 		DovecotDestinationUsername: row.DovecotDestinationUsername,
 		DovecotMailbox:             row.DovecotMailbox,
+		DovecotDestinationMailbox:  row.DovecotDestinationMailbox,
+		DovecotMessages:            row.DovecotMessages,
 		ReplaceExisting:            row.ReplaceExisting != 0 || row.DovecotReplaceExisting != 0,
 	}
 	restore.DestTarget.DatabaseHost = row.DatabaseHost
 	restore.DestTarget.DatabasePort = int(row.DatabasePort)
+	restore.DestTarget.DovecotAPIPort = int(row.DovecotApiPort)
 	restore.DestTarget.DatabaseUsername = row.DatabaseUsername
 	restore.DestTarget.DatabaseTLSMode = row.DatabaseTlsMode
 	restore.DestTarget.DatabaseCACertificate = row.DatabaseCaCertificate
@@ -446,10 +449,13 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 			DovecotSourceUsername:      row.DovecotSourceUsername,
 			DovecotDestinationUsername: row.DovecotDestinationUsername,
 			DovecotMailbox:             row.DovecotMailbox,
+			DovecotDestinationMailbox:  row.DovecotDestinationMailbox,
+			DovecotMessages:            row.DovecotMessages,
 			ReplaceExisting:            row.ReplaceExisting != 0 || row.DovecotReplaceExisting != 0,
 		}
 		restore.DestTarget.DatabaseHost = row.DatabaseHost
 		restore.DestTarget.DatabasePort = int(row.DatabasePort)
+		restore.DestTarget.DovecotAPIPort = int(row.DovecotApiPort)
 		restore.DestTarget.DatabaseUsername = row.DatabaseUsername
 		restore.DestTarget.DatabaseTLSMode = row.DatabaseTlsMode
 		restore.DestTarget.DatabaseCACertificate = row.DatabaseCaCertificate
@@ -600,6 +606,8 @@ type Restore struct {
 	DovecotSourceUsername      string     `json:"dovecot_source_username,omitempty"`
 	DovecotDestinationUsername string     `json:"dovecot_destination_username,omitempty"`
 	DovecotMailbox             string     `json:"dovecot_mailbox,omitempty"`
+	DovecotDestinationMailbox  string     `json:"dovecot_destination_mailbox,omitempty"`
+	DovecotMessages            string     `json:"dovecot_messages,omitempty"`
 	ReplaceExisting            bool       `json:"replace_existing,omitempty"`
 }
 
@@ -624,7 +632,8 @@ func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Resto
 }
 
 func (db *Store) storeRestoreDovecotOptions(q *corequery.Queries, restore Restore) error {
-	if restore.DovecotSourceUsername == "" && restore.DovecotDestinationUsername == "" && restore.DovecotMailbox == "" {
+	if restore.DovecotSourceUsername == "" && restore.DovecotDestinationUsername == "" &&
+		restore.DovecotMailbox == "" && restore.DovecotDestinationMailbox == "" && restore.DovecotMessages == "" {
 		return q.DeleteRestoreDovecotOptions(db.ctx, restore.ID)
 	}
 	target, err := q.GetTarget(db.ctx, restore.DestTarget.Name)
@@ -640,11 +649,16 @@ func (db *Store) storeRestoreDovecotOptions(q *corequery.Queries, restore Restor
 	if restore.DovecotDestinationUsername == "" {
 		restore.DovecotDestinationUsername = restore.DovecotSourceUsername
 	}
+	if restore.ReplaceExisting && (restore.DovecotDestinationMailbox != "" || restore.DovecotMessages != "") {
+		return errors.New("Dovecot replace-existing cannot select messages or a destination mailbox")
+	}
 	return q.UpsertRestoreDovecotOptions(db.ctx, corequery.UpsertRestoreDovecotOptionsParams{
 		RestoreID:           restore.ID,
 		SourceUsername:      restore.DovecotSourceUsername,
 		DestinationUsername: restore.DovecotDestinationUsername,
 		Mailbox:             restore.DovecotMailbox,
+		DestinationMailbox:  restore.DovecotDestinationMailbox,
+		Messages:            restore.DovecotMessages,
 		ReplaceExisting:     boolToNullInt64(restore.ReplaceExisting).Int64,
 	})
 }

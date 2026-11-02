@@ -245,11 +245,13 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 		LegacyXattr:      fromNullInt64ToBool(row.LegacyXattr),
 		DatabaseScope:    row.DatabaseScope,
 		DatabaseName:     row.DatabaseName,
+		DovecotScope:     row.DovecotScope,
 		DovecotUsername:  row.DovecotUsername,
 		DovecotMailbox:   row.DovecotMailbox,
 	}
 	backup.Target.DatabaseHost = row.DatabaseHost
 	backup.Target.DatabasePort = int(row.DatabasePort)
+	backup.Target.DovecotAPIPort = int(row.DovecotApiPort)
 	backup.Target.DatabaseUsername = row.DatabaseUsername
 	backup.Target.DatabaseTLSMode = row.DatabaseTlsMode
 	backup.Target.DatabaseCACertificate = row.DatabaseCaCertificate
@@ -604,12 +606,14 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			LegacyXattr:      fromNullInt64ToBool(row.LegacyXattr),
 			DatabaseScope:    row.DatabaseScope,
 			DatabaseName:     row.DatabaseName,
+			DovecotScope:     row.DovecotScope,
 			DovecotUsername:  row.DovecotUsername,
 			DovecotMailbox:   row.DovecotMailbox,
 
 			Exclusions: exclusionsByJob[row.ID]}
 		backup.Target.DatabaseHost = row.DatabaseHost
 		backup.Target.DatabasePort = int(row.DatabasePort)
+		backup.Target.DovecotAPIPort = int(row.DovecotApiPort)
 		backup.Target.DatabaseUsername = row.DatabaseUsername
 		backup.Target.DatabaseTLSMode = row.DatabaseTlsMode
 		backup.Target.DatabaseCACertificate = row.DatabaseCaCertificate
@@ -780,6 +784,7 @@ type Backup struct {
 	History          JobHistory  `json:"history"`
 	DatabaseScope    string      `json:"database_scope,omitempty"`
 	DatabaseName     string      `json:"database_name,omitempty"`
+	DovecotScope     string      `json:"dovecot_scope,omitempty"`
 	DovecotUsername  string      `json:"dovecot_username,omitempty"`
 	DovecotMailbox   string      `json:"dovecot_mailbox,omitempty"`
 }
@@ -812,8 +817,15 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 	})
 }
 
+// Dovecot backup scopes mirror the dovecot package, which cannot be imported
+// here because it already depends on this package.
+const (
+	dovecotScopeUser   = "user"
+	dovecotScopeServer = "server"
+)
+
 func (db *Store) storeBackupDovecotOptions(q *corequery.Queries, backup Backup) error {
-	if backup.DovecotUsername == "" && backup.DovecotMailbox == "" {
+	if backup.DovecotScope == "" && backup.DovecotUsername == "" && backup.DovecotMailbox == "" {
 		return q.DeleteBackupDovecotOptions(db.ctx, backup.ID)
 	}
 	target, err := q.GetTarget(db.ctx, backup.Target.Name)
@@ -823,11 +835,20 @@ func (db *Store) storeBackupDovecotOptions(q *corequery.Queries, backup Backup) 
 	if TargetType(target.TargetType) != TargetTypeDovecot {
 		return q.DeleteBackupDovecotOptions(db.ctx, backup.ID)
 	}
-	if backup.DovecotUsername == "" {
+	if backup.DovecotScope == "" {
+		backup.DovecotScope = dovecotScopeUser
+	}
+	if backup.DovecotScope != dovecotScopeUser && backup.DovecotScope != dovecotScopeServer {
+		return errors.New("Dovecot backup scope must be user or server")
+	}
+	if backup.DovecotScope == dovecotScopeServer {
+		backup.DovecotUsername = ""
+	} else if backup.DovecotUsername == "" {
 		return errors.New("Dovecot username is required")
 	}
 	return q.UpsertBackupDovecotOptions(db.ctx, corequery.UpsertBackupDovecotOptionsParams{
 		BackupID: backup.ID,
+		Scope:    backup.DovecotScope,
 		Username: backup.DovecotUsername,
 		Mailbox:  backup.DovecotMailbox,
 	})

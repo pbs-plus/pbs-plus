@@ -59,6 +59,7 @@ var backupJobEdit = js.EditWindow{
 			"pbsDataStoreSelector[name=store]":       js.Obj{"change": "storeChange"},
 			"pbsD2DTargetSelector[name=target]":      js.Obj{"change": "targetChange"},
 			"proxmoxKVComboBox[name=database_scope]": js.Obj{"change": "databaseScopeChange"},
+			"proxmoxKVComboBox[name=dovecot_scope]":  js.Obj{"change": "dovecotScopeChange"},
 			"proxmoxcheckbox[name=expand-archives]":  js.Obj{"change": "expandArchivesChange"},
 		},
 		Methods: map[string]js.Raw{
@@ -109,6 +110,12 @@ var backupJobEdit = js.EditWindow{
 				databaseName.setHidden(value !== "database");
 				if (value !== "database") databaseName.setValue("");
 			`),
+			"dovecotScopeChange": js.Func("field, value", `
+				let dovecotUsername = this.lookup("dovecotUsername");
+				dovecotUsername.setDisabled(value !== "user");
+				dovecotUsername.setHidden(value !== "user");
+				if (value !== "user") dovecotUsername.setValue("");
+			`),
 			"expandArchivesChange": js.Func("field, value", `
 				let on = value === true || value === "true";
 				let expandOptions = this.lookup("expandOptions");
@@ -139,7 +146,11 @@ var backupJobEdit = js.EditWindow{
 						js.Field{XType: "proxmoxtextfield", Label: "Database", Name: "database_name", Reference: "databaseName", AllowBlank: new(false)},
 					)},
 					js.Field{XType: js.XFieldContainer, Reference: "dovecotOptions", Layout: "anchor", Hidden: true, Disabled: true, Items: js.Items(
-						js.Field{XType: "proxmoxtextfield", Label: "Username", Name: "dovecot_username", AllowBlank: new(false), EmptyText: "user@example.com"},
+						js.Field{XType: js.XKVComboBox, Label: "Backup Scope", Name: "dovecot_scope", Reference: "dovecotScope", Value: "user", AllowBlank: new(false),
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Entire server backs up every mailbox user the doveadm API lists, each into its own directory of the snapshot.")}, ComboItems: js.Arr{
+								js.Arr{"user", "Single user"}, js.Arr{"server", "Entire server"},
+							}},
+						js.Field{XType: "proxmoxtextfield", Label: "Username", Name: "dovecot_username", Reference: "dovecotUsername", AllowBlank: new(false), EmptyText: "user@example.com"},
 						js.Field{XType: "proxmoxtextfield", Label: "Mailbox", Name: "dovecot_mailbox", AllowBlank: new(true), EmptyText: "All mailboxes", DeleteEmptyWhenNotCreate: true},
 					)},
 					js.Field{XType: js.XDataStoreSelector, Label: "Local Datastore", Name: "store"},

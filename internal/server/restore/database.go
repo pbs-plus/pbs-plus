@@ -10,6 +10,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/staging"
 )
 
 type taskLineWriter struct {
@@ -52,7 +53,11 @@ func (b *restoreJob) databaseExecute(ctx context.Context) error {
 }
 
 func (b *restoreJob) restoreArchive(ctx context.Context, pattern string) (string, error) {
-	stagingDir, err := os.MkdirTemp("", pattern)
+	return b.restoreArchiveSources(ctx, pattern, []string{"/"})
+}
+
+func (b *restoreJob) restoreArchiveSources(ctx context.Context, pattern string, sources []string) (string, error) {
+	stagingDir, err := os.MkdirTemp(staging.Root(b.job.Store), pattern)
 	if err != nil {
 		return "", fmt.Errorf("create restore staging directory: %w", err)
 	}
@@ -61,7 +66,7 @@ func (b *restoreJob) restoreArchive(ctx context.Context, pattern string) (string
 		return "", fmt.Errorf("secure restore staging directory: %w", err)
 	}
 	b.stagingDir = stagingDir
-	if err := b.startLocalRestore(ctx, stagingDir, []string{"/"}, pxar.RestoreModeNormal); err != nil {
+	if err := b.startLocalRestore(ctx, stagingDir, sources, pxar.RestoreModeNormal); err != nil {
 		return "", err
 	}
 	if err := b.waitForTransfer(ctx); err != nil {
