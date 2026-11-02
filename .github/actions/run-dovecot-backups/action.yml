@@ -67,6 +67,11 @@ runs:
         mail_home = /srv/mail/%{user}
         mail_uid = 1000
         mail_gid = 1000
+        sieve_script personal {
+          driver = file
+          path = ~/sieve
+          active_path = ~/.dovecot.sieve
+        }
         passdb static {
           fields {
             nopassword = yes
@@ -139,9 +144,20 @@ runs:
             chown -R 1000:1000 /srv/mail
           '
         }
+        seed_sieve() {
+          local name=$1 user=$2
+          docker exec -e TEST_USER="$user" "$name" sh -ec '
+            sieve_dir="/srv/mail/$TEST_USER/sieve"
+            mkdir -p "$sieve_dir"
+            printf "require [\"fileinto\"];\nif header :contains \"subject\" \"report\" {\n  fileinto \"Reports\";\n}\n" > "$sieve_dir/e2e-filter.sieve"
+            ln -sf "$sieve_dir/e2e-filter.sieve" "/srv/mail/$TEST_USER/.dovecot.sieve"
+            chown -R 1000:1000 /srv/mail
+          '
+        }
         seed_mail pbs-plus-dovecot-source alice@example.com source-message alice-source-1
         seed_mail pbs-plus-dovecot-source dave@example.com dave-message dave-source-1
         seed_mail pbs-plus-dovecot-destination bob@example.com destination-message bob-dest-1
+        seed_sieve pbs-plus-dovecot-source alice@example.com
         echo "Seeded alice and dave on the source and bob on the destination"
 
         api_post() {
@@ -451,6 +467,17 @@ runs:
         docker exec pbs-plus-dovecot-destination grep -R -F 'destination-message' /srv/mail/bob@example.com >/dev/null
         echo "Additive restore kept bob's existing message and delivered alice's message"
 
+        docker exec pbs-plus-dovecot-destination grep -F 'fileinto' /srv/mail/bob@example.com/sieve/e2e-filter.sieve >/dev/null || {
+          echo "bob is missing alice's restored Sieve script"
+          docker exec pbs-plus-dovecot-destination find /srv/mail/bob@example.com -maxdepth 3 2>/dev/null || true
+          exit 1
+        }
+        docker exec pbs-plus-dovecot-destination test -e /srv/mail/bob@example.com/.dovecot.sieve || {
+          echo "bob's restored Sieve script is not active"
+          exit 1
+        }
+        echo "Restore delivered alice's Sieve script and kept it active"
+
         create_restore \
           --data-urlencode 'id=e2e-dovecot-replace' \
           --data-urlencode 'store=test' \
@@ -503,3 +530,9 @@ runs:
           exit 1
         fi
         echo "Server-scope restore delivered only dave's mail, into the Recovered mailbox"
+
+        docker exec pbs-plus-dovecot-destination grep -F 'fileinto' /srv/mail/bob@example.com/sieve/e2e-filter.sieve >/dev/null || {
+          echo "a later restore removed bob's Sieve script"
+          exit 1
+        }
+        echo "Selective restores left existing Sieve scripts alone"

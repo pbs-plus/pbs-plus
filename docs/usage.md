@@ -192,7 +192,9 @@ Validate the version-specific configuration with `doveconf -n`, verify the liste
 
 Snapshots store each user under `users/<user-directory>/mail`, alongside a `dovecot-manifest.json` mapping directories back to usernames. Snapshots taken by earlier PBS Plus versions keep their single-user layout and still restore.
 
-This target covers mailbox data only. Dovecot configuration, user databases in SQL or LDAP, TLS private keys, Sieve scripts, quota/accounting systems, replication state, and full-host recovery are excluded and must be backed up separately. Additive dsync merge behavior is not a conflict-resolution system; use **Replace Existing** when the destination must match the snapshot exactly.
+Sieve scripts travel with the mailbox. dsync carries them as mailbox attributes, so each user's scripts land in `users/<user-directory>/sieve/scripts` with the active script linked as `sieve/main.sieve`, and a restore puts them back along with the mail, active flag included. Restores that select a destination mailbox or individual messages leave the destination's existing scripts untouched.
+
+This target covers mailbox data only. Dovecot configuration, user databases in SQL or LDAP, TLS private keys, quota/accounting systems, replication state, and full-host recovery are excluded and must be backed up separately. Additive dsync merge behavior is not a conflict-resolution system; use **Replace Existing** when the destination must match the snapshot exactly.
 
 ### Service Backup via Hook Scripts
 
