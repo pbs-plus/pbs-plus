@@ -74,11 +74,12 @@ LDAP targets (including logical Active Directory exports):
 
 Dovecot targets:
 
-1. The server selects Dovecot 2.4 or newer `doveadm` client tools and creates an ephemeral client configuration containing the shared doveadm password, local staging storage, and a private copy of the target CA certificate.
-2. `doveadm backup --no-userdb-lookup -R` pulls one remote user's mailbox data over `tcps:` into a mode-0700 staging directory. An optional mailbox filter narrows the transfer.
-3. The password and CA copy are removed before the staged mail data and manifest enter the normal PBS snapshot pipeline. The original CA file remains on the server.
-4. Restore validates the manifest and staged mail directory, then uses one-way `doveadm sync` (run twice so the first pass can reconcile mailbox GUID state) for additive recovery or `doveadm backup` for replace-existing mirror semantics. The destination user may differ from the source user. Replace requires fresh or empty destination mail storage because Dovecot never allows deleting an existing INBOX; restoring into divergent state fails the task instead of partially applying.
-5. This path preserves mailbox data and metadata only. Dovecot configuration, user databases, TLS keys, Sieve, and host state are outside its scope.
+1. The server selects Dovecot 2.4 or newer `doveadm` client tools and creates an ephemeral client configuration per user, containing the shared doveadm password, local staging storage, and a private copy of the target CA certificate.
+2. Server-scope jobs read the user list from the target's doveadm HTTPS API first, because dsync has no userdb iteration of its own.
+3. `doveadm backup --no-userdb-lookup -R` pulls each user's mailbox data over `tcps:` into `users/<user-directory>/mail` of a mode-0700 staging directory. An optional mailbox filter narrows the transfer. In server scope a user that fails is recorded in the manifest and skipped; in user scope the failure aborts the job.
+4. The password and CA copies are removed before the staged mail data and manifest enter the normal PBS snapshot pipeline. The original CA file remains on the server.
+5. Restore reads the manifest, pulls only the selected user's directory out of the snapshot, then uses one-way `doveadm sync` (run twice so the first pass can reconcile mailbox GUID state) for additive recovery or `doveadm backup` for replace-existing mirror semantics. The destination user may differ from the source user. A destination mailbox or an explicit message list is served by staging a throwaway Maildir holding only the selected mail, which dsync then merges. Replace requires fresh or empty destination mail storage because Dovecot never allows deleting an existing INBOX; restoring into divergent state fails the task instead of partially applying.
+6. This path preserves mailbox data and metadata only. Dovecot configuration, user databases, TLS keys, Sieve, and host state are outside its scope.
 
 S3 targets are backed up by reading the bucket through the `s3fs` virtual filesystem instead of an agent mount.
 
