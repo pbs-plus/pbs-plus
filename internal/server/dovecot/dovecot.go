@@ -305,6 +305,14 @@ func RestoreBackup(ctx context.Context, archiveDir string, target coredb.Target,
 
 func restoreUser(ctx context.Context, archiveDir string, user ManifestUser, target coredb.Target, password string, options RestoreOptions, client Client) error {
 	userDir := UserArchiveDir(archiveDir, user)
+	if user.Dir != "" {
+		if _, err := os.Lstat(userDir); errors.Is(err, fs.ErrNotExist) {
+			flattenedDir := filepath.Join(archiveDir, user.Dir)
+			if _, err := os.Lstat(flattenedDir); err == nil {
+				userDir = flattenedDir
+			}
+		}
+	}
 	mailDir := filepath.Join(userDir, mailDirName)
 	info, err := os.Lstat(mailDir)
 	if err != nil {

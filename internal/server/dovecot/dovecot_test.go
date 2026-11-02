@@ -548,6 +548,44 @@ func TestRestoreBackupLegacyManifest(t *testing.T) {
 	})
 }
 
+func TestRestoreBackupFlattenedUserArchive(t *testing.T) {
+	tempDir := t.TempDir()
+	archiveDir := filepath.Join(tempDir, "archive")
+	user := ManifestUser{Username: "alice@example.com", Dir: UserDirName("alice@example.com")}
+	if err := os.MkdirAll(filepath.Join(archiveDir, user.Dir, mailDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(Manifest{Version: ManifestVersion, Scope: ScopeUser, Users: []ManifestUser{user}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, manifestName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(tempDir, "ca.pem")
+	if err := os.WriteFile(caPath, []byte("test ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(tempDir, "calls.log")
+	t.Setenv("DOVECOT_TEST_LOG", logPath)
+	t.Setenv("DOVECOT_TEST_CONFIG", filepath.Join(tempDir, "dovecot.conf"))
+	program := filepath.Join(tempDir, "doveadm")
+	writeDovecotTestProgram(t, program)
+
+	target := coredb.Target{Type: coredb.TargetTypeDovecot, DatabaseHost: "mail.example.com", DatabasePort: 24245, DatabaseCACertificate: caPath}
+	if err := RestoreBackup(context.Background(), archiveDir, target, "pa55word", RestoreOptions{SourceUsername: user.Username}, Client{Program: program, Version: "2.4.1"}); err != nil {
+		t.Fatal(err)
+	}
+	assertDovecotTestCall(t, readDovecotTestCalls(t, logPath), 0, []string{
+		"USER=alice@example.com",
+		"ARG=-c",
+		"ARG=sync",
+		"ARG=--no-userdb-lookup",
+		"ARG=-1",
+		"ARG=tcps:mail.example.com:24245",
+	})
+}
+
 func TestBuildSelection(t *testing.T) {
 	mailDir := t.TempDir()
 	sentDir := filepath.Join(mailDir, ".Sent", "cur")
