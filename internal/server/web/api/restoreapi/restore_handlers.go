@@ -282,6 +282,8 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 			DovecotSourceUsername:      r.FormValue("dovecot_source_username"),
 			DovecotDestinationUsername: r.FormValue("dovecot_destination_username"),
 			DovecotMailbox:             r.FormValue("dovecot_mailbox"),
+			DovecotDestinationMailbox:  r.FormValue("dovecot_destination_mailbox"),
+			DovecotMessages:            r.FormValue("dovecot_messages"),
 		}
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
@@ -391,6 +393,12 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 			if r.Form.Has("dovecot_mailbox") {
 				restore.DovecotMailbox = r.FormValue("dovecot_mailbox")
 			}
+			if r.Form.Has("dovecot_destination_mailbox") {
+				restore.DovecotDestinationMailbox = r.FormValue("dovecot_destination_mailbox")
+			}
+			if r.Form.Has("dovecot_messages") {
+				restore.DovecotMessages = r.FormValue("dovecot_messages")
+			}
 			if r.Form.Has("replace_existing") {
 				replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing"))
 				if parseErr != nil {
@@ -473,6 +481,10 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.DovecotDestinationUsername = ""
 					case "dovecot_mailbox":
 						restore.DovecotMailbox = ""
+					case "dovecot_destination_mailbox":
+						restore.DovecotDestinationMailbox = ""
+					case "dovecot_messages":
+						restore.DovecotMessages = ""
 					case "replace_existing":
 						restore.ReplaceExisting = false
 					}

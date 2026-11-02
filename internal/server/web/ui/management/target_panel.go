@@ -428,6 +428,7 @@ var targetPanelController = js.ControllerClass{
 					database_variant: node.database_variant,
 					database_default_client_family: node.database_default_client_family,
 					ldap_base_dn: node.ldap_base_dn,
+					dovecot_api_port: node.dovecot_api_port,
 				});
 			}
 			if (node.children && node.children.length > 0) {
