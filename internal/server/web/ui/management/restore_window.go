@@ -51,6 +51,8 @@ var restoreJobEdit = js.EditWindow{
 				snapSelector.setDatastore(value);
 				let pathSel = me.lookup("pathSelector");
 				if (pathSel) pathSel.setDatastore(value);
+				let messageSel = me.lookup("dovecotMessages");
+				if (messageSel) messageSel.setDatastore(value);
 				if (field.isDirty()) {
 					snapSelector.setValue(null);
 				}
@@ -61,6 +63,8 @@ var restoreJobEdit = js.EditWindow{
 				snapSelector.setNamespace(value);
 				let pathSel = me.lookup("pathSelector");
 				if (pathSel) pathSel.setNamespace(value);
+				let messageSel = me.lookup("dovecotMessages");
+				if (messageSel) messageSel.setNamespace(value);
 				if (field.isDirty()) {
 					snapSelector.setValue(null);
 				}
@@ -69,6 +73,10 @@ var restoreJobEdit = js.EditWindow{
 				let pathSel = this.lookup("pathSelector");
 				if (pathSel) {
 					pathSel.setSnapshot(value);
+				}
+				let messageSel = this.lookup("dovecotMessages");
+				if (messageSel) {
+					messageSel.setSnapshot(value);
 				}
 			`),
 			"targetChange": js.Func("field, value", `
@@ -156,9 +164,8 @@ var restoreJobEdit = js.EditWindow{
 						js.Field{XType: "proxmoxtextfield", Label: "Source Mailbox", Name: "dovecot_mailbox", AllowBlank: new(true), EmptyText: "All backed-up mailboxes", DeleteEmptyWhenNotCreate: true},
 						js.Field{XType: "proxmoxtextfield", Label: "Destination Mailbox", Name: "dovecot_destination_mailbox", AllowBlank: new(true), EmptyText: "Same as source", DeleteEmptyWhenNotCreate: true,
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Mailbox the selected mail is delivered into, created when missing. Leave empty to keep the backed-up mailbox.")}},
-						js.Field{XType: js.XTextArea, Label: "Messages", Name: "dovecot_messages", Height: 110, AllowBlank: new(true), DeleteEmptyWhenNotCreate: true,
-							EmptyText: "Newline delimited Maildir paths, for example .Sent/cur/1700000000.M1P2.mail:2,S",
-							AutoEl:    js.Obj{"tag": "div", "data-qtip": js.T("Restores single messages instead of the whole mailbox. Paths are relative to the user's backed-up Maildir.")}},
+						js.Field{XType: "pbsD2DDovecotMessageSelector", Label: "Messages", Reference: "dovecotMessages", Name: "dovecot_messages", AllowBlank: new(true), DeleteEmptyWhenNotCreate: true,
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Restores single messages instead of the whole mailbox. Browse the snapshot or type Maildir paths relative to the user's backed-up Maildir.")}},
 						js.Field{XType: js.XCheckbox, Label: "Replace Existing", Name: "replace_existing", BoxLabel: "Mirror the backup into the destination mailbox", InputValue: "true", UncheckedValue: "false"},
 					)},
 				),
