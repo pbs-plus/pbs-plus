@@ -251,6 +251,7 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 	}
 	backup.Target.DatabaseHost = row.DatabaseHost
 	backup.Target.DatabasePort = int(row.DatabasePort)
+	backup.Target.DovecotAPIPort = int(row.DovecotApiPort)
 	backup.Target.DatabaseUsername = row.DatabaseUsername
 	backup.Target.DatabaseTLSMode = row.DatabaseTlsMode
 	backup.Target.DatabaseCACertificate = row.DatabaseCaCertificate
@@ -612,6 +613,7 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			Exclusions: exclusionsByJob[row.ID]}
 		backup.Target.DatabaseHost = row.DatabaseHost
 		backup.Target.DatabasePort = int(row.DatabasePort)
+		backup.Target.DovecotAPIPort = int(row.DovecotApiPort)
 		backup.Target.DatabaseUsername = row.DatabaseUsername
 		backup.Target.DatabaseTLSMode = row.DatabaseTlsMode
 		backup.Target.DatabaseCACertificate = row.DatabaseCaCertificate

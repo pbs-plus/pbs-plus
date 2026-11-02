@@ -211,6 +211,7 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 	}
 	restore.DestTarget.DatabaseHost = row.DatabaseHost
 	restore.DestTarget.DatabasePort = int(row.DatabasePort)
+	restore.DestTarget.DovecotAPIPort = int(row.DovecotApiPort)
 	restore.DestTarget.DatabaseUsername = row.DatabaseUsername
 	restore.DestTarget.DatabaseTLSMode = row.DatabaseTlsMode
 	restore.DestTarget.DatabaseCACertificate = row.DatabaseCaCertificate
@@ -454,6 +455,7 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 		}
 		restore.DestTarget.DatabaseHost = row.DatabaseHost
 		restore.DestTarget.DatabasePort = int(row.DatabasePort)
+		restore.DestTarget.DovecotAPIPort = int(row.DovecotApiPort)
 		restore.DestTarget.DatabaseUsername = row.DatabaseUsername
 		restore.DestTarget.DatabaseTLSMode = row.DatabaseTlsMode
 		restore.DestTarget.DatabaseCACertificate = row.DatabaseCaCertificate
