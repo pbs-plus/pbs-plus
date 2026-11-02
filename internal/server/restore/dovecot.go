@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
+	"github.com/pbs-plus/pbs-plus/internal/server/staging"
 )
 
 func (b *restoreJob) dovecotExecute(ctx context.Context) error {
@@ -33,6 +34,7 @@ func (b *restoreJob) dovecotExecute(ctx context.Context) error {
 		SourceMailbox:       b.job.DovecotMailbox,
 		DestinationMailbox:  b.job.DovecotDestinationMailbox,
 		Messages:            dovecotMessages(b.job.DovecotMessages),
+		StagingDir:          staging.Root(b.job.Store),
 		ReplaceExisting:     b.job.ReplaceExisting,
 		LogWriter:           taskLineWriter{task: b.task},
 	}, client); err != nil {

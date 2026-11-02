@@ -52,6 +52,7 @@ type RestoreOptions struct {
 	DestinationMailbox  string
 	Messages            []string
 	ReplaceExisting     bool
+	StagingDir          string
 	LogWriter           io.Writer
 }
 
@@ -315,7 +316,7 @@ func restoreUser(ctx context.Context, archiveDir string, user ManifestUser, targ
 
 	mailbox := options.SourceMailbox
 	if len(options.Messages) > 0 || options.DestinationMailbox != "" {
-		selectionRoot, selectedMailbox, err := buildSelection(mailDir, options.SourceMailbox, options.DestinationMailbox, options.Messages)
+		selectionRoot, selectedMailbox, err := buildSelection(options.StagingDir, mailDir, options.SourceMailbox, options.DestinationMailbox, options.Messages)
 		if err != nil {
 			return err
 		}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/database"
+	"github.com/pbs-plus/pbs-plus/internal/server/staging"
 	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
@@ -127,7 +128,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if scope == "" && target.Type == coredb.TargetTypeLDAP {
 			scope = "server"
 		}
-		stagedDump, err := database.StageDump(ctx, "", target, password, database.DumpOptions{
+		stagedDump, err := database.StageDump(ctx, staging.Root(job.Store), target, password, database.DumpOptions{
 			Scope:     scope,
 			Database:  job.DatabaseName,
 			LogWriter: databaseLog,
@@ -161,7 +162,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if _, err := fmt.Fprintf(dovecotLog, "using Dovecot client %s from %s\n", client.Version, client.Program); err != nil {
 			return "", nil, nil, fmt.Errorf("write Dovecot client selection: %w", err)
 		}
-		stagedBackup, err := dovecot.StageBackup(ctx, "", target, password, dovecot.BackupOptions{
+		stagedBackup, err := dovecot.StageBackup(ctx, staging.Root(job.Store), target, password, dovecot.BackupOptions{
 			Scope:     job.DovecotScope,
 			Username:  job.DovecotUsername,
 			Mailbox:   job.DovecotMailbox,

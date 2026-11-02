@@ -560,7 +560,7 @@ func TestBuildSelection(t *testing.T) {
 		}
 	}
 
-	root, mailbox, err := buildSelection(mailDir, "Sent", "Recovered/Sent", []string{".Sent/cur/1700000000.M1.mail:2,S"})
+	root, mailbox, err := buildSelection(t.TempDir(), mailDir, "Sent", "Recovered/Sent", []string{".Sent/cur/1700000000.M1.mail:2,S"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +579,7 @@ func TestBuildSelection(t *testing.T) {
 		t.Fatalf("unselected message was copied: %v", err)
 	}
 
-	whole, mailbox, err := buildSelection(mailDir, "Sent", "Recovered", nil)
+	whole, mailbox, err := buildSelection(t.TempDir(), mailDir, "Sent", "Recovered", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,10 +596,10 @@ func TestBuildSelection(t *testing.T) {
 		t.Fatalf("copied %d messages", len(entries))
 	}
 
-	if _, _, err := buildSelection(mailDir, "Sent", "Recovered", []string{"../../etc/passwd"}); err == nil {
+	if _, _, err := buildSelection(t.TempDir(), mailDir, "Sent", "Recovered", []string{"../../etc/passwd"}); err == nil {
 		t.Fatal("message outside the backup was accepted")
 	}
-	if _, _, err := buildSelection(mailDir, "Trash", "", nil); err == nil {
+	if _, _, err := buildSelection(t.TempDir(), mailDir, "Trash", "", nil); err == nil {
 		t.Fatal("empty mailbox selection was accepted")
 	}
 }

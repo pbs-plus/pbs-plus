@@ -61,7 +61,7 @@ func mailboxFolder(root, mailbox string) string {
 // buildSelection stages the selected messages as a throwaway Maildir holding
 // only the destination mailbox, which dsync then merges into the destination
 // user. It returns the staging root and the mailbox to transfer.
-func buildSelection(mailDir, sourceMailbox, destinationMailbox string, messages []string) (_ string, _ string, err error) {
+func buildSelection(stagingDir, mailDir, sourceMailbox, destinationMailbox string, messages []string) (_ string, _ string, err error) {
 	mailbox := destinationMailbox
 	if mailbox == "" {
 		mailbox = sourceMailbox
@@ -74,7 +74,7 @@ func buildSelection(mailDir, sourceMailbox, destinationMailbox string, messages 
 		return "", "", errors.New("Dovecot message selection matched no messages")
 	}
 
-	root, err := os.MkdirTemp("", ".pbs-plus-dovecot-selection-")
+	root, err := os.MkdirTemp(stagingDir, ".pbs-plus-dovecot-selection-")
 	if err != nil {
 		return "", "", fmt.Errorf("create Dovecot selection directory: %w", err)
 	}
