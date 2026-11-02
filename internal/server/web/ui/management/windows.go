@@ -195,6 +195,8 @@ var windows = []js.Value{
 				targetNameField(), targetKindField("dovecot"),
 				js.Field{XType: js.XProxmoxTextField, Label: "Host", Name: "database_host", AllowBlank: new(false), EmptyText: "mail.example.com"},
 				js.Field{XType: js.XIntegerField, Label: "Port", Name: "database_port", Value: 24245, MinValue: 1, MaxValue: 65535, AllowBlank: new(false)},
+				js.Field{XType: js.XIntegerField, Label: "Doveadm API Port", Name: "dovecot_api_port", MinValue: 0, MaxValue: 65535, AllowBlank: new(true), EmptyText: "Disabled", DeleteEmptyWhenNotCreate: true,
+					AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("HTTPS port of the doveadm API listener. Required for entire-server backups, which read the user list from it.")}},
 				js.Field{XType: js.XProxmoxTextField, Label: "Doveadm Password", Name: "database_password", InputType: "password", AllowBlank: new(true), EmptyText: "Leave blank to keep the current password", CBind: js.Obj{"allowBlank": "{!isCreate}"}},
 			)},
 		),
