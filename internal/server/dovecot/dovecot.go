@@ -18,13 +18,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 )
 
 const (
-	ManifestVersion = 1
+	ManifestVersion = 2
 	manifestName    = "dovecot-manifest.json"
 	mailDirName     = "mail"
+	sieveDirName    = "sieve"
+	usersDirName    = "users"
+
+	ScopeUser   = "user"
+	ScopeServer = "server"
 )
 
 type Client struct {
@@ -33,6 +39,7 @@ type Client struct {
 }
 
 type BackupOptions struct {
+	Scope     string
 	Username  string
 	Mailbox   string
 	LogWriter io.Writer
@@ -41,17 +48,31 @@ type BackupOptions struct {
 type RestoreOptions struct {
 	SourceUsername      string
 	DestinationUsername string
-	Mailbox             string
+	SourceMailbox       string
+	DestinationMailbox  string
+	Messages            []string
 	ReplaceExisting     bool
+	StagingDir          string
 	LogWriter           io.Writer
 }
 
+// ManifestUser maps one backed-up mailbox user to its archive directory.
+// Dir is empty for version 1 archives, which hold a single user at the root.
+type ManifestUser struct {
+	Username string `json:"username"`
+	Dir      string `json:"dir,omitempty"`
+}
+
 type Manifest struct {
-	Version       int       `json:"version"`
-	Username      string    `json:"username"`
-	Mailbox       string    `json:"mailbox,omitempty"`
-	ClientVersion string    `json:"client_version"`
-	CreatedAt     time.Time `json:"created_at"`
+	Version       int            `json:"version"`
+	Scope         string         `json:"scope,omitempty"`
+	Host          string         `json:"host,omitempty"`
+	Username      string         `json:"username,omitempty"`
+	Mailbox       string         `json:"mailbox,omitempty"`
+	Users         []ManifestUser `json:"users,omitempty"`
+	Failed        []string       `json:"failed,omitempty"`
+	ClientVersion string         `json:"client_version"`
+	CreatedAt     time.Time      `json:"created_at"`
 }
 
 type StagedBackup struct {
@@ -118,11 +139,27 @@ func StageBackup(ctx context.Context, parent string, target coredb.Target, passw
 	if err := validateTarget(target, password, client); err != nil {
 		return nil, err
 	}
-	if err := validateUsername(options.Username); err != nil {
+	scope, err := normalizeScope(options.Scope)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateMailbox(options.Mailbox); err != nil {
 		return nil, err
+	}
+
+	usernames := []string{options.Username}
+	if scope == ScopeServer {
+		if usernames, err = ListUsers(ctx, target, password); err != nil {
+			return nil, err
+		}
+		if len(usernames) == 0 {
+			return nil, errors.New("Dovecot target reported no mailbox users")
+		}
+	}
+	for _, username := range usernames {
+		if err := validateUsername(username); err != nil {
+			return nil, err
+		}
 	}
 
 	root, err := os.MkdirTemp(parent, ".pbs-plus-dovecot-")
@@ -139,45 +176,73 @@ func StageBackup(ctx context.Context, parent string, target coredb.Target, passw
 	}
 
 	archiveDir := filepath.Join(root, "archive")
-	mailDir := filepath.Join(archiveDir, mailDirName)
-	sieveDir := filepath.Join(archiveDir, "sieve")
 	secretsDir := filepath.Join(root, "secrets")
-	for _, dir := range []string{archiveDir, mailDir, filepath.Join(sieveDir, "scripts"), secretsDir} {
+	for _, dir := range []string{archiveDir, secretsDir} {
 		if err = os.MkdirAll(dir, 0o700); err != nil {
 			return nil, fmt.Errorf("create Dovecot staging subdirectory: %w", err)
 		}
-	}
-	if err = chownForMail(archiveDir); err != nil {
-		return nil, fmt.Errorf("prepare Dovecot staging permissions: %w", err)
 	}
 	if uid, gid := mailIdentity(); os.Getuid() == 0 && uid != 0 {
 		if err = os.Chown(root, uid, gid); err != nil {
 			return nil, fmt.Errorf("prepare Dovecot staging permissions: %w", err)
 		}
-	}
-	configPath, err := writeClientConfig(secretsDir, mailDir, target.DatabaseCACertificate, password)
-	if err != nil {
-		return nil, err
-	}
-	args := []string{"-c", configPath, "backup", "--no-userdb-lookup"}
-	if options.Mailbox != "" {
-		args = append(args, "-m", options.Mailbox)
-	}
-	args = append(args, "-R", destination(target))
-	if err = run(ctx, client.Program, args, options.Username, options.LogWriter); err != nil {
-		return nil, fmt.Errorf("pull Dovecot mailbox: %w", err)
-	}
-	if err = os.RemoveAll(secretsDir); err != nil {
-		return nil, fmt.Errorf("remove Dovecot backup secrets: %w", err)
+		if err = os.Chown(archiveDir, uid, gid); err != nil {
+			return nil, fmt.Errorf("prepare Dovecot staging permissions: %w", err)
+		}
 	}
 
 	manifest := Manifest{
 		Version:       ManifestVersion,
-		Username:      options.Username,
+		Scope:         scope,
+		Host:          target.DatabaseHost,
 		Mailbox:       options.Mailbox,
 		ClientVersion: client.Version,
 		CreatedAt:     time.Now().UTC(),
 	}
+	for index, username := range usernames {
+		dir := UserDirName(username)
+		userDir := filepath.Join(archiveDir, usersDirName, dir)
+		mailDir := filepath.Join(userDir, mailDirName)
+		userSecretsDir := filepath.Join(secretsDir, strconv.Itoa(index))
+		for _, path := range []string{mailDir, filepath.Join(userDir, sieveDirName, "scripts"), userSecretsDir} {
+			if err = os.MkdirAll(path, 0o700); err != nil {
+				return nil, fmt.Errorf("create Dovecot staging subdirectory: %w", err)
+			}
+		}
+		if err = chownForMail(filepath.Join(archiveDir, usersDirName)); err != nil {
+			return nil, fmt.Errorf("prepare Dovecot staging permissions: %w", err)
+		}
+		var configPath string
+		if configPath, err = writeClientConfig(userSecretsDir, mailDir, target.DatabaseCACertificate, password); err != nil {
+			return nil, err
+		}
+		args := []string{"-c", configPath, "backup", "--no-userdb-lookup"}
+		if options.Mailbox != "" {
+			args = append(args, "-m", options.Mailbox)
+		}
+		args = append(args, "-R", destination(target))
+		if runErr := run(ctx, client.Program, args, username, options.LogWriter); runErr != nil {
+			if scope == ScopeUser || ctx.Err() != nil {
+				err = fmt.Errorf("pull Dovecot mailbox: %w", runErr)
+				return nil, err
+			}
+			logLine(options.LogWriter, fmt.Sprintf("skipping %s: %s", username, runErr))
+			manifest.Failed = append(manifest.Failed, username)
+			if err = os.RemoveAll(userDir); err != nil {
+				return nil, fmt.Errorf("remove failed Dovecot user staging: %w", err)
+			}
+			continue
+		}
+		manifest.Users = append(manifest.Users, ManifestUser{Username: username, Dir: dir})
+	}
+	if err = os.RemoveAll(secretsDir); err != nil {
+		return nil, fmt.Errorf("remove Dovecot backup secrets: %w", err)
+	}
+	if len(manifest.Users) == 0 {
+		err = errors.New("no Dovecot mailbox was backed up")
+		return nil, err
+	}
+
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode Dovecot manifest: %w", err)
@@ -196,29 +261,59 @@ func RestoreBackup(ctx context.Context, archiveDir string, target coredb.Target,
 	if err != nil {
 		return err
 	}
-	if err := validateUsername(options.SourceUsername); err != nil {
-		return fmt.Errorf("source %w", err)
+	if options.SourceUsername != "" {
+		if err := validateUsername(options.SourceUsername); err != nil {
+			return fmt.Errorf("source %w", err)
+		}
 	}
-	if options.SourceUsername != manifest.Username {
-		return errors.New("Dovecot source username does not match the backup manifest")
+	if options.DestinationUsername != "" {
+		if err := validateUsername(options.DestinationUsername); err != nil {
+			return fmt.Errorf("destination %w", err)
+		}
 	}
-	if options.DestinationUsername == "" {
-		options.DestinationUsername = options.SourceUsername
-	}
-	if err := validateUsername(options.DestinationUsername); err != nil {
-		return fmt.Errorf("destination %w", err)
-	}
-	if err := validateMailbox(options.Mailbox); err != nil {
+	if err := validateMailbox(options.SourceMailbox); err != nil {
 		return err
 	}
+	if err := validateMailbox(options.DestinationMailbox); err != nil {
+		return err
+	}
+	selective := len(options.Messages) > 0 || options.DestinationMailbox != ""
+	if options.ReplaceExisting && selective {
+		return errors.New("Dovecot replace-existing cannot select messages or a destination mailbox")
+	}
 	if manifest.Mailbox != "" {
-		if options.Mailbox != "" && options.Mailbox != manifest.Mailbox {
+		if options.SourceMailbox != "" && options.SourceMailbox != manifest.Mailbox {
 			return errors.New("Dovecot mailbox does not match the backup manifest")
 		}
-		options.Mailbox = manifest.Mailbox
+		options.SourceMailbox = manifest.Mailbox
 	}
 
-	mailDir := filepath.Join(archiveDir, mailDirName)
+	users, err := selectManifestUsers(manifest, options.SourceUsername)
+	if err != nil {
+		return err
+	}
+	if len(users) > 1 && (options.DestinationUsername != "" || selective) {
+		return errors.New("Dovecot destination username, destination mailbox and message selection each require one source username")
+	}
+	for _, user := range users {
+		if err := restoreUser(ctx, archiveDir, user, target, password, options, client); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreUser(ctx context.Context, archiveDir string, user ManifestUser, target coredb.Target, password string, options RestoreOptions, client Client) error {
+	userDir := UserArchiveDir(archiveDir, user)
+	if user.Dir != "" {
+		if _, err := os.Lstat(userDir); errors.Is(err, fs.ErrNotExist) {
+			flattenedDir := filepath.Join(archiveDir, user.Dir)
+			if _, err := os.Lstat(flattenedDir); err == nil {
+				userDir = flattenedDir
+			}
+		}
+	}
+	mailDir := filepath.Join(userDir, mailDirName)
 	info, err := os.Lstat(mailDir)
 	if err != nil {
 		return fmt.Errorf("read Dovecot backup mail directory: %w", err)
@@ -226,24 +321,52 @@ func RestoreBackup(ctx context.Context, archiveDir string, target coredb.Target,
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("Dovecot backup mail path is not a directory")
 	}
-	sieveDir := filepath.Join(archiveDir, "sieve")
-	if err := os.MkdirAll(filepath.Join(sieveDir, "scripts"), 0o700); err != nil {
+
+	mailbox := options.SourceMailbox
+	if len(options.Messages) > 0 || options.DestinationMailbox != "" {
+		selectionRoot, selectedMailbox, err := buildSelection(options.StagingDir, mailDir, options.SourceMailbox, options.DestinationMailbox, options.Messages)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			_ = os.RemoveAll(selectionRoot)
+		}()
+		userDir = selectionRoot
+		mailDir = filepath.Join(selectionRoot, mailDirName)
+		mailbox = selectedMailbox
+	}
+
+	if err := os.MkdirAll(filepath.Join(userDir, sieveDirName, "scripts"), 0o700); err != nil {
 		return fmt.Errorf("create Dovecot restore sieve directory: %w", err)
 	}
-	if err := chownForMail(archiveDir); err != nil {
+	archiveInfo, err := os.Stat(archiveDir)
+	if err != nil {
+		return fmt.Errorf("read Dovecot restore staging directory: %w", err)
+	}
+	if err := os.Chmod(archiveDir, archiveInfo.Mode().Perm()|0o111); err != nil {
+		return fmt.Errorf("prepare Dovecot restore staging directory: %w", err)
+	}
+	if err := chownForMail(userDir); err != nil {
 		return fmt.Errorf("prepare Dovecot restore permissions: %w", err)
 	}
 	secretsDir, err := os.MkdirTemp("", ".pbs-plus-dovecot-secrets-")
 	if err != nil {
 		return fmt.Errorf("create Dovecot restore secrets directory: %w", err)
 	}
-	defer os.RemoveAll(secretsDir)
+	defer func() {
+		_ = os.RemoveAll(secretsDir)
+	}()
 	if err := os.Chmod(secretsDir, 0o700); err != nil {
 		return fmt.Errorf("secure Dovecot restore secrets directory: %w", err)
 	}
 	configPath, err := writeClientConfig(secretsDir, mailDir, target.DatabaseCACertificate, password)
 	if err != nil {
 		return err
+	}
+
+	destinationUsername := options.DestinationUsername
+	if destinationUsername == "" {
+		destinationUsername = user.Username
 	}
 	command := "sync"
 	args := []string{"-c", configPath, command, "--no-userdb-lookup", "-1"}
@@ -253,17 +376,30 @@ func RestoreBackup(ctx context.Context, archiveDir string, target coredb.Target,
 		args = []string{"-c", configPath, command, "--no-userdb-lookup"}
 		passes = 1
 	}
-	if options.Mailbox != "" {
-		args = append(args, "-m", options.Mailbox)
+	if mailbox != "" {
+		args = append(args, "-m", mailbox)
 	}
 	args = append(args, destination(target))
 	// mailbox GUID state when the destination mailbox already exists. pi:keep
 	for pass := 0; pass < passes; pass++ {
-		if err := run(ctx, client.Program, args, options.DestinationUsername, options.LogWriter); err != nil {
+		if err := run(ctx, client.Program, args, destinationUsername, options.LogWriter); err != nil {
 			return fmt.Errorf("restore Dovecot mailbox: %w", err)
 		}
 	}
 	return nil
+}
+
+// selectManifestUsers resolves which backed-up users a restore covers.
+func selectManifestUsers(manifest Manifest, username string) ([]ManifestUser, error) {
+	if username == "" {
+		return manifest.Users, nil
+	}
+	for _, user := range manifest.Users {
+		if user.Username == username {
+			return []ManifestUser{user}, nil
+		}
+	}
+	return nil, fmt.Errorf("Dovecot snapshot does not contain user %q", username)
 }
 
 func LoadManifest(archiveDir string) (Manifest, error) {
@@ -275,16 +411,69 @@ func LoadManifest(archiveDir string) (Manifest, error) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode Dovecot manifest: %w", err)
 	}
-	if manifest.Version != ManifestVersion {
+	switch manifest.Version {
+	case 1:
+		if err := validateUsername(manifest.Username); err != nil {
+			return Manifest{}, fmt.Errorf("manifest %w", err)
+		}
+		manifest.Scope = ScopeUser
+		manifest.Users = []ManifestUser{{Username: manifest.Username}}
+	case ManifestVersion:
+		if manifest.Scope == "" {
+			manifest.Scope = ScopeUser
+		}
+		if len(manifest.Users) == 0 {
+			return Manifest{}, errors.New("Dovecot manifest contains no users")
+		}
+		for _, user := range manifest.Users {
+			if err := validateUsername(user.Username); err != nil {
+				return Manifest{}, fmt.Errorf("manifest %w", err)
+			}
+			if err := validateUserDir(user.Dir); err != nil {
+				return Manifest{}, fmt.Errorf("manifest %w", err)
+			}
+		}
+	default:
 		return Manifest{}, fmt.Errorf("unsupported Dovecot manifest version %d", manifest.Version)
-	}
-	if err := validateUsername(manifest.Username); err != nil {
-		return Manifest{}, fmt.Errorf("manifest %w", err)
 	}
 	if err := validateMailbox(manifest.Mailbox); err != nil {
 		return Manifest{}, fmt.Errorf("manifest %w", err)
 	}
 	return manifest, nil
+}
+
+// UserArchiveDir resolves where one user's mail lives inside an archive.
+func UserArchiveDir(archiveDir string, user ManifestUser) string {
+	if user.Dir == "" {
+		return archiveDir
+	}
+	return filepath.Join(archiveDir, usersDirName, user.Dir)
+}
+
+// ArchiveUserPaths lists the snapshot paths holding one user's backup, so a
+// restore pulls that user instead of every mailbox in a server-scope snapshot.
+func ArchiveUserPaths(username string) []string {
+	return []string{"/" + manifestName, "/" + usersDirName + "/" + UserDirName(username)}
+}
+
+func normalizeScope(scope string) (string, error) {
+	switch scope {
+	case "", ScopeUser:
+		return ScopeUser, nil
+	case ScopeServer:
+		return ScopeServer, nil
+	default:
+		return "", fmt.Errorf("invalid Dovecot backup scope %q", scope)
+	}
+}
+
+func logLine(writer io.Writer, line string) {
+	if writer == nil {
+		return
+	}
+	if _, err := fmt.Fprintln(writer, line); err != nil {
+		log.Error(err, "")
+	}
 }
 
 // systemCABundlePaths are the host trust stores used when a target has no CA of its own.
@@ -294,7 +483,9 @@ var systemCABundlePaths = []string{
 	"/etc/ssl/cert.pem",
 }
 
-func writeClientConfig(dir, mailDir, caPath, password string) (string, error) {
+// readCACertificate falls back to the host trust store so a target without its
+// own CA still verifies the remote certificate.
+func readCACertificate(caPath string) ([]byte, error) {
 	if caPath == "" {
 		for _, candidate := range systemCABundlePaths {
 			if _, err := os.Stat(candidate); err == nil {
@@ -303,12 +494,20 @@ func writeClientConfig(dir, mailDir, caPath, password string) (string, error) {
 			}
 		}
 		if caPath == "" {
-			return "", errors.New("Dovecot target has no CA certificate and no system CA bundle was found")
+			return nil, errors.New("Dovecot target has no CA certificate and no system CA bundle was found")
 		}
 	}
 	ca, err := os.ReadFile(caPath)
 	if err != nil {
-		return "", fmt.Errorf("read Dovecot CA certificate: %w", err)
+		return nil, fmt.Errorf("read Dovecot CA certificate: %w", err)
+	}
+	return ca, nil
+}
+
+func writeClientConfig(dir, mailDir, caPath, password string) (string, error) {
+	ca, err := readCACertificate(caPath)
+	if err != nil {
+		return "", err
 	}
 	localCA := filepath.Join(dir, "ca.pem")
 	if err := os.WriteFile(localCA, ca, 0o600); err != nil {

@@ -6,10 +6,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,10 +85,14 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 	root := staged.root
 	t.Cleanup(func() { _ = staged.Cleanup() })
 
-	if staged.Manifest.Version != ManifestVersion || staged.Manifest.Username != "alice@example.com" || staged.Manifest.Mailbox != "Archive" || staged.Manifest.ClientVersion != "2.4.1" || staged.Manifest.CreatedAt.IsZero() {
+	if staged.Manifest.Version != ManifestVersion || staged.Manifest.Scope != ScopeUser || staged.Manifest.Mailbox != "Archive" || staged.Manifest.ClientVersion != "2.4.1" || staged.Manifest.CreatedAt.IsZero() {
 		t.Fatalf("manifest = %#v", staged.Manifest)
 	}
-	if _, err := os.Stat(filepath.Join(staged.ArchiveDir, mailDirName, "message")); err != nil {
+	userDir := UserDirName("alice@example.com")
+	if len(staged.Manifest.Users) != 1 || staged.Manifest.Users[0].Username != "alice@example.com" || staged.Manifest.Users[0].Dir != userDir {
+		t.Fatalf("manifest users = %#v", staged.Manifest.Users)
+	}
+	if _, err := os.Stat(filepath.Join(staged.ArchiveDir, usersDirName, userDir, mailDirName, "message")); err != nil {
 		t.Fatalf("staged mail: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "secrets")); !errors.Is(err, os.ErrNotExist) {
@@ -168,7 +178,7 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 	if err := RestoreBackup(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{SourceUsername: "other@example.com"}, client); err == nil {
 		t.Fatal("source username mismatch succeeded")
 	}
-	if err := RestoreBackup(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{SourceUsername: "alice@example.com", Mailbox: "INBOX"}, client); err == nil {
+	if err := RestoreBackup(context.Background(), staged.ArchiveDir, target, "secret", RestoreOptions{SourceUsername: "alice@example.com", SourceMailbox: "INBOX"}, client); err == nil {
 		t.Fatal("mailbox mismatch succeeded")
 	}
 	if got := len(readDovecotTestCalls(t, logPath)); got != 4 {
@@ -185,7 +195,12 @@ func TestStageBackupAndRestoreBackup(t *testing.T) {
 
 func TestLoadManifestAndRestoreValidation(t *testing.T) {
 	tempDir := t.TempDir()
-	manifest := Manifest{Version: ManifestVersion, Username: "alice@example.com", Mailbox: "Archive"}
+	manifest := Manifest{
+		Version: ManifestVersion,
+		Scope:   ScopeUser,
+		Mailbox: "Archive",
+		Users:   []ManifestUser{{Username: "alice@example.com"}},
+	}
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -201,11 +216,14 @@ func TestLoadManifestAndRestoreValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := coredb.Target{Type: coredb.TargetTypeDovecot, DatabaseHost: "mail.example.com", DatabasePort: 24245, DatabaseCACertificate: caPath}
-	if err := RestoreBackup(context.Background(), tempDir, target, "secret", RestoreOptions{SourceUsername: manifest.Username}, Client{Program: "/bin/false", Version: "2.4.1"}); err == nil || !strings.Contains(err.Error(), "not a directory") {
+	if err := RestoreBackup(context.Background(), tempDir, target, "secret", RestoreOptions{SourceUsername: "alice@example.com"}, Client{Program: "/bin/false", Version: "2.4.1"}); err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Fatalf("symlink restore error = %v", err)
 	}
+	if err := RestoreBackup(context.Background(), tempDir, target, "secret", RestoreOptions{SourceUsername: "carol@example.com"}, Client{Program: "/bin/false", Version: "2.4.1"}); err == nil || !strings.Contains(err.Error(), "does not contain user") {
+		t.Fatalf("unknown user restore error = %v", err)
+	}
 
-	manifest.Version++
+	manifest.Version += 2
 	data, err = json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -370,6 +388,9 @@ for arg do
 	previous=$arg
 done
 cp "$config" "$DOVECOT_TEST_CONFIG"
+if [ -n "${DOVECOT_TEST_FAIL_USER:-}" ] && [ "${DOVECOT_TEST_FAIL_USER}" = "${USER-}" ]; then
+	exit 75
+fi
 if [ "${DOVECOT_TEST_CREATE_MAIL:-}" = "1" ]; then
 	mail_dir=
 	while IFS= read -r line; do
@@ -413,4 +434,276 @@ func assertDovecotTestCall(t *testing.T, calls [][]string, index int, want []str
 	if !slices.Equal(got, want) {
 		t.Fatalf("call %d = %#v, want %#v", index, got, want)
 	}
+}
+
+func TestStageBackupServerScope(t *testing.T) {
+	tempDir := t.TempDir()
+	caPath := filepath.Join(tempDir, "ca.pem")
+	logPath := filepath.Join(tempDir, "calls.log")
+	t.Setenv("DOVECOT_TEST_LOG", logPath)
+	t.Setenv("DOVECOT_TEST_CONFIG", filepath.Join(tempDir, "dovecot.conf"))
+	t.Setenv("DOVECOT_TEST_CREATE_MAIL", "1")
+	t.Setenv("DOVECOT_TEST_FAIL_USER", "carol@example.com")
+
+	program := filepath.Join(tempDir, "doveadm")
+	writeDovecotTestProgram(t, program)
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, ok := r.BasicAuth()
+		if !ok || user != apiUser || password != "pa55word" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if _, err := io.WriteString(w, `[["doveadmResponse",{"alice@example.com":{"uid":"1"},"carol@example.com":{"uid":"2"}},"pbs-plus"]]`); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host, port := splitTestHostPort(t, server.URL)
+	target := coredb.Target{
+		Type:                  coredb.TargetTypeDovecot,
+		DatabaseHost:          host,
+		DatabasePort:          24245,
+		DovecotAPIPort:        port,
+		DatabaseCACertificate: caPath,
+	}
+
+	staged, err := StageBackup(context.Background(), tempDir, target, "pa55word", BackupOptions{Scope: ScopeServer}, Client{Program: program, Version: "2.4.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := staged.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	if staged.Manifest.Scope != ScopeServer || len(staged.Manifest.Users) != 1 || staged.Manifest.Users[0].Username != "alice@example.com" {
+		t.Fatalf("manifest users = %#v", staged.Manifest.Users)
+	}
+	if !slices.Equal(staged.Manifest.Failed, []string{"carol@example.com"}) {
+		t.Fatalf("manifest failed = %#v", staged.Manifest.Failed)
+	}
+	if _, err := os.Stat(filepath.Join(staged.ArchiveDir, usersDirName, UserDirName("alice@example.com"), mailDirName, "message")); err != nil {
+		t.Fatalf("staged mail: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(staged.ArchiveDir, usersDirName, UserDirName("carol@example.com"))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed user staging remains: %v", err)
+	}
+	if _, err := LoadManifest(staged.ArchiveDir); err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+}
+
+func TestStageBackupServerScopeRequiresAPIPort(t *testing.T) {
+	tempDir := t.TempDir()
+	caPath := filepath.Join(tempDir, "ca.pem")
+	if err := os.WriteFile(caPath, []byte("test ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := coredb.Target{Type: coredb.TargetTypeDovecot, DatabaseHost: "mail.example.com", DatabasePort: 24245, DatabaseCACertificate: caPath}
+	_, err := StageBackup(context.Background(), tempDir, target, "pa55word", BackupOptions{Scope: ScopeServer}, Client{Program: "/bin/false", Version: "2.4.1"})
+	if err == nil || !strings.Contains(err.Error(), "doveadm HTTP API port") {
+		t.Fatalf("server scope without API port = %v", err)
+	}
+}
+
+func TestRestoreBackupLegacyManifest(t *testing.T) {
+	tempDir := t.TempDir()
+	archiveDir := filepath.Join(tempDir, "archive")
+	if err := os.MkdirAll(filepath.Join(archiveDir, mailDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(Manifest{Version: 1, Username: "alice@example.com", ClientVersion: "2.4.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, manifestName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(tempDir, "ca.pem")
+	if err := os.WriteFile(caPath, []byte("test ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(tempDir, "calls.log")
+	t.Setenv("DOVECOT_TEST_LOG", logPath)
+	t.Setenv("DOVECOT_TEST_CONFIG", filepath.Join(tempDir, "dovecot.conf"))
+	program := filepath.Join(tempDir, "doveadm")
+	writeDovecotTestProgram(t, program)
+
+	target := coredb.Target{Type: coredb.TargetTypeDovecot, DatabaseHost: "mail.example.com", DatabasePort: 24245, DatabaseCACertificate: caPath}
+	if err := RestoreBackup(context.Background(), archiveDir, target, "pa55word", RestoreOptions{}, Client{Program: program, Version: "2.4.1"}); err != nil {
+		t.Fatal(err)
+	}
+	assertDovecotTestCall(t, readDovecotTestCalls(t, logPath), 0, []string{
+		"USER=alice@example.com",
+		"ARG=-c",
+		"ARG=sync",
+		"ARG=--no-userdb-lookup",
+		"ARG=-1",
+		"ARG=tcps:mail.example.com:24245",
+	})
+}
+
+func TestRestoreBackupFlattenedUserArchive(t *testing.T) {
+	tempDir := t.TempDir()
+	archiveDir := filepath.Join(tempDir, "archive")
+	user := ManifestUser{Username: "alice@example.com", Dir: UserDirName("alice@example.com")}
+	if err := os.MkdirAll(filepath.Join(archiveDir, user.Dir, mailDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(Manifest{Version: ManifestVersion, Scope: ScopeUser, Users: []ManifestUser{user}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archiveDir, manifestName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	caPath := filepath.Join(tempDir, "ca.pem")
+	if err := os.WriteFile(caPath, []byte("test ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(tempDir, "calls.log")
+	t.Setenv("DOVECOT_TEST_LOG", logPath)
+	t.Setenv("DOVECOT_TEST_CONFIG", filepath.Join(tempDir, "dovecot.conf"))
+	program := filepath.Join(tempDir, "doveadm")
+	writeDovecotTestProgram(t, program)
+
+	target := coredb.Target{Type: coredb.TargetTypeDovecot, DatabaseHost: "mail.example.com", DatabasePort: 24245, DatabaseCACertificate: caPath}
+	if err := RestoreBackup(context.Background(), archiveDir, target, "pa55word", RestoreOptions{SourceUsername: user.Username}, Client{Program: program, Version: "2.4.1"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(archiveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 != 0o111 {
+		t.Fatalf("archive mode = %o", info.Mode().Perm())
+	}
+	assertDovecotTestCall(t, readDovecotTestCalls(t, logPath), 0, []string{
+		"USER=alice@example.com",
+		"ARG=-c",
+		"ARG=sync",
+		"ARG=--no-userdb-lookup",
+		"ARG=-1",
+		"ARG=tcps:mail.example.com:24245",
+	})
+}
+
+func TestBuildSelection(t *testing.T) {
+	mailDir := t.TempDir()
+	sentDir := filepath.Join(mailDir, ".Sent", "cur")
+	if err := os.MkdirAll(sentDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"1700000000.M1.mail:2,S", "1700000001.M2.mail:2,S"} {
+		if err := os.WriteFile(filepath.Join(sentDir, name), []byte("body"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	root, mailbox, err := buildSelection(t.TempDir(), mailDir, "Sent", "Recovered/Sent", []string{".Sent/cur/1700000000.M1.mail:2,S"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Error(err)
+		}
+	})
+	if mailbox != "Recovered/Sent" {
+		t.Fatalf("mailbox = %q", mailbox)
+	}
+	if _, err := os.Stat(filepath.Join(root, mailDirName, ".Recovered.Sent", "cur", "1700000000.M1.mail:2,S")); err != nil {
+		t.Fatalf("selected message: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, mailDirName, ".Recovered.Sent", "cur", "1700000001.M2.mail:2,S")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unselected message was copied: %v", err)
+	}
+
+	whole, mailbox, err := buildSelection(t.TempDir(), mailDir, "Sent", "Recovered", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(whole); err != nil {
+			t.Error(err)
+		}
+	})
+	entries, err := os.ReadDir(filepath.Join(whole, mailDirName, ".Recovered", "cur"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("copied %d messages", len(entries))
+	}
+
+	if _, _, err := buildSelection(t.TempDir(), mailDir, "Sent", "Recovered", []string{"../../etc/passwd"}); err == nil {
+		t.Fatal("message outside the backup was accepted")
+	}
+	if _, _, err := buildSelection(t.TempDir(), mailDir, "Trash", "", nil); err == nil {
+		t.Fatal("empty mailbox selection was accepted")
+	}
+}
+
+func TestUserDirName(t *testing.T) {
+	first := UserDirName("alice@example.com")
+	if first != UserDirName("alice@example.com") {
+		t.Fatal("user directory is not deterministic")
+	}
+	if first == UserDirName("bob@example.com") {
+		t.Fatal("different users share a directory")
+	}
+	for _, username := range []string{"../escape", ".hidden", "with space", strings.Repeat("long", 40)} {
+		dir := UserDirName(username)
+		if err := validateUserDir(dir); err != nil {
+			t.Fatalf("UserDirName(%q) = %q: %v", username, dir, err)
+		}
+	}
+}
+
+func TestParseUserList(t *testing.T) {
+	listed, err := parseUserList([]byte(`[["doveadmResponse",{"userList":["alice@example.com","dave@example.com"]},"pbs-plus"]]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(listed, []string{"alice@example.com", "dave@example.com"}) {
+		t.Fatalf("listed users = %#v", listed)
+	}
+
+	keyed, err := parseUserList([]byte(`[["doveadmResponse",{"bob@example.com":{},"alice@example.com":{}},"pbs-plus"]]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(keyed, []string{"alice@example.com", "bob@example.com"}) {
+		t.Fatalf("keyed users = %#v", keyed)
+	}
+
+	rows, err := parseUserList([]byte(`[["doveadmResponse",[{"username":"alice@example.com"},{"username":"alice@example.com"}],"pbs-plus"]]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rows, []string{"alice@example.com"}) {
+		t.Fatalf("row users = %#v", rows)
+	}
+
+	if _, err := parseUserList([]byte(`[["error",{"exitCode":68,"type":"exitCode"},"pbs-plus"]]`)); err == nil {
+		t.Fatal("doveadm error response was accepted")
+	}
+}
+
+func splitTestHostPort(t *testing.T, rawURL string) (string, int) {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed.Hostname(), port
 }

@@ -25,6 +25,16 @@ systemctl restart pbs-plus
 
 The server package bundles `bkf2pxar` (BKF/MTF tape conversion). For the **Snapshots** page (server-managed mounts, mount profiles, compose), also install the `pxar-mount` package: the server launches it at `/usr/bin/pxar-mount` for every mount session.
 
+### Staging directory
+
+Database dumps and Dovecot mailboxes are written to disk before they reach a snapshot, and are read back to disk during a restore. By default that staging goes under `.pbs-plus/staging` inside the job's datastore, which is normally the only filesystem large enough. Set `PBS_PLUS_STAGING_DIR` in `/etc/proxmox-backup/pbs-plus/pbs-plus.env` to stage somewhere else, for example a fast local NVMe when the datastore is on slow or nearly full storage:
+
+```bash
+PBS_PLUS_STAGING_DIR=/var/lib/pbs-plus/staging
+```
+
+The directory is created with mode 0700 on first use. If it cannot be created, or the datastore path cannot be resolved, staging falls back to the system temporary directory and a warning is logged.
+
 ### What it does
 
 - Proxies port 8007, injecting custom JS into the PBS Web UI.

@@ -602,6 +602,18 @@ func applyTargetForm(target *coredb.Target, r *http.Request, create bool) error 
 			target.DatabasePort = parsed
 		}
 	}
+	if create || r.Form.Has("dovecot_api_port") {
+		port := r.FormValue("dovecot_api_port")
+		if port == "" {
+			target.DovecotAPIPort = 0
+		} else {
+			parsed, err := strconv.Atoi(port)
+			if err != nil {
+				return fmt.Errorf("invalid Dovecot API port %q", port)
+			}
+			target.DovecotAPIPort = parsed
+		}
+	}
 	if target.Type == coredb.TargetTypeS3 {
 		return applyS3Form(target, r)
 	}

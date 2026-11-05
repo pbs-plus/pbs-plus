@@ -175,6 +175,9 @@ func normalizeDovecotTarget(target *Target) error {
 	if target.DatabasePort < 1 || target.DatabasePort > 65535 {
 		return fmt.Errorf("invalid Dovecot target port %d", target.DatabasePort)
 	}
+	if target.DovecotAPIPort < 0 || target.DovecotAPIPort > 65535 {
+		return fmt.Errorf("invalid Dovecot target API port %d", target.DovecotAPIPort)
+	}
 	if target.DatabaseDefaultClientDir != "" && !filepath.IsAbs(target.DatabaseDefaultClientDir) {
 		return errors.New("Dovecot target client directory must be absolute")
 	}
@@ -338,6 +341,7 @@ func (db *Store) storeTargetDetails(q *corequery.Queries, target Target) error {
 			TargetName:       target.Name,
 			Host:             target.DatabaseHost,
 			Port:             int64(target.DatabasePort),
+			ApiPort:          int64(target.DovecotAPIPort),
 			CaCertificate:    target.DatabaseCACertificate,
 			DefaultClientDir: target.DatabaseDefaultClientDir,
 		})
@@ -646,6 +650,7 @@ func (db *Store) GetTarget(name string) (Target, error) {
 		DatabaseVariant:          row.DatabaseVariant,
 		DatabaseClientFamily:     row.DatabaseDefaultClientFamily,
 		LdapBaseDN:               row.LdapBaseDn,
+		DovecotAPIPort:           int(row.DovecotApiPort),
 	}
 
 	target.populateInfo()
@@ -829,6 +834,7 @@ func (db *Store) GetAllTargets() ([]Target, error) {
 			DatabaseVariant:          row.DatabaseVariant,
 			DatabaseClientFamily:     row.DatabaseDefaultClientFamily,
 			LdapBaseDN:               row.LdapBaseDn,
+			DovecotAPIPort:           int(row.DovecotApiPort),
 		}
 
 		target.populateInfo()
@@ -982,6 +988,7 @@ type Target struct {
 	DatabaseVariant          string           `json:"database_variant,omitempty"`
 	DatabaseClientFamily     string           `json:"database_default_client_family,omitempty"`
 	LdapBaseDN               string           `json:"ldap_base_dn,omitempty"`
+	DovecotAPIPort           int              `json:"dovecot_api_port,omitempty"`
 }
 
 type AgentHost struct {

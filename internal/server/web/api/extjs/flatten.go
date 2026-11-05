@@ -36,6 +36,7 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 		ExpandMaxEntries: b.ExpandMaxEntries,
 		DatabaseScope:    b.DatabaseScope,
 		DatabaseName:     b.DatabaseName,
+		DovecotScope:     b.DovecotScope,
 		DovecotUsername:  b.DovecotUsername,
 		DovecotMailbox:   b.DovecotMailbox,
 
@@ -126,6 +127,8 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 		DovecotSourceUsername:      r.DovecotSourceUsername,
 		DovecotDestinationUsername: r.DovecotDestinationUsername,
 		DovecotMailbox:             r.DovecotMailbox,
+		DovecotDestinationMailbox:  r.DovecotDestinationMailbox,
+		DovecotMessages:            r.DovecotMessages,
 		ReplaceExisting:            r.ReplaceExisting,
 
 		DestTarget: r.DestTarget.Name,
@@ -338,6 +341,7 @@ func BuildTargetTree(targets []coredb.Target, statuses map[string]application.St
 			DatabaseVariant:          t.DatabaseVariant,
 			DatabaseClientFamily:     t.DatabaseClientFamily,
 			LdapBaseDN:               t.LdapBaseDN,
+			DovecotAPIPort:           t.DovecotAPIPort,
 			Leaf:                     true,
 			IsGroup:                  false,
 		}
@@ -525,6 +529,7 @@ func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 		"expand-max-entries": b.ExpandMaxEntries,
 		"database_scope":     b.DatabaseScope,
 		"database_name":      b.DatabaseName,
+		"dovecot_scope":      b.DovecotScope,
 		"dovecot_username":   b.DovecotUsername,
 		"dovecot_mailbox":    b.DovecotMailbox,
 	}
@@ -552,6 +557,8 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 		"dovecot_source_username":      r.DovecotSourceUsername,
 		"dovecot_destination_username": r.DovecotDestinationUsername,
 		"dovecot_mailbox":              r.DovecotMailbox,
+		"dovecot_destination_mailbox":  r.DovecotDestinationMailbox,
+		"dovecot_messages":             r.DovecotMessages,
 		"replace_existing":             r.ReplaceExisting,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
@@ -590,6 +597,7 @@ type FlatBackup struct {
 	ExpandMaxEntries int    `json:"expand-max-entries"`
 	DatabaseScope    string `json:"database_scope,omitempty"`
 	DatabaseName     string `json:"database_name,omitempty"`
+	DovecotScope     string `json:"dovecot_scope,omitempty"`
 	DovecotUsername  string `json:"dovecot_username,omitempty"`
 	DovecotMailbox   string `json:"dovecot_mailbox,omitempty"`
 
@@ -639,6 +647,8 @@ type FlatRestore struct {
 	DovecotSourceUsername      string `json:"dovecot_source_username,omitempty"`
 	DovecotDestinationUsername string `json:"dovecot_destination_username,omitempty"`
 	DovecotMailbox             string `json:"dovecot_mailbox,omitempty"`
+	DovecotDestinationMailbox  string `json:"dovecot_destination_mailbox,omitempty"`
+	DovecotMessages            string `json:"dovecot_messages,omitempty"`
 	ReplaceExisting            bool   `json:"replace_existing,omitempty"`
 
 	DestTarget string `json:"dest-target"`
@@ -781,4 +791,5 @@ type TargetTreeNode struct {
 	DatabaseVariant          string    `json:"database_variant,omitempty"`
 	DatabaseClientFamily     string    `json:"database_default_client_family,omitempty"`
 	LdapBaseDN               string    `json:"ldap_base_dn,omitempty"`
+	DovecotAPIPort           int       `json:"dovecot_api_port,omitempty"`
 }

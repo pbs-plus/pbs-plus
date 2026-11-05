@@ -121,6 +121,8 @@ SELECT
     COALESCE(dvo.source_username, '') AS dovecot_source_username,
     COALESCE(dvo.destination_username, '') AS dovecot_destination_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
+    COALESCE(dvo.destination_mailbox, '') AS dovecot_destination_mailbox,
+    COALESCE(dvo.messages, '') AS dovecot_messages,
     COALESCE(dvo.replace_existing, 0) AS dovecot_replace_existing,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
@@ -137,6 +139,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
@@ -182,6 +185,8 @@ type GetRestoreRow struct {
 	DovecotSourceUsername       string         `json:"dovecot_source_username"`
 	DovecotDestinationUsername  string         `json:"dovecot_destination_username"`
 	DovecotMailbox              string         `json:"dovecot_mailbox"`
+	DovecotDestinationMailbox   string         `json:"dovecot_destination_mailbox"`
+	DovecotMessages             string         `json:"dovecot_messages"`
 	DovecotReplaceExisting      int64          `json:"dovecot_replace_existing"`
 	Name                        sql.NullString `json:"name"`
 	TargetType                  sql.NullString `json:"target_type"`
@@ -208,6 +213,7 @@ type GetRestoreRow struct {
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
 	LdapBaseDn                  string         `json:"ldap_base_dn"`
+	DovecotApiPort              int64          `json:"dovecot_api_port"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
 	AgentAuth                   sql.NullString `json:"agent_auth"`
@@ -246,6 +252,8 @@ func (q *Queries) GetRestore(ctx context.Context, id string) (GetRestoreRow, err
 		&i.DovecotSourceUsername,
 		&i.DovecotDestinationUsername,
 		&i.DovecotMailbox,
+		&i.DovecotDestinationMailbox,
+		&i.DovecotMessages,
 		&i.DovecotReplaceExisting,
 		&i.Name,
 		&i.TargetType,
@@ -272,6 +280,7 @@ func (q *Queries) GetRestore(ctx context.Context, id string) (GetRestoreRow, err
 		&i.DatabaseVariant,
 		&i.DatabaseDefaultClientFamily,
 		&i.LdapBaseDn,
+		&i.DovecotApiPort,
 		&i.AgentName,
 		&i.AgentIp,
 		&i.AgentAuth,
@@ -295,6 +304,8 @@ SELECT
     COALESCE(dvo.source_username, '') AS dovecot_source_username,
     COALESCE(dvo.destination_username, '') AS dovecot_destination_username,
     COALESCE(dvo.mailbox, '') AS dovecot_mailbox,
+    COALESCE(dvo.destination_mailbox, '') AS dovecot_destination_mailbox,
+    COALESCE(dvo.messages, '') AS dovecot_messages,
     COALESCE(dvo.replace_existing, 0) AS dovecot_replace_existing,
     t.name, t.target_type, t.mount_script,
     COALESCE(f.access, '') AS filesystem_access,
@@ -311,6 +322,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     ah.name as agent_name, ah.ip as agent_ip, ah.auth as agent_auth,
     ah.token_used as agent_token_used, ah.os as agent_os
 FROM restores j
@@ -355,6 +367,8 @@ type ListAllRestoresRow struct {
 	DovecotSourceUsername       string         `json:"dovecot_source_username"`
 	DovecotDestinationUsername  string         `json:"dovecot_destination_username"`
 	DovecotMailbox              string         `json:"dovecot_mailbox"`
+	DovecotDestinationMailbox   string         `json:"dovecot_destination_mailbox"`
+	DovecotMessages             string         `json:"dovecot_messages"`
 	DovecotReplaceExisting      int64          `json:"dovecot_replace_existing"`
 	Name                        sql.NullString `json:"name"`
 	TargetType                  sql.NullString `json:"target_type"`
@@ -381,6 +395,7 @@ type ListAllRestoresRow struct {
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
 	LdapBaseDn                  string         `json:"ldap_base_dn"`
+	DovecotApiPort              int64          `json:"dovecot_api_port"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
 	AgentAuth                   sql.NullString `json:"agent_auth"`
@@ -425,6 +440,8 @@ func (q *Queries) ListAllRestores(ctx context.Context) ([]ListAllRestoresRow, er
 			&i.DovecotSourceUsername,
 			&i.DovecotDestinationUsername,
 			&i.DovecotMailbox,
+			&i.DovecotDestinationMailbox,
+			&i.DovecotMessages,
 			&i.DovecotReplaceExisting,
 			&i.Name,
 			&i.TargetType,
@@ -451,6 +468,7 @@ func (q *Queries) ListAllRestores(ctx context.Context) ([]ListAllRestoresRow, er
 			&i.DatabaseVariant,
 			&i.DatabaseDefaultClientFamily,
 			&i.LdapBaseDn,
+			&i.DovecotApiPort,
 			&i.AgentName,
 			&i.AgentIp,
 			&i.AgentAuth,
@@ -573,12 +591,15 @@ func (q *Queries) UpsertRestoreDatabaseOptions(ctx context.Context, arg UpsertRe
 
 const upsertRestoreDovecotOptions = `-- name: UpsertRestoreDovecotOptions :exec
 INSERT INTO restore_dovecot_options (
-    restore_id, source_username, destination_username, mailbox, replace_existing
-) VALUES (?, ?, ?, ?, ?)
+    restore_id, source_username, destination_username, mailbox,
+    destination_mailbox, messages, replace_existing
+) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(restore_id) DO UPDATE SET
     source_username = excluded.source_username,
     destination_username = excluded.destination_username,
     mailbox = excluded.mailbox,
+    destination_mailbox = excluded.destination_mailbox,
+    messages = excluded.messages,
     replace_existing = excluded.replace_existing
 `
 
@@ -587,6 +608,8 @@ type UpsertRestoreDovecotOptionsParams struct {
 	SourceUsername      string `json:"source_username"`
 	DestinationUsername string `json:"destination_username"`
 	Mailbox             string `json:"mailbox"`
+	DestinationMailbox  string `json:"destination_mailbox"`
+	Messages            string `json:"messages"`
 	ReplaceExisting     int64  `json:"replace_existing"`
 }
 
@@ -596,6 +619,8 @@ func (q *Queries) UpsertRestoreDovecotOptions(ctx context.Context, arg UpsertRes
 		arg.SourceUsername,
 		arg.DestinationUsername,
 		arg.Mailbox,
+		arg.DestinationMailbox,
+		arg.Messages,
 		arg.ReplaceExisting,
 	)
 	return err

@@ -20,8 +20,32 @@ runs:
 
         create_server() {
           local name=$1 hostname=$2
-          local dir="$workdir/$name"
+          shift 2
+          local dir="$workdir/$name" userdb_block http_listener=
           mkdir -p "$dir/certs" "$dir/private" "$dir/mail"
+          userdb_block='userdb static {
+          allow_all_users = yes
+          fields {
+            uid = 1000
+            gid = 1000
+            home = /srv/mail/%{user}
+          }
+        }'
+          if (($# > 0)); then
+            printf '%s:::::\n' "$@" > "$dir/users"
+            userdb_block='userdb passwd-file {
+          passwd_file_path = /etc/dovecot/users
+          fields {
+            uid = 1000
+            gid = 1000
+            home = /srv/mail/%{user}
+          }
+        }'
+            http_listener='  inet_listener http {
+            port = 24280
+            ssl = yes
+          }'
+          fi
           openssl req -x509 -newkey rsa:2048 -nodes \
             -keyout "$dir/private/server.key" \
             -out "$dir/certs/server.pem" \
@@ -43,24 +67,23 @@ runs:
         mail_home = /srv/mail/%{user}
         mail_uid = 1000
         mail_gid = 1000
+        sieve_script personal {
+          driver = file
+          path = ~/sieve
+          active_path = ~/.dovecot.sieve
+        }
         passdb static {
           fields {
             nopassword = yes
           }
         }
-        userdb static {
-          allow_all_users = yes
-          fields {
-            uid = 1000
-            gid = 1000
-            home = /srv/mail/%{user}
-          }
-        }
+        $userdb_block
         service doveadm {
           inet_listener doveadm {
             port = 24245
             ssl = yes
           }
+        $http_listener
         }
         doveadm_password = $doveadm_password
         ssl_server {
@@ -68,7 +91,12 @@ runs:
           key_file = /etc/dovecot/private/server.key
         }
         EOF
+          local users_mount=()
+          if [[ -f "$dir/users" ]]; then
+            users_mount=(-v "$dir/users:/etc/dovecot/users:ro")
+          fi
           docker run -d --name "$name" --network pbs-plus-test \
+            "${users_mount[@]}" \
             -v "$dir/dovecot.conf:/etc/dovecot/dovecot.conf:ro" \
             -v "$dir/certs:/etc/dovecot/certs:ro" \
             -v "$dir/private:/etc/dovecot/private:ro" \
@@ -77,7 +105,7 @@ runs:
             pbs-plus:test -F -c /etc/dovecot/dovecot.conf >/dev/null
         }
 
-        create_server pbs-plus-dovecot-source pbs-plus-dovecot-source
+        create_server pbs-plus-dovecot-source pbs-plus-dovecot-source alice@example.com dave@example.com
         create_server pbs-plus-dovecot-destination pbs-plus-dovecot-destination
 
         copy_ca() {
@@ -116,9 +144,21 @@ runs:
             chown -R 1000:1000 /srv/mail
           '
         }
+        seed_sieve() {
+          local name=$1 user=$2
+          docker exec -e TEST_USER="$user" "$name" sh -ec '
+            sieve_dir="/srv/mail/$TEST_USER/sieve"
+            mkdir -p "$sieve_dir"
+            printf "require [\"fileinto\"];\nif header :contains \"subject\" \"report\" {\n  fileinto \"Reports\";\n}\n" > "$sieve_dir/e2e-filter.sieve"
+            ln -sf "$sieve_dir/e2e-filter.sieve" "/srv/mail/$TEST_USER/.dovecot.sieve"
+            chown -R 1000:1000 /srv/mail
+          '
+        }
         seed_mail pbs-plus-dovecot-source alice@example.com source-message alice-source-1
+        seed_mail pbs-plus-dovecot-source dave@example.com dave-message dave-source-1
         seed_mail pbs-plus-dovecot-destination bob@example.com destination-message bob-dest-1
-        echo "Seeded alice on the source and bob on the destination"
+        seed_sieve pbs-plus-dovecot-source alice@example.com
+        echo "Seeded alice and dave on the source and bob on the destination"
 
         api_post() {
           local path=$1
@@ -141,6 +181,7 @@ runs:
           --data-urlencode 'target_type=dovecot' \
           --data-urlencode 'database_host=pbs-plus-dovecot-source' \
           --data-urlencode 'database_port=24245' \
+          --data-urlencode 'dovecot_api_port=24280' \
           --data-urlencode "database_password=$doveadm_password" \
           --data-urlencode 'database_ca_certificate=/tmp/source-ca.pem' \
           --data-urlencode 'database_default_client_dir=/usr/bin'
@@ -154,26 +195,39 @@ runs:
           --data-urlencode 'database_default_client_dir=/usr/bin'
         echo "Created Dovecot targets"
 
-        response=$(api_post '/api2/extjs/config/disk-backup' \
+        create_backup() {
+          local response
+          response=$(api_post '/api2/extjs/config/disk-backup' \
+            --data-urlencode 'target=e2e-dovecot-source' \
+            --data-urlencode 'store=test' \
+            --data-urlencode 'ns=dovecot-e2e' \
+            --data-urlencode 'dovecot_mailbox=' \
+            --data-urlencode 'schedule=' \
+            --data-urlencode 'retry=' \
+            --data-urlencode 'retry-interval=' \
+            --data-urlencode 'max-dir-entries=' \
+            --data-urlencode 'mode=' \
+            --data-urlencode 'sourcemode=' \
+            --data-urlencode 'readmode=' \
+            --data-urlencode 'include-xattr=' \
+            --data-urlencode 'comment=' \
+            --data-urlencode 'rawexclusions=' \
+            --data-urlencode 'pre_script=' \
+            --data-urlencode 'post_script=' "$@")
+          jq -e '.success == true' <<<"$response" >/dev/null || {
+            echo "Backup job creation failed: $response"
+            return 1
+          }
+        }
+
+        create_backup \
           --data-urlencode 'id=e2e-dovecot-backup' \
-          --data-urlencode 'target=e2e-dovecot-source' \
-          --data-urlencode 'store=test' \
-          --data-urlencode 'ns=dovecot-e2e' \
-          --data-urlencode 'dovecot_username=alice@example.com' \
-          --data-urlencode 'dovecot_mailbox=' \
-          --data-urlencode 'schedule=' \
-          --data-urlencode 'retry=' \
-          --data-urlencode 'retry-interval=' \
-          --data-urlencode 'max-dir-entries=' \
-          --data-urlencode 'mode=' \
-          --data-urlencode 'sourcemode=' \
-          --data-urlencode 'readmode=' \
-          --data-urlencode 'include-xattr=' \
-          --data-urlencode 'comment=' \
-          --data-urlencode 'rawexclusions=' \
-          --data-urlencode 'pre_script=' \
-          --data-urlencode 'post_script=')
-        jq -e '.success == true' <<<"$response" >/dev/null
+          --data-urlencode 'dovecot_scope=user' \
+          --data-urlencode 'dovecot_username=alice@example.com'
+        create_backup \
+          --data-urlencode 'id=e2e-dovecot-server-backup' \
+          --data-urlencode 'dovecot_scope=server' \
+          --data-urlencode 'dovecot_username='
 
         start_job() {
           local job_id=$1 encoded response
@@ -233,6 +287,8 @@ runs:
 
         start_job 'e2e-dovecot-backup'
         wait_for_backup 'e2e-dovecot-backup'
+        start_job 'e2e-dovecot-server-backup'
+        wait_for_backup 'e2e-dovecot-server-backup'
 
     - name: Verify Dovecot backup task logs
       shell: bash
@@ -297,6 +353,7 @@ runs:
         }
 
         verify_backup_task 'e2e-dovecot-backup'
+        verify_backup_task 'e2e-dovecot-server-backup'
 
     - name: Run Dovecot restore tests
       shell: bash
@@ -317,15 +374,15 @@ runs:
         }
 
         latest_snapshot() {
-          local snap_time snap_ts
-          snap_time=$(docker exec pbs-plus-test sh -ec \
-            'ls /mnt/test/ns/dovecot-e2e/host/e2e-dovecot-backup/ | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" | sort | tail -1')
+          local job_id=$1 snap_time snap_ts
+          snap_time=$(docker exec -e JOB_ID="$job_id" pbs-plus-test sh -ec \
+            'ls "/mnt/test/ns/dovecot-e2e/host/$JOB_ID/" | grep -E "^[0-9]{4}-[0-9]{2}-[0-9]{2}T" | sort | tail -1')
           if [[ -z "$snap_time" ]]; then
-            echo "No snapshot found for e2e-dovecot-backup" >&2
+            echo "No snapshot found for $job_id" >&2
             return 1
           fi
           snap_ts=$(docker exec -e SNAP_TIME="$snap_time" pbs-plus-test date -d "$snap_time" +%s)
-          printf 'host/e2e-dovecot-backup/%s' "$snap_ts"
+          printf 'host/%s/%s' "$job_id" "$snap_ts"
         }
 
         create_restore() {
@@ -385,7 +442,7 @@ runs:
           echo "$user has the restored source message"
         }
 
-        snapshot=$(latest_snapshot)
+        snapshot=$(latest_snapshot e2e-dovecot-backup)
         echo "Restoring from snapshot $snapshot"
 
         create_restore \
@@ -410,6 +467,17 @@ runs:
         docker exec pbs-plus-dovecot-destination grep -R -F 'destination-message' /srv/mail/bob@example.com >/dev/null
         echo "Additive restore kept bob's existing message and delivered alice's message"
 
+        docker exec pbs-plus-dovecot-destination grep -F 'fileinto' /srv/mail/bob@example.com/sieve/e2e-filter.sieve >/dev/null || {
+          echo "bob is missing alice's restored Sieve script"
+          docker exec pbs-plus-dovecot-destination find /srv/mail/bob@example.com -maxdepth 3 2>/dev/null || true
+          exit 1
+        }
+        docker exec pbs-plus-dovecot-destination test -e /srv/mail/bob@example.com/.dovecot.sieve || {
+          echo "bob's restored Sieve script is not active"
+          exit 1
+        }
+        echo "Restore delivered alice's Sieve script and kept it active"
+
         create_restore \
           --data-urlencode 'id=e2e-dovecot-replace' \
           --data-urlencode 'store=test' \
@@ -429,3 +497,42 @@ runs:
         wait_for_restore 'e2e-dovecot-replace'
 
         verify_mailbox carol@example.com
+
+        server_snapshot=$(latest_snapshot e2e-dovecot-server-backup)
+        echo "Restoring one user out of server snapshot $server_snapshot"
+
+        create_restore \
+          --data-urlencode 'id=e2e-dovecot-server-restore' \
+          --data-urlencode 'store=test' \
+          --data-urlencode 'ns=dovecot-e2e' \
+          --data-urlencode "snapshot=$server_snapshot" \
+          --data-urlencode 'src-path=/' \
+          --data-urlencode 'dest-target=e2e-dovecot-destination' \
+          --data-urlencode 'dest-subpath=' \
+          --data-urlencode 'dovecot_source_username=dave@example.com' \
+          --data-urlencode 'dovecot_destination_username=erin@example.com' \
+          --data-urlencode 'dovecot_mailbox=' \
+          --data-urlencode 'dovecot_destination_mailbox=Recovered' \
+          --data-urlencode 'replace_existing=false' \
+          --data-urlencode 'comment=' \
+          --data-urlencode 'pre_script=' \
+          --data-urlencode 'post_script='
+        start_restore 'e2e-dovecot-server-restore'
+        wait_for_restore 'e2e-dovecot-server-restore'
+
+        docker exec pbs-plus-dovecot-destination grep -R -F 'dave-message' /srv/mail/erin@example.com/Maildir/.Recovered >/dev/null || {
+          echo "erin is missing dave's message in the Recovered mailbox"
+          docker exec pbs-plus-dovecot-destination find /srv/mail/erin@example.com -maxdepth 4 -type f 2>/dev/null || true
+          exit 1
+        }
+        if docker exec pbs-plus-dovecot-destination grep -R -F 'source-message' /srv/mail/erin@example.com >/dev/null 2>&1; then
+          echo "erin received alice's mail from the server-scope snapshot"
+          exit 1
+        fi
+        echo "Server-scope restore delivered only dave's mail, into the Recovered mailbox"
+
+        docker exec pbs-plus-dovecot-destination grep -F 'fileinto' /srv/mail/bob@example.com/sieve/e2e-filter.sieve >/dev/null || {
+          echo "a later restore removed bob's Sieve script"
+          exit 1
+        }
+        echo "Selective restores left existing Sieve scripts alone"

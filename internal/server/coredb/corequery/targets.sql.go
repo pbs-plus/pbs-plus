@@ -109,6 +109,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     COUNT(j.id) AS job_count,
     ah.name AS agent_name, ah.ip AS agent_ip, ah.auth AS agent_auth,
     ah.token_used AS agent_token_used, ah.os AS agent_os
@@ -151,6 +152,7 @@ type GetTargetRow struct {
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
 	LdapBaseDn                  string         `json:"ldap_base_dn"`
+	DovecotApiPort              int64          `json:"dovecot_api_port"`
 	JobCount                    int64          `json:"job_count"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
@@ -188,6 +190,7 @@ func (q *Queries) GetTarget(ctx context.Context, name string) (GetTargetRow, err
 		&i.DatabaseVariant,
 		&i.DatabaseDefaultClientFamily,
 		&i.LdapBaseDn,
+		&i.DovecotApiPort,
 		&i.JobCount,
 		&i.AgentName,
 		&i.AgentIp,
@@ -270,6 +273,7 @@ SELECT
     COALESCE(m.variant, '') AS database_variant,
     COALESCE(m.default_client_family, '') AS database_default_client_family,
     COALESCE(l.base_dn, '') AS ldap_base_dn,
+    COALESCE(d.api_port, 0) AS dovecot_api_port,
     COUNT(j.id) AS job_count,
     ah.name AS agent_name, ah.ip AS agent_ip, ah.auth AS agent_auth,
     ah.token_used AS agent_token_used, ah.os AS agent_os
@@ -291,7 +295,7 @@ GROUP BY t.name, t.target_type, t.mount_script, f.access, f.path, s.url,
          p.ssl_mode, m.tls_mode, l.tls_mode,
          p.ca_certificate, m.ca_certificate, l.ca_certificate, d.ca_certificate,
          p.default_client_dir, m.default_client_dir, l.default_client_dir, d.default_client_dir,
-         m.variant, m.default_client_family, l.base_dn,
+         m.variant, m.default_client_family, l.base_dn, d.api_port,
          ah.name, ah.ip, ah.auth, ah.token_used, ah.os
 ORDER BY t.name
 `
@@ -322,6 +326,7 @@ type ListAllTargetsRow struct {
 	DatabaseVariant             string         `json:"database_variant"`
 	DatabaseDefaultClientFamily string         `json:"database_default_client_family"`
 	LdapBaseDn                  string         `json:"ldap_base_dn"`
+	DovecotApiPort              int64          `json:"dovecot_api_port"`
 	JobCount                    int64          `json:"job_count"`
 	AgentName                   sql.NullString `json:"agent_name"`
 	AgentIp                     sql.NullString `json:"agent_ip"`
@@ -365,6 +370,7 @@ func (q *Queries) ListAllTargets(ctx context.Context) ([]ListAllTargetsRow, erro
 			&i.DatabaseVariant,
 			&i.DatabaseDefaultClientFamily,
 			&i.LdapBaseDn,
+			&i.DovecotApiPort,
 			&i.JobCount,
 			&i.AgentName,
 			&i.AgentIp,
@@ -604,11 +610,12 @@ func (q *Queries) UpsertTarget(ctx context.Context, arg UpsertTargetParams) erro
 
 const upsertTargetDovecot = `-- name: UpsertTargetDovecot :exec
 INSERT INTO target_dovecot (
-    target_name, host, port, ca_certificate, default_client_dir
-) VALUES (?, ?, ?, ?, ?)
+    target_name, host, port, api_port, ca_certificate, default_client_dir
+) VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(target_name) DO UPDATE SET
     host = excluded.host,
     port = excluded.port,
+    api_port = excluded.api_port,
     ca_certificate = excluded.ca_certificate,
     default_client_dir = excluded.default_client_dir
 `
@@ -617,6 +624,7 @@ type UpsertTargetDovecotParams struct {
 	TargetName       string `json:"target_name"`
 	Host             string `json:"host"`
 	Port             int64  `json:"port"`
+	ApiPort          int64  `json:"api_port"`
 	CaCertificate    string `json:"ca_certificate"`
 	DefaultClientDir string `json:"default_client_dir"`
 }
@@ -626,6 +634,7 @@ func (q *Queries) UpsertTargetDovecot(ctx context.Context, arg UpsertTargetDovec
 		arg.TargetName,
 		arg.Host,
 		arg.Port,
+		arg.ApiPort,
 		arg.CaCertificate,
 		arg.DefaultClientDir,
 	)

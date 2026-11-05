@@ -16,6 +16,6 @@ func Definitions() []js.Value {
 	items = append(items, alertsPanel, alertEditWindow)
 	items = append(items, notificationTabs, restoreModesStore, restoreJobEdit)
 	items = append(items, backupModeStores, backupJobEdit, notificationBatchEdit)
-	items = append(items, pathBrowserWindow)
+	items = append(items, pathBrowserWindow, dovecotMessageBrowser, dovecotMessageSelector)
 	return items
 }

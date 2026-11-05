@@ -338,6 +338,7 @@ func TestDovecotTargetAndJobOptionsPersistence(t *testing.T) {
 		Name:                     "mail",
 		Type:                     TargetTypeDovecot,
 		DatabaseHost:             "mail.example.com",
+		DovecotAPIPort:           24280,
 		DatabaseCACertificate:    "/etc/ssl/dovecot-ca.pem",
 		DatabaseDefaultClientDir: "/usr/bin",
 	}
@@ -348,7 +349,7 @@ func TestDovecotTargetAndJobOptionsPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !gotTarget.IsDovecot() || gotTarget.IsDatabase() || gotTarget.DatabaseHost != target.DatabaseHost || gotTarget.DatabasePort != 24245 || gotTarget.DatabaseCACertificate != target.DatabaseCACertificate || gotTarget.DatabaseDefaultClientDir != target.DatabaseDefaultClientDir {
+	if !gotTarget.IsDovecot() || gotTarget.IsDatabase() || gotTarget.DatabaseHost != target.DatabaseHost || gotTarget.DatabasePort != 24245 || gotTarget.DovecotAPIPort != target.DovecotAPIPort || gotTarget.DatabaseCACertificate != target.DatabaseCACertificate || gotTarget.DatabaseDefaultClientDir != target.DatabaseDefaultClientDir {
 		t.Errorf("Dovecot target = %#v", gotTarget)
 	}
 
@@ -384,14 +385,14 @@ func TestDovecotTargetAndJobOptionsPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotBackup.DovecotUsername != backup.DovecotUsername || gotBackup.DovecotMailbox != backup.DovecotMailbox || !gotBackup.Target.IsDovecot() || gotBackup.Target.DatabasePort != 24245 {
+	if gotBackup.DovecotUsername != backup.DovecotUsername || gotBackup.DovecotMailbox != backup.DovecotMailbox || !gotBackup.Target.IsDovecot() || gotBackup.Target.DatabasePort != 24245 || gotBackup.Target.DovecotAPIPort != target.DovecotAPIPort {
 		t.Errorf("Dovecot backup = %#v", gotBackup)
 	}
 	backups, err := db.GetAllBackups()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(backups) != 1 || backups[0].DovecotUsername != backup.DovecotUsername || backups[0].DovecotMailbox != backup.DovecotMailbox {
+	if len(backups) != 1 || backups[0].DovecotUsername != backup.DovecotUsername || backups[0].DovecotMailbox != backup.DovecotMailbox || backups[0].Target.DovecotAPIPort != target.DovecotAPIPort {
 		t.Errorf("Dovecot backup list = %#v", backups)
 	}
 
@@ -411,14 +412,14 @@ func TestDovecotTargetAndJobOptionsPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotRestore.DovecotSourceUsername != restore.DovecotSourceUsername || gotRestore.DovecotDestinationUsername != restore.DovecotSourceUsername || gotRestore.DovecotMailbox != restore.DovecotMailbox || !gotRestore.ReplaceExisting || !gotRestore.DestTarget.IsDovecot() {
+	if gotRestore.DovecotSourceUsername != restore.DovecotSourceUsername || gotRestore.DovecotDestinationUsername != restore.DovecotSourceUsername || gotRestore.DovecotMailbox != restore.DovecotMailbox || !gotRestore.ReplaceExisting || !gotRestore.DestTarget.IsDovecot() || gotRestore.DestTarget.DovecotAPIPort != target.DovecotAPIPort {
 		t.Errorf("Dovecot restore = %#v", gotRestore)
 	}
 	restores, err := db.GetAllRestores()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(restores) != 1 || restores[0].DovecotDestinationUsername != restore.DovecotSourceUsername || !restores[0].ReplaceExisting {
+	if len(restores) != 1 || restores[0].DovecotDestinationUsername != restore.DovecotSourceUsername || !restores[0].ReplaceExisting || restores[0].DestTarget.DovecotAPIPort != target.DovecotAPIPort {
 		t.Errorf("Dovecot restore list = %#v", restores)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/dovecot"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/staging"
 )
 
 type taskLogWriter struct {
@@ -127,7 +128,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if scope == "" && target.Type == coredb.TargetTypeLDAP {
 			scope = "server"
 		}
-		stagedDump, err := database.StageDump(ctx, "", target, password, database.DumpOptions{
+		stagedDump, err := database.StageDump(ctx, staging.Root(job.Store), target, password, database.DumpOptions{
 			Scope:     scope,
 			Database:  job.DatabaseName,
 			LogWriter: databaseLog,
@@ -161,7 +162,8 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		if _, err := fmt.Fprintf(dovecotLog, "using Dovecot client %s from %s\n", client.Version, client.Program); err != nil {
 			return "", nil, nil, fmt.Errorf("write Dovecot client selection: %w", err)
 		}
-		stagedBackup, err := dovecot.StageBackup(ctx, "", target, password, dovecot.BackupOptions{
+		stagedBackup, err := dovecot.StageBackup(ctx, staging.Root(job.Store), target, password, dovecot.BackupOptions{
+			Scope:     job.DovecotScope,
 			Username:  job.DovecotUsername,
 			Mailbox:   job.DovecotMailbox,
 			LogWriter: dovecotLog,
@@ -173,6 +175,9 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		b.stagedDovecot = stagedBackup
 		b.mu.Unlock()
 		srcPath = stagedBackup.ArchiveDir
+		if len(stagedBackup.Manifest.Failed) > 0 {
+			b.logger.Warn("Dovecot backup skipped failed users", "users", stagedBackup.Manifest.Failed)
+		}
 	} else if target.IsAgent() {
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer timedCtxCancel()
