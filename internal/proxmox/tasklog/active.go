@@ -5,10 +5,12 @@ package tasklog
 import (
 	"bufio"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,7 +27,14 @@ var (
 	lockPath    = conf.TaskLogsBasePath + "/.active.lock"
 )
 
-const lockTimeout = 15 * time.Second
+const (
+	lockTimeout = 60 * time.Second
+	lockPollMin = 2 * time.Millisecond
+	lockPollMax = 50 * time.Millisecond
+)
+
+// taskListMu keeps our goroutines off the non-blocking flock in turn, since starving there failed job starts.
+var taskListMu sync.RWMutex
 
 // UseTaskDir redirects all task-log paths to dir and returns a restore func
 // for tests outside this package (the path vars are package-private).
@@ -39,7 +48,26 @@ func UseTaskDir(dir string) func() {
 
 // taskListLock is PBS's TaskListLockGuard: an flock on tasks/.active.lock
 // held for the duration of a task-list read or update.
-type taskListLock struct{ f *os.File }
+type taskListLock struct {
+	f         *os.File
+	exclusive bool
+}
+
+func lockProcess(exclusive bool) {
+	if exclusive {
+		taskListMu.Lock()
+		return
+	}
+	taskListMu.RLock()
+}
+
+func unlockProcess(exclusive bool) {
+	if exclusive {
+		taskListMu.Unlock()
+		return
+	}
+	taskListMu.RUnlock()
+}
 
 func lockTaskList(exclusive bool) (*taskListLock, error) {
 	// PBS's init_worker_tasks creates the task dir before anyone touches
@@ -51,14 +79,18 @@ func lockTaskList(exclusive bool) (*taskListLock, error) {
 		return nil, err
 	}
 
+	lockProcess(exclusive)
+
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0660)
 	if err != nil {
+		unlockProcess(exclusive)
 		return nil, fmt.Errorf("tasklog: open task list lock: %w", err)
 	}
 	if err := proxmox.ChownBackupUser(lockPath); err != nil {
 		if cerr := f.Close(); cerr != nil {
 			slog.Error(cerr.Error())
 		}
+		unlockProcess(exclusive)
 		return nil, err
 	}
 
@@ -67,18 +99,23 @@ func lockTaskList(exclusive bool) (*taskListLock, error) {
 		how = syscall.LOCK_EX
 	}
 	deadline := time.Now().Add(lockTimeout)
+	backoff := lockPollMin
 	for {
 		err = syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB)
 		if err == nil {
-			return &taskListLock{f: f}, nil
+			return &taskListLock{f: f, exclusive: exclusive}, nil
 		}
 		if time.Now().After(deadline) {
 			if cerr := f.Close(); cerr != nil {
 				slog.Error(cerr.Error())
 			}
+			unlockProcess(exclusive)
 			return nil, fmt.Errorf("tasklog: acquire task list lock: %w", err)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(backoff/2 + rand.N(backoff/2+1))
+		if backoff < lockPollMax {
+			backoff *= 2
+		}
 	}
 }
 
@@ -89,7 +126,31 @@ func (l *taskListLock) Close() {
 	if err := l.f.Close(); err != nil {
 		slog.Error("tasklog: close task list lock", "error", err)
 	}
+	unlockProcess(l.exclusive)
 }
+
+func dropFromActiveTasks(upid string) error {
+	lock, err := lockTaskList(true)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+
+	active, err := readTaskFile(activeTasks)
+	if err != nil {
+		return err
+	}
+	kept := active[:0]
+	for _, info := range active {
+		if info.UPID != upid {
+			kept = append(kept, info)
+		}
+	}
+	return writeTaskList(activeTasks, renderTaskList(kept), 0660)
+}
+
+// writeTaskList is a hook tests replace to simulate a failed rewrite.
+var writeTaskList = replaceFile
 
 func readTaskFile(path string) ([]TaskListInfo, error) {
 	f, err := os.Open(path)
@@ -251,7 +312,7 @@ func Reconcile(newUPID string) error {
 		kept = append(kept, TaskListInfo{UPID: newUPID, Task: task, State: nil})
 	}
 
-	if err := replaceFile(activeTasks, renderTaskList(kept), 0660); err != nil {
+	if err := writeTaskList(activeTasks, renderTaskList(kept), 0660); err != nil {
 		return err
 	}
 
