@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"log/slog"
 
@@ -140,33 +141,23 @@ func (t *QueuedTask) Close() {
 		return
 	}
 
-	lock, err := lockTaskList(true)
-	if err != nil {
-		slog.Error("tasklog: lock queued task removal", "error", err, "upid", t.UPID())
-		return
-	}
-	defer lock.Close()
-
-	active, err := readTaskFile(activeTasks)
-	if err != nil {
-		slog.Error("tasklog: read active tasks for queued task removal", "error", err, "upid", t.UPID())
-		return
-	}
-	kept := active[:0]
-	for _, info := range active {
-		if info.UPID != t.UPID() {
-			kept = append(kept, info)
+	dropped := dropFromActiveTasks(t.UPID())
+	if dropped != nil {
+		slog.Error("tasklog: remove queued task from active tasks", "error", dropped, "upid", t.UPID())
+		t.writeLogLine("%s", TaskState{Status: StatusOK, EndTime: time.Now().Unix()}.ResultText())
+		if err := t.file.Sync(); err != nil {
+			slog.Error(err.Error())
 		}
-	}
-	if err := replaceFile(activeTasks, renderTaskList(kept), 0660); err != nil {
-		slog.Error("tasklog: remove queued task from active tasks", "error", err, "upid", t.UPID())
-		return
 	}
 
 	unregisterWorker(t.Task.TaskId)
 	t.close()
 	queuedTasks.CompareAndDelete(t.key, t)
 	queuedStates.Delete(t.UPID())
+
+	if dropped != nil {
+		return
+	}
 
 	path, err := UPIDLogPath(t.UPID())
 	if err != nil {
