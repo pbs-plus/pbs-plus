@@ -628,3 +628,18 @@ func ComputeNextEvent(ev *CalendarEvent, after time.Time, loc *time.Location) (t
 
 	return time.Time{}, fmt.Errorf("could not compute next event within iteration limit")
 }
+
+// CountEvents counts occurrences of ev strictly after after and strictly before before, stopping at limit.
+func CountEvents(ev *CalendarEvent, after, before time.Time, loc *time.Location, limit int) int {
+	count := 0
+	t := after
+	for count < limit {
+		next, err := ComputeNextEvent(ev, t, loc)
+		if err != nil || !next.Before(before) {
+			break
+		}
+		count++
+		t = next
+	}
+	return count
+}

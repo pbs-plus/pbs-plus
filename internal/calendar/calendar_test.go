@@ -180,3 +180,27 @@ func TestSpecificDate(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, got)
 	}
 }
+
+func TestCountEvents(t *testing.T) {
+	ev, err := Parse("daily")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		before time.Time
+		limit  int
+		want   int
+	}{
+		{time.Date(2025, 1, 1, 23, 0, 0, 0, time.UTC), 10, 0},
+		{time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), 10, 0},
+		{time.Date(2025, 1, 2, 0, 0, 1, 0, time.UTC), 10, 1},
+		{time.Date(2025, 1, 5, 12, 0, 0, 0, time.UTC), 10, 4},
+		{time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC), 10, 10},
+	}
+	for _, c := range cases {
+		if got := CountEvents(ev, after, c.before, time.UTC, c.limit); got != c.want {
+			t.Errorf("CountEvents(before=%s, limit=%d) = %d, want %d", c.before, c.limit, got, c.want)
+		}
+	}
+}

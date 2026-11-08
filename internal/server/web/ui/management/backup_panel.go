@@ -1,6 +1,9 @@
 package management
 
 import (
+	"strconv"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/web/api/extjs"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/js"
 )
 
@@ -11,6 +14,18 @@ var backupGroupFn = js.Func("record", `
 	return ns ? "Namespace: " + ns.split("/")[0] : "Namespace: /";
 `)
 
+var lastSuccessRenderer = js.Func("value, meta, record", `
+	let out = PBS.Utils.render_optional_timestamp(value);
+	let missed = record.get("missed_runs");
+	if (missed > 0) {
+		let count = missed >= `+strconv.Itoa(extjs.MissedRunLimit)+` ? missed + "+" : missed;
+		let tip = Ext.String.format(gettext("Missed {0} scheduled run(s) since the last success"), count);
+		meta.tdAttr = 'data-qtip="' + Ext.htmlEncode(tip) + '"';
+		out += ' <i class="fa fa-exclamation-triangle warning"></i> ' + count;
+	}
+	return out;
+`)
+
 var backupRowStyles = js.Raw(`
 	.pbs-row-warning-old-backup {
 		background-color: #ffc107 !important;
@@ -19,10 +34,19 @@ var backupRowStyles = js.Raw(`
 		background-color: #ffc107 !important;
 	}
 
+	.pbs-row-warning-overdue,
+	.pbs-row-warning-overdue .x-grid-cell {
+		background-color: #fff3cd !important;
+	}
+
 	@media (prefers-color-scheme: dark) {
 		.pbs-row-warning-old-backup,
 		.pbs-row-warning-old-backup .x-grid-cell {
 			background-color: rgba(255, 193, 7, 0.35) !important;
+		}
+		.pbs-row-warning-overdue,
+		.pbs-row-warning-overdue .x-grid-cell {
+			background-color: rgba(255, 193, 7, 0.15) !important;
 		}
 	}
 `)
@@ -42,7 +66,10 @@ var backupPanel = js.Panel{
 		GroupFn:        backupGroupFn,
 	},
 	ViewConfig: &js.ViewConfig{GetRowClass: js.Func("record", `
-		return record.get("stale") ? "pbs-row-warning-old-backup" : "";
+		if (record.get("stale")) {
+			return "pbs-row-warning-old-backup";
+		}
+		return record.get("missed_runs") > 0 ? "pbs-row-warning-overdue" : "";
 	`)},
 	Listeners: js.Listeners{ItemDblClick: "editJob"},
 	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "target", "ns", "comment", "subpath"), map[string]js.Raw{
@@ -184,7 +211,7 @@ var backupPanel = js.Panel{
 		{Text: "Namespace", DataIndex: "ns", Width: 120, Sortable: new(true)},
 		{Text: "Schedule", DataIndex: "schedule", Flex: 1, MaxWidth: 220, MinWidth: 80, Sortable: new(true)},
 		{Text: "Legacy Xattr", DataIndex: "legacy-xattr", Width: 120, Sortable: new(true)},
-		{Text: "Last Success", DataIndex: "last-successful-endtime", Width: 140, Sortable: new(true), Renderer: "PBS.Utils.render_optional_timestamp"},
+		{Text: "Last Success", DataIndex: "last-successful-endtime", Width: 180, Sortable: new(true), Renderer: lastSuccessRenderer},
 		{Text: "Last Attempt", DataIndex: "last-run-endtime", Width: 140, Sortable: new(true), Renderer: "PBS.Utils.render_optional_timestamp"},
 		{Text: "Duration", DataIndex: "duration", Width: 60, Renderer: "Proxmox.Utils.render_duration"},
 		{Text: "Read Speed", DataIndex: "read_speed_human", Width: 60, Renderer: js.DashIfEmpty},

@@ -79,12 +79,14 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 // are never marked stale. excludedJobs is a set of job IDs to skip.
 func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool) []FlatBackup {
 	result := make([]FlatBackup, len(backups))
+	now := time.Now()
 	var cutoff int64
 	if staleDays > 0 {
-		cutoff = time.Now().Unix() - int64(staleDays)*24*60*60
+		cutoff = now.Unix() - int64(staleDays)*24*60*60
 	}
 	for i := range backups {
 		result[i] = FlattenBackup(backups[i])
+		result[i].MissedRuns = MissedRuns(backups[i].Schedule, backups[i].History, now)
 		if staleDays <= 0 {
 			continue
 		}
@@ -623,8 +625,8 @@ type FlatBackup struct {
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
 
-	// Computed server-side from alert settings
-	Stale bool `json:"stale"`
+	Stale      bool `json:"stale"`
+	MissedRuns int  `json:"missed_runs"`
 }
 
 type FlatRestore struct {

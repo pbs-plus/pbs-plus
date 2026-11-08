@@ -7,7 +7,7 @@ import (
 var models = []js.Value{
 	js.Model{
 		Name: "pbs-disk-backup-status",
-		Fields: js.Typed(js.Fields(
+		Fields: js.Typed(js.Typed(js.Fields(
 			"id", "store", "mode", "sourcemode", "readmode", "subpath", "ns", "schedule", "comment",
 			"notification-mode", "pre_script", "post_script", "next-run", "retry", "retry-interval",
 			"max-dir-entries", "rawexclusions", "include-xattr", "legacy-xattr", "target", "expected_size",
@@ -16,7 +16,7 @@ var models = []js.Value{
 			"current_files_speed", "current_bytes_speed", "current_bytes_total", "target_size_human",
 			"read_speed_human", "read_total_human", "processing_speed_human", "status_parsed",
 			"database_scope", "database_name",
-		), "stale", "bool"),
+		), "stale", "bool"), "missed_runs", "int"),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/backup",
 	},
