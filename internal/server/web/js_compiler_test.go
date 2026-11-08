@@ -342,3 +342,21 @@ func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
 		t.Error("snapshot selector shadows the ExtJS archiveFilter config applier")
 	}
 }
+
+func TestSnapshotSelectorOpensFilterableBrowser(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`Ext.define("PBS.window.D2DSnapshotBrowser", {`),
+		[]byte(`Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me }).show();`),
+		[]byte(`browse: { cls: "x-form-search-trigger"`),
+		[]byte(`reference: "hostFilter"`),
+		[]byte(`reference: "fromDate"`),
+		[]byte(`reference: "toDate"`),
+		[]byte(`reference: "latestOnly"`),
+		[]byte(`view.getSnapshotField().setValue(rec.get("value"));`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("snapshot browser is missing %q", expected)
+		}
+	}
+}

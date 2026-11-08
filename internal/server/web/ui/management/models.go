@@ -55,6 +55,10 @@ var models = []js.Value{
 			{Name: "backup-time"},
 			{Name: "backup-type"},
 			{Name: "files"},
+			{Name: "size"},
+			{Name: "comment"},
+			{Name: "verification"},
+			{Name: "protected"},
 			{Name: "value", Convert: js.Func("v, record", `
 				if (v) return v;
 				if (!record.data["backup-id"]) return "";

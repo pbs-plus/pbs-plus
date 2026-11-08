@@ -77,6 +77,19 @@ var selectors = []js.Value{
 				}
 			`),
 			"updateArchiveFilter": js.Func("", `this.syncArchiveFilter();`),
+			"triggers":            js.Raw(`{ browse: { cls: "x-form-search-trigger", weight: 1, tooltip: gettext("Browse snapshots by host and date"), handler: function () { this.openBrowser(); } } }`),
+			"openBrowser": js.Func("", `
+				let me = this;
+				if (me.isDisabled() || me.readOnly) {
+					return;
+				}
+				if (!me.getDatastore()) {
+					Ext.Msg.alert(gettext("Error"), gettext("Please select a datastore first."));
+					return;
+				}
+				me.collapse();
+				Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me }).show();
+			`),
 			"updateDatastore": js.Func("newDatastore", `
 				let me = this;
 				if (newDatastore) { me.setDisabled(false); me.store.getProxy().setUrl("/api2/json/admin/datastore/" + newDatastore + "/snapshots"); me.store.load(); } else { me.setDisabled(true); me.store.removeAll(); }
