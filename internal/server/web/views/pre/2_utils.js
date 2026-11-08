@@ -299,20 +299,6 @@ Ext.define("PBS.PlusUtils", {
     );
   },
 
-  archiveName: function (targetName) {
-    return String(targetName || "").replace(/[. ]/g, "-");
-  },
-
-  snapshotHasArchive: function (files, names) {
-    return (files || []).some((file) =>
-      names.some(
-        (name) =>
-          file.filename === name + ".pxar.didx" ||
-          file.filename === name + ".mpxar.didx",
-      ),
-    );
-  },
-
   recentRunColors: {
     ok: "#21bf4b",
     warning: "#fbbc04",

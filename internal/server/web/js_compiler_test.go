@@ -323,24 +323,30 @@ func TestAsyncCallbacksDoNotDereferenceDestroyedViews(t *testing.T) {
 	}
 }
 
-func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
+func TestSnapshotSelectorDelegatesCompatibilityToServer(t *testing.T) {
 	source := append(compileJS(&preJsFS), ui.Render()...)
 	for _, expected := range [][]byte{
-		[]byte(`archiveFilter: null`),
-		[]byte(`syncArchiveFilter: function ()`),
-		[]byte(`updateArchiveFilter: function ()`),
-		[]byte(`name + ".pxar.didx"`),
-		[]byte(`name + ".mpxar.didx"`),
-		[]byte(`PBS.PlusUtils.snapshotHasArchive(record.get("files"), filter.names)`),
-		[]byte(`return exclude ? !match : match;`),
-		[]byte(`mode: structured ? "include" : "exclude"`),
+		[]byte(`url: pbsPlusBaseUrl + "/api2/json/d2d/restore/snapshots"`),
+		[]byte(`target: me.getRestoreTarget() || ""`),
+		[]byte(`this.lookup("snapshot").setRestoreTarget(value || null);`),
+		[]byte(`snapRecord.get("archive")`),
+		[]byte(`snapshot.get("source_target")`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("snapshot selector is missing %q", expected)
 		}
 	}
-	for _, config := range []string{"ArchiveFilter", "PreferredGroup", "MatchTarget"} {
-		if bytes.Contains(source, []byte("apply"+config+":")) {
+	for _, stale := range [][]byte{
+		[]byte(`archiveFilter`),
+		[]byte(`snapshotHasArchive`),
+		[]byte(`archiveName`),
+	} {
+		if bytes.Contains(source, stale) {
+			t.Errorf("frontend still contains archive matching logic %q", stale)
+		}
+	}
+	for _, config := range []string{"RestoreTarget", "PreferredGroup", "Datastore", "Namespace"} {
+		if bytes.Contains(source, []byte("apply"+config+": function")) {
 			t.Errorf("snapshot selector shadows the ExtJS %s config applier", config)
 		}
 	}

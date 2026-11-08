@@ -86,17 +86,8 @@ var restoreJobEdit = js.EditWindow{
 				if (!this.getView().isCreate || !snapshot || !target || target.getValue()) {
 					return;
 				}
-				let files = snapshot.get("files");
-				let match = null;
-				target.getStore().each((entry) => {
-					if (PBS.PlusUtils.snapshotHasArchive(files, [PBS.PlusUtils.archiveName(entry.get("name"))])) {
-						match = entry.get("name");
-						return false;
-					}
-					return true;
-				});
-				if (match) {
-					target.setValue(match);
+				if (snapshot.get("source_target")) {
+					target.setValue(snapshot.get("source_target"));
 				}
 			`),
 			"targetChange": js.Func("field, value", `
@@ -109,17 +100,7 @@ var restoreJobEdit = js.EditWindow{
 				let sourcePath = this.lookup("pathSelector");
 				sourcePath.setHidden(structured);
 				sourcePath.setDisabled(structured);
-				let names = [];
-				field.getStore().each(function (entry) {
-					let entryKind = entry.get("kind") || entry.get("target_type");
-					let keep = structured ? entryKind === kind : ["postgresql", "mysql", "ldap", "dovecot"].includes(entryKind);
-					if (keep) {
-						names.push(PBS.PlusUtils.archiveName(entry.get("name")));
-					}
-				});
-				let snapshotField = this.lookup("snapshot");
-				snapshotField.setMatchTarget(value || null);
-				snapshotField.setArchiveFilter({ names: names, mode: structured ? "include" : "exclude" });
+				this.lookup("snapshot").setRestoreTarget(value || null);
 				let pathSel = this.lookup("pathSelectorDestination");
 				if (pathSel) {
 					pathSel.setTarget(value);

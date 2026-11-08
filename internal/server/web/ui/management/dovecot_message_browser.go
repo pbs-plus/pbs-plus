@@ -148,13 +148,12 @@ var dovecotMessageSelector = js.Panel{
 						Ext.Msg.alert(gettext("Error"), gettext("Please select a valid snapshot first. A snapshot with an ongoing backup is considered invalid."));
 						return;
 					}
-					let files = snapRecord.get("files");
-					let archive = files.find((f) => f.filename.endsWith(".mpxar.didx")) || files.find((f) => f.filename.endsWith(".pxar.didx"));
+					let archive = snapRecord.get("archive");
 					if (!archive) { Ext.Msg.alert(gettext("Error"), gettext("No browsable archives found.")); return; }
 					let parts = me.snapshot.split("/");
 					Ext.create("PBS.window.D2DDovecotMessageSelector", {
 						listURL: "/api2/json/admin/datastore/" + encodeURIComponent(me.datastore) + "/catalog",
-						extraParams: { "backup-type": parts[0], "backup-id": parts[1], "backup-time": parts[2], "archive-name": archive.filename, ns: me.ns || "" },
+						extraParams: { "backup-type": parts[0], "backup-id": parts[1], "backup-time": parts[2], "archive-name": archive, ns: me.ns || "" },
 						listeners: { select: function (paths) {
 							let field = me.down("textarea[reference=messagesField]");
 							let existing = (field.getValue() || "").split("\n").map((l) => l.trim()).filter((l) => l !== "");

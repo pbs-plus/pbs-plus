@@ -950,6 +950,10 @@ func (t *Target) IsDatabase() bool {
 	return t.Type == TargetTypePostgreSQL || t.Type == TargetTypeMySQL || t.Type == TargetTypeLDAP
 }
 
+func (t *Target) IsStructured() bool {
+	return t.IsDatabase() || t.IsDovecot()
+}
+
 func (t *Target) IsLdap() bool {
 	return t.Type == TargetTypeLDAP
 }

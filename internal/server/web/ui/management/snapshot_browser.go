@@ -47,14 +47,14 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 			let me = this;
 			let field = view.getSnapshotField();
 			let targetOnly = me.lookup("targetOnly");
-			let target = field.getMatchTarget();
+			let target = field.getRestoreTarget();
 			let fields = [me.lookup("hostFilter"), targetOnly];
 			fields.forEach((f) => f.suspendEvents(false));
 			me.lookup("hostFilter").setValue(view.getInitialHost() || "");
 			if (target) {
 				let current = field.getSelection();
 				targetOnly.setBoxLabel(Ext.String.format(gettext("Only backups of {0}"), Ext.htmlEncode(target)));
-				targetOnly.setValue(!current || PBS.PlusUtils.snapshotHasArchive(current.get("files"), [PBS.PlusUtils.archiveName(target)]));
+				targetOnly.setValue(!current || current.get("source_target") === target);
 				targetOnly.show();
 			}
 			fields.forEach((f) => f.resumeEvents());
@@ -115,7 +115,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 			let from = me.lookup("fromDate").getValue();
 			let to = me.lookup("toDate").getValue();
 			let latest = me.lookup("latestOnly").getValue();
-			let archive = me.lookup("targetOnly").getValue() && field.getMatchTarget() ? PBS.PlusUtils.archiveName(field.getMatchTarget()) : null;
+			let sourceTarget = me.lookup("targetOnly").getValue() ? field.getRestoreTarget() : null;
 			let fromTs = from ? from.getTime() / 1000 : null;
 			let toTs = to ? Ext.Date.add(Ext.Date.clearTime(to, true), Ext.Date.DAY, 1).getTime() / 1000 : null;
 			let current = field.getValue();
@@ -132,7 +132,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 				if (host && !String(id).toLowerCase().includes(host)) {
 					return;
 				}
-				if (archive && !PBS.PlusUtils.snapshotHasArchive(rec.get("files"), [archive])) {
+				if (sourceTarget && rec.get("source_target") !== sourceTarget) {
 					return;
 				}
 				if (fromTs !== null && time < fromTs) {
@@ -145,7 +145,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 			});
 
 			let names = Object.keys(groups).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
-			let filtered = !!host || !!from || !!to || latest || !!archive;
+			let filtered = !!host || !!from || !!to || latest || !!sourceTarget;
 			let expand = filtered || names.length <= 3;
 			let total = 0;
 			let children = names.map((name) => {
@@ -310,10 +310,10 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 						if (rec.get("leaf") !== true) {
 							return "";
 						}
-						if (!v || !v.state) {
+						if (!v) {
 							return '<i class="fa fa-question-circle-o"></i> ' + gettext("None");
 						}
-						if (v.state === "ok") {
+						if (v === "ok") {
 							return '<i class="fa fa-check good"></i> ' + gettext("OK");
 						}
 						return '<i class="fa fa-times critical"></i> ' + gettext("Failed");

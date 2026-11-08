@@ -55,20 +55,15 @@ var models = []js.Value{
 	js.Model{
 		Name: "pbs-model-d2d-snapshots",
 		Fields: []js.ModelField{
+			{Name: "value"},
 			{Name: "backup-id"},
 			{Name: "backup-time"},
-			{Name: "backup-type"},
-			{Name: "files"},
 			{Name: "size"},
 			{Name: "comment"},
 			{Name: "verification"},
 			{Name: "protected"},
-			{Name: "value", Convert: js.Func("v, record", `
-				if (v) return v;
-				if (!record.data["backup-id"]) return "";
-				let type = record.data["backup-type"] || "host";
-				return type + "/" + record.data["backup-id"] + "/" + record.data["backup-time"];
-			`)},
+			{Name: "source_target"},
+			{Name: "archive"},
 			{Name: "display", Convert: js.Func("v, record", `
 				if (record.data["backup-time"]) {
 					let time = new Date(record.data["backup-time"] * 1000);

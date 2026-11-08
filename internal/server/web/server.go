@@ -22,6 +22,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox/pbsapi"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/agentdist"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/backupapi"
@@ -58,6 +59,7 @@ func NewServer(app *application.Runtime, version string) (*Server, error) {
 
 	apiMux.HandleFunc("/api2/json/d2d/backup", ServerOnly(app, backupapi.D2DBackupHandler(app)))
 	apiMux.HandleFunc("/api2/json/d2d/restore", ServerOnly(app, restoreapi.D2DRestoreHandler(app)))
+	apiMux.HandleFunc("/api2/json/d2d/restore/snapshots", ServerOnly(app, restoreapi.D2DRestoreSnapshotsHandler(app, pbsapi.NewLocal())))
 	apiMux.HandleFunc("/api2/json/d2d/target", ServerOnly(app, targetapi.D2DTargetHandler(app)))
 	apiMux.HandleFunc("/api2/json/d2d/target/tree", ServerOnly(app, backupapi.D2DTargetTreeHandler(app)))
 	apiMux.HandleFunc("/api2/json/d2d/database-clients", ServerOnly(app, targetapi.D2DDatabaseClientsHandler()))
