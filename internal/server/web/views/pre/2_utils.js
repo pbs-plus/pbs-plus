@@ -262,6 +262,40 @@ Ext.define("PBS.PlusUtils", {
 
     return "-";
   },
+
+  jobStatus: function (data) {
+    let parsed = data.status_parsed || {};
+    if (parsed.category === "queued") {
+      return "running";
+    }
+    if (!data["last-run-upid"]) {
+      return "never";
+    }
+    if (!data["last-run-endtime"]) {
+      return "running";
+    }
+    if (parsed.category === "error" || parsed.category === "unknown") {
+      return "failed";
+    }
+    if (parsed.category === "warning") {
+      return "warning";
+    }
+    return "ok";
+  },
+
+  jobNeedsAttention: function (data) {
+    return !!data.stale || data.missed_runs > 0;
+  },
+
+  jobMatchesStatus: function (data, status) {
+    if (!status || status === "all") {
+      return true;
+    }
+    if (status === "overdue") {
+      return PBS.PlusUtils.jobNeedsAttention(data);
+    }
+    return PBS.PlusUtils.jobStatus(data) === status;
+  },
 });
 
 Ext.define("PBS.PlusRestProxy", {

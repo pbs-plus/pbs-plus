@@ -21,8 +21,7 @@ var restorePanel = js.Panel{
 		GroupFn:        restoreGroupFn,
 	},
 	Listeners: js.Listeners{ItemDblClick: "editJob"},
-	Controller: js.Controller{Methods: map[string]js.Raw{
-		"onSearchKeyUp":      js.SearchFilter("id", "ns", "snapshot", "src-path", "dest-target", "comment", "dest-subpath"),
+	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "ns", "snapshot", "src-path", "dest-target", "comment", "dest-subpath"), map[string]js.Raw{
 		"addJob":             js.OpenEditWindow("PBS.D2DManagement.RestoreJobEdit", ""),
 		"editJob":            js.EditJobWindow("PBS.D2DManagement.RestoreJobEdit"),
 		"duplicateJob":       js.DuplicateJobWindow("PBS.D2DManagement.RestoreJobEdit"),
@@ -57,14 +56,15 @@ var restorePanel = js.Panel{
 		`),
 		"init": js.Func("view", `
 			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
+			this.initJobFilters(view);
 			view.getStore().setGrouper({ property: "dest-target", groupFn: `+string(restoreGroupFn)+` });
 		`),
-	}},
+	})},
 	Tbar: []js.Tool{
 		js.AddJobTool, js.DuplicateJobTool, js.EditIdleJobTool, js.RemoveIdleJobsTool, js.Sep(),
 		js.ShowLogTool, js.Sep(),
 		js.RunIdleJobsTool, js.StopJobsTool,
-		js.Fill(), js.SearchTool(),
+		js.Fill(), js.StatusFilterTool(js.JobStatusRunning, js.JobStatusFailed, js.JobStatusWarning, js.JobStatusNever), js.SearchTool(),
 	},
 	Columns: []js.Column{
 		{Text: "Job ID", DataIndex: "id", Flex: 1, MaxWidth: 220, MinWidth: 75, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},

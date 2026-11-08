@@ -45,8 +45,7 @@ var backupPanel = js.Panel{
 		return record.get("stale") ? "pbs-row-warning-old-backup" : "";
 	`)},
 	Listeners: js.Listeners{ItemDblClick: "editJob"},
-	Controller: js.Controller{Methods: map[string]js.Raw{
-		"onSearchKeyUp":      js.SearchFilter("id", "target", "ns", "comment", "subpath"),
+	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "target", "ns", "comment", "subpath"), map[string]js.Raw{
 		"addJob":             js.OpenEditWindow("PBS.D2DManagement.BackupJobEdit", ""),
 		"editJob":            js.EditJobWindow("PBS.D2DManagement.BackupJobEdit"),
 		"duplicateJob":       js.DuplicateJobWindow("PBS.D2DManagement.BackupJobEdit"),
@@ -159,6 +158,7 @@ var backupPanel = js.Panel{
 		`),
 		"init": js.Func("view", `
 			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
+			this.initJobFilters(view);
 			if (!document.getElementById("pbs-backup-job-styles")) {
 				const style = document.createElement("style");
 				style.id = "pbs-backup-job-styles";
@@ -167,14 +167,14 @@ var backupPanel = js.Panel{
 			}
 			view.getStore().setGrouper({ property: "ns", groupFn: `+string(backupGroupFn)+` });
 		`),
-	}},
+	})},
 	Tbar: []js.Tool{
 		js.AddJobTool, js.DuplicateJobTool, js.EditIdleJobTool, js.RemoveIdleJobsTool, js.Sep(),
 		js.ShowLogTool, js.ShowSuccessLogTool,
 		{Text: "Show job history", Handler: "showJobHistory", Disabled: true, EnableFn: js.EnableOnSingleSelection}, js.Sep(),
 		js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
 		{Text: "Export CSV", Handler: "exportCSV", SelModel: new(false)},
-		js.Fill(), js.SearchTool(),
+		js.Fill(), js.StatusFilterTool(js.JobStatusRunning, js.JobStatusFailed, js.JobStatusWarning, js.JobStatusNever, js.JobStatusOverdue), js.SearchTool(),
 	},
 	Columns: []js.Column{
 		{Text: "Job ID", DataIndex: "id", Flex: 1, MaxWidth: 220, MinWidth: 75, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},

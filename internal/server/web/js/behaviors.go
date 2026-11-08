@@ -45,23 +45,6 @@ func SearchTool() Tool {
 	return Tool{XType: XTextField, Reference: "searchField", EmptyText: "Search...", Width: 200, KeyUp: "onSearchKeyUp"}
 }
 
-func SearchFilter(fields ...string) Raw {
-	tests := make([]string, len(fields))
-	for i, f := range fields {
-		tests[i] = fmt.Sprintf(`re.test(rec.get(%q))`, f)
-	}
-	return Func("field", fmt.Sprintf(`
-		const val = field.getValue().trim();
-		const store = this.getView().getStore();
-		store.clearFilter(true);
-		if (!val) {
-			return;
-		}
-		const re = new RegExp(Ext.String.escapeRegex(val), "i");
-		store.filterBy((rec) => %s);
-	`, strings.Join(tests, " || ")))
-}
-
 // selectionEvery enables a button while every selected record satisfies expr, with the record bound to r.
 func SelectionEvery(expr string) Raw {
 	return Func("", fmt.Sprintf(`
