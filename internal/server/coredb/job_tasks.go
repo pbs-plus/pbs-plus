@@ -17,17 +17,13 @@ type taskEntry struct {
 	starttime int64
 }
 
-// jobTasks lists the tasks linked in a job's log directory, newest first, keeping at most limit when limit > 0.
 func jobTasks(baseDir, id string, limit int) []Tasks {
 	logsPath := filepath.Join(baseDir, id)
-	if err := os.MkdirAll(logsPath, 0755); err != nil {
-		log.Error(fmt.Errorf("jobTasks: failed to get log dir: %w", err), "", "id", id)
-		return nil
-	}
-
 	logs, err := os.ReadDir(logsPath)
 	if err != nil {
-		log.Error(fmt.Errorf("jobTasks: failed to read dir: %w", err), "", "id", id)
+		if !os.IsNotExist(err) {
+			log.Error(fmt.Errorf("jobTasks: failed to read dir: %w", err), "", "id", id)
+		}
 		return nil
 	}
 
