@@ -17,6 +17,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 
 	"config": js.Obj{
 		"snapshotField": js.Raw("null"),
+		"initialHost":   "",
 	},
 
 	"controller": js.Raw(`{
@@ -38,7 +39,25 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 			if (store.isLoading()) {
 				Proxmox.Utils.setErrorMask(tree, true);
 			}
+			me.initFilters(view);
 			me.refresh();
+		},
+
+		initFilters: function (view) {
+			let me = this;
+			let field = view.getSnapshotField();
+			let targetOnly = me.lookup("targetOnly");
+			let target = field.getMatchTarget();
+			let fields = [me.lookup("hostFilter"), targetOnly];
+			fields.forEach((f) => f.suspendEvents(false));
+			me.lookup("hostFilter").setValue(view.getInitialHost() || "");
+			if (target) {
+				let current = field.getSelection();
+				targetOnly.setBoxLabel(Ext.String.format(gettext("Only backups of {0}"), Ext.htmlEncode(target)));
+				targetOnly.setValue(!current || PBS.PlusUtils.snapshotHasArchive(current.get("files"), [PBS.PlusUtils.archiveName(target)]));
+				targetOnly.show();
+			}
+			fields.forEach((f) => f.resumeEvents());
 		},
 
 		onFilterChange: function () {
@@ -64,12 +83,13 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 
 		clearFilters: function () {
 			let me = this;
-			let fields = ["hostFilter", "fromDate", "toDate", "latestOnly"].map((ref) => me.lookup(ref));
+			let fields = ["hostFilter", "fromDate", "toDate", "latestOnly", "targetOnly"].map((ref) => me.lookup(ref));
 			fields.forEach((f) => f.suspendEvents(false));
 			me.lookup("hostFilter").setValue("");
 			me.lookup("fromDate").setValue(null);
 			me.lookup("toDate").setValue(null);
 			me.lookup("latestOnly").setValue(false);
+			me.lookup("targetOnly").setValue(false);
 			fields.forEach((f) => f.resumeEvents());
 			me.refresh();
 		},
@@ -95,6 +115,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 			let from = me.lookup("fromDate").getValue();
 			let to = me.lookup("toDate").getValue();
 			let latest = me.lookup("latestOnly").getValue();
+			let archive = me.lookup("targetOnly").getValue() && field.getMatchTarget() ? PBS.PlusUtils.archiveName(field.getMatchTarget()) : null;
 			let fromTs = from ? from.getTime() / 1000 : null;
 			let toTs = to ? Ext.Date.add(Ext.Date.clearTime(to, true), Ext.Date.DAY, 1).getTime() / 1000 : null;
 			let current = field.getValue();
@@ -111,6 +132,9 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 				if (host && !String(id).toLowerCase().includes(host)) {
 					return;
 				}
+				if (archive && !PBS.PlusUtils.snapshotHasArchive(rec.get("files"), [archive])) {
+					return;
+				}
 				if (fromTs !== null && time < fromTs) {
 					return;
 				}
@@ -121,7 +145,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 			});
 
 			let names = Object.keys(groups).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
-			let filtered = !!host || !!from || !!to || latest;
+			let filtered = !!host || !!from || !!to || latest || !!archive;
 			let expand = filtered || names.length <= 3;
 			let total = 0;
 			let children = names.map((name) => {
@@ -212,6 +236,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 					listeners: { change: { fn: "onFilterChange", buffer: 200 } },
 				},
 				{ xtype: "checkbox", reference: "latestOnly", boxLabel: gettext("Latest per host"), margin: "0 0 0 10", listeners: { change: "onFilterChange" } },
+				{ xtype: "checkbox", reference: "targetOnly", hidden: true, margin: "0 0 0 10", listeners: { change: "onFilterChange" } },
 				"->",
 				{ xtype: "button", iconCls: "fa fa-plus-square-o", tooltip: gettext("Expand All"), handler: "expandAll" },
 				{ xtype: "button", iconCls: "fa fa-minus-square-o", tooltip: gettext("Collapse All"), handler: "collapseAll" },

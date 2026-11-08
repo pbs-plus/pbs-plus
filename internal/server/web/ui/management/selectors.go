@@ -63,21 +63,32 @@ var selectors = []js.Value{
 				}
 				store.clearFilter();
 				let filter = me.getArchiveFilter();
-				if (!filter || !filter.names) {
-					return;
+				if (filter && filter.names) {
+					let exclude = filter.mode === "exclude";
+					store.filterBy(function (record) {
+						let match = PBS.PlusUtils.snapshotHasArchive(record.get("files"), filter.names);
+						return exclude ? !match : match;
+					});
+					if (me.getValue() && !store.findRecord("value", me.getValue(), 0, false, true, true)) {
+						me.setValue(null);
+					}
 				}
-				let exclude = filter.mode === "exclude";
-				store.filterBy(function (record) {
-					let files = record.get("files") || [];
-					let match = files.some((file) => filter.names.some((name) => file.filename === name + ".pxar.didx" || file.filename === name + ".mpxar.didx"));
-					return exclude ? !match : match;
-				});
-				if (me.getValue() && !store.findRecord("value", me.getValue(), 0, false, true, true)) {
-					me.setValue(null);
-				}
+				me.selectPreferredSnapshot();
 			`),
 			"updateArchiveFilter": js.Func("", `this.syncArchiveFilter();`),
-			"triggers":            js.Raw(`{ browse: { cls: "x-form-search-trigger", weight: 1, tooltip: gettext("Browse snapshots by host and date"), handler: function () { this.openBrowser(); } } }`),
+			"selectPreferredSnapshot": js.Func("", `
+				let me = this;
+				let group = me.getPreferredGroup();
+				if (!group || me.getValue() || !me.store || me.store.isLoading()) {
+					return;
+				}
+				let latest = me.store.findRecord("backup-id", group, 0, false, true, true);
+				if (latest) {
+					me.setValue(latest.get("value"));
+				}
+			`),
+			"updatePreferredGroup": js.Func("", `this.selectPreferredSnapshot();`),
+			"triggers":             js.Raw(`{ browse: { cls: "x-form-search-trigger", weight: 1, tooltip: gettext("Browse snapshots by host and date"), handler: function () { this.openBrowser(); } } }`),
 			"openBrowser": js.Func("", `
 				let me = this;
 				if (me.isDisabled() || me.readOnly) {
@@ -88,7 +99,7 @@ var selectors = []js.Value{
 					return;
 				}
 				me.collapse();
-				Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me }).show();
+				Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me, initialHost: me.getPreferredGroup() || "" }).show();
 			`),
 			"updateDatastore": js.Func("newDatastore", `
 				let me = this;
@@ -99,7 +110,7 @@ var selectors = []js.Value{
 				if (me.getDatastore()) { me.store.getProxy().setExtraParam("ns", newNamespace || null); me.store.load(); }
 			`),
 		},
-		ConfigNames: []string{"datastore", "namespace", "archiveFilter"}, QueryMode: "local", AnyMatch: new(true),
+		ConfigNames: []string{"datastore", "namespace", "archiveFilter", "preferredGroup", "matchTarget"}, QueryMode: "local", AnyMatch: new(true),
 		ForceSelection: new(false), AutoSelect: new(false),
 	},
 	js.Selector{

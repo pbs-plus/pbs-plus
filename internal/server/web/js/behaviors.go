@@ -104,14 +104,19 @@ func GroupHeader(noun string) string {
 }
 
 // ApplyJobData seeds values from a duplicated job, which arrive after callParent.
-var ApplyJobData = Func("", `
+var ApplyJobData = ApplyJobDataWith("")
+
+func ApplyJobDataWith(setup string) Raw {
+	return Func("", `
 	let me = this;
 	me.callParent();
+	`+setup+`
 	if (me.jobData) {
 		let data = Ext.apply({}, me.jobData);
 		me.setValues(data);
 	}
 `)
+}
 
 var ChangerExtraParams = Func("", `
 	let me = this;

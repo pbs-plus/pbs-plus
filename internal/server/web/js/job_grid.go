@@ -111,3 +111,37 @@ func StatusFilterTool(statuses ...JobStatus) Tool {
 	}
 	return Tool{XType: XButton, Reference: "statusFilter", IconCls: "fa fa-filter", Text: "Status: All", Menu: items}
 }
+
+// ContextMenu builds an itemcontextmenu handler that mirrors toolbar tools, reusing their handlers and enable rules.
+func ContextMenu(tools ...Tool) Raw {
+	items := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if t.separator != "" {
+			items = append(items, `"-"`)
+			continue
+		}
+		disabled := "false"
+		if t.EnableFn != "" {
+			disabled = fmt.Sprintf("!(%s).call(scope, record)", t.EnableFn)
+		}
+		icon := ""
+		if t.IconCls != "" {
+			icon = fmt.Sprintf(", iconCls: %q", t.IconCls)
+		}
+		items = append(items, fmt.Sprintf(`{ text: gettext(%q)%s, disabled: %s, handler: () => me[%q]() }`, t.Text, icon, disabled, t.Handler))
+	}
+	return Func("view, record, item, index, e", fmt.Sprintf(`
+		e.stopEvent();
+		const me = this;
+		const grid = me.getView();
+		const sm = grid.getSelectionModel();
+		if (!sm.isSelected(record)) {
+			sm.select(record);
+		}
+		const scope = { up: () => grid };
+		Ext.create("Ext.menu.Menu", {
+			items: [%s],
+			listeners: { hide: (menu) => Ext.defer(() => menu.destroy(), 1) },
+		}).showAt(e.getXY());
+	`, strings.Join(items, ", ")))
+}

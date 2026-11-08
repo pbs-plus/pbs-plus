@@ -51,6 +51,11 @@ var backupRowStyles = js.Raw(`
 	}
 `)
 
+var (
+	showJobHistoryTool = js.Tool{Text: "Show job history", Handler: "showJobHistory", Disabled: true, EnableFn: js.EnableOnSingleSelection}
+	restoreFromJobTool = js.Tool{Text: "Restore", IconCls: "fa fa-undo", Handler: "restoreFromJob", Disabled: true, EnableFn: js.EnableOnSingleSelection}
+)
+
 var backupPanel = js.Panel{
 	Name: "PBS.config.DiskBackupJobView", XType: "pbsDiskBackupJobView",
 	Title: "Disk Backup Jobs", StateID: "grid-disk-backups-v1",
@@ -71,9 +76,24 @@ var backupPanel = js.Panel{
 		}
 		return record.get("missed_runs") > 0 ? "pbs-row-warning-overdue" : "";
 	`)},
-	Listeners:    js.Listeners{ItemDblClick: "editJob"},
+	Listeners:    js.Listeners{ItemDblClick: "editJob", ItemContextMenu: "onItemContextMenu"},
 	ListenersRaw: recentRunsListeners,
 	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "target", "ns", "comment", "subpath"), map[string]js.Raw{
+		"onItemContextMenu": js.ContextMenu(
+			js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
+			restoreFromJobTool, js.EditIdleJobTool, js.DuplicateJobTool, js.Sep(),
+			js.ShowLogTool, js.ShowSuccessLogTool, showJobHistoryTool,
+		),
+		"restoreFromJob": js.Func("", `
+			const selection = this.getView().getSelection();
+			if (selection.length !== 1) return;
+			const job = selection[0];
+			Ext.create("PBS.D2DManagement.RestoreJobEdit", {
+				autoShow: true,
+				snapshotGroup: job.getId(),
+				jobData: { store: job.get("store"), ns: job.get("ns"), "dest-target": job.get("target") },
+			});
+		`),
 		"addJob":             js.OpenEditWindow("PBS.D2DManagement.BackupJobEdit", ""),
 		"editJob":            js.EditJobWindow("PBS.D2DManagement.BackupJobEdit"),
 		"duplicateJob":       js.DuplicateJobWindow("PBS.D2DManagement.BackupJobEdit"),
@@ -198,9 +218,9 @@ var backupPanel = js.Panel{
 	})},
 	Tbar: []js.Tool{
 		js.AddJobTool, js.DuplicateJobTool, js.EditIdleJobTool, js.RemoveIdleJobsTool, js.Sep(),
-		js.ShowLogTool, js.ShowSuccessLogTool,
-		{Text: "Show job history", Handler: "showJobHistory", Disabled: true, EnableFn: js.EnableOnSingleSelection}, js.Sep(),
+		js.ShowLogTool, js.ShowSuccessLogTool, showJobHistoryTool, js.Sep(),
 		js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
+		restoreFromJobTool,
 		{Text: "Export CSV", Handler: "exportCSV", SelModel: new(false)},
 		js.Fill(), js.StatusFilterTool(js.JobStatusRunning, js.JobStatusFailed, js.JobStatusWarning, js.JobStatusNever, js.JobStatusOverdue), js.SearchTool(),
 	},

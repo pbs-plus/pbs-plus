@@ -20,9 +20,14 @@ var restorePanel = js.Panel{
 		GroupProperty:  "dest-target",
 		GroupFn:        restoreGroupFn,
 	},
-	Listeners:    js.Listeners{ItemDblClick: "editJob"},
+	Listeners:    js.Listeners{ItemDblClick: "editJob", ItemContextMenu: "onItemContextMenu"},
 	ListenersRaw: recentRunsListeners,
 	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "ns", "snapshot", "src-path", "dest-target", "comment", "dest-subpath"), map[string]js.Raw{
+		"onItemContextMenu": js.ContextMenu(
+			js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
+			js.EditIdleJobTool, js.DuplicateJobTool, js.RemoveIdleJobsTool, js.Sep(),
+			js.ShowLogTool,
+		),
 		"addJob":             js.OpenEditWindow("PBS.D2DManagement.RestoreJobEdit", ""),
 		"editJob":            js.EditJobWindow("PBS.D2DManagement.RestoreJobEdit"),
 		"duplicateJob":       js.DuplicateJobWindow("PBS.D2DManagement.RestoreJobEdit"),
@@ -69,7 +74,8 @@ var restorePanel = js.Panel{
 	},
 	Columns: []js.Column{
 		{Text: "Job ID", DataIndex: "id", Flex: 1, MaxWidth: 220, MinWidth: 75, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},
-		{Text: "Snapshot", DataIndex: "snapshot_human", Width: 120, Sortable: new(true)},
+		{Text: "Snapshot", DataIndex: "snapshot_human", Width: 220, Sortable: new(true), Renderer: "Ext.String.htmlEncode"},
+		{Text: "Source Path", DataIndex: "src-path", Width: 140, Sortable: new(true), Renderer: js.Func("value, meta, record", `return Ext.String.htmlEncode(value || record.get("source_database") || "/");`)},
 		{Text: "Target Destination", DataIndex: "dest-target", Width: 120, Sortable: new(true)},
 		{Text: "Namespace", DataIndex: "ns", Width: 120, Sortable: new(true)},
 		{Text: "Datastore", DataIndex: "store", Width: 120, Sortable: new(true), Hidden: true},

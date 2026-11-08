@@ -70,6 +70,7 @@ var restoreJobEdit = js.EditWindow{
 				}
 			`),
 			"snapshotChange": js.Func("field, value", `
+				this.selectOriginalTarget(field, value);
 				let pathSel = this.lookup("pathSelector");
 				if (pathSel) {
 					pathSel.setSnapshot(value);
@@ -77,6 +78,25 @@ var restoreJobEdit = js.EditWindow{
 				let messageSel = this.lookup("dovecotMessages");
 				if (messageSel) {
 					messageSel.setSnapshot(value);
+				}
+			`),
+			"selectOriginalTarget": js.Func("field, value", `
+				let target = this.lookup("dest-target");
+				let snapshot = value ? field.getSelection() : null;
+				if (!this.getView().isCreate || !snapshot || !target || target.getValue()) {
+					return;
+				}
+				let files = snapshot.get("files");
+				let match = null;
+				target.getStore().each((entry) => {
+					if (PBS.PlusUtils.snapshotHasArchive(files, [PBS.PlusUtils.archiveName(entry.get("name"))])) {
+						match = entry.get("name");
+						return false;
+					}
+					return true;
+				});
+				if (match) {
+					target.setValue(match);
 				}
 			`),
 			"targetChange": js.Func("field, value", `
@@ -94,10 +114,12 @@ var restoreJobEdit = js.EditWindow{
 					let entryKind = entry.get("kind") || entry.get("target_type");
 					let keep = structured ? entryKind === kind : ["postgresql", "mysql", "ldap", "dovecot"].includes(entryKind);
 					if (keep) {
-						names.push(String(entry.get("name") || "").replace(/[. ]/g, "-"));
+						names.push(PBS.PlusUtils.archiveName(entry.get("name")));
 					}
 				});
-				this.lookup("snapshot").setArchiveFilter({ names: names, mode: structured ? "include" : "exclude" });
+				let snapshotField = this.lookup("snapshot");
+				snapshotField.setMatchTarget(value || null);
+				snapshotField.setArchiveFilter({ names: names, mode: structured ? "include" : "exclude" });
 				let pathSel = this.lookup("pathSelectorDestination");
 				if (pathSel) {
 					pathSel.setTarget(value);
@@ -127,7 +149,11 @@ var restoreJobEdit = js.EditWindow{
 			`),
 		},
 	},
-	Methods: map[string]js.Raw{"initComponent": js.ApplyJobData},
+	Methods: map[string]js.Raw{"initComponent": js.ApplyJobDataWith(`
+		if (me.snapshotGroup) {
+			me.lookup("snapshot").setPreferredGroup(me.snapshotGroup);
+		}
+	`)},
 	Items: js.Items(js.Panel{
 		Extend: js.ExtTabPanel, BodyPadding: 10, BorderOff: true,
 		Items: js.Items(

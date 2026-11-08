@@ -324,13 +324,14 @@ func TestAsyncCallbacksDoNotDereferenceDestroyedViews(t *testing.T) {
 }
 
 func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
-	source := ui.Render()
+	source := append(compileJS(&preJsFS), ui.Render()...)
 	for _, expected := range [][]byte{
 		[]byte(`archiveFilter: null`),
 		[]byte(`syncArchiveFilter: function ()`),
 		[]byte(`updateArchiveFilter: function ()`),
 		[]byte(`name + ".pxar.didx"`),
 		[]byte(`name + ".mpxar.didx"`),
+		[]byte(`PBS.PlusUtils.snapshotHasArchive(record.get("files"), filter.names)`),
 		[]byte(`return exclude ? !match : match;`),
 		[]byte(`mode: structured ? "include" : "exclude"`),
 	} {
@@ -338,8 +339,10 @@ func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
 			t.Errorf("snapshot selector is missing %q", expected)
 		}
 	}
-	if bytes.Contains(source, []byte(`applyArchiveFilter`)) {
-		t.Error("snapshot selector shadows the ExtJS archiveFilter config applier")
+	for _, config := range []string{"ArchiveFilter", "PreferredGroup", "MatchTarget"} {
+		if bytes.Contains(source, []byte("apply"+config+":")) {
+			t.Errorf("snapshot selector shadows the ExtJS %s config applier", config)
+		}
 	}
 }
 
@@ -347,7 +350,8 @@ func TestSnapshotSelectorOpensFilterableBrowser(t *testing.T) {
 	source := ui.Render()
 	for _, expected := range [][]byte{
 		[]byte(`Ext.define("PBS.window.D2DSnapshotBrowser", {`),
-		[]byte(`Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me }).show();`),
+		[]byte(`Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me, initialHost: me.getPreferredGroup() || "" }).show();`),
+		[]byte(`reference: "targetOnly"`),
 		[]byte(`browse: { cls: "x-form-search-trigger"`),
 		[]byte(`reference: "hostFilter"`),
 		[]byte(`reference: "fromDate"`),
@@ -357,6 +361,21 @@ func TestSnapshotSelectorOpensFilterableBrowser(t *testing.T) {
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("snapshot browser is missing %q", expected)
+		}
+	}
+}
+
+func TestBackupJobsOfferRestoreShortcut(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`restoreFromJob: function ()`),
+		[]byte(`snapshotGroup: job.getId(),`),
+		[]byte(`me.lookup("snapshot").setPreferredGroup(me.snapshotGroup);`),
+		[]byte(`itemcontextmenu: "onItemContextMenu"`),
+		[]byte(`this.selectOriginalTarget(field, value);`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("restore shortcut is missing %q", expected)
 		}
 	}
 }
