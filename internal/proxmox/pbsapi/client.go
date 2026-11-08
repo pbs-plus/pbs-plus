@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
@@ -79,7 +80,20 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("pbsapi: %d %s", e.Status, e.Message)
+	return e.Message
+}
+
+func errorMessage(status int, body []byte) string {
+	var failure struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &failure) == nil && failure.Message != "" {
+		return failure.Message
+	}
+	if text := strings.TrimSpace(string(body)); text != "" && len(text) <= 1024 {
+		return text
+	}
+	return http.StatusText(status)
 }
 
 func (c *Client) Get(ctx context.Context, auth *http.Request, path string, query url.Values, out any) error {
@@ -103,14 +117,7 @@ func (c *Client) Get(ctx context.Context, auth *http.Request, path string, query
 		return fmt.Errorf("pbsapi: read %s: %w", path, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		var failure struct {
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(body, &failure)
-		if failure.Message == "" {
-			failure.Message = http.StatusText(resp.StatusCode)
-		}
-		return &Error{Status: resp.StatusCode, Message: failure.Message}
+		return &Error{Status: resp.StatusCode, Message: errorMessage(resp.StatusCode, body)}
 	}
 	envelope := struct {
 		Data any `json:"data"`

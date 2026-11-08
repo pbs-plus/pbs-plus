@@ -40,6 +40,11 @@ func selfSignedPEM(t *testing.T) []byte {
 
 func TestHostSnapshotsForwardsAuthAndPinsCertificate(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api2/json/admin/datastore/missing/snapshots" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("no such datastore 'missing'\n"))
+			return
+		}
 		if r.Header.Get("Cookie") != "PBSAuthCookie=ticket" {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"message":"authentication failed"}`))
@@ -74,6 +79,11 @@ func TestHostSnapshotsForwardsAuthAndPinsCertificate(t *testing.T) {
 	var apiErr *Error
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized || apiErr.Message != "authentication failed" {
 		t.Fatalf("err = %v", err)
+	}
+
+	_, err = client.HostSnapshots(context.Background(), auth, "missing", "")
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Error() != "no such datastore 'missing'" {
+		t.Fatalf("plain text error = %v", err)
 	}
 
 	otherCert := filepath.Join(t.TempDir(), "other.pem")
