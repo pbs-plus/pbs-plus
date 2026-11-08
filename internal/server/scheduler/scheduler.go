@@ -207,7 +207,6 @@ func oneShotRestoreSucceeded(r coredb.Restore) bool {
 	return r.RemoveOnSuccess && h.LastRunEndtime != 0 && h.LastSuccessfulUpid != "" && h.LastSuccessfulUpid == h.LastRunUpid
 }
 
-// removeSucceededOneShot deletes a restore job flagged remove-on-success once its latest run has succeeded.
 func (s *Scheduler) removeSucceededOneShot(r coredb.Restore) bool {
 	if !oneShotRestoreSucceeded(r) {
 		return false

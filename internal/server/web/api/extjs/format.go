@@ -61,7 +61,6 @@ type TasksWithStatus struct {
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
 }
 
-// RecentRunCount is how many past runs job grids show per job.
 const RecentRunCount = 10
 
 func WithStatus(tasks []coredb.Tasks) []TasksWithStatus {
@@ -72,7 +71,6 @@ func WithStatus(tasks []coredb.Tasks) []TasksWithStatus {
 	return out
 }
 
-// Job states drive the status quick filters of the job grids.
 const (
 	JobStateRunning = "running"
 	JobStateNever   = "never"
@@ -81,7 +79,6 @@ const (
 	JobStateOK      = "ok"
 )
 
-// ClassifyJob reduces a job's last run to a single state.
 func ClassifyJob(history coredb.JobHistory, parsed ParsedTaskStatus) string {
 	switch {
 	case parsed.Category == "queued":

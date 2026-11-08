@@ -91,7 +91,6 @@ func StatusFilterTool(options ...Option) Tool {
 	return Tool{XType: XButton, Reference: "statusFilter", IconCls: "fa fa-filter", Text: "Status: " + options[0].Text, Menu: items}
 }
 
-// ContextMenu builds an itemcontextmenu handler that mirrors toolbar tools, reusing their handlers and enable rules.
 func ContextMenu(tools ...Tool) Raw {
 	items := make([]string, 0, len(tools))
 	for _, t := range tools {

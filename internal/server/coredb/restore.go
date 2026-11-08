@@ -43,7 +43,6 @@ func (db *Store) generateUniqueRestoreID(restore Restore) (string, error) {
 	return "", fmt.Errorf("failed to generate a unique restore ID after %d attempts", maxAttempts)
 }
 
-// CreateRestore inserts restore, filling in a generated ID when it is empty.
 func (db *Store) CreateRestore(tx *Transaction, restore *Restore) (err error) {
 	var commitNeeded bool = false
 	q := db.queries

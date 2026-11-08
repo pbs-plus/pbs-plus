@@ -13,7 +13,6 @@ const (
 	MissedRunLimit = 100
 )
 
-// MissedRuns counts scheduled occurrences that elapsed, past a grace period, without a successful run.
 func MissedRuns(schedule string, history coredb.JobHistory, now time.Time) int {
 	if schedule == "" || history.LastSuccessfulEndtime == 0 {
 		return 0
