@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/crypto"
+	"github.com/pbs-plus/pbs-plus/internal/proxmox"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -119,16 +119,7 @@ func (v *verificationJob) listSnapshots(ctx context.Context, backup coredb.Backu
 }
 
 func buildSnapshotGroupDir(pbsStore, backupType, backupID, namespace string) string {
-	base := pbsStore
-	if namespace != "" {
-		parts := strings.SplitSeq(namespace, "/")
-		for p := range parts {
-			if p != "" {
-				base = filepath.Join(base, "ns", p)
-			}
-		}
-	}
-	return filepath.Join(base, backupType, backupID)
+	return filepath.Join(proxmox.NamespacePath(pbsStore, namespace), backupType, backupID)
 }
 
 func filterByDateRange(snapshots []snapshotInfo, dateFrom, dateTo string) []snapshotInfo {

@@ -20,9 +20,14 @@ var restorePanel = js.Panel{
 		GroupProperty:  "dest-target",
 		GroupFn:        restoreGroupFn,
 	},
-	Listeners: js.Listeners{ItemDblClick: "editJob"},
-	Controller: js.Controller{Methods: map[string]js.Raw{
-		"onSearchKeyUp":      js.SearchFilter("id", "ns", "snapshot", "src-path", "dest-target", "comment", "dest-subpath"),
+	Listeners:    js.Listeners{ItemDblClick: "editJob", ItemContextMenu: "onItemContextMenu"},
+	ListenersRaw: recentRunsListeners,
+	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "ns", "snapshot", "src-path", "dest-target", "comment", "dest-subpath"), map[string]js.Raw{
+		"onItemContextMenu": js.ContextMenu(
+			js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
+			js.EditIdleJobTool, js.DuplicateJobTool, js.RemoveIdleJobsTool, js.Sep(),
+			js.ShowLogTool,
+		),
 		"addJob":             js.OpenEditWindow("PBS.D2DManagement.RestoreJobEdit", ""),
 		"editJob":            js.EditJobWindow("PBS.D2DManagement.RestoreJobEdit"),
 		"duplicateJob":       js.DuplicateJobWindow("PBS.D2DManagement.RestoreJobEdit"),
@@ -30,45 +35,23 @@ var restorePanel = js.Panel{
 		"openTaskLog":        js.OpenTaskLog("last-run-upid"),
 		"openSuccessTaskLog": js.OpenTaskLog("last-successful-upid"),
 		"runJobs":            js.RunJobs(restoreRunURL, "Start restore job '{0}'?", "Start restore jobs '{0}'?"),
-		"stopJobs": js.Func("", `
-			const me = this;
-			const view = me.getView();
-			const recs = view.getSelection();
-			if (!recs.length) return;
-			const jobs = recs
-				.map((r) => r.data["last-run-upid"] ? { id: r.getId(), upid: r.data["last-run-upid"] } : null)
-				.filter(Boolean);
-			if (!jobs.length) return;
-			const list = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
-			const msg = jobs.length > 1
-				? Ext.String.format(gettext("Stop restore jobs '{0}'?"), list)
-				: Ext.String.format(gettext("Stop restore job '{0}'?"), list);
-			Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
-				if (btn !== "yes") return;
-				PBS.PlusUtils.API2Request({
-					url: "`+restoreRunURL+`" + jobs.map((j) => "job=" + encodeURIComponent(encodePathValue(j.id))).join("&"),
-					method: "DELETE",
-					waitMsgTarget: view,
-					// The task viewer drives the reload once each PBS task ends.
-					success: () => {},
-					failure: () => {},
-				});
-			});
-		`),
+		"stopJobs":           js.StopJobs(restoreRunURL, "Stop restore job '{0}'?", "Stop restore jobs '{0}'?"),
 		"init": js.Func("view", `
 			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
+			this.initJobFilters(view);
 			view.getStore().setGrouper({ property: "dest-target", groupFn: `+string(restoreGroupFn)+` });
 		`),
-	}},
+	})},
 	Tbar: []js.Tool{
 		js.AddJobTool, js.DuplicateJobTool, js.EditIdleJobTool, js.RemoveIdleJobsTool, js.Sep(),
 		js.ShowLogTool, js.Sep(),
 		js.RunIdleJobsTool, js.StopJobsTool,
-		js.Fill(), js.SearchTool(),
+		js.Fill(), restoreJobStatusFilters, js.SearchTool(),
 	},
 	Columns: []js.Column{
 		{Text: "Job ID", DataIndex: "id", Flex: 1, MaxWidth: 220, MinWidth: 75, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},
-		{Text: "Snapshot", DataIndex: "snapshot_human", Width: 120, Sortable: new(true)},
+		{Text: "Snapshot", DataIndex: "snapshot_human", Width: 220, Sortable: new(true), Renderer: "Ext.String.htmlEncode"},
+		{Text: "Source Path", DataIndex: "src-path", Width: 140, Sortable: new(true), Renderer: js.Func("value, meta, record", `return Ext.String.htmlEncode(value || record.get("source_database") || "/");`)},
 		{Text: "Target Destination", DataIndex: "dest-target", Width: 120, Sortable: new(true)},
 		{Text: "Namespace", DataIndex: "ns", Width: 120, Sortable: new(true)},
 		{Text: "Datastore", DataIndex: "store", Width: 120, Sortable: new(true), Hidden: true},
@@ -80,6 +63,7 @@ var restorePanel = js.Panel{
 		{Text: "Processing Speed", DataIndex: "processing_speed_human", Width: 60, Renderer: js.DashIfEmpty},
 		{Text: "Files Processed", DataIndex: "current_file_count", Width: 60, Hidden: true, Renderer: js.CountIfSet},
 		{Text: "Folders Processed", DataIndex: "current_folder_count", Width: 60, Hidden: true, Renderer: js.CountIfSet},
+		recentRunsColumn,
 		{Text: "Status", DataIndex: "last-run-state", Flex: 1, Renderer: "PBS.PlusUtils.render_task_status"},
 		{Text: "Comment", DataIndex: "comment", Flex: 2, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},
 	},

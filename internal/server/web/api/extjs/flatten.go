@@ -70,6 +70,7 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 	}, &fb.ReadSpeedHuman, &fb.ReadTotalHuman, &fb.ProcessingSpeedHuman)
 
 	fb.StatusParsed = ParseTaskStatus(b.History.LastRunState)
+	fb.JobStatus = ActiveJobs{}.Classify(b.ID, b.History, fb.StatusParsed)
 
 	return fb
 }
@@ -77,34 +78,31 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 // If staleDays > 0, sets Stale=true for jobs whose last-successful-endtime
 // is older than staleDays. If skipUnscheduled is true, jobs with no schedule
 // are never marked stale. excludedJobs is a set of job IDs to skip.
-func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool) []FlatBackup {
+func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool, active ActiveJobs) []FlatBackup {
 	result := make([]FlatBackup, len(backups))
+	now := time.Now()
 	var cutoff int64
 	if staleDays > 0 {
-		cutoff = time.Now().Unix() - int64(staleDays)*24*60*60
+		cutoff = now.Unix() - int64(staleDays)*24*60*60
 	}
 	for i := range backups {
 		result[i] = FlattenBackup(backups[i])
-		if staleDays <= 0 {
-			continue
-		}
-		b := &backups[i]
-		if excludedJobs != nil && excludedJobs[b.ID] {
-			continue
-		}
-		if skipUnscheduled && b.Schedule == "" {
-			continue
-		}
-		if b.History.LastSuccessfulEndtime == 0 {
-			// Never ran  -  only stale if has a schedule (or not skipping unscheduled)
-			if !skipUnscheduled || b.Schedule != "" {
-				result[i].Stale = true
-			}
-		} else if b.History.LastSuccessfulEndtime < cutoff {
-			result[i].Stale = true
-		}
+		result[i].JobStatus = active.Classify(backups[i].ID, backups[i].History, result[i].StatusParsed)
+		result[i].MissedRuns = MissedRuns(backups[i].Schedule, backups[i].History, now)
+		result[i].Stale = isStale(&backups[i], staleDays, cutoff, skipUnscheduled, excludedJobs)
+		result[i].NeedsAttention = result[i].Stale || result[i].MissedRuns > 0
 	}
 	return result
+}
+
+func isStale(b *coredb.Backup, staleDays int, cutoff int64, skipUnscheduled bool, excludedJobs map[string]bool) bool {
+	if staleDays <= 0 || excludedJobs[b.ID] || (skipUnscheduled && b.Schedule == "") {
+		return false
+	}
+	if b.History.LastSuccessfulEndtime == 0 {
+		return true
+	}
+	return b.History.LastSuccessfulEndtime < cutoff
 }
 
 func FlattenRestore(r coredb.Restore) FlatRestore {
@@ -130,6 +128,7 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 		DovecotDestinationMailbox:  r.DovecotDestinationMailbox,
 		DovecotMessages:            r.DovecotMessages,
 		ReplaceExisting:            r.ReplaceExisting,
+		RemoveOnSuccess:            r.RemoveOnSuccess,
 
 		DestTarget: r.DestTarget.Name,
 
@@ -161,14 +160,16 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 	}, &fr.ReadSpeedHuman, &fr.ReadTotalHuman, &fr.ProcessingSpeedHuman)
 
 	fr.StatusParsed = ParseTaskStatus(r.History.LastRunState)
+	fr.JobStatus = ActiveJobs{}.Classify(r.ID, r.History, fr.StatusParsed)
 
 	return fr
 }
 
-func FlattenRestores(restores []coredb.Restore) []FlatRestore {
+func FlattenRestores(restores []coredb.Restore, active ActiveJobs) []FlatRestore {
 	result := make([]FlatRestore, len(restores))
 	for i := range restores {
 		result[i] = FlattenRestore(restores[i])
+		result[i].JobStatus = active.Classify(restores[i].ID, restores[i].History, result[i].StatusParsed)
 	}
 	return result
 }
@@ -219,14 +220,16 @@ func FlattenVerificationJob(vj coredb.VerificationJob) FlatVerificationJob {
 	}
 
 	fvj.StatusParsed = ParseTaskStatus(vj.History.LastRunState)
+	fvj.JobStatus = ActiveJobs{}.Classify(vj.ID, vj.History, fvj.StatusParsed)
 
 	return fvj
 }
 
-func FlattenVerificationJobs(jobs []coredb.VerificationJob) []FlatVerificationJob {
+func FlattenVerificationJobs(jobs []coredb.VerificationJob, active ActiveJobs) []FlatVerificationJob {
 	result := make([]FlatVerificationJob, len(jobs))
 	for i := range jobs {
 		result[i] = FlattenVerificationJob(jobs[i])
+		result[i].JobStatus = active.Classify(jobs[i].ID, jobs[i].History, result[i].StatusParsed)
 	}
 	return result
 }
@@ -560,6 +563,7 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 		"dovecot_destination_mailbox":  r.DovecotDestinationMailbox,
 		"dovecot_messages":             r.DovecotMessages,
 		"replace_existing":             r.ReplaceExisting,
+		"remove_on_success":            r.RemoveOnSuccess,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
 			"last-run-upid":           r.History.LastRunUpid,
@@ -623,8 +627,11 @@ type FlatBackup struct {
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
 
-	// Computed server-side from alert settings
-	Stale bool `json:"stale"`
+	Stale          bool              `json:"stale"`
+	MissedRuns     int               `json:"missed_runs"`
+	NeedsAttention bool              `json:"needs_attention"`
+	JobStatus      string            `json:"job_status"`
+	RecentRuns     []TasksWithStatus `json:"recent_runs"`
 }
 
 type FlatRestore struct {
@@ -650,6 +657,7 @@ type FlatRestore struct {
 	DovecotDestinationMailbox  string `json:"dovecot_destination_mailbox,omitempty"`
 	DovecotMessages            string `json:"dovecot_messages,omitempty"`
 	ReplaceExisting            bool   `json:"replace_existing,omitempty"`
+	RemoveOnSuccess            bool   `json:"remove_on_success,omitempty"`
 
 	DestTarget string `json:"dest-target"`
 
@@ -671,6 +679,9 @@ type FlatRestore struct {
 	ReadTotalHuman       string           `json:"read_total_human"`
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
+
+	JobStatus  string            `json:"job_status"`
+	RecentRuns []TasksWithStatus `json:"recent_runs"`
 }
 
 type FlatVerificationJob struct {
@@ -700,6 +711,7 @@ type FlatVerificationJob struct {
 	Duration              int64  `json:"duration"`
 
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
+	JobStatus    string           `json:"job_status"`
 }
 
 type SpotCheckConfigJSON struct {

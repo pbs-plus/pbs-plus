@@ -70,6 +70,7 @@ var restoreJobEdit = js.EditWindow{
 				}
 			`),
 			"snapshotChange": js.Func("field, value", `
+				this.selectOriginalTarget(field, value);
 				let pathSel = this.lookup("pathSelector");
 				if (pathSel) {
 					pathSel.setSnapshot(value);
@@ -77,6 +78,16 @@ var restoreJobEdit = js.EditWindow{
 				let messageSel = this.lookup("dovecotMessages");
 				if (messageSel) {
 					messageSel.setSnapshot(value);
+				}
+			`),
+			"selectOriginalTarget": js.Func("field, value", `
+				let target = this.lookup("dest-target");
+				let snapshot = value ? field.getSelection() : null;
+				if (!this.getView().isCreate || !snapshot || !target || target.getValue()) {
+					return;
+				}
+				if (snapshot.get("source_target")) {
+					target.setValue(snapshot.get("source_target"));
 				}
 			`),
 			"targetChange": js.Func("field, value", `
@@ -89,15 +100,7 @@ var restoreJobEdit = js.EditWindow{
 				let sourcePath = this.lookup("pathSelector");
 				sourcePath.setHidden(structured);
 				sourcePath.setDisabled(structured);
-				let names = [];
-				field.getStore().each(function (entry) {
-					let entryKind = entry.get("kind") || entry.get("target_type");
-					let keep = structured ? entryKind === kind : ["postgresql", "mysql", "ldap", "dovecot"].includes(entryKind);
-					if (keep) {
-						names.push(String(entry.get("name") || "").replace(/[. ]/g, "-"));
-					}
-				});
-				this.lookup("snapshot").setArchiveFilter({ names: names, mode: structured ? "include" : "exclude" });
+				this.lookup("snapshot").setRestoreTarget(value || null);
 				let pathSel = this.lookup("pathSelectorDestination");
 				if (pathSel) {
 					pathSel.setTarget(value);
@@ -127,7 +130,34 @@ var restoreJobEdit = js.EditWindow{
 			`),
 		},
 	},
-	Methods: map[string]js.Raw{"initComponent": js.ApplyJobData},
+	Methods: map[string]js.Raw{
+		"initComponent": js.ApplyJobDataWith(`
+			if (me.snapshotGroup) {
+				me.lookup("snapshot").setPreferredGroup(me.snapshotGroup);
+			}
+			if (me.isCreate) {
+				me.addCreateAndRunButton();
+			}
+		`),
+		"addCreateAndRunButton": js.Func("", `
+			let me = this;
+			let submit = me.down("button[reference=submitbutton]");
+			let toolbar = submit.up("toolbar");
+			let form = me.formPanel.getForm();
+			let runButton = toolbar.insert(toolbar.items.indexOf(submit), {
+				xtype: "button",
+				text: gettext("Create & Run"),
+				iconCls: "fa fa-play",
+				disabled: !form.isValid(),
+				handler: () => {
+					me.submitUrl = me.url + "?run=1";
+					me.submit();
+					delete me.submitUrl;
+				},
+			});
+			form.on("validitychange", (f, valid) => runButton.setDisabled(!valid));
+		`),
+	},
 	Items: js.Items(js.Panel{
 		Extend: js.ExtTabPanel, BodyPadding: 10, BorderOff: true,
 		Items: js.Items(
@@ -142,7 +172,10 @@ var restoreJobEdit = js.EditWindow{
 						AllowBlank: new(true), CBind: js.Obj{"value": "{restoreModeValue}"}},
 					js.Field{XType: js.XDataStoreSelector, Label: "Local Datastore", Name: "store"},
 					js.Field{XType: "pbsD2DNamespaceSelector", Label: "Snapshot namespace", EmptyText: "Root", Name: "ns", Reference: "namespace", DeleteEmptyWhenNotCreate: true},
-					js.Field{XType: "pbsD2DSnapshotSelector", Label: "Snapshot", Name: "snapshot", Reference: "snapshot", DeleteEmptyWhenNotCreate: true},
+					js.Field{XType: js.XFieldContainer, Label: "Snapshot", Layout: "hbox", Items: js.Items(
+						js.Field{XType: "pbsD2DSnapshotSelector", Name: "snapshot", Reference: "snapshot", Flex: 1, DeleteEmptyWhenNotCreate: true},
+						js.Raw(`{ xtype: "button", iconCls: "fa fa-history", margin: "0 0 0 5", tooltip: gettext("Browse snapshots by host and date"), handler: function (btn) { btn.up("pbsDiskRestoreJobEdit").lookup("snapshot").openBrowser(); } }`),
+					)},
 					js.Field{XType: "pbsD2DSnapshotPathSelector", Label: "Path to restore", Reference: "pathSelector", Name: "src-path", DeleteEmptyWhenNotCreate: true},
 				),
 				Column2: js.Items(
@@ -171,6 +204,7 @@ var restoreJobEdit = js.EditWindow{
 				),
 				ColumnB: js.Items(
 					js.Field{XType: "proxmoxtextfield", Label: "Comment", Name: "comment", DeleteEmptyWhenNotCreate: true},
+					js.Field{XType: js.XCheckbox, Label: "One-shot", Name: "remove_on_success", BoxLabel: "Remove this job after its next successful run (the task log is kept)", InputValue: "true", UncheckedValue: "false"},
 					js.Field{XType: "pbsD2DScriptSelector", Label: "Pre-Restore Script", Name: "pre_script"},
 					js.Field{XType: "pbsD2DScriptSelector", Label: "Post-Restore Script", Name: "post_script"},
 				),

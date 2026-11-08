@@ -16,14 +16,10 @@ func NormalizeHostname(hostname string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(hostname, ".", "-"), " ", "-")
 }
 
+var upidPattern = regexp.MustCompile(`^UPID:(?P<node>[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?):(?P<pid>[0-9A-Fa-f]{8}):(?P<pstart>[0-9A-Fa-f]{8,9}):(?P<task_id>[0-9A-Fa-f]{8,16}):(?P<starttime>[0-9A-Fa-f]{8}):(?P<wtype>[^:\s]+):(?P<wid>[^:\s]*):(?P<authid>[^:\s]+):$`)
+
 func ParseUPID(upid string) (Task, error) {
-	pattern := `^UPID:(?P<node>[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?):(?P<pid>[0-9A-Fa-f]{8}):(?P<pstart>[0-9A-Fa-f]{8,9}):(?P<task_id>[0-9A-Fa-f]{8,16}):(?P<starttime>[0-9A-Fa-f]{8}):(?P<wtype>[^:\s]+):(?P<wid>[^:\s]*):(?P<authid>[^:\s]+):$`
-
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return Task{}, fmt.Errorf("failed to compile regex: %w", err)
-	}
-
+	re := upidPattern
 	matches := re.FindStringSubmatch(upid)
 	if matches == nil {
 		return Task{}, fmt.Errorf("invalid UPID format")

@@ -4,6 +4,7 @@ package restoreapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -63,7 +65,10 @@ func D2DRestoreHandler(app *application.Runtime) http.HandlerFunc {
 			allRestores[i].CurrentStats.StatCacheHits = int(stats.StatCacheHits)
 		}
 
-		flatRestores := extjs.FlattenRestores(allRestores)
+		flatRestores := extjs.FlattenRestores(allRestores, extjs.LoadActiveJobs(r.Context(), app.Engine, jobs.WorkflowRestore))
+		for i := range flatRestores {
+			flatRestores[i].RecentRuns = extjs.WithStatus(allRestores[i].RecentTasks(extjs.RecentRunCount))
+		}
 
 		digest, err := digest.Calculate(flatRestores)
 		if err != nil {
@@ -99,59 +104,22 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		decodedRestoreIDs := []string{}
-		for _, restoreID := range restoreIDs {
-			decoded := validate.DecodePath(restoreID)
-			if err := validate.ValidateJobId(decoded); err != nil {
-				respond.WriteErrorResponse(w, err)
-				return
-			}
-			decodedRestoreIDs = append(decodedRestoreIDs, decoded)
-		}
-
-		stop := r.Method == http.MethodDelete
-		response.Errors = map[string]string{}
-		var messages []string
-
-		conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 10*time.Second)
+		decodedRestoreIDs, err := validate.DecodeJobIDs(restoreIDs)
 		if err != nil {
-			log.Error(err, "", "restores", decodedRestoreIDs)
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-		rpcClient := rpc.NewClient(conn)
-		defer func() {
-			if err := rpcClient.Close(); err != nil {
-				log.Error(err, "")
-			}
-		}()
 
-		for _, restoreID := range decodedRestoreIDs {
-			restoreTask, err := app.CoreDB.GetRestore(restoreID)
-			if err != nil {
-				log.Error(err, "", "restoreID", restoreID)
-				response.Errors[restoreID] = err.Error()
-				messages = append(messages, restoreID+": "+err.Error())
-				continue
-			}
-
-			args := &jobrpc.RestoreQueueArgs{
-				Job:       restoreTask,
-				SkipCheck: true,
-				Stop:      stop,
-				Web:       true,
-			}
-			var reply jobrpc.QueueReply
-			if err := rpcClient.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
-				log.Error(err, "", "restoreID", restoreID)
-				response.Errors[restoreID] = err.Error()
-				messages = append(messages, restoreID+": "+err.Error())
-				continue
-			}
-			if reply.Status != 200 {
-				log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", restoreID)
-				response.Errors[restoreID] = reply.Message
-				messages = append(messages, restoreID+": "+reply.Message)
+		failures, err := queueRestores(app, decodedRestoreIDs, r.Method == http.MethodDelete)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		response.Errors = failures
+		var messages []string
+		for _, id := range decodedRestoreIDs {
+			if msg, ok := failures[id]; ok {
+				messages = append(messages, id+": "+msg)
 			}
 		}
 
@@ -166,6 +134,59 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 			log.Error(err, "")
 		}
 	}
+}
+
+func queueRestores(app *application.Runtime, ids []string, stop bool) (map[string]string, error) {
+	conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 10*time.Second)
+	if err != nil {
+		log.Error(err, "", "restores", ids)
+		return nil, err
+	}
+	client := rpc.NewClient(conn)
+	defer func() {
+		if err := client.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	failures := map[string]string{}
+	for _, id := range ids {
+		job, err := app.CoreDB.GetRestore(id)
+		if err != nil {
+			log.Error(err, "", "restoreID", id)
+			failures[id] = err.Error()
+			continue
+		}
+		var reply jobrpc.QueueReply
+		args := &jobrpc.RestoreQueueArgs{Job: job, SkipCheck: true, Stop: stop, Web: true}
+		if err := client.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
+			log.Error(err, "", "restoreID", id)
+			failures[id] = err.Error()
+			continue
+		}
+		if reply.Status != http.StatusOK {
+			log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", id)
+			failures[id] = reply.Message
+		}
+	}
+	return failures, nil
+}
+
+func startCreatedRestore(app *application.Runtime, id string) error {
+	failures, err := queueRestores(app, []string{id}, false)
+	if err == nil && failures[id] != "" {
+		err = errors.New(failures[id])
+	}
+	if err == nil {
+		return nil
+	}
+	if delErr := app.Restore.DeleteRestore(id); delErr != nil {
+		log.Error(delErr, "failed to roll back restore job that could not start", "restoreID", id)
+	}
+	if batchErr := app.CoreDB.RemoveJobFromAllBatches("restore", id); batchErr != nil {
+		log.Error(batchErr, "", "restoreID", id)
+	}
+	return fmt.Errorf("%w: restore job could not be started: %w", respond.ErrConflict, err)
 }
 
 func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
@@ -288,8 +309,11 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
 		}
+		if removeOnSuccess, parseErr := strconv.ParseBool(r.FormValue("remove_on_success")); parseErr == nil {
+			newRestore.RemoveOnSuccess = removeOnSuccess
+		}
 
-		err = app.Restore.CreateRestore(newRestore)
+		err = app.Restore.CreateRestore(&newRestore)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
@@ -297,8 +321,16 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 
 		notificationapi.ApplyJobBatchAssignment(app, "restore", newRestore.ID, r.FormValue("notification-batch"))
 
+		if run, _ := strconv.ParseBool(r.FormValue("run")); run {
+			if err := startCreatedRestore(app, newRestore.ID); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+		}
+
 		response.Status = http.StatusOK
 		response.Success = true
+		response.Data = map[string]string{"id": newRestore.ID}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Error(err, "")
 		}
@@ -407,6 +439,14 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 				restore.ReplaceExisting = replaceExisting
 			}
+			if r.Form.Has("remove_on_success") {
+				removeOnSuccess, parseErr := strconv.ParseBool(r.FormValue("remove_on_success"))
+				if parseErr != nil {
+					respond.WriteErrorResponse(w, parseErr)
+					return
+				}
+				restore.RemoveOnSuccess = removeOnSuccess
+			}
 
 			preScript := r.FormValue("pre_script")
 			if err := validate.ValidateScriptPath("pre_script", preScript); err != nil {
@@ -487,6 +527,8 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.DovecotMessages = ""
 					case "replace_existing":
 						restore.ReplaceExisting = false
+					case "remove_on_success":
+						restore.RemoveOnSuccess = false
 					}
 				}
 			}

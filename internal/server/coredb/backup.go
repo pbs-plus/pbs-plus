@@ -714,41 +714,11 @@ func (b *Backup) GetStreamID() string {
 }
 
 func (b *Backup) GetAllUPIDs() []Tasks {
-	backupLogsPath := filepath.Join(conf.BackupLogsBasePath, b.ID)
-	if err := os.MkdirAll(backupLogsPath, 0755); err != nil {
-		log.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err), "", "id", b.ID)
+	return jobTasks(conf.BackupLogsBasePath, b.ID, 0)
+}
 
-		return nil
-	}
-
-	logs, err := os.ReadDir(backupLogsPath)
-	if err != nil {
-		log.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err), "", "id", b.ID)
-
-		return nil
-	}
-
-	upids := make([]Tasks, 0, len(logs))
-
-	for _, entry := range logs {
-		if tasklog.IsQueuedUPID(entry.Name()) {
-			if err := os.Remove(filepath.Join(backupLogsPath, entry.Name())); err != nil && !os.IsNotExist(err) {
-				log.Error(fmt.Errorf("GetAllUPIDs: failed removing queued task link: %w", err), "", "id", b.ID)
-			}
-			continue
-		}
-		task, err := tasklog.GetTaskByUPID(entry.Name())
-		if err != nil {
-			continue
-		}
-		upids = append(upids, Tasks{
-			UPID:    task.UPID,
-			Endtime: task.EndTime,
-			Status:  task.ExitStatus,
-		})
-	}
-
-	return upids
+func (b *Backup) RecentTasks(limit int) []Tasks {
+	return jobTasks(conf.BackupLogsBasePath, b.ID, limit)
 }
 
 type Backup struct {
@@ -855,9 +825,10 @@ func (db *Store) storeBackupDovecotOptions(q *corequery.Queries, backup Backup) 
 }
 
 type Tasks struct {
-	UPID    string `json:"upid"`
-	Endtime int64  `json:"endtime"`
-	Status  string `json:"status"`
+	UPID      string `json:"upid"`
+	Starttime int64  `json:"starttime"`
+	Endtime   int64  `json:"endtime"`
+	Status    string `json:"status"`
 }
 
 type JobStats struct {
@@ -880,4 +851,20 @@ type JobHistory struct {
 	RetryCount            int       `json:"retry-count"`
 	LatestSnapshotSize    int       `json:"latest_snapshot_size,omitempty"`
 	Duration              int64     `json:"duration"`
+}
+
+func (db *Store) UpdateBackups(ids []string, mutate func(*Backup)) error {
+	return db.RunInTransaction(db.ctx, func(tx *Transaction, _ *corequery.Queries) error {
+		for _, id := range ids {
+			backup, err := db.GetBackup(id)
+			if err != nil {
+				return fmt.Errorf("%s: %w", id, err)
+			}
+			mutate(&backup)
+			if err := db.UpdateBackup(tx, backup); err != nil {
+				return fmt.Errorf("%s: %w", id, err)
+			}
+		}
+		return nil
+	})
 }

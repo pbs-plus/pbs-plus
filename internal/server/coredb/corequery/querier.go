@@ -43,6 +43,7 @@ type Querier interface {
 	DeleteRestoreDatabaseOptions(ctx context.Context, restoreID string) error
 	DeleteRestoreDovecotOptions(ctx context.Context, restoreID string) error
 	DeleteScript(ctx context.Context, path string) (int64, error)
+	DeleteSucceededOneShotRestore(ctx context.Context, arg DeleteSucceededOneShotRestoreParams) (int64, error)
 	DeleteTarget(ctx context.Context, name string) (int64, error)
 	DeleteTargetDovecot(ctx context.Context, targetName string) error
 	DeleteTargetFilesystem(ctx context.Context, targetName string) error

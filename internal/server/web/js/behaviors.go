@@ -18,8 +18,8 @@ var DashIfEmpty = Func("value", `return value || "-";`)
 
 // JobIdle and JobStoppable are selectionEvery expressions over a job record r.
 const (
-	JobIdle      = `!r.data["last-run-upid"] || !!r.data["last-run-state"]`
-	JobStoppable = `!!r.data["last-run-upid"] && ((r.data["last-run-state"] || "") === "" || (r.data["last-run-state"] || "").startsWith("QUEUED:"))`
+	JobIdle      = `r.data.job_status !== "running"`
+	JobStoppable = `r.data.job_status === "running"`
 )
 
 var CountIfSet = Func("value", `
@@ -43,23 +43,6 @@ func OpenTaskLog(upidField string) Raw {
 
 func SearchTool() Tool {
 	return Tool{XType: XTextField, Reference: "searchField", EmptyText: "Search...", Width: 200, KeyUp: "onSearchKeyUp"}
-}
-
-func SearchFilter(fields ...string) Raw {
-	tests := make([]string, len(fields))
-	for i, f := range fields {
-		tests[i] = fmt.Sprintf(`re.test(rec.get(%q))`, f)
-	}
-	return Func("field", fmt.Sprintf(`
-		const val = field.getValue().trim();
-		const store = this.getView().getStore();
-		store.clearFilter(true);
-		if (!val) {
-			return;
-		}
-		const re = new RegExp(Ext.String.escapeRegex(val), "i");
-		store.filterBy((rec) => %s);
-	`, strings.Join(tests, " || ")))
 }
 
 // selectionEvery enables a button while every selected record satisfies expr, with the record bound to r.
@@ -87,7 +70,7 @@ var EnableOnSingleSelection = Func("", `
 var (
 	AddJobTool         = Tool{Text: "Add Job", Handler: "addJob", SelModel: new(false)}
 	DuplicateJobTool   = Tool{Text: "Duplicate Job", Handler: "duplicateJob", Disabled: true, EnableFn: EnableOnSingleSelection}
-	EditIdleJobTool    = Tool{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: SelectionOne(`!recs[0].data["last-run-upid"] || !!recs[0].data["last-run-state"]`)}
+	EditIdleJobTool    = Tool{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: SelectionOne(`recs[0].data.job_status !== "running"`)}
 	RemoveIdleJobsTool = Tool{Text: "Remove Job(s)", Handler: "removeJobs", Disabled: true, EnableFn: SelectionEvery(JobIdle)}
 	RunIdleJobsTool    = Tool{Text: "Run Job(s)", Handler: "runJobs", Disabled: true, EnableFn: SelectionEvery(JobIdle)}
 	StopJobsTool       = Tool{Text: "Stop Job(s)", Handler: "stopJobs", Disabled: true, EnableFn: SelectionEvery(JobStoppable)}
@@ -121,14 +104,19 @@ func GroupHeader(noun string) string {
 }
 
 // ApplyJobData seeds values from a duplicated job, which arrive after callParent.
-var ApplyJobData = Func("", `
+var ApplyJobData = ApplyJobDataWith("")
+
+func ApplyJobDataWith(setup string) Raw {
+	return Func("", `
 	let me = this;
 	me.callParent();
+	`+setup+`
 	if (me.jobData) {
 		let data = Ext.apply({}, me.jobData);
 		me.setValues(data);
 	}
 `)
+}
 
 var ChangerExtraParams = Func("", `
 	let me = this;
@@ -180,27 +168,28 @@ func DuplicateJobWindow(class string) Raw {
 
 // runJobs POSTs every selected job id to baseURL as repeated job= parameters.
 func RunJobs(baseURL, singular, plural string) Raw {
+	return jobAction("POST", baseURL, singular, plural, JobIdle)
+}
+
+func StopJobs(baseURL, singular, plural string) Raw {
+	return jobAction("DELETE", baseURL, singular, plural, JobStoppable)
+}
+
+func jobAction(method, baseURL, singular, plural, eligible string) Raw {
 	return Func("", fmt.Sprintf(`
 		const me = this;
 		const view = me.getView();
-		const recs = view.getSelection();
-		if (!recs.length) return;
-		const ids = recs.map((r) => r.getId());
+		const ids = view.getSelection().filter((r) => %s).map((r) => r.getId());
+		if (!ids.length) return;
 		const list = ids.map(Ext.String.htmlEncode).join("', '");
 		const msg = ids.length > 1
 			? Ext.String.format(gettext(%q), list)
 			: Ext.String.format(gettext(%q), list);
 		Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
 			if (btn !== "yes") return;
-			PBS.PlusUtils.API2Request({
-				url: %q + ids.map((id) => "job=" + encodeURIComponent(encodePathValue(id))).join("&"),
-				method: "POST",
-				waitMsgTarget: view,
-				success: () => me.reload(),
-				failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-			});
+			PBS.PlusUtils.jobRequest(%q, %q, ids, { waitMsgTarget: view, success: () => me.reload() });
 		});
-	`, plural, singular, baseURL))
+	`, eligible, plural, singular, method, baseURL))
 }
 
 // A prompt containing {0} is formatted with the list of selected record ids.

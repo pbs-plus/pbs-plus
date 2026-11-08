@@ -46,47 +46,72 @@ var selectors = []js.Value{
 		Methods: map[string]js.Raw{
 			"initComponent": js.Func("", `
 				let me = this;
+				me.reloadTask = new Ext.util.DelayedTask(me.loadSnapshots, me);
 				me.store = Ext.create("Ext.data.Store", {
-					model: "pbs-model-d2d-snapshots", autoLoad: !!me.getDatastore(),
-					sorters: [{ property: "backup-time", direction: "DESC" }],
-					proxy: { type: "proxmox", url: me.getDatastore() ? "/api2/json/admin/datastore/" + me.getDatastore() + "/snapshots" : null, extraParams: { "backup-type": "host", ns: me.getNamespace() || null } },
-					listeners: { load: function () { me.syncArchiveFilter(); let val = me.getValue(); if (val) me.setValue(val); } },
+					model: "pbs-model-d2d-snapshots",
+					proxy: { type: "pbsplus", url: pbsPlusBaseUrl + "/api2/json/d2d/restore/snapshots" },
+					listeners: { load: () => me.onSnapshotsLoaded() },
 				});
-				me.setDisabled(!me.getDatastore());
 				me.callParent();
+				me.reloadSnapshots();
 			`),
-			"syncArchiveFilter": js.Func("", `
+			"onDestroy": js.Func("", `
+				this.reloadTask.cancel();
+				this.callParent();
+			`),
+			"reloadSnapshots": js.Func("", `
+				if (this.reloadTask) {
+					this.reloadTask.delay(50);
+				}
+			`),
+			"loadSnapshots": js.Func("", `
 				let me = this;
-				let store = me.store;
-				if (!store || typeof store.clearFilter !== "function") {
+				let datastore = me.getDatastore();
+				me.setDisabled(!datastore);
+				if (!datastore) {
+					me.store.removeAll();
 					return;
 				}
-				store.clearFilter();
-				let filter = me.getArchiveFilter();
-				if (!filter || !filter.names) {
+				me.store.getProxy().setExtraParams({ store: datastore, ns: me.getNamespace() || "", target: me.getRestoreTarget() || "" });
+				me.store.load();
+			`),
+			"onSnapshotsLoaded": js.Func("", `
+				let me = this;
+				let value = me.getValue();
+				if (value) {
+					me.setValue(me.store.findRecord("value", value, 0, false, true, true) ? value : null);
+				}
+				me.selectPreferredSnapshot();
+			`),
+			"updateDatastore":     js.Func("", `this.reloadSnapshots();`),
+			"updateNamespace":     js.Func("", `this.reloadSnapshots();`),
+			"updateRestoreTarget": js.Func("", `this.reloadSnapshots();`),
+			"selectPreferredSnapshot": js.Func("", `
+				let me = this;
+				let group = me.getPreferredGroup();
+				if (!group || me.getValue() || !me.store || me.store.isLoading()) {
 					return;
 				}
-				let exclude = filter.mode === "exclude";
-				store.filterBy(function (record) {
-					let files = record.get("files") || [];
-					let match = files.some((file) => filter.names.some((name) => file.filename === name + ".pxar.didx" || file.filename === name + ".mpxar.didx"));
-					return exclude ? !match : match;
-				});
-				if (me.getValue() && !store.findRecord("value", me.getValue(), 0, false, true, true)) {
-					me.setValue(null);
+				let latest = me.store.findRecord("backup-id", group, 0, false, true, true);
+				if (latest) {
+					me.setValue(latest.get("value"));
 				}
 			`),
-			"updateArchiveFilter": js.Func("", `this.syncArchiveFilter();`),
-			"updateDatastore": js.Func("newDatastore", `
+			"updatePreferredGroup": js.Func("", `this.selectPreferredSnapshot();`),
+			"openBrowser": js.Func("", `
 				let me = this;
-				if (newDatastore) { me.setDisabled(false); me.store.getProxy().setUrl("/api2/json/admin/datastore/" + newDatastore + "/snapshots"); me.store.load(); } else { me.setDisabled(true); me.store.removeAll(); }
-			`),
-			"updateNamespace": js.Func("newNamespace", `
-				let me = this;
-				if (me.getDatastore()) { me.store.getProxy().setExtraParam("ns", newNamespace || null); me.store.load(); }
+				if (me.isDisabled() || me.readOnly) {
+					return;
+				}
+				if (!me.getDatastore()) {
+					Ext.Msg.alert(gettext("Error"), gettext("Please select a datastore first."));
+					return;
+				}
+				me.collapse();
+				Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me, initialHost: me.getPreferredGroup() || "" }).show();
 			`),
 		},
-		ConfigNames: []string{"datastore", "namespace", "archiveFilter"}, QueryMode: "local", AnyMatch: new(true),
+		ConfigNames: []string{"datastore", "namespace", "restoreTarget", "preferredGroup"}, QueryMode: "local", AnyMatch: new(true),
 		ForceSelection: new(false), AutoSelect: new(false),
 	},
 	js.Selector{

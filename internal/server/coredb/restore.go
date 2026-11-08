@@ -43,7 +43,7 @@ func (db *Store) generateUniqueRestoreID(restore Restore) (string, error) {
 	return "", fmt.Errorf("failed to generate a unique restore ID after %d attempts", maxAttempts)
 }
 
-func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
+func (db *Store) CreateRestore(tx *Transaction, restore *Restore) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -77,7 +77,7 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	q = db.queries.WithTx(tx.Tx)
 
 	if restore.ID == "" {
-		id, err := db.generateUniqueRestoreID(restore)
+		id, err := db.generateUniqueRestoreID(*restore)
 		if err != nil {
 			return fmt.Errorf("CreateRestore: failed to generate unique id -> %w", err)
 		}
@@ -132,14 +132,15 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 		LastRunStatus:      toNullInt64(int(restore.History.LastRunStatus)),
 		RetryCount:         toNullInt64(restore.History.RetryCount),
 		NotificationMode:   toNullString(restore.NotificationMode),
+		RemoveOnSuccess:    boolToNullInt64(restore.RemoveOnSuccess).Int64,
 	})
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
 	}
-	if err = db.storeRestoreDatabaseOptions(q, restore); err != nil {
+	if err = db.storeRestoreDatabaseOptions(q, *restore); err != nil {
 		return fmt.Errorf("CreateRestore: %w", err)
 	}
-	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
+	if err = db.storeRestoreDovecotOptions(q, *restore); err != nil {
 		return fmt.Errorf("CreateRestore: %w", err)
 	}
 
@@ -162,6 +163,7 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		Snapshot:         row.Snapshot,
 		SrcPath:          row.SrcPath,
 		NotificationMode: fromNullString(row.NotificationMode),
+		RemoveOnSuccess:  row.RemoveOnSuccess != 0,
 		DestTarget: Target{
 			Name:   row.DestTarget,
 			Type:   TargetType(fromNullString(row.TargetType)),
@@ -333,6 +335,7 @@ func (db *Store) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 		LastRunStatus:      toNullInt64(int(restore.History.LastRunStatus)),
 		RetryCount:         toNullInt64(restore.History.RetryCount),
 		NotificationMode:   toNullString(restore.NotificationMode),
+		RemoveOnSuccess:    boolToNullInt64(restore.RemoveOnSuccess).Int64,
 		ID:                 restore.ID,
 	})
 	if err != nil {
@@ -407,6 +410,7 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 			SrcPath:          row.SrcPath,
 			Mode:             int(row.RestoreMode),
 			NotificationMode: fromNullString(row.NotificationMode),
+			RemoveOnSuccess:  row.RemoveOnSuccess != 0,
 			DestTarget: Target{
 				Name:   row.DestTarget,
 				Type:   TargetType(fromNullString(row.TargetType)),
@@ -477,96 +481,53 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 	return restores, nil
 }
 
-func (db *Store) DeleteRestore(tx *Transaction, id string) (err error) {
-	var commitNeeded bool = false
-	q := db.queries
+func (db *Store) DeleteRestore(tx *Transaction, id string) error {
+	return db.deleteRestore(tx, id, func(q *corequery.Queries) (int64, error) {
+		return q.DeleteRestore(db.ctx, id)
+	})
+}
 
-	if tx == nil {
-		tx, err = db.NewTransaction()
+func (db *Store) DeleteSucceededOneShotRestore(id, upid string) (bool, error) {
+	err := db.deleteRestore(nil, id, func(q *corequery.Queries) (int64, error) {
+		return q.DeleteSucceededOneShotRestore(db.ctx, corequery.DeleteSucceededOneShotRestoreParams{ID: id, Upid: toNullString(upid)})
+	})
+	if errors.Is(err, ErrRestoreNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (db *Store) deleteRestore(tx *Transaction, id string, del func(*corequery.Queries) (int64, error)) error {
+	run := func(_ *Transaction, q *corequery.Queries) error {
+		rows, err := del(q)
 		if err != nil {
-			return fmt.Errorf("DeleteRestore: failed to begin transaction: %w", err)
+			return fmt.Errorf("DeleteRestore: error deleting restore %s: %w", id, err)
 		}
-		defer func() {
-			if p := recover(); p != nil {
-				if err := tx.Rollback(); err != nil {
-					log.Error(err, "")
-				}
-				panic(p)
-			} else if err != nil {
-				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					log.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr), "")
-				}
-			} else if commitNeeded {
-				if cErr := tx.Commit(); cErr != nil {
-					err = fmt.Errorf("DeleteRestore: failed to commit transaction: %w", cErr)
-					log.Error(err, "")
-				}
-			} else {
-				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					log.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr), "")
-				}
-			}
-		}()
-	}
-	q = db.queries.WithTx(tx.Tx)
-
-	rowsAffected, err := q.DeleteRestore(db.ctx, id)
-	if err != nil {
-		return fmt.Errorf("DeleteRestore: error deleting restore %s: %w", id, err)
-	}
-
-	if rowsAffected == 0 {
-		return ErrRestoreNotFound
-	}
-
-	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, id)
-	if err := os.RemoveAll(restoreLogsPath); err != nil && !os.IsNotExist(err) {
-		if !os.IsNotExist(err) {
-			log.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err), "", "id", id)
-
+		if rows == 0 {
+			return ErrRestoreNotFound
 		}
+		return nil
+	}
+	if tx != nil {
+		if err := run(tx, db.queries.WithTx(tx.Tx)); err != nil {
+			return err
+		}
+	} else if err := db.RunInTransaction(db.ctx, run); err != nil {
+		return err
 	}
 
-	commitNeeded = true
+	if err := os.RemoveAll(filepath.Join(conf.RestoreLogsBasePath, id)); err != nil {
+		log.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err), "", "id", id)
+	}
 	return nil
 }
 
 func (r *Restore) GetAllUPIDs() []Tasks {
-	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, r.ID)
-	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
-		log.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err), "", "id", r.ID)
+	return jobTasks(conf.RestoreLogsBasePath, r.ID, 0)
+}
 
-		return nil
-	}
-
-	logs, err := os.ReadDir(restoreLogsPath)
-	if err != nil {
-		log.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err), "", "id", r.ID)
-
-		return nil
-	}
-
-	upids := make([]Tasks, 0, len(logs))
-
-	for _, entry := range logs {
-		if tasklog.IsQueuedUPID(entry.Name()) {
-			if err := os.Remove(filepath.Join(restoreLogsPath, entry.Name())); err != nil && !os.IsNotExist(err) {
-				log.Error(fmt.Errorf("GetAllUPIDs: failed removing queued task link: %w", err), "", "id", r.ID)
-			}
-			continue
-		}
-		task, err := tasklog.GetTaskByUPID(entry.Name())
-		if err != nil {
-			continue
-		}
-		upids = append(upids, Tasks{
-			UPID:    task.UPID,
-			Endtime: task.EndTime,
-			Status:  task.ExitStatus,
-		})
-	}
-
-	return upids
+func (r *Restore) RecentTasks(limit int) []Tasks {
+	return jobTasks(conf.RestoreLogsBasePath, r.ID, limit)
 }
 
 func (r *Restore) GetStreamID() string {
@@ -609,6 +570,7 @@ type Restore struct {
 	DovecotDestinationMailbox  string     `json:"dovecot_destination_mailbox,omitempty"`
 	DovecotMessages            string     `json:"dovecot_messages,omitempty"`
 	ReplaceExisting            bool       `json:"replace_existing,omitempty"`
+	RemoveOnSuccess            bool       `json:"remove_on_success,omitempty"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {

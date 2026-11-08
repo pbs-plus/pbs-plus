@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -55,7 +56,10 @@ func D2DBackupHandler(app *application.Runtime) http.HandlerFunc {
 			excludedJobs = excluded
 		}
 
-		flatBackups := extjs.FlattenBackups(allBackups, staleDays, skipUnscheduled, excludedJobs)
+		flatBackups := extjs.FlattenBackups(allBackups, staleDays, skipUnscheduled, excludedJobs, extjs.LoadActiveJobs(r.Context(), app.Engine, jobs.WorkflowBackup))
+		for i := range flatBackups {
+			flatBackups[i].RecentRuns = extjs.WithStatus(allBackups[i].RecentTasks(extjs.RecentRunCount))
+		}
 
 		digest, err := digest.Calculate(flatBackups)
 		if err != nil {
@@ -91,14 +95,10 @@ func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		decodedBackupIDs := []string{}
-		for _, backupID := range backupIDs {
-			decoded := validate.DecodePath(backupID)
-			if err := validate.ValidateJobId(decoded); err != nil {
-				respond.WriteErrorResponse(w, err)
-				return
-			}
-			decodedBackupIDs = append(decodedBackupIDs, decoded)
+		decodedBackupIDs, err := validate.DecodeJobIDs(backupIDs)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
 
 		stop := r.Method == http.MethodDelete
@@ -703,12 +703,7 @@ func ExtJsBackupUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			tasks := backup.GetAllUPIDs()
-			data := make([]extjs.TasksWithStatus, len(tasks))
-			for i, t := range tasks {
-				data[i] = extjs.TasksWithStatus{Tasks: t, StatusParsed: extjs.ParseTaskStatus(t.Status)}
-			}
-			response.Data = data
+			response.Data = extjs.WithStatus(backup.GetAllUPIDs())
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}

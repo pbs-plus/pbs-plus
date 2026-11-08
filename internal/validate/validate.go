@@ -431,3 +431,20 @@ func ReadScriptContentFromFile(filePath string) (string, error) {
 	}
 	return string(content), nil
 }
+
+func DecodeJobIDs(encoded []string) ([]string, error) {
+	ids := make([]string, 0, len(encoded))
+	seen := make(map[string]bool, len(encoded))
+	for _, raw := range encoded {
+		id := DecodePath(raw)
+		if err := ValidateJobId(id); err != nil {
+			return nil, err
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, nil
+}

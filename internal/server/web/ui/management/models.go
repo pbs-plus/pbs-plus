@@ -7,7 +7,7 @@ import (
 var models = []js.Value{
 	js.Model{
 		Name: "pbs-disk-backup-status",
-		Fields: js.Typed(js.Fields(
+		Fields: append(js.Fields(
 			"id", "store", "mode", "sourcemode", "readmode", "subpath", "ns", "schedule", "comment",
 			"notification-mode", "pre_script", "post_script", "next-run", "retry", "retry-interval",
 			"max-dir-entries", "rawexclusions", "include-xattr", "legacy-xattr", "target", "expected_size",
@@ -15,8 +15,12 @@ var models = []js.Value{
 			"last-successful-upid", "duration", "current_file_count", "current_folder_count",
 			"current_files_speed", "current_bytes_speed", "current_bytes_total", "target_size_human",
 			"read_speed_human", "read_total_human", "processing_speed_human", "status_parsed",
-			"database_scope", "database_name",
-		), "stale", "bool"),
+			"database_scope", "database_name", "recent_runs", "job_status",
+		),
+			js.ModelField{Name: "stale", Type: "bool"},
+			js.ModelField{Name: "missed_runs", Type: "int"},
+			js.ModelField{Name: "needs_attention", Type: "bool"},
+		),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/backup",
 	},
@@ -29,7 +33,7 @@ var models = []js.Value{
 			"last-successful-upid", "duration", "current_file_count", "current_folder_count",
 			"current_files_speed", "current_bytes_speed", "current_bytes_total", "target_size_human",
 			"read_speed_human", "read_total_human", "processing_speed_human", "status_parsed",
-			"source_database", "destination_database", "replace_existing",
+			"source_database", "destination_database", "replace_existing", "recent_runs", "job_status",
 		),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/restore",
@@ -51,16 +55,15 @@ var models = []js.Value{
 	js.Model{
 		Name: "pbs-model-d2d-snapshots",
 		Fields: []js.ModelField{
+			{Name: "value"},
 			{Name: "backup-id"},
 			{Name: "backup-time"},
-			{Name: "backup-type"},
-			{Name: "files"},
-			{Name: "value", Convert: js.Func("v, record", `
-				if (v) return v;
-				if (!record.data["backup-id"]) return "";
-				let type = record.data["backup-type"] || "host";
-				return type + "/" + record.data["backup-id"] + "/" + record.data["backup-time"];
-			`)},
+			{Name: "size"},
+			{Name: "comment"},
+			{Name: "verification"},
+			{Name: "protected"},
+			{Name: "source_target"},
+			{Name: "archive"},
 			{Name: "display", Convert: js.Func("v, record", `
 				if (record.data["backup-time"]) {
 					let time = new Date(record.data["backup-time"] * 1000);
@@ -87,7 +90,7 @@ var models = []js.Value{
 			"id", "backup_job_id", "store", "ns", "mode", "schedule", "comment", "notification-mode",
 			"spot_config", "next-run", "retry", "retry-interval", "created_at", "last-run-upid",
 			"last-run-state", "last-run-endtime", "last-run-starttime", "last-successful-endtime",
-			"last-successful-upid", "duration", "status_parsed",
+			"last-successful-upid", "duration", "status_parsed", "job_status",
 		),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/verification",

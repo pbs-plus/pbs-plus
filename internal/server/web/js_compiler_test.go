@@ -323,22 +323,78 @@ func TestAsyncCallbacksDoNotDereferenceDestroyedViews(t *testing.T) {
 	}
 }
 
-func TestSnapshotSelectorFiltersIncompatibleArchives(t *testing.T) {
-	source := ui.Render()
+func TestSnapshotSelectorDelegatesCompatibilityToServer(t *testing.T) {
+	source := append(compileJS(&preJsFS), ui.Render()...)
 	for _, expected := range [][]byte{
-		[]byte(`archiveFilter: null`),
-		[]byte(`syncArchiveFilter: function ()`),
-		[]byte(`updateArchiveFilter: function ()`),
-		[]byte(`name + ".pxar.didx"`),
-		[]byte(`name + ".mpxar.didx"`),
-		[]byte(`return exclude ? !match : match;`),
-		[]byte(`mode: structured ? "include" : "exclude"`),
+		[]byte(`url: pbsPlusBaseUrl + "/api2/json/d2d/restore/snapshots"`),
+		[]byte(`target: me.getRestoreTarget() || ""`),
+		[]byte(`this.lookup("snapshot").setRestoreTarget(value || null);`),
+		[]byte(`snapRecord.get("archive")`),
+		[]byte(`snapshot.get("source_target")`),
 	} {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("snapshot selector is missing %q", expected)
 		}
 	}
-	if bytes.Contains(source, []byte(`applyArchiveFilter`)) {
-		t.Error("snapshot selector shadows the ExtJS archiveFilter config applier")
+	for _, stale := range [][]byte{
+		[]byte(`archiveFilter`),
+		[]byte(`snapshotHasArchive`),
+		[]byte(`archiveName`),
+	} {
+		if bytes.Contains(source, stale) {
+			t.Errorf("frontend still contains archive matching logic %q", stale)
+		}
+	}
+	for _, config := range []string{"RestoreTarget", "PreferredGroup", "Datastore", "Namespace"} {
+		if bytes.Contains(source, []byte("apply"+config+": function")) {
+			t.Errorf("snapshot selector shadows the ExtJS %s config applier", config)
+		}
+	}
+}
+
+func TestSnapshotSelectorOpensFilterableBrowser(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`Ext.define("PBS.window.D2DSnapshotBrowser", {`),
+		[]byte(`Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me, initialHost: me.getPreferredGroup() || "" }).show();`),
+		[]byte(`reference: "targetOnly"`),
+		[]byte(`iconCls: "fa fa-history", margin: "0 0 0 5", tooltip: gettext("Browse snapshots by host and date")`),
+		[]byte(`reference: "hostFilter"`),
+		[]byte(`reference: "fromDate"`),
+		[]byte(`reference: "toDate"`),
+		[]byte(`reference: "latestOnly"`),
+		[]byte(`view.getSnapshotField().setValue(rec.get("value"));`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("snapshot browser is missing %q", expected)
+		}
+	}
+}
+
+func TestBackupJobsOfferRestoreShortcut(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`restoreFromJob: function ()`),
+		[]byte(`snapshotGroup: job.getId(),`),
+		[]byte(`me.lookup("snapshot").setPreferredGroup(me.snapshotGroup);`),
+		[]byte(`itemcontextmenu: "onItemContextMenu"`),
+		[]byte(`this.selectOriginalTarget(field, value);`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("restore shortcut is missing %q", expected)
+		}
+	}
+}
+
+func TestBackupBulkEditUsesAtomicEndpoint(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`Ext.define("PBS.window.D2DBulkJobEdit", {`),
+		[]byte(`url: "/api2/extjs/config/disk-backup-bulk",`),
+		[]byte(`method: "PUT",`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("bulk edit is missing %q", expected)
+		}
 	}
 }

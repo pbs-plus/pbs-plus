@@ -168,6 +168,9 @@ func (s *Scheduler) checkRestores() {
 	now := time.Now()
 
 	for _, r := range restores {
+		if s.removeSucceededOneShot(r) {
+			continue
+		}
 		if r.Retry == 0 || !s.shouldRetryRestore(r, now) {
 			continue
 		}
@@ -197,6 +200,29 @@ func (s *Scheduler) checkRestores() {
 			}
 		}
 	}
+}
+
+func oneShotRestoreSucceeded(r coredb.Restore) bool {
+	h := r.History
+	return r.RemoveOnSuccess && h.LastRunEndtime != 0 && h.LastSuccessfulUpid != "" && h.LastSuccessfulUpid == h.LastRunUpid
+}
+
+func (s *Scheduler) removeSucceededOneShot(r coredb.Restore) bool {
+	if !oneShotRestoreSucceeded(r) {
+		return false
+	}
+	if s.hasActiveExecution(jobs.WorkflowRestore, r.ID) {
+		return false
+	}
+	removed, err := s.app.Restore.DeleteSucceededOneShotRestore(r.ID, r.History.LastSuccessfulUpid)
+	if err != nil {
+		log.Error(err, "Scheduler: failed to remove one-shot restore", "restoreID", r.ID)
+		return false
+	}
+	if removed {
+		log.Info("scheduler: removed one-shot restore after a successful run", "restoreID", r.ID, "upid", r.History.LastSuccessfulUpid)
+	}
+	return removed
 }
 
 func (s *Scheduler) shouldRetryRestore(r coredb.Restore, now time.Time) bool {

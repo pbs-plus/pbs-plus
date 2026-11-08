@@ -57,6 +57,9 @@ func (s *BackupService) GetBackup(id string) (coredb.Backup, error) { return s.d
 func (s *BackupService) CreateBackup(b coredb.Backup) error         { return s.db.CreateBackup(nil, b) }
 func (s *BackupService) UpdateBackup(b coredb.Backup) error         { return s.db.UpdateBackup(nil, b) }
 func (s *BackupService) DeleteBackup(id string) error               { return s.db.DeleteBackup(nil, id) }
+func (s *BackupService) UpdateBackups(ids []string, mutate func(*coredb.Backup)) error {
+	return s.db.UpdateBackups(ids, mutate)
+}
 
 func jobStatsFromVFS(stats vfs.VFSStats) coredb.JobStats {
 	return coredb.JobStats{
@@ -75,9 +78,12 @@ func NewRestoreService(db *coredb.Store) *RestoreService { return &RestoreServic
 
 func (s *RestoreService) GetAllRestores() ([]coredb.Restore, error)    { return s.db.GetAllRestores() }
 func (s *RestoreService) GetRestore(id string) (coredb.Restore, error) { return s.db.GetRestore(id) }
-func (s *RestoreService) CreateRestore(r coredb.Restore) error         { return s.db.CreateRestore(nil, r) }
+func (s *RestoreService) CreateRestore(r *coredb.Restore) error        { return s.db.CreateRestore(nil, r) }
 func (s *RestoreService) UpdateRestore(r coredb.Restore) error         { return s.db.UpdateRestore(nil, r) }
 func (s *RestoreService) DeleteRestore(id string) error                { return s.db.DeleteRestore(nil, id) }
+func (s *RestoreService) DeleteSucceededOneShotRestore(id, upid string) (bool, error) {
+	return s.db.DeleteSucceededOneShotRestore(id, upid)
+}
 
 type ExclusionService struct{ db *coredb.Store }
 

@@ -31,6 +31,11 @@ WHERE kind = ? AND definition_id = ? AND state IN ('pending', 'running')
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: ListActiveDefinitionIDs :many
+SELECT DISTINCT definition_id
+FROM job_executions
+WHERE kind = ? AND state IN ('pending', 'running');
+
 -- name: CreateExecutionResource :exec
 INSERT INTO job_execution_resources (execution_id, resource_key) VALUES (?, ?);
 

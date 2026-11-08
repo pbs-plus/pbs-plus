@@ -292,16 +292,30 @@ func TestDatabaseTargetAndJobOptionsPersistence(t *testing.T) {
 		DestTarget:          Target{Name: mysql.Name},
 		DestinationDatabase: "inventory_copy",
 		ReplaceExisting:     true,
+		RemoveOnSuccess:     true,
 	}
-	if err := db.CreateRestore(nil, restore); err != nil {
+	if err := db.CreateRestore(nil, &restore); err != nil {
 		t.Fatal(err)
 	}
 	gotRestore, err := db.GetRestore(restore.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotRestore.DestinationDatabase != "inventory_copy" || !gotRestore.ReplaceExisting || gotRestore.DestTarget.Type != TargetTypeMySQL {
+	if gotRestore.DestinationDatabase != "inventory_copy" || !gotRestore.ReplaceExisting || !gotRestore.RemoveOnSuccess || gotRestore.DestTarget.Type != TargetTypeMySQL {
 		t.Errorf("database restore = %#v", gotRestore)
+	}
+	gotRestore.RemoveOnSuccess = false
+	if err := db.UpdateRestore(nil, gotRestore); err != nil {
+		t.Fatal(err)
+	}
+	allRestores, err := db.GetAllRestores()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range allRestores {
+		if r.ID == restore.ID && r.RemoveOnSuccess {
+			t.Errorf("remove_on_success was not cleared: %#v", r)
+		}
 	}
 
 	ldapBackup := Backup{
@@ -405,7 +419,7 @@ func TestDovecotTargetAndJobOptionsPersistence(t *testing.T) {
 		DovecotMailbox:        "Archive",
 		ReplaceExisting:       true,
 	}
-	if err := db.CreateRestore(nil, restore); err != nil {
+	if err := db.CreateRestore(nil, &restore); err != nil {
 		t.Fatal(err)
 	}
 	gotRestore, err := db.GetRestore(restore.ID)

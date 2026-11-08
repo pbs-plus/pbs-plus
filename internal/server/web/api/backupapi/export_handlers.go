@@ -15,6 +15,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
 func ExtJsBackupCSVExportHandler(app *application.Runtime) http.HandlerFunc {
@@ -30,7 +31,7 @@ func ExtJsBackupCSVExportHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		flatBackups := extjs.FlattenBackups(allBackups, 0, false, nil)
+		flatBackups := extjs.FlattenBackups(allBackups, 0, false, nil, extjs.LoadActiveJobs(r.Context(), app.Engine, jobs.WorkflowBackup))
 
 		if len(flatBackups) == 0 {
 			http.Error(w, "No records to export", http.StatusNoContent)

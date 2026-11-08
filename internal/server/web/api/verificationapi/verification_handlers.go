@@ -45,13 +45,13 @@ func D2DVerificationHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		jobs, err := app.Verification.ListVerificationJobs()
+		verificationJobs, err := app.Verification.ListVerificationJobs()
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
 
-		flatJobs := extjs.FlattenVerificationJobs(jobs)
+		flatJobs := extjs.FlattenVerificationJobs(verificationJobs, extjs.LoadActiveJobs(r.Context(), app.Engine, jobs.WorkflowVerification))
 
 		digest, err := digest.Calculate(flatJobs)
 		if err != nil {

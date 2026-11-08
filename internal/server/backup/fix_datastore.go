@@ -56,17 +56,7 @@ func GetOwnerFilePath(backup coredb.Backup, app *application.Runtime) (string, e
 		return "", fmt.Errorf("getting the current owner: getting the datastore: %w", err)
 	}
 
-	namespaceSplit := strings.Split(backup.Namespace, "/")
-
-	fullNamespacePath := datastoreInfo.Path
-
-	for _, ns := range namespaceSplit {
-		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
-	}
-
-	ownerFilePath := filepath.Join(fullNamespacePath, "host", backupID, "owner")
-
-	return ownerFilePath, nil
+	return filepath.Join(proxmox.NamespacePath(datastoreInfo.Path, backup.Namespace), "host", backupID, "owner"), nil
 }
 
 func GetCurrentOwner(backup coredb.Backup, app *application.Runtime) (string, error) {
@@ -135,21 +125,7 @@ func CleanUnfinishedSnapshot(backup coredb.Backup, backupID string) error {
 		return fmt.Errorf("cleaning an unfinished snapshot: getting the datastore: %w", err)
 	}
 
-	namespaceSplit := strings.Split(backup.Namespace, "/")
-
-	fullNamespacePath := datastoreInfo.Path
-	parentNamespacePath := datastoreInfo.Path
-
-	for i, ns := range namespaceSplit {
-		fullNamespacePath = filepath.Join(fullNamespacePath, "ns", ns)
-		if i == 0 {
-			parentNamespacePath = filepath.Join(parentNamespacePath, "ns", ns)
-		}
-	}
-
-	pathWithBackupId := filepath.Join(fullNamespacePath, "host", backupID)
-
-	pruneIncompleteSnapshots(pathWithBackupId)
+	pruneIncompleteSnapshots(filepath.Join(proxmox.NamespacePath(datastoreInfo.Path, backup.Namespace), "host", backupID))
 
 	return nil
 }

@@ -240,6 +240,25 @@ Ext.define("PBS.PlusUtils", {
       return "-";
     }
 
+    let jobStatus = record.data.job_status;
+    if (jobStatus !== undefined) {
+      let parsed = record.get("status_parsed") || {};
+      if (jobStatus === "running" && parsed.category === "queued") {
+        return `<i class="fa fa-${parsed.icon}"></i> ${parsed.text}`;
+      }
+      if (jobStatus === "running") {
+        metadata.tdCls = "x-grid-row-loading";
+        return "";
+      }
+      if (jobStatus === "never") {
+        return "-";
+      }
+      if (!parsed.icon || parsed.category === "queued") {
+        return `<i class="fa fa-times critical"></i> ${gettext("Interrupted")}`;
+      }
+      return `<i class="fa fa-${parsed.icon}"></i> ${parsed.text}`;
+    }
+
     let qstatus = record.get("status_parsed");
     if (qstatus && qstatus.category === "queued") {
       return `<i class="fa fa-${qstatus.icon}"></i> ${qstatus.text}`;
@@ -261,6 +280,77 @@ Ext.define("PBS.PlusUtils", {
     }
 
     return "-";
+  },
+
+  jobRequest: function (method, baseUrl, ids, options) {
+    PBS.PlusUtils.API2Request(
+      Ext.apply(
+        {
+          url:
+            baseUrl +
+            ids
+              .map((id) => "job=" + encodeURIComponent(encodePathValue(id)))
+              .join("&"),
+          method: method,
+          failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+        },
+        options,
+      ),
+    );
+  },
+
+  recentRunColors: {
+    ok: "#21bf4b",
+    warning: "#fbbc04",
+    error: "#e8463a",
+    unknown: "#9e9e9e",
+    running: "#3892d4",
+  },
+
+  render_recent_runs: function (value) {
+    if (!Array.isArray(value) || value.length === 0) {
+      return "-";
+    }
+    return value
+      .slice()
+      .reverse()
+      .map((run) => {
+        let parsed = run.status_parsed || {};
+        let category = parsed.category || "unknown";
+        let color =
+          PBS.PlusUtils.recentRunColors[category] ||
+          PBS.PlusUtils.recentRunColors.unknown;
+        let start = run.starttime
+          ? Proxmox.Utils.render_timestamp(run.starttime)
+          : "";
+        let text = parsed.text || run.status;
+        let tip = Ext.htmlEncode(
+          Ext.htmlEncode((start ? start + ": " : "") + (text || "")),
+        );
+        return `<span class="pbs-recent-run" data-upid="${Ext.htmlEncode(run.upid)}" data-qtip="${tip}" style="display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; cursor: pointer; background-color: ${color};"></span>`;
+      })
+      .join("");
+  },
+
+  onRecentRunClick: function (view, td, cellIndex, record, tr, rowIndex, e) {
+    let dot = e.getTarget(".pbs-recent-run");
+    if (!dot) {
+      return;
+    }
+    let upid = dot.getAttribute("data-upid");
+    if (upid) {
+      Ext.create("PBS.plusWindow.TaskViewer", { upid }).show();
+    }
+  },
+
+  jobMatchesStatus: function (data, status) {
+    if (!status || status === "all") {
+      return true;
+    }
+    if (status === "overdue") {
+      return !!data.needs_attention;
+    }
+    return data.job_status === status;
   },
 });
 
