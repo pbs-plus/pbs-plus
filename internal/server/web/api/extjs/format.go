@@ -61,6 +61,17 @@ type TasksWithStatus struct {
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
 }
 
+// RecentRunCount is how many past runs job grids show per job.
+const RecentRunCount = 10
+
+func WithStatus(tasks []coredb.Tasks) []TasksWithStatus {
+	out := make([]TasksWithStatus, len(tasks))
+	for i, t := range tasks {
+		out[i] = TasksWithStatus{Tasks: t, StatusParsed: ParseTaskStatus(t.Status)}
+	}
+	return out
+}
+
 func ParseTaskStatus(status string) ParsedTaskStatus {
 	if status == "" {
 		return ParsedTaskStatus{}

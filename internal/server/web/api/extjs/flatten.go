@@ -625,8 +625,9 @@ type FlatBackup struct {
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
 
-	Stale      bool `json:"stale"`
-	MissedRuns int  `json:"missed_runs"`
+	Stale      bool              `json:"stale"`
+	MissedRuns int               `json:"missed_runs"`
+	RecentRuns []TasksWithStatus `json:"recent_runs"`
 }
 
 type FlatRestore struct {
@@ -673,6 +674,8 @@ type FlatRestore struct {
 	ReadTotalHuman       string           `json:"read_total_human"`
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
+
+	RecentRuns []TasksWithStatus `json:"recent_runs"`
 }
 
 type FlatVerificationJob struct {

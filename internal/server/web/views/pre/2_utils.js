@@ -283,6 +283,55 @@ Ext.define("PBS.PlusUtils", {
     return "ok";
   },
 
+  recentRunColors: {
+    ok: "#21bf4b",
+    warning: "#fbbc04",
+    error: "#e8463a",
+    unknown: "#9e9e9e",
+    running: "#3892d4",
+  },
+
+  render_recent_runs: function (value) {
+    if (!Array.isArray(value) || value.length === 0) {
+      return "-";
+    }
+    return value
+      .slice()
+      .reverse()
+      .map((run) => {
+        let parsed = run.status_parsed || {};
+        let category = run.endtime ? parsed.category || "unknown" : "running";
+        let color =
+          PBS.PlusUtils.recentRunColors[category] ||
+          PBS.PlusUtils.recentRunColors.unknown;
+        let start = "";
+        try {
+          start = Proxmox.Utils.render_timestamp(
+            Proxmox.Utils.parse_task_upid(run.upid).starttime,
+          );
+        } catch (e) {
+          start = "";
+        }
+        let text = run.endtime ? parsed.text || run.status : gettext("Running");
+        let tip = Ext.htmlEncode(
+          Ext.htmlEncode((start ? start + ": " : "") + (text || "")),
+        );
+        return `<span class="pbs-recent-run" data-upid="${Ext.htmlEncode(run.upid)}" data-qtip="${tip}" style="display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 3px; cursor: pointer; background-color: ${color};"></span>`;
+      })
+      .join("");
+  },
+
+  onRecentRunClick: function (view, td, cellIndex, record, tr, rowIndex, e) {
+    let dot = e.getTarget(".pbs-recent-run");
+    if (!dot) {
+      return;
+    }
+    let upid = dot.getAttribute("data-upid");
+    if (upid) {
+      Ext.create("PBS.plusWindow.TaskViewer", { upid }).show();
+    }
+  },
+
   jobNeedsAttention: function (data) {
     return !!data.stale || data.missed_runs > 0;
   },

@@ -71,7 +71,8 @@ var backupPanel = js.Panel{
 		}
 		return record.get("missed_runs") > 0 ? "pbs-row-warning-overdue" : "";
 	`)},
-	Listeners: js.Listeners{ItemDblClick: "editJob"},
+	Listeners:    js.Listeners{ItemDblClick: "editJob"},
+	ListenersRaw: recentRunsListeners,
 	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "target", "ns", "comment", "subpath"), map[string]js.Raw{
 		"addJob":             js.OpenEditWindow("PBS.D2DManagement.BackupJobEdit", ""),
 		"editJob":            js.EditJobWindow("PBS.D2DManagement.BackupJobEdit"),
@@ -220,6 +221,7 @@ var backupPanel = js.Panel{
 		{Text: "Processing Speed", DataIndex: "processing_speed_human", Width: 60, Renderer: js.DashIfEmpty},
 		{Text: "Files Processed", DataIndex: "current_file_count", Width: 60, Hidden: true, Renderer: js.CountIfSet},
 		{Text: "Folders Processed", DataIndex: "current_folder_count", Width: 60, Hidden: true, Renderer: js.CountIfSet},
+		recentRunsColumn,
 		{Text: "Status", DataIndex: "last-run-state", Flex: 1, Renderer: "PBS.PlusUtils.render_task_status"},
 		{Text: "Next Run", DataIndex: "next-run", Width: 150, Sortable: new(true), Hidden: true, Renderer: "PBS.Utils.render_next_task_run"},
 		{Text: "Comment", DataIndex: "comment", Flex: 2, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},

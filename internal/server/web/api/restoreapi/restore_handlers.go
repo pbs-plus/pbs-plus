@@ -64,6 +64,9 @@ func D2DRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		flatRestores := extjs.FlattenRestores(allRestores)
+		for i := range flatRestores {
+			flatRestores[i].RecentRuns = extjs.WithStatus(allRestores[i].RecentTasks(extjs.RecentRunCount))
+		}
 
 		digest, err := digest.Calculate(flatRestores)
 		if err != nil {

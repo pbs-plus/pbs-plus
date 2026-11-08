@@ -56,6 +56,9 @@ func D2DBackupHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		flatBackups := extjs.FlattenBackups(allBackups, staleDays, skipUnscheduled, excludedJobs)
+		for i := range flatBackups {
+			flatBackups[i].RecentRuns = extjs.WithStatus(allBackups[i].RecentTasks(extjs.RecentRunCount))
+		}
 
 		digest, err := digest.Calculate(flatBackups)
 		if err != nil {
@@ -703,12 +706,7 @@ func ExtJsBackupUPIDsHandler(app *application.Runtime) http.HandlerFunc {
 
 			response.Status = http.StatusOK
 			response.Success = true
-			tasks := backup.GetAllUPIDs()
-			data := make([]extjs.TasksWithStatus, len(tasks))
-			for i, t := range tasks {
-				data[i] = extjs.TasksWithStatus{Tasks: t, StatusParsed: extjs.ParseTaskStatus(t.Status)}
-			}
-			response.Data = data
+			response.Data = extjs.WithStatus(backup.GetAllUPIDs())
 			if err := json.NewEncoder(w).Encode(response); err != nil {
 				log.Error(err, "")
 			}

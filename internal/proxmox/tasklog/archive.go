@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"log/slog"
@@ -58,7 +59,34 @@ func ListTasks(activeOnly bool) ([]TaskListInfo, error) {
 	return results, nil
 }
 
+const finishedTaskCacheLimit = 8192
+
+var (
+	finishedTaskMu    sync.RWMutex
+	finishedTaskCache = map[string]proxmox.Task{}
+)
+
+func cachedFinishedTask(upid string) (proxmox.Task, bool) {
+	finishedTaskMu.RLock()
+	defer finishedTaskMu.RUnlock()
+	task, ok := finishedTaskCache[upid]
+	return task, ok
+}
+
+func cacheFinishedTask(task proxmox.Task) {
+	finishedTaskMu.Lock()
+	defer finishedTaskMu.Unlock()
+	if len(finishedTaskCache) >= finishedTaskCacheLimit {
+		clear(finishedTaskCache)
+	}
+	finishedTaskCache[task.UPID] = task
+}
+
 func GetTaskByUPID(upid string) (proxmox.Task, error) {
+	if task, ok := cachedFinishedTask(upid); ok {
+		return task, nil
+	}
+
 	parsed, err := proxmox.ParseUPID(upid)
 	if err != nil {
 		return proxmox.Task{}, fmt.Errorf("tasklog: parse upid: %w", err)
@@ -81,6 +109,7 @@ func GetTaskByUPID(upid string) (proxmox.Task, error) {
 	} else {
 		parsed.ExitStatus = state.String()
 		parsed.EndTime = state.EndTime
+		cacheFinishedTask(parsed)
 	}
 
 	return parsed, nil

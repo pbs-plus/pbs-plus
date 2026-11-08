@@ -532,41 +532,11 @@ func (db *Store) DeleteRestore(tx *Transaction, id string) (err error) {
 }
 
 func (r *Restore) GetAllUPIDs() []Tasks {
-	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, r.ID)
-	if err := os.MkdirAll(restoreLogsPath, 0755); err != nil {
-		log.Error(fmt.Errorf("GetAllUPIDs: failed to get log dir: %w", err), "", "id", r.ID)
+	return jobTasks(conf.RestoreLogsBasePath, r.ID, 0)
+}
 
-		return nil
-	}
-
-	logs, err := os.ReadDir(restoreLogsPath)
-	if err != nil {
-		log.Error(fmt.Errorf("GetAllUPIDs: failed to read dir: %w", err), "", "id", r.ID)
-
-		return nil
-	}
-
-	upids := make([]Tasks, 0, len(logs))
-
-	for _, entry := range logs {
-		if tasklog.IsQueuedUPID(entry.Name()) {
-			if err := os.Remove(filepath.Join(restoreLogsPath, entry.Name())); err != nil && !os.IsNotExist(err) {
-				log.Error(fmt.Errorf("GetAllUPIDs: failed removing queued task link: %w", err), "", "id", r.ID)
-			}
-			continue
-		}
-		task, err := tasklog.GetTaskByUPID(entry.Name())
-		if err != nil {
-			continue
-		}
-		upids = append(upids, Tasks{
-			UPID:    task.UPID,
-			Endtime: task.EndTime,
-			Status:  task.ExitStatus,
-		})
-	}
-
-	return upids
+func (r *Restore) RecentTasks(limit int) []Tasks {
+	return jobTasks(conf.RestoreLogsBasePath, r.ID, limit)
 }
 
 func (r *Restore) GetStreamID() string {
