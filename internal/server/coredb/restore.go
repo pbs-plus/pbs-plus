@@ -482,57 +482,44 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 	return restores, nil
 }
 
-func (db *Store) DeleteRestore(tx *Transaction, id string) (err error) {
-	var commitNeeded bool = false
-	q := db.queries
+func (db *Store) DeleteRestore(tx *Transaction, id string) error {
+	return db.deleteRestore(tx, id, func(q *corequery.Queries) (int64, error) {
+		return q.DeleteRestore(db.ctx, id)
+	})
+}
 
-	if tx == nil {
-		tx, err = db.NewTransaction()
+func (db *Store) DeleteSucceededOneShotRestore(id, upid string) (bool, error) {
+	err := db.deleteRestore(nil, id, func(q *corequery.Queries) (int64, error) {
+		return q.DeleteSucceededOneShotRestore(db.ctx, corequery.DeleteSucceededOneShotRestoreParams{ID: id, Upid: toNullString(upid)})
+	})
+	if errors.Is(err, ErrRestoreNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (db *Store) deleteRestore(tx *Transaction, id string, del func(*corequery.Queries) (int64, error)) error {
+	run := func(_ *Transaction, q *corequery.Queries) error {
+		rows, err := del(q)
 		if err != nil {
-			return fmt.Errorf("DeleteRestore: failed to begin transaction: %w", err)
+			return fmt.Errorf("DeleteRestore: error deleting restore %s: %w", id, err)
 		}
-		defer func() {
-			if p := recover(); p != nil {
-				if err := tx.Rollback(); err != nil {
-					log.Error(err, "")
-				}
-				panic(p)
-			} else if err != nil {
-				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					log.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr), "")
-				}
-			} else if commitNeeded {
-				if cErr := tx.Commit(); cErr != nil {
-					err = fmt.Errorf("DeleteRestore: failed to commit transaction: %w", cErr)
-					log.Error(err, "")
-				}
-			} else {
-				if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-					log.Error(fmt.Errorf("DeleteRestore: failed to rollback transaction: %w", rbErr), "")
-				}
-			}
-		}()
-	}
-	q = db.queries.WithTx(tx.Tx)
-
-	rowsAffected, err := q.DeleteRestore(db.ctx, id)
-	if err != nil {
-		return fmt.Errorf("DeleteRestore: error deleting restore %s: %w", id, err)
-	}
-
-	if rowsAffected == 0 {
-		return ErrRestoreNotFound
-	}
-
-	restoreLogsPath := filepath.Join(conf.RestoreLogsBasePath, id)
-	if err := os.RemoveAll(restoreLogsPath); err != nil && !os.IsNotExist(err) {
-		if !os.IsNotExist(err) {
-			log.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err), "", "id", id)
-
+		if rows == 0 {
+			return ErrRestoreNotFound
 		}
+		return nil
+	}
+	if tx != nil {
+		if err := run(tx, db.queries.WithTx(tx.Tx)); err != nil {
+			return err
+		}
+	} else if err := db.RunInTransaction(db.ctx, run); err != nil {
+		return err
 	}
 
-	commitNeeded = true
+	if err := os.RemoveAll(filepath.Join(conf.RestoreLogsBasePath, id)); err != nil {
+		log.Error(fmt.Errorf("DeleteRestore: failed removing restore logs: %w", err), "", "id", id)
+	}
 	return nil
 }
 

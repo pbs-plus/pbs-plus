@@ -81,6 +81,9 @@ func (s *RestoreService) GetRestore(id string) (coredb.Restore, error) { return 
 func (s *RestoreService) CreateRestore(r *coredb.Restore) error        { return s.db.CreateRestore(nil, r) }
 func (s *RestoreService) UpdateRestore(r coredb.Restore) error         { return s.db.UpdateRestore(nil, r) }
 func (s *RestoreService) DeleteRestore(id string) error                { return s.db.DeleteRestore(nil, id) }
+func (s *RestoreService) DeleteSucceededOneShotRestore(id, upid string) (bool, error) {
+	return s.db.DeleteSucceededOneShotRestore(id, upid)
+}
 
 type ExclusionService struct{ db *coredb.Store }
 

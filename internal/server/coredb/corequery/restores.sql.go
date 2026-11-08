@@ -109,6 +109,27 @@ func (q *Queries) DeleteRestoreDovecotOptions(ctx context.Context, restoreID str
 	return err
 }
 
+const deleteSucceededOneShotRestore = `-- name: DeleteSucceededOneShotRestore :execrows
+DELETE FROM restores
+WHERE id = ?1
+  AND remove_on_success = 1
+  AND last_run_upid = ?2
+  AND last_successful_upid = ?2
+`
+
+type DeleteSucceededOneShotRestoreParams struct {
+	ID   string         `json:"id"`
+	Upid sql.NullString `json:"upid"`
+}
+
+func (q *Queries) DeleteSucceededOneShotRestore(ctx context.Context, arg DeleteSucceededOneShotRestoreParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSucceededOneShotRestore, arg.ID, arg.Upid)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getRestore = `-- name: GetRestore :one
 SELECT
     j.id, j.store, j.namespace, j.snapshot, j.src_path, j.dest_target,

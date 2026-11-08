@@ -215,12 +215,15 @@ func (s *Scheduler) removeSucceededOneShot(r coredb.Restore) bool {
 	if s.hasActiveExecution(jobs.WorkflowRestore, r.ID) {
 		return false
 	}
-	if err := s.app.Restore.DeleteRestore(r.ID); err != nil {
+	removed, err := s.app.Restore.DeleteSucceededOneShotRestore(r.ID, r.History.LastSuccessfulUpid)
+	if err != nil {
 		log.Error(err, "Scheduler: failed to remove one-shot restore", "restoreID", r.ID)
 		return false
 	}
-	log.Info("scheduler: removed one-shot restore after a successful run", "restoreID", r.ID, "upid", r.History.LastSuccessfulUpid)
-	return true
+	if removed {
+		log.Info("scheduler: removed one-shot restore after a successful run", "restoreID", r.ID, "upid", r.History.LastSuccessfulUpid)
+	}
+	return removed
 }
 
 func (s *Scheduler) shouldRetryRestore(r coredb.Restore, now time.Time) bool {

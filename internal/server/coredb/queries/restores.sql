@@ -147,6 +147,13 @@ DELETE FROM restore_dovecot_options WHERE restore_id = ?;
 -- name: DeleteRestore :execrows
 DELETE FROM restores WHERE id = ?;
 
+-- name: DeleteSucceededOneShotRestore :execrows
+DELETE FROM restores
+WHERE id = sqlc.arg(id)
+  AND remove_on_success = 1
+  AND last_run_upid = sqlc.arg(upid)
+  AND last_successful_upid = sqlc.arg(upid);
+
 -- name: RestoreExists :one
 SELECT 1 FROM restores WHERE id = ? LIMIT 1;
 
