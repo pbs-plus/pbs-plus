@@ -4,6 +4,7 @@ package restoreapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -108,49 +109,16 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		stop := r.Method == http.MethodDelete
-		response.Errors = map[string]string{}
-		var messages []string
-
-		conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 10*time.Second)
+		failures, err := queueRestores(app, decodedRestoreIDs, r.Method == http.MethodDelete)
 		if err != nil {
-			log.Error(err, "", "restores", decodedRestoreIDs)
 			respond.WriteErrorResponse(w, err)
 			return
 		}
-		rpcClient := rpc.NewClient(conn)
-		defer func() {
-			if err := rpcClient.Close(); err != nil {
-				log.Error(err, "")
-			}
-		}()
-
-		for _, restoreID := range decodedRestoreIDs {
-			restoreTask, err := app.CoreDB.GetRestore(restoreID)
-			if err != nil {
-				log.Error(err, "", "restoreID", restoreID)
-				response.Errors[restoreID] = err.Error()
-				messages = append(messages, restoreID+": "+err.Error())
-				continue
-			}
-
-			args := &jobrpc.RestoreQueueArgs{
-				Job:       restoreTask,
-				SkipCheck: true,
-				Stop:      stop,
-				Web:       true,
-			}
-			var reply jobrpc.QueueReply
-			if err := rpcClient.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
-				log.Error(err, "", "restoreID", restoreID)
-				response.Errors[restoreID] = err.Error()
-				messages = append(messages, restoreID+": "+err.Error())
-				continue
-			}
-			if reply.Status != 200 {
-				log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", restoreID)
-				response.Errors[restoreID] = reply.Message
-				messages = append(messages, restoreID+": "+reply.Message)
+		response.Errors = failures
+		var messages []string
+		for _, id := range decodedRestoreIDs {
+			if msg, ok := failures[id]; ok {
+				messages = append(messages, id+": "+msg)
 			}
 		}
 
@@ -165,6 +133,59 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 			log.Error(err, "")
 		}
 	}
+}
+
+func queueRestores(app *application.Runtime, ids []string, stop bool) (map[string]string, error) {
+	conn, err := net.DialTimeout("unix", conf.JobMutateSocketPath, 10*time.Second)
+	if err != nil {
+		log.Error(err, "", "restores", ids)
+		return nil, err
+	}
+	client := rpc.NewClient(conn)
+	defer func() {
+		if err := client.Close(); err != nil {
+			log.Error(err, "")
+		}
+	}()
+
+	failures := map[string]string{}
+	for _, id := range ids {
+		job, err := app.CoreDB.GetRestore(id)
+		if err != nil {
+			log.Error(err, "", "restoreID", id)
+			failures[id] = err.Error()
+			continue
+		}
+		var reply jobrpc.QueueReply
+		args := &jobrpc.RestoreQueueArgs{Job: job, SkipCheck: true, Stop: stop, Web: true}
+		if err := client.Call(jobrpc.ServiceName+".RestoreQueue", args, &reply); err != nil {
+			log.Error(err, "", "restoreID", id)
+			failures[id] = err.Error()
+			continue
+		}
+		if reply.Status != http.StatusOK {
+			log.Error(fmt.Errorf("%s", reply.Message), "", "restoreID", id)
+			failures[id] = reply.Message
+		}
+	}
+	return failures, nil
+}
+
+func startCreatedRestore(app *application.Runtime, id string) error {
+	failures, err := queueRestores(app, []string{id}, false)
+	if err == nil && failures[id] != "" {
+		err = errors.New(failures[id])
+	}
+	if err == nil {
+		return nil
+	}
+	if delErr := app.Restore.DeleteRestore(id); delErr != nil {
+		log.Error(delErr, "failed to roll back restore job that could not start", "restoreID", id)
+	}
+	if batchErr := app.CoreDB.RemoveJobFromAllBatches("restore", id); batchErr != nil {
+		log.Error(batchErr, "", "restoreID", id)
+	}
+	return fmt.Errorf("%w: restore job could not be started: %w", respond.ErrConflict, err)
 }
 
 func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
@@ -298,6 +319,13 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		}
 
 		notificationapi.ApplyJobBatchAssignment(app, "restore", newRestore.ID, r.FormValue("notification-batch"))
+
+		if run, _ := strconv.ParseBool(r.FormValue("run")); run {
+			if err := startCreatedRestore(app, newRestore.ID); err != nil {
+				respond.WriteErrorResponse(w, err)
+				return
+			}
+		}
 
 		response.Status = http.StatusOK
 		response.Success = true

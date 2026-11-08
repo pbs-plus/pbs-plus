@@ -169,20 +169,12 @@ var restoreJobEdit = js.EditWindow{
 				iconCls: "fa fa-play",
 				disabled: !form.isValid(),
 				handler: () => {
-					me.runAfterCreate = true;
+					me.submitUrl = me.url + "?run=1";
 					me.submit();
+					delete me.submitUrl;
 				},
 			});
 			form.on("validitychange", (f, valid) => runButton.setDisabled(!valid));
-		`),
-		"apiCallDone": js.Func("success, response", `
-			let me = this;
-			let id = response?.result?.data?.id;
-			if (!success || !me.runAfterCreate || !id) {
-				me.runAfterCreate = false;
-				return;
-			}
-			PBS.PlusUtils.startJobs("`+restoreRunURL+`", [id]);
 		`),
 	},
 	Items: js.Items(js.Panel{
