@@ -2,7 +2,12 @@
 
 package backupapi
 
-import "testing"
+import (
+	"net/url"
+	"testing"
+
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+)
 
 func TestParseExpandLimit(t *testing.T) {
 	tests := []struct {
@@ -28,5 +33,40 @@ func TestParseExpandLimit(t *testing.T) {
 				t.Fatalf("parseExpandLimit = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseBulkBackupChanges(t *testing.T) {
+	apply := func(form url.Values) (coredb.Backup, error) {
+		b := coredb.Backup{Schedule: "daily", Comment: "old", Retry: 3, RetryInterval: 5, Store: "ds"}
+		changes, err := parseBulkBackupChanges(form)
+		if err != nil {
+			return b, err
+		}
+		for _, c := range changes {
+			c(&b)
+		}
+		return b, nil
+	}
+
+	got, err := apply(url.Values{"schedule": {"weekly"}, "retry": {"1"}, "delete": {"comment", "retry-interval"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Schedule != "weekly" || got.Retry != 1 || got.Comment != "" || got.RetryInterval != 1 || got.Store != "ds" {
+		t.Fatalf("unexpected result %#v", got)
+	}
+
+	for name, form := range map[string]url.Values{
+		"no changes":         {},
+		"unknown delete":     {"delete": {"target"}},
+		"invalid schedule":   {"schedule": {"not a schedule"}},
+		"negative retry":     {"retry": {"-1"}},
+		"empty datastore":    {"delete": {"store"}},
+		"bad retry interval": {"retry-interval": {"0"}},
+	} {
+		if _, err := apply(form); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
 	}
 }

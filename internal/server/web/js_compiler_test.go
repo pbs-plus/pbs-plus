@@ -379,3 +379,16 @@ func TestBackupJobsOfferRestoreShortcut(t *testing.T) {
 		}
 	}
 }
+
+func TestBackupBulkEditUsesAtomicEndpoint(t *testing.T) {
+	source := ui.Render()
+	for _, expected := range [][]byte{
+		[]byte(`Ext.define("PBS.window.D2DBulkJobEdit", {`),
+		[]byte(`url: "/api2/extjs/config/disk-backup-bulk",`),
+		[]byte(`method: "PUT",`),
+	} {
+		if !bytes.Contains(source, expected) {
+			t.Errorf("bulk edit is missing %q", expected)
+		}
+	}
+}

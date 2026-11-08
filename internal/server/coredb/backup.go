@@ -851,3 +851,19 @@ type JobHistory struct {
 	LatestSnapshotSize    int       `json:"latest_snapshot_size,omitempty"`
 	Duration              int64     `json:"duration"`
 }
+
+func (db *Store) UpdateBackups(ids []string, mutate func(*Backup)) error {
+	return db.RunInTransaction(db.ctx, func(tx *Transaction, _ *corequery.Queries) error {
+		for _, id := range ids {
+			backup, err := db.GetBackup(id)
+			if err != nil {
+				return fmt.Errorf("%s: %w", id, err)
+			}
+			mutate(&backup)
+			if err := db.UpdateBackup(tx, backup); err != nil {
+				return fmt.Errorf("%s: %w", id, err)
+			}
+		}
+		return nil
+	})
+}

@@ -54,6 +54,7 @@ var backupRowStyles = js.Raw(`
 var (
 	showJobHistoryTool = js.Tool{Text: "Show job history", Handler: "showJobHistory", Disabled: true, EnableFn: js.EnableOnSingleSelection}
 	restoreFromJobTool = js.Tool{Text: "Restore", IconCls: "fa fa-undo", Handler: "restoreFromJob", Disabled: true, EnableFn: js.EnableOnSingleSelection}
+	bulkEditTool       = js.Tool{Text: "Bulk Edit", Handler: "bulkEdit", Disabled: true, EnableFn: js.SelectionEvery(js.JobIdle)}
 )
 
 var backupPanel = js.Panel{
@@ -81,9 +82,31 @@ var backupPanel = js.Panel{
 	Controller: js.Controller{Methods: js.MergeMethods(js.JobFilterMethods("id", "target", "ns", "comment", "subpath"), map[string]js.Raw{
 		"onItemContextMenu": js.ContextMenu(
 			js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
-			restoreFromJobTool, js.EditIdleJobTool, js.DuplicateJobTool, js.Sep(),
+			restoreFromJobTool, js.EditIdleJobTool, bulkEditTool, js.DuplicateJobTool, js.Sep(),
 			js.ShowLogTool, js.ShowSuccessLogTool, showJobHistoryTool,
 		),
+		"bulkEdit": js.Func("", `
+			const me = this;
+			const recs = me.getView().getSelection();
+			if (!recs.length) return;
+			const stores = Ext.Array.unique(recs.map((r) => r.get("store")));
+			Ext.create("PBS.window.D2DBulkJobEdit", {
+				url: "/api2/extjs/config/disk-backup-bulk",
+				jobIds: recs.map((r) => r.getId()),
+				commonStore: stores.length === 1 ? stores[0] : null,
+				fields: [
+					{ name: "schedule", label: gettext("Schedule"), field: { xtype: "pbsD2DCalendarEvent", emptyText: gettext("none (disabled)") } },
+					{ name: "store", label: gettext("Local Datastore"), field: { xtype: "`+string(js.XDataStoreSelector)+`" } },
+					{ name: "ns", label: gettext("Namespace"), field: { xtype: "pbsD2DNamespaceSelector", emptyText: gettext("Root") } },
+					{ name: "retry", label: gettext("Number of retries"), field: { xtype: "proxmoxintegerfield", minValue: 0, emptyText: "0" } },
+					{ name: "retry-interval", label: gettext("Retry interval (minutes)"), field: { xtype: "proxmoxintegerfield", minValue: 1, emptyText: "1" } },
+					{ name: "pre_script", label: gettext("Pre-Backup Script"), field: { xtype: "pbsD2DScriptSelector" } },
+					{ name: "post_script", label: gettext("Post-Backup Script"), field: { xtype: "pbsD2DScriptSelector" } },
+					{ name: "comment", label: gettext("Comment"), field: { xtype: "proxmoxtextfield" } },
+				],
+				listeners: { destroy: () => me.reload() },
+			}).show();
+		`),
 		"restoreFromJob": js.Func("", `
 			const selection = this.getView().getSelection();
 			if (selection.length !== 1) return;
@@ -217,7 +240,7 @@ var backupPanel = js.Panel{
 		`),
 	})},
 	Tbar: []js.Tool{
-		js.AddJobTool, js.DuplicateJobTool, js.EditIdleJobTool, js.RemoveIdleJobsTool, js.Sep(),
+		js.AddJobTool, js.DuplicateJobTool, js.EditIdleJobTool, bulkEditTool, js.RemoveIdleJobsTool, js.Sep(),
 		js.ShowLogTool, js.ShowSuccessLogTool, showJobHistoryTool, js.Sep(),
 		js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
 		restoreFromJobTool,
