@@ -152,3 +152,23 @@ func TestLastRunRetryableLegacyStates(t *testing.T) {
 		})
 	}
 }
+
+func TestOneShotRestoreSucceeded(t *testing.T) {
+	succeeded := coredb.JobHistory{LastRunUpid: "u1", LastSuccessfulUpid: "u1", LastRunEndtime: 100}
+	tests := []struct {
+		name    string
+		restore coredb.Restore
+		want    bool
+	}{
+		{"flag off", coredb.Restore{History: succeeded}, false},
+		{"latest run succeeded", coredb.Restore{RemoveOnSuccess: true, History: succeeded}, true},
+		{"never ran", coredb.Restore{RemoveOnSuccess: true}, false},
+		{"still running", coredb.Restore{RemoveOnSuccess: true, History: coredb.JobHistory{LastRunUpid: "u1", LastSuccessfulUpid: "u1"}}, false},
+		{"latest run failed", coredb.Restore{RemoveOnSuccess: true, History: coredb.JobHistory{LastRunUpid: "u2", LastSuccessfulUpid: "u1", LastRunEndtime: 100}}, false},
+	}
+	for _, tt := range tests {
+		if got := oneShotRestoreSucceeded(tt.restore); got != tt.want {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

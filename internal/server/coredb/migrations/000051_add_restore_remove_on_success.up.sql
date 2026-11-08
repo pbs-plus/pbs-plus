@@ -1,0 +1,1 @@
+ALTER TABLE restores ADD COLUMN remove_on_success INTEGER NOT NULL DEFAULT 0;

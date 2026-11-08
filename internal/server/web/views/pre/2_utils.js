@@ -283,6 +283,23 @@ Ext.define("PBS.PlusUtils", {
     return "ok";
   },
 
+  startJobs: function (baseUrl, ids, options) {
+    PBS.PlusUtils.API2Request(
+      Ext.apply(
+        {
+          url:
+            baseUrl +
+            ids
+              .map((id) => "job=" + encodeURIComponent(encodePathValue(id)))
+              .join("&"),
+          method: "POST",
+          failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+        },
+        options,
+      ),
+    );
+  },
+
   archiveName: function (targetName) {
     return String(targetName || "").replace(/[. ]/g, "-");
   },

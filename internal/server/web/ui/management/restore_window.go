@@ -149,11 +149,42 @@ var restoreJobEdit = js.EditWindow{
 			`),
 		},
 	},
-	Methods: map[string]js.Raw{"initComponent": js.ApplyJobDataWith(`
-		if (me.snapshotGroup) {
-			me.lookup("snapshot").setPreferredGroup(me.snapshotGroup);
-		}
-	`)},
+	Methods: map[string]js.Raw{
+		"initComponent": js.ApplyJobDataWith(`
+			if (me.snapshotGroup) {
+				me.lookup("snapshot").setPreferredGroup(me.snapshotGroup);
+			}
+			if (me.isCreate) {
+				me.addCreateAndRunButton();
+			}
+		`),
+		"addCreateAndRunButton": js.Func("", `
+			let me = this;
+			let submit = me.down("button[reference=submitbutton]");
+			let toolbar = submit.up("toolbar");
+			let form = me.formPanel.getForm();
+			let runButton = toolbar.insert(toolbar.items.indexOf(submit), {
+				xtype: "button",
+				text: gettext("Create & Run"),
+				iconCls: "fa fa-play",
+				disabled: !form.isValid(),
+				handler: () => {
+					me.runAfterCreate = true;
+					me.submit();
+				},
+			});
+			form.on("validitychange", (f, valid) => runButton.setDisabled(!valid));
+		`),
+		"apiCallDone": js.Func("success, response", `
+			let me = this;
+			let id = response?.result?.data?.id;
+			if (!success || !me.runAfterCreate || !id) {
+				me.runAfterCreate = false;
+				return;
+			}
+			PBS.PlusUtils.startJobs("`+restoreRunURL+`", [id]);
+		`),
+	},
 	Items: js.Items(js.Panel{
 		Extend: js.ExtTabPanel, BodyPadding: 10, BorderOff: true,
 		Items: js.Items(
@@ -197,6 +228,7 @@ var restoreJobEdit = js.EditWindow{
 				),
 				ColumnB: js.Items(
 					js.Field{XType: "proxmoxtextfield", Label: "Comment", Name: "comment", DeleteEmptyWhenNotCreate: true},
+					js.Field{XType: js.XCheckbox, Label: "One-shot", Name: "remove_on_success", BoxLabel: "Remove this job after its next successful run (the task log is kept)", InputValue: "true", UncheckedValue: "false"},
 					js.Field{XType: "pbsD2DScriptSelector", Label: "Pre-Restore Script", Name: "pre_script"},
 					js.Field{XType: "pbsD2DScriptSelector", Label: "Post-Restore Script", Name: "post_script"},
 				),

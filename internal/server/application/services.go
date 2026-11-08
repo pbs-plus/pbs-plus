@@ -75,7 +75,7 @@ func NewRestoreService(db *coredb.Store) *RestoreService { return &RestoreServic
 
 func (s *RestoreService) GetAllRestores() ([]coredb.Restore, error)    { return s.db.GetAllRestores() }
 func (s *RestoreService) GetRestore(id string) (coredb.Restore, error) { return s.db.GetRestore(id) }
-func (s *RestoreService) CreateRestore(r coredb.Restore) error         { return s.db.CreateRestore(nil, r) }
+func (s *RestoreService) CreateRestore(r *coredb.Restore) error        { return s.db.CreateRestore(nil, r) }
 func (s *RestoreService) UpdateRestore(r coredb.Restore) error         { return s.db.UpdateRestore(nil, r) }
 func (s *RestoreService) DeleteRestore(id string) error                { return s.db.DeleteRestore(nil, id) }
 

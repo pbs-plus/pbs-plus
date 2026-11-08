@@ -43,7 +43,8 @@ func (db *Store) generateUniqueRestoreID(restore Restore) (string, error) {
 	return "", fmt.Errorf("failed to generate a unique restore ID after %d attempts", maxAttempts)
 }
 
-func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
+// CreateRestore inserts restore, filling in a generated ID when it is empty.
+func (db *Store) CreateRestore(tx *Transaction, restore *Restore) (err error) {
 	var commitNeeded bool = false
 	q := db.queries
 
@@ -77,7 +78,7 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 	q = db.queries.WithTx(tx.Tx)
 
 	if restore.ID == "" {
-		id, err := db.generateUniqueRestoreID(restore)
+		id, err := db.generateUniqueRestoreID(*restore)
 		if err != nil {
 			return fmt.Errorf("CreateRestore: failed to generate unique id -> %w", err)
 		}
@@ -132,14 +133,15 @@ func (db *Store) CreateRestore(tx *Transaction, restore Restore) (err error) {
 		LastRunStatus:      toNullInt64(int(restore.History.LastRunStatus)),
 		RetryCount:         toNullInt64(restore.History.RetryCount),
 		NotificationMode:   toNullString(restore.NotificationMode),
+		RemoveOnSuccess:    boolToNullInt64(restore.RemoveOnSuccess).Int64,
 	})
 	if err != nil {
 		return fmt.Errorf("CreateRestore: error inserting restore: %w", err)
 	}
-	if err = db.storeRestoreDatabaseOptions(q, restore); err != nil {
+	if err = db.storeRestoreDatabaseOptions(q, *restore); err != nil {
 		return fmt.Errorf("CreateRestore: %w", err)
 	}
-	if err = db.storeRestoreDovecotOptions(q, restore); err != nil {
+	if err = db.storeRestoreDovecotOptions(q, *restore); err != nil {
 		return fmt.Errorf("CreateRestore: %w", err)
 	}
 
@@ -162,6 +164,7 @@ func (db *Store) GetRestore(id string) (Restore, error) {
 		Snapshot:         row.Snapshot,
 		SrcPath:          row.SrcPath,
 		NotificationMode: fromNullString(row.NotificationMode),
+		RemoveOnSuccess:  row.RemoveOnSuccess != 0,
 		DestTarget: Target{
 			Name:   row.DestTarget,
 			Type:   TargetType(fromNullString(row.TargetType)),
@@ -333,6 +336,7 @@ func (db *Store) UpdateRestore(tx *Transaction, restore Restore) (err error) {
 		LastRunStatus:      toNullInt64(int(restore.History.LastRunStatus)),
 		RetryCount:         toNullInt64(restore.History.RetryCount),
 		NotificationMode:   toNullString(restore.NotificationMode),
+		RemoveOnSuccess:    boolToNullInt64(restore.RemoveOnSuccess).Int64,
 		ID:                 restore.ID,
 	})
 	if err != nil {
@@ -407,6 +411,7 @@ func (db *Store) GetAllRestores() ([]Restore, error) {
 			SrcPath:          row.SrcPath,
 			Mode:             int(row.RestoreMode),
 			NotificationMode: fromNullString(row.NotificationMode),
+			RemoveOnSuccess:  row.RemoveOnSuccess != 0,
 			DestTarget: Target{
 				Name:   row.DestTarget,
 				Type:   TargetType(fromNullString(row.TargetType)),
@@ -579,6 +584,7 @@ type Restore struct {
 	DovecotDestinationMailbox  string     `json:"dovecot_destination_mailbox,omitempty"`
 	DovecotMessages            string     `json:"dovecot_messages,omitempty"`
 	ReplaceExisting            bool       `json:"replace_existing,omitempty"`
+	RemoveOnSuccess            bool       `json:"remove_on_success,omitempty"`
 }
 
 func (db *Store) storeRestoreDatabaseOptions(q *corequery.Queries, restore Restore) error {

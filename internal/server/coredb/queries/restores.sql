@@ -3,8 +3,8 @@ INSERT INTO restores (
     id, store, namespace, snapshot, src_path, dest_target, dest_subpath,
     comment, current_pid, last_run_upid, last_successful_upid, retry,
     retry_interval, pre_script, post_script, restore_mode, last_run_status, retry_count,
-    notification_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    notification_mode, remove_on_success
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetRestore :one
 SELECT
@@ -12,6 +12,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    j.remove_on_success,
     COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
@@ -61,6 +62,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    j.remove_on_success,
     COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
@@ -109,7 +111,7 @@ SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?,
     dest_subpath = ?, comment = ?, current_pid = ?, last_run_upid = ?,
     retry = ?, retry_interval = ?, last_successful_upid = ?,
     pre_script = ?, post_script = ?, restore_mode = ?, last_run_status = ?, retry_count = ?,
-    notification_mode = ?
+    notification_mode = ?, remove_on_success = ?
 WHERE id = ?;
 
 -- name: UpsertRestoreDatabaseOptions :exec

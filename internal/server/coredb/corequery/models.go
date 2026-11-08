@@ -151,6 +151,7 @@ type Restore struct {
 	LastRunEndtime        sql.NullInt64  `json:"last_run_endtime"`
 	LastSuccessfulEndtime sql.NullInt64  `json:"last_successful_endtime"`
 	Duration              sql.NullInt64  `json:"duration"`
+	RemoveOnSuccess       int64          `json:"remove_on_success"`
 }
 
 type RestoreDatabaseOption struct {

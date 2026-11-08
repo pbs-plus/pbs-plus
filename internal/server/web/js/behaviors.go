@@ -180,13 +180,7 @@ func RunJobs(baseURL, singular, plural string) Raw {
 			: Ext.String.format(gettext(%q), list);
 		Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
 			if (btn !== "yes") return;
-			PBS.PlusUtils.API2Request({
-				url: %q + ids.map((id) => "job=" + encodeURIComponent(encodePathValue(id))).join("&"),
-				method: "POST",
-				waitMsgTarget: view,
-				success: () => me.reload(),
-				failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-			});
+			PBS.PlusUtils.startJobs(%q, ids, { waitMsgTarget: view, success: () => me.reload() });
 		});
 	`, plural, singular, baseURL))
 }

@@ -291,8 +291,11 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 		if replaceExisting, parseErr := strconv.ParseBool(r.FormValue("replace_existing")); parseErr == nil {
 			newRestore.ReplaceExisting = replaceExisting
 		}
+		if removeOnSuccess, parseErr := strconv.ParseBool(r.FormValue("remove_on_success")); parseErr == nil {
+			newRestore.RemoveOnSuccess = removeOnSuccess
+		}
 
-		err = app.Restore.CreateRestore(newRestore)
+		err = app.Restore.CreateRestore(&newRestore)
 		if err != nil {
 			respond.WriteErrorResponse(w, err)
 			return
@@ -302,6 +305,7 @@ func ExtJsRestoreHandler(app *application.Runtime) http.HandlerFunc {
 
 		response.Status = http.StatusOK
 		response.Success = true
+		response.Data = map[string]string{"id": newRestore.ID}
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Error(err, "")
 		}
@@ -410,6 +414,14 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 				restore.ReplaceExisting = replaceExisting
 			}
+			if r.Form.Has("remove_on_success") {
+				removeOnSuccess, parseErr := strconv.ParseBool(r.FormValue("remove_on_success"))
+				if parseErr != nil {
+					respond.WriteErrorResponse(w, parseErr)
+					return
+				}
+				restore.RemoveOnSuccess = removeOnSuccess
+			}
 
 			preScript := r.FormValue("pre_script")
 			if err := validate.ValidateScriptPath("pre_script", preScript); err != nil {
@@ -490,6 +502,8 @@ func ExtJsRestoreSingleHandler(app *application.Runtime) http.HandlerFunc {
 						restore.DovecotMessages = ""
 					case "replace_existing":
 						restore.ReplaceExisting = false
+					case "remove_on_success":
+						restore.RemoveOnSuccess = false
 					}
 				}
 			}

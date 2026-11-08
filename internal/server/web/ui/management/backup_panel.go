@@ -91,7 +91,7 @@ var backupPanel = js.Panel{
 			Ext.create("PBS.D2DManagement.RestoreJobEdit", {
 				autoShow: true,
 				snapshotGroup: job.getId(),
-				jobData: { store: job.get("store"), ns: job.get("ns"), "dest-target": job.get("target") },
+				jobData: { store: job.get("store"), ns: job.get("ns"), "dest-target": job.get("target"), remove_on_success: true },
 			});
 		`),
 		"addJob":             js.OpenEditWindow("PBS.D2DManagement.BackupJobEdit", ""),

@@ -26,8 +26,8 @@ INSERT INTO restores (
     id, store, namespace, snapshot, src_path, dest_target, dest_subpath,
     comment, current_pid, last_run_upid, last_successful_upid, retry,
     retry_interval, pre_script, post_script, restore_mode, last_run_status, retry_count,
-    notification_mode
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    notification_mode, remove_on_success
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateRestoreParams struct {
@@ -50,6 +50,7 @@ type CreateRestoreParams struct {
 	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
 	RetryCount         sql.NullInt64  `json:"retry_count"`
 	NotificationMode   sql.NullString `json:"notification_mode"`
+	RemoveOnSuccess    int64          `json:"remove_on_success"`
 }
 
 func (q *Queries) CreateRestore(ctx context.Context, arg CreateRestoreParams) error {
@@ -73,6 +74,7 @@ func (q *Queries) CreateRestore(ctx context.Context, arg CreateRestoreParams) er
 		arg.LastRunStatus,
 		arg.RetryCount,
 		arg.NotificationMode,
+		arg.RemoveOnSuccess,
 	)
 	return err
 }
@@ -113,6 +115,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    j.remove_on_success,
     COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
@@ -177,6 +180,7 @@ type GetRestoreRow struct {
 	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
 	RetryCount                  sql.NullInt64  `json:"retry_count"`
 	NotificationMode            sql.NullString `json:"notification_mode"`
+	RemoveOnSuccess             int64          `json:"remove_on_success"`
 	SourceDatabase              string         `json:"source_database"`
 	DestinationDatabase         string         `json:"destination_database"`
 	ReplaceExisting             int64          `json:"replace_existing"`
@@ -244,6 +248,7 @@ func (q *Queries) GetRestore(ctx context.Context, id string) (GetRestoreRow, err
 		&i.LastRunStatus,
 		&i.RetryCount,
 		&i.NotificationMode,
+		&i.RemoveOnSuccess,
 		&i.SourceDatabase,
 		&i.DestinationDatabase,
 		&i.ReplaceExisting,
@@ -296,6 +301,7 @@ SELECT
     j.dest_subpath, j.comment, j.current_pid, j.last_run_upid,
     j.last_successful_upid, j.retry, j.retry_interval, j.pre_script, j.post_script,
     j.restore_mode, j.last_run_status, j.retry_count, j.notification_mode,
+    j.remove_on_success,
     COALESCE(dro.source_database, '') AS source_database,
     COALESCE(dro.destination_database, '') AS destination_database,
     COALESCE(dro.replace_existing, 0) AS replace_existing,
@@ -359,6 +365,7 @@ type ListAllRestoresRow struct {
 	LastRunStatus               sql.NullInt64  `json:"last_run_status"`
 	RetryCount                  sql.NullInt64  `json:"retry_count"`
 	NotificationMode            sql.NullString `json:"notification_mode"`
+	RemoveOnSuccess             int64          `json:"remove_on_success"`
 	SourceDatabase              string         `json:"source_database"`
 	DestinationDatabase         string         `json:"destination_database"`
 	ReplaceExisting             int64          `json:"replace_existing"`
@@ -432,6 +439,7 @@ func (q *Queries) ListAllRestores(ctx context.Context) ([]ListAllRestoresRow, er
 			&i.LastRunStatus,
 			&i.RetryCount,
 			&i.NotificationMode,
+			&i.RemoveOnSuccess,
 			&i.SourceDatabase,
 			&i.DestinationDatabase,
 			&i.ReplaceExisting,
@@ -505,7 +513,7 @@ SET store = ?, namespace = ?, snapshot = ?, src_path = ?, dest_target = ?,
     dest_subpath = ?, comment = ?, current_pid = ?, last_run_upid = ?,
     retry = ?, retry_interval = ?, last_successful_upid = ?,
     pre_script = ?, post_script = ?, restore_mode = ?, last_run_status = ?, retry_count = ?,
-    notification_mode = ?
+    notification_mode = ?, remove_on_success = ?
 WHERE id = ?
 `
 
@@ -528,6 +536,7 @@ type UpdateRestoreParams struct {
 	LastRunStatus      sql.NullInt64  `json:"last_run_status"`
 	RetryCount         sql.NullInt64  `json:"retry_count"`
 	NotificationMode   sql.NullString `json:"notification_mode"`
+	RemoveOnSuccess    int64          `json:"remove_on_success"`
 	ID                 string         `json:"id"`
 }
 
@@ -551,6 +560,7 @@ func (q *Queries) UpdateRestore(ctx context.Context, arg UpdateRestoreParams) er
 		arg.LastRunStatus,
 		arg.RetryCount,
 		arg.NotificationMode,
+		arg.RemoveOnSuccess,
 		arg.ID,
 	)
 	return err

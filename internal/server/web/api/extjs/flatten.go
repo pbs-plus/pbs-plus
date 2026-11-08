@@ -132,6 +132,7 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 		DovecotDestinationMailbox:  r.DovecotDestinationMailbox,
 		DovecotMessages:            r.DovecotMessages,
 		ReplaceExisting:            r.ReplaceExisting,
+		RemoveOnSuccess:            r.RemoveOnSuccess,
 
 		DestTarget: r.DestTarget.Name,
 
@@ -562,6 +563,7 @@ func FlattenRestoreForEdit(r coredb.Restore) map[string]any {
 		"dovecot_destination_mailbox":  r.DovecotDestinationMailbox,
 		"dovecot_messages":             r.DovecotMessages,
 		"replace_existing":             r.ReplaceExisting,
+		"remove_on_success":            r.RemoveOnSuccess,
 		"history": map[string]any{
 			"last-run-state":          r.History.LastRunState,
 			"last-run-upid":           r.History.LastRunUpid,
@@ -653,6 +655,7 @@ type FlatRestore struct {
 	DovecotDestinationMailbox  string `json:"dovecot_destination_mailbox,omitempty"`
 	DovecotMessages            string `json:"dovecot_messages,omitempty"`
 	ReplaceExisting            bool   `json:"replace_existing,omitempty"`
+	RemoveOnSuccess            bool   `json:"remove_on_success,omitempty"`
 
 	DestTarget string `json:"dest-target"`
 
