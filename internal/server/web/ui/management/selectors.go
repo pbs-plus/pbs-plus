@@ -98,7 +98,6 @@ var selectors = []js.Value{
 				}
 			`),
 			"updatePreferredGroup": js.Func("", `this.selectPreferredSnapshot();`),
-			"triggers":             js.Raw(`{ browse: { cls: "x-form-search-trigger", weight: 1, tooltip: gettext("Browse snapshots by host and date"), handler: function () { this.openBrowser(); } } }`),
 			"openBrowser": js.Func("", `
 				let me = this;
 				if (me.isDisabled() || me.readOnly) {

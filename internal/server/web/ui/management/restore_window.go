@@ -172,7 +172,10 @@ var restoreJobEdit = js.EditWindow{
 						AllowBlank: new(true), CBind: js.Obj{"value": "{restoreModeValue}"}},
 					js.Field{XType: js.XDataStoreSelector, Label: "Local Datastore", Name: "store"},
 					js.Field{XType: "pbsD2DNamespaceSelector", Label: "Snapshot namespace", EmptyText: "Root", Name: "ns", Reference: "namespace", DeleteEmptyWhenNotCreate: true},
-					js.Field{XType: "pbsD2DSnapshotSelector", Label: "Snapshot", Name: "snapshot", Reference: "snapshot", DeleteEmptyWhenNotCreate: true},
+					js.Field{XType: js.XFieldContainer, Label: "Snapshot", Layout: "hbox", Items: js.Items(
+						js.Field{XType: "pbsD2DSnapshotSelector", Name: "snapshot", Reference: "snapshot", Flex: 1, DeleteEmptyWhenNotCreate: true},
+						js.Raw(`{ xtype: "button", iconCls: "fa fa-history", margin: "0 0 0 5", tooltip: gettext("Browse snapshots by host and date"), handler: function (btn) { btn.up("pbsDiskRestoreJobEdit").lookup("snapshot").openBrowser(); } }`),
+					)},
 					js.Field{XType: "pbsD2DSnapshotPathSelector", Label: "Path to restore", Reference: "pathSelector", Name: "src-path", DeleteEmptyWhenNotCreate: true},
 				),
 				Column2: js.Items(

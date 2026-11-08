@@ -358,7 +358,7 @@ func TestSnapshotSelectorOpensFilterableBrowser(t *testing.T) {
 		[]byte(`Ext.define("PBS.window.D2DSnapshotBrowser", {`),
 		[]byte(`Ext.create("PBS.window.D2DSnapshotBrowser", { snapshotField: me, initialHost: me.getPreferredGroup() || "" }).show();`),
 		[]byte(`reference: "targetOnly"`),
-		[]byte(`browse: { cls: "x-form-search-trigger"`),
+		[]byte(`iconCls: "fa fa-history", margin: "0 0 0 5", tooltip: gettext("Browse snapshots by host and date")`),
 		[]byte(`reference: "hostFilter"`),
 		[]byte(`reference: "fromDate"`),
 		[]byte(`reference: "toDate"`),
