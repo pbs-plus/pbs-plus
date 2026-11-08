@@ -305,7 +305,7 @@ runs:
         }
 
         verify_backup_task() {
-          local job_id=$1 response item upid state endtime log terminal marker section
+          local job_id=$1 phase_marker=$2 response item upid state endtime log terminal marker section marker_line
           response=$(api_get '/api2/json/d2d/backup')
           item=$(jq -cer --arg job_id "$job_id" '.data[] | select(.id == $job_id)' <<<"$response")
           upid=$(jq -er '."last-run-upid"' <<<"$item")
@@ -348,12 +348,22 @@ runs:
             printf '%s\n' "$log"
             exit 1
           fi
+          for marker_line in \
+            'Dovecot staging: preparing mailbox data; PBS snapshot upload has not started' \
+            'Dovecot staging complete:' \
+            "$phase_marker"; do
+            if ! grep -qF -- "$marker_line" <<<"$section"; then
+              echo "Dovecot section is missing staging progress: $marker_line"
+              printf '%s\n' "$log"
+              exit 1
+            fi
+          done
 
           printf 'Dovecot section:\n%s\n' "$section"
         }
 
-        verify_backup_task 'e2e-dovecot-backup'
-        verify_backup_task 'e2e-dovecot-server-backup'
+        verify_backup_task 'e2e-dovecot-backup' 'Dovecot staging: user 1/1'
+        verify_backup_task 'e2e-dovecot-server-backup' 'Dovecot staging: requesting the mailbox user list'
 
     - name: Run Dovecot restore tests
       shell: bash
