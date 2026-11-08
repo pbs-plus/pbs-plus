@@ -825,9 +825,10 @@ func (db *Store) storeBackupDovecotOptions(q *corequery.Queries, backup Backup) 
 }
 
 type Tasks struct {
-	UPID    string `json:"upid"`
-	Endtime int64  `json:"endtime"`
-	Status  string `json:"status"`
+	UPID      string `json:"upid"`
+	Starttime int64  `json:"starttime"`
+	Endtime   int64  `json:"endtime"`
+	Status    string `json:"status"`
 }
 
 type JobStats struct {

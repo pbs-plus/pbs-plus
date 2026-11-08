@@ -330,19 +330,14 @@ Ext.define("PBS.PlusUtils", {
       .reverse()
       .map((run) => {
         let parsed = run.status_parsed || {};
-        let category = run.endtime ? parsed.category || "unknown" : "running";
+        let category = parsed.category || "unknown";
         let color =
           PBS.PlusUtils.recentRunColors[category] ||
           PBS.PlusUtils.recentRunColors.unknown;
-        let start = "";
-        try {
-          start = Proxmox.Utils.render_timestamp(
-            Proxmox.Utils.parse_task_upid(run.upid).starttime,
-          );
-        } catch (e) {
-          start = "";
-        }
-        let text = run.endtime ? parsed.text || run.status : gettext("Running");
+        let start = run.starttime
+          ? Proxmox.Utils.render_timestamp(run.starttime)
+          : "";
+        let text = parsed.text || run.status;
         let tip = Ext.htmlEncode(
           Ext.htmlEncode((start ? start + ": " : "") + (text || "")),
         );

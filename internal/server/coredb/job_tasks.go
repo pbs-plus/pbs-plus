@@ -53,7 +53,7 @@ func jobTasks(baseDir, id string, limit int) []Tasks {
 		if err != nil {
 			continue
 		}
-		tasks = append(tasks, Tasks{UPID: task.UPID, Endtime: task.EndTime, Status: task.ExitStatus})
+		tasks = append(tasks, Tasks{UPID: task.UPID, Starttime: e.starttime, Endtime: task.EndTime, Status: task.ExitStatus})
 	}
 	return tasks
 }

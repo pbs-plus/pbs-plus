@@ -61,6 +61,7 @@ type ParsedTaskStatus struct {
 
 type TasksWithStatus struct {
 	coredb.Tasks
+	Duration     int64            `json:"duration,omitempty"`
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
 }
 
@@ -70,6 +71,12 @@ func WithStatus(tasks []coredb.Tasks) []TasksWithStatus {
 	out := make([]TasksWithStatus, len(tasks))
 	for i, t := range tasks {
 		out[i] = TasksWithStatus{Tasks: t, StatusParsed: ParseTaskStatus(t.Status)}
+		if t.Status == "" && t.Endtime == 0 {
+			out[i].StatusParsed = ParsedTaskStatus{Category: "running", Icon: "spinner", Text: "Running"}
+		}
+		if t.Endtime > 0 && t.Starttime > 0 {
+			out[i].Duration = t.Endtime - t.Starttime
+		}
 	}
 	return out
 }

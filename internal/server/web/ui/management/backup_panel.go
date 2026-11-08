@@ -144,18 +144,7 @@ var backupPanel = js.Panel{
 					}
 					const upidStore = Ext.create("Ext.data.Store", {
 						fields: ["upid", "starttime", "endtime", "status", "status_parsed", "duration"],
-						data: upids.map((item) => {
-							const task = Proxmox.Utils.parse_task_upid(item.upid);
-							return {
-								upid: item.upid,
-								starttime: task.starttime,
-								endtime: item.endtime,
-								status: item.status,
-								status_parsed: item.status_parsed,
-								duration: item.endtime && task.starttime ? item.endtime - task.starttime : null,
-							};
-						}),
-						sorters: [{ property: "starttime", direction: "DESC" }],
+						data: upids,
 					});
 					Ext.create("Ext.window.Window", {
 						title: gettext("Task Logs for Job: ") + Ext.String.htmlEncode(jobId),
@@ -169,7 +158,7 @@ var backupPanel = js.Panel{
 							columns: [
 								{ text: gettext("Start Time"), dataIndex: "starttime", flex: 1, renderer: (v) => Proxmox.Utils.render_timestamp(v) },
 								{ text: gettext("End Time"), dataIndex: "endtime", flex: 1, renderer: (v) => v ? Proxmox.Utils.render_timestamp(v) : "-" },
-								{ text: gettext("Duration"), dataIndex: "duration", flex: 1, renderer: (v) => v !== null ? Proxmox.Utils.format_duration_long(v) : "-" },
+								{ text: gettext("Duration"), dataIndex: "duration", flex: 1, renderer: (v) => v ? Proxmox.Utils.format_duration_long(v) : "-" },
 								{ text: gettext("Status"), dataIndex: "status", flex: 2, renderer: PBS.PlusUtils.render_task_status },
 							],
 							listeners: {
