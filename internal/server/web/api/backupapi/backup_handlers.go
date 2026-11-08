@@ -94,14 +94,10 @@ func ExtJsBackupRunHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		decodedBackupIDs := []string{}
-		for _, backupID := range backupIDs {
-			decoded := validate.DecodePath(backupID)
-			if err := validate.ValidateJobId(decoded); err != nil {
-				respond.WriteErrorResponse(w, err)
-				return
-			}
-			decodedBackupIDs = append(decodedBackupIDs, decoded)
+		decodedBackupIDs, err := validate.DecodeJobIDs(backupIDs)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
 
 		stop := r.Method == http.MethodDelete

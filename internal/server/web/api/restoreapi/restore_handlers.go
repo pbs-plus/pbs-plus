@@ -102,14 +102,10 @@ func ExtJsRestoreRunHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 
-		decodedRestoreIDs := []string{}
-		for _, restoreID := range restoreIDs {
-			decoded := validate.DecodePath(restoreID)
-			if err := validate.ValidateJobId(decoded); err != nil {
-				respond.WriteErrorResponse(w, err)
-				return
-			}
-			decodedRestoreIDs = append(decodedRestoreIDs, decoded)
+		decodedRestoreIDs, err := validate.DecodeJobIDs(restoreIDs)
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
 		}
 
 		stop := r.Method == http.MethodDelete
