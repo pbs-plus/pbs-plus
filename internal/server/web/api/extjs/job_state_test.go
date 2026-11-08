@@ -59,10 +59,10 @@ func TestWithStatusDerivesRunningAndDuration(t *testing.T) {
 		{UPID: "b", Starttime: 100, Endtime: 160, Status: "OK"},
 		{UPID: "c", Starttime: 100, Status: "unknown"},
 	})
-	if runs[0].StatusParsed.Category != "running" || runs[0].Duration != 0 {
+	if runs[0].StatusParsed.Category != "running" || runs[0].Duration != nil {
 		t.Errorf("running task = %#v", runs[0])
 	}
-	if runs[1].StatusParsed.Category != "ok" || runs[1].Duration != 60 {
+	if runs[1].StatusParsed.Category != "ok" || runs[1].Duration == nil || *runs[1].Duration != 60 {
 		t.Errorf("finished task = %#v", runs[1])
 	}
 	if runs[2].StatusParsed.Category != "unknown" {

@@ -158,7 +158,7 @@ var backupPanel = js.Panel{
 							columns: [
 								{ text: gettext("Start Time"), dataIndex: "starttime", flex: 1, renderer: (v) => Proxmox.Utils.render_timestamp(v) },
 								{ text: gettext("End Time"), dataIndex: "endtime", flex: 1, renderer: (v) => v ? Proxmox.Utils.render_timestamp(v) : "-" },
-								{ text: gettext("Duration"), dataIndex: "duration", flex: 1, renderer: (v) => v ? Proxmox.Utils.format_duration_long(v) : "-" },
+								{ text: gettext("Duration"), dataIndex: "duration", flex: 1, renderer: (v) => v === undefined || v === null ? "-" : Proxmox.Utils.format_duration_long(v) },
 								{ text: gettext("Status"), dataIndex: "status", flex: 2, renderer: PBS.PlusUtils.render_task_status },
 							],
 							listeners: {

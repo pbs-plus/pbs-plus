@@ -120,6 +120,7 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 			let toTs = to ? Ext.Date.add(Ext.Date.clearTime(to, true), Ext.Date.DAY, 1).getTime() / 1000 : null;
 			let current = field.getValue();
 
+			let exactHost = !!host && field.getStore().findBy((rec) => String(rec.get("backup-id")).toLowerCase() === host) !== -1;
 			let groups = {};
 			let available = 0;
 			field.getStore().each((rec) => {
@@ -129,7 +130,8 @@ var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
 					return;
 				}
 				available++;
-				if (host && !String(id).toLowerCase().includes(host)) {
+				let hostId = String(id).toLowerCase();
+				if (host && (exactHost ? hostId !== host : !hostId.includes(host))) {
 					return;
 				}
 				if (sourceTarget && rec.get("source_target") !== sourceTarget) {
