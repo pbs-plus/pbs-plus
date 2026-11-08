@@ -8,22 +8,30 @@ import (
 
 func TestClassifyJob(t *testing.T) {
 	done := coredb.JobHistory{LastRunUpid: "u", LastRunEndtime: 10}
+	running := coredb.JobHistory{LastRunUpid: "u"}
+	engine := NewActiveJobs(map[string]bool{"active": true})
 	tests := []struct {
 		name    string
+		active  ActiveJobs
+		id      string
 		history coredb.JobHistory
 		state   string
 		want    string
 	}{
-		{"never ran", coredb.JobHistory{}, "", JobStateNever},
-		{"queued", coredb.JobHistory{}, "QUEUED: waiting", JobStateRunning},
-		{"running", coredb.JobHistory{LastRunUpid: "u"}, "", JobStateRunning},
-		{"ok", done, "OK", JobStateOK},
-		{"warnings", done, "WARNINGS: 2", JobStateWarning},
-		{"error", done, "connection refused", JobStateFailed},
-		{"unknown", done, "unknown", JobStateFailed},
+		{"never ran", ActiveJobs{}, "job", coredb.JobHistory{}, "", JobStateNever},
+		{"queued without engine data", ActiveJobs{}, "job", coredb.JobHistory{}, "QUEUED: waiting", JobStateRunning},
+		{"running without engine data", ActiveJobs{}, "job", running, "", JobStateRunning},
+		{"engine says running despite a stale state", engine, "active", done, "OK", JobStateRunning},
+		{"engine says running with an unknown task", engine, "active", running, "unknown", JobStateRunning},
+		{"engine says idle for an orphaned run", engine, "idle", running, "", JobStateFailed},
+		{"engine says idle for a stale queued state", engine, "idle", done, "QUEUED: waiting", JobStateFailed},
+		{"ok", engine, "idle", done, "OK", JobStateOK},
+		{"warnings", engine, "idle", done, "WARNINGS: 2", JobStateWarning},
+		{"error", engine, "idle", done, "connection refused", JobStateFailed},
+		{"unknown", engine, "idle", done, "unknown", JobStateFailed},
 	}
 	for _, tt := range tests {
-		if got := ClassifyJob(tt.history, ParseTaskStatus(tt.state)); got != tt.want {
+		if got := tt.active.Classify(tt.id, tt.history, ParseTaskStatus(tt.state)); got != tt.want {
 			t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
 		}
 	}
@@ -36,7 +44,7 @@ func TestFlattenBackupsFlagsJobsNeedingAttention(t *testing.T) {
 		{ID: "excluded", Schedule: "daily"},
 		{ID: "unscheduled"},
 	}
-	flat := FlattenBackups(backups, 7, true, map[string]bool{"excluded": true})
+	flat := FlattenBackups(backups, 7, true, map[string]bool{"excluded": true}, ActiveJobs{})
 	want := map[string]bool{"fresh": false, "never": true, "excluded": false, "unscheduled": false}
 	for _, f := range flat {
 		if f.NeedsAttention != want[f.ID] || f.Stale != want[f.ID] {

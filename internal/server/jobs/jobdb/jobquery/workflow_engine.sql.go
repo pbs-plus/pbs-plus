@@ -646,6 +646,35 @@ func (q *Queries) InvalidateActivity(ctx context.Context, arg InvalidateActivity
 	return result.RowsAffected()
 }
 
+const listActiveDefinitionIDs = `-- name: ListActiveDefinitionIDs :many
+SELECT DISTINCT definition_id
+FROM job_executions
+WHERE kind = ? AND state IN ('pending', 'running')
+`
+
+func (q *Queries) ListActiveDefinitionIDs(ctx context.Context, kind string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveDefinitionIDs, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var definition_id string
+		if err := rows.Scan(&definition_id); err != nil {
+			return nil, err
+		}
+		items = append(items, definition_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listClaimableExecutionIDs = `-- name: ListClaimableExecutionIDs :many
 SELECT id
 FROM job_executions

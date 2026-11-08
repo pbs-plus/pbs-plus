@@ -240,6 +240,25 @@ Ext.define("PBS.PlusUtils", {
       return "-";
     }
 
+    let jobStatus = record.data.job_status;
+    if (jobStatus !== undefined) {
+      let parsed = record.get("status_parsed") || {};
+      if (jobStatus === "running" && parsed.category === "queued") {
+        return `<i class="fa fa-${parsed.icon}"></i> ${parsed.text}`;
+      }
+      if (jobStatus === "running") {
+        metadata.tdCls = "x-grid-row-loading";
+        return "";
+      }
+      if (jobStatus === "never") {
+        return "-";
+      }
+      if (!parsed.icon || parsed.category === "queued") {
+        return `<i class="fa fa-times critical"></i> ${gettext("Interrupted")}`;
+      }
+      return `<i class="fa fa-${parsed.icon}"></i> ${parsed.text}`;
+    }
+
     let qstatus = record.get("status_parsed");
     if (qstatus && qstatus.category === "queued") {
       return `<i class="fa fa-${qstatus.icon}"></i> ${qstatus.text}`;
@@ -263,7 +282,7 @@ Ext.define("PBS.PlusUtils", {
     return "-";
   },
 
-  startJobs: function (baseUrl, ids, options) {
+  jobRequest: function (method, baseUrl, ids, options) {
     PBS.PlusUtils.API2Request(
       Ext.apply(
         {
@@ -272,7 +291,7 @@ Ext.define("PBS.PlusUtils", {
             ids
               .map((id) => "job=" + encodeURIComponent(encodePathValue(id)))
               .join("&"),
-          method: "POST",
+          method: method,
           failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
         },
         options,

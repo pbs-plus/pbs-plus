@@ -1,12 +1,15 @@
 package extjs
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 )
 
 func HumanReadableBytes(bytes int) string {
@@ -79,15 +82,45 @@ const (
 	JobStateOK      = "ok"
 )
 
-func ClassifyJob(history coredb.JobHistory, parsed ParsedTaskStatus) string {
+type ActiveJobs struct {
+	ids   map[string]bool
+	known bool
+}
+
+func NewActiveJobs(ids map[string]bool) ActiveJobs {
+	return ActiveJobs{ids: ids, known: true}
+}
+
+func LoadActiveJobs(ctx context.Context, engine *jobs.Engine, kind string) ActiveJobs {
+	if engine == nil {
+		return ActiveJobs{}
+	}
+	ids, err := engine.ActiveDefinitions(ctx, kind)
+	if err != nil {
+		log.Error(err, "failed to list active job executions", "kind", kind)
+		return ActiveJobs{}
+	}
+	return NewActiveJobs(ids)
+}
+
+func (a ActiveJobs) Running(id string, history coredb.JobHistory, parsed ParsedTaskStatus) bool {
+	if a.known {
+		return a.ids[id]
+	}
+	return parsed.Category == "queued" || (history.LastRunUpid != "" && history.LastRunEndtime == 0)
+}
+
+func (a ActiveJobs) Classify(id string, history coredb.JobHistory, parsed ParsedTaskStatus) string {
+	return ClassifyJob(a.Running(id, history, parsed), history, parsed)
+}
+
+func ClassifyJob(running bool, history coredb.JobHistory, parsed ParsedTaskStatus) string {
 	switch {
-	case parsed.Category == "queued":
+	case running:
 		return JobStateRunning
 	case history.LastRunUpid == "":
 		return JobStateNever
-	case history.LastRunEndtime == 0:
-		return JobStateRunning
-	case parsed.Category == "error" || parsed.Category == "unknown":
+	case history.LastRunEndtime == 0, parsed.Category == "queued", parsed.Category == "error", parsed.Category == "unknown":
 		return JobStateFailed
 	case parsed.Category == "warning":
 		return JobStateWarning

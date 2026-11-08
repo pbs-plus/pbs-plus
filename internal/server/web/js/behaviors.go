@@ -18,8 +18,8 @@ var DashIfEmpty = Func("value", `return value || "-";`)
 
 // JobIdle and JobStoppable are selectionEvery expressions over a job record r.
 const (
-	JobIdle      = `!r.data["last-run-upid"] || !!r.data["last-run-state"]`
-	JobStoppable = `!!r.data["last-run-upid"] && ((r.data["last-run-state"] || "") === "" || (r.data["last-run-state"] || "").startsWith("QUEUED:"))`
+	JobIdle      = `r.data.job_status !== "running"`
+	JobStoppable = `r.data.job_status === "running"`
 )
 
 var CountIfSet = Func("value", `
@@ -70,7 +70,7 @@ var EnableOnSingleSelection = Func("", `
 var (
 	AddJobTool         = Tool{Text: "Add Job", Handler: "addJob", SelModel: new(false)}
 	DuplicateJobTool   = Tool{Text: "Duplicate Job", Handler: "duplicateJob", Disabled: true, EnableFn: EnableOnSingleSelection}
-	EditIdleJobTool    = Tool{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: SelectionOne(`!recs[0].data["last-run-upid"] || !!recs[0].data["last-run-state"]`)}
+	EditIdleJobTool    = Tool{Text: "Edit Job", Handler: "editJob", Disabled: true, EnableFn: SelectionOne(`recs[0].data.job_status !== "running"`)}
 	RemoveIdleJobsTool = Tool{Text: "Remove Job(s)", Handler: "removeJobs", Disabled: true, EnableFn: SelectionEvery(JobIdle)}
 	RunIdleJobsTool    = Tool{Text: "Run Job(s)", Handler: "runJobs", Disabled: true, EnableFn: SelectionEvery(JobIdle)}
 	StopJobsTool       = Tool{Text: "Stop Job(s)", Handler: "stopJobs", Disabled: true, EnableFn: SelectionEvery(JobStoppable)}
@@ -168,21 +168,28 @@ func DuplicateJobWindow(class string) Raw {
 
 // runJobs POSTs every selected job id to baseURL as repeated job= parameters.
 func RunJobs(baseURL, singular, plural string) Raw {
+	return jobAction("POST", baseURL, singular, plural, JobIdle)
+}
+
+func StopJobs(baseURL, singular, plural string) Raw {
+	return jobAction("DELETE", baseURL, singular, plural, JobStoppable)
+}
+
+func jobAction(method, baseURL, singular, plural, eligible string) Raw {
 	return Func("", fmt.Sprintf(`
 		const me = this;
 		const view = me.getView();
-		const recs = view.getSelection();
-		if (!recs.length) return;
-		const ids = recs.map((r) => r.getId());
+		const ids = view.getSelection().filter((r) => %s).map((r) => r.getId());
+		if (!ids.length) return;
 		const list = ids.map(Ext.String.htmlEncode).join("', '");
 		const msg = ids.length > 1
 			? Ext.String.format(gettext(%q), list)
 			: Ext.String.format(gettext(%q), list);
 		Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
 			if (btn !== "yes") return;
-			PBS.PlusUtils.startJobs(%q, ids, { waitMsgTarget: view, success: () => me.reload() });
+			PBS.PlusUtils.jobRequest(%q, %q, ids, { waitMsgTarget: view, success: () => me.reload() });
 		});
-	`, plural, singular, baseURL))
+	`, eligible, plural, singular, method, baseURL))
 }
 
 // A prompt containing {0} is formatted with the list of selected record ids.

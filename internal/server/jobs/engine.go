@@ -234,6 +234,10 @@ func (e *Engine) Get(ctx context.Context, id string) (jobdb.Execution, error) {
 	return e.db.GetExecution(ctx, id)
 }
 
+func (e *Engine) ActiveDefinitions(ctx context.Context, kind string) (map[string]bool, error) {
+	return e.db.ActiveDefinitionIDs(ctx, kind)
+}
+
 func (e *Engine) ActiveExecution(ctx context.Context, kind, definitionID string) (jobdb.Execution, error) {
 	return e.db.GetActiveExecution(ctx, kind, definitionID)
 }

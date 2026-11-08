@@ -125,52 +125,7 @@ var backupPanel = js.Panel{
 		"openSuccessTaskLog": js.OpenTaskLog("last-successful-upid"),
 		"runJobs":            js.RunJobs(backupRunURL, "Start backup job '{0}'?", "Start backup jobs '{0}'?"),
 		"exportCSV":          js.Func("", `window.open(pbsPlusBaseUrl + "/api2/extjs/d2d/backup/export", "_blank");`),
-		"stopJobs": js.Func("", `
-			const me = this;
-			const view = me.getView();
-			const recs = view.getSelection();
-			if (!recs.length) return;
-			const jobs = recs
-				.map((r) => {
-					const upid = r.data["last-run-upid"] || "";
-					const hasPlus = (r.data["last-run-state"] || "").startsWith("QUEUED:");
-					return hasPlus || upid ? { id: r.getId(), upid, hasPlus, hasPBSTask: !!upid } : null;
-				})
-				.filter(Boolean);
-			if (!jobs.length) return;
-			const list = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
-			const msg = jobs.length > 1
-				? Ext.String.format(gettext("Stop backup jobs '{0}'?"), list)
-				: Ext.String.format(gettext("Stop backup job '{0}'?"), list);
-			Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
-				if (btn !== "yes") return;
-				const plusJobs = jobs.filter((j) => j.hasPlus);
-				if (plusJobs.length > 0) {
-					PBS.PlusUtils.API2Request({
-						url: "`+backupRunURL+`" + plusJobs.map((j) => "job=" + encodeURIComponent(encodePathValue(j.id))).join("&"),
-						method: "DELETE",
-						waitMsgTarget: view,
-						success: () => {
-							if (!jobs.some((j) => j.hasPBSTask)) {
-								me.reload();
-							}
-						},
-						// The per-task deletes below still run.
-						failure: () => {},
-					});
-				}
-				jobs.filter((j) => j.hasPBSTask).forEach((job) => {
-					const task = Proxmox.Utils.parse_task_upid(job.upid);
-					Proxmox.Utils.API2Request({
-						url: "/api2/extjs/nodes/" + task.node + "/tasks/" + encodeURIComponent(job.upid),
-						method: "DELETE",
-						waitMsgTarget: view,
-						success: () => me.reload(),
-						failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-					});
-				});
-			});
-		`),
+		"stopJobs":           js.StopJobs(backupRunURL, "Stop backup job '{0}'?", "Stop backup jobs '{0}'?"),
 		"showJobHistory": js.Func("", `
 			const me = this;
 			const view = me.getView();

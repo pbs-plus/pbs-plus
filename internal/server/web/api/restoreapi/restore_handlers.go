@@ -23,6 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/pxar"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/vfs/sessions"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
@@ -64,7 +65,7 @@ func D2DRestoreHandler(app *application.Runtime) http.HandlerFunc {
 			allRestores[i].CurrentStats.StatCacheHits = int(stats.StatCacheHits)
 		}
 
-		flatRestores := extjs.FlattenRestores(allRestores)
+		flatRestores := extjs.FlattenRestores(allRestores, extjs.LoadActiveJobs(r.Context(), app.Engine, jobs.WorkflowRestore))
 		for i := range flatRestores {
 			flatRestores[i].RecentRuns = extjs.WithStatus(allRestores[i].RecentTasks(extjs.RecentRunCount))
 		}

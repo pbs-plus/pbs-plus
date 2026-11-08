@@ -35,31 +35,7 @@ var restorePanel = js.Panel{
 		"openTaskLog":        js.OpenTaskLog("last-run-upid"),
 		"openSuccessTaskLog": js.OpenTaskLog("last-successful-upid"),
 		"runJobs":            js.RunJobs(restoreRunURL, "Start restore job '{0}'?", "Start restore jobs '{0}'?"),
-		"stopJobs": js.Func("", `
-			const me = this;
-			const view = me.getView();
-			const recs = view.getSelection();
-			if (!recs.length) return;
-			const jobs = recs
-				.map((r) => r.data["last-run-upid"] ? { id: r.getId(), upid: r.data["last-run-upid"] } : null)
-				.filter(Boolean);
-			if (!jobs.length) return;
-			const list = jobs.map((j) => Ext.String.htmlEncode(j.id)).join("', '");
-			const msg = jobs.length > 1
-				? Ext.String.format(gettext("Stop restore jobs '{0}'?"), list)
-				: Ext.String.format(gettext("Stop restore job '{0}'?"), list);
-			Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
-				if (btn !== "yes") return;
-				PBS.PlusUtils.API2Request({
-					url: "`+restoreRunURL+`" + jobs.map((j) => "job=" + encodeURIComponent(encodePathValue(j.id))).join("&"),
-					method: "DELETE",
-					waitMsgTarget: view,
-					// The task viewer drives the reload once each PBS task ends.
-					success: () => {},
-					failure: () => {},
-				});
-			});
-		`),
+		"stopJobs":           js.StopJobs(restoreRunURL, "Stop restore job '{0}'?", "Stop restore jobs '{0}'?"),
 		"init": js.Func("view", `
 			PBS.PlusUtils.monStoreErrors(view, view.getStore().rstore);
 			this.initJobFilters(view);

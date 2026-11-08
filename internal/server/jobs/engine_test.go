@@ -687,3 +687,43 @@ func waitForWorkflowState(t *testing.T, ctx context.Context, engine *Engine, id,
 		}
 	}
 }
+
+func TestActiveDefinitionsTracksPendingExecutions(t *testing.T) {
+	ctx := context.Background()
+	engine, _ := newTestEngine(t, ctx)
+	for _, kind := range []string{"test.active", "test.other"} {
+		if err := engine.Register(kind, func(*WorkflowContext) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, _, err := engine.Submit(ctx, testWorkflowSubmit("test.active", "first"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := engine.Submit(ctx, testWorkflowSubmit("test.active", "second")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := engine.Submit(ctx, testWorkflowSubmit("test.other", "third")); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := engine.ActiveDefinitions(ctx, "test.active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 2 || !active["definition-first"] || !active["definition-second"] {
+		t.Fatalf("active = %v", active)
+	}
+
+	if _, err := engine.Cancel(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	active, err = engine.ActiveDefinitions(ctx, "test.active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || !active["definition-second"] {
+		t.Fatalf("active after cancel = %v", active)
+	}
+}

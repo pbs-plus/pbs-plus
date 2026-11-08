@@ -33,27 +33,7 @@ var verificationPanel = js.Panel{
 		"runJobs":            js.RunJobs(verificationRunURL, "Start verification job '{0}'?", "Start verification jobs '{0}'?"),
 		"openTaskLog":        js.OpenTaskLog("last-run-upid"),
 		"openSuccessTaskLog": js.OpenTaskLog("last-successful-upid"),
-		"stopJobs": js.Func("", `
-			const me = this;
-			const view = me.getView();
-			const recs = view.getSelection();
-			if (!recs.length) return;
-			const ids = recs.map((r) => r.getId());
-			const list = ids.map(Ext.String.htmlEncode).join("', '");
-			const msg = ids.length > 1
-				? Ext.String.format(gettext("Stop verification jobs '{0}'?"), list)
-				: Ext.String.format(gettext("Stop verification job '{0}'?"), list);
-			Ext.Msg.confirm(gettext("Confirm"), msg, (btn) => {
-				if (btn !== "yes") return;
-				PBS.PlusUtils.API2Request({
-					url: "`+verificationRunURL+`" + ids.map((id) => "job=" + encodeURIComponent(encodePathValue(id))).join("&"),
-					method: "DELETE",
-					waitMsgTarget: view,
-					success: () => me.reload(),
-					failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
-				});
-			});
-		`),
+		"stopJobs":           js.StopJobs(verificationRunURL, "Stop verification job '{0}'?", "Stop verification jobs '{0}'?"),
 		"showResults": js.Func("", `
 			const me = this;
 			const view = me.getView();

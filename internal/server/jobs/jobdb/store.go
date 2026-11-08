@@ -212,6 +212,18 @@ func (d *Store) ResourceLockHolder(ctx context.Context, resourceKey string) (Exe
 	return d.GetExecution(ctx, id)
 }
 
+func (d *Store) ActiveDefinitionIDs(ctx context.Context, kind string) (map[string]bool, error) {
+	ids, err := d.read.ListActiveDefinitionIDs(ctx, kind)
+	if err != nil {
+		return nil, fmt.Errorf("listing active executions: %w", err)
+	}
+	active := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		active[id] = true
+	}
+	return active, nil
+}
+
 func (d *Store) GetActiveExecution(ctx context.Context, kind, definitionID string) (Execution, error) {
 	row, err := d.read.GetActiveExecutionByDefinition(ctx, jobquery.GetActiveExecutionByDefinitionParams{
 		Kind:         kind,

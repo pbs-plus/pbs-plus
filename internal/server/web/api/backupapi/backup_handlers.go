@@ -21,6 +21,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/log"
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
+	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -55,7 +56,7 @@ func D2DBackupHandler(app *application.Runtime) http.HandlerFunc {
 			excludedJobs = excluded
 		}
 
-		flatBackups := extjs.FlattenBackups(allBackups, staleDays, skipUnscheduled, excludedJobs)
+		flatBackups := extjs.FlattenBackups(allBackups, staleDays, skipUnscheduled, excludedJobs, extjs.LoadActiveJobs(r.Context(), app.Engine, jobs.WorkflowBackup))
 		for i := range flatBackups {
 			flatBackups[i].RecentRuns = extjs.WithStatus(allBackups[i].RecentTasks(extjs.RecentRunCount))
 		}

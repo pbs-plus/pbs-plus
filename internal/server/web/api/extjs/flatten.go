@@ -70,7 +70,7 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 	}, &fb.ReadSpeedHuman, &fb.ReadTotalHuman, &fb.ProcessingSpeedHuman)
 
 	fb.StatusParsed = ParseTaskStatus(b.History.LastRunState)
-	fb.JobStatus = ClassifyJob(b.History, fb.StatusParsed)
+	fb.JobStatus = ActiveJobs{}.Classify(b.ID, b.History, fb.StatusParsed)
 
 	return fb
 }
@@ -78,7 +78,7 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 // If staleDays > 0, sets Stale=true for jobs whose last-successful-endtime
 // is older than staleDays. If skipUnscheduled is true, jobs with no schedule
 // are never marked stale. excludedJobs is a set of job IDs to skip.
-func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool) []FlatBackup {
+func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool, excludedJobs map[string]bool, active ActiveJobs) []FlatBackup {
 	result := make([]FlatBackup, len(backups))
 	now := time.Now()
 	var cutoff int64
@@ -87,6 +87,7 @@ func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool
 	}
 	for i := range backups {
 		result[i] = FlattenBackup(backups[i])
+		result[i].JobStatus = active.Classify(backups[i].ID, backups[i].History, result[i].StatusParsed)
 		result[i].MissedRuns = MissedRuns(backups[i].Schedule, backups[i].History, now)
 		result[i].Stale = isStale(&backups[i], staleDays, cutoff, skipUnscheduled, excludedJobs)
 		result[i].NeedsAttention = result[i].Stale || result[i].MissedRuns > 0
@@ -159,15 +160,16 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 	}, &fr.ReadSpeedHuman, &fr.ReadTotalHuman, &fr.ProcessingSpeedHuman)
 
 	fr.StatusParsed = ParseTaskStatus(r.History.LastRunState)
-	fr.JobStatus = ClassifyJob(r.History, fr.StatusParsed)
+	fr.JobStatus = ActiveJobs{}.Classify(r.ID, r.History, fr.StatusParsed)
 
 	return fr
 }
 
-func FlattenRestores(restores []coredb.Restore) []FlatRestore {
+func FlattenRestores(restores []coredb.Restore, active ActiveJobs) []FlatRestore {
 	result := make([]FlatRestore, len(restores))
 	for i := range restores {
 		result[i] = FlattenRestore(restores[i])
+		result[i].JobStatus = active.Classify(restores[i].ID, restores[i].History, result[i].StatusParsed)
 	}
 	return result
 }
@@ -218,14 +220,16 @@ func FlattenVerificationJob(vj coredb.VerificationJob) FlatVerificationJob {
 	}
 
 	fvj.StatusParsed = ParseTaskStatus(vj.History.LastRunState)
+	fvj.JobStatus = ActiveJobs{}.Classify(vj.ID, vj.History, fvj.StatusParsed)
 
 	return fvj
 }
 
-func FlattenVerificationJobs(jobs []coredb.VerificationJob) []FlatVerificationJob {
+func FlattenVerificationJobs(jobs []coredb.VerificationJob, active ActiveJobs) []FlatVerificationJob {
 	result := make([]FlatVerificationJob, len(jobs))
 	for i := range jobs {
 		result[i] = FlattenVerificationJob(jobs[i])
+		result[i].JobStatus = active.Classify(jobs[i].ID, jobs[i].History, result[i].StatusParsed)
 	}
 	return result
 }
@@ -707,6 +711,7 @@ type FlatVerificationJob struct {
 	Duration              int64  `json:"duration"`
 
 	StatusParsed ParsedTaskStatus `json:"status_parsed"`
+	JobStatus    string           `json:"job_status"`
 }
 
 type SpotCheckConfigJSON struct {

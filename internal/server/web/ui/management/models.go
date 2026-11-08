@@ -95,7 +95,7 @@ var models = []js.Value{
 			"id", "backup_job_id", "store", "ns", "mode", "schedule", "comment", "notification-mode",
 			"spot_config", "next-run", "retry", "retry-interval", "created_at", "last-run-upid",
 			"last-run-state", "last-run-endtime", "last-run-starttime", "last-successful-endtime",
-			"last-successful-upid", "duration", "status_parsed",
+			"last-successful-upid", "duration", "status_parsed", "job_status",
 		),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/verification",
