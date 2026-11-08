@@ -72,6 +72,32 @@ func WithStatus(tasks []coredb.Tasks) []TasksWithStatus {
 	return out
 }
 
+// Job states drive the status quick filters of the job grids.
+const (
+	JobStateRunning = "running"
+	JobStateNever   = "never"
+	JobStateFailed  = "failed"
+	JobStateWarning = "warning"
+	JobStateOK      = "ok"
+)
+
+// ClassifyJob reduces a job's last run to a single state.
+func ClassifyJob(history coredb.JobHistory, parsed ParsedTaskStatus) string {
+	switch {
+	case parsed.Category == "queued":
+		return JobStateRunning
+	case history.LastRunUpid == "":
+		return JobStateNever
+	case history.LastRunEndtime == 0:
+		return JobStateRunning
+	case parsed.Category == "error" || parsed.Category == "unknown":
+		return JobStateFailed
+	case parsed.Category == "warning":
+		return JobStateWarning
+	}
+	return JobStateOK
+}
+
 func ParseTaskStatus(status string) ParsedTaskStatus {
 	if status == "" {
 		return ParsedTaskStatus{}

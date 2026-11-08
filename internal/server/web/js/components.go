@@ -201,11 +201,6 @@ func Fields(names ...string) []ModelField {
 	return out
 }
 
-// Typed appends a typed field, such as {"name": "stale", "type": "bool"}.
-func Typed(fields []ModelField, name, typ string) []ModelField {
-	return append(fields, ModelField{Name: name, Type: typ})
-}
-
 // Model is an Ext.data.Model class backed by a PBS-Plus API path.
 type Model struct {
 	Name       string

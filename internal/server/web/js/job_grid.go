@@ -6,26 +6,6 @@ import (
 	"strings"
 )
 
-type JobStatus string
-
-const (
-	JobStatusAll     JobStatus = "all"
-	JobStatusRunning JobStatus = "running"
-	JobStatusFailed  JobStatus = "failed"
-	JobStatusWarning JobStatus = "warning"
-	JobStatusNever   JobStatus = "never"
-	JobStatusOverdue JobStatus = "overdue"
-)
-
-var jobStatusLabels = map[JobStatus]string{
-	JobStatusAll:     "All",
-	JobStatusRunning: "Running / Queued",
-	JobStatusFailed:  "Failed",
-	JobStatusWarning: "Warnings",
-	JobStatusNever:   "Never run",
-	JobStatusOverdue: "Overdue / Stale",
-}
-
 func MergeMethods(sets ...map[string]Raw) map[string]Raw {
 	out := map[string]Raw{}
 	for _, s := range sets {
@@ -83,9 +63,8 @@ func JobFilterMethods(fields ...string) map[string]Raw {
 			const records = (store.rstore || store).getRange();
 			const counts = { all: records.length };
 			records.forEach((rec) => {
-				const status = PBS.PlusUtils.jobStatus(rec.data);
-				counts[status] = (counts[status] || 0) + 1;
-				if (PBS.PlusUtils.jobNeedsAttention(rec.data)) {
+				counts[rec.data.job_status] = (counts[rec.data.job_status] || 0) + 1;
+				if (rec.data.needs_attention) {
 					counts.overdue = (counts.overdue || 0) + 1;
 				}
 			});
@@ -96,20 +75,20 @@ func JobFilterMethods(fields ...string) map[string]Raw {
 	}
 }
 
-func StatusFilterTool(statuses ...JobStatus) Tool {
-	items := make(Arr, 0, len(statuses)+1)
-	for _, s := range append([]JobStatus{JobStatusAll}, statuses...) {
-		items = append(items, Obj{
+func StatusFilterTool(options ...Option) Tool {
+	items := make(Arr, len(options))
+	for i, o := range options {
+		items[i] = Obj{
 			"xtype":        "menucheckitem",
-			"text":         T(jobStatusLabels[s]),
-			"statusLabel":  T(jobStatusLabels[s]),
-			"statusValue":  string(s),
+			"text":         T(o.Text),
+			"statusLabel":  T(o.Text),
+			"statusValue":  o.Value,
 			"group":        "jobStatus",
-			"checked":      s == JobStatusAll,
+			"checked":      i == 0,
 			"checkHandler": "onStatusFilter",
-		})
+		}
 	}
-	return Tool{XType: XButton, Reference: "statusFilter", IconCls: "fa fa-filter", Text: "Status: All", Menu: items}
+	return Tool{XType: XButton, Reference: "statusFilter", IconCls: "fa fa-filter", Text: "Status: " + options[0].Text, Menu: items}
 }
 
 // ContextMenu builds an itemcontextmenu handler that mirrors toolbar tools, reusing their handlers and enable rules.

@@ -70,6 +70,7 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 	}, &fb.ReadSpeedHuman, &fb.ReadTotalHuman, &fb.ProcessingSpeedHuman)
 
 	fb.StatusParsed = ParseTaskStatus(b.History.LastRunState)
+	fb.JobStatus = ClassifyJob(b.History, fb.StatusParsed)
 
 	return fb
 }
@@ -87,26 +88,20 @@ func FlattenBackups(backups []coredb.Backup, staleDays int, skipUnscheduled bool
 	for i := range backups {
 		result[i] = FlattenBackup(backups[i])
 		result[i].MissedRuns = MissedRuns(backups[i].Schedule, backups[i].History, now)
-		if staleDays <= 0 {
-			continue
-		}
-		b := &backups[i]
-		if excludedJobs != nil && excludedJobs[b.ID] {
-			continue
-		}
-		if skipUnscheduled && b.Schedule == "" {
-			continue
-		}
-		if b.History.LastSuccessfulEndtime == 0 {
-			// Never ran  -  only stale if has a schedule (or not skipping unscheduled)
-			if !skipUnscheduled || b.Schedule != "" {
-				result[i].Stale = true
-			}
-		} else if b.History.LastSuccessfulEndtime < cutoff {
-			result[i].Stale = true
-		}
+		result[i].Stale = isStale(&backups[i], staleDays, cutoff, skipUnscheduled, excludedJobs)
+		result[i].NeedsAttention = result[i].Stale || result[i].MissedRuns > 0
 	}
 	return result
+}
+
+func isStale(b *coredb.Backup, staleDays int, cutoff int64, skipUnscheduled bool, excludedJobs map[string]bool) bool {
+	if staleDays <= 0 || excludedJobs[b.ID] || (skipUnscheduled && b.Schedule == "") {
+		return false
+	}
+	if b.History.LastSuccessfulEndtime == 0 {
+		return true
+	}
+	return b.History.LastSuccessfulEndtime < cutoff
 }
 
 func FlattenRestore(r coredb.Restore) FlatRestore {
@@ -164,6 +159,7 @@ func FlattenRestore(r coredb.Restore) FlatRestore {
 	}, &fr.ReadSpeedHuman, &fr.ReadTotalHuman, &fr.ProcessingSpeedHuman)
 
 	fr.StatusParsed = ParseTaskStatus(r.History.LastRunState)
+	fr.JobStatus = ClassifyJob(r.History, fr.StatusParsed)
 
 	return fr
 }
@@ -627,9 +623,11 @@ type FlatBackup struct {
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
 
-	Stale      bool              `json:"stale"`
-	MissedRuns int               `json:"missed_runs"`
-	RecentRuns []TasksWithStatus `json:"recent_runs"`
+	Stale          bool              `json:"stale"`
+	MissedRuns     int               `json:"missed_runs"`
+	NeedsAttention bool              `json:"needs_attention"`
+	JobStatus      string            `json:"job_status"`
+	RecentRuns     []TasksWithStatus `json:"recent_runs"`
 }
 
 type FlatRestore struct {
@@ -678,6 +676,7 @@ type FlatRestore struct {
 	ProcessingSpeedHuman string           `json:"processing_speed_human"`
 	StatusParsed         ParsedTaskStatus `json:"status_parsed"`
 
+	JobStatus  string            `json:"job_status"`
 	RecentRuns []TasksWithStatus `json:"recent_runs"`
 }
 

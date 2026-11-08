@@ -222,7 +222,7 @@ var backupPanel = js.Panel{
 		js.RunIdleJobsTool, js.StopJobsTool, js.Sep(),
 		restoreFromJobTool,
 		{Text: "Export CSV", Handler: "exportCSV", SelModel: new(false)},
-		js.Fill(), js.StatusFilterTool(js.JobStatusRunning, js.JobStatusFailed, js.JobStatusWarning, js.JobStatusNever, js.JobStatusOverdue), js.SearchTool(),
+		js.Fill(), backupJobStatusFilters, js.SearchTool(),
 	},
 	Columns: []js.Column{
 		{Text: "Job ID", DataIndex: "id", Flex: 1, MaxWidth: 220, MinWidth: 75, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},

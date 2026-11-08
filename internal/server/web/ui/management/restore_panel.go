@@ -70,7 +70,7 @@ var restorePanel = js.Panel{
 		js.AddJobTool, js.DuplicateJobTool, js.EditIdleJobTool, js.RemoveIdleJobsTool, js.Sep(),
 		js.ShowLogTool, js.Sep(),
 		js.RunIdleJobsTool, js.StopJobsTool,
-		js.Fill(), js.StatusFilterTool(js.JobStatusRunning, js.JobStatusFailed, js.JobStatusWarning, js.JobStatusNever), js.SearchTool(),
+		js.Fill(), restoreJobStatusFilters, js.SearchTool(),
 	},
 	Columns: []js.Column{
 		{Text: "Job ID", DataIndex: "id", Flex: 1, MaxWidth: 220, MinWidth: 75, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},

@@ -7,7 +7,7 @@ import (
 var models = []js.Value{
 	js.Model{
 		Name: "pbs-disk-backup-status",
-		Fields: js.Typed(js.Typed(js.Fields(
+		Fields: append(js.Fields(
 			"id", "store", "mode", "sourcemode", "readmode", "subpath", "ns", "schedule", "comment",
 			"notification-mode", "pre_script", "post_script", "next-run", "retry", "retry-interval",
 			"max-dir-entries", "rawexclusions", "include-xattr", "legacy-xattr", "target", "expected_size",
@@ -15,8 +15,12 @@ var models = []js.Value{
 			"last-successful-upid", "duration", "current_file_count", "current_folder_count",
 			"current_files_speed", "current_bytes_speed", "current_bytes_total", "target_size_human",
 			"read_speed_human", "read_total_human", "processing_speed_human", "status_parsed",
-			"database_scope", "database_name", "recent_runs",
-		), "stale", "bool"), "missed_runs", "int"),
+			"database_scope", "database_name", "recent_runs", "job_status",
+		),
+			js.ModelField{Name: "stale", Type: "bool"},
+			js.ModelField{Name: "missed_runs", Type: "int"},
+			js.ModelField{Name: "needs_attention", Type: "bool"},
+		),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/backup",
 	},
@@ -29,7 +33,7 @@ var models = []js.Value{
 			"last-successful-upid", "duration", "current_file_count", "current_folder_count",
 			"current_files_speed", "current_bytes_speed", "current_bytes_total", "target_size_human",
 			"read_speed_human", "read_total_human", "processing_speed_human", "status_parsed",
-			"source_database", "destination_database", "replace_existing", "recent_runs",
+			"source_database", "destination_database", "replace_existing", "recent_runs", "job_status",
 		),
 		IDProperty: "id",
 		APIPath:    "/api2/json/d2d/restore",
