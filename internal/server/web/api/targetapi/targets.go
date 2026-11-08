@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/digest"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
@@ -361,6 +362,9 @@ func ExtJsTargetSingleHandler(app *application.Runtime) http.HandlerFunc {
 			case target.IsLocal():
 				_, err := os.Stat(target.Path)
 				target.ConnectionStatus = err == nil && validate.IsValid(target.Path)
+			case target.IsDatabase() || target.IsDovecot():
+				statuses := app.Target.CheckStatus(r.Context(), []coredb.Target{target}, true, 5*time.Second, 1)
+				target.ConnectionStatus = len(statuses) == 1 && statuses[0].ConnectionStatus
 			default:
 			}
 
