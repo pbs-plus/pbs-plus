@@ -213,7 +213,7 @@ var verificationPanel = js.Panel{
 								'</span>',
 						}],
 					});
-					Ext.create("Ext.window.Window", {
+					Ext.create("PBS.plusWindow.Window", {
 						title: gettext("Verification Results: ") + Ext.String.htmlEncode(jobId),
 						width: 1000,
 						height: 600,

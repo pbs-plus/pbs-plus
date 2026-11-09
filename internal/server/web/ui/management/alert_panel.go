@@ -313,7 +313,7 @@ var alertEditWindow = js.EditWindow{
 		"showExclusionPicker": js.Func("excludeType, items", `
 			var me = this;
 			var view = me.getView();
-			var win = Ext.create("Ext.window.Window", {
+			var win = Ext.create("PBS.plusWindow.Window", {
 				title: Ext.String.format("Add {0} Exclusion", excludeType === "job" ? "Job" : "Target"),
 				modal: true,
 				width: 400,

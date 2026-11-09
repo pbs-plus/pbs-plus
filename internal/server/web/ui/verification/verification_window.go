@@ -59,7 +59,7 @@ function bestUnitForBytes(bytes) {
 
 var verificationFilterEditWindow = js.Panel{
 	Name: "PBS.D2DVerification.FilterEditWindow", XType: "pbsD2DVerificationFilterEditWindow",
-	Extend: "Ext.window.Window",
+	Extend: "PBS.plusWindow.Window",
 	Title:  "Add Filter", Width: 480, Modal: true, Layout: "fit", NotResizable: true,
 	Methods: map[string]js.Raw{
 		"initComponent": js.Func("", `

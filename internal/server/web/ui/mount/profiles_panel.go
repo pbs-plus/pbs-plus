@@ -31,7 +31,7 @@ var mountProfilesPanel = js.Panel{
 		"openEdit": js.Func("view, rec", `
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
-			let win = Ext.create("Ext.window.Window", {
+			let win = Ext.create("PBS.plusWindow.Window", {
 				title: isEdit ? Ext.String.format(gettext("Edit Batch '{0}'"), values.namespace || gettext("root")) : gettext("Add Mount Batch"),
 				width: 480,
 				modal: true,

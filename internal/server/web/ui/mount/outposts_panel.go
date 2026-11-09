@@ -68,7 +68,7 @@ var outpostsPanel = js.Panel{
 				let manager;
 				let openBucketEditor = (record) => {
 					let current = record ? record.data : {};
-					let editor = Ext.create("Ext.window.Window", {
+					let editor = Ext.create("PBS.plusWindow.Window", {
 						title: record ? gettext("Edit Bucket Mapping") : gettext("Add Bucket Mapping"),
 						width: 500,
 						modal: true,
@@ -193,7 +193,7 @@ var outpostsPanel = js.Panel{
 							],
 						};
 					});
-					let editor = Ext.create("Ext.window.Window", {
+					let editor = Ext.create("PBS.plusWindow.Window", {
 						title: record ? gettext("Edit Credential") : gettext("Add Credential"),
 						width: 540,
 						maxHeight: 650,
@@ -275,7 +275,7 @@ var outpostsPanel = js.Panel{
 					editor.show();
 				};
 				let selectedRecord = (itemId) => manager.down("[itemId=" + itemId + "]").getSelectionModel().getSelection()[0];
-				manager = Ext.create("Ext.window.Window", {
+				manager = Ext.create("PBS.plusWindow.Window", {
 					title: gettext("S3 Buckets and Credentials"),
 					width: 860,
 					height: 650,
@@ -429,7 +429,7 @@ var outpostsPanel = js.Panel{
 				});
 				manager.show();
 			};
-			win = Ext.create("Ext.window.Window", {
+			win = Ext.create("PBS.plusWindow.Window", {
 				title: isEdit ? Ext.String.format(gettext("Edit Outpost '{0}'"), values.name) : gettext("Add Outpost"),
 				width: 520,
 				modal: true,

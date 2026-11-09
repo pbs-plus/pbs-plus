@@ -914,7 +914,7 @@ func (s Selector) Config() Obj {
 	if extend == "" {
 		extend = "Proxmox.form.ComboGrid"
 	}
-	o := Obj{"extend": extend}
+	o := Obj{"extend": extend, "plugins": Arr{"pbsPlusResponsive"}}
 	if s.XType != "" {
 		o["alias"] = "widget." + string(s.XType)
 	}
@@ -1073,7 +1073,7 @@ const (
 )
 
 func (p Panel) Config() Obj {
-	o := Obj{}
+	o := Obj{"plugins": Arr{"pbsPlusResponsive"}}
 	if p.Name == "" {
 		o["xtype"] = string(p.inlineXType())
 	} else {

@@ -39,7 +39,6 @@ PBS.D2DManagement.makeNotificationTab = function () {
 		items: [
 			{
 				xtype: "radiogroup",
-				height: "15px",
 				layout: { type: "vbox" },
 				bind: { value: "{notificationMode}" },
 				items: [
@@ -147,7 +146,6 @@ PBS.D2DManagement.makeSimpleNotificationTab = function () {
 		items: [
 			{
 				xtype: "radiogroup",
-				height: "15px",
 				layout: { type: "vbox" },
 				bind: { value: "{notificationMode}" },
 				items: [

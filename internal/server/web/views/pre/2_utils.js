@@ -399,6 +399,7 @@ Ext.define("PBS.PlusRestProxy", {
 Ext.define("PBS.plusWindow.Edit", {
   extend: "Proxmox.window.Edit",
   alias: "widget.pbsPlusWindowEdit",
+  plugins: ["pbsPlusResponsive"],
   submit: function () {
     let me = this;
 
@@ -457,6 +458,7 @@ Ext.define("PBS.plusWindow.Edit", {
             let upid = response.result.data;
             let viewerClass = me.showTaskViewer ? "Viewer" : "Progress";
             Ext.create("Proxmox.window.Task" + viewerClass, {
+              plugins: ["pbsPlusResponsive"],
               autoShow: true,
               upid: upid,
               taskDone: me.taskDone,

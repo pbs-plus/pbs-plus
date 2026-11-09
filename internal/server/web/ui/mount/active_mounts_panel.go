@@ -51,7 +51,7 @@ var activeMountsPanel = js.Panel{
 		`),
 		"initNew": js.Func("view", `
 			let me = this;
-			Ext.create("Ext.window.Window", {
+			Ext.create("PBS.plusWindow.Window", {
 				title: gettext("Create New Snapshot"),
 				modal: true,
 				layout: "anchor",

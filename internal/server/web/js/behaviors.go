@@ -234,7 +234,7 @@ func CopySelectionWindow(title, field string) Raw {
 			return;
 		}
 		let value = selection[0].data.%s;
-		Ext.create("Ext.window.Window", {
+		Ext.create("PBS.plusWindow.Window", {
 			modal: true,
 			width: 600,
 			title: gettext(%q),
