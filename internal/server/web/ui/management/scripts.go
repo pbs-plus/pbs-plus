@@ -42,11 +42,40 @@ var scriptPanel = js.Panel{
 	Controller: js.Controller{Methods: map[string]js.Raw{
 		"onAdd":  js.OpenEditWindow("PBS.D2DManagement.ScriptEditWindow", ""),
 		"onEdit": js.OpenEditWindow("PBS.D2DManagement.ScriptEditWindow", "path"),
-		"removeScripts": js.ConfirmRemove(
-			"/api2/extjs/config/d2d-script/",
-			"encodePathValue(rec.getId())",
-			"Remove selected entries?",
-		),
+		"removeScripts": js.Func("", `
+			const me = this;
+			const view = me.getView();
+			const recs = view.getSelection();
+			if (!recs.length) {
+				return;
+			}
+			const names = recs.map((rec) => Ext.String.htmlEncode(rec.getId())).join("', '");
+			const jobs = recs.reduce((total, rec) => total + (rec.get("job_count") || 0), 0);
+			const targets = recs.reduce((total, rec) => total + (rec.get("target_count") || 0), 0);
+			let message = Ext.String.format(gettext("Remove script '{0}'?"), names);
+			if (jobs || targets) {
+				message = Ext.String.format(
+					gettext("Script '{0}' is still used by {1} backup job(s) and {2} target(s). Remove it anyway?"),
+					names,
+					jobs,
+					targets,
+				);
+			}
+			Ext.Msg.confirm(gettext("Confirm"), message, (btn) => {
+				if (btn !== "yes") {
+					return;
+				}
+				recs.forEach((rec) => {
+					PBS.PlusUtils.API2Request({
+						url: "/api2/extjs/config/d2d-script/" + encodeURIComponent(encodePathValue(rec.getId())),
+						method: "DELETE",
+						waitMsgTarget: view,
+						failure: (resp) => Ext.Msg.alert(gettext("Error"), resp.htmlStatus),
+						success: () => me.reload(),
+					});
+				});
+			});
+		`),
 	}},
 	Tbar: []js.Tool{
 		{Text: "Add", Handler: "onAdd", SelModel: new(false)},
