@@ -43,6 +43,18 @@ Ext.define("PBS.PlusUtils", {
     });
   },
 
+  renderSnapshotLabel: function (value) {
+    let parts = String(value || "").split("/");
+    let last = parts[parts.length - 1];
+    if (/^\d+$/.test(last)) {
+      parts[parts.length - 1] = Ext.Date.format(
+        new Date(Number(last) * 1000),
+        "Y-m-d H:i:s",
+      );
+    }
+    return Ext.String.htmlEncode(parts.join("/"));
+  },
+
   formatRequestError: function (response) {
     if (response.aborted) {
       return Ext.htmlEncode(gettext("Connection error") + " - aborted.");

@@ -151,6 +151,8 @@ function loader() {
       define: (name, config) => {
         definitions[name] = config;
       },
+      Date: { format: (date) => date.toISOString() },
+      String: { htmlEncode: (value) => String(value) },
     },
     window,
     document: {
@@ -189,6 +191,16 @@ function loader() {
   failed.assets[0].onerror();
   await new Promise(setImmediate);
   assert.equal(enhanced, false);
+  const utils = loaded.utils;
+  assert.equal(
+    utils.renderSnapshotLabel("host/responsive-test/1794274046"),
+    "host/responsive-test/" + new Date(1794274046000).toISOString(),
+  );
+  assert.equal(
+    utils.renderSnapshotLabel("ns: host/responsive-test/2026-11-10T01:27:26Z"),
+    "ns: host/responsive-test/2026-11-10T01:27:26Z",
+  );
+  assert.equal(utils.renderSnapshotLabel(undefined), "");
   console.log(
     "Code editor synchronization, reset, sizing, cleanup and loader checks passed",
   );

@@ -130,7 +130,7 @@ var verificationPanel = js.Panel{
 									}
 								},
 							},
-							{ text: gettext("Snapshot"), dataIndex: "snapshot_human", flex: 2, renderer: Ext.String.htmlEncode },
+							{ text: gettext("Snapshot"), dataIndex: "snapshot_human", flex: 2, renderer: PBS.PlusUtils.renderSnapshotLabel },
 							{ text: gettext("Pass Rate"), width: 120, renderer: (v, md, rec) => renderPassRate(rec) },
 							{ text: gettext("Total"), dataIndex: "total_files", width: 60 },
 							{

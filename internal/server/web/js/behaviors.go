@@ -192,9 +192,15 @@ func jobAction(method, baseURL, singular, plural, eligible string) Raw {
 	`, eligible, plural, singular, method, baseURL))
 }
 
+// RenderSnapshotLabel formats the unix timestamp ending a snapshot id as a date.
+func RenderSnapshotLabel() Raw {
+	return Raw("PBS.PlusUtils.renderSnapshotLabel")
+}
+
 // A prompt containing {0} is formatted with the list of selected record ids.
 func ConfirmRemove(baseURL, idExpr, prompt string) Raw {
 	msg := fmt.Sprintf("gettext(%q)", prompt)
+
 	if strings.Contains(prompt, "{0}") {
 		msg = fmt.Sprintf(`Ext.String.format(gettext(%q), recs.map((rec) => Ext.String.htmlEncode(rec.getId())).join("', '"))`, prompt)
 	}
