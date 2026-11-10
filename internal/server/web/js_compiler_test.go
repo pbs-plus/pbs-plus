@@ -321,6 +321,16 @@ func TestDatabaseJobWindowsHideFilesystemRestorePath(t *testing.T) {
 	}
 }
 
+func TestDatastoreFieldsUseTheSharedSelector(t *testing.T) {
+	source := ui.Render()
+	if bytes.Contains(source, []byte(`store: "pbs-datastore-list"`)) {
+		t.Error("a field still binds to the datastore store id, which is empty when the dialog opens first")
+	}
+	if bytes.Count(source, []byte(`xtype: "pbsDataStoreSelector"`)) < 3 {
+		t.Error("mount dialogs no longer use the shared datastore selector")
+	}
+}
+
 func TestDatabaseJobWindowsDoNotReferenceRemovedClientOverrides(t *testing.T) {
 	source := ui.Render()
 	for _, stale := range [][]byte{

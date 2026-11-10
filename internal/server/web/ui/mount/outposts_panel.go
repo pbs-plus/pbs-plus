@@ -88,12 +88,9 @@ var outpostsPanel = js.Panel{
 									value: current.name,
 								},
 								{
-									xtype: "combobox",
+									xtype: "pbsDataStoreSelector",
 									name: "bucket-datastore",
 									fieldLabel: gettext("Datastore"),
-									store: "pbs-datastore-list",
-									displayField: "store",
-									valueField: "store",
 									allowBlank: false,
 									value: current.datastore,
 									listeners: {

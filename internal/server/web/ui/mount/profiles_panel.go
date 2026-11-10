@@ -43,12 +43,9 @@ var mountProfilesPanel = js.Panel{
 					defaults: { anchor: "100%", labelWidth: 120 },
 					items: [
 					{
-						xtype: "combobox",
+						xtype: "pbsDataStoreSelector",
 						name: "datastore",
 						fieldLabel: gettext("Datastore"),
-						store: "pbs-datastore-list",
-						displayField: "store",
-						valueField: "store",
 						allowBlank: false,
 						value: values.datastore,
 						listeners: {
