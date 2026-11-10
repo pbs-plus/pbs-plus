@@ -612,13 +612,13 @@ var targetPanel = js.Panel{
 			Change:       "onSearch", ChangeBuffer: 300},
 	},
 	Columns: []js.Column{
-		{XType: js.XTreeColumn, Text: "Name", DataIndex: "name", Flex: 1, Renderer: js.Func("value, metaData, record", `
+		{XType: js.XTreeColumn, Text: "Name", DataIndex: "name", Flex: 1, MinWidth: 220, Renderer: js.Func("value, metaData, record", `
 			if (record.data.isGroup) {
 				return record.data.text;
 			}
 			return value;
 		`)},
-		{Text: "Path / Volume", DataIndex: "path", Flex: 2, Renderer: js.Func("value, metaData, record", `
+		{Text: "Path / Volume", DataIndex: "path", Flex: 2, MinWidth: 200, Renderer: js.Func("value, metaData, record", `
 			if (record.data.isGroup) {
 				if (record.data.groupType === "agent") {
 					return '<i class="fa fa-info-circle"></i> Host IP: ' + (record.data.ip || "");

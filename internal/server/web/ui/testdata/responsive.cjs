@@ -59,6 +59,19 @@ const column = component("gridcolumn");
 Object.assign(column, { isColumn: true, flex: 1, initialConfig: {} });
 plugin.prepare(column);
 assert.equal(column.minWidth, 100);
+const wideColumn = component("gridcolumn");
+Object.assign(wideColumn, { isColumn: true, flex: 2, initialConfig: {} });
+plugin.prepare(wideColumn);
+assert.equal(wideColumn.minWidth, 200);
+const cappedColumn = component("gridcolumn");
+Object.assign(cappedColumn, {
+  isColumn: true,
+  flex: 3,
+  maxWidth: 150,
+  initialConfig: {},
+});
+plugin.prepare(cappedColumn);
+assert.equal(cappedColumn.minWidth, 150);
 const explicitColumn = component("gridcolumn");
 Object.assign(explicitColumn, {
   isColumn: true,

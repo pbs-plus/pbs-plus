@@ -24,7 +24,10 @@ Ext.define("PBS.plugin.Responsive", {
       component.flex &&
       !component.initialConfig.minWidth
     ) {
-      component.minWidth = Math.min(100, component.maxWidth || Infinity);
+      component.minWidth = Math.min(
+        100 * component.flex,
+        component.maxWidth || Infinity,
+      );
     }
     if (
       component.isXType("inputpanel") &&
