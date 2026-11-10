@@ -2,39 +2,46 @@ Ext.define("PBS.PlusUtils", {
   singleton: true,
 
   LoadCodeMirror: function (callback) {
-    if (window.CodeMirror) {
-      callback();
-      return;
+    if (!this.codeMirrorLoad) {
+      if (window.CodeMirror) {
+        callback();
+        return;
+      }
+
+      let loadCSS = (href) =>
+        new Promise((resolve, reject) => {
+          let link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          link.onload = resolve;
+          link.onerror = () =>
+            reject(new Error("Failed to load code editor stylesheet"));
+          document.head.appendChild(link);
+        });
+      let loadJS = (src) =>
+        new Promise((resolve, reject) => {
+          let script = document.createElement("script");
+          script.src = src;
+          script.onload = resolve;
+          script.onerror = () =>
+            reject(new Error("Failed to load code editor script"));
+          document.head.appendChild(script);
+        });
+      let baseURL = "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16";
+      this.codeMirrorLoad = Promise.all([
+        loadCSS(`${baseURL}/codemirror.min.css`),
+        loadCSS(`${baseURL}/theme/material-darker.min.css`),
+        loadJS(`${baseURL}/codemirror.min.js`),
+      ]).then(() => loadJS(`${baseURL}/mode/shell/shell.min.js`));
     }
-
-    let loadCSS = (href) => {
-      return new Promise((resolve) => {
-        let link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = href;
-        link.onload = resolve;
-        document.head.appendChild(link);
-      });
-    };
-
-    let loadJS = (src) => {
-      return new Promise((resolve) => {
-        let script = document.createElement("script");
-        script.src = src;
-        script.onload = resolve;
-        document.head.appendChild(script);
-      });
-    };
-
-    let baseURL = "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16";
-
-    Promise.all([
-      loadCSS(`${baseURL}/codemirror.min.css`),
-      loadCSS(`${baseURL}/theme/material-darker.min.css`),
-      loadJS(`${baseURL}/codemirror.min.js`),
-    ])
-      .then(() => loadJS(`${baseURL}/mode/shell/shell.min.js`))
-      .then(callback);
+    this.codeMirrorLoad.then(callback).catch((error) => {
+      console.warn(
+        gettext(
+          "Syntax highlighting is unavailable. The plain text editor remains usable.",
+        ),
+        error,
+      );
+    });
   },
 
   formatRequestError: function (response) {

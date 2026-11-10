@@ -63,14 +63,15 @@ var scriptPanel = js.Panel{
 }
 
 var scriptEditWindow = js.EditWindow{
-	Name:      "PBS.D2DManagement.ScriptEditWindow",
-	XType:     "pbsScriptEditWindow",
-	Subject:   "Script",
-	Width:     "80%",
-	Resizable: true,
-	IsCreate:  true,
-	IsAdd:     true,
-	CBindData: js.PathKeyedURL("/api2/extjs/config/d2d-script"),
+	Name:          "PBS.D2DManagement.ScriptEditWindow",
+	XType:         "pbsScriptEditWindow",
+	Subject:       "Script",
+	Width:         "80%",
+	Resizable:     true,
+	FieldDefaults: js.Obj{"labelAlign": "top"},
+	IsCreate:      true,
+	IsAdd:         true,
+	CBindData:     js.PathKeyedURL("/api2/extjs/config/d2d-script"),
 	Items: js.Items(
 		js.Field{
 			XType:      js.XDisplayEditField,
@@ -87,21 +88,4 @@ var scriptEditWindow = js.EditWindow{
 			Items:  js.Items(js.CodeMirrorField("script", "shell", 400)),
 		},
 	),
-	Methods: map[string]js.Raw{
-		"getValues": js.Func("", `
-			let values = this.callParent();
-			let editor = this.down("#scriptEditor");
-			if (editor && editor.getValue) {
-				values.script = editor.getValue();
-			}
-			return values;
-		`),
-		"setValues": js.Func("values", `
-			this.callParent([values]);
-			let editor = this.down("#scriptEditor");
-			if (editor && editor.setValue && values.script) {
-				editor.setValue(values.script);
-			}
-		`),
-	},
 }
