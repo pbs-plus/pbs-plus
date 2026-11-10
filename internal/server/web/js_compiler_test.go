@@ -98,6 +98,28 @@ func TestCodeMirrorFieldUsesNativeFormValue(t *testing.T) {
 	}
 }
 
+func TestCodeEditorAssetsAreServedLocally(t *testing.T) {
+	source := compileJS(&preJsFS)
+	if bytes.Contains(source, []byte("cdnjs.cloudflare.com")) {
+		t.Error("script editor still loads assets from a public CDN")
+	}
+	for embedded, name := range vendoredAssets {
+		data, err := vendorFS.ReadFile(embedded)
+		if err != nil {
+			t.Fatalf("vendored asset %s is missing: %v", embedded, err)
+		}
+		if len(data) == 0 {
+			t.Errorf("vendored asset %s is empty", embedded)
+		}
+		if name == "pbs-plus-codemirror.license.txt" {
+			continue
+		}
+		if !bytes.Contains(source, []byte("/js/"+name)) {
+			t.Errorf("pre JS never loads vendored asset %s", name)
+		}
+	}
+}
+
 func TestTargetViewRendersImplementedKindTabs(t *testing.T) {
 	source := ui.Render()
 	if got := bytes.Count(source, []byte(`xtype: "pbsDiskTargetPanel"`)); got != 6 {

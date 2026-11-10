@@ -24,6 +24,19 @@ import (
 //go:embed all:views/pre
 var preJsFS embed.FS
 
+//go:embed views/vendor/codemirror
+var vendorFS embed.FS
+
+// vendoredAssets are served locally so the script editor keeps syntax
+// highlighting on hosts without internet access.
+var vendoredAssets = map[string]string{
+	"views/vendor/codemirror/codemirror.min.js":       "pbs-plus-codemirror.js",
+	"views/vendor/codemirror/codemirror.min.css":      "pbs-plus-codemirror.css",
+	"views/vendor/codemirror/shell.min.js":            "pbs-plus-codemirror-shell.js",
+	"views/vendor/codemirror/material-darker.min.css": "pbs-plus-codemirror-dark.css",
+	"views/vendor/codemirror/LICENSE":                 "pbs-plus-codemirror.license.txt",
+}
+
 var backupDir = conf.StatePrefix + "/backups"
 
 var legacyJSPaths = []string{
@@ -125,6 +138,16 @@ func writeJSFiles(jsDir string) error {
 		}
 		log.Info(fmt.Sprintf("Pre JS file written to %s", preJSPath))
 
+	}
+
+	for embedded, name := range vendoredAssets {
+		data, err := vendorFS.ReadFile(embedded)
+		if err != nil {
+			return fmt.Errorf("failed to read vendored asset %s: %w", embedded, err)
+		}
+		if err := os.WriteFile(filepath.Join(jsDir, name), data, 0644); err != nil {
+			return fmt.Errorf("failed to write vendored asset %s: %w", name, err)
+		}
 	}
 
 	customJS := ui.Render()

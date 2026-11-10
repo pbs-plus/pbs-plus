@@ -27,12 +27,11 @@ Ext.define("PBS.PlusUtils", {
             reject(new Error("Failed to load code editor script"));
           document.head.appendChild(script);
         });
-      let baseURL = "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16";
       this.codeMirrorLoad = Promise.all([
-        loadCSS(`${baseURL}/codemirror.min.css`),
-        loadCSS(`${baseURL}/theme/material-darker.min.css`),
-        loadJS(`${baseURL}/codemirror.min.js`),
-      ]).then(() => loadJS(`${baseURL}/mode/shell/shell.min.js`));
+        loadCSS("/js/pbs-plus-codemirror.css"),
+        loadCSS("/js/pbs-plus-codemirror-dark.css"),
+        loadJS("/js/pbs-plus-codemirror.js"),
+      ]).then(() => loadJS("/js/pbs-plus-codemirror-shell.js"));
     }
     this.codeMirrorLoad.then(callback).catch((error) => {
       console.warn(
