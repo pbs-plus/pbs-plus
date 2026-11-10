@@ -74,6 +74,13 @@ var scriptEditWindow = js.EditWindow{
 	CBindData:     js.PathKeyedURL("/api2/extjs/config/d2d-script"),
 	Items: js.Items(
 		js.Field{
+			XType:    js.XDisplayField,
+			Label:    "Path",
+			Name:     "path",
+			Renderer: "Ext.htmlEncode",
+			CBind:    js.Obj{"hidden": "{isCreate}"},
+		},
+		js.Field{
 			XType:      js.XDisplayEditField,
 			Label:      "Description",
 			Name:       "description",
