@@ -376,6 +376,7 @@ var targetPanelController = js.ControllerClass{
 						}
 					});
 					me.loaded = true;
+					if (me.searchValue) me.filterTree();
 					me.loadStatuses();
 				},
 				failure: function () {
