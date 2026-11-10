@@ -40,6 +40,10 @@ const sandbox = {
         toTextArea() {
           this.disposed = true;
         },
+        wrapper: { style: {}, title: "" },
+        getWrapperElement() {
+          return this.wrapper;
+        },
       };
       editors.push(editor);
       return editor;
@@ -76,6 +80,9 @@ function field(value) {
     isDirty() {
       return this.value !== this.originalValue;
     },
+    isValid() {
+      return this.value !== "";
+    },
     setHeight(value) {
       this.height = value;
     },
@@ -108,8 +115,17 @@ assert.equal(component.isDirty(), true);
 component.setValue(component.originalValue);
 assert.equal(component.isDirty(), false);
 assert.equal(editor.getValue(), component.originalValue);
+assert.equal(editor.wrapper.style.outline, "");
 component.setValue("");
 assert.equal(editor.getValue(), "");
+component.events.validitychange(component, component.isValid());
+assert.equal(editor.wrapper.style.outline, "1px solid #cf4c35");
+assert.equal(editor.wrapper.title, "This field is required");
+component.setValue("#!/bin/sh\n");
+component.events.validitychange(component, component.isValid());
+assert.equal(editor.wrapper.style.outline, "");
+assert.equal(editor.wrapper.title, "");
+component.setValue("");
 viewportHeight = 360;
 component.viewportResize();
 assert.equal(component.height, 160);

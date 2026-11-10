@@ -269,15 +269,23 @@ func PathKeyedURL(baseURL string) Raw {
 
 func CodeMirrorField(name, mode string, height int) Field {
 	return Field{
-		XType:  XTextArea,
-		Name:   name,
-		Height: height,
-		ItemID: "scriptEditor",
-		Anchor: "100%",
+		XType:      XTextArea,
+		Name:       name,
+		Height:     height,
+		ItemID:     "scriptEditor",
+		Anchor:     "100%",
+		AllowBlank: new(false),
 		AfterRender: Func("component", fmt.Sprintf(`
 			component.inputEl.dom.spellcheck = false;
 			component.inputEl.dom.style.fontFamily = "monospace";
 			component.inputEl.dom.setAttribute("aria-label", gettext("Script Content"));
+			let markValidity = (valid) => {
+				if (!component.codeMirror) return;
+				let wrapper = component.codeMirror.getWrapperElement();
+				wrapper.style.outline = valid ? "" : "1px solid #cf4c35";
+				wrapper.title = valid ? "" : gettext("This field is required");
+			};
+			component.on("validitychange", (field, valid) => markValidity(valid));
 			let refresh = () => {
 				if (component.codeMirror && !component.destroyed && !component.destroying) {
 					component.codeMirror.setSize("100%%", component.height);
@@ -321,6 +329,7 @@ func CodeMirrorField(name, mode string, height int) Field {
 					theme: isDark ? "material-darker" : "default",
 				});
 				component.codeMirror = editor;
+				markValidity(component.isValid());
 				editor.on("change", () => {
 					let value = editor.getValue();
 					if (value !== component.getValue()) component.setValue(value);
