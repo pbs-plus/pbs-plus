@@ -4,6 +4,9 @@
       requestAnimationFrame(() => requestAnimationFrame(resolve)),
     );
   const results = [];
+  const runtimeErrors = [];
+  const captureError = (event) => runtimeErrors.push(event.message);
+  window.addEventListener("error", captureError);
   const names = Object.keys(Ext.ClassManager.classes).filter(
     (name) =>
       /^(PBS\.D2DManagement\.|PBS\.D2DVerification\.|PBS\.MtfManagement\.)/.test(
@@ -99,6 +102,11 @@
     });
     panel?.destroy();
   }
+  await new Promise((resolve) => Ext.defer(resolve, 250));
+  window.removeEventListener("error", captureError);
+  runtimeErrors.forEach((error) =>
+    results.push({ name: "closed dialog callback", error }),
+  );
   window.pbsPlusResponsiveResults = results;
   return JSON.stringify({
     viewport: [innerWidth, innerHeight],
