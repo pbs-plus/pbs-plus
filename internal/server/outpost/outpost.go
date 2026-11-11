@@ -34,6 +34,7 @@ const (
 type Outpost struct {
 	Name       string              `json:"name"`
 	Type       string              `json:"type"`
+	Agent      string              `json:"agent,omitempty"`
 	ListenAddr string              `json:"listen_addr,omitempty"`
 	Guest      bool                `json:"guest,omitempty"`
 	ValidUsers string              `json:"valid_users,omitempty"`
@@ -101,6 +102,9 @@ func ValidateOutpost(o Outpost) error {
 	driver, ok := drivers[o.Type]
 	if !ok {
 		return fmt.Errorf("unknown outpost type %q (available: %s)", o.Type, strings.Join(DriverTypes(), ", "))
+	}
+	if err := validatePlacement(o); err != nil {
+		return err
 	}
 	return driver.Validate(o)
 }
