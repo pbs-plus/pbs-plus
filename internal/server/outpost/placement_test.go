@@ -19,6 +19,8 @@ func (l advertisedListener) Addr() net.Addr { return l.addr }
 
 type fakePlacement struct{ calls []string }
 
+func (p *fakePlacement) Health(Outpost) error { return nil }
+
 func (p *fakePlacement) Listen(ctx context.Context, o Outpost) (net.Listener, error) {
 	p.calls = append(p.calls, o.Agent)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

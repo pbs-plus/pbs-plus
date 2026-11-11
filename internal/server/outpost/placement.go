@@ -13,6 +13,7 @@ import (
 
 type Placement interface {
 	Listen(ctx context.Context, o Outpost) (net.Listener, error)
+	Health(o Outpost) error
 }
 
 var ErrAgentPlacementUnavailable = errors.New("agent-hosted outposts are not available")
@@ -22,6 +23,16 @@ type localPlacement struct{}
 func (localPlacement) Listen(ctx context.Context, o Outpost) (net.Listener, error) {
 	var lc net.ListenConfig
 	return lc.Listen(ctx, "tcp", o.ListenAddr)
+}
+
+func (localPlacement) Health(Outpost) error { return nil }
+
+func placementHealth(o Outpost) error {
+	p, err := placementOf(o)
+	if err != nil {
+		return err
+	}
+	return p.Health(o)
 }
 
 var (

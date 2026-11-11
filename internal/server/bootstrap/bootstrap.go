@@ -19,6 +19,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
+	"github.com/pbs-plus/pbs-plus/internal/server/outposttunnel"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
@@ -111,6 +112,7 @@ func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Schedule
 		log.Error(err, "migrating s3 outposts to repositories")
 	}
 	s3repo.StartAll(mainCtx)
+	outpost.SetAgentPlacement(outposttunnel.New(app.Agents))
 	outpost.StartAll(mainCtx)
 	go snapshotmount.ReattachOutposts(mainCtx)
 	go func() {

@@ -418,6 +418,9 @@ func StatusAll() []Status {
 		}
 		if inst := mgr.instances[o.Name]; inst != nil {
 			st.Running = true
+			if err := placementHealth(o); err != nil {
+				st.Error = err.Error()
+			}
 			st.Attached = inst.Attached()
 			for _, share := range st.Attached {
 				st.Endpoints = append(st.Endpoints, inst.Endpoint(share))
