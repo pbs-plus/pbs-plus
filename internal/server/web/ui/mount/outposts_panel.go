@@ -6,7 +6,7 @@ import (
 
 var outpostsModel = js.Model{
 	Name:       "pbs-model-outposts",
-	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints", "s3-export"),
+	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints", "s3-export", "agent"),
 	IDProperty: "name",
 }
 
@@ -121,6 +121,11 @@ var outpostsPanel = js.Panel{
 									let listen = form.down("[name=listen-addr]");
 									let smb = form.down("[itemId=sambaFields]");
 									let exportFields = form.down("[itemId=s3ExportFields]");
+									let agentField = form.down("[name=agent]");
+									if (agentField) {
+										agentField.setVisible(v !== "samba");
+										agentField.setDisabled(v === "samba");
+									}
 									if (!isEdit && listen) {
 										if (v === "s3-export" && listen.getValue() === "0.0.0.0:2049") listen.setValue("0.0.0.0:9100");
 										if (v === "nfs" && listen.getValue() === "0.0.0.0:9100") listen.setValue("0.0.0.0:2049");
@@ -139,6 +144,44 @@ var outpostsPanel = js.Panel{
 									}
 								},
 							},
+						},
+						{
+							xtype: "combobox",
+							name: "agent",
+							fieldLabel: gettext("Host"),
+							store: { fields: ["name"], data: [] },
+							displayField: "name",
+							valueField: "name",
+							queryMode: "local",
+							editable: true,
+							forceSelection: false,
+							allowBlank: true,
+							emptyText: gettext("This server"),
+							value: values.agent || "",
+							hidden: values.type === "samba",
+							disabled: values.type === "samba",
+							listeners: {
+								afterrender: (cb) => {
+									PBS.PlusUtils.API2Request({
+										url: "/api2/json/d2d/target",
+										method: "GET",
+										success: (resp) => {
+											let names = {};
+											for (let t of resp.result.data || []) {
+												let host = t.agent_host && t.agent_host.name;
+												if (host) names[host] = true;
+											}
+											if (cb.isDestroyed) return;
+											cb.getStore().loadData(Object.keys(names).sort().map((name) => ({ name })));
+										},
+									});
+								},
+							},
+						},
+						{
+							xtype: "displayfield",
+							value: gettext("With an agent selected, that host listens on the address below and forwards each client connection to this server, which still serves the files. Leave empty to listen here."),
+							hidden: values.type === "samba",
 						},
 						{
 							xtype: "proxmoxtextfield",
@@ -295,6 +338,7 @@ var outpostsPanel = js.Panel{
 								"force-user": vals["force-user"] || "",
 								"hosts-allow": vals["hosts-allow"] || "",
 								browseable: vals.browseable || "0",
+								agent: vals.type === "samba" ? "" : (vals.agent || ""),
 							};
 							if (vals.type === "s3-export") {
 								if (!exportCredentials.getCount()) {
@@ -374,7 +418,10 @@ var outpostsPanel = js.Panel{
 			if (v === "s3-export") return "S3 Export";
 			return Ext.String.htmlEncode(v || "");
 		`)},
-		{Text: "Listen Address", DataIndex: "listen-addr", Width: 160, Renderer: js.Func("v", `return Ext.String.htmlEncode(v || "");`)},
+		{Text: "Listen Address", DataIndex: "listen-addr", Width: 200, Renderer: js.Func("v, meta, rec", `
+			let agent = rec.get("agent");
+			return Ext.String.htmlEncode((v || "") + (agent ? " @ " + agent : ""));
+		`)},
 		{Text: "Access", DataIndex: "valid-users", Width: 180, Renderer: js.Func("v, meta, rec", `
 			if (rec.get("type") === "s3-export") {
 				let credentials = (rec.get("s3-export") || {}).credentials || [];
@@ -385,9 +432,10 @@ var outpostsPanel = js.Panel{
 			return Ext.String.htmlEncode(v || "-");
 		`)},
 		{Text: "Status", DataIndex: "running", Width: 100, Renderer: js.Func("v, meta, rec", `
-			if (v) return '<i class="fa fa-check-circle"></i> ' + gettext("Running");
 			let error = rec.get("error") || "";
 			if (error) meta.tdAttr = 'data-qtip="' + Ext.String.htmlEncode(error) + '"';
+			if (v && error) return '<i class="fa fa-exclamation-triangle"></i> ' + gettext("Agent offline");
+			if (v) return '<i class="fa fa-check-circle"></i> ' + gettext("Running");
 			return '<i class="fa fa-times-circle"></i> ' + gettext("Stopped");
 		`)},
 		{Text: "Resources", DataIndex: "attached", Flex: 1, Renderer: js.Func("v, meta, rec", `

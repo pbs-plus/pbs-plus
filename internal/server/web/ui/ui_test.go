@@ -73,6 +73,8 @@ func TestRender(t *testing.T) {
 		`listen.setDisabled(v === "samba");`,
 		`smb.setDisabled(v !== "samba");`,
 		`exportFields.setDisabled(v !== "s3-export");`,
+		`agentField.setDisabled(v === "samba");`,
+		`agent: vals.type === "samba" ? "" : (vals.agent || ""),`,
 		`params["s3-export"] = JSON.stringify(exportParams);`,
 	} {
 		if !strings.Contains(source, want) {
