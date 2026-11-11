@@ -40,7 +40,7 @@ submit_ok() {
 
 dump_logs() {
 	echo "--- outposts ---"
-	curl -k -s "$PBS_API/api2/extjs/config/d2d-outposts" || true
+	curl -k -s "$PBS_API/api2/extjs/config/d2d-s3-repositories" || true
 	echo ""
 	echo "--- s3 outpost log trace (last 400 lines) ---"
 	docker logs --since 30m pbs-plus-test 2>&1 | grep -Ei 's3 outpost|objectstore|s3 put|s3 delete' | tail -400 || true
@@ -89,7 +89,7 @@ JSON
 }
 
 outpost_running() {
-	curl -k -s "$PBS_API/api2/extjs/config/d2d-outposts" | jq -e \
+	curl -k -s "$PBS_API/api2/extjs/config/d2d-s3-repositories" | jq -e \
 		--arg name "$OUTPOST" \
 		'.data[]? | select(.name == $name and .running == true)' \
 		>/dev/null
@@ -98,7 +98,7 @@ outpost_running() {
 snapshot_count() {
 	local expected=$1
 	local count
-	count=$(ls -1 "$GROUP_DIR" 2>/dev/null | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' || true)
+	count=$(find "$GROUP_DIR" -mindepth 1 -maxdepth 1 -type d -name '????-??-??T*' 2>/dev/null | wc -l)
 	[ "$count" = "$expected" ]
 }
 
@@ -131,12 +131,12 @@ mkdir -p "$WORK"
 
 section "Create S3 outpost"
 
-req -X DELETE "$PBS_API/api2/extjs/config/d2d-outposts/$OUTPOST" >/dev/null 2>&1 || true
+req -X DELETE "$PBS_API/api2/extjs/config/d2d-s3-repositories/$OUTPOST" >/dev/null 2>&1 || true
 
 S3_JSON=$(s3_config)
-RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
-	-d "name=$OUTPOST" -d "type=s3" -d "listen-addr=0.0.0.0:$S3_PORT" \
-	--data-urlencode "s3=$S3_JSON")
+RESP=$(api_post "/api2/extjs/config/d2d-s3-repositories" \
+	-d "name=$OUTPOST" -d "listen-addr=0.0.0.0:$S3_PORT" \
+	--data-urlencode "config=$S3_JSON")
 submit_ok "$RESP" && ok "s3 outpost created" || fail "s3 outpost create rejected: $(body_of "$RESP")"
 
 wait_for "s3 outpost running" 30 outpost_running
@@ -177,7 +177,7 @@ section "Objects land as PBS snapshots"
 
 wait_for "three object snapshots published" 60 snapshot_count 3
 
-SNAPSHOT_DIR=$(ls -1 "$GROUP_DIR" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' | sort | tail -1)
+SNAPSHOT_DIR=$(find "$GROUP_DIR" -mindepth 1 -maxdepth 1 -type d -name '????-??-??T*' -printf '%f\n' | sort | tail -1)
 for file in s3-object.didx index.json.blob; do
 	[ -s "$GROUP_DIR/$SNAPSHOT_DIR/$file" ] \
 		&& ok "snapshot contains $file" || fail "snapshot missing $file"
@@ -239,7 +239,7 @@ mc ls "e2e/$BUCKET" 2>/dev/null | grep -q . \
 
 section "Remove S3 outpost"
 
-RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-outposts/$OUTPOST")
+RESP=$(req -X DELETE "$PBS_API/api2/extjs/config/d2d-s3-repositories/$OUTPOST")
 submit_ok "$RESP" && ok "s3 outpost removed" || fail "s3 outpost delete rejected: $(body_of "$RESP")"
 
 sleep 2
@@ -250,16 +250,16 @@ ss -lnt 2>/dev/null | grep -q ":$S3_PORT" \
 section "Enforce S3 config policy"
 
 BAD_JSON=$(s3_config | jq -c '.buckets[0].name = "invalid_bucket_name"')
-RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
-	-d "name=e2e-s3-bad" -d "type=s3" -d "listen-addr=0.0.0.0:39001" \
-	--data-urlencode "s3=$BAD_JSON")
+RESP=$(api_post "/api2/extjs/config/d2d-s3-repositories" \
+	-d "name=e2e-s3-bad" -d "listen-addr=0.0.0.0:39001" \
+	--data-urlencode "config=$BAD_JSON")
 submit_ok "$RESP" && fail "invalid bucket name accepted" \
 	|| ok "invalid bucket name rejected"
 
 BAD_JSON=$(s3_config | jq -c '.credentials[0].auth_id = "not an auth id"')
-RESP=$(api_post "/api2/extjs/config/d2d-outposts" \
-	-d "name=e2e-s3-bad" -d "type=s3" -d "listen-addr=0.0.0.0:39001" \
-	--data-urlencode "s3=$BAD_JSON")
+RESP=$(api_post "/api2/extjs/config/d2d-s3-repositories" \
+	-d "name=e2e-s3-bad" -d "listen-addr=0.0.0.0:39001" \
+	--data-urlencode "config=$BAD_JSON")
 submit_ok "$RESP" && fail "invalid auth id accepted" \
 	|| ok "invalid auth id rejected"
 

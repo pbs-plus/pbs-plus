@@ -33,4 +33,4 @@ jobs:
         if: matrix.os == 'windows-2025'
         shell: pwsh
         run: |
-          go test -race ./internal/agent/agentfs/... -tags=windows -count=1 -timeout 3m
+          go test -race ./internal/agent/agentfs/... ./internal/outpostwire/ ./internal/agent/cli/ -tags=windows -count=1 -timeout 3m
