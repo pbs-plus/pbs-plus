@@ -72,6 +72,8 @@ func TestRender(t *testing.T) {
 	for _, want := range []string{
 		`listen.setDisabled(v === "samba");`,
 		`smb.setDisabled(v !== "samba");`,
+		`exportFields.setDisabled(v !== "s3-export");`,
+		`params["s3-export"] = JSON.stringify(exportParams);`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("outpost form does not disable inactive fields: %s", want)
