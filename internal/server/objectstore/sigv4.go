@@ -31,27 +31,40 @@ type signatureHeader struct {
 }
 
 func (c Config) authenticate(r *http.Request, now time.Time) (Credential, error) {
-	header, err := parseSignatureHeader(r.Header.Get("Authorization"))
+	accessKey, err := VerifySigV4(r, now, c.RegionName(), func(accessKey string) (string, bool) {
+		credential, ok := c.credential(accessKey)
+		return credential.SecretKey, ok
+	})
 	if err != nil {
 		return Credential{}, err
 	}
-	credential, ok := c.credential(header.accessKey)
+	credential, _ := c.credential(accessKey)
+	return credential, nil
+}
+
+// VerifySigV4 checks a header-signed SigV4 request against region and the secret lookup returns, yielding the access key.
+func VerifySigV4(r *http.Request, now time.Time, region string, lookup func(accessKey string) (secret string, ok bool)) (string, error) {
+	header, err := parseSignatureHeader(r.Header.Get("Authorization"))
+	if err != nil {
+		return "", err
+	}
+	secret, ok := lookup(header.accessKey)
 	if !ok {
-		return Credential{}, fmt.Errorf("unknown access key")
+		return "", fmt.Errorf("unknown access key")
 	}
 	requestTime, err := time.Parse(signatureTimeFormat, r.Header.Get("X-Amz-Date"))
 	if err != nil {
-		return Credential{}, fmt.Errorf("invalid x-amz-date")
+		return "", fmt.Errorf("invalid x-amz-date")
 	}
 	if requestTime.Sub(now) > maximumClockSkew || now.Sub(requestTime) > maximumClockSkew {
-		return Credential{}, fmt.Errorf("request time is outside the allowed clock skew")
+		return "", fmt.Errorf("request time is outside the allowed clock skew")
 	}
-	if header.date != requestTime.Format("20060102") || header.region != c.RegionName() {
-		return Credential{}, fmt.Errorf("credential scope does not match the request")
+	if header.date != requestTime.Format("20060102") || header.region != region {
+		return "", fmt.Errorf("credential scope does not match the request")
 	}
 	canonicalHeaders, err := signedCanonicalHeaders(r, header.signedHeaders)
 	if err != nil {
-		return Credential{}, err
+		return "", err
 	}
 	payloadHash := r.Header.Get("X-Amz-Content-Sha256")
 	if payloadHash == "" {
@@ -74,11 +87,11 @@ func (c Config) authenticate(r *http.Request, now time.Time) (Credential, error)
 		scope,
 		hex.EncodeToString(requestHash[:]),
 	}, "\n")
-	expected := signature(credential.SecretKey, header.date, header.region, stringToSign)
+	expected := signature(secret, header.date, header.region, stringToSign)
 	if subtle.ConstantTimeCompare(header.signature, expected) != 1 {
-		return Credential{}, fmt.Errorf("signature does not match")
+		return "", fmt.Errorf("signature does not match")
 	}
-	return credential, nil
+	return header.accessKey, nil
 }
 
 func parseSignatureHeader(value string) (signatureHeader, error) {
