@@ -31,7 +31,7 @@ var mountProfilesPanel = js.Panel{
 		"openEdit": js.Func("view, rec", `
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
-			let win = Ext.create("Ext.window.Window", {
+			let win = Ext.create("PBS.plusWindow.Window", {
 				title: isEdit ? Ext.String.format(gettext("Edit Batch '{0}'"), values.namespace || gettext("root")) : gettext("Add Mount Batch"),
 				width: 480,
 				modal: true,
@@ -43,12 +43,9 @@ var mountProfilesPanel = js.Panel{
 					defaults: { anchor: "100%", labelWidth: 120 },
 					items: [
 					{
-						xtype: "combobox",
+						xtype: "pbsDataStoreSelector",
 						name: "datastore",
 						fieldLabel: gettext("Datastore"),
-						store: "pbs-datastore-list",
-						displayField: "store",
-						valueField: "store",
 						allowBlank: false,
 						value: values.datastore,
 						listeners: {

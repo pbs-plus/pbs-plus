@@ -70,18 +70,30 @@ func TestRender(t *testing.T) {
 		t.Error("rendered profiles panel still pins single backup groups")
 	}
 	for _, want := range []string{
-		`values.type === "s3" ? "0.0.0.0:9000" : "0.0.0.0:2049"`,
 		`listen.setDisabled(v === "samba");`,
 		`smb.setDisabled(v !== "samba");`,
-		`structured.setDisabled(v !== "s3");`,
-		`text: gettext("Manage Buckets and Credentials")`,
-		`title: gettext("Bucket Mappings")`,
-		`title: gettext("Credentials")`,
-		`boxLabel: gettext("Serve HTTPS using the current PBS certificate")`,
-		`params.s3 = JSON.stringify(managedS3);`,
+		`exportFields.setDisabled(v !== "s3-export");`,
+		`agentField.setDisabled(v === "samba");`,
+		`agent: vals.type === "samba" ? "" : (vals.agent || ""),`,
+		`params["s3-export"] = JSON.stringify(exportParams);`,
 	} {
 		if !strings.Contains(source, want) {
 			t.Errorf("outpost form does not disable inactive fields: %s", want)
+		}
+	}
+	if strings.Contains(source, `"S3 (objects as snapshots)"`) {
+		t.Error("outposts still offer the s3 backup repository type")
+	}
+	for _, want := range []string{
+		`"widget.pbsPlusS3RepositoriesPanel"`,
+		`let url = "/api2/extjs/config/d2d-s3-repositories";`,
+		`title: gettext("Bucket Mappings")`,
+		`title: gettext("Credentials")`,
+		`boxLabel: gettext("Serve HTTPS using the current PBS certificate")`,
+		`config: JSON.stringify(next)`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Errorf("s3 repository panel missing %s", want)
 		}
 	}
 }

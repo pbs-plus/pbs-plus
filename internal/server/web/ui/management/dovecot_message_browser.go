@@ -5,7 +5,7 @@ import (
 )
 
 var dovecotMessageBrowser = js.Define("PBS.window.D2DDovecotMessageSelector", js.Obj{
-	"extend": "Ext.window.Window",
+	"extend": "PBS.plusWindow.Window",
 	"alias":  "widget.pbsD2DDovecotMessageSelector",
 
 	"modal":  true,

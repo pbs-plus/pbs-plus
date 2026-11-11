@@ -46,7 +46,7 @@ func (nfsDriver) Validate(o Outpost) error {
 }
 
 func (nfsDriver) Start(ctx context.Context, o Outpost) (Instance, error) {
-	ln, err := net.Listen("tcp", o.ListenAddr)
+	ln, err := openListener(ctx, o)
 	if err != nil {
 		return nil, fmt.Errorf("nfs outpost listen: %w", err)
 	}

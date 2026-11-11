@@ -260,7 +260,7 @@ var mtfInventoryPanel = js.Panel{
 						fields: ["name", "machine_name", "owner", "write_time", "num_files", "num_directories", "id", "volumes"],
 						data: resp.result.data || [],
 					});
-					Ext.create("Ext.window.Window", {
+					Ext.create("PBS.plusWindow.Window", {
 						title: Ext.String.format(gettext("Data Sets - {0}"), famName),
 						width: 800,
 						height: 400,

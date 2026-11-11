@@ -146,7 +146,7 @@ var backupPanel = js.Panel{
 						fields: ["upid", "starttime", "endtime", "status", "status_parsed", "duration"],
 						data: upids,
 					});
-					Ext.create("Ext.window.Window", {
+					Ext.create("PBS.plusWindow.Window", {
 						title: gettext("Task Logs for Job: ") + Ext.String.htmlEncode(jobId),
 						width: 900,
 						height: 400,
