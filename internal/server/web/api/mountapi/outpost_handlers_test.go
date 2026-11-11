@@ -154,3 +154,46 @@ func TestOutpostCreateRejectsInvalid(t *testing.T) {
 		t.Fatalf("bad listen status = %d", w.Code)
 	}
 }
+
+func TestOutpostHandlersS3Export(t *testing.T) {
+	old := conf.StatePrefix
+	conf.StatePrefix = t.TempDir()
+	t.Cleanup(func() {
+		outpost.StopAll()
+		conf.StatePrefix = old
+	})
+	app := (*application.Runtime)(nil)
+	config := `{"tls":false,"credentials":[{"access_key":"reader","secret_key":"reader-secret"}]}`
+
+	r, w := profileRequest(http.MethodPost, "/api2/extjs/config/d2d-outposts", url.Values{"name": {"edge-s3"}, "type": {"s3-export"}, "listen-addr": {"127.0.0.1:0"}, "s3-export": {config}})
+	ExtJsOutpostsHandler(app)(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
+	}
+
+	r, w = profileRequest(http.MethodGet, "/api2/extjs/config/d2d-outposts", nil)
+	ExtJsOutpostsHandler(app)(w, r)
+	view := decodeList(t, w)
+	export, _ := view[0]["s3-export"].(map[string]any)
+	credentials, _ := export["credentials"].([]any)
+	if len(credentials) != 1 || credentials[0].(map[string]any)["access_key"] != "reader" || credentials[0].(map[string]any)["secret_key"] != "" {
+		t.Fatalf("view s3-export = %v", view[0]["s3-export"])
+	}
+
+	r, w = profileRequest(http.MethodPut, "/api2/extjs/config/d2d-outposts/edge-s3", url.Values{"type": {"s3-export"}, "listen-addr": {"127.0.0.1:0"}, "s3-export": {`{"tls":false,"credentials":[{"access_key":"reader","secret_key":""}]}`}})
+	r.SetPathValue("name", "edge-s3")
+	ExtJsOutpostSingleHandler(app)(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s", w.Code, w.Body.String())
+	}
+	loaded, ok, err := outpost.LoadOutpost("edge-s3")
+	if err != nil || !ok || loaded.S3Export.Credentials[0].SecretKey != "reader-secret" {
+		t.Fatalf("secret not preserved: %+v ok=%v err=%v", loaded.S3Export, ok, err)
+	}
+
+	r, w = profileRequest(http.MethodPost, "/api2/extjs/config/d2d-outposts", url.Values{"name": {"bad"}, "type": {"s3-export"}, "listen-addr": {"127.0.0.1:0"}, "s3-export": {"{not json"}})
+	ExtJsOutpostsHandler(app)(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("malformed config status = %d", w.Code)
+	}
+}

@@ -3,33 +3,46 @@
 package mountapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
+	"github.com/pbs-plus/pbs-plus/internal/server/s3export"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
 )
 
 type outpostView struct {
-	Name       string   `json:"name"`
-	Type       string   `json:"type"`
-	ListenAddr string   `json:"listen-addr"`
-	Guest      bool     `json:"guest"`
-	ValidUsers string   `json:"valid-users"`
-	ForceUser  string   `json:"force-user"`
-	HostsAllow string   `json:"hosts-allow"`
-	Browseable bool     `json:"browseable"`
-	Running    bool     `json:"running"`
-	Error      string   `json:"error,omitempty"`
-	Attached   []string `json:"attached"`
-	Endpoints  []string `json:"endpoints"`
+	Name       string           `json:"name"`
+	Type       string           `json:"type"`
+	ListenAddr string           `json:"listen-addr"`
+	Guest      bool             `json:"guest"`
+	ValidUsers string           `json:"valid-users"`
+	ForceUser  string           `json:"force-user"`
+	HostsAllow string           `json:"hosts-allow"`
+	Browseable bool             `json:"browseable"`
+	S3Export   *s3export.Config `json:"s3-export,omitempty"`
+	Running    bool             `json:"running"`
+	Error      string           `json:"error,omitempty"`
+	Attached   []string         `json:"attached"`
+	Endpoints  []string         `json:"endpoints"`
 }
 
 func toOutpostView(s outpost.Status) outpostView {
+	var export *s3export.Config
+	if s.S3Export != nil {
+		redacted := *s.S3Export
+		redacted.Credentials = make([]s3export.Credential, len(s.S3Export.Credentials))
+		for i, credential := range s.S3Export.Credentials {
+			redacted.Credentials[i] = s3export.Credential{AccessKey: credential.AccessKey}
+		}
+		export = &redacted
+	}
 	return outpostView{
+		S3Export:   export,
 		Name:       s.Name,
 		Type:       s.Type,
 		ListenAddr: s.ListenAddr,
@@ -49,8 +62,8 @@ func writeOutpostView(w http.ResponseWriter, s outpost.Status) {
 	writeExtJS(w, toOutpostView(s))
 }
 
-func outpostFormValues(r *http.Request) outpost.Outpost {
-	return outpost.Outpost{
+func outpostFormValues(r *http.Request) (outpost.Outpost, error) {
+	o := outpost.Outpost{
 		Name:       strings.TrimSpace(r.FormValue("name")),
 		Type:       strings.TrimSpace(r.FormValue("type")),
 		ListenAddr: strings.TrimSpace(r.FormValue("listen-addr")),
@@ -59,6 +72,30 @@ func outpostFormValues(r *http.Request) outpost.Outpost {
 		ForceUser:  strings.TrimSpace(r.FormValue("force-user")),
 		HostsAllow: strings.TrimSpace(r.FormValue("hosts-allow")),
 		Browseable: r.FormValue("browseable") == "1" || r.FormValue("browseable") == "true",
+	}
+	if raw := strings.TrimSpace(r.FormValue("s3-export")); raw != "" {
+		o.S3Export = &s3export.Config{}
+		if err := json.Unmarshal([]byte(raw), o.S3Export); err != nil {
+			return outpost.Outpost{}, fmt.Errorf("invalid s3-export config: %w", err)
+		}
+	}
+	return o, nil
+}
+
+// preserveExportSecrets keeps stored secret keys for credentials resubmitted blank, since views redact them.
+func preserveExportSecrets(next, current *s3export.Config) {
+	if next == nil || current == nil {
+		return
+	}
+	for i := range next.Credentials {
+		if next.Credentials[i].SecretKey != "" {
+			continue
+		}
+		for _, stored := range current.Credentials {
+			if stored.AccessKey == next.Credentials[i].AccessKey {
+				next.Credentials[i].SecretKey = stored.SecretKey
+			}
+		}
 	}
 }
 
@@ -85,7 +122,11 @@ func ExtJsOutpostsHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
-			o := outpostFormValues(r)
+			o, err := outpostFormValues(r)
+			if err != nil {
+				writeOutpostInvalid(w, err)
+				return
+			}
 			if err := outpost.ValidateOutpost(o); err != nil {
 				writeOutpostInvalid(w, err)
 				return
@@ -136,11 +177,16 @@ func ExtJsOutpostSingleHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
-			o := outpostFormValues(r)
+			o, err := outpostFormValues(r)
+			if err != nil {
+				writeOutpostInvalid(w, err)
+				return
+			}
 			if o.Name == "" {
 				o.Name = existing.Name
 			}
 			o.CreatedAt = existing.CreatedAt
+			preserveExportSecrets(o.S3Export, existing.S3Export)
 			if err := outpost.ValidateOutpost(o); err != nil {
 				writeOutpostInvalid(w, err)
 				return
