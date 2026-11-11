@@ -246,6 +246,8 @@ func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 		[]byte(`path: "pbsD2DMounts"`),
 		[]byte(`id: "d2d_outposts"`),
 		[]byte(`path: "pbsPlusOutpostsPanel"`),
+		[]byte(`id: "d2d_s3_repositories"`),
+		[]byte(`path: "pbsPlusS3RepositoriesPanel"`),
 		[]byte(`id: "data_verification"`),
 		[]byte(`id: "mtf_tapes"`),
 	} {

@@ -6,7 +6,7 @@ import (
 
 var outpostsModel = js.Model{
 	Name:       "pbs-model-outposts",
-	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints", "s3"),
+	Fields:     js.Fields("name", "type", "listen-addr", "guest", "valid-users", "force-user", "hosts-allow", "browseable", "running", "error", "attached", "endpoints"),
 	IDProperty: "name",
 }
 
@@ -44,389 +44,7 @@ var outpostsPanel = js.Panel{
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
 			let panel = this.getView();
-			let managedS3 = values.s3 ? Ext.clone(values.s3) : null;
-			let win;
-			let updateS3Summary = () => {
-				if (!win) return;
-				let summary = win.down("[itemId=s3Summary]");
-				if (!summary) return;
-				let config = managedS3 || {};
-				let buckets = config.buckets ? config.buckets.length : 0;
-				let credentials = config.credentials ? config.credentials.length : 0;
-				summary.setValue(Ext.String.format(gettext("{0} bucket(s), {1} credential(s)"), buckets, credentials));
-			};
-			let openS3Manager = () => {
-				let config = Ext.clone(managedS3 || {});
-				let bucketStore = Ext.create("Ext.data.Store", {
-					fields: ["name", "datastore", "namespace", "backup_type", "backup_id"],
-					data: config.buckets || [],
-				});
-				let credentialStore = Ext.create("Ext.data.Store", {
-					fields: ["access_key", "secret_key", "auth_id", "grants"],
-					data: config.credentials || [],
-				});
-				let manager;
-				let openBucketEditor = (record) => {
-					let current = record ? record.data : {};
-					let editor = Ext.create("PBS.plusWindow.Window", {
-						title: record ? gettext("Edit Bucket Mapping") : gettext("Add Bucket Mapping"),
-						width: 500,
-						modal: true,
-						bodyPadding: 10,
-						items: [{
-							xtype: "form",
-							border: false,
-							defaults: { anchor: "100%", labelWidth: 120 },
-							items: [
-								{
-									xtype: "proxmoxtextfield",
-									name: "bucket-name",
-									fieldLabel: gettext("Bucket Name"),
-									allowBlank: false,
-									regex: /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/,
-									regexText: gettext("3-63 lowercase letters, digits, dots and dashes"),
-									value: current.name,
-								},
-								{
-									xtype: "pbsDataStoreSelector",
-									name: "bucket-datastore",
-									fieldLabel: gettext("Datastore"),
-									allowBlank: false,
-									value: current.datastore,
-									listeners: {
-										change: (cb, value) => {
-											let selector = cb.up("form").down("pbsNamespaceSelector");
-											if (selector) selector.setDatastore(value);
-										},
-									},
-								},
-								{
-									xtype: "pbsNamespaceSelector",
-									name: "bucket-namespace",
-									fieldLabel: gettext("Namespace"),
-									datastore: current.datastore,
-									emptyText: gettext("root"),
-									value: current.namespace,
-								},
-								{
-									xtype: "combobox",
-									name: "bucket-backup-type",
-									fieldLabel: gettext("Backup Type"),
-									store: [["host", gettext("Host")], ["vm", gettext("VM")], ["ct", gettext("Container")]],
-									value: current.backup_type || "host",
-									editable: false,
-									allowBlank: false,
-								},
-								{
-									xtype: "proxmoxtextfield",
-									name: "bucket-backup-id",
-									fieldLabel: gettext("Backup ID"),
-									allowBlank: false,
-									regex: /^[A-Za-z0-9_][A-Za-z0-9._-]*$/,
-									regexText: gettext("Letters, digits, dots, dashes and underscores; start with a letter or digit"),
-									value: current.backup_id,
-								},
-							],
-						}],
-						buttons: [{
-							text: record ? gettext("Apply") : gettext("Add"),
-							handler: () => {
-								let form = editor.down("form").getForm();
-								if (!form.isValid()) return;
-								let vals = form.getValues();
-								let name = vals["bucket-name"];
-								let duplicate = bucketStore.findExact("name", name);
-								if (duplicate !== -1 && (!record || bucketStore.getAt(duplicate) !== record)) {
-									Ext.Msg.alert(gettext("Error"), gettext("Bucket names must be unique."));
-									return;
-								}
-								let data = {
-									name,
-									datastore: vals["bucket-datastore"],
-									namespace: vals["bucket-namespace"] || "",
-									backup_type: vals["bucket-backup-type"],
-									backup_id: vals["bucket-backup-id"],
-								};
-								if (record) {
-									let oldName = record.get("name");
-									record.set(data);
-									if (oldName !== name) {
-										credentialStore.each((credential) => {
-											let grants = (credential.get("grants") || []).map((grant) => grant.bucket === oldName ? Ext.apply({}, grant, { bucket: name }) : grant);
-											credential.set("grants", grants);
-										});
-									}
-								} else {
-									bucketStore.add(data);
-								}
-								manager.down("[itemId=credentialGrid]").getView().refresh();
-								editor.close();
-							},
-						}],
-					});
-					editor.show();
-				};
-				let openCredentialEditor = (record) => {
-					if (!bucketStore.getCount()) {
-						Ext.Msg.alert(gettext("Add a Bucket"), gettext("Add at least one bucket before creating credentials."));
-						return;
-					}
-					let current = record ? record.data : {};
-					let grantMap = {};
-					for (let grant of current.grants || []) grantMap[grant.bucket] = grant;
-					let grantRows = bucketStore.getRange().map((bucketRecord) => {
-						let bucket = bucketRecord.get("name");
-						let grant = grantMap[bucket] || {};
-						return {
-							xtype: "fieldcontainer",
-							fieldLabel: bucket,
-							layout: "hbox",
-							bucketName: bucket,
-							defaults: { xtype: "checkbox", margin: "0 18 0 0" },
-							items: [
-								{ itemId: "read", boxLabel: gettext("Read"), checked: !!grant.read },
-								{ itemId: "write", boxLabel: gettext("Write"), checked: !!grant.write },
-								{ itemId: "delete", boxLabel: gettext("Delete"), checked: !!grant.delete },
-							],
-						};
-					});
-					let editor = Ext.create("PBS.plusWindow.Window", {
-						title: record ? gettext("Edit Credential") : gettext("Add Credential"),
-						width: 540,
-						maxHeight: 650,
-						modal: true,
-						bodyPadding: 10,
-						items: [{
-							xtype: "form",
-							border: false,
-							autoScroll: true,
-							defaults: { anchor: "100%", labelWidth: 150 },
-							items: [
-								{
-									xtype: "proxmoxtextfield",
-									name: "credential-access-key",
-									fieldLabel: gettext("Access Key"),
-									allowBlank: false,
-									value: current.access_key,
-								},
-								{
-									xtype: "proxmoxtextfield",
-									name: "credential-secret-key",
-									fieldLabel: gettext("Secret Key"),
-									inputType: "password",
-									allowBlank: !!record,
-									minLength: 8,
-									emptyText: record ? gettext("Unchanged") : "",
-								},
-								{
-									xtype: "proxmoxtextfield",
-									name: "credential-auth-id",
-									fieldLabel: gettext("PBS Owner"),
-									allowBlank: false,
-									regex: /^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+(![A-Za-z0-9._-]+)?$/,
-									regexText: gettext("PBS auth id, e.g. root@pam"),
-									value: current.auth_id || "root@pam",
-								},
-								{
-									xtype: "fieldset",
-									title: gettext("Bucket Permissions"),
-									items: grantRows,
-								},
-							],
-						}],
-						buttons: [{
-							text: record ? gettext("Apply") : gettext("Add"),
-							handler: () => {
-								let form = editor.down("form").getForm();
-								if (!form.isValid()) return;
-								let vals = form.getValues();
-								let accessKey = vals["credential-access-key"];
-								let duplicate = credentialStore.findExact("access_key", accessKey);
-								if (duplicate !== -1 && (!record || credentialStore.getAt(duplicate) !== record)) {
-									Ext.Msg.alert(gettext("Error"), gettext("Access keys must be unique."));
-									return;
-								}
-								let secretKey = vals["credential-secret-key"] || current.secret_key || "";
-								if (!secretKey && (!record || accessKey !== current.access_key)) {
-									Ext.Msg.alert(gettext("Error"), gettext("A secret key is required for a new access key."));
-									return;
-								}
-								let grants = [];
-								let rows = editor.down("fieldset").query("fieldcontainer");
-								for (let row of rows) {
-									let read = row.down("[itemId=read]").getValue();
-									let write = row.down("[itemId=write]").getValue();
-									let remove = row.down("[itemId=delete]").getValue();
-									if (read || write || remove) grants.push({ bucket: row.bucketName, read, write, delete: remove });
-								}
-								if (!grants.length) {
-									Ext.Msg.alert(gettext("Error"), gettext("Assign at least one bucket permission."));
-									return;
-								}
-								let data = { access_key: accessKey, secret_key: secretKey, auth_id: vals["credential-auth-id"], grants };
-								if (record) record.set(data); else credentialStore.add(data);
-								editor.close();
-							},
-						}],
-					});
-					editor.show();
-				};
-				let selectedRecord = (itemId) => manager.down("[itemId=" + itemId + "]").getSelectionModel().getSelection()[0];
-				manager = Ext.create("PBS.plusWindow.Window", {
-					title: gettext("S3 Buckets and Credentials"),
-					width: 860,
-					height: 650,
-					modal: true,
-					layout: "fit",
-					items: [{
-						xtype: "form",
-						border: false,
-						autoScroll: true,
-						bodyPadding: 10,
-						defaults: { anchor: "100%", labelWidth: 150 },
-						items: [
-							{
-								xtype: "fieldset",
-								title: gettext("Connection"),
-								items: [
-									{
-										xtype: "combobox",
-										name: "manager-region",
-										fieldLabel: gettext("Region"),
-										store: ["us-east-1", "us-east-2", "us-west-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-west-2", "ap-southeast-1", "ap-northeast-1", "sa-east-1"],
-										queryMode: "local",
-										editable: true,
-										forceSelection: false,
-										value: config.region || "us-east-1",
-									},
-									{
-										xtype: "proxmoxcheckbox",
-										name: "manager-tls",
-										fieldLabel: gettext("HTTPS"),
-										boxLabel: gettext("Serve HTTPS using the current PBS certificate"),
-										inputValue: "1",
-										uncheckedValue: "0",
-										checked: config.tls !== false,
-										listeners: {
-											change: (field, enabled) => {
-												let form = field.up("form");
-												for (let name of ["manager-tls-cert", "manager-tls-key"]) form.down("[name=" + name + "]").setDisabled(!enabled);
-											},
-										},
-									},
-									{
-										xtype: "proxmoxtextfield",
-										name: "manager-tls-cert",
-										fieldLabel: gettext("Custom Certificate"),
-										emptyText: gettext("Current PBS certificate (default)"),
-										value: config["tls-cert"],
-										disabled: config.tls === false,
-									},
-									{
-										xtype: "proxmoxtextfield",
-										name: "manager-tls-key",
-										fieldLabel: gettext("Custom Key"),
-										emptyText: gettext("Current PBS key (default)"),
-										value: config["tls-key"],
-										disabled: config.tls === false,
-									},
-									{
-										xtype: "proxmoxtextfield",
-										name: "manager-spool-dir",
-										fieldLabel: gettext("Spool Directory"),
-										emptyText: gettext("inside the datastore (default)"),
-										value: config["spool-dir"],
-									},
-								],
-							},
-							{
-								xtype: "grid",
-								itemId: "bucketGrid",
-								title: gettext("Bucket Mappings"),
-								height: 180,
-								store: bucketStore,
-								columns: [
-									{ text: gettext("Bucket"), dataIndex: "name", flex: 1 },
-									{ text: gettext("Datastore"), dataIndex: "datastore", flex: 1 },
-									{ text: gettext("Namespace"), dataIndex: "namespace", flex: 1, renderer: (value) => Ext.String.htmlEncode(value || gettext("root")) },
-									{ text: gettext("Backup Group"), flex: 1, renderer: (value, meta, row) => Ext.String.htmlEncode(row.get("backup_type") + "/" + row.get("backup_id")) },
-								],
-								tbar: [
-									{ text: gettext("Add"), iconCls: "fa fa-plus", handler: () => openBucketEditor(null) },
-									{ text: gettext("Edit"), iconCls: "fa fa-pencil", handler: () => { let selected = selectedRecord("bucketGrid"); if (selected) openBucketEditor(selected); } },
-									{ text: gettext("Remove"), iconCls: "fa fa-trash", handler: () => {
-										let selected = selectedRecord("bucketGrid");
-										if (!selected) return;
-										let name = selected.get("name");
-										bucketStore.remove(selected);
-										credentialStore.each((credential) => credential.set("grants", (credential.get("grants") || []).filter((grant) => grant.bucket !== name)));
-										manager.down("[itemId=credentialGrid]").getView().refresh();
-									} },
-								],
-								listeners: { itemdblclick: (grid, selected) => openBucketEditor(selected) },
-							},
-							{
-								xtype: "grid",
-								itemId: "credentialGrid",
-								title: gettext("Credentials"),
-								height: 180,
-								margin: "10 0 0 0",
-								store: credentialStore,
-								columns: [
-									{ text: gettext("Access Key"), dataIndex: "access_key", flex: 1 },
-									{ text: gettext("PBS Owner"), dataIndex: "auth_id", flex: 1 },
-									{ text: gettext("Bucket Access"), dataIndex: "grants", flex: 2, renderer: (grants) => Ext.String.htmlEncode((grants || []).map((grant) => grant.bucket).join(", ") || gettext("None")) },
-								],
-								tbar: [
-									{ text: gettext("Add"), iconCls: "fa fa-plus", handler: () => openCredentialEditor(null) },
-									{ text: gettext("Edit"), iconCls: "fa fa-pencil", handler: () => { let selected = selectedRecord("credentialGrid"); if (selected) openCredentialEditor(selected); } },
-									{ text: gettext("Remove"), iconCls: "fa fa-trash", handler: () => { let selected = selectedRecord("credentialGrid"); if (selected) credentialStore.remove(selected); } },
-								],
-								listeners: { itemdblclick: (grid, selected) => openCredentialEditor(selected) },
-							},
-						],
-					}],
-					buttons: [{
-						text: gettext("Apply"),
-						handler: () => {
-							if (!bucketStore.getCount()) {
-								Ext.Msg.alert(gettext("Error"), gettext("Add at least one bucket."));
-								return;
-							}
-							if (!credentialStore.getCount()) {
-								Ext.Msg.alert(gettext("Error"), gettext("Add at least one credential."));
-								return;
-							}
-							let missingGrant = credentialStore.findBy((credential) => !(credential.get("grants") || []).length);
-							if (missingGrant !== -1) {
-								Ext.Msg.alert(gettext("Error"), gettext("Every credential needs at least one bucket permission."));
-								return;
-							}
-							let vals = manager.down("form").getForm().getValues();
-							let tlsEnabled = vals["manager-tls"] === "1";
-							let cert = vals["manager-tls-cert"] || "";
-							let key = vals["manager-tls-key"] || "";
-							if (tlsEnabled && (!!cert !== !!key)) {
-								Ext.Msg.alert(gettext("Error"), gettext("Set both the custom TLS certificate and key, or leave both empty."));
-								return;
-							}
-							managedS3 = {
-								region: vals["manager-region"] || "us-east-1",
-								tls: tlsEnabled,
-								buckets: bucketStore.getRange().map((row) => Ext.clone(row.data)),
-								credentials: credentialStore.getRange().map((row) => Ext.clone(row.data)),
-							};
-							if (cert) managedS3["tls-cert"] = cert;
-							if (key) managedS3["tls-key"] = key;
-							if (vals["manager-spool-dir"]) managedS3["spool-dir"] = vals["manager-spool-dir"];
-							updateS3Summary();
-							manager.close();
-						},
-					}],
-				});
-				manager.show();
-			};
-			win = Ext.create("PBS.plusWindow.Window", {
+			let win = Ext.create("PBS.plusWindow.Window", {
 				title: isEdit ? Ext.String.format(gettext("Edit Outpost '{0}'"), values.name) : gettext("Add Outpost"),
 				width: 520,
 				modal: true,
@@ -455,7 +73,6 @@ var outpostsPanel = js.Panel{
 							store: [
 								["nfs", "NFSv3 (built-in)"],
 								["samba", "SMB (Samba)"],
-								["s3", "S3 (objects as snapshots)"],
 							],
 							value: values.type || "nfs",
 							editable: false,
@@ -464,12 +81,7 @@ var outpostsPanel = js.Panel{
 								change: (f, v) => {
 									let form = f.up("form");
 									let listen = form.down("[name=listen-addr]");
-									if (!isEdit && listen) {
-										if (v === "s3" && listen.getValue() === "0.0.0.0:2049") listen.setValue("0.0.0.0:9000");
-										if (v === "nfs" && listen.getValue() === "0.0.0.0:9000") listen.setValue("0.0.0.0:2049");
-									}
 									let smb = form.down("[itemId=sambaFields]");
-									let structured = form.down("[itemId=s3Fields]");
 									if (listen) {
 										listen.setVisible(v !== "samba");
 										listen.setDisabled(v === "samba");
@@ -477,10 +89,6 @@ var outpostsPanel = js.Panel{
 									if (smb) {
 										smb.setVisible(v === "samba");
 										smb.setDisabled(v !== "samba");
-									}
-									if (structured) {
-										structured.setVisible(v === "s3");
-										structured.setDisabled(v !== "s3");
 									}
 								},
 							},
@@ -491,7 +99,7 @@ var outpostsPanel = js.Panel{
 							fieldLabel: gettext("Listen Address"),
 							emptyText: "0.0.0.0:2049",
 							allowBlank: false,
-							value: values["listen-addr"] || (values.type === "s3" ? "0.0.0.0:9000" : "0.0.0.0:2049"),
+							value: values["listen-addr"] || "0.0.0.0:2049",
 							hidden: values.type === "samba",
 							disabled: values.type === "samba",
 						},
@@ -544,31 +152,6 @@ var outpostsPanel = js.Panel{
 							],
 						},
 						{
-							xtype: "container",
-							itemId: "s3Fields",
-							defaults: { anchor: "100%", labelWidth: 120 },
-							hidden: values.type !== "s3",
-							disabled: values.type !== "s3",
-							items: [
-								{
-									xtype: "displayfield",
-									itemId: "s3Summary",
-									fieldLabel: gettext("S3 Configuration"),
-								},
-								{
-									xtype: "button",
-									text: gettext("Manage Buckets and Credentials"),
-									iconCls: "fa fa-list",
-									margin: "0 0 10 0",
-									handler: openS3Manager,
-								},
-								{
-									xtype: "displayfield",
-									value: gettext("Objects become snapshots in the mapped backup group; clients authenticate with SigV4 access keys."),
-								},
-							],
-						},
-						{
 							xtype: "displayfield",
 							value: gettext("Samba outposts need smbd running with 'include' pointing at the pbs-plus outpost config. Set either guest access or valid users. Domain accounts (DOMAIN\\user) require the host to be joined with 'net ads join'. Read-only shares preserve backed-up ownership. Writable shares with Force User map pxar ownership to that NSS/winbind account while retaining source mode and ACL checks. The built-in NFSv3 outpost has no per-user authentication: restrict network access to trusted hosts."),
 						},
@@ -592,13 +175,6 @@ var outpostsPanel = js.Panel{
 								"hosts-allow": vals["hosts-allow"] || "",
 								browseable: vals.browseable || "0",
 							};
-							if (vals.type === "s3") {
-								if (!managedS3 || !(managedS3.buckets || []).length || !(managedS3.credentials || []).length) {
-									Ext.Msg.alert(gettext("Error"), gettext("Use 'Manage Buckets and Credentials' to add at least one bucket and one credential."));
-									return;
-								}
-								params.s3 = JSON.stringify(managedS3);
-							}
 							let url = "/api2/extjs/config/d2d-outposts";
 							let method = "POST";
 							if (isEdit) {
@@ -621,7 +197,6 @@ var outpostsPanel = js.Panel{
 				],
 			});
 			win.show();
-			updateS3Summary();
 		`),
 		"edit": js.Func("view, rowIdx, colIdx, item, e, rec", `
 			this.openEdit(rec);
@@ -654,15 +229,10 @@ var outpostsPanel = js.Panel{
 		{Text: "Type", DataIndex: "type", Width: 130, Renderer: js.Func("v", `
 			if (v === "nfs") return "NFSv3";
 			if (v === "samba") return "SMB (Samba)";
-			if (v === "s3") return "S3";
 			return Ext.String.htmlEncode(v || "");
 		`)},
 		{Text: "Listen Address", DataIndex: "listen-addr", Width: 160, Renderer: js.Func("v", `return Ext.String.htmlEncode(v || "");`)},
 		{Text: "Access", DataIndex: "valid-users", Width: 180, Renderer: js.Func("v, meta, rec", `
-			if (rec.get("type") === "s3") {
-				let s3 = rec.get("s3") || {};
-				return Ext.String.format(gettext("{0} bucket(s), {1} credential(s)"), (s3.buckets || []).length, (s3.credentials || []).length);
-			}
 			if (rec.get("type") !== "samba") return "-";
 			if (rec.get("guest")) return gettext("Guest");
 			return Ext.String.htmlEncode(v || "-");
@@ -675,7 +245,6 @@ var outpostsPanel = js.Panel{
 		`)},
 		{Text: "Resources", DataIndex: "attached", Flex: 1, Renderer: js.Func("v, meta, rec", `
 			let endpoints = rec.get("endpoints") || [];
-			if (rec.get("type") === "s3") return Ext.String.htmlEncode(endpoints.join(", ") || "-");
 			let shares = v || [];
 			if (!shares.length) return "-";
 			return Ext.String.htmlEncode(shares.length + " (" + endpoints.join(", ") + ")");
