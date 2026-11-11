@@ -18,6 +18,7 @@ import (
 type outpostView struct {
 	Name       string           `json:"name"`
 	Type       string           `json:"type"`
+	Agent      string           `json:"agent"`
 	ListenAddr string           `json:"listen-addr"`
 	Guest      bool             `json:"guest"`
 	ValidUsers string           `json:"valid-users"`
@@ -45,6 +46,7 @@ func toOutpostView(s outpost.Status) outpostView {
 		S3Export:   export,
 		Name:       s.Name,
 		Type:       s.Type,
+		Agent:      s.Agent,
 		ListenAddr: s.ListenAddr,
 		Guest:      s.Guest,
 		ValidUsers: s.ValidUsers,
@@ -66,6 +68,7 @@ func outpostFormValues(r *http.Request) (outpost.Outpost, error) {
 	o := outpost.Outpost{
 		Name:       strings.TrimSpace(r.FormValue("name")),
 		Type:       strings.TrimSpace(r.FormValue("type")),
+		Agent:      strings.TrimSpace(r.FormValue("agent")),
 		ListenAddr: strings.TrimSpace(r.FormValue("listen-addr")),
 		Guest:      r.FormValue("guest") == "1" || r.FormValue("guest") == "true",
 		ValidUsers: strings.TrimSpace(r.FormValue("valid-users")),

@@ -191,6 +191,12 @@ func TestOutpostHandlersS3Export(t *testing.T) {
 		t.Fatalf("secret not preserved: %+v ok=%v err=%v", loaded.S3Export, ok, err)
 	}
 
+	r, w = profileRequest(http.MethodPost, "/api2/extjs/config/d2d-outposts", url.Values{"name": {"smb-agent"}, "type": {"samba"}, "agent": {"web01"}, "guest": {"1"}})
+	ExtJsOutpostsHandler(app)(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("samba on an agent status = %d body=%s", w.Code, w.Body.String())
+	}
+
 	r, w = profileRequest(http.MethodPost, "/api2/extjs/config/d2d-outposts", url.Values{"name": {"bad"}, "type": {"s3-export"}, "listen-addr": {"127.0.0.1:0"}, "s3-export": {"{not json"}})
 	ExtJsOutpostsHandler(app)(w, r)
 	if w.Code != http.StatusBadRequest {
