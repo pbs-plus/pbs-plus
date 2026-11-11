@@ -58,10 +58,9 @@ func openListener(ctx context.Context, o Outpost) (net.Listener, error) {
 
 var agentNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
 
-// agentCapable lists the types that own their listener; samba relies on the host smbd.
+// agentCapable lists the types that serve attached snapshots through their own listener.
 var agentCapable = map[string]bool{
 	TypeNFS: true,
-	TypeS3:  true,
 }
 
 func validatePlacement(o Outpost) error {

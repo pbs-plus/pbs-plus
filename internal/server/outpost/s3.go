@@ -61,7 +61,7 @@ func (s3Driver) Start(ctx context.Context, o Outpost) (Instance, error) {
 	if err := handler.OpenKeyIndex(filepath.Join(conf.StatePrefix, "objectstore", o.Name+".db")); err != nil {
 		log.Error(err, "s3 outpost "+o.Name+" key index; serving via snapshot scan")
 	}
-	listener, err := openListener(ctx, o)
+	listener, err := net.Listen("tcp", o.ListenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("s3 outpost listen: %w", err)
 	}

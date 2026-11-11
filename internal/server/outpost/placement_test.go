@@ -36,7 +36,7 @@ func TestValidatePlacement(t *testing.T) {
 	}{
 		{"server nfs", testOutpost(), ""},
 		{"agent nfs", Outpost{Name: "a", Type: TypeNFS, Agent: "host-1.lan", ListenAddr: "0.0.0.0:2049"}, ""},
-		{"agent s3", func() Outpost { o := testS3Outpost(); o.Agent = "host-1"; return o }(), ""},
+		{"agent s3 objects", func() Outpost { o := testS3Outpost(); o.Agent = "host-1"; return o }(), "cannot be placed on an agent"},
 		{"agent samba", Outpost{Name: "a", Type: TypeSamba, Agent: "host-1"}, "cannot be placed on an agent"},
 		{"bad agent", Outpost{Name: "a", Type: TypeNFS, Agent: "../x", ListenAddr: "0.0.0.0:2049"}, "invalid agent name"},
 	}
