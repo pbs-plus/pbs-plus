@@ -32,6 +32,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/mtfapi"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/notificationapi"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/restoreapi"
+	"github.com/pbs-plus/pbs-plus/internal/server/web/api/s3repoapi"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/scriptapi"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/targetapi"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/tokenapi"
@@ -88,6 +89,8 @@ func NewServer(app *application.Runtime, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-compose/{datastore}", ServerOnly(app, mountapi.ExtJsComposeHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-outposts", ServerOnly(app, mountapi.ExtJsOutpostsHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-outposts/{name}", ServerOnly(app, mountapi.ExtJsOutpostSingleHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-s3-repositories", ServerOnly(app, s3repoapi.ListHandler()))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-s3-repositories/{name}", ServerOnly(app, s3repoapi.SingleHandler()))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles", ServerOnly(app, mountapi.ExtJsMountProfilesHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles/{id}", ServerOnly(app, mountapi.ExtJsMountProfileSingleHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles/{id}/mount", ServerOnly(app, mountapi.ExtJsMountProfileMountHandler(app)))

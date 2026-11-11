@@ -5,7 +5,6 @@ package mountapi
 import (
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/pbs-plus/pbs-plus/internal/conf"
@@ -153,94 +152,5 @@ func TestOutpostCreateRejectsInvalid(t *testing.T) {
 	ExtJsOutpostsHandler(app)(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("bad listen status = %d", w.Code)
-	}
-}
-
-func TestOutpostHandlersS3(t *testing.T) {
-	dir := t.TempDir()
-	old := conf.StatePrefix
-	conf.StatePrefix = dir
-	t.Cleanup(func() {
-		outpost.StopAll()
-		conf.StatePrefix = old
-	})
-
-	app := (*application.Runtime)(nil)
-	config := `{"region":"us-east-1","tls":false,"buckets":[{"name":"mariadb","datastore":"backup","backup_type":"host","backup_id":"mariadb"},{"name":"postgres","datastore":"backup","namespace":"databases","backup_type":"host","backup_id":"postgres"}],"credentials":[{"access_key":"operator","secret_key":"operator-secret","auth_id":"backup@pbs!s3","grants":[{"bucket":"mariadb","read":true,"write":true,"delete":true}]},{"access_key":"postgres-operator","secret_key":"postgres-secret","auth_id":"backup@pbs!postgres","grants":[{"bucket":"postgres","read":true,"write":true}]}]}`
-
-	create := url.Values{"name": {"edge-s3"}, "type": {"s3"}, "listen-addr": {"127.0.0.1:0"}, "s3": {config}}
-	r, w := profileRequest(http.MethodPost, "/api2/extjs/config/d2d-outposts", create)
-	ExtJsOutpostsHandler(app)(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("create status = %d body=%s", w.Code, w.Body.String())
-	}
-
-	r, w = profileRequest(http.MethodGet, "/api2/extjs/config/d2d-outposts", nil)
-	ExtJsOutpostsHandler(app)(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("list status = %d body=%s", w.Code, w.Body.String())
-	}
-	view := decodeList(t, w)
-	if len(view) != 1 {
-		t.Fatalf("view = %v", view)
-	}
-	if view[0]["type"] != "s3" {
-		t.Fatalf("view type = %v", view[0]["type"])
-	}
-	s3, ok := view[0]["s3"].(map[string]any)
-	if !ok || s3["region"] != "us-east-1" {
-		t.Fatalf("view s3 = %v", view[0]["s3"])
-	}
-	buckets, _ := s3["buckets"].([]any)
-	if len(buckets) != 2 || buckets[0].(map[string]any)["name"] != "mariadb" {
-		t.Fatalf("view buckets = %v", s3["buckets"])
-	}
-	credentials, _ := s3["credentials"].([]any)
-	if len(credentials) != 2 || credentials[0].(map[string]any)["secret_key"] != "" {
-		t.Fatalf("view credentials = %v", s3["credentials"])
-	}
-	endpoints, _ := view[0]["endpoints"].([]any)
-	if len(endpoints) != 2 || !strings.HasPrefix(endpoints[0].(string), "http://") {
-		t.Fatalf("view endpoints = %v", view[0]["endpoints"])
-	}
-
-	updated := strings.ReplaceAll(config, `"secret_key":"operator-secret"`, `"secret_key":""`)
-	updated = strings.ReplaceAll(updated, `"secret_key":"postgres-secret"`, `"secret_key":""`)
-	update := url.Values{"name": {"edge-s3"}, "type": {"s3"}, "listen-addr": {"127.0.0.1:0"}, "s3": {updated}}
-	r, w = profileRequest(http.MethodPut, "/api2/extjs/config/d2d-outposts/edge-s3", update)
-	r.SetPathValue("name", "edge-s3")
-	ExtJsOutpostSingleHandler(app)(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("update status = %d body=%s", w.Code, w.Body.String())
-	}
-	loaded, ok, err := outpost.LoadOutpost("edge-s3")
-	if err != nil || !ok || loaded.S3.Credentials[0].SecretKey != "operator-secret" || loaded.S3.Credentials[1].SecretKey != "postgres-secret" {
-		t.Fatalf("updated credentials = %+v, ok=%v, err=%v", loaded.S3, ok, err)
-	}
-
-	badJSON := url.Values{"name": {"edge-s3"}, "type": {"s3"}, "listen-addr": {"127.0.0.1:0"}, "s3": {"{not json"}}
-	r, w = profileRequest(http.MethodPut, "/api2/extjs/config/d2d-outposts/edge-s3", badJSON)
-	r.SetPathValue("name", "edge-s3")
-	ExtJsOutpostSingleHandler(app)(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("malformed s3 json status = %d body=%s", w.Code, w.Body.String())
-	}
-
-	missingConfig := url.Values{"name": {"edge-s3"}, "type": {"s3"}, "listen-addr": {"127.0.0.1:0"}}
-	r, w = profileRequest(http.MethodPut, "/api2/extjs/config/d2d-outposts/edge-s3", missingConfig)
-	r.SetPathValue("name", "edge-s3")
-	ExtJsOutpostSingleHandler(app)(w, r)
-	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "s3 config is required") {
-		t.Fatalf("missing s3 config status = %d body=%s", w.Code, w.Body.String())
-	}
-
-	r, w = profileRequest(http.MethodDelete, "/api2/extjs/config/d2d-outposts/edge-s3", nil)
-	r.SetPathValue("name", "edge-s3")
-	ExtJsOutpostSingleHandler(app)(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("delete status = %d", w.Code)
-	}
-	if _, ok, _ := outpost.LoadOutpost("edge-s3"); ok {
-		t.Fatal("s3 outpost survived delete")
 	}
 }

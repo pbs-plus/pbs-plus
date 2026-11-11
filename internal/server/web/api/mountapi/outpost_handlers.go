@@ -3,36 +3,33 @@
 package mountapi
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
-	"github.com/pbs-plus/pbs-plus/internal/server/objectstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
 )
 
 type outpostView struct {
-	Name       string          `json:"name"`
-	Type       string          `json:"type"`
-	ListenAddr string          `json:"listen-addr"`
-	Guest      bool            `json:"guest"`
-	ValidUsers string          `json:"valid-users"`
-	ForceUser  string          `json:"force-user"`
-	HostsAllow string          `json:"hosts-allow"`
-	Browseable bool            `json:"browseable"`
-	S3         json.RawMessage `json:"s3,omitempty"`
-	Running    bool            `json:"running"`
-	Error      string          `json:"error,omitempty"`
-	Attached   []string        `json:"attached"`
-	Endpoints  []string        `json:"endpoints"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	ListenAddr string   `json:"listen-addr"`
+	Guest      bool     `json:"guest"`
+	ValidUsers string   `json:"valid-users"`
+	ForceUser  string   `json:"force-user"`
+	HostsAllow string   `json:"hosts-allow"`
+	Browseable bool     `json:"browseable"`
+	Running    bool     `json:"running"`
+	Error      string   `json:"error,omitempty"`
+	Attached   []string `json:"attached"`
+	Endpoints  []string `json:"endpoints"`
 }
 
-func toOutpostView(s outpost.Status) (outpostView, error) {
-	view := outpostView{
+func toOutpostView(s outpost.Status) outpostView {
+	return outpostView{
 		Name:       s.Name,
 		Type:       s.Type,
 		ListenAddr: s.ListenAddr,
@@ -46,32 +43,14 @@ func toOutpostView(s outpost.Status) (outpostView, error) {
 		Attached:   s.Attached,
 		Endpoints:  s.Endpoints,
 	}
-	if s.S3 != nil {
-		config := *s.S3
-		config.Credentials = append([]objectstore.Credential(nil), s.S3.Credentials...)
-		for i := range config.Credentials {
-			config.Credentials[i].SecretKey = ""
-		}
-		data, err := json.Marshal(config)
-		if err != nil {
-			return outpostView{}, err
-		}
-		view.S3 = data
-	}
-	return view, nil
 }
 
 func writeOutpostView(w http.ResponseWriter, s outpost.Status) {
-	view, err := toOutpostView(s)
-	if err != nil {
-		respond.WriteErrorResponse(w, err)
-		return
-	}
-	writeExtJS(w, view)
+	writeExtJS(w, toOutpostView(s))
 }
 
-func outpostFormValues(r *http.Request) (outpost.Outpost, error) {
-	o := outpost.Outpost{
+func outpostFormValues(r *http.Request) outpost.Outpost {
+	return outpost.Outpost{
 		Name:       strings.TrimSpace(r.FormValue("name")),
 		Type:       strings.TrimSpace(r.FormValue("type")),
 		ListenAddr: strings.TrimSpace(r.FormValue("listen-addr")),
@@ -80,29 +59,6 @@ func outpostFormValues(r *http.Request) (outpost.Outpost, error) {
 		ForceUser:  strings.TrimSpace(r.FormValue("force-user")),
 		HostsAllow: strings.TrimSpace(r.FormValue("hosts-allow")),
 		Browseable: r.FormValue("browseable") == "1" || r.FormValue("browseable") == "true",
-	}
-	if s3 := strings.TrimSpace(r.FormValue("s3")); s3 != "" {
-		config := &objectstore.Config{}
-		if err := json.Unmarshal([]byte(s3), config); err != nil {
-			return outpost.Outpost{}, fmt.Errorf("invalid s3 config: %w", err)
-		}
-		o.S3 = config
-	}
-	return o, nil
-}
-
-func preserveS3Secrets(next, current *objectstore.Config) {
-	if next == nil || current == nil {
-		return
-	}
-	secrets := make(map[string]string, len(current.Credentials))
-	for _, credential := range current.Credentials {
-		secrets[credential.AccessKey] = credential.SecretKey
-	}
-	for i := range next.Credentials {
-		if next.Credentials[i].SecretKey == "" {
-			next.Credentials[i].SecretKey = secrets[next.Credentials[i].AccessKey]
-		}
 	}
 }
 
@@ -121,12 +77,7 @@ func ExtJsOutpostsHandler(app *application.Runtime) http.HandlerFunc {
 			statuses := outpost.StatusAll()
 			views := make([]outpostView, 0, len(statuses))
 			for _, s := range statuses {
-				view, err := toOutpostView(s)
-				if err != nil {
-					respond.WriteErrorResponse(w, err)
-					return
-				}
-				views = append(views, view)
+				views = append(views, toOutpostView(s))
 			}
 			writeExtJS(w, views)
 		case http.MethodPost:
@@ -134,11 +85,7 @@ func ExtJsOutpostsHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
-			o, err := outpostFormValues(r)
-			if err != nil {
-				writeOutpostInvalid(w, err)
-				return
-			}
+			o := outpostFormValues(r)
 			if err := outpost.ValidateOutpost(o); err != nil {
 				writeOutpostInvalid(w, err)
 				return
@@ -189,16 +136,11 @@ func ExtJsOutpostSingleHandler(app *application.Runtime) http.HandlerFunc {
 				respond.WriteErrorResponse(w, err)
 				return
 			}
-			o, err := outpostFormValues(r)
-			if err != nil {
-				writeOutpostInvalid(w, err)
-				return
-			}
+			o := outpostFormValues(r)
 			if o.Name == "" {
 				o.Name = existing.Name
 			}
 			o.CreatedAt = existing.CreatedAt
-			preserveS3Secrets(o.S3, existing.S3)
 			if err := outpost.ValidateOutpost(o); err != nil {
 				writeOutpostInvalid(w, err)
 				return

@@ -1,6 +1,6 @@
 //go:build linux
 
-package outpost
+package s3repo
 
 import (
 	"crypto/ecdsa"
@@ -26,14 +26,13 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/objectstore"
 )
 
-func testS3Outpost() Outpost {
+func testRepository() Repository {
 	tlsDisabled := false
-	return Outpost{
+	return Repository{
 		Name:       "s3-test",
-		Type:       TypeS3,
 		ListenAddr: "127.0.0.1:0",
 		CreatedAt:  time.Now().Unix(),
-		S3: &objectstore.Config{
+		Config: objectstore.Config{
 			Region: "us-east-1",
 			TLS:    &tlsDisabled,
 			Buckets: []objectstore.Bucket{{
@@ -50,14 +49,14 @@ func testS3Outpost() Outpost {
 }
 
 func TestS3DriverRejectsMissingTLSCertificate(t *testing.T) {
-	configured := testS3Outpost()
+	configured := testRepository()
 	tlsEnabled := true
-	configured.S3.TLS = &tlsEnabled
-	configured.S3.TLSCertFile = filepath.Join(t.TempDir(), "missing.crt")
-	configured.S3.TLSKeyFile = filepath.Join(t.TempDir(), "missing.key")
+	configured.Config.TLS = &tlsEnabled
+	configured.Config.TLSCertFile = filepath.Join(t.TempDir(), "missing.crt")
+	configured.Config.TLSKeyFile = filepath.Join(t.TempDir(), "missing.key")
 
-	_, err := (s3Driver{}).Start(t.Context(), configured)
-	if err == nil || !strings.Contains(err.Error(), "s3 outpost tls") {
+	_, err := start(t.Context(), configured)
+	if err == nil || !strings.Contains(err.Error(), "s3 repository tls") {
 		t.Fatalf("Start() error = %v, want synchronous TLS certificate error", err)
 	}
 }
@@ -97,21 +96,21 @@ func TestS3DriverTLSRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	configured := testS3Outpost()
+	configured := testRepository()
 	tlsEnabled := true
-	configured.S3.TLS = &tlsEnabled
-	configured.S3.TLSCertFile = certPath
-	configured.S3.TLSKeyFile = keyPath
-	instance, err := (s3Driver{}).Start(t.Context(), configured)
+	configured.Config.TLS = &tlsEnabled
+	configured.Config.TLSCertFile = certPath
+	configured.Config.TLSKeyFile = keyPath
+	instance, err := start(t.Context(), configured)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = instance.Stop() })
+	t.Cleanup(func() { _ = instance.stop() })
 
-	if !strings.HasPrefix(instance.Endpoint(""), "https://") {
-		t.Fatalf("endpoint = %q", instance.Endpoint(""))
+	if !strings.HasPrefix(instance.endpoint(""), "https://") {
+		t.Fatalf("endpoint = %q", instance.endpoint(""))
 	}
-	endpoint, err := url.Parse(instance.Endpoint(""))
+	endpoint, err := url.Parse(instance.endpoint(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,18 +139,18 @@ func TestS3OutpostPersistence(t *testing.T) {
 	oldPrefix := conf.StatePrefix
 	conf.StatePrefix = t.TempDir()
 	t.Cleanup(func() { conf.StatePrefix = oldPrefix })
-	configured := testS3Outpost()
-	if err := SaveOutpost(configured); err != nil {
+	configured := testRepository()
+	if err := Save(configured); err != nil {
 		t.Fatal(err)
 	}
-	loaded, ok, err := LoadOutpost(configured.Name)
+	loaded, ok, err := Load(configured.Name)
 	if err != nil || !ok {
-		t.Fatalf("LoadOutpost() ok = %v, err = %v", ok, err)
+		t.Fatalf("Load() ok = %v, err = %v", ok, err)
 	}
-	if loaded.S3 == nil || loaded.S3.Credentials[0].SecretKey != "outpost-secret-key" || loaded.S3.Buckets[0].Datastore != "store" {
-		t.Fatalf("loaded S3 config = %+v", loaded.S3)
+	if loaded.Config.Credentials[0].SecretKey != "outpost-secret-key" || loaded.Config.Buckets[0].Datastore != "store" {
+		t.Fatalf("loaded config = %+v", loaded.Config)
 	}
-	info, err := os.Stat(filepath.Join(conf.StatePrefix, "outposts", configured.Name+".json"))
+	info, err := os.Stat(filepath.Join(conf.StatePrefix, "s3-repositories", configured.Name+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,14 +160,14 @@ func TestS3OutpostPersistence(t *testing.T) {
 }
 
 func TestS3DriverRoundTrip(t *testing.T) {
-	configured := testS3Outpost()
-	instance, err := (s3Driver{}).Start(t.Context(), configured)
+	configured := testRepository()
+	instance, err := start(t.Context(), configured)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = instance.Stop() })
+	t.Cleanup(func() { _ = instance.stop() })
 
-	endpoint, err := url.Parse(instance.Endpoint(""))
+	endpoint, err := url.Parse(instance.endpoint(""))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,9 +1,7 @@
 //go:build linux
 
 // Package outpost manages typed serving endpoints that attached mounts are
-// exposed through as shares. Drivers are registered per type so further
-// outpost kinds (e.g. an S3 endpoint) can be added without touching mount
-// workflows.
+
 package outpost
 
 import (
@@ -21,28 +19,25 @@ import (
 	"github.com/go-git/go-billy/v5"
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/log"
-	"github.com/pbs-plus/pbs-plus/internal/server/objectstore"
 )
 
 const (
 	TypeNFS   = "nfs"
-	TypeS3    = "s3"
 	TypeSamba = "samba"
 )
 
 // Outpost is the persisted configuration of one serving endpoint.
 type Outpost struct {
-	Name       string              `json:"name"`
-	Type       string              `json:"type"`
-	Agent      string              `json:"agent,omitempty"`
-	ListenAddr string              `json:"listen_addr,omitempty"`
-	Guest      bool                `json:"guest,omitempty"`
-	ValidUsers string              `json:"valid_users,omitempty"`
-	ForceUser  string              `json:"force_user,omitempty"`
-	HostsAllow string              `json:"hosts_allow,omitempty"`
-	Browseable bool                `json:"browseable,omitempty"`
-	S3         *objectstore.Config `json:"s3,omitempty"`
-	CreatedAt  int64               `json:"created_at"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Agent      string `json:"agent,omitempty"`
+	ListenAddr string `json:"listen_addr,omitempty"`
+	Guest      bool   `json:"guest,omitempty"`
+	ValidUsers string `json:"valid_users,omitempty"`
+	ForceUser  string `json:"force_user,omitempty"`
+	HostsAllow string `json:"hosts_allow,omitempty"`
+	Browseable bool   `json:"browseable,omitempty"`
+	CreatedAt  int64  `json:"created_at"`
 }
 
 // Attachment is a share served by an outpost: FS serves in process (nfs driver), Path backs VFS drivers (samba).
@@ -78,7 +73,6 @@ type Instance interface {
 // drivers registers the available outpost types.
 var drivers = map[string]Driver{
 	TypeNFS:   nfsDriver{},
-	TypeS3:    s3Driver{},
 	TypeSamba: sambaDriver{},
 }
 
@@ -421,14 +415,8 @@ func StatusAll() []Status {
 		if inst := mgr.instances[o.Name]; inst != nil {
 			st.Running = true
 			st.Attached = inst.Attached()
-			if o.Type == TypeS3 && o.S3 != nil {
-				for _, bucket := range o.S3.Buckets {
-					st.Endpoints = append(st.Endpoints, inst.Endpoint(bucket.Name))
-				}
-			} else {
-				for _, share := range st.Attached {
-					st.Endpoints = append(st.Endpoints, inst.Endpoint(share))
-				}
+			for _, share := range st.Attached {
+				st.Endpoints = append(st.Endpoints, inst.Endpoint(share))
 			}
 		}
 		statuses = append(statuses, st)
