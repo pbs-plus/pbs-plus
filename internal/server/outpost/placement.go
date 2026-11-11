@@ -60,7 +60,8 @@ var agentNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
 
 // agentCapable lists the types that serve attached snapshots through their own listener.
 var agentCapable = map[string]bool{
-	TypeNFS: true,
+	TypeNFS:      true,
+	TypeS3Export: true,
 }
 
 func validatePlacement(o Outpost) error {

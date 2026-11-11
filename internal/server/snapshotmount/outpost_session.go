@@ -184,6 +184,9 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 	if !found {
 		return Session{}, fmt.Errorf("outpost %q does not exist", in.Outpost)
 	}
+	if o.Type == outpost.TypeS3Export && mode == ModeRW {
+		return Session{}, fmt.Errorf("outpost %q is an s3 export and only serves read-only mounts", in.Outpost)
+	}
 	if o.Type == outpost.TypeSamba {
 		return mountVFSOutpostSession(ctx, task, in, parsedTime, key, mode)
 	}
