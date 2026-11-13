@@ -2,6 +2,8 @@ package snapshots
 
 import (
 	"fmt"
+	"runtime"
+	"strings"
 )
 
 type SnapshotManager struct {
@@ -10,26 +12,25 @@ type SnapshotManager struct {
 
 var Manager = &SnapshotManager{
 	handlerMap: map[string]SnapshotHandler{
-		"btrfs": &BtrfsSnapshotHandler{},
-		"zfs":   &ZFSSnapshotHandler{},
-		"lvm":   &LVMSnapshotHandler{},
-		"ext4":  &EXT4XFSHandler{},
-		"xfs":   &EXT4XFSHandler{},
 		"ntfs":  &NtfsSnapshotHandler{},
 		"refs":  &NtfsSnapshotHandler{},
-		"fat32": nil, // FAT32 does not support snapshots
-		"exfat": nil, // exFAT does not support snapshots
+		"fat32": nil,
+		"exfat": nil,
 		"hfs+":  nil,
 	},
 }
 
 func (m *SnapshotManager) CreateSnapshot(jobID string, sourcePath string) (Snapshot, error) {
+	if runtime.GOOS == "linux" {
+		return Snapshot{}, fmt.Errorf("snapshots are unavailable on Linux")
+	}
+
 	fsType, err := detectFilesystem(sourcePath)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("failed to detect filesystem: %w", err)
 	}
 
-	handler, exists := m.handlerMap[fsType]
+	handler, exists := m.handlerMap[strings.ToLower(fsType)]
 	if !exists || handler == nil {
 		return Snapshot{}, fmt.Errorf("no snapshot handler available for filesystem type: %s", fsType)
 	}

@@ -12,7 +12,10 @@ func GetAgentTargetName(hostname string, volumeId string, os string) string {
 	if os == "windows" {
 		return hostname + " - " + volumeId
 	}
-	return hostname + " - Root"
+	if volumeId == "/" {
+		return hostname + " - Root"
+	}
+	return hostname + " - " + volumeId
 }
 
 func toNullString(s string) sql.NullString {
