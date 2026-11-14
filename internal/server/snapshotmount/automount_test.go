@@ -96,7 +96,7 @@ func TestListNamespaceGroups(t *testing.T) {
 		}
 	}
 	mkdir("host", "live-id", "2026-01-01T00:00:00Z")
-	mkdir("ns", "1988-PROJECTS", "host", "xmedia", "2026-01-02T00:00:00Z")
+	mkdir("ns", "1988-PROJECTS", "host", "scanner", "2026-01-02T00:00:00Z")
 	mkdir("ns", "1988-PROJECTS", "ns", "inner", "host", "x", "2026-01-03T00:00:00Z")
 	mkdir("ns", "empty-ns")
 	mkdir("ns", "no-snaps", "host", "gone")
@@ -111,7 +111,7 @@ func TestListNamespaceGroups(t *testing.T) {
 	}
 	for _, want := range []string{
 		"\x00host\x00live-id",
-		"1988-PROJECTS\x00host\x00xmedia",
+		"1988-PROJECTS\x00host\x00scanner",
 		"1988-PROJECTS/inner\x00host\x00x",
 	} {
 		if !got[want] {
