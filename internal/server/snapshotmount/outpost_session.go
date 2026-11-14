@@ -519,9 +519,9 @@ func openSplitReader(storeRoot, fileName, dirTime, namespace, backupType, backup
 		}
 		return transfer.NewSplitReader(metaData, payloadData, source)
 	}
-	idxData, err := os.ReadFile(ppxarPath)
+	idxData, err := os.ReadFile(mpxarPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading index: %w", err)
 	}
-	return transfer.NewSplitReader(idxData, nil, source)
+	return transfer.NewSplitReaderMetaOnly(idxData, source)
 }
