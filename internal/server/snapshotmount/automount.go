@@ -110,7 +110,12 @@ func AutoMountProfiles(ctx context.Context, engine *jobs.Engine) {
 }
 
 func submitUnmount(ctx context.Context, engine *jobs.Engine, session Session, reason string) {
-	input := jobs.SnapshotUnmountInput{MountPath: session.MountPoint, Force: false, Reason: reason}
+	input := jobs.SnapshotUnmountInput{
+		Datastore: session.Datastore, Namespace: session.Namespace,
+		BackupType: session.BackupType, BackupID: session.BackupID,
+		BackupTime: session.BackupTime, FileName: session.FileName,
+		MountPath: session.MountPoint, Force: false, Reason: reason,
+	}
 	request, err := jobs.NewWorkflowSubmit(jobs.WorkflowSnapshotUnmount, session.ServiceKey, reason, "", input, []string{"snapshot-mount:" + session.ServiceKey}, 1, time.Minute)
 	if err != nil {
 		log.Error(err, "auto-mount: building unmount submit", "mount-point", session.MountPoint)
