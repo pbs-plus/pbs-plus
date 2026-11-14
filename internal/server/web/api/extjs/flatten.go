@@ -34,6 +34,8 @@ func FlattenBackup(b coredb.Backup) FlatBackup {
 		ExpandSevenZip:   b.ExpandSevenZip,
 		ExpandMaxDepth:   b.ExpandMaxDepth,
 		ExpandMaxEntries: b.ExpandMaxEntries,
+		StallTimeout:     b.StallTimeout,
+		StallMinProgress: b.StallMinProgress,
 		DatabaseScope:    b.DatabaseScope,
 		DatabaseName:     b.DatabaseName,
 		DovecotScope:     b.DovecotScope,
@@ -530,6 +532,8 @@ func FlattenBackupForEdit(b coredb.Backup) map[string]any {
 		"expand-7z":          b.ExpandSevenZip,
 		"expand-max-depth":   b.ExpandMaxDepth,
 		"expand-max-entries": b.ExpandMaxEntries,
+		"stall-timeout":      b.StallTimeout,
+		"stall-min-progress": b.StallMinProgress,
 		"database_scope":     b.DatabaseScope,
 		"database_name":      b.DatabaseName,
 		"dovecot_scope":      b.DovecotScope,
@@ -599,6 +603,8 @@ type FlatBackup struct {
 	ExpandSevenZip   bool   `json:"expand-7z"`
 	ExpandMaxDepth   int    `json:"expand-max-depth"`
 	ExpandMaxEntries int    `json:"expand-max-entries"`
+	StallTimeout     int    `json:"stall-timeout"`
+	StallMinProgress int    `json:"stall-min-progress"`
 	DatabaseScope    string `json:"database_scope,omitempty"`
 	DatabaseName     string `json:"database_name,omitempty"`
 	DovecotScope     string `json:"dovecot_scope,omitempty"`

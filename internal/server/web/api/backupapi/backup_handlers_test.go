@@ -57,13 +57,33 @@ func TestParseBulkBackupChanges(t *testing.T) {
 		t.Fatalf("unexpected result %#v", got)
 	}
 
+	got, err = apply(url.Values{"stall-timeout": {"-1"}, "stall-min-progress": {"512"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StallTimeout != coredb.StallTimeoutDisabled || got.StallMinProgress != 512 {
+		t.Fatalf("stall rule = (%d, %d), want (-1, 512)", got.StallTimeout, got.StallMinProgress)
+	}
+
+	got, err = apply(url.Values{"delete": {"stall-timeout", "stall-min-progress"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StallTimeout != coredb.DefaultStallTimeout || got.StallMinProgress != coredb.DefaultStallMinProgress {
+		t.Fatalf("deleted stall rule = (%d, %d), want defaults", got.StallTimeout, got.StallMinProgress)
+	}
+
 	for name, form := range map[string]url.Values{
-		"no changes":         {},
-		"unknown delete":     {"delete": {"target"}},
-		"invalid schedule":   {"schedule": {"not a schedule"}},
-		"negative retry":     {"retry": {"-1"}},
-		"empty datastore":    {"delete": {"store"}},
-		"bad retry interval": {"retry-interval": {"0"}},
+		"zero stall timeout":     {"stall-timeout": {"0"}},
+		"below -1 stall timeout": {"stall-timeout": {"-2"}},
+		"non-numeric stall":      {"stall-timeout": {"soon"}},
+		"zero stall progress":    {"stall-min-progress": {"0"}},
+		"no changes":             {},
+		"unknown delete":         {"delete": {"target"}},
+		"invalid schedule":       {"schedule": {"not a schedule"}},
+		"negative retry":         {"retry": {"-1"}},
+		"empty datastore":        {"delete": {"store"}},
+		"bad retry interval":     {"retry-interval": {"0"}},
 	} {
 		if _, err := apply(form); err == nil {
 			t.Errorf("%s: expected an error", name)

@@ -62,6 +62,20 @@ var bulkBackupFields = map[string]bulkBackupField{
 		}
 		return func(b *coredb.Backup) { b.RetryInterval = n }, nil
 	},
+	"stall-timeout": func(v string) (backupChange, error) {
+		n, err := parseStallTimeout(v)
+		if err != nil {
+			return nil, err
+		}
+		return func(b *coredb.Backup) { b.StallTimeout = n }, nil
+	},
+	"stall-min-progress": func(v string) (backupChange, error) {
+		n, err := parseStallMinProgress(v)
+		if err != nil {
+			return nil, err
+		}
+		return func(b *coredb.Backup) { b.StallMinProgress = n }, nil
+	},
 	"pre_script": func(v string) (backupChange, error) {
 		if err := validate.ValidateScriptPath("pre_script", v); err != nil {
 			return nil, err

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/server/coredb"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
 )
 
@@ -33,14 +34,35 @@ func (f *fakeMount) Progress() (mountrpc.StatusReply, error) {
 }
 
 func newStallJob() *backupJob {
-	return &backupJob{logger: log.WithScope(log.Scope{JobID: "stall-test"})}
+	return newStallJobWith(0, 0)
 }
 
-func shortenStallChecks(t *testing.T, grace, tick time.Duration, minBytes int64) {
+func newStallJobWith(timeout, minProgress int) *backupJob {
+	return &backupJob{
+		logger: log.WithScope(log.Scope{JobID: "stall-test"}),
+		job:    coredb.Backup{StallTimeout: timeout, StallMinProgress: minProgress},
+	}
+}
+
+// shortenStallChecks runs the rule in milliseconds and KiB, so the 120/1024 defaults become 120ms and 1 MiB.
+func shortenStallChecks(t *testing.T, tick time.Duration) {
 	t.Helper()
-	priorGrace, priorTick, priorBytes := noProgressGrace, stallCheckInterval, minProgressBytes
-	noProgressGrace, stallCheckInterval, minProgressBytes = grace, tick, minBytes
-	t.Cleanup(func() { noProgressGrace, stallCheckInterval, minProgressBytes = priorGrace, priorTick, priorBytes })
+	priorTick, priorUnit, priorBytes := stallCheckInterval, stallTimeoutUnit, stallProgressUnit
+	stallCheckInterval, stallTimeoutUnit, stallProgressUnit = tick, time.Millisecond, 1<<10
+	t.Cleanup(func() { stallCheckInterval, stallTimeoutUnit, stallProgressUnit = priorTick, priorUnit, priorBytes })
+}
+
+func connectedMount() *fakeMount {
+	m := &fakeMount{}
+	m.connected.Store(true)
+	return m
+}
+
+func watch(t *testing.T, b *backupJob, mount mountProgressReporter) <-chan error {
+	t.Helper()
+	finished := make(chan struct{})
+	t.Cleanup(func() { close(finished) })
+	return b.watchStall(context.Background(), "upid", finished, mount)
 }
 
 func expectStall(t *testing.T, stalled <-chan error) {
@@ -76,63 +98,70 @@ func driveFor(n int, step func()) <-chan struct{} {
 	return done
 }
 
+func TestStallRuleDefaults(t *testing.T) {
+	cases := map[string]struct {
+		timeout, minProgress int
+		grace                time.Duration
+		minBytes             int64
+	}{
+		"unset uses defaults":    {0, 0, 2 * time.Hour, 1 << 30},
+		"custom values":          {30, 256, 30 * time.Minute, 256 << 20},
+		"disabled":               {coredb.StallTimeoutDisabled, 0, 0, 0},
+		"negative floor default": {45, -5, 45 * time.Minute, 1 << 30},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			grace, minBytes := newStallJobWith(tc.timeout, tc.minProgress).stallRule()
+			if grace != tc.grace || minBytes != tc.minBytes {
+				t.Fatalf("stallRule = (%s, %d), want (%s, %d)", grace, minBytes, tc.grace, tc.minBytes)
+			}
+		})
+	}
+}
+
 func TestWatchStallFiresWhenConnectedMountServesNoOperations(t *testing.T) {
-	shortenStallChecks(t, 50*time.Millisecond, 5*time.Millisecond, 1<<20)
-
-	mount := &fakeMount{}
-	mount.connected.Store(true)
+	shortenStallChecks(t, 5*time.Millisecond)
+	mount := connectedMount()
 	mount.entries.Store(1234)
+	expectStall(t, watch(t, newStallJobWith(50, 1024), mount))
+}
 
-	finished := make(chan struct{})
-	defer close(finished)
-	expectStall(t, newStallJob().watchStall(context.Background(), "upid", finished, mount))
+func TestWatchStallUsesDefaultsForUnsetJob(t *testing.T) {
+	shortenStallChecks(t, 5*time.Millisecond)
+	expectStall(t, watch(t, newStallJob(), connectedMount()))
 }
 
 func TestWatchStallStaysQuietWhileEntriesAdvance(t *testing.T) {
-	shortenStallChecks(t, 80*time.Millisecond, 5*time.Millisecond, 1<<20)
-
-	mount := &fakeMount{}
-	mount.connected.Store(true)
-
-	finished := make(chan struct{})
-	defer close(finished)
-	stalled := newStallJob().watchStall(context.Background(), "upid", finished, mount)
+	shortenStallChecks(t, 5*time.Millisecond)
+	mount := connectedMount()
+	stalled := watch(t, newStallJobWith(80, 1024), mount)
 	expectNoStall(t, stalled, driveFor(40, func() { mount.entries.Add(1) }))
 }
 
 func TestWatchStallStaysQuietWhileBytesAdvance(t *testing.T) {
-	shortenStallChecks(t, 80*time.Millisecond, 5*time.Millisecond, 1<<20)
-
-	mount := &fakeMount{}
-	mount.connected.Store(true)
-
-	finished := make(chan struct{})
-	defer close(finished)
-	stalled := newStallJob().watchStall(context.Background(), "upid", finished, mount)
+	shortenStallChecks(t, 5*time.Millisecond)
+	mount := connectedMount()
+	stalled := watch(t, newStallJobWith(80, 1024), mount)
 	expectNoStall(t, stalled, driveFor(40, func() { mount.bytes.Add(1 << 20) }))
 }
 
 func TestWatchStallFiresOnForwardCrawlBelowFloor(t *testing.T) {
-	shortenStallChecks(t, 50*time.Millisecond, 5*time.Millisecond, 1<<20)
-
-	mount := &fakeMount{}
-	mount.connected.Store(true)
-
-	finished := make(chan struct{})
-	defer close(finished)
-	stalled := newStallJob().watchStall(context.Background(), "upid", finished, mount)
+	shortenStallChecks(t, 5*time.Millisecond)
+	mount := connectedMount()
+	stalled := watch(t, newStallJobWith(50, 1024), mount)
 	_ = driveFor(1000, func() { mount.bytes.Add(1 << 10) })
 	expectStall(t, stalled)
 }
 
+func TestWatchStallDisabledNeverFiresOnIdleMount(t *testing.T) {
+	shortenStallChecks(t, 5*time.Millisecond)
+	stalled := watch(t, newStallJobWith(coredb.StallTimeoutDisabled, 0), connectedMount())
+	expectNoStall(t, stalled, driveFor(40, func() {}))
+}
+
 func TestWatchStallTransientRPCFailuresNeitherProgressNorOutage(t *testing.T) {
-	shortenStallChecks(t, 50*time.Millisecond, 5*time.Millisecond, 1<<20)
-
-	mount := &fakeMount{}
-	mount.connected.Store(true)
+	shortenStallChecks(t, 5*time.Millisecond)
+	mount := connectedMount()
 	mount.failEvery.Store(statusRPCAttempts)
-
-	finished := make(chan struct{})
-	defer close(finished)
-	expectStall(t, newStallJob().watchStall(context.Background(), "upid", finished, mount))
+	expectStall(t, watch(t, newStallJobWith(50, 1024), mount))
 }

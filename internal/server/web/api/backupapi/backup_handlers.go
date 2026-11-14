@@ -4,6 +4,7 @@ package backupapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -172,6 +173,28 @@ func parseExpandLimit(raw, name string, fallback int) (int, error) {
 	return value, nil
 }
 
+func parseStallTimeout(raw string) (int, error) {
+	if raw == "" {
+		return coredb.DefaultStallTimeout, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value == 0 || value < coredb.StallTimeoutDisabled {
+		return 0, errors.New("stall-timeout must be -1 (disabled) or a positive number of minutes")
+	}
+	return value, nil
+}
+
+func parseStallMinProgress(raw string) (int, error) {
+	if raw == "" {
+		return coredb.DefaultStallMinProgress, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return 0, errors.New("stall-min-progress must be a positive number of MiB")
+	}
+	return value, nil
+}
+
 func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := BackupConfigResponse{}
@@ -251,6 +274,16 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			respond.WriteErrorResponse(w, err)
 			return
 		}
+		stallTimeout, err := parseStallTimeout(r.FormValue("stall-timeout"))
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
+		stallMinProgress, err := parseStallMinProgress(r.FormValue("stall-min-progress"))
+		if err != nil {
+			respond.WriteErrorResponse(w, err)
+			return
+		}
 
 		id := r.FormValue("id")
 		err = validate.ValidateJobId(id)
@@ -319,6 +352,8 @@ func ExtJsBackupHandler(app *application.Runtime) http.HandlerFunc {
 			ExpandSevenZip:   expandSevenZip,
 			ExpandMaxDepth:   expandMaxDepth,
 			ExpandMaxEntries: expandMaxEntries,
+			StallTimeout:     stallTimeout,
+			StallMinProgress: stallMinProgress,
 			DatabaseScope:    r.FormValue("database_scope"),
 			DatabaseName:     r.FormValue("database_name"),
 			DovecotScope:     r.FormValue("dovecot_scope"),
@@ -492,6 +527,22 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 				}
 				backup.ExpandMaxEntries = expandMaxEntries
 			}
+			if r.FormValue("stall-timeout") != "" {
+				stallTimeout, err := parseStallTimeout(r.FormValue("stall-timeout"))
+				if err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+				backup.StallTimeout = stallTimeout
+			}
+			if r.FormValue("stall-min-progress") != "" {
+				stallMinProgress, err := parseStallMinProgress(r.FormValue("stall-min-progress"))
+				if err != nil {
+					respond.WriteErrorResponse(w, err)
+					return
+				}
+				backup.StallMinProgress = stallMinProgress
+			}
 
 			preScript := r.FormValue("pre_script")
 			if err := validate.ValidateScriptPath("pre_script", preScript); err != nil {
@@ -591,6 +642,10 @@ func ExtJsBackupSingleHandler(app *application.Runtime) http.HandlerFunc {
 						backup.RetryInterval = 1
 					case "max-dir-entries":
 						backup.MaxDirEntries = 1048576
+					case "stall-timeout":
+						backup.StallTimeout = coredb.DefaultStallTimeout
+					case "stall-min-progress":
+						backup.StallMinProgress = coredb.DefaultStallMinProgress
 					case "notification-mode":
 						backup.NotificationMode = ""
 					case "pre_script":

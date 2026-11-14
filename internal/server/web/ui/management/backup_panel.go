@@ -100,6 +100,8 @@ var backupPanel = js.Panel{
 					{ name: "ns", label: gettext("Namespace"), field: { xtype: "pbsD2DNamespaceSelector", emptyText: gettext("Root") } },
 					{ name: "retry", label: gettext("Number of retries"), field: { xtype: "proxmoxintegerfield", minValue: 0, emptyText: "0" } },
 					{ name: "retry-interval", label: gettext("Retry interval (minutes)"), field: { xtype: "proxmoxintegerfield", minValue: 1, emptyText: "1" } },
+					{ name: "stall-timeout", label: gettext("Stall timeout (minutes)"), field: { xtype: "proxmoxintegerfield", minValue: -1, emptyText: "120" } },
+					{ name: "stall-min-progress", label: gettext("Stall minimum progress (MiB)"), field: { xtype: "proxmoxintegerfield", minValue: 1, emptyText: "1024" } },
 					{ name: "pre_script", label: gettext("Pre-Backup Script"), field: { xtype: "pbsD2DScriptSelector" } },
 					{ name: "post_script", label: gettext("Post-Backup Script"), field: { xtype: "pbsD2DScriptSelector" } },
 					{ name: "comment", label: gettext("Comment"), field: { xtype: "proxmoxtextfield" } },

@@ -114,11 +114,25 @@ const statusRPCAttempts = 3
 
 var stallCheckInterval = time.Minute
 
-// noProgressGrace is generous because a large source legitimately spends a long time in metadata comparison, emitting no chunks and no task log lines.
-var noProgressGrace = 2 * time.Hour
+// Stall rule units are variables so tests can run the rule in milliseconds and bytes.
+var (
+	stallTimeoutUnit        = time.Minute
+	stallProgressUnit int64 = 1 << 20
+)
 
-// minProgressBytes is the forward data that proves progress within noProgressGrace when no new entries are listed.
-var minProgressBytes int64 = 1 << 30
+func (b *backupJob) stallRule() (time.Duration, int64) {
+	timeout, progress := b.job.StallTimeout, b.job.StallMinProgress
+	if timeout == 0 {
+		timeout = coredb.DefaultStallTimeout
+	}
+	if progress <= 0 {
+		progress = coredb.DefaultStallMinProgress
+	}
+	if timeout < 0 {
+		return 0, 0
+	}
+	return time.Duration(timeout) * stallTimeoutUnit, int64(progress) * stallProgressUnit
+}
 
 var exitDrainTimeout = 30 * time.Second
 
@@ -144,8 +158,7 @@ type mountProgressReporter interface {
 
 func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan struct{}, mount mountProgressReporter) <-chan error {
 	stalled := make(chan error, 1)
-	idleGrace := noProgressGrace
-	minBytes := minProgressBytes
+	idleGrace, minBytes := b.stallRule()
 	checkInterval := stallCheckInterval
 
 	go func() {
@@ -189,7 +202,7 @@ func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan
 					mark, marked, markSince = p, true, time.Now()
 					continue
 				}
-				if time.Since(markSince) > idleGrace {
+				if idleGrace > 0 && time.Since(markSince) > idleGrace {
 					stalled <- fmt.Errorf("%w: no new entries and %d of %d bytes read in %s", ErrBackupStalled, p.Bytes-mark.Bytes, minBytes, idleGrace)
 					return
 				}

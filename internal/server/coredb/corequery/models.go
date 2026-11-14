@@ -72,6 +72,8 @@ type Backup struct {
 	ExpandZip             bool           `json:"expand_zip"`
 	Expand7z              bool           `json:"expand_7z"`
 	ExpandMaxDepth        int64          `json:"expand_max_depth"`
+	StallTimeout          int64          `json:"stall_timeout"`
+	StallMinProgress      int64          `json:"stall_min_progress"`
 }
 
 type BackupDatabaseOption struct {
