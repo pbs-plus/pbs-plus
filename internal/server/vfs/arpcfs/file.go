@@ -18,6 +18,7 @@ import (
 
 func (f *ARPCFile) Close(ctx context.Context) error {
 	if f.zs != nil {
+		f.zs.close()
 		f.zs = nil
 		return nil
 	}
