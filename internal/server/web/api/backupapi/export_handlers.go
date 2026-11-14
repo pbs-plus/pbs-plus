@@ -51,6 +51,7 @@ func ExtJsBackupCSVExportHandler(app *application.Runtime) http.HandlerFunc {
 			"current_files_speed", "current_bytes_speed", "current_bytes_total",
 			"retry", "retry-interval", "max-dir-entries",
 			"include-xattr", "legacy-xattr", "expand-archives", "expand-zip", "expand-7z", "expand-max-depth", "expand-max-entries",
+			"stall-timeout", "stall-min-progress",
 		}
 
 		if _, err := fmt.Fprintln(w, strings.Join(headers, ",")); err != nil {
@@ -91,6 +92,8 @@ func ExtJsBackupCSVExportHandler(app *application.Runtime) http.HandlerFunc {
 				"expand-7z":               strconv.FormatBool(rec.ExpandSevenZip),
 				"expand-max-depth":        strconv.Itoa(rec.ExpandMaxDepth),
 				"expand-max-entries":      strconv.Itoa(rec.ExpandMaxEntries),
+				"stall-timeout":           strconv.Itoa(rec.StallTimeout),
+				"stall-min-progress":      strconv.Itoa(rec.StallMinProgress),
 			}
 
 			var vals []string

@@ -4,9 +4,9 @@ INSERT INTO backups (
     notification_mode, namespace, current_pid, last_run_upid, last_successful_upid,
     retry, retry_interval, max_dir_entries, pre_script, post_script,
     include_xattr, legacy_xattr, expand_archives, expand_zip, expand_7z, expand_max_depth,
-    expand_max_entries, last_run_status, retry_count, last_run_state, last_run_starttime,
-    last_run_endtime, last_successful_endtime, duration
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    expand_max_entries, stall_timeout, stall_min_progress, last_run_status, retry_count,
+    last_run_state, last_run_starttime, last_run_endtime, last_successful_endtime, duration
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetBackup :one
 SELECT
@@ -15,6 +15,7 @@ SELECT
     j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
     j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
     j.expand_archives, j.expand_zip, j.expand_7z, j.expand_max_depth, j.expand_max_entries,
+    j.stall_timeout, j.stall_min_progress,
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
@@ -64,6 +65,7 @@ SELECT
     j.last_run_upid, j.last_successful_upid, j.retry, j.retry_interval,
     j.max_dir_entries, j.pre_script, j.post_script, j.include_xattr, j.legacy_xattr,
     j.expand_archives, j.expand_zip, j.expand_7z, j.expand_max_depth, j.expand_max_entries,
+    j.stall_timeout, j.stall_min_progress,
     j.last_run_status, j.retry_count,
     j.last_run_state, j.last_run_starttime, j.last_run_endtime,
     j.last_successful_endtime, j.duration,
@@ -113,6 +115,7 @@ SET store = ?, mode = ?, source_mode = ?, read_mode = ?, target = ?,
     retry_interval = ?, last_successful_upid = ?, pre_script = ?,
     post_script = ?, max_dir_entries = ?, include_xattr = ?, legacy_xattr = ?,
     expand_archives = ?, expand_zip = ?, expand_7z = ?, expand_max_depth = ?, expand_max_entries = ?,
+    stall_timeout = ?, stall_min_progress = ?,
     last_run_status = ?, retry_count = ?,
     last_run_state = ?, last_run_starttime = ?, last_run_endtime = ?,
     last_successful_endtime = ?, duration = ?
