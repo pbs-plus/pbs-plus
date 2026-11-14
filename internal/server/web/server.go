@@ -92,6 +92,7 @@ func NewServer(app *application.Runtime, version string) (*Server, error) {
 	apiMux.HandleFunc("/api2/extjs/config/d2d-s3-repositories", ServerOnly(app, s3repoapi.ListHandler()))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-s3-repositories/{name}", ServerOnly(app, s3repoapi.SingleHandler()))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles", ServerOnly(app, mountapi.ExtJsMountProfilesHandler(app)))
+	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles/preview", ServerOnly(app, mountapi.ExtJsMountProfilePreviewHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles/{id}", ServerOnly(app, mountapi.ExtJsMountProfileSingleHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-mount-profiles/{id}/mount", ServerOnly(app, mountapi.ExtJsMountProfileMountHandler(app)))
 	apiMux.HandleFunc("/api2/extjs/config/d2d-script", ServerOnly(app, scriptapi.ExtJsScriptHandler(app)))

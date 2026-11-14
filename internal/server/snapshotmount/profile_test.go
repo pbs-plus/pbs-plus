@@ -161,7 +161,9 @@ func TestProfileSkipRoundTrip(t *testing.T) {
 		t.Errorf("skip keyed by wrong group: %v", skips)
 	}
 
-	ReconcileProfileNow(context.Background(), nil, p)
+	if err := ReconcileProfileNow(context.Background(), nil, p); err == nil {
+		t.Fatal("mount-now must report a missing datastore")
+	}
 	if skips := loadSkips(p.ID()); len(skips) != 0 {
 		t.Errorf("mount-now must clear manual unmount skips, got %v", skips)
 	}

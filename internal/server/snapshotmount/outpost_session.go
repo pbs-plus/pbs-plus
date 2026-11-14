@@ -123,17 +123,7 @@ func attachOutpostSession(s Session, parsedTime time.Time) error {
 		FS:       pxarmount.NewNFSFilesystem(stack.Raw, s.Mode == ModeRO),
 		Release:  stack.Close,
 	}
-	var attachErr error
-	if s.SubPath != "" {
-		attachErr = outpost.AttachSub(s.Outpost, share, s.SubPath, att)
-	} else {
-		attachErr = outpost.Attach(s.Outpost, att)
-	}
-	if attachErr != nil {
-		stack.Close()
-		return attachErr
-	}
-	return nil
+	return attachSessionPaths(s, share, att)
 }
 
 // OutpostShareMountPath is the private FUSE mount backing a VFS outpost share; /run state, rebuilt on boot.
@@ -149,13 +139,16 @@ func OutpostShareRoot(outpostName string) string {
 
 // ValidateSubPath accepts a clean relative path of sanitized components.
 func ValidateSubPath(sub string) error {
-	switch {
-	case sub == "":
+	if sub == "" {
 		return nil
-	case strings.ContainsAny(sub, "\\/"), strings.HasPrefix(sub, "."), strings.HasSuffix(sub, "."):
+	}
+	if !filepath.IsLocal(sub) || filepath.Clean(sub) != sub || strings.ContainsAny(sub, "\\\x00") {
 		return fmt.Errorf("invalid sub path %q", sub)
-	case filepath.Clean(sub) != sub, strings.Contains(sub, ".."):
-		return fmt.Errorf("invalid sub path %q", sub)
+	}
+	for part := range strings.SplitSeq(sub, "/") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".") {
+			return fmt.Errorf("invalid sub path %q", sub)
+		}
 	}
 	return nil
 }
@@ -202,6 +195,7 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 		Outpost:    in.Outpost,
 		ShareName:  in.ShareName,
 		SubPath:    in.SubPath,
+		Aliases:    in.Aliases,
 		Profile:    in.Profile,
 		ServiceKey: key,
 		CreatedAt:  time.Now().Unix(),
@@ -226,7 +220,7 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 		session.Endpoint += "/" + in.SubPath
 	}
 	if err := SaveSession(session); err != nil {
-		outpost.Detach(in.Outpost, ShareName(session))
+		detachSessionPaths(session)
 		return Session{}, fmt.Errorf("persist mount session: %w", err)
 	}
 	task.LogString(fmt.Sprintf("attached %s/%s as %s on outpost %s (%s)",
@@ -236,14 +230,7 @@ func mountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.
 
 func unmountOutpostSession(ctx context.Context, task *tasklog.WorkerTask, session Session, in jobs.SnapshotUnmountInput) error {
 	share := ShareName(session)
-	if session.SubPath == "" {
-		outpost.Detach(session.Outpost, share)
-	} else {
-		outpost.DetachSub(session.Outpost, share, session.SubPath)
-		if !sharedShareInUse(session) {
-			outpost.Detach(session.Outpost, share)
-		}
-	}
+	detachSessionPaths(session)
 	if task != nil {
 		task.LogString("detached " + share + " from outpost " + session.Outpost)
 	}
@@ -367,6 +354,7 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 		Outpost:    in.Outpost,
 		ShareName:  in.ShareName,
 		SubPath:    in.SubPath,
+		Aliases:    in.Aliases,
 		Profile:    in.Profile,
 		MountPoint: mountPoint,
 		ServiceKey: key,
@@ -497,6 +485,7 @@ func reattachOutposts(ctx context.Context, only string) {
 				Outpost:    s.Outpost,
 				ShareName:  s.ShareName,
 				SubPath:    s.SubPath,
+				Aliases:    s.Aliases,
 			}
 			if _, err := mountVFSOutpostSession(ctx, nil, in, parsed, s.ServiceKey, s.Mode); err != nil {
 				log.Error(err, "reattaching outpost share "+share)

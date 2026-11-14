@@ -207,10 +207,11 @@ type Status struct {
 }
 
 type manager struct {
-	mu        sync.RWMutex
-	instances map[string]Instance
-	attached  map[string]map[string]Attachment
-	errs      map[string]error
+	mu          sync.RWMutex
+	instances   map[string]Instance
+	attached    map[string]map[string]Attachment
+	subAttached map[string]map[string]Attachment
+	errs        map[string]error
 }
 
 var mgr = &manager{
@@ -273,6 +274,8 @@ func StopOutpost(name string) {
 	inst := mgr.instances[name]
 	delete(mgr.instances, name)
 	atts := mgr.attached[name]
+	subs := mgr.subAttached[name]
+	delete(mgr.subAttached, name)
 	delete(mgr.attached, name)
 	mgr.mu.Unlock()
 
@@ -281,9 +284,11 @@ func StopOutpost(name string) {
 			log.Error(err, "stopping outpost "+name)
 		}
 	}
-	for _, a := range atts {
-		if a.Release != nil {
-			a.Release()
+	for _, group := range []map[string]Attachment{atts, subs} {
+		for _, a := range group {
+			if a.Release != nil {
+				a.Release()
+			}
 		}
 	}
 }
@@ -360,24 +365,45 @@ func AttachShared(outpostName, share, path string) error {
 
 // AttachSub adds one sub-directory mount to an outpost's shared share.
 func AttachSub(outpostName, share, sub string, a Attachment) error {
-	mgr.mu.RLock()
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
 	inst := mgr.instances[outpostName]
-	mgr.mu.RUnlock()
 	if inst == nil {
 		return fmt.Errorf("outpost %q is not running", outpostName)
 	}
-	return inst.AttachSub(share, sub, a)
+	if mgr.subAttached == nil {
+		mgr.subAttached = map[string]map[string]Attachment{}
+	}
+	if mgr.subAttached[outpostName] == nil {
+		mgr.subAttached[outpostName] = map[string]Attachment{}
+	}
+	key := share + "/" + sub
+	for existing := range mgr.subAttached[outpostName] {
+		if existing == key || strings.HasPrefix(existing, key+"/") || strings.HasPrefix(key, existing+"/") {
+			return fmt.Errorf("export path %q is already attached", key)
+		}
+	}
+	if err := inst.AttachSub(share, sub, a); err != nil {
+		return err
+	}
+	mgr.subAttached[outpostName][key] = a
+	return nil
 }
 
 // DetachSub removes one sub-directory mount from an outpost's shared share.
 func DetachSub(outpostName, share, sub string) {
-	mgr.mu.RLock()
+	mgr.mu.Lock()
 	inst := mgr.instances[outpostName]
-	mgr.mu.RUnlock()
-	if inst == nil {
-		return
+	key := share + "/" + sub
+	att := mgr.subAttached[outpostName][key]
+	delete(mgr.subAttached[outpostName], key)
+	if inst != nil {
+		inst.DetachSub(share, sub)
 	}
-	inst.DetachSub(share, sub)
+	mgr.mu.Unlock()
+	if att.Release != nil {
+		att.Release()
+	}
 }
 
 // Detach removes the named share and releases its underlying stack.
@@ -389,6 +415,13 @@ func Detach(outpostName, name string) {
 	mgr.mu.Lock()
 	att, ok := mgr.attached[outpostName][name]
 	delete(mgr.attached[outpostName], name)
+	var subs []Attachment
+	for key, sub := range mgr.subAttached[outpostName] {
+		if strings.HasPrefix(key, name+"/") {
+			subs = append(subs, sub)
+			delete(mgr.subAttached[outpostName], key)
+		}
+	}
 	mgr.mu.Unlock()
 
 	if inst != nil {
@@ -398,6 +431,11 @@ func Detach(outpostName, name string) {
 	}
 	if ok && att.Release != nil {
 		att.Release()
+	}
+	for _, sub := range subs {
+		if sub.Release != nil {
+			sub.Release()
+		}
 	}
 }
 

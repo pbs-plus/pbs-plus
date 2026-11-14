@@ -5,6 +5,7 @@ package snapshotmount
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -39,7 +40,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != s {
+	if !reflect.DeepEqual(got, s) {
 		t.Fatalf("session mismatch: %+v != %+v", got, s)
 	}
 	if got.ServiceName() != "pbs-plus-snapshot-mount-k.service" {

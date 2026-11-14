@@ -12,9 +12,9 @@ import (
 
 // NamespaceGroup identifies one backup group (type/id) living in a namespace.
 type NamespaceGroup struct {
-	Namespace  string
-	BackupType string
-	BackupID   string
+	Namespace  string `json:"namespace"`
+	BackupType string `json:"backup_type"`
+	BackupID   string `json:"backup_id"`
 }
 
 var backupTypeDirs = map[string]bool{"host": true, "vm": true, "ct": true}

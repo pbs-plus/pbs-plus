@@ -26,10 +26,7 @@ func TestGroupKeyOfCollidesOnlyOnSameGroup(t *testing.T) {
 }
 
 func TestFollowGateDue(t *testing.T) {
-	loc := time.FixedZone("test", 0)
-	oldLocal := time.Local
-	time.Local = loc
-	t.Cleanup(func() { time.Local = oldLocal })
+	loc := time.Local
 
 	tick := time.Date(2026, 3, 1, 2, 5, 0, 0, loc)
 	gate := &followGate{}

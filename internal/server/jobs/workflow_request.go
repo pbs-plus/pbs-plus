@@ -49,21 +49,22 @@ type MtfScanInput struct {
 }
 
 type SnapshotMountInput struct {
-	Datastore  string `json:"datastore"`
-	Namespace  string `json:"namespace"`
-	BackupType string `json:"backup_type"`
-	BackupID   string `json:"backup_id"`
-	BackupTime string `json:"backup_time"`
-	FileName   string `json:"file_name"`
-	Mode       string `json:"mode"`
-	Backend    string `json:"backend"`
-	Outpost    string `json:"outpost,omitempty"`
-	ShareName  string `json:"share_name,omitempty"`
-	SubPath    string `json:"sub_path,omitempty"`
-	Profile    string `json:"profile,omitempty"`
-	MountPath  string `json:"mount_path"`
-	UPID       string `json:"upid"`
-	Web        bool   `json:"web"`
+	Datastore  string   `json:"datastore"`
+	Namespace  string   `json:"namespace"`
+	BackupType string   `json:"backup_type"`
+	BackupID   string   `json:"backup_id"`
+	BackupTime string   `json:"backup_time"`
+	FileName   string   `json:"file_name"`
+	Mode       string   `json:"mode"`
+	Backend    string   `json:"backend"`
+	Outpost    string   `json:"outpost,omitempty"`
+	ShareName  string   `json:"share_name,omitempty"`
+	SubPath    string   `json:"sub_path,omitempty"`
+	Aliases    []string `json:"aliases,omitempty"`
+	Profile    string   `json:"profile,omitempty"`
+	MountPath  string   `json:"mount_path"`
+	UPID       string   `json:"upid"`
+	Web        bool     `json:"web"`
 }
 
 type SnapshotUnmountInput struct {

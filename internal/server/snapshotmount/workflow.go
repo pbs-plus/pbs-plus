@@ -21,7 +21,6 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/cli"
 	"github.com/pbs-plus/pbs-plus/internal/proxmox/tasklog"
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs"
-	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
 	"github.com/pbs-plus/pbs-plus/internal/server/systemd"
 	"github.com/pbs-plus/pbs-plus/internal/validate"
 )
@@ -266,6 +265,9 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	if err := ValidateSubPath(in.SubPath); err != nil {
 		return Session{}, err
 	}
+	if err := validateAliases(in); err != nil {
+		return Session{}, err
+	}
 	if in.Outpost != "" {
 		return mountOutpostSession(ctx, task, in, parsedTime, key, mode)
 	}
@@ -310,6 +312,7 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 		Mode:       mode,
 		Backend:    backend,
 		SubPath:    in.SubPath,
+		Aliases:    in.Aliases,
 		Profile:    in.Profile,
 		MountPoint: mountPoint,
 		ServiceKey: key,
@@ -351,7 +354,18 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	}
 	args = append(args, mountPoint)
 
-	return startSession(ctx, session, mountPoint, managed, args)
+	session, err = startSession(ctx, session, mountPoint, managed, args)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := localAliases(session, false); err != nil {
+		if cleanupErr := localAliases(session, true); cleanupErr != nil {
+			log.Error(cleanupErr, "removing partial mount aliases")
+		}
+		rollbackVFSMount(ctx, session)
+		return Session{}, err
+	}
+	return session, nil
 }
 
 func normalizeBackend(backend string) (string, error) {
@@ -508,14 +522,9 @@ func unmountSession(ctx context.Context, task *tasklog.WorkerTask, session Sessi
 	task.LogString("unmounting " + session.MountPoint)
 
 	if session.Outpost != "" && session.ShareName != "" {
-		if session.SubPath == "" {
-			outpost.Detach(session.Outpost, session.ShareName)
-		} else {
-			outpost.DetachSub(session.Outpost, session.ShareName, session.SubPath)
-			if !sharedShareInUse(session) {
-				outpost.Detach(session.Outpost, session.ShareName)
-			}
-		}
+		detachSessionPaths(session)
+	} else if err := localAliases(session, true); err != nil {
+		return err
 	}
 	if session.ServiceKey != "" {
 		if err := systemd.StopMountService(ctx, session.ServiceName()); err != nil {
