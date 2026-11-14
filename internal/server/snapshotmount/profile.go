@@ -130,7 +130,7 @@ func ListProfiles() ([]Profile, error) {
 	}
 	profiles := make([]Profile, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.HasSuffix(e.Name(), ".skip.json") {
 			continue
 		}
 		p, ok, err := LoadProfile(strings.TrimSuffix(e.Name(), ".json"))
