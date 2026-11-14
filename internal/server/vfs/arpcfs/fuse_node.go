@@ -477,6 +477,20 @@ type FileHandle struct {
 	fs   *ARPCFS
 	file *ARPCFile
 	cut  atomic.Int64
+	hw   atomic.Int64
+}
+
+func (fh *FileHandle) advance(end int64) {
+	for {
+		h := fh.hw.Load()
+		if end <= h {
+			return
+		}
+		if fh.hw.CompareAndSwap(h, end) {
+			fh.fs.ForwardBytes.Add(end - h)
+			return
+		}
+	}
 }
 
 func (fh *FileHandle) cutAt(end int64) {
@@ -506,11 +520,12 @@ func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse
 			return nil, errnoFor(err, syscall.EIO)
 		}
 		end := offset + int64(n)
+		fh.advance(end)
 		fh.cutAt(end)
 		fh.fs.skipWarn(fh.file.name, err, "unreadable file cut short, remainder zero-padded", "offset", end)
 		return fuse.ReadResultData(dest[:n]), 0
 	}
-
+	fh.advance(offset + int64(n))
 	return fuse.ReadResultData(dest[:n]), 0
 }
 

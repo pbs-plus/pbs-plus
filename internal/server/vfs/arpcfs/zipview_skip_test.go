@@ -133,6 +133,34 @@ func TestFileHandleCutsCorruptEntryShort(t *testing.T) {
 	}
 }
 
+func TestFileHandleCountsOnlyForwardBytes(t *testing.T) {
+	content := compressible(3 << 20)
+	fs := testFS(testOverlay(t, buildZipFiles(t, map[string][]byte{"big.txt": content})))
+	f, err := fs.OpenFile(context.Background(), "/data/big.txt", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh := &FileHandle{fs: fs, file: f}
+	buf := make([]byte, 64<<10)
+	read := func(off int64) {
+		if _, errno := fh.Read(context.Background(), buf, off); errno != 0 {
+			t.Fatalf("Read at %d: errno %v", off, errno)
+		}
+	}
+
+	read(0)
+	read(64 << 10)
+	read(0)
+	read(32 << 10)
+	if got := fs.ForwardBytes.Load(); got != 128<<10 {
+		t.Fatalf("forward bytes after re-reads = %d, want %d", got, 128<<10)
+	}
+	read(1 << 20)
+	if got := fs.ForwardBytes.Load(); got != 1<<20+64<<10 {
+		t.Fatalf("forward bytes after skip-ahead = %d, want %d", got, 1<<20+64<<10)
+	}
+}
+
 func TestSkippableReadErrKeepsTransportFatal(t *testing.T) {
 	for _, err := range []error{
 		fmt.Errorf("%w: %w", ErrSessionLost, errors.New("pipe closed")),

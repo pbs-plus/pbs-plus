@@ -107,16 +107,18 @@ func (b *backupJob) clientFailureLine() string {
 	return b.clientFailure
 }
 
-const (
-	agentOutageGrace = 15 * time.Minute
+const agentOutageGrace = 15 * time.Minute
 
-	maxBackupRuntime = 72 * time.Hour
-)
+// statusRPCAttempts consecutive failed status checks count as an outage, so one slow local RPC does not.
+const statusRPCAttempts = 3
 
 var stallCheckInterval = time.Minute
 
 // noProgressGrace is generous because a large source legitimately spends a long time in metadata comparison, emitting no chunks and no task log lines.
 var noProgressGrace = 2 * time.Hour
+
+// minProgressBytes is the forward data that proves progress within noProgressGrace when no new entries are listed.
+var minProgressBytes int64 = 1 << 30
 
 var exitDrainTimeout = 30 * time.Second
 
@@ -136,26 +138,25 @@ func (b *backupJob) awaitExit(done <-chan error, upid string) {
 	}
 }
 
-// watchStall reports when a run can no longer make progress, either because
-// its agent transport has been down past the grace period or because it has
-// outlived the runtime ceiling.
 type mountProgressReporter interface {
-	Progress() (connected bool, activity int64)
+	Progress() (mountrpc.StatusReply, error)
 }
 
 func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan struct{}, mount mountProgressReporter) <-chan error {
 	stalled := make(chan error, 1)
 	idleGrace := noProgressGrace
+	minBytes := minProgressBytes
 	checkInterval := stallCheckInterval
 
 	go func() {
 		ticker := time.NewTicker(checkInterval)
 		defer ticker.Stop()
 
-		start := time.Now()
 		var downSince time.Time
-		lastActivity := int64(-1)
-		activitySince := time.Now()
+		var mark mountrpc.StatusReply
+		marked := false
+		markSince := time.Now()
+		rpcFailures := 0
 
 		for {
 			select {
@@ -166,27 +167,30 @@ func (b *backupJob) watchStall(ctx context.Context, upid string, finished <-chan
 			case <-ticker.C:
 			}
 
-			if time.Since(start) > maxBackupRuntime {
-				stalled <- fmt.Errorf("%w: exceeded %s runtime ceiling", ErrBackupStalled, maxBackupRuntime)
+			if mount == nil {
 				return
 			}
-
-			if mount == nil {
-				continue
+			p, err := mount.Progress()
+			if err != nil {
+				rpcFailures++
+				if rpcFailures < statusRPCAttempts {
+					continue
+				}
+			} else {
+				rpcFailures = 0
 			}
-			connected, activity := mount.Progress()
-			if connected {
+			if err == nil && p.Connected {
 				if !downSince.IsZero() {
 					b.logger.Info("agent connection restored", "upid", upid)
 					downSince = time.Time{}
+					marked = false
 				}
-				if activity != lastActivity {
-					lastActivity = activity
-					activitySince = time.Now()
+				if !marked || p.Entries != mark.Entries || p.Bytes-mark.Bytes >= minBytes {
+					mark, marked, markSince = p, true, time.Now()
 					continue
 				}
-				if time.Since(activitySince) > idleGrace {
-					stalled <- fmt.Errorf("%w: agent served no filesystem operations for %s", ErrBackupStalled, idleGrace)
+				if time.Since(markSince) > idleGrace {
+					stalled <- fmt.Errorf("%w: no new entries and %d of %d bytes read in %s", ErrBackupStalled, p.Bytes-mark.Bytes, minBytes, idleGrace)
 					return
 				}
 				continue

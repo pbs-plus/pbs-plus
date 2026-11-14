@@ -646,6 +646,7 @@ type ARPCFS struct {
 	loggedPaths     sync.Map
 	loggedPathCount atomic.Int64
 	jobLog          *log.Logger
+	ForwardBytes    atomic.Int64
 	skippedPaths    sync.Map
 	skippedCount    atomic.Int64
 
