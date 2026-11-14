@@ -78,7 +78,32 @@ func (fs *ARPCFS) logOnce(path string, err error, op string) {
 
 }
 
-// suppressed  -  these are files probed by proxmox-backup-client on every
+// skipWarn lists a skipped or cut-short file in the task log, where it counts as a warning.
+func (fs *ARPCFS) skipWarn(path string, err error, msg string, args ...any) {
+	if fs.skippedCount.Load() > maxLoggedPaths {
+		return
+	}
+	if _, loaded := fs.skippedPaths.LoadOrStore(path, struct{}{}); loaded {
+		return
+	}
+	l := fs.jobLog
+	if l == nil {
+		l = log.L
+	}
+	switch n := fs.skippedCount.Add(1); {
+	case n <= maxLoggedPaths:
+		l.Warn(msg, append(args, "path", path, "error", err.Error())...)
+	case n == maxLoggedPaths+1:
+		l.Warn("too many unreadable files, the rest are skipped without a listing", "limit", maxLoggedPaths)
+	}
+}
+
+func skippableReadErr(err error) bool {
+	return !errors.Is(err, ErrSessionLost) &&
+		!errors.Is(err, context.Canceled) &&
+		!errors.Is(err, context.DeadlineExceeded)
+}
+
 func isIgnoredPath(p string) bool {
 	base := p
 	if idx := strings.LastIndexAny(p, "/\\"); idx >= 0 {
@@ -132,6 +157,7 @@ func NewARPCFS(ctx context.Context, agentManager *arpc.AgentsManager, sessionId 
 		expandMaxEntries: backup.ExpandMaxEntries,
 		agentManager:     agentManager,
 		sessionId:        sessionId,
+		jobLog:           log.WithScope(log.Scope{JobID: backup.ID}),
 	}
 	log.Debug("aRPCFS initialized",
 
@@ -619,6 +645,9 @@ type ARPCFS struct {
 	sessionDown     atomic.Bool
 	loggedPaths     sync.Map
 	loggedPathCount atomic.Int64
+	jobLog          *log.Logger
+	skippedPaths    sync.Map
+	skippedCount    atomic.Int64
 
 	expandArchives   bool
 	expandZip        bool

@@ -13,6 +13,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/pbs-plus/pbs-plus/internal/agent/agentfs/fswire"
+	"github.com/pbs-plus/pbs-plus/internal/arpc"
 	"github.com/pbs-plus/pbs-plus/internal/log"
 )
 
@@ -139,7 +140,10 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 
 			"length", len(p), "offset", f.offset, "path", f.name)
 
-		return 0, io.EOF
+		if _, remote := errors.AsType[*arpc.RemoteError](err); remote {
+			return 0, err
+		}
+		return 0, f.fs.sessionLost(err)
 	}
 
 	f.fs.TotalBytes.Add(int64(n))
@@ -152,6 +156,13 @@ func (f *ARPCFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error)
 	}
 
 	return n, nil
+}
+
+func (f *ARPCFile) precheck(ctx context.Context) error {
+	if f.zs == nil {
+		return nil
+	}
+	return f.zs.precheck(ctx)
 }
 
 type ARPCFile struct {

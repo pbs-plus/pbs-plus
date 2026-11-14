@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -435,6 +436,18 @@ func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, s
 		n.fs.logOnce(n.getPath(), err, "Open")
 		return nil, 0, errnoFor(err, syscall.ESTALE)
 	}
+	if err := file.precheck(ctx); err != nil {
+		p := n.getPath()
+		if cerr := file.Close(ctx); cerr != nil {
+			log.Debug("FUSE Release failed", "error", cerr, "path", p)
+		}
+		if !skippableReadErr(err) {
+			n.fs.logOnce(p, err, "Open")
+			return nil, 0, syscall.EIO
+		}
+		n.fs.skipWarn(p, err, "skipped unreadable file")
+		return nil, 0, syscall.EACCES
+	}
 
 	return &FileHandle{
 		fs:   n.fs,
@@ -463,6 +476,19 @@ func (n *Node) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errno {
 type FileHandle struct {
 	fs   *ARPCFS
 	file *ARPCFile
+	cut  atomic.Int64
+}
+
+func (fh *FileHandle) cutAt(end int64) {
+	for {
+		c := fh.cut.Load()
+		if c != 0 && c-1 <= end {
+			return
+		}
+		if fh.cut.CompareAndSwap(c, end+1) {
+			return
+		}
+	}
 }
 
 var _ = (fs.FileReader)((*FileHandle)(nil))
@@ -470,10 +496,19 @@ var _ = (fs.FileReleaser)((*FileHandle)(nil))
 var _ = (fs.FileLseeker)((*FileHandle)(nil))
 
 func (fh *FileHandle) Read(ctx context.Context, dest []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
+	if c := fh.cut.Load(); c != 0 && offset >= c-1 {
+		return fuse.ReadResultData(nil), 0
+	}
 	n, err := fh.file.ReadAt(ctx, dest, offset)
 	if err != nil && err != io.EOF {
-		fh.fs.logOnce(fh.file.name, err, "Read")
-		return nil, errnoFor(err, syscall.EIO)
+		if !skippableReadErr(err) {
+			fh.fs.logOnce(fh.file.name, err, "Read")
+			return nil, errnoFor(err, syscall.EIO)
+		}
+		end := offset + int64(n)
+		fh.cutAt(end)
+		fh.fs.skipWarn(fh.file.name, err, "unreadable file cut short, remainder zero-padded", "offset", end)
+		return fuse.ReadResultData(dest[:n]), 0
 	}
 
 	return fuse.ReadResultData(dest[:n]), 0
