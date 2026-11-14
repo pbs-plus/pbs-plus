@@ -4,6 +4,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	pxar "github.com/pbs-plus/pxar"
 )
 
 func TestReadFileAtInlineAndSplitPayload(t *testing.T) {
@@ -18,7 +20,11 @@ func TestReadFileAtInlineAndSplitPayload(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			const contents = "archive contents"
 			fs := &PxarFS{readerAt: strings.NewReader("prefix" + test.header + contents)}
-			n := node{contentOffset: 6, fileSize: uint64(len(contents)), inlinePayload: test.inline}
+			entry := &pxar.Entry{ContentOffset: 6, FileSize: uint64(len(contents))}
+			if !test.inline {
+				entry.PayloadOffset = 6
+			}
+			n := newNodeFromEntry(entry, 2, RootInode)
 			for _, offset := range []int64{0, 3, int64(len(contents))} {
 				buffer := make([]byte, len(contents)+10)
 				count, err := fs.readFileAt(&n, offset, buffer)

@@ -111,6 +111,7 @@ func newNodeFromEntry(e *pxar.Entry, inode, parent uint64) node {
 	return node{
 		entryStart:    e.FileOffset,
 		contentOffset: e.ContentOffset,
+		inlinePayload: e.PayloadOffset == 0,
 		fileSize:      e.FileSize,
 		mode:          st.Mode,
 		inode:         inode,
