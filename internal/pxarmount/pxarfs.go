@@ -229,6 +229,7 @@ func (fs *PxarFS) ReadDirPlus(cancel <-chan struct{}, input *fuse.ReadIn, out *f
 			fs.nodes[e.inode] = node{
 				entryStart:    e.entryStart,
 				contentOffset: e.contentOffset,
+				inlinePayload: e.payloadOffset == 0,
 				fileSize:      e.fileSize,
 				mode:          uint64(e.mode),
 				inode:         e.inode,
@@ -564,7 +565,11 @@ func (fs *PxarFS) readFileAt(n *node, off int64, dest []byte) (int, error) {
 	if remaining := int64(n.fileSize) - off; int64(len(dest)) > remaining {
 		dest = dest[:remaining]
 	}
-	return fs.readerAt.ReadAt(dest, int64(n.contentOffset)+16+off)
+	contentOffset := int64(n.contentOffset)
+	if !n.inlinePayload {
+		contentOffset += 16
+	}
+	return fs.readerAt.ReadAt(dest, contentOffset+off)
 }
 
 func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) node {
@@ -581,6 +586,7 @@ func (fs *PxarFS) registerSlimNode(e *dirEntrySlim, parent uint64) node {
 	n := node{
 		entryStart:    e.entryStart,
 		contentOffset: e.contentOffset,
+		inlinePayload: e.payloadOffset == 0,
 		fileSize:      e.fileSize,
 		mode:          uint64(e.mode),
 		inode:         e.inode,
@@ -613,6 +619,7 @@ func (fs *PxarFS) preregisterSlimNode(e *dirEntrySlim, parent uint64) node {
 	n := node{
 		entryStart:    e.entryStart,
 		contentOffset: e.contentOffset,
+		inlinePayload: e.payloadOffset == 0,
 		fileSize:      e.fileSize,
 		mode:          uint64(e.mode),
 		inode:         e.inode,

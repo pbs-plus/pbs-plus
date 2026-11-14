@@ -113,7 +113,7 @@ func runMountSubcommand() {
 			fmt.Fprintf(os.Stderr, "Error reading index: %v\n", err)
 			os.Exit(1)
 		}
-		reader, err = transfer.NewSplitReader(idxData, nil, source)
+		reader, err = transfer.NewSplitReader(idxData, idxData, source)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating archive reader: %v\n", err)
 			os.Exit(1)

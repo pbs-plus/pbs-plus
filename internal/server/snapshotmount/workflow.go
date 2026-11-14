@@ -332,7 +332,7 @@ func mountSession(ctx context.Context, task *tasklog.WorkerTask, in jobs.Snapsho
 	if isMetadataSplit {
 		args = append(args, "--mpxar-didx", mpxarPath, "--ppxar-didx", ppxarPath)
 	} else {
-		args = append(args, "--ppxar-didx", ppxarPath)
+		args = append(args, "--ppxar-didx", mpxarPath)
 	}
 	if mode == ModeRW {
 		session.OverlayDir = OverlayDir(pbsStoreRoot, key)

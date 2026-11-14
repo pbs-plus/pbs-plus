@@ -34,6 +34,7 @@ type node struct {
 	isDir         bool
 	isSymlink     bool
 	isReg         bool
+	inlinePayload bool
 	timesResolved bool
 }
 

@@ -44,8 +44,8 @@ func TestOpenSplitReaderArchiveFormats(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (reader.PayloadIndex() != nil) != split {
-				t.Error("payload reader does not match archive format")
+			if reader.PayloadReaderAt() == nil {
+				t.Error("archive content stream is unavailable")
 			}
 			if err := reader.Close(); err != nil {
 				t.Fatal(err)

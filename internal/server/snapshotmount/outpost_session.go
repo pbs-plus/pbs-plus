@@ -340,7 +340,7 @@ func mountVFSOutpostSession(ctx context.Context, task *tasklog.WorkerTask, in jo
 	if isMetadataSplit {
 		args = append(args, "--mpxar-didx", mpxarPath, "--ppxar-didx", ppxarPath)
 	} else {
-		args = append(args, "--ppxar-didx", ppxarPath)
+		args = append(args, "--ppxar-didx", mpxarPath)
 	}
 
 	session := Session{
@@ -523,5 +523,5 @@ func openSplitReader(storeRoot, fileName, dirTime, namespace, backupType, backup
 	if err != nil {
 		return nil, fmt.Errorf("reading index: %w", err)
 	}
-	return transfer.NewSplitReaderMetaOnly(idxData, source)
+	return transfer.NewSplitReader(idxData, idxData, source)
 }
