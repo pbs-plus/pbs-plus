@@ -189,9 +189,9 @@ func (s *StreamPipe) CallBinaryWithMeta(ctx context.Context, method string, payl
 	if resp.Status != StatusRawStream {
 		var serErr SerializableError
 		if err := s.cborDec.Unmarshal(resp.Data, &serErr); err == nil {
-			return 0, resp, UnwrapError(serErr)
+			return 0, resp, &RemoteError{Err: UnwrapError(serErr)}
 		}
-		return 0, resp, fmt.Errorf("RPC error: status %d", resp.Status)
+		return 0, resp, &RemoteError{Err: fmt.Errorf("RPC error: status %d", resp.Status)}
 	}
 
 	if err := performHandshake(stream); err != nil {

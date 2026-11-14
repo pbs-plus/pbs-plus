@@ -57,10 +57,11 @@ type StatusArgs struct {
 	MountID        string
 }
 
-// StatusReply exposes Activity, a monotonic filesystem-operation count, because Connected alone cannot distinguish a working run from a wedged one.
+// StatusReply carries forward progress; Bytes excludes re-reads and decoder churn so a spinning run reads as idle.
 type StatusReply struct {
 	Connected bool
-	Activity  int64
+	Entries   int64
+	Bytes     int64
 }
 
 type CleanupArgs struct {
@@ -257,7 +258,8 @@ func (s *Service) Status(args *StatusArgs, reply *StatusReply) error {
 	}
 	_, reply.Connected = s.Store.Agents.GetStreamPipe(childKey)
 	if fs := sessions.GetSessionARPCFS(childKey); fs != nil {
-		reply.Activity = fs.FileCount.Value() + fs.FolderCount.Value() + fs.TotalBytes.Value()
+		reply.Entries = fs.FileCount.Value() + fs.FolderCount.Value()
+		reply.Bytes = fs.ForwardBytes.Load()
 	}
 	return nil
 }

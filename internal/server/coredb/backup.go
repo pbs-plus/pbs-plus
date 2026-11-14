@@ -113,6 +113,7 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 	if backup.MaxDirEntries <= 0 {
 		backup.MaxDirEntries = 1048576
 	}
+	backup.normalizeStallRule()
 	if strings.TrimSpace(backup.ReadMode) == "" {
 		backup.ReadMode = "standard"
 	}
@@ -149,6 +150,8 @@ func (db *Store) CreateBackup(tx *Transaction, backup Backup) (err error) {
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
 		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
 		RetryCount:         toNullInt64(backup.History.RetryCount),
+		StallTimeout:       int64(backup.StallTimeout),
+		StallMinProgress:   int64(backup.StallMinProgress),
 	})
 	if err != nil {
 		return fmt.Errorf("CreateBackup: error inserting backup: %w", err)
@@ -242,6 +245,8 @@ func (db *Store) GetBackup(id string) (Backup, error) {
 		ExpandSevenZip:   row.Expand7z,
 		ExpandMaxDepth:   int(row.ExpandMaxDepth),
 		ExpandMaxEntries: fromNullInt64(row.ExpandMaxEntries),
+		StallTimeout:     int(row.StallTimeout),
+		StallMinProgress: int(row.StallMinProgress),
 		LegacyXattr:      fromNullInt64ToBool(row.LegacyXattr),
 		DatabaseScope:    row.DatabaseScope,
 		DatabaseName:     row.DatabaseName,
@@ -424,6 +429,8 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 		backup.SourceMode = "snapshot"
 	}
 
+	backup.normalizeStallRule()
+
 	err = q.UpdateBackup(db.ctx, corequery.UpdateBackupParams{
 		Store:              backup.Store,
 		Mode:               backup.Mode,
@@ -452,6 +459,8 @@ func (db *Store) UpdateBackup(tx *Transaction, backup Backup) (err error) {
 		LegacyXattr:        boolToNullInt64(backup.LegacyXattr),
 		LastRunStatus:      toNullInt64(int(backup.History.LastRunStatus)),
 		RetryCount:         toNullInt64(backup.History.RetryCount),
+		StallTimeout:       int64(backup.StallTimeout),
+		StallMinProgress:   int64(backup.StallMinProgress),
 		ID:                 backup.ID,
 	})
 	if err != nil {
@@ -603,6 +612,8 @@ func (db *Store) GetAllBackups() ([]Backup, error) {
 			ExpandSevenZip:   row.Expand7z,
 			ExpandMaxDepth:   int(row.ExpandMaxDepth),
 			ExpandMaxEntries: fromNullInt64(row.ExpandMaxEntries),
+			StallTimeout:     int(row.StallTimeout),
+			StallMinProgress: int(row.StallMinProgress),
 			LegacyXattr:      fromNullInt64ToBool(row.LegacyXattr),
 			DatabaseScope:    row.DatabaseScope,
 			DatabaseName:     row.DatabaseName,
@@ -735,6 +746,8 @@ type Backup struct {
 	ExpandSevenZip   bool        `json:"expand-7z"`
 	ExpandMaxDepth   int         `json:"expand-max-depth"`
 	ExpandMaxEntries int         `json:"expand-max-entries"`
+	StallTimeout     int         `json:"stall-timeout"`
+	StallMinProgress int         `json:"stall-min-progress"`
 	Subpath          string      `json:"subpath"`
 	Schedule         string      `json:"schedule"`
 	Comment          string      `json:"comment"`
@@ -787,7 +800,21 @@ func (db *Store) storeBackupDatabaseOptions(q *corequery.Queries, backup Backup)
 	})
 }
 
-// Dovecot backup scopes mirror the dovecot package, which cannot be imported
+const (
+	DefaultStallTimeout     = 120
+	StallTimeoutDisabled    = -1
+	DefaultStallMinProgress = 1024
+)
+
+func (b *Backup) normalizeStallRule() {
+	if b.StallTimeout == 0 || b.StallTimeout < StallTimeoutDisabled {
+		b.StallTimeout = DefaultStallTimeout
+	}
+	if b.StallMinProgress <= 0 {
+		b.StallMinProgress = DefaultStallMinProgress
+	}
+}
+
 // here because it already depends on this package.
 const (
 	dovecotScopeUser   = "user"

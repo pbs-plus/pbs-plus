@@ -610,6 +610,20 @@ func (zs *zipFileState) checkCRC() error {
 	return nil
 }
 
+func (zs *zipFileState) precheck(ctx context.Context) error {
+	if zs.ent.method == 0 || zs.uncomp == 0 || zs.uncomp > zipRingSize {
+		return nil
+	}
+	zs.mu.Lock()
+	defer zs.mu.Unlock()
+	if zs.ring == nil {
+		if err := zs.init(ctx); err != nil {
+			return err
+		}
+	}
+	return zs.fill(0, zs.uncomp)
+}
+
 func (zs *zipFileState) verifyStoredCRC(ctx context.Context, dataOff int64) error {
 	buf := make([]byte, zipSrcBufSize)
 	var sum uint32

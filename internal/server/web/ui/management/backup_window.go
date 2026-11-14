@@ -163,6 +163,12 @@ var backupJobEdit = js.EditWindow{
 					js.Field{XType: "proxmoxtextfield", Label: "Retry interval (minutes)", EmptyText: "1", Name: "retry-interval"},
 					js.Field{XType: js.XFieldContainer, Reference: "filesystemOptions", Layout: "anchor", Items: js.Items(
 						js.Field{XType: "proxmoxtextfield", Label: "Max number of entries per directory", EmptyText: "1048576", Name: "max-dir-entries"},
+						js.Field{XType: js.XIntegerField, Label: "Stall timeout (minutes)", EmptyText: "120", Name: "stall-timeout", MinValue: -1,
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Cancels an agent backup that lists no new files and reads less than the minimum progress within this window. " +
+								"Empty uses 120; -1 disables the check. A lost agent connection still cancels the run after 15 minutes.")}},
+						js.Field{XType: js.XIntegerField, Label: "Stall minimum progress (MiB)", EmptyText: "1024", Name: "stall-min-progress", MinValue: 1,
+							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("New file data that must be read within the stall timeout when no new files are listed. " +
+								"Re-reads of the same data do not count. Empty uses 1024.")}},
 						js.Field{XType: js.XCombo, Label: "Backup Mode", Name: "mode", QueryMode: "local", Store: js.Raw("backupModes"),
 							DisplayField: "display", ValueField: "value", Editable: new(false), AnyMatch: true, ForceSelection: true, AllowBlank: new(true),
 							AutoEl: js.Obj{"tag": "div", "data-qtip": js.T("Metadata: store file metadata and directory structure only, skipping file contents. " +

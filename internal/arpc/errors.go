@@ -11,6 +11,14 @@ func (se *SerializableError) Error() string {
 	return se.Message
 }
 
+type RemoteError struct {
+	Err error
+}
+
+func (e *RemoteError) Error() string { return e.Err.Error() }
+
+func (e *RemoteError) Unwrap() error { return e.Err }
+
 func WrapError(err error) *SerializableError {
 	if err == nil {
 		return nil
