@@ -1,0 +1,22 @@
+name: Run Mount Profile Layout E2E
+description: Back up real PBS snapshots and verify shared profile layouts through local mounts, NFS and S3 exports
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "900"
+    description: Timeout for the profile layout integration suite
+
+runs:
+  using: composite
+  steps:
+    - name: Build userspace NFS probe
+      shell: bash
+      run: |
+        go build -o "$RUNNER_TEMP/layout-nfs-read" ./.github/actions/run-profile-layout-e2e/nfs-read.go
+        docker cp "$RUNNER_TEMP/layout-nfs-read" pbs-plus-test:/tmp/layout-nfs-read
+        docker cp .github/actions/run-profile-layout-e2e/run.py pbs-plus-test:/tmp/profile-layout-e2e.py
+
+    - name: Test layouts against real PBS snapshots
+      shell: bash
+      run: timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test python3 /tmp/profile-layout-e2e.py

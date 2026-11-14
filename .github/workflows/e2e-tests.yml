@@ -139,6 +139,12 @@ jobs:
         with:
           timeout-seconds: 900
 
+      - name: Run mount profile layout e2e tests
+        if: matrix.suite == 'mount'
+        uses: ./.github/actions/run-profile-layout-e2e
+        with:
+          timeout-seconds: 900
+
       - name: Run NFS outpost e2e tests
         if: matrix.suite == 'mount'
         uses: ./.github/actions/run-outpost-e2e
