@@ -148,6 +148,7 @@ var alertEditWindow = js.EditWindow{
 						// Check quiet-days checkboxes after render
 						var quietDays = values["quiet-days"] || [];
 						Ext.defer(function () {
+							if (panel.destroyed || panel.destroying) return;
 							var quietGroup = panel.down("checkboxgroup[reference=quietDays]");
 							if (quietGroup) {
 								Ext.Array.each(quietGroup.items.items, function (cb) {
@@ -266,7 +267,7 @@ var alertEditWindow = js.EditWindow{
 			var me = this;
 			// Load exclusions after the window has rendered and the alert name is known
 			Ext.defer(function () {
-				me.loadExclusions();
+				if (!view.destroyed && !view.destroying) me.loadExclusions();
 			}, 200);
 		`),
 		"loadExclusions": js.Func("", `
@@ -313,7 +314,7 @@ var alertEditWindow = js.EditWindow{
 		"showExclusionPicker": js.Func("excludeType, items", `
 			var me = this;
 			var view = me.getView();
-			var win = Ext.create("Ext.window.Window", {
+			var win = Ext.create("PBS.plusWindow.Window", {
 				title: Ext.String.format("Add {0} Exclusion", excludeType === "job" ? "Job" : "Target"),
 				modal: true,
 				width: 400,

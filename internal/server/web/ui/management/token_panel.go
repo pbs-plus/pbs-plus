@@ -5,7 +5,7 @@ import (
 )
 
 var showFingerprint = js.Func("", `
-	let win = Ext.create("Ext.window.Window", {
+	let win = Ext.create("PBS.plusWindow.Window", {
 		modal: true,
 		width: 600,
 		title: gettext("Server CA Fingerprint"),

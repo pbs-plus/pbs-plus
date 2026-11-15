@@ -50,7 +50,7 @@ var restorePanel = js.Panel{
 	},
 	Columns: []js.Column{
 		{Text: "Job ID", DataIndex: "id", Flex: 1, MaxWidth: 220, MinWidth: 75, Sortable: new(true), Hidden: true, Renderer: "Ext.String.htmlEncode"},
-		{Text: "Snapshot", DataIndex: "snapshot_human", Width: 220, Sortable: new(true), Renderer: "Ext.String.htmlEncode"},
+		{Text: "Snapshot", DataIndex: "snapshot_human", Width: 220, Sortable: new(true), Renderer: js.RenderSnapshotLabel()},
 		{Text: "Source Path", DataIndex: "src-path", Width: 140, Sortable: new(true), Renderer: js.Func("value, meta, record", `return Ext.String.htmlEncode(value || record.get("source_database") || "/");`)},
 		{Text: "Target Destination", DataIndex: "dest-target", Width: 120, Sortable: new(true)},
 		{Text: "Namespace", DataIndex: "ns", Width: 120, Sortable: new(true)},

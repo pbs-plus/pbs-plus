@@ -1,5 +1,5 @@
 Ext.define("PBS.plusWindow.TaskViewer", {
-  extend: "Ext.window.Window",
+  extend: "PBS.plusWindow.Window",
   alias: "widget.proxmoxPlusTaskViewer",
 
   extraTitle: "", // string to prepend after the generic task title

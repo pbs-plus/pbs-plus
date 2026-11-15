@@ -6,7 +6,7 @@ import (
 
 var mountProfilesModel = js.Model{
 	Name:       "pbs-model-mount-profiles",
-	Fields:     js.Fields("id", "datastore", "namespace", "mode", "outpost", "share-name", "mount-path", "schedule", "auto-mount", "replace"),
+	Fields:     js.Fields("id", "datastore", "namespace", "mode", "outpost", "share-name", "mount-path", "schedule", "auto-mount", "replace", "layout"),
 	IDProperty: "id",
 }
 
@@ -28,12 +28,36 @@ var mountProfilesPanel = js.Panel{
 		"reload": js.Func("", `
 			this.getView().getStore().rstore.load();
 		`),
+		"profileParams": js.Func("form", `
+			let vals = form.getValues();
+			let fieldset = form.down("#pathLayout");
+			let layout = null;
+			if (!fieldset.collapsed) {
+				layout = {
+					template: vals["layout-template"] || "",
+					fallback: vals["layout-fallback"] || "",
+					selection: vals["layout-selection"] || "group",
+					resolver_url: vals["layout-resolver"] || "",
+					resolver_token_env: vals["layout-token-env"] || "",
+					windows_names: vals["layout-windows"] === "1",
+				};
+			}
+			return {
+				datastore: vals.datastore, ns: vals.ns || "", mode: vals.mode,
+				outpost: vals.outpost || "", "share-name": vals["share-name"] || "",
+				"mount-path": vals["mount-path"] || "", schedule: vals.schedule || "",
+				"auto-mount": vals["auto-mount"] === "1" ? 1 : 0,
+				replace: vals.replace === "1" ? 1 : 0,
+				layout: layout ? JSON.stringify(layout) : "",
+			};
+		`),
 		"openEdit": js.Func("view, rec", `
 			let isEdit = !!rec;
 			let values = isEdit ? rec.data : {};
-			let win = Ext.create("Ext.window.Window", {
+			let layout = values.layout || {};
+			let win = Ext.create("PBS.plusWindow.Window", {
 				title: isEdit ? Ext.String.format(gettext("Edit Batch '{0}'"), values.namespace || gettext("root")) : gettext("Add Mount Batch"),
-				width: 480,
+				width: 640,
 				modal: true,
 				bodyPadding: 10,
 				items: [{
@@ -43,12 +67,9 @@ var mountProfilesPanel = js.Panel{
 					defaults: { anchor: "100%", labelWidth: 120 },
 					items: [
 					{
-						xtype: "combobox",
+						xtype: "pbsDataStoreSelector",
 						name: "datastore",
 						fieldLabel: gettext("Datastore"),
-						store: "pbs-datastore-list",
-						displayField: "store",
-						valueField: "store",
 						allowBlank: false,
 						value: values.datastore,
 						listeners: {
@@ -140,12 +161,61 @@ var mountProfilesPanel = js.Panel{
 						checked: !isEdit || !!values.replace,
 					},
 						{
-							xtype: "displayfield",
-							value: gettext("Mounts the newest snapshot of every group under the parent namespace; each namespace appears as its own directory inside the share or root path."),
+							xtype: "fieldset", itemId: "pathLayout", title: gettext("Custom directory layout (read-only)"),
+							checkboxToggle: true, collapsed: !values.layout,
+							defaults: { anchor: "100%", labelWidth: 150 },
+							items: [
+								{ xtype: "combobox", name: "layout-selection", fieldLabel: gettext("Snapshot selection"),
+									store: [["group", gettext("Newest per backup group")], ["namespace", gettext("Newest across groups per namespace")]],
+									queryMode: "local", editable: false, forceSelection: true, value: layout.selection || "group" },
+								{ xtype: "proxmoxtextfield", name: "layout-template", fieldLabel: gettext("Path template"),
+									value: layout.template || "{ns.rel}/{type}-{id}" },
+								{ xtype: "displayfield", value: gettext("Tokens: {ns}, {ns.rel}, {ns.leaf}, {type}, {id}, {archive}, {time}, {resolve}. Paths are relative to the local root or export bucket/share. Colliding paths are rejected.") },
+								{ xtype: "proxmoxtextfield", name: "layout-resolver", fieldLabel: gettext("HTTP resolver URL"),
+									value: layout.resolver_url || "", emptyText: gettext("Optional HTTP(S) endpoint") },
+								{ xtype: "proxmoxtextfield", name: "layout-token-env", fieldLabel: gettext("Bearer token variable"),
+									value: layout.resolver_token_env || "", emptyText: gettext("Server environment variable name, not the token") },
+								{ xtype: "proxmoxtextfield", name: "layout-fallback", fieldLabel: gettext("Empty result fallback"),
+									value: layout.fallback || "", emptyText: "Uncategorized/{ns.leaf}" },
+								{ xtype: "proxmoxcheckbox", name: "layout-windows", fieldLabel: gettext("Windows-safe names"),
+									inputValue: "1", uncheckedValue: "0", checked: !!layout.windows_names },
+								{ xtype: "displayfield", value: gettext('The resolver receives snapshot metadata by JSON POST and returns {"values":["Project A","Project B"]}. Use {resolve} in the template. Each value is a folder name; multiple values expose one snapshot at multiple paths. Empty values use the fallback. Resolver errors preserve current mounts. Bearer authentication requires HTTPS.') },
+							],
 						},
+						{ xtype: "displayfield", itemId: "layoutPreview", hidden: true },
+						{ xtype: "displayfield", value: gettext("Without a custom layout, mounts the newest snapshot per backup group using the existing namespace directory layout. NFS and S3 snapshot exports use the same directory planner.") },
+
 					],
 				}],
 				buttons: [
+					{
+						text: gettext("Preview paths"),
+						handler: (btn) => {
+							let w = btn.up("window");
+							let form = w.down("form");
+							if (!form.isValid()) return;
+							PBS.PlusUtils.API2Request({
+								url: "/api2/extjs/config/d2d-mount-profiles/preview", method: "POST",
+								params: this.profileParams(form), waitMsgTarget: w,
+								failure: (resp) => { if (!w.destroyed) Ext.Msg.alert(gettext("Error"), resp.htmlStatus); },
+								success: (resp) => {
+									if (w.destroyed) return;
+									let plans = resp.result.data || [];
+									let lines = [];
+									for (let plan of plans) {
+										for (let path of plan.paths) {
+											if (lines.length >= 100) break;
+											lines.push(path + "  [" + plan.backup_time + "]");
+										}
+										if (lines.length >= 100) break;
+									}
+									let preview = form.down("#layoutPreview");
+									preview.setValue('<pre style="max-height:240px;overflow:auto;white-space:pre-wrap">' + Ext.String.htmlEncode(lines.join("\n") || gettext("No mountable snapshots")) + "</pre>");
+									preview.show();
+								},
+							});
+						},
+					},
 					{
 						text: isEdit ? gettext("Save") : gettext("Create"),
 						handler: (btn) => {
@@ -153,18 +223,7 @@ var mountProfilesPanel = js.Panel{
 							let w = btn.up("window");
 							let form = w.down("form");
 							if (!form.isValid()) return;
-							let vals = form.getValues();
-							let params = {
-								datastore: vals.datastore,
-								ns: vals.ns || "",
-								mode: vals.mode,
-								outpost: vals.outpost || "",
-								"share-name": vals["share-name"] || "",
-								"mount-path": vals["mount-path"] || "",
-								"schedule": vals.schedule || "",
-								"auto-mount": vals["auto-mount"] === "1" ? 1 : 0,
-								"replace": vals["replace"] === "1" ? 1 : 0,
-							};
+							let params = this.profileParams(form);
 							let url = "/api2/extjs/config/d2d-mount-profiles";
 							let method = "POST";
 							if (isEdit) {

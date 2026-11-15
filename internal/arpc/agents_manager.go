@@ -96,6 +96,11 @@ func (sm *AgentsManager) getClientId(state tls.ConnectionState, headers http.Hea
 		clientID = clientID + "|" + verifyIdHeader + "|verify"
 	}
 
+	outpostHeader := headers.Get("X-PBS-Plus-OutpostID")
+	if outpostHeader != "" {
+		clientID = clientID + "|" + outpostHeader + "|outpost"
+	}
+
 	return clientID
 }
 

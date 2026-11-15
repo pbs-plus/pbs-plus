@@ -23,6 +23,7 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/conf"
 	"github.com/pbs-plus/pbs-plus/internal/host"
 	"github.com/pbs-plus/pbs-plus/internal/log"
+	"github.com/pbs-plus/pbs-plus/internal/outpostwire"
 )
 
 var ErrHostNotExpected = errors.New("host not expected by server - requires re-bootstrap")
@@ -323,6 +324,8 @@ func ConnectARPC(
 			router.Handle("cleanup", sync.BackupCloseHandler)
 			router.Handle("cleanup_restore", sync.RestoreCloseHandler)
 			router.Handle("verify_start", cli.VerifyStartHandler)
+			router.Handle(outpostwire.MethodStart, sync.OutpostStartHandler)
+			router.Handle(outpostwire.MethodStop, sync.OutpostStopHandler)
 			router.Handle("update", func(req *arpc.Request) (arpc.Response, error) {
 				if err := updater.TriggerUpdate(); err != nil {
 					return arpc.Response{}, arpc.WrapError(err)

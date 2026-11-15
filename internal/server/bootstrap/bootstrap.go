@@ -19,9 +19,11 @@ import (
 	"github.com/pbs-plus/pbs-plus/internal/server/jobs/jobdb"
 	"github.com/pbs-plus/pbs-plus/internal/server/mtf"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
+	"github.com/pbs-plus/pbs-plus/internal/server/outposttunnel"
 	"github.com/pbs-plus/pbs-plus/internal/server/restore"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/jobrpc"
 	"github.com/pbs-plus/pbs-plus/internal/server/rpc/mountrpc"
+	"github.com/pbs-plus/pbs-plus/internal/server/s3repo"
 	"github.com/pbs-plus/pbs-plus/internal/server/scheduler"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/verification"
@@ -106,11 +108,17 @@ func Run(mainCtx context.Context, app *application.Runtime) (*scheduler.Schedule
 	}
 	app.Engine = engine
 	go snapshotmount.FollowLatestProfiles(mainCtx, engine)
+	if err := s3repo.MigrateLegacyOutposts(); err != nil {
+		log.Error(err, "migrating s3 outposts to repositories")
+	}
+	s3repo.StartAll(mainCtx)
+	outpost.SetAgentPlacement(outposttunnel.New(app.Agents))
 	outpost.StartAll(mainCtx)
 	go snapshotmount.ReattachOutposts(mainCtx)
 	go func() {
 		<-mainCtx.Done()
 		outpost.StopAll()
+		s3repo.StopAll()
 	}()
 	s := scheduler.NewScheduler(mainCtx, app)
 	s.Start()

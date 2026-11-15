@@ -5,7 +5,7 @@ import (
 )
 
 var snapshotBrowser = js.Define("PBS.window.D2DSnapshotBrowser", js.Obj{
-	"extend": "Ext.window.Window",
+	"extend": "PBS.plusWindow.Window",
 	"alias":  "widget.pbsD2DSnapshotBrowser",
 
 	"modal":        true,

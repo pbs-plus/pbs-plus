@@ -145,6 +145,7 @@ var mountPanel = js.Panel{
 					failure: (response) => Ext.Msg.alert(gettext("Error"), response.htmlStatus),
 					success: (response) => {
 						Ext.create("Proxmox.window.TaskViewer", {
+							plugins: ["pbsPlusResponsive"],
 							upid: response.result.data,
 							taskDone: () => me.reload(),
 						}).show();
@@ -461,7 +462,7 @@ var mountPanel = js.Panel{
 				if (view.namespace && view.namespace !== "") {
 					params.ns = view.namespace;
 				}
-				Ext.create("Ext.window.Window", {
+				Ext.create("PBS.plusWindow.Window", {
 					title: Ext.String.format(gettext("Mount '{0}'"), file),
 					width: 460,
 					modal: true,
@@ -626,6 +627,7 @@ var mountPanel = js.Panel{
 					extraParams.ns = view.namespace;
 				}
 				Ext.create("Proxmox.window.FileBrowser", {
+					plugins: ["pbsPlusResponsive"],
 					title: type + "/" + id + "/" + timetext,
 					listURL: "/api2/json/admin/datastore/" + view.datastore + "/catalog",
 					downloadURL: "/api2/json/admin/datastore/" + view.datastore + "/pxar-file-download",

@@ -4,6 +4,7 @@ package snapshotmount
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,17 +19,18 @@ import (
 )
 
 type Profile struct {
-	Datastore string `json:"datastore"`
-	Namespace string `json:"namespace"` // parent namespace; "" = root
-	Mode      string `json:"mode"`
-	Outpost   string `json:"outpost,omitempty"` // "" = mount locally
-	ShareName string `json:"share_name,omitempty"`
-	MountPath string `json:"mount_path,omitempty"` // local batch root; empty = default base
-	Schedule  string `json:"schedule"`
-	AutoMount bool   `json:"auto_mount"`
-	Replace   bool   `json:"replace"` // replace a mounted snapshot when a newer latest appears
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	Datastore string      `json:"datastore"`
+	Namespace string      `json:"namespace"` // parent namespace; "" = root
+	Mode      string      `json:"mode"`
+	Outpost   string      `json:"outpost,omitempty"` // "" = mount locally
+	ShareName string      `json:"share_name,omitempty"`
+	MountPath string      `json:"mount_path,omitempty"` // local batch root; empty = default base
+	Schedule  string      `json:"schedule"`
+	AutoMount bool        `json:"auto_mount"`
+	Replace   bool        `json:"replace"` // replace a mounted snapshot when a newer latest appears
+	Layout    *PathLayout `json:"layout,omitempty"`
+	CreatedAt int64       `json:"created_at"`
+	UpdatedAt int64       `json:"updated_at"`
 }
 
 func (p Profile) ID() string {
@@ -72,6 +74,9 @@ func ValidateProfile(p Profile) error {
 		if _, err := calendar.Parse(p.Schedule); err != nil {
 			return fmt.Errorf("invalid schedule %q: %w", p.Schedule, err)
 		}
+	}
+	if err := validateLayout(p); err != nil {
+		return err
 	}
 	return ValidateMountPath(p.MountPath)
 }
@@ -125,7 +130,7 @@ func ListProfiles() ([]Profile, error) {
 	}
 	profiles := make([]Profile, 0, len(entries))
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.HasSuffix(e.Name(), ".skip.json") {
 			continue
 		}
 		p, ok, err := LoadProfile(strings.TrimSuffix(e.Name(), ".json"))
@@ -138,6 +143,8 @@ func ListProfiles() ([]Profile, error) {
 	}
 	return profiles, nil
 }
+
+var errNoMountableSnapshot = errors.New("no snapshot with a mountable archive")
 
 func LatestSnapshotIn(storeRoot, ns, backupType, backupID string) (string, string, error) {
 	groupDir := groupParentDir(storeRoot, ns, backupType, backupID)
@@ -179,7 +186,7 @@ func LatestSnapshotIn(storeRoot, ns, backupType, backupID string) (string, strin
 			return t.Format(time.RFC3339), pxar, nil
 		}
 	}
-	return "", "", fmt.Errorf("no snapshot with a mountable archive in %s", groupDir)
+	return "", "", fmt.Errorf("%w in %s", errNoMountableSnapshot, groupDir)
 }
 
 func groupParentDir(storeRoot, ns, backupType, backupID string) string {

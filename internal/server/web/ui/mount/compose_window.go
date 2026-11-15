@@ -5,9 +5,10 @@ import (
 )
 
 var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
-	"extend": "Ext.window.Window",
+	"extend": "PBS.plusWindow.Window",
 	"alias":  "widget.pbsPlusComposeWindow",
 
+	"title":  js.T("Compose Snapshot"),
 	"modal":  true,
 	"width":  700,
 	"height": 600,
@@ -133,21 +134,21 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 					"uncheckedValue": "0", "inputValue": "1", "margin": "0 0 5 0",
 				},
 				js.Obj{
-					"xtype":  "fieldcontainer",
-					"layout": js.Obj{"type": "hbox", "align": "center"},
-					"margin": "5 0",
+					"xtype":                    "fieldcontainer",
+					"pbsPlusResponsiveColumns": true,
+					"layout":                   "column",
+					"margin":                   "5 0",
+					"defaults":                 js.Obj{"labelAlign": "top"},
 					"items": js.Arr{
 						js.Obj{
 							"xtype": "proxmoxtextfield", "name": "target-ns", "fieldLabel": "Target Namespace",
 							"emptyText": "root", "flex": 1, "labelWidth": 120,
 						},
-						js.Obj{"xtype": "tbspacer", "width": 10},
 						js.Obj{
 							"xtype": "combobox", "name": "target-type", "fieldLabel": "Target Type",
 							"store": js.Raw(`[["host", "host"], ["vm", "vm"], ["ct", "ct"]]`),
 							"value": "host", "labelWidth": 90, "width": 180, "editable": false,
 						},
-						js.Obj{"xtype": "tbspacer", "width": 10},
 						js.Obj{
 							"xtype": "proxmoxtextfield", "name": "target-id", "fieldLabel": "Target ID",
 							"allowBlank": false, "flex": 1, "labelWidth": 80,
@@ -158,6 +159,7 @@ var composeWindow = js.Define("PBS.D2DSnapshotMount.ComposeWindow", js.Obj{
 					"xtype":       "treepanel",
 					"reference":   "tree",
 					"flex":        1,
+					"minHeight":   180,
 					"rootVisible": false,
 					"selModel":    js.Raw(`{ type: "treemodel", mode: "MULTI" }`),
 					"store": js.Obj{

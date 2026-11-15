@@ -34,6 +34,7 @@ var mtfJobEdit = js.EditWindow{
 				win.getController().loadSourceStore(win.sourceKind, win.sourceRef);
 			}
 			Ext.defer(function () {
+				if (win.destroyed || win.destroying) return;
 				let form = win.down("form").getForm();
 				if (win.defaultJobId && form.findField("id")) {
 					form.findField("id").setValue(win.defaultJobId);
@@ -48,6 +49,7 @@ var mtfJobEdit = js.EditWindow{
 				method: "GET",
 				waitMsgTarget: view,
 				success: function (response) {
+					if (view.destroyed || view.destroying) return;
 					let data = response.result.data;
 					let form = view.down("form").getForm();
 					view.method = "PUT";
@@ -64,6 +66,7 @@ var mtfJobEdit = js.EditWindow{
 					view.setTitle(gettext("Edit") + ": " + data.id);
 				},
 				failure: function (resp) {
+					if (view.destroyed || view.destroying) return;
 					Ext.Msg.alert(gettext("Error"), resp.htmlStatus);
 					view.close();
 				},
@@ -82,6 +85,7 @@ var mtfJobEdit = js.EditWindow{
 			store.removeAll();
 			store.load({
 				callback: function () {
+					if (combo.destroyed || combo.destroying) return;
 					if (sourceRef) {
 						combo.setValue(sourceRef);
 					}

@@ -138,8 +138,7 @@ func D2DRestoreSnapshotsHandler(app *application.Runtime, client *pbsapi.Client)
 		}
 
 		snapshots, err := client.HostSnapshots(r.Context(), r, store, ns)
-		var apiErr *pbsapi.Error
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[*pbsapi.Error](err); ok {
 			respond.Error(w, apiErr.Status, apiErr)
 			return
 		}

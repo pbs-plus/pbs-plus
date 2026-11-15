@@ -192,9 +192,15 @@ func jobAction(method, baseURL, singular, plural, eligible string) Raw {
 	`, eligible, plural, singular, method, baseURL))
 }
 
+// RenderSnapshotLabel formats the unix timestamp ending a snapshot id as a date.
+func RenderSnapshotLabel() Raw {
+	return Raw("PBS.PlusUtils.renderSnapshotLabel")
+}
+
 // A prompt containing {0} is formatted with the list of selected record ids.
 func ConfirmRemove(baseURL, idExpr, prompt string) Raw {
 	msg := fmt.Sprintf("gettext(%q)", prompt)
+
 	if strings.Contains(prompt, "{0}") {
 		msg = fmt.Sprintf(`Ext.String.format(gettext(%q), recs.map((rec) => Ext.String.htmlEncode(rec.getId())).join("', '"))`, prompt)
 	}
@@ -234,7 +240,7 @@ func CopySelectionWindow(title, field string) Raw {
 			return;
 		}
 		let value = selection[0].data.%s;
-		Ext.create("Ext.window.Window", {
+		Ext.create("PBS.plusWindow.Window", {
 			modal: true,
 			width: 600,
 			title: gettext(%q),
@@ -269,23 +275,46 @@ func PathKeyedURL(baseURL string) Raw {
 
 func CodeMirrorField(name, mode string, height int) Field {
 	return Field{
-		XType:  XComponent,
-		Name:   name,
-		Height: height,
-		ItemID: "scriptEditor",
-		Anchor: "100%",
-		HTML:   `<div style="height: 100%;"></div>`,
+		XType:      XTextArea,
+		Name:       name,
+		Height:     height,
+		ItemID:     "scriptEditor",
+		Anchor:     "100%",
+		AllowBlank: new(false),
 		AfterRender: Func("component", fmt.Sprintf(`
-			let pendingValue = "";
-			component.setValue = (val) => {
-				pendingValue = val || "";
-				if (component.codeMirror) component.codeMirror.setValue(pendingValue);
+			component.inputEl.dom.spellcheck = false;
+			component.inputEl.dom.style.fontFamily = "monospace";
+			component.inputEl.dom.setAttribute("aria-label", gettext("Script Content"));
+			let markValidity = (valid) => {
+				if (!component.codeMirror) return;
+				let wrapper = component.codeMirror.getWrapperElement();
+				wrapper.style.outline = valid ? "" : "1px solid #cf4c35";
+				wrapper.title = valid ? "" : gettext("This field is required");
 			};
-			component.getValue = () =>
-				component.codeMirror ? component.codeMirror.getValue() : pendingValue;
-			component.isValid = () => true;
-			component.validate = () => true;
+			component.on("validitychange", (field, valid) => markValidity(valid));
+			let refresh = () => {
+				if (component.codeMirror && !component.destroyed && !component.destroying) {
+					component.codeMirror.setSize("100%%", component.height);
+					component.codeMirror.refresh();
+				}
+			};
+			let fit = () => {
+				component.setHeight(Math.min(%d, Math.max(160, Ext.Element.getViewportHeight() - 220)));
+				refresh();
+				component.updateLayout();
+			};
+			component.mon(Ext.GlobalEvents, "resize", fit);
+			component.on("resize", refresh);
+			component.on("boxready", refresh);
+			component.on("beforedestroy", () => {
+				if (component.codeMirror) {
+					component.codeMirror.toTextArea();
+					component.codeMirror = null;
+				}
+			});
+			fit();
 			PBS.PlusUtils.LoadCodeMirror(function () {
+				if (component.destroyed || component.destroying) return;
 				let isDark =
 					window.matchMedia &&
 					window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -295,19 +324,27 @@ func CodeMirrorField(name, mode string, height int) Field {
 							? isDark
 							: Proxmox.Utils.theme === "dark";
 				}
-				let editor = CodeMirror(component.el.dom.firstChild, {
+				let editor = CodeMirror.fromTextArea(component.inputEl.dom, {
 					mode: %q,
+					screenReaderLabel: gettext("Script Content"),
 					lineNumbers: true,
 					indentUnit: 2,
 					tabSize: 2,
 					indentWithTabs: false,
-					lineWrapping: false,
+					lineWrapping: true,
 					theme: isDark ? "material-darker" : "default",
 				});
 				component.codeMirror = editor;
-				editor.setValue(pendingValue);
-				setTimeout(() => editor.refresh(), 1);
+				markValidity(component.isValid());
+				editor.on("change", () => {
+					let value = editor.getValue();
+					if (value !== component.getValue()) component.setValue(value);
+				});
+				component.on("change", (field, value) => {
+					if (value !== editor.getValue()) editor.setValue(value || "");
+				});
+				refresh();
 			});
-		`, mode)),
+		`, height, mode)),
 	}
 }

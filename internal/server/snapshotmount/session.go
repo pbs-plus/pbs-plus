@@ -26,24 +26,25 @@ const (
 )
 
 type Session struct {
-	Datastore  string `json:"datastore"`
-	Namespace  string `json:"namespace"`
-	BackupType string `json:"backup_type"`
-	BackupID   string `json:"backup_id"`
-	BackupTime string `json:"backup_time"`
-	FileName   string `json:"file_name"`
-	Mode       string `json:"mode"`
-	Backend    string `json:"backend,omitempty"`
-	Outpost    string `json:"outpost,omitempty"`
-	ShareName  string `json:"share_name,omitempty"`
-	SubPath    string `json:"sub_path,omitempty"`
-	Profile    string `json:"profile,omitempty"`
-	Endpoint   string `json:"endpoint,omitempty"`
-	MountPoint string `json:"mount_point"`
-	OverlayDir string `json:"overlay_dir,omitempty"`
-	SocketPath string `json:"socket_path,omitempty"`
-	ServiceKey string `json:"service_key"`
-	CreatedAt  int64  `json:"created_at"`
+	Datastore  string   `json:"datastore"`
+	Namespace  string   `json:"namespace"`
+	BackupType string   `json:"backup_type"`
+	BackupID   string   `json:"backup_id"`
+	BackupTime string   `json:"backup_time"`
+	FileName   string   `json:"file_name"`
+	Mode       string   `json:"mode"`
+	Backend    string   `json:"backend,omitempty"`
+	Outpost    string   `json:"outpost,omitempty"`
+	ShareName  string   `json:"share_name,omitempty"`
+	SubPath    string   `json:"sub_path,omitempty"`
+	Aliases    []string `json:"aliases,omitempty"`
+	Profile    string   `json:"profile,omitempty"`
+	Endpoint   string   `json:"endpoint,omitempty"`
+	MountPoint string   `json:"mount_point"`
+	OverlayDir string   `json:"overlay_dir,omitempty"`
+	SocketPath string   `json:"socket_path,omitempty"`
+	ServiceKey string   `json:"service_key"`
+	CreatedAt  int64    `json:"created_at"`
 }
 
 func sessionsDir() string { return filepath.Join(conf.StatePrefix, "mount-sessions") }

@@ -1,0 +1,46 @@
+name: Run Agent Outpost E2E
+description: Serve a snapshot over an S3 export, then over NFS and S3 outposts hosted by the agent, including an agent restart
+
+inputs:
+  timeout-seconds:
+    required: false
+    default: "900"
+    description: Timeout for each e2e phase
+
+runs:
+  using: composite
+  steps:
+    - name: Copy e2e script into container
+      shell: bash
+      run: |
+        docker cp .github/actions/run-agent-outpost-e2e/run.sh pbs-plus-test:/tmp/e2e-agent-outpost.sh
+        docker exec pbs-plus-test chmod +x /tmp/e2e-agent-outpost.sh
+
+    - name: Serve through server and agent outposts
+      shell: bash
+      run: timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-agent-outpost.sh main
+
+    - name: Stop the agent
+      shell: bash
+      run: docker stop pbs-plus-agent
+
+    - name: Check the outpost reports the agent offline
+      shell: bash
+      run: timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-agent-outpost.sh offline
+
+    - name: Start the agent
+      shell: bash
+      run: docker start pbs-plus-agent
+
+    - name: Check the outpost recovers and serves S3 from the agent
+      shell: bash
+      run: timeout ${{ inputs.timeout-seconds }} docker exec pbs-plus-test /tmp/e2e-agent-outpost.sh recover
+
+    - name: Dump outpost state
+      if: always()
+      shell: bash
+      run: |
+        echo "--- server outpost trace (last 300 lines) ---"
+        docker logs --since 30m pbs-plus-test 2>&1 | grep -Ei 'outpost|tunnel' | tail -300 || true
+        echo "--- agent outpost trace (last 300 lines) ---"
+        docker logs --since 30m pbs-plus-agent 2>&1 | grep -Ei 'outpost' | tail -300 || true

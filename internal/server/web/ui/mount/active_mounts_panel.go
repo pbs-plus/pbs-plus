@@ -51,7 +51,7 @@ var activeMountsPanel = js.Panel{
 		`),
 		"initNew": js.Func("view", `
 			let me = this;
-			Ext.create("Ext.window.Window", {
+			Ext.create("PBS.plusWindow.Window", {
 				title: gettext("Create New Snapshot"),
 				modal: true,
 				layout: "anchor",
@@ -69,12 +69,9 @@ var activeMountsPanel = js.Panel{
 					defaults: { anchor: "100%", labelWidth: 120 },
 					items: [
 					{
-						xtype: "combobox",
+						xtype: "pbsDataStoreSelector",
 						name: "datastore",
 						fieldLabel: gettext("Datastore"),
-						store: "pbs-datastore-list",
-						displayField: "store",
-						valueField: "store",
 						allowBlank: false,
 					},
 					{

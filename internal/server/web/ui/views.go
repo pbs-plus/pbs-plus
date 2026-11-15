@@ -132,6 +132,7 @@ var coreViews = []js.Value{
 				children: [
 					{ text: "Backup / Restore", iconCls: "fa fa-hdd-o", id: "backup_targets", path: "pbsD2DManagement", leaf: true },
 					{ text: "Targets", iconCls: "fa fa-bullseye", id: "d2d_targets", path: "pbsD2DTargets", leaf: true },
+					{ text: "S3 Backup Repositories", iconCls: "fa fa-cloud-upload", id: "d2d_s3_repositories", path: "pbsPlusS3RepositoriesPanel", leaf: true },
 					{ text: "Snapshots", iconCls: "fa fa-history", id: "snapshot_mount", path: "pbsD2DSnapshotMount", leaf: true },
 					{ text: "Mounts", iconCls: "fa fa-hdd-o", id: "d2d_mounts", path: "pbsD2DMounts", leaf: true },
 					{ text: "Outposts", iconCls: "fa fa-globe", id: "d2d_outposts", path: "pbsPlusOutpostsPanel", leaf: true },

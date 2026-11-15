@@ -80,20 +80,43 @@ func TestCustomJSMigratesDefinitionsOnce(t *testing.T) {
 	}
 }
 
-func TestCodeMirrorFieldBuffersValuesUntilEditorLoads(t *testing.T) {
+func TestCodeMirrorFieldUsesNativeFormValue(t *testing.T) {
 	source := ui.Render()
 	for _, marker := range []string{
-		"let pendingValue = \"\";",
-		"editor.setValue(pendingValue);",
-		"values.script = editor.getValue();",
-		"editor.setValue(values.script);",
+		`xtype: "textarea",`,
+		`name: "script",`,
+		`CodeMirror.fromTextArea(component.inputEl.dom, {`,
+		`component.setValue(value);`,
+		`editor.setValue(value || "");`,
 	} {
 		if !bytes.Contains(source, []byte(marker)) {
-			t.Errorf("rendered JS lost the buffered code mirror wiring: %s", marker)
+			t.Errorf("rendered JS lost native code editor form integration: %s", marker)
 		}
 	}
-	if bytes.Contains(source, []byte("editor.codeMirror")) {
-		t.Error("rendered JS reads editor.codeMirror directly instead of the buffered field contract")
+	if bytes.Contains(source, []byte(`let pendingValue = "";`)) {
+		t.Error("rendered JS still keeps script content outside the form")
+	}
+}
+
+func TestCodeEditorAssetsAreServedLocally(t *testing.T) {
+	source := compileJS(&preJsFS)
+	if bytes.Contains(source, []byte("cdnjs.cloudflare.com")) {
+		t.Error("script editor still loads assets from a public CDN")
+	}
+	for embedded, name := range vendoredAssets {
+		data, err := vendorFS.ReadFile(embedded)
+		if err != nil {
+			t.Fatalf("vendored asset %s is missing: %v", embedded, err)
+		}
+		if len(data) == 0 {
+			t.Errorf("vendored asset %s is empty", embedded)
+		}
+		if name == "pbs-plus-codemirror.license.txt" {
+			continue
+		}
+		if !bytes.Contains(source, []byte("/js/"+name)) {
+			t.Errorf("pre JS never loads vendored asset %s", name)
+		}
 	}
 }
 
@@ -223,6 +246,8 @@ func TestCustomNavigationGroupsPBSPlusViews(t *testing.T) {
 		[]byte(`path: "pbsD2DMounts"`),
 		[]byte(`id: "d2d_outposts"`),
 		[]byte(`path: "pbsPlusOutpostsPanel"`),
+		[]byte(`id: "d2d_s3_repositories"`),
+		[]byte(`path: "pbsPlusS3RepositoriesPanel"`),
 		[]byte(`id: "data_verification"`),
 		[]byte(`id: "mtf_tapes"`),
 	} {
@@ -295,6 +320,16 @@ func TestDatabaseJobWindowsHideFilesystemRestorePath(t *testing.T) {
 		if !bytes.Contains(source, expected) {
 			t.Errorf("database job editor is missing %q", expected)
 		}
+	}
+}
+
+func TestDatastoreFieldsUseTheSharedSelector(t *testing.T) {
+	source := ui.Render()
+	if bytes.Contains(source, []byte(`store: "pbs-datastore-list"`)) {
+		t.Error("a field still binds to the datastore store id, which is empty when the dialog opens first")
+	}
+	if bytes.Count(source, []byte(`xtype: "pbsDataStoreSelector"`)) < 3 {
+		t.Error("mount dialogs no longer use the shared datastore selector")
 	}
 }
 

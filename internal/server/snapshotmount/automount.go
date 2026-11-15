@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -87,7 +88,9 @@ func autoMountProfilesGated(ctx context.Context, engine *jobs.Engine, gate *foll
 		}
 	}
 	for _, p := range due {
-		reconcileProfile(ctx, engine, p)
+		if err := reconcileProfile(ctx, engine, p); err != nil {
+			log.Error(err, "auto-mount: reconciling profile", "profile", p.ID())
+		}
 	}
 }
 
@@ -99,13 +102,20 @@ func AutoMountProfiles(ctx context.Context, engine *jobs.Engine) {
 	}
 	for _, p := range profiles {
 		if p.AutoMount {
-			reconcileProfile(ctx, engine, p)
+			if err := reconcileProfile(ctx, engine, p); err != nil {
+				log.Error(err, "auto-mount: reconciling profile", "profile", p.ID())
+			}
 		}
 	}
 }
 
 func submitUnmount(ctx context.Context, engine *jobs.Engine, session Session, reason string) {
-	input := jobs.SnapshotUnmountInput{MountPath: session.MountPoint, Force: false, Reason: reason}
+	input := jobs.SnapshotUnmountInput{
+		Datastore: session.Datastore, Namespace: session.Namespace,
+		BackupType: session.BackupType, BackupID: session.BackupID,
+		BackupTime: session.BackupTime, FileName: session.FileName,
+		MountPath: session.MountPoint, Force: false, Reason: reason,
+	}
 	request, err := jobs.NewWorkflowSubmit(jobs.WorkflowSnapshotUnmount, session.ServiceKey, reason, "", input, []string{"snapshot-mount:" + session.ServiceKey}, 1, time.Minute)
 	if err != nil {
 		log.Error(err, "auto-mount: building unmount submit", "mount-point", session.MountPoint)
@@ -116,12 +126,9 @@ func submitUnmount(ctx context.Context, engine *jobs.Engine, session Session, re
 	}
 }
 
-func submitBatchMount(ctx context.Context, engine *jobs.Engine, p Profile, g NamespaceGroup, sub string) {
-	backupTime, fileName, err := LatestSnapshotIn(mustStoreRoot(p), g.Namespace, g.BackupType, g.BackupID)
-	if err != nil {
-		log.Error(err, "auto-mount: resolving latest snapshot", "namespace", g.Namespace, "group", g.BackupType+"/"+g.BackupID)
-		return
-	}
+func submitBatchMount(ctx context.Context, engine *jobs.Engine, p Profile, planned PlannedMount) {
+	g, sub := planned.Group, planned.Paths[0]
+	backupTime, fileName := planned.BackupTime, planned.FileName
 	parsed, err := time.Parse(time.RFC3339, backupTime)
 	if err != nil {
 		log.Error(err, "auto-mount: parsing backup time", "backup-time", backupTime)
@@ -143,6 +150,7 @@ func submitBatchMount(ctx context.Context, engine *jobs.Engine, p Profile, g Nam
 		Outpost:    p.Outpost,
 		ShareName:  profileShare(p),
 		SubPath:    sub,
+		Aliases:    planned.Paths[1:],
 		Profile:    p.ID(),
 		MountPath:  mountPath,
 	}
@@ -251,27 +259,29 @@ func sessionLive(s Session) bool {
 // reconcileProfile drives one batch profile toward its desired state: every
 // group under the parent namespace mounted at its latest snapshot inside the
 // shared target, stale or vanished mounts cleaned up.
-func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) {
+func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) error {
 	share := profileShare(p)
 	storeRoot := mustStoreRoot(p)
 	if storeRoot == "" {
-		log.Error(fmt.Errorf("datastore %s has no path", p.Datastore), "auto-mount: batch reconcile")
-		return
+		return fmt.Errorf("datastore %s has no path", p.Datastore)
 	}
-	groups, err := ListNamespaceGroups(storeRoot, p.Namespace)
+	plans, err := planProfileIn(ctx, p, storeRoot)
 	if err != nil {
-		log.Error(err, "auto-mount: listing namespaces", "datastore", p.Datastore, "namespace", p.Namespace)
-		return
+		return fmt.Errorf("planning layout: %w", err)
 	}
-	subs := planBatch(groups, p.Namespace)
+	plannedGroups := make(map[string]PlannedMount, len(plans))
+	for _, planned := range plans {
+		g := planned.Group
+		plannedGroups[groupKeyOf(g.Namespace, g.BackupType, g.BackupID)] = planned
+	}
 	owned, err := batchSessionsOwned(p, share)
 	if err != nil {
-		log.Error(err, "auto-mount: listing sessions")
-		return
+		return fmt.Errorf("listing sessions: %w", err)
 	}
 	skips := loadSkips(p.ID())
 
 	mountedOfGroup := map[string][]Session{}
+	removingStale := false
 	for _, s := range owned {
 		if s.Profile == "" {
 			s.Profile = p.ID()
@@ -280,44 +290,43 @@ func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) {
 			}
 		}
 		gk := groupKeyOf(s.Namespace, s.BackupType, s.BackupID)
-		if want, ok := subs[gk]; !ok || want != s.SubPath {
+		if s.Profile != p.ID() {
+			continue
+		}
+		if want, ok := plannedGroups[gk]; !ok || want.Paths[0] != s.SubPath || !slices.Equal(want.Paths[1:], s.Aliases) {
 			if s.Mode == ModeRW {
 				log.Info("auto-mount: skipping stale read-write session, use mount-now to force", "mount-point", s.MountPoint)
 				continue
 			}
 			if sessionLive(s) {
 				submitUnmount(ctx, engine, s, "follow-latest")
+				removingStale = true
 			}
 			continue
 		}
 		mountedOfGroup[gk] = append(mountedOfGroup[gk], s)
 	}
 
-	for _, g := range groups {
+	if removingStale {
+		return nil
+	}
+	for _, planned := range plans {
+		g := planned.Group
 		gk := groupKeyOf(g.Namespace, g.BackupType, g.BackupID)
 		live := mountedOfGroup[gk]
 		if len(live) == 0 {
 			if t, ok := skips[gk]; ok {
-				latestStr, _, err := LatestSnapshotIn(storeRoot, g.Namespace, g.BackupType, g.BackupID)
-				if err != nil {
-					continue
-				}
-				latest, err := time.Parse(time.RFC3339, latestStr)
+				latest, err := time.Parse(time.RFC3339, planned.BackupTime)
 				if err != nil || !latest.After(t) {
 					continue
 				}
 				delete(skips, gk)
 				saveSkips(p.ID(), skips)
 			}
-			submitBatchMount(ctx, engine, p, g, subs[gk])
+			submitBatchMount(ctx, engine, p, planned)
 			continue
 		}
-		latestStr, _, err := LatestSnapshotIn(storeRoot, g.Namespace, g.BackupType, g.BackupID)
-		if err != nil {
-			log.Error(err, "auto-mount: resolving latest snapshot", "namespace", g.Namespace, "group", g.BackupType+"/"+g.BackupID)
-			continue
-		}
-		latest, err := time.Parse(time.RFC3339, latestStr)
+		latest, err := time.Parse(time.RFC3339, planned.BackupTime)
 		if err != nil {
 			continue
 		}
@@ -347,10 +356,11 @@ func reconcileProfile(ctx context.Context, engine *jobs.Engine, p Profile) {
 			submitUnmount(ctx, engine, newest, "follow-latest")
 		}
 	}
+	return nil
 }
 
 // ReconcileProfileNow runs one reconcile pass for a single profile (mount-now).
-func ReconcileProfileNow(ctx context.Context, engine *jobs.Engine, p Profile) {
+func ReconcileProfileNow(ctx context.Context, engine *jobs.Engine, p Profile) error {
 	_ = os.Remove(skipPath(p.ID()))
-	reconcileProfile(ctx, engine, p)
+	return reconcileProfile(ctx, engine, p)
 }

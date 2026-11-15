@@ -9,32 +9,44 @@ import (
 	"strings"
 
 	"github.com/pbs-plus/pbs-plus/internal/server/application"
-	"github.com/pbs-plus/pbs-plus/internal/server/objectstore"
 	"github.com/pbs-plus/pbs-plus/internal/server/outpost"
+	"github.com/pbs-plus/pbs-plus/internal/server/s3export"
 	"github.com/pbs-plus/pbs-plus/internal/server/snapshotmount"
 	"github.com/pbs-plus/pbs-plus/internal/server/web/api/respond"
 )
 
 type outpostView struct {
-	Name       string          `json:"name"`
-	Type       string          `json:"type"`
-	ListenAddr string          `json:"listen-addr"`
-	Guest      bool            `json:"guest"`
-	ValidUsers string          `json:"valid-users"`
-	ForceUser  string          `json:"force-user"`
-	HostsAllow string          `json:"hosts-allow"`
-	Browseable bool            `json:"browseable"`
-	S3         json.RawMessage `json:"s3,omitempty"`
-	Running    bool            `json:"running"`
-	Error      string          `json:"error,omitempty"`
-	Attached   []string        `json:"attached"`
-	Endpoints  []string        `json:"endpoints"`
+	Name       string           `json:"name"`
+	Type       string           `json:"type"`
+	Agent      string           `json:"agent"`
+	ListenAddr string           `json:"listen-addr"`
+	Guest      bool             `json:"guest"`
+	ValidUsers string           `json:"valid-users"`
+	ForceUser  string           `json:"force-user"`
+	HostsAllow string           `json:"hosts-allow"`
+	Browseable bool             `json:"browseable"`
+	S3Export   *s3export.Config `json:"s3-export,omitempty"`
+	Running    bool             `json:"running"`
+	Error      string           `json:"error,omitempty"`
+	Attached   []string         `json:"attached"`
+	Endpoints  []string         `json:"endpoints"`
 }
 
-func toOutpostView(s outpost.Status) (outpostView, error) {
-	view := outpostView{
+func toOutpostView(s outpost.Status) outpostView {
+	var export *s3export.Config
+	if s.S3Export != nil {
+		redacted := *s.S3Export
+		redacted.Credentials = make([]s3export.Credential, len(s.S3Export.Credentials))
+		for i, credential := range s.S3Export.Credentials {
+			redacted.Credentials[i] = s3export.Credential{AccessKey: credential.AccessKey}
+		}
+		export = &redacted
+	}
+	return outpostView{
+		S3Export:   export,
 		Name:       s.Name,
 		Type:       s.Type,
+		Agent:      s.Agent,
 		ListenAddr: s.ListenAddr,
 		Guest:      s.Guest,
 		ValidUsers: s.ValidUsers,
@@ -46,34 +58,17 @@ func toOutpostView(s outpost.Status) (outpostView, error) {
 		Attached:   s.Attached,
 		Endpoints:  s.Endpoints,
 	}
-	if s.S3 != nil {
-		config := *s.S3
-		config.Credentials = append([]objectstore.Credential(nil), s.S3.Credentials...)
-		for i := range config.Credentials {
-			config.Credentials[i].SecretKey = ""
-		}
-		data, err := json.Marshal(config)
-		if err != nil {
-			return outpostView{}, err
-		}
-		view.S3 = data
-	}
-	return view, nil
 }
 
 func writeOutpostView(w http.ResponseWriter, s outpost.Status) {
-	view, err := toOutpostView(s)
-	if err != nil {
-		respond.WriteErrorResponse(w, err)
-		return
-	}
-	writeExtJS(w, view)
+	writeExtJS(w, toOutpostView(s))
 }
 
 func outpostFormValues(r *http.Request) (outpost.Outpost, error) {
 	o := outpost.Outpost{
 		Name:       strings.TrimSpace(r.FormValue("name")),
 		Type:       strings.TrimSpace(r.FormValue("type")),
+		Agent:      strings.TrimSpace(r.FormValue("agent")),
 		ListenAddr: strings.TrimSpace(r.FormValue("listen-addr")),
 		Guest:      r.FormValue("guest") == "1" || r.FormValue("guest") == "true",
 		ValidUsers: strings.TrimSpace(r.FormValue("valid-users")),
@@ -81,27 +76,28 @@ func outpostFormValues(r *http.Request) (outpost.Outpost, error) {
 		HostsAllow: strings.TrimSpace(r.FormValue("hosts-allow")),
 		Browseable: r.FormValue("browseable") == "1" || r.FormValue("browseable") == "true",
 	}
-	if s3 := strings.TrimSpace(r.FormValue("s3")); s3 != "" {
-		config := &objectstore.Config{}
-		if err := json.Unmarshal([]byte(s3), config); err != nil {
-			return outpost.Outpost{}, fmt.Errorf("invalid s3 config: %w", err)
+	if raw := strings.TrimSpace(r.FormValue("s3-export")); raw != "" {
+		o.S3Export = &s3export.Config{}
+		if err := json.Unmarshal([]byte(raw), o.S3Export); err != nil {
+			return outpost.Outpost{}, fmt.Errorf("invalid s3-export config: %w", err)
 		}
-		o.S3 = config
 	}
 	return o, nil
 }
 
-func preserveS3Secrets(next, current *objectstore.Config) {
+// preserveExportSecrets keeps stored secret keys for credentials resubmitted blank, since views redact them.
+func preserveExportSecrets(next, current *s3export.Config) {
 	if next == nil || current == nil {
 		return
 	}
-	secrets := make(map[string]string, len(current.Credentials))
-	for _, credential := range current.Credentials {
-		secrets[credential.AccessKey] = credential.SecretKey
-	}
 	for i := range next.Credentials {
-		if next.Credentials[i].SecretKey == "" {
-			next.Credentials[i].SecretKey = secrets[next.Credentials[i].AccessKey]
+		if next.Credentials[i].SecretKey != "" {
+			continue
+		}
+		for _, stored := range current.Credentials {
+			if stored.AccessKey == next.Credentials[i].AccessKey {
+				next.Credentials[i].SecretKey = stored.SecretKey
+			}
 		}
 	}
 }
@@ -121,12 +117,7 @@ func ExtJsOutpostsHandler(app *application.Runtime) http.HandlerFunc {
 			statuses := outpost.StatusAll()
 			views := make([]outpostView, 0, len(statuses))
 			for _, s := range statuses {
-				view, err := toOutpostView(s)
-				if err != nil {
-					respond.WriteErrorResponse(w, err)
-					return
-				}
-				views = append(views, view)
+				views = append(views, toOutpostView(s))
 			}
 			writeExtJS(w, views)
 		case http.MethodPost:
@@ -198,7 +189,7 @@ func ExtJsOutpostSingleHandler(app *application.Runtime) http.HandlerFunc {
 				o.Name = existing.Name
 			}
 			o.CreatedAt = existing.CreatedAt
-			preserveS3Secrets(o.S3, existing.S3)
+			preserveExportSecrets(o.S3Export, existing.S3Export)
 			if err := outpost.ValidateOutpost(o); err != nil {
 				writeOutpostInvalid(w, err)
 				return

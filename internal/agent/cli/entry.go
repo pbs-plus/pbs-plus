@@ -21,9 +21,10 @@ func Entry() {
 	srcPath := flag.String("srcPath", "/", "Path to be restored within snapshot")
 	destPath := flag.String("destPath", "", "Destination path of files to be restored from snapshot")
 	token := flag.String("token", "", "Auth Token")
+	listenAddr := flag.String("listenAddr", "", "Outpost listen address")
 	flag.Parse()
 
-	if *cmdMode != "restore" && *cmdMode != "backup" && *cmdMode != "verify" {
+	if *cmdMode != "restore" && *cmdMode != "backup" && *cmdMode != "verify" && *cmdMode != "outpost" {
 		log.Debug("cli: invalid command mode", "cmdMode", *cmdMode)
 		return
 	}
@@ -84,5 +85,7 @@ func Entry() {
 		cmdRestore(id, srcPath, destPath, restoreMode)
 	case "verify":
 		cmdVerify(id)
+	case "outpost":
+		cmdOutpost(id, listenAddr)
 	}
 }

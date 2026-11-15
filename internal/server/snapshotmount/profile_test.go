@@ -152,6 +152,10 @@ func TestProfileSkipRoundTrip(t *testing.T) {
 	p := Profile{Datastore: "nonexistent", Namespace: "ns1", Mode: "ro"}
 	s := Session{Profile: p.ID(), Datastore: p.Datastore, Namespace: "ns1", BackupType: "host", BackupID: "vm1"}
 	RecordProfileSkip(s)
+	profiles, err := ListProfiles()
+	if err != nil || len(profiles) != 0 {
+		t.Fatalf("skip state must not appear as a profile: %+v, %v", profiles, err)
+	}
 
 	skips := loadSkips(p.ID())
 	if len(skips) != 1 {
@@ -161,7 +165,9 @@ func TestProfileSkipRoundTrip(t *testing.T) {
 		t.Errorf("skip keyed by wrong group: %v", skips)
 	}
 
-	ReconcileProfileNow(context.Background(), nil, p)
+	if err := ReconcileProfileNow(context.Background(), nil, p); err == nil {
+		t.Fatal("mount-now must report a missing datastore")
+	}
 	if skips := loadSkips(p.ID()); len(skips) != 0 {
 		t.Errorf("mount-now must clear manual unmount skips, got %v", skips)
 	}

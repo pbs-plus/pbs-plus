@@ -4,6 +4,8 @@ package mountapi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,16 +17,17 @@ import (
 )
 
 type profileView struct {
-	ID        string `json:"id"`
-	Datastore string `json:"datastore"`
-	Namespace string `json:"namespace"`
-	Mode      string `json:"mode"`
-	Outpost   string `json:"outpost"`
-	ShareName string `json:"share-name"`
-	MountPath string `json:"mount-path"`
-	Schedule  string `json:"schedule"`
-	AutoMount bool   `json:"auto-mount"`
-	Replace   bool   `json:"replace"`
+	ID        string                    `json:"id"`
+	Datastore string                    `json:"datastore"`
+	Namespace string                    `json:"namespace"`
+	Mode      string                    `json:"mode"`
+	Outpost   string                    `json:"outpost"`
+	ShareName string                    `json:"share-name"`
+	MountPath string                    `json:"mount-path"`
+	Schedule  string                    `json:"schedule"`
+	AutoMount bool                      `json:"auto-mount"`
+	Replace   bool                      `json:"replace"`
+	Layout    *snapshotmount.PathLayout `json:"layout,omitempty"`
 }
 
 func toProfileView(p snapshotmount.Profile) profileView {
@@ -39,6 +42,7 @@ func toProfileView(p snapshotmount.Profile) profileView {
 		Schedule:  p.Schedule,
 		AutoMount: p.AutoMount,
 		Replace:   p.Replace,
+		Layout:    p.Layout,
 	}
 }
 
@@ -57,6 +61,42 @@ func profileFormValues(r *http.Request) snapshotmount.Profile {
 		Schedule:  strings.TrimSpace(r.FormValue("schedule")),
 		AutoMount: r.FormValue("auto-mount") == "1" || r.FormValue("auto-mount") == "true",
 		Replace:   r.FormValue("replace") == "1" || r.FormValue("replace") == "true",
+	}
+}
+
+func readProfileLayout(r *http.Request, p *snapshotmount.Profile) error {
+	raw := r.FormValue("layout")
+	if raw == "" {
+		return nil
+	}
+	if len(raw) > 8192 || json.Unmarshal([]byte(raw), &p.Layout) != nil {
+		return errors.New("invalid layout configuration")
+	}
+	return nil
+}
+
+func ExtJsMountProfilePreviewHandler(app *application.Runtime) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			respond.MethodNotAllowed(w, r)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, 16384)
+		if err := r.ParseForm(); err != nil {
+			writeProfileInvalid(w, errors.New("invalid preview form"))
+			return
+		}
+		p := profileFormValues(r)
+		if err := readProfileLayout(r, &p); err != nil {
+			writeProfileInvalid(w, err)
+			return
+		}
+		plans, err := snapshotmount.PlanProfile(r.Context(), p)
+		if err != nil {
+			writeProfileInvalid(w, err)
+			return
+		}
+		writeExtJS(w, plans)
 	}
 }
 
@@ -88,6 +128,10 @@ func ExtJsMountProfilesHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		p := profileFormValues(r)
+		if err := readProfileLayout(r, &p); err != nil {
+			writeProfileInvalid(w, err)
+			return
+		}
 		if err := snapshotmount.ValidateProfile(p); err != nil {
 			writeProfileInvalid(w, err)
 			return
@@ -134,6 +178,13 @@ func ExtJsMountProfileSingleHandler(app *application.Runtime) http.HandlerFunc {
 				return
 			}
 			p := profileFormValues(r)
+			if err := readProfileLayout(r, &p); err != nil {
+				writeProfileInvalid(w, err)
+				return
+			}
+			if _, ok := r.Form["layout"]; !ok {
+				p.Layout = existing.Layout
+			}
 			if _, ok := r.Form["datastore"]; !ok {
 				p.Datastore = existing.Datastore
 				p.Namespace = existing.Namespace
@@ -190,7 +241,10 @@ func ExtJsMountProfileMountHandler(app *application.Runtime) http.HandlerFunc {
 			return
 		}
 		go func() {
-			snapshotmount.ReconcileProfileNow(context.WithoutCancel(r.Context()), app.Engine, p)
+			if err := snapshotmount.ReconcileProfileNow(context.WithoutCancel(r.Context()), app.Engine, p); err != nil {
+				task.CloseErr(err)
+				return
+			}
 			task.LogString("reconciled batch profile " + id)
 			task.CloseOK()
 		}()

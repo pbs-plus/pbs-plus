@@ -2,39 +2,57 @@ Ext.define("PBS.PlusUtils", {
   singleton: true,
 
   LoadCodeMirror: function (callback) {
-    if (window.CodeMirror) {
-      callback();
-      return;
+    if (!this.codeMirrorLoad) {
+      if (window.CodeMirror) {
+        callback();
+        return;
+      }
+
+      let loadCSS = (href) =>
+        new Promise((resolve, reject) => {
+          let link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = href;
+          link.onload = resolve;
+          link.onerror = () =>
+            reject(new Error("Failed to load code editor stylesheet"));
+          document.head.appendChild(link);
+        });
+      let loadJS = (src) =>
+        new Promise((resolve, reject) => {
+          let script = document.createElement("script");
+          script.src = src;
+          script.onload = resolve;
+          script.onerror = () =>
+            reject(new Error("Failed to load code editor script"));
+          document.head.appendChild(script);
+        });
+      this.codeMirrorLoad = Promise.all([
+        loadCSS("/js/pbs-plus-codemirror.css"),
+        loadCSS("/js/pbs-plus-codemirror-dark.css"),
+        loadJS("/js/pbs-plus-codemirror.js"),
+      ]).then(() => loadJS("/js/pbs-plus-codemirror-shell.js"));
     }
+    this.codeMirrorLoad.then(callback).catch((error) => {
+      console.warn(
+        gettext(
+          "Syntax highlighting is unavailable. The plain text editor remains usable.",
+        ),
+        error,
+      );
+    });
+  },
 
-    let loadCSS = (href) => {
-      return new Promise((resolve) => {
-        let link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = href;
-        link.onload = resolve;
-        document.head.appendChild(link);
-      });
-    };
-
-    let loadJS = (src) => {
-      return new Promise((resolve) => {
-        let script = document.createElement("script");
-        script.src = src;
-        script.onload = resolve;
-        document.head.appendChild(script);
-      });
-    };
-
-    let baseURL = "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16";
-
-    Promise.all([
-      loadCSS(`${baseURL}/codemirror.min.css`),
-      loadCSS(`${baseURL}/theme/material-darker.min.css`),
-      loadJS(`${baseURL}/codemirror.min.js`),
-    ])
-      .then(() => loadJS(`${baseURL}/mode/shell/shell.min.js`))
-      .then(callback);
+  renderSnapshotLabel: function (value) {
+    let parts = String(value || "").split("/");
+    let last = parts[parts.length - 1];
+    if (/^\d+$/.test(last)) {
+      parts[parts.length - 1] = Ext.Date.format(
+        new Date(Number(last) * 1000),
+        "Y-m-d H:i:s",
+      );
+    }
+    return Ext.String.htmlEncode(parts.join("/"));
   },
 
   formatRequestError: function (response) {
@@ -399,6 +417,7 @@ Ext.define("PBS.PlusRestProxy", {
 Ext.define("PBS.plusWindow.Edit", {
   extend: "Proxmox.window.Edit",
   alias: "widget.pbsPlusWindowEdit",
+  plugins: ["pbsPlusResponsive"],
   submit: function () {
     let me = this;
 
@@ -457,6 +476,7 @@ Ext.define("PBS.plusWindow.Edit", {
             let upid = response.result.data;
             let viewerClass = me.showTaskViewer ? "Viewer" : "Progress";
             Ext.create("Proxmox.window.Task" + viewerClass, {
+              plugins: ["pbsPlusResponsive"],
               autoShow: true,
               upid: upid,
               taskDone: me.taskDone,

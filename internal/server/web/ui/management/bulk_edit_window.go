@@ -5,7 +5,7 @@ import (
 )
 
 var bulkEditWindow = js.Define("PBS.window.D2DBulkJobEdit", js.Obj{
-	"extend": "Ext.window.Window",
+	"extend": "PBS.plusWindow.Window",
 	"alias":  "widget.pbsD2DBulkJobEdit",
 
 	"modal":       true,
