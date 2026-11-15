@@ -137,14 +137,24 @@ Ext.define("PBS.plugin.Responsive", {
         win.doConstrain();
       }
     };
+    let sizesChildren = function (container) {
+      let layout = container.getLayout ? container.getLayout() : null;
+      return (
+        !!layout &&
+        ["fit", "card", "border", "vbox", "hbox"].indexOf(layout.type) !== -1
+      );
+    };
     win.constrain = true;
     if (win.formPanel) {
       win.setLayout("fit");
-      win.formPanel.setScrollable(true);
+      win.formPanel.setScrollable("y");
+    } else if (!sizesChildren(win)) {
+      win.setScrollable("y");
     } else {
-      win.setScrollable(true);
       win.query("form").forEach(function (form) {
-        form.setScrollable(true);
+        if (form.ownerCt && sizesChildren(form.ownerCt)) {
+          form.setScrollable("y");
+        }
       });
     }
     fit();

@@ -157,16 +157,35 @@ const edit = makeWindow({
 });
 plugin.window(edit);
 assert.equal(formLayout, "fit");
-assert.equal(formScrollable, true);
+assert.equal(formScrollable, "y");
+assert.equal(edit.scrollable, undefined);
 assert.equal(edit.height, undefined);
-const form = {
-  setScrollable: (value) => {
-    formScrollable = value;
-  },
+
+const layoutOf = (type) => () => ({ type });
+const scrolled = [];
+const makeForm = (ownerCt) => {
+  const form = {
+    ownerCt,
+    setScrollable(value) {
+      scrolled.push([form, value]);
+    },
+  };
+  return form;
 };
-formScrollable = undefined;
-plugin.window(makeWindow({ query: () => [form] }));
-assert.equal(formScrollable, true);
+const plain = makeWindow({ getLayout: layoutOf("auto") });
+const plainForm = makeForm(plain);
+plain.query = () => [plainForm];
+plugin.window(plain);
+assert.equal(plain.scrollable, "y");
+assert.deepEqual(scrolled, []);
+
+const fitted = makeWindow({ getLayout: layoutOf("fit") });
+const outer = makeForm(fitted);
+const nested = makeForm({ getLayout: layoutOf("anchor") });
+fitted.query = () => [outer, nested];
+plugin.window(fitted);
+assert.equal(fitted.scrollable, undefined);
+assert.deepEqual(scrolled, [[outer, "y"]]);
 
 const columns = Array.from({ length: 2 }, () => ({
   flex: 1,
