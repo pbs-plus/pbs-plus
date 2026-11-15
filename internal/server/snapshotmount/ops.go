@@ -5,6 +5,7 @@ package snapshotmount
 import (
 	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,8 +26,13 @@ func ParseMountPoints() ([]string, error) {
 		}
 	}()
 
+	return parseMountPoints(f)
+}
+
+func parseMountPoints(r io.Reader) ([]string, error) {
 	var mps []string
-	sc := bufio.NewScanner(f)
+	unescape := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		parts := strings.Split(sc.Text(), " - ")
 		if len(parts) != 2 {
@@ -36,7 +42,7 @@ func ParseMountPoints() ([]string, error) {
 		if len(fields) < 5 {
 			continue
 		}
-		mps = append(mps, fields[4])
+		mps = append(mps, unescape.Replace(fields[4]))
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
@@ -46,20 +52,12 @@ func ParseMountPoints() ([]string, error) {
 
 func IsMounted(path string) bool {
 	resolved, rerr := filepath.EvalSymlinks(path)
-	mountInfoFile, err := os.Open("/proc/self/mountinfo")
+	mountPoints, err := ParseMountPoints()
 	if err != nil {
 		return false
 	}
-	defer func() {
-		if err := mountInfoFile.Close(); err != nil {
-			log.Error(err, "")
-		}
-	}()
-
-	scanner := bufio.NewScanner(mountInfoFile)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) >= 5 && (fields[4] == path || (rerr == nil && fields[4] == resolved)) {
+	for _, mountPoint := range mountPoints {
+		if mountPoint == path || (rerr == nil && mountPoint == resolved) {
 			return true
 		}
 	}
