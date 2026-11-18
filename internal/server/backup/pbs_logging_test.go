@@ -41,6 +41,62 @@ func contains(lines []string, needle string) bool {
 	return false
 }
 
+func TestIsClientWarning(t *testing.T) {
+	for line, want := range map[string]bool{
+		`warning: stale file handle encountered while reading: "a/b.ts"`:                                           true,
+		`2026-11-18T14:48:25-05:00: warning: file size shrunk while reading: "x", file will be padded with zeros!`: true,
+		"pbs-plus: WARNING: unreadable file cut short":                                                             true,
+		`  warning: stale file handle encountered while reading: "c"`:                                              true,
+		`skipping "reports/warning: notes.txt"`:                                                                    false,
+		"bkp.ppxar: had to backup 390.8 GiB of 391.769 GiB":                                                        false,
+		"no warnings here": false,
+	} {
+		if got := isClientWarning(line); got != want {
+			t.Errorf("isClientWarning(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+func TestMergePBSLogsCountsLowercaseClientWarnings(t *testing.T) {
+	dir := t.TempDir()
+	proxyLog := filepath.Join(dir, "proxy.log")
+	writeLines(t, proxyLog, []string{
+		"2026-11-18T12:18:37-05:00: starting backup",
+		"2026-11-18T14:48:42-05:00: TASK OK",
+	}, 0660)
+
+	jobID := "pbsplus-test-" + strings.ReplaceAll(t.Name(), "/", "-")
+	defer func() {
+		_ = os.Remove(filepath.Join(os.TempDir(), "job-"+jobID+"-stdout"))
+	}()
+	logger := log.WithScope(log.Scope{JobID: jobID})
+	if err := logger.FlushJobLog(); err != nil {
+		t.Fatalf("flush job log: %v", err)
+	}
+	clientLog := logger.JobLogPath()
+	writeLines(t, clientLog, []string{
+		"Starting backup: host/bkp-ingest-station-Root",
+		`warning: stale file handle encountered while reading: "Data/Video/T1636.ts"`,
+		`warning: stale file handle encountered while reading: "test.gpf"`,
+		`warning: file size shrunk while reading: "big.bin", file will be padded with zeros!`,
+		"bkp.ppxar: had to backup 390.8 GiB of 391.769 GiB",
+		"Duration: 8991.48s",
+		"End Time: Wed Nov 18 14:48:28 2026",
+	}, 0666)
+
+	succeeded, _, warnings, err := mergePBSLogs(proxyLog, clientLog, logger, true, nil, "")
+	if err != nil {
+		t.Fatalf("mergePBSLogs: %v", err)
+	}
+	if !succeeded || warnings != 3 {
+		t.Fatalf("succeeded=%v warnings=%d, want true and 3", succeeded, warnings)
+	}
+	merged := readLines(t, proxyLog)
+	if last := merged[len(merged)-1]; !strings.HasSuffix(last, "TASK WARNINGS: 3") {
+		t.Errorf("final line = %q, want TASK WARNINGS: 3", last)
+	}
+}
+
 func TestMergePBSLogsRewritesProxyLogNotClientLog(t *testing.T) {
 	dir := t.TempDir()
 	proxyLog := filepath.Join(dir, "proxy.log")
