@@ -649,6 +649,8 @@ type ARPCFS struct {
 	ForwardBytes    atomic.Int64
 	skippedPaths    sync.Map
 	skippedCount    atomic.Int64
+	sourceGone      atomic.Bool
+	sourceStat      func(ctx context.Context, root string) error
 
 	expandArchives   bool
 	expandZip        bool

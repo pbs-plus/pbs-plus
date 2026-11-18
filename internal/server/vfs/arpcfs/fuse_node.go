@@ -145,6 +145,7 @@ func errnoFor(err error, fallback syscall.Errno) syscall.Errno {
 func (n *Node) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := n.fs.Attr(ctx, n.getPath(), false)
 	if err != nil {
+		n.fs.noteMissing(ctx, n.getPath(), err)
 		return errnoFor(err, syscall.ESTALE)
 	}
 
@@ -176,6 +177,7 @@ func (n *Node) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, 
 
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
+		n.fs.noteMissing(ctx, n.getPath(), err)
 		return 0, syscall.ENODATA
 	}
 
@@ -234,6 +236,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
+		n.fs.noteMissing(ctx, n.getPath(), err)
 		return 0, 0
 	}
 
@@ -275,6 +278,7 @@ func (n *Node) Listxattr(ctx context.Context, dest []byte) (uint32, syscall.Errn
 func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.Xattr(ctx, n.getPath(), attr)
 	if err != nil {
+		n.fs.noteMissing(ctx, n.getPath(), err)
 		return 0, syscall.ENODATA
 	}
 
@@ -329,6 +333,7 @@ func (n *Node) legacyGetxattr(ctx context.Context, attr string, dest []byte) (ui
 func (n *Node) legacyListxattr(ctx context.Context, dest []byte) (uint32, syscall.Errno) {
 	fi, err := n.fs.ListXattr(ctx, n.getPath())
 	if err != nil {
+		n.fs.noteMissing(ctx, n.getPath(), err)
 		return 0, 0
 	}
 
@@ -374,6 +379,7 @@ func (n *Node) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs
 
 	fi, err := n.fs.Attr(ctx, fullPath, true)
 	if err != nil {
+		n.fs.noteMissing(ctx, fullPath, err)
 		return nil, errnoFor(err, syscall.ENOENT)
 	}
 
@@ -423,6 +429,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	}
 	entries, err := n.fs.ReadDir(ctx, n.getPath())
 	if err != nil {
+		n.fs.noteMissing(ctx, n.getPath(), err)
 		n.fs.logOnce(n.getPath(), err, "Readdir")
 		return nil, errnoFor(err, syscall.EIO)
 	}
@@ -433,6 +440,7 @@ func (n *Node) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (n *Node) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
 	file, err := n.fs.OpenFile(ctx, n.getPath(), int(flags), 0)
 	if err != nil {
+		n.fs.noteMissing(ctx, n.getPath(), err)
 		n.fs.logOnce(n.getPath(), err, "Open")
 		return nil, 0, errnoFor(err, syscall.ESTALE)
 	}

@@ -63,7 +63,16 @@ var (
 	pbsWarningMarkers = []string{
 		"WARNING: ",
 	}
+
+	pbsClientWarningPrefix = "warning: "
 )
+
+func isClientWarning(line string) bool {
+	if _, has := containsAny(line, pbsWarningMarkers); has {
+		return true
+	}
+	return strings.HasPrefix(proxmox.TrimLogLineTimestamp(strings.TrimSpace(line)), pbsClientWarningPrefix)
+}
 
 func systemLocation() *time.Location {
 	target, err := os.Readlink("/etc/localtime")
@@ -285,7 +294,7 @@ func mergePBSLogs(
 			}
 		}
 
-		if _, has := containsAny(line, pbsWarningMarkers); has {
+		if isClientWarning(line) {
 			pbsWarningRawCount++
 		}
 
