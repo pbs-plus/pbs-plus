@@ -155,14 +155,12 @@ func (b *backupJob) cleanup() {
 			if logger != nil {
 				logger.Info("unmounting agent source")
 			}
-			agentMount.Unmount()
 			agentMount.CloseMount()
 		}
 		if s3Mount != nil {
 			if logger != nil {
 				logger.Info("unmounting S3 source")
 			}
-			s3Mount.Unmount()
 			s3Mount.CloseMount()
 		}
 		if stagedDump != nil {

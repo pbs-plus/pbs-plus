@@ -29,7 +29,6 @@ const (
 
 	TimerBasePath        = "/lib/systemd/system"
 	DbBasePath           = "/var/lib/proxmox-backup"
-	AgentMountBasePath   = "/mnt/pbs-plus-mounts"
 	RestoreMountBasePath = "/mnt/pbs-plus-restores"
 	LogsBasePath         = "/var/log/proxmox-backup"
 	TaskLogsBasePath     = LogsBasePath + "/tasks"
@@ -44,6 +43,7 @@ var (
 	SecretsKeyPath      = StatePrefix + "/.secret.key"
 	BackupLogsBasePath  = "/var/log/pbs-plus"
 	RestoreLogsBasePath = "/var/log/pbs-plus/restores"
+	AgentMountBasePath  = "/mnt/pbs-plus-mounts"
 	MountSocketPath     = "/var/run/pbs_agent_mount.sock"
 	JobMutateSocketPath = "/var/run/pbs_agent_job_mutate.sock"
 	RestoreSocketPath   = "/var/run/pbs_plus_restore"

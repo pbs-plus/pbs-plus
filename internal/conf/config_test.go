@@ -8,16 +8,12 @@ import (
 )
 
 func TestEnvConfig_Defaults(t *testing.T) {
-	// Save and restore env
-	origDebug := os.Getenv("DEBUG")
-	origHostname := os.Getenv("PBS_PLUS_HOSTNAME")
-	defer func() {
-		os.Setenv("DEBUG", origDebug)
-		os.Setenv("PBS_PLUS_HOSTNAME", origHostname)
-	}()
-
-	os.Unsetenv("DEBUG")
-	os.Unsetenv("PBS_PLUS_HOSTNAME")
+	for _, key := range []string{"DEBUG", "PBS_PLUS_HOSTNAME"} {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	cfg := loadEnvConfig()
 
@@ -48,10 +44,7 @@ func TestEnvConfig_Defaults(t *testing.T) {
 }
 
 func TestEnvConfig_DebugEnabled(t *testing.T) {
-	orig := os.Getenv("DEBUG")
-	defer os.Setenv("DEBUG", orig)
-
-	os.Setenv("DEBUG", "true")
+	t.Setenv("DEBUG", "true")
 	cfg := loadEnvConfig()
 	if !cfg.Debug {
 		t.Error("expected Debug to be true")
@@ -59,10 +52,7 @@ func TestEnvConfig_DebugEnabled(t *testing.T) {
 }
 
 func TestEnvConfig_HostnameSet(t *testing.T) {
-	orig := os.Getenv("PBS_PLUS_HOSTNAME")
-	defer os.Setenv("PBS_PLUS_HOSTNAME", orig)
-
-	os.Setenv("PBS_PLUS_HOSTNAME", "test-host")
+	t.Setenv("PBS_PLUS_HOSTNAME", "test-host")
 	cfg := loadEnvConfig()
 	if cfg.Hostname != "test-host" {
 		t.Errorf("expected 'test-host', got %q", cfg.Hostname)

@@ -166,15 +166,13 @@ func runWorkflow(w *jobs.WorkflowContext, app *application.Runtime, job coredb.B
 // start mounts the source and launches proxmox-backup-client, returning
 // the durable task identity for the wait activity.
 func (b *backupJob) start(ctx context.Context, info jobs.ActivityInfo) (json.RawMessage, error) {
-	srcPath, agentMount, s3Mount, err := b.mountSource(ctx, b.job.Target)
+	srcPath, err := b.mountSource(ctx, b.job.Target)
 	if err != nil {
 		return nil, err
 	}
 
 	b.mu.Lock()
 	b.srcPath = srcPath
-	b.agentMount = agentMount
-	b.s3Mount = s3Mount
 	b.mu.Unlock()
 
 	cmd, task, currOwner, err := b.startBackup(ctx, srcPath, b.job.Target, info)
