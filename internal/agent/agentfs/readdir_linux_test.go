@@ -299,6 +299,56 @@ func TestStatDirentsParallelMatchesSerial(t *testing.T) {
 	}
 }
 
+func TestStatDirentsFstatatFallbackMatchesStatx(t *testing.T) {
+	dir := t.TempDir()
+	mkFiles(t, dir, 40, 513)
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("file-00000", filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unix.Close(fd) })
+
+	buf := make([]byte, 1024*1024)
+	n, err := unix.Getdents(fd, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ents := parseDirents(buf[:n], 1<<30, nil)
+
+	withStatx, err := statDirents(nil, fd, ents, 4096)
+	if err != nil {
+		t.Fatalf("statx statDirents: %v", err)
+	}
+
+	statxUnsupported.Store(true)
+	t.Cleanup(func() { statxUnsupported.Store(false) })
+	withFstatat, err := statDirents(nil, fd, ents, 4096)
+	if err != nil {
+		t.Fatalf("fstatat statDirents: %v", err)
+	}
+
+	if len(withStatx) != len(withFstatat) {
+		t.Fatalf("statx %d entries, fstatat %d", len(withStatx), len(withFstatat))
+	}
+	for i := range withStatx {
+		if withFstatat[i].Name == "link" {
+			t.Fatal("fstatat fallback should exclude symlinks")
+		}
+		want := withStatx[i]
+		want.CreationTime = withFstatat[i].CreationTime
+		if !reflect.DeepEqual(want, withFstatat[i]) {
+			t.Fatalf("entry %d differs:\n statx   %+v\n fstatat %+v", i, withStatx[i], withFstatat[i])
+		}
+	}
+}
+
 func TestStatDirentsSkipsVanishedEntries(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "here"), nil, 0o644); err != nil {

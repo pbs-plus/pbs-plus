@@ -207,7 +207,7 @@ func statDirent(fd int, ent dirent, blockSize uint64, info *fswire.AgentFileInfo
 	}
 
 	var sx unix.Statx_t
-	err := statxDirent(fd, ent.name, &sx)
+	err := statDirentx(fd, ent.name, &sx)
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return false, nil
@@ -259,7 +259,43 @@ func shouldExcludeDirent(fileType uint8) bool {
 	}
 }
 
-// statxDirent bypasses unix.Statx so the pathname remains stack-backed instead of allocating per entry.
+// statxUnsupported latches once statx returns ENOSYS, as on kernels older than 4.11.
+var statxUnsupported atomic.Bool
+
+func statDirentx(fd int, name string, sx *unix.Statx_t) error {
+	if !statxUnsupported.Load() {
+		err := statxDirent(fd, name, sx)
+		if !errors.Is(err, unix.ENOSYS) {
+			return err
+		}
+		statxUnsupported.Store(true)
+	}
+	return fstatatDirent(fd, name, sx)
+}
+
+// fstatatDirent fills the statx fields readdir uses from fstatat. Birth time and attributes stay unset.
+func fstatatDirent(fd int, name string, sx *unix.Statx_t) error {
+	var st unix.Stat_t
+	if err := unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return err
+	}
+	*sx = unix.Statx_t{
+		Mask:   statxMask,
+		Mode:   uint16(st.Mode),
+		Size:   uint64(st.Size),
+		Blocks: uint64(st.Blocks),
+		Atime:  statxTimestamp(st.Atim),
+		Mtime:  statxTimestamp(st.Mtim),
+		Ctime:  statxTimestamp(st.Ctim),
+	}
+	return nil
+}
+
+func statxTimestamp(ts unix.Timespec) unix.StatxTimestamp {
+	sec, nsec := ts.Unix()
+	return unix.StatxTimestamp{Sec: sec, Nsec: uint32(nsec)}
+}
+
 func statxDirent(fd int, name string, sx *unix.Statx_t) error {
 	if len(name) > unix.NAME_MAX {
 		return unix.ENAMETOOLONG
