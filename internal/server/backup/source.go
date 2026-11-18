@@ -90,10 +90,10 @@ func validateAgentConnection(target coredb.Target, online bool) error {
 	return nil
 }
 
-func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (string, *mountrpc.AgentMount, *mountrpc.S3Mount, error) {
+func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (string, error) {
 	select {
 	case <-ctx.Done():
-		return "", nil, nil, jobs.ErrCanceled
+		return "", jobs.ErrCanceled
 	default:
 	}
 
@@ -111,18 +111,18 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	if target.IsDatabase() && b.databaseAware {
 		password, err := b.app.CoreDB.GetDatabasePassword(target.Name)
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("get database password: %w", err)
+			return "", fmt.Errorf("get database password: %w", err)
 		}
 		databaseLog := taskLogWriter{
 			destination: b.logger.JobStdoutWriter(),
 			logLine:     b.logQueuedLine,
 		}
 		if _, err := fmt.Fprintf(databaseLog, "--- %s log starts here ---\n", databaseLogLabel(target)); err != nil {
-			return "", nil, nil, fmt.Errorf("write database log marker: %w", err)
+			return "", fmt.Errorf("write database log marker: %w", err)
 		}
 		bundle, err := database.SelectClientBundle(ctx, target, password, databaseLog)
 		if err != nil {
-			return "", nil, nil, err
+			return "", err
 		}
 		scope := job.DatabaseScope
 		if scope == "" && target.Type == coredb.TargetTypeLDAP {
@@ -134,7 +134,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 			LogWriter: databaseLog,
 		}, bundle)
 		if err != nil {
-			return "", nil, nil, err
+			return "", err
 		}
 		b.mu.Lock()
 		b.stagedDump = stagedDump
@@ -146,21 +146,21 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 	} else if target.IsDovecot() && b.databaseAware {
 		password, err := b.app.CoreDB.GetDatabasePassword(target.Name)
 		if err != nil {
-			return "", nil, nil, fmt.Errorf("get Dovecot password: %w", err)
+			return "", fmt.Errorf("get Dovecot password: %w", err)
 		}
 		dovecotLog := taskLogWriter{
 			destination: b.logger.JobStdoutWriter(),
 			logLine:     b.logQueuedLine,
 		}
 		if _, err := fmt.Fprintln(dovecotLog, "--- Dovecot log starts here ---"); err != nil {
-			return "", nil, nil, fmt.Errorf("write Dovecot log marker: %w", err)
+			return "", fmt.Errorf("write Dovecot log marker: %w", err)
 		}
 		client, err := dovecot.SelectClient(ctx, target)
 		if err != nil {
-			return "", nil, nil, err
+			return "", err
 		}
 		if _, err := fmt.Fprintf(dovecotLog, "using Dovecot client %s from %s\n", client.Version, client.Program); err != nil {
-			return "", nil, nil, fmt.Errorf("write Dovecot client selection: %w", err)
+			return "", fmt.Errorf("write Dovecot client selection: %w", err)
 		}
 		stagedBackup, err := dovecot.StageBackup(ctx, staging.Root(job.Store), target, password, dovecot.BackupOptions{
 			Scope:     job.DovecotScope,
@@ -169,7 +169,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 			LogWriter: dovecotLog,
 		}, client)
 		if err != nil {
-			return "", nil, nil, err
+			return "", err
 		}
 		b.mu.Lock()
 		b.stagedDovecot = stagedBackup
@@ -186,17 +186,18 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 			"agent", target.AgentHost.Name, "agentAddress", target.AgentHost.IP, "sourcePath", target.Path)
 		agentMount, err = mountrpc.AgentFSMount(timedCtx, b.app, job, target)
 		if err != nil {
-			return "", nil, nil, err
+			return "", err
 		}
+		b.mu.Lock()
+		b.agentMount = agentMount
+		b.mu.Unlock()
 		srcPath = agentMount.Path
 		b.logger.Info("agent source mounted",
 			"agent", target.AgentHost.Name, "mountpoint", agentMount.Path)
 
 		select {
 		case <-ctx.Done():
-			agentMount.Unmount()
-			agentMount.CloseMount()
-			return "", nil, nil, jobs.ErrCanceled
+			return "", jobs.ErrCanceled
 		default:
 		}
 
@@ -208,7 +209,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		b.mu.Unlock()
 
 		if agentMount.IsEmpty() {
-			return "", agentMount, nil, jobs.ErrMountEmpty
+			return "", jobs.ErrMountEmpty
 		}
 	} else if target.IsS3() {
 		timedCtx, timedCtxCancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -217,16 +218,17 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		b.logger.Info("mounting S3 source", "target", target.Name)
 		s3Mount, err = mountrpc.S3FSMount(timedCtx, b.app, job, target)
 		if err != nil {
-			return "", nil, nil, err
+			return "", err
 		}
+		b.mu.Lock()
+		b.s3Mount = s3Mount
+		b.mu.Unlock()
 		srcPath = s3Mount.Path
 		b.logger.Info("S3 source mounted", "target", target.Name, "mountpoint", s3Mount.Path)
 
 		select {
 		case <-ctx.Done():
-			s3Mount.Unmount()
-			s3Mount.CloseMount()
-			return "", nil, nil, jobs.ErrCanceled
+			return "", jobs.ErrCanceled
 		default:
 		}
 
@@ -238,7 +240,7 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		b.mu.Unlock()
 
 		if s3Mount.IsEmpty() {
-			return "", nil, s3Mount, jobs.ErrMountEmpty
+			return "", jobs.ErrMountEmpty
 		}
 	}
 
@@ -250,14 +252,14 @@ func (b *backupJob) mountSource(ctx context.Context, target coredb.Target) (stri
 		info, err := os.Stat(srcPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return "", agentMount, s3Mount, fmt.Errorf("%w: %q does not exist under the mount point", jobs.ErrSubpathNotFound, job.Subpath)
+				return "", fmt.Errorf("%w: %q does not exist under the mount point", jobs.ErrSubpathNotFound, job.Subpath)
 			}
-			return "", agentMount, s3Mount, fmt.Errorf("%w: cannot access subpath %q: %w", jobs.ErrSubpathNotFound, job.Subpath, err)
+			return "", fmt.Errorf("%w: cannot access subpath %q: %w", jobs.ErrSubpathNotFound, job.Subpath, err)
 		}
 		if !info.IsDir() {
-			return "", agentMount, s3Mount, fmt.Errorf("%w: %q is not a directory", jobs.ErrSubpathNotFound, job.Subpath)
+			return "", fmt.Errorf("%w: %q is not a directory", jobs.ErrSubpathNotFound, job.Subpath)
 		}
 	}
 
-	return srcPath, agentMount, s3Mount, nil
+	return srcPath, nil
 }
